@@ -2,6 +2,7 @@ import type { Env } from './types';
 import { handleAuthLogin, handleAuthCallback, handleAuthLogout, handleClientMetadata } from './routes/auth';
 import { handleFeedFetch, handleFeedDiscover } from './routes/feeds';
 import { handleSocialFeed, handleSyncFollows, handlePopularShares } from './routes/social';
+import { handleRecordSync } from './routes/records';
 
 export { JetstreamConsumer } from './durable-objects/jetstream-consumer';
 
@@ -63,6 +64,11 @@ export default {
           break;
         case url.pathname === '/api/social/popular':
           response = await handlePopularShares(request, env);
+          break;
+
+        // Record sync routes
+        case url.pathname === '/api/records/sync':
+          response = await handleRecordSync(request, env);
           break;
 
         default:

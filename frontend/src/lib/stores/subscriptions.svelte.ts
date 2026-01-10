@@ -15,6 +15,18 @@ function createSubscriptionsStore() {
   let isLoading = $state(true);
   let error = $state<string | null>(null);
 
+  // Listen for sync completions and update local state
+  syncQueue.onSyncComplete(async (collection, rkey) => {
+    if (collection === 'com.at-rss.feed.subscription') {
+      const sub = await db.subscriptions.where('rkey').equals(rkey).first();
+      if (sub) {
+        subscriptions = subscriptions.map((s) =>
+          s.rkey === rkey ? { ...s, atUri: sub.atUri, syncStatus: 'synced' as const } : s
+        );
+      }
+    }
+  });
+
   async function load() {
     isLoading = true;
     try {

@@ -81,6 +81,19 @@ class ApiClient {
     if (cursor) params.set('cursor', cursor);
     return this.fetch(`/api/social/popular?${params}`);
   }
+
+  // Record sync
+  async syncRecord(request: {
+    operation: 'create' | 'update' | 'delete';
+    collection: string;
+    rkey: string;
+    record?: Record<string, unknown>;
+  }): Promise<{ uri?: string; cid?: string }> {
+    return this.fetch('/api/records/sync', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  }
 }
 
 export const api = new ApiClient();

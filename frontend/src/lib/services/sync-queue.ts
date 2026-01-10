@@ -1,10 +1,12 @@
 import { db } from './db';
+import { api } from './api';
 import type { SyncQueueItem } from '$lib/types';
 import { browser } from '$app/environment';
 
 class SyncQueueService {
   private isProcessing = false;
   private onlineHandler: (() => void) | null = null;
+  private onSyncCompleteCallbacks: Array<(collection: string, rkey: string) => void> = [];
 
   init() {
     if (!browser) return;
@@ -70,16 +72,52 @@ class SyncQueueService {
   }
 
   private async processItem(item: SyncQueueItem) {
-    // This will be implemented when we have the AT Protocol client
-    // For now, just log the operation
     console.log('Processing sync item:', item);
 
-    // TODO: Implement actual AT Protocol record operations
-    // await atproto.createRecord(item.collection, item.rkey, item.record!);
+    const response = await api.syncRecord({
+      operation: item.operation,
+      collection: item.collection,
+      rkey: item.rkey,
+      record: item.record,
+    });
+
+    // Update local record with atUri and syncStatus after successful sync
+    if (item.operation !== 'delete' && response.uri) {
+      await this.updateLocalRecord(item.collection, item.rkey, response.uri);
+    }
+  }
+
+  private async updateLocalRecord(collection: string, rkey: string, atUri: string) {
+    if (collection === 'com.at-rss.feed.subscription') {
+      const sub = await db.subscriptions.where('rkey').equals(rkey).first();
+      if (sub?.id) {
+        await db.subscriptions.update(sub.id, { atUri, syncStatus: 'synced' });
+        this.notifySyncComplete(collection, rkey);
+      }
+    } else if (collection === 'com.at-rss.feed.readPosition') {
+      const pos = await db.readPositions.where('rkey').equals(rkey).first();
+      if (pos?.id) {
+        await db.readPositions.update(pos.id, { atUri, syncStatus: 'synced' });
+        this.notifySyncComplete(collection, rkey);
+      }
+    }
   }
 
   async getPendingCount(): Promise<number> {
     return db.syncQueue.count();
+  }
+
+  onSyncComplete(callback: (collection: string, rkey: string) => void) {
+    this.onSyncCompleteCallbacks.push(callback);
+    return () => {
+      this.onSyncCompleteCallbacks = this.onSyncCompleteCallbacks.filter(cb => cb !== callback);
+    };
+  }
+
+  private notifySyncComplete(collection: string, rkey: string) {
+    for (const callback of this.onSyncCompleteCallbacks) {
+      callback(collection, rkey);
+    }
   }
 }
 
