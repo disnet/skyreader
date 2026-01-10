@@ -129,6 +129,20 @@ export class JetstreamConsumer implements DurableObject {
     }, 5000) as unknown as number;
   }
 
+  private async notifyRealtimeHub(message: object): Promise<void> {
+    try {
+      const hubId = this.env.REALTIME_HUB.idFromName('main');
+      const hub = this.env.REALTIME_HUB.get(hubId);
+      await hub.fetch('http://internal/broadcast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(message),
+      });
+    } catch (error) {
+      console.error('Failed to notify RealtimeHub:', error);
+    }
+  }
+
   private async handleEvent(event: JetstreamEvent): Promise<void> {
     if (event.kind !== 'commit' || !event.commit) {
       return;
@@ -170,6 +184,21 @@ export class JetstreamConsumer implements DurableObject {
           INSERT OR IGNORE INTO users (did, handle, pds_url)
           VALUES (?, ?, '')
         `).bind(did, did).run();
+
+        // Notify RealtimeHub of new share
+        await this.notifyRealtimeHub({
+          type: 'new_share',
+          payload: {
+            authorDid: did,
+            recordUri,
+            itemUrl: record.itemUrl,
+            itemTitle: record.itemTitle,
+            itemDescription: record.itemDescription,
+            itemImage: record.itemImage,
+            note: record.note,
+            createdAt: record.createdAt,
+          },
+        });
       } else if (operation === 'delete') {
         await this.env.DB.prepare(
           'DELETE FROM shares WHERE record_uri = ?'

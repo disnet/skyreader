@@ -7,6 +7,7 @@ import { getSessionFromRequest, updateUserActivity } from './services/oauth';
 import { refreshActiveFeeds } from './services/scheduled-feeds';
 
 export { JetstreamConsumer } from './durable-objects/jetstream-consumer';
+export { RealtimeHub } from './durable-objects/realtime-hub';
 
 function corsHeaders(origin: string | null, allowedOrigin: string): HeadersInit {
   return {
@@ -84,6 +85,14 @@ export default {
         case url.pathname === '/api/records/list':
           response = await handleRecordsList(request, env);
           break;
+
+        // Realtime WebSocket route
+        case url.pathname === '/api/realtime': {
+          const hubId = env.REALTIME_HUB.idFromName('main');
+          const hub = env.REALTIME_HUB.get(hubId);
+          // WebSocket upgrades bypass CORS handling
+          return hub.fetch(request);
+        }
 
         default:
           response = new Response(JSON.stringify({ error: 'Not found' }), {

@@ -1,9 +1,19 @@
 <script lang="ts">
   import { auth } from '$lib/stores/auth.svelte';
   import { syncStore } from '$lib/stores/sync.svelte';
+  import { realtimeStore } from '$lib/stores/realtime.svelte';
   import '../app.css';
 
   let { children } = $props();
+
+  // Connect/disconnect realtime based on auth state
+  $effect(() => {
+    if (auth.isAuthenticated && auth.sessionId) {
+      realtimeStore.connect(auth.sessionId);
+    } else {
+      realtimeStore.disconnect();
+    }
+  });
 </script>
 
 <svelte:head>
@@ -31,6 +41,9 @@
             <span class="offline-badge">Offline</span>
           {:else if syncStore.pendingCount > 0}
             <span class="sync-badge">{syncStore.pendingCount} pending</span>
+          {/if}
+          {#if auth.isAuthenticated && realtimeStore.isConnected}
+            <span class="realtime-indicator" title="Real-time updates active"></span>
           {/if}
           {#if auth.isAuthenticated}
             <a href="/settings" class="user-menu">
@@ -120,6 +133,23 @@
     padding: 0.25rem 0.5rem;
     border-radius: 4px;
     font-size: 0.75rem;
+  }
+
+  .realtime-indicator {
+    width: 8px;
+    height: 8px;
+    background: #4caf50;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
   }
 
   .user-menu {

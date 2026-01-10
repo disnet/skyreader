@@ -1,5 +1,6 @@
 import { db } from '$lib/services/db';
 import { api } from '$lib/services/api';
+import { realtime, type NewSharePayload } from '$lib/services/realtime';
 import type { SocialShare } from '$lib/types';
 
 function createSocialStore() {
@@ -9,6 +10,34 @@ function createSocialStore() {
   let cursor = $state<string | null>(null);
   let hasMore = $state(true);
   let error = $state<string | null>(null);
+
+  // Listen for realtime new shares
+  realtime.on('new_share', async (payload) => {
+    const data = payload as NewSharePayload;
+    const newShare: SocialShare = {
+      authorDid: data.authorDid,
+      authorHandle: data.authorHandle || data.authorDid,
+      authorDisplayName: data.authorDisplayName,
+      authorAvatar: data.authorAvatar,
+      recordUri: data.recordUri,
+      itemUrl: data.itemUrl,
+      itemTitle: data.itemTitle,
+      itemDescription: data.itemDescription,
+      itemImage: data.itemImage,
+      note: data.note,
+      createdAt: data.createdAt,
+    };
+
+    // Prepend to shares list
+    shares = [newShare, ...shares];
+
+    // Also store in IndexedDB
+    try {
+      await db.socialShares.add(newShare);
+    } catch {
+      // Ignore duplicate errors
+    }
+  });
 
   async function loadFeed(reset = false) {
     if (isLoading || (!hasMore && !reset)) return;

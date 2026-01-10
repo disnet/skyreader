@@ -1,6 +1,7 @@
 import { db } from '$lib/services/db';
 import { syncQueue } from '$lib/services/sync-queue';
 import { api } from '$lib/services/api';
+import { realtime, type NewArticlesPayload } from '$lib/services/realtime';
 import type { Subscription, Article, ParsedFeed } from '$lib/types';
 
 // Generate a TID (Timestamp Identifier) for AT Protocol records
@@ -24,6 +25,16 @@ function createSubscriptionsStore() {
           s.rkey === rkey ? { ...s, atUri: sub.atUri, syncStatus: 'synced' as const } : s
         );
       }
+    }
+  });
+
+  // Listen for realtime new articles notifications
+  realtime.on('new_articles', async (payload) => {
+    const data = payload as NewArticlesPayload;
+    // Find subscription by feed URL and refresh it
+    const sub = subscriptions.find((s) => s.feedUrl === data.feedUrl);
+    if (sub?.id) {
+      await fetchFeed(sub.id, true);
     }
   });
 

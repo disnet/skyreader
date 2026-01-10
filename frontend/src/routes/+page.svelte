@@ -17,6 +17,16 @@
       await subscriptionsStore.load();
       await readingStore.load();
       articles = await subscriptionsStore.getAllArticles();
+
+      // If we have subscriptions but no articles, fetch feeds (first login scenario)
+      if (subscriptionsStore.subscriptions.length > 0 && articles.length === 0) {
+        for (const sub of subscriptionsStore.subscriptions) {
+          if (sub.id) {
+            await subscriptionsStore.fetchFeed(sub.id, false);
+          }
+        }
+        articles = await subscriptionsStore.getAllArticles();
+      }
     }
     isLoading = false;
   });

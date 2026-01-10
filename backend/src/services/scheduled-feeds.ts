@@ -174,6 +174,17 @@ async function fetchAndCacheFeed(
     response.headers.get('Last-Modified') || null
   ).run();
 
+  // Notify RealtimeHub that new articles may be available
+  await notifyRealtimeHub(env, {
+    type: 'new_articles',
+    payload: {
+      feedUrl,
+      feedTitle: parsed.title,
+      newCount: parsed.items.length, // Total items in feed (client will determine which are new)
+      timestamp: Date.now(),
+    },
+  });
+
   return { status: 'fetched' };
 }
 
@@ -195,4 +206,18 @@ async function recordFetchError(env: Env, feedUrl: string, error: string): Promi
       error_count = error_count + 1,
       last_scheduled_fetch_at = unixepoch()
   `).bind(feedUrl, error).run();
+}
+
+async function notifyRealtimeHub(env: Env, message: object): Promise<void> {
+  try {
+    const hubId = env.REALTIME_HUB.idFromName('main');
+    const hub = env.REALTIME_HUB.get(hubId);
+    await hub.fetch('http://internal/broadcast', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(message),
+    });
+  } catch (error) {
+    console.error('Failed to notify RealtimeHub:', error);
+  }
 }
