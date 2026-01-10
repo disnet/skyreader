@@ -29,12 +29,12 @@ export async function generateDPoPKeyPair(): Promise<CryptoKeyPair> {
     },
     true,
     ['sign', 'verify']
-  );
+  ) as CryptoKeyPair;
 }
 
 // Export private key to JWK
 export async function exportPrivateKey(key: CryptoKey): Promise<JsonWebKey> {
-  return await crypto.subtle.exportKey('jwk', key);
+  return await crypto.subtle.exportKey('jwk', key) as JsonWebKey;
 }
 
 // Import private key from JWK

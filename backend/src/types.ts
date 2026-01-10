@@ -1,12 +1,6 @@
-import type { D1Database, KVNamespace, DurableObjectNamespace } from '@cloudflare/workers-types';
-
-export interface Env {
-  DB: D1Database;
-  FEED_CACHE: KVNamespace;
-  SESSION_CACHE: KVNamespace;
-  JETSTREAM_CONSUMER: DurableObjectNamespace;
-  FRONTEND_URL: string;
-}
+// Re-export the global Env interface from worker-configuration.d.ts
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface Env extends globalThis.Env {}
 
 export interface User {
   did: string;

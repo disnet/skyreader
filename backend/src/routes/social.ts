@@ -37,7 +37,7 @@ export async function handleSocialFeed(request: Request, env: Env): Promise<Resp
       .all();
 
     const hasMore = results.results.length > limit;
-    const shares = results.results.slice(0, limit).map((row) => ({
+    const shares = results.results.slice(0, limit).map((row: Record<string, unknown>) => ({
       id: row.id as number,
       authorDid: row.author_did as string,
       recordUri: row.record_uri as string,
@@ -232,7 +232,7 @@ export async function handlePopularShares(request: Request, env: Env): Promise<R
       .all();
 
     const hasMore = results.results.length > limit;
-    const shares = results.results.slice(0, limit).map((row) => ({
+    const shares = results.results.slice(0, limit).map((row: Record<string, unknown>) => ({
       id: row.id as number,
       authorDid: row.author_did as string,
       recordUri: row.record_uri as string,

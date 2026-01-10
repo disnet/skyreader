@@ -180,7 +180,7 @@ export async function handleAuthCallback(request: Request, env: Env): Promise<Re
     // Generate DPoP key pair
     const keyPair = await generateDPoPKeyPair();
     const privateKeyJwk = await exportPrivateKey(keyPair.privateKey);
-    const publicKeyJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+    const publicKeyJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey) as JsonWebKey;
 
     const baseUrl = getBaseUrl(url);
     const clientId = `${baseUrl}/.well-known/client-metadata`;
