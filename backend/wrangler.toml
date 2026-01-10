@@ -34,6 +34,10 @@ id = "c969d539d9174b3e9a9646ec4df6ef13"
 [vars]
 FRONTEND_URL = "http://127.0.0.1:5173"
 
+# Cron Triggers - run every 15 minutes
+[triggers]
+crons = ["*/15 * * * *"]
+
 # Development environment
 [env.dev]
 vars = { FRONTEND_URL = "http://127.0.0.1:5173" }

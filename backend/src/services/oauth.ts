@@ -256,3 +256,10 @@ export async function getSessionFromRequest(request: Request, env: Env): Promise
   const sessionId = authHeader.substring(7);
   return await getSession(env, sessionId);
 }
+
+// Update user's last active timestamp
+export async function updateUserActivity(env: Env, did: string): Promise<void> {
+  await env.DB.prepare(
+    'UPDATE users SET last_active_at = unixepoch() WHERE did = ?'
+  ).bind(did).run();
+}

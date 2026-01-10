@@ -168,6 +168,33 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
       });
     }
 
+    // Cache subscription for scheduled feed fetching
+    if (collection === 'com.at-rss.feed.subscription') {
+      try {
+        if (operation === 'create' || operation === 'update') {
+          const feedRecord = record as { feedUrl: string; title?: string };
+          const recordUri = result.data.uri || `at://${session.did}/${collection}/${rkey}`;
+          await env.DB.prepare(`
+            INSERT OR REPLACE INTO subscriptions_cache
+            (user_did, record_uri, feed_url, title, created_at)
+            VALUES (?, ?, ?, ?, unixepoch())
+          `).bind(
+            session.did,
+            recordUri,
+            feedRecord.feedUrl,
+            feedRecord.title || null
+          ).run();
+        } else if (operation === 'delete') {
+          await env.DB.prepare(
+            'DELETE FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
+          ).bind(session.did, `%/${rkey}`).run();
+        }
+      } catch (cacheError) {
+        // Log but don't fail the request if caching fails
+        console.error('Failed to cache subscription:', cacheError);
+      }
+    }
+
     return new Response(JSON.stringify({
       uri: result.data.uri,
       cid: result.data.cid,

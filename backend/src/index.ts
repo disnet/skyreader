@@ -3,6 +3,8 @@ import { handleAuthLogin, handleAuthCallback, handleAuthLogout, handleClientMeta
 import { handleFeedFetch, handleFeedDiscover } from './routes/feeds';
 import { handleSocialFeed, handleSyncFollows, handlePopularShares } from './routes/social';
 import { handleRecordSync } from './routes/records';
+import { getSessionFromRequest, updateUserActivity } from './services/oauth';
+import { refreshActiveFeeds } from './services/scheduled-feeds';
 
 export { JetstreamConsumer } from './durable-objects/jetstream-consumer';
 
@@ -16,7 +18,7 @@ function corsHeaders(origin: string | null, allowedOrigin: string): HeadersInit 
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const origin = request.headers.get('Origin');
     const headers = corsHeaders(origin, env.FRONTEND_URL);
@@ -24,6 +26,12 @@ export default {
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers });
+    }
+
+    // Track user activity for authenticated requests (non-blocking)
+    const session = await getSessionFromRequest(request, env);
+    if (session) {
+      ctx.waitUntil(updateUserActivity(env, session.did));
     }
 
     try {
@@ -98,6 +106,24 @@ export default {
           headers: { ...headers, 'Content-Type': 'application/json' },
         }
       );
+    }
+  },
+
+  async scheduled(
+    controller: ScheduledController,
+    env: Env,
+    ctx: ExecutionContext
+  ): Promise<void> {
+    console.log(`Cron triggered: ${controller.cron}`);
+
+    try {
+      const result = await refreshActiveFeeds(env);
+      console.log(
+        `Scheduled feed refresh complete: ${result.fetched} fetched, ` +
+        `${result.skipped} skipped (not modified), ${result.errors} errors`
+      );
+    } catch (error) {
+      console.error('Scheduled feed refresh failed:', error);
     }
   },
 };
