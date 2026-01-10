@@ -42,19 +42,12 @@ export class RealtimeHub implements DurableObject {
   private state: DurableObjectState;
   private env: Env;
   private clients: Map<WebSocket, ConnectedClient> = new Map();
-  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
 
-    // Start heartbeat interval
-    this.heartbeatInterval = setInterval(() => {
-      this.sendHeartbeats();
-      this.cleanupStaleConnections();
-    }, 30000);
-
-    // Use hibernation API for WebSocket connections
+    // Restore WebSocket connections from hibernation
     this.state.getWebSockets().forEach((ws) => {
       const attachment = ws.deserializeAttachment() as WebSocketAttachment | null;
       if (attachment) {
@@ -65,6 +58,17 @@ export class RealtimeHub implements DurableObject {
         });
       }
     });
+  }
+
+  // Use alarm() instead of setInterval for hibernation support
+  async alarm(): Promise<void> {
+    this.sendHeartbeats();
+    this.cleanupStaleConnections();
+
+    // Schedule next alarm only if there are connected clients
+    if (this.clients.size > 0) {
+      await this.state.storage.setAlarm(Date.now() + 30000);
+    }
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -140,6 +144,11 @@ export class RealtimeHub implements DurableObject {
     } as WebSocketAttachment);
 
     this.clients.set(server, clientData);
+
+    // Start heartbeat alarm if this is the first client
+    if (this.clients.size === 1) {
+      await this.state.storage.setAlarm(Date.now() + 30000);
+    }
 
     // Send connected message
     server.send(JSON.stringify({

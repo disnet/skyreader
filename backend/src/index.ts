@@ -50,7 +50,7 @@ export default {
           response = await handleAuthLogin(request, env);
           break;
         case url.pathname === '/api/auth/callback':
-          response = await handleAuthCallback(request, env);
+          response = await handleAuthCallback(request, env, ctx);
           break;
         case url.pathname === '/api/auth/logout':
           response = await handleAuthLogout(request, env);
@@ -142,6 +142,15 @@ export default {
       );
     } catch (error) {
       console.error('Scheduled feed refresh failed:', error);
+    }
+
+    // Ensure JetstreamConsumer stays alive (wakes it up if hibernated)
+    try {
+      const jetstreamId = env.JETSTREAM_CONSUMER.idFromName('main');
+      const jetstream = env.JETSTREAM_CONSUMER.get(jetstreamId);
+      await jetstream.fetch('http://internal/status');
+    } catch (error) {
+      console.error('Failed to ping JetstreamConsumer:', error);
     }
   },
 };

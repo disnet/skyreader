@@ -150,7 +150,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
   }
 }
 
-export async function handleAuthCallback(request: Request, env: Env): Promise<Response> {
+export async function handleAuthCallback(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
   const state = url.searchParams.get('state');
@@ -330,26 +330,45 @@ export async function handleAuthCallback(request: Request, env: Env): Promise<Re
 
     await storeSession(env, sessionId, session);
 
+    // Check if user already exists in D1
+    const existingUser = await env.DB.prepare(
+      'SELECT did FROM users WHERE did = ?'
+    ).bind(oauthState.did).first();
+
     // Store/update user in D1
     await env.DB.prepare(`
       INSERT OR REPLACE INTO users (did, handle, display_name, avatar_url, pds_url, updated_at)
       VALUES (?, ?, ?, ?, ?, unixepoch())
     `).bind(oauthState.did, handle, displayName || null, avatarUrl || null, oauthState.pdsUrl).run();
 
-    // Check if this is first login (no follows cached) and sync follows
-    const followsCount = await env.DB.prepare(
-      'SELECT COUNT(*) as count FROM follows_cache WHERE follower_did = ?'
-    ).bind(oauthState.did).first<{ count: number }>();
+    // For new users: register DID with Jetstream and sync their follows
+    if (!existingUser) {
+      console.log(`First login for ${handle}, registering with Jetstream and syncing follows...`);
 
-    if (!followsCount || followsCount.count === 0) {
-      console.log(`First login for ${handle}, syncing follows...`);
-      try {
-        const syncedCount = await syncFollowsForUser(env, session);
-        console.log(`Synced ${syncedCount} follows for ${handle}`);
-      } catch (syncError) {
-        // Don't block login if sync fails - user can manually sync later
-        console.error('Failed to sync follows on first login:', syncError);
-      }
+      // Register DID with Jetstream consumer for real-time follow tracking
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const jetstreamId = env.JETSTREAM_CONSUMER.idFromName('main');
+            const jetstream = env.JETSTREAM_CONSUMER.get(jetstreamId);
+            await jetstream.fetch('http://internal/register-did', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ did: oauthState.did }),
+            });
+            console.log(`Registered DID ${oauthState.did} with Jetstream consumer`);
+          } catch (error) {
+            console.error('Failed to register DID with Jetstream:', error);
+          }
+        })()
+      );
+
+      // Sync their existing follows from PDS
+      ctx.waitUntil(
+        syncFollowsForUser(env, session)
+          .then(syncedCount => console.log(`Synced ${syncedCount} follows for ${handle}`))
+          .catch(syncError => console.error('Failed to sync follows on first login:', syncError))
+      );
     }
 
     // Redirect to frontend with session
