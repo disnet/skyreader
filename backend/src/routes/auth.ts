@@ -257,24 +257,46 @@ export async function handleAuthCallback(request: Request, env: Env): Promise<Re
     }
 
     // Fetch user profile
-    const profileDpop = await createDPoPProof(
+    const profileUrl = `${oauthState.pdsUrl}/xrpc/app.bsky.actor.getProfile?actor=${oauthState.did}`;
+    let profileDpop = await createDPoPProof(
       keyPair.privateKey,
       publicKeyJwk,
       'GET',
-      `${oauthState.pdsUrl}/xrpc/app.bsky.actor.getProfile?actor=${oauthState.did}`,
+      profileUrl,
       undefined,
       tokenData.access_token
     );
 
-    const profileResponse = await fetch(
-      `${oauthState.pdsUrl}/xrpc/app.bsky.actor.getProfile?actor=${oauthState.did}`,
-      {
-        headers: {
-          Authorization: `DPoP ${tokenData.access_token}`,
-          DPoP: profileDpop,
-        },
+    let profileResponse = await fetch(profileUrl, {
+      headers: {
+        Authorization: `DPoP ${tokenData.access_token}`,
+        DPoP: profileDpop,
+      },
+    });
+
+    // Handle DPoP nonce requirement for profile fetch
+    if (!profileResponse.ok && profileResponse.status === 401) {
+      const profileErrorData = await profileResponse.json().catch(() => null) as { error?: string } | null;
+      const profileDpopNonce = profileResponse.headers.get('DPoP-Nonce');
+
+      if (profileErrorData?.error === 'use_dpop_nonce' && profileDpopNonce) {
+        profileDpop = await createDPoPProof(
+          keyPair.privateKey,
+          publicKeyJwk,
+          'GET',
+          profileUrl,
+          profileDpopNonce,
+          tokenData.access_token
+        );
+
+        profileResponse = await fetch(profileUrl, {
+          headers: {
+            Authorization: `DPoP ${tokenData.access_token}`,
+            DPoP: profileDpop,
+          },
+        });
       }
-    );
+    }
 
     let displayName: string | undefined;
     let avatarUrl: string | undefined;
@@ -385,7 +407,7 @@ export async function handleAuthLogout(request: Request, env: Env): Promise<Resp
         const publicKeyJwk = { ...privateKeyJwk };
         delete publicKeyJwk.d;
 
-        const dpopProof = await createDPoPProof(
+        let dpopProof = await createDPoPProof(
           privateKey,
           publicKeyJwk,
           'POST',
@@ -394,7 +416,7 @@ export async function handleAuthLogout(request: Request, env: Env): Promise<Resp
           session.accessToken
         );
 
-        await fetch(authMeta.revocation_endpoint, {
+        let revokeResponse = await fetch(authMeta.revocation_endpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
@@ -404,6 +426,34 @@ export async function handleAuthLogout(request: Request, env: Env): Promise<Resp
             token: session.refreshToken,
           }),
         });
+
+        // Handle DPoP nonce requirement
+        if (!revokeResponse.ok && revokeResponse.status === 401) {
+          const revokeErrorData = await revokeResponse.json().catch(() => null) as { error?: string } | null;
+          const revokeDpopNonce = revokeResponse.headers.get('DPoP-Nonce');
+
+          if (revokeErrorData?.error === 'use_dpop_nonce' && revokeDpopNonce) {
+            dpopProof = await createDPoPProof(
+              privateKey,
+              publicKeyJwk,
+              'POST',
+              authMeta.revocation_endpoint,
+              revokeDpopNonce,
+              session.accessToken
+            );
+
+            revokeResponse = await fetch(authMeta.revocation_endpoint, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                DPoP: dpopProof,
+              },
+              body: new URLSearchParams({
+                token: session.refreshToken,
+              }),
+            });
+          }
+        }
       }
     } catch (error) {
       console.error('Token revocation error:', error);

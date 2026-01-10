@@ -104,7 +104,7 @@ export async function handleSyncFollows(request: Request, env: Env): Promise<Res
     do {
       const followsUrl = `${session.pdsUrl}/xrpc/app.bsky.graph.getFollows?actor=${session.did}&limit=100${cursor ? `&cursor=${cursor}` : ''}`;
 
-      const dpopProof = await createDPoPProof(
+      let dpopProof = await createDPoPProof(
         privateKey,
         publicKeyJwk,
         'GET',
@@ -113,12 +113,36 @@ export async function handleSyncFollows(request: Request, env: Env): Promise<Res
         session.accessToken
       );
 
-      const response = await fetch(followsUrl, {
+      let response = await fetch(followsUrl, {
         headers: {
           Authorization: `DPoP ${session.accessToken}`,
           DPoP: dpopProof,
         },
       });
+
+      // Handle DPoP nonce requirement
+      if (!response.ok && response.status === 401) {
+        const errorData = await response.json().catch(() => null) as { error?: string } | null;
+        const dpopNonce = response.headers.get('DPoP-Nonce');
+
+        if (errorData?.error === 'use_dpop_nonce' && dpopNonce) {
+          dpopProof = await createDPoPProof(
+            privateKey,
+            publicKeyJwk,
+            'GET',
+            followsUrl,
+            dpopNonce,
+            session.accessToken
+          );
+
+          response = await fetch(followsUrl, {
+            headers: {
+              Authorization: `DPoP ${session.accessToken}`,
+              DPoP: dpopProof,
+            },
+          });
+        }
+      }
 
       if (!response.ok) {
         throw new Error(`Failed to fetch follows: ${response.status}`);
