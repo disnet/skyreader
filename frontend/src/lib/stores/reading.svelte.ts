@@ -56,18 +56,30 @@ function createReadingStore() {
     readPositions.set(articleGuid, { ...position, id });
     readPositions = new Map(readPositions);
 
+    // Build record, only including optional fields if they have valid values
+    const record: Record<string, unknown> = {
+      itemGuid: articleGuid,
+      readAt: now,
+      starred: false,
+    };
+    // Only include subscriptionUri if it's a valid AT URI
+    if (subscriptionAtUri && subscriptionAtUri.startsWith('at://')) {
+      record.subscriptionUri = subscriptionAtUri;
+    }
+    // Only include itemUrl if it looks like a valid URL
+    if (articleUrl && (articleUrl.startsWith('http://') || articleUrl.startsWith('https://'))) {
+      record.itemUrl = articleUrl;
+    }
+    // Only include itemTitle if present
+    if (articleTitle) {
+      record.itemTitle = articleTitle;
+    }
+
     await syncQueue.enqueue({
       operation: 'create',
       collection: 'com.at-rss.feed.readPosition',
       rkey,
-      record: {
-        subscriptionUri: subscriptionAtUri,
-        itemGuid: articleGuid,
-        itemUrl: articleUrl,
-        itemTitle: articleTitle,
-        readAt: now,
-        starred: false,
-      },
+      record,
     });
   }
 
@@ -83,18 +95,30 @@ function createReadingStore() {
     readPositions = new Map(readPositions);
 
     if (position.syncStatus === 'synced' && position.rkey) {
+      // Build record, only including optional fields if they have valid values
+      const record: Record<string, unknown> = {
+        itemGuid: position.articleGuid,
+        readAt: position.readAt,
+        starred: newStarred,
+      };
+      // Only include subscriptionUri if it's a valid AT URI
+      if (position.subscriptionAtUri && position.subscriptionAtUri.startsWith('at://')) {
+        record.subscriptionUri = position.subscriptionAtUri;
+      }
+      // Only include itemUrl if it looks like a valid URL
+      if (position.articleUrl && (position.articleUrl.startsWith('http://') || position.articleUrl.startsWith('https://'))) {
+        record.itemUrl = position.articleUrl;
+      }
+      // Only include itemTitle if present
+      if (position.articleTitle) {
+        record.itemTitle = position.articleTitle;
+      }
+
       await syncQueue.enqueue({
         operation: 'update',
         collection: 'com.at-rss.feed.readPosition',
         rkey: position.rkey,
-        record: {
-          subscriptionUri: position.subscriptionAtUri,
-          itemGuid: position.articleGuid,
-          itemUrl: position.articleUrl,
-          itemTitle: position.articleTitle,
-          readAt: position.readAt,
-          starred: newStarred,
-        },
+        record,
       });
     }
   }
