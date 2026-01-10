@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { readingStore } from '$lib/stores/reading.svelte';
@@ -8,6 +8,9 @@
 
   let articles = $state<Article[]>([]);
   let isLoading = $state(true);
+  let selectedIndex = $state(-1);
+  let expandedIndex = $state(-1);
+  let articleElements: HTMLElement[] = [];
 
   onMount(async () => {
     if (auth.isAuthenticated) {
@@ -28,8 +31,57 @@
     }
     articles = await subscriptionsStore.getAllArticles();
     isLoading = false;
+    selectedIndex = -1;
+    expandedIndex = -1;
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (!auth.isAuthenticated || articles.length === 0) return;
+
+    // Ignore if user is typing in an input
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+    if (e.key === 'j' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      selectArticle(Math.min(selectedIndex + 1, articles.length - 1));
+    } else if (e.key === 'k' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      selectArticle(Math.max(selectedIndex - 1, 0));
+    }
+  }
+
+  async function selectArticle(index: number) {
+    if (index === selectedIndex) return;
+
+    // Mark as read when selecting
+    const article = articles[index];
+    const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId);
+    if (sub && !readingStore.isRead(article.guid)) {
+      readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+    }
+
+    selectedIndex = index;
+    expandedIndex = -1; // Reset expanded when selecting new article
+
+    await tick(); // Wait for DOM to update
+    scrollToCenter();
+  }
+
+  function scrollToCenter() {
+    const el = articleElements[selectedIndex];
+    if (!el) return;
+
+    const rect = el.getBoundingClientRect();
+    const elementCenter = rect.top + rect.height / 2;
+    const viewportCenter = window.innerHeight / 2;
+    const offset = elementCenter - viewportCenter;
+
+    // Use instant scroll to avoid jitter
+    window.scrollBy({ top: offset, behavior: 'instant' });
   }
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 {#if !auth.isAuthenticated}
   <div class="welcome">
@@ -61,19 +113,37 @@
       </div>
     {:else}
       <div class="article-list">
-        {#each articles as article (article.guid)}
-          <ArticleCard
-            {article}
-            isRead={readingStore.isRead(article.guid)}
-            isStarred={readingStore.isStarred(article.guid)}
-            onRead={() => {
-              const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId);
-              if (sub) {
-                readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
-              }
-            }}
-            onToggleStar={() => readingStore.toggleStar(article.guid)}
-          />
+        {#each articles as article, index (article.guid)}
+          {@const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId)}
+          <div bind:this={articleElements[index]}>
+            <ArticleCard
+              {article}
+              siteUrl={sub?.siteUrl}
+              isRead={readingStore.isRead(article.guid)}
+              isStarred={readingStore.isStarred(article.guid)}
+              selected={selectedIndex === index}
+              expanded={expandedIndex === index}
+              onRead={() => {
+                if (sub) {
+                  readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+                }
+              }}
+              onToggleStar={() => readingStore.toggleStar(article.guid)}
+              onSelect={() => {
+                if (selectedIndex === index) {
+                  selectedIndex = -1;
+                  expandedIndex = -1;
+                } else {
+                  selectArticle(index);
+                }
+              }}
+              onExpand={async () => {
+                expandedIndex = index;
+                await tick();
+                scrollToCenter();
+              }}
+            />
+          </div>
         {/each}
       </div>
     {/if}
@@ -137,7 +207,14 @@
   .article-list {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+  }
+
+  .article-list > div {
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .article-list > div:last-child {
+    border-bottom: none;
   }
 
   .loading-state {

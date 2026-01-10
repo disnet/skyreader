@@ -3,27 +3,47 @@
 
   let {
     article,
+    siteUrl,
     isRead = false,
     isStarred = false,
+    selected = false,
+    expanded = false,
     onRead,
     onToggleStar,
+    onSelect,
+    onExpand,
   }: {
     article: Article;
+    siteUrl?: string;
     isRead?: boolean;
     isStarred?: boolean;
+    selected?: boolean;
+    expanded?: boolean;
     onRead?: () => void;
     onToggleStar?: () => void;
+    onSelect?: () => void;
+    onExpand?: () => void;
   } = $props();
 
-  let expanded = $state(false);
+  function getFaviconUrl(url: string): string {
+    try {
+      const domain = new URL(url).hostname;
+      return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+    } catch {
+      return '';
+    }
+  }
 
-  function toggleExpanded(e: MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    expanded = !expanded;
+  function handleHeaderClick() {
+    onSelect?.();
     if (!isRead && onRead) {
       onRead();
     }
+  }
+
+  function handleExpandClick(e: MouseEvent) {
+    e.stopPropagation();
+    onExpand?.();
   }
 
   function formatDate(dateString: string): string {
@@ -46,151 +66,153 @@
     return date.toLocaleDateString();
   }
 
-  function handleClick() {
-    if (!isRead && onRead) {
-      onRead();
-    }
+  function handleStarClick(e: MouseEvent) {
+    e.stopPropagation();
+    onToggleStar?.();
   }
+
+  let isOpen = $derived(selected || expanded);
+  let hasContent = $derived(Boolean(article.content || article.summary));
 </script>
 
-<article class="article-card" class:read={isRead}>
-  <a href={article.url} target="_blank" rel="noopener" onclick={handleClick} class="article-link">
-    {#if article.imageUrl}
-      <img src={article.imageUrl} alt="" class="article-image" />
+<article class="article-item" class:read={isRead} class:selected class:expanded>
+  <button class="article-header" onclick={handleHeaderClick}>
+    {#if siteUrl}
+      <img src={getFaviconUrl(siteUrl)} alt="" class="favicon" />
     {/if}
+    {#if isOpen}
+      <a href={article.url} target="_blank" rel="noopener" class="article-title-link" onclick={(e) => e.stopPropagation()}>
+        {article.title}
+      </a>
+    {:else}
+      <span class="article-title">{article.title}</span>
+    {/if}
+    <span class="article-date">{formatDate(article.publishedAt)}</span>
+  </button>
+
+  {#if isOpen}
     <div class="article-content">
-      <h3 class="article-title">{article.title}</h3>
-      {#if expanded && (article.content || article.summary)}
-        <div class="article-body">{@html article.content || article.summary}</div>
-      {:else if article.summary}
-        <p class="article-summary">{@html article.summary.slice(0, 200)}{article.summary.length > 200 ? '...' : ''}</p>
-      {/if}
-      <div class="article-meta">
-        {#if article.author}
-          <span class="author">{article.author}</span>
-        {/if}
-        <span class="date">{formatDate(article.publishedAt)}</span>
-        {#if article.content || (article.summary && article.summary.length > 200)}
-          <button class="expand-btn" onclick={toggleExpanded}>
-            {expanded ? 'Show less' : 'Show more'}
+      <div class="article-actions">
+        <button
+          class="star-btn"
+          class:starred={isStarred}
+          onclick={handleStarClick}
+        >
+          {isStarred ? '★ Starred' : '☆ Star'}
+        </button>
+      </div>
+      {#if hasContent}
+        <div class="article-body" class:truncated={selected && !expanded}>
+          {@html article.content || article.summary}
+        </div>
+        {#if selected && !expanded}
+          <button class="show-more-btn" onclick={handleExpandClick}>
+            Show more
           </button>
         {/if}
-      </div>
+      {/if}
     </div>
-  </a>
-  <div class="article-actions">
-    <button
-      class="star-btn"
-      class:starred={isStarred}
-      onclick={(e) => { e.preventDefault(); onToggleStar?.(); }}
-      title={isStarred ? 'Remove star' : 'Add star'}
-    >
-      {isStarred ? '★' : '☆'}
-    </button>
-  </div>
+  {/if}
 </article>
 
 <style>
-  .article-card {
+  .article-item {
+    transition: background-color 0.15s ease;
+  }
+
+  .article-item:hover {
+    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
+  }
+
+  .article-item.read {
+    opacity: 0.6;
+  }
+
+  .article-item.read:hover {
+    opacity: 0.8;
+  }
+
+  .article-item.selected,
+  .article-item.expanded {
+    opacity: 1;
+  }
+
+  .article-header {
     display: flex;
-    background: var(--color-bg);
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    overflow: hidden;
-    transition: box-shadow 0.2s;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.75rem 0.5rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
   }
 
-  .article-card:hover {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  }
-
-  .article-card.read {
-    opacity: 0.7;
-  }
-
-  .article-link {
-    flex: 1;
-    display: flex;
-    text-decoration: none;
-    color: inherit;
-    gap: 1rem;
-    padding: 1rem;
-  }
-
-  .article-image {
-    width: 120px;
-    height: 80px;
-    object-fit: cover;
-    border-radius: 4px;
+  .favicon {
+    width: 16px;
+    height: 16px;
     flex-shrink: 0;
   }
 
-  .article-content {
-    flex: 1;
-    min-width: 0;
-  }
-
   .article-title {
-    font-size: 1rem;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
+    flex: 1;
+    font-weight: 500;
+    color: var(--color-text);
     overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .article-summary {
-    font-size: 0.875rem;
-    color: var(--color-text-secondary);
-    margin-bottom: 0.5rem;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
+  .article-title-link {
+    flex: 1;
+    font-weight: 500;
+    color: var(--color-primary, #0066cc);
     overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-decoration: none;
   }
 
-  .article-meta {
-    font-size: 0.75rem;
-    color: var(--color-text-secondary);
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-  }
-
-  .expand-btn {
-    background: none;
-    border: none;
-    color: var(--color-primary, #3b82f6);
-    cursor: pointer;
-    font-size: 0.75rem;
-    padding: 0;
-    margin-left: auto;
-  }
-
-  .expand-btn:hover {
+  .article-title-link:hover {
     text-decoration: underline;
   }
 
-  .article-body {
+  .article-date {
+    flex-shrink: 0;
     font-size: 0.875rem;
-    line-height: 1.6;
+    color: var(--color-text-secondary);
+  }
+
+  .article-content {
+    padding: 0 0.5rem 1rem;
+  }
+
+  .article-body {
+    font-size: 0.9375rem;
+    line-height: 1.7;
     color: var(--color-text);
-    margin-bottom: 0.75rem;
     overflow-wrap: break-word;
+  }
+
+  .article-body.truncated {
+    display: -webkit-box;
+    -webkit-line-clamp: 8;
+    line-clamp: 8;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .article-body :global(img) {
     max-width: 100%;
     height: auto;
     border-radius: 4px;
-    margin: 0.5rem 0;
+    margin: 0.75rem 0;
   }
 
   .article-body :global(a) {
-    color: var(--color-primary, #3b82f6);
+    color: var(--color-primary, #0066cc);
   }
 
   .article-body :global(pre) {
@@ -203,23 +225,23 @@
 
   .article-body :global(blockquote) {
     border-left: 3px solid var(--color-border);
-    margin: 0.5rem 0;
+    margin: 0.75rem 0;
     padding-left: 1rem;
     color: var(--color-text-secondary);
   }
 
   .article-actions {
     display: flex;
-    flex-direction: column;
-    padding: 0.5rem;
+    gap: 1rem;
+    margin-bottom: 1rem;
   }
 
   .star-btn {
     background: none;
     border: none;
-    font-size: 1.25rem;
+    font-size: 0.875rem;
     color: var(--color-text-secondary);
-    padding: 0.25rem;
+    padding: 0;
     cursor: pointer;
   }
 
@@ -231,14 +253,22 @@
     color: #ffc107;
   }
 
-  @media (max-width: 480px) {
-    .article-link {
-      flex-direction: column;
-    }
+  .show-more-btn {
+    background: none;
+    border: none;
+    color: var(--color-primary, #0066cc);
+    font-size: 0.875rem;
+    padding: 0.5rem 0 0;
+    cursor: pointer;
+  }
 
-    .article-image {
-      width: 100%;
-      height: 150px;
+  .show-more-btn:hover {
+    text-decoration: underline;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .article-item:hover {
+      background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
     }
   }
 </style>
