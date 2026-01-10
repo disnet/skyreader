@@ -70,7 +70,7 @@
   let isOpen = $derived(selected || expanded);
   let hasContent = $derived(Boolean(article.content || article.summary));
 
-  let bodyEl: HTMLElement | undefined;
+  let bodyEl = $state<HTMLElement | undefined>(undefined);
   let isTruncated = $state(false);
 
   $effect(() => {
