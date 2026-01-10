@@ -1,0 +1,66 @@
+{
+  "lexicon": 1,
+  "id": "com.at-rss.social.share",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A shared article with optional commentary",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["itemUrl", "createdAt"],
+        "properties": {
+          "subscriptionUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "AT URI of the source subscription (optional)"
+          },
+          "itemUrl": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "description": "The URL of the shared article"
+          },
+          "itemTitle": {
+            "type": "string",
+            "maxLength": 512,
+            "description": "Title of the shared article"
+          },
+          "itemAuthor": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Author of the article"
+          },
+          "itemDescription": {
+            "type": "string",
+            "maxLength": 1000,
+            "description": "Brief description/excerpt from the article"
+          },
+          "itemImage": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "description": "Preview image URL for the article"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 3000,
+            "description": "User's commentary or note about the share"
+          },
+          "tags": {
+            "type": "array",
+            "maxLength": 5,
+            "items": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}

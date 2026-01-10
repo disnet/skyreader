@@ -1,0 +1,54 @@
+{
+  "lexicon": 1,
+  "id": "com.at-rss.feed.readPosition",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Reading position/progress for a feed item",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["itemGuid", "readAt"],
+        "properties": {
+          "subscriptionUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "AT URI reference to the subscription record"
+          },
+          "itemGuid": {
+            "type": "string",
+            "maxLength": 2048,
+            "description": "The GUID/ID of the feed item (from RSS)"
+          },
+          "itemUrl": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "description": "The URL of the feed item"
+          },
+          "itemTitle": {
+            "type": "string",
+            "maxLength": 512,
+            "description": "Cached title of the item"
+          },
+          "readAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "When the item was marked as read"
+          },
+          "scrollPosition": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Scroll position percentage for partial reading"
+          },
+          "starred": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the item is starred/favorited"
+          }
+        }
+      }
+    }
+  }
+}

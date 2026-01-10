@@ -1,0 +1,39 @@
+name = "at-rss-api"
+main = "src/index.ts"
+compatibility_date = "2025-09-27"
+
+[observability]
+enabled = true
+
+# Durable Objects for Jetstream consumer
+[durable_objects]
+bindings = [
+  { name = "JETSTREAM_CONSUMER", class_name = "JetstreamConsumer" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["JetstreamConsumer"]
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "at-rss"
+database_id = "9ee50bac-d79c-4df7-8c09-6adb9d8940d2"
+
+# KV Namespaces
+[[kv_namespaces]]
+binding = "FEED_CACHE"
+id = "aa459060fbd9404d8511e8e042805ae0"
+
+[[kv_namespaces]]
+binding = "SESSION_CACHE"
+id = "c969d539d9174b3e9a9646ec4df6ef13"
+
+# Environment variables
+[vars]
+FRONTEND_URL = "http://127.0.0.1:5173"
+
+# Development environment
+[env.dev]
+vars = { FRONTEND_URL = "http://127.0.0.1:5173" }

@@ -1,0 +1,55 @@
+import Dexie, { type Table } from 'dexie';
+import type { Subscription, Article, ReadPosition, SocialShare, SyncQueueItem } from '$lib/types';
+
+class ATRSSDatabase extends Dexie {
+  subscriptions!: Table<Subscription>;
+  articles!: Table<Article>;
+  readPositions!: Table<ReadPosition>;
+  socialShares!: Table<SocialShare>;
+  syncQueue!: Table<SyncQueueItem>;
+
+  constructor() {
+    super('at-rss');
+
+    this.version(1).stores({
+      subscriptions: '++id, atUri, rkey, feedUrl, category, syncStatus, localUpdatedAt',
+      articles: '++id, subscriptionId, guid, url, publishedAt, fetchedAt',
+      readPositions: '++id, atUri, subscriptionAtUri, articleGuid, starred, syncStatus',
+      socialShares: '++id, authorDid, recordUri, itemUrl, createdAt',
+      syncQueue: '++id, operation, collection, timestamp'
+    });
+  }
+}
+
+export const db = new ATRSSDatabase();
+
+// Helper to check if article is read
+export async function isArticleRead(articleGuid: string): Promise<boolean> {
+  const position = await db.readPositions.where('articleGuid').equals(articleGuid).first();
+  return !!position;
+}
+
+// Helper to get unread count for a subscription
+export async function getUnreadCount(subscriptionId: number): Promise<number> {
+  const articles = await db.articles.where('subscriptionId').equals(subscriptionId).toArray();
+  const readGuids = new Set(
+    (await db.readPositions.toArray()).map(p => p.articleGuid)
+  );
+  return articles.filter(a => !readGuids.has(a.guid)).length;
+}
+
+// Helper to get all starred articles
+export async function getStarredArticles(): Promise<ReadPosition[]> {
+  return db.readPositions.where('starred').equals(1).toArray();
+}
+
+// Clear all data (for logout)
+export async function clearAllData(): Promise<void> {
+  await Promise.all([
+    db.subscriptions.clear(),
+    db.articles.clear(),
+    db.readPositions.clear(),
+    db.socialShares.clear(),
+    db.syncQueue.clear()
+  ]);
+}
