@@ -1,7 +1,7 @@
 import type { Env } from './types';
 import { handleAuthLogin, handleAuthCallback, handleAuthLogout, handleAuthMe, handleClientMetadata } from './routes/auth';
 import { handleFeedFetch, handleFeedDiscover } from './routes/feeds';
-import { handleSocialFeed, handleSyncFollows, handlePopularShares } from './routes/social';
+import { handleSocialFeed, handleSyncFollows, handleFollowedUsers, handlePopularShares } from './routes/social';
 import { handleRecordSync, handleRecordsList } from './routes/records';
 import { getSessionFromRequest, updateUserActivity } from './services/oauth';
 import { refreshActiveFeeds } from './services/scheduled-feeds';
@@ -73,6 +73,9 @@ export default {
           break;
         case url.pathname === '/api/social/sync-follows':
           response = await handleSyncFollows(request, env);
+          break;
+        case url.pathname === '/api/social/following':
+          response = await handleFollowedUsers(request, env);
           break;
         case url.pathname === '/api/social/popular':
           response = await handlePopularShares(request, env);

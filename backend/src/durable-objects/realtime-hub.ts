@@ -3,8 +3,12 @@ import type { Env, Session } from '../types';
 interface ConnectedClient {
   socket: WebSocket;
   did: string;
-  followingDids: Set<string>;
-  subscribedFeedUrls: Set<string>;
+  lastHeartbeat: number;
+}
+
+// Minimal attachment data to stay under 2KB limit
+interface WebSocketAttachment {
+  did: string;
   lastHeartbeat: number;
 }
 
@@ -52,13 +56,12 @@ export class RealtimeHub implements DurableObject {
 
     // Use hibernation API for WebSocket connections
     this.state.getWebSockets().forEach((ws) => {
-      const attachment = ws.deserializeAttachment() as ConnectedClient | null;
+      const attachment = ws.deserializeAttachment() as WebSocketAttachment | null;
       if (attachment) {
         this.clients.set(ws, {
-          ...attachment,
           socket: ws,
-          followingDids: new Set(attachment.followingDids),
-          subscribedFeedUrls: new Set(attachment.subscribedFeedUrls),
+          did: attachment.did,
+          lastHeartbeat: attachment.lastHeartbeat,
         });
       }
     });
@@ -117,12 +120,6 @@ export class RealtimeHub implements DurableObject {
       return new Response('Invalid session', { status: 401 });
     }
 
-    // Load user's follows and subscriptions
-    const [follows, subscriptions] = await Promise.all([
-      this.getUserFollows(session.did),
-      this.getUserSubscriptions(session.did),
-    ]);
-
     // Create WebSocket pair
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
@@ -133,18 +130,14 @@ export class RealtimeHub implements DurableObject {
     const clientData: ConnectedClient = {
       socket: server,
       did: session.did,
-      followingDids: new Set(follows),
-      subscribedFeedUrls: new Set(subscriptions),
       lastHeartbeat: Date.now(),
     };
 
-    // Store attachment for hibernation
+    // Store minimal attachment for hibernation (follows are looked up dynamically)
     server.serializeAttachment({
       did: clientData.did,
-      followingDids: Array.from(clientData.followingDids),
-      subscribedFeedUrls: Array.from(clientData.subscribedFeedUrls),
       lastHeartbeat: clientData.lastHeartbeat,
-    });
+    } as WebSocketAttachment);
 
     this.clients.set(server, clientData);
 
@@ -178,27 +171,11 @@ export class RealtimeHub implements DurableObject {
         client.lastHeartbeat = Date.now();
         ws.serializeAttachment({
           did: client.did,
-          followingDids: Array.from(client.followingDids),
-          subscribedFeedUrls: Array.from(client.subscribedFeedUrls),
           lastHeartbeat: client.lastHeartbeat,
-        });
-      } else if (data.type === 'subscribe_feed') {
-        client.subscribedFeedUrls.add(data.payload.feedUrl);
-        ws.serializeAttachment({
-          did: client.did,
-          followingDids: Array.from(client.followingDids),
-          subscribedFeedUrls: Array.from(client.subscribedFeedUrls),
-          lastHeartbeat: client.lastHeartbeat,
-        });
-      } else if (data.type === 'unsubscribe_feed') {
-        client.subscribedFeedUrls.delete(data.payload.feedUrl);
-        ws.serializeAttachment({
-          did: client.did,
-          followingDids: Array.from(client.followingDids),
-          subscribedFeedUrls: Array.from(client.subscribedFeedUrls),
-          lastHeartbeat: client.lastHeartbeat,
-        });
+        } as WebSocketAttachment);
       }
+      // subscribe_feed and unsubscribe_feed messages are no longer needed
+      // since we look up subscriptions dynamically from the database
     } catch (error) {
       console.error('Error handling WebSocket message:', error);
     }
@@ -215,9 +192,13 @@ export class RealtimeHub implements DurableObject {
   private async broadcast(message: RealtimeMessage): Promise<void> {
     if (message.type === 'new_share') {
       const payload = message.payload as NewSharePayload;
-      // Only send to users who follow the author
+      // Get all users who follow the author
+      const followers = await this.getFollowersOf(payload.authorDid);
+      const followerSet = new Set(followers);
+
+      // Only send to connected users who follow the author
       for (const [ws, client] of this.clients) {
-        if (client.followingDids.has(payload.authorDid)) {
+        if (followerSet.has(client.did)) {
           try {
             ws.send(JSON.stringify(message));
           } catch (error) {
@@ -228,9 +209,13 @@ export class RealtimeHub implements DurableObject {
       }
     } else if (message.type === 'new_articles') {
       const payload = message.payload as NewArticlesPayload;
-      // Only send to users subscribed to this feed
+      // Get all users subscribed to this feed
+      const subscribers = await this.getSubscribersOf(payload.feedUrl);
+      const subscriberSet = new Set(subscribers);
+
+      // Only send to connected users subscribed to this feed
       for (const [ws, client] of this.clients) {
-        if (client.subscribedFeedUrls.has(payload.feedUrl)) {
+        if (subscriberSet.has(client.did)) {
           try {
             ws.send(JSON.stringify(message));
           } catch (error) {
@@ -290,28 +275,28 @@ export class RealtimeHub implements DurableObject {
     return JSON.parse(sessionData) as Session;
   }
 
-  private async getUserFollows(did: string): Promise<string[]> {
+  private async getFollowersOf(authorDid: string): Promise<string[]> {
     try {
       const result = await this.env.DB.prepare(
-        'SELECT following_did FROM follows_cache WHERE follower_did = ?'
-      ).bind(did).all<{ following_did: string }>();
+        'SELECT follower_did FROM follows_cache WHERE following_did = ?'
+      ).bind(authorDid).all<{ follower_did: string }>();
 
-      return result.results.map(r => r.following_did);
+      return result.results.map(r => r.follower_did);
     } catch (error) {
-      console.error('Failed to get user follows:', error);
+      console.error('Failed to get followers:', error);
       return [];
     }
   }
 
-  private async getUserSubscriptions(did: string): Promise<string[]> {
+  private async getSubscribersOf(feedUrl: string): Promise<string[]> {
     try {
       const result = await this.env.DB.prepare(
-        'SELECT feed_url FROM subscriptions_cache WHERE user_did = ?'
-      ).bind(did).all<{ feed_url: string }>();
+        'SELECT user_did FROM subscriptions_cache WHERE feed_url = ?'
+      ).bind(feedUrl).all<{ user_did: string }>();
 
-      return result.results.map(r => r.feed_url);
+      return result.results.map(r => r.user_did);
     } catch (error) {
-      console.error('Failed to get user subscriptions:', error);
+      console.error('Failed to get subscribers:', error);
       return [];
     }
   }

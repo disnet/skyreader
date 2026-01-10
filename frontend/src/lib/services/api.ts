@@ -73,6 +73,17 @@ class ApiClient {
     return this.fetch('/api/social/sync-follows', { method: 'POST' });
   }
 
+  async getFollowedUsers(): Promise<{
+    users: Array<{
+      did: string;
+      handle: string;
+      displayName?: string;
+      avatarUrl?: string;
+    }>;
+  }> {
+    return this.fetch('/api/social/following');
+  }
+
   async getPopularShares(
     period: 'day' | 'week' | 'month' = 'week',
     cursor?: string,

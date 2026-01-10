@@ -4,14 +4,14 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
 
-  let activeTab = $state<'following' | 'popular'>('following');
+  let activeTab = $state<'following' | 'shares'>('following');
 
   onMount(async () => {
     if (!auth.isAuthenticated) {
       goto('/auth/login?returnUrl=/social');
       return;
     }
-    await socialStore.loadFeed(true);
+    await socialStore.loadFollowedUsers();
   });
 
   async function loadMore() {
@@ -19,18 +19,15 @@
   }
 
   async function syncFollows() {
-    const count = await socialStore.syncFollows();
-    if (count > 0) {
-      alert(`Synced ${count} follows`);
-    }
+    await socialStore.syncFollows();
   }
 
-  function switchTab(tab: 'following' | 'popular') {
+  function switchTab(tab: 'following' | 'shares') {
     activeTab = tab;
-    if (tab === 'popular') {
-      socialStore.loadPopular('week');
-    } else {
+    if (tab === 'shares') {
       socialStore.loadFeed(true);
+    } else {
+      socialStore.loadFollowedUsers();
     }
   }
 
@@ -42,9 +39,9 @@
 
 <div class="social-page">
   <div class="page-header">
-    <h1>Social Feed</h1>
-    <button class="btn btn-secondary" onclick={syncFollows}>
-      Sync Follows
+    <h1>Social</h1>
+    <button class="btn btn-secondary" onclick={syncFollows} disabled={socialStore.isSyncing}>
+      {socialStore.isSyncing ? 'Syncing...' : 'Sync Follows'}
     </button>
   </div>
 
@@ -55,13 +52,16 @@
       onclick={() => switchTab('following')}
     >
       Following
+      {#if socialStore.followedUsers.length > 0}
+        <span class="count">({socialStore.followedUsers.length})</span>
+      {/if}
     </button>
     <button
       class="tab"
-      class:active={activeTab === 'popular'}
-      onclick={() => switchTab('popular')}
+      class:active={activeTab === 'shares'}
+      onclick={() => switchTab('shares')}
     >
-      Popular
+      Shares
     </button>
   </div>
 
@@ -69,58 +69,85 @@
     <p class="error">{socialStore.error}</p>
   {/if}
 
-  {#if socialStore.isLoading && (activeTab === 'following' ? socialStore.shares : socialStore.popularShares).length === 0}
-    <div class="loading-state">Loading shares...</div>
-  {:else}
-    <div class="shares-list">
-      {#each activeTab === 'following' ? socialStore.shares : socialStore.popularShares as share (share.recordUri)}
-        <article class="share-card card">
-          <div class="share-header">
-            {#if share.authorAvatar}
-              <img src={share.authorAvatar} alt="" class="author-avatar" />
+  {#if activeTab === 'following'}
+    {#if socialStore.isLoading && socialStore.followedUsers.length === 0}
+      <div class="loading-state">Loading followed users...</div>
+    {:else if socialStore.followedUsers.length === 0}
+      <div class="empty-state">
+        <h2>No follows yet</h2>
+        <p>Click "Sync Follows" to import your Bluesky follows</p>
+      </div>
+    {:else}
+      <div class="users-list">
+        {#each socialStore.followedUsers as user (user.did)}
+          <div class="user-card card">
+            {#if user.avatarUrl}
+              <img src={user.avatarUrl} alt="" class="user-avatar" />
             {:else}
-              <div class="author-avatar placeholder"></div>
+              <div class="user-avatar placeholder"></div>
             {/if}
-            <div class="author-info">
-              <span class="author-name">{share.authorDisplayName || share.authorHandle}</span>
-              <span class="author-handle">@{share.authorHandle}</span>
+            <div class="user-info">
+              <span class="user-name">{user.displayName || user.handle}</span>
+              <span class="user-handle">@{user.handle}</span>
             </div>
-            <span class="share-date">{formatDate(share.createdAt)}</span>
           </div>
-
-          {#if share.note}
-            <p class="share-note">{share.note}</p>
-          {/if}
-
-          <a href={share.itemUrl} target="_blank" rel="noopener" class="shared-article">
-            {#if share.itemImage}
-              <img src={share.itemImage} alt="" class="article-image" />
-            {/if}
-            <div class="article-info">
-              <h3>{share.itemTitle || share.itemUrl}</h3>
-              {#if share.itemDescription}
-                <p>{share.itemDescription.slice(0, 150)}{share.itemDescription.length > 150 ? '...' : ''}</p>
+        {/each}
+      </div>
+    {/if}
+  {:else}
+    {#if socialStore.isLoading && socialStore.shares.length === 0}
+      <div class="loading-state">Loading shares...</div>
+    {:else if socialStore.shares.length === 0}
+      <div class="empty-state">
+        <h2>No shares yet</h2>
+        <p>Shares from people you follow will appear here</p>
+      </div>
+    {:else}
+      <div class="shares-list">
+        {#each socialStore.shares as share (share.recordUri)}
+          <article class="share-card card">
+            <div class="share-header">
+              {#if share.authorAvatar}
+                <img src={share.authorAvatar} alt="" class="author-avatar" />
+              {:else}
+                <div class="author-avatar placeholder"></div>
               {/if}
+              <div class="author-info">
+                <span class="author-name">{share.authorDisplayName || share.authorHandle}</span>
+                <span class="author-handle">@{share.authorHandle}</span>
+              </div>
+              <span class="share-date">{formatDate(share.createdAt)}</span>
             </div>
-          </a>
-        </article>
-      {:else}
-        <div class="empty-state">
-          <h2>No shares yet</h2>
-          <p>Shares from people you follow will appear here</p>
-        </div>
-      {/each}
 
-      {#if activeTab === 'following' && socialStore.hasMore && !socialStore.isLoading}
-        <button class="btn btn-secondary load-more" onclick={loadMore}>
-          Load More
-        </button>
-      {/if}
+            {#if share.note}
+              <p class="share-note">{share.note}</p>
+            {/if}
 
-      {#if socialStore.isLoading && (activeTab === 'following' ? socialStore.shares : socialStore.popularShares).length > 0}
-        <div class="loading-state">Loading more...</div>
-      {/if}
-    </div>
+            <a href={share.itemUrl} target="_blank" rel="noopener" class="shared-article">
+              {#if share.itemImage}
+                <img src={share.itemImage} alt="" class="article-image" />
+              {/if}
+              <div class="article-info">
+                <h3>{share.itemTitle || share.itemUrl}</h3>
+                {#if share.itemDescription}
+                  <p>{share.itemDescription.slice(0, 150)}{share.itemDescription.length > 150 ? '...' : ''}</p>
+                {/if}
+              </div>
+            </a>
+          </article>
+        {/each}
+
+        {#if socialStore.hasMore && !socialStore.isLoading}
+          <button class="btn btn-secondary load-more" onclick={loadMore}>
+            Load More
+          </button>
+        {/if}
+
+        {#if socialStore.isLoading && socialStore.shares.length > 0}
+          <div class="loading-state">Loading more...</div>
+        {/if}
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -151,6 +178,11 @@
     color: var(--color-text-secondary);
     font-weight: 500;
     position: relative;
+    cursor: pointer;
+  }
+
+  .tab:hover {
+    color: var(--color-text);
   }
 
   .tab.active {
@@ -165,6 +197,56 @@
     right: 0;
     height: 2px;
     background: var(--color-primary);
+  }
+
+  .tab .count {
+    font-weight: normal;
+    color: var(--color-text-secondary);
+  }
+
+  .users-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .user-card {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+  }
+
+  .user-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .user-avatar.placeholder {
+    background: var(--color-bg-secondary);
+  }
+
+  .user-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .user-name {
+    display: block;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .user-handle {
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .share-card {
@@ -252,5 +334,24 @@
     text-align: center;
     padding: 2rem;
     color: var(--color-text-secondary);
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--color-text-secondary);
+  }
+
+  .empty-state h2 {
+    margin-bottom: 0.5rem;
+    color: var(--color-text);
+  }
+
+  .error {
+    color: var(--color-error, #dc3545);
+    padding: 1rem;
+    background: var(--color-error-bg, #f8d7da);
+    border-radius: 8px;
+    margin-bottom: 1rem;
   }
 </style>

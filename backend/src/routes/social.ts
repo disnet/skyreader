@@ -213,6 +213,46 @@ export async function handleSyncFollows(request: Request, env: Env): Promise<Res
   }
 }
 
+export async function handleFollowedUsers(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  try {
+    const results = await env.DB.prepare(`
+      SELECT u.did, u.handle, u.display_name, u.avatar_url
+      FROM follows_cache f
+      JOIN users u ON u.did = f.following_did
+      WHERE f.follower_did = ?
+      ORDER BY u.handle ASC
+    `).bind(session.did).all();
+
+    const users = results.results.map((row: Record<string, unknown>) => ({
+      did: row.did as string,
+      handle: row.handle as string,
+      displayName: row.display_name as string | undefined,
+      avatarUrl: row.avatar_url as string | undefined,
+    }));
+
+    return new Response(JSON.stringify({ users }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Get followed users error:', error);
+    return new Response(
+      JSON.stringify({ error: 'Failed to fetch followed users' }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+  }
+}
+
 export async function handlePopularShares(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const cursor = url.searchParams.get('cursor');

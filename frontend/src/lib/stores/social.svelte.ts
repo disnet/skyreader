@@ -3,10 +3,19 @@ import { api } from '$lib/services/api';
 import { realtime, type NewSharePayload } from '$lib/services/realtime';
 import type { SocialShare } from '$lib/types';
 
+export interface FollowedUser {
+  did: string;
+  handle: string;
+  displayName?: string;
+  avatarUrl?: string;
+}
+
 function createSocialStore() {
   let shares = $state<SocialShare[]>([]);
   let popularShares = $state<(SocialShare & { shareCount: number })[]>([]);
+  let followedUsers = $state<FollowedUser[]>([]);
   let isLoading = $state(false);
+  let isSyncing = $state(false);
   let cursor = $state<string | null>(null);
   let hasMore = $state(true);
   let error = $state<string | null>(null);
@@ -86,21 +95,42 @@ function createSocialStore() {
     }
   }
 
+  async function loadFollowedUsers() {
+    isLoading = true;
+    error = null;
+
+    try {
+      const result = await api.getFollowedUsers();
+      followedUsers = result.users;
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to load followed users';
+    } finally {
+      isLoading = false;
+    }
+  }
+
   async function syncFollows() {
+    isSyncing = true;
+    error = null;
+
     try {
       const result = await api.syncFollows();
-      // Refresh feed after syncing follows
+      // Refresh followed users list and feed after syncing
+      await loadFollowedUsers();
       await loadFeed(true);
       return result.synced;
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to sync follows';
       return 0;
+    } finally {
+      isSyncing = false;
     }
   }
 
   function reset() {
     shares = [];
     popularShares = [];
+    followedUsers = [];
     cursor = null;
     hasMore = true;
     error = null;
@@ -113,8 +143,14 @@ function createSocialStore() {
     get popularShares() {
       return popularShares;
     },
+    get followedUsers() {
+      return followedUsers;
+    },
     get isLoading() {
       return isLoading;
+    },
+    get isSyncing() {
+      return isSyncing;
     },
     get hasMore() {
       return hasMore;
@@ -124,6 +160,7 @@ function createSocialStore() {
     },
     loadFeed,
     loadPopular,
+    loadFollowedUsers,
     syncFollows,
     reset,
   };
