@@ -1,4 +1,4 @@
-import type { ParsedFeed, SocialShare } from '$lib/types';
+import type { ParsedFeed, SocialShare, User } from '$lib/types';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8787';
 
@@ -42,6 +42,10 @@ class ApiClient {
 
   async logout(): Promise<void> {
     await this.fetch('/api/auth/logout', { method: 'POST' });
+  }
+
+  async getMe(): Promise<User> {
+    return this.fetch('/api/auth/me');
   }
 
   // Feeds
@@ -93,6 +97,12 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(request),
     });
+  }
+
+  async listRecords<T>(collection: string): Promise<{
+    records: Array<{ uri: string; cid: string; value: T }>;
+  }> {
+    return this.fetch(`/api/records/list?collection=${encodeURIComponent(collection)}`);
   }
 }
 

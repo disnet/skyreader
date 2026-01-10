@@ -31,6 +31,7 @@ export interface Session {
 export interface OAuthState {
   codeVerifier: string;
   did: string;
+  handle: string;
   pdsUrl: string;
   authServer: string;
   returnUrl?: string;

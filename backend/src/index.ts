@@ -1,8 +1,8 @@
 import type { Env } from './types';
-import { handleAuthLogin, handleAuthCallback, handleAuthLogout, handleClientMetadata } from './routes/auth';
+import { handleAuthLogin, handleAuthCallback, handleAuthLogout, handleAuthMe, handleClientMetadata } from './routes/auth';
 import { handleFeedFetch, handleFeedDiscover } from './routes/feeds';
 import { handleSocialFeed, handleSyncFollows, handlePopularShares } from './routes/social';
-import { handleRecordSync } from './routes/records';
+import { handleRecordSync, handleRecordsList } from './routes/records';
 import { getSessionFromRequest, updateUserActivity } from './services/oauth';
 import { refreshActiveFeeds } from './services/scheduled-feeds';
 
@@ -54,6 +54,9 @@ export default {
         case url.pathname === '/api/auth/logout':
           response = await handleAuthLogout(request, env);
           break;
+        case url.pathname === '/api/auth/me':
+          response = await handleAuthMe(request, env);
+          break;
 
         // Feed routes
         case url.pathname === '/api/feeds/fetch':
@@ -77,6 +80,9 @@ export default {
         // Record sync routes
         case url.pathname === '/api/records/sync':
           response = await handleRecordSync(request, env);
+          break;
+        case url.pathname === '/api/records/list':
+          response = await handleRecordsList(request, env);
           break;
 
         default:

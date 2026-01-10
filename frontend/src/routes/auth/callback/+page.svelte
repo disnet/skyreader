@@ -3,8 +3,10 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth.svelte';
+  import { api } from '$lib/services/api';
+  import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 
-  onMount(() => {
+  onMount(async () => {
     const sessionId = $page.url.searchParams.get('sessionId');
     const returnUrl = $page.url.searchParams.get('returnUrl') || '/';
 
@@ -13,27 +15,31 @@
       return;
     }
 
-    // Fetch user info from the session
-    // For now, we'll parse it from the URL or make an API call
-    // In a real app, you'd want to fetch the session details
+    // Check if we already have a valid session
     const stored = localStorage.getItem('at-rss-auth');
     if (stored) {
-      // Already have a session, just redirect
       goto(returnUrl);
       return;
     }
 
-    // Store the session ID and redirect
-    // The actual user info should come from the backend
-    // For now, we'll store a placeholder and the layout will show the user
-    const user = {
-      did: '',
-      handle: 'loading...',
-      pdsUrl: ''
-    };
+    try {
+      // Set the session ID so the API can make authenticated requests
+      api.setSession(sessionId);
 
-    auth.setSession(user, sessionId);
-    goto(returnUrl);
+      // Fetch the user info from the backend
+      const user = await api.getMe();
+
+      // Store the session with the real user data
+      auth.setSession(user, sessionId);
+
+      // Sync subscriptions from PDS
+      await subscriptionsStore.syncFromPds();
+
+      goto(returnUrl);
+    } catch (error) {
+      console.error('Failed to fetch user info:', error);
+      goto('/auth/error?error=Failed+to+fetch+user+info');
+    }
   });
 </script>
 

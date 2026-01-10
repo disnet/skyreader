@@ -84,6 +84,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
     await storeOAuthState(env, state, {
       codeVerifier,
       did,
+      handle: normalizedHandle,
       pdsUrl,
       authServer: authMeta.issuer,
       returnUrl,
@@ -277,7 +278,7 @@ export async function handleAuthCallback(request: Request, env: Env): Promise<Re
 
     let displayName: string | undefined;
     let avatarUrl: string | undefined;
-    let handle = oauthState.did;
+    let handle = oauthState.handle;
 
     if (profileResponse.ok) {
       const profile = await profileResponse.json() as {
@@ -323,6 +324,36 @@ export async function handleAuthCallback(request: Request, env: Env): Promise<Re
       `${env.FRONTEND_URL}/auth/error?error=${encodeURIComponent(error instanceof Error ? error.message : 'Authentication failed')}`
     );
   }
+}
+
+export async function handleAuthMe(request: Request, env: Env): Promise<Response> {
+  const authHeader = request.headers.get('Authorization');
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const sessionId = authHeader.substring(7);
+  const session = await getSession(env, sessionId);
+
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Session not found' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  return new Response(JSON.stringify({
+    did: session.did,
+    handle: session.handle,
+    displayName: session.displayName,
+    avatarUrl: session.avatarUrl,
+    pdsUrl: session.pdsUrl,
+  }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 export async function handleAuthLogout(request: Request, env: Env): Promise<Response> {

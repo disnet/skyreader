@@ -180,6 +180,58 @@ function createSubscriptionsStore() {
     return db.articles.orderBy('publishedAt').reverse().toArray();
   }
 
+  async function syncFromPds(): Promise<void> {
+    try {
+      const response = await api.listRecords<{
+        feedUrl: string;
+        title?: string;
+        siteUrl?: string;
+        category?: string;
+        tags?: string[];
+        createdAt: string;
+        updatedAt?: string;
+      }>('com.at-rss.feed.subscription');
+
+      // Get existing local subscriptions
+      const localSubs = await db.subscriptions.toArray();
+      const localByRkey = new Map(localSubs.map((s) => [s.rkey, s]));
+
+      for (const record of response.records) {
+        // Extract rkey from URI (at://did/collection/rkey)
+        const rkey = record.uri.split('/').pop() || '';
+        const existing = localByRkey.get(rkey);
+
+        const subscription: Omit<Subscription, 'id'> = {
+          atUri: record.uri,
+          rkey,
+          feedUrl: record.value.feedUrl,
+          title: record.value.title || record.value.feedUrl,
+          siteUrl: record.value.siteUrl,
+          category: record.value.category,
+          tags: record.value.tags || [],
+          createdAt: record.value.createdAt,
+          updatedAt: record.value.updatedAt,
+          syncStatus: 'synced',
+          localUpdatedAt: Date.now(),
+        };
+
+        if (existing) {
+          // Update existing record
+          await db.subscriptions.update(existing.id!, subscription);
+        } else {
+          // Add new record from PDS
+          await db.subscriptions.add(subscription);
+        }
+      }
+
+      // Reload subscriptions from DB
+      subscriptions = await db.subscriptions.toArray();
+    } catch (e) {
+      console.error('Failed to sync from PDS:', e);
+      error = e instanceof Error ? e.message : 'Failed to sync from PDS';
+    }
+  }
+
   return {
     get subscriptions() {
       return subscriptions;
@@ -197,6 +249,7 @@ function createSubscriptionsStore() {
     fetchFeed,
     getArticles,
     getAllArticles,
+    syncFromPds,
   };
 }
 

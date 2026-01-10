@@ -71,6 +71,55 @@ async function makePdsRequest(
   return { ok: false, data: { error: 'Failed after nonce retry' }, status: 400 };
 }
 
+async function makePdsGetRequest<T>(
+  session: { pdsUrl: string; accessToken: string; dpopPrivateKey: string },
+  endpoint: string,
+  params: Record<string, string>
+): Promise<{ ok: boolean; data: T; status: number }> {
+  const privateKeyJwk = JSON.parse(session.dpopPrivateKey);
+  const privateKey = await importPrivateKey(privateKeyJwk);
+  const publicKeyJwk = { ...privateKeyJwk };
+  delete publicKeyJwk.d;
+
+  const queryString = new URLSearchParams(params).toString();
+  const url = `${session.pdsUrl}/xrpc/${endpoint}?${queryString}`;
+  let nonce: string | undefined;
+
+  // Retry up to 2 times for nonce errors
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const dpopProof = await createDPoPProof(
+      privateKey,
+      publicKeyJwk,
+      'GET',
+      url,
+      nonce,
+      session.accessToken
+    );
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `DPoP ${session.accessToken}`,
+        DPoP: dpopProof,
+      },
+    });
+
+    const data = await response.json() as T & { error?: string };
+
+    // Handle use_dpop_nonce error
+    if (data.error === 'use_dpop_nonce') {
+      nonce = response.headers.get('dpop-nonce') || response.headers.get('DPoP-Nonce') || undefined;
+      if (nonce) {
+        continue;
+      }
+    }
+
+    return { ok: response.ok, data, status: response.status };
+  }
+
+  return { ok: false, data: { error: 'Failed after nonce retry' } as T, status: 400 };
+}
+
 export async function handleRecordSync(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
@@ -205,6 +254,84 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
     console.error('Record sync error:', error);
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : 'Failed to sync record' }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+  }
+}
+
+interface ListRecordsResponse {
+  records: Array<{
+    uri: string;
+    cid: string;
+    value: Record<string, unknown>;
+  }>;
+  cursor?: string;
+}
+
+export async function handleRecordsList(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const collection = url.searchParams.get('collection');
+
+  if (!collection || !ALLOWED_COLLECTIONS.includes(collection)) {
+    return new Response(JSON.stringify({ error: 'Invalid collection' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  try {
+    const allRecords: ListRecordsResponse['records'] = [];
+    let cursor: string | undefined;
+
+    // Paginate through all records
+    do {
+      const params: Record<string, string> = {
+        repo: session.did,
+        collection,
+        limit: '100',
+      };
+      if (cursor) {
+        params.cursor = cursor;
+      }
+
+      const result = await makePdsGetRequest<ListRecordsResponse>(
+        session,
+        'com.atproto.repo.listRecords',
+        params
+      );
+
+      if (!result.ok) {
+        console.error('PDS listRecords failed:', result.data);
+        return new Response(JSON.stringify({
+          error: 'Failed to fetch records from PDS',
+        }), {
+          status: result.status,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      allRecords.push(...result.data.records);
+      cursor = result.data.cursor;
+    } while (cursor);
+
+    return new Response(JSON.stringify({ records: allRecords }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Record list error:', error);
+    return new Response(
+      JSON.stringify({ error: error instanceof Error ? error.message : 'Failed to list records' }),
       {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
