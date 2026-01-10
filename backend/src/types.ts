@@ -68,7 +68,7 @@ export interface Share {
 }
 
 export interface ShareWithAuthor extends Share {
-  handle: string;
-  displayName?: string;
-  avatarUrl?: string;
+  authorHandle: string;
+  authorDisplayName?: string;
+  authorAvatar?: string;
 }

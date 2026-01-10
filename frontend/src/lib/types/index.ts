@@ -65,6 +65,22 @@ export interface SocialShare {
   createdAt: string;
 }
 
+export interface UserShare {
+  id?: number;
+  atUri?: string;
+  rkey?: string;
+  subscriptionAtUri?: string;
+  articleGuid: string;
+  articleUrl: string;
+  articleTitle?: string;
+  articleAuthor?: string;
+  articleDescription?: string;
+  articleImage?: string;
+  note?: string;
+  createdAt: string;
+  syncStatus: 'synced' | 'pending';
+}
+
 export interface SyncQueueItem {
   id?: number;
   operation: 'create' | 'update' | 'delete';

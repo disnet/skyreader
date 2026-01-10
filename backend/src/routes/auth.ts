@@ -16,6 +16,7 @@ import {
   getSession,
   deleteSession,
 } from '../services/oauth';
+import { syncFollowsForUser } from './social';
 
 // RFC 8252 requires loopback IP instead of localhost for OAuth
 function getBaseUrl(url: URL): string {
@@ -334,6 +335,22 @@ export async function handleAuthCallback(request: Request, env: Env): Promise<Re
       INSERT OR REPLACE INTO users (did, handle, display_name, avatar_url, pds_url, updated_at)
       VALUES (?, ?, ?, ?, ?, unixepoch())
     `).bind(oauthState.did, handle, displayName || null, avatarUrl || null, oauthState.pdsUrl).run();
+
+    // Check if this is first login (no follows cached) and sync follows
+    const followsCount = await env.DB.prepare(
+      'SELECT COUNT(*) as count FROM follows_cache WHERE follower_did = ?'
+    ).bind(oauthState.did).first<{ count: number }>();
+
+    if (!followsCount || followsCount.count === 0) {
+      console.log(`First login for ${handle}, syncing follows...`);
+      try {
+        const syncedCount = await syncFollowsForUser(env, session);
+        console.log(`Synced ${syncedCount} follows for ${handle}`);
+      } catch (syncError) {
+        // Don't block login if sync fails - user can manually sync later
+        console.error('Failed to sync follows on first login:', syncError);
+      }
+    }
 
     // Redirect to frontend with session
     const returnUrl = oauthState.returnUrl || '/';

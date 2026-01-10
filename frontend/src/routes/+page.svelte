@@ -3,6 +3,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { readingStore } from '$lib/stores/reading.svelte';
+  import { sharesStore } from '$lib/stores/shares.svelte';
   import ArticleCard from '$lib/components/ArticleCard.svelte';
   import type { Article } from '$lib/types';
 
@@ -16,6 +17,7 @@
     if (auth.isAuthenticated) {
       await subscriptionsStore.load();
       await readingStore.load();
+      await sharesStore.load();
       articles = await subscriptionsStore.getAllArticles();
 
       // If we have subscriptions but no articles, fetch feeds (first login scenario)
@@ -135,9 +137,31 @@
               siteUrl={sub?.siteUrl}
               isRead={readingStore.isRead(article.guid)}
               isStarred={readingStore.isStarred(article.guid)}
+              isShared={sharesStore.isShared(article.guid)}
+              shareNote={sharesStore.getShareNote(article.guid)}
               selected={selectedIndex === index}
               expanded={expandedIndex === index}
               onToggleStar={() => readingStore.toggleStar(article.guid)}
+              onShare={() => sharesStore.share(
+                sub?.atUri || '',
+                article.guid,
+                article.url,
+                article.title,
+                article.author,
+                article.summary?.slice(0, 200),
+                article.imageUrl
+              )}
+              onShareWithNote={(note) => sharesStore.shareWithNote(
+                sub?.atUri || '',
+                article.guid,
+                article.url,
+                article.title,
+                article.author,
+                article.summary?.slice(0, 200),
+                article.imageUrl,
+                note
+              )}
+              onUnshare={() => sharesStore.unshare(article.guid)}
               onSelect={() => {
                 if (selectedIndex === index) {
                   selectedIndex = -1;

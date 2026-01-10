@@ -1,11 +1,12 @@
 import Dexie, { type Table } from 'dexie';
-import type { Subscription, Article, ReadPosition, SocialShare, SyncQueueItem } from '$lib/types';
+import type { Subscription, Article, ReadPosition, SocialShare, UserShare, SyncQueueItem } from '$lib/types';
 
 class ATRSSDatabase extends Dexie {
   subscriptions!: Table<Subscription>;
   articles!: Table<Article>;
   readPositions!: Table<ReadPosition>;
   socialShares!: Table<SocialShare>;
+  userShares!: Table<UserShare>;
   syncQueue!: Table<SyncQueueItem>;
 
   constructor() {
@@ -22,6 +23,11 @@ class ATRSSDatabase extends Dexie {
     // Add rkey index to readPositions for sync-queue lookups
     this.version(2).stores({
       readPositions: '++id, atUri, rkey, subscriptionAtUri, articleGuid, starred, syncStatus',
+    });
+
+    // Add userShares table for user's own shares
+    this.version(3).stores({
+      userShares: '++id, atUri, rkey, articleGuid, articleUrl, syncStatus',
     });
   }
 }
@@ -55,6 +61,7 @@ export async function clearAllData(): Promise<void> {
     db.articles.clear(),
     db.readPositions.clear(),
     db.socialShares.clear(),
+    db.userShares.clear(),
     db.syncQueue.clear()
   ]);
 }

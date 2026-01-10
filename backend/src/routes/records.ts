@@ -477,6 +477,96 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
       }
     }
 
+    // Index shares for social feed
+    if (collection === 'com.at-rss.social.share') {
+      try {
+        const recordUri = result.data.uri || `at://${session.did}/${collection}/${rkey}`;
+        if (operation === 'create' || operation === 'update') {
+          const shareRecord = record as {
+            itemUrl: string;
+            itemTitle?: string;
+            itemAuthor?: string;
+            itemDescription?: string;
+            itemImage?: string;
+            note?: string;
+            tags?: string[];
+            createdAt: string;
+          };
+
+          // Ensure user exists in users table with full profile info
+          await env.DB.prepare(`
+            INSERT INTO users (did, handle, display_name, avatar_url, pds_url, updated_at)
+            VALUES (?, ?, ?, ?, ?, unixepoch())
+            ON CONFLICT(did) DO UPDATE SET
+              handle = excluded.handle,
+              display_name = COALESCE(excluded.display_name, users.display_name),
+              avatar_url = COALESCE(excluded.avatar_url, users.avatar_url),
+              updated_at = unixepoch()
+          `).bind(
+            session.did,
+            session.handle || session.did,
+            session.displayName || null,
+            session.avatarUrl || null,
+            session.pdsUrl
+          ).run();
+
+          // Insert share into shares table
+          await env.DB.prepare(`
+            INSERT OR REPLACE INTO shares
+            (author_did, record_uri, record_cid, item_url, item_title,
+             item_author, item_description, item_image, note, tags, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).bind(
+            session.did,
+            recordUri,
+            result.data.cid || '',
+            shareRecord.itemUrl,
+            shareRecord.itemTitle || null,
+            shareRecord.itemAuthor || null,
+            shareRecord.itemDescription || null,
+            shareRecord.itemImage || null,
+            shareRecord.note || null,
+            shareRecord.tags ? JSON.stringify(shareRecord.tags) : null,
+            new Date(shareRecord.createdAt).getTime()
+          ).run();
+
+          // Notify RealtimeHub of new share for live updates
+          try {
+            const hubId = env.REALTIME_HUB.idFromName('main');
+            const hub = env.REALTIME_HUB.get(hubId);
+            await hub.fetch('http://internal/broadcast', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                type: 'new_share',
+                payload: {
+                  authorDid: session.did,
+                  authorHandle: session.handle,
+                  authorDisplayName: session.displayName,
+                  authorAvatar: session.avatarUrl,
+                  recordUri,
+                  itemUrl: shareRecord.itemUrl,
+                  itemTitle: shareRecord.itemTitle,
+                  itemDescription: shareRecord.itemDescription,
+                  itemImage: shareRecord.itemImage,
+                  note: shareRecord.note,
+                  createdAt: shareRecord.createdAt,
+                },
+              }),
+            });
+          } catch (realtimeError) {
+            console.error('Failed to notify RealtimeHub:', realtimeError);
+          }
+        } else if (operation === 'delete') {
+          await env.DB.prepare(
+            'DELETE FROM shares WHERE record_uri = ?'
+          ).bind(recordUri).run();
+        }
+      } catch (cacheError) {
+        console.error('Failed to index share:', cacheError);
+      }
+    }
+
     return new Response(JSON.stringify({
       uri: result.data.uri,
       cid: result.data.cid,
