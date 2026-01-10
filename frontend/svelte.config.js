@@ -14,7 +14,9 @@ const config = {
       strict: true
     }),
     serviceWorker: {
-      register: true
+      // Service worker doesn't work in dev mode on Firefox due to ES module restrictions.
+      // Use `npm run build && npm run preview` to test the service worker.
+      register: process.env.NODE_ENV === 'production'
     }
   }
 };

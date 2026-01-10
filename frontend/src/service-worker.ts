@@ -101,18 +101,20 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-// Background sync for pending operations
-self.addEventListener('sync', (event) => {
-  if (event.tag === 'sync-queue') {
-    event.waitUntil(
-      self.clients.matchAll().then((clients) => {
-        clients.forEach((client) => {
-          client.postMessage({ type: 'PROCESS_SYNC_QUEUE' });
-        });
-      })
-    );
-  }
-});
+// Background sync for pending operations (not supported in Firefox)
+if (typeof self.registration !== 'undefined' && 'sync' in self.registration) {
+  self.addEventListener('sync', (event) => {
+    if ((event as ExtendableEvent & { tag?: string }).tag === 'sync-queue') {
+      event.waitUntil(
+        self.clients.matchAll().then((clients) => {
+          clients.forEach((client) => {
+            client.postMessage({ type: 'PROCESS_SYNC_QUEUE' });
+          });
+        })
+      );
+    }
+  });
+}
 
 // Listen for messages from the app
 self.addEventListener('message', (event) => {
