@@ -47,20 +47,22 @@ export async function handleFeedFetch(request: Request, env: Env): Promise<Respo
   }
 
   try {
-    // Get cached metadata for conditional request
-    const metaStr = await env.FEED_CACHE.get(`feed:${urlHash}:meta`);
-    const meta = metaStr ? JSON.parse(metaStr) as { etag?: string; lastModified?: string } : null;
-
     const headers: HeadersInit = {
       'User-Agent': 'AT-RSS/1.0 (+https://at-rss.example.com)',
       Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
     };
 
-    if (meta?.etag) {
-      headers['If-None-Match'] = meta.etag;
-    }
-    if (meta?.lastModified) {
-      headers['If-Modified-Since'] = meta.lastModified;
+    // Only use conditional headers if not forcing refresh
+    if (!force) {
+      const metaStr = await env.FEED_CACHE.get(`feed:${urlHash}:meta`);
+      const meta = metaStr ? JSON.parse(metaStr) as { etag?: string; lastModified?: string } : null;
+
+      if (meta?.etag) {
+        headers['If-None-Match'] = meta.etag;
+      }
+      if (meta?.lastModified) {
+        headers['If-Modified-Since'] = meta.lastModified;
+      }
     }
 
     const response = await fetch(feedUrl, { headers });

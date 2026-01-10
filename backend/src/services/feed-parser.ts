@@ -64,10 +64,14 @@ function parseRssFeed(xml: string, feedUrl: string): ParsedFeed {
 function parseAtomFeed(xml: string, feedUrl: string): ParsedFeed {
   const items: FeedItem[] = [];
 
-  const title = extractTag(xml, 'title') || 'Untitled Feed';
-  const description = extractTag(xml, 'subtitle');
-  const siteUrl = extractAtomLink(xml, 'alternate');
-  const imageUrl = extractTag(xml, 'icon') || extractTag(xml, 'logo');
+  // Extract feed-level metadata (before the first entry)
+  const firstEntryIndex = xml.indexOf('<entry>');
+  const feedHeader = firstEntryIndex > 0 ? xml.substring(0, firstEntryIndex) : xml;
+
+  const title = extractTag(feedHeader, 'title') || 'Untitled Feed';
+  const description = extractTag(feedHeader, 'subtitle');
+  const siteUrl = extractAtomLink(feedHeader, 'alternate');
+  const imageUrl = extractTag(feedHeader, 'icon') || extractTag(feedHeader, 'logo');
 
   // Extract entries
   const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
