@@ -18,6 +18,11 @@ class ATRSSDatabase extends Dexie {
       socialShares: '++id, authorDid, recordUri, itemUrl, createdAt',
       syncQueue: '++id, operation, collection, timestamp'
     });
+
+    // Add rkey index to readPositions for sync-queue lookups
+    this.version(2).stores({
+      readPositions: '++id, atUri, rkey, subscriptionAtUri, articleGuid, starred, syncStatus',
+    });
   }
 }
 

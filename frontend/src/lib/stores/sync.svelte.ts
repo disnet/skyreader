@@ -20,13 +20,17 @@ function createSyncStore() {
     // Initialize sync queue
     syncQueue.init();
 
-    // Update pending count periodically
-    const updatePendingCount = async () => {
+    // Update pending count and process queue periodically
+    const updateAndProcess = async () => {
       pendingCount = await syncQueue.getPendingCount();
+      if (pendingCount > 0 && navigator.onLine) {
+        await syncQueue.processQueue();
+        pendingCount = await syncQueue.getPendingCount();
+      }
     };
 
-    updatePendingCount();
-    setInterval(updatePendingCount, 5000);
+    updateAndProcess();
+    setInterval(updateAndProcess, 5000);
   }
 
   async function triggerSync() {

@@ -8,7 +8,6 @@
     isStarred = false,
     selected = false,
     expanded = false,
-    onRead,
     onToggleStar,
     onSelect,
     onExpand,
@@ -19,7 +18,6 @@
     isStarred?: boolean;
     selected?: boolean;
     expanded?: boolean;
-    onRead?: () => void;
     onToggleStar?: () => void;
     onSelect?: () => void;
     onExpand?: () => void;
@@ -36,9 +34,7 @@
 
   function handleHeaderClick() {
     onSelect?.();
-    if (!isRead && onRead) {
-      onRead();
-    }
+    // Note: onRead is NOT called here - selectArticle in +page.svelte handles marking as read
   }
 
   function handleExpandClick(e: MouseEvent) {
@@ -73,6 +69,16 @@
 
   let isOpen = $derived(selected || expanded);
   let hasContent = $derived(Boolean(article.content || article.summary));
+
+  let bodyEl: HTMLElement | undefined;
+  let isTruncated = $state(false);
+
+  $effect(() => {
+    if (selected && !expanded && bodyEl) {
+      // Check if content overflows the line clamp
+      isTruncated = bodyEl.scrollHeight > bodyEl.clientHeight;
+    }
+  });
 </script>
 
 <article class="article-item" class:read={isRead} class:selected class:expanded>
@@ -93,8 +99,11 @@
   {#if isOpen}
     <div class="article-content">
       <div class="article-actions">
+        <a href={article.url} target="_blank" rel="noopener" class="action-btn" onclick={(e) => e.stopPropagation()}>
+          ↗ Open
+        </a>
         <button
-          class="star-btn"
+          class="action-btn"
           class:starred={isStarred}
           onclick={handleStarClick}
         >
@@ -102,10 +111,12 @@
         </button>
       </div>
       {#if hasContent}
-        <div class="article-body" class:truncated={selected && !expanded}>
-          {@html article.content || article.summary}
+        <div class="article-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
+          <div bind:this={bodyEl} class="article-body" class:truncated={selected && !expanded}>
+            {@html article.content || article.summary}
+          </div>
         </div>
-        {#if selected && !expanded}
+        {#if selected && !expanded && isTruncated}
           <button class="show-more-btn" onclick={handleExpandClick}>
             Show more
           </button>
@@ -189,6 +200,27 @@
     padding: 0 0.5rem 1rem;
   }
 
+  .article-body-wrapper {
+    position: relative;
+  }
+
+  .article-body-wrapper.has-fade::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 4em;
+    background: linear-gradient(to bottom, transparent, var(--color-bg, #ffffff));
+    pointer-events: none;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .article-body-wrapper.has-fade::after {
+      background: linear-gradient(to bottom, transparent, var(--color-bg, #1a1a1a));
+    }
+  }
+
   .article-body {
     font-size: 0.9375rem;
     line-height: 1.7;
@@ -236,20 +268,25 @@
     margin-bottom: 1rem;
   }
 
-  .star-btn {
+  .action-btn {
     background: none;
     border: none;
     font-size: 0.875rem;
     color: var(--color-text-secondary);
     padding: 0;
     cursor: pointer;
+    text-decoration: none;
   }
 
-  .star-btn.starred {
+  .action-btn:hover {
+    color: var(--color-primary, #0066cc);
+  }
+
+  .action-btn.starred {
     color: #ffc107;
   }
 
-  .star-btn:hover {
+  .action-btn.starred:hover {
     color: #ffc107;
   }
 

@@ -2,6 +2,7 @@ import { db } from './db';
 import { api } from './api';
 import type { SyncQueueItem } from '$lib/types';
 import { browser } from '$app/environment';
+import { auth } from '$lib/stores/auth.svelte';
 
 class SyncQueueService {
   private isProcessing = false;
@@ -43,7 +44,7 @@ class SyncQueueService {
   }
 
   async processQueue() {
-    if (this.isProcessing || !browser || !navigator.onLine) return;
+    if (this.isProcessing || !browser || !navigator.onLine || !auth.isAuthenticated) return;
 
     this.isProcessing = true;
 
@@ -55,9 +56,17 @@ class SyncQueueService {
           await this.processItem(item);
           await db.syncQueue.delete(item.id!);
         } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+          // If unauthorized, stop processing - session is invalid
+          if (errorMessage === 'Unauthorized') {
+            console.error('Sync failed: session expired or invalid');
+            break;
+          }
+
           await db.syncQueue.update(item.id!, {
             retryCount: item.retryCount + 1,
-            lastError: error instanceof Error ? error.message : 'Unknown error',
+            lastError: errorMessage,
           });
 
           if (item.retryCount >= 5) {

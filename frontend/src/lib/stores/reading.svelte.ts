@@ -36,6 +36,7 @@ function createReadingStore() {
     articleUrl: string,
     articleTitle?: string
   ) {
+    // Check if already read - skip if so
     if (readPositions.has(articleGuid)) return;
 
     const rkey = generateTid();
@@ -51,6 +52,10 @@ function createReadingStore() {
       starred: false,
       syncStatus: 'pending',
     };
+
+    // Update map immediately to prevent race conditions
+    readPositions.set(articleGuid, { ...position });
+    readPositions = new Map(readPositions);
 
     const id = await db.readPositions.add(position);
     readPositions.set(articleGuid, { ...position, id });

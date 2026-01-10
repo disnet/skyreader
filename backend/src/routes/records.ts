@@ -120,6 +120,237 @@ async function makePdsGetRequest<T>(
   return { ok: false, data: { error: 'Failed after nonce retry' } as T, status: 400 };
 }
 
+interface ReadPositionRecord {
+  itemGuid: string;
+  itemUrl?: string;
+  itemTitle?: string;
+  starred?: boolean;
+  readAt: string;
+}
+
+interface CachedReadPosition {
+  id: number;
+  user_did: string;
+  rkey: string;
+  record_uri: string | null;
+  item_guid: string;
+  synced_at: number | null;
+}
+
+// Track which users have had their cache hydrated (in-memory, per-isolate)
+const hydratedUsers = new Set<string>();
+
+async function hydrateReadPositionsCacheFromPds(
+  env: Env,
+  session: { did: string; pdsUrl: string; accessToken: string; dpopPrivateKey: string }
+): Promise<void> {
+  // Check if we've already hydrated for this user in this isolate
+  if (hydratedUsers.has(session.did)) {
+    return;
+  }
+
+  // Check if user has any cached records - if so, assume cache is valid
+  const existingCount = await env.DB.prepare(
+    'SELECT COUNT(*) as count FROM read_positions_cache WHERE user_did = ?'
+  ).bind(session.did).first<{ count: number }>();
+
+  if (existingCount && existingCount.count > 0) {
+    hydratedUsers.add(session.did);
+    return;
+  }
+
+  // No cache exists - fetch from PDS and populate
+  console.log(`Hydrating read positions cache for ${session.did} from PDS`);
+
+  try {
+    const allRecords: Array<{ uri: string; cid: string; value: ReadPositionRecord }> = [];
+    let cursor: string | undefined;
+
+    do {
+      const params: Record<string, string> = {
+        repo: session.did,
+        collection: 'com.at-rss.feed.readPosition',
+        limit: '100',
+      };
+      if (cursor) {
+        params.cursor = cursor;
+      }
+
+      const result = await makePdsGetRequest<{
+        records: Array<{ uri: string; cid: string; value: ReadPositionRecord }>;
+        cursor?: string;
+      }>(session, 'com.atproto.repo.listRecords', params);
+
+      if (!result.ok) {
+        console.error('Failed to fetch read positions from PDS:', result.data);
+        break;
+      }
+
+      allRecords.push(...result.data.records);
+      cursor = result.data.cursor;
+    } while (cursor);
+
+    // Insert all records into cache
+    for (const record of allRecords) {
+      // Extract rkey from URI: at://did/collection/rkey
+      const rkey = record.uri.split('/').pop();
+      if (!rkey) continue;
+
+      try {
+        await env.DB.prepare(`
+          INSERT OR IGNORE INTO read_positions_cache
+          (user_did, rkey, record_uri, item_guid, item_url, item_title, starred, read_at, synced_at, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+        `).bind(
+          session.did,
+          rkey,
+          record.uri,
+          record.value.itemGuid,
+          record.value.itemUrl || null,
+          record.value.itemTitle || null,
+          record.value.starred ? 1 : 0,
+          record.value.readAt
+        ).run();
+      } catch (err) {
+        // Ignore insert errors (e.g., duplicates)
+        console.error('Failed to insert cached read position:', err);
+      }
+    }
+
+    console.log(`Hydrated ${allRecords.length} read positions for ${session.did}`);
+    hydratedUsers.add(session.did);
+  } catch (error) {
+    console.error('Error hydrating read positions cache:', error);
+    // Don't throw - allow operation to continue, cache will be built up over time
+  }
+}
+
+async function handleReadPositionSync(
+  env: Env,
+  session: { did: string; pdsUrl: string; accessToken: string; dpopPrivateKey: string },
+  operation: 'create' | 'update' | 'delete',
+  rkey: string,
+  record?: Record<string, unknown>
+): Promise<Response> {
+  const collection = 'com.at-rss.feed.readPosition';
+
+  // Ensure cache is hydrated from PDS before checking
+  await hydrateReadPositionsCacheFromPds(env, session);
+
+  if (operation === 'delete') {
+    // For delete, remove from cache and PDS
+    const result = await makePdsRequest(session, 'com.atproto.repo.deleteRecord', {
+      repo: session.did,
+      collection,
+      rkey,
+    });
+
+    // Remove from cache regardless of PDS result
+    await env.DB.prepare(
+      'DELETE FROM read_positions_cache WHERE user_did = ? AND rkey = ?'
+    ).bind(session.did, rkey).run();
+
+    if (!result.ok) {
+      // If record doesn't exist on PDS, that's fine for delete
+      if (result.data.error === 'RecordNotFound') {
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({
+        error: result.data.error || 'PDS request failed',
+        message: result.data.message,
+      }), {
+        status: result.status,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // For create/update, check cache first
+  if (!record) {
+    return new Response(JSON.stringify({ error: 'Record required for create/update' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  const readRecord = record as unknown as ReadPositionRecord;
+
+  // Check if this record is already in cache and synced
+  const cached = await env.DB.prepare(
+    'SELECT id, record_uri, synced_at FROM read_positions_cache WHERE user_did = ? AND rkey = ?'
+  ).bind(session.did, rkey).first<CachedReadPosition>();
+
+  if (cached && cached.synced_at !== null && cached.record_uri) {
+    // Already synced - return cached URI without hitting PDS
+    console.log(`Read position ${rkey} already synced, returning cached URI`);
+    return new Response(JSON.stringify({
+      uri: cached.record_uri,
+      cached: true,
+    }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Not in cache or not yet synced - sync to PDS
+  const requestBody = {
+    repo: session.did,
+    collection,
+    rkey,
+    record: { $type: collection, ...record },
+  };
+  console.log('Syncing read position to PDS:', rkey);
+  const result = await makePdsRequest(session, 'com.atproto.repo.putRecord', requestBody);
+
+  if (!result.ok) {
+    console.error('PDS request failed for read position:', result.data);
+    return new Response(JSON.stringify({
+      error: result.data.error || 'PDS request failed',
+      message: result.data.message,
+    }), {
+      status: result.status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Update cache with sync result
+  const recordUri = result.data.uri || `at://${session.did}/${collection}/${rkey}`;
+  try {
+    await env.DB.prepare(`
+      INSERT INTO read_positions_cache
+      (user_did, rkey, record_uri, item_guid, item_url, item_title, starred, read_at, synced_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+      ON CONFLICT(user_did, rkey) DO UPDATE SET
+        record_uri = excluded.record_uri,
+        starred = excluded.starred,
+        synced_at = unixepoch()
+    `).bind(
+      session.did,
+      rkey,
+      recordUri,
+      readRecord.itemGuid,
+      readRecord.itemUrl || null,
+      readRecord.itemTitle || null,
+      readRecord.starred ? 1 : 0,
+      readRecord.readAt
+    ).run();
+  } catch (cacheError) {
+    console.error('Failed to cache read position:', cacheError);
+    // Don't fail the request if caching fails
+  }
+
+  return new Response(JSON.stringify({
+    uri: result.data.uri,
+    cid: result.data.cid,
+  }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 export async function handleRecordSync(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
@@ -181,22 +412,24 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
   }
 
   try {
+    // Handle read positions with cache-first deduplication
+    if (collection === 'com.at-rss.feed.readPosition') {
+      return await handleReadPositionSync(env, session, operation, rkey, record);
+    }
+
     let result: { ok: boolean; data: PdsResponse; status: number };
 
-    if (operation === 'create') {
-      result = await makePdsRequest(session, 'com.atproto.repo.createRecord', {
+    if (operation === 'create' || operation === 'update') {
+      // Use putRecord for both create and update - it's idempotent
+      // This handles retries gracefully when a record already exists
+      const requestBody = {
         repo: session.did,
         collection,
         rkey,
         record: { $type: collection, ...record },
-      });
-    } else if (operation === 'update') {
-      result = await makePdsRequest(session, 'com.atproto.repo.putRecord', {
-        repo: session.did,
-        collection,
-        rkey,
-        record: { $type: collection, ...record },
-      });
+      };
+      console.log('Upserting record:', JSON.stringify(requestBody, null, 2));
+      result = await makePdsRequest(session, 'com.atproto.repo.putRecord', requestBody);
     } else {
       // delete
       result = await makePdsRequest(session, 'com.atproto.repo.deleteRecord', {
@@ -252,8 +485,12 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
     });
   } catch (error) {
     console.error('Record sync error:', error);
+    const errorMessage = error instanceof Error
+      ? `${error.name}: ${error.message}`
+      : 'Failed to sync record';
+    console.error('Error details:', errorMessage, error instanceof Error ? error.stack : '');
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Failed to sync record' }),
+      JSON.stringify({ error: errorMessage }),
       {
         status: 500,
         headers: { 'Content-Type': 'application/json' },

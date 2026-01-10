@@ -231,7 +231,7 @@ export async function deleteOAuthState(env: Env, state: string): Promise<void> {
 // Store session in KV
 export async function storeSession(env: Env, sessionId: string, session: Session): Promise<void> {
   await env.SESSION_CACHE.put(`session:${sessionId}`, JSON.stringify(session), {
-    expirationTtl: 3600, // 1 hour
+    expirationTtl: 2592000, // 30 days - tokens are refreshed automatically before expiry
   });
 }
 
@@ -247,14 +247,132 @@ export async function deleteSession(env: Env, sessionId: string): Promise<void> 
   await env.SESSION_CACHE.delete(`session:${sessionId}`);
 }
 
-// Get session from Authorization header
+// Get session from Authorization header, auto-refreshing if needed
 export async function getSessionFromRequest(request: Request, env: Env): Promise<Session | null> {
   const authHeader = request.headers.get('Authorization');
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return null;
   }
   const sessionId = authHeader.substring(7);
-  return await getSession(env, sessionId);
+  const session = await getSession(env, sessionId);
+
+  if (!session) {
+    return null;
+  }
+
+  // Check if token is expired or about to expire (within 5 minutes)
+  const expiryBuffer = 5 * 60 * 1000; // 5 minutes
+  const timeUntilExpiry = (session.expiresAt || 0) - Date.now();
+
+  if (timeUntilExpiry < expiryBuffer) {
+    console.log(`Token expiring in ${timeUntilExpiry}ms, refreshing...`);
+    // Try to refresh the token
+    try {
+      const refreshedSession = await refreshSession(env, sessionId, session);
+      if (refreshedSession) {
+        return refreshedSession;
+      }
+    } catch (error) {
+      console.error('Token refresh error:', error);
+    }
+    // If refresh fails, return null (session is invalid)
+    return null;
+  }
+
+  return session;
+}
+
+// Refresh session tokens
+async function refreshSession(env: Env, sessionId: string, session: Session): Promise<Session | null> {
+  try {
+    // Import the DPoP key
+    const privateKeyJwk = JSON.parse(session.dpopPrivateKey);
+    const privateKey = await importPrivateKey(privateKeyJwk);
+    const publicKeyJwk = { ...privateKeyJwk };
+    delete (publicKeyJwk as Record<string, unknown>).d;
+
+    // Get token endpoint
+    const authMeta = await fetchAuthServerMetadata(session.pdsUrl);
+
+    // Create DPoP proof for refresh request
+    let dpopProof = await createDPoPProof(
+      privateKey,
+      publicKeyJwk,
+      'POST',
+      authMeta.token_endpoint
+    );
+
+    const refreshBody = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: session.refreshToken,
+    });
+
+    let tokenResponse = await fetch(authMeta.token_endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        DPoP: dpopProof,
+      },
+      body: refreshBody,
+    });
+
+    // Handle DPoP nonce requirement
+    if (!tokenResponse.ok) {
+      const errorData = await tokenResponse.json().catch(() => null) as { error?: string } | null;
+      const dpopNonce = tokenResponse.headers.get('DPoP-Nonce');
+
+      if (errorData?.error === 'use_dpop_nonce' && dpopNonce) {
+        dpopProof = await createDPoPProof(
+          privateKey,
+          publicKeyJwk,
+          'POST',
+          authMeta.token_endpoint,
+          dpopNonce
+        );
+
+        tokenResponse = await fetch(authMeta.token_endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            DPoP: dpopProof,
+          },
+          body: refreshBody,
+        });
+      }
+    }
+
+    if (!tokenResponse.ok) {
+      console.error('Token refresh failed:', await tokenResponse.text());
+      // Delete invalid session
+      await deleteSession(env, sessionId);
+      return null;
+    }
+
+    const tokenData = await tokenResponse.json() as {
+      access_token: string;
+      refresh_token: string;
+      expires_in: number;
+    };
+
+    // Update session with new tokens
+    const updatedSession: Session = {
+      ...session,
+      accessToken: tokenData.access_token,
+      refreshToken: tokenData.refresh_token,
+      expiresAt: Date.now() + tokenData.expires_in * 1000,
+    };
+
+    // Store updated session with fresh TTL
+    await storeSession(env, sessionId, updatedSession);
+
+    console.log('Session refreshed successfully for', session.handle);
+    return updatedSession;
+  } catch (error) {
+    console.error('Session refresh error:', error);
+    // Delete invalid session
+    await deleteSession(env, sessionId);
+    return null;
+  }
 }
 
 // Update user's last active timestamp

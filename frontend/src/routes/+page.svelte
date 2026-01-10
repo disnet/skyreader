@@ -47,13 +47,19 @@
     } else if (e.key === 'k' || e.key === 'ArrowUp') {
       e.preventDefault();
       selectArticle(Math.max(selectedIndex - 1, 0));
+    } else if (e.key === 'o' && selectedIndex >= 0) {
+      e.preventDefault();
+      window.open(articles[selectedIndex].url, '_blank');
+    } else if (e.key === 'Enter' && selectedIndex >= 0) {
+      e.preventDefault();
+      expandedIndex = expandedIndex === selectedIndex ? -1 : selectedIndex;
     }
   }
 
   async function selectArticle(index: number) {
     if (index === selectedIndex) return;
 
-    // Mark as read when selecting
+    // Mark as read when selecting (only place this should happen)
     const article = articles[index];
     const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId);
     if (sub && !readingStore.isRead(article.guid)) {
@@ -72,11 +78,9 @@
     if (!el) return;
 
     const rect = el.getBoundingClientRect();
-    const elementCenter = rect.top + rect.height / 2;
-    const viewportCenter = window.innerHeight / 2;
-    const offset = elementCenter - viewportCenter;
+    const targetY = window.innerHeight / 3;
+    const offset = rect.top - targetY;
 
-    // Use instant scroll to avoid jitter
     window.scrollBy({ top: offset, behavior: 'instant' });
   }
 </script>
@@ -123,11 +127,6 @@
               isStarred={readingStore.isStarred(article.guid)}
               selected={selectedIndex === index}
               expanded={expandedIndex === index}
-              onRead={() => {
-                if (sub) {
-                  readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
-                }
-              }}
               onToggleStar={() => readingStore.toggleStar(article.guid)}
               onSelect={() => {
                 if (selectedIndex === index) {
