@@ -1,97 +1,87 @@
+import { XMLParser } from 'fast-xml-parser';
 import type { ParsedFeed, FeedItem } from '../types';
 
-// Simple XML parser for RSS/Atom feeds
-export function parseFeed(xml: string, feedUrl: string): ParsedFeed {
-  // Detect feed type
-  const isAtom = xml.includes('<feed') && xml.includes('xmlns="http://www.w3.org/2005/Atom"');
+const parser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: '@_',
+  textNodeName: '#text',
+  cdataPropName: '#cdata',
+  trimValues: true,
+  parseTagValue: false,
+  isArray: (name) => ['item', 'entry', 'link', 'category'].includes(name),
+});
 
-  if (isAtom) {
-    return parseAtomFeed(xml, feedUrl);
+export function parseFeed(xml: string, feedUrl: string): ParsedFeed {
+  const doc = parser.parse(xml);
+
+  // Detect feed type
+  if (doc.feed) {
+    return parseAtomFeed(doc.feed, feedUrl);
   }
-  return parseRssFeed(xml, feedUrl);
+  if (doc.rss?.channel) {
+    return parseRssFeed(doc.rss.channel, feedUrl);
+  }
+  if (doc['rdf:RDF']) {
+    return parseRdfFeed(doc['rdf:RDF'], feedUrl);
+  }
+
+  throw new Error('Unknown feed format');
 }
 
-function parseRssFeed(xml: string, feedUrl: string): ParsedFeed {
+function parseRssFeed(channel: any, feedUrl: string): ParsedFeed {
   const items: FeedItem[] = [];
 
-  // Extract channel info
-  const channelMatch = xml.match(/<channel>([\s\S]*?)<\/channel>/);
-  const channelContent = channelMatch ? channelMatch[1] : xml;
-
-  const title = extractTag(channelContent, 'title') || 'Untitled Feed';
-  const description = extractTag(channelContent, 'description');
-  const siteUrl = extractTag(channelContent, 'link');
-  const imageUrl = extractImageUrl(channelContent);
-
-  // Extract items
-  const itemRegex = /<item>([\s\S]*?)<\/item>/g;
-  let match;
-
-  while ((match = itemRegex.exec(xml)) !== null) {
-    const itemContent = match[1];
-
-    const itemTitle = extractTag(itemContent, 'title') || 'Untitled';
-    const itemUrl = extractTag(itemContent, 'link') || '';
-    const guid = extractTag(itemContent, 'guid') || itemUrl || generateGuid(itemTitle);
-    const author = extractTag(itemContent, 'author') || extractTag(itemContent, 'dc:creator');
-    const content = extractTag(itemContent, 'content:encoded') || extractTag(itemContent, 'description');
-    const summary = extractTag(itemContent, 'description');
-    const pubDate = extractTag(itemContent, 'pubDate');
-    const itemImage = extractMediaContent(itemContent) || extractEnclosure(itemContent);
+  const rawItems = channel.item || [];
+  for (const item of rawItems) {
+    const title = getText(item.title) || 'Untitled';
+    const url = getText(item.link) || '';
+    const guid = getText(item.guid) || url || generateGuid(title);
+    const author = getText(item.author) || getText(item['dc:creator']);
+    const content = getText(item['content:encoded']) || getText(item.description);
+    const summary = getText(item.description);
+    const pubDate = getText(item.pubDate) || getText(item['dc:date']);
+    const imageUrl = extractRssItemImage(item);
 
     items.push({
       guid,
-      url: itemUrl,
-      title: decodeHtmlEntities(itemTitle),
+      url,
+      title: decodeHtmlEntities(title),
       author: author ? decodeHtmlEntities(author) : undefined,
       content: content ? decodeHtmlEntities(content) : undefined,
       summary: summary ? decodeHtmlEntities(summary) : undefined,
-      imageUrl: itemImage,
+      imageUrl,
       publishedAt: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString(),
     });
   }
 
+  const description = getText(channel.description);
   return {
-    title: decodeHtmlEntities(title),
+    title: decodeHtmlEntities(getText(channel.title) || 'Untitled Feed'),
     description: description ? decodeHtmlEntities(description) : undefined,
-    siteUrl,
-    imageUrl,
+    siteUrl: getText(channel.link),
+    imageUrl: channel.image?.url ? getText(channel.image.url) : undefined,
     items,
     fetchedAt: Date.now(),
   };
 }
 
-function parseAtomFeed(xml: string, feedUrl: string): ParsedFeed {
+function parseAtomFeed(feed: any, feedUrl: string): ParsedFeed {
   const items: FeedItem[] = [];
 
-  // Extract feed-level metadata (before the first entry)
-  const firstEntryIndex = xml.indexOf('<entry>');
-  const feedHeader = firstEntryIndex > 0 ? xml.substring(0, firstEntryIndex) : xml;
-
-  const title = extractTag(feedHeader, 'title') || 'Untitled Feed';
-  const description = extractTag(feedHeader, 'subtitle');
-  const siteUrl = extractAtomLink(feedHeader, 'alternate');
-  const imageUrl = extractTag(feedHeader, 'icon') || extractTag(feedHeader, 'logo');
-
-  // Extract entries
-  const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
-  let match;
-
-  while ((match = entryRegex.exec(xml)) !== null) {
-    const entryContent = match[1];
-
-    const entryTitle = extractTag(entryContent, 'title') || 'Untitled';
-    const entryUrl = extractAtomLink(entryContent, 'alternate') || '';
-    const guid = extractTag(entryContent, 'id') || entryUrl || generateGuid(entryTitle);
-    const author = extractAtomAuthor(entryContent);
-    const content = extractTag(entryContent, 'content') || extractTag(entryContent, 'summary');
-    const summary = extractTag(entryContent, 'summary');
-    const updated = extractTag(entryContent, 'updated') || extractTag(entryContent, 'published');
+  const entries = feed.entry || [];
+  for (const entry of entries) {
+    const title = getText(entry.title) || 'Untitled';
+    const url = getAtomLink(entry.link, 'alternate') || '';
+    const guid = getText(entry.id) || url || generateGuid(title);
+    const author = entry.author?.name ? getText(entry.author.name) : undefined;
+    const content = getText(entry.content) || getText(entry.summary);
+    const summary = getText(entry.summary);
+    const updated = getText(entry.updated) || getText(entry.published);
 
     items.push({
       guid,
-      url: entryUrl,
-      title: decodeHtmlEntities(entryTitle),
+      url,
+      title: decodeHtmlEntities(title),
       author: author ? decodeHtmlEntities(author) : undefined,
       content: content ? decodeHtmlEntities(content) : undefined,
       summary: summary ? decodeHtmlEntities(summary) : undefined,
@@ -99,66 +89,133 @@ function parseAtomFeed(xml: string, feedUrl: string): ParsedFeed {
     });
   }
 
+  const subtitle = getText(feed.subtitle);
   return {
-    title: decodeHtmlEntities(title),
-    description: description ? decodeHtmlEntities(description) : undefined,
-    siteUrl,
-    imageUrl,
+    title: decodeHtmlEntities(getText(feed.title) || 'Untitled Feed'),
+    description: subtitle ? decodeHtmlEntities(subtitle) : undefined,
+    siteUrl: getAtomLink(feed.link, 'alternate'),
+    imageUrl: getText(feed.icon) || getText(feed.logo),
     items,
     fetchedAt: Date.now(),
   };
 }
 
-function extractTag(content: string, tagName: string): string | undefined {
-  // Handle CDATA
-  const cdataRegex = new RegExp(`<${tagName}[^>]*><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/${tagName}>`, 'i');
-  const cdataMatch = content.match(cdataRegex);
-  if (cdataMatch) {
-    return cdataMatch[1].trim();
+function parseRdfFeed(rdf: any, feedUrl: string): ParsedFeed {
+  const items: FeedItem[] = [];
+  const channel = rdf.channel || {};
+
+  const rawItems = rdf.item || [];
+  for (const item of rawItems) {
+    const title = getText(item.title) || 'Untitled';
+    const url = getText(item.link) || '';
+    const guid = url || generateGuid(title);
+    const author = getText(item['dc:creator']);
+    const content = getText(item['content:encoded']) || getText(item.description);
+    const summary = getText(item.description);
+    const pubDate = getText(item['dc:date']);
+
+    items.push({
+      guid,
+      url,
+      title: decodeHtmlEntities(title),
+      author: author ? decodeHtmlEntities(author) : undefined,
+      content: content ? decodeHtmlEntities(content) : undefined,
+      summary: summary ? decodeHtmlEntities(summary) : undefined,
+      publishedAt: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString(),
+    });
   }
 
-  // Handle regular tags
-  const regex = new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'i');
-  const match = content.match(regex);
-  return match ? match[1].trim() : undefined;
+  const rdfDescription = getText(channel.description);
+  return {
+    title: decodeHtmlEntities(getText(channel.title) || 'Untitled Feed'),
+    description: rdfDescription ? decodeHtmlEntities(rdfDescription) : undefined,
+    siteUrl: getText(channel.link),
+    imageUrl: rdf.image?.url ? getText(rdf.image.url) : undefined,
+    items,
+    fetchedAt: Date.now(),
+  };
 }
 
-function extractAtomLink(content: string, rel: string): string | undefined {
-  const regex = new RegExp(`<link[^>]*rel=["']${rel}["'][^>]*href=["']([^"']+)["']`, 'i');
-  const match = content.match(regex);
-  if (match) return match[1];
-
-  // Try alternate format
-  const regex2 = new RegExp(`<link[^>]*href=["']([^"']+)["'][^>]*rel=["']${rel}["']`, 'i');
-  const match2 = content.match(regex2);
-  return match2 ? match2[1] : undefined;
-}
-
-function extractAtomAuthor(content: string): string | undefined {
-  const authorMatch = content.match(/<author>([\s\S]*?)<\/author>/i);
-  if (!authorMatch) return undefined;
-  return extractTag(authorMatch[1], 'name');
-}
-
-function extractImageUrl(content: string): string | undefined {
-  // Try image tag
-  const imageMatch = content.match(/<image>([\s\S]*?)<\/image>/i);
-  if (imageMatch) {
-    return extractTag(imageMatch[1], 'url');
+// Extract text from a node that may be a string, object with #text/#cdata, or nested
+function getText(node: any): string | undefined {
+  if (node === undefined || node === null) {
+    return undefined;
+  }
+  if (typeof node === 'string') {
+    return node;
+  }
+  if (typeof node === 'number') {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    // Handle arrays (take first element)
+    return node.length > 0 ? getText(node[0]) : undefined;
+  }
+  if (typeof node === 'object') {
+    // Handle CDATA (recursively in case it's nested)
+    if (node['#cdata'] !== undefined) {
+      return getText(node['#cdata']);
+    }
+    // Handle text node
+    if (node['#text'] !== undefined) {
+      return getText(node['#text']);
+    }
+    // Try to find any string value in the object
+    for (const key of Object.keys(node)) {
+      const val = getText(node[key]);
+      if (val) return val;
+    }
   }
   return undefined;
 }
 
-function extractMediaContent(content: string): string | undefined {
-  const regex = /<media:content[^>]*url=["']([^"']+)["']/i;
-  const match = content.match(regex);
-  return match ? match[1] : undefined;
+function getAtomLink(links: any, rel: string): string | undefined {
+  if (!links) return undefined;
+
+  const linkArray = Array.isArray(links) ? links : [links];
+  for (const link of linkArray) {
+    const linkRel = link['@_rel'] || 'alternate';
+    if (linkRel === rel && link['@_href']) {
+      return link['@_href'];
+    }
+  }
+
+  // Fallback: return first link with href
+  for (const link of linkArray) {
+    if (link['@_href']) {
+      return link['@_href'];
+    }
+  }
+
+  return undefined;
 }
 
-function extractEnclosure(content: string): string | undefined {
-  const regex = /<enclosure[^>]*url=["']([^"']+)["'][^>]*type=["']image/i;
-  const match = content.match(regex);
-  return match ? match[1] : undefined;
+function extractRssItemImage(item: any): string | undefined {
+  // media:content
+  if (item['media:content']) {
+    const media = Array.isArray(item['media:content']) ? item['media:content'][0] : item['media:content'];
+    if (media['@_url']) {
+      return media['@_url'];
+    }
+  }
+
+  // media:thumbnail
+  if (item['media:thumbnail']) {
+    const thumb = Array.isArray(item['media:thumbnail']) ? item['media:thumbnail'][0] : item['media:thumbnail'];
+    if (thumb['@_url']) {
+      return thumb['@_url'];
+    }
+  }
+
+  // enclosure with image type
+  if (item.enclosure) {
+    const enc = Array.isArray(item.enclosure) ? item.enclosure[0] : item.enclosure;
+    if (enc['@_type']?.startsWith('image') && enc['@_url']) {
+      return enc['@_url'];
+    }
+  }
+
+  return undefined;
 }
 
 function generateGuid(title: string): string {
@@ -166,6 +223,9 @@ function generateGuid(title: string): string {
 }
 
 function decodeHtmlEntities(text: string): string {
+  if (typeof text !== 'string') {
+    return String(text ?? '');
+  }
   const entities: Record<string, string> = {
     '&amp;': '&',
     '&lt;': '<',
@@ -208,7 +268,7 @@ export async function discoverFeeds(url: string): Promise<string[]> {
     return [url];
   }
 
-  // Look for link tags in HTML
+  // Parse HTML to find link tags
   const feeds: string[] = [];
   const linkRegex = /<link[^>]*type=["'](application\/rss\+xml|application\/atom\+xml)["'][^>]*>/gi;
   let match;
