@@ -8,6 +8,7 @@ export interface FollowedUser {
   handle: string;
   displayName?: string;
   avatarUrl?: string;
+  onApp?: boolean;
 }
 
 function createSocialStore() {

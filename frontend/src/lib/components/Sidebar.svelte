@@ -246,6 +246,7 @@
                             class="nav-item sub-item"
                             class:active={currentFilter().type === "sharer" &&
                                 currentFilter().id === user.did}
+                            class:not-on-app={!user.onApp}
                             onclick={() => selectFilter("sharer", user.did)}
                         >
                             {#if user.avatarUrl}
@@ -661,6 +662,10 @@
 
     .nav-item.has-error {
         color: var(--color-error);
+    }
+
+    .nav-item.not-on-app {
+        opacity: 0.5;
     }
 
     .retry-btn {

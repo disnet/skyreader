@@ -237,7 +237,7 @@ export async function handleFollowedUsers(request: Request, env: Env): Promise<R
 
   try {
     const results = await env.DB.prepare(`
-      SELECT u.did, u.handle, u.display_name, u.avatar_url
+      SELECT u.did, u.handle, u.display_name, u.avatar_url, u.pds_url
       FROM follows_cache f
       JOIN users u ON u.did = f.following_did
       WHERE f.follower_did = ?
@@ -249,6 +249,7 @@ export async function handleFollowedUsers(request: Request, env: Env): Promise<R
       handle: row.handle as string,
       displayName: row.display_name as string | undefined,
       avatarUrl: row.avatar_url as string | undefined,
+      onApp: !!(row.pds_url as string),
     }));
 
     return new Response(JSON.stringify({ users }), {
