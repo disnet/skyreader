@@ -352,6 +352,17 @@
             {/if}
         </button>
 
+        <a
+            href="/settings"
+            class="nav-item nav-link"
+            onclick={() => sidebarStore.closeMobile()}
+        >
+            <span class="nav-icon">⚙</span>
+            {#if !sidebarStore.isCollapsed}
+                <span class="nav-label">Settings</span>
+            {/if}
+        </a>
+
         <!-- Following section -->
         <div class="nav-section">
             <div class="section-header" class:active={currentFilter().type === "following"}>
@@ -660,6 +671,10 @@
 
     .nav-item:hover {
         background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+    }
+
+    .nav-link {
+        text-decoration: none;
     }
 
     .nav-item.active {

@@ -1,8 +1,9 @@
 import type { Env } from './types';
 import { handleAuthLogin, handleAuthCallback, handleAuthLogout, handleAuthMe, handleClientMetadata } from './routes/auth';
-import { handleFeedFetch, handleFeedDiscover, handleArticleFetch } from './routes/feeds';
+import { handleFeedFetch, handleCachedFeedFetch, handleFeedDiscover, handleArticleFetch } from './routes/feeds';
+import { handleItemsList, handleItemsRecent, handleItemGet, handleItemsByFeed } from './routes/items';
 import { handleSocialFeed, handleSyncFollows, handleFollowedUsers, handlePopularShares } from './routes/social';
-import { handleRecordSync, handleRecordsList } from './routes/records';
+import { handleRecordSync, handleBulkRecordSync, handleRecordsList } from './routes/records';
 import { getSessionFromRequest, updateUserActivity } from './services/oauth';
 import { refreshActiveFeeds } from './services/scheduled-feeds';
 import { pollJetstream } from './services/jetstream-poller';
@@ -64,11 +65,28 @@ export default {
         case url.pathname === '/api/feeds/fetch':
           response = await handleFeedFetch(request, env);
           break;
+        case url.pathname === '/api/feeds/cached':
+          response = await handleCachedFeedFetch(request, env);
+          break;
         case url.pathname === '/api/feeds/discover':
           response = await handleFeedDiscover(request, env);
           break;
         case url.pathname === '/api/feeds/article':
           response = await handleArticleFetch(request, env);
+          break;
+
+        // Item routes (individual feed items)
+        case url.pathname === '/api/items':
+          response = await handleItemsList(request, env);
+          break;
+        case url.pathname === '/api/items/recent':
+          response = await handleItemsRecent(request, env);
+          break;
+        case url.pathname === '/api/items/get':
+          response = await handleItemGet(request, env);
+          break;
+        case url.pathname === '/api/items/by-feed':
+          response = await handleItemsByFeed(request, env);
           break;
 
         // Social routes
@@ -88,6 +106,9 @@ export default {
         // Record sync routes
         case url.pathname === '/api/records/sync':
           response = await handleRecordSync(request, env);
+          break;
+        case url.pathname === '/api/records/bulk-sync':
+          response = await handleBulkRecordSync(request, env);
           break;
         case url.pathname === '/api/records/list':
           response = await handleRecordsList(request, env);
@@ -160,22 +181,20 @@ export default {
       console.error('Jetstream follows poll failed:', error);
     }
 
-    // Refresh active feeds (only every 15 minutes based on cron config)
-    // Note: Now that cron runs every minute, we only refresh feeds periodically
-    const minute = new Date().getMinutes();
-    if (minute % 15 === 0) {
-      try {
-        const result = await refreshActiveFeeds(env);
-        console.log(
-          `Scheduled feed refresh complete: ${result.fetched} fetched, ` +
-          `${result.skipped} skipped (not modified), ${result.errors} errors`
-        );
-      } catch (error) {
-        console.error('Scheduled feed refresh failed:', error);
-      }
+    // Refresh active feeds
+    // TODO: Change back to every 15 minutes (minute % 15 === 0) after cache is repopulated
+    try {
+      const result = await refreshActiveFeeds(env);
+      console.log(
+        `Scheduled feed refresh complete: ${result.fetched} fetched, ` +
+        `${result.skipped} skipped (not modified), ${result.errors} errors`
+      );
+    } catch (error) {
+      console.error('Scheduled feed refresh failed:', error);
     }
 
     // Clean up expired D1 data (once per hour)
+    const minute = new Date().getMinutes();
     if (minute === 0) {
       try {
         const now = Date.now();

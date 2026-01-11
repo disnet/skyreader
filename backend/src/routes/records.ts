@@ -1,6 +1,7 @@
 import type { Env } from '../types';
 import { getSessionFromRequest, importPrivateKey, createDPoPProof } from '../services/oauth';
 import { fetchArticleContent } from '../services/jetstream-poller';
+import { fetchAndCacheFeed } from './feeds';
 
 const ALLOWED_COLLECTIONS = [
   'com.at-rss.feed.subscription',
@@ -453,9 +454,9 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
 
     // Cache subscription for scheduled feed fetching
     if (collection === 'com.at-rss.feed.subscription') {
+      const feedRecord = record as { feedUrl: string; title?: string };
       try {
         if (operation === 'create' || operation === 'update') {
-          const feedRecord = record as { feedUrl: string; title?: string };
           const recordUri = result.data.uri || `at://${session.did}/${collection}/${rkey}`;
           await env.DB.prepare(`
             INSERT OR REPLACE INTO subscriptions_cache
@@ -475,6 +476,17 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
       } catch (cacheError) {
         // Log but don't fail the request if caching fails
         console.error('Failed to cache subscription:', cacheError);
+      }
+
+      // Trigger immediate feed fetch for new subscriptions
+      if (operation === 'create' && feedRecord.feedUrl) {
+        try {
+          await fetchAndCacheFeed(env, feedRecord.feedUrl);
+          console.log(`Fetched feed for new subscription: ${feedRecord.feedUrl}`);
+        } catch (fetchError) {
+          // Don't fail the request if feed fetch fails - cron will retry
+          console.error(`Failed to fetch feed ${feedRecord.feedUrl}:`, fetchError);
+        }
       }
     }
 
@@ -603,6 +615,204 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
       ? `${error.name}: ${error.message}`
       : 'Failed to sync record';
     console.error('Error details:', errorMessage, error instanceof Error ? error.stack : '');
+    return new Response(
+      JSON.stringify({ error: errorMessage }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+  }
+}
+
+interface BulkSyncRequest {
+  operations: Array<{
+    operation: 'create' | 'update' | 'delete';
+    collection: string;
+    rkey: string;
+    record?: Record<string, unknown>;
+  }>;
+}
+
+interface ApplyWritesResponse {
+  results?: Array<{
+    uri?: string;
+    cid?: string;
+    validationStatus?: string;
+  }>;
+  error?: string;
+  message?: string;
+}
+
+export async function handleBulkRecordSync(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  let body: BulkSyncRequest;
+  try {
+    body = await request.json() as BulkSyncRequest;
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const { operations } = body;
+
+  if (!Array.isArray(operations) || operations.length === 0) {
+    return new Response(JSON.stringify({ error: 'Operations array required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Validate all operations
+  for (const op of operations) {
+    if (!['create', 'update', 'delete'].includes(op.operation)) {
+      return new Response(JSON.stringify({ error: `Invalid operation: ${op.operation}` }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (!ALLOWED_COLLECTIONS.includes(op.collection)) {
+      return new Response(JSON.stringify({ error: `Invalid collection: ${op.collection}` }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (!op.rkey || typeof op.rkey !== 'string') {
+      return new Response(JSON.stringify({ error: 'Invalid rkey' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if ((op.operation === 'create' || op.operation === 'update') && !op.record) {
+      return new Response(JSON.stringify({ error: 'Record required for create/update' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
+
+  try {
+    // Build applyWrites request
+    const writes = operations.map(op => {
+      if (op.operation === 'delete') {
+        return {
+          $type: 'com.atproto.repo.applyWrites#delete',
+          collection: op.collection,
+          rkey: op.rkey,
+        };
+      } else {
+        // Both create and update use the same format with applyWrites
+        return {
+          $type: 'com.atproto.repo.applyWrites#create',
+          collection: op.collection,
+          rkey: op.rkey,
+          value: { $type: op.collection, ...op.record },
+        };
+      }
+    });
+
+    const requestBody = {
+      repo: session.did,
+      writes,
+    };
+
+    console.log(`Bulk sync: ${operations.length} operations`);
+    const result = await makePdsRequest(session, 'com.atproto.repo.applyWrites', requestBody);
+
+    if (!result.ok) {
+      console.error('Bulk PDS request failed:', result.data);
+      return new Response(JSON.stringify({
+        error: result.data.error || 'PDS request failed',
+        message: result.data.message,
+      }), {
+        status: result.status,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const applyResult = result.data as unknown as ApplyWritesResponse;
+
+    // Cache subscriptions for scheduled feed fetching
+    const subscriptionOps = operations.filter(op => op.collection === 'com.at-rss.feed.subscription');
+    const feedsToFetch: string[] = [];
+
+    for (let i = 0; i < subscriptionOps.length; i++) {
+      const op = subscriptionOps[i];
+      try {
+        if (op.operation === 'create' || op.operation === 'update') {
+          const feedRecord = op.record as { feedUrl: string; title?: string };
+          const resultUri = applyResult.results?.[i]?.uri;
+          const recordUri = resultUri || `at://${session.did}/${op.collection}/${op.rkey}`;
+          await env.DB.prepare(`
+            INSERT OR REPLACE INTO subscriptions_cache
+            (user_did, record_uri, feed_url, title, created_at)
+            VALUES (?, ?, ?, ?, unixepoch())
+          `).bind(
+            session.did,
+            recordUri,
+            feedRecord.feedUrl,
+            feedRecord.title || null
+          ).run();
+
+          // Collect feeds to fetch (for create only)
+          if (op.operation === 'create' && feedRecord.feedUrl) {
+            feedsToFetch.push(feedRecord.feedUrl);
+          }
+        } else if (op.operation === 'delete') {
+          await env.DB.prepare(
+            'DELETE FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
+          ).bind(session.did, `%/${op.rkey}`).run();
+        }
+      } catch (cacheError) {
+        console.error('Failed to cache subscription:', cacheError);
+      }
+    }
+
+    // Fetch feeds for new subscriptions (limit to 5 to stay under subrequest limits)
+    const MAX_FEEDS_TO_FETCH = 5;
+    for (let i = 0; i < Math.min(feedsToFetch.length, MAX_FEEDS_TO_FETCH); i++) {
+      try {
+        await fetchAndCacheFeed(env, feedsToFetch[i]);
+        console.log(`Fetched feed for new subscription: ${feedsToFetch[i]}`);
+      } catch (fetchError) {
+        console.error(`Failed to fetch feed ${feedsToFetch[i]}:`, fetchError);
+      }
+    }
+    if (feedsToFetch.length > MAX_FEEDS_TO_FETCH) {
+      console.log(`${feedsToFetch.length - MAX_FEEDS_TO_FETCH} feeds will be fetched by cron`);
+    }
+
+    // Build response with URIs
+    const results = operations.map((op, i) => ({
+      rkey: op.rkey,
+      uri: applyResult.results?.[i]?.uri || `at://${session.did}/${op.collection}/${op.rkey}`,
+      cid: applyResult.results?.[i]?.cid,
+    }));
+
+    return new Response(JSON.stringify({ results }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Bulk record sync error:', error);
+    const errorMessage = error instanceof Error
+      ? `${error.name}: ${error.message}`
+      : 'Failed to sync records';
     return new Response(
       JSON.stringify({ error: errorMessage }),
       {

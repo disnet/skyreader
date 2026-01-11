@@ -34,10 +34,10 @@ function createSubscriptionsStore() {
   // Listen for realtime new articles notifications
   realtime.on('new_articles', async (payload) => {
     const data = payload as NewArticlesPayload;
-    // Find subscription by feed URL and refresh it
+    // Find subscription by feed URL and refresh from cache (cron already updated it)
     const sub = subscriptions.find((s) => s.feedUrl === data.feedUrl);
     if (sub?.id) {
-      await fetchFeed(sub.id, true);
+      await fetchFeed(sub.id);
     }
   });
 
@@ -88,6 +88,126 @@ function createSubscriptionsStore() {
     });
 
     return id;
+  }
+
+  async function addBulk(
+    feeds: Array<{ feedUrl: string; title: string; siteUrl?: string; category?: string }>,
+    onProgress?: (current: number, total: number) => void
+  ): Promise<{ added: number[]; skipped: string[]; failed: Array<{ url: string; error: string }> }> {
+    const added: number[] = [];
+    const skipped: string[] = [];
+    const failed: Array<{ url: string; error: string }> = [];
+
+    // Get existing feed URLs for duplicate detection
+    const existingUrls = new Set(subscriptions.map((s) => s.feedUrl.toLowerCase()));
+
+    // Filter out duplicates first
+    const feedsToAdd = feeds.filter((feed) => {
+      if (existingUrls.has(feed.feedUrl.toLowerCase())) {
+        skipped.push(feed.feedUrl);
+        return false;
+      }
+      existingUrls.add(feed.feedUrl.toLowerCase());
+      return true;
+    });
+
+    if (feedsToAdd.length === 0) {
+      return { added, skipped, failed };
+    }
+
+    onProgress?.(0, feedsToAdd.length);
+
+    // Create all subscriptions locally first
+    const now = new Date().toISOString();
+    const localRecords: Array<{ id: number; rkey: string; feed: typeof feedsToAdd[0] }> = [];
+
+    for (const feed of feedsToAdd) {
+      const rkey = generateTid();
+      const subscription: Omit<Subscription, 'id'> = {
+        atUri: '',
+        rkey,
+        feedUrl: feed.feedUrl,
+        title: feed.title,
+        siteUrl: feed.siteUrl,
+        category: feed.category,
+        tags: [],
+        createdAt: now,
+        syncStatus: 'pending',
+        localUpdatedAt: Date.now(),
+      };
+
+      try {
+        const id = await db.subscriptions.add(subscription);
+        subscriptions = [...subscriptions, { ...subscription, id }];
+        localRecords.push({ id, rkey, feed });
+        added.push(id);
+      } catch (e) {
+        failed.push({
+          url: feed.feedUrl,
+          error: e instanceof Error ? e.message : 'Failed to save locally',
+        });
+      }
+    }
+
+    onProgress?.(Math.floor(feedsToAdd.length / 2), feedsToAdd.length);
+
+    // Bulk sync to PDS
+    if (localRecords.length > 0) {
+      try {
+        const operations = localRecords.map(({ rkey, feed }) => ({
+          operation: 'create' as const,
+          collection: 'com.at-rss.feed.subscription',
+          rkey,
+          record: {
+            feedUrl: feed.feedUrl,
+            title: feed.title,
+            siteUrl: feed.siteUrl,
+            category: feed.category,
+            createdAt: now,
+          },
+        }));
+
+        const result = await api.bulkSyncRecords(operations);
+
+        // Update local records with URIs from PDS
+        for (const res of result.results) {
+          const local = localRecords.find((r) => r.rkey === res.rkey);
+          if (local && res.uri) {
+            await db.subscriptions.update(local.id, {
+              atUri: res.uri,
+              syncStatus: 'synced',
+            });
+            subscriptions = subscriptions.map((s) =>
+              s.id === local.id ? { ...s, atUri: res.uri, syncStatus: 'synced' as const } : s
+            );
+          }
+        }
+      } catch (e) {
+        // Bulk sync failed - records are saved locally with pending status
+        // They'll sync individually via the sync queue later
+        console.error('Bulk sync failed, will retry individually:', e);
+
+        // Queue individual syncs as fallback
+        for (const { rkey, feed } of localRecords) {
+          await syncQueue.enqueue({
+            operation: 'create',
+            collection: 'com.at-rss.feed.subscription',
+            rkey,
+            record: {
+              feedUrl: feed.feedUrl,
+              title: feed.title,
+              siteUrl: feed.siteUrl,
+              category: feed.category,
+              createdAt: now,
+            },
+          });
+        }
+      }
+    }
+
+    onProgress?.(feedsToAdd.length, feedsToAdd.length);
+
+    return { added, skipped, failed };
   }
 
   async function update(id: number, updates: Partial<Subscription>) {
@@ -152,7 +272,17 @@ function createSubscriptionsStore() {
     feedErrors.delete(id);
 
     try {
-      const feed = await api.fetchFeed(sub.feedUrl, force);
+      // Use cached endpoint by default, direct fetch only when forced
+      const feed = force
+        ? await api.fetchFeed(sub.feedUrl, true)
+        : await api.fetchCachedFeed(sub.feedUrl);
+
+      // If cache miss (no items), don't treat as error - cron will populate
+      if (!feed.items || feed.items.length === 0) {
+        feedLoadingStates = new Map(feedLoadingStates);
+        feedLoadingStates.delete(id);
+        return feed;
+      }
 
       // Store articles
       const existingArticles = await db.articles
@@ -212,6 +342,79 @@ function createSubscriptionsStore() {
 
   async function getAllArticles(): Promise<Article[]> {
     return db.articles.orderBy('publishedAt').reverse().toArray();
+  }
+
+  // Fetch recent items across all subscribed feeds from the backend
+  async function fetchRecentItems(hours = 24): Promise<Article[]> {
+    try {
+      const { items } = await api.getRecentItems(hours);
+
+      // Find subscription IDs for each item
+      const subsByUrl = new Map(subscriptions.map(s => [s.feedUrl, s.id]));
+
+      // Convert to Article format and store in IndexedDB
+      const articles: Article[] = [];
+      for (const item of items) {
+        const subscriptionId = subsByUrl.get(item.feedUrl);
+        if (!subscriptionId) continue;
+
+        // Check if already exists
+        const existing = await db.articles.where('guid').equals(item.guid).first();
+        if (existing) continue;
+
+        const article: Article = {
+          subscriptionId,
+          guid: item.guid,
+          url: item.url,
+          title: item.title,
+          author: item.author,
+          content: item.content,
+          summary: item.summary,
+          imageUrl: item.imageUrl,
+          publishedAt: item.publishedAt,
+          fetchedAt: Date.now(),
+        };
+
+        await db.articles.add(article);
+        articles.push(article);
+      }
+
+      if (articles.length > 0) {
+        articlesVersion++;
+      }
+
+      return articles;
+    } catch (e) {
+      console.error('Failed to fetch recent items:', e);
+      return [];
+    }
+  }
+
+  // Search articles across all feeds
+  async function searchArticles(query: string, limit = 50): Promise<(Article & { feedTitle?: string })[]> {
+    try {
+      const { items } = await api.getItems({ search: query, limit });
+
+      // Map to Article format
+      const subsByUrl = new Map(subscriptions.map(s => [s.feedUrl, s.id]));
+
+      return items.map(item => ({
+        subscriptionId: subsByUrl.get(item.feedUrl) || 0,
+        guid: item.guid,
+        url: item.url,
+        title: item.title,
+        author: item.author,
+        content: item.content,
+        summary: item.summary,
+        imageUrl: item.imageUrl,
+        publishedAt: item.publishedAt,
+        fetchedAt: Date.now(),
+        feedTitle: item.feedTitle,
+      }));
+    } catch (e) {
+      console.error('Failed to search articles:', e);
+      return [];
+    }
   }
 
   async function syncFromPds(): Promise<void> {
@@ -287,11 +490,14 @@ function createSubscriptionsStore() {
     },
     load,
     add,
+    addBulk,
     update,
     remove,
     fetchFeed,
     getArticles,
     getAllArticles,
+    fetchRecentItems,
+    searchArticles,
     syncFromPds,
     clearFeedError,
   };

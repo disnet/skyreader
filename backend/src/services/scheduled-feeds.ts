@@ -1,5 +1,6 @@
 import type { Env } from '../types';
 import { parseFeed } from './feed-parser';
+import { storeItems } from '../routes/feeds';
 
 // Hash URL for cache key (same as feeds.ts)
 function hashUrl(url: string): string {
@@ -23,27 +24,33 @@ interface RefreshResult {
   errors: number;
 }
 
-const BATCH_SIZE = 10;
-const DELAY_BETWEEN_BATCHES_MS = 1000;
+const BATCH_SIZE = 3; // Reduced to stay under CPU limits
+const MAX_FEEDS_PER_RUN = 10; // Reduced to avoid exceeding CPU time limits
+const DELAY_BETWEEN_BATCHES_MS = 500;
 const SEVEN_DAYS_SECONDS = 7 * 24 * 60 * 60;
 const MAX_ERROR_COUNT = 10; // Skip feeds with too many consecutive errors
+const MAX_CONTENT_SIZE = 500000; // 500KB max for cached content to avoid D1 limits
 
 export async function refreshActiveFeeds(env: Env): Promise<RefreshResult> {
   const sevenDaysAgo = Math.floor(Date.now() / 1000) - SEVEN_DAYS_SECONDS;
 
   // Query unique feeds from active users' subscriptions
-  // Ordered by subscriber count so popular feeds are refreshed first
+  // Ordered by: 1) oldest fetch first (to ensure progress), 2) subscriber count (popular feeds prioritized)
   const feedsResult = await env.DB.prepare(`
     SELECT DISTINCT sc.feed_url, COUNT(DISTINCT sc.user_did) as subscriber_count
     FROM subscriptions_cache sc
     INNER JOIN users u ON sc.user_did = u.did
+    LEFT JOIN feed_metadata fm ON sc.feed_url = fm.feed_url
     WHERE u.last_active_at > ?
     GROUP BY sc.feed_url
-    ORDER BY subscriber_count DESC
+    ORDER BY COALESCE(fm.last_scheduled_fetch_at, 0) ASC, subscriber_count DESC
   `).bind(sevenDaysAgo).all<FeedToFetch>();
 
-  const feeds = feedsResult.results || [];
-  console.log(`Scheduled refresh: found ${feeds.length} feeds to check`);
+  const allFeeds = feedsResult.results || [];
+
+  // Limit feeds per run to stay under Cloudflare subrequest limits
+  const feeds = allFeeds.slice(0, MAX_FEEDS_PER_RUN);
+  console.log(`Scheduled refresh: found ${allFeeds.length} feeds, processing ${feeds.length} this run`);
 
   if (feeds.length === 0) {
     return { fetched: 0, skipped: 0, errors: 0 };
@@ -139,9 +146,34 @@ async function fetchAndCacheFeed(
   }
 
   const xml = await response.text();
-  const parsed = parseFeed(xml, feedUrl);
+  let parsed;
+  try {
+    parsed = parseFeed(xml, feedUrl);
+  } catch (parseError) {
+    const errorMsg = parseError instanceof Error ? parseError.message : 'Parse error';
+    await recordFetchError(env, feedUrl, errorMsg);
+    throw parseError;
+  }
 
-  // Cache in D1
+  // Store individual items in feed_items table
+  await storeItems(env, feedUrl, parsed.items);
+
+  // Cache in D1 (with size limit to avoid SQLITE_TOOBIG)
+  let contentToCache = JSON.stringify(parsed);
+  if (contentToCache.length > MAX_CONTENT_SIZE) {
+    // Truncate items to fit within size limit
+    const truncatedParsed = {
+      ...parsed,
+      items: parsed.items.slice(0, Math.floor(parsed.items.length / 2)),
+    };
+    contentToCache = JSON.stringify(truncatedParsed);
+    // If still too big, just cache metadata without items
+    if (contentToCache.length > MAX_CONTENT_SIZE) {
+      contentToCache = JSON.stringify({ ...parsed, items: [] });
+    }
+    console.log(`Truncated cache for ${feedUrl}: ${parsed.items.length} -> ${truncatedParsed.items.length} items`);
+  }
+
   await env.DB.prepare(`
     INSERT INTO feed_cache (url_hash, feed_url, content, etag, last_modified, cached_at)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -153,7 +185,7 @@ async function fetchAndCacheFeed(
   `).bind(
     urlHash,
     feedUrl,
-    JSON.stringify(parsed),
+    contentToCache,
     response.headers.get('ETag') || null,
     response.headers.get('Last-Modified') || null,
     now

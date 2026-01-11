@@ -11,8 +11,26 @@ const parser = new XMLParser({
   isArray: (name) => ['item', 'entry', 'link', 'category'].includes(name),
 });
 
-export function parseFeed(xml: string, feedUrl: string): ParsedFeed {
-  const doc = parser.parse(xml);
+export function parseFeed(content: string, feedUrl: string): ParsedFeed {
+  // Check if it's JSON Feed
+  const trimmed = content.trim();
+  if (trimmed.startsWith('{')) {
+    try {
+      const json = JSON.parse(content);
+      if (json.version && json.version.startsWith('https://jsonfeed.org/')) {
+        return parseJsonFeed(json, feedUrl);
+      }
+    } catch {
+      // Not valid JSON, continue to XML parsing
+    }
+  }
+
+  // Check if it looks like HTML instead of XML
+  if (trimmed.toLowerCase().startsWith('<!doctype html') || trimmed.toLowerCase().startsWith('<html')) {
+    throw new Error(`URL returned HTML instead of a feed: ${feedUrl}`);
+  }
+
+  const doc = parser.parse(content);
 
   // Detect feed type
   if (doc.feed) {
@@ -25,7 +43,45 @@ export function parseFeed(xml: string, feedUrl: string): ParsedFeed {
     return parseRdfFeed(doc['rdf:RDF'], feedUrl);
   }
 
-  throw new Error('Unknown feed format');
+  // Log what we got for debugging
+  const keys = Object.keys(doc).join(', ');
+  throw new Error(`Unknown feed format. Root elements: ${keys || 'none'}`);
+}
+
+function parseJsonFeed(json: any, feedUrl: string): ParsedFeed {
+  const items: FeedItem[] = [];
+
+  const jsonItems = json.items || [];
+  for (const item of jsonItems) {
+    const title = item.title || 'Untitled';
+    const url = item.url || item.external_url || '';
+    const guid = item.id || url || generateGuid(title);
+    const author = item.author?.name || (item.authors?.[0]?.name);
+    const content = item.content_html || item.content_text;
+    const summary = item.summary;
+    const imageUrl = item.image || item.banner_image;
+    const pubDate = item.date_published || item.date_modified;
+
+    items.push({
+      guid,
+      url,
+      title,
+      author,
+      content,
+      summary,
+      imageUrl,
+      publishedAt: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString(),
+    });
+  }
+
+  return {
+    title: json.title || 'Untitled Feed',
+    description: json.description,
+    siteUrl: json.home_page_url,
+    imageUrl: json.icon || json.favicon,
+    items,
+    fetchedAt: Date.now(),
+  };
 }
 
 function parseRssFeed(channel: any, feedUrl: string): ParsedFeed {

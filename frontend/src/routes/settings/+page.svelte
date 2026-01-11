@@ -3,6 +3,9 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { syncStore } from '$lib/stores/sync.svelte';
+  import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
+
+  let showImportModal = $state(false);
 
   onMount(() => {
     if (!auth.isAuthenticated) {
@@ -62,11 +65,21 @@
   </section>
 
   <section class="card">
+    <h2>Import / Export</h2>
+    <p>Import feeds from other RSS readers using OPML files.</p>
+    <button class="btn btn-secondary" onclick={() => showImportModal = true}>
+      Import OPML
+    </button>
+  </section>
+
+  <section class="card">
     <h2>About</h2>
     <p>AT-RSS is a decentralized RSS reader built on the AT Protocol.</p>
     <p>Your data is stored in your Personal Data Server (PDS), giving you full ownership and portability.</p>
   </section>
 </div>
+
+<ImportOPMLModal open={showImportModal} onclose={() => showImportModal = false} />
 
 <style>
   .settings-page {
