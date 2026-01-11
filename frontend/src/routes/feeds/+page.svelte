@@ -45,15 +45,25 @@
     isAdding = true;
 
     try {
-      const feed = await api.fetchFeed(feedUrl);
-      await subscriptionsStore.add(feedUrl, feed.title, {
-        siteUrl: feed.siteUrl,
-      });
+      // Add subscription with URL as temporary title
+      const tempTitle = new URL(feedUrl).hostname;
+      const id = await subscriptionsStore.add(feedUrl, tempTitle, {});
       newFeedUrl = '';
       discoveredFeeds = [];
+      isAdding = false;
+
+      // Fetch feed in background (updates title and loads articles)
+      subscriptionsStore.fetchFeed(id, true).then(async (feed) => {
+        if (feed) {
+          // Update subscription with actual title and siteUrl
+          await subscriptionsStore.update(id, {
+            title: feed.title,
+            siteUrl: feed.siteUrl,
+          });
+        }
+      });
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to add feed';
-    } finally {
       isAdding = false;
     }
   }
@@ -111,11 +121,17 @@
       </div>
     {:else}
       {#each subscriptionsStore.subscriptions as sub (sub.id)}
-        <div class="subscription-card card">
+        {@const loadingState = subscriptionsStore.feedLoadingStates.get(sub.id!)}
+        {@const feedError = subscriptionsStore.feedErrors.get(sub.id!)}
+        <div class="subscription-card card" class:has-error={loadingState === 'error'}>
           <div class="sub-info">
             <h3>{sub.title}</h3>
             <p class="feed-url">{sub.feedUrl}</p>
-            {#if sub.category}
+            {#if loadingState === 'loading'}
+              <span class="loading-status">Loading...</span>
+            {:else if loadingState === 'error'}
+              <span class="error-status" title={feedError}>Error: {feedError}</span>
+            {:else if sub.category}
               <span class="category">{sub.category}</span>
             {/if}
             {#if sub.syncStatus === 'pending'}
@@ -126,8 +142,9 @@
             <button
               class="btn btn-secondary"
               onclick={() => sub.id && subscriptionsStore.fetchFeed(sub.id, true)}
+              disabled={loadingState === 'loading'}
             >
-              Refresh
+              {loadingState === 'loading' ? 'Loading...' : 'Refresh'}
             </button>
             <button
               class="btn btn-danger"
@@ -227,6 +244,30 @@
     color: white;
     border-radius: 4px;
     font-size: 0.75rem;
+  }
+
+  .loading-status {
+    display: inline-block;
+    margin-top: 0.5rem;
+    padding: 0.125rem 0.5rem;
+    background: var(--color-primary);
+    color: white;
+    border-radius: 4px;
+    font-size: 0.75rem;
+  }
+
+  .error-status {
+    display: inline-block;
+    margin-top: 0.5rem;
+    padding: 0.125rem 0.5rem;
+    background: var(--color-error);
+    color: white;
+    border-radius: 4px;
+    font-size: 0.75rem;
+  }
+
+  .subscription-card.has-error {
+    border-color: var(--color-error);
   }
 
   .sub-actions {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
@@ -15,31 +15,84 @@
   let expandedIndex = $state(-1);
   let articleElements: HTMLElement[] = [];
 
+  // Snapshot of displayed items (doesn't change as you read items)
+  let displayedArticles = $state<Article[]>([]);
+  let displayedShares = $state<SocialShare[]>([]);
+
   // Get filter params from URL
   let feedFilter = $derived($page.url.searchParams.get('feed'));
   let starredFilter = $derived($page.url.searchParams.get('starred'));
   let sharerFilter = $derived($page.url.searchParams.get('sharer'));
+  let followingFilter = $derived($page.url.searchParams.get('following'));
 
   // Determine current view mode
-  let viewMode = $derived<'articles' | 'shares'>(sharerFilter ? 'shares' : 'articles');
+  let viewMode = $derived<'articles' | 'shares'>(sharerFilter || followingFilter ? 'shares' : 'articles');
 
-  // Filter articles based on query params
-  let filteredArticles = $derived(() => {
-    if (feedFilter) {
-      const feedId = parseInt(feedFilter);
-      return allArticles.filter(a => a.subscriptionId === feedId);
+  // Build a filter key to detect when we need to recompute the snapshot
+  let filterKey = $derived(
+    `${feedFilter || ''}-${starredFilter || ''}-${sharerFilter || ''}-${followingFilter || ''}`
+  );
+
+  // Track the last filter key and articles version to know when to snapshot
+  let lastFilterKey = $state('');
+  let lastArticlesVersion = $state(-1);
+  let lastSharesLength = $state(-1);
+
+  // Snapshot articles when filter or source data changes (not read state)
+  $effect(() => {
+    // Track these dependencies
+    const currentKey = filterKey;
+    const currentVersion = subscriptionsStore.articlesVersion;
+    const currentArticles = allArticles;
+
+    // Untrack comparisons to avoid loops
+    const prevKey = untrack(() => lastFilterKey);
+    const prevVersion = untrack(() => lastArticlesVersion);
+
+    if (currentKey !== prevKey || currentVersion !== prevVersion) {
+      // Take a snapshot using current read state (untracked to avoid reactivity)
+      const readPositions = untrack(() => readingStore.readPositions);
+
+      let filtered: Article[];
+      if (feedFilter) {
+        const feedId = parseInt(feedFilter);
+        filtered = currentArticles.filter(a => a.subscriptionId === feedId);
+      } else if (starredFilter) {
+        filtered = currentArticles.filter(a => readPositions.get(a.guid)?.starred ?? false);
+      } else {
+        // Default: show only unread articles
+        filtered = currentArticles.filter(a => !readPositions.has(a.guid));
+      }
+
+      displayedArticles = filtered;
+      lastFilterKey = currentKey;
+      lastArticlesVersion = currentVersion;
     }
-    if (starredFilter) {
-      return allArticles.filter(a => readingStore.isStarred(a.guid));
-    }
-    // Default: show only unread articles
-    return allArticles.filter(a => !readingStore.isRead(a.guid));
   });
 
-  // Filter social shares by author
-  let filteredShares = $derived(() => {
-    if (!sharerFilter) return [];
-    return socialStore.shares.filter(s => s.authorDid === sharerFilter);
+  // Snapshot shares when filter or source data changes
+  $effect(() => {
+    // Track these dependencies
+    const shares = socialStore.shares;
+    const currentKey = filterKey;
+
+    // Untrack comparisons to avoid loops
+    const prevKey = untrack(() => lastFilterKey);
+    const prevLength = untrack(() => lastSharesLength);
+
+    if (currentKey !== prevKey || shares.length !== prevLength) {
+      let filtered: SocialShare[];
+      if (followingFilter) {
+        filtered = [...shares];
+      } else if (sharerFilter) {
+        filtered = shares.filter(s => s.authorDid === sharerFilter);
+      } else {
+        filtered = [];
+      }
+
+      displayedShares = filtered;
+      lastSharesLength = shares.length;
+    }
   });
 
   // Get page title based on filter
@@ -49,6 +102,7 @@
       return sub?.title || 'Feed';
     }
     if (starredFilter) return 'Starred';
+    if (followingFilter) return 'Following';
     if (sharerFilter) {
       const user = socialStore.followedUsers.find(u => u.did === sharerFilter);
       return user?.displayName || user?.handle || 'Shared';
@@ -84,33 +138,24 @@
     feedFilter;
     starredFilter;
     sharerFilter;
+    followingFilter;
     selectedIndex = -1;
     expandedIndex = -1;
   });
 
-  // Refresh feeds
-  async function refreshFeeds() {
-    isLoading = true;
-    if (sharerFilter) {
-      // Refresh social feed
-      await socialStore.loadFeed(true);
-    } else {
-      // Refresh RSS feeds
-      for (const sub of subscriptionsStore.subscriptions) {
-        if (sub.id) {
-          await subscriptionsStore.fetchFeed(sub.id, true);
-        }
-      }
-      allArticles = await subscriptionsStore.getAllArticles();
+  // Reload articles when new ones are fetched
+  $effect(() => {
+    const version = subscriptionsStore.articlesVersion;
+    if (version > 0) {
+      subscriptionsStore.getAllArticles().then(articles => {
+        allArticles = articles;
+      });
     }
-    isLoading = false;
-    selectedIndex = -1;
-    expandedIndex = -1;
-  }
+  });
 
-  // Get current items based on view mode
+  // Get current items based on view mode (uses snapshots)
   let currentItems = $derived(() => {
-    return viewMode === 'shares' ? filteredShares() : filteredArticles();
+    return viewMode === 'shares' ? displayedShares : displayedArticles;
   });
 
   function handleKeydown(e: KeyboardEvent) {
@@ -142,8 +187,7 @@
 
     // Mark as read when selecting articles (not shares)
     if (viewMode === 'articles') {
-      const articles = filteredArticles();
-      const article = articles[index];
+      const article = displayedArticles[index];
       const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId);
       if (sub && !readingStore.isRead(article.guid)) {
         readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
@@ -206,9 +250,6 @@
   <div class="feed-page">
     <div class="feed-header">
       <h1>{pageTitle()}</h1>
-      <button class="btn btn-secondary" onclick={refreshFeeds} disabled={isLoading}>
-        {isLoading ? 'Refreshing...' : 'Refresh'}
-      </button>
     </div>
 
     {#if isLoading && currentItems().length === 0}
@@ -218,6 +259,9 @@
         {#if starredFilter}
           <h2>No starred articles</h2>
           <p>Star articles to save them for later</p>
+        {:else if followingFilter}
+          <h2>No shared articles</h2>
+          <p>People you follow haven't shared any articles yet</p>
         {:else if sharerFilter}
           <h2>No shares from this user</h2>
           <p>This user hasn't shared any articles yet</p>
@@ -233,7 +277,7 @@
     {:else if viewMode === 'shares'}
       <!-- Social shares view -->
       <div class="article-list">
-        {#each filteredShares() as share, index (share.recordUri)}
+        {#each displayedShares as share, index (share.recordUri)}
           <div bind:this={articleElements[index]}>
             <div
               class="share-item"
@@ -277,7 +321,7 @@
     {:else}
       <!-- Articles view -->
       <div class="article-list">
-        {#each filteredArticles() as article, index (article.guid)}
+        {#each displayedArticles as article, index (article.guid)}
           {@const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId)}
           <div bind:this={articleElements[index]}>
             <ArticleCard

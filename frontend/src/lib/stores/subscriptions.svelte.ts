@@ -15,6 +15,9 @@ function createSubscriptionsStore() {
   let subscriptions = $state<Subscription[]>([]);
   let isLoading = $state(true);
   let error = $state<string | null>(null);
+  let articlesVersion = $state(0);
+  let feedLoadingStates = $state<Map<number, 'loading' | 'error'>>(new Map());
+  let feedErrors = $state<Map<number, string>>(new Map());
 
   // Listen for sync completions and update local state
   syncQueue.onSyncComplete(async (collection, rkey) => {
@@ -143,6 +146,11 @@ function createSubscriptionsStore() {
     const sub = await db.subscriptions.get(id);
     if (!sub) return null;
 
+    // Set loading state
+    feedLoadingStates = new Map(feedLoadingStates).set(id, 'loading');
+    feedErrors = new Map(feedErrors);
+    feedErrors.delete(id);
+
     try {
       const feed = await api.fetchFeed(sub.feedUrl, force);
 
@@ -170,13 +178,28 @@ function createSubscriptionsStore() {
 
       if (newArticles.length > 0) {
         await db.articles.bulkAdd(newArticles);
+        articlesVersion++;
       }
+
+      // Clear loading state on success
+      feedLoadingStates = new Map(feedLoadingStates);
+      feedLoadingStates.delete(id);
 
       return feed;
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to fetch feed';
+      const errorMessage = e instanceof Error ? e.message : 'Failed to fetch feed';
+      // Set error state
+      feedLoadingStates = new Map(feedLoadingStates).set(id, 'error');
+      feedErrors = new Map(feedErrors).set(id, errorMessage);
       return null;
     }
+  }
+
+  function clearFeedError(id: number) {
+    feedLoadingStates = new Map(feedLoadingStates);
+    feedLoadingStates.delete(id);
+    feedErrors = new Map(feedErrors);
+    feedErrors.delete(id);
   }
 
   async function getArticles(subscriptionId: number): Promise<Article[]> {
@@ -253,6 +276,15 @@ function createSubscriptionsStore() {
     get error() {
       return error;
     },
+    get articlesVersion() {
+      return articlesVersion;
+    },
+    get feedLoadingStates() {
+      return feedLoadingStates;
+    },
+    get feedErrors() {
+      return feedErrors;
+    },
     load,
     add,
     update,
@@ -261,6 +293,7 @@ function createSubscriptionsStore() {
     getArticles,
     getAllArticles,
     syncFromPds,
+    clearFeedError,
   };
 }
 
