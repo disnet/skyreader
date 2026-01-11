@@ -335,10 +335,16 @@ export async function handleAuthCallback(request: Request, env: Env, ctx: Execut
       'SELECT did FROM users WHERE did = ?'
     ).bind(oauthState.did).first();
 
-    // Store/update user in D1
+    // Store/update user in D1 (use ON CONFLICT to avoid CASCADE DELETE from INSERT OR REPLACE)
     await env.DB.prepare(`
-      INSERT OR REPLACE INTO users (did, handle, display_name, avatar_url, pds_url, updated_at)
+      INSERT INTO users (did, handle, display_name, avatar_url, pds_url, updated_at)
       VALUES (?, ?, ?, ?, ?, unixepoch())
+      ON CONFLICT(did) DO UPDATE SET
+        handle = excluded.handle,
+        display_name = excluded.display_name,
+        avatar_url = excluded.avatar_url,
+        pds_url = excluded.pds_url,
+        updated_at = unixepoch()
     `).bind(oauthState.did, handle, displayName || null, avatarUrl || null, oauthState.pdsUrl).run();
 
     // For new users: register DID with Jetstream and sync their follows
