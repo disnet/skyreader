@@ -7,8 +7,8 @@
     import { readingStore } from "$lib/stores/reading.svelte";
     import { socialStore } from "$lib/stores/social.svelte";
     import { sharesStore } from "$lib/stores/shares.svelte";
+    import { onMount, onDestroy } from "svelte";
     import AddFeedModal from "./AddFeedModal.svelte";
-    import PopoverMenu from "./PopoverMenu.svelte";
 
     async function removeFeed(id: number) {
         if (confirm('Are you sure you want to remove this subscription?')) {
@@ -17,6 +17,127 @@
     }
 
     let showAddFeedModal = $state(false);
+
+    // Sidebar resize state
+    const MIN_WIDTH = 180;
+    const MAX_WIDTH = 400;
+    const DEFAULT_WIDTH = 260;
+    let sidebarWidth = $state(DEFAULT_WIDTH);
+    let isResizing = $state(false);
+
+    function loadSavedWidth() {
+        const saved = localStorage.getItem('sidebar-width');
+        if (saved) {
+            const width = parseInt(saved, 10);
+            if (width >= MIN_WIDTH && width <= MAX_WIDTH) {
+                sidebarWidth = width;
+            }
+        }
+        updateCssVariable(sidebarWidth);
+    }
+
+    function saveWidth(width: number) {
+        localStorage.setItem('sidebar-width', String(width));
+    }
+
+    function updateCssVariable(width: number) {
+        document.documentElement.style.setProperty('--sidebar-width', `${width}px`);
+    }
+
+    // Update CSS variable whenever width changes
+    $effect(() => {
+        updateCssVariable(sidebarWidth);
+    });
+
+    function startResize(e: MouseEvent) {
+        e.preventDefault();
+        isResizing = true;
+        document.body.classList.add('sidebar-resizing');
+        document.addEventListener('mousemove', handleResize);
+        document.addEventListener('mouseup', stopResize);
+    }
+
+    function handleResize(e: MouseEvent) {
+        if (!isResizing) return;
+        const newWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, e.clientX));
+        sidebarWidth = newWidth;
+    }
+
+    function stopResize() {
+        if (isResizing) {
+            isResizing = false;
+            document.body.classList.remove('sidebar-resizing');
+            saveWidth(sidebarWidth);
+            document.removeEventListener('mousemove', handleResize);
+            document.removeEventListener('mouseup', stopResize);
+        }
+    }
+
+    // Context menu state
+    let contextMenu = $state<{ x: number; y: number; feedId: number } | null>(null);
+    let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+    let longPressTriggered = $state(false);
+
+    function handleContextMenu(e: MouseEvent, feedId: number) {
+        e.preventDefault();
+        contextMenu = { x: e.clientX, y: e.clientY, feedId };
+    }
+
+    function handleTouchStart(e: TouchEvent, feedId: number) {
+        longPressTriggered = false;
+        const touch = e.touches[0];
+        longPressTimer = setTimeout(() => {
+            longPressTriggered = true;
+            contextMenu = { x: touch.clientX, y: touch.clientY, feedId };
+        }, 500);
+    }
+
+    function handleTouchEnd(e: TouchEvent) {
+        if (longPressTimer) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+        }
+        if (longPressTriggered) {
+            e.preventDefault();
+        }
+    }
+
+    function handleTouchMove() {
+        if (longPressTimer) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+        }
+    }
+
+    function closeContextMenu() {
+        contextMenu = null;
+    }
+
+    function handleClickOutside(e: MouseEvent) {
+        if (contextMenu) {
+            closeContextMenu();
+        }
+    }
+
+    function handleKeydown(e: KeyboardEvent) {
+        if (contextMenu && e.key === 'Escape') {
+            closeContextMenu();
+        }
+    }
+
+    onMount(() => {
+        loadSavedWidth();
+        document.addEventListener('click', handleClickOutside);
+        document.addEventListener('keydown', handleKeydown);
+    });
+
+    onDestroy(() => {
+        document.removeEventListener('click', handleClickOutside);
+        document.removeEventListener('keydown', handleKeydown);
+        document.removeEventListener('mousemove', handleResize);
+        document.removeEventListener('mouseup', stopResize);
+        if (longPressTimer) clearTimeout(longPressTimer);
+    });
 
     let feedUnreadCounts = $state<Map<number, number>>(new Map());
 
@@ -147,7 +268,17 @@
     class="sidebar"
     class:collapsed={sidebarStore.isCollapsed}
     class:open={sidebarStore.isOpen}
+    class:resizing={isResizing}
+    style="--sidebar-width: {sidebarWidth}px"
 >
+    <!-- Resize handle -->
+    <div
+        class="resize-handle"
+        onmousedown={startResize}
+        role="separator"
+        aria-orientation="vertical"
+    ></div>
+
     <!-- Header row -->
     <div class="sidebar-header">
         <a href="/settings" class="user-info" onclick={() => sidebarStore.closeMobile()}>
@@ -317,56 +448,43 @@
                         {@const faviconUrl = getFaviconUrl(sub)}
                         {@const loadingState = subscriptionsStore.feedLoadingStates.get(sub.id!)}
                         {@const feedError = subscriptionsStore.feedErrors.get(sub.id!)}
-                        <div
+                        <button
                             class="nav-item sub-item feed-item"
                             class:active={currentFilter().type === "feed" &&
                                 currentFilter().id === sub.id}
                             class:has-error={loadingState === "error"}
+                            onclick={() => selectFilter("feed", sub.id)}
+                            oncontextmenu={(e) => sub.id && handleContextMenu(e, sub.id)}
+                            ontouchstart={(e) => sub.id && handleTouchStart(e, sub.id)}
+                            ontouchend={handleTouchEnd}
+                            ontouchmove={handleTouchMove}
+                            title={feedError || ""}
                         >
-                            <button
-                                class="feed-item-content"
-                                onclick={() => selectFilter("feed", sub.id)}
-                                title={feedError || ""}
-                            >
-                                {#if loadingState === "loading"}
-                                    <span class="feed-loading-spinner"></span>
-                                {:else if loadingState === "error"}
-                                    <span class="feed-error-icon" title={feedError}>!</span>
-                                {:else if faviconUrl}
-                                    <img src={faviconUrl} alt="" class="feed-favicon" />
-                                {:else}
-                                    <span class="feed-favicon-placeholder"></span>
-                                {/if}
-                                <span class="nav-label">{sub.title}</span>
-                            </button>
-                            <div class="feed-item-actions">
-                                {#if loadingState === "error"}
-                                    <button
-                                        class="retry-btn"
-                                        onclick={(e) => {
-                                            e.stopPropagation();
-                                            subscriptionsStore.fetchFeed(sub.id!, true);
-                                        }}
-                                        title="Retry"
-                                    >
-                                        ↻
-                                    </button>
-                                {/if}
-                                <PopoverMenu
-                                    items={[
-                                        {
-                                            label: 'Delete',
-                                            icon: '🗑',
-                                            variant: 'danger',
-                                            onclick: () => sub.id && removeFeed(sub.id),
-                                        },
-                                    ]}
-                                />
-                                {#if count > 0}
-                                    <span class="nav-count">{count}</span>
-                                {/if}
-                            </div>
-                        </div>
+                            {#if loadingState === "loading"}
+                                <span class="feed-loading-spinner"></span>
+                            {:else if loadingState === "error"}
+                                <span class="feed-error-icon" title={feedError}>!</span>
+                            {:else if faviconUrl}
+                                <img src={faviconUrl} alt="" class="feed-favicon" />
+                            {:else}
+                                <span class="feed-favicon-placeholder"></span>
+                            {/if}
+                            <span class="nav-label">{sub.title}</span>
+                            {#if loadingState === "error"}
+                                <button
+                                    class="retry-btn"
+                                    onclick={(e) => {
+                                        e.stopPropagation();
+                                        subscriptionsStore.fetchFeed(sub.id!, true);
+                                    }}
+                                    title="Retry"
+                                >
+                                    ↻
+                                </button>
+                            {:else if count > 0}
+                                <span class="nav-count">{count}</span>
+                            {/if}
+                        </button>
                     {:else}
                         <div class="empty-section">No subscriptions</div>
                     {/each}
@@ -377,6 +495,26 @@
 </aside>
 
 <AddFeedModal open={showAddFeedModal} onclose={() => showAddFeedModal = false} />
+
+{#if contextMenu}
+    <div
+        class="context-menu"
+        style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
+        role="menu"
+    >
+        <button
+            class="context-menu-item danger"
+            onclick={() => {
+                if (contextMenu) removeFeed(contextMenu.feedId);
+                closeContextMenu();
+            }}
+            role="menuitem"
+        >
+            <span class="context-menu-icon">🗑</span>
+            Delete
+        </button>
+    </div>
+{/if}
 
 <style>
     .sidebar-backdrop {
@@ -404,6 +542,28 @@
             width 0.2s ease,
             transform 0.2s ease;
         overflow-y: auto;
+    }
+
+    .sidebar.resizing {
+        transition: none;
+        user-select: none;
+    }
+
+    .resize-handle {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 4px;
+        height: 100%;
+        cursor: col-resize;
+        background: transparent;
+        z-index: 10;
+        transition: background-color 0.15s;
+    }
+
+    .resize-handle:hover,
+    .sidebar.resizing .resize-handle {
+        background: var(--color-primary);
     }
 
     .sidebar.collapsed {
@@ -518,17 +678,11 @@
     .nav-count {
         flex-shrink: 0;
         font-size: 0.75rem;
-        background: var(--color-text-secondary);
-        color: var(--color-bg);
-        padding: 0.125rem 0.375rem;
-        border-radius: 10px;
-        min-width: 1.25rem;
-        text-align: center;
+        color: var(--color-text-secondary);
     }
 
     .nav-item.active .nav-count {
-        background: var(--color-primary);
-        color: white;
+        color: var(--color-primary);
     }
 
     .nav-section {
@@ -692,42 +846,11 @@
         opacity: 0.5;
     }
 
-    /* Feed item with popover menu */
+    /* Feed item */
     .feed-item {
-        display: flex;
-        align-items: center;
-        padding: 0 0.5rem 0 1.5rem;
-    }
-
-    .feed-item-content {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        flex: 1;
-        min-width: 0;
-        padding: 0.5rem 0;
-        background: none;
-        border: none;
-        cursor: pointer;
-        text-align: left;
-        font: inherit;
-        color: inherit;
-    }
-
-    .feed-item-actions {
-        display: flex;
-        align-items: center;
-        flex-shrink: 0;
-        gap: 0.25rem;
-    }
-
-    .feed-item-actions :global(.popover-menu) {
-        opacity: 0;
-        transition: opacity 0.15s;
-    }
-
-    .feed-item:hover .feed-item-actions :global(.popover-menu) {
-        opacity: 1;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
     }
 
     .retry-btn {
@@ -775,5 +898,48 @@
         .nav-item:hover {
             background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
         }
+    }
+
+    /* Context menu */
+    .context-menu {
+        position: fixed;
+        min-width: 140px;
+        background: var(--color-bg);
+        border: 1px solid var(--color-border);
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        z-index: 100;
+        overflow: hidden;
+    }
+
+    .context-menu-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        width: 100%;
+        padding: 0.625rem 0.875rem;
+        border: none;
+        background: transparent;
+        color: var(--color-text);
+        font-size: 0.875rem;
+        text-align: left;
+        cursor: pointer;
+        transition: background-color 0.15s;
+    }
+
+    .context-menu-item:hover {
+        background: var(--color-bg-secondary);
+    }
+
+    .context-menu-item.danger {
+        color: var(--color-error);
+    }
+
+    .context-menu-item.danger:hover {
+        background: rgba(244, 67, 54, 0.1);
+    }
+
+    .context-menu-icon {
+        font-size: 1rem;
     }
 </style>

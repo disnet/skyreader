@@ -11,6 +11,8 @@
   import ShareCard from '$lib/components/ShareCard.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import LoadingState from '$lib/components/LoadingState.svelte';
+  import PopoverMenu from '$lib/components/PopoverMenu.svelte';
+  import { goto } from '$app/navigation';
   import type { Article, FeedItem, SocialShare, CombinedFeedItem, UserShare } from '$lib/types';
 
   let allArticles = $state<Article[]>([]);
@@ -215,6 +217,13 @@
     return 'All';
   });
 
+  async function removeFeed(id: number) {
+    if (confirm('Are you sure you want to remove this subscription?')) {
+      await subscriptionsStore.remove(id);
+      goto('/');
+    }
+  }
+
   onMount(async () => {
     if (auth.isAuthenticated) {
       await subscriptionsStore.load();
@@ -361,7 +370,21 @@
 {:else}
   <div class="feed-page">
     <div class="feed-header">
-      <h1>{pageTitle}</h1>
+      <div class="feed-title-row">
+        <h1>{pageTitle}</h1>
+        {#if feedFilter}
+          <PopoverMenu
+            items={[
+              {
+                label: 'Delete',
+                icon: '🗑',
+                variant: 'danger',
+                onclick: () => removeFeed(parseInt(feedFilter)),
+              },
+            ]}
+          />
+        {/if}
+      </div>
       {#if (!feedFilter && !starredFilter && !sharerFilter && !followingFilter) || feedsFilter || feedFilter}
         <div class="view-toggle">
           <button
@@ -694,6 +717,12 @@
 
   .feed-header h1 {
     font-size: 1.5rem;
+  }
+
+  .feed-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
 
   .view-toggle {

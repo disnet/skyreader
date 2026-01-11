@@ -135,3 +135,13 @@ input, textarea {
 .empty-state h2 {
   margin-bottom: 0.5rem;
 }
+
+/* Sidebar resize state */
+body.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.sidebar-resizing * {
+  transition: none !important;
+}
