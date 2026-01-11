@@ -5,10 +5,9 @@ compatibility_date = "2025-09-27"
 [observability]
 enabled = true
 
-# Durable Objects for Jetstream consumer and realtime hub
+# Durable Objects for realtime hub
 [durable_objects]
 bindings = [
-  { name = "JETSTREAM_CONSUMER", class_name = "JetstreamConsumer" },
   { name = "REALTIME_HUB", class_name = "RealtimeHub" }
 ]
 
@@ -19,6 +18,10 @@ new_sqlite_classes = ["JetstreamConsumer"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["RealtimeHub"]
+
+[[migrations]]
+tag = "v3"
+deleted_classes = ["JetstreamConsumer"]
 
 # D1 Database
 [[d1_databases]]
@@ -39,9 +42,9 @@ id = "c969d539d9174b3e9a9646ec4df6ef13"
 [vars]
 FRONTEND_URL = "http://127.0.0.1:5173"
 
-# Cron Triggers - run every 15 minutes
+# Cron Triggers - run every minute for Jetstream polling
 [triggers]
-crons = ["*/15 * * * *"]
+crons = ["* * * * *"]
 
 # Development environment
 [env.dev]

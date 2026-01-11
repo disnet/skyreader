@@ -100,19 +100,24 @@ export async function handleFeedFetch(request: Request, env: Env): Promise<Respo
     const xml = await response.text();
     const parsed = parseFeed(xml, feedUrl);
 
-    // Cache the parsed feed
-    await Promise.all([
-      env.FEED_CACHE.put(`feed:${urlHash}`, JSON.stringify(parsed), { expirationTtl: 900 }), // 15 min
-      env.FEED_CACHE.put(
-        `feed:${urlHash}:meta`,
-        JSON.stringify({
-          etag: response.headers.get('ETag'),
-          lastModified: response.headers.get('Last-Modified'),
-          fetchedAt: Date.now(),
-        }),
-        { expirationTtl: 3600 }
-      ), // 1 hour
-    ]);
+    // Cache the parsed feed (best effort - don't fail if KV limit reached)
+    try {
+      await Promise.all([
+        env.FEED_CACHE.put(`feed:${urlHash}`, JSON.stringify(parsed), { expirationTtl: 900 }), // 15 min
+        env.FEED_CACHE.put(
+          `feed:${urlHash}:meta`,
+          JSON.stringify({
+            etag: response.headers.get('ETag'),
+            lastModified: response.headers.get('Last-Modified'),
+            fetchedAt: Date.now(),
+          }),
+          { expirationTtl: 3600 }
+        ), // 1 hour
+      ]);
+    } catch (cacheError) {
+      // KV limit likely reached - continue without caching
+      console.warn('Failed to cache feed (KV limit?):', cacheError);
+    }
 
     // Update feed metadata in D1
     await env.DB.prepare(`
@@ -208,8 +213,12 @@ export async function handleArticleFetch(request: Request, env: Env): Promise<Re
     const xml = await response.text();
     const parsed = parseFeed(xml, feedUrl);
 
-    // Cache the parsed feed
-    await env.FEED_CACHE.put(`feed:${urlHash}`, JSON.stringify(parsed), { expirationTtl: 900 });
+    // Cache the parsed feed (best effort)
+    try {
+      await env.FEED_CACHE.put(`feed:${urlHash}`, JSON.stringify(parsed), { expirationTtl: 900 });
+    } catch (cacheError) {
+      console.warn('Failed to cache feed (KV limit?):', cacheError);
+    }
 
     // Find the article by guid
     const article = parsed.items.find(item => item.guid === guid);

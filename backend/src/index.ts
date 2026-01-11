@@ -5,8 +5,8 @@ import { handleSocialFeed, handleSyncFollows, handleFollowedUsers, handlePopular
 import { handleRecordSync, handleRecordsList } from './routes/records';
 import { getSessionFromRequest, updateUserActivity } from './services/oauth';
 import { refreshActiveFeeds } from './services/scheduled-feeds';
+import { pollJetstream } from './services/jetstream-poller';
 
-export { JetstreamConsumer } from './durable-objects/jetstream-consumer';
 export { RealtimeHub } from './durable-objects/realtime-hub';
 
 function corsHeaders(origin: string | null, allowedOrigin: string): HeadersInit {
@@ -100,20 +100,6 @@ export default {
           return hub.fetch(request);
         }
 
-        // Jetstream debug routes
-        case url.pathname === '/api/jetstream/status': {
-          const jetstreamId = env.JETSTREAM_CONSUMER.idFromName('main-v2');
-          const jetstream = env.JETSTREAM_CONSUMER.get(jetstreamId);
-          response = await jetstream.fetch('http://internal/status');
-          break;
-        }
-        case url.pathname === '/api/jetstream/reconnect': {
-          const jetstreamId = env.JETSTREAM_CONSUMER.idFromName('main-v2');
-          const jetstream = env.JETSTREAM_CONSUMER.get(jetstreamId);
-          response = await jetstream.fetch('http://internal/reconnect');
-          break;
-        }
-
         default:
           response = new Response(JSON.stringify({ error: 'Not found' }), {
             status: 404,
@@ -151,23 +137,48 @@ export default {
   ): Promise<void> {
     console.log(`Cron triggered: ${controller.cron}`);
 
+    // Poll Jetstream for new shares
     try {
-      const result = await refreshActiveFeeds(env);
+      const jetstreamResult = await pollJetstream(env);
       console.log(
-        `Scheduled feed refresh complete: ${result.fetched} fetched, ` +
-        `${result.skipped} skipped (not modified), ${result.errors} errors`
+        `Jetstream poll complete: ${jetstreamResult.processed} processed, ` +
+        `${jetstreamResult.errors} errors`
       );
     } catch (error) {
-      console.error('Scheduled feed refresh failed:', error);
+      console.error('Jetstream poll failed:', error);
     }
 
-    // Ensure JetstreamConsumer stays alive (wakes it up if hibernated)
-    try {
-      const jetstreamId = env.JETSTREAM_CONSUMER.idFromName('main-v2');
-      const jetstream = env.JETSTREAM_CONSUMER.get(jetstreamId);
-      await jetstream.fetch('http://internal/status');
-    } catch (error) {
-      console.error('Failed to ping JetstreamConsumer:', error);
+    // Refresh active feeds (only every 15 minutes based on cron config)
+    // Note: Now that cron runs every minute, we only refresh feeds periodically
+    const minute = new Date().getMinutes();
+    if (minute % 15 === 0) {
+      try {
+        const result = await refreshActiveFeeds(env);
+        console.log(
+          `Scheduled feed refresh complete: ${result.fetched} fetched, ` +
+          `${result.skipped} skipped (not modified), ${result.errors} errors`
+        );
+      } catch (error) {
+        console.error('Scheduled feed refresh failed:', error);
+      }
+    }
+
+    // Clean up expired D1 fallback data (once per hour)
+    if (minute === 0) {
+      try {
+        const now = Date.now();
+        const [oauthResult, sessionsResult] = await Promise.all([
+          env.DB.prepare('DELETE FROM oauth_state WHERE expires_at < ?').bind(now).run(),
+          env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now).run(),
+        ]);
+        const oauthDeleted = oauthResult.meta?.changes || 0;
+        const sessionsDeleted = sessionsResult.meta?.changes || 0;
+        if (oauthDeleted > 0 || sessionsDeleted > 0) {
+          console.log(`Cleanup: deleted ${oauthDeleted} expired OAuth states, ${sessionsDeleted} expired sessions`);
+        }
+      } catch (error) {
+        console.error('Cleanup of expired D1 data failed:', error);
+      }
     }
   },
 };

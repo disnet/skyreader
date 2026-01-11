@@ -209,42 +209,111 @@ export async function fetchAuthServerMetadata(pdsUrl: string): Promise<{
   };
 }
 
-// Store OAuth state in KV
+// Store OAuth state in D1
 export async function storeOAuthState(env: Env, state: string, data: OAuthState): Promise<void> {
-  await env.SESSION_CACHE.put(`oauth:state:${state}`, JSON.stringify(data), {
-    expirationTtl: 600, // 10 minutes
-  });
+  const expiresAt = Date.now() + 600 * 1000; // 10 minutes
+  await env.DB.prepare(`
+    INSERT INTO oauth_state (state, code_verifier, did, handle, pds_url, auth_server, return_url, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    state,
+    data.codeVerifier,
+    data.did,
+    data.handle,
+    data.pdsUrl,
+    data.authServer,
+    data.returnUrl || null,
+    expiresAt
+  ).run();
 }
 
-// Get OAuth state from KV
+// Get OAuth state from D1
 export async function getOAuthState(env: Env, state: string): Promise<OAuthState | null> {
-  const data = await env.SESSION_CACHE.get(`oauth:state:${state}`);
-  if (!data) return null;
-  return JSON.parse(data) as OAuthState;
+  const row = await env.DB.prepare(
+    'SELECT * FROM oauth_state WHERE state = ? AND expires_at > ?'
+  ).bind(state, Date.now()).first<{
+    code_verifier: string;
+    did: string;
+    handle: string;
+    pds_url: string;
+    auth_server: string;
+    return_url: string | null;
+  }>();
+
+  if (!row) return null;
+
+  return {
+    codeVerifier: row.code_verifier,
+    did: row.did,
+    handle: row.handle,
+    pdsUrl: row.pds_url,
+    authServer: row.auth_server,
+    returnUrl: row.return_url || undefined,
+  };
 }
 
-// Delete OAuth state from KV
+// Delete OAuth state from D1
 export async function deleteOAuthState(env: Env, state: string): Promise<void> {
-  await env.SESSION_CACHE.delete(`oauth:state:${state}`);
+  await env.DB.prepare('DELETE FROM oauth_state WHERE state = ?').bind(state).run();
 }
 
-// Store session in KV
+// Store session in D1
 export async function storeSession(env: Env, sessionId: string, session: Session): Promise<void> {
-  await env.SESSION_CACHE.put(`session:${sessionId}`, JSON.stringify(session), {
-    expirationTtl: 2592000, // 30 days - tokens are refreshed automatically before expiry
-  });
+  await env.DB.prepare(`
+    INSERT INTO sessions (session_id, did, handle, display_name, avatar_url, pds_url, access_token, refresh_token, dpop_private_key, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(session_id) DO UPDATE SET
+      access_token = excluded.access_token,
+      refresh_token = excluded.refresh_token,
+      expires_at = excluded.expires_at
+  `).bind(
+    sessionId,
+    session.did,
+    session.handle,
+    session.displayName || null,
+    session.avatarUrl || null,
+    session.pdsUrl,
+    session.accessToken,
+    session.refreshToken,
+    session.dpopPrivateKey,
+    session.expiresAt
+  ).run();
 }
 
-// Get session from KV
+// Get session from D1
 export async function getSession(env: Env, sessionId: string): Promise<Session | null> {
-  const data = await env.SESSION_CACHE.get(`session:${sessionId}`);
-  if (!data) return null;
-  return JSON.parse(data) as Session;
+  const row = await env.DB.prepare(
+    'SELECT * FROM sessions WHERE session_id = ? AND expires_at > ?'
+  ).bind(sessionId, Date.now()).first<{
+    did: string;
+    handle: string;
+    display_name: string | null;
+    avatar_url: string | null;
+    pds_url: string;
+    access_token: string;
+    refresh_token: string;
+    dpop_private_key: string;
+    expires_at: number;
+  }>();
+
+  if (!row) return null;
+
+  return {
+    did: row.did,
+    handle: row.handle,
+    displayName: row.display_name || undefined,
+    avatarUrl: row.avatar_url || undefined,
+    pdsUrl: row.pds_url,
+    accessToken: row.access_token,
+    refreshToken: row.refresh_token,
+    dpopPrivateKey: row.dpop_private_key,
+    expiresAt: row.expires_at,
+  };
 }
 
-// Delete session from KV
+// Delete session from D1
 export async function deleteSession(env: Env, sessionId: string): Promise<void> {
-  await env.SESSION_CACHE.delete(`session:${sessionId}`);
+  await env.DB.prepare('DELETE FROM sessions WHERE session_id = ?').bind(sessionId).run();
 }
 
 // Get session from Authorization header, auto-refreshing if needed
@@ -362,9 +431,8 @@ async function refreshSession(env: Env, sessionId: string, session: Session): Pr
       expiresAt: Date.now() + tokenData.expires_in * 1000,
     };
 
-    // Store updated session with fresh TTL
+    // Store updated session
     await storeSession(env, sessionId, updatedSession);
-
     console.log('Session refreshed successfully for', session.handle);
     return updatedSession;
   } catch (error) {

@@ -25,6 +25,8 @@ AT Protocol OAuth has specific requirements:
 
 ## Architecture Details
 
+See [backend/ARCHITECTURE.md](backend/ARCHITECTURE.md) for detailed backend documentation.
+
 ### Backend (Cloudflare Workers)
 
 **Entry Point**: `backend/src/index.ts`
@@ -39,9 +41,11 @@ AT Protocol OAuth has specific requirements:
 **Services**:
 - `backend/src/services/oauth.ts` - PKCE, DPoP, handle resolution, session management
 - `backend/src/services/feed-parser.ts` - RSS/Atom parsing
+- `backend/src/services/jetstream-poller.ts` - Polls Jetstream for share events (cron-triggered)
+- `backend/src/services/scheduled-feeds.ts` - Refreshes RSS feeds on schedule
 
 **Durable Objects**:
-- `backend/src/durable-objects/jetstream-consumer.ts` - Consumes AT Protocol firehose for share aggregation
+- `backend/src/durable-objects/realtime-hub.ts` - Broadcasts real-time updates to connected clients
 
 **Storage**:
 - D1: Users, follows cache, aggregated shares, feed metadata, sync state
@@ -118,26 +122,6 @@ social/share.json       - Shared article
    - `use_dpop_nonce`: Need to retry with nonce from response header
    - `invalid_client_metadata`: client_id URL not accessible or metadata invalid
    - `localhost` errors: Use `127.0.0.1` instead
-
-### Updating Durable Object Code
-
-Durable Objects persist across code deploys. WebSocket event handlers are closures that capture code at connection time, so they won't automatically pick up new code.
-
-**For WebSocket handler changes** (in `jetstream-consumer.ts`):
-1. Bump the `CODE_VERSION` constant at the top of the file
-2. Deploy with `npx wrangler deploy`
-3. Within 30 seconds, the alarm detects the version mismatch and forces a reconnect with new handlers
-
-**For major changes requiring a fresh instance**:
-1. Change the instance name in `index.ts` and `auth.ts` (e.g., `'main-v2'` → `'main-v3'`)
-2. Deploy
-3. The new instance registers itself as active in KV
-4. Old instances detect they're stale within 30 seconds and shut down
-
-**Debugging DO state**:
-- Check status: `curl https://at-rss-api.YOUR_SUBDOMAIN.workers.dev/api/jetstream/status`
-- Status shows: `instanceId`, `isActiveInstance`, `codeVersion`, `storedVersion`
-- Force reconnect: `curl https://at-rss-api.YOUR_SUBDOMAIN.workers.dev/api/jetstream/reconnect`
 
 ## Environment Variables
 

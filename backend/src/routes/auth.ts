@@ -347,29 +347,10 @@ export async function handleAuthCallback(request: Request, env: Env, ctx: Execut
         updated_at = unixepoch()
     `).bind(oauthState.did, handle, displayName || null, avatarUrl || null, oauthState.pdsUrl).run();
 
-    // For new users: register DID with Jetstream and sync their follows
+    // For new users: sync their existing follows from PDS
     if (!existingUser) {
-      console.log(`First login for ${handle}, registering with Jetstream and syncing follows...`);
+      console.log(`First login for ${handle}, syncing follows...`);
 
-      // Register DID with Jetstream consumer for real-time follow tracking
-      ctx.waitUntil(
-        (async () => {
-          try {
-            const jetstreamId = env.JETSTREAM_CONSUMER.idFromName('main-v2');
-            const jetstream = env.JETSTREAM_CONSUMER.get(jetstreamId);
-            await jetstream.fetch('http://internal/register-did', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ did: oauthState.did }),
-            });
-            console.log(`Registered DID ${oauthState.did} with Jetstream consumer`);
-          } catch (error) {
-            console.error('Failed to register DID with Jetstream:', error);
-          }
-        })()
-      );
-
-      // Sync their existing follows from PDS
       ctx.waitUntil(
         syncFollowsForUser(env, session)
           .then(syncedCount => console.log(`Synced ${syncedCount} follows for ${handle}`))

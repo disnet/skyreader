@@ -135,19 +135,9 @@ async function fetchAndCacheFeed(
   const xml = await response.text();
   const parsed = parseFeed(xml, feedUrl);
 
-  // Cache the parsed feed
-  await Promise.all([
-    env.FEED_CACHE.put(`feed:${urlHash}`, JSON.stringify(parsed), { expirationTtl: 900 }), // 15 min
-    env.FEED_CACHE.put(
-      `feed:${urlHash}:meta`,
-      JSON.stringify({
-        etag: response.headers.get('ETag'),
-        lastModified: response.headers.get('Last-Modified'),
-        fetchedAt: Date.now(),
-      }),
-      { expirationTtl: 3600 }
-    ), // 1 hour
-  ]);
+  // Note: We don't cache to KV here to stay within free plan limits (1,000 writes/day).
+  // KV cache is populated on-demand when users fetch feeds via the API.
+  // We only store metadata in D1 which has higher write limits.
 
   // Update feed metadata in D1
   await env.DB.prepare(`

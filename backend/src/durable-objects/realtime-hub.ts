@@ -292,9 +292,33 @@ export class RealtimeHub implements DurableObject {
   }
 
   private async getSession(sessionId: string): Promise<Session | null> {
-    const sessionData = await this.env.SESSION_CACHE.get(`session:${sessionId}`);
-    if (!sessionData) return null;
-    return JSON.parse(sessionData) as Session;
+    const row = await this.env.DB.prepare(
+      'SELECT * FROM sessions WHERE session_id = ? AND expires_at > ?'
+    ).bind(sessionId, Date.now()).first<{
+      did: string;
+      handle: string;
+      display_name: string | null;
+      avatar_url: string | null;
+      pds_url: string;
+      access_token: string;
+      refresh_token: string;
+      dpop_private_key: string;
+      expires_at: number;
+    }>();
+
+    if (!row) return null;
+
+    return {
+      did: row.did,
+      handle: row.handle,
+      displayName: row.display_name || undefined,
+      avatarUrl: row.avatar_url || undefined,
+      pdsUrl: row.pds_url,
+      accessToken: row.access_token,
+      refreshToken: row.refresh_token,
+      dpopPrivateKey: row.dpop_private_key,
+      expiresAt: row.expires_at,
+    };
   }
 
   private async getFollowersOf(authorDid: string): Promise<string[]> {
