@@ -164,7 +164,7 @@
         >
             <span class="nav-icon">&#x2709;</span>
             {#if !sidebarStore.isCollapsed}
-                <span class="nav-label">All Unread</span>
+                <span class="nav-label">All</span>
                 {#if totalUnread > 0}
                     <span class="nav-count">{totalUnread}</span>
                 {/if}

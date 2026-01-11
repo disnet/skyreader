@@ -14,6 +14,7 @@
   let selectedIndex = $state(-1);
   let expandedIndex = $state(-1);
   let articleElements: HTMLElement[] = [];
+  let showOnlyUnread = $state(true);
 
   // Snapshot of displayed items (doesn't change as you read items)
   let displayedArticles = $state<Article[]>([]);
@@ -30,7 +31,7 @@
 
   // Build a filter key to detect when we need to recompute the snapshot
   let filterKey = $derived(
-    `${feedFilter || ''}-${starredFilter || ''}-${sharerFilter || ''}-${followingFilter || ''}`
+    `${feedFilter || ''}-${starredFilter || ''}-${sharerFilter || ''}-${followingFilter || ''}-${showOnlyUnread}`
   );
 
   // Track the last filter key and articles version to know when to snapshot
@@ -60,8 +61,13 @@
       } else if (starredFilter) {
         filtered = currentArticles.filter(a => readPositions.get(a.guid)?.starred ?? false);
       } else {
-        // Default: show only unread articles
-        filtered = currentArticles.filter(a => !readPositions.has(a.guid));
+        // Default: filter based on showOnlyUnread toggle
+        const onlyUnread = untrack(() => showOnlyUnread);
+        if (onlyUnread) {
+          filtered = currentArticles.filter(a => !readPositions.has(a.guid));
+        } else {
+          filtered = [...currentArticles];
+        }
       }
 
       displayedArticles = filtered;
@@ -107,7 +113,7 @@
       const user = socialStore.followedUsers.find(u => u.did === sharerFilter);
       return user?.displayName || user?.handle || 'Shared';
     }
-    return 'All Unread';
+    return 'All';
   });
 
   onMount(async () => {
@@ -250,6 +256,18 @@
   <div class="feed-page">
     <div class="feed-header">
       <h1>{pageTitle()}</h1>
+      {#if !feedFilter && !starredFilter && !sharerFilter && !followingFilter}
+        <div class="view-toggle">
+          <button
+            class:active={showOnlyUnread}
+            onclick={() => showOnlyUnread = true}
+          >Unread</button>
+          <button
+            class:active={!showOnlyUnread}
+            onclick={() => showOnlyUnread = false}
+          >All</button>
+        </div>
+      {/if}
     </div>
 
     {#if isLoading && currentItems().length === 0}
@@ -268,9 +286,12 @@
         {:else if feedFilter}
           <h2>No unread articles</h2>
           <p>You're all caught up on this feed</p>
-        {:else}
+        {:else if showOnlyUnread}
           <h2>No unread articles</h2>
-          <p>You're all caught up! Add more subscriptions to get started</p>
+          <p>You're all caught up!</p>
+        {:else}
+          <h2>No articles</h2>
+          <p>Add some subscriptions to get started</p>
           <a href="/feeds" class="btn btn-primary">Manage Subscriptions</a>
         {/if}
       </div>
@@ -427,6 +448,35 @@
 
   .feed-header h1 {
     font-size: 1.5rem;
+  }
+
+  .view-toggle {
+    display: flex;
+    background: var(--color-bg-secondary);
+    border-radius: 6px;
+    padding: 2px;
+    gap: 2px;
+  }
+
+  .view-toggle button {
+    padding: 0.375rem 0.75rem;
+    border: none;
+    background: transparent;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    transition: all 0.15s ease;
+    font-family: inherit;
+  }
+
+  .view-toggle button.active {
+    background: var(--color-primary);
+    color: white;
+  }
+
+  .view-toggle button:hover:not(.active) {
+    background: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
   }
 
   .article-list {
