@@ -68,6 +68,7 @@
   // Track the last filter key and articles version to know when to snapshot
   let lastFilterKey = $state('');
   let lastArticlesVersion = $state(-1);
+  let lastArticlesLength = $state(-1);
   let lastSharesLength = $state(-1);
 
   // Snapshot articles when filter or source data changes (not read state)
@@ -76,12 +77,14 @@
     const currentKey = filterKey;
     const currentVersion = subscriptionsStore.articlesVersion;
     const currentArticles = allArticles;
+    const currentLength = currentArticles.length;
 
     // Untrack comparisons to avoid loops
     const prevKey = untrack(() => lastFilterKey);
     const prevVersion = untrack(() => lastArticlesVersion);
+    const prevLength = untrack(() => lastArticlesLength);
 
-    if (currentKey !== prevKey || currentVersion !== prevVersion) {
+    if (currentKey !== prevKey || currentVersion !== prevVersion || currentLength !== prevLength) {
       // Take a snapshot using current read state (untracked to avoid reactivity)
       const readPositions = untrack(() => readingStore.readPositions);
 
@@ -104,6 +107,7 @@
       displayedArticles = filtered;
       lastFilterKey = currentKey;
       lastArticlesVersion = currentVersion;
+      lastArticlesLength = currentLength;
     }
   });
 
