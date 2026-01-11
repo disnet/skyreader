@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Article } from '$lib/types';
+  import { formatRelativeDate } from '$lib/utils/date';
 
   let {
     article,
@@ -53,26 +54,6 @@
   function handleExpandClick(e: MouseEvent) {
     e.stopPropagation();
     onExpand?.();
-  }
-
-  function formatDate(dateString: string): string {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-
-    if (diffHours < 1) {
-      const diffMinutes = Math.floor(diffMs / (1000 * 60));
-      return `${diffMinutes}m ago`;
-    }
-    if (diffHours < 24) {
-      return `${diffHours}h ago`;
-    }
-    const diffDays = Math.floor(diffHours / 24);
-    if (diffDays < 7) {
-      return `${diffDays}d ago`;
-    }
-    return date.toLocaleDateString();
   }
 
   function handleStarClick(e: MouseEvent) {
@@ -138,7 +119,7 @@
     {:else}
       <span class="article-title">{article.title}</span>
     {/if}
-    <span class="article-date">{formatDate(article.publishedAt)}</span>
+    <span class="article-date">{formatRelativeDate(article.publishedAt)}</span>
   </button>
 
   {#if isOpen}

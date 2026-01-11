@@ -3,6 +3,9 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { readingStore } from '$lib/stores/reading.svelte';
+  import { formatRelativeDate } from '$lib/utils/date';
+  import EmptyState from '$lib/components/EmptyState.svelte';
+  import LoadingState from '$lib/components/LoadingState.svelte';
   import type { ReadPosition } from '$lib/types';
 
   let starredItems = $state<ReadPosition[]>([]);
@@ -17,23 +20,18 @@
     starredItems = await readingStore.getStarredArticles();
     isLoading = false;
   });
-
-  function formatDate(dateString: string): string {
-    const date = new Date(dateString);
-    return date.toLocaleDateString();
-  }
 </script>
 
 <div class="starred-page">
   <h1>Starred Articles</h1>
 
   {#if isLoading}
-    <div class="loading-state">Loading starred articles...</div>
+    <LoadingState message="Loading starred articles..." />
   {:else if starredItems.length === 0}
-    <div class="empty-state">
-      <h2>No starred articles</h2>
-      <p>Star articles to save them for later</p>
-    </div>
+    <EmptyState
+      title="No starred articles"
+      description="Star articles to save them for later"
+    />
   {:else}
     <div class="starred-list">
       {#each starredItems as item (item.articleGuid)}
@@ -42,7 +40,7 @@
             <a href={item.articleUrl} target="_blank" rel="noopener" class="article-link">
               <h3>{item.articleTitle || item.articleUrl}</h3>
             </a>
-            <p class="meta">Starred on {formatDate(item.readAt)}</p>
+            <p class="meta">Starred {formatRelativeDate(item.readAt)}</p>
           </div>
           <button
             class="unstar-btn"
@@ -117,9 +115,4 @@
     opacity: 0.7;
   }
 
-  .loading-state {
-    text-align: center;
-    padding: 3rem;
-    color: var(--color-text-secondary);
-  }
 </style>

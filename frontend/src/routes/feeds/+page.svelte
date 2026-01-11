@@ -3,12 +3,9 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { api } from '$lib/services/api';
-
-  let newFeedUrl = $state('');
-  let isAdding = $state(false);
-  let error = $state<string | null>(null);
-  let discoveredFeeds = $state<string[]>([]);
+  import FeedDiscoveryForm from '$lib/components/FeedDiscoveryForm.svelte';
+  import EmptyState from '$lib/components/EmptyState.svelte';
+  import LoadingState from '$lib/components/LoadingState.svelte';
 
   onMount(async () => {
     if (!auth.isAuthenticated) {
@@ -18,54 +15,21 @@
     await subscriptionsStore.load();
   });
 
-  async function discoverFeeds() {
-    if (!newFeedUrl.trim()) return;
+  async function handleFeedSelected(feedUrl: string) {
+    // Add subscription with URL as temporary title
+    const tempTitle = new URL(feedUrl).hostname;
+    const id = await subscriptionsStore.add(feedUrl, tempTitle, {});
 
-    error = null;
-    isAdding = true;
-
-    try {
-      const result = await api.discoverFeeds(newFeedUrl.trim());
-      if (result.feeds.length === 0) {
-        error = 'No feeds found at this URL';
-      } else if (result.feeds.length === 1) {
-        await addFeed(result.feeds[0]);
-      } else {
-        discoveredFeeds = result.feeds;
+    // Fetch feed in background (updates title and loads articles)
+    subscriptionsStore.fetchFeed(id, true).then(async (feed) => {
+      if (feed) {
+        // Update subscription with actual title and siteUrl
+        await subscriptionsStore.update(id, {
+          title: feed.title,
+          siteUrl: feed.siteUrl,
+        });
       }
-    } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to discover feeds';
-    } finally {
-      isAdding = false;
-    }
-  }
-
-  async function addFeed(feedUrl: string) {
-    error = null;
-    isAdding = true;
-
-    try {
-      // Add subscription with URL as temporary title
-      const tempTitle = new URL(feedUrl).hostname;
-      const id = await subscriptionsStore.add(feedUrl, tempTitle, {});
-      newFeedUrl = '';
-      discoveredFeeds = [];
-      isAdding = false;
-
-      // Fetch feed in background (updates title and loads articles)
-      subscriptionsStore.fetchFeed(id, true).then(async (feed) => {
-        if (feed) {
-          // Update subscription with actual title and siteUrl
-          await subscriptionsStore.update(id, {
-            title: feed.title,
-            siteUrl: feed.siteUrl,
-          });
-        }
-      });
-    } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to add feed';
-      isAdding = false;
-    }
+    });
   }
 
   async function removeFeed(id: number) {
@@ -80,45 +44,17 @@
 
   <div class="add-feed card">
     <h2>Add New Feed</h2>
-    <form onsubmit={(e) => { e.preventDefault(); discoverFeeds(); }}>
-      <div class="input-group">
-        <input
-          type="url"
-          class="input"
-          placeholder="https://example.com or feed URL"
-          bind:value={newFeedUrl}
-          disabled={isAdding}
-        />
-        <button type="submit" class="btn btn-primary" disabled={isAdding || !newFeedUrl.trim()}>
-          {isAdding ? 'Adding...' : 'Add'}
-        </button>
-      </div>
-    </form>
-
-    {#if error}
-      <p class="error">{error}</p>
-    {/if}
-
-    {#if discoveredFeeds.length > 1}
-      <div class="discovered-feeds">
-        <p>Found multiple feeds. Select one:</p>
-        {#each discoveredFeeds as feedUrl}
-          <button class="btn btn-secondary feed-option" onclick={() => addFeed(feedUrl)}>
-            {feedUrl}
-          </button>
-        {/each}
-      </div>
-    {/if}
+    <FeedDiscoveryForm onFeedSelected={handleFeedSelected} />
   </div>
 
   <div class="subscriptions-list">
     {#if subscriptionsStore.isLoading}
-      <p class="loading-state">Loading subscriptions...</p>
+      <LoadingState message="Loading subscriptions..." />
     {:else if subscriptionsStore.subscriptions.length === 0}
-      <div class="empty-state">
-        <h2>No subscriptions yet</h2>
-        <p>Add your first RSS feed above</p>
-      </div>
+      <EmptyState
+        title="No subscriptions yet"
+        description="Add your first RSS feed above"
+      />
     {:else}
       {#each subscriptionsStore.subscriptions as sub (sub.id)}
         {@const loadingState = subscriptionsStore.feedLoadingStates.get(sub.id!)}
@@ -176,35 +112,6 @@
   .add-feed h2 {
     font-size: 1.125rem;
     margin-bottom: 1rem;
-  }
-
-  .input-group {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .input-group input {
-    flex: 1;
-  }
-
-  .discovered-feeds {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--color-border);
-  }
-
-  .discovered-feeds p {
-    margin-bottom: 0.5rem;
-    color: var(--color-text-secondary);
-  }
-
-  .feed-option {
-    display: block;
-    width: 100%;
-    text-align: left;
-    margin-top: 0.5rem;
-    font-size: 0.875rem;
-    word-break: break-all;
   }
 
   .subscription-card {
@@ -274,12 +181,6 @@
     display: flex;
     gap: 0.5rem;
     flex-shrink: 0;
-  }
-
-  .loading-state {
-    text-align: center;
-    padding: 2rem;
-    color: var(--color-text-secondary);
   }
 
   @media (max-width: 600px) {

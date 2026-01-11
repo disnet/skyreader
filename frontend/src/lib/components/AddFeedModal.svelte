@@ -1,6 +1,6 @@
 <script lang="ts">
     import { subscriptionsStore } from "$lib/stores/subscriptions.svelte";
-    import { api } from "$lib/services/api";
+    import FeedDiscoveryForm from "$lib/components/FeedDiscoveryForm.svelte";
 
     interface Props {
         open: boolean;
@@ -8,21 +8,10 @@
     }
 
     let { open, onclose }: Props = $props();
-
-    let feedUrl = $state("");
-    let isAdding = $state(false);
-    let error = $state<string | null>(null);
-    let discoveredFeeds = $state<string[]>([]);
-
-    function reset() {
-        feedUrl = "";
-        isAdding = false;
-        error = null;
-        discoveredFeeds = [];
-    }
+    let feedFormRef: { reset: () => void } | undefined = $state();
 
     function handleClose() {
-        reset();
+        feedFormRef?.reset();
         onclose();
     }
 
@@ -38,54 +27,24 @@
         }
     }
 
-    async function discoverFeeds() {
-        if (!feedUrl.trim()) return;
+    async function handleFeedSelected(url: string) {
+        // Add subscription with URL as temporary title
+        const tempTitle = new URL(url).hostname;
+        const id = await subscriptionsStore.add(url, tempTitle, {});
 
-        error = null;
-        isAdding = true;
+        // Close modal immediately
+        handleClose();
 
-        try {
-            const result = await api.discoverFeeds(feedUrl.trim());
-            if (result.feeds.length === 0) {
-                error = "No feeds found at this URL";
-            } else if (result.feeds.length === 1) {
-                await addFeed(result.feeds[0]);
-            } else {
-                discoveredFeeds = result.feeds;
+        // Fetch feed in background (updates title and loads articles)
+        subscriptionsStore.fetchFeed(id, true).then(async (feed) => {
+            if (feed) {
+                // Update subscription with actual title and siteUrl
+                await subscriptionsStore.update(id, {
+                    title: feed.title,
+                    siteUrl: feed.siteUrl,
+                });
             }
-        } catch (e) {
-            error = e instanceof Error ? e.message : "Failed to discover feeds";
-        } finally {
-            isAdding = false;
-        }
-    }
-
-    async function addFeed(url: string) {
-        error = null;
-        isAdding = true;
-
-        try {
-            // Add subscription with URL as temporary title
-            const tempTitle = new URL(url).hostname;
-            const id = await subscriptionsStore.add(url, tempTitle, {});
-
-            // Close modal immediately
-            handleClose();
-
-            // Fetch feed in background (updates title and loads articles)
-            subscriptionsStore.fetchFeed(id, true).then(async (feed) => {
-                if (feed) {
-                    // Update subscription with actual title and siteUrl
-                    await subscriptionsStore.update(id, {
-                        title: feed.title,
-                        siteUrl: feed.siteUrl,
-                    });
-                }
-            });
-        } catch (e) {
-            error = e instanceof Error ? e.message : "Failed to add feed";
-            isAdding = false;
-        }
+        });
     }
 </script>
 
@@ -101,43 +60,7 @@
                 </button>
             </div>
 
-            <form onsubmit={(e) => { e.preventDefault(); discoverFeeds(); }}>
-                <div class="input-group">
-                    <input
-                        type="url"
-                        class="input"
-                        placeholder="https://example.com or feed URL"
-                        bind:value={feedUrl}
-                        disabled={isAdding}
-                    />
-                    <button
-                        type="submit"
-                        class="btn btn-primary"
-                        disabled={isAdding || !feedUrl.trim()}
-                    >
-                        {isAdding ? "Adding..." : "Add"}
-                    </button>
-                </div>
-            </form>
-
-            {#if error}
-                <p class="error">{error}</p>
-            {/if}
-
-            {#if discoveredFeeds.length > 1}
-                <div class="discovered-feeds">
-                    <p>Found multiple feeds. Select one:</p>
-                    {#each discoveredFeeds as url}
-                        <button
-                            class="btn btn-secondary feed-option"
-                            onclick={() => addFeed(url)}
-                            disabled={isAdding}
-                        >
-                            {url}
-                        </button>
-                    {/each}
-                </div>
-            {/if}
+            <FeedDiscoveryForm bind:this={feedFormRef} onFeedSelected={handleFeedSelected} />
         </div>
     </div>
 {/if}
@@ -187,35 +110,5 @@
 
     .close-btn:hover {
         color: var(--color-text);
-    }
-
-    .input-group {
-        display: flex;
-        gap: 0.5rem;
-    }
-
-    .input-group input {
-        flex: 1;
-    }
-
-    .discovered-feeds {
-        margin-top: 1rem;
-        padding-top: 1rem;
-        border-top: 1px solid var(--color-border);
-    }
-
-    .discovered-feeds p {
-        margin-bottom: 0.5rem;
-        color: var(--color-text-secondary);
-        font-size: 0.875rem;
-    }
-
-    .feed-option {
-        display: block;
-        width: 100%;
-        text-align: left;
-        margin-top: 0.5rem;
-        font-size: 0.875rem;
-        word-break: break-all;
     }
 </style>

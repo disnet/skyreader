@@ -3,6 +3,9 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
+  import { formatRelativeDate } from '$lib/utils/date';
+  import EmptyState from '$lib/components/EmptyState.svelte';
+  import LoadingState from '$lib/components/LoadingState.svelte';
 
   let activeTab = $state<'following' | 'shares'>('following');
 
@@ -34,11 +37,6 @@
     } else {
       socialStore.loadFollowedUsers();
     }
-  }
-
-  function formatDate(dateString: string): string {
-    const date = new Date(dateString);
-    return date.toLocaleDateString();
   }
 </script>
 
@@ -76,14 +74,12 @@
 
   {#if activeTab === 'following'}
     {#if (socialStore.isLoading || socialStore.isSyncing) && socialStore.followedUsers.length === 0}
-      <div class="loading-state">
-        {socialStore.isSyncing ? 'Syncing follows from Bluesky...' : 'Loading followed users...'}
-      </div>
+      <LoadingState message={socialStore.isSyncing ? 'Syncing follows from Bluesky...' : 'Loading followed users...'} />
     {:else if socialStore.followedUsers.length === 0}
-      <div class="empty-state">
-        <h2>No follows yet</h2>
-        <p>Click "Sync Follows" to import your Bluesky follows</p>
-      </div>
+      <EmptyState
+        title="No follows yet"
+        description="Click 'Sync Follows' to import your Bluesky follows"
+      />
     {:else}
       <div class="users-list">
         {#each socialStore.followedUsers as user (user.did)}
@@ -103,12 +99,12 @@
     {/if}
   {:else}
     {#if socialStore.isLoading && socialStore.shares.length === 0}
-      <div class="loading-state">Loading shares...</div>
+      <LoadingState message="Loading shares..." />
     {:else if socialStore.shares.length === 0}
-      <div class="empty-state">
-        <h2>No shares yet</h2>
-        <p>Shares from people you follow will appear here</p>
-      </div>
+      <EmptyState
+        title="No shares yet"
+        description="Shares from people you follow will appear here"
+      />
     {:else}
       <div class="shares-list">
         {#each socialStore.shares as share (share.recordUri)}
@@ -123,7 +119,7 @@
                 <span class="author-name">{share.authorDisplayName || share.authorHandle}</span>
                 <span class="author-handle">@{share.authorHandle}</span>
               </div>
-              <span class="share-date">{formatDate(share.createdAt)}</span>
+              <span class="share-date">{formatRelativeDate(share.createdAt)}</span>
             </div>
 
             {#if share.note}
@@ -151,7 +147,7 @@
         {/if}
 
         {#if socialStore.isLoading && socialStore.shares.length > 0}
-          <div class="loading-state">Loading more...</div>
+          <LoadingState message="Loading more..." />
         {/if}
       </div>
     {/if}
@@ -335,23 +331,6 @@
   .load-more {
     width: 100%;
     margin-top: 1rem;
-  }
-
-  .loading-state {
-    text-align: center;
-    padding: 2rem;
-    color: var(--color-text-secondary);
-  }
-
-  .empty-state {
-    text-align: center;
-    padding: 3rem 1rem;
-    color: var(--color-text-secondary);
-  }
-
-  .empty-state h2 {
-    margin-bottom: 0.5rem;
-    color: var(--color-text);
   }
 
   .error {

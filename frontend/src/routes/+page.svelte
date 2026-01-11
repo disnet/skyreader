@@ -6,7 +6,10 @@
   import { readingStore } from '$lib/stores/reading.svelte';
   import { sharesStore } from '$lib/stores/shares.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
+  import { formatRelativeDate } from '$lib/utils/date';
   import ArticleCard from '$lib/components/ArticleCard.svelte';
+  import EmptyState from '$lib/components/EmptyState.svelte';
+  import LoadingState from '$lib/components/LoadingState.svelte';
   import type { Article, SocialShare } from '$lib/types';
 
   let allArticles = $state<Article[]>([]);
@@ -218,25 +221,6 @@
     window.scrollBy({ top: offset, behavior: 'instant' });
   }
 
-  function formatDate(dateString: string): string {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-
-    if (diffHours < 1) {
-      const diffMinutes = Math.floor(diffMs / (1000 * 60));
-      return `${diffMinutes}m ago`;
-    }
-    if (diffHours < 24) {
-      return `${diffHours}h ago`;
-    }
-    const diffDays = Math.floor(diffHours / 24);
-    if (diffDays < 7) {
-      return `${diffDays}d ago`;
-    }
-    return date.toLocaleDateString();
-  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -271,30 +255,26 @@
     </div>
 
     {#if isLoading && currentItems().length === 0}
-      <div class="loading-state">Loading...</div>
+      <LoadingState />
     {:else if currentItems().length === 0}
-      <div class="empty-state">
-        {#if starredFilter}
-          <h2>No starred articles</h2>
-          <p>Star articles to save them for later</p>
-        {:else if followingFilter}
-          <h2>No shared articles</h2>
-          <p>People you follow haven't shared any articles yet</p>
-        {:else if sharerFilter}
-          <h2>No shares from this user</h2>
-          <p>This user hasn't shared any articles yet</p>
-        {:else if feedFilter}
-          <h2>No unread articles</h2>
-          <p>You're all caught up on this feed</p>
-        {:else if showOnlyUnread}
-          <h2>No unread articles</h2>
-          <p>You're all caught up!</p>
-        {:else}
-          <h2>No articles</h2>
-          <p>Add some subscriptions to get started</p>
-          <a href="/feeds" class="btn btn-primary">Manage Subscriptions</a>
-        {/if}
-      </div>
+      {#if starredFilter}
+        <EmptyState title="No starred articles" description="Star articles to save them for later" />
+      {:else if followingFilter}
+        <EmptyState title="No shared articles" description="People you follow haven't shared any articles yet" />
+      {:else if sharerFilter}
+        <EmptyState title="No shares from this user" description="This user hasn't shared any articles yet" />
+      {:else if feedFilter}
+        <EmptyState title="No unread articles" description="You're all caught up on this feed" />
+      {:else if showOnlyUnread}
+        <EmptyState title="No unread articles" description="You're all caught up!" />
+      {:else}
+        <EmptyState
+          title="No articles"
+          description="Add some subscriptions to get started"
+          actionHref="/feeds"
+          actionText="Manage Subscriptions"
+        />
+      {/if}
     {:else if viewMode === 'shares'}
       <!-- Social shares view -->
       <div class="article-list">
@@ -317,7 +297,7 @@
                   <img src={share.authorAvatar} alt="" class="share-avatar" />
                 {/if}
                 <span class="share-title">{share.itemTitle || share.itemUrl}</span>
-                <span class="share-date">{formatDate(share.createdAt)}</span>
+                <span class="share-date">{formatRelativeDate(share.createdAt)}</span>
               </button>
               {#if selectedIndex === index || expandedIndex === index}
                 <div class="share-content">
@@ -490,12 +470,6 @@
 
   .article-list > div:last-child {
     border-bottom: none;
-  }
-
-  .loading-state {
-    text-align: center;
-    padding: 3rem;
-    color: var(--color-text-secondary);
   }
 
   /* Share items styling */
