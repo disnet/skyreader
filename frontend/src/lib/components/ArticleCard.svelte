@@ -13,7 +13,6 @@
     expanded = false,
     onToggleStar,
     onShare,
-    onShareWithNote,
     onUnshare,
     onSelect,
     onExpand,
@@ -28,14 +27,10 @@
     expanded?: boolean;
     onToggleStar?: () => void;
     onShare?: () => void;
-    onShareWithNote?: (note: string) => void;
     onUnshare?: () => void;
     onSelect?: () => void;
     onExpand?: () => void;
   } = $props();
-
-  let showNoteInput = $state(false);
-  let noteText = $state('');
 
   function getFaviconUrl(url: string): string {
     try {
@@ -64,28 +59,6 @@
   function handleShare(e: MouseEvent) {
     e.stopPropagation();
     onShare?.();
-  }
-
-  function handleShowNoteInput(e: MouseEvent) {
-    e.stopPropagation();
-    showNoteInput = true;
-  }
-
-  function handleCancelNote(e: MouseEvent) {
-    e.stopPropagation();
-    showNoteInput = false;
-    noteText = '';
-  }
-
-  function handleShareWithNote(e: MouseEvent) {
-    e.stopPropagation();
-    if (noteText.trim()) {
-      onShareWithNote?.(noteText.trim());
-    } else {
-      onShare?.();
-    }
-    showNoteInput = false;
-    noteText = '';
   }
 
   function handleUnshare(e: MouseEvent) {
@@ -143,25 +116,8 @@
           <button class="action-btn" onclick={handleShare}>
             ↑ Share
           </button>
-          <button class="action-btn" onclick={handleShowNoteInput}>
-            + Note
-          </button>
         {/if}
       </div>
-      {#if showNoteInput}
-        <div class="share-note-input">
-          <textarea
-            bind:value={noteText}
-            placeholder="Add a note..."
-            rows="2"
-            onclick={(e) => e.stopPropagation()}
-          ></textarea>
-          <div class="share-note-actions">
-            <button class="btn btn-secondary btn-sm" onclick={handleCancelNote}>Cancel</button>
-            <button class="btn btn-primary btn-sm" onclick={handleShareWithNote}>Share</button>
-          </div>
-        </div>
-      {/if}
       {#if hasContent}
         <div class="article-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
           <div bind:this={bodyEl} class="article-body" class:truncated={selected && !expanded}>
@@ -344,39 +300,6 @@
 
   .action-btn.shared {
     color: var(--color-primary, #0066cc);
-  }
-
-  .share-note-input {
-    margin-top: 0.75rem;
-  }
-
-  .share-note-input textarea {
-    width: 100%;
-    resize: vertical;
-    padding: 0.5rem;
-    border: 1px solid var(--color-border);
-    border-radius: 4px;
-    font-family: inherit;
-    font-size: 0.875rem;
-    background: var(--color-bg);
-    color: var(--color-text);
-  }
-
-  .share-note-input textarea:focus {
-    outline: none;
-    border-color: var(--color-primary, #0066cc);
-  }
-
-  .share-note-actions {
-    display: flex;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
-    justify-content: flex-end;
-  }
-
-  .btn-sm {
-    padding: 0.25rem 0.75rem;
-    font-size: 0.8125rem;
   }
 
   .show-more-btn {

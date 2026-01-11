@@ -41,58 +41,6 @@ function createSharesStore() {
     articleImage?: string,
     articlePublishedAt?: string
   ) {
-    await createShare(
-      subscriptionAtUri,
-      feedUrl,
-      articleGuid,
-      articleUrl,
-      articleTitle,
-      articleAuthor,
-      articleDescription,
-      articleImage,
-      articlePublishedAt,
-      undefined
-    );
-  }
-
-  async function shareWithNote(
-    subscriptionAtUri: string,
-    feedUrl: string,
-    articleGuid: string,
-    articleUrl: string,
-    articleTitle?: string,
-    articleAuthor?: string,
-    articleDescription?: string,
-    articleImage?: string,
-    articlePublishedAt?: string,
-    note?: string
-  ) {
-    await createShare(
-      subscriptionAtUri,
-      feedUrl,
-      articleGuid,
-      articleUrl,
-      articleTitle,
-      articleAuthor,
-      articleDescription,
-      articleImage,
-      articlePublishedAt,
-      note
-    );
-  }
-
-  async function createShare(
-    subscriptionAtUri: string,
-    feedUrl: string,
-    articleGuid: string,
-    articleUrl: string,
-    articleTitle?: string,
-    articleAuthor?: string,
-    articleDescription?: string,
-    articleImage?: string,
-    articlePublishedAt?: string,
-    note?: string
-  ) {
     // Already shared - skip
     if (userShares.has(articleGuid)) return;
 
@@ -110,7 +58,6 @@ function createSharesStore() {
       articleDescription,
       articleImage,
       articlePublishedAt,
-      note,
       createdAt: now,
       syncStatus: 'pending',
     };
@@ -152,9 +99,6 @@ function createSharesStore() {
     }
     if (articlePublishedAt) {
       record.itemPublishedAt = articlePublishedAt;
-    }
-    if (note) {
-      record.note = note.slice(0, 3000);
     }
 
     await syncQueue.enqueue({
@@ -203,7 +147,6 @@ function createSharesStore() {
     isShared,
     getShareNote,
     share,
-    shareWithNote,
     unshare,
     getSharedArticles,
   };

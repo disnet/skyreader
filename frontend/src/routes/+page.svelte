@@ -455,18 +455,6 @@
                   article.imageUrl,
                   article.publishedAt
                 )}
-                onShareWithNote={(note) => sharesStore.shareWithNote(
-                  sub?.atUri || '',
-                  sub?.feedUrl || '',
-                  article.guid,
-                  article.url,
-                  article.title,
-                  article.author,
-                  article.summary,
-                  article.imageUrl,
-                  article.publishedAt,
-                  note
-                )}
                 onUnshare={() => sharesStore.unshare(article.guid)}
                 onSelect={() => {
                   if (selectedIndex === index) {
@@ -630,18 +618,6 @@
                 article.summary,
                 article.imageUrl,
                 article.publishedAt
-              )}
-              onShareWithNote={(note) => sharesStore.shareWithNote(
-                sub?.atUri || '',
-                sub?.feedUrl || '',
-                article.guid,
-                article.url,
-                article.title,
-                article.author,
-                article.summary,
-                article.imageUrl,
-                article.publishedAt,
-                note
               )}
               onUnshare={() => sharesStore.unshare(article.guid)}
               onSelect={() => {
