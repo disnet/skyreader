@@ -49,17 +49,19 @@ function hashUrl(url: string): string {
   return Math.abs(hash).toString(16);
 }
 
-async function fetchArticleContent(env: Env, feedUrl: string, itemGuid: string, itemUrl?: string): Promise<string | null> {
+export async function fetchArticleContent(env: Env, feedUrl: string, itemGuid: string, itemUrl?: string): Promise<string | null> {
   try {
     const urlHash = hashUrl(feedUrl);
     const now = Math.floor(Date.now() / 1000);
 
     // Check D1 cache first
     const cached = await env.DB.prepare(
-      'SELECT content FROM feed_cache WHERE url_hash = ? AND cached_at > ?'
-    ).bind(urlHash, now - CACHE_TTL_SECONDS).first<{ content: string }>();
+      'SELECT content, cached_at FROM feed_cache WHERE url_hash = ?'
+    ).bind(urlHash).first<{ content: string; cached_at: number }>();
 
-    if (cached) {
+    const isCacheValid = cached && (now - cached.cached_at) <= CACHE_TTL_SECONDS;
+
+    if (isCacheValid && cached) {
       const parsed = JSON.parse(cached.content) as { items?: { guid: string; url?: string; content?: string; summary?: string }[] };
       if (parsed?.items) {
         // Try matching by GUID first, then by URL
@@ -73,7 +75,7 @@ async function fetchArticleContent(env: Env, feedUrl: string, itemGuid: string, 
       }
     }
 
-    // Not in cache, fetch from source
+    // Not in cache or cache stale, fetch from source
     const response = await fetch(feedUrl, {
       headers: {
         'User-Agent': 'AT-RSS/1.0 (+https://at-rss.example.com)',
@@ -107,7 +109,7 @@ async function fetchArticleContent(env: Env, feedUrl: string, itemGuid: string, 
       now
     ).run();
 
-    // Try matching by GUID first, then by URL (more stable across parses)
+    // Try matching by GUID first, then by URL
     let article = parsed.items.find(item => item.guid === itemGuid);
     if (!article && itemUrl) {
       article = parsed.items.find(item => item.url === itemUrl);

@@ -1,5 +1,6 @@
 import type { Env } from '../types';
 import { getSessionFromRequest, importPrivateKey, createDPoPProof } from '../services/oauth';
+import { fetchArticleContent } from '../services/jetstream-poller';
 
 const ALLOWED_COLLECTIONS = [
   'com.at-rss.feed.subscription',
@@ -482,17 +483,6 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
       try {
         const recordUri = result.data.uri || `at://${session.did}/${collection}/${rkey}`;
         if (operation === 'create' || operation === 'update') {
-          const shareRecord = record as {
-            itemUrl: string;
-            itemTitle?: string;
-            itemAuthor?: string;
-            itemDescription?: string;
-            itemImage?: string;
-            note?: string;
-            tags?: string[];
-            createdAt: string;
-          };
-
           // Ensure user exists in users table with full profile info
           await env.DB.prepare(`
             INSERT INTO users (did, handle, display_name, avatar_url, pds_url, updated_at)
@@ -510,25 +500,55 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
             session.pdsUrl
           ).run();
 
-          // Insert share into shares table
+          // Insert share into shares table (content will be updated after fetch)
+          const shareRecordForInsert = record as {
+            feedUrl?: string;
+            itemGuid?: string;
+            itemUrl: string;
+            itemTitle?: string;
+            itemAuthor?: string;
+            itemDescription?: string;
+            itemImage?: string;
+            itemPublishedAt?: string;
+            note?: string;
+            tags?: string[];
+            createdAt: string;
+          };
           await env.DB.prepare(`
             INSERT OR REPLACE INTO shares
-            (author_did, record_uri, record_cid, item_url, item_title,
-             item_author, item_description, item_image, note, tags, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (author_did, record_uri, record_cid, feed_url, item_url, item_title,
+             item_author, item_description, item_image, item_guid, item_published_at, note, tags, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).bind(
             session.did,
             recordUri,
             result.data.cid || '',
-            shareRecord.itemUrl,
-            shareRecord.itemTitle || null,
-            shareRecord.itemAuthor || null,
-            shareRecord.itemDescription || null,
-            shareRecord.itemImage || null,
-            shareRecord.note || null,
-            shareRecord.tags ? JSON.stringify(shareRecord.tags) : null,
-            new Date(shareRecord.createdAt).getTime()
+            shareRecordForInsert.feedUrl || null,
+            shareRecordForInsert.itemUrl,
+            shareRecordForInsert.itemTitle || null,
+            shareRecordForInsert.itemAuthor || null,
+            shareRecordForInsert.itemDescription || null,
+            shareRecordForInsert.itemImage || null,
+            shareRecordForInsert.itemGuid || null,
+            shareRecordForInsert.itemPublishedAt ? new Date(shareRecordForInsert.itemPublishedAt).getTime() : null,
+            shareRecordForInsert.note || null,
+            shareRecordForInsert.tags ? JSON.stringify(shareRecordForInsert.tags) : null,
+            new Date(shareRecordForInsert.createdAt).getTime()
           ).run();
+
+          // Fetch article content if feedUrl and itemGuid are available
+          let articleContent: string | null = null;
+          if (shareRecordForInsert.feedUrl && shareRecordForInsert.itemGuid) {
+            articleContent = await fetchArticleContent(env, shareRecordForInsert.feedUrl, shareRecordForInsert.itemGuid, shareRecordForInsert.itemUrl);
+          }
+
+          // Update share with content if fetched
+          if (articleContent) {
+            await env.DB.prepare(`
+              UPDATE shares SET content = ?
+              WHERE record_uri = ?
+            `).bind(articleContent, recordUri).run();
+          }
 
           // Notify RealtimeHub of new share for live updates
           try {
@@ -545,12 +565,16 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
                   authorDisplayName: session.displayName,
                   authorAvatar: session.avatarUrl,
                   recordUri,
-                  itemUrl: shareRecord.itemUrl,
-                  itemTitle: shareRecord.itemTitle,
-                  itemDescription: shareRecord.itemDescription,
-                  itemImage: shareRecord.itemImage,
-                  note: shareRecord.note,
-                  createdAt: shareRecord.createdAt,
+                  feedUrl: shareRecordForInsert.feedUrl,
+                  itemUrl: shareRecordForInsert.itemUrl,
+                  itemTitle: shareRecordForInsert.itemTitle,
+                  itemDescription: shareRecordForInsert.itemDescription,
+                  itemImage: shareRecordForInsert.itemImage,
+                  itemGuid: shareRecordForInsert.itemGuid,
+                  itemPublishedAt: shareRecordForInsert.itemPublishedAt,
+                  note: shareRecordForInsert.note,
+                  content: articleContent,
+                  createdAt: shareRecordForInsert.createdAt,
                 },
               }),
             });
