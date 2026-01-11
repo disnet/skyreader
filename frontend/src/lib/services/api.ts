@@ -4,9 +4,15 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8787';
 
 class ApiClient {
   private sessionId: string | null = null;
+  private onUnauthorized: (() => void) | null = null;
 
   setSession(sessionId: string | null) {
     this.sessionId = sessionId;
+  }
+
+  // Set callback for when 401 is received (session invalid)
+  setOnUnauthorized(callback: () => void) {
+    this.onUnauthorized = callback;
   }
 
   private async fetch<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -26,6 +32,15 @@ class ApiClient {
     });
 
     if (!response.ok) {
+      // Handle 401 - session is invalid/expired
+      if (response.status === 401) {
+        console.warn('Session expired or invalid, logging out...');
+        if (this.onUnauthorized) {
+          this.onUnauthorized();
+        }
+        throw new Error('Session expired');
+      }
+
       const error = await response.json().catch(() => ({ error: 'Request failed' }));
       throw new Error((error as { error: string }).error || `HTTP ${response.status}`);
     }

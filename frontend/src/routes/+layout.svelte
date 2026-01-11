@@ -1,7 +1,8 @@
 <script lang="ts">
   import { auth } from '$lib/stores/auth.svelte';
-  import { syncStore } from '$lib/stores/sync.svelte';
   import { realtimeStore } from '$lib/stores/realtime.svelte';
+  import { sidebarStore } from '$lib/stores/sidebar.svelte';
+  import Sidebar from '$lib/components/Sidebar.svelte';
   import '../app.css';
 
   let { children } = $props();
@@ -25,43 +26,28 @@
 
 <div class="app">
   {#if !auth.isLoading}
-    <header>
-      <nav>
-        <a href="/" class="logo">AT-RSS</a>
-        <div class="nav-links">
-          {#if auth.isAuthenticated}
-            <a href="/">Feed</a>
-            <a href="/feeds">Subscriptions</a>
-            <a href="/social">Social</a>
-            <a href="/starred">Starred</a>
-          {/if}
+    {#if auth.isAuthenticated}
+      <Sidebar />
+      <button class="mobile-menu-btn" onclick={() => sidebarStore.toggleMobile()} aria-label="Open menu">
+        &#x2630;
+      </button>
+      <div class="main-wrapper" class:sidebar-collapsed={sidebarStore.isCollapsed}>
+        <main>
+          {@render children()}
+        </main>
+      </div>
+    {:else}
+      <header class="header-full">
+        <div class="header-content">
+          <a href="/" class="logo">AT-RSS</a>
+          <a href="/auth/login" class="login-btn">Login</a>
         </div>
-        <div class="nav-right">
-          {#if !syncStore.isOnline}
-            <span class="offline-badge">Offline</span>
-          {:else if syncStore.pendingCount > 0}
-            <span class="sync-badge">{syncStore.pendingCount} pending</span>
-          {/if}
-          {#if auth.isAuthenticated && realtimeStore.isConnected}
-            <span class="realtime-indicator" title="Real-time updates active"></span>
-          {/if}
-          {#if auth.isAuthenticated}
-            <a href="/settings" class="user-menu">
-              {#if auth.user?.avatarUrl}
-                <img src={auth.user.avatarUrl} alt="" class="avatar" />
-              {/if}
-              <span>@{auth.user?.handle}</span>
-            </a>
-          {:else}
-            <a href="/auth/login" class="login-btn">Login</a>
-          {/if}
-        </div>
-      </nav>
-    </header>
+      </header>
 
-    <main>
-      {@render children()}
-    </main>
+      <main class="main-full">
+        {@render children()}
+      </main>
+    {/if}
   {:else}
     <div class="loading">Loading...</div>
   {/if}
@@ -74,7 +60,20 @@
     flex-direction: column;
   }
 
-  header {
+  /* Main wrapper with sidebar margin */
+  .main-wrapper {
+    margin-left: var(--sidebar-width, 260px);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    transition: margin-left 0.2s ease;
+  }
+
+  .main-wrapper.sidebar-collapsed {
+    margin-left: var(--sidebar-collapsed-width, 60px);
+  }
+
+  .header-full {
     background: var(--color-bg-secondary, #f5f5f5);
     border-bottom: 1px solid var(--color-border, #e0e0e0);
     padding: 0.75rem 1rem;
@@ -83,12 +82,28 @@
     z-index: 100;
   }
 
-  nav {
+  .header-content {
     max-width: 1200px;
     margin: 0 auto;
     display: flex;
     align-items: center;
-    gap: 2rem;
+    gap: 1rem;
+  }
+
+  .mobile-menu-btn {
+    display: none;
+    position: fixed;
+    top: 1rem;
+    left: 1rem;
+    z-index: 45;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 0.5rem 0.75rem;
+    color: var(--color-text);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   }
 
   .logo {
@@ -98,83 +113,24 @@
     text-decoration: none;
   }
 
-  .nav-links {
-    display: flex;
-    gap: 1.5rem;
-  }
-
-  .nav-links a {
-    color: var(--color-text, #333);
-    text-decoration: none;
-  }
-
-  .nav-links a:hover {
-    color: var(--color-primary, #0066cc);
-  }
-
-  .nav-right {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-  }
-
-  .offline-badge {
-    background: #f44336;
-    color: white;
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-  }
-
-  .sync-badge {
-    background: #ff9800;
-    color: white;
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-  }
-
-  .realtime-indicator {
-    width: 8px;
-    height: 8px;
-    background: #4caf50;
-    border-radius: 50%;
-    animation: pulse 2s infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.5;
-    }
-  }
-
-  .user-menu {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    text-decoration: none;
-    color: var(--color-text, #333);
-  }
-
-  .avatar {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-  }
-
   .login-btn {
     background: var(--color-primary, #0066cc);
     color: white;
     padding: 0.5rem 1rem;
     border-radius: 6px;
     text-decoration: none;
+    margin-left: auto;
   }
 
   main {
+    flex: 1;
+    max-width: 900px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 1rem;
+  }
+
+  .main-full {
     flex: 1;
     max-width: 1200px;
     width: 100%;
@@ -192,14 +148,16 @@
   }
 
   @media (max-width: 768px) {
-    nav {
-      flex-wrap: wrap;
+    .main-wrapper {
+      margin-left: 0;
     }
 
-    .nav-links {
-      order: 3;
-      width: 100%;
-      padding-top: 0.5rem;
+    .main-wrapper.sidebar-collapsed {
+      margin-left: 0;
+    }
+
+    .mobile-menu-btn {
+      display: block;
     }
   }
 </style>

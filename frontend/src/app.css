@@ -10,6 +10,11 @@
   --color-warning: #ff9800;
   --color-error: #f44336;
 
+  /* Sidebar dimensions */
+  --sidebar-width: 260px;
+  --sidebar-collapsed-width: 60px;
+  --color-sidebar-active: rgba(0, 102, 204, 0.1);
+
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
   line-height: 1.5;
   color: var(--color-text);
@@ -25,6 +30,7 @@
     --color-text: #e0e0e0;
     --color-text-secondary: #999999;
     --color-border: #404040;
+    --color-sidebar-active: rgba(77, 166, 255, 0.15);
   }
 }
 

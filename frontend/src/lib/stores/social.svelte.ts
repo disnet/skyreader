@@ -136,6 +136,10 @@ function createSocialStore() {
     error = null;
   }
 
+  function getSharesByAuthor(authorDid: string): SocialShare[] {
+    return shares.filter((s) => s.authorDid === authorDid);
+  }
+
   return {
     get shares() {
       return shares;
@@ -163,6 +167,7 @@ function createSocialStore() {
     loadFollowedUsers,
     syncFollows,
     reset,
+    getSharesByAuthor,
   };
 }
 

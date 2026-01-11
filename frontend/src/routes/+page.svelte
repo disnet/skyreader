@@ -1,85 +1,157 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { readingStore } from '$lib/stores/reading.svelte';
   import { sharesStore } from '$lib/stores/shares.svelte';
+  import { socialStore } from '$lib/stores/social.svelte';
   import ArticleCard from '$lib/components/ArticleCard.svelte';
-  import type { Article } from '$lib/types';
+  import type { Article, SocialShare } from '$lib/types';
 
-  let articles = $state<Article[]>([]);
+  let allArticles = $state<Article[]>([]);
   let isLoading = $state(true);
   let selectedIndex = $state(-1);
   let expandedIndex = $state(-1);
   let articleElements: HTMLElement[] = [];
+
+  // Get filter params from URL
+  let feedFilter = $derived($page.url.searchParams.get('feed'));
+  let starredFilter = $derived($page.url.searchParams.get('starred'));
+  let sharerFilter = $derived($page.url.searchParams.get('sharer'));
+
+  // Determine current view mode
+  let viewMode = $derived<'articles' | 'shares'>(sharerFilter ? 'shares' : 'articles');
+
+  // Filter articles based on query params
+  let filteredArticles = $derived(() => {
+    if (feedFilter) {
+      const feedId = parseInt(feedFilter);
+      return allArticles.filter(a => a.subscriptionId === feedId);
+    }
+    if (starredFilter) {
+      return allArticles.filter(a => readingStore.isStarred(a.guid));
+    }
+    // Default: show only unread articles
+    return allArticles.filter(a => !readingStore.isRead(a.guid));
+  });
+
+  // Filter social shares by author
+  let filteredShares = $derived(() => {
+    if (!sharerFilter) return [];
+    return socialStore.shares.filter(s => s.authorDid === sharerFilter);
+  });
+
+  // Get page title based on filter
+  let pageTitle = $derived(() => {
+    if (feedFilter) {
+      const sub = subscriptionsStore.subscriptions.find(s => s.id === parseInt(feedFilter));
+      return sub?.title || 'Feed';
+    }
+    if (starredFilter) return 'Starred';
+    if (sharerFilter) {
+      const user = socialStore.followedUsers.find(u => u.did === sharerFilter);
+      return user?.displayName || user?.handle || 'Shared';
+    }
+    return 'All Unread';
+  });
 
   onMount(async () => {
     if (auth.isAuthenticated) {
       await subscriptionsStore.load();
       await readingStore.load();
       await sharesStore.load();
-      articles = await subscriptionsStore.getAllArticles();
+      await socialStore.loadFollowedUsers();
+      await socialStore.loadFeed(true);
+      allArticles = await subscriptionsStore.getAllArticles();
 
       // If we have subscriptions but no articles, fetch feeds (first login scenario)
-      if (subscriptionsStore.subscriptions.length > 0 && articles.length === 0) {
+      if (subscriptionsStore.subscriptions.length > 0 && allArticles.length === 0) {
         for (const sub of subscriptionsStore.subscriptions) {
           if (sub.id) {
             await subscriptionsStore.fetchFeed(sub.id, false);
           }
         }
-        articles = await subscriptionsStore.getAllArticles();
+        allArticles = await subscriptionsStore.getAllArticles();
       }
     }
     isLoading = false;
   });
 
+  // Reset selection when filter changes
+  $effect(() => {
+    // Access filter values to create dependency
+    feedFilter;
+    starredFilter;
+    sharerFilter;
+    selectedIndex = -1;
+    expandedIndex = -1;
+  });
+
   // Refresh feeds
   async function refreshFeeds() {
     isLoading = true;
-    for (const sub of subscriptionsStore.subscriptions) {
-      if (sub.id) {
-        await subscriptionsStore.fetchFeed(sub.id, true);
+    if (sharerFilter) {
+      // Refresh social feed
+      await socialStore.loadFeed(true);
+    } else {
+      // Refresh RSS feeds
+      for (const sub of subscriptionsStore.subscriptions) {
+        if (sub.id) {
+          await subscriptionsStore.fetchFeed(sub.id, true);
+        }
       }
+      allArticles = await subscriptionsStore.getAllArticles();
     }
-    articles = await subscriptionsStore.getAllArticles();
     isLoading = false;
     selectedIndex = -1;
     expandedIndex = -1;
   }
 
+  // Get current items based on view mode
+  let currentItems = $derived(() => {
+    return viewMode === 'shares' ? filteredShares() : filteredArticles();
+  });
+
   function handleKeydown(e: KeyboardEvent) {
-    if (!auth.isAuthenticated || articles.length === 0) return;
+    if (!auth.isAuthenticated || currentItems().length === 0) return;
 
     // Ignore if user is typing in an input
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
+    const items = currentItems();
     if (e.key === 'j' || e.key === 'ArrowDown') {
       e.preventDefault();
-      selectArticle(Math.min(selectedIndex + 1, articles.length - 1));
+      selectItem(Math.min(selectedIndex + 1, items.length - 1));
     } else if (e.key === 'k' || e.key === 'ArrowUp') {
       e.preventDefault();
-      selectArticle(Math.max(selectedIndex - 1, 0));
+      selectItem(Math.max(selectedIndex - 1, 0));
     } else if (e.key === 'o' && selectedIndex >= 0) {
       e.preventDefault();
-      window.open(articles[selectedIndex].url, '_blank');
+      const item = items[selectedIndex];
+      const url = viewMode === 'shares' ? (item as SocialShare).itemUrl : (item as Article).url;
+      window.open(url, '_blank');
     } else if (e.key === 'Enter' && selectedIndex >= 0) {
       e.preventDefault();
       expandedIndex = expandedIndex === selectedIndex ? -1 : selectedIndex;
     }
   }
 
-  async function selectArticle(index: number) {
+  async function selectItem(index: number) {
     if (index === selectedIndex) return;
 
-    // Mark as read when selecting (only place this should happen)
-    const article = articles[index];
-    const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId);
-    if (sub && !readingStore.isRead(article.guid)) {
-      readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+    // Mark as read when selecting articles (not shares)
+    if (viewMode === 'articles') {
+      const articles = filteredArticles();
+      const article = articles[index];
+      const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId);
+      if (sub && !readingStore.isRead(article.guid)) {
+        readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+      }
     }
 
     selectedIndex = index;
-    expandedIndex = -1; // Reset expanded when selecting new article
+    expandedIndex = -1; // Reset expanded when selecting new item
 
     await tick(); // Wait for DOM to update
     scrollToCenter();
@@ -94,6 +166,26 @@
     const offset = rect.top - targetY;
 
     window.scrollBy({ top: offset, behavior: 'instant' });
+  }
+
+  function formatDate(dateString: string): string {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+
+    if (diffHours < 1) {
+      const diffMinutes = Math.floor(diffMs / (1000 * 60));
+      return `${diffMinutes}m ago`;
+    }
+    if (diffHours < 24) {
+      return `${diffHours}h ago`;
+    }
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays < 7) {
+      return `${diffDays}d ago`;
+    }
+    return date.toLocaleDateString();
   }
 </script>
 
@@ -113,23 +205,79 @@
 {:else}
   <div class="feed-page">
     <div class="feed-header">
-      <h1>Your Feed</h1>
+      <h1>{pageTitle()}</h1>
       <button class="btn btn-secondary" onclick={refreshFeeds} disabled={isLoading}>
         {isLoading ? 'Refreshing...' : 'Refresh'}
       </button>
     </div>
 
-    {#if isLoading && articles.length === 0}
-      <div class="loading-state">Loading articles...</div>
-    {:else if articles.length === 0}
+    {#if isLoading && currentItems().length === 0}
+      <div class="loading-state">Loading...</div>
+    {:else if currentItems().length === 0}
       <div class="empty-state">
-        <h2>No articles yet</h2>
-        <p>Add some subscriptions to get started</p>
-        <a href="/feeds" class="btn btn-primary">Manage Subscriptions</a>
+        {#if starredFilter}
+          <h2>No starred articles</h2>
+          <p>Star articles to save them for later</p>
+        {:else if sharerFilter}
+          <h2>No shares from this user</h2>
+          <p>This user hasn't shared any articles yet</p>
+        {:else if feedFilter}
+          <h2>No unread articles</h2>
+          <p>You're all caught up on this feed</p>
+        {:else}
+          <h2>No unread articles</h2>
+          <p>You're all caught up! Add more subscriptions to get started</p>
+          <a href="/feeds" class="btn btn-primary">Manage Subscriptions</a>
+        {/if}
+      </div>
+    {:else if viewMode === 'shares'}
+      <!-- Social shares view -->
+      <div class="article-list">
+        {#each filteredShares() as share, index (share.recordUri)}
+          <div bind:this={articleElements[index]}>
+            <div
+              class="share-item"
+              class:selected={selectedIndex === index}
+              class:expanded={expandedIndex === index}
+            >
+              <button class="share-header" onclick={() => {
+                if (selectedIndex === index) {
+                  selectedIndex = -1;
+                  expandedIndex = -1;
+                } else {
+                  selectItem(index);
+                }
+              }}>
+                {#if share.authorAvatar}
+                  <img src={share.authorAvatar} alt="" class="share-avatar" />
+                {/if}
+                <span class="share-title">{share.itemTitle || share.itemUrl}</span>
+                <span class="share-date">{formatDate(share.createdAt)}</span>
+              </button>
+              {#if selectedIndex === index || expandedIndex === index}
+                <div class="share-content">
+                  <div class="share-meta">
+                    Shared by <strong>{share.authorDisplayName || share.authorHandle}</strong>
+                  </div>
+                  {#if share.note}
+                    <blockquote class="share-note">{share.note}</blockquote>
+                  {/if}
+                  {#if share.itemDescription}
+                    <p class="share-description">{share.itemDescription}</p>
+                  {/if}
+                  <a href={share.itemUrl} target="_blank" rel="noopener" class="btn btn-secondary">
+                    Open Article
+                  </a>
+                </div>
+              {/if}
+            </div>
+          </div>
+        {/each}
       </div>
     {:else}
+      <!-- Articles view -->
       <div class="article-list">
-        {#each articles as article, index (article.guid)}
+        {#each filteredArticles() as article, index (article.guid)}
           {@const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId)}
           <div bind:this={articleElements[index]}>
             <ArticleCard
@@ -167,7 +315,7 @@
                   selectedIndex = -1;
                   expandedIndex = -1;
                 } else {
-                  selectArticle(index);
+                  selectItem(index);
                 }
               }}
               onExpand={async () => {
@@ -254,5 +402,87 @@
     text-align: center;
     padding: 3rem;
     color: var(--color-text-secondary);
+  }
+
+  /* Share items styling */
+  .share-item {
+    transition: background-color 0.15s ease;
+  }
+
+  .share-item:hover {
+    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
+  }
+
+  .share-item.selected,
+  .share-item.expanded {
+    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
+  }
+
+  .share-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.75rem 0.5rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+  }
+
+  .share-avatar {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .share-title {
+    flex: 1;
+    font-weight: 500;
+    color: var(--color-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .share-date {
+    flex-shrink: 0;
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+  }
+
+  .share-content {
+    padding: 0 0.5rem 1rem;
+  }
+
+  .share-meta {
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+    margin-bottom: 0.75rem;
+  }
+
+  .share-note {
+    border-left: 3px solid var(--color-primary);
+    margin: 0 0 0.75rem 0;
+    padding-left: 1rem;
+    font-style: italic;
+    color: var(--color-text);
+  }
+
+  .share-description {
+    font-size: 0.9375rem;
+    color: var(--color-text-secondary);
+    margin-bottom: 0.75rem;
+    line-height: 1.5;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .share-item:hover,
+    .share-item.selected,
+    .share-item.expanded {
+      background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
+    }
   }
 </style>

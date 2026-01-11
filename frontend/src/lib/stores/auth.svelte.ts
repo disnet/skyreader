@@ -18,6 +18,20 @@ function createAuthStore() {
     error: null,
   });
 
+  // Handle 401 - session expired/invalid on the backend
+  function handleUnauthorized() {
+    console.log('Handling unauthorized - clearing session');
+    state.user = null;
+    state.sessionId = null;
+    api.setSession(null);
+
+    if (browser) {
+      localStorage.removeItem('at-rss-auth');
+      // Redirect to login
+      window.location.href = '/auth/login';
+    }
+  }
+
   // Restore session from localStorage on init
   if (browser) {
     const stored = localStorage.getItem('at-rss-auth');
@@ -32,6 +46,9 @@ function createAuthStore() {
       }
     }
     state.isLoading = false;
+
+    // Set up 401 handler
+    api.setOnUnauthorized(handleUnauthorized);
   }
 
   function setSession(user: User, sessionId: string) {
