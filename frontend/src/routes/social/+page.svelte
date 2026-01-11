@@ -12,6 +12,11 @@
       return;
     }
     await socialStore.loadFollowedUsers();
+
+    // Auto-sync if follows are empty (e.g., new user whose backend sync is still running)
+    if (socialStore.followedUsers.length === 0 && !socialStore.isSyncing) {
+      await socialStore.syncFollows();
+    }
   });
 
   async function loadMore() {
@@ -70,8 +75,10 @@
   {/if}
 
   {#if activeTab === 'following'}
-    {#if socialStore.isLoading && socialStore.followedUsers.length === 0}
-      <div class="loading-state">Loading followed users...</div>
+    {#if (socialStore.isLoading || socialStore.isSyncing) && socialStore.followedUsers.length === 0}
+      <div class="loading-state">
+        {socialStore.isSyncing ? 'Syncing follows from Bluesky...' : 'Loading followed users...'}
+      </div>
     {:else if socialStore.followedUsers.length === 0}
       <div class="empty-state">
         <h2>No follows yet</h2>
