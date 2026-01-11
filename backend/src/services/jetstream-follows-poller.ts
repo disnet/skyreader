@@ -119,12 +119,15 @@ async function processFollowEvent(env: Env, event: JetstreamFollowEvent): Promis
 
   } else if (operation === 'delete') {
     // Delete from follows_cache using rkey
-    await env.DB.prepare(`
+    const result = await env.DB.prepare(`
       DELETE FROM follows_cache
       WHERE follower_did = ? AND rkey = ?
     `).bind(followerDid, rkey).run();
 
-    console.log(`[JetstreamFollows] ${followerDid} unfollowed (rkey: ${rkey})`);
+    // Only log if we actually deleted something (avoids duplicate logs from cursor buffer)
+    if (result.meta.changes > 0) {
+      console.log(`[JetstreamFollows] ${followerDid} unfollowed (rkey: ${rkey})`);
+    }
   }
 }
 
@@ -157,18 +160,16 @@ export async function pollJetstreamFollows(env: Env): Promise<FollowsPollResult>
     wsUrl.searchParams.append('wantedDids', did);
   }
 
-  // Initialize cursor - use existing or current time in microseconds
+  // Use existing cursor if available, otherwise establish baseline
   let lastCursor: string;
   if (cursorResult?.value) {
-    // Subtract 5 seconds (in microseconds) to ensure we catch everything during reconnects
-    const cursorWithBuffer = BigInt(cursorResult.value) - BigInt(5_000_000);
-    wsUrl.searchParams.set('cursor', cursorWithBuffer.toString());
+    wsUrl.searchParams.set('cursor', cursorResult.value);
     lastCursor = cursorResult.value;
-    console.log(`[JetstreamFollows] Starting from cursor ${cursorWithBuffer}`);
+    console.log(`[JetstreamFollows] Starting from cursor ${cursorResult.value}`);
   } else {
-    // First run - initialize cursor to current time so we don't miss future events
+    // No cursor yet - save current time as baseline after this poll
     lastCursor = (Date.now() * 1000).toString();
-    console.log('[JetstreamFollows] Starting fresh poll (no cursor), will save current time as baseline');
+    console.log('[JetstreamFollows] Starting fresh poll, will establish baseline cursor');
   }
 
   let processed = 0;
@@ -211,7 +212,7 @@ export async function pollJetstreamFollows(env: Env): Promise<FollowsPollResult>
         ws = null;
       }
 
-      // Always save cursor so we don't miss events between polls
+      // Save cursor (either last event time, or baseline if no events)
       await env.DB.prepare(
         'INSERT OR REPLACE INTO sync_state (key, value, updated_at) VALUES (?, ?, unixepoch())'
       ).bind('jetstream_follows_cursor', lastCursor).run();
@@ -236,7 +237,7 @@ export async function pollJetstreamFollows(env: Env): Promise<FollowsPollResult>
         try {
           const data = JSON.parse(event.data as string) as JetstreamFollowEvent;
 
-          // Update cursor
+          // Update cursor to last seen event
           lastCursor = data.time_us.toString();
 
           // Process the event

@@ -217,18 +217,20 @@ export async function pollJetstream(env: Env): Promise<PollResult> {
   const wsUrl = new URL('wss://jetstream2.us-east.bsky.network/subscribe');
   wsUrl.searchParams.append('wantedCollections', 'com.at-rss.social.share');
 
+  // Use existing cursor if available, otherwise establish baseline
+  let lastCursor: string;
   if (cursorResult?.value) {
-    // Subtract 5 seconds (in microseconds) to ensure we catch everything during reconnects
-    const cursorWithBuffer = BigInt(cursorResult.value) - BigInt(5_000_000);
-    wsUrl.searchParams.set('cursor', cursorWithBuffer.toString());
-    console.log(`[Jetstream] Starting poll from cursor ${cursorWithBuffer}`);
+    wsUrl.searchParams.set('cursor', cursorResult.value);
+    lastCursor = cursorResult.value;
+    console.log(`[Jetstream] Starting poll from cursor ${cursorResult.value}`);
   } else {
-    console.log('[Jetstream] Starting fresh poll (no cursor)');
+    // No cursor yet - save current time as baseline after this poll
+    lastCursor = (Date.now() * 1000).toString();
+    console.log('[Jetstream] Starting fresh poll, will establish baseline cursor');
   }
 
   let processed = 0;
   let errors = 0;
-  let lastCursor: string | undefined;
   let lastEventTime = Date.now();
 
   return new Promise((resolve) => {
@@ -263,12 +265,10 @@ export async function pollJetstream(env: Env): Promise<PollResult> {
         ws = null;
       }
 
-      // Save final cursor
-      if (lastCursor) {
-        await env.DB.prepare(
-          'INSERT OR REPLACE INTO sync_state (key, value, updated_at) VALUES (?, ?, unixepoch())'
-        ).bind('jetstream_cursor', lastCursor).run();
-      }
+      // Save cursor (either last event time, or baseline if no events)
+      await env.DB.prepare(
+        'INSERT OR REPLACE INTO sync_state (key, value, updated_at) VALUES (?, ?, unixepoch())'
+      ).bind('jetstream_cursor', lastCursor).run();
 
       const duration = Date.now() - startTime;
       console.log(`[Jetstream] Poll complete: ${processed} processed, ${errors} errors, ${duration}ms`);
@@ -290,7 +290,7 @@ export async function pollJetstream(env: Env): Promise<PollResult> {
         try {
           const data = JSON.parse(event.data as string) as JetstreamEvent;
 
-          // Update cursor
+          // Update cursor to last seen event
           lastCursor = data.time_us.toString();
 
           // Process the event

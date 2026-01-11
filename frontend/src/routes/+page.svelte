@@ -77,6 +77,7 @@
 
   // Track the last filter key and articles version to know when to snapshot
   let lastFilterKey = $state('');
+  let lastSharesFilterKey = $state('');
   let lastArticlesVersion = $state(-1);
   let lastArticlesLength = $state(-1);
   let lastSharesLength = $state(-1);
@@ -128,7 +129,7 @@
     const currentKey = filterKey;
 
     // Untrack comparisons to avoid loops
-    const prevKey = untrack(() => lastFilterKey);
+    const prevKey = untrack(() => lastSharesFilterKey);
     const prevLength = untrack(() => lastSharesLength);
 
     if (currentKey !== prevKey || shares.length !== prevLength) {
@@ -143,6 +144,7 @@
       }
 
       displayedShares = filtered;
+      lastSharesFilterKey = currentKey;
       lastSharesLength = shares.length;
     }
   });
