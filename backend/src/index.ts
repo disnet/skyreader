@@ -100,6 +100,20 @@ export default {
           return hub.fetch(request);
         }
 
+        // Jetstream debug routes
+        case url.pathname === '/api/jetstream/status': {
+          const jetstreamId = env.JETSTREAM_CONSUMER.idFromName('main-v2');
+          const jetstream = env.JETSTREAM_CONSUMER.get(jetstreamId);
+          response = await jetstream.fetch('http://internal/status');
+          break;
+        }
+        case url.pathname === '/api/jetstream/reconnect': {
+          const jetstreamId = env.JETSTREAM_CONSUMER.idFromName('main-v2');
+          const jetstream = env.JETSTREAM_CONSUMER.get(jetstreamId);
+          response = await jetstream.fetch('http://internal/reconnect');
+          break;
+        }
+
         default:
           response = new Response(JSON.stringify({ error: 'Not found' }), {
             status: 404,
@@ -149,7 +163,7 @@ export default {
 
     // Ensure JetstreamConsumer stays alive (wakes it up if hibernated)
     try {
-      const jetstreamId = env.JETSTREAM_CONSUMER.idFromName('main');
+      const jetstreamId = env.JETSTREAM_CONSUMER.idFromName('main-v2');
       const jetstream = env.JETSTREAM_CONSUMER.get(jetstreamId);
       await jetstream.fetch('http://internal/status');
     } catch (error) {

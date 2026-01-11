@@ -355,7 +355,7 @@ export async function handleAuthCallback(request: Request, env: Env, ctx: Execut
       ctx.waitUntil(
         (async () => {
           try {
-            const jetstreamId = env.JETSTREAM_CONSUMER.idFromName('main');
+            const jetstreamId = env.JETSTREAM_CONSUMER.idFromName('main-v2');
             const jetstream = env.JETSTREAM_CONSUMER.get(jetstreamId);
             await jetstream.fetch('http://internal/register-did', {
               method: 'POST',

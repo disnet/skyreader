@@ -23,11 +23,15 @@ interface NewSharePayload {
   authorDisplayName?: string;
   authorAvatar?: string;
   recordUri: string;
+  feedUrl?: string;
   itemUrl: string;
   itemTitle?: string;
   itemDescription?: string;
   itemImage?: string;
+  itemGuid?: string;
+  itemPublishedAt?: string;
   note?: string;
+  content?: string;
   createdAt: string;
 }
 
@@ -77,6 +81,15 @@ export class RealtimeHub implements DurableObject {
     // Internal broadcast endpoint (called by JetstreamConsumer and scheduled-feeds)
     if (url.pathname === '/broadcast') {
       const message = await request.json() as RealtimeMessage;
+      // Skip shares without content to avoid sending incomplete data
+      if (message.type === 'new_share') {
+        const payload = message.payload as NewSharePayload;
+        if (!payload.content) {
+          return new Response(JSON.stringify({ success: true, skipped: true }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      }
       await this.broadcast(message);
       return new Response(JSON.stringify({ success: true }), {
         headers: { 'Content-Type': 'application/json' },

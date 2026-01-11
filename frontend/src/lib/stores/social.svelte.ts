@@ -41,14 +41,31 @@ function createSocialStore() {
       createdAt: data.createdAt,
     };
 
-    // Prepend to shares list
-    shares = [newShare, ...shares];
+    // Check if share already exists
+    const existingIndex = shares.findIndex(s => s.recordUri === newShare.recordUri);
 
-    // Also store in IndexedDB
-    try {
-      await db.socialShares.add(newShare);
-    } catch {
-      // Ignore duplicate errors
+    if (existingIndex === -1) {
+      // New share - add it
+      shares = [newShare, ...shares];
+      try {
+        await db.socialShares.add(newShare);
+      } catch {
+        // Ignore duplicate errors
+      }
+    } else if (newShare.content && !shares[existingIndex].content) {
+      // Existing share but new message has content - update it
+      const updated = { ...shares[existingIndex], content: newShare.content };
+      shares = [
+        ...shares.slice(0, existingIndex),
+        updated,
+        ...shares.slice(existingIndex + 1)
+      ];
+      // Update in IndexedDB
+      try {
+        await db.socialShares.where('recordUri').equals(newShare.recordUri).modify({ content: newShare.content });
+      } catch {
+        // Ignore errors
+      }
     }
   });
 

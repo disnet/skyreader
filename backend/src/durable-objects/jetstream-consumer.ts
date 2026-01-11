@@ -31,6 +31,9 @@ interface JetstreamEvent {
   };
 }
 
+// Bump this when changing WebSocket handler code to force reconnect
+const CODE_VERSION = 1;
+
 export class JetstreamConsumer implements DurableObject {
   private state: DurableObjectState;
   private env: Env;
@@ -44,6 +47,20 @@ export class JetstreamConsumer implements DurableObject {
 
     // Load watched DIDs and start connection when instantiated
     this.state.blockConcurrencyWhile(async () => {
+      // Generate and store a unique instance ID if we don't have one
+      let instanceId = await this.state.storage.get<string>('instanceId');
+      if (!instanceId) {
+        instanceId = crypto.randomUUID();
+        await this.state.storage.put('instanceId', instanceId);
+      }
+
+      // Register this instance as the active one in KV
+      // This allows old instances to detect they've been replaced
+      await this.env.SESSION_CACHE.put('jetstream:active-instance', instanceId, {
+        expirationTtl: 86400, // 24 hours - will be refreshed by alarms
+      });
+      console.log(`[JetstreamConsumer] Registered as active instance: ${instanceId}`);
+
       await this.loadWatchedDids();
       await this.connect();
       // Schedule alarm to keep DO alive and monitor connection
@@ -53,13 +70,44 @@ export class JetstreamConsumer implements DurableObject {
 
   // Keep DO alive and ensure Jetstream connection stays up
   async alarm(): Promise<void> {
+    // Check if this instance is still the active one
+    const activeInstance = await this.env.SESSION_CACHE.get('jetstream:active-instance');
+    const myId = await this.state.storage.get<string>('instanceId');
+
+    if (activeInstance && myId && activeInstance !== myId) {
+      // Another instance is active - shut down
+      console.log('[JetstreamConsumer] Shutting down - replaced by newer instance');
+      if (this.ws) {
+        this.ws.close();
+        this.ws = null;
+      }
+      return; // Don't reschedule
+    }
+
+    // Refresh our active instance registration
+    if (myId) {
+      await this.env.SESSION_CACHE.put('jetstream:active-instance', myId, {
+        expirationTtl: 86400,
+      });
+    }
+
+    // Check if code version changed - force reconnect to pick up new handlers
+    const lastVersion = await this.state.storage.get<number>('codeVersion');
+    if (lastVersion !== CODE_VERSION) {
+      console.log(`[JetstreamConsumer] Code version changed ${lastVersion} -> ${CODE_VERSION}, forcing reconnect`);
+      if (this.ws) {
+        this.ws.close();
+        this.ws = null;
+      }
+      await this.state.storage.put('codeVersion', CODE_VERSION);
+    }
+
     // Reconnect if needed
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.log('Alarm: WebSocket not connected, reconnecting...');
       await this.connect();
     }
 
-    // Always reschedule to stay alive
+    // Reschedule to stay alive
     await this.state.storage.setAlarm(Date.now() + 30000);
   }
 
@@ -105,10 +153,17 @@ export class JetstreamConsumer implements DurableObject {
     const url = new URL(request.url);
 
     if (url.pathname === '/status') {
+      const instanceId = await this.state.storage.get<string>('instanceId');
+      const activeInstance = await this.env.SESSION_CACHE.get('jetstream:active-instance');
+      const storedVersion = await this.state.storage.get<number>('codeVersion');
       return new Response(
         JSON.stringify({
           connected: this.ws?.readyState === WebSocket.OPEN,
           watchedDids: this.watchedDids.size,
+          instanceId,
+          isActiveInstance: instanceId === activeInstance,
+          codeVersion: CODE_VERSION,
+          storedVersion,
         }),
         { headers: { 'Content-Type': 'application/json' } }
       );
@@ -350,24 +405,26 @@ export class JetstreamConsumer implements DurableObject {
           VALUES (?, ?, '')
         `).bind(did, did).run();
 
-        // Notify RealtimeHub of new share
-        await this.notifyRealtimeHub({
-          type: 'new_share',
-          payload: {
-            authorDid: did,
-            recordUri,
-            feedUrl: record.feedUrl,
-            itemUrl: record.itemUrl,
-            itemTitle: record.itemTitle,
-            itemDescription: record.itemDescription,
-            itemImage: record.itemImage,
-            itemGuid: record.itemGuid,
-            itemPublishedAt: record.itemPublishedAt,
-            note: record.note,
-            content,
-            createdAt: record.createdAt,
-          },
-        });
+        // Only notify RealtimeHub if we have content (avoid sending incomplete shares)
+        if (content) {
+          await this.notifyRealtimeHub({
+            type: 'new_share',
+            payload: {
+              authorDid: did,
+              recordUri,
+              feedUrl: record.feedUrl,
+              itemUrl: record.itemUrl,
+              itemTitle: record.itemTitle,
+              itemDescription: record.itemDescription,
+              itemImage: record.itemImage,
+              itemGuid: record.itemGuid,
+              itemPublishedAt: record.itemPublishedAt,
+              note: record.note,
+              content,
+              createdAt: record.createdAt,
+            },
+          });
+        }
       } else if (operation === 'delete') {
         await this.env.DB.prepare(
           'DELETE FROM shares WHERE record_uri = ?'

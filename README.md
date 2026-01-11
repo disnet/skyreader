@@ -163,6 +163,27 @@ npm run build             # Production build
 npm run check             # Type checking
 ```
 
+### Updating Durable Object Code
+
+Durable Objects (like `JetstreamConsumer`) persist across deploys. WebSocket handlers are closures created at connection time and won't pick up new code automatically.
+
+**For WebSocket handler changes**:
+1. Bump `CODE_VERSION` in `backend/src/durable-objects/jetstream-consumer.ts`
+2. Deploy - the alarm forces a reconnect within 30 seconds
+
+**For major changes**:
+1. Change the DO instance name in `index.ts` and `auth.ts` (e.g., `'main-v2'` → `'main-v3'`)
+2. Deploy - old instances auto-shutdown via active instance registry in KV
+
+**Debug endpoints**:
+```bash
+# Check DO status (instanceId, codeVersion, connection state)
+curl https://at-rss-api.YOUR_SUBDOMAIN.workers.dev/api/jetstream/status
+
+# Force reconnect
+curl https://at-rss-api.YOUR_SUBDOMAIN.workers.dev/api/jetstream/reconnect
+```
+
 ## License
 
 MIT

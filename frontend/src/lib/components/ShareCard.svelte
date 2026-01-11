@@ -57,9 +57,15 @@
   let isTruncated = $state(false);
 
   $effect(() => {
+    // Access articleContent to create dependency
+    const content = articleContent;
     if (selected && !expanded && bodyEl) {
-      // Check if content overflows the line clamp
-      isTruncated = bodyEl.scrollHeight > bodyEl.clientHeight;
+      // Use requestAnimationFrame to ensure DOM has rendered
+      requestAnimationFrame(() => {
+        if (bodyEl) {
+          isTruncated = bodyEl.scrollHeight > bodyEl.clientHeight;
+        }
+      });
     }
   });
 </script>
