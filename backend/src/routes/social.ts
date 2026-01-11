@@ -134,7 +134,7 @@ export async function handleSocialFeed(request: Request, env: Env): Promise<Resp
         s.id, s.author_did, s.record_uri, s.record_cid,
         s.feed_url, s.item_url, s.item_title, s.item_author, s.item_description,
         s.item_image, s.item_guid, s.item_published_at,
-        s.note, s.tags, s.indexed_at, s.created_at,
+        s.note, s.tags, s.content, s.indexed_at, s.created_at,
         u.handle, u.display_name, u.avatar_url
       FROM shares s
       JOIN follows_cache f ON f.following_did = s.author_did
@@ -169,6 +169,7 @@ export async function handleSocialFeed(request: Request, env: Env): Promise<Resp
       itemPublishedAt: row.item_published_at as number | undefined,
       note: row.note as string | undefined,
       tags: row.tags ? JSON.parse(row.tags as string) : undefined,
+      content: row.content as string | undefined,
       indexedAt: row.indexed_at as number,
       createdAt: row.created_at as number,
     })) as ShareWithAuthor[];
@@ -292,7 +293,7 @@ export async function handlePopularShares(request: Request, env: Env): Promise<R
         s.id, s.author_did, s.record_uri, s.record_cid,
         s.feed_url, s.item_url, s.item_title, s.item_author, s.item_description,
         s.item_image, s.item_guid, s.item_published_at,
-        s.note, s.tags, s.indexed_at, s.created_at,
+        s.note, s.tags, s.content, s.indexed_at, s.created_at,
         u.handle, u.display_name, u.avatar_url,
         COUNT(*) OVER (PARTITION BY s.item_url) as share_count
       FROM shares s
@@ -327,6 +328,7 @@ export async function handlePopularShares(request: Request, env: Env): Promise<R
       itemPublishedAt: row.item_published_at as number | undefined,
       note: row.note as string | undefined,
       tags: row.tags ? JSON.parse(row.tags as string) : undefined,
+      content: row.content as string | undefined,
       indexedAt: row.indexed_at as number,
       createdAt: row.created_at as number,
       shareCount: row.share_count as number,

@@ -37,6 +37,7 @@ function createSocialStore() {
       itemGuid: data.itemGuid,
       itemPublishedAt: data.itemPublishedAt,
       note: data.note,
+      content: data.content,
       createdAt: data.createdAt,
     };
 

@@ -34,9 +34,10 @@
   }
 
   function handleHeaderClick() {
+    const wasSelected = selected;
     onSelect?.();
     // Fetch article content if needed when selecting
-    if (!selected && onFetchContent) {
+    if (!wasSelected && onFetchContent) {
       onFetchContent();
     }
   }
@@ -48,7 +49,7 @@
 
   let isOpen = $derived(selected || expanded);
   let articleContent = $derived(
-    localArticle?.content || localArticle?.summary || remoteArticle?.content || remoteArticle?.summary
+    share.content || localArticle?.content || localArticle?.summary || remoteArticle?.content || remoteArticle?.summary
   );
   let hasContent = $derived(Boolean(articleContent || share.itemDescription));
 
@@ -106,6 +107,17 @@
         {/if}
       {:else if isFetching}
         <p class="share-loading">Loading article content...</p>
+      {:else if share.itemDescription}
+        <div class="share-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
+          <div bind:this={bodyEl} class="share-body" class:truncated={selected && !expanded}>
+            {share.itemDescription}
+          </div>
+        </div>
+        {#if selected && !expanded && isTruncated}
+          <button class="show-more-btn" onclick={handleExpandClick}>
+            Show more
+          </button>
+        {/if}
       {/if}
     </div>
   {/if}

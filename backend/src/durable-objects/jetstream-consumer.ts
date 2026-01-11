@@ -1,4 +1,5 @@
 import type { Env } from '../types';
+import { parseFeed } from '../services/feed-parser';
 
 interface JetstreamEvent {
   did: string;
@@ -234,6 +235,62 @@ export class JetstreamConsumer implements DurableObject {
     }
   }
 
+  // Hash URL for cache key (same as feeds.ts)
+  private hashUrl(url: string): string {
+    let hash = 0;
+    for (let i = 0; i < url.length; i++) {
+      const char = url.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash = hash & hash;
+    }
+    return Math.abs(hash).toString(16);
+  }
+
+  // Fetch article content from cache or feed
+  private async fetchArticleContent(feedUrl: string, itemGuid: string): Promise<string | null> {
+    try {
+      const urlHash = this.hashUrl(feedUrl);
+
+      // Check cache first
+      const cached = await this.env.FEED_CACHE.get(`feed:${urlHash}`, 'json') as { items?: { guid: string; content?: string; summary?: string }[] } | null;
+      if (cached?.items) {
+        const article = cached.items.find(item => item.guid === itemGuid);
+        if (article) {
+          return article.content || article.summary || null;
+        }
+      }
+
+      // Not in cache, fetch from source
+      const response = await fetch(feedUrl, {
+        headers: {
+          'User-Agent': 'AT-RSS/1.0 (+https://at-rss.example.com)',
+          Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
+        },
+      });
+
+      if (!response.ok) {
+        console.error(`Failed to fetch feed ${feedUrl}: ${response.status}`);
+        return null;
+      }
+
+      const xml = await response.text();
+      const parsed = parseFeed(xml, feedUrl);
+
+      // Cache the parsed feed
+      await this.env.FEED_CACHE.put(`feed:${urlHash}`, JSON.stringify(parsed), { expirationTtl: 900 });
+
+      const article = parsed.items.find(item => item.guid === itemGuid);
+      if (article) {
+        return article.content || article.summary || null;
+      }
+
+      return null;
+    } catch (error) {
+      console.error(`Error fetching article content from ${feedUrl}:`, error);
+      return null;
+    }
+  }
+
   private async handleEvent(event: JetstreamEvent): Promise<void> {
     if (event.kind !== 'commit' || !event.commit) {
       return;
@@ -256,13 +313,19 @@ export class JetstreamConsumer implements DurableObject {
 
     try {
       if (operation === 'create' && record && cid) {
+        // Fetch article content if feedUrl and itemGuid are available
+        let content: string | null = null;
+        if (record.feedUrl && record.itemGuid) {
+          content = await this.fetchArticleContent(record.feedUrl, record.itemGuid);
+        }
+
         // Insert share into D1
         await this.env.DB.prepare(`
           INSERT OR REPLACE INTO shares
           (author_did, record_uri, record_cid, feed_url, item_url, item_title,
            item_author, item_description, item_image, item_guid, item_published_at,
-           note, tags, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           note, tags, content, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).bind(
           did,
           recordUri,
@@ -277,6 +340,7 @@ export class JetstreamConsumer implements DurableObject {
           record.itemPublishedAt ? new Date(record.itemPublishedAt).getTime() : null,
           record.note || null,
           record.tags ? JSON.stringify(record.tags) : null,
+          content,
           record.createdAt ? new Date(record.createdAt).getTime() : Date.now()
         ).run();
 
@@ -300,6 +364,7 @@ export class JetstreamConsumer implements DurableObject {
             itemGuid: record.itemGuid,
             itemPublishedAt: record.itemPublishedAt,
             note: record.note,
+            content,
             createdAt: record.createdAt,
           },
         });

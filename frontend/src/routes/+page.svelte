@@ -11,7 +11,7 @@
   import ShareCard from '$lib/components/ShareCard.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import LoadingState from '$lib/components/LoadingState.svelte';
-  import type { Article, FeedItem, SocialShare, CombinedFeedItem } from '$lib/types';
+  import type { Article, FeedItem, SocialShare, CombinedFeedItem, UserShare } from '$lib/types';
 
   let allArticles = $state<Article[]>([]);
   let isLoading = $state(true);
@@ -23,6 +23,7 @@
   // Snapshot of displayed items (doesn't change as you read items)
   let displayedArticles = $state<Article[]>([]);
   let displayedShares = $state<SocialShare[]>([]);
+  let displayedUserShares = $state<UserShare[]>([]);
   let displayedCombined = $state<CombinedFeedItem[]>([]);
 
   // Map of guid -> article for looking up share content
@@ -55,13 +56,15 @@
   // Get filter params from URL
   let feedFilter = $derived($page.url.searchParams.get('feed'));
   let starredFilter = $derived($page.url.searchParams.get('starred'));
+  let sharedFilter = $derived($page.url.searchParams.get('shared'));
   let sharerFilter = $derived($page.url.searchParams.get('sharer'));
   let followingFilter = $derived($page.url.searchParams.get('following'));
   let feedsFilter = $derived($page.url.searchParams.get('feeds'));
 
   // Determine current view mode
-  // 'combined' = all view (articles + shares), 'shares' = following/sharer filter, 'articles' = specific feed or starred or all feeds
-  let viewMode = $derived<'articles' | 'shares' | 'combined'>(() => {
+  // 'combined' = all view (articles + shares), 'shares' = following/sharer filter, 'userShares' = user's own shares, 'articles' = specific feed or starred or all feeds
+  let viewMode = $derived.by((): 'articles' | 'shares' | 'userShares' | 'combined' => {
+    if (sharedFilter) return 'userShares';
     if (sharerFilter || followingFilter) return 'shares';
     if (feedFilter || starredFilter || feedsFilter) return 'articles';
     return 'combined'; // "All" view shows both
@@ -69,7 +72,7 @@
 
   // Build a filter key to detect when we need to recompute the snapshot
   let filterKey = $derived(
-    `${feedFilter || ''}-${starredFilter || ''}-${sharerFilter || ''}-${followingFilter || ''}-${feedsFilter || ''}-${showOnlyUnread}`
+    `${feedFilter || ''}-${starredFilter || ''}-${sharedFilter || ''}-${sharerFilter || ''}-${followingFilter || ''}-${feedsFilter || ''}-${showOnlyUnread}`
   );
 
   // Track the last filter key and articles version to know when to snapshot
@@ -144,12 +147,27 @@
     }
   });
 
+  // Snapshot user's own shares when filter changes
+  $effect(() => {
+    const userShares = sharesStore.userShares;
+    const currentKey = filterKey;
+
+    if (sharedFilter) {
+      // Convert Map to array and sort by createdAt descending
+      const shares = Array.from(userShares.values());
+      shares.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      displayedUserShares = shares;
+    } else {
+      displayedUserShares = [];
+    }
+  });
+
   // Combine articles and shares for the "all" view, sorted by date
   $effect(() => {
     // Track dependencies
     const articles = displayedArticles;
     const shares = displayedShares;
-    const mode = viewMode();
+    const mode = viewMode;
 
     if (mode === 'combined') {
       const combined: CombinedFeedItem[] = [
@@ -173,12 +191,13 @@
   });
 
   // Get page title based on filter
-  let pageTitle = $derived(() => {
+  let pageTitle = $derived.by(() => {
     if (feedFilter) {
       const sub = subscriptionsStore.subscriptions.find(s => s.id === parseInt(feedFilter));
       return sub?.title || 'Feed';
     }
     if (starredFilter) return 'Starred';
+    if (sharedFilter) return 'Shared';
     if (followingFilter) return 'Following';
     if (sharerFilter) {
       const user = socialStore.followedUsers.find(u => u.did === sharerFilter);
@@ -215,6 +234,7 @@
     // Access filter values to create dependency
     feedFilter;
     starredFilter;
+    sharedFilter;
     sharerFilter;
     followingFilter;
     feedsFilter;
@@ -233,20 +253,21 @@
   });
 
   // Get current items based on view mode (uses snapshots)
-  let currentItems = $derived(() => {
-    const mode = viewMode();
+  let currentItems = $derived.by(() => {
+    const mode = viewMode;
     if (mode === 'combined') return displayedCombined;
     if (mode === 'shares') return displayedShares;
+    if (mode === 'userShares') return displayedUserShares;
     return displayedArticles;
   });
 
   function handleKeydown(e: KeyboardEvent) {
-    if (!auth.isAuthenticated || currentItems().length === 0) return;
+    if (!auth.isAuthenticated || currentItems.length === 0) return;
 
     // Ignore if user is typing in an input
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
-    const items = currentItems();
+    const items = currentItems;
     if (e.key === 'j' || e.key === 'ArrowDown') {
       e.preventDefault();
       selectItem(Math.min(selectedIndex + 1, items.length - 1));
@@ -256,13 +277,15 @@
     } else if (e.key === 'o' && selectedIndex >= 0) {
       e.preventDefault();
       const item = items[selectedIndex];
-      const mode = viewMode();
+      const mode = viewMode;
       let url: string;
       if (mode === 'combined') {
         const combined = item as CombinedFeedItem;
         url = combined.type === 'article' ? combined.item.url : combined.item.itemUrl;
       } else if (mode === 'shares') {
         url = (item as SocialShare).itemUrl;
+      } else if (mode === 'userShares') {
+        url = (item as UserShare).articleUrl;
       } else {
         url = (item as Article).url;
       }
@@ -276,7 +299,7 @@
   async function selectItem(index: number) {
     if (index === selectedIndex) return;
 
-    const mode = viewMode();
+    const mode = viewMode;
     // Mark as read when selecting articles (not shares)
     if (mode === 'articles') {
       const article = displayedArticles[index];
@@ -330,7 +353,7 @@
 {:else}
   <div class="feed-page">
     <div class="feed-header">
-      <h1>{pageTitle()}</h1>
+      <h1>{pageTitle}</h1>
       {#if (!feedFilter && !starredFilter && !sharerFilter && !followingFilter) || feedsFilter}
         <div class="view-toggle">
           <button
@@ -345,11 +368,13 @@
       {/if}
     </div>
 
-    {#if isLoading && currentItems().length === 0}
+    {#if isLoading && currentItems.length === 0}
       <LoadingState />
-    {:else if currentItems().length === 0}
+    {:else if currentItems.length === 0}
       {#if starredFilter}
         <EmptyState title="No starred articles" description="Star articles to save them for later" />
+      {:else if sharedFilter}
+        <EmptyState title="No shared articles" description="Share articles to see them here" />
       {:else if followingFilter}
         <EmptyState title="No shared articles" description="People you follow haven't shared any articles yet" />
       {:else if sharerFilter}
@@ -368,7 +393,7 @@
           actionText="Manage Subscriptions"
         />
       {/if}
-    {:else if viewMode() === 'combined'}
+    {:else if viewMode === 'combined'}
       <!-- Combined view (articles + shares) -->
       <div class="article-list">
         {#each displayedCombined as feedItem, index (feedItem.type === 'article' ? feedItem.item.guid : feedItem.item.recordUri)}
@@ -450,7 +475,9 @@
                   scrollToCenter();
                 }}
                 onFetchContent={() => {
-                  if (share.feedUrl && share.itemGuid && !localArticle && !remoteArticle) {
+                  const hasLocalContent = localArticle?.content || localArticle?.summary;
+                  const hasRemoteContent = remoteArticle?.content || remoteArticle?.summary;
+                  if (share.feedUrl && share.itemGuid && !hasLocalContent && !hasRemoteContent) {
                     fetchArticleContent(share.feedUrl, share.itemGuid);
                   }
                 }}
@@ -459,7 +486,7 @@
           </div>
         {/each}
       </div>
-    {:else if viewMode() === 'shares'}
+    {:else if viewMode === 'shares'}
       <!-- Social shares view -->
       <div class="article-list">
         {#each displayedShares as share, index (share.recordUri)}
@@ -488,9 +515,57 @@
                 scrollToCenter();
               }}
               onFetchContent={() => {
-                if (share.feedUrl && share.itemGuid && !localArticle && !remoteArticle) {
+                const hasLocalContent = localArticle?.content || localArticle?.summary;
+                const hasRemoteContent = remoteArticle?.content || remoteArticle?.summary;
+                if (share.feedUrl && share.itemGuid && !hasLocalContent && !hasRemoteContent) {
                   fetchArticleContent(share.feedUrl, share.itemGuid);
                 }
+              }}
+            />
+          </div>
+        {/each}
+      </div>
+    {:else if viewMode === 'userShares'}
+      <!-- User's own shares view -->
+      <div class="article-list">
+        {#each displayedUserShares as share, index (share.articleGuid)}
+          {@const localArticle = articlesByGuid.get(share.articleGuid)}
+          {@const article = localArticle || {
+            guid: share.articleGuid,
+            url: share.articleUrl,
+            title: share.articleTitle || share.articleUrl,
+            author: share.articleAuthor,
+            summary: share.articleDescription,
+            imageUrl: share.articleImage,
+            publishedAt: share.articlePublishedAt || share.createdAt,
+            subscriptionId: 0,
+            fetchedAt: Date.now()
+          }}
+          {@const sub = localArticle ? subscriptionsStore.subscriptions.find(s => s.id === localArticle.subscriptionId) : undefined}
+          <div bind:this={articleElements[index]}>
+            <ArticleCard
+              {article}
+              siteUrl={sub?.siteUrl}
+              isRead={readingStore.isRead(article.guid)}
+              isStarred={readingStore.isStarred(article.guid)}
+              isShared={true}
+              shareNote={share.note}
+              selected={selectedIndex === index}
+              expanded={expandedIndex === index}
+              onToggleStar={() => readingStore.toggleStar(article.guid)}
+              onUnshare={() => sharesStore.unshare(share.articleGuid)}
+              onSelect={() => {
+                if (selectedIndex === index) {
+                  selectedIndex = -1;
+                  expandedIndex = -1;
+                } else {
+                  selectItem(index);
+                }
+              }}
+              onExpand={async () => {
+                expandedIndex = index;
+                await tick();
+                scrollToCenter();
               }}
             />
           </div>

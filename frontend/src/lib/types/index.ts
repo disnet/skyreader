@@ -65,6 +65,7 @@ export interface SocialShare {
   itemGuid?: string;
   itemPublishedAt?: string;
   note?: string;
+  content?: string;
   createdAt: string;
 }
 

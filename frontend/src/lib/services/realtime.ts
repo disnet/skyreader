@@ -22,6 +22,7 @@ export interface NewSharePayload {
   itemGuid?: string;
   itemPublishedAt?: string;
   note?: string;
+  content?: string;
   createdAt: string;
 }
 

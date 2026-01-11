@@ -6,6 +6,7 @@
     import { subscriptionsStore } from "$lib/stores/subscriptions.svelte";
     import { readingStore } from "$lib/stores/reading.svelte";
     import { socialStore } from "$lib/stores/social.svelte";
+    import { sharesStore } from "$lib/stores/shares.svelte";
     import AddFeedModal from "./AddFeedModal.svelte";
 
     let showAddFeedModal = $state(false);
@@ -30,11 +31,13 @@
     let currentFilter = $derived(() => {
         const feed = $page.url.searchParams.get("feed");
         const starred = $page.url.searchParams.get("starred");
+        const shared = $page.url.searchParams.get("shared");
         const sharer = $page.url.searchParams.get("sharer");
         const following = $page.url.searchParams.get("following");
         const feeds = $page.url.searchParams.get("feeds");
         if (feed) return { type: "feed" as const, id: parseInt(feed) };
         if (starred) return { type: "starred" as const };
+        if (shared) return { type: "shared" as const };
         if (following) return { type: "following" as const };
         if (sharer) return { type: "sharer" as const, id: sharer };
         if (feeds) return { type: "feeds" as const };
@@ -91,6 +94,7 @@
         const params = new URLSearchParams();
         if (type === "feed" && id) params.set("feed", String(id));
         else if (type === "starred") params.set("starred", "true");
+        else if (type === "shared") params.set("shared", "true");
         else if (type === "following") params.set("following", "true");
         else if (type === "sharer" && id) params.set("sharer", String(id));
         else if (type === "feeds") params.set("feeds", "true");
@@ -185,7 +189,21 @@
             {/if}
         </button>
 
-        <!-- Shared section -->
+        <button
+            class="nav-item"
+            class:active={currentFilter().type === "shared"}
+            onclick={() => selectFilter("shared")}
+        >
+            <span class="nav-icon">&#x2197;</span>
+            {#if !sidebarStore.isCollapsed}
+                <span class="nav-label">Shared</span>
+                {#if sharesStore.userShares.size > 0}
+                    <span class="nav-count">{sharesStore.userShares.size}</span>
+                {/if}
+            {/if}
+        </button>
+
+        <!-- Following section -->
         <div class="nav-section">
             <div class="section-header" class:active={currentFilter().type === "following"}>
                 <button
