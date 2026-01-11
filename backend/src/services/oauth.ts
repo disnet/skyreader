@@ -387,7 +387,8 @@ async function refreshSession(env: Env, sessionId: string, session: Session): Pr
 
     // Handle DPoP nonce requirement
     if (!tokenResponse.ok) {
-      const errorData = await tokenResponse.json().catch(() => null) as { error?: string } | null;
+      const errorText = await tokenResponse.text();
+      const errorData = (() => { try { return JSON.parse(errorText) as { error?: string }; } catch { return null; } })();
       const dpopNonce = tokenResponse.headers.get('DPoP-Nonce');
 
       if (errorData?.error === 'use_dpop_nonce' && dpopNonce) {
@@ -407,6 +408,11 @@ async function refreshSession(env: Env, sessionId: string, session: Session): Pr
           },
           body: refreshBody,
         });
+      } else {
+        console.error('Token refresh failed:', errorText);
+        // Delete invalid session
+        await deleteSession(env, sessionId);
+        return null;
       }
     }
 
