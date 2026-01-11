@@ -32,10 +32,12 @@
         const starred = $page.url.searchParams.get("starred");
         const sharer = $page.url.searchParams.get("sharer");
         const following = $page.url.searchParams.get("following");
+        const feeds = $page.url.searchParams.get("feeds");
         if (feed) return { type: "feed" as const, id: parseInt(feed) };
         if (starred) return { type: "starred" as const };
         if (following) return { type: "following" as const };
         if (sharer) return { type: "sharer" as const, id: sharer };
+        if (feeds) return { type: "feeds" as const };
         return { type: "all" as const };
     });
 
@@ -91,6 +93,7 @@
         else if (type === "starred") params.set("starred", "true");
         else if (type === "following") params.set("following", "true");
         else if (type === "sharer" && id) params.set("sharer", String(id));
+        else if (type === "feeds") params.set("feeds", "true");
 
         const query = params.toString();
         goto(query ? `/?${query}` : "/");
@@ -184,7 +187,7 @@
 
         <!-- Shared section -->
         <div class="nav-section">
-            <div class="section-header">
+            <div class="section-header" class:active={currentFilter().type === "following"}>
                 <button
                     class="disclosure-btn"
                     onclick={() => sidebarStore.toggleSection("shared")}
@@ -248,7 +251,7 @@
 
         <!-- Feeds section -->
         <div class="nav-section">
-            <div class="section-header">
+            <div class="section-header" class:active={currentFilter().type === "feeds"}>
                 <button
                     class="disclosure-btn"
                     onclick={() => sidebarStore.toggleSection("feeds")}
@@ -261,8 +264,8 @@
                 {#if !sidebarStore.isCollapsed}
                     <button
                         class="section-label-btn"
-                        class:active={currentFilter().type === "all"}
-                        onclick={() => selectFilter("all")}
+                        class:active={currentFilter().type === "feeds"}
+                        onclick={() => selectFilter("feeds")}
                     >
                         Feeds
                     </button>
@@ -535,6 +538,14 @@
 
     .section-label-btn.active {
         color: var(--color-primary);
+    }
+
+    .section-header:hover {
+        background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+    }
+
+    .section-header.active {
+        background-color: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
     }
 
     .disclosure {

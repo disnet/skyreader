@@ -57,18 +57,19 @@
   let starredFilter = $derived($page.url.searchParams.get('starred'));
   let sharerFilter = $derived($page.url.searchParams.get('sharer'));
   let followingFilter = $derived($page.url.searchParams.get('following'));
+  let feedsFilter = $derived($page.url.searchParams.get('feeds'));
 
   // Determine current view mode
-  // 'combined' = all view (articles + shares), 'shares' = following/sharer filter, 'articles' = specific feed or starred
+  // 'combined' = all view (articles + shares), 'shares' = following/sharer filter, 'articles' = specific feed or starred or all feeds
   let viewMode = $derived<'articles' | 'shares' | 'combined'>(() => {
     if (sharerFilter || followingFilter) return 'shares';
-    if (feedFilter || starredFilter) return 'articles';
+    if (feedFilter || starredFilter || feedsFilter) return 'articles';
     return 'combined'; // "All" view shows both
   });
 
   // Build a filter key to detect when we need to recompute the snapshot
   let filterKey = $derived(
-    `${feedFilter || ''}-${starredFilter || ''}-${sharerFilter || ''}-${followingFilter || ''}-${showOnlyUnread}`
+    `${feedFilter || ''}-${starredFilter || ''}-${sharerFilter || ''}-${followingFilter || ''}-${feedsFilter || ''}-${showOnlyUnread}`
   );
 
   // Track the last filter key and articles version to know when to snapshot
@@ -183,6 +184,7 @@
       const user = socialStore.followedUsers.find(u => u.did === sharerFilter);
       return user?.displayName || user?.handle || 'Shared';
     }
+    if (feedsFilter) return 'Feeds';
     return 'All';
   });
 
@@ -215,6 +217,7 @@
     starredFilter;
     sharerFilter;
     followingFilter;
+    feedsFilter;
     selectedIndex = -1;
     expandedIndex = -1;
   });
@@ -328,7 +331,7 @@
   <div class="feed-page">
     <div class="feed-header">
       <h1>{pageTitle()}</h1>
-      {#if !feedFilter && !starredFilter && !sharerFilter && !followingFilter}
+      {#if (!feedFilter && !starredFilter && !sharerFilter && !followingFilter) || feedsFilter}
         <div class="view-toggle">
           <button
             class:active={showOnlyUnread}
@@ -353,6 +356,8 @@
         <EmptyState title="No shares from this user" description="This user hasn't shared any articles yet" />
       {:else if feedFilter}
         <EmptyState title="No unread articles" description="You're all caught up on this feed" />
+      {:else if feedsFilter}
+        <EmptyState title="No unread articles" description="You're all caught up on your feeds" />
       {:else if showOnlyUnread}
         <EmptyState title="No unread articles" description="You're all caught up!" />
       {:else}
