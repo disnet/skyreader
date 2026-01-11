@@ -156,8 +156,9 @@
       margin-left: 0;
     }
 
+    /* Hide floating hamburger - mobile header in page handles this now */
     .mobile-menu-btn {
-      display: block;
+      display: none;
     }
   }
 </style>

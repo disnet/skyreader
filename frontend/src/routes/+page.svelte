@@ -2,6 +2,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth.svelte';
+  import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { readingStore } from '$lib/stores/reading.svelte';
   import { sharesStore } from '$lib/stores/shares.svelte';
@@ -370,21 +371,23 @@
 {:else}
   <div class="feed-page">
     <div class="feed-header">
-      <div class="feed-title-row">
-        <h1>{pageTitle}</h1>
-        {#if feedFilter}
-          <PopoverMenu
-            items={[
-              {
-                label: 'Delete',
-                icon: '🗑',
-                variant: 'danger',
-                onclick: () => removeFeed(parseInt(feedFilter)),
-              },
-            ]}
-          />
-        {/if}
-      </div>
+      <button class="mobile-menu-btn" onclick={() => sidebarStore.toggleMobile()} aria-label="Open menu">
+        &lt;
+      </button>
+      <h1>{pageTitle}</h1>
+      {#if feedFilter}
+        <PopoverMenu
+          items={[
+            {
+              label: 'Delete',
+              icon: '🗑',
+              variant: 'danger',
+              onclick: () => removeFeed(parseInt(feedFilter)),
+            },
+          ]}
+        />
+      {/if}
+      <div class="header-spacer"></div>
       {#if (!feedFilter && !starredFilter && !sharerFilter && !followingFilter) || feedsFilter || feedFilter}
         <div class="view-toggle">
           <button
@@ -686,19 +689,28 @@
 
   .feed-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    gap: 0.5rem;
     margin-bottom: 1.5rem;
   }
 
   .feed-header h1 {
     font-size: 1.5rem;
+    margin: 0;
   }
 
-  .feed-title-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
+  .mobile-menu-btn {
+    display: none;
+    background: none;
+    border: none;
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 0.25rem;
+    color: var(--color-text);
+  }
+
+  .header-spacer {
+    flex: 1;
   }
 
   .view-toggle {
@@ -741,5 +753,32 @@
 
   .article-list > div:last-child {
     border-bottom: none;
+  }
+
+  /* Mobile styles */
+  @media (max-width: 768px) {
+    .feed-page {
+      padding-top: 3.5rem;
+    }
+
+    .feed-header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 40;
+      background: var(--color-bg);
+      padding: 0.75rem 1rem;
+      margin-bottom: 0;
+      border-bottom: 1px solid var(--color-border);
+    }
+
+    .feed-header h1 {
+      font-size: 1.125rem;
+    }
+
+    .mobile-menu-btn {
+      display: block;
+    }
   }
 </style>

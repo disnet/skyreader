@@ -145,3 +145,8 @@ body.sidebar-resizing {
 body.sidebar-resizing * {
   transition: none !important;
 }
+
+/* Prevent body scroll when mobile sidebar is open */
+body.sidebar-open-mobile {
+  overflow: hidden;
+}

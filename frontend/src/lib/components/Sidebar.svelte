@@ -137,6 +137,17 @@
         document.removeEventListener('mousemove', handleResize);
         document.removeEventListener('mouseup', stopResize);
         if (longPressTimer) clearTimeout(longPressTimer);
+        document.body.classList.remove('sidebar-open-mobile');
+    });
+
+    // Lock body scroll when sidebar is open on mobile
+    $effect(() => {
+        const isMobile = window.matchMedia('(max-width: 768px)').matches;
+        if (isMobile && sidebarStore.isOpen) {
+            document.body.classList.add('sidebar-open-mobile');
+        } else {
+            document.body.classList.remove('sidebar-open-mobile');
+        }
     });
 
     let feedUnreadCounts = $state<Map<number, number>>(new Map());
@@ -877,20 +888,23 @@
     /* Mobile styles */
     @media (max-width: 768px) {
         .sidebar-backdrop {
-            display: block;
-        }
-
-        .sidebar-backdrop:not(.sidebar.open ~ .sidebar-backdrop) {
             display: none;
         }
 
         .sidebar {
+            width: 100% !important;
+            height: 100%;
+            border-right: none;
             transform: translateX(-100%);
-            width: var(--sidebar-width, 260px) !important;
+            transition: transform 0.25s ease-out;
         }
 
         .sidebar.open {
             transform: translateX(0);
+        }
+
+        .resize-handle {
+            display: none;
         }
     }
 
