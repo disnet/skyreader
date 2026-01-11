@@ -12,6 +12,17 @@ function hashUrl(url: string): string {
   return Math.abs(hash).toString(16);
 }
 
+const CACHE_TTL_SECONDS = 900; // 15 minutes
+
+interface CachedFeed {
+  url_hash: string;
+  feed_url: string;
+  content: string;
+  etag: string | null;
+  last_modified: string | null;
+  cached_at: number;
+}
+
 export async function handleFeedFetch(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const feedUrl = url.searchParams.get('url');
@@ -35,12 +46,16 @@ export async function handleFeedFetch(request: Request, env: Env): Promise<Respo
   }
 
   const urlHash = hashUrl(feedUrl);
+  const now = Math.floor(Date.now() / 1000);
 
-  // Check cache unless force refresh
+  // Check D1 cache unless force refresh
   if (!force) {
-    const cached = await env.FEED_CACHE.get(`feed:${urlHash}`, 'json');
+    const cached = await env.DB.prepare(
+      'SELECT * FROM feed_cache WHERE url_hash = ? AND cached_at > ?'
+    ).bind(urlHash, now - CACHE_TTL_SECONDS).first<CachedFeed>();
+
     if (cached) {
-      return new Response(JSON.stringify(cached), {
+      return new Response(cached.content, {
         headers: { 'Content-Type': 'application/json', 'X-Cache': 'HIT' },
       });
     }
@@ -52,26 +67,35 @@ export async function handleFeedFetch(request: Request, env: Env): Promise<Respo
       Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
     };
 
-    // Only use conditional headers if not forcing refresh
+    // Get metadata for conditional request (even if cache expired)
     if (!force) {
-      const metaStr = await env.FEED_CACHE.get(`feed:${urlHash}:meta`);
-      const meta = metaStr ? JSON.parse(metaStr) as { etag?: string; lastModified?: string } : null;
+      const meta = await env.DB.prepare(
+        'SELECT etag, last_modified FROM feed_cache WHERE url_hash = ?'
+      ).bind(urlHash).first<{ etag: string | null; last_modified: string | null }>();
 
       if (meta?.etag) {
         headers['If-None-Match'] = meta.etag;
       }
-      if (meta?.lastModified) {
-        headers['If-Modified-Since'] = meta.lastModified;
+      if (meta?.last_modified) {
+        headers['If-Modified-Since'] = meta.last_modified;
       }
     }
 
     const response = await fetch(feedUrl, { headers });
 
-    // If not modified and we have cached data, return cached
+    // If not modified, update cache timestamp and return existing content
     if (response.status === 304) {
-      const cached = await env.FEED_CACHE.get(`feed:${urlHash}`, 'json');
+      const cached = await env.DB.prepare(
+        'SELECT content FROM feed_cache WHERE url_hash = ?'
+      ).bind(urlHash).first<{ content: string }>();
+
       if (cached) {
-        return new Response(JSON.stringify(cached), {
+        // Update cached_at to extend the cache
+        await env.DB.prepare(
+          'UPDATE feed_cache SET cached_at = ? WHERE url_hash = ?'
+        ).bind(now, urlHash).run();
+
+        return new Response(cached.content, {
           headers: { 'Content-Type': 'application/json', 'X-Cache': 'HIT' },
         });
       }
@@ -99,25 +123,25 @@ export async function handleFeedFetch(request: Request, env: Env): Promise<Respo
 
     const xml = await response.text();
     const parsed = parseFeed(xml, feedUrl);
+    const parsedJson = JSON.stringify(parsed);
 
-    // Cache the parsed feed (best effort - don't fail if KV limit reached)
-    try {
-      await Promise.all([
-        env.FEED_CACHE.put(`feed:${urlHash}`, JSON.stringify(parsed), { expirationTtl: 900 }), // 15 min
-        env.FEED_CACHE.put(
-          `feed:${urlHash}:meta`,
-          JSON.stringify({
-            etag: response.headers.get('ETag'),
-            lastModified: response.headers.get('Last-Modified'),
-            fetchedAt: Date.now(),
-          }),
-          { expirationTtl: 3600 }
-        ), // 1 hour
-      ]);
-    } catch (cacheError) {
-      // KV limit likely reached - continue without caching
-      console.warn('Failed to cache feed (KV limit?):', cacheError);
-    }
+    // Cache in D1
+    await env.DB.prepare(`
+      INSERT INTO feed_cache (url_hash, feed_url, content, etag, last_modified, cached_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(url_hash) DO UPDATE SET
+        content = excluded.content,
+        etag = excluded.etag,
+        last_modified = excluded.last_modified,
+        cached_at = excluded.cached_at
+    `).bind(
+      urlHash,
+      feedUrl,
+      parsedJson,
+      response.headers.get('ETag') || null,
+      response.headers.get('Last-Modified') || null,
+      now
+    ).run();
 
     // Update feed metadata in D1
     await env.DB.prepare(`
@@ -141,7 +165,7 @@ export async function handleFeedFetch(request: Request, env: Env): Promise<Respo
       response.headers.get('Last-Modified') || null
     ).run();
 
-    return new Response(JSON.stringify(parsed), {
+    return new Response(parsedJson, {
       headers: { 'Content-Type': 'application/json', 'X-Cache': 'MISS' },
     });
   } catch (error) {
@@ -160,6 +184,7 @@ export async function handleArticleFetch(request: Request, env: Env): Promise<Re
   const url = new URL(request.url);
   const feedUrl = url.searchParams.get('feedUrl');
   const guid = url.searchParams.get('guid');
+  const itemUrl = url.searchParams.get('itemUrl');
 
   if (!feedUrl || !guid) {
     return new Response(JSON.stringify({ error: 'Missing feedUrl or guid parameter' }), {
@@ -179,16 +204,27 @@ export async function handleArticleFetch(request: Request, env: Env): Promise<Re
   }
 
   const urlHash = hashUrl(feedUrl);
+  const now = Math.floor(Date.now() / 1000);
 
   try {
-    // Check cache first
-    const cached = await env.FEED_CACHE.get(`feed:${urlHash}`, 'json') as { items?: { guid: string; content?: string; summary?: string }[] } | null;
-    if (cached?.items) {
-      const article = cached.items.find(item => item.guid === guid);
-      if (article) {
-        return new Response(JSON.stringify({ article }), {
-          headers: { 'Content-Type': 'application/json', 'X-Cache': 'HIT' },
-        });
+    // Check D1 cache first
+    const cached = await env.DB.prepare(
+      'SELECT content FROM feed_cache WHERE url_hash = ? AND cached_at > ?'
+    ).bind(urlHash, now - CACHE_TTL_SECONDS).first<{ content: string }>();
+
+    if (cached) {
+      const parsed = JSON.parse(cached.content) as { items?: { guid: string; url?: string; content?: string; summary?: string }[] };
+      if (parsed?.items) {
+        // Try matching by GUID first, then by URL
+        let article = parsed.items.find(item => item.guid === guid);
+        if (!article && itemUrl) {
+          article = parsed.items.find(item => item.url === itemUrl);
+        }
+        if (article) {
+          return new Response(JSON.stringify({ article }), {
+            headers: { 'Content-Type': 'application/json', 'X-Cache': 'HIT' },
+          });
+        }
       }
     }
 
@@ -213,15 +249,29 @@ export async function handleArticleFetch(request: Request, env: Env): Promise<Re
     const xml = await response.text();
     const parsed = parseFeed(xml, feedUrl);
 
-    // Cache the parsed feed (best effort)
-    try {
-      await env.FEED_CACHE.put(`feed:${urlHash}`, JSON.stringify(parsed), { expirationTtl: 900 });
-    } catch (cacheError) {
-      console.warn('Failed to cache feed (KV limit?):', cacheError);
-    }
+    // Cache in D1
+    await env.DB.prepare(`
+      INSERT INTO feed_cache (url_hash, feed_url, content, etag, last_modified, cached_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(url_hash) DO UPDATE SET
+        content = excluded.content,
+        etag = excluded.etag,
+        last_modified = excluded.last_modified,
+        cached_at = excluded.cached_at
+    `).bind(
+      urlHash,
+      feedUrl,
+      JSON.stringify(parsed),
+      response.headers.get('ETag') || null,
+      response.headers.get('Last-Modified') || null,
+      now
+    ).run();
 
-    // Find the article by guid
-    const article = parsed.items.find(item => item.guid === guid);
+    // Find the article by guid first, then by URL (more stable across parses)
+    let article = parsed.items.find(item => item.guid === guid);
+    if (!article && itemUrl) {
+      article = parsed.items.find(item => item.url === itemUrl);
+    }
     if (!article) {
       return new Response(JSON.stringify({ error: 'Article not found in feed' }), {
         status: 404,

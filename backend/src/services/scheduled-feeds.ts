@@ -89,6 +89,7 @@ async function fetchAndCacheFeed(
   subscriberCount: number
 ): Promise<{ status: 'fetched' | 'skipped' | 'not_modified' }> {
   const urlHash = hashUrl(feedUrl);
+  const now = Math.floor(Date.now() / 1000);
 
   // Check if feed has too many errors - skip it
   const errorCheck = await env.DB.prepare(
@@ -100,9 +101,10 @@ async function fetchAndCacheFeed(
     return { status: 'skipped' };
   }
 
-  // Get existing metadata for conditional request
-  const metaStr = await env.FEED_CACHE.get(`feed:${urlHash}:meta`);
-  const meta = metaStr ? JSON.parse(metaStr) as { etag?: string; lastModified?: string } : null;
+  // Get existing metadata from D1 for conditional request
+  const meta = await env.DB.prepare(
+    'SELECT etag, last_modified FROM feed_cache WHERE url_hash = ?'
+  ).bind(urlHash).first<{ etag: string | null; last_modified: string | null }>();
 
   const headers: HeadersInit = {
     'User-Agent': 'AT-RSS/1.0 (+https://at-rss.example.com)',
@@ -112,8 +114,8 @@ async function fetchAndCacheFeed(
   if (meta?.etag) {
     headers['If-None-Match'] = meta.etag;
   }
-  if (meta?.lastModified) {
-    headers['If-Modified-Since'] = meta.lastModified;
+  if (meta?.last_modified) {
+    headers['If-Modified-Since'] = meta.last_modified;
   }
 
   const response = await fetch(feedUrl, {
@@ -124,6 +126,10 @@ async function fetchAndCacheFeed(
   // Not modified - update metadata but don't re-parse
   if (response.status === 304) {
     await updateScheduledFetchTime(env, feedUrl, subscriberCount);
+    // Update cache timestamp to keep it fresh
+    await env.DB.prepare(
+      'UPDATE feed_cache SET cached_at = ? WHERE url_hash = ?'
+    ).bind(now, urlHash).run();
     return { status: 'not_modified' };
   }
 
@@ -135,9 +141,23 @@ async function fetchAndCacheFeed(
   const xml = await response.text();
   const parsed = parseFeed(xml, feedUrl);
 
-  // Note: We don't cache to KV here to stay within free plan limits (1,000 writes/day).
-  // KV cache is populated on-demand when users fetch feeds via the API.
-  // We only store metadata in D1 which has higher write limits.
+  // Cache in D1
+  await env.DB.prepare(`
+    INSERT INTO feed_cache (url_hash, feed_url, content, etag, last_modified, cached_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(url_hash) DO UPDATE SET
+      content = excluded.content,
+      etag = excluded.etag,
+      last_modified = excluded.last_modified,
+      cached_at = excluded.cached_at
+  `).bind(
+    urlHash,
+    feedUrl,
+    JSON.stringify(parsed),
+    response.headers.get('ETag') || null,
+    response.headers.get('Last-Modified') || null,
+    now
+  ).run();
 
   // Update feed metadata in D1
   await env.DB.prepare(`

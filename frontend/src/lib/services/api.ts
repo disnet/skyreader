@@ -74,8 +74,9 @@ class ApiClient {
     return this.fetch(`/api/feeds/discover?url=${encodeURIComponent(url)}`);
   }
 
-  async fetchArticle(feedUrl: string, guid: string): Promise<FeedItem | null> {
+  async fetchArticle(feedUrl: string, guid: string, itemUrl?: string): Promise<FeedItem | null> {
     const params = new URLSearchParams({ feedUrl, guid });
+    if (itemUrl) params.set('itemUrl', itemUrl);
     const result = await this.fetch<{ article: FeedItem }>(`/api/feeds/article?${params}`);
     return result.article;
   }

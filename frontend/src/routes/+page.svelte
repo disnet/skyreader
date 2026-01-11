@@ -33,14 +33,14 @@
   let fetchedArticles = $state<Map<string, FeedItem>>(new Map());
   let fetchingArticles = $state<Set<string>>(new Set());
 
-  async function fetchArticleContent(feedUrl: string, guid: string) {
+  async function fetchArticleContent(feedUrl: string, guid: string, itemUrl?: string) {
     if (fetchedArticles.has(guid) || fetchingArticles.has(guid)) return;
 
     fetchingArticles.add(guid);
     fetchingArticles = new Set(fetchingArticles);
 
     try {
-      const article = await api.fetchArticle(feedUrl, guid);
+      const article = await api.fetchArticle(feedUrl, guid, itemUrl);
       if (article) {
         fetchedArticles.set(guid, article);
         fetchedArticles = new Map(fetchedArticles);
@@ -478,7 +478,7 @@
                   const hasLocalContent = localArticle?.content || localArticle?.summary;
                   const hasRemoteContent = remoteArticle?.content || remoteArticle?.summary;
                   if (share.feedUrl && share.itemGuid && !hasLocalContent && !hasRemoteContent) {
-                    fetchArticleContent(share.feedUrl, share.itemGuid);
+                    fetchArticleContent(share.feedUrl, share.itemGuid, share.itemUrl);
                   }
                 }}
               />
@@ -518,7 +518,7 @@
                 const hasLocalContent = localArticle?.content || localArticle?.summary;
                 const hasRemoteContent = remoteArticle?.content || remoteArticle?.summary;
                 if (share.feedUrl && share.itemGuid && !hasLocalContent && !hasRemoteContent) {
-                  fetchArticleContent(share.feedUrl, share.itemGuid);
+                  fetchArticleContent(share.feedUrl, share.itemGuid, share.itemUrl);
                 }
               }}
             />

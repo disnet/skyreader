@@ -36,6 +36,7 @@ export interface PollResult {
 
 const POLL_TIMEOUT_MS = 30000; // 30 seconds max
 const IDLE_TIMEOUT_MS = 2000; // 2 seconds without events = caught up
+const CACHE_TTL_SECONDS = 900; // 15 minutes
 
 // Hash URL for cache key (same as feeds.ts)
 function hashUrl(url: string): string {
@@ -48,16 +49,27 @@ function hashUrl(url: string): string {
   return Math.abs(hash).toString(16);
 }
 
-async function fetchArticleContent(env: Env, feedUrl: string, itemGuid: string): Promise<string | null> {
+async function fetchArticleContent(env: Env, feedUrl: string, itemGuid: string, itemUrl?: string): Promise<string | null> {
   try {
     const urlHash = hashUrl(feedUrl);
+    const now = Math.floor(Date.now() / 1000);
 
-    // Check cache first
-    const cached = await env.FEED_CACHE.get(`feed:${urlHash}`, 'json') as { items?: { guid: string; content?: string; summary?: string }[] } | null;
-    if (cached?.items) {
-      const article = cached.items.find(item => item.guid === itemGuid);
-      if (article) {
-        return article.content || article.summary || null;
+    // Check D1 cache first
+    const cached = await env.DB.prepare(
+      'SELECT content FROM feed_cache WHERE url_hash = ? AND cached_at > ?'
+    ).bind(urlHash, now - CACHE_TTL_SECONDS).first<{ content: string }>();
+
+    if (cached) {
+      const parsed = JSON.parse(cached.content) as { items?: { guid: string; url?: string; content?: string; summary?: string }[] };
+      if (parsed?.items) {
+        // Try matching by GUID first, then by URL
+        let article = parsed.items.find(item => item.guid === itemGuid);
+        if (!article && itemUrl) {
+          article = parsed.items.find(item => item.url === itemUrl);
+        }
+        if (article) {
+          return article.content || article.summary || null;
+        }
       }
     }
 
@@ -77,10 +89,29 @@ async function fetchArticleContent(env: Env, feedUrl: string, itemGuid: string):
     const xml = await response.text();
     const parsed = parseFeed(xml, feedUrl);
 
-    // Note: We don't cache to KV here to stay within free plan limits (1,000 writes/day).
-    // KV cache is populated on-demand when users fetch feeds via the API.
+    // Cache in D1
+    await env.DB.prepare(`
+      INSERT INTO feed_cache (url_hash, feed_url, content, etag, last_modified, cached_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(url_hash) DO UPDATE SET
+        content = excluded.content,
+        etag = excluded.etag,
+        last_modified = excluded.last_modified,
+        cached_at = excluded.cached_at
+    `).bind(
+      urlHash,
+      feedUrl,
+      JSON.stringify(parsed),
+      response.headers.get('ETag') || null,
+      response.headers.get('Last-Modified') || null,
+      now
+    ).run();
 
-    const article = parsed.items.find(item => item.guid === itemGuid);
+    // Try matching by GUID first, then by URL (more stable across parses)
+    let article = parsed.items.find(item => item.guid === itemGuid);
+    if (!article && itemUrl) {
+      article = parsed.items.find(item => item.url === itemUrl);
+    }
     return article?.content || article?.summary || null;
   } catch (error) {
     console.error(`Error fetching article content from ${feedUrl}:`, error);
@@ -116,7 +147,7 @@ async function processShareEvent(env: Env, event: JetstreamEvent): Promise<void>
     // Fetch article content if feedUrl and itemGuid are available
     let content: string | null = null;
     if (record.feedUrl && record.itemGuid) {
-      content = await fetchArticleContent(env, record.feedUrl, record.itemGuid);
+      content = await fetchArticleContent(env, record.feedUrl, record.itemGuid, record.itemUrl);
     }
 
     // Insert share into D1
@@ -150,26 +181,24 @@ async function processShareEvent(env: Env, event: JetstreamEvent): Promise<void>
       VALUES (?, ?, '')
     `).bind(did, did).run();
 
-    // Only notify RealtimeHub if we have content
-    if (content) {
-      await notifyRealtimeHub(env, {
-        type: 'new_share',
-        payload: {
-          authorDid: did,
-          recordUri,
-          feedUrl: record.feedUrl,
-          itemUrl: record.itemUrl,
-          itemTitle: record.itemTitle,
-          itemDescription: record.itemDescription,
-          itemImage: record.itemImage,
-          itemGuid: record.itemGuid,
-          itemPublishedAt: record.itemPublishedAt,
-          note: record.note,
-          content,
-          createdAt: record.createdAt,
-        },
-      });
-    }
+    // Always notify RealtimeHub - content may be missing but frontend can fall back to description
+    await notifyRealtimeHub(env, {
+      type: 'new_share',
+      payload: {
+        authorDid: did,
+        recordUri,
+        feedUrl: record.feedUrl,
+        itemUrl: record.itemUrl,
+        itemTitle: record.itemTitle,
+        itemDescription: record.itemDescription,
+        itemImage: record.itemImage,
+        itemGuid: record.itemGuid,
+        itemPublishedAt: record.itemPublishedAt,
+        note: record.note,
+        content,
+        createdAt: record.createdAt,
+      },
+    });
   } else if (operation === 'delete') {
     await env.DB.prepare(
       'DELETE FROM shares WHERE record_uri = ?'

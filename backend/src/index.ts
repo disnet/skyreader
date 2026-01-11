@@ -163,7 +163,7 @@ export default {
       }
     }
 
-    // Clean up expired D1 fallback data (once per hour)
+    // Clean up expired D1 data (once per hour)
     if (minute === 0) {
       try {
         const now = Date.now();

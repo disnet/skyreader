@@ -81,15 +81,7 @@ export class RealtimeHub implements DurableObject {
     // Internal broadcast endpoint (called by JetstreamConsumer and scheduled-feeds)
     if (url.pathname === '/broadcast') {
       const message = await request.json() as RealtimeMessage;
-      // Skip shares without content to avoid sending incomplete data
-      if (message.type === 'new_share') {
-        const payload = message.payload as NewSharePayload;
-        if (!payload.content) {
-          return new Response(JSON.stringify({ success: true, skipped: true }), {
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-      }
+      // Broadcast shares even without content - frontend can fall back to description or fetch on-demand
       await this.broadcast(message);
       return new Response(JSON.stringify({ success: true }), {
         headers: { 'Content-Type': 'application/json' },
