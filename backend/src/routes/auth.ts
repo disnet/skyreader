@@ -330,10 +330,10 @@ export async function handleAuthCallback(request: Request, env: Env, ctx: Execut
 
     await storeSession(env, sessionId, session);
 
-    // Check if user already exists in D1
+    // Check if user has logged in before (pds_url is empty for users added via follow sync)
     const existingUser = await env.DB.prepare(
-      'SELECT did FROM users WHERE did = ?'
-    ).bind(oauthState.did).first();
+      'SELECT did, pds_url FROM users WHERE did = ?'
+    ).bind(oauthState.did).first<{ did: string; pds_url: string }>();
 
     // Store/update user in D1 (use ON CONFLICT to avoid CASCADE DELETE from INSERT OR REPLACE)
     await env.DB.prepare(`
@@ -348,7 +348,8 @@ export async function handleAuthCallback(request: Request, env: Env, ctx: Execut
     `).bind(oauthState.did, handle, displayName || null, avatarUrl || null, oauthState.pdsUrl).run();
 
     // For new users: sync their existing follows from PDS
-    if (!existingUser) {
+    // Also sync if user exists but never logged in (added via someone else's follow sync)
+    if (!existingUser || !existingUser.pds_url) {
       console.log(`First login for ${handle}, syncing follows...`);
 
       ctx.waitUntil(

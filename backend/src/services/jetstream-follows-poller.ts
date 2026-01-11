@@ -1,0 +1,267 @@
+import type { Env } from '../types';
+
+interface ProfileInfo {
+  handle: string;
+  displayName?: string;
+  avatar?: string;
+}
+
+async function fetchProfileInfo(did: string): Promise<ProfileInfo | null> {
+  try {
+    const response = await fetch(
+      `https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(did)}`,
+      {
+        headers: {
+          'Accept': 'application/json',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      console.warn(`[JetstreamFollows] Failed to fetch profile for ${did}: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json() as {
+      handle: string;
+      displayName?: string;
+      avatar?: string;
+    };
+
+    return {
+      handle: data.handle,
+      displayName: data.displayName,
+      avatar: data.avatar,
+    };
+  } catch (error) {
+    console.error(`[JetstreamFollows] Error fetching profile for ${did}:`, error);
+    return null;
+  }
+}
+
+interface JetstreamFollowEvent {
+  did: string;
+  time_us: number;
+  kind: 'commit' | 'identity' | 'account';
+  commit?: {
+    rev: string;
+    operation: 'create' | 'update' | 'delete';
+    collection: string;
+    rkey: string;
+    record?: {
+      $type: string;
+      subject: string;
+      createdAt: string;
+    };
+    cid?: string;
+  };
+}
+
+export interface FollowsPollResult {
+  processed: number;
+  errors: number;
+  cursor?: string;
+}
+
+const POLL_TIMEOUT_MS = 30000; // 30 seconds max
+const IDLE_TIMEOUT_MS = 2000; // 2 seconds without events = caught up
+const SEVEN_DAYS_SECONDS = 7 * 24 * 60 * 60;
+const MAX_WANTED_DIDS = 100; // URL length limit consideration
+
+async function getActiveUserDids(env: Env): Promise<string[]> {
+  const sevenDaysAgo = Math.floor(Date.now() / 1000) - SEVEN_DAYS_SECONDS;
+
+  const result = await env.DB.prepare(`
+    SELECT did FROM users
+    WHERE pds_url != ''
+      AND pds_url IS NOT NULL
+      AND last_active_at > ?
+  `).bind(sevenDaysAgo).all<{ did: string }>();
+
+  return result.results.map(r => r.did);
+}
+
+async function processFollowEvent(env: Env, event: JetstreamFollowEvent): Promise<void> {
+  const { did: followerDid, commit } = event;
+  if (!commit || commit.collection !== 'app.bsky.graph.follow') return;
+
+  const { operation, rkey, record } = commit;
+
+  if (operation === 'create' && record) {
+    const followingDid = record.subject;
+
+    // Insert into follows_cache with rkey for deletion handling
+    await env.DB.prepare(`
+      INSERT OR REPLACE INTO follows_cache (follower_did, following_did, rkey, created_at)
+      VALUES (?, ?, ?, unixepoch())
+    `).bind(followerDid, followingDid, rkey).run();
+
+    // Fetch profile info for the followed user
+    const profile = await fetchProfileInfo(followingDid);
+
+    // Upsert the followed user to users table with profile info
+    await env.DB.prepare(`
+      INSERT INTO users (did, handle, display_name, avatar_url, pds_url, created_at, updated_at)
+      VALUES (?, ?, ?, ?, '', unixepoch(), unixepoch())
+      ON CONFLICT(did) DO UPDATE SET
+        handle = CASE WHEN excluded.handle != excluded.did THEN excluded.handle ELSE users.handle END,
+        display_name = COALESCE(excluded.display_name, users.display_name),
+        avatar_url = COALESCE(excluded.avatar_url, users.avatar_url),
+        updated_at = unixepoch()
+    `).bind(
+      followingDid,
+      profile?.handle || followingDid,
+      profile?.displayName || null,
+      profile?.avatar || null
+    ).run();
+
+    console.log(`[JetstreamFollows] ${followerDid} followed ${profile?.handle || followingDid}`);
+
+  } else if (operation === 'delete') {
+    // Delete from follows_cache using rkey
+    await env.DB.prepare(`
+      DELETE FROM follows_cache
+      WHERE follower_did = ? AND rkey = ?
+    `).bind(followerDid, rkey).run();
+
+    console.log(`[JetstreamFollows] ${followerDid} unfollowed (rkey: ${rkey})`);
+  }
+}
+
+export async function pollJetstreamFollows(env: Env): Promise<FollowsPollResult> {
+  // Get active user DIDs for filtering
+  const activeUsers = await getActiveUserDids(env);
+
+  if (activeUsers.length === 0) {
+    console.log('[JetstreamFollows] No active users to poll for');
+    return { processed: 0, errors: 0 };
+  }
+
+  if (activeUsers.length > MAX_WANTED_DIDS) {
+    console.warn(`[JetstreamFollows] ${activeUsers.length} active users exceeds limit of ${MAX_WANTED_DIDS}, using first ${MAX_WANTED_DIDS}`);
+  }
+
+  const usersToWatch = activeUsers.slice(0, MAX_WANTED_DIDS);
+  console.log(`[JetstreamFollows] Polling for ${usersToWatch.length} active users`);
+
+  // Get cursor from D1 (separate from share poller cursor)
+  const cursorResult = await env.DB.prepare(
+    'SELECT value FROM sync_state WHERE key = ?'
+  ).bind('jetstream_follows_cursor').first<{ value: string }>();
+
+  const wsUrl = new URL('wss://jetstream2.us-east.bsky.network/subscribe');
+  wsUrl.searchParams.append('wantedCollections', 'app.bsky.graph.follow');
+
+  // Add wantedDids parameter - filter to only our active users
+  for (const did of usersToWatch) {
+    wsUrl.searchParams.append('wantedDids', did);
+  }
+
+  // Initialize cursor - use existing or current time in microseconds
+  let lastCursor: string;
+  if (cursorResult?.value) {
+    // Subtract 5 seconds (in microseconds) to ensure we catch everything during reconnects
+    const cursorWithBuffer = BigInt(cursorResult.value) - BigInt(5_000_000);
+    wsUrl.searchParams.set('cursor', cursorWithBuffer.toString());
+    lastCursor = cursorResult.value;
+    console.log(`[JetstreamFollows] Starting from cursor ${cursorWithBuffer}`);
+  } else {
+    // First run - initialize cursor to current time so we don't miss future events
+    lastCursor = (Date.now() * 1000).toString();
+    console.log('[JetstreamFollows] Starting fresh poll (no cursor), will save current time as baseline');
+  }
+
+  let processed = 0;
+  let errors = 0;
+  let cleanedUp = false;
+  let lastEventTime = Date.now();
+
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+
+    // Timeout to ensure we don't run forever
+    const pollTimeout = setTimeout(() => {
+      console.log(`[JetstreamFollows] Poll timeout after ${POLL_TIMEOUT_MS}ms`);
+      cleanup();
+    }, POLL_TIMEOUT_MS);
+
+    // Check for idle (caught up)
+    const idleCheck = setInterval(() => {
+      if (Date.now() - lastEventTime > IDLE_TIMEOUT_MS) {
+        console.log(`[JetstreamFollows] Caught up (idle for ${IDLE_TIMEOUT_MS}ms)`);
+        cleanup();
+      }
+    }, 500);
+
+    let ws: WebSocket | null = null;
+
+    const cleanup = async () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+
+      clearTimeout(pollTimeout);
+      clearInterval(idleCheck);
+
+      if (ws) {
+        try {
+          ws.close();
+        } catch {
+          // Ignore close errors
+        }
+        ws = null;
+      }
+
+      // Always save cursor so we don't miss events between polls
+      await env.DB.prepare(
+        'INSERT OR REPLACE INTO sync_state (key, value, updated_at) VALUES (?, ?, unixepoch())'
+      ).bind('jetstream_follows_cursor', lastCursor).run();
+
+      const duration = Date.now() - startTime;
+      console.log(`[JetstreamFollows] Poll complete: ${processed} processed, ${errors} errors, ${duration}ms`);
+
+      resolve({ processed, errors, cursor: lastCursor });
+    };
+
+    try {
+      ws = new WebSocket(wsUrl.toString());
+
+      ws.addEventListener('open', () => {
+        console.log('[JetstreamFollows] Connected');
+        lastEventTime = Date.now();
+      });
+
+      ws.addEventListener('message', async (event) => {
+        lastEventTime = Date.now();
+
+        try {
+          const data = JSON.parse(event.data as string) as JetstreamFollowEvent;
+
+          // Update cursor
+          lastCursor = data.time_us.toString();
+
+          // Process the event
+          if (data.kind === 'commit' && data.commit?.collection === 'app.bsky.graph.follow') {
+            await processFollowEvent(env, data);
+            processed++;
+          }
+        } catch (error) {
+          console.error('[JetstreamFollows] Error processing event:', error);
+          errors++;
+        }
+      });
+
+      ws.addEventListener('close', () => {
+        console.log('[JetstreamFollows] Disconnected');
+        cleanup();
+      });
+
+      ws.addEventListener('error', (error) => {
+        console.error('[JetstreamFollows] WebSocket error:', error);
+        cleanup();
+      });
+    } catch (error) {
+      console.error('[JetstreamFollows] Failed to connect:', error);
+      cleanup();
+    }
+  });
+}

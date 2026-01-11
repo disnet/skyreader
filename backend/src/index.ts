@@ -6,6 +6,7 @@ import { handleRecordSync, handleRecordsList } from './routes/records';
 import { getSessionFromRequest, updateUserActivity } from './services/oauth';
 import { refreshActiveFeeds } from './services/scheduled-feeds';
 import { pollJetstream } from './services/jetstream-poller';
+import { pollJetstreamFollows } from './services/jetstream-follows-poller';
 
 export { RealtimeHub } from './durable-objects/realtime-hub';
 
@@ -146,6 +147,17 @@ export default {
       );
     } catch (error) {
       console.error('Jetstream poll failed:', error);
+    }
+
+    // Poll Jetstream for follow changes
+    try {
+      const followsResult = await pollJetstreamFollows(env);
+      console.log(
+        `Jetstream follows poll: ${followsResult.processed} processed, ` +
+        `${followsResult.errors} errors`
+      );
+    } catch (error) {
+      console.error('Jetstream follows poll failed:', error);
     }
 
     // Refresh active feeds (only every 15 minutes based on cron config)
