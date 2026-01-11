@@ -116,3 +116,8 @@ export interface FeedItem {
   imageUrl?: string;
   publishedAt: string;
 }
+
+// Combined feed item for unified "all" view
+export type CombinedFeedItem =
+  | { type: 'article'; item: Article; date: string }
+  | { type: 'share'; item: SocialShare; date: string };

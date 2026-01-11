@@ -7,11 +7,11 @@
   import { sharesStore } from '$lib/stores/shares.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
   import { api } from '$lib/services/api';
-  import { formatRelativeDate } from '$lib/utils/date';
   import ArticleCard from '$lib/components/ArticleCard.svelte';
+  import ShareCard from '$lib/components/ShareCard.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import LoadingState from '$lib/components/LoadingState.svelte';
-  import type { Article, FeedItem, SocialShare } from '$lib/types';
+  import type { Article, FeedItem, SocialShare, CombinedFeedItem } from '$lib/types';
 
   let allArticles = $state<Article[]>([]);
   let isLoading = $state(true);
@@ -23,6 +23,7 @@
   // Snapshot of displayed items (doesn't change as you read items)
   let displayedArticles = $state<Article[]>([]);
   let displayedShares = $state<SocialShare[]>([]);
+  let displayedCombined = $state<CombinedFeedItem[]>([]);
 
   // Map of guid -> article for looking up share content
   let articlesByGuid = $derived(new Map(allArticles.map(a => [a.guid, a])));
@@ -58,7 +59,12 @@
   let followingFilter = $derived($page.url.searchParams.get('following'));
 
   // Determine current view mode
-  let viewMode = $derived<'articles' | 'shares'>(sharerFilter || followingFilter ? 'shares' : 'articles');
+  // 'combined' = all view (articles + shares), 'shares' = following/sharer filter, 'articles' = specific feed or starred
+  let viewMode = $derived<'articles' | 'shares' | 'combined'>(() => {
+    if (sharerFilter || followingFilter) return 'shares';
+    if (feedFilter || starredFilter) return 'articles';
+    return 'combined'; // "All" view shows both
+  });
 
   // Build a filter key to detect when we need to recompute the snapshot
   let filterKey = $derived(
@@ -128,11 +134,40 @@
       } else if (sharerFilter) {
         filtered = shares.filter(s => s.authorDid === sharerFilter);
       } else {
-        filtered = [];
+        // For "all" view and other views, include all shares
+        filtered = [...shares];
       }
 
       displayedShares = filtered;
       lastSharesLength = shares.length;
+    }
+  });
+
+  // Combine articles and shares for the "all" view, sorted by date
+  $effect(() => {
+    // Track dependencies
+    const articles = displayedArticles;
+    const shares = displayedShares;
+    const mode = viewMode();
+
+    if (mode === 'combined') {
+      const combined: CombinedFeedItem[] = [
+        ...articles.map(item => ({
+          type: 'article' as const,
+          item,
+          date: item.publishedAt
+        })),
+        ...shares.map(item => ({
+          type: 'share' as const,
+          item,
+          date: item.itemPublishedAt || item.createdAt
+        }))
+      ];
+      // Sort by date descending (newest first)
+      combined.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      displayedCombined = combined;
+    } else {
+      displayedCombined = [];
     }
   });
 
@@ -196,7 +231,10 @@
 
   // Get current items based on view mode (uses snapshots)
   let currentItems = $derived(() => {
-    return viewMode === 'shares' ? displayedShares : displayedArticles;
+    const mode = viewMode();
+    if (mode === 'combined') return displayedCombined;
+    if (mode === 'shares') return displayedShares;
+    return displayedArticles;
   });
 
   function handleKeydown(e: KeyboardEvent) {
@@ -215,7 +253,16 @@
     } else if (e.key === 'o' && selectedIndex >= 0) {
       e.preventDefault();
       const item = items[selectedIndex];
-      const url = viewMode === 'shares' ? (item as SocialShare).itemUrl : (item as Article).url;
+      const mode = viewMode();
+      let url: string;
+      if (mode === 'combined') {
+        const combined = item as CombinedFeedItem;
+        url = combined.type === 'article' ? combined.item.url : combined.item.itemUrl;
+      } else if (mode === 'shares') {
+        url = (item as SocialShare).itemUrl;
+      } else {
+        url = (item as Article).url;
+      }
       window.open(url, '_blank');
     } else if (e.key === 'Enter' && selectedIndex >= 0) {
       e.preventDefault();
@@ -226,12 +273,22 @@
   async function selectItem(index: number) {
     if (index === selectedIndex) return;
 
+    const mode = viewMode();
     // Mark as read when selecting articles (not shares)
-    if (viewMode === 'articles') {
+    if (mode === 'articles') {
       const article = displayedArticles[index];
       const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId);
       if (sub && !readingStore.isRead(article.guid)) {
         readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+      }
+    } else if (mode === 'combined') {
+      const feedItem = displayedCombined[index];
+      if (feedItem.type === 'article') {
+        const article = feedItem.item;
+        const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId);
+        if (sub && !readingStore.isRead(article.guid)) {
+          readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+        }
       }
     }
 
@@ -252,16 +309,6 @@
 
     window.scrollBy({ top: offset, behavior: 'instant' });
   }
-
-  function getFaviconUrl(url: string): string {
-    try {
-      const domain = new URL(url).hostname;
-      return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
-    } catch {
-      return '';
-    }
-  }
-
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -316,67 +363,131 @@
           actionText="Manage Subscriptions"
         />
       {/if}
-    {:else if viewMode === 'shares'}
+    {:else if viewMode() === 'combined'}
+      <!-- Combined view (articles + shares) -->
+      <div class="article-list">
+        {#each displayedCombined as feedItem, index (feedItem.type === 'article' ? feedItem.item.guid : feedItem.item.recordUri)}
+          <div bind:this={articleElements[index]}>
+            {#if feedItem.type === 'article'}
+              {@const article = feedItem.item}
+              {@const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId)}
+              <ArticleCard
+                {article}
+                siteUrl={sub?.siteUrl}
+                isRead={readingStore.isRead(article.guid)}
+                isStarred={readingStore.isStarred(article.guid)}
+                isShared={sharesStore.isShared(article.guid)}
+                shareNote={sharesStore.getShareNote(article.guid)}
+                selected={selectedIndex === index}
+                expanded={expandedIndex === index}
+                onToggleStar={() => readingStore.toggleStar(article.guid)}
+                onShare={() => sharesStore.share(
+                  sub?.atUri || '',
+                  sub?.feedUrl || '',
+                  article.guid,
+                  article.url,
+                  article.title,
+                  article.author,
+                  article.summary,
+                  article.imageUrl,
+                  article.publishedAt
+                )}
+                onShareWithNote={(note) => sharesStore.shareWithNote(
+                  sub?.atUri || '',
+                  sub?.feedUrl || '',
+                  article.guid,
+                  article.url,
+                  article.title,
+                  article.author,
+                  article.summary,
+                  article.imageUrl,
+                  article.publishedAt,
+                  note
+                )}
+                onUnshare={() => sharesStore.unshare(article.guid)}
+                onSelect={() => {
+                  if (selectedIndex === index) {
+                    selectedIndex = -1;
+                    expandedIndex = -1;
+                  } else {
+                    selectItem(index);
+                  }
+                }}
+                onExpand={async () => {
+                  expandedIndex = index;
+                  await tick();
+                  scrollToCenter();
+                }}
+              />
+            {:else}
+              {@const share = feedItem.item}
+              {@const localArticle = share.itemGuid ? articlesByGuid.get(share.itemGuid) : undefined}
+              {@const remoteArticle = share.itemGuid ? fetchedArticles.get(share.itemGuid) : undefined}
+              {@const isFetching = share.itemGuid ? fetchingArticles.has(share.itemGuid) : false}
+              <ShareCard
+                {share}
+                {localArticle}
+                {remoteArticle}
+                {isFetching}
+                selected={selectedIndex === index}
+                expanded={expandedIndex === index}
+                onSelect={() => {
+                  if (selectedIndex === index) {
+                    selectedIndex = -1;
+                    expandedIndex = -1;
+                  } else {
+                    selectItem(index);
+                  }
+                }}
+                onExpand={async () => {
+                  expandedIndex = index;
+                  await tick();
+                  scrollToCenter();
+                }}
+                onFetchContent={() => {
+                  if (share.feedUrl && share.itemGuid && !localArticle && !remoteArticle) {
+                    fetchArticleContent(share.feedUrl, share.itemGuid);
+                  }
+                }}
+              />
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {:else if viewMode() === 'shares'}
       <!-- Social shares view -->
       <div class="article-list">
         {#each displayedShares as share, index (share.recordUri)}
           {@const localArticle = share.itemGuid ? articlesByGuid.get(share.itemGuid) : undefined}
           {@const remoteArticle = share.itemGuid ? fetchedArticles.get(share.itemGuid) : undefined}
-          {@const articleContent = localArticle?.content || localArticle?.summary || remoteArticle?.content || remoteArticle?.summary}
           {@const isFetching = share.itemGuid ? fetchingArticles.has(share.itemGuid) : false}
           <div bind:this={articleElements[index]}>
-            <div
-              class="share-item"
-              class:selected={selectedIndex === index}
-              class:expanded={expandedIndex === index}
-            >
-              <div class="share-attribution">
-                shared by <a href="/?sharer={share.authorDid}" class="share-author-link">@{share.authorHandle}</a>
-              </div>
-              <button class="share-header" onclick={() => {
+            <ShareCard
+              {share}
+              {localArticle}
+              {remoteArticle}
+              {isFetching}
+              selected={selectedIndex === index}
+              expanded={expandedIndex === index}
+              onSelect={() => {
                 if (selectedIndex === index) {
                   selectedIndex = -1;
                   expandedIndex = -1;
                 } else {
                   selectItem(index);
-                  // Fetch article content if needed
-                  if (share.feedUrl && share.itemGuid && !localArticle && !remoteArticle) {
-                    fetchArticleContent(share.feedUrl, share.itemGuid);
-                  }
                 }
-              }}>
-                <img src={getFaviconUrl(share.itemUrl)} alt="" class="favicon" />
-                {#if selectedIndex === index || expandedIndex === index}
-                  <a href={share.itemUrl} target="_blank" rel="noopener" class="share-title-link" onclick={(e) => e.stopPropagation()}>
-                    {share.itemTitle || share.itemUrl}
-                  </a>
-                {:else}
-                  <span class="share-title">{share.itemTitle || share.itemUrl}</span>
-                {/if}
-                <span class="share-date">{formatRelativeDate(share.itemPublishedAt || share.createdAt)}</span>
-              </button>
-              {#if selectedIndex === index || expandedIndex === index}
-                <div class="share-content">
-                  <div class="share-actions">
-                    <a href={share.itemUrl} target="_blank" rel="noopener" class="action-btn" onclick={(e) => e.stopPropagation()}>
-                      ↗ Open
-                    </a>
-                  </div>
-                  {#if share.note}
-                    <blockquote class="share-note">{share.note}</blockquote>
-                  {/if}
-                  {#if articleContent}
-                    <div class="share-body">
-                      {@html articleContent}
-                    </div>
-                  {:else if isFetching}
-                    <p class="share-loading">Loading article content...</p>
-                  {:else if share.itemDescription}
-                    <p class="share-description">{share.itemDescription}</p>
-                  {/if}
-                </div>
-              {/if}
-            </div>
+              }}
+              onExpand={async () => {
+                expandedIndex = index;
+                await tick();
+                scrollToCenter();
+              }}
+              onFetchContent={() => {
+                if (share.feedUrl && share.itemGuid && !localArticle && !remoteArticle) {
+                  fetchArticleContent(share.feedUrl, share.itemGuid);
+                }
+              }}
+            />
           </div>
         {/each}
       </div>
@@ -535,170 +646,5 @@
 
   .article-list > div:last-child {
     border-bottom: none;
-  }
-
-  /* Share items styling */
-  .share-item {
-    transition: background-color 0.15s ease;
-  }
-
-  .share-item:hover {
-    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
-  }
-
-  .share-item.selected,
-  .share-item.expanded {
-    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
-  }
-
-  .share-attribution {
-    font-size: 0.75rem;
-    color: var(--color-text-secondary);
-    padding: 0.5rem 0.5rem 0;
-  }
-
-  .share-author-link {
-    color: var(--color-text-secondary);
-    text-decoration: none;
-  }
-
-  .share-author-link:hover {
-    color: var(--color-primary);
-    text-decoration: underline;
-  }
-
-  .share-header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    width: 100%;
-    padding: 0.5rem 0.5rem 0.75rem;
-    background: none;
-    border: none;
-    cursor: pointer;
-    text-align: left;
-    font: inherit;
-  }
-
-  .share-item .favicon {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-  }
-
-  .share-title {
-    flex: 1;
-    font-weight: 500;
-    color: var(--color-text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .share-title-link {
-    flex: 1;
-    font-weight: 500;
-    color: var(--color-primary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    text-decoration: none;
-  }
-
-  .share-title-link:hover {
-    text-decoration: underline;
-  }
-
-  .share-date {
-    flex-shrink: 0;
-    font-size: 0.875rem;
-    color: var(--color-text-secondary);
-  }
-
-  .share-content {
-    padding: 0 0.5rem 1rem;
-  }
-
-  .share-actions {
-    display: flex;
-    gap: 1rem;
-    margin-bottom: 1rem;
-  }
-
-  .share-item .action-btn {
-    background: none;
-    border: none;
-    font-size: 0.875rem;
-    color: var(--color-text-secondary);
-    padding: 0;
-    cursor: pointer;
-    text-decoration: none;
-  }
-
-  .share-item .action-btn:hover {
-    color: var(--color-primary);
-  }
-
-  .share-note {
-    border-left: 3px solid var(--color-primary);
-    margin: 0 0 0.75rem 0;
-    padding-left: 1rem;
-    font-style: italic;
-    color: var(--color-text);
-  }
-
-  .share-description {
-    font-size: 0.9375rem;
-    color: var(--color-text-secondary);
-    margin-bottom: 0.75rem;
-    line-height: 1.5;
-  }
-
-  .share-loading {
-    font-size: 0.875rem;
-    color: var(--color-text-secondary);
-    margin-top: 0.5rem;
-    font-style: italic;
-  }
-
-  .share-body {
-    font-size: 0.9375rem;
-    line-height: 1.7;
-    color: var(--color-text);
-    overflow-wrap: break-word;
-  }
-
-  .share-body :global(img) {
-    max-width: 100%;
-    height: auto;
-    border-radius: 4px;
-    margin: 0.75rem 0;
-  }
-
-  .share-body :global(a) {
-    color: var(--color-primary);
-  }
-
-  .share-body :global(pre) {
-    background: var(--color-bg-secondary);
-    padding: 0.75rem;
-    border-radius: 4px;
-    overflow-x: auto;
-    font-size: 0.8rem;
-  }
-
-  .share-body :global(blockquote) {
-    border-left: 3px solid var(--color-border);
-    margin: 0.75rem 0;
-    padding-left: 1rem;
-    color: var(--color-text-secondary);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .share-item:hover,
-    .share-item.selected,
-    .share-item.expanded {
-      background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
-    }
   }
 </style>
