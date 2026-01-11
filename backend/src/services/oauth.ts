@@ -316,6 +316,16 @@ export async function deleteSession(env: Env, sessionId: string): Promise<void> 
   await env.DB.prepare('DELETE FROM sessions WHERE session_id = ?').bind(sessionId).run();
 }
 
+// RFC 8252 requires loopback IP instead of localhost for OAuth
+function getBaseUrl(url: URL): string {
+  let host = url.host;
+  // Replace localhost with 127.0.0.1 for OAuth compliance
+  if (host.startsWith('localhost')) {
+    host = host.replace('localhost', '127.0.0.1');
+  }
+  return `${url.protocol}//${host}`;
+}
+
 // Get session from Authorization header, auto-refreshing if needed
 export async function getSessionFromRequest(request: Request, env: Env): Promise<Session | null> {
   const authHeader = request.headers.get('Authorization');
@@ -337,7 +347,7 @@ export async function getSessionFromRequest(request: Request, env: Env): Promise
     console.log(`Token expiring in ${timeUntilExpiry}ms, refreshing...`);
     // Try to refresh the token
     try {
-      const refreshedSession = await refreshSession(env, sessionId, session);
+      const refreshedSession = await refreshSession(env, sessionId, session, request);
       if (refreshedSession) {
         return refreshedSession;
       }
@@ -352,7 +362,7 @@ export async function getSessionFromRequest(request: Request, env: Env): Promise
 }
 
 // Refresh session tokens
-async function refreshSession(env: Env, sessionId: string, session: Session): Promise<Session | null> {
+async function refreshSession(env: Env, sessionId: string, session: Session, request: Request): Promise<Session | null> {
   try {
     // Import the DPoP key
     const privateKeyJwk = JSON.parse(session.dpopPrivateKey);
@@ -362,6 +372,11 @@ async function refreshSession(env: Env, sessionId: string, session: Session): Pr
 
     // Get token endpoint
     const authMeta = await fetchAuthServerMetadata(session.pdsUrl);
+
+    // Construct client_id from request URL
+    const url = new URL(request.url);
+    const baseUrl = getBaseUrl(url);
+    const clientId = `${baseUrl}/.well-known/client-metadata`;
 
     // Create DPoP proof for refresh request
     let dpopProof = await createDPoPProof(
@@ -374,6 +389,7 @@ async function refreshSession(env: Env, sessionId: string, session: Session): Pr
     const refreshBody = new URLSearchParams({
       grant_type: 'refresh_token',
       refresh_token: session.refreshToken,
+      client_id: clientId,
     });
 
     let tokenResponse = await fetch(authMeta.token_endpoint, {
