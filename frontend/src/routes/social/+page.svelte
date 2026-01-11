@@ -38,6 +38,15 @@
       socialStore.loadFollowedUsers();
     }
   }
+
+  function getFaviconUrl(url: string): string {
+    try {
+      const domain = new URL(url).hostname;
+      return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+    } catch {
+      return '';
+    }
+  }
 </script>
 
 <div class="social-page">
@@ -108,36 +117,28 @@
     {:else}
       <div class="shares-list">
         {#each socialStore.shares as share (share.recordUri)}
-          <article class="share-card card">
+          <div class="share-item">
+            <div class="share-attribution">
+              shared by <a href="/?sharer={share.authorDid}" class="share-author-link">@{share.authorHandle}</a>
+            </div>
             <div class="share-header">
-              {#if share.authorAvatar}
-                <img src={share.authorAvatar} alt="" class="author-avatar" />
-              {:else}
-                <div class="author-avatar placeholder"></div>
-              {/if}
-              <div class="author-info">
-                <span class="author-name">{share.authorDisplayName || share.authorHandle}</span>
-                <span class="author-handle">@{share.authorHandle}</span>
-              </div>
+              <img src={getFaviconUrl(share.itemUrl)} alt="" class="favicon" />
+              <a href={share.itemUrl} target="_blank" rel="noopener" class="share-title-link">
+                {share.itemTitle || share.itemUrl}
+              </a>
               <span class="share-date">{formatRelativeDate(share.createdAt)}</span>
             </div>
-
-            {#if share.note}
-              <p class="share-note">{share.note}</p>
-            {/if}
-
-            <a href={share.itemUrl} target="_blank" rel="noopener" class="shared-article">
-              {#if share.itemImage}
-                <img src={share.itemImage} alt="" class="article-image" />
-              {/if}
-              <div class="article-info">
-                <h3>{share.itemTitle || share.itemUrl}</h3>
-                {#if share.itemDescription}
-                  <p>{share.itemDescription.slice(0, 150)}{share.itemDescription.length > 150 ? '...' : ''}</p>
-                {/if}
+            <div class="share-content">
+              <div class="share-actions">
+                <a href={share.itemUrl} target="_blank" rel="noopener" class="action-btn">
+                  ↗ Open
+                </a>
               </div>
-            </a>
-          </article>
+              {#if share.note}
+                <blockquote class="share-note">{share.note}</blockquote>
+              {/if}
+            </div>
+          </div>
         {/each}
 
         {#if socialStore.hasMore && !socialStore.isLoading}
@@ -252,80 +253,112 @@
     white-space: nowrap;
   }
 
-  .share-card {
-    margin-bottom: 1rem;
+  .shares-list {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .share-item {
+    border-bottom: 1px solid var(--color-border);
+    transition: background-color 0.15s ease;
+  }
+
+  .share-item:last-child {
+    border-bottom: none;
+  }
+
+  .share-item:hover {
+    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
+  }
+
+  .share-attribution {
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    padding: 0.5rem 0.5rem 0;
+  }
+
+  .share-author-link {
+    color: var(--color-text-secondary);
+    text-decoration: none;
+  }
+
+  .share-author-link:hover {
+    color: var(--color-primary);
+    text-decoration: underline;
   }
 
   .share-header {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .author-avatar {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-  }
-
-  .author-avatar.placeholder {
-    background: var(--color-bg-secondary);
-  }
-
-  .author-info {
-    flex: 1;
-  }
-
-  .author-name {
-    display: block;
-    font-weight: 600;
-  }
-
-  .author-handle {
-    font-size: 0.875rem;
-    color: var(--color-text-secondary);
-  }
-
-  .share-date {
-    font-size: 0.875rem;
-    color: var(--color-text-secondary);
-  }
-
-  .share-note {
-    margin-bottom: 0.75rem;
-  }
-
-  .shared-article {
-    display: flex;
-    gap: 1rem;
-    padding: 0.75rem;
-    background: var(--color-bg-secondary);
-    border-radius: 8px;
+    width: 100%;
+    padding: 0.5rem 0.5rem 0.75rem;
     text-decoration: none;
     color: inherit;
   }
 
-  .shared-article:hover {
-    background: var(--color-border);
-  }
-
-  .shared-article .article-image {
-    width: 100px;
-    height: 70px;
-    object-fit: cover;
-    border-radius: 4px;
+  .favicon {
+    width: 16px;
+    height: 16px;
     flex-shrink: 0;
   }
 
-  .article-info h3 {
-    font-size: 0.875rem;
-    margin-bottom: 0.25rem;
+  .share-title-link {
+    flex: 1;
+    font-weight: 500;
+    color: var(--color-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-decoration: none;
   }
 
-  .article-info p {
-    font-size: 0.75rem;
+  .share-title-link:hover {
+    text-decoration: underline;
+  }
+
+  .share-date {
+    flex-shrink: 0;
+    font-size: 0.875rem;
     color: var(--color-text-secondary);
+  }
+
+  .share-content {
+    padding: 0 0.5rem 0.75rem;
+  }
+
+  .share-actions {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .action-btn {
+    background: none;
+    border: none;
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+    padding: 0;
+    cursor: pointer;
+    text-decoration: none;
+  }
+
+  .action-btn:hover {
+    color: var(--color-primary);
+  }
+
+  .share-note {
+    border-left: 3px solid var(--color-primary);
+    margin: 0 0.5rem 0.75rem;
+    padding-left: 1rem;
+    font-style: italic;
+    color: var(--color-text);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .share-item:hover {
+      background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
+    }
   }
 
   .load-more {

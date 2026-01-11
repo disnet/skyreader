@@ -56,11 +56,14 @@ export interface SocialShare {
   authorDisplayName?: string;
   authorAvatar?: string;
   recordUri: string;
+  feedUrl?: string;
   itemUrl: string;
   itemTitle?: string;
   itemAuthor?: string;
   itemDescription?: string;
   itemImage?: string;
+  itemGuid?: string;
+  itemPublishedAt?: string;
   note?: string;
   createdAt: string;
 }
@@ -70,12 +73,14 @@ export interface UserShare {
   atUri?: string;
   rkey?: string;
   subscriptionAtUri?: string;
+  feedUrl?: string;
   articleGuid: string;
   articleUrl: string;
   articleTitle?: string;
   articleAuthor?: string;
   articleDescription?: string;
   articleImage?: string;
+  articlePublishedAt?: string;
   note?: string;
   createdAt: string;
   syncStatus: 'synced' | 'pending';

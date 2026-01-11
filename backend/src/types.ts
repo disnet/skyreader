@@ -56,11 +56,14 @@ export interface Share {
   authorDid: string;
   recordUri: string;
   recordCid: string;
+  feedUrl?: string;
   itemUrl: string;
   itemTitle?: string;
   itemAuthor?: string;
   itemDescription?: string;
   itemImage?: string;
+  itemGuid?: string;
+  itemPublishedAt?: number;
   note?: string;
   tags?: string[];
   indexedAt: number;

@@ -132,8 +132,9 @@ export async function handleSocialFeed(request: Request, env: Env): Promise<Resp
     const query = `
       SELECT
         s.id, s.author_did, s.record_uri, s.record_cid,
-        s.item_url, s.item_title, s.item_author, s.item_description,
-        s.item_image, s.note, s.tags, s.indexed_at, s.created_at,
+        s.feed_url, s.item_url, s.item_title, s.item_author, s.item_description,
+        s.item_image, s.item_guid, s.item_published_at,
+        s.note, s.tags, s.indexed_at, s.created_at,
         u.handle, u.display_name, u.avatar_url
       FROM shares s
       JOIN follows_cache f ON f.following_did = s.author_did
@@ -158,11 +159,14 @@ export async function handleSocialFeed(request: Request, env: Env): Promise<Resp
       authorAvatar: row.avatar_url as string | undefined,
       recordUri: row.record_uri as string,
       recordCid: row.record_cid as string,
+      feedUrl: row.feed_url as string | undefined,
       itemUrl: row.item_url as string,
       itemTitle: row.item_title as string | undefined,
       itemAuthor: row.item_author as string | undefined,
       itemDescription: row.item_description as string | undefined,
       itemImage: row.item_image as string | undefined,
+      itemGuid: row.item_guid as string | undefined,
+      itemPublishedAt: row.item_published_at as number | undefined,
       note: row.note as string | undefined,
       tags: row.tags ? JSON.parse(row.tags as string) : undefined,
       indexedAt: row.indexed_at as number,
@@ -286,8 +290,9 @@ export async function handlePopularShares(request: Request, env: Env): Promise<R
     const query = `
       SELECT
         s.id, s.author_did, s.record_uri, s.record_cid,
-        s.item_url, s.item_title, s.item_author, s.item_description,
-        s.item_image, s.note, s.tags, s.indexed_at, s.created_at,
+        s.feed_url, s.item_url, s.item_title, s.item_author, s.item_description,
+        s.item_image, s.item_guid, s.item_published_at,
+        s.note, s.tags, s.indexed_at, s.created_at,
         u.handle, u.display_name, u.avatar_url,
         COUNT(*) OVER (PARTITION BY s.item_url) as share_count
       FROM shares s
@@ -312,11 +317,14 @@ export async function handlePopularShares(request: Request, env: Env): Promise<R
       authorAvatar: row.avatar_url as string | undefined,
       recordUri: row.record_uri as string,
       recordCid: row.record_cid as string,
+      feedUrl: row.feed_url as string | undefined,
       itemUrl: row.item_url as string,
       itemTitle: row.item_title as string | undefined,
       itemAuthor: row.item_author as string | undefined,
       itemDescription: row.item_description as string | undefined,
       itemImage: row.item_image as string | undefined,
+      itemGuid: row.item_guid as string | undefined,
+      itemPublishedAt: row.item_published_at as number | undefined,
       note: row.note as string | undefined,
       tags: row.tags ? JSON.parse(row.tags as string) : undefined,
       indexedAt: row.indexed_at as number,

@@ -1,6 +1,6 @@
 import type { Env } from './types';
 import { handleAuthLogin, handleAuthCallback, handleAuthLogout, handleAuthMe, handleClientMetadata } from './routes/auth';
-import { handleFeedFetch, handleFeedDiscover } from './routes/feeds';
+import { handleFeedFetch, handleFeedDiscover, handleArticleFetch } from './routes/feeds';
 import { handleSocialFeed, handleSyncFollows, handleFollowedUsers, handlePopularShares } from './routes/social';
 import { handleRecordSync, handleRecordsList } from './routes/records';
 import { getSessionFromRequest, updateUserActivity } from './services/oauth';
@@ -65,6 +65,9 @@ export default {
           break;
         case url.pathname === '/api/feeds/discover':
           response = await handleFeedDiscover(request, env);
+          break;
+        case url.pathname === '/api/feeds/article':
+          response = await handleArticleFetch(request, env);
           break;
 
         // Social routes

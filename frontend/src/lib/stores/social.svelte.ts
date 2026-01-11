@@ -29,10 +29,13 @@ function createSocialStore() {
       authorDisplayName: data.authorDisplayName,
       authorAvatar: data.authorAvatar,
       recordUri: data.recordUri,
+      feedUrl: data.feedUrl,
       itemUrl: data.itemUrl,
       itemTitle: data.itemTitle,
       itemDescription: data.itemDescription,
       itemImage: data.itemImage,
+      itemGuid: data.itemGuid,
+      itemPublishedAt: data.itemPublishedAt,
       note: data.note,
       createdAt: data.createdAt,
     };

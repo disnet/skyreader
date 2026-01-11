@@ -6,11 +6,12 @@
   import { readingStore } from '$lib/stores/reading.svelte';
   import { sharesStore } from '$lib/stores/shares.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
+  import { api } from '$lib/services/api';
   import { formatRelativeDate } from '$lib/utils/date';
   import ArticleCard from '$lib/components/ArticleCard.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import LoadingState from '$lib/components/LoadingState.svelte';
-  import type { Article, SocialShare } from '$lib/types';
+  import type { Article, FeedItem, SocialShare } from '$lib/types';
 
   let allArticles = $state<Article[]>([]);
   let isLoading = $state(true);
@@ -22,6 +23,33 @@
   // Snapshot of displayed items (doesn't change as you read items)
   let displayedArticles = $state<Article[]>([]);
   let displayedShares = $state<SocialShare[]>([]);
+
+  // Map of guid -> article for looking up share content
+  let articlesByGuid = $derived(new Map(allArticles.map(a => [a.guid, a])));
+
+  // Cache for fetched articles (from backend, for shares not in local DB)
+  let fetchedArticles = $state<Map<string, FeedItem>>(new Map());
+  let fetchingArticles = $state<Set<string>>(new Set());
+
+  async function fetchArticleContent(feedUrl: string, guid: string) {
+    if (fetchedArticles.has(guid) || fetchingArticles.has(guid)) return;
+
+    fetchingArticles.add(guid);
+    fetchingArticles = new Set(fetchingArticles);
+
+    try {
+      const article = await api.fetchArticle(feedUrl, guid);
+      if (article) {
+        fetchedArticles.set(guid, article);
+        fetchedArticles = new Map(fetchedArticles);
+      }
+    } catch (e) {
+      console.error('Failed to fetch article:', e);
+    } finally {
+      fetchingArticles.delete(guid);
+      fetchingArticles = new Set(fetchingArticles);
+    }
+  }
 
   // Get filter params from URL
   let feedFilter = $derived($page.url.searchParams.get('feed'));
@@ -221,6 +249,15 @@
     window.scrollBy({ top: offset, behavior: 'instant' });
   }
 
+  function getFaviconUrl(url: string): string {
+    try {
+      const domain = new URL(url).hostname;
+      return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+    } catch {
+      return '';
+    }
+  }
+
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -279,40 +316,60 @@
       <!-- Social shares view -->
       <div class="article-list">
         {#each displayedShares as share, index (share.recordUri)}
+          {@const localArticle = share.itemGuid ? articlesByGuid.get(share.itemGuid) : undefined}
+          {@const remoteArticle = share.itemGuid ? fetchedArticles.get(share.itemGuid) : undefined}
+          {@const articleContent = localArticle?.content || localArticle?.summary || remoteArticle?.content || remoteArticle?.summary}
+          {@const isFetching = share.itemGuid ? fetchingArticles.has(share.itemGuid) : false}
           <div bind:this={articleElements[index]}>
             <div
               class="share-item"
               class:selected={selectedIndex === index}
               class:expanded={expandedIndex === index}
             >
+              <div class="share-attribution">
+                shared by <a href="/?sharer={share.authorDid}" class="share-author-link">@{share.authorHandle}</a>
+              </div>
               <button class="share-header" onclick={() => {
                 if (selectedIndex === index) {
                   selectedIndex = -1;
                   expandedIndex = -1;
                 } else {
                   selectItem(index);
+                  // Fetch article content if needed
+                  if (share.feedUrl && share.itemGuid && !localArticle && !remoteArticle) {
+                    fetchArticleContent(share.feedUrl, share.itemGuid);
+                  }
                 }
               }}>
-                {#if share.authorAvatar}
-                  <img src={share.authorAvatar} alt="" class="share-avatar" />
+                <img src={getFaviconUrl(share.itemUrl)} alt="" class="favicon" />
+                {#if selectedIndex === index || expandedIndex === index}
+                  <a href={share.itemUrl} target="_blank" rel="noopener" class="share-title-link" onclick={(e) => e.stopPropagation()}>
+                    {share.itemTitle || share.itemUrl}
+                  </a>
+                {:else}
+                  <span class="share-title">{share.itemTitle || share.itemUrl}</span>
                 {/if}
-                <span class="share-title">{share.itemTitle || share.itemUrl}</span>
-                <span class="share-date">{formatRelativeDate(share.createdAt)}</span>
+                <span class="share-date">{formatRelativeDate(share.itemPublishedAt || share.createdAt)}</span>
               </button>
               {#if selectedIndex === index || expandedIndex === index}
                 <div class="share-content">
-                  <div class="share-meta">
-                    Shared by <strong>{share.authorDisplayName || share.authorHandle}</strong>
+                  <div class="share-actions">
+                    <a href={share.itemUrl} target="_blank" rel="noopener" class="action-btn" onclick={(e) => e.stopPropagation()}>
+                      ↗ Open
+                    </a>
                   </div>
                   {#if share.note}
                     <blockquote class="share-note">{share.note}</blockquote>
                   {/if}
-                  {#if share.itemDescription}
+                  {#if articleContent}
+                    <div class="share-body">
+                      {@html articleContent}
+                    </div>
+                  {:else if isFetching}
+                    <p class="share-loading">Loading article content...</p>
+                  {:else if share.itemDescription}
                     <p class="share-description">{share.itemDescription}</p>
                   {/if}
-                  <a href={share.itemUrl} target="_blank" rel="noopener" class="btn btn-secondary">
-                    Open Article
-                  </a>
                 </div>
               {/if}
             </div>
@@ -337,21 +394,25 @@
               onToggleStar={() => readingStore.toggleStar(article.guid)}
               onShare={() => sharesStore.share(
                 sub?.atUri || '',
+                sub?.feedUrl || '',
                 article.guid,
                 article.url,
                 article.title,
                 article.author,
-                article.summary?.slice(0, 200),
-                article.imageUrl
+                article.summary,
+                article.imageUrl,
+                article.publishedAt
               )}
               onShareWithNote={(note) => sharesStore.shareWithNote(
                 sub?.atUri || '',
+                sub?.feedUrl || '',
                 article.guid,
                 article.url,
                 article.title,
                 article.author,
-                article.summary?.slice(0, 200),
+                article.summary,
                 article.imageUrl,
+                article.publishedAt,
                 note
               )}
               onUnshare={() => sharesStore.unshare(article.guid)}
@@ -486,12 +547,28 @@
     background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
   }
 
+  .share-attribution {
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    padding: 0.5rem 0.5rem 0;
+  }
+
+  .share-author-link {
+    color: var(--color-text-secondary);
+    text-decoration: none;
+  }
+
+  .share-author-link:hover {
+    color: var(--color-primary);
+    text-decoration: underline;
+  }
+
   .share-header {
     display: flex;
     align-items: center;
     gap: 0.75rem;
     width: 100%;
-    padding: 0.75rem 0.5rem;
+    padding: 0.5rem 0.5rem 0.75rem;
     background: none;
     border: none;
     cursor: pointer;
@@ -499,10 +576,9 @@
     font: inherit;
   }
 
-  .share-avatar {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
+  .share-item .favicon {
+    width: 16px;
+    height: 16px;
     flex-shrink: 0;
   }
 
@@ -515,6 +591,20 @@
     white-space: nowrap;
   }
 
+  .share-title-link {
+    flex: 1;
+    font-weight: 500;
+    color: var(--color-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-decoration: none;
+  }
+
+  .share-title-link:hover {
+    text-decoration: underline;
+  }
+
   .share-date {
     flex-shrink: 0;
     font-size: 0.875rem;
@@ -525,10 +615,24 @@
     padding: 0 0.5rem 1rem;
   }
 
-  .share-meta {
+  .share-actions {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .share-item .action-btn {
+    background: none;
+    border: none;
     font-size: 0.875rem;
     color: var(--color-text-secondary);
-    margin-bottom: 0.75rem;
+    padding: 0;
+    cursor: pointer;
+    text-decoration: none;
+  }
+
+  .share-item .action-btn:hover {
+    color: var(--color-primary);
   }
 
   .share-note {
@@ -544,6 +648,46 @@
     color: var(--color-text-secondary);
     margin-bottom: 0.75rem;
     line-height: 1.5;
+  }
+
+  .share-loading {
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+    margin-top: 0.5rem;
+    font-style: italic;
+  }
+
+  .share-body {
+    font-size: 0.9375rem;
+    line-height: 1.7;
+    color: var(--color-text);
+    overflow-wrap: break-word;
+  }
+
+  .share-body :global(img) {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+    margin: 0.75rem 0;
+  }
+
+  .share-body :global(a) {
+    color: var(--color-primary);
+  }
+
+  .share-body :global(pre) {
+    background: var(--color-bg-secondary);
+    padding: 0.75rem;
+    border-radius: 4px;
+    overflow-x: auto;
+    font-size: 0.8rem;
+  }
+
+  .share-body :global(blockquote) {
+    border-left: 3px solid var(--color-border);
+    margin: 0.75rem 0;
+    padding-left: 1rem;
+    color: var(--color-text-secondary);
   }
 
   @media (prefers-color-scheme: dark) {

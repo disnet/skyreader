@@ -12,11 +12,14 @@ interface JetstreamEvent {
     record?: {
       $type: string;
       // For shares (com.at-rss.social.share)
+      feedUrl?: string;
       itemUrl?: string;
       itemTitle?: string;
       itemAuthor?: string;
       itemDescription?: string;
       itemImage?: string;
+      itemGuid?: string;
+      itemPublishedAt?: string;
       note?: string;
       tags?: string[];
       createdAt?: string;
@@ -256,18 +259,22 @@ export class JetstreamConsumer implements DurableObject {
         // Insert share into D1
         await this.env.DB.prepare(`
           INSERT OR REPLACE INTO shares
-          (author_did, record_uri, record_cid, item_url, item_title,
-           item_author, item_description, item_image, note, tags, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (author_did, record_uri, record_cid, feed_url, item_url, item_title,
+           item_author, item_description, item_image, item_guid, item_published_at,
+           note, tags, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).bind(
           did,
           recordUri,
           cid,
+          record.feedUrl || null,
           record.itemUrl,
           record.itemTitle || null,
           record.itemAuthor || null,
           record.itemDescription || null,
           record.itemImage || null,
+          record.itemGuid || null,
+          record.itemPublishedAt ? new Date(record.itemPublishedAt).getTime() : null,
           record.note || null,
           record.tags ? JSON.stringify(record.tags) : null,
           record.createdAt ? new Date(record.createdAt).getTime() : Date.now()
@@ -285,10 +292,13 @@ export class JetstreamConsumer implements DurableObject {
           payload: {
             authorDid: did,
             recordUri,
+            feedUrl: record.feedUrl,
             itemUrl: record.itemUrl,
             itemTitle: record.itemTitle,
             itemDescription: record.itemDescription,
             itemImage: record.itemImage,
+            itemGuid: record.itemGuid,
+            itemPublishedAt: record.itemPublishedAt,
             note: record.note,
             createdAt: record.createdAt,
           },

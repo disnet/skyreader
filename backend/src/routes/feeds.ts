@@ -151,6 +151,90 @@ export async function handleFeedFetch(request: Request, env: Env): Promise<Respo
   }
 }
 
+export async function handleArticleFetch(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const feedUrl = url.searchParams.get('feedUrl');
+  const guid = url.searchParams.get('guid');
+
+  if (!feedUrl || !guid) {
+    return new Response(JSON.stringify({ error: 'Missing feedUrl or guid parameter' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Validate URL
+  try {
+    new URL(feedUrl);
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid feedUrl' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const urlHash = hashUrl(feedUrl);
+
+  try {
+    // Check cache first
+    const cached = await env.FEED_CACHE.get(`feed:${urlHash}`, 'json') as { items?: { guid: string; content?: string; summary?: string }[] } | null;
+    if (cached?.items) {
+      const article = cached.items.find(item => item.guid === guid);
+      if (article) {
+        return new Response(JSON.stringify({ article }), {
+          headers: { 'Content-Type': 'application/json', 'X-Cache': 'HIT' },
+        });
+      }
+    }
+
+    // Fetch the feed
+    const response = await fetch(feedUrl, {
+      headers: {
+        'User-Agent': 'AT-RSS/1.0 (+https://at-rss.example.com)',
+        Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
+      },
+    });
+
+    if (!response.ok) {
+      return new Response(
+        JSON.stringify({ error: `Failed to fetch feed: ${response.status}` }),
+        {
+          status: 502,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
+    const xml = await response.text();
+    const parsed = parseFeed(xml, feedUrl);
+
+    // Cache the parsed feed
+    await env.FEED_CACHE.put(`feed:${urlHash}`, JSON.stringify(parsed), { expirationTtl: 900 });
+
+    // Find the article by guid
+    const article = parsed.items.find(item => item.guid === guid);
+    if (!article) {
+      return new Response(JSON.stringify({ error: 'Article not found in feed' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({ article }), {
+      headers: { 'Content-Type': 'application/json', 'X-Cache': 'MISS' },
+    });
+  } catch (error) {
+    console.error('Article fetch error:', error);
+    return new Response(
+      JSON.stringify({ error: error instanceof Error ? error.message : 'Failed to fetch article' }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+  }
+}
+
 export async function handleFeedDiscover(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const siteUrl = url.searchParams.get('url');

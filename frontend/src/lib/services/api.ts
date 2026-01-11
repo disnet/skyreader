@@ -1,4 +1,4 @@
-import type { ParsedFeed, SocialShare, User } from '$lib/types';
+import type { FeedItem, ParsedFeed, SocialShare, User } from '$lib/types';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8787';
 
@@ -72,6 +72,12 @@ class ApiClient {
 
   async discoverFeeds(url: string): Promise<{ feeds: string[] }> {
     return this.fetch(`/api/feeds/discover?url=${encodeURIComponent(url)}`);
+  }
+
+  async fetchArticle(feedUrl: string, guid: string): Promise<FeedItem | null> {
+    const params = new URLSearchParams({ feedUrl, guid });
+    const result = await this.fetch<{ article: FeedItem }>(`/api/feeds/article?${params}`);
+    return result.article;
   }
 
   // Social

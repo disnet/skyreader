@@ -32,55 +32,65 @@ function createSharesStore() {
 
   async function share(
     subscriptionAtUri: string,
+    feedUrl: string,
     articleGuid: string,
     articleUrl: string,
     articleTitle?: string,
     articleAuthor?: string,
     articleDescription?: string,
-    articleImage?: string
+    articleImage?: string,
+    articlePublishedAt?: string
   ) {
     await createShare(
       subscriptionAtUri,
+      feedUrl,
       articleGuid,
       articleUrl,
       articleTitle,
       articleAuthor,
       articleDescription,
       articleImage,
+      articlePublishedAt,
       undefined
     );
   }
 
   async function shareWithNote(
     subscriptionAtUri: string,
+    feedUrl: string,
     articleGuid: string,
     articleUrl: string,
     articleTitle?: string,
     articleAuthor?: string,
     articleDescription?: string,
     articleImage?: string,
+    articlePublishedAt?: string,
     note?: string
   ) {
     await createShare(
       subscriptionAtUri,
+      feedUrl,
       articleGuid,
       articleUrl,
       articleTitle,
       articleAuthor,
       articleDescription,
       articleImage,
+      articlePublishedAt,
       note
     );
   }
 
   async function createShare(
     subscriptionAtUri: string,
+    feedUrl: string,
     articleGuid: string,
     articleUrl: string,
     articleTitle?: string,
     articleAuthor?: string,
     articleDescription?: string,
     articleImage?: string,
+    articlePublishedAt?: string,
     note?: string
   ) {
     // Already shared - skip
@@ -92,12 +102,14 @@ function createSharesStore() {
     const shareData: Omit<UserShare, 'id'> = {
       rkey,
       subscriptionAtUri,
+      feedUrl,
       articleGuid,
       articleUrl,
       articleTitle,
       articleAuthor,
       articleDescription,
       articleImage,
+      articlePublishedAt,
       note,
       createdAt: now,
       syncStatus: 'pending',
@@ -120,6 +132,9 @@ function createSharesStore() {
     if (subscriptionAtUri && subscriptionAtUri.startsWith('at://')) {
       record.subscriptionUri = subscriptionAtUri;
     }
+    if (feedUrl) {
+      record.feedUrl = feedUrl;
+    }
     if (articleTitle) {
       record.itemTitle = articleTitle;
     }
@@ -131,6 +146,12 @@ function createSharesStore() {
     }
     if (articleImage && (articleImage.startsWith('http://') || articleImage.startsWith('https://'))) {
       record.itemImage = articleImage;
+    }
+    if (articleGuid) {
+      record.itemGuid = articleGuid;
+    }
+    if (articlePublishedAt) {
+      record.itemPublishedAt = articlePublishedAt;
     }
     if (note) {
       record.note = note.slice(0, 3000);

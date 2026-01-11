@@ -14,10 +14,13 @@ export interface NewSharePayload {
   authorDisplayName?: string;
   authorAvatar?: string;
   recordUri: string;
+  feedUrl?: string;
   itemUrl: string;
   itemTitle?: string;
   itemDescription?: string;
   itemImage?: string;
+  itemGuid?: string;
+  itemPublishedAt?: string;
   note?: string;
   createdAt: string;
 }
