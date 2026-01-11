@@ -102,7 +102,13 @@
       let filtered: Article[];
       if (feedFilter) {
         const feedId = parseInt(feedFilter);
-        filtered = currentArticles.filter(a => a.subscriptionId === feedId);
+        let feedArticles = currentArticles.filter(a => a.subscriptionId === feedId);
+        // Apply showOnlyUnread filter for individual feeds too
+        const onlyUnread = untrack(() => showOnlyUnread);
+        if (onlyUnread) {
+          feedArticles = feedArticles.filter(a => !readPositions.has(a.guid));
+        }
+        filtered = feedArticles;
       } else if (starredFilter) {
         filtered = currentArticles.filter(a => readPositions.get(a.guid)?.starred ?? false);
       } else {
@@ -356,7 +362,7 @@
   <div class="feed-page">
     <div class="feed-header">
       <h1>{pageTitle}</h1>
-      {#if (!feedFilter && !starredFilter && !sharerFilter && !followingFilter) || feedsFilter}
+      {#if (!feedFilter && !starredFilter && !sharerFilter && !followingFilter) || feedsFilter || feedFilter}
         <div class="view-toggle">
           <button
             class:active={showOnlyUnread}
@@ -382,7 +388,11 @@
       {:else if sharerFilter}
         <EmptyState title="No shares from this user" description="This user hasn't shared any articles yet" />
       {:else if feedFilter}
-        <EmptyState title="No unread articles" description="You're all caught up on this feed" />
+        {#if showOnlyUnread}
+          <EmptyState title="No unread articles" description="You're all caught up on this feed" />
+        {:else}
+          <EmptyState title="No articles" description="This feed has no articles" />
+        {/if}
       {:else if feedsFilter}
         <EmptyState title="No unread articles" description="You're all caught up on your feeds" />
       {:else if showOnlyUnread}
@@ -390,9 +400,7 @@
       {:else}
         <EmptyState
           title="No articles"
-          description="Add some subscriptions to get started"
-          actionHref="/feeds"
-          actionText="Manage Subscriptions"
+          description="Add some subscriptions using the + button in the sidebar"
         />
       {/if}
     {:else if viewMode === 'combined'}

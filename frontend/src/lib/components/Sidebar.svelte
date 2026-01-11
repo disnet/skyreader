@@ -8,6 +8,13 @@
     import { socialStore } from "$lib/stores/social.svelte";
     import { sharesStore } from "$lib/stores/shares.svelte";
     import AddFeedModal from "./AddFeedModal.svelte";
+    import PopoverMenu from "./PopoverMenu.svelte";
+
+    async function removeFeed(id: number) {
+        if (confirm('Are you sure you want to remove this subscription?')) {
+            await subscriptionsStore.remove(id);
+        }
+    }
 
     let showAddFeedModal = $state(false);
 
@@ -310,39 +317,56 @@
                         {@const faviconUrl = getFaviconUrl(sub)}
                         {@const loadingState = subscriptionsStore.feedLoadingStates.get(sub.id!)}
                         {@const feedError = subscriptionsStore.feedErrors.get(sub.id!)}
-                        <button
-                            class="nav-item sub-item"
+                        <div
+                            class="nav-item sub-item feed-item"
                             class:active={currentFilter().type === "feed" &&
                                 currentFilter().id === sub.id}
                             class:has-error={loadingState === "error"}
-                            onclick={() => selectFilter("feed", sub.id)}
-                            title={feedError || ""}
                         >
-                            {#if loadingState === "loading"}
-                                <span class="feed-loading-spinner"></span>
-                            {:else if loadingState === "error"}
-                                <span class="feed-error-icon" title={feedError}>!</span>
-                            {:else if faviconUrl}
-                                <img src={faviconUrl} alt="" class="feed-favicon" />
-                            {:else}
-                                <span class="feed-favicon-placeholder"></span>
-                            {/if}
-                            <span class="nav-label">{sub.title}</span>
-                            {#if loadingState === "error"}
-                                <button
-                                    class="retry-btn"
-                                    onclick={(e) => {
-                                        e.stopPropagation();
-                                        subscriptionsStore.fetchFeed(sub.id!, true);
-                                    }}
-                                    title="Retry"
-                                >
-                                    ↻
-                                </button>
-                            {:else if count > 0}
-                                <span class="nav-count">{count}</span>
-                            {/if}
-                        </button>
+                            <button
+                                class="feed-item-content"
+                                onclick={() => selectFilter("feed", sub.id)}
+                                title={feedError || ""}
+                            >
+                                {#if loadingState === "loading"}
+                                    <span class="feed-loading-spinner"></span>
+                                {:else if loadingState === "error"}
+                                    <span class="feed-error-icon" title={feedError}>!</span>
+                                {:else if faviconUrl}
+                                    <img src={faviconUrl} alt="" class="feed-favicon" />
+                                {:else}
+                                    <span class="feed-favicon-placeholder"></span>
+                                {/if}
+                                <span class="nav-label">{sub.title}</span>
+                            </button>
+                            <div class="feed-item-actions">
+                                {#if loadingState === "error"}
+                                    <button
+                                        class="retry-btn"
+                                        onclick={(e) => {
+                                            e.stopPropagation();
+                                            subscriptionsStore.fetchFeed(sub.id!, true);
+                                        }}
+                                        title="Retry"
+                                    >
+                                        ↻
+                                    </button>
+                                {/if}
+                                <PopoverMenu
+                                    items={[
+                                        {
+                                            label: 'Delete',
+                                            icon: '🗑',
+                                            variant: 'danger',
+                                            onclick: () => sub.id && removeFeed(sub.id),
+                                        },
+                                    ]}
+                                />
+                                {#if count > 0}
+                                    <span class="nav-count">{count}</span>
+                                {/if}
+                            </div>
+                        </div>
                     {:else}
                         <div class="empty-section">No subscriptions</div>
                     {/each}
@@ -666,6 +690,44 @@
 
     .nav-item.not-on-app {
         opacity: 0.5;
+    }
+
+    /* Feed item with popover menu */
+    .feed-item {
+        display: flex;
+        align-items: center;
+        padding: 0 0.5rem 0 1.5rem;
+    }
+
+    .feed-item-content {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        flex: 1;
+        min-width: 0;
+        padding: 0.5rem 0;
+        background: none;
+        border: none;
+        cursor: pointer;
+        text-align: left;
+        font: inherit;
+        color: inherit;
+    }
+
+    .feed-item-actions {
+        display: flex;
+        align-items: center;
+        flex-shrink: 0;
+        gap: 0.25rem;
+    }
+
+    .feed-item-actions :global(.popover-menu) {
+        opacity: 0;
+        transition: opacity 0.15s;
+    }
+
+    .feed-item:hover .feed-item-actions :global(.popover-menu) {
+        opacity: 1;
     }
 
     .retry-btn {
