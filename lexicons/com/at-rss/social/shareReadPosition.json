@@ -1,0 +1,43 @@
+{
+  "lexicon": 1,
+  "id": "com.at-rss.social.shareReadPosition",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Read status for a social share",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["shareUri", "readAt"],
+        "properties": {
+          "shareUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "AT URI of the share record being marked as read"
+          },
+          "shareAuthorDid": {
+            "type": "string",
+            "format": "did",
+            "description": "DID of the share author"
+          },
+          "itemUrl": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "description": "URL of the shared article (cached)"
+          },
+          "itemTitle": {
+            "type": "string",
+            "maxLength": 512,
+            "description": "Cached title of the shared article"
+          },
+          "readAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "When the share was marked as read"
+          }
+        }
+      }
+    }
+  }
+}

@@ -49,6 +49,18 @@ export interface ReadPosition {
   syncStatus: 'synced' | 'pending';
 }
 
+export interface ShareReadPosition {
+  id?: number;
+  atUri?: string;
+  rkey?: string;
+  shareUri: string;
+  shareAuthorDid: string;
+  itemUrl: string;
+  itemTitle?: string;
+  readAt: string;
+  syncStatus: 'synced' | 'pending';
+}
+
 export interface SocialShare {
   id?: number;
   authorDid: string;

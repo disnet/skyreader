@@ -7,6 +7,7 @@
     localArticle,
     remoteArticle,
     isFetching = false,
+    isRead = false,
     selected = false,
     expanded = false,
     onSelect,
@@ -17,6 +18,7 @@
     localArticle?: Article;
     remoteArticle?: FeedItem;
     isFetching?: boolean;
+    isRead?: boolean;
     selected?: boolean;
     expanded?: boolean;
     onSelect?: () => void;
@@ -72,6 +74,7 @@
 
 <div
   class="share-item"
+  class:read={isRead}
   class:selected
   class:expanded
 >
@@ -141,7 +144,15 @@
 
 <style>
   .share-item {
-    transition: background-color 0.15s ease;
+    transition: background-color 0.15s ease, opacity 0.15s ease;
+  }
+
+  .share-item.read:not(.selected):not(.expanded) {
+    opacity: 0.6;
+  }
+
+  .share-item.read:not(.selected):not(.expanded):hover {
+    opacity: 0.8;
   }
 
   .share-item:not(.selected):not(.expanded):hover {

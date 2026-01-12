@@ -8,6 +8,7 @@ const ALLOWED_COLLECTIONS = [
   'com.at-rss.feed.readPosition',
   'com.at-rss.social.share',
   'com.at-rss.social.follow',
+  'com.at-rss.social.shareReadPosition',
 ];
 
 interface ProfileInfo {
@@ -393,6 +394,136 @@ async function handleReadPositionSync(
   });
 }
 
+interface ShareReadPositionRecord {
+  shareUri: string;
+  shareAuthorDid: string;
+  itemUrl?: string;
+  itemTitle?: string;
+  readAt: string;
+}
+
+async function handleShareReadPositionSync(
+  env: Env,
+  session: { did: string; pdsUrl: string; accessToken: string; dpopPrivateKey: string },
+  operation: 'create' | 'update' | 'delete',
+  rkey: string,
+  record?: Record<string, unknown>
+): Promise<Response> {
+  const collection = 'com.at-rss.social.shareReadPosition';
+
+  if (operation === 'delete') {
+    // For delete, remove from cache and PDS
+    const result = await makePdsRequest(session, 'com.atproto.repo.deleteRecord', {
+      repo: session.did,
+      collection,
+      rkey,
+    });
+
+    // Remove from cache regardless of PDS result
+    await env.DB.prepare(
+      'DELETE FROM share_read_positions_cache WHERE user_did = ? AND rkey = ?'
+    ).bind(session.did, rkey).run();
+
+    if (!result.ok) {
+      // If record doesn't exist on PDS, that's fine for delete
+      if (result.data.error === 'RecordNotFound') {
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({
+        error: result.data.error || 'PDS request failed',
+        message: result.data.message,
+      }), {
+        status: result.status,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // For create/update, check cache first
+  if (!record) {
+    return new Response(JSON.stringify({ error: 'Record required for create/update' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  const shareReadRecord = record as unknown as ShareReadPositionRecord;
+
+  // Check if this record is already in cache and synced (by shareUri)
+  const cached = await env.DB.prepare(
+    'SELECT id, record_uri, synced_at FROM share_read_positions_cache WHERE user_did = ? AND share_uri = ?'
+  ).bind(session.did, shareReadRecord.shareUri).first<{ id: number; record_uri: string | null; synced_at: number | null }>();
+
+  if (cached && cached.synced_at !== null && cached.record_uri) {
+    // Already synced - return cached URI without hitting PDS
+    console.log(`Share read position for ${shareReadRecord.shareUri} already synced, returning cached URI`);
+    return new Response(JSON.stringify({
+      uri: cached.record_uri,
+      cached: true,
+    }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Not in cache or not yet synced - sync to PDS
+  const requestBody = {
+    repo: session.did,
+    collection,
+    rkey,
+    record: { $type: collection, ...record },
+  };
+  console.log('Syncing share read position to PDS:', rkey);
+  const result = await makePdsRequest(session, 'com.atproto.repo.putRecord', requestBody);
+
+  if (!result.ok) {
+    console.error('PDS request failed for share read position:', result.data);
+    return new Response(JSON.stringify({
+      error: result.data.error || 'PDS request failed',
+      message: result.data.message,
+    }), {
+      status: result.status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Update cache with sync result
+  const recordUri = result.data.uri || `at://${session.did}/${collection}/${rkey}`;
+  try {
+    await env.DB.prepare(`
+      INSERT INTO share_read_positions_cache
+      (user_did, rkey, record_uri, share_uri, share_author_did, item_url, item_title, read_at, synced_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+      ON CONFLICT(user_did, share_uri) DO UPDATE SET
+        record_uri = excluded.record_uri,
+        synced_at = unixepoch()
+    `).bind(
+      session.did,
+      rkey,
+      recordUri,
+      shareReadRecord.shareUri,
+      shareReadRecord.shareAuthorDid,
+      shareReadRecord.itemUrl || null,
+      shareReadRecord.itemTitle || null,
+      shareReadRecord.readAt
+    ).run();
+  } catch (cacheError) {
+    console.error('Failed to cache share read position:', cacheError);
+    // Don't fail the request if caching fails
+  }
+
+  return new Response(JSON.stringify({
+    uri: result.data.uri,
+    cid: result.data.cid,
+  }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 export async function handleRecordSync(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
@@ -457,6 +588,11 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
     // Handle read positions with cache-first deduplication
     if (collection === 'com.at-rss.feed.readPosition') {
       return await handleReadPositionSync(env, session, operation, rkey, record);
+    }
+
+    // Handle share read positions with cache-first deduplication
+    if (collection === 'com.at-rss.social.shareReadPosition') {
+      return await handleShareReadPositionSync(env, session, operation, rkey, record);
     }
 
     let result: { ok: boolean; data: PdsResponse; status: number };

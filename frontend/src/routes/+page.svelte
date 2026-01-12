@@ -5,6 +5,7 @@
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { readingStore } from '$lib/stores/reading.svelte';
+  import { shareReadingStore } from '$lib/stores/shareReading.svelte';
   import { sharesStore } from '$lib/stores/shares.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
   import { api } from '$lib/services/api';
@@ -229,6 +230,7 @@
     if (auth.isAuthenticated) {
       await subscriptionsStore.load();
       await readingStore.load();
+      await shareReadingStore.load();
       await sharesStore.load();
       await socialStore.loadFollowedUsers();
       await socialStore.loadFeed(true);
@@ -318,12 +320,17 @@
     if (index === selectedIndex) return;
 
     const mode = viewMode;
-    // Mark as read when selecting articles (not shares)
+    // Mark as read when selecting articles or shares
     if (mode === 'articles') {
       const article = displayedArticles[index];
       const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId);
       if (sub && !readingStore.isRead(article.guid)) {
         readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+      }
+    } else if (mode === 'shares') {
+      const share = displayedShares[index];
+      if (!shareReadingStore.isRead(share.recordUri)) {
+        shareReadingStore.markAsRead(share.recordUri, share.authorDid, share.itemUrl, share.itemTitle);
       }
     } else if (mode === 'combined') {
       const feedItem = displayedCombined[index];
@@ -332,6 +339,11 @@
         const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId);
         if (sub && !readingStore.isRead(article.guid)) {
           readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+        }
+      } else {
+        const share = feedItem.item;
+        if (!shareReadingStore.isRead(share.recordUri)) {
+          shareReadingStore.markAsRead(share.recordUri, share.authorDid, share.itemUrl, share.itemTitle);
         }
       }
     }
@@ -488,6 +500,7 @@
                 {localArticle}
                 {remoteArticle}
                 {isFetching}
+                isRead={shareReadingStore.isRead(share.recordUri)}
                 selected={selectedIndex === index}
                 expanded={expandedIndex === index}
                 onSelect={() => {
@@ -532,6 +545,7 @@
               {localArticle}
               {remoteArticle}
               {isFetching}
+              isRead={shareReadingStore.isRead(share.recordUri)}
               selected={selectedIndex === index}
               expanded={expandedIndex === index}
               onSelect={() => {

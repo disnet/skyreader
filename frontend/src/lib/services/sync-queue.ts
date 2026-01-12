@@ -115,6 +115,12 @@ class SyncQueueService {
         await db.userShares.update(share.id, { atUri, syncStatus: 'synced' });
         this.notifySyncComplete(collection, rkey);
       }
+    } else if (collection === 'com.at-rss.social.shareReadPosition') {
+      const pos = await db.shareReadPositions.where('rkey').equals(rkey).first();
+      if (pos?.id) {
+        await db.shareReadPositions.update(pos.id, { atUri, syncStatus: 'synced' });
+        this.notifySyncComplete(collection, rkey);
+      }
     }
   }
 
