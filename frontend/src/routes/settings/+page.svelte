@@ -63,6 +63,31 @@
     refreshResult = { updated, failed };
     isRefreshingMetadata = false;
   }
+
+  let isUnsubscribingAll = $state(false);
+  let unsubscribeProgress = $state({ current: 0, total: 0 });
+
+  async function handleUnsubscribeAll() {
+    const count = subscriptionsStore.subscriptions.length;
+    if (count === 0) return;
+
+    if (!confirm(`Are you sure you want to unsubscribe from all ${count} feeds? This cannot be undone.`)) {
+      return;
+    }
+
+    isUnsubscribingAll = true;
+    unsubscribeProgress = { current: 0, total: count };
+
+    // Get a copy of IDs since array will change as we delete
+    const ids = subscriptionsStore.subscriptions.map(s => s.id).filter((id): id is number => id !== undefined);
+
+    for (const id of ids) {
+      await subscriptionsStore.remove(id);
+      unsubscribeProgress = { current: unsubscribeProgress.current + 1, total: count };
+    }
+
+    isUnsubscribingAll = false;
+  }
 </script>
 
 <div class="settings-page">
@@ -143,6 +168,22 @@
     <h2>About</h2>
     <p>AT-RSS is a decentralized RSS reader built on the AT Protocol.</p>
     <p>Your data is stored in your Personal Data Server (PDS), giving you full ownership and portability.</p>
+  </section>
+
+  <section class="card debug-section">
+    <h2>Debug</h2>
+    <p>Development tools for testing.</p>
+    <button
+      class="btn btn-danger"
+      onclick={handleUnsubscribeAll}
+      disabled={isUnsubscribingAll || subscriptionsStore.subscriptions.length === 0}
+    >
+      {#if isUnsubscribingAll}
+        Unsubscribing... ({unsubscribeProgress.current}/{unsubscribeProgress.total})
+      {:else}
+        Unsubscribe from All ({subscriptionsStore.subscriptions.length} feeds)
+      {/if}
+    </button>
   </section>
 </div>
 
@@ -234,5 +275,14 @@
     font-size: 0.875rem;
     color: var(--color-text-secondary);
     margin: 0;
+  }
+
+  .debug-section {
+    border: 1px dashed var(--color-border);
+    background: var(--color-bg-secondary);
+  }
+
+  .debug-section h2 {
+    color: var(--color-text-secondary);
   }
 </style>

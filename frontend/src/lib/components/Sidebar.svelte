@@ -518,7 +518,7 @@
                             ontouchmove={handleTouchMove}
                             title={feedError || ""}
                         >
-                            {#if loadingState === "loading"}
+                            {#if loadingState === "loading" || sub.fetchStatus === "pending"}
                                 <span class="feed-loading-spinner"></span>
                             {:else if loadingState === "error"}
                                 <span class="feed-error-icon" title={feedError}>!</span>

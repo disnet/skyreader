@@ -227,6 +227,17 @@ async function fetchAndCacheFeed(
     },
   });
 
+  // Also notify that this feed is now ready (for bulk import tracking)
+  await notifyRealtimeHub(env, {
+    type: 'feed_ready',
+    payload: {
+      feedUrl,
+      feedTitle: parsed.title,
+      itemCount: parsed.items.length,
+      timestamp: Date.now(),
+    },
+  });
+
   return { status: 'fetched' };
 }
 

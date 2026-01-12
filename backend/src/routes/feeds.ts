@@ -665,3 +665,80 @@ export async function handleFeedDiscover(request: Request, env: Env): Promise<Re
     );
   }
 }
+
+interface FeedStatus {
+  cached: boolean;
+  lastFetchedAt?: number;
+  error?: string;
+  itemCount?: number;
+}
+
+// Batch check status of multiple feeds
+export async function handleFeedStatusBatch(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const feedUrls = url.searchParams.getAll('url');
+
+  if (feedUrls.length === 0) {
+    return new Response(JSON.stringify({ error: 'Missing url parameter(s)' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Limit to prevent abuse
+  if (feedUrls.length > 100) {
+    return new Response(JSON.stringify({ error: 'Too many URLs (max 100)' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const statuses: Record<string, FeedStatus> = {};
+
+  // Check each feed's status
+  for (const feedUrl of feedUrls) {
+    try {
+      new URL(feedUrl);
+    } catch {
+      statuses[feedUrl] = { cached: false, error: 'Invalid URL' };
+      continue;
+    }
+
+    const urlHash = hashUrl(feedUrl);
+
+    // Check feed_cache for cached data
+    const cached = await env.DB.prepare(
+      'SELECT cached_at FROM feed_cache WHERE url_hash = ?'
+    ).bind(urlHash).first<{ cached_at: number }>();
+
+    // Check feed_metadata for error info and item count
+    const metadata = await env.DB.prepare(
+      'SELECT last_fetched_at, fetch_error, error_count FROM feed_metadata WHERE feed_url = ?'
+    ).bind(feedUrl).first<{ last_fetched_at: number; fetch_error: string | null; error_count: number }>();
+
+    // Count items
+    const itemCount = await env.DB.prepare(
+      'SELECT COUNT(*) as count FROM feed_items WHERE feed_url = ?'
+    ).bind(feedUrl).first<{ count: number }>();
+
+    if (cached || (itemCount && itemCount.count > 0)) {
+      statuses[feedUrl] = {
+        cached: true,
+        lastFetchedAt: (cached?.cached_at || metadata?.last_fetched_at || 0) * 1000,
+        itemCount: itemCount?.count || 0,
+      };
+    } else if (metadata?.fetch_error) {
+      statuses[feedUrl] = {
+        cached: false,
+        error: metadata.fetch_error,
+        lastFetchedAt: metadata.last_fetched_at * 1000,
+      };
+    } else {
+      statuses[feedUrl] = { cached: false };
+    }
+  }
+
+  return new Response(JSON.stringify(statuses), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}

@@ -243,13 +243,17 @@
       await socialStore.loadFeed(true);
       allArticles = await subscriptionsStore.getAllArticles();
 
-      // If we have subscriptions but no articles, fetch feeds (first login scenario)
+      // If we have subscriptions but no articles, use smart fetching
       if (subscriptionsStore.subscriptions.length > 0 && allArticles.length === 0) {
-        for (const sub of subscriptionsStore.subscriptions) {
-          if (sub.id) {
-            await subscriptionsStore.fetchFeed(sub.id, false);
-          }
-        }
+        // Check which feeds are ready on the backend
+        const feedUrls = subscriptionsStore.subscriptions.map((s) => s.feedUrl);
+        await subscriptionsStore.checkFeedStatuses(feedUrls);
+
+        // Fetch all feeds (ready from cache, pending gradually from source)
+        subscriptionsStore.fetchAllNewFeeds(2, 1000);
+
+        // Give a moment for first batch then update display
+        await new Promise((resolve) => setTimeout(resolve, 500));
         allArticles = await subscriptionsStore.getAllArticles();
       }
     }

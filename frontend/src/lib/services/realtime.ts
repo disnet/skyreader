@@ -4,7 +4,7 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8787';
 const WS_BASE = API_BASE.replace(/^http/, 'ws');
 
 export interface RealtimeMessage {
-  type: 'connected' | 'heartbeat' | 'new_share' | 'new_articles';
+  type: 'connected' | 'heartbeat' | 'new_share' | 'new_articles' | 'feed_ready';
   payload: unknown;
 }
 
@@ -30,6 +30,13 @@ export interface NewArticlesPayload {
   feedUrl: string;
   feedTitle: string;
   newCount: number;
+  timestamp: number;
+}
+
+export interface FeedReadyPayload {
+  feedUrl: string;
+  feedTitle: string;
+  itemCount: number;
   timestamp: number;
 }
 

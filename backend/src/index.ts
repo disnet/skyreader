@@ -1,6 +1,6 @@
 import type { Env } from './types';
 import { handleAuthLogin, handleAuthCallback, handleAuthLogout, handleAuthMe, handleClientMetadata } from './routes/auth';
-import { handleFeedFetch, handleCachedFeedFetch, handleFeedDiscover, handleArticleFetch } from './routes/feeds';
+import { handleFeedFetch, handleCachedFeedFetch, handleFeedDiscover, handleArticleFetch, handleFeedStatusBatch } from './routes/feeds';
 import { handleItemsList, handleItemsRecent, handleItemGet, handleItemsByFeed } from './routes/items';
 import { handleSocialFeed, handleSyncFollows, handleFollowedUsers, handlePopularShares } from './routes/social';
 import { handleDiscover } from './routes/discover';
@@ -75,6 +75,9 @@ export default {
           break;
         case url.pathname === '/api/feeds/article':
           response = await handleArticleFetch(request, env);
+          break;
+        case url.pathname === '/api/feeds/status':
+          response = await handleFeedStatusBatch(request, env);
           break;
 
         // Item routes (individual feed items)

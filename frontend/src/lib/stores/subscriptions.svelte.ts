@@ -1,7 +1,7 @@
 import { db } from '$lib/services/db';
 import { syncQueue } from '$lib/services/sync-queue';
 import { api } from '$lib/services/api';
-import { realtime, type NewArticlesPayload } from '$lib/services/realtime';
+import { realtime, type NewArticlesPayload, type FeedReadyPayload } from '$lib/services/realtime';
 import type { Subscription, Article, ParsedFeed } from '$lib/types';
 
 // Generate a TID (Timestamp Identifier) for AT Protocol records
@@ -37,6 +37,26 @@ function createSubscriptionsStore() {
     // Find subscription by feed URL and refresh from cache (cron already updated it)
     const sub = subscriptions.find((s) => s.feedUrl === data.feedUrl);
     if (sub?.id) {
+      await fetchFeed(sub.id);
+    }
+  });
+
+  // Listen for feed_ready notifications (for bulk import tracking)
+  realtime.on('feed_ready', async (payload) => {
+    const data = payload as FeedReadyPayload;
+    // Find subscription by feed URL and update its fetchStatus
+    const sub = subscriptions.find((s) => s.feedUrl === data.feedUrl);
+    if (sub?.id) {
+      // Update local DB
+      await db.subscriptions.update(sub.id, {
+        fetchStatus: 'ready',
+        lastFetchedAt: data.timestamp,
+      });
+      // Update in-memory state
+      subscriptions = subscriptions.map((s) =>
+        s.id === sub.id ? { ...s, fetchStatus: 'ready' as const, lastFetchedAt: data.timestamp } : s
+      );
+      // Fetch the newly ready feed
       await fetchFeed(sub.id);
     }
   });
@@ -134,6 +154,7 @@ function createSubscriptionsStore() {
         createdAt: now,
         syncStatus: 'pending',
         localUpdatedAt: Date.now(),
+        fetchStatus: 'pending',
       };
 
       try {
@@ -495,6 +516,96 @@ function createSubscriptionsStore() {
     }
   }
 
+  // Check feed statuses from backend and update local state
+  async function checkFeedStatuses(feedUrls: string[]): Promise<void> {
+    if (feedUrls.length === 0) return;
+
+    try {
+      const statuses = await api.getFeedStatuses(feedUrls);
+
+      // Update local subscriptions with status
+      for (const sub of subscriptions) {
+        const status = statuses[sub.feedUrl];
+        if (status) {
+          const newFetchStatus = status.cached ? 'ready' : (status.error ? 'error' : 'pending');
+          const updates: Partial<Subscription> = {
+            fetchStatus: newFetchStatus as 'pending' | 'ready' | 'error',
+          };
+          if (status.lastFetchedAt) {
+            updates.lastFetchedAt = status.lastFetchedAt;
+          }
+          if (status.error) {
+            updates.fetchError = status.error;
+          }
+
+          if (sub.id) {
+            await db.subscriptions.update(sub.id, updates);
+          }
+        }
+      }
+
+      // Reload subscriptions from DB
+      subscriptions = await db.subscriptions.toArray();
+    } catch (e) {
+      console.error('Failed to check feed statuses:', e);
+    }
+  }
+
+  // Fetch all feeds that need content: ready feeds from cache, pending feeds from source
+  async function fetchAllNewFeeds(concurrency = 2, delayMs = 1000): Promise<void> {
+    // First, quickly fetch ready feeds from cache (no delay needed)
+    const readyFeeds = subscriptions.filter((s) => s.fetchStatus === 'ready' && s.id);
+    if (readyFeeds.length > 0) {
+      console.log(`Fetching ${readyFeeds.length} ready feeds from cache...`);
+      await Promise.all(
+        readyFeeds.map((sub) => sub.id && fetchFeed(sub.id, false))
+      );
+    }
+
+    // Then gradually fetch pending feeds from source
+    await fetchPendingFeedsGradually(concurrency, delayMs);
+  }
+
+  // Gradually fetch pending feeds in background with rate limiting
+  // Uses force=true to trigger actual backend fetches for feeds not yet cached
+  async function fetchPendingFeedsGradually(concurrency = 2, delayMs = 1000): Promise<void> {
+    const pendingFeeds = subscriptions.filter((s) => s.fetchStatus === 'pending' && s.id);
+
+    if (pendingFeeds.length === 0) return;
+
+    console.log(`Fetching ${pendingFeeds.length} pending feeds gradually...`);
+
+    // Process in batches with delay
+    for (let i = 0; i < pendingFeeds.length; i += concurrency) {
+      const batch = pendingFeeds.slice(i, i + concurrency);
+
+      await Promise.allSettled(
+        batch.map(async (sub) => {
+          if (!sub.id) return;
+          // Use force=true to trigger actual backend fetch if not cached
+          const result = await fetchFeed(sub.id, true);
+          // If we got items, mark as ready
+          if (result && result.items && result.items.length > 0) {
+            await db.subscriptions.update(sub.id, {
+              fetchStatus: 'ready',
+              lastFetchedAt: Date.now(),
+            });
+            subscriptions = subscriptions.map((s) =>
+              s.id === sub.id ? { ...s, fetchStatus: 'ready' as const, lastFetchedAt: Date.now() } : s
+            );
+          }
+        })
+      );
+
+      // Delay between batches to avoid overwhelming the backend
+      if (i + concurrency < pendingFeeds.length) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+
+    console.log('Finished fetching pending feeds');
+  }
+
   return {
     get subscriptions() {
       return subscriptions;
@@ -526,6 +637,9 @@ function createSubscriptionsStore() {
     searchArticles,
     syncFromPds,
     clearFeedError,
+    checkFeedStatuses,
+    fetchPendingFeedsGradually,
+    fetchAllNewFeeds,
   };
 }
 

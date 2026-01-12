@@ -40,6 +40,11 @@ class ATRSSDatabase extends Dexie {
     this.version(5).stores({
       syncQueue: '++id, operation, collection, rkey, timestamp',
     });
+
+    // Add fetchStatus to track backend feed processing state
+    this.version(6).stores({
+      subscriptions: '++id, atUri, rkey, feedUrl, category, syncStatus, fetchStatus, localUpdatedAt',
+    });
   }
 }
 

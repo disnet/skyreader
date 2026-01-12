@@ -85,6 +85,17 @@ class ApiClient {
     return result.article;
   }
 
+  async getFeedStatuses(feedUrls: string[]): Promise<Record<string, {
+    cached: boolean;
+    lastFetchedAt?: number;
+    error?: string;
+    itemCount?: number;
+  }>> {
+    const params = new URLSearchParams();
+    feedUrls.forEach(url => params.append('url', url));
+    return this.fetch(`/api/feeds/status?${params}`);
+  }
+
   // Items (paginated queries)
   async getItems(options: {
     feedUrls?: string[];

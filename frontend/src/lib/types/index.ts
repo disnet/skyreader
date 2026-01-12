@@ -19,6 +19,9 @@ export interface Subscription {
   updatedAt?: string;
   syncStatus: 'synced' | 'pending' | 'conflict';
   localUpdatedAt: number;
+  fetchStatus?: 'pending' | 'ready' | 'error';
+  lastFetchedAt?: number;
+  fetchError?: string;
 }
 
 export interface Article {

@@ -112,6 +112,18 @@
         };
 
         modalState = "complete";
+
+        // Check which feeds are already cached on the backend (from other users)
+        // and start fetching them immediately
+        if (result.added.length > 0) {
+            const newFeedUrls = feedsToImport.map((f) => f.feedUrl);
+
+            // Check backend status - feeds already cached will be marked 'ready'
+            await subscriptionsStore.checkFeedStatuses(newFeedUrls);
+
+            // Fetch ready feeds from cache immediately, then pending feeds gradually
+            subscriptionsStore.fetchAllNewFeeds(2, 1000);
+        }
     }
 
     function isDuplicate(feedUrl: string): boolean {
