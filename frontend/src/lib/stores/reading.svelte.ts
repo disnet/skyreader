@@ -8,9 +8,46 @@ function generateTid(): string {
   return `${now.toString(36)}${random}`;
 }
 
+// Debounce delay for batching read state updates (ms)
+const READ_BATCH_DELAY = 500;
+
 function createReadingStore() {
   let readPositions = $state<Map<string, ReadPosition>>(new Map());
   let isLoading = $state(true);
+
+  // Pending read positions waiting to be enqueued
+  let pendingReads: Array<{
+    rkey: string;
+    record: Record<string, unknown>;
+  }> = [];
+  let flushTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  async function flushPendingReads() {
+    if (pendingReads.length === 0) return;
+
+    const toEnqueue = pendingReads;
+    pendingReads = [];
+    flushTimeout = null;
+
+    // Enqueue all pending reads as a batch
+    for (const { rkey, record } of toEnqueue) {
+      await syncQueue.enqueue({
+        operation: 'create',
+        collection: 'com.at-rss.feed.readPosition',
+        rkey,
+        record,
+      });
+    }
+  }
+
+  function scheduleFlush() {
+    if (flushTimeout) {
+      clearTimeout(flushTimeout);
+    }
+    flushTimeout = setTimeout(() => {
+      flushPendingReads();
+    }, READ_BATCH_DELAY);
+  }
 
   async function load() {
     isLoading = true;
@@ -80,12 +117,9 @@ function createReadingStore() {
       record.itemTitle = articleTitle;
     }
 
-    await syncQueue.enqueue({
-      operation: 'create',
-      collection: 'com.at-rss.feed.readPosition',
-      rkey,
-      record,
-    });
+    // Add to pending batch and schedule debounced flush
+    pendingReads.push({ rkey, record });
+    scheduleFlush();
   }
 
   async function toggleStar(articleGuid: string) {
@@ -151,6 +185,7 @@ function createReadingStore() {
     toggleStar,
     getStarredArticles,
     getUnreadCount,
+    flushPendingReads,
   };
 }
 
