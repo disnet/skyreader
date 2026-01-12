@@ -215,6 +215,19 @@ function createSubscriptionsStore() {
     if (!sub) return;
 
     const now = new Date().toISOString();
+
+    // Build the updated record for PDS sync
+    const updatedRecord = {
+      feedUrl: updates.feedUrl ?? sub.feedUrl,
+      title: updates.title ?? sub.title,
+      siteUrl: updates.siteUrl ?? sub.siteUrl,
+      category: updates.category ?? sub.category,
+      tags: updates.tags ?? sub.tags,
+      createdAt: sub.createdAt,
+      updatedAt: now,
+    };
+
+    // Update local DB
     await db.subscriptions.update(id, {
       ...updates,
       updatedAt: now,
@@ -226,20 +239,33 @@ function createSubscriptionsStore() {
       s.id === id ? { ...s, ...updates, updatedAt: now, syncStatus: 'pending' as const } : s
     );
 
-    if (sub.syncStatus === 'synced') {
+    // Try to update any pending create operation in the sync queue
+    const pendingCreateItems = await db.syncQueue
+      .where('rkey')
+      .equals(sub.rkey)
+      .filter((item) => item.operation === 'create' && item.collection === 'com.at-rss.feed.subscription')
+      .toArray();
+
+    if (pendingCreateItems.length > 0) {
+      // Update the pending create with new data
+      for (const item of pendingCreateItems) {
+        if (item.id && item.record) {
+          await db.syncQueue.update(item.id, {
+            record: {
+              ...item.record,
+              ...updatedRecord,
+            },
+          });
+        }
+      }
+    } else {
+      // No pending create found - either already synced or will be soon
+      // Enqueue an update operation to ensure PDS gets the latest data
       await syncQueue.enqueue({
         operation: 'update',
         collection: 'com.at-rss.feed.subscription',
         rkey: sub.rkey,
-        record: {
-          feedUrl: updates.feedUrl ?? sub.feedUrl,
-          title: updates.title ?? sub.title,
-          siteUrl: updates.siteUrl ?? sub.siteUrl,
-          category: updates.category ?? sub.category,
-          tags: updates.tags ?? sub.tags,
-          createdAt: sub.createdAt,
-          updatedAt: now,
-        },
+        record: updatedRecord,
       });
     }
   }

@@ -35,6 +35,11 @@ class ATRSSDatabase extends Dexie {
     this.version(4).stores({
       shareReadPositions: '++id, atUri, rkey, shareUri, shareAuthorDid, syncStatus',
     });
+
+    // Add rkey index to syncQueue for updating pending items
+    this.version(5).stores({
+      syncQueue: '++id, operation, collection, rkey, timestamp',
+    });
   }
 }
 
