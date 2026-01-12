@@ -153,6 +153,13 @@
         filtered = [...shares];
       }
 
+      // Apply showOnlyUnread filter for shares
+      const onlyUnread = untrack(() => showOnlyUnread);
+      const readPositions = untrack(() => shareReadingStore.shareReadPositions);
+      if (onlyUnread && (followingFilter || sharerFilter)) {
+        filtered = filtered.filter(s => !readPositions.has(s.recordUri));
+      }
+
       displayedShares = filtered;
       lastSharesFilterKey = currentKey;
       lastSharesLength = shares.length;
@@ -401,7 +408,7 @@
           />
         {/if}
       </div>
-      {#if (!feedFilter && !starredFilter && !sharerFilter && !followingFilter) || feedsFilter || feedFilter}
+      {#if !starredFilter && !sharedFilter}
         <div class="view-toggle">
           <button
             class:active={showOnlyUnread}
@@ -423,9 +430,17 @@
       {:else if sharedFilter}
         <EmptyState title="No shared articles" description="Share articles to see them here" />
       {:else if followingFilter}
-        <EmptyState title="No shared articles" description="People you follow haven't shared any articles yet" />
+        {#if showOnlyUnread}
+          <EmptyState title="No unread shares" description="You're all caught up on shares from people you follow" />
+        {:else}
+          <EmptyState title="No shared articles" description="People you follow haven't shared any articles yet" />
+        {/if}
       {:else if sharerFilter}
-        <EmptyState title="No shares from this user" description="This user hasn't shared any articles yet" />
+        {#if showOnlyUnread}
+          <EmptyState title="No unread shares" description="You're all caught up on shares from this user" />
+        {:else}
+          <EmptyState title="No shares from this user" description="This user hasn't shared any articles yet" />
+        {/if}
       {:else if feedFilter}
         {#if showOnlyUnread}
           <EmptyState title="No unread articles" description="You're all caught up on this feed" />

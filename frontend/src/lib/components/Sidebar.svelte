@@ -7,6 +7,7 @@
     import { readingStore } from "$lib/stores/reading.svelte";
     import { socialStore } from "$lib/stores/social.svelte";
     import { sharesStore } from "$lib/stores/shares.svelte";
+    import { shareReadingStore } from "$lib/stores/shareReading.svelte";
     import { onMount, onDestroy } from "svelte";
     import AddFeedModal from "./AddFeedModal.svelte";
 
@@ -157,11 +158,15 @@
         Array.from(feedUnreadCounts.values()).reduce((a, b) => a + b, 0),
     );
 
-    // Group shares by author for counts
+    // Group unread shares by author for counts
     let sharerCounts = $derived(() => {
+        // Track dependency on read positions
+        shareReadingStore.shareReadPositions;
         const counts = new Map<string, number>();
         for (const share of socialStore.shares) {
-            counts.set(share.authorDid, (counts.get(share.authorDid) || 0) + 1);
+            if (!shareReadingStore.isRead(share.recordUri)) {
+                counts.set(share.authorDid, (counts.get(share.authorDid) || 0) + 1);
+            }
         }
         return counts;
     });
@@ -196,13 +201,32 @@
         return subs;
     });
 
-    // Sort and optionally filter followed users by share count (descending)
+    // Sort followed users: 1) with unread shares, 2) followed in-app, 3) others
     let sortedFollowedUsers = $derived(() => {
         const counts = sharerCounts();
         let users = [...socialStore.followedUsers].sort((a, b) => {
             const countA = counts.get(a.did) || 0;
             const countB = counts.get(b.did) || 0;
-            return countB - countA;
+            const hasUnreadA = countA > 0;
+            const hasUnreadB = countB > 0;
+
+            // Tier 1: accounts with unread shares
+            if (hasUnreadA && !hasUnreadB) return -1;
+            if (!hasUnreadA && hasUnreadB) return 1;
+
+            // Within unread tier, sort by count descending
+            if (hasUnreadA && hasUnreadB) {
+                return countB - countA;
+            }
+
+            // Tier 2: accounts followed in-app
+            if (a.onApp && !b.onApp) return -1;
+            if (!a.onApp && b.onApp) return 1;
+
+            // Tier 3: alphabetical by display name or handle
+            const nameA = (a.displayName || a.handle).toLowerCase();
+            const nameB = (b.displayName || b.handle).toLowerCase();
+            return nameA.localeCompare(nameB);
         });
         if (sidebarStore.showOnlyUnread.shared) {
             users = users.filter((u) => (counts.get(u.did) || 0) > 0);
@@ -403,7 +427,7 @@
                         }}
                         title={sidebarStore.showOnlyUnread.shared
                             ? "Show all"
-                            : "Show only with shares"}
+                            : "Show only with unread"}
                     >
                         {sidebarStore.showOnlyUnread.shared ? "●" : "○"}
                     </button>
