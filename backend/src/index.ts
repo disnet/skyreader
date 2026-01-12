@@ -3,11 +3,13 @@ import { handleAuthLogin, handleAuthCallback, handleAuthLogout, handleAuthMe, ha
 import { handleFeedFetch, handleCachedFeedFetch, handleFeedDiscover, handleArticleFetch } from './routes/feeds';
 import { handleItemsList, handleItemsRecent, handleItemGet, handleItemsByFeed } from './routes/items';
 import { handleSocialFeed, handleSyncFollows, handleFollowedUsers, handlePopularShares } from './routes/social';
+import { handleDiscover } from './routes/discover';
 import { handleRecordSync, handleBulkRecordSync, handleRecordsList } from './routes/records';
 import { getSessionFromRequest, updateUserActivity } from './services/oauth';
 import { refreshActiveFeeds } from './services/scheduled-feeds';
 import { pollJetstream } from './services/jetstream-poller';
 import { pollJetstreamFollows } from './services/jetstream-follows-poller';
+import { pollJetstreamInappFollows } from './services/jetstream-inapp-follows-poller';
 
 export { RealtimeHub } from './durable-objects/realtime-hub';
 
@@ -103,6 +105,11 @@ export default {
           response = await handlePopularShares(request, env);
           break;
 
+        // Discover route
+        case url.pathname === '/api/discover':
+          response = await handleDiscover(request, env);
+          break;
+
         // Record sync routes
         case url.pathname === '/api/records/sync':
           response = await handleRecordSync(request, env);
@@ -179,6 +186,17 @@ export default {
       );
     } catch (error) {
       console.error('Jetstream follows poll failed:', error);
+    }
+
+    // Poll Jetstream for in-app follow changes
+    try {
+      const inappFollowsResult = await pollJetstreamInappFollows(env);
+      console.log(
+        `Jetstream in-app follows poll: ${inappFollowsResult.processed} processed, ` +
+        `${inappFollowsResult.errors} errors`
+      );
+    } catch (error) {
+      console.error('Jetstream in-app follows poll failed:', error);
     }
 
     // Refresh active feeds

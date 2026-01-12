@@ -1,7 +1,8 @@
 import { db } from '$lib/services/db';
 import { api } from '$lib/services/api';
 import { realtime, type NewSharePayload } from '$lib/services/realtime';
-import type { SocialShare } from '$lib/types';
+import type { DiscoverUser, SocialShare } from '$lib/types';
+import { generateTid } from '$lib/utils/tid';
 
 export interface FollowedUser {
   did: string;
@@ -9,13 +10,16 @@ export interface FollowedUser {
   displayName?: string;
   avatarUrl?: string;
   onApp?: boolean;
+  source: 'bluesky' | 'inapp' | 'both';
 }
 
 function createSocialStore() {
   let shares = $state<SocialShare[]>([]);
   let popularShares = $state<(SocialShare & { shareCount: number })[]>([]);
   let followedUsers = $state<FollowedUser[]>([]);
+  let discoverUsers = $state<DiscoverUser[]>([]);
   let isLoading = $state(false);
+  let isDiscoverLoading = $state(false);
   let isSyncing = $state(false);
   let cursor = $state<string | null>(null);
   let hasMore = $state(true);
@@ -149,10 +153,84 @@ function createSocialStore() {
     }
   }
 
+  async function loadDiscoverUsers() {
+    isDiscoverLoading = true;
+    error = null;
+
+    try {
+      const result = await api.getDiscoverUsers();
+      discoverUsers = result.users;
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to load discover users';
+    } finally {
+      isDiscoverLoading = false;
+    }
+  }
+
+  async function followUser(did: string): Promise<boolean> {
+    try {
+      const rkey = generateTid();
+      const record = {
+        subject: did,
+        createdAt: new Date().toISOString(),
+      };
+
+      await api.syncRecord({
+        operation: 'create',
+        collection: 'com.at-rss.social.follow',
+        rkey,
+        record,
+      });
+
+      // Refresh followed users and remove from discover
+      await loadFollowedUsers();
+      discoverUsers = discoverUsers.filter(u => u.did !== did);
+
+      return true;
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to follow user';
+      return false;
+    }
+  }
+
+  async function unfollowInApp(did: string): Promise<boolean> {
+    try {
+      // Find the user's in-app follow record
+      const records = await api.listRecords<{ subject: string }>('com.at-rss.social.follow');
+      const followRecord = records.records.find(r => r.value.subject === did);
+
+      if (!followRecord) {
+        error = 'Follow record not found';
+        return false;
+      }
+
+      const rkey = followRecord.uri.split('/').pop();
+      if (!rkey) {
+        error = 'Invalid follow record URI';
+        return false;
+      }
+
+      await api.syncRecord({
+        operation: 'delete',
+        collection: 'com.at-rss.social.follow',
+        rkey,
+      });
+
+      // Refresh followed users
+      await loadFollowedUsers();
+
+      return true;
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to unfollow user';
+      return false;
+    }
+  }
+
   function reset() {
     shares = [];
     popularShares = [];
     followedUsers = [];
+    discoverUsers = [];
     cursor = null;
     hasMore = true;
     error = null;
@@ -172,8 +250,14 @@ function createSocialStore() {
     get followedUsers() {
       return followedUsers;
     },
+    get discoverUsers() {
+      return discoverUsers;
+    },
     get isLoading() {
       return isLoading;
+    },
+    get isDiscoverLoading() {
+      return isDiscoverLoading;
     },
     get isSyncing() {
       return isSyncing;
@@ -187,6 +271,9 @@ function createSocialStore() {
     loadFeed,
     loadPopular,
     loadFollowedUsers,
+    loadDiscoverUsers,
+    followUser,
+    unfollowInApp,
     syncFollows,
     reset,
     getSharesByAuthor,

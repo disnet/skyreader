@@ -128,7 +128,7 @@ export async function handleSocialFeed(request: Request, env: Env): Promise<Resp
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 100);
 
   try {
-    // Get shares from users the current user follows
+    // Get shares from users the current user follows (both Bluesky and in-app follows)
     const query = `
       SELECT
         s.id, s.author_did, s.record_uri, s.record_cid,
@@ -137,9 +137,12 @@ export async function handleSocialFeed(request: Request, env: Env): Promise<Resp
         s.note, s.tags, s.content, s.indexed_at, s.created_at,
         u.handle, u.display_name, u.avatar_url
       FROM shares s
-      JOIN follows_cache f ON f.following_did = s.author_did
       JOIN users u ON u.did = s.author_did
-      WHERE f.follower_did = ?
+      WHERE s.author_did IN (
+        SELECT following_did FROM follows_cache WHERE follower_did = ?
+        UNION
+        SELECT following_did FROM inapp_follows WHERE follower_did = ?
+      )
         AND s.created_at < ?
       ORDER BY s.created_at DESC
       LIMIT ?
@@ -147,7 +150,7 @@ export async function handleSocialFeed(request: Request, env: Env): Promise<Resp
 
     const cursorTimestamp = cursor ? parseInt(cursor, 10) : Date.now() * 1000;
     const results = await env.DB.prepare(query)
-      .bind(session.did, cursorTimestamp, limit + 1)
+      .bind(session.did, session.did, cursorTimestamp, limit + 1)
       .all();
 
     const hasMore = results.results.length > limit;
@@ -236,13 +239,25 @@ export async function handleFollowedUsers(request: Request, env: Env): Promise<R
   }
 
   try {
+    // Get all followed users with source information (bluesky, inapp, or both)
     const results = await env.DB.prepare(`
-      SELECT u.did, u.handle, u.display_name, u.avatar_url, u.pds_url
-      FROM follows_cache f
-      JOIN users u ON u.did = f.following_did
-      WHERE f.follower_did = ?
+      SELECT
+        u.did,
+        u.handle,
+        u.display_name,
+        u.avatar_url,
+        u.pds_url,
+        CASE
+          WHEN fc.following_did IS NOT NULL AND iaf.following_did IS NOT NULL THEN 'both'
+          WHEN fc.following_did IS NOT NULL THEN 'bluesky'
+          ELSE 'inapp'
+        END as source
+      FROM users u
+      LEFT JOIN follows_cache fc ON fc.following_did = u.did AND fc.follower_did = ?
+      LEFT JOIN inapp_follows iaf ON iaf.following_did = u.did AND iaf.follower_did = ?
+      WHERE fc.following_did IS NOT NULL OR iaf.following_did IS NOT NULL
       ORDER BY u.handle ASC
-    `).bind(session.did).all();
+    `).bind(session.did, session.did).all();
 
     const users = results.results.map((row: Record<string, unknown>) => ({
       did: row.did as string,
@@ -250,6 +265,7 @@ export async function handleFollowedUsers(request: Request, env: Env): Promise<R
       displayName: row.display_name as string | undefined,
       avatarUrl: row.avatar_url as string | undefined,
       onApp: !!(row.pds_url as string),
+      source: row.source as 'bluesky' | 'inapp' | 'both',
     }));
 
     return new Response(JSON.stringify({ users }), {

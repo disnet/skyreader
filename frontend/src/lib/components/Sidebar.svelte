@@ -353,6 +353,17 @@
         </button>
 
         <a
+            href="/discover"
+            class="nav-item nav-link"
+            onclick={() => sidebarStore.closeMobile()}
+        >
+            <span class="nav-icon">&#x1F50D;</span>
+            {#if !sidebarStore.isCollapsed}
+                <span class="nav-label">Discover</span>
+            {/if}
+        </a>
+
+        <a
             href="/settings"
             class="nav-item nav-link"
             onclick={() => sidebarStore.closeMobile()}

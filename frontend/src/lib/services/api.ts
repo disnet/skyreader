@@ -1,4 +1,4 @@
-import type { FeedItem, ParsedFeed, SocialShare, User } from '$lib/types';
+import type { DiscoverUser, FeedItem, ParsedFeed, SocialShare, User } from '$lib/types';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8787';
 
@@ -142,9 +142,16 @@ class ApiClient {
       handle: string;
       displayName?: string;
       avatarUrl?: string;
+      onApp?: boolean;
+      source: 'bluesky' | 'inapp' | 'both';
     }>;
   }> {
     return this.fetch('/api/social/following');
+  }
+
+  async getDiscoverUsers(limit = 20): Promise<{ users: DiscoverUser[] }> {
+    const params = new URLSearchParams({ limit: limit.toString() });
+    return this.fetch(`/api/discover?${params}`);
   }
 
   async getPopularShares(

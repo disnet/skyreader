@@ -7,7 +7,47 @@ const ALLOWED_COLLECTIONS = [
   'com.at-rss.feed.subscription',
   'com.at-rss.feed.readPosition',
   'com.at-rss.social.share',
+  'com.at-rss.social.follow',
 ];
+
+interface ProfileInfo {
+  handle: string;
+  displayName?: string;
+  avatar?: string;
+}
+
+async function fetchProfileInfo(did: string): Promise<ProfileInfo | null> {
+  try {
+    const response = await fetch(
+      `https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(did)}`,
+      {
+        headers: {
+          'Accept': 'application/json',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      console.warn(`Failed to fetch profile for ${did}: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json() as {
+      handle: string;
+      displayName?: string;
+      avatar?: string;
+    };
+
+    return {
+      handle: data.handle,
+      displayName: data.displayName,
+      avatar: data.avatar,
+    };
+  } catch (error) {
+    console.error(`Error fetching profile for ${did}:`, error);
+    return null;
+  }
+}
 
 interface RecordSyncRequest {
   operation: 'create' | 'update' | 'delete';
@@ -600,6 +640,49 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
         }
       } catch (cacheError) {
         console.error('Failed to index share:', cacheError);
+      }
+    }
+
+    // Index in-app follows
+    if (collection === 'com.at-rss.social.follow') {
+      try {
+        const followRecord = record as { subject: string; createdAt: string };
+        const recordUri = result.data.uri || `at://${session.did}/${collection}/${rkey}`;
+
+        if (operation === 'create' || operation === 'update') {
+          // Insert into inapp_follows
+          await env.DB.prepare(`
+            INSERT OR REPLACE INTO inapp_follows
+            (follower_did, following_did, rkey, record_uri, created_at)
+            VALUES (?, ?, ?, ?, unixepoch())
+          `).bind(session.did, followRecord.subject, rkey, recordUri).run();
+
+          // Ensure followed user exists in users table
+          const profile = await fetchProfileInfo(followRecord.subject);
+          await env.DB.prepare(`
+            INSERT INTO users (did, handle, display_name, avatar_url, pds_url, created_at, updated_at)
+            VALUES (?, ?, ?, ?, '', unixepoch(), unixepoch())
+            ON CONFLICT(did) DO UPDATE SET
+              handle = CASE WHEN excluded.handle != excluded.did THEN excluded.handle ELSE users.handle END,
+              display_name = COALESCE(excluded.display_name, users.display_name),
+              avatar_url = COALESCE(excluded.avatar_url, users.avatar_url),
+              updated_at = unixepoch()
+          `).bind(
+            followRecord.subject,
+            profile?.handle || followRecord.subject,
+            profile?.displayName || null,
+            profile?.avatar || null
+          ).run();
+
+          console.log(`Indexed in-app follow: ${session.did} -> ${followRecord.subject}`);
+        } else if (operation === 'delete') {
+          await env.DB.prepare(
+            'DELETE FROM inapp_follows WHERE follower_did = ? AND rkey = ?'
+          ).bind(session.did, rkey).run();
+          console.log(`Removed in-app follow: ${session.did} (rkey: ${rkey})`);
+        }
+      } catch (cacheError) {
+        console.error('Failed to index in-app follow:', cacheError);
       }
     }
 

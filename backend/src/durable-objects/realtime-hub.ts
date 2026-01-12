@@ -315,9 +315,12 @@ export class RealtimeHub implements DurableObject {
 
   private async getFollowersOf(authorDid: string): Promise<string[]> {
     try {
-      const result = await this.env.DB.prepare(
-        'SELECT follower_did FROM follows_cache WHERE following_did = ?'
-      ).bind(authorDid).all<{ follower_did: string }>();
+      // Get followers from both Bluesky follows and in-app follows
+      const result = await this.env.DB.prepare(`
+        SELECT follower_did FROM follows_cache WHERE following_did = ?
+        UNION
+        SELECT follower_did FROM inapp_follows WHERE following_did = ?
+      `).bind(authorDid, authorDid).all<{ follower_did: string }>();
 
       return result.results.map(r => r.follower_did);
     } catch (error) {

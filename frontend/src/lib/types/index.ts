@@ -122,3 +122,20 @@ export interface FeedItem {
 export type CombinedFeedItem =
   | { type: 'article'; item: Article; date: string }
   | { type: 'share'; item: SocialShare; date: string };
+
+export interface DiscoverUser {
+  did: string;
+  handle: string;
+  displayName?: string;
+  avatarUrl?: string;
+  shareCount: number;
+}
+
+export interface InappFollow {
+  id?: number;
+  atUri?: string;
+  rkey?: string;
+  subjectDid: string;
+  createdAt: string;
+  syncStatus: 'synced' | 'pending';
+}
