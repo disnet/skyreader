@@ -468,9 +468,13 @@
                   }
                 }}
                 onExpand={async () => {
-                  expandedIndex = index;
-                  await tick();
-                  scrollToCenter();
+                  if (expandedIndex === index) {
+                    expandedIndex = -1;
+                  } else {
+                    expandedIndex = index;
+                    await tick();
+                    scrollToCenter();
+                  }
                 }}
               />
             {:else}
@@ -494,9 +498,13 @@
                   }
                 }}
                 onExpand={async () => {
-                  expandedIndex = index;
-                  await tick();
-                  scrollToCenter();
+                  if (expandedIndex === index) {
+                    expandedIndex = -1;
+                  } else {
+                    expandedIndex = index;
+                    await tick();
+                    scrollToCenter();
+                  }
                 }}
                 onFetchContent={() => {
                   const hasLocalContent = localArticle?.content || localArticle?.summary;
@@ -534,9 +542,13 @@
                 }
               }}
               onExpand={async () => {
-                expandedIndex = index;
-                await tick();
-                scrollToCenter();
+                if (expandedIndex === index) {
+                  expandedIndex = -1;
+                } else {
+                  expandedIndex = index;
+                  await tick();
+                  scrollToCenter();
+                }
               }}
               onFetchContent={() => {
                 const hasLocalContent = localArticle?.content || localArticle?.summary;
@@ -587,9 +599,13 @@
                 }
               }}
               onExpand={async () => {
-                expandedIndex = index;
-                await tick();
-                scrollToCenter();
+                if (expandedIndex === index) {
+                  expandedIndex = -1;
+                } else {
+                  expandedIndex = index;
+                  await tick();
+                  scrollToCenter();
+                }
               }}
             />
           </div>
@@ -632,9 +648,13 @@
                 }
               }}
               onExpand={async () => {
-                expandedIndex = index;
-                await tick();
-                scrollToCenter();
+                if (expandedIndex === index) {
+                  expandedIndex = -1;
+                } else {
+                  expandedIndex = index;
+                  await tick();
+                  scrollToCenter();
+                }
               }}
             />
           </div>
@@ -695,8 +715,13 @@
   }
 
   .feed-header h1 {
+    flex: 1;
     font-size: 1.5rem;
     margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
   }
 
   .mobile-menu-btn {

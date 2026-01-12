@@ -75,28 +75,38 @@
   class:selected
   class:expanded
 >
-  <div class="share-attribution">
-    shared by <a href="/?sharer={share.authorDid}" class="share-author-link">@{share.authorHandle}</a>
-  </div>
-  <button class="share-header" onclick={handleHeaderClick}>
-    <img src={getFaviconUrl(share.itemUrl)} alt="" class="favicon" />
-    {#if isOpen}
-      <a href={share.itemUrl} target="_blank" rel="noopener" class="share-title-link" onclick={(e) => e.stopPropagation()}>
-        {share.itemTitle || share.itemUrl}
-      </a>
-    {:else}
-      <span class="share-title">{share.itemTitle || share.itemUrl}</span>
-    {/if}
-    <span class="share-date">{formatRelativeDate(share.itemPublishedAt || share.createdAt)}</span>
-  </button>
+  <div class="share-sticky-header">
+    <div class="share-attribution">
+      shared by <a href="/?sharer={share.authorDid}" class="share-author-link">@{share.authorHandle}</a>
+    </div>
+    <button class="share-header" onclick={handleHeaderClick}>
+      <img src={getFaviconUrl(share.itemUrl)} alt="" class="favicon" />
+      {#if isOpen}
+        <a href={share.itemUrl} target="_blank" rel="noopener" class="share-title-link" onclick={(e) => e.stopPropagation()}>
+          {share.itemTitle || share.itemUrl}
+        </a>
+      {:else}
+        <span class="share-title">{share.itemTitle || share.itemUrl}</span>
+      {/if}
+      <span class="share-date">{formatRelativeDate(share.itemPublishedAt || share.createdAt)}</span>
+    </button>
 
-  {#if isOpen}
-    <div class="share-content">
+    {#if isOpen}
       <div class="share-actions">
         <a href={share.itemUrl} target="_blank" rel="noopener" class="action-btn" onclick={(e) => e.stopPropagation()}>
           ↗ Open
         </a>
+        {#if hasContent}
+          <button class="action-btn expand-btn" onclick={handleExpandClick}>
+            {expanded ? '↑ Collapse' : '↓ Expand'}
+          </button>
+        {/if}
       </div>
+    {/if}
+  </div>
+
+  {#if isOpen}
+    <div class="share-content" onclick={selected && !expanded && isTruncated ? handleExpandClick : undefined} role={selected && !expanded && isTruncated ? "button" : undefined}>
       {#if share.note}
         <blockquote class="share-note">{share.note}</blockquote>
       {/if}
@@ -134,12 +144,7 @@
     transition: background-color 0.15s ease;
   }
 
-  .share-item:hover {
-    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
-  }
-
-  .share-item.selected,
-  .share-item.expanded {
+  .share-item:not(.selected):not(.expanded):hover {
     background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
   }
 
@@ -157,6 +162,39 @@
   .share-author-link:hover {
     color: var(--color-primary);
     text-decoration: underline;
+  }
+
+  .share-sticky-header {
+    position: relative;
+  }
+
+  .share-item.expanded .share-sticky-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .share-item.expanded .share-sticky-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -1rem;
+    right: -1rem;
+    background: var(--color-bg, #ffffff);
+    z-index: -1;
+  }
+
+  @media (max-width: 768px) {
+    .share-item.expanded .share-sticky-header {
+      top: 3rem;
+    }
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .share-item.expanded .share-sticky-header::before {
+      background: var(--color-bg, #1a1a1a);
+    }
   }
 
   .share-header {
@@ -211,10 +249,14 @@
     padding: 0 0.5rem 1rem;
   }
 
+  .share-content[role="button"] {
+    cursor: pointer;
+  }
+
   .share-actions {
     display: flex;
     gap: 1rem;
-    margin-bottom: 1rem;
+    padding: 0 0.5rem 0.5rem;
   }
 
   .action-btn {
@@ -229,6 +271,10 @@
 
   .action-btn:hover {
     color: var(--color-primary);
+  }
+
+  .action-btn.expand-btn {
+    margin-left: auto;
   }
 
   .share-note {
@@ -301,6 +347,34 @@
     color: var(--color-text-secondary);
   }
 
+  .share-body :global(p) {
+    margin: 0.75rem 0;
+  }
+
+  .share-body :global(p:first-child) {
+    margin-top: 0;
+  }
+
+  .share-body :global(p:last-child) {
+    margin-bottom: 0;
+  }
+
+  .share-body :global(ul),
+  .share-body :global(ol) {
+    margin: 0.75rem 0;
+    padding-left: 0.5rem;
+    list-style-position: inside;
+  }
+
+  .share-body :global(li ul),
+  .share-body :global(li ol) {
+    padding-left: 1.5rem;
+  }
+
+  .share-body :global(li) {
+    margin: 0.25rem 0;
+  }
+
   .share-loading {
     font-size: 0.875rem;
     color: var(--color-text-secondary);
@@ -322,9 +396,7 @@
   }
 
   @media (prefers-color-scheme: dark) {
-    .share-item:hover,
-    .share-item.selected,
-    .share-item.expanded {
+    .share-item:not(.selected):not(.expanded):hover {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
     }
   }

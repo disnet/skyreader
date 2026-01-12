@@ -81,22 +81,22 @@
 </script>
 
 <article class="article-item" class:read={isRead} class:selected class:expanded>
-  <button class="article-header" onclick={handleHeaderClick}>
-    {#if siteUrl}
-      <img src={getFaviconUrl(siteUrl)} alt="" class="favicon" />
-    {/if}
-    {#if isOpen}
-      <a href={article.url} target="_blank" rel="noopener" class="article-title-link" onclick={(e) => e.stopPropagation()}>
-        {article.title}
-      </a>
-    {:else}
-      <span class="article-title">{article.title}</span>
-    {/if}
-    <span class="article-date">{formatRelativeDate(article.publishedAt)}</span>
-  </button>
+  <div class="article-sticky-header">
+    <button class="article-header" onclick={handleHeaderClick}>
+      {#if siteUrl}
+        <img src={getFaviconUrl(siteUrl)} alt="" class="favicon" />
+      {/if}
+      {#if isOpen}
+        <a href={article.url} target="_blank" rel="noopener" class="article-title-link" onclick={(e) => e.stopPropagation()}>
+          {article.title}
+        </a>
+      {:else}
+        <span class="article-title">{article.title}</span>
+      {/if}
+      <span class="article-date">{formatRelativeDate(article.publishedAt)}</span>
+    </button>
 
-  {#if isOpen}
-    <div class="article-content">
+    {#if isOpen}
       <div class="article-actions">
         <a href={article.url} target="_blank" rel="noopener" class="action-btn" onclick={(e) => e.stopPropagation()}>
           ↗ Open
@@ -117,7 +117,17 @@
             ↑ Share
           </button>
         {/if}
+        {#if hasContent}
+          <button class="action-btn expand-btn" onclick={handleExpandClick}>
+            {expanded ? '↑ Collapse' : '↓ Expand'}
+          </button>
+        {/if}
       </div>
+    {/if}
+  </div>
+
+  {#if isOpen}
+    <div class="article-content" onclick={selected && !expanded && isTruncated ? handleExpandClick : undefined} role={selected && !expanded && isTruncated ? "button" : undefined}>
       {#if hasContent}
         <div class="article-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
           <div bind:this={bodyEl} class="article-body" class:truncated={selected && !expanded}>
@@ -139,7 +149,7 @@
     transition: background-color 0.15s ease;
   }
 
-  .article-item:hover {
+  .article-item:not(.selected):not(.expanded):hover {
     background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
   }
 
@@ -154,6 +164,39 @@
   .article-item.selected,
   .article-item.expanded {
     opacity: 1;
+  }
+
+  .article-sticky-header {
+    position: relative;
+  }
+
+  .article-item.expanded .article-sticky-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .article-item.expanded .article-sticky-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -1rem;
+    right: -1rem;
+    background: var(--color-bg, #ffffff);
+    z-index: -1;
+  }
+
+  @media (max-width: 768px) {
+    .article-item.expanded .article-sticky-header {
+      top: 3rem;
+    }
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .article-item.expanded .article-sticky-header::before {
+      background: var(--color-bg, #1a1a1a);
+    }
   }
 
   .article-header {
@@ -206,6 +249,10 @@
 
   .article-content {
     padding: 0 0.5rem 1rem;
+  }
+
+  .article-content[role="button"] {
+    cursor: pointer;
   }
 
   .article-body-wrapper {
@@ -270,10 +317,38 @@
     color: var(--color-text-secondary);
   }
 
+  .article-body :global(p) {
+    margin: 0.75rem 0;
+  }
+
+  .article-body :global(p:first-child) {
+    margin-top: 0;
+  }
+
+  .article-body :global(p:last-child) {
+    margin-bottom: 0;
+  }
+
+  .article-body :global(ul),
+  .article-body :global(ol) {
+    margin: 0.75rem 0;
+    padding-left: 0.5rem;
+    list-style-position: inside;
+  }
+
+  .article-body :global(li ul),
+  .article-body :global(li ol) {
+    padding-left: 1.5rem;
+  }
+
+  .article-body :global(li) {
+    margin: 0.25rem 0;
+  }
+
   .article-actions {
     display: flex;
     gap: 1rem;
-    margin-bottom: 1rem;
+    padding: 0 0.5rem 0.5rem;
   }
 
   .action-btn {
@@ -302,6 +377,10 @@
     color: var(--color-primary, #0066cc);
   }
 
+  .action-btn.expand-btn {
+    margin-left: auto;
+  }
+
   .show-more-btn {
     background: none;
     border: none;
@@ -316,7 +395,7 @@
   }
 
   @media (prefers-color-scheme: dark) {
-    .article-item:hover {
+    .article-item:not(.selected):not(.expanded):hover {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
     }
   }
