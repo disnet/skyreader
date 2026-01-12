@@ -15,6 +15,7 @@
 		"@sveltejs/adapter-auto": "^7.0.0",
 		"@sveltejs/kit": "^2.49.1",
 		"@sveltejs/vite-plugin-svelte": "^6.2.1",
+		"@types/dompurify": "^3.0.5",
 		"svelte": "^5.45.6",
 		"svelte-check": "^4.3.4",
 		"typescript": "^5.9.3",
@@ -23,6 +24,7 @@
 	"dependencies": {
 		"@atproto/api": "^0.18.13",
 		"@sveltejs/adapter-static": "^3.0.10",
-		"dexie": "^4.2.1"
+		"dexie": "^4.2.1",
+		"dompurify": "^3.3.1"
 	}
 }

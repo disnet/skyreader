@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Article, FeedItem, SocialShare } from '$lib/types';
   import { formatRelativeDate } from '$lib/utils/date';
+  import DOMPurify from 'dompurify';
 
   let {
     share,
@@ -53,6 +54,8 @@
   let articleContent = $derived(
     share.content || localArticle?.content || localArticle?.summary || remoteArticle?.content || remoteArticle?.summary
   );
+  let sanitizedContent = $derived(articleContent ? DOMPurify.sanitize(articleContent) : '');
+  let sanitizedDescription = $derived(share.itemDescription ? DOMPurify.sanitize(share.itemDescription) : '');
   let hasContent = $derived(Boolean(articleContent || share.itemDescription));
 
   let bodyEl = $state<HTMLElement | undefined>(undefined);
@@ -110,13 +113,10 @@
 
   {#if isOpen}
     <div class="share-content" onclick={selected && !expanded && isTruncated ? handleExpandClick : undefined} role={selected && !expanded && isTruncated ? "button" : undefined}>
-      {#if share.note}
-        <blockquote class="share-note">{share.note}</blockquote>
-      {/if}
       {#if articleContent}
         <div class="share-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
           <div bind:this={bodyEl} class="share-body" class:truncated={selected && !expanded}>
-            {@html articleContent}
+            {@html sanitizedContent}
           </div>
         </div>
         {#if selected && !expanded && isTruncated}
@@ -126,10 +126,10 @@
         {/if}
       {:else if isFetching}
         <p class="share-loading">Loading article content...</p>
-      {:else if share.itemDescription}
+      {:else if sanitizedDescription}
         <div class="share-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
           <div bind:this={bodyEl} class="share-body" class:truncated={selected && !expanded}>
-            {share.itemDescription}
+            {@html sanitizedDescription}
           </div>
         </div>
         {#if selected && !expanded && isTruncated}
@@ -286,14 +286,6 @@
 
   .action-btn.expand-btn {
     margin-left: auto;
-  }
-
-  .share-note {
-    border-left: 3px solid var(--color-primary);
-    margin: 0 0 0.75rem 0;
-    padding-left: 1rem;
-    font-style: italic;
-    color: var(--color-text);
   }
 
   .share-body-wrapper {

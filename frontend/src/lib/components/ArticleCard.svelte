@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Article } from '$lib/types';
   import { formatRelativeDate } from '$lib/utils/date';
+  import DOMPurify from 'dompurify';
 
   let {
     article,
@@ -68,6 +69,7 @@
 
   let isOpen = $derived(selected || expanded);
   let hasContent = $derived(Boolean(article.content || article.summary));
+  let sanitizedContent = $derived(DOMPurify.sanitize(article.content || article.summary || ''));
 
   let bodyEl = $state<HTMLElement | undefined>(undefined);
   let isTruncated = $state(false);
@@ -131,7 +133,7 @@
       {#if hasContent}
         <div class="article-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
           <div bind:this={bodyEl} class="article-body" class:truncated={selected && !expanded}>
-            {@html article.content || article.summary}
+            {@html sanitizedContent}
           </div>
         </div>
         {#if selected && !expanded && isTruncated}
