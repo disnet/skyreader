@@ -374,20 +374,21 @@
       <button class="mobile-menu-btn" onclick={() => sidebarStore.toggleMobile()} aria-label="Open menu">
         &lt;
       </button>
-      <h1>{pageTitle}</h1>
-      {#if feedFilter}
-        <PopoverMenu
-          items={[
-            {
-              label: 'Delete',
-              icon: '🗑',
-              variant: 'danger',
-              onclick: () => removeFeed(parseInt(feedFilter)),
-            },
-          ]}
-        />
-      {/if}
-      <div class="header-spacer"></div>
+      <div class="feed-title-group">
+        <h1>{pageTitle}</h1>
+        {#if feedFilter}
+          <PopoverMenu
+            items={[
+              {
+                label: 'Delete',
+                icon: '🗑',
+                variant: 'danger',
+                onclick: () => removeFeed(parseInt(feedFilter)),
+              },
+            ]}
+          />
+        {/if}
+      </div>
       {#if (!feedFilter && !starredFilter && !sharerFilter && !followingFilter) || feedsFilter || feedFilter}
         <div class="view-toggle">
           <button
@@ -712,16 +713,23 @@
     align-items: center;
     gap: 0.5rem;
     margin-bottom: 1.5rem;
+    width: 100%;
+  }
+
+  .feed-title-group {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
   }
 
   .feed-header h1 {
-    flex: 1;
     font-size: 1.5rem;
     margin: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    min-width: 0;
   }
 
   .mobile-menu-btn {
@@ -732,10 +740,6 @@
     cursor: pointer;
     padding: 0.25rem;
     color: var(--color-text);
-  }
-
-  .header-spacer {
-    flex: 1;
   }
 
   .view-toggle {
