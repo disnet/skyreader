@@ -318,6 +318,7 @@
   }
 
   .share-body {
+    font-family: var(--article-font);
     font-size: 0.9375rem;
     line-height: 1.7;
     color: var(--color-text);

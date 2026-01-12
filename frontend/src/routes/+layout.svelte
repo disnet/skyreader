@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
   import { auth } from '$lib/stores/auth.svelte';
   import { realtimeStore } from '$lib/stores/realtime.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
+  import { preferences } from '$lib/stores/preferences.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import '../app.css';
 
@@ -13,6 +15,13 @@
       realtimeStore.connect(auth.sessionId);
     } else {
       realtimeStore.disconnect();
+    }
+  });
+
+  // Apply article font preference to document
+  $effect(() => {
+    if (browser) {
+      document.documentElement.setAttribute('data-article-font', preferences.articleFont);
     }
   });
 </script>

@@ -153,17 +153,12 @@
     background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
   }
 
-  .article-item.read {
+  .article-item.read:not(.selected):not(.expanded) {
     opacity: 0.6;
   }
 
-  .article-item.read:hover {
+  .article-item.read:not(.selected):not(.expanded):hover {
     opacity: 0.8;
-  }
-
-  .article-item.selected,
-  .article-item.expanded {
-    opacity: 1;
   }
 
   .article-sticky-header {
@@ -277,6 +272,7 @@
   }
 
   .article-body {
+    font-family: var(--article-font);
     font-size: 0.9375rem;
     line-height: 1.7;
     color: var(--color-text);

@@ -4,7 +4,14 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+  import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
+
+  const fontOptions: { value: ArticleFont; label: string }[] = [
+    { value: 'sans-serif', label: 'Sans Serif' },
+    { value: 'serif', label: 'Serif' },
+    { value: 'mono', label: 'Monospace' },
+  ];
 
   let showImportModal = $state(false);
   let isRefreshingMetadata = $state(false);
@@ -131,6 +138,25 @@
     <button class="btn btn-secondary" onclick={() => syncStore.triggerSync()} disabled={!syncStore.isOnline}>
       Sync Now
     </button>
+  </section>
+
+  <section class="card">
+    <h2>Appearance</h2>
+    <div class="setting-row">
+      <label for="article-font">Article Font</label>
+      <div class="font-options">
+        {#each fontOptions as option}
+          <button
+            class="font-option"
+            class:selected={preferences.articleFont === option.value}
+            onclick={() => preferences.setArticleFont(option.value)}
+          >
+            <span class="font-preview" style:font-family={option.value === 'mono' ? 'monospace' : option.value}>Aa</span>
+            <span class="font-label">{option.label}</span>
+          </button>
+        {/each}
+      </div>
+    </div>
   </section>
 
   <section class="card">
@@ -284,5 +310,58 @@
 
   .debug-section h2 {
     color: var(--color-text-secondary);
+  }
+
+  .setting-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .setting-row label {
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    font-size: 0.875rem;
+  }
+
+  .font-options {
+    display: flex;
+    gap: 0.75rem;
+  }
+
+  .font-option {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.75rem 1rem;
+    background: var(--color-bg);
+    border: 2px solid var(--color-border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: border-color 0.15s, background-color 0.15s;
+  }
+
+  .font-option:hover {
+    border-color: var(--color-primary);
+  }
+
+  .font-option.selected {
+    border-color: var(--color-primary);
+    background: var(--color-sidebar-active);
+  }
+
+  .font-preview {
+    font-size: 1.5rem;
+    line-height: 1;
+  }
+
+  .font-label {
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+  }
+
+  .font-option.selected .font-label {
+    color: var(--color-primary);
   }
 </style>
