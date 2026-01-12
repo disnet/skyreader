@@ -156,7 +156,7 @@ async function fetchAndCacheFeed(
   }
 
   // Store individual items in feed_items table
-  await storeItems(env, feedUrl, parsed.items);
+  const { newCount, isInitialImport } = await storeItems(env, feedUrl, parsed.items);
 
   // Cache in D1 (with size limit to avoid SQLITE_TOOBIG)
   let contentToCache = JSON.stringify(parsed);
@@ -216,27 +216,31 @@ async function fetchAndCacheFeed(
     response.headers.get('Last-Modified') || null
   ).run();
 
-  // Notify RealtimeHub that new articles may be available
-  await notifyRealtimeHub(env, {
-    type: 'new_articles',
-    payload: {
-      feedUrl,
-      feedTitle: parsed.title,
-      newCount: parsed.items.length, // Total items in feed (client will determine which are new)
-      timestamp: Date.now(),
-    },
-  });
+  // Only notify if there are actually new articles
+  if (newCount > 0) {
+    await notifyRealtimeHub(env, {
+      type: 'new_articles',
+      payload: {
+        feedUrl,
+        feedTitle: parsed.title,
+        newCount,
+        timestamp: Date.now(),
+      },
+    });
+  }
 
-  // Also notify that this feed is now ready (for bulk import tracking)
-  await notifyRealtimeHub(env, {
-    type: 'feed_ready',
-    payload: {
-      feedUrl,
-      feedTitle: parsed.title,
-      itemCount: parsed.items.length,
-      timestamp: Date.now(),
-    },
-  });
+  // Only notify feed_ready on initial import (not every cron run)
+  if (isInitialImport) {
+    await notifyRealtimeHub(env, {
+      type: 'feed_ready',
+      payload: {
+        feedUrl,
+        feedTitle: parsed.title,
+        itemCount: parsed.items.length,
+        timestamp: Date.now(),
+      },
+    });
+  }
 
   return { status: 'fetched' };
 }

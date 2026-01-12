@@ -4,8 +4,13 @@ import { parseFeed, discoverFeeds } from '../services/feed-parser';
 const MAX_ITEM_CONTENT_SIZE = 100000; // 100KB per item
 const MAX_INITIAL_ITEMS = 50; // Limit items on initial feed import
 
+export interface StoreItemsResult {
+  newCount: number;
+  isInitialImport: boolean;
+}
+
 // Store individual feed items in D1
-export async function storeItems(env: Env, feedUrl: string, items: FeedItem[]): Promise<void> {
+export async function storeItems(env: Env, feedUrl: string, items: FeedItem[]): Promise<StoreItemsResult> {
   // Check if this is an initial import (no existing items for this feed)
   const existingCount = await env.DB.prepare(
     'SELECT COUNT(*) as count FROM feed_items WHERE feed_url = ?'
@@ -21,7 +26,28 @@ export async function storeItems(env: Env, feedUrl: string, items: FeedItem[]): 
       .slice(0, MAX_INITIAL_ITEMS);
   }
 
+  // Get existing guids to determine which items are truly new
+  const guids = itemsToStore.map(item => item.guid);
+  const placeholders = guids.map(() => '?').join(',');
+  const existingGuids = new Set<string>();
+
+  if (guids.length > 0) {
+    const existing = await env.DB.prepare(
+      `SELECT guid FROM feed_items WHERE feed_url = ? AND guid IN (${placeholders})`
+    ).bind(feedUrl, ...guids).all<{ guid: string }>();
+
+    for (const row of existing.results) {
+      existingGuids.add(row.guid);
+    }
+  }
+
+  let newCount = 0;
+
   for (const item of itemsToStore) {
+    const isNew = !existingGuids.has(item.guid);
+    if (isNew) {
+      newCount++;
+    }
     const publishedTs = Math.floor(new Date(item.publishedAt).getTime() / 1000);
 
     // Truncate content if too large
@@ -59,6 +85,8 @@ export async function storeItems(env: Env, feedUrl: string, items: FeedItem[]): 
       contentHash
     ).run();
   }
+
+  return { newCount, isInitialImport };
 }
 
 function simpleHash(str: string): string {
