@@ -74,7 +74,8 @@
   });
 </script>
 
-<div class="popover-menu" onmouseleave={handleMouseLeave} onmouseenter={handleMouseEnter}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="popover-menu" role="group" onmouseleave={handleMouseLeave} onmouseenter={handleMouseEnter}>
   <button
     bind:this={buttonRef}
     class="menu-trigger"

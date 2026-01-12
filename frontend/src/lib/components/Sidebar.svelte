@@ -306,6 +306,7 @@
     class:resizing={isResizing}
     style="--sidebar-width: {sidebarWidth}px"
 >
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <!-- Resize handle -->
     <div
         class="resize-handle"
@@ -528,16 +529,25 @@
                             {/if}
                             <span class="nav-label">{sub.title}</span>
                             {#if loadingState === "error"}
-                                <button
+                                <span
                                     class="retry-btn"
+                                    role="button"
+                                    tabindex="0"
                                     onclick={(e) => {
                                         e.stopPropagation();
                                         subscriptionsStore.fetchFeed(sub.id!, true);
                                     }}
+                                    onkeydown={(e) => {
+                                        if (e.key === 'Enter' || e.key === ' ') {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            subscriptionsStore.fetchFeed(sub.id!, true);
+                                        }
+                                    }}
                                     title="Retry"
                                 >
                                     ↻
-                                </button>
+                                </span>
                             {:else if count > 0}
                                 <span class="nav-count">{count}</span>
                             {/if}
@@ -809,10 +819,6 @@
     .disclosure {
         font-size: 0.625rem;
         flex-shrink: 0;
-    }
-
-    .section-label {
-        flex: 1;
     }
 
     .filter-toggle {

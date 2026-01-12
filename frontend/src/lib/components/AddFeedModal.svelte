@@ -51,7 +51,8 @@
 <svelte:window onkeydown={handleKeydown} />
 
 {#if open}
-    <div class="modal-backdrop" onclick={handleBackdropClick} role="dialog" aria-modal="true">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="modal-backdrop" onclick={handleBackdropClick} onkeydown={handleKeydown} role="dialog" aria-modal="true" tabindex="-1">
         <div class="modal">
             <div class="modal-header">
                 <h2>Add Feed</h2>
