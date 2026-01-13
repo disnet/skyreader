@@ -35,7 +35,7 @@ export function handleClientMetadata(request: Request, env: Env): Response {
   const metadata = {
     client_id: `${baseUrl}/.well-known/client-metadata`,
     application_type: 'web',
-    client_name: 'AT-RSS Reader',
+    client_name: 'Skyreader',
     client_uri: baseUrl,
     redirect_uris: [`${baseUrl}/api/auth/callback`],
     grant_types: ['authorization_code', 'refresh_token'],

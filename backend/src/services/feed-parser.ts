@@ -308,7 +308,7 @@ function decodeHtmlEntities(text: string): string {
 export async function discoverFeeds(url: string): Promise<string[]> {
   const response = await fetch(url, {
     headers: {
-      'User-Agent': 'AT-RSS/1.0 (+https://at-rss.example.com)',
+      'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)',
     },
   });
 
@@ -352,7 +352,7 @@ export async function discoverFeeds(url: string): Promise<string[]> {
         const feedUrl = new URL(path, baseUrl).toString();
         const feedResponse = await fetch(feedUrl, {
           method: 'HEAD',
-          headers: { 'User-Agent': 'AT-RSS/1.0' },
+          headers: { 'User-Agent': 'Skyreader/1.0' },
         });
         if (feedResponse.ok) {
           const ct = feedResponse.headers.get('Content-Type') || '';

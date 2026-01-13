@@ -1,6 +1,6 @@
 {
   "lexicon": 1,
-  "id": "com.at-rss.social.shareReadPosition",
+  "id": "app.skyreader.social.shareReadPosition",
   "defs": {
     "main": {
       "type": "record",

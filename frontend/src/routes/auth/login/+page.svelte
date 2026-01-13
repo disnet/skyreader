@@ -27,7 +27,7 @@
 
 <div class="login-page">
   <div class="login-card card">
-    <h1>Login to AT-RSS</h1>
+    <h1>Login to Skyreader</h1>
     <p>Sign in with your Bluesky account</p>
 
     <form onsubmit={handleSubmit}>
@@ -53,7 +53,7 @@
     </form>
 
     <p class="info">
-      You'll be redirected to your Bluesky server to authorize AT-RSS.
+      You'll be redirected to your Bluesky server to authorize Skyreader.
     </p>
   </div>
 </div>

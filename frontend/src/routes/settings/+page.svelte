@@ -192,7 +192,7 @@
 
   <section class="card">
     <h2>About</h2>
-    <p>AT-RSS is a decentralized RSS reader built on the AT Protocol.</p>
+    <p>Skyreader is a decentralized RSS reader built on the AT Protocol.</p>
     <p>Your data is stored in your Personal Data Server (PDS), giving you full ownership and portability.</p>
   </section>
 
