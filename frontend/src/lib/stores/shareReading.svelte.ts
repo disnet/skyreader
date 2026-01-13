@@ -79,6 +79,27 @@ function createShareReadingStore() {
     });
   }
 
+  async function markAsUnread(shareUri: string) {
+    const position = shareReadPositions.get(shareUri);
+    if (!position || !position.id) return;
+
+    // Delete from local DB
+    await db.shareReadPositions.delete(position.id);
+
+    // Remove from map
+    shareReadPositions.delete(shareUri);
+    shareReadPositions = new Map(shareReadPositions);
+
+    // Queue delete to sync to server
+    if (position.syncStatus === 'synced' && position.rkey) {
+      await syncQueue.enqueue({
+        operation: 'delete',
+        collection: 'com.at-rss.social.shareReadPosition',
+        rkey: position.rkey,
+      });
+    }
+  }
+
   return {
     get shareReadPositions() {
       return shareReadPositions;
@@ -89,6 +110,7 @@ function createShareReadingStore() {
     load,
     isRead,
     markAsRead,
+    markAsUnread,
   };
 }
 

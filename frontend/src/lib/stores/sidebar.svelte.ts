@@ -3,6 +3,7 @@ import { browser } from '$app/environment';
 interface SidebarState {
   isCollapsed: boolean;
   isOpen: boolean; // For mobile overlay
+  addFeedModalOpen: boolean;
   expandedSections: {
     shared: boolean;
     feeds: boolean;
@@ -11,12 +12,16 @@ interface SidebarState {
     shared: boolean;
     feeds: boolean;
   };
+  // Sorted IDs for keyboard navigation (matches visual sidebar order)
+  sortedFeedIds: number[];
+  sortedUserDids: string[];
 }
 
 function createSidebarStore() {
   let state = $state<SidebarState>({
     isCollapsed: false,
     isOpen: false,
+    addFeedModalOpen: false,
     expandedSections: {
       shared: true,
       feeds: true,
@@ -25,6 +30,8 @@ function createSidebarStore() {
       shared: false,
       feeds: false,
     },
+    sortedFeedIds: [],
+    sortedUserDids: [],
   });
 
   // Restore from localStorage on init
@@ -78,6 +85,22 @@ function createSidebarStore() {
     persist();
   }
 
+  function openAddFeedModal() {
+    state.addFeedModalOpen = true;
+  }
+
+  function closeAddFeedModal() {
+    state.addFeedModalOpen = false;
+  }
+
+  function setSortedFeedIds(ids: number[]) {
+    state.sortedFeedIds = ids;
+  }
+
+  function setSortedUserDids(dids: string[]) {
+    state.sortedUserDids = dids;
+  }
+
   return {
     get isCollapsed() {
       return state.isCollapsed;
@@ -85,17 +108,30 @@ function createSidebarStore() {
     get isOpen() {
       return state.isOpen;
     },
+    get addFeedModalOpen() {
+      return state.addFeedModalOpen;
+    },
     get expandedSections() {
       return state.expandedSections;
     },
     get showOnlyUnread() {
       return state.showOnlyUnread;
     },
+    get sortedFeedIds() {
+      return state.sortedFeedIds;
+    },
+    get sortedUserDids() {
+      return state.sortedUserDids;
+    },
     toggle,
     toggleMobile,
     closeMobile,
     toggleSection,
     toggleShowOnlyUnread,
+    openAddFeedModal,
+    closeAddFeedModal,
+    setSortedFeedIds,
+    setSortedUserDids,
   };
 }
 
