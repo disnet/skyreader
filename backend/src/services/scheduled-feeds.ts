@@ -97,21 +97,26 @@ async function fetchAndCacheFeed(
 ): Promise<{ status: 'fetched' | 'skipped' | 'not_modified' }> {
   const urlHash = hashUrl(feedUrl);
   const now = Math.floor(Date.now() / 1000);
+  const timings: Record<string, number> = {};
+  let startTime = Date.now();
 
   // Check if feed has too many errors - skip it
   const errorCheck = await env.DB.prepare(
     'SELECT error_count FROM feed_metadata WHERE feed_url = ?'
   ).bind(feedUrl).first<{ error_count: number }>();
+  timings.errorCheck = Date.now() - startTime;
 
   if (errorCheck && errorCheck.error_count >= MAX_ERROR_COUNT) {
-    console.log(`Skipping ${feedUrl}: too many errors (${errorCheck.error_count})`);
+    console.log(`[Feed] Skipping ${feedUrl}: too many errors (${errorCheck.error_count})`);
     return { status: 'skipped' };
   }
 
   // Get existing metadata from D1 for conditional request
+  startTime = Date.now();
   const meta = await env.DB.prepare(
     'SELECT etag, last_modified FROM feed_cache WHERE url_hash = ?'
   ).bind(urlHash).first<{ etag: string | null; last_modified: string | null }>();
+  timings.metaQuery = Date.now() - startTime;
 
   const headers: HeadersInit = {
     'User-Agent': 'AT-RSS/1.0 (+https://at-rss.example.com)',
@@ -125,18 +130,23 @@ async function fetchAndCacheFeed(
     headers['If-Modified-Since'] = meta.last_modified;
   }
 
+  startTime = Date.now();
   const response = await fetch(feedUrl, {
     headers,
     cf: { cacheTtl: 0 }, // Bypass Cloudflare cache for fresh fetch
   });
+  timings.fetch = Date.now() - startTime;
 
   // Not modified - update metadata but don't re-parse
   if (response.status === 304) {
+    startTime = Date.now();
     await updateScheduledFetchTime(env, feedUrl, subscriberCount);
     // Update cache timestamp to keep it fresh
     await env.DB.prepare(
       'UPDATE feed_cache SET cached_at = ? WHERE url_hash = ?'
     ).bind(now, urlHash).run();
+    timings.notModifiedUpdate = Date.now() - startTime;
+    console.log(`[Feed] ${feedUrl}: 304, timings=${JSON.stringify(timings)}`);
     return { status: 'not_modified' };
   }
 
@@ -145,10 +155,17 @@ async function fetchAndCacheFeed(
     throw new Error(`Failed to fetch ${feedUrl}: ${response.status}`);
   }
 
+  startTime = Date.now();
   const xml = await response.text();
+  timings.readBody = Date.now() - startTime;
+  timings.bodySize = xml.length;
+
   let parsed;
   try {
+    startTime = Date.now();
     parsed = parseFeed(xml, feedUrl);
+    timings.parse = Date.now() - startTime;
+    timings.itemCount = parsed.items.length;
   } catch (parseError) {
     const errorMsg = parseError instanceof Error ? parseError.message : 'Parse error';
     await recordFetchError(env, feedUrl, errorMsg);
@@ -156,10 +173,16 @@ async function fetchAndCacheFeed(
   }
 
   // Store individual items in feed_items table
+  startTime = Date.now();
   const { newCount, isInitialImport } = await storeItems(env, feedUrl, parsed.items);
+  timings.storeItems = Date.now() - startTime;
 
   // Cache in D1 (with size limit to avoid SQLITE_TOOBIG)
+  startTime = Date.now();
   let contentToCache = JSON.stringify(parsed);
+  timings.stringify = Date.now() - startTime;
+  timings.cacheSize = contentToCache.length;
+
   if (contentToCache.length > MAX_CONTENT_SIZE) {
     // Truncate items to fit within size limit
     const truncatedParsed = {
@@ -171,9 +194,10 @@ async function fetchAndCacheFeed(
     if (contentToCache.length > MAX_CONTENT_SIZE) {
       contentToCache = JSON.stringify({ ...parsed, items: [] });
     }
-    console.log(`Truncated cache for ${feedUrl}: ${parsed.items.length} -> ${truncatedParsed.items.length} items`);
+    console.log(`[Feed] Truncated cache for ${feedUrl}: ${parsed.items.length} -> ${truncatedParsed.items.length} items`);
   }
 
+  startTime = Date.now();
   await env.DB.prepare(`
     INSERT INTO feed_cache (url_hash, feed_url, content, etag, last_modified, cached_at)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -190,8 +214,10 @@ async function fetchAndCacheFeed(
     response.headers.get('Last-Modified') || null,
     now
   ).run();
+  timings.cacheInsert = Date.now() - startTime;
 
   // Update feed metadata in D1
+  startTime = Date.now();
   await env.DB.prepare(`
     INSERT INTO feed_metadata (feed_url, title, site_url, description, last_fetched_at, last_scheduled_fetch_at, subscriber_count, etag, last_modified, fetch_error, error_count)
     VALUES (?, ?, ?, ?, unixepoch(), unixepoch(), ?, ?, ?, NULL, 0)
@@ -215,6 +241,7 @@ async function fetchAndCacheFeed(
     response.headers.get('ETag') || null,
     response.headers.get('Last-Modified') || null
   ).run();
+  timings.metadataInsert = Date.now() - startTime;
 
   // Only notify if there are actually new articles
   if (newCount > 0) {
@@ -242,6 +269,7 @@ async function fetchAndCacheFeed(
     });
   }
 
+  console.log(`[Feed] ${feedUrl}: fetched, timings=${JSON.stringify(timings)}`);
   return { status: 'fetched' };
 }
 

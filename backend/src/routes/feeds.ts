@@ -9,8 +9,12 @@ export interface StoreItemsResult {
   isInitialImport: boolean;
 }
 
-// Store individual feed items in D1
+// Store individual feed items in D1 using batched inserts
 export async function storeItems(env: Env, feedUrl: string, items: FeedItem[]): Promise<StoreItemsResult> {
+  if (items.length === 0) {
+    return { newCount: 0, isInitialImport: false };
+  }
+
   // Check if this is an initial import (no existing items for this feed)
   const existingCount = await env.DB.prepare(
     'SELECT COUNT(*) as count FROM feed_items WHERE feed_url = ?'
@@ -41,13 +45,16 @@ export async function storeItems(env: Env, feedUrl: string, items: FeedItem[]): 
     }
   }
 
+  // Count new items
   let newCount = 0;
-
   for (const item of itemsToStore) {
-    const isNew = !existingGuids.has(item.guid);
-    if (isNew) {
+    if (!existingGuids.has(item.guid)) {
       newCount++;
     }
+  }
+
+  // Build batch of prepared statements
+  const statements = itemsToStore.map(item => {
     const publishedTs = Math.floor(new Date(item.publishedAt).getTime() / 1000);
 
     // Truncate content if too large
@@ -59,7 +66,7 @@ export async function storeItems(env: Env, feedUrl: string, items: FeedItem[]): 
     // Simple content hash for change detection
     const contentHash = content ? simpleHash(content) : null;
 
-    await env.DB.prepare(`
+    return env.DB.prepare(`
       INSERT INTO feed_items (feed_url, guid, url, title, author, summary, content, image_url, published_at, content_hash)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(feed_url, guid) DO UPDATE SET
@@ -83,8 +90,11 @@ export async function storeItems(env: Env, feedUrl: string, items: FeedItem[]): 
       item.imageUrl || null,
       publishedTs,
       contentHash
-    ).run();
-  }
+    );
+  });
+
+  // Execute all inserts in a single batch (single round-trip to D1)
+  await env.DB.batch(statements);
 
   return { newCount, isInitialImport };
 }

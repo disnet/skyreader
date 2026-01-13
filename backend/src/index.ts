@@ -167,55 +167,64 @@ export default {
     env: Env,
     ctx: ExecutionContext
   ): Promise<void> {
-    console.log(`Cron triggered: ${controller.cron}`);
+    const cronStart = Date.now();
+    console.log(`[Cron] Started: ${controller.cron}`);
 
-    // Poll Jetstream for new shares
-    try {
-      const jetstreamResult = await pollJetstream(env);
+    // Run all three Jetstream pollers in parallel for better performance
+    const pollerStartTime = Date.now();
+    const [jetstreamResult, followsResult, inappFollowsResult] = await Promise.allSettled([
+      pollJetstream(env),
+      pollJetstreamFollows(env),
+      pollJetstreamInappFollows(env),
+    ]);
+    const pollersDuration = Date.now() - pollerStartTime;
+
+    // Log results
+    if (jetstreamResult.status === 'fulfilled') {
       console.log(
-        `Jetstream poll complete: ${jetstreamResult.processed} processed, ` +
-        `${jetstreamResult.errors} errors`
+        `[Cron] Jetstream shares: ${jetstreamResult.value.processed} processed, ` +
+        `${jetstreamResult.value.errors} errors`
       );
-    } catch (error) {
-      console.error('Jetstream poll failed:', error);
+    } else {
+      console.error('[Cron] Jetstream poll failed:', jetstreamResult.reason);
     }
 
-    // Poll Jetstream for follow changes
-    try {
-      const followsResult = await pollJetstreamFollows(env);
+    if (followsResult.status === 'fulfilled') {
       console.log(
-        `Jetstream follows poll: ${followsResult.processed} processed, ` +
-        `${followsResult.errors} errors`
+        `[Cron] Jetstream follows: ${followsResult.value.processed} processed, ` +
+        `${followsResult.value.errors} errors`
       );
-    } catch (error) {
-      console.error('Jetstream follows poll failed:', error);
+    } else {
+      console.error('[Cron] Jetstream follows poll failed:', followsResult.reason);
     }
 
-    // Poll Jetstream for in-app follow changes
-    try {
-      const inappFollowsResult = await pollJetstreamInappFollows(env);
+    if (inappFollowsResult.status === 'fulfilled') {
       console.log(
-        `Jetstream in-app follows poll: ${inappFollowsResult.processed} processed, ` +
-        `${inappFollowsResult.errors} errors`
+        `[Cron] Jetstream in-app follows: ${inappFollowsResult.value.processed} processed, ` +
+        `${inappFollowsResult.value.errors} errors`
       );
-    } catch (error) {
-      console.error('Jetstream in-app follows poll failed:', error);
+    } else {
+      console.error('[Cron] Jetstream in-app follows poll failed:', inappFollowsResult.reason);
     }
 
-    // Refresh active feeds
-    // TODO: Change back to every 15 minutes (minute % 15 === 0) after cache is repopulated
-    try {
-      const result = await refreshActiveFeeds(env);
-      console.log(
-        `Scheduled feed refresh complete: ${result.fetched} fetched, ` +
-        `${result.skipped} skipped (not modified), ${result.errors} errors`
-      );
-    } catch (error) {
-      console.error('Scheduled feed refresh failed:', error);
+    // Refresh active feeds (every 15 minutes to reduce CPU usage)
+    const minute = new Date().getMinutes();
+    let feedRefreshDuration = 0;
+    if (minute % 15 === 0) {
+      try {
+        const startTime = Date.now();
+        const result = await refreshActiveFeeds(env);
+        feedRefreshDuration = Date.now() - startTime;
+        console.log(
+          `[Cron] Feed refresh: ${result.fetched} fetched, ` +
+          `${result.skipped} skipped, ${result.errors} errors, ${feedRefreshDuration}ms`
+        );
+      } catch (error) {
+        console.error('[Cron] Feed refresh failed:', error);
+      }
     }
 
     // Clean up expired D1 data (once per hour)
-    const minute = new Date().getMinutes();
     if (minute === 0) {
       try {
         const now = Date.now();
@@ -226,11 +235,17 @@ export default {
         const oauthDeleted = oauthResult.meta?.changes || 0;
         const sessionsDeleted = sessionsResult.meta?.changes || 0;
         if (oauthDeleted > 0 || sessionsDeleted > 0) {
-          console.log(`Cleanup: deleted ${oauthDeleted} expired OAuth states, ${sessionsDeleted} expired sessions`);
+          console.log(`[Cron] Cleanup: deleted ${oauthDeleted} OAuth states, ${sessionsDeleted} sessions`);
         }
       } catch (error) {
-        console.error('Cleanup of expired D1 data failed:', error);
+        console.error('[Cron] Cleanup failed:', error);
       }
     }
+
+    const totalDuration = Date.now() - cronStart;
+    console.log(
+      `[Cron] Complete: total=${totalDuration}ms, ` +
+      `pollers=${pollersDuration}ms (parallel), feeds=${feedRefreshDuration}ms`
+    );
   },
 };

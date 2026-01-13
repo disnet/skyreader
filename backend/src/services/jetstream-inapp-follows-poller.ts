@@ -63,7 +63,7 @@ export interface InappFollowsPollResult {
   cursor?: string;
 }
 
-const POLL_TIMEOUT_MS = 30000; // 30 seconds max
+const POLL_TIMEOUT_MS = 10000; // 10 seconds max for low-volume custom collection
 const IDLE_TIMEOUT_MS = 2000; // 2 seconds without events = caught up
 
 async function processInappFollowEvent(env: Env, event: JetstreamInappFollowEvent): Promise<void> {
@@ -197,13 +197,18 @@ export async function pollJetstreamInappFollows(env: Env): Promise<InappFollowsP
       });
 
       ws.addEventListener('message', async (event) => {
-        lastEventTime = Date.now();
-
         try {
           const data = JSON.parse(event.data as string) as JetstreamInappFollowEvent;
 
+          // Only update idle timer on actual commit events, not control messages
+          if (data.kind === 'commit') {
+            lastEventTime = Date.now();
+          }
+
           // Update cursor to last seen event
-          lastCursor = data.time_us.toString();
+          if (data.time_us) {
+            lastCursor = data.time_us.toString();
+          }
 
           // Process the event
           if (data.kind === 'commit' && data.commit?.collection === 'com.at-rss.social.follow') {
