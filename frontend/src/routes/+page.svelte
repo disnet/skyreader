@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from 'svelte';
+  import { onMount, onDestroy, tick, untrack } from 'svelte';
   import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
@@ -8,6 +8,7 @@
   import { shareReadingStore } from '$lib/stores/shareReading.svelte';
   import { sharesStore } from '$lib/stores/shares.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
+  import { keyboardStore } from '$lib/stores/keyboard.svelte';
   import { api } from '$lib/services/api';
   import ArticleCard from '$lib/components/ArticleCard.svelte';
   import ShareCard from '$lib/components/ShareCard.svelte';
@@ -292,40 +293,296 @@
     return displayedArticles;
   });
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (!auth.isAuthenticated || currentItems.length === 0) return;
+  // Helper to get selected article info (for keyboard shortcuts)
+  function getSelectedArticle(): { article: Article; sub: typeof subscriptionsStore.subscriptions[0] } | null {
+    if (selectedIndex < 0) return null;
+    const mode = viewMode;
 
-    // Ignore if user is typing in an input
-    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-
-    const items = currentItems;
-    if (e.key === 'j' || e.key === 'ArrowDown') {
-      e.preventDefault();
-      selectItem(Math.min(selectedIndex + 1, items.length - 1));
-    } else if (e.key === 'k' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      selectItem(Math.max(selectedIndex - 1, 0));
-    } else if (e.key === 'o' && selectedIndex >= 0) {
-      e.preventDefault();
-      const item = items[selectedIndex];
-      const mode = viewMode;
-      let url: string;
-      if (mode === 'combined') {
-        const combined = item as CombinedFeedItem;
-        url = combined.type === 'article' ? combined.item.url : combined.item.itemUrl;
-      } else if (mode === 'shares') {
-        url = (item as SocialShare).itemUrl;
-      } else if (mode === 'userShares') {
-        url = (item as UserShare).articleUrl;
-      } else {
-        url = (item as Article).url;
+    if (mode === 'articles') {
+      const article = displayedArticles[selectedIndex];
+      if (!article) return null;
+      const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId);
+      if (!sub) return null;
+      return { article, sub };
+    } else if (mode === 'combined') {
+      const feedItem = displayedCombined[selectedIndex];
+      if (!feedItem || feedItem.type !== 'article') return null;
+      const article = feedItem.item;
+      const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId);
+      if (!sub) return null;
+      return { article, sub };
+    } else if (mode === 'userShares') {
+      const share = displayedUserShares[selectedIndex];
+      if (!share) return null;
+      const localArticle = articlesByGuid.get(share.articleGuid);
+      if (localArticle) {
+        const sub = subscriptionsStore.subscriptions.find(s => s.id === localArticle.subscriptionId);
+        if (sub) return { article: localArticle, sub };
       }
-      window.open(url, '_blank');
-    } else if (e.key === 'Enter' && selectedIndex >= 0) {
-      e.preventDefault();
-      expandedIndex = expandedIndex === selectedIndex ? -1 : selectedIndex;
+      // For user shares without local article, create a minimal article object
+      return {
+        article: {
+          guid: share.articleGuid,
+          url: share.articleUrl,
+          title: share.articleTitle || share.articleUrl,
+          author: share.articleAuthor,
+          summary: share.articleDescription,
+          imageUrl: share.articleImage,
+          publishedAt: share.articlePublishedAt || share.createdAt,
+          subscriptionId: 0,
+          fetchedAt: Date.now()
+        },
+        sub: { atUri: '', feedUrl: share.feedUrl || '', id: 0, title: '' } as typeof subscriptionsStore.subscriptions[0]
+      };
+    }
+    return null;
+  }
+
+  // Open selected item in new tab
+  function openSelectedItem() {
+    if (selectedIndex < 0) return;
+    const items = currentItems;
+    const item = items[selectedIndex];
+    const mode = viewMode;
+    let url: string;
+    if (mode === 'combined') {
+      const combined = item as CombinedFeedItem;
+      url = combined.type === 'article' ? combined.item.url : combined.item.itemUrl;
+    } else if (mode === 'shares') {
+      url = (item as SocialShare).itemUrl;
+    } else if (mode === 'userShares') {
+      url = (item as UserShare).articleUrl;
+    } else {
+      url = (item as Article).url;
+    }
+    window.open(url, '_blank');
+  }
+
+  // Toggle star on selected item
+  function toggleSelectedStar() {
+    const selected = getSelectedArticle();
+    if (selected) {
+      readingStore.toggleStar(selected.article.guid);
     }
   }
+
+  // Share/unshare selected item
+  function toggleSelectedShare() {
+    const selected = getSelectedArticle();
+    if (!selected) return;
+
+    const { article, sub } = selected;
+    if (sharesStore.isShared(article.guid)) {
+      sharesStore.unshare(article.guid);
+    } else {
+      sharesStore.share(
+        sub.atUri,
+        sub.feedUrl,
+        article.guid,
+        article.url,
+        article.title,
+        article.author,
+        article.summary,
+        article.imageUrl,
+        article.publishedAt
+      );
+    }
+  }
+
+  // Toggle read/unread on selected item
+  function toggleSelectedRead() {
+    if (selectedIndex < 0) return;
+    const mode = viewMode;
+
+    if (mode === 'articles') {
+      const article = displayedArticles[selectedIndex];
+      if (!article) return;
+      const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId);
+      if (!sub) return;
+
+      if (readingStore.isRead(article.guid)) {
+        readingStore.markAsUnread(article.guid);
+      } else {
+        readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+      }
+    } else if (mode === 'combined') {
+      const feedItem = displayedCombined[selectedIndex];
+      if (!feedItem) return;
+
+      if (feedItem.type === 'article') {
+        const article = feedItem.item;
+        const sub = subscriptionsStore.subscriptions.find(s => s.id === article.subscriptionId);
+        if (!sub) return;
+
+        if (readingStore.isRead(article.guid)) {
+          readingStore.markAsUnread(article.guid);
+        } else {
+          readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+        }
+      } else {
+        const share = feedItem.item;
+        if (shareReadingStore.isRead(share.recordUri)) {
+          shareReadingStore.markAsUnread(share.recordUri);
+        } else {
+          shareReadingStore.markAsRead(share.recordUri, share.authorDid, share.itemUrl, share.itemTitle);
+        }
+      }
+    } else if (mode === 'shares') {
+      const share = displayedShares[selectedIndex];
+      if (!share) return;
+
+      if (shareReadingStore.isRead(share.recordUri)) {
+        shareReadingStore.markAsUnread(share.recordUri);
+      } else {
+        shareReadingStore.markAsRead(share.recordUri, share.authorDid, share.itemUrl, share.itemTitle);
+      }
+    }
+  }
+
+  // Refresh current view
+  async function refreshView() {
+    if (feedFilter) {
+      // Refresh specific feed
+      const feedId = parseInt(feedFilter);
+      await subscriptionsStore.fetchFeed(feedId, true);
+    } else {
+      // Refresh all feeds
+      await subscriptionsStore.fetchAllNewFeeds(2, 500);
+    }
+    allArticles = await subscriptionsStore.getAllArticles();
+  }
+
+  // Register keyboard shortcuts
+  onMount(() => {
+    // Navigation shortcuts
+    keyboardStore.register({
+      key: 'j',
+      description: 'Next item',
+      category: 'Navigation',
+      action: () => {
+        if (currentItems.length > 0) {
+          selectItem(Math.min(selectedIndex + 1, currentItems.length - 1));
+        }
+      },
+      condition: () => auth.isAuthenticated && currentItems.length > 0,
+    });
+
+    keyboardStore.register({
+      key: 'ArrowDown',
+      description: 'Next item',
+      category: 'Navigation',
+      action: () => {
+        if (currentItems.length > 0) {
+          selectItem(Math.min(selectedIndex + 1, currentItems.length - 1));
+        }
+      },
+      condition: () => auth.isAuthenticated && currentItems.length > 0,
+    });
+
+    keyboardStore.register({
+      key: 'k',
+      description: 'Previous item',
+      category: 'Navigation',
+      action: () => {
+        if (currentItems.length > 0) {
+          selectItem(Math.max(selectedIndex - 1, 0));
+        }
+      },
+      condition: () => auth.isAuthenticated && currentItems.length > 0,
+    });
+
+    keyboardStore.register({
+      key: 'ArrowUp',
+      description: 'Previous item',
+      category: 'Navigation',
+      action: () => {
+        if (currentItems.length > 0) {
+          selectItem(Math.max(selectedIndex - 1, 0));
+        }
+      },
+      condition: () => auth.isAuthenticated && currentItems.length > 0,
+    });
+
+    keyboardStore.register({
+      key: 'o',
+      description: 'Open in new tab',
+      category: 'Navigation',
+      action: openSelectedItem,
+      condition: () => auth.isAuthenticated && selectedIndex >= 0,
+    });
+
+    keyboardStore.register({
+      key: 'Enter',
+      description: 'Toggle expand',
+      category: 'Navigation',
+      action: () => {
+        if (selectedIndex >= 0) {
+          expandedIndex = expandedIndex === selectedIndex ? -1 : selectedIndex;
+        }
+      },
+      condition: () => auth.isAuthenticated && selectedIndex >= 0,
+    });
+
+    // Article action shortcuts
+    keyboardStore.register({
+      key: 's',
+      description: 'Toggle star',
+      category: 'Article',
+      action: toggleSelectedStar,
+      condition: () => auth.isAuthenticated && selectedIndex >= 0,
+    });
+
+    keyboardStore.register({
+      key: 'S',
+      shift: true,
+      description: 'Share/unshare',
+      category: 'Article',
+      action: toggleSelectedShare,
+      condition: () => auth.isAuthenticated && selectedIndex >= 0,
+    });
+
+    keyboardStore.register({
+      key: 'm',
+      description: 'Mark read/unread',
+      category: 'Article',
+      action: toggleSelectedRead,
+      condition: () => auth.isAuthenticated && selectedIndex >= 0,
+    });
+
+    // Other shortcuts
+    keyboardStore.register({
+      key: 'u',
+      description: 'Toggle unread filter',
+      category: 'Other',
+      action: () => {
+        showOnlyUnread = !showOnlyUnread;
+      },
+      condition: () => auth.isAuthenticated && !starredFilter && !sharedFilter,
+    });
+
+    keyboardStore.register({
+      key: 'r',
+      description: 'Refresh',
+      category: 'Other',
+      action: refreshView,
+      condition: () => auth.isAuthenticated,
+    });
+  });
+
+  // Unregister shortcuts when component unmounts
+  onDestroy(() => {
+    keyboardStore.unregister('j');
+    keyboardStore.unregister('k');
+    keyboardStore.unregister('ArrowDown');
+    keyboardStore.unregister('ArrowUp');
+    keyboardStore.unregister('o');
+    keyboardStore.unregister('Enter');
+    keyboardStore.unregister('s');
+    keyboardStore.unregister('S', true);
+    keyboardStore.unregister('m');
+    keyboardStore.unregister('u');
+    keyboardStore.unregister('r');
+  });
 
   async function selectItem(index: number) {
     if (index === selectedIndex) return;
@@ -377,8 +634,6 @@
     window.scrollBy({ top: offset, behavior: 'instant' });
   }
 </script>
-
-<svelte:window onkeydown={handleKeydown} />
 
 {#if !auth.isAuthenticated}
   <div class="welcome">

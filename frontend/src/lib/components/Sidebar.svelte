@@ -17,8 +17,6 @@
         }
     }
 
-    let showAddFeedModal = $state(false);
-
     // Sidebar resize state
     const MIN_WIDTH = 180;
     const MAX_WIDTH = 400;
@@ -234,6 +232,19 @@
         return users;
     });
 
+    // Update sorted IDs in store for keyboard navigation
+    $effect(() => {
+        const sorted = sortedSubscriptions();
+        const ids = sorted.map(s => s.id!).filter(id => id !== undefined);
+        sidebarStore.setSortedFeedIds(ids);
+    });
+
+    $effect(() => {
+        const sorted = sortedFollowedUsers();
+        const dids = sorted.map(u => u.did);
+        sidebarStore.setSortedUserDids(dids);
+    });
+
     // Load unread counts when subscriptions, articles, or read state changes
     $effect(() => {
         // Track dependencies
@@ -271,7 +282,7 @@
 
     function handleAddFeed(e: MouseEvent) {
         e.stopPropagation();
-        showAddFeedModal = true;
+        sidebarStore.openAddFeedModal();
         sidebarStore.closeMobile();
     }
 
@@ -561,7 +572,7 @@
     </nav>
 </aside>
 
-<AddFeedModal open={showAddFeedModal} onclose={() => showAddFeedModal = false} />
+<AddFeedModal open={sidebarStore.addFeedModalOpen} onclose={() => sidebarStore.closeAddFeedModal()} />
 
 {#if contextMenu}
     <div

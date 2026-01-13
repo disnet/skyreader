@@ -1,13 +1,177 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
+  import { onMount } from 'svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { realtimeStore } from '$lib/stores/realtime.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
+  import { keyboardStore } from '$lib/stores/keyboard.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
+  import KeyboardShortcutsModal from '$lib/components/KeyboardShortcutsModal.svelte';
   import '../app.css';
 
   let { children } = $props();
+
+  // Helper functions for feed/user cycling
+  function getCurrentFeedId(): number | null {
+    const feedParam = $page.url.searchParams.get('feed');
+    return feedParam ? parseInt(feedParam) : null;
+  }
+
+  function getCurrentSharerId(): string | null {
+    return $page.url.searchParams.get('sharer');
+  }
+
+  function cycleFeeds(direction: 1 | -1) {
+    // Use sorted feed IDs from sidebar store (matches visual order)
+    const feedIds = sidebarStore.sortedFeedIds;
+    if (feedIds.length === 0) return;
+
+    const currentFeedId = getCurrentFeedId();
+    if (currentFeedId === null) {
+      // Not on a feed view, go to first/last feed
+      const targetId = direction === 1 ? feedIds[0] : feedIds[feedIds.length - 1];
+      goto(`/?feed=${targetId}`);
+      return;
+    }
+
+    const currentIndex = feedIds.indexOf(currentFeedId);
+    if (currentIndex === -1) {
+      // Current feed not found in sorted list, go to first
+      goto(`/?feed=${feedIds[0]}`);
+      return;
+    }
+
+    const newIndex = (currentIndex + direction + feedIds.length) % feedIds.length;
+    goto(`/?feed=${feedIds[newIndex]}`);
+  }
+
+  function cycleUsers(direction: 1 | -1) {
+    // Use sorted user DIDs from sidebar store (matches visual order)
+    const userDids = sidebarStore.sortedUserDids;
+    if (userDids.length === 0) return;
+
+    const currentSharerId = getCurrentSharerId();
+    if (currentSharerId === null) {
+      // Not on a sharer view, go to first/last user
+      const targetDid = direction === 1 ? userDids[0] : userDids[userDids.length - 1];
+      goto(`/?sharer=${targetDid}`);
+      return;
+    }
+
+    const currentIndex = userDids.indexOf(currentSharerId);
+    if (currentIndex === -1) {
+      // Current user not found in sorted list, go to first
+      goto(`/?sharer=${userDids[0]}`);
+      return;
+    }
+
+    const newIndex = (currentIndex + direction + userDids.length) % userDids.length;
+    goto(`/?sharer=${userDids[newIndex]}`);
+  }
+
+  // Determine whether to cycle feeds or users based on current view
+  function cycleSidebar(direction: 1 | -1) {
+    const feedParam = $page.url.searchParams.get('feed');
+    const sharerParam = $page.url.searchParams.get('sharer');
+    const followingParam = $page.url.searchParams.get('following');
+
+    // If on a specific sharer or following view, cycle users
+    if (sharerParam || followingParam) {
+      cycleUsers(direction);
+    } else {
+      // Otherwise cycle feeds
+      cycleFeeds(direction);
+    }
+  }
+
+  // Register global keyboard shortcuts on mount
+  onMount(() => {
+    // View switching shortcuts
+    keyboardStore.register({
+      key: '1',
+      description: 'All',
+      category: 'Views',
+      action: () => goto('/'),
+      condition: () => auth.isAuthenticated,
+    });
+
+    keyboardStore.register({
+      key: '2',
+      description: 'Starred',
+      category: 'Views',
+      action: () => goto('/?starred=true'),
+      condition: () => auth.isAuthenticated,
+    });
+
+    keyboardStore.register({
+      key: '3',
+      description: 'Shared',
+      category: 'Views',
+      action: () => goto('/?shared=true'),
+      condition: () => auth.isAuthenticated,
+    });
+
+    keyboardStore.register({
+      key: '4',
+      description: 'Feeds',
+      category: 'Views',
+      action: () => goto('/?feeds=true'),
+      condition: () => auth.isAuthenticated,
+    });
+
+    keyboardStore.register({
+      key: '5',
+      description: 'Following',
+      category: 'Views',
+      action: () => goto('/?following=true'),
+      condition: () => auth.isAuthenticated,
+    });
+
+    keyboardStore.register({
+      key: '6',
+      description: 'Discover',
+      category: 'Views',
+      action: () => goto('/discover'),
+      condition: () => auth.isAuthenticated,
+    });
+
+    keyboardStore.register({
+      key: '0',
+      description: 'Settings',
+      category: 'Views',
+      action: () => goto('/settings'),
+      condition: () => auth.isAuthenticated,
+    });
+
+    // Feed/user cycling shortcuts
+    keyboardStore.register({
+      key: '[',
+      description: 'Previous feed/user',
+      category: 'Feed/User',
+      action: () => cycleSidebar(-1),
+      condition: () => auth.isAuthenticated,
+    });
+
+    keyboardStore.register({
+      key: ']',
+      description: 'Next feed/user',
+      category: 'Feed/User',
+      action: () => cycleSidebar(1),
+      condition: () => auth.isAuthenticated,
+    });
+
+    // Add feed shortcut
+    keyboardStore.register({
+      key: 'a',
+      description: 'Add feed',
+      category: 'Other',
+      action: () => sidebarStore.openAddFeedModal(),
+      condition: () => auth.isAuthenticated,
+    });
+  });
 
   // Connect/disconnect realtime based on auth state
   $effect(() => {
@@ -26,12 +190,16 @@
   });
 </script>
 
+<svelte:window onkeydown={keyboardStore.handleKeydown} />
+
 <svelte:head>
   <title>AT-RSS</title>
   <meta name="description" content="A decentralized RSS reader built on AT Protocol" />
   <link rel="manifest" href="/manifest.json" />
   <meta name="theme-color" content="#0066cc" />
 </svelte:head>
+
+<KeyboardShortcutsModal />
 
 <div class="app">
   {#if !auth.isLoading}

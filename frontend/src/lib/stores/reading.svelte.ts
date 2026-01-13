@@ -122,6 +122,27 @@ function createReadingStore() {
     scheduleFlush();
   }
 
+  async function markAsUnread(articleGuid: string) {
+    const position = readPositions.get(articleGuid);
+    if (!position || !position.id) return;
+
+    // Delete from local DB
+    await db.readPositions.delete(position.id);
+
+    // Remove from map
+    readPositions.delete(articleGuid);
+    readPositions = new Map(readPositions);
+
+    // Queue delete to sync to server
+    if (position.syncStatus === 'synced' && position.rkey) {
+      await syncQueue.enqueue({
+        operation: 'delete',
+        collection: 'com.at-rss.feed.readPosition',
+        rkey: position.rkey,
+      });
+    }
+  }
+
   async function toggleStar(articleGuid: string) {
     const position = readPositions.get(articleGuid);
     if (!position || !position.id) return;
@@ -182,6 +203,7 @@ function createReadingStore() {
     isRead,
     isStarred,
     markAsRead,
+    markAsUnread,
     toggleStar,
     getStarredArticles,
     getUnreadCount,
