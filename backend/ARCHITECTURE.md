@@ -1,8 +1,8 @@
-# AT-RSS Backend Architecture
+# Skyreader Backend Architecture
 
 ## Overview
 
-The AT-RSS backend is a Cloudflare Worker that serves as an API gateway between the frontend and the AT Protocol ecosystem. It handles authentication, RSS feed fetching/parsing, social features, and real-time updates.
+The Skyreader backend is a Cloudflare Worker that serves as an API gateway between the frontend and the AT Protocol ecosystem. It handles authentication, RSS feed fetching/parsing, social features, and real-time updates.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -168,9 +168,9 @@ Return parsed feed JSON
 | `/api/records/list` | GET | Bearer | List all records of a collection |
 
 **Supported collections:**
-- `com.at-rss.feed.subscription` - RSS feed subscriptions
-- `com.at-rss.feed.readPosition` - Read/starred state
-- `com.at-rss.social.share` - Shared articles
+- `app.skyreader.feed.subscription` - RSS feed subscriptions
+- `app.skyreader.feed.readPosition` - Read/starred state
+- `app.skyreader.social.share` - Shared articles
 
 ### Realtime (`/api/realtime`)
 
@@ -236,7 +236,7 @@ Read cursor from D1 (sync_state.jetstream_cursor)
        ↓
 Connect to wss://jetstream2.us-east.bsky.network/subscribe
        ↓
-Subscribe to com.at-rss.social.share collection
+Subscribe to app.skyreader.social.share collection
        ↓
 Resume from cursor (with 5-second buffer)
        ↓

@@ -177,7 +177,7 @@ function createSocialStore() {
 
       await api.syncRecord({
         operation: 'create',
-        collection: 'com.at-rss.social.follow',
+        collection: 'app.skyreader.social.follow',
         rkey,
         record,
       });
@@ -196,7 +196,7 @@ function createSocialStore() {
   async function unfollowInApp(did: string): Promise<boolean> {
     try {
       // Find the user's in-app follow record
-      const records = await api.listRecords<{ subject: string }>('com.at-rss.social.follow');
+      const records = await api.listRecords<{ subject: string }>('app.skyreader.social.follow');
       const followRecord = records.records.find(r => r.value.subject === did);
 
       if (!followRecord) {
@@ -212,7 +212,7 @@ function createSocialStore() {
 
       await api.syncRecord({
         operation: 'delete',
-        collection: 'com.at-rss.social.follow',
+        collection: 'app.skyreader.social.follow',
         rkey,
       });
 

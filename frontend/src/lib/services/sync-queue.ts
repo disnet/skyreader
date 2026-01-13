@@ -165,25 +165,25 @@ class SyncQueueService {
   }
 
   private async updateLocalRecord(collection: string, rkey: string, atUri: string) {
-    if (collection === 'com.at-rss.feed.subscription') {
+    if (collection === 'app.skyreader.feed.subscription') {
       const sub = await db.subscriptions.where('rkey').equals(rkey).first();
       if (sub?.id) {
         await db.subscriptions.update(sub.id, { atUri, syncStatus: 'synced' });
         this.notifySyncComplete(collection, rkey);
       }
-    } else if (collection === 'com.at-rss.feed.readPosition') {
+    } else if (collection === 'app.skyreader.feed.readPosition') {
       const pos = await db.readPositions.where('rkey').equals(rkey).first();
       if (pos?.id) {
         await db.readPositions.update(pos.id, { atUri, syncStatus: 'synced' });
         this.notifySyncComplete(collection, rkey);
       }
-    } else if (collection === 'com.at-rss.social.share') {
+    } else if (collection === 'app.skyreader.social.share') {
       const share = await db.userShares.where('rkey').equals(rkey).first();
       if (share?.id) {
         await db.userShares.update(share.id, { atUri, syncStatus: 'synced' });
         this.notifySyncComplete(collection, rkey);
       }
-    } else if (collection === 'com.at-rss.social.shareReadPosition') {
+    } else if (collection === 'app.skyreader.social.shareReadPosition') {
       const pos = await db.shareReadPositions.where('rkey').equals(rkey).first();
       if (pos?.id) {
         await db.shareReadPositions.update(pos.id, { atUri, syncStatus: 'synced' });

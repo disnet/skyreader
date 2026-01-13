@@ -1,4 +1,4 @@
-# AT-RSS
+# Skyreader
 
 A decentralized RSS reader built on the [AT Protocol](https://atproto.com). Your subscriptions, reading progress, and shares are stored in your Personal Data Server (PDS), giving you full ownership and portability of your data.
 
@@ -32,7 +32,7 @@ A decentralized RSS reader built on the [AT Protocol](https://atproto.com). Your
 ## Project Structure
 
 ```
-at-rss/
+skyreader/
 ├── frontend/           # Svelte 5 PWA
 │   ├── src/
 │   │   ├── lib/
@@ -51,7 +51,7 @@ at-rss/
 │   │   └── durable-objects/  # Jetstream consumer
 │   └── migrations/           # D1 SQL migrations
 └── lexicons/           # AT Protocol schemas
-    └── com/at-rss/
+    └── app/skyreader/
         ├── feed/             # subscription, readPosition
         └── social/           # share
 ```
@@ -74,7 +74,7 @@ at-rss/
 
 2. Create Cloudflare resources:
    ```bash
-   npx wrangler d1 create at-rss
+   npx wrangler d1 create skyreader
    npx wrangler kv namespace create FEED_CACHE
    npx wrangler kv namespace create SESSION_CACHE
    ```
@@ -83,7 +83,7 @@ at-rss/
 
 4. Run the database migration:
    ```bash
-   npx wrangler d1 execute at-rss --remote --file=migrations/0001_initial.sql
+   npx wrangler d1 execute skyreader --remote --file=migrations/0001_initial.sql
    ```
 
 5. Deploy:
@@ -101,7 +101,7 @@ at-rss/
 
 2. Create `.env` with your backend URL:
    ```
-   VITE_API_URL=https://at-rss-api.YOUR_SUBDOMAIN.workers.dev
+   VITE_API_URL=https://skyreader-api.YOUR_SUBDOMAIN.workers.dev
    ```
 
 3. Run development server:
@@ -115,11 +115,11 @@ at-rss/
 
 ### Lexicon Schemas
 
-The app defines three custom record types under the `com.at-rss` namespace:
+The app defines three custom record types under the `app.skyreader` namespace:
 
-- **`com.at-rss.feed.subscription`**: RSS feed subscriptions
-- **`com.at-rss.feed.readPosition`**: Read/starred state for articles
-- **`com.at-rss.social.share`**: Shared articles with optional notes
+- **`app.skyreader.feed.subscription`**: RSS feed subscriptions
+- **`app.skyreader.feed.readPosition`**: Read/starred state for articles
+- **`app.skyreader.social.share`**: Shared articles with optional notes
 
 ### OAuth Flow
 
@@ -154,7 +154,7 @@ cd backend
 npx wrangler dev          # Local dev (limited - no real OAuth)
 npx wrangler deploy       # Deploy to Cloudflare
 npx wrangler tail         # Stream live logs
-npx wrangler d1 execute at-rss --remote --command "SELECT * FROM users"
+npx wrangler d1 execute skyreader --remote --command "SELECT * FROM users"
 
 # Frontend
 cd frontend
@@ -178,10 +178,10 @@ Durable Objects (like `JetstreamConsumer`) persist across deploys. WebSocket han
 **Debug endpoints**:
 ```bash
 # Check DO status (instanceId, codeVersion, connection state)
-curl https://at-rss-api.YOUR_SUBDOMAIN.workers.dev/api/jetstream/status
+curl https://skyreader-api.YOUR_SUBDOMAIN.workers.dev/api/jetstream/status
 
 # Force reconnect
-curl https://at-rss-api.YOUR_SUBDOMAIN.workers.dev/api/jetstream/reconnect
+curl https://skyreader-api.YOUR_SUBDOMAIN.workers.dev/api/jetstream/reconnect
 ```
 
 ## License

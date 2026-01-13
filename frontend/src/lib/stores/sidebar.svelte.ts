@@ -36,7 +36,7 @@ function createSidebarStore() {
 
   // Restore from localStorage on init
   if (browser) {
-    const stored = localStorage.getItem('at-rss-sidebar');
+    const stored = localStorage.getItem('skyreader-sidebar');
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
@@ -52,7 +52,7 @@ function createSidebarStore() {
   function persist() {
     if (browser) {
       localStorage.setItem(
-        'at-rss-sidebar',
+        'skyreader-sidebar',
         JSON.stringify({
           isCollapsed: state.isCollapsed,
           expandedSections: state.expandedSections,

@@ -188,7 +188,7 @@ export async function fetchAndCacheFeed(env: Env, feedUrl: string): Promise<void
 
   const response = await fetch(feedUrl, {
     headers: {
-      'User-Agent': 'AT-RSS/1.0 (+https://at-rss.example.com)',
+      'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)',
       Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
     },
   });
@@ -389,7 +389,7 @@ export async function handleFeedFetch(request: Request, env: Env): Promise<Respo
 
   try {
     const headers: HeadersInit = {
-      'User-Agent': 'AT-RSS/1.0 (+https://at-rss.example.com)',
+      'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)',
       Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
     };
 
@@ -587,7 +587,7 @@ export async function handleArticleFetch(request: Request, env: Env): Promise<Re
     // Fetch the feed
     const response = await fetch(feedUrl, {
       headers: {
-        'User-Agent': 'AT-RSS/1.0 (+https://at-rss.example.com)',
+        'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)',
         Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
       },
     });

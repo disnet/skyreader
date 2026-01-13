@@ -6,7 +6,7 @@ interface PreferencesState {
   articleFont: ArticleFont;
 }
 
-const STORAGE_KEY = 'at-rss-preferences';
+const STORAGE_KEY = 'skyreader-preferences';
 
 function createPreferencesStore() {
   let state = $state<PreferencesState>({

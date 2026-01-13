@@ -26,7 +26,7 @@ function createAuthStore() {
     api.setSession(null);
 
     if (browser) {
-      localStorage.removeItem('at-rss-auth');
+      localStorage.removeItem('skyreader-auth');
       // Redirect to login
       window.location.href = '/auth/login';
     }
@@ -34,7 +34,7 @@ function createAuthStore() {
 
   // Restore session from localStorage on init
   if (browser) {
-    const stored = localStorage.getItem('at-rss-auth');
+    const stored = localStorage.getItem('skyreader-auth');
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
@@ -42,7 +42,7 @@ function createAuthStore() {
         state.sessionId = parsed.sessionId;
         api.setSession(parsed.sessionId);
       } catch {
-        localStorage.removeItem('at-rss-auth');
+        localStorage.removeItem('skyreader-auth');
       }
     }
     state.isLoading = false;
@@ -58,7 +58,7 @@ function createAuthStore() {
     api.setSession(sessionId);
 
     if (browser) {
-      localStorage.setItem('at-rss-auth', JSON.stringify({ user, sessionId }));
+      localStorage.setItem('skyreader-auth', JSON.stringify({ user, sessionId }));
     }
   }
 
@@ -74,7 +74,7 @@ function createAuthStore() {
     api.setSession(null);
 
     if (browser) {
-      localStorage.removeItem('at-rss-auth');
+      localStorage.removeItem('skyreader-auth');
       await clearAllData();
     }
   }

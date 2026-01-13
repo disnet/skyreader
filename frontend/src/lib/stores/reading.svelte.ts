@@ -33,7 +33,7 @@ function createReadingStore() {
     for (const { rkey, record } of toEnqueue) {
       await syncQueue.enqueue({
         operation: 'create',
-        collection: 'com.at-rss.feed.readPosition',
+        collection: 'app.skyreader.feed.readPosition',
         rkey,
         record,
       });
@@ -137,7 +137,7 @@ function createReadingStore() {
     if (position.syncStatus === 'synced' && position.rkey) {
       await syncQueue.enqueue({
         operation: 'delete',
-        collection: 'com.at-rss.feed.readPosition',
+        collection: 'app.skyreader.feed.readPosition',
         rkey: position.rkey,
       });
     }
@@ -176,7 +176,7 @@ function createReadingStore() {
 
       await syncQueue.enqueue({
         operation: 'update',
-        collection: 'com.at-rss.feed.readPosition',
+        collection: 'app.skyreader.feed.readPosition',
         rkey: position.rkey,
         record,
       });

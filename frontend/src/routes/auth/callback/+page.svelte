@@ -16,7 +16,7 @@
     }
 
     // Check if we already have a valid session
-    const stored = localStorage.getItem('at-rss-auth');
+    const stored = localStorage.getItem('skyreader-auth');
     if (stored) {
       goto(returnUrl);
       return;

@@ -4,11 +4,11 @@ import { fetchArticleContent } from '../services/jetstream-poller';
 import { fetchAndCacheFeed } from './feeds';
 
 const ALLOWED_COLLECTIONS = [
-  'com.at-rss.feed.subscription',
-  'com.at-rss.feed.readPosition',
-  'com.at-rss.social.share',
-  'com.at-rss.social.follow',
-  'com.at-rss.social.shareReadPosition',
+  'app.skyreader.feed.subscription',
+  'app.skyreader.feed.readPosition',
+  'app.skyreader.social.share',
+  'app.skyreader.social.follow',
+  'app.skyreader.social.shareReadPosition',
 ];
 
 interface ProfileInfo {
@@ -212,7 +212,7 @@ async function hydrateReadPositionsCacheFromPds(
     do {
       const params: Record<string, string> = {
         repo: session.did,
-        collection: 'com.at-rss.feed.readPosition',
+        collection: 'app.skyreader.feed.readPosition',
         limit: '100',
       };
       if (cursor) {
@@ -275,7 +275,7 @@ async function handleReadPositionSync(
   rkey: string,
   record?: Record<string, unknown>
 ): Promise<Response> {
-  const collection = 'com.at-rss.feed.readPosition';
+  const collection = 'app.skyreader.feed.readPosition';
 
   // Ensure cache is hydrated from PDS before checking
   await hydrateReadPositionsCacheFromPds(env, session);
@@ -409,7 +409,7 @@ async function handleShareReadPositionSync(
   rkey: string,
   record?: Record<string, unknown>
 ): Promise<Response> {
-  const collection = 'com.at-rss.social.shareReadPosition';
+  const collection = 'app.skyreader.social.shareReadPosition';
 
   if (operation === 'delete') {
     // For delete, remove from cache and PDS
@@ -586,12 +586,12 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
 
   try {
     // Handle read positions with cache-first deduplication
-    if (collection === 'com.at-rss.feed.readPosition') {
+    if (collection === 'app.skyreader.feed.readPosition') {
       return await handleReadPositionSync(env, session, operation, rkey, record);
     }
 
     // Handle share read positions with cache-first deduplication
-    if (collection === 'com.at-rss.social.shareReadPosition') {
+    if (collection === 'app.skyreader.social.shareReadPosition') {
       return await handleShareReadPositionSync(env, session, operation, rkey, record);
     }
 
@@ -629,7 +629,7 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
     }
 
     // Cache subscription for scheduled feed fetching
-    if (collection === 'com.at-rss.feed.subscription') {
+    if (collection === 'app.skyreader.feed.subscription') {
       const feedRecord = record as { feedUrl: string; title?: string };
       try {
         if (operation === 'create' || operation === 'update') {
@@ -667,7 +667,7 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
     }
 
     // Index shares for social feed
-    if (collection === 'com.at-rss.social.share') {
+    if (collection === 'app.skyreader.social.share') {
       try {
         const recordUri = result.data.uri || `at://${session.did}/${collection}/${rkey}`;
         if (operation === 'create' || operation === 'update') {
@@ -780,7 +780,7 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
     }
 
     // Index in-app follows
-    if (collection === 'com.at-rss.social.follow') {
+    if (collection === 'app.skyreader.social.follow') {
       try {
         const followRecord = record as { subject: string; createdAt: string };
         const recordUri = result.data.uri || `at://${session.did}/${collection}/${rkey}`;
@@ -968,7 +968,7 @@ export async function handleBulkRecordSync(request: Request, env: Env): Promise<
     const applyResult = result.data as unknown as ApplyWritesResponse;
 
     // Cache subscriptions for scheduled feed fetching
-    const subscriptionOps = operations.filter(op => op.collection === 'com.at-rss.feed.subscription');
+    const subscriptionOps = operations.filter(op => op.collection === 'app.skyreader.feed.subscription');
     const feedsToFetch: string[] = [];
 
     for (let i = 0; i < subscriptionOps.length; i++) {

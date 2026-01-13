@@ -78,7 +78,7 @@ export async function fetchArticleContent(env: Env, feedUrl: string, itemGuid: s
     // Not in cache or cache stale, fetch from source
     const response = await fetch(feedUrl, {
       headers: {
-        'User-Agent': 'AT-RSS/1.0 (+https://at-rss.example.com)',
+        'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)',
         Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
       },
     });
@@ -141,7 +141,7 @@ async function processShareEvent(env: Env, event: JetstreamEvent): Promise<void>
 
   const { operation, collection, rkey, record, cid } = commit;
 
-  if (collection !== 'com.at-rss.social.share') return;
+  if (collection !== 'app.skyreader.social.share') return;
 
   const recordUri = `at://${did}/${collection}/${rkey}`;
 
@@ -215,7 +215,7 @@ export async function pollJetstream(env: Env): Promise<PollResult> {
   ).bind('jetstream_cursor').first<{ value: string }>();
 
   const wsUrl = new URL('wss://jetstream2.us-east.bsky.network/subscribe');
-  wsUrl.searchParams.append('wantedCollections', 'com.at-rss.social.share');
+  wsUrl.searchParams.append('wantedCollections', 'app.skyreader.social.share');
 
   // Use existing cursor if available, otherwise establish baseline
   let lastCursor: string;
@@ -299,7 +299,7 @@ export async function pollJetstream(env: Env): Promise<PollResult> {
           }
 
           // Process the event
-          if (data.kind === 'commit' && data.commit?.collection === 'com.at-rss.social.share') {
+          if (data.kind === 'commit' && data.commit?.collection === 'app.skyreader.social.share') {
             await processShareEvent(env, data);
             processed++;
           }

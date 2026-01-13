@@ -1,7 +1,7 @@
 import Dexie, { type Table } from 'dexie';
 import type { Subscription, Article, ReadPosition, ShareReadPosition, SocialShare, UserShare, SyncQueueItem } from '$lib/types';
 
-class ATRSSDatabase extends Dexie {
+class SkyreaderDatabase extends Dexie {
   subscriptions!: Table<Subscription>;
   articles!: Table<Article>;
   readPositions!: Table<ReadPosition>;
@@ -11,7 +11,7 @@ class ATRSSDatabase extends Dexie {
   syncQueue!: Table<SyncQueueItem>;
 
   constructor() {
-    super('at-rss');
+    super('skyreader');
 
     this.version(1).stores({
       subscriptions: '++id, atUri, rkey, feedUrl, category, syncStatus, localUpdatedAt',
@@ -48,7 +48,7 @@ class ATRSSDatabase extends Dexie {
   }
 }
 
-export const db = new ATRSSDatabase();
+export const db = new SkyreaderDatabase();
 
 // Helper to check if article is read
 export async function isArticleRead(articleGuid: string): Promise<boolean> {

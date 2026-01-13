@@ -73,7 +73,7 @@ function createShareReadingStore() {
 
     await syncQueue.enqueue({
       operation: 'create',
-      collection: 'com.at-rss.social.shareReadPosition',
+      collection: 'app.skyreader.social.shareReadPosition',
       rkey,
       record,
     });
@@ -94,7 +94,7 @@ function createShareReadingStore() {
     if (position.syncStatus === 'synced' && position.rkey) {
       await syncQueue.enqueue({
         operation: 'delete',
-        collection: 'com.at-rss.social.shareReadPosition',
+        collection: 'app.skyreader.social.shareReadPosition',
         rkey: position.rkey,
       });
     }

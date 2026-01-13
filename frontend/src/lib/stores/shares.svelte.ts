@@ -103,7 +103,7 @@ function createSharesStore() {
 
     await syncQueue.enqueue({
       operation: 'create',
-      collection: 'com.at-rss.social.share',
+      collection: 'app.skyreader.social.share',
       rkey,
       record,
     });
@@ -126,7 +126,7 @@ function createSharesStore() {
     if (existingShare.syncStatus === 'synced' && existingShare.rkey) {
       await syncQueue.enqueue({
         operation: 'delete',
-        collection: 'com.at-rss.social.share',
+        collection: 'app.skyreader.social.share',
         rkey: existingShare.rkey,
       });
     }

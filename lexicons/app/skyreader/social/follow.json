@@ -1,10 +1,10 @@
 {
   "lexicon": 1,
-  "id": "com.at-rss.social.follow",
+  "id": "app.skyreader.social.follow",
   "defs": {
     "main": {
       "type": "record",
-      "description": "An in-app follow relationship to another AT-RSS user",
+      "description": "An in-app follow relationship to another Skyreader user",
       "key": "tid",
       "record": {
         "type": "object",

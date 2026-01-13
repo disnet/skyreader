@@ -68,7 +68,7 @@ const IDLE_TIMEOUT_MS = 2000; // 2 seconds without events = caught up
 
 async function processInappFollowEvent(env: Env, event: JetstreamInappFollowEvent): Promise<void> {
   const { did: followerDid, commit } = event;
-  if (!commit || commit.collection !== 'com.at-rss.social.follow') return;
+  if (!commit || commit.collection !== 'app.skyreader.social.follow') return;
 
   const { operation, rkey, record } = commit;
 
@@ -79,7 +79,7 @@ async function processInappFollowEvent(env: Env, event: JetstreamInappFollowEven
     await env.DB.prepare(`
       INSERT OR REPLACE INTO inapp_follows (follower_did, following_did, rkey, record_uri, created_at)
       VALUES (?, ?, ?, ?, unixepoch())
-    `).bind(followerDid, followingDid, rkey, `at://${followerDid}/com.at-rss.social.follow/${rkey}`).run();
+    `).bind(followerDid, followingDid, rkey, `at://${followerDid}/app.skyreader.social.follow/${rkey}`).run();
 
     // Fetch profile info for the followed user
     const profile = await fetchProfileInfo(followingDid);
@@ -123,7 +123,7 @@ export async function pollJetstreamInappFollows(env: Env): Promise<InappFollowsP
   ).bind('jetstream_inapp_follows_cursor').first<{ value: string }>();
 
   const wsUrl = new URL('wss://jetstream2.us-east.bsky.network/subscribe');
-  wsUrl.searchParams.append('wantedCollections', 'com.at-rss.social.follow');
+  wsUrl.searchParams.append('wantedCollections', 'app.skyreader.social.follow');
 
   // Use existing cursor if available, otherwise establish baseline
   let lastCursor: string;
@@ -211,7 +211,7 @@ export async function pollJetstreamInappFollows(env: Env): Promise<InappFollowsP
           }
 
           // Process the event
-          if (data.kind === 'commit' && data.commit?.collection === 'com.at-rss.social.follow') {
+          if (data.kind === 'commit' && data.commit?.collection === 'app.skyreader.social.follow') {
             await processInappFollowEvent(env, data);
             processed++;
           }

@@ -21,7 +21,7 @@ function createSubscriptionsStore() {
 
   // Listen for sync completions and update local state
   syncQueue.onSyncComplete(async (collection, rkey) => {
-    if (collection === 'com.at-rss.feed.subscription') {
+    if (collection === 'app.skyreader.feed.subscription') {
       const sub = await db.subscriptions.where('rkey').equals(rkey).first();
       if (sub) {
         subscriptions = subscriptions.map((s) =>
@@ -95,7 +95,7 @@ function createSubscriptionsStore() {
 
     await syncQueue.enqueue({
       operation: 'create',
-      collection: 'com.at-rss.feed.subscription',
+      collection: 'app.skyreader.feed.subscription',
       rkey,
       record: {
         feedUrl,
@@ -177,7 +177,7 @@ function createSubscriptionsStore() {
       try {
         const operations = localRecords.map(({ rkey, feed }) => ({
           operation: 'create' as const,
-          collection: 'com.at-rss.feed.subscription',
+          collection: 'app.skyreader.feed.subscription',
           rkey,
           record: {
             feedUrl: feed.feedUrl,
@@ -212,7 +212,7 @@ function createSubscriptionsStore() {
         for (const { rkey, feed } of localRecords) {
           await syncQueue.enqueue({
             operation: 'create',
-            collection: 'com.at-rss.feed.subscription',
+            collection: 'app.skyreader.feed.subscription',
             rkey,
             record: {
               feedUrl: feed.feedUrl,
@@ -264,7 +264,7 @@ function createSubscriptionsStore() {
     const pendingCreateItems = await db.syncQueue
       .where('rkey')
       .equals(sub.rkey)
-      .filter((item) => item.operation === 'create' && item.collection === 'com.at-rss.feed.subscription')
+      .filter((item) => item.operation === 'create' && item.collection === 'app.skyreader.feed.subscription')
       .toArray();
 
     if (pendingCreateItems.length > 0) {
@@ -284,7 +284,7 @@ function createSubscriptionsStore() {
       // Enqueue an update operation to ensure PDS gets the latest data
       await syncQueue.enqueue({
         operation: 'update',
-        collection: 'com.at-rss.feed.subscription',
+        collection: 'app.skyreader.feed.subscription',
         rkey: sub.rkey,
         record: updatedRecord,
       });
@@ -303,7 +303,7 @@ function createSubscriptionsStore() {
     if (sub.syncStatus === 'synced') {
       await syncQueue.enqueue({
         operation: 'delete',
-        collection: 'com.at-rss.feed.subscription',
+        collection: 'app.skyreader.feed.subscription',
         rkey: sub.rkey,
       });
     }
@@ -474,7 +474,7 @@ function createSubscriptionsStore() {
         tags?: string[];
         createdAt: string;
         updatedAt?: string;
-      }>('com.at-rss.feed.subscription');
+      }>('app.skyreader.feed.subscription');
 
       // Get existing local subscriptions
       const localSubs = await db.subscriptions.toArray();

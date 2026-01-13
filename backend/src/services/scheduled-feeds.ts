@@ -119,7 +119,7 @@ async function fetchAndCacheFeed(
   timings.metaQuery = Date.now() - startTime;
 
   const headers: HeadersInit = {
-    'User-Agent': 'AT-RSS/1.0 (+https://at-rss.example.com)',
+    'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)',
     Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
   };
 

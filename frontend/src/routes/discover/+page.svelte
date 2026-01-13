@@ -42,7 +42,7 @@
   <div class="page-header">
     <div class="header-content">
       <h1>Discover</h1>
-      <p class="subtitle">Find active AT-RSS users to follow</p>
+      <p class="subtitle">Find active Skyreader users to follow</p>
     </div>
     <button class="btn btn-secondary" onclick={shuffle} disabled={socialStore.isDiscoverLoading}>
       {socialStore.isDiscoverLoading ? 'Loading...' : 'Shuffle'}

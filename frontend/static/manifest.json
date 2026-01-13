@@ -1,6 +1,6 @@
 {
-  "name": "AT-RSS Reader",
-  "short_name": "AT-RSS",
+  "name": "Skyreader",
+  "short_name": "Skyreader",
   "description": "A decentralized RSS reader built on AT Protocol",
   "start_url": "/",
   "display": "standalone",

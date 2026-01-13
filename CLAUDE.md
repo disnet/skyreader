@@ -1,8 +1,8 @@
-# AT-RSS Development Guide
+# Skyreader Development Guide
 
 ## Project Overview
 
-AT-RSS is a decentralized RSS reader using the AT Protocol (Bluesky's underlying protocol) for data storage. Users authenticate with their Bluesky account and their data is stored in their Personal Data Server (PDS).
+Skyreader is a decentralized RSS reader using the AT Protocol (Bluesky's underlying protocol) for data storage. Users authenticate with their Bluesky account and their data is stored in their Personal Data Server (PDS).
 
 ## Key Concepts
 
@@ -12,7 +12,7 @@ AT-RSS is a decentralized RSS reader using the AT Protocol (Bluesky's underlying
 - **Handle**: Human-readable username (e.g., `user.bsky.social`)
 - **PDS**: Personal Data Server - where user data is stored
 - **Lexicon**: Schema definition language for record types (like JSON Schema)
-- **NSID**: Namespaced identifier for schemas (e.g., `com.at-rss.feed.subscription`)
+- **NSID**: Namespaced identifier for schemas (e.g., `app.skyreader.feed.subscription`)
 
 ### OAuth Requirements
 
@@ -77,7 +77,7 @@ See [backend/ARCHITECTURE.md](backend/ARCHITECTURE.md) for detailed backend docu
 
 ### Lexicon Schemas
 
-Located in `lexicons/com/at-rss/`:
+Located in `lexicons/app/skyreader/`:
 
 ```
 feed/subscription.json  - RSS feed subscription
@@ -104,7 +104,7 @@ social/share.json       - Shared article
 
 ### Adding a New Lexicon Field
 
-1. Update schema in `lexicons/com/at-rss/...`
+1. Update schema in `lexicons/app/skyreader/...`
 2. Update TypeScript types in `frontend/src/lib/types/index.ts`
 3. Update Dexie schema version in `frontend/src/lib/services/db.ts`
 4. Update relevant store and components
@@ -133,10 +133,10 @@ social/share.json       - Shared article
 
 ## Deployment Checklist
 
-1. Create D1 database: `npx wrangler d1 create at-rss`
+1. Create D1 database: `npx wrangler d1 create skyreader`
 2. Create KV namespaces: `npx wrangler kv namespace create FEED_CACHE` (and SESSION_CACHE)
 3. Update `wrangler.toml` with resource IDs
-4. Run migration: `npx wrangler d1 execute at-rss --remote --file=migrations/0001_initial.sql`
+4. Run migration: `npx wrangler d1 execute skyreader --remote --file=migrations/0001_initial.sql`
 5. Deploy backend: `npx wrangler deploy`
 6. Update frontend `.env` with backend URL
 7. Build frontend: `npm run build`

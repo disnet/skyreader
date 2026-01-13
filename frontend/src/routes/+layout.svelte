@@ -193,7 +193,7 @@
 <svelte:window onkeydown={keyboardStore.handleKeydown} />
 
 <svelte:head>
-  <title>AT-RSS</title>
+  <title>Skyreader</title>
   <meta name="description" content="A decentralized RSS reader built on AT Protocol" />
   <link rel="manifest" href="/manifest.json" />
   <meta name="theme-color" content="#0066cc" />
@@ -216,7 +216,7 @@
     {:else}
       <header class="header-full">
         <div class="header-content">
-          <a href="/" class="logo">AT-RSS</a>
+          <a href="/" class="logo">Skyreader</a>
           <a href="/auth/login" class="login-btn">Login</a>
         </div>
       </header>

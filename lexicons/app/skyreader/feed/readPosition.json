@@ -1,6 +1,6 @@
 {
   "lexicon": 1,
-  "id": "com.at-rss.feed.readPosition",
+  "id": "app.skyreader.feed.readPosition",
   "defs": {
     "main": {
       "type": "record",

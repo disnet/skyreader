@@ -5,7 +5,7 @@ import { build, files, version } from '$service-worker';
 
 declare const self: ServiceWorkerGlobalScope;
 
-const CACHE_NAME = `at-rss-${version}`;
+const CACHE_NAME = `skyreader-${version}`;
 const STATIC_ASSETS = [...build, ...files];
 
 // API routes to cache with network-first strategy

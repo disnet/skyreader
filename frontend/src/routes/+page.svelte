@@ -637,7 +637,7 @@
 
 {#if !auth.isAuthenticated}
   <div class="welcome">
-    <h1>Welcome to AT-RSS</h1>
+    <h1>Welcome to Skyreader</h1>
     <p>A decentralized RSS reader built on the AT Protocol.</p>
     <ul class="features">
       <li>Store your subscriptions in your own data server</li>
