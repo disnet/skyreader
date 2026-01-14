@@ -27,11 +27,11 @@ deleted_classes = ["JetstreamConsumer"]
 [[d1_databases]]
 binding = "DB"
 database_name = "skyreader"
-database_id = "9ee50bac-d79c-4df7-8c09-6adb9d8940d2"
+database_id = "94dbfd9e-3e55-4551-a812-75ce4bc8339f"
 
 # Environment variables
 [vars]
-FRONTEND_URL = "http://127.0.0.1:5173"
+FRONTEND_URL = "https://skyreader.pages.dev"
 
 # Cron Triggers - run every minute for Jetstream polling
 [triggers]

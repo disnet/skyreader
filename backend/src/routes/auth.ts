@@ -328,14 +328,12 @@ export async function handleAuthCallback(request: Request, env: Env, ctx: Execut
       expiresAt: Date.now() + tokenData.expires_in * 1000,
     };
 
-    await storeSession(env, sessionId, session);
-
     // Check if user has logged in before (pds_url is empty for users added via follow sync)
     const existingUser = await env.DB.prepare(
       'SELECT did, pds_url FROM users WHERE did = ?'
     ).bind(oauthState.did).first<{ did: string; pds_url: string }>();
 
-    // Store/update user in D1 (use ON CONFLICT to avoid CASCADE DELETE from INSERT OR REPLACE)
+    // Store/update user in D1 BEFORE storing session (sessions table has FK to users)
     await env.DB.prepare(`
       INSERT INTO users (did, handle, display_name, avatar_url, pds_url, updated_at)
       VALUES (?, ?, ?, ?, ?, unixepoch())
@@ -346,6 +344,9 @@ export async function handleAuthCallback(request: Request, env: Env, ctx: Execut
         pds_url = excluded.pds_url,
         updated_at = unixepoch()
     `).bind(oauthState.did, handle, displayName || null, avatarUrl || null, oauthState.pdsUrl).run();
+
+    // Now store session (after user exists in DB due to FK constraint)
+    await storeSession(env, sessionId, session);
 
     // For new users: sync their existing follows from PDS
     // Also sync if user exists but never logged in (added via someone else's follow sync)
