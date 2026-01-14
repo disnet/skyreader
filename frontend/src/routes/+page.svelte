@@ -452,6 +452,31 @@
     allArticles = await subscriptionsStore.getAllArticles();
   }
 
+  // Mark all articles in current feed as read
+  async function markAllAsReadInCurrentFeed() {
+    if (!feedFilter) return;
+
+    const feedId = parseInt(feedFilter);
+    const sub = subscriptionsStore.subscriptions.find(s => s.id === feedId);
+    if (!sub) return;
+
+    // Get ALL articles for this feed (not just displayed/filtered)
+    const allFeedArticles = await subscriptionsStore.getArticles(feedId);
+
+    const articlesToMark = allFeedArticles
+      .filter((a) => !readingStore.isRead(a.guid))
+      .map((a) => ({
+        subscriptionAtUri: sub.atUri,
+        articleGuid: a.guid,
+        articleUrl: a.url,
+        articleTitle: a.title,
+      }));
+
+    if (articlesToMark.length > 0) {
+      await readingStore.markAllAsRead(articlesToMark);
+    }
+  }
+
   // Register keyboard shortcuts
   onMount(() => {
     // Navigation shortcuts
@@ -567,6 +592,15 @@
       action: refreshView,
       condition: () => auth.isAuthenticated,
     });
+
+    keyboardStore.register({
+      key: 'A',
+      shift: true,
+      description: 'Mark all as read',
+      category: 'Article',
+      action: markAllAsReadInCurrentFeed,
+      condition: () => auth.isAuthenticated && !!feedFilter,
+    });
   });
 
   // Unregister shortcuts when component unmounts
@@ -582,6 +616,7 @@
     keyboardStore.unregister('m');
     keyboardStore.unregister('u');
     keyboardStore.unregister('r');
+    keyboardStore.unregister('A', true);
   });
 
   async function selectItem(index: number) {
@@ -657,6 +692,11 @@
         {#if feedFilter}
           <PopoverMenu
             items={[
+              {
+                label: 'Mark all as read',
+                icon: '✓',
+                onclick: markAllAsReadInCurrentFeed,
+              },
               {
                 label: 'Delete',
                 icon: '🗑',

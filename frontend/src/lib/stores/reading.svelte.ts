@@ -122,6 +122,66 @@ function createReadingStore() {
     scheduleFlush();
   }
 
+  async function markAllAsRead(
+    articles: Array<{
+      subscriptionAtUri: string;
+      articleGuid: string;
+      articleUrl: string;
+      articleTitle?: string;
+    }>
+  ) {
+    // Filter out already-read articles
+    const unreadArticles = articles.filter(a => !readPositions.has(a.articleGuid));
+    if (unreadArticles.length === 0) return;
+
+    const now = new Date().toISOString();
+
+    // Create ReadPosition objects for each unread article
+    for (const article of unreadArticles) {
+      const rkey = generateTid();
+      const position: Omit<ReadPosition, 'id'> = {
+        rkey,
+        subscriptionAtUri: article.subscriptionAtUri,
+        articleGuid: article.articleGuid,
+        articleUrl: article.articleUrl,
+        articleTitle: article.articleTitle,
+        readAt: now,
+        starred: false,
+        syncStatus: 'pending',
+      };
+
+      // Update map immediately
+      readPositions.set(article.articleGuid, { ...position });
+
+      // Store in DB
+      const id = await db.readPositions.add(position);
+      readPositions.set(article.articleGuid, { ...position, id });
+
+      // Build sync record
+      const record: Record<string, unknown> = {
+        itemGuid: article.articleGuid,
+        readAt: now,
+        starred: false,
+      };
+      if (article.subscriptionAtUri?.startsWith('at://')) {
+        record.subscriptionUri = article.subscriptionAtUri;
+      }
+      if (article.articleUrl?.startsWith('http')) {
+        record.itemUrl = article.articleUrl;
+      }
+      if (article.articleTitle) {
+        record.itemTitle = article.articleTitle;
+      }
+      pendingReads.push({ rkey, record });
+    }
+
+    // Trigger reactivity
+    readPositions = new Map(readPositions);
+
+    // Flush immediately for bulk operations
+    await flushPendingReads();
+  }
+
   async function markAsUnread(articleGuid: string) {
     const position = readPositions.get(articleGuid);
     if (!position || !position.id) return;
@@ -203,6 +263,7 @@ function createReadingStore() {
     isRead,
     isStarred,
     markAsRead,
+    markAllAsRead,
     markAsUnread,
     toggleStar,
     getStarredArticles,
