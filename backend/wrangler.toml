@@ -31,7 +31,7 @@ database_id = "94dbfd9e-3e55-4551-a812-75ce4bc8339f"
 
 # Environment variables
 [vars]
-FRONTEND_URL = "https://skyreader.pages.dev"
+FRONTEND_URL = "https://skyreader.app"
 
 # Cron Triggers - run every minute for Jetstream polling
 [triggers]

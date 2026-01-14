@@ -70,7 +70,7 @@ jobs:
       - name: Build
         working-directory: frontend
         env:
-          VITE_API_URL: https://skyreader-api.tim-54a.workers.dev
+          VITE_API_URL: https://api.skyreader.app
         run: npm run build
 
       - name: Deploy to Cloudflare Pages
