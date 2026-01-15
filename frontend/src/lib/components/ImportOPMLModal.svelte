@@ -1,6 +1,6 @@
 <script lang="ts">
     import { parseOPMLFile, type OPMLFeed } from "$lib/utils/opml-parser";
-    import { subscriptionsStore } from "$lib/stores/subscriptions.svelte";
+    import { subscriptionsStore, MAX_SUBSCRIPTIONS } from "$lib/stores/subscriptions.svelte";
     import Modal from "$lib/components/common/Modal.svelte";
 
     interface Props {
@@ -17,8 +17,14 @@
     let selectedUrls: Set<string> = $state(new Set());
     let existingUrls: Set<string> = $state(new Set());
     let progress = $state({ current: 0, total: 0 });
-    let results = $state({ added: 0, skipped: 0, failed: [] as string[] });
+    let results = $state({ added: 0, skipped: 0, failed: [] as string[], truncated: 0 });
     let fileInput: HTMLInputElement | undefined = $state();
+
+    const availableSlots = $derived(MAX_SUBSCRIPTIONS - subscriptionsStore.subscriptions.length);
+    const selectedNonDuplicates = $derived(
+        [...selectedUrls].filter((url) => !existingUrls.has(url.toLowerCase())).length
+    );
+    const willExceedLimit = $derived(selectedNonDuplicates > availableSlots);
 
     function reset() {
         modalState = "select";
@@ -27,7 +33,7 @@
         selectedUrls = new Set();
         existingUrls = new Set();
         progress = { current: 0, total: 0 };
-        results = { added: 0, skipped: 0, failed: [] };
+        results = { added: 0, skipped: 0, failed: [], truncated: 0 };
         if (fileInput) fileInput.value = "";
     }
 
@@ -98,6 +104,7 @@
             added: result.added.length,
             skipped: result.skipped.length,
             failed: result.failed.map((f) => f.url),
+            truncated: result.truncated,
         };
 
         modalState = "complete";
@@ -153,6 +160,16 @@
                 <button class="link-btn" onclick={selectNone}>Select none</button>
             </div>
         </div>
+        {#if willExceedLimit}
+            <div class="limit-warning">
+                You can only add {availableSlots} more feed{availableSlots === 1 ? "" : "s"} (limit: {MAX_SUBSCRIPTIONS}).
+                {#if availableSlots > 0}
+                    The first {availableSlots} will be imported.
+                {:else}
+                    Remove some existing feeds to import new ones.
+                {/if}
+            </div>
+        {/if}
         <ul class="feed-list">
             {#each parsedFeeds as feed}
                 {@const duplicate = isDuplicate(feed.feedUrl)}
@@ -203,6 +220,10 @@
             {#if results.skipped > 0}
                 <dt>Skipped (duplicates)</dt>
                 <dd>{results.skipped}</dd>
+            {/if}
+            {#if results.truncated > 0}
+                <dt>Not imported (limit reached)</dt>
+                <dd>{results.truncated}</dd>
             {/if}
             {#if results.failed.length > 0}
                 <dt>Failed</dt>
@@ -272,6 +293,15 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
+        margin-bottom: 1rem;
+    }
+
+    .limit-warning {
+        background: var(--color-warning-bg, #fef3c7);
+        color: var(--color-warning-text, #92400e);
+        padding: 0.75rem;
+        border-radius: 4px;
+        font-size: 0.875rem;
         margin-bottom: 1rem;
     }
 

@@ -11,6 +11,8 @@ const ALLOWED_COLLECTIONS = [
   'app.skyreader.social.shareReadPosition',
 ];
 
+const MAX_SUBSCRIPTIONS = 100;
+
 interface ProfileInfo {
   handle: string;
   displayName?: string;
@@ -524,6 +526,39 @@ async function handleShareReadPositionSync(
   });
 }
 
+async function countUserSubscriptions(
+  session: { did: string; pdsUrl: string; accessToken: string; dpopPrivateKey: string }
+): Promise<number> {
+  let count = 0;
+  let cursor: string | undefined;
+
+  do {
+    const params: Record<string, string> = {
+      repo: session.did,
+      collection: 'app.skyreader.feed.subscription',
+      limit: '100',
+    };
+
+    if (cursor) {
+      params.cursor = cursor;
+    }
+
+    const result = await makePdsGetRequest<{
+      records: Array<{ uri: string; cid: string; value: Record<string, unknown> }>;
+      cursor?: string;
+    }>(session, 'com.atproto.repo.listRecords', params);
+
+    if (!result.ok) {
+      throw new Error('Failed to count subscriptions');
+    }
+
+    count += result.data.records.length;
+    cursor = result.data.cursor;
+  } while (cursor);
+
+  return count;
+}
+
 export async function handleRecordSync(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
@@ -582,6 +617,27 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+
+  // Check subscription limit for creates
+  if (operation === 'create' && collection === 'app.skyreader.feed.subscription') {
+    try {
+      const currentCount = await countUserSubscriptions(session);
+      if (currentCount >= MAX_SUBSCRIPTIONS) {
+        return new Response(JSON.stringify({
+          error: 'subscription_limit_reached',
+          message: `You have reached the maximum of ${MAX_SUBSCRIPTIONS} feed subscriptions.`,
+          limit: MAX_SUBSCRIPTIONS,
+          current: currentCount,
+        }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    } catch (countError) {
+      console.error('Failed to check subscription count:', countError);
+      // Continue anyway - don't block user if count check fails
+    }
   }
 
   try {
@@ -923,6 +979,36 @@ export async function handleBulkRecordSync(request: Request, env: Env): Promise<
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       });
+    }
+  }
+
+  // Check subscription limit for bulk creates
+  const subscriptionCreates = operations.filter(
+    op => op.operation === 'create' && op.collection === 'app.skyreader.feed.subscription'
+  );
+
+  if (subscriptionCreates.length > 0) {
+    try {
+      const currentCount = await countUserSubscriptions(session);
+      const totalAfterImport = currentCount + subscriptionCreates.length;
+
+      if (totalAfterImport > MAX_SUBSCRIPTIONS) {
+        const available = Math.max(0, MAX_SUBSCRIPTIONS - currentCount);
+        return new Response(JSON.stringify({
+          error: 'subscription_limit_exceeded',
+          message: `Adding ${subscriptionCreates.length} feeds would exceed the maximum of ${MAX_SUBSCRIPTIONS}.`,
+          limit: MAX_SUBSCRIPTIONS,
+          current: currentCount,
+          requested: subscriptionCreates.length,
+          available,
+        }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    } catch (countError) {
+      console.error('Failed to check subscription count:', countError);
+      // Continue anyway - don't block user if count check fails
     }
   }
 
