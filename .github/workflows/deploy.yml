@@ -70,10 +70,17 @@ jobs:
         working-directory: backend
         run: npm ci
 
+      - name: Bootstrap D1 migrations table (staging)
+        if: needs.changes.outputs.environment == 'staging'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: backend
+          command: d1 execute skyreader-staging --env=staging --remote --file=migrations/0000_bootstrap.sql
+
       - name: Run D1 migrations (staging)
         if: needs.changes.outputs.environment == 'staging'
-        continue-on-error: true
-        id: migrations-staging
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -90,10 +97,17 @@ jobs:
           workingDirectory: backend
           command: deploy --env=staging
 
+      - name: Bootstrap D1 migrations table (production)
+        if: needs.changes.outputs.environment != 'staging'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: backend
+          command: d1 execute skyreader --remote --file=migrations/0000_bootstrap.sql
+
       - name: Run D1 migrations (production)
         if: needs.changes.outputs.environment != 'staging'
-        continue-on-error: true
-        id: migrations-production
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
