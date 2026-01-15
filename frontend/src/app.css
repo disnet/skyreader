@@ -20,7 +20,7 @@
   --font-serif: Georgia, Cambria, 'Times New Roman', Times, serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
   --article-font: var(--font-sans-serif);
-  --article-font-size: 0.9375rem;
+  --article-font-size: 1rem;
 
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
   line-height: 1.5;
@@ -172,14 +172,22 @@ body.sidebar-open-mobile {
 }
 
 /* Article font size preference */
-:root[data-article-font-size="small"] {
-  --article-font-size: 0.8125rem;
+:root[data-article-font-size="xs"] {
+  --article-font-size: 0.75rem;
 }
 
-:root[data-article-font-size="medium"] {
-  --article-font-size: 0.9375rem;
+:root[data-article-font-size="sm"] {
+  --article-font-size: 0.875rem;
 }
 
-:root[data-article-font-size="large"] {
-  --article-font-size: 1.0625rem;
+:root[data-article-font-size="md"] {
+  --article-font-size: 1rem;
+}
+
+:root[data-article-font-size="lg"] {
+  --article-font-size: 1.125rem;
+}
+
+:root[data-article-font-size="xl"] {
+  --article-font-size: 1.25rem;
 }

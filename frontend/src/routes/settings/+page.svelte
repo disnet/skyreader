@@ -14,9 +14,11 @@
   ];
 
   const fontSizeOptions: { value: ArticleFontSize; label: string }[] = [
-    { value: 'small', label: 'Small' },
-    { value: 'medium', label: 'Medium' },
-    { value: 'large', label: 'Large' },
+    { value: 'xs', label: 'XS' },
+    { value: 'sm', label: 'S' },
+    { value: 'md', label: 'M' },
+    { value: 'lg', label: 'L' },
+    { value: 'xl', label: 'XL' },
   ];
 
   let showImportModal = $state(false);
@@ -172,7 +174,7 @@
             class:selected={preferences.articleFontSize === option.value}
             onclick={() => preferences.setArticleFontSize(option.value)}
           >
-            <span class="font-size-preview" class:small={option.value === 'small'} class:large={option.value === 'large'}>Aa</span>
+            <span class="font-size-preview" data-size={option.value}>Aa</span>
             <span class="font-label">{option.label}</span>
           </button>
         {/each}
@@ -413,15 +415,26 @@
   }
 
   .font-size-preview {
-    font-size: 1.25rem;
     line-height: 1;
   }
 
-  .font-size-preview.small {
+  .font-size-preview[data-size="xs"] {
+    font-size: 0.875rem;
+  }
+
+  .font-size-preview[data-size="sm"] {
     font-size: 1rem;
   }
 
-  .font-size-preview.large {
-    font-size: 1.5rem;
+  .font-size-preview[data-size="md"] {
+    font-size: 1.125rem;
+  }
+
+  .font-size-preview[data-size="lg"] {
+    font-size: 1.25rem;
+  }
+
+  .font-size-preview[data-size="xl"] {
+    font-size: 1.375rem;
   }
 </style>

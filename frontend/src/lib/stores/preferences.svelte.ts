@@ -1,9 +1,9 @@
 import { browser } from '$app/environment';
 
 export type ArticleFont = 'sans-serif' | 'serif' | 'mono';
-export type ArticleFontSize = 'small' | 'medium' | 'large';
+export type ArticleFontSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
-const FONT_SIZE_ORDER: ArticleFontSize[] = ['small', 'medium', 'large'];
+const FONT_SIZE_ORDER: ArticleFontSize[] = ['xs', 'sm', 'md', 'lg', 'xl'];
 
 interface PreferencesState {
   articleFont: ArticleFont;
@@ -15,7 +15,7 @@ const STORAGE_KEY = 'skyreader-preferences';
 function createPreferencesStore() {
   let state = $state<PreferencesState>({
     articleFont: 'sans-serif',
-    articleFontSize: 'medium',
+    articleFontSize: 'md',
   });
 
   // Restore from localStorage on init
@@ -69,7 +69,7 @@ function createPreferencesStore() {
   }
 
   function resetFontSize() {
-    state.articleFontSize = 'medium';
+    state.articleFontSize = 'md';
     save();
   }
 
