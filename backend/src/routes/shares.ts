@@ -170,13 +170,17 @@ async function hydrateSharesCacheFromPds(
 
 // GET /api/shares/my - Get user's own shares
 export async function handleGetMyShares(request: Request, env: Env): Promise<Response> {
+  console.log('[shares/my] Request received');
   const session = await getSessionFromRequest(request, env);
   if (!session) {
+    console.log('[shares/my] No session found');
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
   }
+
+  console.log(`[shares/my] Session found for user: ${session.did}`);
 
   try {
     // Hydrate from PDS if D1 cache is empty
@@ -191,6 +195,8 @@ export async function handleGetMyShares(request: Request, env: Env): Promise<Res
       WHERE author_did = ?
       ORDER BY created_at DESC
     `).bind(session.did).all<UserShareRow>();
+
+    console.log(`[shares/my] Found ${result.results.length} shares in D1 for ${session.did}`);
 
     const shares = result.results.map((row) => ({
       recordUri: row.record_uri,
