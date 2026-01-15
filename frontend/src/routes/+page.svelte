@@ -14,7 +14,8 @@
     import ShareCard from "$lib/components/ShareCard.svelte";
     import EmptyState from "$lib/components/EmptyState.svelte";
     import LoadingState from "$lib/components/LoadingState.svelte";
-    import PopoverMenu from "$lib/components/PopoverMenu.svelte";
+    import WelcomePage from "$lib/components/feed/WelcomePage.svelte";
+    import FeedPageHeader from "$lib/components/feed/FeedPageHeader.svelte";
     import { goto } from "$app/navigation";
     import type {
         Article,
@@ -754,71 +755,19 @@
 </script>
 
 {#if !auth.isAuthenticated}
-    <div class="welcome">
-        <div class="title-row">
-            <h1>Welcome to Skyreader</h1>
-            <span class="beta-badge">BETA</span>
-        </div>
-        <p>A decentralized RSS reader built on the AT Protocol.</p>
-        <ul class="features">
-            <li>Store your subscriptions in your own data server</li>
-            <li>Share articles with your followers</li>
-            <li>Works offline with automatic sync</li>
-            <li>
-                <em
-                    >Vibe coded in an afternoon by <a
-                        href="https://bsky.app/profile/disnetdev.com">@disnetdev.com</a
-                    > so maybe don't trust it just yet</em
-                >
-            </li>
-        </ul>
-        <div class="cta">
-            <a href="/auth/login" class="btn btn-primary">Login with Bluesky</a>
-        </div>
-    </div>
+    <WelcomePage />
 {:else}
     <div class="feed-page">
-        <div class="feed-header">
-            <button
-                class="mobile-menu-btn"
-                onclick={() => sidebarStore.toggleMobile()}
-                aria-label="Open menu"
-            >
-                &lt;
-            </button>
-            <div class="feed-title-group">
-                <h1>{pageTitle}</h1>
-                {#if feedFilter}
-                    <PopoverMenu
-                        items={[
-                            {
-                                label: "Mark all as read",
-                                icon: "✓",
-                                onclick: markAllAsReadInCurrentFeed,
-                            },
-                            {
-                                label: "Delete",
-                                icon: "🗑",
-                                variant: "danger",
-                                onclick: () => removeFeed(parseInt(feedFilter)),
-                            },
-                        ]}
-                    />
-                {/if}
-            </div>
-            {#if !starredFilter && !sharedFilter}
-                <div class="view-toggle">
-                    <button
-                        class:active={showOnlyUnread}
-                        onclick={() => (showOnlyUnread = true)}>Unread</button
-                    >
-                    <button
-                        class:active={!showOnlyUnread}
-                        onclick={() => (showOnlyUnread = false)}>All</button
-                    >
-                </div>
-            {/if}
-        </div>
+        <FeedPageHeader
+            title={pageTitle}
+            feedId={feedFilter ? parseInt(feedFilter) : undefined}
+            showViewToggle={!starredFilter && !sharedFilter}
+            {showOnlyUnread}
+            onToggleUnread={(value) => (showOnlyUnread = value)}
+            onMarkAllAsRead={feedFilter ? markAllAsReadInCurrentFeed : undefined}
+            onDelete={feedFilter ? () => removeFeed(parseInt(feedFilter)) : undefined}
+            onMobileMenuToggle={() => sidebarStore.toggleMobile()}
+        />
 
         {#if isLoading && currentItems.length === 0}
             <LoadingState />
@@ -1167,156 +1116,9 @@
 {/if}
 
 <style>
-    .welcome {
-        max-width: 600px;
-        margin: 4rem auto;
-        text-align: center;
-    }
-
-    .title-row {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.75rem;
-        justify-content: center;
-        margin-bottom: 1rem;
-    }
-
-    .welcome h1 {
-        font-size: 2.5rem;
-        margin-bottom: 0;
-    }
-
-    /* Web 2.0 style beta badge */
-    .beta-badge {
-        position: relative;
-        padding: 4px 12px;
-        font-size: 0.7rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        color: white;
-        background: linear-gradient(180deg, #ff6b6b 0%, #ee2222 50%, #cc0000 100%);
-        border-radius: 4px;
-        transform: rotate(12deg);
-        box-shadow:
-            0 2px 4px rgba(0, 0, 0, 0.3),
-            inset 0 1px 0 rgba(255, 255, 255, 0.4);
-        border: 1px solid #aa0000;
-    }
-
-    /* Glossy highlight effect */
-    .beta-badge::before {
-        content: "";
-        position: absolute;
-        top: 1px;
-        left: 2px;
-        right: 2px;
-        height: 45%;
-        background: linear-gradient(
-            180deg,
-            rgba(255, 255, 255, 0.5) 0%,
-            rgba(255, 255, 255, 0.1) 100%
-        );
-        border-radius: 3px 3px 50% 50%;
-        pointer-events: none;
-    }
-
-    .welcome p {
-        font-size: 1.25rem;
-        color: var(--color-text-secondary);
-        margin-bottom: 2rem;
-    }
-
-    .features {
-        list-style: none;
-        margin-bottom: 2rem;
-        text-align: left;
-        display: inline-block;
-    }
-
-    .features li {
-        padding: 0.5rem 0;
-        padding-left: 1.5rem;
-        position: relative;
-    }
-
-    .features li::before {
-        content: "✓";
-        position: absolute;
-        left: 0;
-        color: var(--color-success);
-    }
-
-    .cta {
-        text-align: center;
-    }
-
     .feed-page {
         max-width: 800px;
         margin: 0 auto;
-    }
-
-    .feed-header {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        margin-bottom: 1.5rem;
-        width: 100%;
-    }
-
-    .feed-title-group {
-        flex: 1;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        min-width: 0;
-    }
-
-    .feed-header h1 {
-        font-size: 1.5rem;
-        margin: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    .mobile-menu-btn {
-        display: none;
-        background: none;
-        border: none;
-        font-size: 1.25rem;
-        cursor: pointer;
-        padding: 0.25rem;
-        color: var(--color-text);
-    }
-
-    .view-toggle {
-        display: flex;
-        background: var(--color-bg-secondary);
-        border-radius: 6px;
-        padding: 2px;
-        gap: 2px;
-    }
-
-    .view-toggle button {
-        padding: 0.375rem 0.75rem;
-        border: none;
-        background: transparent;
-        border-radius: 4px;
-        font-size: 0.875rem;
-        cursor: pointer;
-        color: var(--color-text-secondary);
-        transition: all 0.15s ease;
-        font-family: inherit;
-    }
-
-    .view-toggle button.active {
-        background: var(--color-primary);
-        color: white;
-    }
-
-    .view-toggle button:hover:not(.active) {
-        background: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
     }
 
     .article-list {
@@ -1332,30 +1134,4 @@
         border-bottom: none;
     }
 
-    /* Mobile styles */
-    @media (max-width: 768px) {
-        .feed-page {
-            padding-top: 3.5rem;
-        }
-
-        .feed-header {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            z-index: 40;
-            background: var(--color-bg);
-            padding: 0.75rem 1rem;
-            margin-bottom: 0;
-            border-bottom: 1px solid var(--color-border);
-        }
-
-        .feed-header h1 {
-            font-size: 1.125rem;
-        }
-
-        .mobile-menu-btn {
-            display: block;
-        }
-    }
 </style>

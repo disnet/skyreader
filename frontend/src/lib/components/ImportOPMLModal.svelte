@@ -1,6 +1,7 @@
 <script lang="ts">
     import { parseOPMLFile, type OPMLFeed } from "$lib/utils/opml-parser";
     import { subscriptionsStore } from "$lib/stores/subscriptions.svelte";
+    import Modal from "$lib/components/common/Modal.svelte";
 
     interface Props {
         open: boolean;
@@ -33,18 +34,6 @@
     function handleClose() {
         reset();
         onclose();
-    }
-
-    function handleBackdropClick(e: MouseEvent) {
-        if (e.target === e.currentTarget) {
-            handleClose();
-        }
-    }
-
-    function handleKeydown(e: KeyboardEvent) {
-        if (e.key === "Escape") {
-            handleClose();
-        }
     }
 
     async function handleFileSelect(e: Event) {
@@ -137,205 +126,122 @@
     });
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
-
-{#if open}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="modal-backdrop" onclick={handleBackdropClick} onkeydown={handleKeydown} role="dialog" aria-modal="true" tabindex="-1">
-        <div class="modal">
-            <div class="modal-header">
-                <h2>Import OPML</h2>
-                <button class="close-btn" onclick={handleClose} aria-label="Close">
-                    &times;
-                </button>
+<Modal {open} onclose={handleClose} title="Import OPML" maxWidth="520px">
+    {#if modalState === "select"}
+        <p class="description">
+            Select an OPML file to import feeds from another RSS reader.
+        </p>
+        <input
+            bind:this={fileInput}
+            type="file"
+            accept=".opml,.xml"
+            onchange={handleFileSelect}
+            class="file-input"
+        />
+        {#if parseErrors.length > 0}
+            <div class="error-list">
+                {#each parseErrors as error}
+                    <p class="error">{error}</p>
+                {/each}
             </div>
-
-            {#if modalState === "select"}
-                <div class="modal-body">
-                    <p class="description">
-                        Select an OPML file to import feeds from another RSS reader.
-                    </p>
-                    <input
-                        bind:this={fileInput}
-                        type="file"
-                        accept=".opml,.xml"
-                        onchange={handleFileSelect}
-                        class="file-input"
-                    />
-                    {#if parseErrors.length > 0}
-                        <div class="error-list">
-                            {#each parseErrors as error}
-                                <p class="error">{error}</p>
-                            {/each}
-                        </div>
-                    {/if}
-                </div>
-            {:else if modalState === "preview"}
-                <div class="modal-body">
-                    <div class="preview-header">
-                        <p>Found {parsedFeeds.length} feed{parsedFeeds.length === 1 ? "" : "s"}</p>
-                        <div class="selection-actions">
-                            <button class="link-btn" onclick={selectAll}>Select all</button>
-                            <button class="link-btn" onclick={selectNone}>Select none</button>
-                        </div>
-                    </div>
-                    <ul class="feed-list">
-                        {#each parsedFeeds as feed}
-                            {@const duplicate = isDuplicate(feed.feedUrl)}
-                            <li class="feed-item" class:duplicate>
-                                <label>
-                                    <input
-                                        type="checkbox"
-                                        checked={selectedUrls.has(feed.feedUrl)}
-                                        onchange={() => toggleFeed(feed.feedUrl)}
-                                    />
-                                    <span class="feed-info">
-                                        <span class="feed-title">{feed.title}</span>
-                                        {#if feed.category}
-                                            <span class="feed-category">{feed.category}</span>
-                                        {/if}
-                                        {#if duplicate}
-                                            <span class="duplicate-badge">Already subscribed</span>
-                                        {/if}
-                                    </span>
-                                </label>
-                            </li>
-                        {/each}
-                    </ul>
-                    {#if parseErrors.length > 0}
-                        <details class="parse-errors">
-                            <summary>{parseErrors.length} warning{parseErrors.length === 1 ? "" : "s"}</summary>
-                            <ul>
-                                {#each parseErrors as error}
-                                    <li>{error}</li>
-                                {/each}
-                            </ul>
-                        </details>
-                    {/if}
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" onclick={() => { modalState = "select"; }}>
-                        Back
-                    </button>
-                    <button
-                        class="btn btn-primary"
-                        onclick={startImport}
-                        disabled={selectedUrls.size === 0}
-                    >
-                        Import {selectedUrls.size} feed{selectedUrls.size === 1 ? "" : "s"}
-                    </button>
-                </div>
-            {:else if modalState === "importing"}
-                <div class="modal-body">
-                    <p>Importing feeds...</p>
-                    <div class="progress-bar">
-                        <div
-                            class="progress-fill"
-                            style="width: {(progress.current / progress.total) * 100}%"
-                        ></div>
-                    </div>
-                    <p class="progress-text">{progress.current} / {progress.total}</p>
-                </div>
-            {:else if modalState === "complete"}
-                <div class="modal-body">
-                    <h3>Import Complete</h3>
-                    <dl class="results">
-                        <dt>Added</dt>
-                        <dd>{results.added}</dd>
-                        {#if results.skipped > 0}
-                            <dt>Skipped (duplicates)</dt>
-                            <dd>{results.skipped}</dd>
-                        {/if}
-                        {#if results.failed.length > 0}
-                            <dt>Failed</dt>
-                            <dd>{results.failed.length}</dd>
-                        {/if}
-                    </dl>
-                    {#if results.failed.length > 0}
-                        <details class="failed-list">
-                            <summary>View failed imports</summary>
-                            <ul>
-                                {#each results.failed as url}
-                                    <li>{url}</li>
-                                {/each}
-                            </ul>
-                        </details>
-                    {/if}
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-primary" onclick={handleClose}>
-                        Done
-                    </button>
-                </div>
-            {/if}
+        {/if}
+    {:else if modalState === "preview"}
+        <div class="preview-header">
+            <p>Found {parsedFeeds.length} feed{parsedFeeds.length === 1 ? "" : "s"}</p>
+            <div class="selection-actions">
+                <button class="link-btn" onclick={selectAll}>Select all</button>
+                <button class="link-btn" onclick={selectNone}>Select none</button>
+            </div>
         </div>
-    </div>
-{/if}
+        <ul class="feed-list">
+            {#each parsedFeeds as feed}
+                {@const duplicate = isDuplicate(feed.feedUrl)}
+                <li class="feed-item" class:duplicate>
+                    <label>
+                        <input
+                            type="checkbox"
+                            checked={selectedUrls.has(feed.feedUrl)}
+                            onchange={() => toggleFeed(feed.feedUrl)}
+                        />
+                        <span class="feed-info">
+                            <span class="feed-title">{feed.title}</span>
+                            {#if feed.category}
+                                <span class="feed-category">{feed.category}</span>
+                            {/if}
+                            {#if duplicate}
+                                <span class="duplicate-badge">Already subscribed</span>
+                            {/if}
+                        </span>
+                    </label>
+                </li>
+            {/each}
+        </ul>
+        {#if parseErrors.length > 0}
+            <details class="parse-errors">
+                <summary>{parseErrors.length} warning{parseErrors.length === 1 ? "" : "s"}</summary>
+                <ul>
+                    {#each parseErrors as error}
+                        <li>{error}</li>
+                    {/each}
+                </ul>
+            </details>
+        {/if}
+    {:else if modalState === "importing"}
+        <p>Importing feeds...</p>
+        <div class="progress-bar">
+            <div
+                class="progress-fill"
+                style="width: {(progress.current / progress.total) * 100}%"
+            ></div>
+        </div>
+        <p class="progress-text">{progress.current} / {progress.total}</p>
+    {:else if modalState === "complete"}
+        <h3>Import Complete</h3>
+        <dl class="results">
+            <dt>Added</dt>
+            <dd>{results.added}</dd>
+            {#if results.skipped > 0}
+                <dt>Skipped (duplicates)</dt>
+                <dd>{results.skipped}</dd>
+            {/if}
+            {#if results.failed.length > 0}
+                <dt>Failed</dt>
+                <dd>{results.failed.length}</dd>
+            {/if}
+        </dl>
+        {#if results.failed.length > 0}
+            <details class="failed-list">
+                <summary>View failed imports</summary>
+                <ul>
+                    {#each results.failed as url}
+                        <li>{url}</li>
+                    {/each}
+                </ul>
+            </details>
+        {/if}
+    {/if}
+
+    {#snippet footer()}
+        {#if modalState === "preview"}
+            <button class="btn btn-secondary" onclick={() => { modalState = "select"; }}>
+                Back
+            </button>
+            <button
+                class="btn btn-primary"
+                onclick={startImport}
+                disabled={selectedUrls.size === 0}
+            >
+                Import {selectedUrls.size} feed{selectedUrls.size === 1 ? "" : "s"}
+            </button>
+        {:else if modalState === "complete"}
+            <button class="btn btn-primary" onclick={handleClose}>
+                Done
+            </button>
+        {/if}
+    {/snippet}
+</Modal>
 
 <style>
-    .modal-backdrop {
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.5);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 100;
-        padding: 1rem;
-    }
-
-    .modal {
-        background: var(--color-bg);
-        border-radius: 8px;
-        width: 100%;
-        max-width: 520px;
-        max-height: 80vh;
-        display: flex;
-        flex-direction: column;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-    }
-
-    .modal-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 1.5rem;
-        border-bottom: 1px solid var(--color-border);
-    }
-
-    .modal-header h2 {
-        font-size: 1.25rem;
-        margin: 0;
-    }
-
-    .close-btn {
-        background: none;
-        border: none;
-        font-size: 1.5rem;
-        color: var(--color-text-secondary);
-        padding: 0;
-        line-height: 1;
-        cursor: pointer;
-    }
-
-    .close-btn:hover {
-        color: var(--color-text);
-    }
-
-    .modal-body {
-        padding: 1.5rem;
-        overflow-y: auto;
-        flex: 1;
-    }
-
-    .modal-footer {
-        display: flex;
-        justify-content: flex-end;
-        gap: 0.75rem;
-        padding: 1rem 1.5rem;
-        border-top: 1px solid var(--color-border);
-    }
-
     .description {
         color: var(--color-text-secondary);
         margin-bottom: 1rem;
@@ -475,7 +381,7 @@
         font-size: 0.875rem;
     }
 
-    .modal-body h3 {
+    h3 {
         margin-top: 0;
         margin-bottom: 1rem;
     }

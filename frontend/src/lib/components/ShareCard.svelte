@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Article, FeedItem, SocialShare } from '$lib/types';
   import { formatRelativeDate } from '$lib/utils/date';
+  import { getFaviconUrl } from '$lib/utils/favicon';
   import DOMPurify from 'dompurify';
 
   let {
@@ -26,15 +27,6 @@
     onExpand?: () => void;
     onFetchContent?: () => void;
   } = $props();
-
-  function getFaviconUrl(url: string): string {
-    try {
-      const domain = new URL(url).hostname;
-      return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
-    } catch {
-      return '';
-    }
-  }
 
   function handleHeaderClick() {
     const wasSelected = selected;
