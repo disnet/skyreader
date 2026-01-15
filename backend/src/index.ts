@@ -3,6 +3,7 @@ import { handleAuthLogin, handleAuthCallback, handleAuthLogout, handleAuthMe, ha
 import { handleFeedFetch, handleCachedFeedFetch, handleFeedDiscover, handleArticleFetch, handleFeedStatusBatch } from './routes/feeds';
 import { handleItemsList, handleItemsRecent, handleItemGet, handleItemsByFeed } from './routes/items';
 import { handleSocialFeed, handleSyncFollows, handleFollowedUsers, handlePopularShares } from './routes/social';
+import { handleGetMyShares } from './routes/shares';
 import { handleDiscover } from './routes/discover';
 import { handleRecordSync, handleBulkRecordSync, handleRecordsList } from './routes/records';
 import { handleGetReadPositions, handleMarkAsRead, handleMarkAsUnread, handleToggleStar, handleBulkMarkAsRead } from './routes/reading';
@@ -108,6 +109,11 @@ export default {
           break;
         case url.pathname === '/api/social/popular':
           response = await handlePopularShares(request, env);
+          break;
+
+        // User's own shares route
+        case url.pathname === '/api/shares/my':
+          response = await handleGetMyShares(request, env);
           break;
 
         // Discover route

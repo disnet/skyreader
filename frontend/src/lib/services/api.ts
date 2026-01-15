@@ -178,6 +178,26 @@ class ApiClient {
     return this.fetch(`/api/social/popular?${params}`);
   }
 
+  // User's own shares
+  async getMyShares(): Promise<{
+    shares: Array<{
+      recordUri: string;
+      recordCid: string;
+      feedUrl?: string;
+      articleGuid?: string;
+      articleUrl: string;
+      articleTitle?: string;
+      articleAuthor?: string;
+      articleDescription?: string;
+      articleImage?: string;
+      articlePublishedAt?: string;
+      note?: string;
+      createdAt: string;
+    }>;
+  }> {
+    return this.fetch('/api/shares/my');
+  }
+
   // Record sync
   async syncRecord(request: {
     operation: 'create' | 'update' | 'delete';
