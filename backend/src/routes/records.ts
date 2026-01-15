@@ -668,9 +668,11 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
 
     // Index shares for social feed
     if (collection === 'app.skyreader.social.share') {
+      console.log(`[records/sync] Indexing share for ${session.did}, operation: ${operation}`);
       try {
         const recordUri = result.data.uri || `at://${session.did}/${collection}/${rkey}`;
         if (operation === 'create' || operation === 'update') {
+          console.log(`[records/sync] Inserting share into D1: ${recordUri}`);
           // Ensure user exists in users table with full profile info
           await env.DB.prepare(`
             INSERT INTO users (did, handle, display_name, avatar_url, pds_url, updated_at)
@@ -723,6 +725,7 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
             shareRecordForInsert.tags ? JSON.stringify(shareRecordForInsert.tags) : null,
             new Date(shareRecordForInsert.createdAt).getTime()
           ).run();
+          console.log(`[records/sync] Share inserted into D1 successfully: ${recordUri}`);
 
           // Fetch article content if feedUrl and itemGuid are available
           let articleContent: string | null = null;
