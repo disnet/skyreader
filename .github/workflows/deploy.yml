@@ -43,10 +43,13 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             echo "environment=staging" >> $GITHUB_OUTPUT
+            echo "Deploying to STAGING (pull_request event)"
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+            echo "Deploying to ${{ inputs.environment }} (workflow_dispatch event)"
           else
             echo "environment=production" >> $GITHUB_OUTPUT
+            echo "Deploying to PRODUCTION (push to main)"
           fi
 
   deploy-backend:
@@ -67,13 +70,23 @@ jobs:
         working-directory: backend
         run: npm ci
 
-      - name: Deploy Worker
+      - name: Deploy Worker (staging)
+        if: needs.changes.outputs.environment == 'staging'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: backend
-          command: deploy ${{ needs.changes.outputs.environment == 'staging' && '--env=staging' || '--env=""' }}
+          command: deploy --env=staging
+
+      - name: Deploy Worker (production)
+        if: needs.changes.outputs.environment != 'staging'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: backend
+          command: deploy --env=""
 
   deploy-frontend:
     needs: changes
@@ -93,16 +106,34 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      - name: Build
+      - name: Build (staging)
+        if: needs.changes.outputs.environment == 'staging'
         working-directory: frontend
         env:
-          VITE_API_URL: ${{ needs.changes.outputs.environment == 'staging' && 'https://api-staging.skyreader.app' || 'https://api.skyreader.app' }}
+          VITE_API_URL: https://api-staging.skyreader.app
         run: npm run build
 
-      - name: Deploy to Cloudflare Pages
+      - name: Build (production)
+        if: needs.changes.outputs.environment != 'staging'
+        working-directory: frontend
+        env:
+          VITE_API_URL: https://api.skyreader.app
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages (staging)
+        if: needs.changes.outputs.environment == 'staging'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: frontend
-          command: pages deploy build --project-name=skyreader --branch=${{ needs.changes.outputs.environment == 'staging' && 'staging' || 'main' }}
+          command: pages deploy build --project-name=skyreader --branch=staging
+
+      - name: Deploy to Cloudflare Pages (production)
+        if: needs.changes.outputs.environment != 'staging'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: frontend
+          command: pages deploy build --project-name=skyreader --branch=main
