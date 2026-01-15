@@ -600,9 +600,17 @@
             key: "Enter",
             description: "Toggle expand",
             category: "Navigation",
-            action: () => {
+            action: async () => {
                 if (selectedIndex >= 0) {
-                    expandedIndex = expandedIndex === selectedIndex ? -1 : selectedIndex;
+                    if (expandedIndex === selectedIndex) {
+                        expandedIndex = -1;
+                        await tick();
+                        scrollToCenter();
+                    } else {
+                        expandedIndex = selectedIndex;
+                        await tick();
+                        scrollToCenter();
+                    }
                 }
             },
             condition: () => auth.isAuthenticated && selectedIndex >= 0,
@@ -878,6 +886,8 @@
                                 onExpand={async () => {
                                     if (expandedIndex === index) {
                                         expandedIndex = -1;
+                                        await tick();
+                                        scrollToCenter();
                                     } else {
                                         expandedIndex = index;
                                         await tick();
@@ -915,6 +925,8 @@
                                 onExpand={async () => {
                                     if (expandedIndex === index) {
                                         expandedIndex = -1;
+                                        await tick();
+                                        scrollToCenter();
                                     } else {
                                         expandedIndex = index;
                                         await tick();
@@ -977,6 +989,8 @@
                             onExpand={async () => {
                                 if (expandedIndex === index) {
                                     expandedIndex = -1;
+                                    await tick();
+                                    scrollToCenter();
                                 } else {
                                     expandedIndex = index;
                                     await tick();
@@ -1049,6 +1063,8 @@
                             onExpand={async () => {
                                 if (expandedIndex === index) {
                                     expandedIndex = -1;
+                                    await tick();
+                                    scrollToCenter();
                                 } else {
                                     expandedIndex = index;
                                     await tick();
@@ -1101,6 +1117,8 @@
                             onExpand={async () => {
                                 if (expandedIndex === index) {
                                     expandedIndex = -1;
+                                    await tick();
+                                    scrollToCenter();
                                 } else {
                                     expandedIndex = index;
                                     await tick();
