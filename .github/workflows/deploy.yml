@@ -4,7 +4,22 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+  pull-requests: read
 
 jobs:
   changes:
@@ -12,6 +27,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      environment: ${{ steps.env.outputs.environment }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -22,6 +38,19 @@ jobs:
               - 'backend/**'
             frontend:
               - 'frontend/**'
+      - name: Determine environment
+        id: env
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+            echo "Deploying to STAGING (pull_request event)"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+            echo "Deploying to ${{ inputs.environment }} (workflow_dispatch event)"
+          else
+            echo "environment=production" >> $GITHUB_OUTPUT
+            echo "Deploying to PRODUCTION (push to main)"
+          fi
 
   deploy-backend:
     needs: changes
@@ -41,7 +70,17 @@ jobs:
         working-directory: backend
         run: npm ci
 
-      - name: Deploy Worker
+      - name: Deploy Worker (staging)
+        if: needs.changes.outputs.environment == 'staging'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: backend
+          command: deploy --env=staging
+
+      - name: Deploy Worker (production)
+        if: needs.changes.outputs.environment != 'staging'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -67,13 +106,31 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      - name: Build
+      - name: Build (staging)
+        if: needs.changes.outputs.environment == 'staging'
+        working-directory: frontend
+        env:
+          VITE_API_URL: https://api-staging.skyreader.app
+        run: npm run build
+
+      - name: Build (production)
+        if: needs.changes.outputs.environment != 'staging'
         working-directory: frontend
         env:
           VITE_API_URL: https://api.skyreader.app
         run: npm run build
 
-      - name: Deploy to Cloudflare Pages
+      - name: Deploy to Cloudflare Pages (staging)
+        if: needs.changes.outputs.environment == 'staging'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: frontend
+          command: pages deploy build --project-name=skyreader --branch=staging
+
+      - name: Deploy to Cloudflare Pages (production)
+        if: needs.changes.outputs.environment != 'staging'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}

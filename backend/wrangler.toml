@@ -40,3 +40,18 @@ crons = ["* * * * *"]
 # Development environment
 [env.dev]
 vars = { FRONTEND_URL = "http://127.0.0.1:5173" }
+
+# Staging environment
+[env.staging]
+name = "skyreader-api-staging"
+vars = { FRONTEND_URL = "https://staging.skyreader.pages.dev" }
+routes = [{ pattern = "api-staging.skyreader.app", custom_domain = true }]
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "skyreader-staging"
+database_id = "4319fd64-8868-48c9-b539-a4f4bc6d0c22"
+
+# Disable cron in staging to avoid unnecessary background processing
+[env.staging.triggers]
+crons = []
