@@ -13,6 +13,7 @@ import { pollJetstream } from './services/jetstream-poller';
 import { pollJetstreamFollows } from './services/jetstream-follows-poller';
 import { pollJetstreamInappFollows } from './services/jetstream-inapp-follows-poller';
 import { syncReadPositionsToPds } from './services/read-positions-pds-sync';
+import { checkRateLimit, cleanupRateLimits, getRateLimitConfig } from './services/rate-limit';
 
 export { RealtimeHub } from './durable-objects/realtime-hub';
 
@@ -40,6 +41,22 @@ export default {
     const session = await getSessionFromRequest(request, env);
     if (session) {
       ctx.waitUntil(updateUserActivity(env, session.did));
+
+      // Check rate limit for authenticated requests
+      const rateLimit = await checkRateLimit(env, session.did, url.pathname);
+      if (!rateLimit.allowed) {
+        const config = getRateLimitConfig(url.pathname);
+        return new Response(JSON.stringify({ error: 'Rate limit exceeded' }), {
+          status: 429,
+          headers: {
+            ...headers,
+            'Content-Type': 'application/json',
+            'Retry-After': String(rateLimit.retryAfter || 60),
+            'X-RateLimit-Limit': String(config.limit),
+            'X-RateLimit-Remaining': '0',
+          },
+        });
+      }
     }
 
     try {
@@ -271,6 +288,16 @@ export default {
       } catch (error) {
         console.error('[Cron] PDS sync failed:', error);
       }
+    }
+
+    // Clean up rate limit records (every minute)
+    try {
+      const rateLimitDeleted = await cleanupRateLimits(env);
+      if (rateLimitDeleted > 0) {
+        console.log(`[Cron] Rate limit cleanup: deleted ${rateLimitDeleted} records`);
+      }
+    } catch (error) {
+      console.error('[Cron] Rate limit cleanup failed:', error);
     }
 
     // Clean up expired D1 data (once per hour)
