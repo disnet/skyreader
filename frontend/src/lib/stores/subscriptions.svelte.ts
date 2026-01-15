@@ -4,6 +4,8 @@ import { api } from '$lib/services/api';
 import { realtime, type NewArticlesPayload, type FeedReadyPayload } from '$lib/services/realtime';
 import type { Subscription, Article, ParsedFeed } from '$lib/types';
 
+export const MAX_SUBSCRIPTIONS = 100;
+
 // Generate a TID (Timestamp Identifier) for AT Protocol records
 function generateTid(): string {
   const now = Date.now();
@@ -74,6 +76,10 @@ function createSubscriptionsStore() {
   }
 
   async function add(feedUrl: string, title: string, options?: Partial<Subscription>) {
+    if (subscriptions.length >= MAX_SUBSCRIPTIONS) {
+      throw new Error(`Feed limit reached. You can have up to ${MAX_SUBSCRIPTIONS} feeds.`);
+    }
+
     const rkey = generateTid();
     const now = new Date().toISOString();
 
@@ -113,16 +119,17 @@ function createSubscriptionsStore() {
   async function addBulk(
     feeds: Array<{ feedUrl: string; title: string; siteUrl?: string; category?: string }>,
     onProgress?: (current: number, total: number) => void
-  ): Promise<{ added: number[]; skipped: string[]; failed: Array<{ url: string; error: string }> }> {
+  ): Promise<{ added: number[]; skipped: string[]; failed: Array<{ url: string; error: string }>; truncated: number }> {
     const added: number[] = [];
     const skipped: string[] = [];
     const failed: Array<{ url: string; error: string }> = [];
+    let truncated = 0;
 
     // Get existing feed URLs for duplicate detection
     const existingUrls = new Set(subscriptions.map((s) => s.feedUrl.toLowerCase()));
 
     // Filter out duplicates first
-    const feedsToAdd = feeds.filter((feed) => {
+    let feedsToAdd = feeds.filter((feed) => {
       if (existingUrls.has(feed.feedUrl.toLowerCase())) {
         skipped.push(feed.feedUrl);
         return false;
@@ -131,8 +138,15 @@ function createSubscriptionsStore() {
       return true;
     });
 
+    // Check subscription limit and truncate if needed
+    const availableSlots = MAX_SUBSCRIPTIONS - subscriptions.length;
+    if (feedsToAdd.length > availableSlots) {
+      truncated = feedsToAdd.length - availableSlots;
+      feedsToAdd = feedsToAdd.slice(0, availableSlots);
+    }
+
     if (feedsToAdd.length === 0) {
-      return { added, skipped, failed };
+      return { added, skipped, failed, truncated };
     }
 
     onProgress?.(0, feedsToAdd.length);
@@ -228,7 +242,7 @@ function createSubscriptionsStore() {
 
     onProgress?.(feedsToAdd.length, feedsToAdd.length);
 
-    return { added, skipped, failed };
+    return { added, skipped, failed, truncated };
   }
 
   async function update(id: number, updates: Partial<Subscription>) {
