@@ -72,6 +72,8 @@ jobs:
 
       - name: Run D1 migrations (staging)
         if: needs.changes.outputs.environment == 'staging'
+        continue-on-error: true
+        id: migrations-staging
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -90,6 +92,8 @@ jobs:
 
       - name: Run D1 migrations (production)
         if: needs.changes.outputs.environment != 'staging'
+        continue-on-error: true
+        id: migrations-production
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}

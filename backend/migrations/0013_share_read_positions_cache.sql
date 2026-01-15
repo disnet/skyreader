@@ -1,6 +1,6 @@
 -- Cache of share read positions (synced from AT Protocol)
 -- Used to dedupe before syncing to PDS
-CREATE TABLE share_read_positions_cache (
+CREATE TABLE IF NOT EXISTS share_read_positions_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_did TEXT NOT NULL,
     rkey TEXT NOT NULL,
@@ -17,5 +17,5 @@ CREATE TABLE share_read_positions_cache (
     UNIQUE(user_did, share_uri)
 );
 
-CREATE INDEX idx_share_read_positions_cache_user ON share_read_positions_cache(user_did);
-CREATE INDEX idx_share_read_positions_cache_share ON share_read_positions_cache(user_did, share_uri);
+CREATE INDEX IF NOT EXISTS idx_share_read_positions_cache_user ON share_read_positions_cache(user_did);
+CREATE INDEX IF NOT EXISTS idx_share_read_positions_cache_share ON share_read_positions_cache(user_did, share_uri);

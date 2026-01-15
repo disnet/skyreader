@@ -1,5 +1,5 @@
 -- Rate limiting table for per-user API request tracking
-CREATE TABLE rate_limits (
+CREATE TABLE IF NOT EXISTS rate_limits (
   did TEXT NOT NULL,
   endpoint TEXT NOT NULL,
   window_start INTEGER NOT NULL,
@@ -8,4 +8,4 @@ CREATE TABLE rate_limits (
 );
 
 -- Index for efficient cleanup of old rate limit records
-CREATE INDEX idx_rate_limits_cleanup ON rate_limits(window_start);
+CREATE INDEX IF NOT EXISTS idx_rate_limits_cleanup ON rate_limits(window_start);
