@@ -1020,6 +1020,86 @@ export async function handleBulkRecordSync(request: Request, env: Env): Promise<
       console.log(`${feedsToFetch.length - MAX_FEEDS_TO_FETCH} feeds will be fetched by cron`);
     }
 
+    // Index shares in D1 for social feed
+    const shareOps = operations.filter(op => op.collection === 'app.skyreader.social.share');
+    for (let i = 0; i < shareOps.length; i++) {
+      const op = shareOps[i];
+      try {
+        // Find the index of this share op in the original operations array
+        const originalIndex = operations.indexOf(op);
+        const resultUri = applyResult.results?.[originalIndex]?.uri;
+        const recordUri = resultUri || `at://${session.did}/${op.collection}/${op.rkey}`;
+        const resultCid = applyResult.results?.[originalIndex]?.cid || '';
+
+        if (op.operation === 'create' || op.operation === 'update') {
+          console.log(`[bulk-sync] Indexing share in D1: ${recordUri}`);
+
+          // Ensure user exists
+          await env.DB.prepare(`
+            INSERT INTO users (did, handle, display_name, avatar_url, pds_url, updated_at)
+            VALUES (?, ?, ?, ?, ?, unixepoch())
+            ON CONFLICT(did) DO UPDATE SET
+              handle = excluded.handle,
+              display_name = COALESCE(excluded.display_name, users.display_name),
+              avatar_url = COALESCE(excluded.avatar_url, users.avatar_url),
+              updated_at = unixepoch()
+          `).bind(
+            session.did,
+            session.handle || session.did,
+            session.displayName || null,
+            session.avatarUrl || null,
+            session.pdsUrl
+          ).run();
+
+          // Insert share
+          const shareRecord = op.record as {
+            feedUrl?: string;
+            itemGuid?: string;
+            itemUrl: string;
+            itemTitle?: string;
+            itemAuthor?: string;
+            itemDescription?: string;
+            itemImage?: string;
+            itemPublishedAt?: string;
+            note?: string;
+            tags?: string[];
+            createdAt: string;
+          };
+
+          await env.DB.prepare(`
+            INSERT OR REPLACE INTO shares
+            (author_did, record_uri, record_cid, feed_url, item_url, item_title,
+             item_author, item_description, item_image, item_guid, item_published_at, note, tags, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).bind(
+            session.did,
+            recordUri,
+            resultCid,
+            shareRecord.feedUrl || null,
+            shareRecord.itemUrl,
+            shareRecord.itemTitle || null,
+            shareRecord.itemAuthor || null,
+            shareRecord.itemDescription || null,
+            shareRecord.itemImage || null,
+            shareRecord.itemGuid || null,
+            shareRecord.itemPublishedAt ? new Date(shareRecord.itemPublishedAt).getTime() : null,
+            shareRecord.note || null,
+            shareRecord.tags ? JSON.stringify(shareRecord.tags) : null,
+            new Date(shareRecord.createdAt).getTime()
+          ).run();
+
+          console.log(`[bulk-sync] Share indexed successfully: ${recordUri}`);
+        } else if (op.operation === 'delete') {
+          console.log(`[bulk-sync] Deleting share from D1: ${recordUri}`);
+          await env.DB.prepare(
+            'DELETE FROM shares WHERE record_uri = ?'
+          ).bind(recordUri).run();
+        }
+      } catch (shareError) {
+        console.error('[bulk-sync] Failed to index share:', shareError);
+      }
+    }
+
     // Build response with URIs
     const results = operations.map((op, i) => ({
       rkey: op.rkey,
