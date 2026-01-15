@@ -1,5 +1,54 @@
 import type { Env, OAuthState, Session } from '../types';
 
+// Constants for refresh retry logic
+const MAX_REFRESH_FAILURES = 5;
+const BASE_BACKOFF_MS = 60 * 1000;      // 1 minute base
+const MAX_BACKOFF_MS = 60 * 60 * 1000;  // 1 hour max
+
+// Error codes that indicate permanent failure (refresh token is invalid)
+const PERMANENT_REFRESH_ERRORS = [
+  'invalid_grant',           // Refresh token expired or revoked
+  'invalid_client',          // Client credentials invalid
+  'unauthorized_client',     // Client not authorized for this grant type
+  'invalid_token',           // Token is malformed or revoked
+];
+
+function isPermanentError(error: string | undefined): boolean {
+  return error !== undefined && PERMANENT_REFRESH_ERRORS.includes(error);
+}
+
+function isTransientError(error: string | undefined, statusCode?: number): boolean {
+  if (!error && statusCode) {
+    // 5xx errors and rate limiting are transient
+    return statusCode >= 500 || statusCode === 429;
+  }
+  // Network errors (no error code) are transient
+  if (!error) return true;
+  // Explicit transient errors
+  if (['temporarily_unavailable', 'server_error'].includes(error)) return true;
+  // Not a known permanent error = treat as transient for safety
+  return !isPermanentError(error);
+}
+
+function calculateBackoffMs(failures: number): number {
+  // Exponential backoff: 1min, 2min, 4min, 8min, 16min... capped at 1 hour
+  const backoff = Math.min(
+    BASE_BACKOFF_MS * Math.pow(2, failures - 1),
+    MAX_BACKOFF_MS
+  );
+  // Add jitter (0-10% of backoff)
+  const jitter = backoff * Math.random() * 0.1;
+  return backoff + jitter;
+}
+
+// Extended session type with refresh state (internal use)
+interface SessionWithRefreshState extends Session {
+  refreshFailures: number;
+  lastRefreshAttempt?: number;
+  lastRefreshError?: string;
+  refreshLockedUntil?: number;
+}
+
 // Generate a cryptographically random string
 export function generateRandomString(length: number): string {
   const array = new Uint8Array(length);
@@ -280,11 +329,16 @@ export async function storeSession(env: Env, sessionId: string, session: Session
   ).run();
 }
 
-// Get session from D1
-export async function getSession(env: Env, sessionId: string): Promise<Session | null> {
-  const row = await env.DB.prepare(
-    'SELECT * FROM sessions WHERE session_id = ? AND expires_at > ?'
-  ).bind(sessionId, Date.now()).first<{
+// Get session from D1 (returns session even if expired, to allow refresh)
+async function getSessionWithRefreshState(env: Env, sessionId: string): Promise<SessionWithRefreshState | null> {
+  const row = await env.DB.prepare(`
+    SELECT
+      did, handle, display_name, avatar_url, pds_url,
+      access_token, refresh_token, dpop_private_key, expires_at,
+      refresh_failures, last_refresh_attempt, last_refresh_error, refresh_locked_until
+    FROM sessions
+    WHERE session_id = ?
+  `).bind(sessionId).first<{
     did: string;
     handle: string;
     display_name: string | null;
@@ -294,6 +348,10 @@ export async function getSession(env: Env, sessionId: string): Promise<Session |
     refresh_token: string;
     dpop_private_key: string;
     expires_at: number;
+    refresh_failures: number | null;
+    last_refresh_attempt: number | null;
+    last_refresh_error: string | null;
+    refresh_locked_until: number | null;
   }>();
 
   if (!row) return null;
@@ -308,6 +366,29 @@ export async function getSession(env: Env, sessionId: string): Promise<Session |
     refreshToken: row.refresh_token,
     dpopPrivateKey: row.dpop_private_key,
     expiresAt: row.expires_at,
+    refreshFailures: row.refresh_failures || 0,
+    lastRefreshAttempt: row.last_refresh_attempt || undefined,
+    lastRefreshError: row.last_refresh_error || undefined,
+    refreshLockedUntil: row.refresh_locked_until || undefined,
+  };
+}
+
+// Public getSession - returns Session type for external use
+export async function getSession(env: Env, sessionId: string): Promise<Session | null> {
+  const session = await getSessionWithRefreshState(env, sessionId);
+  if (!session) return null;
+
+  // Return just the Session fields (without refresh state)
+  return {
+    did: session.did,
+    handle: session.handle,
+    displayName: session.displayName,
+    avatarUrl: session.avatarUrl,
+    pdsUrl: session.pdsUrl,
+    accessToken: session.accessToken,
+    refreshToken: session.refreshToken,
+    dpopPrivateKey: session.dpopPrivateKey,
+    expiresAt: session.expiresAt,
   };
 }
 
@@ -333,9 +414,15 @@ export async function getSessionFromRequest(request: Request, env: Env): Promise
     return null;
   }
   const sessionId = authHeader.substring(7);
-  const session = await getSession(env, sessionId);
+  const session = await getSessionWithRefreshState(env, sessionId);
 
   if (!session) {
+    return null;
+  }
+
+  // Check if session has exceeded max refresh failures
+  if (session.refreshFailures >= MAX_REFRESH_FAILURES) {
+    console.log(`Session for ${session.handle} has exceeded max refresh failures, treating as invalid`);
     return null;
   }
 
@@ -344,7 +431,14 @@ export async function getSessionFromRequest(request: Request, env: Env): Promise
   const timeUntilExpiry = (session.expiresAt || 0) - Date.now();
 
   if (timeUntilExpiry < expiryBuffer) {
-    console.log(`Token expiring in ${timeUntilExpiry}ms, refreshing...`);
+    // Check if we're in backoff period
+    if (session.refreshLockedUntil && Date.now() < session.refreshLockedUntil) {
+      const lockRemaining = session.refreshLockedUntil - Date.now();
+      console.log(`Refresh locked for ${session.handle} for ${Math.round(lockRemaining / 1000)}s more (failure ${session.refreshFailures}/${MAX_REFRESH_FAILURES})`);
+      return null;
+    }
+
+    console.log(`Token expiring in ${timeUntilExpiry}ms for ${session.handle}, attempting refresh...`);
     // Try to refresh the token
     try {
       const refreshedSession = await refreshSession(env, sessionId, session, request);
@@ -354,15 +448,60 @@ export async function getSessionFromRequest(request: Request, env: Env): Promise
     } catch (error) {
       console.error('Token refresh error:', error);
     }
-    // If refresh fails, return null (session is invalid)
+    // If refresh fails, return null (session needs refresh but can't right now)
     return null;
   }
 
   return session;
 }
 
-// Refresh session tokens
-async function refreshSession(env: Env, sessionId: string, session: Session, request: Request): Promise<Session | null> {
+// Refresh session tokens with resilience (retry logic with backoff)
+async function refreshSession(
+  env: Env,
+  sessionId: string,
+  session: SessionWithRefreshState,
+  request: Request
+): Promise<Session | null> {
+  // Helper to record a refresh failure with backoff
+  async function recordRefreshFailure(errorCode: string | undefined, statusCode?: number): Promise<void> {
+    const newFailures = session.refreshFailures + 1;
+    const backoffMs = calculateBackoffMs(newFailures);
+    const lockUntil = Date.now() + backoffMs;
+
+    await env.DB.prepare(`
+      UPDATE sessions
+      SET refresh_failures = ?,
+          last_refresh_attempt = ?,
+          last_refresh_error = ?,
+          refresh_locked_until = ?
+      WHERE session_id = ?
+    `).bind(
+      newFailures,
+      Date.now(),
+      errorCode || `HTTP ${statusCode || 'unknown'}`,
+      lockUntil,
+      sessionId
+    ).run();
+
+    console.log(
+      `Transient refresh error for ${session.handle}, ` +
+      `failure ${newFailures}/${MAX_REFRESH_FAILURES}, ` +
+      `locked until ${new Date(lockUntil).toISOString()}`
+    );
+  }
+
+  // Helper to reset refresh state on success
+  async function resetRefreshState(): Promise<void> {
+    await env.DB.prepare(`
+      UPDATE sessions
+      SET refresh_failures = 0,
+          last_refresh_attempt = ?,
+          last_refresh_error = NULL,
+          refresh_locked_until = NULL
+      WHERE session_id = ?
+    `).bind(Date.now(), sessionId).run();
+  }
+
   try {
     // Import the DPoP key
     const privateKeyJwk = JSON.parse(session.dpopPrivateKey);
@@ -424,18 +563,35 @@ async function refreshSession(env: Env, sessionId: string, session: Session, req
           },
           body: refreshBody,
         });
-      } else {
-        console.error('Token refresh failed:', errorText);
-        // Delete invalid session
-        await deleteSession(env, sessionId);
-        return null;
       }
     }
 
+    // Handle refresh failure with resilience
     if (!tokenResponse.ok) {
-      console.error('Token refresh failed:', await tokenResponse.text());
-      // Delete invalid session
-      await deleteSession(env, sessionId);
+      const errorText = await tokenResponse.text();
+      const errorData = (() => { try { return JSON.parse(errorText) as { error?: string }; } catch { return null; } })();
+      const errorCode = errorData?.error;
+      const statusCode = tokenResponse.status;
+
+      console.error(`Token refresh failed for ${session.handle}:`, errorCode, statusCode, errorText);
+
+      // Permanent error: delete session immediately
+      if (isPermanentError(errorCode)) {
+        console.log(`Permanent refresh error (${errorCode}) for ${session.handle}, deleting session`);
+        await deleteSession(env, sessionId);
+        return null;
+      }
+
+      // Transient error: check if we've exceeded max failures
+      const newFailures = session.refreshFailures + 1;
+      if (newFailures >= MAX_REFRESH_FAILURES) {
+        console.log(`Max refresh failures (${MAX_REFRESH_FAILURES}) reached for ${session.handle}, deleting session`);
+        await deleteSession(env, sessionId);
+        return null;
+      }
+
+      // Record the failure and set backoff
+      await recordRefreshFailure(errorCode, statusCode);
       return null;
     }
 
@@ -453,14 +609,46 @@ async function refreshSession(env: Env, sessionId: string, session: Session, req
       expiresAt: Date.now() + tokenData.expires_in * 1000,
     };
 
-    // Store updated session
+    // Store updated session and reset failure counters
     await storeSession(env, sessionId, updatedSession);
+    await resetRefreshState();
     console.log('Session refreshed successfully for', session.handle);
     return updatedSession;
   } catch (error) {
-    console.error('Session refresh error:', error);
-    // Delete invalid session
-    await deleteSession(env, sessionId);
+    // Network/fetch errors are transient
+    console.error('Session refresh network error for', session.handle, ':', error);
+
+    const newFailures = session.refreshFailures + 1;
+    if (newFailures >= MAX_REFRESH_FAILURES) {
+      console.log(`Max refresh failures reached for ${session.handle} (network error), deleting session`);
+      await deleteSession(env, sessionId);
+      return null;
+    }
+
+    // Record network error as transient failure
+    const backoffMs = calculateBackoffMs(newFailures);
+    const lockUntil = Date.now() + backoffMs;
+
+    await env.DB.prepare(`
+      UPDATE sessions
+      SET refresh_failures = ?,
+          last_refresh_attempt = ?,
+          last_refresh_error = ?,
+          refresh_locked_until = ?
+      WHERE session_id = ?
+    `).bind(
+      newFailures,
+      Date.now(),
+      error instanceof Error ? error.message : 'Network error',
+      lockUntil,
+      sessionId
+    ).run();
+
+    console.log(
+      `Network error for ${session.handle}, ` +
+      `failure ${newFailures}/${MAX_REFRESH_FAILURES}, ` +
+      `locked until ${new Date(lockUntil).toISOString()}`
+    );
     return null;
   }
 }
