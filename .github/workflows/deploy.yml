@@ -70,6 +70,15 @@ jobs:
         working-directory: backend
         run: npm ci
 
+      - name: Run D1 migrations (staging)
+        if: needs.changes.outputs.environment == 'staging'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: backend
+          command: d1 migrations apply skyreader-staging --env=staging --remote
+
       - name: Deploy Worker (staging)
         if: needs.changes.outputs.environment == 'staging'
         uses: cloudflare/wrangler-action@v3
@@ -78,6 +87,15 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: backend
           command: deploy --env=staging
+
+      - name: Run D1 migrations (production)
+        if: needs.changes.outputs.environment != 'staging'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: backend
+          command: d1 migrations apply skyreader --remote
 
       - name: Deploy Worker (production)
         if: needs.changes.outputs.environment != 'staging'
