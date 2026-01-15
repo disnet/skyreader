@@ -95,13 +95,15 @@ async function hydrateSharesCacheFromPds(
     'SELECT COUNT(*) as count FROM shares WHERE author_did = ?'
   ).bind(session.did).first<{ count: number }>();
 
+  console.log(`[shares/hydrate] User ${session.did} has ${existingCount?.count ?? 0} shares in D1`);
+
   if (existingCount && existingCount.count > 0) {
     hydratedShareUsers.add(session.did);
     return;
   }
 
   // No cache exists - fetch from PDS and populate
-  console.log(`Hydrating shares cache for ${session.did} from PDS`);
+  console.log(`[shares/hydrate] Hydrating shares cache for ${session.did} from PDS`);
 
   try {
     const allRecords: Array<{ uri: string; cid: string; value: ShareRecord }> = [];
@@ -123,10 +125,11 @@ async function hydrateSharesCacheFromPds(
       }>(session, 'com.atproto.repo.listRecords', params);
 
       if (!result.ok) {
-        console.error('Failed to fetch shares from PDS:', result.data);
+        console.error('[shares/hydrate] Failed to fetch shares from PDS:', result.data);
         break;
       }
 
+      console.log(`[shares/hydrate] PDS returned ${result.data.records.length} records (cursor: ${cursor || 'none'})`);
       allRecords.push(...result.data.records);
       cursor = result.data.cursor;
     } while (cursor);
@@ -160,7 +163,7 @@ async function hydrateSharesCacheFromPds(
       }
     }
 
-    console.log(`Hydrated ${allRecords.length} shares for ${session.did}`);
+    console.log(`[shares/hydrate] Hydrated ${allRecords.length} shares for ${session.did}`);
     hydratedShareUsers.add(session.did);
   } catch (error) {
     console.error('Error hydrating shares cache:', error);
