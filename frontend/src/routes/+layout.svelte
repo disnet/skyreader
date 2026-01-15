@@ -173,9 +173,9 @@
       condition: () => auth.isAuthenticated,
     });
 
-    // Font size shortcuts
+    // Font size shortcuts (use resulting character from Shift+key)
     keyboardStore.register({
-      key: '=',
+      key: '+',
       shift: true,
       description: 'Increase font size',
       category: 'Article',
@@ -184,7 +184,7 @@
     });
 
     keyboardStore.register({
-      key: '-',
+      key: '_',
       shift: true,
       description: 'Decrease font size',
       category: 'Article',
@@ -193,7 +193,7 @@
     });
 
     keyboardStore.register({
-      key: '0',
+      key: ')',
       shift: true,
       description: 'Reset font size',
       category: 'Article',
