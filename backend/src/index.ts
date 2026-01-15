@@ -277,9 +277,23 @@ export default {
     if (minute === 0) {
       try {
         const now = Date.now();
+        // 30-day grace period for refresh tokens (even if access token expired long ago)
+        const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
+
         const [oauthResult, sessionsResult] = await Promise.all([
+          // Delete OAuth states older than 10 minutes
           env.DB.prepare('DELETE FROM oauth_state WHERE expires_at < ?').bind(now).run(),
-          env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now).run(),
+          // Delete sessions that are either:
+          // 1. Have exceeded max refresh failures (5) AND their backoff period has passed, OR
+          // 2. Access token expired more than 30 days ago (refresh token grace period)
+          env.DB.prepare(`
+            DELETE FROM sessions
+            WHERE (
+              refresh_failures >= 5
+              AND (refresh_locked_until IS NULL OR refresh_locked_until < ?)
+            )
+            OR expires_at < ?
+          `).bind(now, thirtyDaysAgo).run(),
         ]);
         const oauthDeleted = oauthResult.meta?.changes || 0;
         const sessionsDeleted = sessionsResult.meta?.changes || 0;
