@@ -32,9 +32,7 @@ function createSharesStore() {
 
     // 2. Then fetch from backend and update
     try {
-      console.log('[shares] Fetching shares from backend...');
       const { shares } = await api.getMyShares();
-      console.log(`[shares] Backend returned ${shares.length} shares`);
 
       // Convert backend response to UserShare format and build map
       const newShares = new Map<string, UserShare>();
@@ -77,7 +75,7 @@ function createSharesStore() {
         console.error('Failed to sync shares cache:', cacheError);
       }
     } catch (e) {
-      console.error('[shares] Failed to load shares from backend:', e);
+      console.error('Failed to load shares from backend:', e);
       // If backend fails but we have cached data, that's ok
       if (userShares.size > 0) {
         hasLoaded = true;

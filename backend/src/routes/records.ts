@@ -668,11 +668,9 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
 
     // Index shares for social feed
     if (collection === 'app.skyreader.social.share') {
-      console.log(`[records/sync] Indexing share for ${session.did}, operation: ${operation}`);
       try {
         const recordUri = result.data.uri || `at://${session.did}/${collection}/${rkey}`;
         if (operation === 'create' || operation === 'update') {
-          console.log(`[records/sync] Inserting share into D1: ${recordUri}`);
           // Ensure user exists in users table with full profile info
           await env.DB.prepare(`
             INSERT INTO users (did, handle, display_name, avatar_url, pds_url, updated_at)
@@ -725,7 +723,6 @@ export async function handleRecordSync(request: Request, env: Env): Promise<Resp
             shareRecordForInsert.tags ? JSON.stringify(shareRecordForInsert.tags) : null,
             new Date(shareRecordForInsert.createdAt).getTime()
           ).run();
-          console.log(`[records/sync] Share inserted into D1 successfully: ${recordUri}`);
 
           // Fetch article content if feedUrl and itemGuid are available
           let articleContent: string | null = null;
@@ -1032,8 +1029,6 @@ export async function handleBulkRecordSync(request: Request, env: Env): Promise<
         const resultCid = applyResult.results?.[originalIndex]?.cid || '';
 
         if (op.operation === 'create' || op.operation === 'update') {
-          console.log(`[bulk-sync] Indexing share in D1: ${recordUri}`);
-
           // Ensure user exists
           await env.DB.prepare(`
             INSERT INTO users (did, handle, display_name, avatar_url, pds_url, updated_at)
@@ -1087,10 +1082,7 @@ export async function handleBulkRecordSync(request: Request, env: Env): Promise<
             shareRecord.tags ? JSON.stringify(shareRecord.tags) : null,
             new Date(shareRecord.createdAt).getTime()
           ).run();
-
-          console.log(`[bulk-sync] Share indexed successfully: ${recordUri}`);
         } else if (op.operation === 'delete') {
-          console.log(`[bulk-sync] Deleting share from D1: ${recordUri}`);
           await env.DB.prepare(
             'DELETE FROM shares WHERE record_uri = ?'
           ).bind(recordUri).run();

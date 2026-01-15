@@ -95,15 +95,12 @@ async function hydrateSharesCacheFromPds(
     'SELECT COUNT(*) as count FROM shares WHERE author_did = ?'
   ).bind(session.did).first<{ count: number }>();
 
-  console.log(`[shares/hydrate] User ${session.did} has ${existingCount?.count ?? 0} shares in D1`);
-
   if (existingCount && existingCount.count > 0) {
     hydratedShareUsers.add(session.did);
     return;
   }
 
   // No cache exists - fetch from PDS and populate
-  console.log(`[shares/hydrate] Hydrating shares cache for ${session.did} from PDS`);
 
   try {
     const allRecords: Array<{ uri: string; cid: string; value: ShareRecord }> = [];
@@ -125,11 +122,9 @@ async function hydrateSharesCacheFromPds(
       }>(session, 'com.atproto.repo.listRecords', params);
 
       if (!result.ok) {
-        console.error('[shares/hydrate] Failed to fetch shares from PDS:', result.data);
+        console.error('Failed to fetch shares from PDS:', result.data);
         break;
       }
-
-      console.log(`[shares/hydrate] PDS returned ${result.data.records.length} records (cursor: ${cursor || 'none'})`);
       allRecords.push(...result.data.records);
       cursor = result.data.cursor;
     } while (cursor);
@@ -163,7 +158,6 @@ async function hydrateSharesCacheFromPds(
       }
     }
 
-    console.log(`[shares/hydrate] Hydrated ${allRecords.length} shares for ${session.did}`);
     hydratedShareUsers.add(session.did);
   } catch (error) {
     console.error('Error hydrating shares cache:', error);
@@ -173,17 +167,13 @@ async function hydrateSharesCacheFromPds(
 
 // GET /api/shares/my - Get user's own shares
 export async function handleGetMyShares(request: Request, env: Env): Promise<Response> {
-  console.log('[shares/my] Request received');
   const session = await getSessionFromRequest(request, env);
   if (!session) {
-    console.log('[shares/my] No session found');
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
   }
-
-  console.log(`[shares/my] Session found for user: ${session.did}`);
 
   try {
     // Hydrate from PDS if D1 cache is empty
@@ -198,8 +188,6 @@ export async function handleGetMyShares(request: Request, env: Env): Promise<Res
       WHERE author_did = ?
       ORDER BY created_at DESC
     `).bind(session.did).all<UserShareRow>();
-
-    console.log(`[shares/my] Found ${result.results.length} shares in D1 for ${session.did}`);
 
     const shares = result.results.map((row) => ({
       recordUri: row.record_uri,

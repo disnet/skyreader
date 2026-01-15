@@ -151,6 +151,12 @@ export default {
 
         // Realtime WebSocket route
         case url.pathname === '/api/realtime': {
+          if (!env.REALTIME_HUB) {
+            return new Response(JSON.stringify({ error: 'Realtime not configured' }), {
+              status: 503,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
           const hubId = env.REALTIME_HUB.idFromName('main');
           const hub = env.REALTIME_HUB.get(hubId);
           // WebSocket upgrades bypass CORS handling
