@@ -2,6 +2,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { api } from '$lib/services/api';
+  import Logo from '$lib/assets/logo.svg';
 
   let handle = $state('');
   let isLoading = $state(false);
@@ -27,7 +28,10 @@
 
 <div class="login-page">
   <div class="login-card card">
-    <h1>Login to Skyreader</h1>
+    <div class="logo-header">
+      <img src={Logo} alt="Skyreader" class="login-logo" />
+      <h1>Skyreader</h1>
+    </div>
     <p>Sign in with your Bluesky account</p>
 
     <form onsubmit={handleSubmit}>
@@ -68,14 +72,28 @@
     padding: 2rem;
   }
 
+  .logo-header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .login-logo {
+    width: 72px;
+    height: 72px;
+  }
+
   .login-card h1 {
     font-size: 1.5rem;
-    margin-bottom: 0.5rem;
+    margin: 0;
   }
 
   .login-card > p {
     color: var(--color-text-secondary);
     margin-bottom: 1.5rem;
+    text-align: center;
   }
 
   .form-group {

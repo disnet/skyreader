@@ -1,4 +1,51 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
-  <rect width="192" height="192" fill="#0066cc" rx="24"/>
-  <text x="96" y="130" font-family="system-ui, sans-serif" font-size="100" font-weight="bold" fill="white" text-anchor="middle">R</text>
+  <defs>
+    <!-- Sky gradient background -->
+    <linearGradient id="skyGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#87CEEB"/>
+      <stop offset="50%" stop-color="#4A9FD4"/>
+      <stop offset="100%" stop-color="#1E6FA8"/>
+    </linearGradient>
+
+    <!-- Lighter gradient for RSS waves -->
+    <linearGradient id="waveGradient" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#E8F4FC"/>
+      <stop offset="100%" stop-color="#FFFFFF"/>
+    </linearGradient>
+
+  </defs>
+
+  <!-- Background rounded square (for app icon) -->
+  <rect x="0" y="0" width="192" height="192" rx="32" fill="url(#skyGradient)"/>
+
+  <!-- RSS Symbol - scaled for 192px -->
+  <!-- RSS dot (origin point) -->
+  <circle cx="48" cy="144" r="15" fill="url(#waveGradient)"/>
+
+  <!-- First RSS arc (innermost) -->
+  <path
+    d="M 48 108 A 36 36 0 0 1 84 144"
+    fill="none"
+    stroke="url(#waveGradient)"
+    stroke-width="12"
+    stroke-linecap="round"
+  />
+
+  <!-- Second RSS arc (middle) -->
+  <path
+    d="M 48 72 A 72 72 0 0 1 120 144"
+    fill="none"
+    stroke="url(#waveGradient)"
+    stroke-width="12"
+    stroke-linecap="round"
+  />
+
+  <!-- Third RSS arc (outermost) - reaching toward the sky -->
+  <path
+    d="M 48 40 A 104 104 0 0 1 152 144"
+    fill="none"
+    stroke="url(#waveGradient)"
+    stroke-width="12"
+    stroke-linecap="round"
+  />
 </svg>

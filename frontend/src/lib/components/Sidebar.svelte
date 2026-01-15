@@ -10,6 +10,7 @@
     import { shareReadingStore } from "$lib/stores/shareReading.svelte";
     import { onMount, onDestroy } from "svelte";
     import AddFeedModal from "./AddFeedModal.svelte";
+    import Logo from "$lib/assets/logo.svg";
 
     async function removeFeed(id: number) {
         if (confirm('Are you sure you want to remove this subscription?')) {
@@ -328,14 +329,10 @@
 
     <!-- Header row -->
     <div class="sidebar-header">
-        <a href="/settings" class="user-info" onclick={() => sidebarStore.closeMobile()}>
-            {#if auth.user?.avatarUrl}
-                <img src={auth.user.avatarUrl} alt="" class="avatar" />
-            {:else}
-                <div class="avatar-placeholder"></div>
-            {/if}
+        <a href="/" class="logo-link" onclick={() => sidebarStore.closeMobile()}>
+            <img src={Logo} alt="Skyreader" class="sidebar-logo" />
             {#if !sidebarStore.isCollapsed}
-                <span class="username">@{auth.user?.handle}</span>
+                <span class="logo-text">Skyreader</span>
             {/if}
         </a>
         <button
@@ -346,6 +343,18 @@
             +
         </button>
     </div>
+
+    <!-- User info row -->
+    <a href="/settings" class="user-info" onclick={() => sidebarStore.closeMobile()}>
+        {#if auth.user?.avatarUrl}
+            <img src={auth.user.avatarUrl} alt="" class="avatar" />
+        {:else}
+            <div class="avatar-placeholder"></div>
+        {/if}
+        {#if !sidebarStore.isCollapsed}
+            <span class="username">@{auth.user?.handle}</span>
+        {/if}
+    </a>
 
     <!-- Navigation items -->
     <nav class="sidebar-nav">
@@ -657,6 +666,28 @@
         flex-shrink: 0;
     }
 
+    .logo-link {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        text-decoration: none;
+        color: var(--color-primary);
+        font-weight: 700;
+        font-size: 1rem;
+    }
+
+    .sidebar-logo {
+        width: 28px;
+        height: 28px;
+        flex-shrink: 0;
+    }
+
+    .logo-text {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
     .user-info {
         display: flex;
         align-items: center;
@@ -664,7 +695,12 @@
         text-decoration: none;
         color: var(--color-text);
         min-width: 0;
-        flex: 1;
+        padding: 0.5rem 0.75rem;
+        transition: background-color 0.15s;
+    }
+
+    .user-info:hover {
+        background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
     }
 
     .avatar {

@@ -10,6 +10,7 @@
   import { keyboardStore } from '$lib/stores/keyboard.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import KeyboardShortcutsModal from '$lib/components/KeyboardShortcutsModal.svelte';
+  import Logo from '$lib/assets/logo.svg';
   import '../app.css';
 
   let { children } = $props();
@@ -195,8 +196,9 @@
 <svelte:head>
   <title>Skyreader</title>
   <meta name="description" content="A decentralized RSS reader built on AT Protocol" />
+  <link rel="icon" type="image/svg+xml" href={Logo} />
   <link rel="manifest" href="/manifest.json" />
-  <meta name="theme-color" content="#0066cc" />
+  <meta name="theme-color" content="#4A9FD4" />
 </svelte:head>
 
 <KeyboardShortcutsModal />
@@ -216,7 +218,10 @@
     {:else}
       <header class="header-full">
         <div class="header-content">
-          <a href="/" class="logo">Skyreader</a>
+          <a href="/" class="logo">
+            <img src={Logo} alt="" class="logo-icon" />
+            <span>Skyreader</span>
+          </a>
           <a href="/auth/login" class="login-btn">Login</a>
         </div>
       </header>
@@ -284,10 +289,18 @@
   }
 
   .logo {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
     font-weight: 700;
     font-size: 1.25rem;
     color: var(--color-primary, #0066cc);
     text-decoration: none;
+  }
+
+  .logo-icon {
+    width: 28px;
+    height: 28px;
   }
 
   .login-btn {
