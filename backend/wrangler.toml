@@ -44,7 +44,7 @@ vars = { FRONTEND_URL = "http://127.0.0.1:5173" }
 # Staging environment
 [env.staging]
 name = "skyreader-api-staging"
-vars = { FRONTEND_URL = "https://staging.skyreader.app" }
+vars = { FRONTEND_URL = "https://staging.skyreader.pages.dev" }
 routes = [{ pattern = "api-staging.skyreader.app", custom_domain = true }]
 
 [[env.staging.d1_databases]]
