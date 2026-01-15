@@ -303,7 +303,7 @@
 
   .share-body {
     font-family: var(--article-font);
-    font-size: 0.9375rem;
+    font-size: var(--article-font-size);
     line-height: 1.7;
     color: var(--color-text);
     overflow-wrap: break-word;

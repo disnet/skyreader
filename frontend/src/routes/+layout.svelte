@@ -172,6 +172,34 @@
       action: () => sidebarStore.openAddFeedModal(),
       condition: () => auth.isAuthenticated,
     });
+
+    // Font size shortcuts (use resulting character from Shift+key)
+    keyboardStore.register({
+      key: '+',
+      shift: true,
+      description: 'Increase font size',
+      category: 'Article',
+      action: () => preferences.increaseFontSize(),
+      condition: () => auth.isAuthenticated,
+    });
+
+    keyboardStore.register({
+      key: '_',
+      shift: true,
+      description: 'Decrease font size',
+      category: 'Article',
+      action: () => preferences.decreaseFontSize(),
+      condition: () => auth.isAuthenticated,
+    });
+
+    keyboardStore.register({
+      key: ')',
+      shift: true,
+      description: 'Reset font size',
+      category: 'Article',
+      action: () => preferences.resetFontSize(),
+      condition: () => auth.isAuthenticated,
+    });
   });
 
   // Connect/disconnect realtime based on auth state
@@ -187,6 +215,13 @@
   $effect(() => {
     if (browser) {
       document.documentElement.setAttribute('data-article-font', preferences.articleFont);
+    }
+  });
+
+  // Apply article font size preference to document
+  $effect(() => {
+    if (browser) {
+      document.documentElement.setAttribute('data-article-font-size', preferences.articleFontSize);
     }
   });
 </script>
