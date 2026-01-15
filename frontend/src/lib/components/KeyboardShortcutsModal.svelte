@@ -27,8 +27,8 @@
         { category: 'Article', key: 'S', description: 'Share/unshare' },
         { category: 'Article', key: 'm', description: 'Mark read/unread' },
         { category: 'Article', key: '+', description: 'Increase font size' },
-        { category: 'Article', key: '-', description: 'Decrease font size' },
-        { category: 'Article', key: ')' , description: 'Reset font size' },
+        { category: 'Article', key: '_', description: 'Decrease font size' },
+        { category: 'Article', key: ')', description: 'Reset font size' },
 
         // Other
         { category: 'Other', key: 'u', description: 'Toggle unread filter' },
