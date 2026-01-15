@@ -11,7 +11,11 @@
     import { onMount, onDestroy } from "svelte";
     import AddFeedModal from "./AddFeedModal.svelte";
     import Logo from "$lib/assets/logo.svg";
-    import { getFaviconUrl } from "$lib/utils/favicon";
+    import ResizeHandle from "./sidebar/ResizeHandle.svelte";
+    import ContextMenu from "./sidebar/ContextMenu.svelte";
+    import NavSection from "./sidebar/NavSection.svelte";
+    import FeedItem from "./sidebar/FeedItem.svelte";
+    import UserItem from "./sidebar/UserItem.svelte";
 
     async function removeFeed(id: number) {
         if (confirm('Are you sure you want to remove this subscription?')) {
@@ -50,28 +54,17 @@
         updateCssVariable(sidebarWidth);
     });
 
-    function startResize(e: MouseEvent) {
-        e.preventDefault();
+    function handleWidthChange(width: number) {
+        sidebarWidth = width;
+    }
+
+    function handleResizeStart() {
         isResizing = true;
-        document.body.classList.add('sidebar-resizing');
-        document.addEventListener('mousemove', handleResize);
-        document.addEventListener('mouseup', stopResize);
     }
 
-    function handleResize(e: MouseEvent) {
-        if (!isResizing) return;
-        const newWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, e.clientX));
-        sidebarWidth = newWidth;
-    }
-
-    function stopResize() {
-        if (isResizing) {
-            isResizing = false;
-            document.body.classList.remove('sidebar-resizing');
-            saveWidth(sidebarWidth);
-            document.removeEventListener('mousemove', handleResize);
-            document.removeEventListener('mouseup', stopResize);
-        }
+    function handleResizeEnd() {
+        isResizing = false;
+        saveWidth(sidebarWidth);
     }
 
     // Context menu state
@@ -135,8 +128,6 @@
     onDestroy(() => {
         document.removeEventListener('click', handleClickOutside);
         document.removeEventListener('keydown', handleKeydown);
-        document.removeEventListener('mousemove', handleResize);
-        document.removeEventListener('mouseup', stopResize);
         if (longPressTimer) clearTimeout(longPressTimer);
         document.body.classList.remove('sidebar-open-mobile');
     });
@@ -309,14 +300,15 @@
     class:resizing={isResizing}
     style="--sidebar-width: {sidebarWidth}px"
 >
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <!-- Resize handle -->
-    <div
-        class="resize-handle"
-        onmousedown={startResize}
-        role="separator"
-        aria-orientation="vertical"
-    ></div>
+    <ResizeHandle
+        width={sidebarWidth}
+        onWidthChange={handleWidthChange}
+        onResizeStart={handleResizeStart}
+        onResizeEnd={handleResizeEnd}
+        minWidth={MIN_WIDTH}
+        maxWidth={MAX_WIDTH}
+    />
 
     <!-- Header row -->
     <div class="sidebar-header">
@@ -411,187 +403,73 @@
         </a>
 
         <!-- Following section -->
-        <div class="nav-section">
-            <div class="section-header" class:active={currentFilter().type === "following"}>
-                <button
-                    class="disclosure-btn"
-                    onclick={() => sidebarStore.toggleSection("shared")}
-                    aria-label="Toggle section"
-                >
-                    <span class="disclosure"
-                        >{sidebarStore.expandedSections.shared ? "▼" : "▶"}</span
-                    >
-                </button>
-                {#if !sidebarStore.isCollapsed}
-                    <button
-                        class="section-label-btn"
-                        class:active={currentFilter().type === "following"}
-                        onclick={() => selectFilter("following")}
-                    >
-                        Following
-                    </button>
-                    <button
-                        class="filter-toggle"
-                        class:active={sidebarStore.showOnlyUnread.shared}
-                        onclick={(e) => {
-                            e.stopPropagation();
-                            sidebarStore.toggleShowOnlyUnread("shared");
-                        }}
-                        title={sidebarStore.showOnlyUnread.shared
-                            ? "Show all"
-                            : "Show only with unread"}
-                    >
-                        {sidebarStore.showOnlyUnread.shared ? "●" : "○"}
-                    </button>
-                {/if}
-            </div>
-            {#if sidebarStore.expandedSections.shared && !sidebarStore.isCollapsed}
-                <div class="section-items">
-                    {#each sortedFollowedUsers() as user (user.did)}
-                        {@const count = sharerCounts().get(user.did) || 0}
-                        <button
-                            class="nav-item sub-item"
-                            class:active={currentFilter().type === "sharer" &&
-                                currentFilter().id === user.did}
-                            class:not-on-app={!user.onApp}
-                            onclick={() => selectFilter("sharer", user.did)}
-                        >
-                            {#if user.avatarUrl}
-                                <img src={user.avatarUrl} alt="" class="small-avatar" />
-                            {:else}
-                                <div class="small-avatar-placeholder"></div>
-                            {/if}
-                            <span class="nav-label"
-                                >{user.displayName || user.handle}</span
-                            >
-                            {#if count > 0}
-                                <span class="nav-count">{count}</span>
-                            {/if}
-                        </button>
-                    {:else}
-                        <div class="empty-section">No followed users</div>
-                    {/each}
-                </div>
-            {/if}
-        </div>
+        <NavSection
+            title="Following"
+            isExpanded={sidebarStore.expandedSections.shared}
+            isCollapsed={sidebarStore.isCollapsed}
+            showOnlyUnread={sidebarStore.showOnlyUnread.shared}
+            isActive={currentFilter().type === "following"}
+            onToggle={() => sidebarStore.toggleSection("shared")}
+            onLabelClick={() => selectFilter("following")}
+            onUnreadToggle={() => sidebarStore.toggleShowOnlyUnread("shared")}
+        >
+            {#each sortedFollowedUsers() as user (user.did)}
+                {@const count = sharerCounts().get(user.did) || 0}
+                <UserItem
+                    {user}
+                    unreadCount={count}
+                    isActive={currentFilter().type === "sharer" && currentFilter().id === user.did}
+                    onSelect={() => selectFilter("sharer", user.did)}
+                />
+            {:else}
+                <div class="empty-section">No followed users</div>
+            {/each}
+        </NavSection>
 
         <!-- Feeds section -->
-        <div class="nav-section">
-            <div class="section-header" class:active={currentFilter().type === "feeds"}>
-                <button
-                    class="disclosure-btn"
-                    onclick={() => sidebarStore.toggleSection("feeds")}
-                    aria-label="Toggle section"
-                >
-                    <span class="disclosure"
-                        >{sidebarStore.expandedSections.feeds ? "▼" : "▶"}</span
-                    >
-                </button>
-                {#if !sidebarStore.isCollapsed}
-                    <button
-                        class="section-label-btn"
-                        class:active={currentFilter().type === "feeds"}
-                        onclick={() => selectFilter("feeds")}
-                    >
-                        Feeds
-                    </button>
-                    <button
-                        class="filter-toggle"
-                        class:active={sidebarStore.showOnlyUnread.feeds}
-                        onclick={(e) => {
-                            e.stopPropagation();
-                            sidebarStore.toggleShowOnlyUnread("feeds");
-                        }}
-                        title={sidebarStore.showOnlyUnread.feeds
-                            ? "Show all"
-                            : "Show only unread"}
-                    >
-                        {sidebarStore.showOnlyUnread.feeds ? "●" : "○"}
-                    </button>
-                {/if}
-            </div>
-            {#if sidebarStore.expandedSections.feeds && !sidebarStore.isCollapsed}
-                <div class="section-items">
-                    {#each sortedSubscriptions() as sub (sub.id)}
-                        {@const count = feedUnreadCounts.get(sub.id!) || 0}
-                        {@const faviconUrl = getFaviconUrl(sub.siteUrl || sub.feedUrl)}
-                        {@const loadingState = subscriptionsStore.feedLoadingStates.get(sub.id!)}
-                        {@const feedError = subscriptionsStore.feedErrors.get(sub.id!)}
-                        <button
-                            class="nav-item sub-item feed-item"
-                            class:active={currentFilter().type === "feed" &&
-                                currentFilter().id === sub.id}
-                            class:has-error={loadingState === "error"}
-                            onclick={() => selectFilter("feed", sub.id)}
-                            oncontextmenu={(e) => sub.id && handleContextMenu(e, sub.id)}
-                            ontouchstart={(e) => sub.id && handleTouchStart(e, sub.id)}
-                            ontouchend={handleTouchEnd}
-                            ontouchmove={handleTouchMove}
-                            title={feedError || ""}
-                        >
-                            {#if loadingState === "loading" || sub.fetchStatus === "pending"}
-                                <span class="feed-loading-spinner"></span>
-                            {:else if loadingState === "error"}
-                                <span class="feed-error-icon" title={feedError}>!</span>
-                            {:else if faviconUrl}
-                                <img src={faviconUrl} alt="" class="feed-favicon" />
-                            {:else}
-                                <span class="feed-favicon-placeholder"></span>
-                            {/if}
-                            <span class="nav-label">{sub.title}</span>
-                            {#if loadingState === "error"}
-                                <span
-                                    class="retry-btn"
-                                    role="button"
-                                    tabindex="0"
-                                    onclick={(e) => {
-                                        e.stopPropagation();
-                                        subscriptionsStore.fetchFeed(sub.id!, true);
-                                    }}
-                                    onkeydown={(e) => {
-                                        if (e.key === 'Enter' || e.key === ' ') {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            subscriptionsStore.fetchFeed(sub.id!, true);
-                                        }
-                                    }}
-                                    title="Retry"
-                                >
-                                    ↻
-                                </span>
-                            {:else if count > 0}
-                                <span class="nav-count">{count}</span>
-                            {/if}
-                        </button>
-                    {:else}
-                        <div class="empty-section">No subscriptions</div>
-                    {/each}
-                </div>
-            {/if}
-        </div>
+        <NavSection
+            title="Feeds"
+            isExpanded={sidebarStore.expandedSections.feeds}
+            isCollapsed={sidebarStore.isCollapsed}
+            showOnlyUnread={sidebarStore.showOnlyUnread.feeds}
+            isActive={currentFilter().type === "feeds"}
+            onToggle={() => sidebarStore.toggleSection("feeds")}
+            onLabelClick={() => selectFilter("feeds")}
+            onUnreadToggle={() => sidebarStore.toggleShowOnlyUnread("feeds")}
+        >
+            {#each sortedSubscriptions() as sub (sub.id)}
+                {@const count = feedUnreadCounts.get(sub.id!) || 0}
+                {@const loadingState = subscriptionsStore.feedLoadingStates.get(sub.id!)}
+                {@const feedError = subscriptionsStore.feedErrors.get(sub.id!)}
+                <FeedItem
+                    subscription={sub}
+                    unreadCount={count}
+                    isActive={currentFilter().type === "feed" && currentFilter().id === sub.id}
+                    loadingState={loadingState}
+                    errorMessage={feedError}
+                    onSelect={() => selectFilter("feed", sub.id)}
+                    onContextMenu={(e) => sub.id && handleContextMenu(e, sub.id)}
+                    onTouchStart={(e) => sub.id && handleTouchStart(e, sub.id)}
+                    onTouchEnd={handleTouchEnd}
+                    onTouchMove={handleTouchMove}
+                    onRetry={() => subscriptionsStore.fetchFeed(sub.id!, true)}
+                />
+            {:else}
+                <div class="empty-section">No subscriptions</div>
+            {/each}
+        </NavSection>
     </nav>
 </aside>
 
 <AddFeedModal open={sidebarStore.addFeedModalOpen} onclose={() => sidebarStore.closeAddFeedModal()} />
 
 {#if contextMenu}
-    <div
-        class="context-menu"
-        style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
-        role="menu"
-    >
-        <button
-            class="context-menu-item danger"
-            onclick={() => {
-                if (contextMenu) removeFeed(contextMenu.feedId);
-                closeContextMenu();
-            }}
-            role="menuitem"
-        >
-            <span class="context-menu-icon">🗑</span>
-            Delete
-        </button>
-    </div>
+    <ContextMenu
+        x={contextMenu.x}
+        y={contextMenu.y}
+        onDelete={() => removeFeed(contextMenu.feedId)}
+        onClose={closeContextMenu}
+    />
 {/if}
 
 <style>
@@ -625,23 +503,6 @@
     .sidebar.resizing {
         transition: none;
         user-select: none;
-    }
-
-    .resize-handle {
-        position: absolute;
-        top: 0;
-        right: 0;
-        width: 4px;
-        height: 100%;
-        cursor: col-resize;
-        background: transparent;
-        z-index: 10;
-        transition: background-color 0.15s;
-    }
-
-    .resize-handle:hover,
-    .sidebar.resizing .resize-handle {
-        background: var(--color-primary);
     }
 
     .sidebar.collapsed {
@@ -765,10 +626,6 @@
         color: var(--color-primary);
     }
 
-    .nav-item.sub-item {
-        padding-left: 1.5rem;
-    }
-
     .nav-icon {
         font-size: 1rem;
         flex-shrink: 0;
@@ -791,184 +648,6 @@
     }
 
     .nav-item.active .nav-count {
-        color: var(--color-primary);
-    }
-
-    .nav-section {
-        margin-top: 0.5rem;
-    }
-
-    .section-header {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        width: 100%;
-        padding: 0.5rem 0.75rem;
-        color: var(--color-text-secondary);
-        font-size: 0.75rem;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-    }
-
-    .disclosure-btn {
-        background: none;
-        border: none;
-        cursor: pointer;
-        padding: 0;
-        color: inherit;
-        font-size: inherit;
-        line-height: 1;
-    }
-
-    .disclosure-btn:hover {
-        color: var(--color-text);
-    }
-
-    .section-label-btn {
-        flex: 1;
-        background: none;
-        border: none;
-        cursor: pointer;
-        text-align: left;
-        font: inherit;
-        color: inherit;
-        font-size: inherit;
-        text-transform: inherit;
-        letter-spacing: inherit;
-        padding: 0;
-    }
-
-    .section-label-btn:hover {
-        color: var(--color-text);
-    }
-
-    .section-label-btn.active {
-        color: var(--color-primary);
-    }
-
-    .section-header:hover {
-        background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
-    }
-
-    .section-header.active {
-        background-color: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
-    }
-
-    .disclosure {
-        font-size: 0.625rem;
-        flex-shrink: 0;
-    }
-
-    .filter-toggle {
-        background: none;
-        border: none;
-        cursor: pointer;
-        font-size: 0.75rem;
-        color: var(--color-text-secondary);
-        padding: 0 0.25rem;
-        line-height: 1;
-        opacity: 0.6;
-    }
-
-    .filter-toggle:hover {
-        opacity: 1;
-    }
-
-    .filter-toggle.active {
-        color: var(--color-primary);
-        opacity: 1;
-    }
-
-    .section-items {
-        margin-top: 0.25rem;
-    }
-
-    .small-avatar {
-        width: 20px;
-        height: 20px;
-        border-radius: 50%;
-        flex-shrink: 0;
-    }
-
-    .small-avatar-placeholder {
-        width: 20px;
-        height: 20px;
-        border-radius: 50%;
-        background: var(--color-border);
-        flex-shrink: 0;
-    }
-
-    .feed-favicon {
-        width: 16px;
-        height: 16px;
-        flex-shrink: 0;
-        border-radius: 2px;
-    }
-
-    .feed-favicon-placeholder {
-        width: 16px;
-        height: 16px;
-        flex-shrink: 0;
-        background: var(--color-border);
-        border-radius: 2px;
-    }
-
-    .feed-loading-spinner {
-        width: 16px;
-        height: 16px;
-        flex-shrink: 0;
-        border: 2px solid var(--color-border);
-        border-top-color: var(--color-primary);
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-    }
-
-    @keyframes spin {
-        to {
-            transform: rotate(360deg);
-        }
-    }
-
-    .feed-error-icon {
-        width: 16px;
-        height: 16px;
-        flex-shrink: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: var(--color-error);
-        color: white;
-        border-radius: 50%;
-        font-size: 0.75rem;
-        font-weight: bold;
-    }
-
-    .nav-item.has-error {
-        color: var(--color-error);
-    }
-
-    .nav-item.not-on-app {
-        opacity: 0.5;
-    }
-
-    /* Feed item */
-    .feed-item {
-        -webkit-touch-callout: none;
-        -webkit-user-select: none;
-        user-select: none;
-    }
-
-    .retry-btn {
-        background: none;
-        border: none;
-        cursor: pointer;
-        color: var(--color-text-secondary);
-        font-size: 1rem;
-        padding: 0 0.25rem;
-        line-height: 1;
-    }
-
-    .retry-btn:hover {
         color: var(--color-primary);
     }
 
@@ -996,58 +675,11 @@
         .sidebar.open {
             transform: translateX(0);
         }
-
-        .resize-handle {
-            display: none;
-        }
     }
 
     @media (prefers-color-scheme: dark) {
         .nav-item:hover {
             background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
         }
-    }
-
-    /* Context menu */
-    .context-menu {
-        position: fixed;
-        min-width: 140px;
-        background: var(--color-bg);
-        border: 1px solid var(--color-border);
-        border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-        z-index: 100;
-        overflow: hidden;
-    }
-
-    .context-menu-item {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        width: 100%;
-        padding: 0.625rem 0.875rem;
-        border: none;
-        background: transparent;
-        color: var(--color-text);
-        font-size: 0.875rem;
-        text-align: left;
-        cursor: pointer;
-        transition: background-color 0.15s;
-    }
-
-    .context-menu-item:hover {
-        background: var(--color-bg-secondary);
-    }
-
-    .context-menu-item.danger {
-        color: var(--color-error);
-    }
-
-    .context-menu-item.danger:hover {
-        background: rgba(244, 67, 54, 0.1);
-    }
-
-    .context-menu-icon {
-        font-size: 1rem;
     }
 </style>

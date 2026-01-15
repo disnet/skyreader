@@ -3,8 +3,9 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
-  import EmptyState from '$lib/components/EmptyState.svelte';
-  import LoadingState from '$lib/components/LoadingState.svelte';
+  import PageHeader from '$lib/components/common/PageHeader.svelte';
+  import StateView from '$lib/components/common/StateView.svelte';
+  import UserCard from '$lib/components/common/UserCard.svelte';
 
   let followingDids = $state<Set<string>>(new Set());
 
@@ -39,44 +40,34 @@
 </script>
 
 <div class="discover-page">
-  <div class="page-header">
-    <div class="header-content">
-      <h1>Discover</h1>
-      <p class="subtitle">Find active Skyreader users to follow</p>
-    </div>
+  <PageHeader title="Discover" subtitle="Find active Skyreader users to follow">
     <button class="btn btn-secondary" onclick={shuffle} disabled={socialStore.isDiscoverLoading}>
       {socialStore.isDiscoverLoading ? 'Loading...' : 'Shuffle'}
     </button>
-  </div>
+  </PageHeader>
 
   {#if socialStore.error}
     <p class="error">{socialStore.error}</p>
   {/if}
 
-  {#if socialStore.isDiscoverLoading && socialStore.discoverUsers.length === 0}
-    <LoadingState message="Finding active users..." />
-  {:else if socialStore.discoverUsers.length === 0}
-    <EmptyState
-      title="No users to discover"
-      description="Check back later when more users have shared articles"
-    />
-  {:else}
+  <StateView
+    isLoading={socialStore.isDiscoverLoading && socialStore.discoverUsers.length === 0}
+    isEmpty={socialStore.discoverUsers.length === 0}
+    loadingMessage="Finding active users..."
+    emptyTitle="No users to discover"
+    emptyDescription="Check back later when more users have shared articles"
+  >
     <div class="users-grid">
       {#each socialStore.discoverUsers as user (user.did)}
         <div class="user-card card">
-          <div class="user-header">
-            {#if user.avatarUrl}
-              <img src={user.avatarUrl} alt="" class="user-avatar" />
-            {:else}
-              <div class="user-avatar placeholder"></div>
-            {/if}
-            <div class="user-info">
-              <span class="user-name">{user.displayName || user.handle}</span>
-              <span class="user-handle">@{user.handle}</span>
-            </div>
-          </div>
+          <UserCard
+            avatarUrl={user.avatarUrl}
+            displayName={user.displayName}
+            handle={user.handle}
+            size="large"
+          />
           <div class="user-stats">
-            <span class="share-count">{user.shareCount} {user.shareCount === 1 ? 'share' : 'shares'} in last 30 days</span>
+            {user.shareCount} {user.shareCount === 1 ? 'share' : 'shares'} in last 30 days
           </div>
           <button
             class="btn follow-btn"
@@ -96,30 +87,14 @@
         </div>
       {/each}
     </div>
-  {/if}
+  </StateView>
 </div>
 
 <style>
   .discover-page {
     max-width: 800px;
     margin: 0 auto;
-  }
-
-  .page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 1.5rem;
-  }
-
-  .header-content h1 {
-    margin: 0;
-  }
-
-  .subtitle {
-    color: var(--color-text-secondary);
-    margin: 0.25rem 0 0 0;
-    font-size: 0.875rem;
+    padding: 0 1rem;
   }
 
   .users-grid {
@@ -135,50 +110,7 @@
     gap: 0.75rem;
   }
 
-  .user-header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .user-avatar {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .user-avatar.placeholder {
-    background: var(--color-bg-secondary);
-  }
-
-  .user-info {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .user-name {
-    display: block;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .user-handle {
-    display: block;
-    font-size: 0.875rem;
-    color: var(--color-text-secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   .user-stats {
-    padding-left: calc(48px + 0.75rem);
-  }
-
-  .share-count {
     font-size: 0.875rem;
     color: var(--color-text-secondary);
   }

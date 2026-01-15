@@ -5,7 +5,9 @@
   import { socialStore } from '$lib/stores/social.svelte';
   import { formatRelativeDate } from '$lib/utils/date';
   import { getFaviconUrl } from '$lib/utils/favicon';
-  import EmptyState from '$lib/components/EmptyState.svelte';
+  import PageHeader from '$lib/components/common/PageHeader.svelte';
+  import StateView from '$lib/components/common/StateView.svelte';
+  import UserCard from '$lib/components/common/UserCard.svelte';
   import LoadingState from '$lib/components/LoadingState.svelte';
 
   let activeTab = $state<'following' | 'shares'>('following');
@@ -42,12 +44,11 @@
 </script>
 
 <div class="social-page">
-  <div class="page-header">
-    <h1>Social</h1>
+  <PageHeader title="Social">
     <button class="btn btn-secondary" onclick={syncFollows} disabled={socialStore.isSyncing}>
       {socialStore.isSyncing ? 'Syncing...' : 'Sync Follows'}
     </button>
-  </div>
+  </PageHeader>
 
   <div class="tabs">
     <button
@@ -74,39 +75,33 @@
   {/if}
 
   {#if activeTab === 'following'}
-    {#if (socialStore.isLoading || socialStore.isSyncing) && socialStore.followedUsers.length === 0}
-      <LoadingState message={socialStore.isSyncing ? 'Syncing follows from Bluesky...' : 'Loading followed users...'} />
-    {:else if socialStore.followedUsers.length === 0}
-      <EmptyState
-        title="No follows yet"
-        description="Click 'Sync Follows' to import your Bluesky follows"
-      />
-    {:else}
+    <StateView
+      isLoading={(socialStore.isLoading || socialStore.isSyncing) && socialStore.followedUsers.length === 0}
+      isEmpty={socialStore.followedUsers.length === 0}
+      loadingMessage={socialStore.isSyncing ? 'Syncing follows from Bluesky...' : 'Loading followed users...'}
+      emptyTitle="No follows yet"
+      emptyDescription="Click 'Sync Follows' to import your Bluesky follows"
+    >
       <div class="users-list">
         {#each socialStore.followedUsers as user (user.did)}
-          <div class="user-card card">
-            {#if user.avatarUrl}
-              <img src={user.avatarUrl} alt="" class="user-avatar" />
-            {:else}
-              <div class="user-avatar placeholder"></div>
-            {/if}
-            <div class="user-info">
-              <span class="user-name">{user.displayName || user.handle}</span>
-              <span class="user-handle">@{user.handle}</span>
-            </div>
-          </div>
+          <UserCard
+            avatarUrl={user.avatarUrl}
+            displayName={user.displayName}
+            handle={user.handle}
+            size="large"
+            variant="card"
+          />
         {/each}
       </div>
-    {/if}
+    </StateView>
   {:else}
-    {#if socialStore.isLoading && socialStore.shares.length === 0}
-      <LoadingState message="Loading shares..." />
-    {:else if socialStore.shares.length === 0}
-      <EmptyState
-        title="No shares yet"
-        description="Shares from people you follow will appear here"
-      />
-    {:else}
+    <StateView
+      isLoading={socialStore.isLoading && socialStore.shares.length === 0}
+      isEmpty={socialStore.shares.length === 0}
+      loadingMessage="Loading shares..."
+      emptyTitle="No shares yet"
+      emptyDescription="Shares from people you follow will appear here"
+    >
       <div class="shares-list">
         {#each socialStore.shares as share (share.recordUri)}
           <div class="share-item">
@@ -143,7 +138,7 @@
           <LoadingState message="Loading more..." />
         {/if}
       </div>
-    {/if}
+    </StateView>
   {/if}
 </div>
 
@@ -151,13 +146,7 @@
   .social-page {
     max-width: 800px;
     margin: 0 auto;
-  }
-
-  .page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
+    padding: 0 1rem;
   }
 
   .tabs {
@@ -204,45 +193,6 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-  }
-
-  .user-card {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem 1rem;
-  }
-
-  .user-avatar {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .user-avatar.placeholder {
-    background: var(--color-bg-secondary);
-  }
-
-  .user-info {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .user-name {
-    display: block;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .user-handle {
-    font-size: 0.875rem;
-    color: var(--color-text-secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .shares-list {
