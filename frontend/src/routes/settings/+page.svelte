@@ -4,13 +4,19 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
+  import { preferences, type ArticleFont, type ArticleFontSize } from '$lib/stores/preferences.svelte';
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
 
   const fontOptions: { value: ArticleFont; label: string }[] = [
     { value: 'sans-serif', label: 'Sans Serif' },
     { value: 'serif', label: 'Serif' },
     { value: 'mono', label: 'Monospace' },
+  ];
+
+  const fontSizeOptions: { value: ArticleFontSize; label: string }[] = [
+    { value: 'small', label: 'Small' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'large', label: 'Large' },
   ];
 
   let showImportModal = $state(false);
@@ -152,6 +158,21 @@
             onclick={() => preferences.setArticleFont(option.value)}
           >
             <span class="font-preview" style:font-family={option.value === 'mono' ? 'monospace' : option.value}>Aa</span>
+            <span class="font-label">{option.label}</span>
+          </button>
+        {/each}
+      </div>
+    </div>
+    <div class="setting-row">
+      <label for="article-font-size">Article Font Size</label>
+      <div class="font-options">
+        {#each fontSizeOptions as option}
+          <button
+            class="font-size-option"
+            class:selected={preferences.articleFontSize === option.value}
+            onclick={() => preferences.setArticleFontSize(option.value)}
+          >
+            <span class="font-size-preview" class:small={option.value === 'small'} class:large={option.value === 'large'}>Aa</span>
             <span class="font-label">{option.label}</span>
           </button>
         {/each}
@@ -363,5 +384,44 @@
 
   .font-option.selected .font-label {
     color: var(--color-primary);
+  }
+
+  .font-size-option {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.75rem 1rem;
+    background: var(--color-bg);
+    border: 2px solid var(--color-border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: border-color 0.15s, background-color 0.15s;
+  }
+
+  .font-size-option:hover {
+    border-color: var(--color-primary);
+  }
+
+  .font-size-option.selected {
+    border-color: var(--color-primary);
+    background: var(--color-sidebar-active);
+  }
+
+  .font-size-option.selected .font-label {
+    color: var(--color-primary);
+  }
+
+  .font-size-preview {
+    font-size: 1.25rem;
+    line-height: 1;
+  }
+
+  .font-size-preview.small {
+    font-size: 1rem;
+  }
+
+  .font-size-preview.large {
+    font-size: 1.5rem;
   }
 </style>
