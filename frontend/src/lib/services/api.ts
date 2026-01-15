@@ -96,6 +96,23 @@ class ApiClient {
     return this.fetch(`/api/feeds/status?${params}`);
   }
 
+  async fetchFeedsBatch(urls: string[]): Promise<{
+    feeds: Record<string, {
+      title: string;
+      description?: string;
+      siteUrl?: string;
+      imageUrl?: string;
+      items: FeedItem[];
+      status: 'ready' | 'pending';
+      lastFetchedAt?: number;
+    }>;
+  }> {
+    return this.fetch('/api/feeds/batch', {
+      method: 'POST',
+      body: JSON.stringify({ urls }),
+    });
+  }
+
   // Items (paginated queries)
   async getItems(options: {
     feedUrls?: string[];

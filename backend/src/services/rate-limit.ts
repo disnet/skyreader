@@ -41,6 +41,7 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
 
   // Light operations (cached data, simple queries)
   '/api/feeds/cached': LIGHT_LIMIT,
+  '/api/feeds/batch': LIGHT_LIMIT,
   '/api/feeds/discover': LIGHT_LIMIT,
   '/api/feeds/status': LIGHT_LIMIT,
   '/api/items': LIGHT_LIMIT,
