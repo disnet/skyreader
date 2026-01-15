@@ -5,11 +5,13 @@ import { handleItemsList, handleItemsRecent, handleItemGet, handleItemsByFeed } 
 import { handleSocialFeed, handleSyncFollows, handleFollowedUsers, handlePopularShares } from './routes/social';
 import { handleDiscover } from './routes/discover';
 import { handleRecordSync, handleBulkRecordSync, handleRecordsList } from './routes/records';
+import { handleGetReadPositions, handleMarkAsRead, handleMarkAsUnread, handleToggleStar, handleBulkMarkAsRead } from './routes/reading';
 import { getSessionFromRequest, updateUserActivity } from './services/oauth';
 import { refreshActiveFeeds } from './services/scheduled-feeds';
 import { pollJetstream } from './services/jetstream-poller';
 import { pollJetstreamFollows } from './services/jetstream-follows-poller';
 import { pollJetstreamInappFollows } from './services/jetstream-inapp-follows-poller';
+import { syncReadPositionsToPds } from './services/read-positions-pds-sync';
 
 export { RealtimeHub } from './durable-objects/realtime-hub';
 
@@ -124,6 +126,23 @@ export default {
           response = await handleRecordsList(request, env);
           break;
 
+        // Reading routes (read positions)
+        case url.pathname === '/api/reading/positions':
+          response = await handleGetReadPositions(request, env);
+          break;
+        case url.pathname === '/api/reading/mark-read':
+          response = await handleMarkAsRead(request, env);
+          break;
+        case url.pathname === '/api/reading/mark-unread':
+          response = await handleMarkAsUnread(request, env);
+          break;
+        case url.pathname === '/api/reading/toggle-star':
+          response = await handleToggleStar(request, env);
+          break;
+        case url.pathname === '/api/reading/mark-read-bulk':
+          response = await handleBulkMarkAsRead(request, env);
+          break;
+
         // Realtime WebSocket route
         case url.pathname === '/api/realtime': {
           const hubId = env.REALTIME_HUB.idFromName('main');
@@ -224,6 +243,24 @@ export default {
       }
     }
 
+    // Sync read positions to PDS (every 5 minutes for data portability)
+    let pdsSyncDuration = 0;
+    if (minute % 5 === 0) {
+      try {
+        const startTime = Date.now();
+        const result = await syncReadPositionsToPds(env);
+        pdsSyncDuration = Date.now() - startTime;
+        if (result.synced > 0 || result.errors > 0) {
+          console.log(
+            `[Cron] PDS sync: ${result.synced} synced, ` +
+            `${result.errors} errors, ${result.users} users, ${pdsSyncDuration}ms`
+          );
+        }
+      } catch (error) {
+        console.error('[Cron] PDS sync failed:', error);
+      }
+    }
+
     // Clean up expired D1 data (once per hour)
     if (minute === 0) {
       try {
@@ -245,7 +282,7 @@ export default {
     const totalDuration = Date.now() - cronStart;
     console.log(
       `[Cron] Complete: total=${totalDuration}ms, ` +
-      `pollers=${pollersDuration}ms (parallel), feeds=${feedRefreshDuration}ms`
+      `pollers=${pollersDuration}ms (parallel), feeds=${feedRefreshDuration}ms, pds=${pdsSyncDuration}ms`
     );
   },
 };

@@ -2,13 +2,12 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
-  import { readingStore } from '$lib/stores/reading.svelte';
+  import { readingStore, type StarredArticle } from '$lib/stores/reading.svelte';
   import { formatRelativeDate } from '$lib/utils/date';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import LoadingState from '$lib/components/LoadingState.svelte';
-  import type { ReadPosition } from '$lib/types';
 
-  let starredItems = $state<ReadPosition[]>([]);
+  let starredItems = $state<StarredArticle[]>([]);
   let isLoading = $state(true);
 
   onMount(async () => {
@@ -17,7 +16,7 @@
       return;
     }
     await readingStore.load();
-    starredItems = await readingStore.getStarredArticles();
+    starredItems = readingStore.getStarredArticles();
     isLoading = false;
   });
 </script>
@@ -40,7 +39,7 @@
             <a href={item.articleUrl} target="_blank" rel="noopener" class="article-link">
               <h3>{item.articleTitle || item.articleUrl}</h3>
             </a>
-            <p class="meta">Starred {formatRelativeDate(item.readAt)}</p>
+            <p class="meta">Starred {formatRelativeDate(new Date(item.readAt).toISOString())}</p>
           </div>
           <button
             class="unstar-btn"

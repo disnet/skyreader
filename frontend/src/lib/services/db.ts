@@ -1,10 +1,19 @@
 import Dexie, { type Table } from 'dexie';
-import type { Subscription, Article, ReadPosition, ShareReadPosition, SocialShare, UserShare, SyncQueueItem } from '$lib/types';
+import type { Subscription, Article, ShareReadPosition, SocialShare, UserShare, SyncQueueItem } from '$lib/types';
+
+// Local cache for read positions (backend is source of truth)
+export interface ReadPositionCache {
+  articleGuid: string; // primary key
+  starred: boolean;
+  readAt: number;
+  itemUrl?: string;
+  itemTitle?: string;
+}
 
 class SkyreaderDatabase extends Dexie {
   subscriptions!: Table<Subscription>;
   articles!: Table<Article>;
-  readPositions!: Table<ReadPosition>;
+  readPositionsCache!: Table<ReadPositionCache>;
   shareReadPositions!: Table<ShareReadPosition>;
   socialShares!: Table<SocialShare>;
   userShares!: Table<UserShare>;
@@ -45,37 +54,27 @@ class SkyreaderDatabase extends Dexie {
     this.version(6).stores({
       subscriptions: '++id, atUri, rkey, feedUrl, category, syncStatus, fetchStatus, localUpdatedAt',
     });
+
+    // Remove readPositions table - read status now stored in D1 backend
+    this.version(7).stores({
+      readPositions: null,
+    });
+
+    // Add readPositionsCache table - local cache for faster loads, backend is source of truth
+    this.version(8).stores({
+      readPositionsCache: 'articleGuid, starred',
+    });
   }
 }
 
 export const db = new SkyreaderDatabase();
-
-// Helper to check if article is read
-export async function isArticleRead(articleGuid: string): Promise<boolean> {
-  const position = await db.readPositions.where('articleGuid').equals(articleGuid).first();
-  return !!position;
-}
-
-// Helper to get unread count for a subscription
-export async function getUnreadCount(subscriptionId: number): Promise<number> {
-  const articles = await db.articles.where('subscriptionId').equals(subscriptionId).toArray();
-  const readGuids = new Set(
-    (await db.readPositions.toArray()).map(p => p.articleGuid)
-  );
-  return articles.filter(a => !readGuids.has(a.guid)).length;
-}
-
-// Helper to get all starred articles
-export async function getStarredArticles(): Promise<ReadPosition[]> {
-  return db.readPositions.where('starred').equals(1).toArray();
-}
 
 // Clear all data (for logout)
 export async function clearAllData(): Promise<void> {
   await Promise.all([
     db.subscriptions.clear(),
     db.articles.clear(),
-    db.readPositions.clear(),
+    db.readPositionsCache.clear(),
     db.shareReadPositions.clear(),
     db.socialShares.clear(),
     db.userShares.clear(),

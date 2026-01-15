@@ -5,6 +5,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { api } from '$lib/services/api';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+  import { readingStore } from '$lib/stores/reading.svelte';
 
   onMount(async () => {
     const sessionId = $page.url.searchParams.get('sessionId');
@@ -34,6 +35,9 @@
 
       // Sync subscriptions from PDS
       await subscriptionsStore.syncFromPds();
+
+      // Load read positions from backend
+      await readingStore.load();
 
       goto(returnUrl);
     } catch (error) {

@@ -171,12 +171,6 @@ class SyncQueueService {
         await db.subscriptions.update(sub.id, { atUri, syncStatus: 'synced' });
         this.notifySyncComplete(collection, rkey);
       }
-    } else if (collection === 'app.skyreader.feed.readPosition') {
-      const pos = await db.readPositions.where('rkey').equals(rkey).first();
-      if (pos?.id) {
-        await db.readPositions.update(pos.id, { atUri, syncStatus: 'synced' });
-        this.notifySyncComplete(collection, rkey);
-      }
     } else if (collection === 'app.skyreader.social.share') {
       const share = await db.userShares.where('rkey').equals(rkey).first();
       if (share?.id) {
