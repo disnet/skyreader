@@ -1,3 +1,4 @@
+import { api } from '$lib/services/api';
 import { db } from '$lib/services/db';
 import { syncQueue } from '$lib/services/sync-queue';
 import type { UserShare } from '$lib/types';
@@ -11,12 +12,74 @@ function generateTid(): string {
 function createSharesStore() {
   let userShares = $state<Map<string, UserShare>>(new Map());
   let isLoading = $state(true);
+  let hasLoaded = false;
 
+  // Load shares - stale-while-revalidate pattern
   async function load() {
     isLoading = true;
+
+    // 1. First, try to load from local cache for instant display
     try {
-      const shares = await db.userShares.toArray();
-      userShares = new Map(shares.map((s) => [s.articleGuid, s]));
+      const cached = await db.userShares.toArray();
+      if (cached.length > 0) {
+        userShares = new Map(cached.map((s) => [s.articleGuid, s]));
+        // Show cached data immediately, but keep loading
+        isLoading = false;
+      }
+    } catch (e) {
+      console.error('Failed to load shares from cache:', e);
+    }
+
+    // 2. Then fetch from backend and update
+    try {
+      const { shares } = await api.getMyShares();
+
+      // Convert backend response to UserShare format and build map
+      const newShares = new Map<string, UserShare>();
+      const sharesForDb: UserShare[] = [];
+
+      for (const share of shares) {
+        // Extract rkey from recordUri: at://did/collection/rkey
+        const rkey = share.recordUri.split('/').pop() || '';
+
+        const userShare: UserShare = {
+          atUri: share.recordUri,
+          rkey,
+          feedUrl: share.feedUrl,
+          articleGuid: share.articleGuid || share.articleUrl, // Fall back to URL if no GUID
+          articleUrl: share.articleUrl,
+          articleTitle: share.articleTitle,
+          articleAuthor: share.articleAuthor,
+          articleDescription: share.articleDescription,
+          articleImage: share.articleImage,
+          articlePublishedAt: share.articlePublishedAt,
+          note: share.note,
+          createdAt: share.createdAt,
+          syncStatus: 'synced',
+        };
+
+        newShares.set(userShare.articleGuid, userShare);
+        sharesForDb.push(userShare);
+      }
+
+      userShares = newShares;
+      hasLoaded = true;
+
+      // Sync cache in background - clear and repopulate
+      try {
+        await db.userShares.clear();
+        if (sharesForDb.length > 0) {
+          await db.userShares.bulkPut(sharesForDb);
+        }
+      } catch (cacheError) {
+        console.error('Failed to sync shares cache:', cacheError);
+      }
+    } catch (e) {
+      console.error('Failed to load shares from backend:', e);
+      // If backend fails but we have cached data, that's ok
+      if (userShares.size > 0) {
+        hasLoaded = true;
+      }
     } finally {
       isLoading = false;
     }

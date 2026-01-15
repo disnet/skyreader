@@ -3,6 +3,7 @@ import { handleAuthLogin, handleAuthCallback, handleAuthLogout, handleAuthMe, ha
 import { handleFeedFetch, handleCachedFeedFetch, handleFeedDiscover, handleArticleFetch, handleFeedStatusBatch } from './routes/feeds';
 import { handleItemsList, handleItemsRecent, handleItemGet, handleItemsByFeed } from './routes/items';
 import { handleSocialFeed, handleSyncFollows, handleFollowedUsers, handlePopularShares } from './routes/social';
+import { handleGetMyShares } from './routes/shares';
 import { handleDiscover } from './routes/discover';
 import { handleRecordSync, handleBulkRecordSync, handleRecordsList } from './routes/records';
 import { handleGetReadPositions, handleMarkAsRead, handleMarkAsUnread, handleToggleStar, handleBulkMarkAsRead } from './routes/reading';
@@ -110,6 +111,11 @@ export default {
           response = await handlePopularShares(request, env);
           break;
 
+        // User's own shares route
+        case url.pathname === '/api/shares/my':
+          response = await handleGetMyShares(request, env);
+          break;
+
         // Discover route
         case url.pathname === '/api/discover':
           response = await handleDiscover(request, env);
@@ -145,6 +151,12 @@ export default {
 
         // Realtime WebSocket route
         case url.pathname === '/api/realtime': {
+          if (!env.REALTIME_HUB) {
+            return new Response(JSON.stringify({ error: 'Realtime not configured' }), {
+              status: 503,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
           const hubId = env.REALTIME_HUB.idFromName('main');
           const hub = env.REALTIME_HUB.get(hubId);
           // WebSocket upgrades bypass CORS handling
