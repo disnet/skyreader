@@ -1,5 +1,5 @@
 -- Store individual feed items for efficient querying
-CREATE TABLE feed_items (
+CREATE TABLE IF NOT EXISTS feed_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     feed_url TEXT NOT NULL,
     guid TEXT NOT NULL,
@@ -16,13 +16,13 @@ CREATE TABLE feed_items (
 );
 
 -- Index for fetching items by feed
-CREATE INDEX idx_feed_items_feed_url ON feed_items(feed_url);
+CREATE INDEX IF NOT EXISTS idx_feed_items_feed_url ON feed_items(feed_url);
 
 -- Index for cross-feed queries sorted by date
-CREATE INDEX idx_feed_items_published_at ON feed_items(published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feed_items_published_at ON feed_items(published_at DESC);
 
 -- Composite index for feed-specific date queries
-CREATE INDEX idx_feed_items_feed_published ON feed_items(feed_url, published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feed_items_feed_published ON feed_items(feed_url, published_at DESC);
 
 -- Index for looking up items by URL (for social features)
-CREATE INDEX idx_feed_items_url ON feed_items(url);
+CREATE INDEX IF NOT EXISTS idx_feed_items_url ON feed_items(url);

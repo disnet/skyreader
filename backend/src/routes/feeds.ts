@@ -780,3 +780,157 @@ export async function handleFeedStatusBatch(request: Request, env: Env): Promise
     headers: { 'Content-Type': 'application/json' },
   });
 }
+
+interface BatchFeedResult {
+  title: string;
+  description?: string;
+  siteUrl?: string;
+  imageUrl?: string;
+  items: FeedItem[];
+  status: 'ready' | 'pending';
+  lastFetchedAt?: number;
+}
+
+// Batch fetch cached content for multiple feeds in a single request
+export async function handleBatchFeedFetch(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  let body: { urls?: string[] };
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const feedUrls = body.urls;
+  if (!feedUrls || !Array.isArray(feedUrls) || feedUrls.length === 0) {
+    return new Response(JSON.stringify({ error: 'Missing urls array in request body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Limit to prevent abuse
+  if (feedUrls.length > 50) {
+    return new Response(JSON.stringify({ error: 'Too many URLs (max 50)' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Validate URLs
+  const validUrls: string[] = [];
+  const invalidUrls: string[] = [];
+  for (const url of feedUrls) {
+    try {
+      new URL(url);
+      validUrls.push(url);
+    } catch {
+      invalidUrls.push(url);
+    }
+  }
+
+  const feeds: Record<string, BatchFeedResult> = {};
+
+  // Initialize invalid URLs with error status
+  for (const url of invalidUrls) {
+    feeds[url] = {
+      title: 'Invalid URL',
+      items: [],
+      status: 'pending',
+    };
+  }
+
+  if (validUrls.length === 0) {
+    return new Response(JSON.stringify({ feeds }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Fetch all feed metadata in one query
+  const metadataPlaceholders = validUrls.map(() => '?').join(',');
+  const metadataResults = await env.DB.prepare(`
+    SELECT feed_url, title, site_url, description, image_url
+    FROM feed_metadata
+    WHERE feed_url IN (${metadataPlaceholders})
+  `).bind(...validUrls).all<{
+    feed_url: string;
+    title: string;
+    site_url: string | null;
+    description: string | null;
+    image_url: string | null;
+  }>();
+
+  const metadataMap = new Map<string, typeof metadataResults.results[0]>();
+  for (const row of metadataResults.results) {
+    metadataMap.set(row.feed_url, row);
+  }
+
+  // Fetch cache timestamps in one query
+  const urlHashes = validUrls.map(hashUrl);
+  const cachePlaceholders = urlHashes.map(() => '?').join(',');
+  const cacheResults = await env.DB.prepare(`
+    SELECT url_hash, feed_url, cached_at
+    FROM feed_cache
+    WHERE url_hash IN (${cachePlaceholders})
+  `).bind(...urlHashes).all<{
+    url_hash: string;
+    feed_url: string;
+    cached_at: number;
+  }>();
+
+  const cacheMap = new Map<string, number>();
+  for (const row of cacheResults.results) {
+    cacheMap.set(row.feed_url, row.cached_at);
+  }
+
+  // Fetch all feed items for valid URLs in one query
+  const itemsResults = await env.DB.prepare(`
+    SELECT id, feed_url, guid, url, title, author, summary, content, image_url, published_at
+    FROM feed_items
+    WHERE feed_url IN (${metadataPlaceholders})
+    ORDER BY feed_url, published_at DESC
+  `).bind(...validUrls).all<FeedItemRow>();
+
+  // Group items by feed URL
+  const itemsByFeed = new Map<string, FeedItem[]>();
+  for (const row of itemsResults.results) {
+    const items = itemsByFeed.get(row.feed_url) || [];
+    // Limit to 100 items per feed
+    if (items.length < 100) {
+      items.push(mapRowToFeedItem(row));
+    }
+    itemsByFeed.set(row.feed_url, items);
+  }
+
+  // Build response for each URL
+  for (const feedUrl of validUrls) {
+    const metadata = metadataMap.get(feedUrl);
+    const items = itemsByFeed.get(feedUrl) || [];
+    const cachedAt = cacheMap.get(feedUrl);
+
+    const hasContent = items.length > 0 || cachedAt !== undefined;
+
+    feeds[feedUrl] = {
+      title: metadata?.title || 'Unknown Feed',
+      description: metadata?.description || undefined,
+      siteUrl: metadata?.site_url || undefined,
+      imageUrl: metadata?.image_url || undefined,
+      items,
+      status: hasContent ? 'ready' : 'pending',
+      lastFetchedAt: cachedAt ? cachedAt * 1000 : undefined,
+    };
+  }
+
+  return new Response(JSON.stringify({ feeds }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}

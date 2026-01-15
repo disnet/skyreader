@@ -1,6 +1,6 @@
 -- Cache of user read positions (synced from AT Protocol)
 -- Used to dedupe before syncing to PDS
-CREATE TABLE read_positions_cache (
+CREATE TABLE IF NOT EXISTS read_positions_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_did TEXT NOT NULL,
     rkey TEXT NOT NULL,
@@ -16,6 +16,6 @@ CREATE TABLE read_positions_cache (
     UNIQUE(user_did, rkey)
 );
 
-CREATE INDEX idx_read_positions_cache_user ON read_positions_cache(user_did);
-CREATE INDEX idx_read_positions_cache_guid ON read_positions_cache(user_did, item_guid);
-CREATE INDEX idx_read_positions_cache_unsynced ON read_positions_cache(synced_at) WHERE synced_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_read_positions_cache_user ON read_positions_cache(user_did);
+CREATE INDEX IF NOT EXISTS idx_read_positions_cache_guid ON read_positions_cache(user_did, item_guid);
+CREATE INDEX IF NOT EXISTS idx_read_positions_cache_unsynced ON read_positions_cache(synced_at) WHERE synced_at IS NULL;

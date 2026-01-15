@@ -7,7 +7,7 @@ CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active_at);
 
 -- Cache of user subscriptions (synced from AT Protocol)
 -- Used by scheduled feed fetcher to know which feeds to refresh
-CREATE TABLE subscriptions_cache (
+CREATE TABLE IF NOT EXISTS subscriptions_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_did TEXT NOT NULL,
     record_uri TEXT UNIQUE NOT NULL,
@@ -17,8 +17,8 @@ CREATE TABLE subscriptions_cache (
     FOREIGN KEY (user_did) REFERENCES users(did) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_subscriptions_cache_user ON subscriptions_cache(user_did);
-CREATE INDEX idx_subscriptions_cache_feed_url ON subscriptions_cache(feed_url);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_cache_user ON subscriptions_cache(user_did);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_cache_feed_url ON subscriptions_cache(feed_url);
 
 -- Add scheduled fetch tracking to feed_metadata
 ALTER TABLE feed_metadata ADD COLUMN last_scheduled_fetch_at INTEGER;

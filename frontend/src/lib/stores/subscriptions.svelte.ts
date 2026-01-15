@@ -565,18 +565,59 @@ function createSubscriptionsStore() {
     }
   }
 
-  // Fetch all feeds that need content: ready feeds from cache, pending feeds from source
+  // Fetch all feeds that need content: ready feeds from cache (batch), pending feeds from source
   async function fetchAllNewFeeds(concurrency = 2, delayMs = 1000): Promise<void> {
-    // First, quickly fetch ready feeds from cache (no delay needed)
+    // First, batch fetch all ready feeds from cache in a single request
     const readyFeeds = subscriptions.filter((s) => s.fetchStatus === 'ready' && s.id);
     if (readyFeeds.length > 0) {
-      console.log(`Fetching ${readyFeeds.length} ready feeds from cache...`);
-      await Promise.all(
-        readyFeeds.map((sub) => sub.id && fetchFeed(sub.id, false))
-      );
+      console.log(`Batch fetching ${readyFeeds.length} ready feeds from cache...`);
+      try {
+        const feedUrls = readyFeeds.map((s) => s.feedUrl);
+        const { feeds } = await api.fetchFeedsBatch(feedUrls);
+
+        // Process batch response and store articles
+        for (const sub of readyFeeds) {
+          if (!sub.id) continue;
+          const feedData = feeds[sub.feedUrl];
+          if (!feedData || feedData.items.length === 0) continue;
+
+          // Store articles (same logic as fetchFeed)
+          const existingArticles = await db.articles
+            .where('subscriptionId')
+            .equals(sub.id)
+            .toArray();
+          const existingGuids = new Set(existingArticles.map((a) => a.guid));
+
+          const newArticles: Article[] = feedData.items
+            .filter((item) => !existingGuids.has(item.guid))
+            .map((item) => ({
+              subscriptionId: sub.id!,
+              guid: item.guid,
+              url: item.url,
+              title: item.title,
+              author: item.author,
+              content: item.content,
+              summary: item.summary,
+              imageUrl: item.imageUrl,
+              publishedAt: item.publishedAt,
+              fetchedAt: Date.now(),
+            }));
+
+          if (newArticles.length > 0) {
+            await db.articles.bulkAdd(newArticles);
+            articlesVersion++;
+          }
+        }
+      } catch (e) {
+        console.error('Batch feed fetch failed, falling back to individual fetches:', e);
+        // Fallback to individual fetches
+        await Promise.all(
+          readyFeeds.map((sub) => sub.id && fetchFeed(sub.id, false))
+        );
+      }
     }
 
-    // Then gradually fetch pending feeds from source
+    // Then gradually fetch pending feeds from source (these need actual backend fetches)
     await fetchPendingFeedsGradually(concurrency, delayMs);
   }
 
