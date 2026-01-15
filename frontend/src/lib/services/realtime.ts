@@ -4,8 +4,39 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8787';
 const WS_BASE = API_BASE.replace(/^http/, 'ws');
 
 export interface RealtimeMessage {
-  type: 'connected' | 'heartbeat' | 'new_share' | 'new_articles' | 'feed_ready';
+  type: 'connected' | 'heartbeat' | 'new_share' | 'new_articles' | 'feed_ready' | 'read_position_sync' | 'read_position_delete' | 'read_position_star' | 'read_position_bulk_sync';
   payload: unknown;
+}
+
+export interface ReadPositionSyncPayload {
+  userDid: string;
+  itemGuid: string;
+  itemUrl?: string;
+  itemTitle?: string;
+  starred: boolean;
+  readAt: number;
+  rkey: string;
+}
+
+export interface ReadPositionDeletePayload {
+  userDid: string;
+  itemGuid: string;
+}
+
+export interface ReadPositionStarPayload {
+  userDid: string;
+  itemGuid: string;
+  starred: boolean;
+}
+
+export interface ReadPositionBulkSyncPayload {
+  userDid: string;
+  items: Array<{
+    itemGuid: string;
+    rkey: string;
+    readAt: number;
+    starred: boolean;
+  }>;
 }
 
 export interface NewSharePayload {

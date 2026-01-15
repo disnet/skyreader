@@ -208,6 +208,57 @@ class ApiClient {
   }> {
     return this.fetch(`/api/records/list?collection=${encodeURIComponent(collection)}`);
   }
+
+  // Reading (read positions)
+  async getReadPositions(): Promise<{
+    positions: Array<{
+      item_guid: string;
+      item_url: string | null;
+      item_title: string | null;
+      starred: number;
+      read_at: number;
+      rkey: string;
+    }>;
+  }> {
+    return this.fetch('/api/reading/positions');
+  }
+
+  async markAsRead(data: {
+    itemGuid: string;
+    itemUrl?: string;
+    itemTitle?: string;
+    starred?: boolean;
+  }): Promise<{ success: boolean; rkey?: string; alreadyRead?: boolean }> {
+    return this.fetch('/api/reading/mark-read', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async markAsUnread(itemGuid: string): Promise<{ success: boolean }> {
+    return this.fetch('/api/reading/mark-unread', {
+      method: 'POST',
+      body: JSON.stringify({ itemGuid }),
+    });
+  }
+
+  async toggleStar(itemGuid: string, starred: boolean): Promise<{ success: boolean; starred: boolean }> {
+    return this.fetch('/api/reading/toggle-star', {
+      method: 'POST',
+      body: JSON.stringify({ itemGuid, starred }),
+    });
+  }
+
+  async markAsReadBulk(items: Array<{
+    itemGuid: string;
+    itemUrl?: string;
+    itemTitle?: string;
+  }>): Promise<{ success: boolean; marked: number; skipped: number }> {
+    return this.fetch('/api/reading/mark-read-bulk', {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    });
+  }
 }
 
 export const api = new ApiClient();

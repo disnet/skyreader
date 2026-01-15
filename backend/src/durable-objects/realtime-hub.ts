@@ -13,7 +13,7 @@ interface WebSocketAttachment {
 }
 
 interface RealtimeMessage {
-  type: 'connected' | 'heartbeat' | 'new_share' | 'new_articles';
+  type: 'connected' | 'heartbeat' | 'new_share' | 'new_articles' | 'read_position_sync' | 'read_position_delete' | 'read_position_star' | 'read_position_bulk_sync';
   payload: unknown;
 }
 
@@ -40,6 +40,37 @@ interface NewArticlesPayload {
   feedTitle: string;
   newCount: number;
   timestamp: number;
+}
+
+interface ReadPositionSyncPayload {
+  userDid: string;
+  itemGuid: string;
+  itemUrl?: string;
+  itemTitle?: string;
+  starred: boolean;
+  readAt: number;
+  rkey: string;
+}
+
+interface ReadPositionDeletePayload {
+  userDid: string;
+  itemGuid: string;
+}
+
+interface ReadPositionStarPayload {
+  userDid: string;
+  itemGuid: string;
+  starred: boolean;
+}
+
+interface ReadPositionBulkSyncPayload {
+  userDid: string;
+  items: Array<{
+    itemGuid: string;
+    rkey: string;
+    readAt: number;
+    starred: boolean;
+  }>;
 }
 
 export class RealtimeHub implements DurableObject {
@@ -230,6 +261,19 @@ export class RealtimeHub implements DurableObject {
       // Only send to connected users subscribed to this feed
       for (const [ws, client] of this.clients) {
         if (subscriberSet.has(client.did)) {
+          try {
+            ws.send(JSON.stringify(message));
+          } catch (error) {
+            console.error('Error sending to client:', error);
+            this.clients.delete(ws);
+          }
+        }
+      }
+    } else if (message.type === 'read_position_sync' || message.type === 'read_position_delete' || message.type === 'read_position_star' || message.type === 'read_position_bulk_sync') {
+      // Read position messages: only send to the same user's other sessions
+      const payload = message.payload as { userDid: string };
+      for (const [ws, client] of this.clients) {
+        if (client.did === payload.userDid) {
           try {
             ws.send(JSON.stringify(message));
           } catch (error) {
