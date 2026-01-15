@@ -11,6 +11,7 @@
     import { onMount, onDestroy } from "svelte";
     import AddFeedModal from "./AddFeedModal.svelte";
     import Logo from "$lib/assets/logo.svg";
+    import { getFaviconUrl } from "$lib/utils/favicon";
 
     async function removeFeed(id: number) {
         if (confirm('Are you sure you want to remove this subscription?')) {
@@ -290,16 +291,6 @@
     function handleBackdropClick() {
         sidebarStore.closeMobile();
     }
-
-    function getFaviconUrl(sub: typeof subscriptionsStore.subscriptions[0]): string | null {
-        const url = sub.siteUrl || sub.feedUrl;
-        try {
-            const domain = new URL(url).hostname;
-            return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
-        } catch {
-            return null;
-        }
-    }
 </script>
 
 <!-- Mobile backdrop -->
@@ -523,7 +514,7 @@
                 <div class="section-items">
                     {#each sortedSubscriptions() as sub (sub.id)}
                         {@const count = feedUnreadCounts.get(sub.id!) || 0}
-                        {@const faviconUrl = getFaviconUrl(sub)}
+                        {@const faviconUrl = getFaviconUrl(sub.siteUrl || sub.feedUrl)}
                         {@const loadingState = subscriptionsStore.feedLoadingStates.get(sub.id!)}
                         {@const feedError = subscriptionsStore.feedErrors.get(sub.id!)}
                         <button

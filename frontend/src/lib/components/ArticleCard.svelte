@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Article } from '$lib/types';
   import { formatRelativeDate } from '$lib/utils/date';
+  import { getFaviconUrl } from '$lib/utils/favicon';
   import DOMPurify from 'dompurify';
 
   let {
@@ -32,15 +33,6 @@
     onSelect?: () => void;
     onExpand?: () => void;
   } = $props();
-
-  function getFaviconUrl(url: string): string {
-    try {
-      const domain = new URL(url).hostname;
-      return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
-    } catch {
-      return '';
-    }
-  }
 
   function handleHeaderClick() {
     onSelect?.();

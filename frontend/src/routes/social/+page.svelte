@@ -4,6 +4,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
   import { formatRelativeDate } from '$lib/utils/date';
+  import { getFaviconUrl } from '$lib/utils/favicon';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import LoadingState from '$lib/components/LoadingState.svelte';
 
@@ -36,15 +37,6 @@
       socialStore.loadFeed(true);
     } else {
       socialStore.loadFollowedUsers();
-    }
-  }
-
-  function getFaviconUrl(url: string): string {
-    try {
-      const domain = new URL(url).hostname;
-      return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
-    } catch {
-      return '';
     }
   }
 </script>
