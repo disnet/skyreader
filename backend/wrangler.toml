@@ -47,6 +47,11 @@ name = "skyreader-api-staging"
 vars = { FRONTEND_URL = "https://staging.skyreader.pages.dev" }
 routes = [{ pattern = "api-staging.skyreader.app", custom_domain = true }]
 
+[env.staging.durable_objects]
+bindings = [
+  { name = "REALTIME_HUB", class_name = "RealtimeHub" }
+]
+
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "skyreader-staging"
