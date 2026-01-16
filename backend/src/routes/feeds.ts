@@ -3,6 +3,15 @@ import { parseFeed, discoverFeeds } from '../services/feed-parser';
 
 const MAX_ITEM_CONTENT_SIZE = 100000; // 100KB per item
 const MAX_INITIAL_ITEMS = 50; // Limit items on initial feed import
+const MAX_SQL_PARAMS = 900; // Leave buffer below SQLite's 999 limit
+
+function chunkArray<T>(array: T[], chunkSize: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < array.length; i += chunkSize) {
+    chunks.push(array.slice(i, i + chunkSize));
+  }
+  return chunks;
+}
 
 export interface StoreItemsResult {
   newCount: number;
@@ -31,17 +40,21 @@ export async function storeItems(env: Env, feedUrl: string, items: FeedItem[]): 
   }
 
   // Get existing guids to determine which items are truly new
+  // Use batched queries to avoid exceeding SQL variable limit
   const guids = itemsToStore.map(item => item.guid);
-  const placeholders = guids.map(() => '?').join(',');
   const existingGuids = new Set<string>();
 
   if (guids.length > 0) {
-    const existing = await env.DB.prepare(
-      `SELECT guid FROM feed_items WHERE feed_url = ? AND guid IN (${placeholders})`
-    ).bind(feedUrl, ...guids).all<{ guid: string }>();
+    const chunks = chunkArray(guids, MAX_SQL_PARAMS - 1); // -1 for feedUrl param
+    for (const chunk of chunks) {
+      const placeholders = chunk.map(() => '?').join(',');
+      const existing = await env.DB.prepare(
+        `SELECT guid FROM feed_items WHERE feed_url = ? AND guid IN (${placeholders})`
+      ).bind(feedUrl, ...chunk).all<{ guid: string }>();
 
-    for (const row of existing.results) {
-      existingGuids.add(row.guid);
+      for (const row of existing.results) {
+        existingGuids.add(row.guid);
+      }
     }
   }
 

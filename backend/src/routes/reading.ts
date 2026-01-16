@@ -368,6 +368,14 @@ export async function handleBulkMarkAsRead(request: Request, env: Env): Promise<
     });
   }
 
+  // Limit items to avoid exceeding SQL variable limit
+  if (items.length > 500) {
+    return new Response(JSON.stringify({ error: 'Too many items (max 500)' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   const readAt = Date.now();
   const results: Array<{ itemGuid: string; rkey: string }> = [];
 

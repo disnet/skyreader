@@ -52,6 +52,14 @@ export async function handleItemsList(request: Request, env: Env): Promise<Respo
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
   const search = url.searchParams.get('search');
 
+  // Limit feedUrls to avoid exceeding SQL variable limit
+  if (feedUrls.length > 100) {
+    return new Response(JSON.stringify({ error: 'Too many feedUrls (max 100)' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   const bindings: unknown[] = [];
   let query: string;
 
