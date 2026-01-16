@@ -1,6 +1,9 @@
 <script lang="ts">
     import { parseOPMLFile, type OPMLFeed } from "$lib/utils/opml-parser";
-    import { subscriptionsStore, MAX_SUBSCRIPTIONS } from "$lib/stores/subscriptions.svelte";
+    import {
+        subscriptionsStore,
+        MAX_SUBSCRIPTIONS,
+    } from "$lib/stores/subscriptions.svelte";
     import Modal from "$lib/components/common/Modal.svelte";
 
     interface Props {
@@ -20,9 +23,11 @@
     let results = $state({ added: 0, skipped: 0, failed: [] as string[], truncated: 0 });
     let fileInput: HTMLInputElement | undefined = $state();
 
-    const availableSlots = $derived(MAX_SUBSCRIPTIONS - subscriptionsStore.subscriptions.length);
+    const availableSlots = $derived(
+        MAX_SUBSCRIPTIONS - subscriptionsStore.subscriptions.length,
+    );
     const selectedNonDuplicates = $derived(
-        [...selectedUrls].filter((url) => !existingUrls.has(url.toLowerCase())).length
+        [...selectedUrls].filter((url) => !existingUrls.has(url.toLowerCase())).length,
     );
     const willExceedLimit = $derived(selectedNonDuplicates > availableSlots);
 
@@ -57,7 +62,7 @@
 
         // Check which feeds already exist
         const existing = new Set(
-            subscriptionsStore.subscriptions.map((s) => s.feedUrl.toLowerCase())
+            subscriptionsStore.subscriptions.map((s) => s.feedUrl.toLowerCase()),
         );
         existingUrls = existing;
 
@@ -65,7 +70,7 @@
         selectedUrls = new Set(
             parsedFeeds
                 .filter((f) => !existing.has(f.feedUrl.toLowerCase()))
-                .map((f) => f.feedUrl)
+                .map((f) => f.feedUrl),
         );
 
         modalState = "preview";
@@ -96,9 +101,12 @@
         modalState = "importing";
         progress = { current: 0, total: feedsToImport.length };
 
-        const result = await subscriptionsStore.addBulk(feedsToImport, (current, total) => {
-            progress = { current, total };
-        });
+        const result = await subscriptionsStore.addBulk(
+            feedsToImport,
+            (current, total) => {
+                progress = { current, total };
+            },
+        );
 
         results = {
             added: result.added.length,
@@ -138,7 +146,7 @@
         <p class="description">
             Select an OPML file to import feeds from another RSS reader.
         </p>
-        <p class="info-notice">Your feed subscriptions are publicly visible on Bluesky.</p>
+        <p class="info-notice">Your feed subscriptions are public.</p>
         <input
             bind:this={fileInput}
             type="file"
@@ -163,7 +171,9 @@
         </div>
         {#if willExceedLimit}
             <div class="limit-warning">
-                You can only add {availableSlots} more feed{availableSlots === 1 ? "" : "s"} (limit: {MAX_SUBSCRIPTIONS}).
+                You can only add {availableSlots} more feed{availableSlots === 1
+                    ? ""
+                    : "s"} (limit: {MAX_SUBSCRIPTIONS}).
                 {#if availableSlots > 0}
                     The first {availableSlots} will be imported.
                 {:else}
@@ -196,7 +206,11 @@
         </ul>
         {#if parseErrors.length > 0}
             <details class="parse-errors">
-                <summary>{parseErrors.length} warning{parseErrors.length === 1 ? "" : "s"}</summary>
+                <summary
+                    >{parseErrors.length} warning{parseErrors.length === 1
+                        ? ""
+                        : "s"}</summary
+                >
                 <ul>
                     {#each parseErrors as error}
                         <li>{error}</li>
@@ -245,7 +259,12 @@
 
     {#snippet footer()}
         {#if modalState === "preview"}
-            <button class="btn btn-secondary" onclick={() => { modalState = "select"; }}>
+            <button
+                class="btn btn-secondary"
+                onclick={() => {
+                    modalState = "select";
+                }}
+            >
                 Back
             </button>
             <button
@@ -256,9 +275,7 @@
                 Import {selectedUrls.size} feed{selectedUrls.size === 1 ? "" : "s"}
             </button>
         {:else if modalState === "complete"}
-            <button class="btn btn-primary" onclick={handleClose}>
-                Done
-            </button>
+            <button class="btn btn-primary" onclick={handleClose}> Done </button>
         {/if}
     {/snippet}
 </Modal>

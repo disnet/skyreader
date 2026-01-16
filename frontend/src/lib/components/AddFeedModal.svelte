@@ -1,5 +1,8 @@
 <script lang="ts">
-    import { subscriptionsStore, MAX_SUBSCRIPTIONS } from "$lib/stores/subscriptions.svelte";
+    import {
+        subscriptionsStore,
+        MAX_SUBSCRIPTIONS,
+    } from "$lib/stores/subscriptions.svelte";
     import FeedDiscoveryForm from "$lib/components/FeedDiscoveryForm.svelte";
     import Modal from "$lib/components/common/Modal.svelte";
 
@@ -12,7 +15,9 @@
     let feedFormRef: { reset: () => void } | undefined = $state();
     let error = $state<string | null>(null);
 
-    const isAtLimit = $derived(subscriptionsStore.subscriptions.length >= MAX_SUBSCRIPTIONS);
+    const isAtLimit = $derived(
+        subscriptionsStore.subscriptions.length >= MAX_SUBSCRIPTIONS,
+    );
 
     function handleClose() {
         feedFormRef?.reset();
@@ -50,15 +55,15 @@
 <Modal {open} onclose={handleClose} title="Add Feed">
     {#if isAtLimit}
         <p class="limit-message">
-            You've reached the maximum of {MAX_SUBSCRIPTIONS} feeds.
-            Remove some feeds to add new ones.
+            You've reached the maximum of {MAX_SUBSCRIPTIONS} feeds. Remove some feeds to add
+            new ones.
         </p>
     {:else}
         <FeedDiscoveryForm bind:this={feedFormRef} onFeedSelected={handleFeedSelected} />
         {#if error}
             <p class="error-message">{error}</p>
         {/if}
-        <p class="info-notice">Your feed subscriptions are publicly visible on Bluesky.</p>
+        <p class="info-notice">Your feed subscriptions are public.</p>
     {/if}
 </Modal>
 
