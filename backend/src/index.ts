@@ -258,42 +258,37 @@ export default {
       console.error('[Cron] Jetstream in-app follows poll failed:', inappFollowsResult.reason);
     }
 
-    // Refresh active feeds (every 15 minutes to reduce CPU usage)
-    const minute = new Date().getMinutes();
+    // Refresh active feeds
     let feedRefreshDuration = 0;
-    if (minute % 15 === 0) {
-      try {
-        const startTime = Date.now();
-        const result = await refreshActiveFeeds(env);
-        feedRefreshDuration = Date.now() - startTime;
-        console.log(
-          `[Cron] Feed refresh: ${result.fetched} fetched, ` +
-          `${result.skipped} skipped, ${result.errors} errors, ${feedRefreshDuration}ms`
-        );
-      } catch (error) {
-        console.error('[Cron] Feed refresh failed:', error);
-      }
+    try {
+      const startTime = Date.now();
+      const result = await refreshActiveFeeds(env);
+      feedRefreshDuration = Date.now() - startTime;
+      console.log(
+        `[Cron] Feed refresh: ${result.fetched} fetched, ` +
+        `${result.skipped} skipped, ${result.errors} errors, ${feedRefreshDuration}ms`
+      );
+    } catch (error) {
+      console.error('[Cron] Feed refresh failed:', error);
     }
 
-    // Sync read positions to PDS (every 5 minutes for data portability)
+    // Sync read positions to PDS
     let pdsSyncDuration = 0;
-    if (minute % 5 === 0) {
-      try {
-        const startTime = Date.now();
-        const result = await syncReadPositionsToPds(env);
-        pdsSyncDuration = Date.now() - startTime;
-        if (result.synced > 0 || result.errors > 0) {
-          console.log(
-            `[Cron] PDS sync: ${result.synced} synced, ` +
-            `${result.errors} errors, ${result.users} users, ${pdsSyncDuration}ms`
-          );
-        }
-      } catch (error) {
-        console.error('[Cron] PDS sync failed:', error);
+    try {
+      const startTime = Date.now();
+      const result = await syncReadPositionsToPds(env);
+      pdsSyncDuration = Date.now() - startTime;
+      if (result.synced > 0 || result.errors > 0) {
+        console.log(
+          `[Cron] PDS sync: ${result.synced} synced, ` +
+          `${result.errors} errors, ${result.users} users, ${pdsSyncDuration}ms`
+        );
       }
+    } catch (error) {
+      console.error('[Cron] PDS sync failed:', error);
     }
 
-    // Clean up rate limit records (every minute)
+    // Clean up rate limit records
     try {
       const rateLimitDeleted = await cleanupRateLimits(env);
       if (rateLimitDeleted > 0) {
@@ -303,36 +298,34 @@ export default {
       console.error('[Cron] Rate limit cleanup failed:', error);
     }
 
-    // Clean up expired D1 data (once per hour)
-    if (minute === 0) {
-      try {
-        const now = Date.now();
-        // 30-day grace period for refresh tokens (even if access token expired long ago)
-        const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
+    // Clean up expired D1 data
+    try {
+      const now = Date.now();
+      // 30-day grace period for refresh tokens (even if access token expired long ago)
+      const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
 
-        const [oauthResult, sessionsResult] = await Promise.all([
-          // Delete OAuth states older than 10 minutes
-          env.DB.prepare('DELETE FROM oauth_state WHERE expires_at < ?').bind(now).run(),
-          // Delete sessions that are either:
-          // 1. Have exceeded max refresh failures (5) AND their backoff period has passed, OR
-          // 2. Access token expired more than 30 days ago (refresh token grace period)
-          env.DB.prepare(`
-            DELETE FROM sessions
-            WHERE (
-              refresh_failures >= 5
-              AND (refresh_locked_until IS NULL OR refresh_locked_until < ?)
-            )
-            OR expires_at < ?
-          `).bind(now, thirtyDaysAgo).run(),
-        ]);
-        const oauthDeleted = oauthResult.meta?.changes || 0;
-        const sessionsDeleted = sessionsResult.meta?.changes || 0;
-        if (oauthDeleted > 0 || sessionsDeleted > 0) {
-          console.log(`[Cron] Cleanup: deleted ${oauthDeleted} OAuth states, ${sessionsDeleted} sessions`);
-        }
-      } catch (error) {
-        console.error('[Cron] Cleanup failed:', error);
+      const [oauthResult, sessionsResult] = await Promise.all([
+        // Delete OAuth states older than 10 minutes
+        env.DB.prepare('DELETE FROM oauth_state WHERE expires_at < ?').bind(now).run(),
+        // Delete sessions that are either:
+        // 1. Have exceeded max refresh failures (5) AND their backoff period has passed, OR
+        // 2. Access token expired more than 30 days ago (refresh token grace period)
+        env.DB.prepare(`
+          DELETE FROM sessions
+          WHERE (
+            refresh_failures >= 5
+            AND (refresh_locked_until IS NULL OR refresh_locked_until < ?)
+          )
+          OR expires_at < ?
+        `).bind(now, thirtyDaysAgo).run(),
+      ]);
+      const oauthDeleted = oauthResult.meta?.changes || 0;
+      const sessionsDeleted = sessionsResult.meta?.changes || 0;
+      if (oauthDeleted > 0 || sessionsDeleted > 0) {
+        console.log(`[Cron] Cleanup: deleted ${oauthDeleted} OAuth states, ${sessionsDeleted} sessions`);
       }
+    } catch (error) {
+      console.error('[Cron] Cleanup failed:', error);
     }
 
     const totalDuration = Date.now() - cronStart;

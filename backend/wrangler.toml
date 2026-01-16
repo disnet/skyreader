@@ -33,9 +33,9 @@ database_id = "YOUR_D1_DATABASE_ID"
 [vars]
 FRONTEND_URL = "https://skyreader.app"
 
-# Cron Triggers - run every 5 minutes for feed refresh
+# Cron Triggers - run every hour
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["0 * * * *"]
 
 # Development environment
 [env.dev]
@@ -57,6 +57,6 @@ binding = "DB"
 database_name = "skyreader-staging"
 database_id = "YOUR_STAGING_D1_DATABASE_ID"
 
-# Cron Triggers - run every 30 minutes in staging
+# Cron Triggers - run every 12 hours in staging
 [env.staging.triggers]
-crons = ["*/30 * * * *"]
+crons = ["0 */12 * * *"]
