@@ -27,7 +27,7 @@ deleted_classes = ["JetstreamConsumer"]
 [[d1_databases]]
 binding = "DB"
 database_name = "skyreader"
-database_id = "94dbfd9e-3e55-4551-a812-75ce4bc8339f"
+database_id = "YOUR_D1_DATABASE_ID"
 
 # Environment variables
 [vars]
@@ -55,7 +55,7 @@ bindings = [
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "skyreader-staging"
-database_id = "4319fd64-8868-48c9-b539-a4f4bc6d0c22"
+database_id = "YOUR_STAGING_D1_DATABASE_ID"
 
 # Disable cron in staging to avoid unnecessary background processing
 [env.staging.triggers]

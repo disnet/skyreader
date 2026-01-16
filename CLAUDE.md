@@ -131,6 +131,19 @@ social/share.json       - Shared article
 ### Frontend (`.env`)
 - `VITE_API_URL`: Backend API URL
 
+## Local Development Setup
+
+### D1 Database Setup (for contributors)
+
+The `wrangler.toml` file contains placeholder values for database IDs. To run the backend locally:
+
+1. Create your own D1 database: `npx wrangler d1 create skyreader`
+2. Copy the `database_id` from the command output
+3. Replace `YOUR_D1_DATABASE_ID` in `backend/wrangler.toml` with your database ID
+4. Run migrations locally: `npx wrangler d1 execute skyreader --local --file=backend/migrations/0001_initial.sql`
+
+For staging, create a separate database with `npx wrangler d1 create skyreader-staging` and update the staging `database_id`.
+
 ## Deployment Checklist
 
 1. Create D1 database: `npx wrangler d1 create skyreader`

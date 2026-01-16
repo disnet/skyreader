@@ -59,6 +59,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Configure wrangler.toml with database IDs
+        working-directory: backend
+        run: |
+          sed -i 's/YOUR_D1_DATABASE_ID/${{ secrets.D1_DATABASE_ID }}/g' wrangler.toml
+          sed -i 's/YOUR_STAGING_D1_DATABASE_ID/${{ secrets.D1_DATABASE_ID_STAGING }}/g' wrangler.toml
+          echo "Verifying database IDs were replaced:"
+          grep -n "database_id" wrangler.toml | sed 's/[a-f0-9-]\{36\}/***REDACTED***/g'
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
