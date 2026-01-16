@@ -9,6 +9,7 @@
     import { sharesStore } from "$lib/stores/shares.svelte";
     import { socialStore } from "$lib/stores/social.svelte";
     import { keyboardStore } from "$lib/stores/keyboard.svelte";
+    import { preferences } from "$lib/stores/preferences.svelte";
     import { api } from "$lib/services/api";
     import ArticleCard from "$lib/components/ArticleCard.svelte";
     import ShareCard from "$lib/components/ShareCard.svelte";
@@ -40,6 +41,11 @@
 
     // Map of guid -> article for looking up share content
     let articlesByGuid = $derived(new Map(allArticles.map((a) => [a.guid, a])));
+
+    // Scroll-to-mark-as-read state
+    let lastScrollY = $state(0);
+    let scrollDirection = $state<'up' | 'down' | null>(null);
+    let scrollMarkObserver: IntersectionObserver | null = null;
 
     // Cache for fetched articles (from backend, for shares not in local DB)
     let fetchedArticles = $state<Map<string, FeedItem>>(new Map());
@@ -230,6 +236,21 @@
         }
     });
 
+    // Setup/teardown scroll-to-mark-as-read observer when preference or content changes
+    $effect(() => {
+        // Track these dependencies to re-run when content changes
+        const _articles = displayedArticles;
+        const _shares = displayedShares;
+        const _combined = displayedCombined;
+        const _mode = viewMode;
+        const _enabled = preferences.scrollToMarkAsRead;
+
+        // Use tick to ensure DOM is updated before observing
+        tick().then(() => {
+            setupScrollMarkObserver();
+        });
+    });
+
     // Get page title based on filter
     let pageTitle = $derived.by(() => {
         if (feedFilter) {
@@ -248,6 +269,113 @@
         if (feedsFilter) return "Feeds";
         return "All";
     });
+
+    // Scroll direction tracking for scroll-to-mark-as-read
+    function updateScrollDirection() {
+        const currentScrollY = window.scrollY;
+        if (currentScrollY > lastScrollY) {
+            scrollDirection = 'down';
+        } else if (currentScrollY < lastScrollY) {
+            scrollDirection = 'up';
+        }
+        lastScrollY = currentScrollY;
+    }
+
+    // Mark an item as read by its index in the current view
+    function markItemAsReadByIndex(index: number) {
+        const mode = viewMode;
+
+        // Skip userShares - these are user's own shares
+        if (mode === "userShares") return;
+
+        if (mode === "articles") {
+            const article = displayedArticles[index];
+            if (!article || readingStore.isRead(article.guid)) return;
+
+            const sub = subscriptionsStore.subscriptions.find(
+                (s) => s.id === article.subscriptionId,
+            );
+            if (sub) {
+                readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+            }
+        } else if (mode === "shares") {
+            const share = displayedShares[index];
+            if (!share || shareReadingStore.isRead(share.recordUri)) return;
+
+            shareReadingStore.markAsRead(
+                share.recordUri,
+                share.authorDid,
+                share.itemUrl,
+                share.itemTitle,
+            );
+        } else if (mode === "combined") {
+            const feedItem = displayedCombined[index];
+            if (!feedItem) return;
+
+            if (feedItem.type === "article") {
+                const article = feedItem.item;
+                if (readingStore.isRead(article.guid)) return;
+
+                const sub = subscriptionsStore.subscriptions.find(
+                    (s) => s.id === article.subscriptionId,
+                );
+                if (sub) {
+                    readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+                }
+            } else {
+                const share = feedItem.item;
+                if (shareReadingStore.isRead(share.recordUri)) return;
+
+                shareReadingStore.markAsRead(
+                    share.recordUri,
+                    share.authorDid,
+                    share.itemUrl,
+                    share.itemTitle,
+                );
+            }
+        }
+    }
+
+    // Setup IntersectionObserver for scroll-to-mark-as-read
+    function setupScrollMarkObserver() {
+        // Clean up existing observer
+        if (scrollMarkObserver) {
+            scrollMarkObserver.disconnect();
+            scrollMarkObserver = null;
+        }
+
+        if (!preferences.scrollToMarkAsRead) return;
+
+        scrollMarkObserver = new IntersectionObserver(
+            (entries) => {
+                // Only process if scrolling down
+                if (scrollDirection !== 'down') return;
+
+                entries.forEach((entry) => {
+                    // Article left viewport from top (boundingClientRect.top < 0) and is no longer intersecting
+                    if (!entry.isIntersecting && entry.boundingClientRect.top < 0) {
+                        const index = parseInt((entry.target as HTMLElement).dataset.index || '-1');
+                        if (index >= 0) {
+                            markItemAsReadByIndex(index);
+                        }
+                    }
+                });
+            },
+            {
+                root: null, // viewport
+                rootMargin: '0px',
+                threshold: 0,
+            }
+        );
+
+        // Observe all article elements
+        articleElements.forEach((el, index) => {
+            if (el) {
+                el.dataset.index = String(index);
+                scrollMarkObserver?.observe(el);
+            }
+        });
+    }
 
     async function removeFeed(id: number) {
         if (confirm("Are you sure you want to remove this subscription?")) {
@@ -281,6 +409,10 @@
             }
         }
         isLoading = false;
+
+        // Set up scroll direction tracking for scroll-to-mark-as-read
+        window.addEventListener('scroll', updateScrollDirection, { passive: true });
+        lastScrollY = window.scrollY;
     });
 
     // Reset selection when filter changes
@@ -685,6 +817,10 @@
         keyboardStore.unregister("u");
         keyboardStore.unregister("r");
         keyboardStore.unregister("A", true);
+
+        // Clean up scroll-to-mark-as-read
+        window.removeEventListener('scroll', updateScrollDirection);
+        scrollMarkObserver?.disconnect();
     });
 
     async function selectItem(index: number) {
