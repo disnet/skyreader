@@ -39,21 +39,34 @@ export async function syncReadPositionsToPds(env: Env): Promise<{
   errors: number;
   users: number;
 }> {
+  const timings: Record<string, number> = {};
+  const startTime = Date.now();
   let synced = 0;
   let errors = 0;
   let usersProcessed = 0;
+  let usersSkipped = 0;
+
+  // Accumulated timing categories
+  let totalSessionLookup = 0;
+  let totalPositionsQuery = 0;
+  let totalPdsRequests = 0;
+  let totalDbWrites = 0;
 
   try {
     // Find users with unsynced read positions
+    let queryStart = Date.now();
     const usersWithUnsynced = await env.DB.prepare(`
       SELECT DISTINCT user_did
       FROM read_positions_cache
       WHERE synced_at IS NULL
       LIMIT ?
     `).bind(MAX_USERS_PER_RUN).all<{ user_did: string }>();
+    timings.usersQuery = Date.now() - queryStart;
+    timings.usersFound = usersWithUnsynced.results.length;
 
     for (const { user_did } of usersWithUnsynced.results) {
       // Get user's session (need access token and DPoP key)
+      queryStart = Date.now();
       const session = await env.DB.prepare(`
         SELECT did, pds_url, access_token, dpop_private_key
         FROM sessions
@@ -61,16 +74,19 @@ export async function syncReadPositionsToPds(env: Env): Promise<{
         ORDER BY expires_at DESC
         LIMIT 1
       `).bind(user_did, Date.now()).first<UserSession>();
+      totalSessionLookup += Date.now() - queryStart;
 
       if (!session) {
         // User has no valid session - skip their records
         // They'll sync when they log in again
+        usersSkipped++;
         continue;
       }
 
       usersProcessed++;
 
       // Get unsynced positions for this user
+      queryStart = Date.now();
       const unsyncedPositions = await env.DB.prepare(`
         SELECT id, user_did, rkey, item_guid, item_url, item_title, starred, read_at
         FROM read_positions_cache
@@ -78,32 +94,50 @@ export async function syncReadPositionsToPds(env: Env): Promise<{
         ORDER BY read_at ASC
         LIMIT ?
       `).bind(user_did, BATCH_SIZE).all<UnsyncedPosition>();
+      totalPositionsQuery += Date.now() - queryStart;
 
       // Sync each position to PDS
       for (const position of unsyncedPositions.results) {
         try {
+          const pdsStart = Date.now();
           const result = await syncPositionToPds(session, position);
+          totalPdsRequests += Date.now() - pdsStart;
+
           if (result.success) {
             // Mark as synced in D1
+            const dbStart = Date.now();
             await env.DB.prepare(`
               UPDATE read_positions_cache
               SET record_uri = ?, synced_at = unixepoch()
               WHERE id = ?
             `).bind(result.uri, position.id).run();
+            totalDbWrites += Date.now() - dbStart;
             synced++;
           } else {
             errors++;
-            console.error(`Failed to sync position ${position.rkey} for ${user_did}:`, result.error);
+            console.error(`[PDSSync] Failed to sync position ${position.rkey} for ${user_did}:`, result.error);
           }
         } catch (error) {
           errors++;
-          console.error(`Error syncing position ${position.rkey}:`, error);
+          console.error(`[PDSSync] Error syncing position ${position.rkey}:`, error);
         }
       }
     }
   } catch (error) {
-    console.error('Error in syncReadPositionsToPds:', error);
+    console.error('[PDSSync] Error in syncReadPositionsToPds:', error);
   }
+
+  timings.sessionLookup = totalSessionLookup;
+  timings.positionsQuery = totalPositionsQuery;
+  timings.pdsRequests = totalPdsRequests;
+  timings.dbWrites = totalDbWrites;
+  timings.total = Date.now() - startTime;
+  timings.synced = synced;
+  timings.errors = errors;
+  timings.usersProcessed = usersProcessed;
+  timings.usersSkipped = usersSkipped;
+
+  console.log(`[PDSSync] Complete: timings=${JSON.stringify(timings)}`);
 
   return { synced, errors, users: usersProcessed };
 }

@@ -219,9 +219,11 @@ export default {
     ctx: ExecutionContext
   ): Promise<void> {
     const cronStart = Date.now();
-    console.log(`[Cron] Started: ${controller.cron}`);
+    const minute = new Date().getMinutes();
+    console.log(`[Cron] Started: ${controller.cron}, minute=${minute}`);
 
-    // Run all three Jetstream pollers in parallel for better performance
+    // Phase 1: Run all three Jetstream pollers in parallel
+    console.log('[Cron] Phase 1: Starting parallel Jetstream pollers');
     const pollerStartTime = Date.now();
     const [jetstreamResult, followsResult, inappFollowsResult] = await Promise.allSettled([
       pollJetstream(env),
@@ -229,8 +231,9 @@ export default {
       pollJetstreamInappFollows(env),
     ]);
     const pollersDuration = Date.now() - pollerStartTime;
+    console.log(`[Cron] Phase 1 complete: pollers=${pollersDuration}ms`);
 
-    // Log results
+    // Log poller results
     if (jetstreamResult.status === 'fulfilled') {
       console.log(
         `[Cron] Jetstream shares: ${jetstreamResult.value.processed} processed, ` +
@@ -258,54 +261,60 @@ export default {
       console.error('[Cron] Jetstream in-app follows poll failed:', inappFollowsResult.reason);
     }
 
-    // Refresh active feeds (every 15 minutes to reduce CPU usage)
-    const minute = new Date().getMinutes();
+    // Phase 2: Refresh active feeds (every 15 minutes to reduce CPU usage)
     let feedRefreshDuration = 0;
     if (minute % 15 === 0) {
+      console.log('[Cron] Phase 2: Starting feed refresh');
       try {
         const startTime = Date.now();
         const result = await refreshActiveFeeds(env);
         feedRefreshDuration = Date.now() - startTime;
         console.log(
-          `[Cron] Feed refresh: ${result.fetched} fetched, ` +
+          `[Cron] Phase 2 complete: feed refresh: ${result.fetched} fetched, ` +
           `${result.skipped} skipped, ${result.errors} errors, ${feedRefreshDuration}ms`
         );
       } catch (error) {
-        console.error('[Cron] Feed refresh failed:', error);
+        console.error('[Cron] Phase 2 failed: Feed refresh error:', error);
       }
     }
 
-    // Sync read positions to PDS (every 5 minutes for data portability)
+    // Phase 3: Sync read positions to PDS (every 5 minutes for data portability)
     let pdsSyncDuration = 0;
     if (minute % 5 === 0) {
+      console.log('[Cron] Phase 3: Starting PDS sync');
       try {
         const startTime = Date.now();
         const result = await syncReadPositionsToPds(env);
         pdsSyncDuration = Date.now() - startTime;
-        if (result.synced > 0 || result.errors > 0) {
-          console.log(
-            `[Cron] PDS sync: ${result.synced} synced, ` +
-            `${result.errors} errors, ${result.users} users, ${pdsSyncDuration}ms`
-          );
-        }
+        console.log(
+          `[Cron] Phase 3 complete: PDS sync: ${result.synced} synced, ` +
+          `${result.errors} errors, ${result.users} users, ${pdsSyncDuration}ms`
+        );
       } catch (error) {
-        console.error('[Cron] PDS sync failed:', error);
+        console.error('[Cron] Phase 3 failed: PDS sync error:', error);
       }
     }
 
-    // Clean up rate limit records (every minute)
+    // Phase 4: Clean up rate limit records (every minute)
+    let rateLimitDuration = 0;
+    let rateLimitDeleted = 0;
     try {
-      const rateLimitDeleted = await cleanupRateLimits(env);
+      const result = await cleanupRateLimits(env);
+      rateLimitDeleted = result.deleted;
+      rateLimitDuration = result.duration;
       if (rateLimitDeleted > 0) {
-        console.log(`[Cron] Rate limit cleanup: deleted ${rateLimitDeleted} records`);
+        console.log(`[Cron] Phase 4: Rate limit cleanup: deleted ${rateLimitDeleted} records, ${rateLimitDuration}ms`);
       }
     } catch (error) {
-      console.error('[Cron] Rate limit cleanup failed:', error);
+      console.error('[Cron] Phase 4 failed: Rate limit cleanup error:', error);
     }
 
-    // Clean up expired D1 data (once per hour)
+    // Phase 5: Clean up expired D1 data (once per hour)
+    let d1CleanupDuration = 0;
     if (minute === 0) {
+      console.log('[Cron] Phase 5: Starting D1 cleanup');
       try {
+        const cleanupStart = Date.now();
         const now = Date.now();
         // 30-day grace period for refresh tokens (even if access token expired long ago)
         const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
@@ -325,20 +334,20 @@ export default {
             OR expires_at < ?
           `).bind(now, thirtyDaysAgo).run(),
         ]);
+        d1CleanupDuration = Date.now() - cleanupStart;
         const oauthDeleted = oauthResult.meta?.changes || 0;
         const sessionsDeleted = sessionsResult.meta?.changes || 0;
-        if (oauthDeleted > 0 || sessionsDeleted > 0) {
-          console.log(`[Cron] Cleanup: deleted ${oauthDeleted} OAuth states, ${sessionsDeleted} sessions`);
-        }
+        console.log(`[Cron] Phase 5 complete: D1 cleanup: deleted ${oauthDeleted} OAuth states, ${sessionsDeleted} sessions, ${d1CleanupDuration}ms`);
       } catch (error) {
-        console.error('[Cron] Cleanup failed:', error);
+        console.error('[Cron] Phase 5 failed: D1 cleanup error:', error);
       }
     }
 
     const totalDuration = Date.now() - cronStart;
     console.log(
       `[Cron] Complete: total=${totalDuration}ms, ` +
-      `pollers=${pollersDuration}ms (parallel), feeds=${feedRefreshDuration}ms, pds=${pdsSyncDuration}ms`
+      `pollers=${pollersDuration}ms, feeds=${feedRefreshDuration}ms, pds=${pdsSyncDuration}ms, ` +
+      `rateLimit=${rateLimitDuration}ms, d1Cleanup=${d1CleanupDuration}ms`
     );
   },
 };
