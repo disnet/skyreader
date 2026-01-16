@@ -53,7 +53,7 @@ skyreader/
 └── lexicons/           # AT Protocol schemas
     └── app/skyreader/
         ├── feed/             # subscription, readPosition
-        └── social/           # share
+        └── social/           # share, follow, shareReadPosition
 ```
 
 ## Setup
@@ -115,11 +115,15 @@ skyreader/
 
 ### Lexicon Schemas
 
-The app defines three custom record types under the `app.skyreader` namespace:
+The app defines five custom record types under the `app.skyreader` namespace:
 
 - **`app.skyreader.feed.subscription`**: RSS feed subscriptions
 - **`app.skyreader.feed.readPosition`**: Read/starred state for articles
 - **`app.skyreader.social.share`**: Shared articles with optional notes
+- **`app.skyreader.social.follow`**: In-app follow relationships
+- **`app.skyreader.social.shareReadPosition`**: Read state for others' shares
+
+See [Lexicon Documentation](docs/LEXICONS.md) for detailed schema information.
 
 ### OAuth Flow
 
