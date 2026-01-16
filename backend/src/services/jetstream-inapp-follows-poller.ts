@@ -66,9 +66,15 @@ export interface InappFollowsPollResult {
 const POLL_TIMEOUT_MS = 10000; // 10 seconds max for low-volume custom collection
 const IDLE_TIMEOUT_MS = 2000; // 2 seconds without events = caught up
 
-async function processInappFollowEvent(env: Env, event: JetstreamInappFollowEvent): Promise<void> {
+interface InappFollowEventTimings {
+  profileFetch: number;
+  dbWrite: number;
+}
+
+async function processInappFollowEvent(env: Env, event: JetstreamInappFollowEvent): Promise<InappFollowEventTimings> {
+  const timings: InappFollowEventTimings = { profileFetch: 0, dbWrite: 0 };
   const { did: followerDid, commit } = event;
-  if (!commit || commit.collection !== 'app.skyreader.social.follow') return;
+  if (!commit || commit.collection !== 'app.skyreader.social.follow') return timings;
 
   const { operation, rkey, record } = commit;
 
@@ -76,15 +82,19 @@ async function processInappFollowEvent(env: Env, event: JetstreamInappFollowEven
     const followingDid = record.subject;
 
     // Insert into inapp_follows with rkey for deletion handling
+    let dbStart = Date.now();
     await env.DB.prepare(`
       INSERT OR REPLACE INTO inapp_follows (follower_did, following_did, rkey, record_uri, created_at)
       VALUES (?, ?, ?, ?, unixepoch())
     `).bind(followerDid, followingDid, rkey, `at://${followerDid}/app.skyreader.social.follow/${rkey}`).run();
 
     // Fetch profile info for the followed user
+    const profileStart = Date.now();
     const profile = await fetchProfileInfo(followingDid);
+    timings.profileFetch = Date.now() - profileStart;
 
     // Upsert the followed user to users table with profile info
+    dbStart = Date.now();
     await env.DB.prepare(`
       INSERT INTO users (did, handle, display_name, avatar_url, pds_url, created_at, updated_at)
       VALUES (?, ?, ?, ?, '', unixepoch(), unixepoch())
@@ -99,28 +109,37 @@ async function processInappFollowEvent(env: Env, event: JetstreamInappFollowEven
       profile?.displayName || null,
       profile?.avatar || null
     ).run();
+    timings.dbWrite = Date.now() - dbStart;
 
     console.log(`[JetstreamInappFollows] ${followerDid} followed ${profile?.handle || followingDid}`);
 
   } else if (operation === 'delete') {
     // Delete from inapp_follows using rkey
+    const dbStart = Date.now();
     const result = await env.DB.prepare(`
       DELETE FROM inapp_follows
       WHERE follower_did = ? AND rkey = ?
     `).bind(followerDid, rkey).run();
+    timings.dbWrite = Date.now() - dbStart;
 
     // Only log if we actually deleted something
     if (result.meta.changes > 0) {
       console.log(`[JetstreamInappFollows] ${followerDid} unfollowed (rkey: ${rkey})`);
     }
   }
+
+  return timings;
 }
 
 export async function pollJetstreamInappFollows(env: Env): Promise<InappFollowsPollResult> {
+  const timings: Record<string, number> = {};
+  let startTime = Date.now();
+
   // Get cursor from D1
   const cursorResult = await env.DB.prepare(
     'SELECT value FROM sync_state WHERE key = ?'
   ).bind('jetstream_inapp_follows_cursor').first<{ value: string }>();
+  timings.cursorQuery = Date.now() - startTime;
 
   const wsUrl = new URL('wss://jetstream2.us-east.bsky.network/subscribe');
   wsUrl.searchParams.append('wantedCollections', 'app.skyreader.social.follow');
@@ -142,8 +161,14 @@ export async function pollJetstreamInappFollows(env: Env): Promise<InappFollowsP
   let cleanedUp = false;
   let lastEventTime = Date.now();
 
+  // Accumulated event timings
+  let totalProfileFetch = 0;
+  let totalDbWrite = 0;
+  let wsConnectTime = 0;
+  const wsConnectStart = Date.now();
+
   return new Promise((resolve) => {
-    const startTime = Date.now();
+    startTime = Date.now();
 
     // Timeout to ensure we don't run forever
     const pollTimeout = setTimeout(() => {
@@ -178,12 +203,20 @@ export async function pollJetstreamInappFollows(env: Env): Promise<InappFollowsP
       }
 
       // Save cursor (either last event time, or baseline if no events)
+      const cursorSaveStart = Date.now();
       await env.DB.prepare(
         'INSERT OR REPLACE INTO sync_state (key, value, updated_at) VALUES (?, ?, unixepoch())'
       ).bind('jetstream_inapp_follows_cursor', lastCursor).run();
+      timings.cursorSave = Date.now() - cursorSaveStart;
 
-      const duration = Date.now() - startTime;
-      console.log(`[JetstreamInappFollows] Poll complete: ${processed} processed, ${errors} errors, ${duration}ms`);
+      timings.wsConnect = wsConnectTime;
+      timings.total = Date.now() - startTime;
+      timings.profileFetch = totalProfileFetch;
+      timings.dbWrite = totalDbWrite;
+      timings.processed = processed;
+      timings.errors = errors;
+
+      console.log(`[JetstreamInappFollows] Poll complete: timings=${JSON.stringify(timings)}`);
 
       resolve({ processed, errors, cursor: lastCursor });
     };
@@ -192,7 +225,8 @@ export async function pollJetstreamInappFollows(env: Env): Promise<InappFollowsP
       ws = new WebSocket(wsUrl.toString());
 
       ws.addEventListener('open', () => {
-        console.log('[JetstreamInappFollows] Connected');
+        wsConnectTime = Date.now() - wsConnectStart;
+        console.log(`[JetstreamInappFollows] Connected in ${wsConnectTime}ms`);
         lastEventTime = Date.now();
       });
 
@@ -212,7 +246,9 @@ export async function pollJetstreamInappFollows(env: Env): Promise<InappFollowsP
 
           // Process the event
           if (data.kind === 'commit' && data.commit?.collection === 'app.skyreader.social.follow') {
-            await processInappFollowEvent(env, data);
+            const eventTimings = await processInappFollowEvent(env, data);
+            totalProfileFetch += eventTimings.profileFetch;
+            totalDbWrite += eventTimings.dbWrite;
             processed++;
           }
         } catch (error) {

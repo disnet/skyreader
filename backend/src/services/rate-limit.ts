@@ -101,18 +101,22 @@ export async function checkRateLimit(
  * Clean up old rate limit records.
  * Should be called periodically (e.g., every minute via cron).
  */
-export async function cleanupRateLimits(env: Env): Promise<number> {
+export async function cleanupRateLimits(env: Env): Promise<{ deleted: number; duration: number }> {
   const twoMinutesAgo = Date.now() - 120000;
+  const startTime = Date.now();
 
   try {
     const result = await env.DB.prepare(
       'DELETE FROM rate_limits WHERE window_start < ?'
     ).bind(twoMinutesAgo).run();
 
-    return result.meta?.changes || 0;
+    const deleted = result.meta?.changes || 0;
+    const duration = Date.now() - startTime;
+
+    return { deleted, duration };
   } catch (error) {
     console.error('[RateLimit] Cleanup error:', error);
-    return 0;
+    return { deleted: 0, duration: Date.now() - startTime };
   }
 }
 

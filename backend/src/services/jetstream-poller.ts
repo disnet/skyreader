@@ -135,13 +135,20 @@ async function notifyRealtimeHub(env: Env, message: object): Promise<void> {
   }
 }
 
-async function processShareEvent(env: Env, event: JetstreamEvent): Promise<void> {
+interface EventTimings {
+  contentFetch: number;
+  dbWrite: number;
+  notify: number;
+}
+
+async function processShareEvent(env: Env, event: JetstreamEvent): Promise<EventTimings> {
+  const timings: EventTimings = { contentFetch: 0, dbWrite: 0, notify: 0 };
   const { did, commit } = event;
-  if (!commit) return;
+  if (!commit) return timings;
 
   const { operation, collection, rkey, record, cid } = commit;
 
-  if (collection !== 'app.skyreader.social.share') return;
+  if (collection !== 'app.skyreader.social.share') return timings;
 
   const recordUri = `at://${did}/${collection}/${rkey}`;
 
@@ -149,10 +156,13 @@ async function processShareEvent(env: Env, event: JetstreamEvent): Promise<void>
     // Fetch article content if feedUrl and itemGuid are available
     let content: string | null = null;
     if (record.feedUrl && record.itemGuid) {
+      const fetchStart = Date.now();
       content = await fetchArticleContent(env, record.feedUrl, record.itemGuid, record.itemUrl);
+      timings.contentFetch = Date.now() - fetchStart;
     }
 
     // Insert share into D1
+    const dbStart = Date.now();
     await env.DB.prepare(`
       INSERT OR REPLACE INTO shares
       (author_did, record_uri, record_cid, feed_url, item_url, item_title,
@@ -182,8 +192,10 @@ async function processShareEvent(env: Env, event: JetstreamEvent): Promise<void>
       INSERT OR IGNORE INTO users (did, handle, pds_url)
       VALUES (?, ?, '')
     `).bind(did, did).run();
+    timings.dbWrite = Date.now() - dbStart;
 
     // Always notify RealtimeHub - content may be missing but frontend can fall back to description
+    const notifyStart = Date.now();
     await notifyRealtimeHub(env, {
       type: 'new_share',
       payload: {
@@ -201,18 +213,27 @@ async function processShareEvent(env: Env, event: JetstreamEvent): Promise<void>
         createdAt: record.createdAt,
       },
     });
+    timings.notify = Date.now() - notifyStart;
   } else if (operation === 'delete') {
+    const dbStart = Date.now();
     await env.DB.prepare(
       'DELETE FROM shares WHERE record_uri = ?'
     ).bind(recordUri).run();
+    timings.dbWrite = Date.now() - dbStart;
   }
+
+  return timings;
 }
 
 export async function pollJetstream(env: Env): Promise<PollResult> {
+  const timings: Record<string, number> = {};
+  let startTime = Date.now();
+
   // Get cursor from D1
   const cursorResult = await env.DB.prepare(
     'SELECT value FROM sync_state WHERE key = ?'
   ).bind('jetstream_cursor').first<{ value: string }>();
+  timings.cursorQuery = Date.now() - startTime;
 
   const wsUrl = new URL('wss://jetstream2.us-east.bsky.network/subscribe');
   wsUrl.searchParams.append('wantedCollections', 'app.skyreader.social.share');
@@ -233,8 +254,15 @@ export async function pollJetstream(env: Env): Promise<PollResult> {
   let errors = 0;
   let lastEventTime = Date.now();
 
+  // Accumulated event timings
+  let totalContentFetch = 0;
+  let totalDbWrite = 0;
+  let totalNotify = 0;
+  let wsConnectTime = 0;
+  const wsConnectStart = Date.now();
+
   return new Promise((resolve) => {
-    const startTime = Date.now();
+    startTime = Date.now();
 
     // Timeout to ensure we don't run forever
     const pollTimeout = setTimeout(() => {
@@ -266,12 +294,21 @@ export async function pollJetstream(env: Env): Promise<PollResult> {
       }
 
       // Save cursor (either last event time, or baseline if no events)
+      const cursorSaveStart = Date.now();
       await env.DB.prepare(
         'INSERT OR REPLACE INTO sync_state (key, value, updated_at) VALUES (?, ?, unixepoch())'
       ).bind('jetstream_cursor', lastCursor).run();
+      timings.cursorSave = Date.now() - cursorSaveStart;
 
-      const duration = Date.now() - startTime;
-      console.log(`[Jetstream] Poll complete: ${processed} processed, ${errors} errors, ${duration}ms`);
+      timings.wsConnect = wsConnectTime;
+      timings.total = Date.now() - startTime;
+      timings.contentFetch = totalContentFetch;
+      timings.dbWrite = totalDbWrite;
+      timings.notify = totalNotify;
+      timings.processed = processed;
+      timings.errors = errors;
+
+      console.log(`[Jetstream] Poll complete: timings=${JSON.stringify(timings)}`);
 
       resolve({ processed, errors, cursor: lastCursor });
     };
@@ -280,7 +317,8 @@ export async function pollJetstream(env: Env): Promise<PollResult> {
       ws = new WebSocket(wsUrl.toString());
 
       ws.addEventListener('open', () => {
-        console.log('[Jetstream] Connected');
+        wsConnectTime = Date.now() - wsConnectStart;
+        console.log(`[Jetstream] Connected in ${wsConnectTime}ms`);
         lastEventTime = Date.now();
       });
 
@@ -300,7 +338,10 @@ export async function pollJetstream(env: Env): Promise<PollResult> {
 
           // Process the event
           if (data.kind === 'commit' && data.commit?.collection === 'app.skyreader.social.share') {
-            await processShareEvent(env, data);
+            const eventTimings = await processShareEvent(env, data);
+            totalContentFetch += eventTimings.contentFetch;
+            totalDbWrite += eventTimings.dbWrite;
+            totalNotify += eventTimings.notify;
             processed++;
           }
         } catch (error) {

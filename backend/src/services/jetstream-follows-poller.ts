@@ -81,9 +81,15 @@ async function getActiveUserDids(env: Env): Promise<string[]> {
   return result.results.map(r => r.did);
 }
 
-async function processFollowEvent(env: Env, event: JetstreamFollowEvent): Promise<void> {
+interface FollowEventTimings {
+  profileFetch: number;
+  dbWrite: number;
+}
+
+async function processFollowEvent(env: Env, event: JetstreamFollowEvent): Promise<FollowEventTimings> {
+  const timings: FollowEventTimings = { profileFetch: 0, dbWrite: 0 };
   const { did: followerDid, commit } = event;
-  if (!commit || commit.collection !== 'app.bsky.graph.follow') return;
+  if (!commit || commit.collection !== 'app.bsky.graph.follow') return timings;
 
   const { operation, rkey, record } = commit;
 
@@ -91,15 +97,19 @@ async function processFollowEvent(env: Env, event: JetstreamFollowEvent): Promis
     const followingDid = record.subject;
 
     // Insert into follows_cache with rkey for deletion handling
+    let dbStart = Date.now();
     await env.DB.prepare(`
       INSERT OR REPLACE INTO follows_cache (follower_did, following_did, rkey, created_at)
       VALUES (?, ?, ?, unixepoch())
     `).bind(followerDid, followingDid, rkey).run();
 
     // Fetch profile info for the followed user
+    const profileStart = Date.now();
     const profile = await fetchProfileInfo(followingDid);
+    timings.profileFetch = Date.now() - profileStart;
 
     // Upsert the followed user to users table with profile info
+    dbStart = Date.now();
     await env.DB.prepare(`
       INSERT INTO users (did, handle, display_name, avatar_url, pds_url, created_at, updated_at)
       VALUES (?, ?, ?, ?, '', unixepoch(), unixepoch())
@@ -114,26 +124,35 @@ async function processFollowEvent(env: Env, event: JetstreamFollowEvent): Promis
       profile?.displayName || null,
       profile?.avatar || null
     ).run();
+    timings.dbWrite = Date.now() - dbStart;
 
     console.log(`[JetstreamFollows] ${followerDid} followed ${profile?.handle || followingDid}`);
 
   } else if (operation === 'delete') {
     // Delete from follows_cache using rkey
+    const dbStart = Date.now();
     const result = await env.DB.prepare(`
       DELETE FROM follows_cache
       WHERE follower_did = ? AND rkey = ?
     `).bind(followerDid, rkey).run();
+    timings.dbWrite = Date.now() - dbStart;
 
     // Only log if we actually deleted something (avoids duplicate logs from cursor buffer)
     if (result.meta.changes > 0) {
       console.log(`[JetstreamFollows] ${followerDid} unfollowed (rkey: ${rkey})`);
     }
   }
+
+  return timings;
 }
 
 export async function pollJetstreamFollows(env: Env): Promise<FollowsPollResult> {
+  const timings: Record<string, number> = {};
+  let startTime = Date.now();
+
   // Get active user DIDs for filtering
   const activeUsers = await getActiveUserDids(env);
+  timings.activeUsersQuery = Date.now() - startTime;
 
   if (activeUsers.length === 0) {
     console.log('[JetstreamFollows] No active users to poll for');
@@ -145,12 +164,15 @@ export async function pollJetstreamFollows(env: Env): Promise<FollowsPollResult>
   }
 
   const usersToWatch = activeUsers.slice(0, MAX_WANTED_DIDS);
+  timings.activeUsers = usersToWatch.length;
   console.log(`[JetstreamFollows] Polling for ${usersToWatch.length} active users`);
 
   // Get cursor from D1 (separate from share poller cursor)
+  startTime = Date.now();
   const cursorResult = await env.DB.prepare(
     'SELECT value FROM sync_state WHERE key = ?'
   ).bind('jetstream_follows_cursor').first<{ value: string }>();
+  timings.cursorQuery = Date.now() - startTime;
 
   const wsUrl = new URL('wss://jetstream2.us-east.bsky.network/subscribe');
   wsUrl.searchParams.append('wantedCollections', 'app.bsky.graph.follow');
@@ -177,8 +199,14 @@ export async function pollJetstreamFollows(env: Env): Promise<FollowsPollResult>
   let cleanedUp = false;
   let lastEventTime = Date.now();
 
+  // Accumulated event timings
+  let totalProfileFetch = 0;
+  let totalDbWrite = 0;
+  let wsConnectTime = 0;
+  const wsConnectStart = Date.now();
+
   return new Promise((resolve) => {
-    const startTime = Date.now();
+    startTime = Date.now();
 
     // Timeout to ensure we don't run forever
     const pollTimeout = setTimeout(() => {
@@ -213,12 +241,20 @@ export async function pollJetstreamFollows(env: Env): Promise<FollowsPollResult>
       }
 
       // Save cursor (either last event time, or baseline if no events)
+      const cursorSaveStart = Date.now();
       await env.DB.prepare(
         'INSERT OR REPLACE INTO sync_state (key, value, updated_at) VALUES (?, ?, unixepoch())'
       ).bind('jetstream_follows_cursor', lastCursor).run();
+      timings.cursorSave = Date.now() - cursorSaveStart;
 
-      const duration = Date.now() - startTime;
-      console.log(`[JetstreamFollows] Poll complete: ${processed} processed, ${errors} errors, ${duration}ms`);
+      timings.wsConnect = wsConnectTime;
+      timings.total = Date.now() - startTime;
+      timings.profileFetch = totalProfileFetch;
+      timings.dbWrite = totalDbWrite;
+      timings.processed = processed;
+      timings.errors = errors;
+
+      console.log(`[JetstreamFollows] Poll complete: timings=${JSON.stringify(timings)}`);
 
       resolve({ processed, errors, cursor: lastCursor });
     };
@@ -227,7 +263,8 @@ export async function pollJetstreamFollows(env: Env): Promise<FollowsPollResult>
       ws = new WebSocket(wsUrl.toString());
 
       ws.addEventListener('open', () => {
-        console.log('[JetstreamFollows] Connected');
+        wsConnectTime = Date.now() - wsConnectStart;
+        console.log(`[JetstreamFollows] Connected in ${wsConnectTime}ms`);
         lastEventTime = Date.now();
       });
 
@@ -242,7 +279,9 @@ export async function pollJetstreamFollows(env: Env): Promise<FollowsPollResult>
 
           // Process the event
           if (data.kind === 'commit' && data.commit?.collection === 'app.bsky.graph.follow') {
-            await processFollowEvent(env, data);
+            const eventTimings = await processFollowEvent(env, data);
+            totalProfileFetch += eventTimings.profileFetch;
+            totalDbWrite += eventTimings.dbWrite;
             processed++;
           }
         } catch (error) {
