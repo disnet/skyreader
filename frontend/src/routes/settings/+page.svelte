@@ -183,6 +183,21 @@
   </section>
 
   <section class="card">
+    <h2>Reading</h2>
+    <label class="toggle-setting">
+      <input
+        type="checkbox"
+        checked={preferences.scrollToMarkAsRead}
+        onchange={(e) => preferences.setScrollToMarkAsRead(e.currentTarget.checked)}
+      />
+      <span>Mark articles as read when scrolled past</span>
+    </label>
+    <p class="setting-description">
+      Automatically mark articles as read when you scroll past them in the feed.
+    </p>
+  </section>
+
+  <section class="card">
     <h2>Feeds</h2>
     <p>Refresh feed titles and icons from their sources. This will update your PDS with the correct metadata.</p>
     <div class="refresh-section">
@@ -436,5 +451,24 @@
 
   .font-size-preview[data-size="xl"] {
     font-size: 1.375rem;
+  }
+
+  .toggle-setting {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+
+  .toggle-setting input[type="checkbox"] {
+    width: 1rem;
+    height: 1rem;
+    cursor: pointer;
+  }
+
+  .setting-description {
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+    margin: 0.5rem 0 0 0;
   }
 </style>

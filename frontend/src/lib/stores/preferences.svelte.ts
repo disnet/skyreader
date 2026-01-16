@@ -8,6 +8,7 @@ const FONT_SIZE_ORDER: ArticleFontSize[] = ['xs', 'sm', 'md', 'lg', 'xl'];
 interface PreferencesState {
   articleFont: ArticleFont;
   articleFontSize: ArticleFontSize;
+  scrollToMarkAsRead: boolean;
 }
 
 const STORAGE_KEY = 'skyreader-preferences';
@@ -16,6 +17,7 @@ function createPreferencesStore() {
   let state = $state<PreferencesState>({
     articleFont: 'sans-serif',
     articleFontSize: 'md',
+    scrollToMarkAsRead: false,
   });
 
   // Restore from localStorage on init
@@ -29,6 +31,9 @@ function createPreferencesStore() {
         }
         if (parsed.articleFontSize) {
           state.articleFontSize = parsed.articleFontSize;
+        }
+        if (parsed.scrollToMarkAsRead !== undefined) {
+          state.scrollToMarkAsRead = parsed.scrollToMarkAsRead;
         }
       } catch {
         localStorage.removeItem(STORAGE_KEY);
@@ -73,6 +78,11 @@ function createPreferencesStore() {
     save();
   }
 
+  function setScrollToMarkAsRead(enabled: boolean) {
+    state.scrollToMarkAsRead = enabled;
+    save();
+  }
+
   return {
     get articleFont() {
       return state.articleFont;
@@ -80,11 +90,15 @@ function createPreferencesStore() {
     get articleFontSize() {
       return state.articleFontSize;
     },
+    get scrollToMarkAsRead() {
+      return state.scrollToMarkAsRead;
+    },
     setArticleFont,
     setArticleFontSize,
     increaseFontSize,
     decreaseFontSize,
     resetFontSize,
+    setScrollToMarkAsRead,
   };
 }
 
