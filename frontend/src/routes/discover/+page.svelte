@@ -69,21 +69,31 @@
           <div class="user-stats">
             {user.shareCount} {user.shareCount === 1 ? 'share' : 'shares'} in last 30 days
           </div>
-          <button
-            class="btn follow-btn"
-            class:btn-primary={!isFollowing(user.did)}
-            class:btn-secondary={isFollowing(user.did)}
-            disabled={isFollowing(user.did) || followingDids.has(user.did)}
-            onclick={() => handleFollow(user.did)}
-          >
-            {#if isFollowing(user.did)}
-              Following
-            {:else if followingDids.has(user.did)}
-              Following...
-            {:else}
-              Follow
-            {/if}
-          </button>
+          <div class="follow-buttons">
+            <button
+              class="btn follow-btn"
+              class:btn-primary={!isFollowing(user.did)}
+              class:btn-secondary={isFollowing(user.did)}
+              disabled={isFollowing(user.did) || followingDids.has(user.did)}
+              onclick={() => handleFollow(user.did)}
+            >
+              {#if isFollowing(user.did)}
+                Following on Skyreader
+              {:else if followingDids.has(user.did)}
+                Following...
+              {:else}
+                Follow on Skyreader
+              {/if}
+            </button>
+            <a
+              href="https://bsky.app/profile/{user.handle}"
+              target="_blank"
+              rel="noopener"
+              class="btn btn-outline bluesky-btn"
+            >
+              Follow on Bluesky ↗
+            </a>
+          </div>
         </div>
       {/each}
     </div>
@@ -115,9 +125,28 @@
     color: var(--color-text-secondary);
   }
 
+  .follow-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
+  }
+
   .follow-btn {
     width: 100%;
-    margin-top: 0.25rem;
+  }
+
+  .bluesky-btn {
+    width: 100%;
+    text-align: center;
+    text-decoration: none;
+    background: transparent;
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+  }
+
+  .bluesky-btn:hover {
+    background: var(--color-bg-secondary);
   }
 
   .error {
