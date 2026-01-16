@@ -138,6 +138,7 @@
         <p class="description">
             Select an OPML file to import feeds from another RSS reader.
         </p>
+        <p class="info-notice">Your feed subscriptions are publicly visible on Bluesky.</p>
         <input
             bind:this={fileInput}
             type="file"
@@ -265,6 +266,12 @@
 <style>
     .description {
         color: var(--color-text-secondary);
+        margin-bottom: 0.5rem;
+    }
+
+    .info-notice {
+        color: var(--color-text-secondary);
+        font-size: 0.75rem;
         margin-bottom: 1rem;
     }
 

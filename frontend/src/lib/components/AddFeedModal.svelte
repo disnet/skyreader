@@ -58,6 +58,7 @@
         {#if error}
             <p class="error-message">{error}</p>
         {/if}
+        <p class="info-notice">Your feed subscriptions are publicly visible on Bluesky.</p>
     {/if}
 </Modal>
 
@@ -72,5 +73,12 @@
         color: var(--color-error);
         font-size: 0.875rem;
         margin-top: 0.5rem;
+    }
+
+    .info-notice {
+        color: var(--color-text-secondary);
+        font-size: 0.75rem;
+        margin-top: 1rem;
+        text-align: center;
     }
 </style>
