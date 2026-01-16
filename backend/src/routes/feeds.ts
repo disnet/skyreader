@@ -4,6 +4,7 @@ import { parseFeed, discoverFeeds } from '../services/feed-parser';
 const MAX_ITEM_CONTENT_SIZE = 100000; // 100KB per item
 const MAX_INITIAL_ITEMS = 50; // Limit items on initial feed import
 const MAX_SQL_PARAMS = 900; // Leave buffer below SQLite's 999 limit
+const BATCH_INSERT_SIZE = 90; // 90 items × 10 params = 900, under 999 limit
 
 function chunkArray<T>(array: T[], chunkSize: number): T[][] {
   const chunks: T[][] = [];
@@ -106,8 +107,12 @@ export async function storeItems(env: Env, feedUrl: string, items: FeedItem[]): 
     );
   });
 
-  // Execute all inserts in a single batch (single round-trip to D1)
-  await env.DB.batch(statements);
+  // Execute inserts in batches to avoid SQL variable limit
+  // Each INSERT has 10 params; D1 limit is 999 per batch
+  const statementChunks = chunkArray(statements, BATCH_INSERT_SIZE);
+  for (const chunk of statementChunks) {
+    await env.DB.batch(chunk);
+  }
 
   return { newCount, isInitialImport };
 }
