@@ -33,9 +33,9 @@ database_id = "YOUR_D1_DATABASE_ID"
 [vars]
 FRONTEND_URL = "https://skyreader.app"
 
-# Cron Triggers - run every minute for Jetstream polling
+# Cron Triggers - run every 5 minutes for feed refresh
 [triggers]
-crons = ["* * * * *"]
+crons = ["*/5 * * * *"]
 
 # Development environment
 [env.dev]
@@ -57,6 +57,6 @@ binding = "DB"
 database_name = "skyreader-staging"
 database_id = "YOUR_STAGING_D1_DATABASE_ID"
 
-# Disable cron in staging to avoid unnecessary background processing
+# Cron Triggers - run every 30 minutes in staging
 [env.staging.triggers]
-crons = []
+crons = ["*/30 * * * *"]
