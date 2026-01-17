@@ -1,6 +1,6 @@
 import type { Env } from '../types';
 import { getSessionFromRequest, importPrivateKey, createDPoPProof } from '../services/oauth';
-import { fetchArticleContent } from '../services/jetstream-poller';
+import { fetchArticleContent } from '../services/article-content';
 import { fetchAndCacheFeed } from './feeds';
 
 const ALLOWED_COLLECTIONS = [

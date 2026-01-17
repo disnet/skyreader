@@ -8,14 +8,11 @@ import { handleDiscover } from './routes/discover';
 import { handleRecordSync, handleBulkRecordSync, handleRecordsList } from './routes/records';
 import { handleGetReadPositions, handleMarkAsRead, handleMarkAsUnread, handleToggleStar, handleBulkMarkAsRead } from './routes/reading';
 import { getSessionFromRequest, updateUserActivity } from './services/oauth';
-import { refreshActiveFeeds } from './services/scheduled-feeds';
-import { pollJetstream } from './services/jetstream-poller';
-import { pollJetstreamFollows } from './services/jetstream-follows-poller';
-import { pollJetstreamInappFollows } from './services/jetstream-inapp-follows-poller';
-import { syncReadPositionsToPds } from './services/read-positions-pds-sync';
 import { checkRateLimit, cleanupRateLimits, getRateLimitConfig } from './services/rate-limit';
 
 export { RealtimeHub } from './durable-objects/realtime-hub';
+export { JetstreamPoller } from './durable-objects/jetstream-poller';
+export { FeedRefresher } from './durable-objects/feed-refresher';
 
 function corsHeaders(origin: string | null, allowedOrigin: string): HeadersInit {
   return {
@@ -220,134 +217,85 @@ export default {
   ): Promise<void> {
     const cronStart = Date.now();
     const minute = new Date().getMinutes();
+    const isEveryMinuteCron = controller.cron === '* * * * *';
+    const is15MinuteCron = controller.cron.includes('*/15') || controller.cron.includes('*/30');
+
     console.log(`[Cron] Started: ${controller.cron}, minute=${minute}`);
 
-    // Phase 1: Run all three Jetstream pollers in parallel
-    console.log('[Cron] Phase 1: Starting parallel Jetstream pollers');
-    const pollerStartTime = Date.now();
-    const [jetstreamResult, followsResult, inappFollowsResult] = await Promise.allSettled([
-      pollJetstream(env),
-      pollJetstreamFollows(env),
-      pollJetstreamInappFollows(env),
-    ]);
-    const pollersDuration = Date.now() - pollerStartTime;
-    console.log(`[Cron] Phase 1 complete: pollers=${pollersDuration}ms`);
-
-    // Log poller results
-    if (jetstreamResult.status === 'fulfilled') {
-      console.log(
-        `[Cron] Jetstream shares: ${jetstreamResult.value.processed} processed, ` +
-        `${jetstreamResult.value.errors} errors`
-      );
-    } else {
-      console.error('[Cron] Jetstream poll failed:', jetstreamResult.reason);
-    }
-
-    if (followsResult.status === 'fulfilled') {
-      console.log(
-        `[Cron] Jetstream follows: ${followsResult.value.processed} processed, ` +
-        `${followsResult.value.errors} errors`
-      );
-    } else {
-      console.error('[Cron] Jetstream follows poll failed:', followsResult.reason);
-    }
-
-    if (inappFollowsResult.status === 'fulfilled') {
-      console.log(
-        `[Cron] Jetstream in-app follows: ${inappFollowsResult.value.processed} processed, ` +
-        `${inappFollowsResult.value.errors} errors`
-      );
-    } else {
-      console.error('[Cron] Jetstream in-app follows poll failed:', inappFollowsResult.reason);
-    }
-
-    // Phase 2: Refresh active feeds (every 15 minutes to reduce CPU usage)
-    let feedRefreshDuration = 0;
-    if (minute % 15 === 0) {
-      console.log('[Cron] Phase 2: Starting feed refresh');
+    // Every minute: Cleanup tasks and ensure JetstreamPoller is running
+    if (isEveryMinuteCron) {
+      // Phase 1: Ensure JetstreamPoller DO is running
       try {
-        const startTime = Date.now();
-        const result = await refreshActiveFeeds(env);
-        feedRefreshDuration = Date.now() - startTime;
-        console.log(
-          `[Cron] Phase 2 complete: feed refresh: ${result.fetched} fetched, ` +
-          `${result.skipped} skipped, ${result.errors} errors, ${feedRefreshDuration}ms`
-        );
+        const pollerId = env.JETSTREAM_POLLER.idFromName('main');
+        const poller = env.JETSTREAM_POLLER.get(pollerId);
+        const response = await poller.fetch('http://internal/start');
+        const result = await response.json() as { status: string };
+        console.log(`[Cron] JetstreamPoller: ${result.status}`);
       } catch (error) {
-        console.error('[Cron] Phase 2 failed: Feed refresh error:', error);
+        console.error('[Cron] Failed to start JetstreamPoller:', error);
       }
-    }
 
-    // Phase 3: Sync read positions to PDS (every 5 minutes for data portability)
-    let pdsSyncDuration = 0;
-    if (minute % 5 === 0) {
-      console.log('[Cron] Phase 3: Starting PDS sync');
+      // Phase 2: Clean up rate limit records
+      let rateLimitDuration = 0;
+      let rateLimitDeleted = 0;
       try {
-        const startTime = Date.now();
-        const result = await syncReadPositionsToPds(env);
-        pdsSyncDuration = Date.now() - startTime;
-        console.log(
-          `[Cron] Phase 3 complete: PDS sync: ${result.synced} synced, ` +
-          `${result.errors} errors, ${result.users} users, ${pdsSyncDuration}ms`
-        );
+        const result = await cleanupRateLimits(env);
+        rateLimitDeleted = result.deleted;
+        rateLimitDuration = result.duration;
+        if (rateLimitDeleted > 0) {
+          console.log(`[Cron] Rate limit cleanup: deleted ${rateLimitDeleted} records, ${rateLimitDuration}ms`);
+        }
       } catch (error) {
-        console.error('[Cron] Phase 3 failed: PDS sync error:', error);
+        console.error('[Cron] Rate limit cleanup error:', error);
       }
+
+      // Phase 3: Clean up expired D1 data (once per hour)
+      let d1CleanupDuration = 0;
+      if (minute === 0) {
+        console.log('[Cron] Starting D1 cleanup');
+        try {
+          const cleanupStart = Date.now();
+          const now = Date.now();
+          const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
+
+          const [oauthResult, sessionsResult] = await Promise.all([
+            env.DB.prepare('DELETE FROM oauth_state WHERE expires_at < ?').bind(now).run(),
+            env.DB.prepare(`
+              DELETE FROM sessions
+              WHERE (
+                refresh_failures >= 5
+                AND (refresh_locked_until IS NULL OR refresh_locked_until < ?)
+              )
+              OR expires_at < ?
+            `).bind(now, thirtyDaysAgo).run(),
+          ]);
+          d1CleanupDuration = Date.now() - cleanupStart;
+          const oauthDeleted = oauthResult.meta?.changes || 0;
+          const sessionsDeleted = sessionsResult.meta?.changes || 0;
+          console.log(`[Cron] D1 cleanup: deleted ${oauthDeleted} OAuth states, ${sessionsDeleted} sessions, ${d1CleanupDuration}ms`);
+        } catch (error) {
+          console.error('[Cron] D1 cleanup error:', error);
+        }
+      }
+
+      const totalDuration = Date.now() - cronStart;
+      console.log(`[Cron] Every-minute complete: total=${totalDuration}ms`);
     }
 
-    // Phase 4: Clean up rate limit records (every minute)
-    let rateLimitDuration = 0;
-    let rateLimitDeleted = 0;
-    try {
-      const result = await cleanupRateLimits(env);
-      rateLimitDeleted = result.deleted;
-      rateLimitDuration = result.duration;
-      if (rateLimitDeleted > 0) {
-        console.log(`[Cron] Phase 4: Rate limit cleanup: deleted ${rateLimitDeleted} records, ${rateLimitDuration}ms`);
-      }
-    } catch (error) {
-      console.error('[Cron] Phase 4 failed: Rate limit cleanup error:', error);
-    }
-
-    // Phase 5: Clean up expired D1 data (once per hour)
-    let d1CleanupDuration = 0;
-    if (minute === 0) {
-      console.log('[Cron] Phase 5: Starting D1 cleanup');
+    // Every 15 minutes (or 30 in staging): Trigger FeedRefresher cycle
+    if (is15MinuteCron) {
       try {
-        const cleanupStart = Date.now();
-        const now = Date.now();
-        // 30-day grace period for refresh tokens (even if access token expired long ago)
-        const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
-
-        const [oauthResult, sessionsResult] = await Promise.all([
-          // Delete OAuth states older than 10 minutes
-          env.DB.prepare('DELETE FROM oauth_state WHERE expires_at < ?').bind(now).run(),
-          // Delete sessions that are either:
-          // 1. Have exceeded max refresh failures (5) AND their backoff period has passed, OR
-          // 2. Access token expired more than 30 days ago (refresh token grace period)
-          env.DB.prepare(`
-            DELETE FROM sessions
-            WHERE (
-              refresh_failures >= 5
-              AND (refresh_locked_until IS NULL OR refresh_locked_until < ?)
-            )
-            OR expires_at < ?
-          `).bind(now, thirtyDaysAgo).run(),
-        ]);
-        d1CleanupDuration = Date.now() - cleanupStart;
-        const oauthDeleted = oauthResult.meta?.changes || 0;
-        const sessionsDeleted = sessionsResult.meta?.changes || 0;
-        console.log(`[Cron] Phase 5 complete: D1 cleanup: deleted ${oauthDeleted} OAuth states, ${sessionsDeleted} sessions, ${d1CleanupDuration}ms`);
+        const refresherId = env.FEED_REFRESHER.idFromName('main');
+        const refresher = env.FEED_REFRESHER.get(refresherId);
+        const response = await refresher.fetch('http://internal/trigger');
+        const result = await response.json() as { status: string; feedCount?: number };
+        console.log(`[Cron] FeedRefresher: ${result.status}${result.feedCount ? `, ${result.feedCount} feeds` : ''}`);
       } catch (error) {
-        console.error('[Cron] Phase 5 failed: D1 cleanup error:', error);
+        console.error('[Cron] Failed to trigger FeedRefresher:', error);
       }
-    }
 
-    const totalDuration = Date.now() - cronStart;
-    console.log(
-      `[Cron] Complete: total=${totalDuration}ms, ` +
-      `pollers=${pollersDuration}ms, feeds=${feedRefreshDuration}ms, pds=${pdsSyncDuration}ms, ` +
-      `rateLimit=${rateLimitDuration}ms, d1Cleanup=${d1CleanupDuration}ms`
-    );
+      const totalDuration = Date.now() - cronStart;
+      console.log(`[Cron] Feed refresh trigger complete: total=${totalDuration}ms`);
+    }
   },
 };
