@@ -566,8 +566,45 @@ function createSubscriptionsStore() {
   }
 
   // Fetch all feeds that need content: ready feeds from cache (batch), pending feeds from source
-  async function fetchAllNewFeeds(concurrency = 2, delayMs = 1000): Promise<void> {
-    // First, batch fetch all ready feeds from cache in a single request
+  // When force=true, bypass all caches and fetch all feeds from source
+  async function fetchAllNewFeeds(concurrency = 2, delayMs = 1000, force = false): Promise<void> {
+    if (force) {
+      // Force refresh ALL feeds from source, bypassing all caches
+      const allFeeds = subscriptions.filter((s) => s.id);
+      console.log(`Force refreshing ${allFeeds.length} feeds from source...`);
+
+      // Process in batches with rate limiting
+      for (let i = 0; i < allFeeds.length; i += concurrency) {
+        const batch = allFeeds.slice(i, i + concurrency);
+
+        await Promise.allSettled(
+          batch.map(async (sub) => {
+            if (!sub.id) return;
+            const result = await fetchFeed(sub.id, true); // force=true bypasses backend cache
+            // Update status if we got items
+            if (result && result.items && result.items.length > 0) {
+              await db.subscriptions.update(sub.id, {
+                fetchStatus: 'ready',
+                lastFetchedAt: Date.now(),
+              });
+              subscriptions = subscriptions.map((s) =>
+                s.id === sub.id ? { ...s, fetchStatus: 'ready' as const, lastFetchedAt: Date.now() } : s
+              );
+            }
+          })
+        );
+
+        // Delay between batches
+        if (i + concurrency < allFeeds.length) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+
+      console.log('Force refresh complete');
+      return;
+    }
+
+    // Non-force path: batch fetch ready feeds from cache, then fetch pending from source
     const readyFeeds = subscriptions.filter((s) => s.fetchStatus === 'ready' && s.id);
     if (readyFeeds.length > 0) {
       console.log(`Batch fetching ${readyFeeds.length} ready feeds from cache...`);
