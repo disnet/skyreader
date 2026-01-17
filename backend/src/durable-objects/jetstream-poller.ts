@@ -170,10 +170,12 @@ export class JetstreamPoller implements DurableObject {
       let lastEventTime = Date.now();
       let cleanedUp = false;
 
-      const pollTimeout = setTimeout(() => cleanup(), POLL_TIMEOUT_MS);
+      const cleanupWithCatch = () => cleanup().catch(e => console.error('[JetstreamPoller] shares cleanup error:', e));
+
+      const pollTimeout = setTimeout(cleanupWithCatch, POLL_TIMEOUT_MS);
       const idleCheck = setInterval(() => {
         if (Date.now() - lastEventTime > IDLE_TIMEOUT_MS) {
-          cleanup();
+          cleanupWithCatch();
         }
       }, 500);
 
@@ -224,10 +226,10 @@ export class JetstreamPoller implements DurableObject {
           }
         });
 
-        ws.addEventListener('close', () => cleanup());
-        ws.addEventListener('error', () => cleanup());
+        ws.addEventListener('close', cleanupWithCatch);
+        ws.addEventListener('error', cleanupWithCatch);
       } catch {
-        cleanup();
+        cleanupWithCatch();
       }
     });
   }
@@ -345,10 +347,12 @@ export class JetstreamPoller implements DurableObject {
       let lastEventTime = Date.now();
       let cleanedUp = false;
 
-      const pollTimeout = setTimeout(() => cleanup(), POLL_TIMEOUT_MS);
+      const cleanupWithCatch = () => cleanup().catch(e => console.error('[JetstreamPoller] follows cleanup error:', e));
+
+      const pollTimeout = setTimeout(cleanupWithCatch, POLL_TIMEOUT_MS);
       const idleCheck = setInterval(() => {
         if (Date.now() - lastEventTime > IDLE_TIMEOUT_MS) {
-          cleanup();
+          cleanupWithCatch();
         }
       }, 500);
 
@@ -393,10 +397,10 @@ export class JetstreamPoller implements DurableObject {
           }
         });
 
-        ws.addEventListener('close', () => cleanup());
-        ws.addEventListener('error', () => cleanup());
+        ws.addEventListener('close', cleanupWithCatch);
+        ws.addEventListener('error', cleanupWithCatch);
       } catch {
-        cleanup();
+        cleanupWithCatch();
       }
     });
   }
@@ -468,10 +472,12 @@ export class JetstreamPoller implements DurableObject {
       let lastEventTime = Date.now();
       let cleanedUp = false;
 
-      const pollTimeout = setTimeout(() => cleanup(), POLL_TIMEOUT_MS);
+      const cleanupWithCatch = () => cleanup().catch(e => console.error('[JetstreamPoller] inapp follows cleanup error:', e));
+
+      const pollTimeout = setTimeout(cleanupWithCatch, POLL_TIMEOUT_MS);
       const idleCheck = setInterval(() => {
         if (Date.now() - lastEventTime > IDLE_TIMEOUT_MS) {
-          cleanup();
+          cleanupWithCatch();
         }
       }, 500);
 
@@ -522,10 +528,10 @@ export class JetstreamPoller implements DurableObject {
           }
         });
 
-        ws.addEventListener('close', () => cleanup());
-        ws.addEventListener('error', () => cleanup());
+        ws.addEventListener('close', cleanupWithCatch);
+        ws.addEventListener('error', cleanupWithCatch);
       } catch {
-        cleanup();
+        cleanupWithCatch();
       }
     });
   }
