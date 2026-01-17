@@ -47,6 +47,10 @@
     let scrollDirection = $state<'up' | 'down' | null>(null);
     let scrollMarkObserver: IntersectionObserver | null = null;
 
+    // Tab visibility state for catching up on missed updates
+    let lastVisibleTime = $state(Date.now());
+    const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
     // Cache for fetched articles (from backend, for shares not in local DB)
     let fetchedArticles = $state<Map<string, FeedItem>>(new Map());
     let fetchingArticles = $state<Set<string>>(new Set());
@@ -384,6 +388,21 @@
         }
     }
 
+    // Handle tab visibility changes to catch up on missed updates
+    async function handleVisibilityChange() {
+        if (document.visibilityState === 'visible' && auth.isAuthenticated) {
+            const timeSinceVisible = Date.now() - lastVisibleTime;
+
+            if (timeSinceVisible > STALE_THRESHOLD_MS) {
+                console.log('Tab was hidden for a while, checking for updates...');
+                // Fetch from backend cache (non-forced) to catch up on missed updates
+                await subscriptionsStore.fetchAllNewFeeds(2, 500);
+                allArticles = await subscriptionsStore.getAllArticles();
+            }
+        }
+        lastVisibleTime = Date.now();
+    }
+
     onMount(async () => {
         if (auth.isAuthenticated) {
             await subscriptionsStore.load();
@@ -392,19 +411,20 @@
             await sharesStore.load();
             await socialStore.loadFollowedUsers();
             await socialStore.loadFeed(true);
+
+            // Load existing articles from IndexedDB first (instant display of cached data)
             allArticles = await subscriptionsStore.getAllArticles();
 
-            // If we have subscriptions but no articles, use smart fetching
+            // If we have subscriptions but no articles, fetch from backend
             if (subscriptionsStore.subscriptions.length > 0 && allArticles.length === 0) {
                 // Check which feeds are ready on the backend
                 const feedUrls = subscriptionsStore.subscriptions.map((s) => s.feedUrl);
                 await subscriptionsStore.checkFeedStatuses(feedUrls);
 
-                // Fetch all feeds (ready from cache, pending gradually from source)
-                subscriptionsStore.fetchAllNewFeeds(2, 1000);
+                // Await the full fetch operation (ready from cache, pending from source)
+                await subscriptionsStore.fetchAllNewFeeds(2, 1000);
 
-                // Give a moment for first batch then update display
-                await new Promise((resolve) => setTimeout(resolve, 500));
+                // Update articles after fetch completes
                 allArticles = await subscriptionsStore.getAllArticles();
             }
         }
@@ -413,6 +433,10 @@
         // Set up scroll direction tracking for scroll-to-mark-as-read
         window.addEventListener('scroll', updateScrollDirection, { passive: true });
         lastScrollY = window.scrollY;
+
+        // Set up visibility change handler for catching up on missed updates
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        lastVisibleTime = Date.now();
     });
 
     // Reset selection when filter changes
@@ -634,12 +658,12 @@
     // Refresh current view
     async function refreshView() {
         if (feedFilter) {
-            // Refresh specific feed
+            // Refresh specific feed with force (bypasses backend cache)
             const feedId = parseInt(feedFilter);
             await subscriptionsStore.fetchFeed(feedId, true);
         } else {
-            // Refresh all feeds
-            await subscriptionsStore.fetchAllNewFeeds(2, 500);
+            // Force refresh all feeds - bypass all caches
+            await subscriptionsStore.fetchAllNewFeeds(2, 500, true);
         }
         allArticles = await subscriptionsStore.getAllArticles();
     }
@@ -821,6 +845,9 @@
         // Clean up scroll-to-mark-as-read
         window.removeEventListener('scroll', updateScrollDirection);
         scrollMarkObserver?.disconnect();
+
+        // Clean up visibility change handler
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
     });
 
     async function selectItem(index: number) {
