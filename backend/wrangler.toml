@@ -5,10 +5,12 @@ compatibility_date = "2025-09-27"
 [observability]
 enabled = true
 
-# Durable Objects for realtime hub
+# Durable Objects
 [durable_objects]
 bindings = [
-  { name = "REALTIME_HUB", class_name = "RealtimeHub" }
+  { name = "REALTIME_HUB", class_name = "RealtimeHub" },
+  { name = "JETSTREAM_POLLER", class_name = "JetstreamPoller" },
+  { name = "FEED_REFRESHER", class_name = "FeedRefresher" }
 ]
 
 [[migrations]]
@@ -23,6 +25,10 @@ new_sqlite_classes = ["RealtimeHub"]
 tag = "v3"
 deleted_classes = ["JetstreamConsumer"]
 
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["JetstreamPoller", "FeedRefresher"]
+
 # D1 Database
 [[d1_databases]]
 binding = "DB"
@@ -33,9 +39,11 @@ database_id = "YOUR_D1_DATABASE_ID"
 [vars]
 FRONTEND_URL = "https://skyreader.app"
 
-# Cron Triggers - run every 15 minutes for feed refresh
+# Cron Triggers
+# - Every minute: Cleanup tasks, ensure JetstreamPoller running
+# - Every 15 minutes: Trigger FeedRefresher cycle
 [triggers]
-crons = ["*/15 * * * *"]
+crons = ["* * * * *", "*/15 * * * *"]
 
 # Development environment
 [env.dev]
@@ -49,7 +57,9 @@ routes = [{ pattern = "api-staging.skyreader.app", custom_domain = true }]
 
 [env.staging.durable_objects]
 bindings = [
-  { name = "REALTIME_HUB", class_name = "RealtimeHub" }
+  { name = "REALTIME_HUB", class_name = "RealtimeHub" },
+  { name = "JETSTREAM_POLLER", class_name = "JetstreamPoller" },
+  { name = "FEED_REFRESHER", class_name = "FeedRefresher" }
 ]
 
 [[env.staging.d1_databases]]
@@ -57,6 +67,6 @@ binding = "DB"
 database_name = "skyreader-staging"
 database_id = "YOUR_STAGING_D1_DATABASE_ID"
 
-# Cron Triggers - run every 30 minutes in staging
+# Cron Triggers in staging
 [env.staging.triggers]
-crons = ["*/30 * * * *"]
+crons = ["* * * * *", "*/30 * * * *"]

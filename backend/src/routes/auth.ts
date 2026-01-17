@@ -17,6 +17,7 @@ import {
   deleteSession,
 } from '../services/oauth';
 import { syncFollowsForUser } from './social';
+import { syncReadPositionsForUser } from '../services/pds-sync';
 
 // RFC 8252 requires loopback IP instead of localhost for OAuth
 function getBaseUrl(url: URL): string {
@@ -359,6 +360,17 @@ export async function handleAuthCallback(request: Request, env: Env, ctx: Execut
           .catch(syncError => console.error('Failed to sync follows on first login:', syncError))
       );
     }
+
+    // Sync unsynced read positions to PDS on each login
+    ctx.waitUntil(
+      syncReadPositionsForUser(env, session)
+        .then(result => {
+          if (result.synced > 0) {
+            console.log(`Synced ${result.synced} read positions to PDS for ${handle}`);
+          }
+        })
+        .catch(syncError => console.error('Failed to sync read positions on login:', syncError))
+    );
 
     // Redirect to frontend with session
     const returnUrl = oauthState.returnUrl || '/';
