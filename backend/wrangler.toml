@@ -33,9 +33,9 @@ database_id = "YOUR_D1_DATABASE_ID"
 [vars]
 FRONTEND_URL = "https://skyreader.app"
 
-# Cron Triggers - run every 5 minutes for feed refresh
+# Cron Triggers - run every 15 minutes for feed refresh
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["*/15 * * * *"]
 
 # Development environment
 [env.dev]
