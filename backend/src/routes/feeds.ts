@@ -3,7 +3,7 @@ import { parseFeed, discoverFeeds } from '../services/feed-parser';
 
 const MAX_ITEM_CONTENT_SIZE = 100000; // 100KB per item
 const MAX_INITIAL_ITEMS = 50; // Limit items on initial feed import
-const MAX_SQL_PARAMS = 900; // Leave buffer below SQLite's 999 limit
+const MAX_SQL_PARAMS = 90; // Conservative limit for D1 (empirically lower than SQLite's 999)
 const BATCH_INSERT_SIZE = 90; // 90 items × 10 params = 900, under 999 limit
 
 function chunkArray<T>(array: T[], chunkSize: number): T[][] {
