@@ -65,15 +65,28 @@ export class JetstreamPoller implements DurableObject {
 
     if (url.pathname === '/start') {
       // Ensure polling is running
-      const alarmTime = await this.state.storage.getAlarm();
-      if (!alarmTime) {
-        // Start immediately and schedule next poll
+      // Check both scheduled alarm AND recent activity to avoid race conditions
+      // (getAlarm() returns null while an alarm is currently running)
+      const [alarmTime, lastAlarmStart] = await Promise.all([
+        this.state.storage.getAlarm(),
+        this.state.storage.get<number>('last_alarm_start'),
+      ]);
+
+      const recentlyActive = lastAlarmStart && (Date.now() - lastAlarmStart < 120000); // 2 minutes
+
+      if (!alarmTime && !recentlyActive) {
+        // No alarm scheduled and none ran recently - start fresh
         await this.state.storage.setAlarm(Date.now() + 100);
         return new Response(JSON.stringify({ status: 'started' }), {
           headers: { 'Content-Type': 'application/json' },
         });
       }
-      return new Response(JSON.stringify({ status: 'already_running', nextPoll: alarmTime }), {
+
+      return new Response(JSON.stringify({
+        status: alarmTime ? 'scheduled' : 'recently_active',
+        nextPoll: alarmTime,
+        lastAlarmStart,
+      }), {
         headers: { 'Content-Type': 'application/json' },
       });
     }
@@ -105,6 +118,10 @@ export class JetstreamPoller implements DurableObject {
   }
 
   async alarm(): Promise<void> {
+    // Record when this alarm started to prevent race conditions with /start
+    // (cron calls /start every minute, but getAlarm() returns null while running)
+    await this.state.storage.put('last_alarm_start', Date.now());
+
     // Top-level try-catch to ensure we NEVER crash the alarm handler
     // The finally block ensures we always schedule the next alarm
     try {
