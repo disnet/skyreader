@@ -138,15 +138,25 @@ export class JetstreamPoller implements DurableObject {
     }
 
     stats.duration = Date.now() - startTime;
-    await this.state.storage.put('last_stats', stats);
+
+    // Save stats (best effort - don't let this crash the alarm)
+    try {
+      await this.state.storage.put('last_stats', stats);
+    } catch (error) {
+      console.error('[JetstreamPoller] Error saving stats:', error);
+    }
 
     console.log(`[JetstreamPoller] Poll complete: shares=${stats.shares.processed}/${stats.shares.errors}, ` +
       `follows=${stats.follows.processed}/${stats.follows.errors}, ` +
       `inappFollows=${stats.inappFollows.processed}/${stats.inappFollows.errors}, ` +
       `duration=${stats.duration}ms`);
 
-    // Schedule next poll
-    await this.state.storage.setAlarm(Date.now() + ALARM_INTERVAL_MS);
+    // Schedule next poll - CRITICAL: always attempt this to keep poller alive
+    try {
+      await this.state.storage.setAlarm(Date.now() + ALARM_INTERVAL_MS);
+    } catch (error) {
+      console.error('[JetstreamPoller] CRITICAL: Error scheduling next alarm:', error);
+    }
   }
 
   // --- Shares Stream ---
