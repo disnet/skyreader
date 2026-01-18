@@ -226,7 +226,7 @@ export default {
     if (isEveryMinuteCron) {
       // Phase 1: Ensure JetstreamPoller DO is running
       try {
-        const pollerId = env.JETSTREAM_POLLER.idFromName('main');
+        const pollerId = env.JETSTREAM_POLLER.idFromName('main-v2');
         const poller = env.JETSTREAM_POLLER.get(pollerId);
         const response = await poller.fetch('http://internal/start');
         const result = await response.json() as { status: string };
