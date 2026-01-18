@@ -105,57 +105,65 @@ export class JetstreamPoller implements DurableObject {
   }
 
   async alarm(): Promise<void> {
-    const startTime = Date.now();
-    console.log('[JetstreamPoller] Starting poll cycle');
-
-    const stats: PollStats = {
-      shares: { processed: 0, errors: 0 },
-      follows: { processed: 0, errors: 0 },
-      inappFollows: { processed: 0, errors: 0 },
-      duration: 0,
-      lastPollAt: startTime,
-    };
-
+    // Top-level try-catch to ensure we NEVER crash the alarm handler
+    // The finally block ensures we always schedule the next alarm
     try {
-      // Poll streams sequentially to reduce peak CPU usage
-      // 1. Shares (app.skyreader.social.share)
-      console.log('[JetstreamPoller] Polling shares stream');
-      const sharesResult = await this.pollSharesStream();
-      stats.shares = sharesResult;
+      const startTime = Date.now();
+      console.log('[JetstreamPoller] Starting poll cycle');
 
-      // 2. Follows (app.bsky.graph.follow)
-      console.log('[JetstreamPoller] Polling follows stream');
-      const followsResult = await this.pollFollowsStream();
-      stats.follows = followsResult;
+      const stats: PollStats = {
+        shares: { processed: 0, errors: 0 },
+        follows: { processed: 0, errors: 0 },
+        inappFollows: { processed: 0, errors: 0 },
+        duration: 0,
+        lastPollAt: startTime,
+      };
 
-      // 3. In-app follows (app.skyreader.social.follow)
-      console.log('[JetstreamPoller] Polling in-app follows stream');
-      const inappFollowsResult = await this.pollInappFollowsStream();
-      stats.inappFollows = inappFollowsResult;
+      try {
+        // Poll streams sequentially to reduce peak CPU usage
+        // 1. Shares (app.skyreader.social.share)
+        console.log('[JetstreamPoller] Polling shares stream');
+        const sharesResult = await this.pollSharesStream();
+        stats.shares = sharesResult;
+
+        // 2. Follows (app.bsky.graph.follow)
+        console.log('[JetstreamPoller] Polling follows stream');
+        const followsResult = await this.pollFollowsStream();
+        stats.follows = followsResult;
+
+        // 3. In-app follows (app.skyreader.social.follow)
+        console.log('[JetstreamPoller] Polling in-app follows stream');
+        const inappFollowsResult = await this.pollInappFollowsStream();
+        stats.inappFollows = inappFollowsResult;
+
+      } catch (error) {
+        console.error('[JetstreamPoller] Error during poll cycle:', error);
+      }
+
+      stats.duration = Date.now() - startTime;
+
+      // Save stats (best effort)
+      try {
+        await this.state.storage.put('last_stats', stats);
+      } catch (error) {
+        console.error('[JetstreamPoller] Error saving stats:', error);
+      }
+
+      console.log(`[JetstreamPoller] Poll complete: shares=${stats.shares.processed}/${stats.shares.errors}, ` +
+        `follows=${stats.follows.processed}/${stats.follows.errors}, ` +
+        `inappFollows=${stats.inappFollows.processed}/${stats.inappFollows.errors}, ` +
+        `duration=${stats.duration}ms`);
 
     } catch (error) {
-      console.error('[JetstreamPoller] Error during poll cycle:', error);
-    }
-
-    stats.duration = Date.now() - startTime;
-
-    // Save stats (best effort - don't let this crash the alarm)
-    try {
-      await this.state.storage.put('last_stats', stats);
-    } catch (error) {
-      console.error('[JetstreamPoller] Error saving stats:', error);
-    }
-
-    console.log(`[JetstreamPoller] Poll complete: shares=${stats.shares.processed}/${stats.shares.errors}, ` +
-      `follows=${stats.follows.processed}/${stats.follows.errors}, ` +
-      `inappFollows=${stats.inappFollows.processed}/${stats.inappFollows.errors}, ` +
-      `duration=${stats.duration}ms`);
-
-    // Schedule next poll - CRITICAL: always attempt this to keep poller alive
-    try {
-      await this.state.storage.setAlarm(Date.now() + ALARM_INTERVAL_MS);
-    } catch (error) {
-      console.error('[JetstreamPoller] CRITICAL: Error scheduling next alarm:', error);
+      // Catch-all for any unexpected errors
+      console.error('[JetstreamPoller] UNEXPECTED ERROR in alarm handler:', error);
+    } finally {
+      // ALWAYS schedule next poll - this runs even if an error occurred above
+      try {
+        await this.state.storage.setAlarm(Date.now() + ALARM_INTERVAL_MS);
+      } catch (error) {
+        console.error('[JetstreamPoller] CRITICAL: Error scheduling next alarm:', error);
+      }
     }
   }
 
