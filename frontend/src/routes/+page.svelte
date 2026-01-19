@@ -415,8 +415,8 @@
             // Load existing articles from IndexedDB first (instant display of cached data)
             allArticles = await subscriptionsStore.getAllArticles();
 
-            // If we have subscriptions but no articles, fetch from backend
-            if (subscriptionsStore.subscriptions.length > 0 && allArticles.length === 0) {
+            // Fetch latest articles from backend (store handles deduplication)
+            if (subscriptionsStore.subscriptions.length > 0) {
                 // Check which feeds are ready on the backend
                 const feedUrls = subscriptionsStore.subscriptions.map((s) => s.feedUrl);
                 await subscriptionsStore.checkFeedStatuses(feedUrls);
