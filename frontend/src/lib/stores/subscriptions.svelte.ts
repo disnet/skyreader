@@ -610,7 +610,25 @@ function createSubscriptionsStore() {
       console.log(`Batch fetching ${readyFeeds.length} ready feeds from cache...`);
       try {
         const feedUrls = readyFeeds.map((s) => s.feedUrl);
-        const { feeds } = await api.fetchFeedsBatch(feedUrls);
+
+        // Collect most recent article timestamp per feed for delta sync
+        const since: Record<string, number> = {};
+        for (const sub of readyFeeds) {
+          if (!sub.id) continue;
+          // Get the most recent article for this subscription
+          const mostRecent = await db.articles
+            .where('subscriptionId')
+            .equals(sub.id)
+            .reverse()
+            .sortBy('publishedAt')
+            .then((articles) => articles[0]);
+
+          if (mostRecent?.publishedAt) {
+            since[sub.feedUrl] = new Date(mostRecent.publishedAt).getTime();
+          }
+        }
+
+        const { feeds } = await api.fetchFeedsBatch(feedUrls, since);
 
         // Process batch response and store articles
         for (const sub of readyFeeds) {
@@ -618,7 +636,7 @@ function createSubscriptionsStore() {
           const feedData = feeds[sub.feedUrl];
           if (!feedData || feedData.items.length === 0) continue;
 
-          // Store articles (same logic as fetchFeed)
+          // Store new articles (backend already filtered by 'since', but double-check GUIDs)
           const existingArticles = await db.articles
             .where('subscriptionId')
             .equals(sub.id)

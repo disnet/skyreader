@@ -96,7 +96,10 @@ class ApiClient {
     return this.fetch(`/api/feeds/status?${params}`);
   }
 
-  async fetchFeedsBatch(urls: string[]): Promise<{
+  async fetchFeedsBatch(
+    urls: string[],
+    since?: Record<string, number>
+  ): Promise<{
     feeds: Record<string, {
       title: string;
       description?: string;
@@ -109,7 +112,7 @@ class ApiClient {
   }> {
     return this.fetch('/api/feeds/batch', {
       method: 'POST',
-      body: JSON.stringify({ urls }),
+      body: JSON.stringify({ urls, since }),
     });
   }
 

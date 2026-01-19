@@ -818,7 +818,7 @@ export async function handleBatchFeedFetch(request: Request, env: Env): Promise<
     });
   }
 
-  let body: { urls?: string[] };
+  let body: { urls?: string[]; since?: Record<string, number> };
   try {
     body = await request.json();
   } catch {
@@ -829,6 +829,7 @@ export async function handleBatchFeedFetch(request: Request, env: Env): Promise<
   }
 
   const feedUrls = body.urls;
+  const since = body.since || {}; // feedUrl -> timestamp of most recent known article
   if (!feedUrls || !Array.isArray(feedUrls) || feedUrls.length === 0) {
     return new Response(JSON.stringify({ error: 'Missing urls array in request body' }), {
       status: 400,
@@ -918,9 +919,19 @@ export async function handleBatchFeedFetch(request: Request, env: Env): Promise<
     ORDER BY feed_url, published_at DESC
   `).bind(...validUrls).all<FeedItemRow>();
 
-  // Group items by feed URL
+  // Group items by feed URL, filtering by 'since' timestamp if provided
   const itemsByFeed = new Map<string, FeedItem[]>();
   for (const row of itemsResults.results) {
+    // If client provided a 'since' timestamp for this feed, only include newer items
+    const sinceTimestamp = since[row.feed_url];
+    if (sinceTimestamp !== undefined) {
+      // Convert milliseconds to seconds for comparison with DB timestamp
+      const sinceSeconds = Math.floor(sinceTimestamp / 1000);
+      if (row.published_at <= sinceSeconds) {
+        continue; // Skip items older than or equal to the 'since' timestamp
+      }
+    }
+
     const items = itemsByFeed.get(row.feed_url) || [];
     // Limit to 100 items per feed
     if (items.length < 100) {
