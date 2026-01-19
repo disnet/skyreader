@@ -233,7 +233,7 @@
   <meta name="description" content="A decentralized RSS reader built on AT Protocol" />
   <link rel="icon" type="image/svg+xml" href={Logo} />
   <link rel="manifest" href="/manifest.json" />
-  <meta name="theme-color" content="#4A9FD4" />
+  <meta name="theme-color" content="#6b21a8" />
 </svelte:head>
 
 <KeyboardShortcutsModal />
