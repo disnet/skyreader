@@ -14,3 +14,13 @@ ALTER TABLE subscriptions_cache ADD COLUMN external_ref TEXT;
 
 -- Index for efficient Leaflet subscription queries
 CREATE INDEX IF NOT EXISTS idx_subscriptions_source ON subscriptions_cache(user_did, source);
+
+-- DID to handle cache for avoiding repeated plc.directory lookups
+CREATE TABLE IF NOT EXISTS did_handle_cache (
+    did TEXT PRIMARY KEY,
+    handle TEXT NOT NULL,
+    cached_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+-- Index for cache expiry cleanup
+CREATE INDEX IF NOT EXISTS idx_did_handle_cached_at ON did_handle_cache(cached_at);

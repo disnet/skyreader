@@ -79,10 +79,18 @@
       leafletSyncResult = result;
       leafletLastSynced = Date.now();
       // Reload subscriptions to reflect changes
-      await subscriptionsStore.load();
+      if (result.added > 0 || result.removed > 0) {
+        await subscriptionsStore.load();
+      }
     } catch (error) {
       console.error('Leaflet sync failed:', error);
-      leafletSyncResult = { added: 0, removed: 0, errors: [error instanceof Error ? error.message : 'Sync failed'] };
+      const errorMessage = error instanceof Error ? error.message : 'Sync failed';
+      // Handle cooldown error with user-friendly message
+      if (errorMessage === 'sync_cooldown') {
+        leafletSyncResult = { added: 0, removed: 0, errors: ['Please wait at least 1 hour between syncs'] };
+      } else {
+        leafletSyncResult = { added: 0, removed: 0, errors: [errorMessage] };
+      }
     } finally {
       leafletSyncing = false;
     }

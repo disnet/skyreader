@@ -1,4 +1,4 @@
-import type { Session } from '../types';
+import type { Env, Session } from '../types';
 import { importPrivateKey, createDPoPProof } from './oauth';
 
 // Leaflet subscription record from user's PDS
@@ -18,6 +18,9 @@ export interface ResolvedPublication {
   siteUrl: string;
 }
 
+// Cache TTL: 24 hours in seconds
+const HANDLE_CACHE_TTL_SECONDS = 24 * 60 * 60;
+
 // Parse an at-uri into components
 function parseAtUri(atUri: string): { did: string; collection: string; rkey: string } | null {
   // at://did:plc:xxx/pub.leaflet.publication/tid
@@ -30,8 +33,19 @@ function parseAtUri(atUri: string): { did: string; collection: string; rkey: str
   };
 }
 
-// Resolve a DID to get its handle from the DID document
-async function resolveDidToHandle(did: string): Promise<string | null> {
+// Resolve a DID to get its handle, using cache when available
+async function resolveDidToHandle(did: string, env: Env): Promise<string | null> {
+  // Check cache first
+  const cached = await env.DB.prepare(`
+    SELECT handle, cached_at FROM did_handle_cache
+    WHERE did = ? AND cached_at > unixepoch() - ?
+  `).bind(did, HANDLE_CACHE_TTL_SECONDS).first<{ handle: string; cached_at: number }>();
+
+  if (cached) {
+    return cached.handle;
+  }
+
+  // Cache miss or stale - fetch from plc.directory
   try {
     let didDocUrl: string;
 
@@ -56,15 +70,26 @@ async function resolveDidToHandle(did: string): Promise<string | null> {
     };
 
     // Extract handle from alsoKnownAs (format: at://handle)
+    let handle: string | null = null;
     if (didDoc.alsoKnownAs && didDoc.alsoKnownAs.length > 0) {
       for (const aka of didDoc.alsoKnownAs) {
         if (aka.startsWith('at://')) {
-          return aka.replace('at://', '');
+          handle = aka.replace('at://', '');
+          break;
         }
       }
     }
 
-    return null;
+    // Cache the result (even if null, to avoid repeated failed lookups)
+    if (handle) {
+      await env.DB.prepare(`
+        INSERT INTO did_handle_cache (did, handle, cached_at)
+        VALUES (?, ?, unixepoch())
+        ON CONFLICT(did) DO UPDATE SET handle = excluded.handle, cached_at = unixepoch()
+      `).bind(did, handle).run();
+    }
+
+    return handle;
   } catch (error) {
     console.error(`Error resolving DID ${did}:`, error);
     return null;
@@ -72,7 +97,7 @@ async function resolveDidToHandle(did: string): Promise<string | null> {
 }
 
 // Resolve a Leaflet publication at-uri to RSS URL and metadata
-export async function resolvePublicationToRss(publicationUri: string): Promise<ResolvedPublication | null> {
+export async function resolvePublicationToRss(publicationUri: string, env: Env): Promise<ResolvedPublication | null> {
   const parsed = parseAtUri(publicationUri);
   if (!parsed || parsed.collection !== 'pub.leaflet.publication') {
     console.error(`Invalid Leaflet publication URI: ${publicationUri}`);
@@ -80,7 +105,7 @@ export async function resolvePublicationToRss(publicationUri: string): Promise<R
   }
 
   // Resolve DID to get the handle (which is the subdomain for Leaflet)
-  const handle = await resolveDidToHandle(parsed.did);
+  const handle = await resolveDidToHandle(parsed.did, env);
   if (!handle) {
     console.error(`Could not resolve handle for DID: ${parsed.did}`);
     return null;

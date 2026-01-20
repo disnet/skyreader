@@ -1,7 +1,9 @@
 import type { Env, Session } from '../types';
 import { getSessionFromRequest, importPrivateKey, createDPoPProof } from '../services/oauth';
 import { fetchLeafletSubscriptions, resolvePublicationToRss } from '../services/leaflet';
-import { fetchAndCacheFeed } from './feeds';
+
+// Minimum time between syncs (1 hour in milliseconds)
+const SYNC_COOLDOWN_MS = 60 * 60 * 1000;
 
 // Generate a TID (Timestamp Identifier) for record keys
 function generateTid(): string {
@@ -137,6 +139,29 @@ export async function handleLeafletSync(request: Request, env: Env): Promise<Res
     });
   }
 
+  // Check for sync cooldown (1 hour minimum between syncs)
+  const settings = await env.DB.prepare(`
+    SELECT leaflet_last_synced_at FROM user_settings WHERE user_did = ?
+  `).bind(session.did).first<{ leaflet_last_synced_at: number | null }>();
+
+  if (settings?.leaflet_last_synced_at) {
+    const lastSyncMs = settings.leaflet_last_synced_at * 1000;
+    const timeSinceSync = Date.now() - lastSyncMs;
+    if (timeSinceSync < SYNC_COOLDOWN_MS) {
+      const waitMinutes = Math.ceil((SYNC_COOLDOWN_MS - timeSinceSync) / 60000);
+      return new Response(JSON.stringify({
+        error: 'sync_cooldown',
+        message: `Please wait ${waitMinutes} minute${waitMinutes === 1 ? '' : 's'} before syncing again`,
+        added: 0,
+        removed: 0,
+        errors: [],
+      }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
+
   const errors: string[] = [];
   let added = 0;
   let removed = 0;
@@ -173,7 +198,7 @@ export async function handleLeafletSync(request: Request, env: Env): Promise<Res
     const toAdd: Array<{ leafletUri: string; rssUrl: string; title: string; siteUrl: string }> = [];
     for (const sub of leafletSubs) {
       if (!currentByRef.has(sub.uri)) {
-        const resolved = await resolvePublicationToRss(sub.value.publication);
+        const resolved = await resolvePublicationToRss(sub.value.publication, env);
         if (resolved) {
           toAdd.push({
             leafletUri: sub.uri,
@@ -221,7 +246,7 @@ export async function handleLeafletSync(request: Request, env: Env): Promise<Res
         if (result.ok) {
           const recordUri = result.data.uri || `at://${session.did}/app.skyreader.feed.subscription/${rkey}`;
 
-          // Cache in D1
+          // Cache in D1 (feed will be fetched by scheduled refresher)
           await env.DB.prepare(`
             INSERT OR REPLACE INTO subscriptions_cache
             (user_did, record_uri, feed_url, title, source, external_ref, created_at)
@@ -233,13 +258,6 @@ export async function handleLeafletSync(request: Request, env: Env): Promise<Res
             sub.title,
             sub.leafletUri
           ).run();
-
-          // Fetch the feed
-          try {
-            await fetchAndCacheFeed(env, sub.rssUrl);
-          } catch (fetchError) {
-            console.error(`Failed to fetch feed ${sub.rssUrl}:`, fetchError);
-          }
 
           added++;
         } else {
