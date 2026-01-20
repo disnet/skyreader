@@ -11,13 +11,6 @@
         <li>Store your subscriptions in your own data server</li>
         <li>Share articles with your followers</li>
         <li>Works offline with automatic sync</li>
-        <li>
-            <em
-                >Vibe coded in an afternoon by <a
-                    href="https://bsky.app/profile/disnetdev.com">@disnetdev.com</a
-                > so maybe don't trust it just yet</em
-            >
-        </li>
     </ul>
     <div class="cta">
         <a href="/auth/login" class="btn btn-primary">Login with Bluesky</a>
