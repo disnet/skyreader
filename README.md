@@ -177,4 +177,4 @@ npm run check             # Type checking
 
 ## License
 
-MIT
+GPL
