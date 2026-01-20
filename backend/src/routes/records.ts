@@ -235,30 +235,39 @@ async function hydrateReadPositionsCacheFromPds(
       cursor = result.data.cursor;
     } while (cursor);
 
-    // Insert all records into cache
-    for (const record of allRecords) {
-      // Extract rkey from URI: at://did/collection/rkey
-      const rkey = record.uri.split('/').pop();
-      if (!rkey) continue;
+    // Insert all records into cache using batched operations to avoid subrequest limit
+    const CHUNK_SIZE = 50;
+    for (let i = 0; i < allRecords.length; i += CHUNK_SIZE) {
+      const chunk = allRecords.slice(i, i + CHUNK_SIZE);
+      const statements = chunk
+        .map(record => {
+          // Extract rkey from URI: at://did/collection/rkey
+          const rkey = record.uri.split('/').pop();
+          if (!rkey) return null;
 
-      try {
-        await env.DB.prepare(`
-          INSERT OR IGNORE INTO read_positions_cache
-          (user_did, rkey, record_uri, item_guid, item_url, item_title, starred, read_at, synced_at, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
-        `).bind(
-          session.did,
-          rkey,
-          record.uri,
-          record.value.itemGuid,
-          record.value.itemUrl || null,
-          record.value.itemTitle || null,
-          record.value.starred ? 1 : 0,
-          record.value.readAt
-        ).run();
-      } catch (err) {
-        // Ignore insert errors (e.g., duplicates)
-        console.error('Failed to insert cached read position:', err);
+          return env.DB.prepare(`
+            INSERT OR IGNORE INTO read_positions_cache
+            (user_did, rkey, record_uri, item_guid, item_url, item_title, starred, read_at, synced_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+          `).bind(
+            session.did,
+            rkey,
+            record.uri,
+            record.value.itemGuid,
+            record.value.itemUrl || null,
+            record.value.itemTitle || null,
+            record.value.starred ? 1 : 0,
+            record.value.readAt
+          );
+        })
+        .filter((stmt): stmt is NonNullable<typeof stmt> => stmt !== null);
+
+      if (statements.length > 0) {
+        try {
+          await env.DB.batch(statements);
+        } catch (err) {
+          console.error('Failed to batch insert cached read positions:', err);
+        }
       }
     }
 
@@ -1053,18 +1062,23 @@ export async function handleBulkRecordSync(request: Request, env: Env): Promise<
 
     const applyResult = result.data as unknown as ApplyWritesResponse;
 
+    // Collect all D1 statements for batching to avoid subrequest limit
+    const batchStatements: ReturnType<typeof env.DB.prepare>[] = [];
+    const feedsToFetch: string[] = [];
+
     // Cache subscriptions for scheduled feed fetching
     const subscriptionOps = operations.filter(op => op.collection === 'app.skyreader.feed.subscription');
-    const feedsToFetch: string[] = [];
 
     for (let i = 0; i < subscriptionOps.length; i++) {
       const op = subscriptionOps[i];
-      try {
-        if (op.operation === 'create' || op.operation === 'update') {
-          const feedRecord = op.record as { feedUrl: string; title?: string };
-          const resultUri = applyResult.results?.[i]?.uri;
-          const recordUri = resultUri || `at://${session.did}/${op.collection}/${op.rkey}`;
-          await env.DB.prepare(`
+      const originalIndex = operations.indexOf(op);
+
+      if (op.operation === 'create' || op.operation === 'update') {
+        const feedRecord = op.record as { feedUrl: string; title?: string };
+        const resultUri = applyResult.results?.[originalIndex]?.uri;
+        const recordUri = resultUri || `at://${session.did}/${op.collection}/${op.rkey}`;
+        batchStatements.push(
+          env.DB.prepare(`
             INSERT OR REPLACE INTO subscriptions_cache
             (user_did, record_uri, feed_url, title, created_at)
             VALUES (?, ?, ?, ?, unixepoch())
@@ -1073,81 +1087,71 @@ export async function handleBulkRecordSync(request: Request, env: Env): Promise<
             recordUri,
             feedRecord.feedUrl,
             feedRecord.title || null
-          ).run();
+          )
+        );
 
-          // Collect feeds to fetch (for create only)
-          if (op.operation === 'create' && feedRecord.feedUrl) {
-            feedsToFetch.push(feedRecord.feedUrl);
-          }
-        } else if (op.operation === 'delete') {
-          await env.DB.prepare(
-            'DELETE FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
-          ).bind(session.did, `%/${op.rkey}`).run();
+        // Collect feeds to fetch (for create only)
+        if (op.operation === 'create' && feedRecord.feedUrl) {
+          feedsToFetch.push(feedRecord.feedUrl);
         }
-      } catch (cacheError) {
-        console.error('Failed to cache subscription:', cacheError);
+      } else if (op.operation === 'delete') {
+        batchStatements.push(
+          env.DB.prepare(
+            'DELETE FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
+          ).bind(session.did, `%/${op.rkey}`)
+        );
       }
-    }
-
-    // Fetch feeds for new subscriptions (limit to 5 to stay under subrequest limits)
-    const MAX_FEEDS_TO_FETCH = 5;
-    for (let i = 0; i < Math.min(feedsToFetch.length, MAX_FEEDS_TO_FETCH); i++) {
-      try {
-        await fetchAndCacheFeed(env, feedsToFetch[i]);
-        console.log(`Fetched feed for new subscription: ${feedsToFetch[i]}`);
-      } catch (fetchError) {
-        console.error(`Failed to fetch feed ${feedsToFetch[i]}:`, fetchError);
-      }
-    }
-    if (feedsToFetch.length > MAX_FEEDS_TO_FETCH) {
-      console.log(`${feedsToFetch.length - MAX_FEEDS_TO_FETCH} feeds will be fetched by cron`);
     }
 
     // Index shares in D1 for social feed
     const shareOps = operations.filter(op => op.collection === 'app.skyreader.social.share');
+
+    // Add user upsert only once if there are share creates/updates
+    const hasShareCreates = shareOps.some(op => op.operation === 'create' || op.operation === 'update');
+    if (hasShareCreates) {
+      batchStatements.push(
+        env.DB.prepare(`
+          INSERT INTO users (did, handle, display_name, avatar_url, pds_url, updated_at)
+          VALUES (?, ?, ?, ?, ?, unixepoch())
+          ON CONFLICT(did) DO UPDATE SET
+            handle = excluded.handle,
+            display_name = COALESCE(excluded.display_name, users.display_name),
+            avatar_url = COALESCE(excluded.avatar_url, users.avatar_url),
+            updated_at = unixepoch()
+        `).bind(
+          session.did,
+          session.handle || session.did,
+          session.displayName || null,
+          session.avatarUrl || null,
+          session.pdsUrl
+        )
+      );
+    }
+
     for (let i = 0; i < shareOps.length; i++) {
       const op = shareOps[i];
-      try {
-        // Find the index of this share op in the original operations array
-        const originalIndex = operations.indexOf(op);
-        const resultUri = applyResult.results?.[originalIndex]?.uri;
-        const recordUri = resultUri || `at://${session.did}/${op.collection}/${op.rkey}`;
-        const resultCid = applyResult.results?.[originalIndex]?.cid || '';
+      const originalIndex = operations.indexOf(op);
+      const resultUri = applyResult.results?.[originalIndex]?.uri;
+      const recordUri = resultUri || `at://${session.did}/${op.collection}/${op.rkey}`;
+      const resultCid = applyResult.results?.[originalIndex]?.cid || '';
 
-        if (op.operation === 'create' || op.operation === 'update') {
-          // Ensure user exists
-          await env.DB.prepare(`
-            INSERT INTO users (did, handle, display_name, avatar_url, pds_url, updated_at)
-            VALUES (?, ?, ?, ?, ?, unixepoch())
-            ON CONFLICT(did) DO UPDATE SET
-              handle = excluded.handle,
-              display_name = COALESCE(excluded.display_name, users.display_name),
-              avatar_url = COALESCE(excluded.avatar_url, users.avatar_url),
-              updated_at = unixepoch()
-          `).bind(
-            session.did,
-            session.handle || session.did,
-            session.displayName || null,
-            session.avatarUrl || null,
-            session.pdsUrl
-          ).run();
+      if (op.operation === 'create' || op.operation === 'update') {
+        const shareRecord = op.record as {
+          feedUrl?: string;
+          itemGuid?: string;
+          itemUrl: string;
+          itemTitle?: string;
+          itemAuthor?: string;
+          itemDescription?: string;
+          itemImage?: string;
+          itemPublishedAt?: string;
+          note?: string;
+          tags?: string[];
+          createdAt: string;
+        };
 
-          // Insert share
-          const shareRecord = op.record as {
-            feedUrl?: string;
-            itemGuid?: string;
-            itemUrl: string;
-            itemTitle?: string;
-            itemAuthor?: string;
-            itemDescription?: string;
-            itemImage?: string;
-            itemPublishedAt?: string;
-            note?: string;
-            tags?: string[];
-            createdAt: string;
-          };
-
-          await env.DB.prepare(`
+        batchStatements.push(
+          env.DB.prepare(`
             INSERT OR REPLACE INTO shares
             (author_did, record_uri, record_cid, feed_url, item_url, item_title,
              item_author, item_description, item_image, item_guid, item_published_at, note, tags, created_at)
@@ -1167,15 +1171,38 @@ export async function handleBulkRecordSync(request: Request, env: Env): Promise<
             shareRecord.note || null,
             shareRecord.tags ? JSON.stringify(shareRecord.tags) : null,
             new Date(shareRecord.createdAt).getTime()
-          ).run();
-        } else if (op.operation === 'delete') {
-          await env.DB.prepare(
+          )
+        );
+      } else if (op.operation === 'delete') {
+        batchStatements.push(
+          env.DB.prepare(
             'DELETE FROM shares WHERE record_uri = ?'
-          ).bind(recordUri).run();
-        }
-      } catch (shareError) {
-        console.error('[bulk-sync] Failed to index share:', shareError);
+          ).bind(recordUri)
+        );
       }
+    }
+
+    // Execute all D1 operations in a single batch
+    if (batchStatements.length > 0) {
+      try {
+        await env.DB.batch(batchStatements);
+      } catch (batchError) {
+        console.error('[bulk-sync] Failed to batch D1 operations:', batchError);
+      }
+    }
+
+    // Fetch feeds for new subscriptions (limit to 5 to stay under subrequest limits)
+    const MAX_FEEDS_TO_FETCH = 5;
+    for (let i = 0; i < Math.min(feedsToFetch.length, MAX_FEEDS_TO_FETCH); i++) {
+      try {
+        await fetchAndCacheFeed(env, feedsToFetch[i]);
+        console.log(`Fetched feed for new subscription: ${feedsToFetch[i]}`);
+      } catch (fetchError) {
+        console.error(`Failed to fetch feed ${feedsToFetch[i]}:`, fetchError);
+      }
+    }
+    if (feedsToFetch.length > MAX_FEEDS_TO_FETCH) {
+      console.log(`${feedsToFetch.length - MAX_FEEDS_TO_FETCH} feeds will be fetched by cron`);
     }
 
     // Build response with URIs
