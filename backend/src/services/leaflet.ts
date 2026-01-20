@@ -33,19 +33,8 @@ function parseAtUri(atUri: string): { did: string; collection: string; rkey: str
   };
 }
 
-// Resolve a DID to get its handle, using cache when available
-async function resolveDidToHandle(did: string, env: Env): Promise<string | null> {
-  // Check cache first
-  const cached = await env.DB.prepare(`
-    SELECT handle, cached_at FROM did_handle_cache
-    WHERE did = ? AND cached_at > unixepoch() - ?
-  `).bind(did, HANDLE_CACHE_TTL_SECONDS).first<{ handle: string; cached_at: number }>();
-
-  if (cached) {
-    return cached.handle;
-  }
-
-  // Cache miss or stale - fetch from plc.directory
+// Resolve a DID to get its PDS URL
+async function resolveDidToPds(did: string): Promise<string | null> {
   try {
     let didDocUrl: string;
 
@@ -66,37 +55,59 @@ async function resolveDidToHandle(did: string, env: Env): Promise<string | null>
     }
 
     const didDoc = await response.json() as {
-      alsoKnownAs?: string[];
+      service?: Array<{ id: string; type: string; serviceEndpoint: string }>;
     };
 
-    // Extract handle from alsoKnownAs (format: at://handle)
-    let handle: string | null = null;
-    if (didDoc.alsoKnownAs && didDoc.alsoKnownAs.length > 0) {
-      for (const aka of didDoc.alsoKnownAs) {
-        if (aka.startsWith('at://')) {
-          handle = aka.replace('at://', '');
-          break;
+    // Find the AtprotoPersonalDataServer service
+    if (didDoc.service) {
+      for (const svc of didDoc.service) {
+        if (svc.type === 'AtprotoPersonalDataServer') {
+          return svc.serviceEndpoint;
         }
       }
     }
 
-    // Cache the result (even if null, to avoid repeated failed lookups)
-    if (handle) {
-      await env.DB.prepare(`
-        INSERT INTO did_handle_cache (did, handle, cached_at)
-        VALUES (?, ?, unixepoch())
-        ON CONFLICT(did) DO UPDATE SET handle = excluded.handle, cached_at = unixepoch()
-      `).bind(did, handle).run();
-    }
-
-    return handle;
+    console.error(`No PDS service found for DID ${did}`);
+    return null;
   } catch (error) {
     console.error(`Error resolving DID ${did}:`, error);
     return null;
   }
 }
 
+// Leaflet publication record structure
+interface LeafletPublication {
+  $type: string;
+  name?: string;
+  description?: string;
+  base_path?: string;
+}
+
+// Fetch a Leaflet publication record from a PDS
+async function fetchPublicationRecord(
+  pdsUrl: string,
+  did: string,
+  rkey: string
+): Promise<LeafletPublication | null> {
+  try {
+    const url = `${pdsUrl}/xrpc/com.atproto.repo.getRecord?repo=${did}&collection=pub.leaflet.publication&rkey=${rkey}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      console.error(`Failed to fetch publication record: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json() as { value: LeafletPublication };
+    return data.value;
+  } catch (error) {
+    console.error(`Error fetching publication record:`, error);
+    return null;
+  }
+}
+
 // Resolve a Leaflet publication at-uri to RSS URL and metadata
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function resolvePublicationToRss(publicationUri: string, env: Env): Promise<ResolvedPublication | null> {
   const parsed = parseAtUri(publicationUri);
   if (!parsed || parsed.collection !== 'pub.leaflet.publication') {
@@ -104,23 +115,30 @@ export async function resolvePublicationToRss(publicationUri: string, env: Env):
     return null;
   }
 
-  // Resolve DID to get the handle (which is the subdomain for Leaflet)
-  const handle = await resolveDidToHandle(parsed.did, env);
-  if (!handle) {
-    console.error(`Could not resolve handle for DID: ${parsed.did}`);
+  // 1. Resolve DID to get the PDS URL
+  const pdsUrl = await resolveDidToPds(parsed.did);
+  if (!pdsUrl) {
+    console.error(`Could not resolve PDS for DID: ${parsed.did}`);
     return null;
   }
 
-  // For Leaflet, the handle should be something like "subdomain.leaflet.pub"
-  // The RSS feed is at https://subdomain.leaflet.pub/rss
-  if (!handle.endsWith('.leaflet.pub')) {
-    console.warn(`Handle ${handle} doesn't appear to be a Leaflet publication`);
+  // 2. Fetch the publication record from the PDS
+  const publication = await fetchPublicationRecord(pdsUrl, parsed.did, parsed.rkey);
+  if (!publication) {
+    console.error(`Could not fetch publication record: ${publicationUri}`);
+    return null;
   }
 
-  const siteUrl = `https://${handle}`;
+  // 3. Get the base_path (the Leaflet subdomain)
+  if (!publication.base_path) {
+    console.error(`Publication has no base_path: ${publicationUri}`);
+    return null;
+  }
+
+  const siteUrl = `https://${publication.base_path}`;
   const rssUrl = `${siteUrl}/rss`;
 
-  // Validate that the RSS feed actually exists before returning
+  // 4. Validate that the RSS feed actually exists
   try {
     const rssResponse = await fetch(rssUrl, { method: 'HEAD' });
     if (!rssResponse.ok) {
@@ -137,10 +155,9 @@ export async function resolvePublicationToRss(publicationUri: string, env: Env):
     return null;
   }
 
-  // Use the subdomain as the title, or the full handle for custom domains
-  const title = handle.endsWith('.leaflet.pub')
-    ? handle.replace('.leaflet.pub', '')
-    : handle;
+  // Use the publication name as title, fallback to subdomain
+  const title = publication.name ||
+    publication.base_path.replace('.leaflet.pub', '');
 
   return {
     rssUrl,
