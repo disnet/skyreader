@@ -75,13 +75,10 @@
     leafletSyncing = true;
     leafletSyncResult = null;
     try {
-      const result = await api.syncLeaflet();
+      // Use the store's syncLeaflet which handles reloading and fetching feeds
+      const result = await subscriptionsStore.syncLeaflet();
       leafletSyncResult = result;
       leafletLastSynced = Date.now();
-      // Reload subscriptions to reflect changes
-      if (result.added > 0 || result.removed > 0) {
-        await subscriptionsStore.load();
-      }
     } catch (error) {
       console.error('Leaflet sync failed:', error);
       const errorMessage = error instanceof Error ? error.message : 'Sync failed';
