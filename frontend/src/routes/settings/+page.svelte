@@ -4,6 +4,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { preferences, type ArticleFont, type ArticleFontSize } from '$lib/stores/preferences.svelte';
+  import { api } from '$lib/services/api';
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
 
   const fontOptions: { value: ArticleFont; label: string }[] = [
@@ -22,6 +23,71 @@
 
   let showImportModal = $state(false);
 
+  // Leaflet sync state
+  let leafletEnabled = $state(false);
+  let leafletLastSynced = $state<number | null>(null);
+  let leafletLoading = $state(true);
+  let leafletSyncing = $state(false);
+  let leafletSyncResult = $state<{ added: number; removed: number; errors: string[] } | null>(null);
+
+  function formatRelativeTime(timestamp: number): string {
+    const now = Date.now();
+    const diff = now - timestamp;
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+    if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+    return `${days} day${days === 1 ? '' : 's'} ago`;
+  }
+
+  async function loadLeafletSettings() {
+    try {
+      const settings = await api.getLeafletSettings();
+      leafletEnabled = settings.enabled;
+      leafletLastSynced = settings.lastSyncedAt;
+    } catch (error) {
+      console.error('Failed to load Leaflet settings:', error);
+    } finally {
+      leafletLoading = false;
+    }
+  }
+
+  async function handleLeafletToggle(enabled: boolean) {
+    leafletLoading = true;
+    try {
+      await api.updateLeafletSettings(enabled);
+      leafletEnabled = enabled;
+      // If enabling, trigger immediate sync
+      if (enabled) {
+        await handleLeafletSync();
+      }
+    } catch (error) {
+      console.error('Failed to update Leaflet settings:', error);
+    } finally {
+      leafletLoading = false;
+    }
+  }
+
+  async function handleLeafletSync() {
+    leafletSyncing = true;
+    leafletSyncResult = null;
+    try {
+      const result = await api.syncLeaflet();
+      leafletSyncResult = result;
+      leafletLastSynced = Date.now();
+      // Reload subscriptions to reflect changes
+      await subscriptionsStore.load();
+    } catch (error) {
+      console.error('Leaflet sync failed:', error);
+      leafletSyncResult = { added: 0, removed: 0, errors: [error instanceof Error ? error.message : 'Sync failed'] };
+    } finally {
+      leafletSyncing = false;
+    }
+  }
+
   onMount(async () => {
     if (!auth.isAuthenticated) {
       goto('/auth/login?returnUrl=/settings');
@@ -31,6 +97,8 @@
     if (subscriptionsStore.subscriptions.length === 0) {
       await subscriptionsStore.load();
     }
+    // Load Leaflet settings
+    await loadLeafletSettings();
   });
 
   async function handleLogout() {
@@ -143,6 +211,62 @@
     <button class="btn btn-secondary" onclick={() => showImportModal = true}>
       Import OPML
     </button>
+  </section>
+
+  <section class="card">
+    <h2>Integrations</h2>
+    <div class="integration-item">
+      <div class="integration-header">
+        <div class="integration-info">
+          <h3>Leaflet</h3>
+          <p class="setting-description">
+            Automatically sync your <a href="https://leaflet.pub" target="_blank" rel="noopener">Leaflet</a> subscriptions as RSS feeds in Skyreader.
+          </p>
+        </div>
+        <label class="toggle-setting">
+          <input
+            type="checkbox"
+            checked={leafletEnabled}
+            onchange={(e) => handleLeafletToggle(e.currentTarget.checked)}
+            disabled={leafletLoading || leafletSyncing}
+          />
+          <span class="toggle-label">Enable</span>
+        </label>
+      </div>
+
+      {#if leafletEnabled}
+        <div class="sync-status">
+          {#if leafletLastSynced}
+            <p class="setting-description">Last synced: {formatRelativeTime(leafletLastSynced)}</p>
+          {/if}
+          <button
+            class="btn btn-secondary"
+            onclick={handleLeafletSync}
+            disabled={leafletSyncing || leafletLoading}
+          >
+            {leafletSyncing ? 'Syncing...' : 'Sync Now'}
+          </button>
+        </div>
+
+        {#if leafletSyncResult}
+          <div class="sync-result" class:has-errors={leafletSyncResult.errors.length > 0}>
+            {#if leafletSyncResult.added > 0 || leafletSyncResult.removed > 0}
+              <p>
+                {#if leafletSyncResult.added > 0}Added {leafletSyncResult.added} feed{leafletSyncResult.added === 1 ? '' : 's'}.{/if}
+                {#if leafletSyncResult.removed > 0}Removed {leafletSyncResult.removed} feed{leafletSyncResult.removed === 1 ? '' : 's'}.{/if}
+              </p>
+            {:else if leafletSyncResult.errors.length === 0}
+              <p>Already in sync.</p>
+            {/if}
+            {#if leafletSyncResult.errors.length > 0}
+              <p class="sync-errors">
+                {leafletSyncResult.errors.length} error{leafletSyncResult.errors.length === 1 ? '' : 's'}: {leafletSyncResult.errors[0]}
+              </p>
+            {/if}
+          </div>
+        {/if}
+      {/if}
+    </div>
   </section>
 
   <section class="card">
@@ -346,5 +470,79 @@
     font-size: 0.875rem;
     color: var(--color-text-secondary);
     margin: 0.5rem 0 0 0;
+  }
+
+  .setting-description a {
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+
+  .setting-description a:hover {
+    text-decoration: underline;
+  }
+
+  .integration-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .integration-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  .integration-info {
+    flex: 1;
+  }
+
+  .integration-info h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.25rem 0;
+  }
+
+  .integration-info .setting-description {
+    margin: 0;
+  }
+
+  .toggle-label {
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+  }
+
+  .sync-status {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem;
+    background: var(--color-bg-secondary);
+    border-radius: 6px;
+  }
+
+  .sync-status .setting-description {
+    margin: 0;
+    flex: 1;
+  }
+
+  .sync-result {
+    padding: 0.75rem;
+    background: var(--color-bg-secondary);
+    border-radius: 6px;
+    font-size: 0.875rem;
+  }
+
+  .sync-result p {
+    margin: 0;
+  }
+
+  .sync-result.has-errors {
+    background: rgba(239, 68, 68, 0.1);
+  }
+
+  .sync-errors {
+    color: var(--color-error, #ef4444);
   }
 </style>

@@ -716,6 +716,41 @@ function createSubscriptionsStore() {
     console.log('Finished fetching pending feeds');
   }
 
+  // Sync Leaflet subscriptions
+  async function syncLeaflet(): Promise<{ added: number; removed: number; errors: string[] }> {
+    const result = await api.syncLeaflet();
+
+    // Reload subscriptions to reflect changes
+    if (result.added > 0 || result.removed > 0) {
+      await load();
+      // Fetch new feeds
+      if (result.added > 0) {
+        await fetchAllNewFeeds();
+      }
+    }
+
+    return result;
+  }
+
+  // Check if Leaflet sync is needed (called on app load)
+  async function checkLeafletSync(): Promise<void> {
+    try {
+      const settings = await api.getLeafletSettings();
+      if (settings.enabled) {
+        const lastSync = settings.lastSyncedAt || 0;
+        const hoursSinceSync = (Date.now() - lastSync) / (1000 * 60 * 60);
+
+        // Auto-sync if more than 6 hours since last sync
+        if (hoursSinceSync > 6) {
+          console.log('Auto-syncing Leaflet subscriptions...');
+          await syncLeaflet();
+        }
+      }
+    } catch (error) {
+      console.error('Leaflet sync check failed:', error);
+    }
+  }
+
   return {
     get subscriptions() {
       return subscriptions;
@@ -750,6 +785,8 @@ function createSubscriptionsStore() {
     checkFeedStatuses,
     fetchPendingFeedsGradually,
     fetchAllNewFeeds,
+    syncLeaflet,
+    checkLeafletSync,
   };
 }
 

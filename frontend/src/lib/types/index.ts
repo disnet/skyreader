@@ -22,6 +22,8 @@ export interface Subscription {
   fetchStatus?: 'pending' | 'ready' | 'error';
   lastFetchedAt?: number;
   fetchError?: string;
+  source?: 'manual' | 'opml' | 'leaflet';
+  externalRef?: string;
 }
 
 export interface Article {

@@ -299,6 +299,22 @@ class ApiClient {
       body: JSON.stringify({ items }),
     });
   }
+
+  // Leaflet sync
+  async getLeafletSettings(): Promise<{ enabled: boolean; lastSyncedAt: number | null }> {
+    return this.fetch('/api/leaflet/settings');
+  }
+
+  async updateLeafletSettings(enabled: boolean): Promise<{ success: boolean }> {
+    return this.fetch('/api/leaflet/settings', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
+  async syncLeaflet(): Promise<{ added: number; removed: number; errors: string[] }> {
+    return this.fetch('/api/leaflet/sync', { method: 'POST' });
+  }
 }
 
 export const api = new ApiClient();
