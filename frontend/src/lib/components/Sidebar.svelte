@@ -402,6 +402,18 @@
             {/if}
         </a>
 
+        <a
+            href="https://github.com/disnet/skyreader/issues"
+            class="nav-item nav-link"
+            target="_blank"
+            rel="noopener noreferrer"
+        >
+            <span class="nav-icon">&#x1F4AC;</span>
+            {#if !sidebarStore.isCollapsed}
+                <span class="nav-label">Feedback ↗</span>
+            {/if}
+        </a>
+
         <!-- Following section -->
         <NavSection
             title="Following"
