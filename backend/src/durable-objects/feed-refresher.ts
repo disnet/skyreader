@@ -3,12 +3,13 @@ import { parseFeed } from '../services/feed-parser';
 import { storeItems } from '../routes/feeds';
 
 // Constants
-const BATCH_SIZE = 3;
+const BATCH_SIZE = 1; // Process one feed at a time to avoid CPU spikes
 const MAX_FEEDS_PER_CYCLE = 50;
 const DELAY_BETWEEN_BATCHES_MS = 2000;
 const SEVEN_DAYS_SECONDS = 7 * 24 * 60 * 60;
 const MAX_ERROR_COUNT = 10;
 const MAX_CONTENT_SIZE = 500000; // 500KB max for cached content
+const MAX_FEED_SIZE_BYTES = 2 * 1024 * 1024; // 2MB limit to prevent CPU exhaustion
 
 interface FeedToFetch {
   feed_url: string;
@@ -267,6 +268,14 @@ export class FeedRefresher implements DurableObject {
     if (!response.ok) {
       await this.recordFetchError(feedUrl, `HTTP ${response.status}`);
       throw new Error(`Failed to fetch ${feedUrl}: ${response.status}`);
+    }
+
+    // Check content size before reading body to prevent CPU exhaustion on large feeds
+    const contentLength = response.headers.get('Content-Length');
+    if (contentLength && parseInt(contentLength, 10) > MAX_FEED_SIZE_BYTES) {
+      await this.recordFetchError(feedUrl, 'Feed too large');
+      console.log(`[FeedRefresher] Skipping ${feedUrl}: content too large (${contentLength} bytes)`);
+      return { status: 'skipped' };
     }
 
     const xml = await response.text();
