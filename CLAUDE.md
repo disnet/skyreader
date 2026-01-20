@@ -48,9 +48,7 @@ See [backend/ARCHITECTURE.md](backend/ARCHITECTURE.md) for detailed backend docu
 - `backend/src/durable-objects/realtime-hub.ts` - Broadcasts real-time updates to connected clients
 
 **Storage**:
-- D1: Users, follows cache, aggregated shares, feed metadata, sync state
-- KV (FEED_CACHE): Parsed feed content (15min TTL)
-- KV (SESSION_CACHE): OAuth state and sessions
+- D1: Users, sessions, follows cache, aggregated shares, feed metadata, feed cache, sync state
 
 ### Frontend (SvelteKit + Svelte 5)
 
@@ -147,10 +145,9 @@ For staging, create a separate database with `npx wrangler d1 create skyreader-s
 ## Deployment Checklist
 
 1. Create D1 database: `npx wrangler d1 create skyreader`
-2. Create KV namespaces: `npx wrangler kv namespace create FEED_CACHE` (and SESSION_CACHE)
-3. Update `wrangler.toml` with resource IDs
-4. Run migration: `npx wrangler d1 execute skyreader --remote --file=migrations/0001_initial.sql`
-5. Deploy backend: `npx wrangler deploy`
-6. Update frontend `.env` with backend URL
-7. Build frontend: `npm run build`
-8. Deploy frontend to Cloudflare Pages or other static host
+2. Update `wrangler.toml` with database ID
+3. Run migration: `npx wrangler d1 execute skyreader --remote --file=migrations/0001_initial.sql`
+4. Deploy backend: `npx wrangler deploy`
+5. Update frontend `.env` with backend URL
+6. Build frontend: `npm run build`
+7. Deploy frontend to Cloudflare Pages or other static host
