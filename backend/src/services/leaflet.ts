@@ -115,19 +115,36 @@ export async function resolvePublicationToRss(publicationUri: string, env: Env):
   // The RSS feed is at https://subdomain.leaflet.pub/rss
   if (!handle.endsWith('.leaflet.pub')) {
     console.warn(`Handle ${handle} doesn't appear to be a Leaflet publication`);
-    // Still try to construct the URL - it might work
   }
 
   const siteUrl = `https://${handle}`;
   const rssUrl = `${siteUrl}/rss`;
 
-  // Optionally fetch the publication record to get the title
-  // For now, just use the subdomain as the title
-  const subdomain = handle.replace('.leaflet.pub', '');
+  // Validate that the RSS feed actually exists before returning
+  try {
+    const rssResponse = await fetch(rssUrl, { method: 'HEAD' });
+    if (!rssResponse.ok) {
+      console.error(`RSS feed not found at ${rssUrl}: ${rssResponse.status}`);
+      return null;
+    }
+    const contentType = rssResponse.headers.get('content-type') || '';
+    if (!contentType.includes('xml') && !contentType.includes('rss')) {
+      console.error(`Invalid RSS content type at ${rssUrl}: ${contentType}`);
+      return null;
+    }
+  } catch (error) {
+    console.error(`Failed to validate RSS feed at ${rssUrl}:`, error);
+    return null;
+  }
+
+  // Use the subdomain as the title, or the full handle for custom domains
+  const title = handle.endsWith('.leaflet.pub')
+    ? handle.replace('.leaflet.pub', '')
+    : handle;
 
   return {
     rssUrl,
-    title: subdomain,
+    title,
     siteUrl,
   };
 }
