@@ -257,7 +257,7 @@
             <img src={Logo} alt="" class="logo-icon" />
             <span>Skyreader</span>
           </a>
-          <a href="https://github.com/disnet/skyreader/issues" class="feedback-link" target="_blank" rel="noopener noreferrer">Feedback</a>
+          <a href="https://github.com/disnet/skyreader/issues" class="feedback-link" target="_blank" rel="noopener noreferrer">Feedback ↗</a>
           <a href="/auth/login" class="login-btn">Login</a>
         </div>
       </header>

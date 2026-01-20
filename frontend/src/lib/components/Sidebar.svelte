@@ -410,7 +410,7 @@
         >
             <span class="nav-icon">&#x1F4AC;</span>
             {#if !sidebarStore.isCollapsed}
-                <span class="nav-label">Feedback</span>
+                <span class="nav-label">Feedback ↗</span>
             {/if}
         </a>
 
