@@ -12,23 +12,36 @@ A decentralized RSS reader built on the [AT Protocol](https://atproto.com). Your
 ## Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  Svelte 5 PWA   │────▶│  CF Workers API │────▶│   User's PDS    │
-│  (Frontend)     │     │  (Backend)      │     │  (AT Protocol)  │
-└────────┬────────┘     └────────┬────────┘     └─────────────────┘
-         │                       │                      ↑
-         │                       │              ┌───────┴───────┐
-    IndexedDB              ┌─────┴─────┐        │   Jetstream   │
-    (Offline)              │           │        │   Firehose    │
-                          D1         KV         └───────────────┘
-                    (Users, Feeds,  (Sessions,
-                     Shares, etc.)  Feed Cache)
+┌─────────────────┐     ┌─────────────────────────────────────────────┐
+│  Svelte 5 PWA   │────▶│           CLOUDFLARE WORKERS                │
+│  (Frontend)     │     │                                             │
+└────────┬────────┘     │  Routes: auth, feeds, items, reading,       │
+         │              │          records, shares, social, discover  │
+    IndexedDB           │                                             │
+    (Offline)           │  ┌─────────────────────────────────────┐    │
+         │              │  │         Durable Objects             │    │
+         └─WebSocket───▶│  │  RealtimeHub     (WebSocket server) │    │
+                        │  │  JetstreamPoller (firehose events)  │    │
+                        │  │  FeedRefresher   (RSS refresh)      │    │
+                        │  └─────────────────────────────────────┘    │
+                        │                    │                        │
+                        │                   D1                        │
+                        │          (Users, Sessions, Feeds,           │
+                        │           Shares, Feed Cache, etc.)         │
+                        └──────────────┬──────────────────────────────┘
+                                       │
+                        ┌──────────────┼──────────────┐
+                        ↓              ↓              ↓
+                ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
+                │ User's PDS  │ │  Jetstream  │ │  RSS Feeds  │
+                │(AT Protocol)│ │  Firehose   │ │  (External) │
+                └─────────────┘ └─────────────┘ └─────────────┘
 ```
 
 ## Tech Stack
 
 - **Frontend**: SvelteKit + Svelte 5 (runes), Dexie.js (IndexedDB)
-- **Backend**: Cloudflare Workers + D1 + KV + Durable Objects
+- **Backend**: Cloudflare Workers + D1 + Durable Objects
 - **Protocol**: AT Protocol with OAuth 2.0 + PKCE + DPoP
 
 ## Project Structure
@@ -38,13 +51,14 @@ skyreader/
 ├── frontend/           # Svelte 5 PWA
 │   ├── src/
 │   │   ├── lib/
-│   │   │   ├── components/   # UI components
+│   │   │   ├── components/   # UI components (Sidebar, ArticleCard, ShareCard, etc.)
 │   │   │   ├── stores/       # Svelte 5 rune stores (auth, subscriptions,
 │   │   │   │                 #   reading, social, shares, shareReading,
 │   │   │   │                 #   preferences, sidebar, realtime, keyboard, sync)
 │   │   │   ├── services/     # API client, Dexie DB, sync queue, realtime
 │   │   │   └── types/        # TypeScript types
-│   │   ├── routes/           # SvelteKit pages
+│   │   ├── routes/           # SvelteKit pages (/, /social, /starred,
+│   │   │                     #   /discover, /settings, /auth/*)
 │   │   └── service-worker.ts # PWA service worker
 │   └── static/
 │       └── manifest.json     # PWA manifest
@@ -52,10 +66,10 @@ skyreader/
 │   ├── src/
 │   │   ├── routes/           # API handlers (auth, feeds, items, reading,
 │   │   │                     #   records, shares, social, discover)
-│   │   ├── services/         # OAuth, feed parser, Jetstream pollers,
-│   │   │                     #   scheduled feeds, rate limiting, PDS sync
-│   │   └── durable-objects/  # RealtimeHub (WebSocket connections)
-│   └── migrations/           # D1 SQL migrations
+│   │   ├── services/         # OAuth, feed parser, article content,
+│   │   │                     #   rate limiting, PDS sync
+│   │   └── durable-objects/  # RealtimeHub, JetstreamPoller, FeedRefresher
+│   └── migrations/           # D1 SQL migrations (16 migrations)
 └── lexicons/           # AT Protocol schemas
     └── app/skyreader/
         ├── feed/             # subscription, readPosition
@@ -78,14 +92,12 @@ skyreader/
    npm install
    ```
 
-2. Create Cloudflare resources:
+2. Create Cloudflare D1 database:
    ```bash
    npx wrangler d1 create skyreader
-   npx wrangler kv namespace create FEED_CACHE
-   npx wrangler kv namespace create SESSION_CACHE
    ```
 
-3. Update `wrangler.toml` with the IDs from step 2
+3. Update `wrangler.toml` with the database ID from step 2
 
 4. Run the database migration:
    ```bash
@@ -138,7 +150,7 @@ See [Lexicon Documentation](docs/LEXICONS.md) for detailed schema information.
 3. PKCE + PAR (Pushed Authorization Request) initiated
 4. User authorizes on Bluesky
 5. Callback exchanges code for tokens with DPoP proof
-6. Session stored in KV, user redirected to app
+6. Session stored in D1, user redirected to app
 
 ### Data Flow
 
