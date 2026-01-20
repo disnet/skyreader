@@ -1,6 +1,22 @@
 import { XMLParser } from 'fast-xml-parser';
 import type { ParsedFeed, FeedItem } from '../types';
 
+// Pre-compiled regex patterns for HTML entity decoding (avoid creating on each call)
+const HTML_ENTITY_PATTERNS: Array<[RegExp, string]> = [
+  [/&amp;/g, '&'],
+  [/&lt;/g, '<'],
+  [/&gt;/g, '>'],
+  [/&quot;/g, '"'],
+  [/&#39;/g, "'"],
+  [/&apos;/g, "'"],
+  [/&nbsp;/g, ' '],
+];
+const NUMERIC_ENTITY_PATTERN = /&#(\d+);/g;
+const HEX_ENTITY_PATTERN = /&#x([0-9a-f]+);/gi;
+
+// Limit items parsed to prevent CPU exhaustion on large feeds
+const MAX_ITEMS_TO_PARSE = 100;
+
 const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
@@ -53,6 +69,7 @@ function parseJsonFeed(json: any, feedUrl: string): ParsedFeed {
 
   const jsonItems = json.items || [];
   for (const item of jsonItems) {
+    if (items.length >= MAX_ITEMS_TO_PARSE) break;
     const title = item.title || 'Untitled';
     const url = item.url || item.external_url || '';
     const guid = item.id || url || generateGuid(title);
@@ -89,6 +106,7 @@ function parseRssFeed(channel: any, feedUrl: string): ParsedFeed {
 
   const rawItems = channel.item || [];
   for (const item of rawItems) {
+    if (items.length >= MAX_ITEMS_TO_PARSE) break;
     const title = getText(item.title) || 'Untitled';
     const url = getText(item.link) || '';
     const guid = getText(item.guid) || url || generateGuid(title);
@@ -126,6 +144,7 @@ function parseAtomFeed(feed: any, feedUrl: string): ParsedFeed {
 
   const entries = feed.entry || [];
   for (const entry of entries) {
+    if (items.length >= MAX_ITEMS_TO_PARSE) break;
     const title = getText(entry.title) || 'Untitled';
     const url = getAtomLink(entry.link, 'alternate') || '';
     const guid = getText(entry.id) || url || generateGuid(title);
@@ -162,6 +181,7 @@ function parseRdfFeed(rdf: any, feedUrl: string): ParsedFeed {
 
   const rawItems = rdf.item || [];
   for (const item of rawItems) {
+    if (items.length >= MAX_ITEMS_TO_PARSE) break;
     const title = getText(item.title) || 'Untitled';
     const url = getText(item.link) || '';
     const guid = url || generateGuid(title);
@@ -282,24 +302,15 @@ function decodeHtmlEntities(text: string): string {
   if (typeof text !== 'string') {
     return String(text ?? '');
   }
-  const entities: Record<string, string> = {
-    '&amp;': '&',
-    '&lt;': '<',
-    '&gt;': '>',
-    '&quot;': '"',
-    '&#39;': "'",
-    '&apos;': "'",
-    '&nbsp;': ' ',
-  };
 
   let decoded = text;
-  for (const [entity, char] of Object.entries(entities)) {
-    decoded = decoded.replace(new RegExp(entity, 'g'), char);
+  for (const [pattern, replacement] of HTML_ENTITY_PATTERNS) {
+    decoded = decoded.replace(pattern, replacement);
   }
 
   // Handle numeric entities
-  decoded = decoded.replace(/&#(\d+);/g, (_, num) => String.fromCharCode(parseInt(num, 10)));
-  decoded = decoded.replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+  decoded = decoded.replace(NUMERIC_ENTITY_PATTERN, (_, num) => String.fromCharCode(parseInt(num, 10)));
+  decoded = decoded.replace(HEX_ENTITY_PATTERN, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
 
   return decoded;
 }
