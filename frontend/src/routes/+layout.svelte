@@ -257,6 +257,7 @@
             <img src={Logo} alt="" class="logo-icon" />
             <span>Skyreader</span>
           </a>
+          <a href="https://github.com/disnet/skyreader/issues" class="feedback-link" target="_blank" rel="noopener noreferrer">Feedback</a>
           <a href="/auth/login" class="login-btn">Login</a>
         </div>
       </header>
@@ -338,13 +339,24 @@
     height: 28px;
   }
 
+  .feedback-link {
+    color: var(--color-text-secondary, #666);
+    text-decoration: none;
+    font-size: 0.875rem;
+    margin-left: auto;
+  }
+
+  .feedback-link:hover {
+    color: var(--color-primary, #0066cc);
+    text-decoration: underline;
+  }
+
   .login-btn {
     background: var(--color-primary, #0066cc);
     color: white;
     padding: 0.5rem 1rem;
     border-radius: 6px;
     text-decoration: none;
-    margin-left: auto;
   }
 
   main {
