@@ -19,19 +19,27 @@ interface PdsResponse {
 }
 
 const COLLECTION = 'app.skyreader.feed.readPosition';
-const BATCH_SIZE = 50; // Max records to sync per run
+const BATCH_SIZE = 25; // Max records to sync per run (kept low to stay under subrequest limits)
+
+interface ApplyWritesResponse {
+  results?: Array<{
+    uri?: string;
+    cid?: string;
+    validationStatus?: string;
+  }>;
+  error?: string;
+  message?: string;
+}
 
 /**
  * Syncs unsynced read positions from D1 to the user's PDS.
  * Called on user login to ensure data portability.
+ * Uses batched applyWrites to avoid exceeding Cloudflare's 50 subrequest limit.
  */
 export async function syncReadPositionsForUser(
   env: Env,
   session: Session
 ): Promise<{ synced: number; errors: number }> {
-  let synced = 0;
-  let errors = 0;
-
   try {
     // Get unsynced positions for this user
     const unsyncedPositions = await env.DB.prepare(`
@@ -46,68 +54,54 @@ export async function syncReadPositionsForUser(
       return { synced: 0, errors: 0 };
     }
 
-    // Sync each position to PDS
-    for (const position of unsyncedPositions.results) {
-      try {
-        const result = await syncPositionToPds(session, position);
+    const positions = unsyncedPositions.results;
 
-        if (result.success) {
-          // Mark as synced in D1
-          await env.DB.prepare(`
-            UPDATE read_positions_cache
-            SET record_uri = ?, synced_at = unixepoch()
-            WHERE id = ?
-          `).bind(result.uri, position.id).run();
-          synced++;
-        } else {
-          errors++;
-          console.error(`[PDSSync] Failed to sync position ${position.rkey}:`, result.error);
-        }
-      } catch (error) {
-        errors++;
-        console.error(`[PDSSync] Error syncing position ${position.rkey}:`, error);
-      }
+    // Build batched applyWrites request
+    const writes = positions.map(position => ({
+      $type: 'com.atproto.repo.applyWrites#create',
+      collection: COLLECTION,
+      rkey: position.rkey,
+      value: {
+        $type: COLLECTION,
+        itemGuid: position.item_guid,
+        readAt: new Date(position.read_at).toISOString(),
+        starred: position.starred === 1,
+        ...(position.item_url && { itemUrl: position.item_url }),
+        ...(position.item_title && { itemTitle: position.item_title }),
+      },
+    }));
+
+    const result = await makePdsRequest(session, 'com.atproto.repo.applyWrites', {
+      repo: session.did,
+      writes,
+    });
+
+    if (!result.ok) {
+      console.error('[PDSSync] Batch sync failed:', result.data);
+      return { synced: 0, errors: positions.length };
     }
+
+    const applyResult = result.data as unknown as ApplyWritesResponse;
+
+    // Batch update D1 records with sync results
+    const updateStatements = positions.map((position, i) => {
+      const recordUri = applyResult.results?.[i]?.uri ||
+        `at://${session.did}/${COLLECTION}/${position.rkey}`;
+      return env.DB.prepare(`
+        UPDATE read_positions_cache
+        SET record_uri = ?, synced_at = unixepoch()
+        WHERE id = ?
+      `).bind(recordUri, position.id);
+    });
+
+    await env.DB.batch(updateStatements);
+
+    console.log(`[PDSSync] Synced ${positions.length} read positions for ${session.did}`);
+    return { synced: positions.length, errors: 0 };
   } catch (error) {
     console.error('[PDSSync] Error in syncReadPositionsForUser:', error);
+    return { synced: 0, errors: 0 };
   }
-
-  return { synced, errors };
-}
-
-async function syncPositionToPds(
-  session: Session,
-  position: UnsyncedPosition
-): Promise<{ success: boolean; uri?: string; error?: string }> {
-  const record = {
-    $type: COLLECTION,
-    itemGuid: position.item_guid,
-    readAt: new Date(position.read_at).toISOString(),
-    starred: position.starred === 1,
-    ...(position.item_url && { itemUrl: position.item_url }),
-    ...(position.item_title && { itemTitle: position.item_title }),
-  };
-
-  const requestBody = {
-    repo: session.did,
-    collection: COLLECTION,
-    rkey: position.rkey,
-    record,
-  };
-
-  const result = await makePdsRequest(session, 'com.atproto.repo.putRecord', requestBody);
-
-  if (result.ok) {
-    return {
-      success: true,
-      uri: result.data.uri || `at://${session.did}/${COLLECTION}/${position.rkey}`,
-    };
-  }
-
-  return {
-    success: false,
-    error: result.data.error || result.data.message || 'Unknown error',
-  };
 }
 
 async function makePdsRequest(

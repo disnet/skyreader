@@ -391,22 +391,34 @@ export async function handleBulkMarkAsRead(request: Request, env: Env): Promise<
     // Filter out already-read items
     const newItems = items.filter(item => !existingGuids.has(item.itemGuid));
 
-    // Insert new read positions
-    for (const item of newItems) {
-      const rkey = generateTid();
-      await env.DB.prepare(`
-        INSERT INTO read_positions_cache
-        (user_did, rkey, item_guid, item_url, item_title, starred, read_at, created_at)
-        VALUES (?, ?, ?, ?, ?, 0, ?, unixepoch())
-      `).bind(
-        session.did,
-        rkey,
-        item.itemGuid,
-        item.itemUrl || null,
-        item.itemTitle || null,
-        readAt
-      ).run();
-      results.push({ itemGuid: item.itemGuid, rkey });
+    // Generate rkeys and prepare batch insert
+    const itemsWithRkeys = newItems.map(item => ({
+      ...item,
+      rkey: generateTid(),
+    }));
+
+    // Batch insert new read positions using D1 batch to avoid subrequest limit
+    if (itemsWithRkeys.length > 0) {
+      const insertStatements = itemsWithRkeys.map(item =>
+        env.DB.prepare(`
+          INSERT INTO read_positions_cache
+          (user_did, rkey, item_guid, item_url, item_title, starred, read_at, created_at)
+          VALUES (?, ?, ?, ?, ?, 0, ?, unixepoch())
+        `).bind(
+          session.did,
+          item.rkey,
+          item.itemGuid,
+          item.itemUrl || null,
+          item.itemTitle || null,
+          readAt
+        )
+      );
+      await env.DB.batch(insertStatements);
+    }
+
+    // Build results
+    for (const item of itemsWithRkeys) {
+      results.push({ itemGuid: item.itemGuid, rkey: item.rkey });
     }
 
     // Broadcast bulk update to other devices
