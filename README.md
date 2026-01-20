@@ -42,7 +42,6 @@ A decentralized RSS reader built on the [AT Protocol](https://atproto.com). Your
 
 - **Frontend**: SvelteKit + Svelte 5 (runes), Dexie.js (IndexedDB)
 - **Backend**: Cloudflare Workers + D1 + Durable Objects
-- **Protocol**: AT Protocol with OAuth 2.0 + PKCE + DPoP
 
 ## Project Structure
 
@@ -142,15 +141,6 @@ The app defines five custom record types under the `app.skyreader` namespace:
 - **`app.skyreader.social.shareReadPosition`**: Read state for others' shares
 
 See [Lexicon Documentation](docs/LEXICONS.md) for detailed schema information.
-
-### OAuth Flow
-
-1. User enters Bluesky handle
-2. App resolves handle → DID → PDS URL → Auth Server
-3. PKCE + PAR (Pushed Authorization Request) initiated
-4. User authorizes on Bluesky
-5. Callback exchanges code for tokens with DPoP proof
-6. Session stored in D1, user redirected to app
 
 ### Data Flow
 
