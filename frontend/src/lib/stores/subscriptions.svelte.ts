@@ -627,41 +627,26 @@ function createSubscriptionsStore() {
     // Non-force path: batch fetch ready feeds from cache, then fetch pending from source
     const readyFeeds = subscriptions.filter((s) => s.fetchStatus === 'ready' && s.id);
     if (readyFeeds.length > 0) {
-      console.log(`Batch fetching ${readyFeeds.length} ready feeds from cache...`);
       try {
         const feedUrls = readyFeeds.map((s) => s.feedUrl);
 
         // Chunk URLs into batches to respect backend limit
         const urlChunks = chunkArray(feedUrls, BATCH_SIZE);
 
-        console.time('[BatchFetch] API calls');
-        // Fetch batches sequentially to avoid UI lockup
+        // Fetch batches sequentially
         const feeds: Record<string, { title: string; items: ParsedFeed['items'] }> = {};
         for (const chunk of urlChunks) {
           const result = await api.fetchFeedsBatch(chunk, {});
           Object.assign(feeds, result.feeds);
         }
-        console.timeEnd('[BatchFetch] API calls');
 
-        // Collect all incoming GUIDs to check for duplicates in one query
-        const allIncomingGuids: string[] = [];
-        for (const sub of readyFeeds) {
-          if (!sub.id) continue;
-          const feedData = feeds[sub.feedUrl];
-          if (!feedData) continue;
-          for (const item of feedData.items) {
-            allIncomingGuids.push(item.guid);
-          }
-        }
-        console.log(`[BatchFetch] Total incoming items: ${allIncomingGuids.length}`);
+        // Collect all incoming GUIDs to check for duplicates
+        const allIncomingGuids = Object.values(feeds).flatMap((f) => f.items.map((i) => i.guid));
 
-        console.time('[BatchFetch] anyOf query');
         // Single query: find which GUIDs already exist
         const existingGuids = new Set(
           (await db.articles.where('guid').anyOf(allIncomingGuids).toArray()).map((a) => a.guid)
         );
-        console.timeEnd('[BatchFetch] anyOf query');
-        console.log(`[BatchFetch] Existing GUIDs found: ${existingGuids.size}`);
 
         // Build all new articles at once
         const allNewArticles: Article[] = [];
@@ -687,15 +672,12 @@ function createSubscriptionsStore() {
             }
           }
         }
-        console.log(`[BatchFetch] New articles to add: ${allNewArticles.length}`);
 
-        console.time('[BatchFetch] bulkAdd');
         // Single bulkAdd for all new articles
         if (allNewArticles.length > 0) {
           await db.articles.bulkAdd(allNewArticles);
           articlesVersion++;
         }
-        console.timeEnd('[BatchFetch] bulkAdd');
       } catch (e) {
         console.error('Batch feed fetch failed, falling back to individual fetches:', e);
         // Fallback to individual fetches
