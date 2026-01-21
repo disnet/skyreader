@@ -9,6 +9,7 @@
     import { sharesStore } from "$lib/stores/shares.svelte";
     import { shareReadingStore } from "$lib/stores/shareReading.svelte";
     import { onMount, onDestroy } from "svelte";
+    import { db } from "$lib/services/db";
     import AddFeedModal from "./AddFeedModal.svelte";
     import Logo from "$lib/assets/logo.svg";
     import ResizeHandle from "./sidebar/ResizeHandle.svelte";
@@ -248,10 +249,15 @@
     });
 
     async function loadUnreadCounts() {
+        // Load all articles once instead of N queries
+        const allArticles = await db.articles.toArray();
+        const readPositions = readingStore.readPositions;
+
+        // Group by subscriptionId and count unread
         const counts = new Map<number, number>();
-        for (const sub of subscriptionsStore.subscriptions) {
-            if (sub.id) {
-                counts.set(sub.id, await readingStore.getUnreadCount(sub.id));
+        for (const article of allArticles) {
+            if (!readPositions.has(article.guid)) {
+                counts.set(article.subscriptionId, (counts.get(article.subscriptionId) || 0) + 1);
             }
         }
         feedUnreadCounts = counts;
