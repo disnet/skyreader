@@ -64,6 +64,11 @@ class SkyreaderDatabase extends Dexie {
     this.version(8).stores({
       readPositionsCache: 'articleGuid, starred',
     });
+
+    // Add source index for Leaflet sync tracking
+    this.version(9).stores({
+      subscriptions: '++id, atUri, rkey, feedUrl, category, syncStatus, fetchStatus, source, localUpdatedAt',
+    });
   }
 }
 

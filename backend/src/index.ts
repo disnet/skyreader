@@ -7,6 +7,7 @@ import { handleGetMyShares } from './routes/shares';
 import { handleDiscover } from './routes/discover';
 import { handleRecordSync, handleBulkRecordSync, handleRecordsList } from './routes/records';
 import { handleGetReadPositions, handleMarkAsRead, handleMarkAsUnread, handleToggleStar, handleBulkMarkAsRead } from './routes/reading';
+import { handleGetLeafletSettings, handleUpdateLeafletSettings, handleGetLeafletSubscriptions, handleResolvePublications } from './routes/leaflet';
 import { getSessionFromRequest, updateUserActivity } from './services/oauth';
 import { checkRateLimit, cleanupRateLimits, getRateLimitConfig } from './services/rate-limit';
 
@@ -164,6 +165,21 @@ export default {
           break;
         case url.pathname === '/api/reading/mark-read-bulk':
           response = await handleBulkMarkAsRead(request, env);
+          break;
+
+        // Leaflet routes
+        case url.pathname === '/api/leaflet/settings':
+          if (request.method === 'GET') {
+            response = await handleGetLeafletSettings(request, env);
+          } else {
+            response = await handleUpdateLeafletSettings(request, env);
+          }
+          break;
+        case url.pathname === '/api/leaflet/subscriptions':
+          response = await handleGetLeafletSubscriptions(request, env);
+          break;
+        case url.pathname === '/api/leaflet/resolve':
+          response = await handleResolvePublications(request, env);
           break;
 
         // Realtime WebSocket route

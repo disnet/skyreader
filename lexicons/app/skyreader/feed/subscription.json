@@ -48,6 +48,17 @@
           "updatedAt": {
             "type": "string",
             "format": "datetime"
+          },
+          "source": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Origin of this subscription (e.g., 'leaflet', 'opml', 'manual')"
+          },
+          "externalRef": {
+            "type": "string",
+            "format": "at-uri",
+            "maxLength": 2048,
+            "description": "Reference to the external source record (e.g., Leaflet subscription at-uri)"
           }
         }
       }

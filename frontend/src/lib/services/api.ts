@@ -299,6 +299,36 @@ class ApiClient {
       body: JSON.stringify({ items }),
     });
   }
+
+  // Leaflet sync
+  async getLeafletSettings(): Promise<{ enabled: boolean; lastSyncedAt: number | null }> {
+    return this.fetch('/api/leaflet/settings');
+  }
+
+  async updateLeafletSettings(options: { enabled?: boolean; lastSyncedAt?: number }): Promise<{ success: boolean }> {
+    return this.fetch('/api/leaflet/settings', {
+      method: 'POST',
+      body: JSON.stringify(options),
+    });
+  }
+
+  async getLeafletSubscriptions(): Promise<{
+    subscriptions: Array<{ uri: string; publication: string }>;
+  }> {
+    return this.fetch('/api/leaflet/subscriptions');
+  }
+
+  async resolveLeafletPublications(publications: string[]): Promise<{
+    results: Array<{
+      publication: string;
+      resolved: { rssUrl: string; title?: string; siteUrl: string } | null;
+    }>;
+  }> {
+    return this.fetch('/api/leaflet/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ publications }),
+    });
+  }
 }
 
 export const api = new ApiClient();
