@@ -651,21 +651,15 @@ function createSubscriptionsStore() {
         // Chunk URLs into batches to respect backend limit
         const urlChunks = chunkArray(feedUrls, BATCH_SIZE);
 
-        // Fetch all chunks in parallel
-        const chunkResults = await Promise.all(
-          urlChunks.map((chunk) => {
-            // Build since object for just this chunk's URLs
-            const chunkSince: Record<string, number> = {};
-            for (const url of chunk) {
-              if (since[url]) chunkSince[url] = since[url];
-            }
-            return api.fetchFeedsBatch(chunk, chunkSince);
-          })
-        );
-
-        // Merge results from all chunks
+        // Fetch batches sequentially to avoid UI lockup
         const feeds: Record<string, { title: string; items: ParsedFeed['items'] }> = {};
-        for (const result of chunkResults) {
+        for (const chunk of urlChunks) {
+          // Build since object for just this chunk's URLs
+          const chunkSince: Record<string, number> = {};
+          for (const url of chunk) {
+            if (since[url]) chunkSince[url] = since[url];
+          }
+          const result = await api.fetchFeedsBatch(chunk, chunkSince);
           Object.assign(feeds, result.feeds);
         }
 
