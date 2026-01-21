@@ -6,6 +6,18 @@ import type { Subscription, Article, ParsedFeed } from '$lib/types';
 
 export const MAX_SUBSCRIPTIONS = 100;
 
+// Backend batch endpoint limit
+const BATCH_SIZE = 50;
+
+// Helper to chunk arrays for batched API calls
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
+
 // Generate a TID (Timestamp Identifier) for AT Protocol records
 function generateTid(): string {
   const now = Date.now();
@@ -616,15 +628,8 @@ function createSubscriptionsStore() {
     const readyFeeds = subscriptions.filter((s) => s.fetchStatus === 'ready' && s.id);
     if (readyFeeds.length > 0) {
       console.log(`Batch fetching ${readyFeeds.length} ready feeds from cache...`);
-      if (readyFeeds.length > 50) {
-        console.warn(
-          `[BatchFetch] ⚠️ Attempting to batch ${readyFeeds.length} feeds, but backend limit is 50 - this will fail and fall back to individual fetches`
-        );
-      }
       try {
         const feedUrls = readyFeeds.map((s) => s.feedUrl);
-        console.log('[BatchFetch] URLs being sent:', feedUrls);
-        console.log('[BatchFetch] Feed count:', feedUrls.length);
 
         // Collect most recent article timestamp per feed for delta sync
         const since: Record<string, number> = {};
@@ -642,14 +647,27 @@ function createSubscriptionsStore() {
             since[sub.feedUrl] = new Date(mostRecent.publishedAt).getTime();
           }
         }
-        console.log(
-          '[BatchFetch] Since timestamps:',
-          Object.fromEntries(
-            Object.entries(since).map(([url, ts]) => [url, new Date(ts).toISOString()])
-          )
+
+        // Chunk URLs into batches to respect backend limit
+        const urlChunks = chunkArray(feedUrls, BATCH_SIZE);
+
+        // Fetch all chunks in parallel
+        const chunkResults = await Promise.all(
+          urlChunks.map((chunk) => {
+            // Build since object for just this chunk's URLs
+            const chunkSince: Record<string, number> = {};
+            for (const url of chunk) {
+              if (since[url]) chunkSince[url] = since[url];
+            }
+            return api.fetchFeedsBatch(chunk, chunkSince);
+          })
         );
 
-        const { feeds } = await api.fetchFeedsBatch(feedUrls, since);
+        // Merge results from all chunks
+        const feeds: Record<string, { title: string; items: ParsedFeed['items'] }> = {};
+        for (const result of chunkResults) {
+          Object.assign(feeds, result.feeds);
+        }
 
         // Process batch response and store articles
         for (const sub of readyFeeds) {
