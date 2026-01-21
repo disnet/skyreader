@@ -6,7 +6,6 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { realtimeStore } from '$lib/stores/realtime.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
-  import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { keyboardStore } from '$lib/stores/keyboard.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
@@ -209,18 +208,6 @@
       realtimeStore.connect(auth.sessionId);
     } else {
       realtimeStore.disconnect();
-    }
-  });
-
-  // Check for Leaflet sync on app load (with delay to not block initial load)
-  let leafletCheckDone = false;
-  $effect(() => {
-    if (auth.isAuthenticated && !leafletCheckDone) {
-      leafletCheckDone = true;
-      // Delay the check to not interfere with initial app loading
-      setTimeout(() => {
-        subscriptionsStore.checkLeafletSync().catch(console.error);
-      }, 5000);
     }
   });
 

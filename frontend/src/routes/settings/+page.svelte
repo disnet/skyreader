@@ -28,7 +28,8 @@
   let leafletLastSynced = $state<number | null>(null);
   let leafletLoading = $state(true);
   let leafletSyncing = $state(false);
-  let leafletSyncResult = $state<{ added: number; removed: number; errors: string[] } | null>(null);
+  let leafletSyncProgress = $state<{ stage: string; current: number; total: number } | null>(null);
+  let leafletSyncResult = $state<{ added: number; skipped: number; errors: string[] } | null>(null);
 
   function formatRelativeTime(timestamp: number): string {
     const now = Date.now();
@@ -74,22 +75,21 @@
   async function handleLeafletSync() {
     leafletSyncing = true;
     leafletSyncResult = null;
+    leafletSyncProgress = null;
     try {
-      // Use the store's syncLeaflet which handles reloading and fetching feeds
-      const result = await subscriptionsStore.syncLeaflet();
+      // Use the store's syncLeaflet with progress callback
+      const result = await subscriptionsStore.syncLeaflet((stage, current, total) => {
+        leafletSyncProgress = { stage, current, total };
+      });
       leafletSyncResult = result;
       leafletLastSynced = Date.now();
     } catch (error) {
       console.error('Leaflet sync failed:', error);
       const errorMessage = error instanceof Error ? error.message : 'Sync failed';
-      // Handle cooldown error with user-friendly message
-      if (errorMessage === 'sync_cooldown') {
-        leafletSyncResult = { added: 0, removed: 0, errors: ['Please wait at least 1 hour between syncs'] };
-      } else {
-        leafletSyncResult = { added: 0, removed: 0, errors: [errorMessage] };
-      }
+      leafletSyncResult = { added: 0, skipped: 0, errors: [errorMessage] };
     } finally {
       leafletSyncing = false;
+      leafletSyncProgress = null;
     }
   }
 
@@ -242,8 +242,16 @@
 
       {#if leafletEnabled}
         <div class="sync-status">
-          {#if leafletLastSynced}
+          {#if leafletLastSynced && !leafletSyncing}
             <p class="setting-description">Last synced: {formatRelativeTime(leafletLastSynced)}</p>
+          {/if}
+          {#if leafletSyncProgress}
+            <p class="setting-description">
+              {leafletSyncProgress.stage}
+              {#if leafletSyncProgress.total > 0}
+                ({leafletSyncProgress.current}/{leafletSyncProgress.total})
+              {/if}
+            </p>
           {/if}
           <button
             class="btn btn-secondary"
@@ -254,15 +262,15 @@
           </button>
         </div>
 
-        {#if leafletSyncResult}
+        {#if leafletSyncResult && !leafletSyncing}
           <div class="sync-result" class:has-errors={leafletSyncResult.errors.length > 0}>
-            {#if leafletSyncResult.added > 0 || leafletSyncResult.removed > 0}
+            {#if leafletSyncResult.added > 0 || leafletSyncResult.skipped > 0}
               <p>
                 {#if leafletSyncResult.added > 0}Added {leafletSyncResult.added} feed{leafletSyncResult.added === 1 ? '' : 's'}.{/if}
-                {#if leafletSyncResult.removed > 0}Removed {leafletSyncResult.removed} feed{leafletSyncResult.removed === 1 ? '' : 's'}.{/if}
+                {#if leafletSyncResult.skipped > 0}Skipped {leafletSyncResult.skipped} (already imported).{/if}
               </p>
             {:else if leafletSyncResult.errors.length === 0}
-              <p>Already in sync.</p>
+              <p>No Leaflet subscriptions found.</p>
             {/if}
             {#if leafletSyncResult.errors.length > 0}
               <p class="sync-errors">

@@ -312,8 +312,22 @@ class ApiClient {
     });
   }
 
-  async syncLeaflet(): Promise<{ added: number; removed: number; errors: string[] }> {
-    return this.fetch('/api/leaflet/sync', { method: 'POST' });
+  async getLeafletSubscriptions(): Promise<{
+    subscriptions: Array<{ uri: string; publication: string }>;
+  }> {
+    return this.fetch('/api/leaflet/subscriptions');
+  }
+
+  async resolveLeafletPublications(publications: string[]): Promise<{
+    results: Array<{
+      publication: string;
+      resolved: { rssUrl: string; title?: string; siteUrl: string } | null;
+    }>;
+  }> {
+    return this.fetch('/api/leaflet/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ publications }),
+    });
   }
 }
 

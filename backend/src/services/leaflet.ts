@@ -18,9 +18,6 @@ export interface ResolvedPublication {
   siteUrl: string;
 }
 
-// Cache TTL: 24 hours in seconds
-const HANDLE_CACHE_TTL_SECONDS = 24 * 60 * 60;
-
 // Parse an at-uri into components
 function parseAtUri(atUri: string): { did: string; collection: string; rkey: string } | null {
   // at://did:plc:xxx/pub.leaflet.publication/tid
@@ -107,8 +104,7 @@ async function fetchPublicationRecord(
 }
 
 // Resolve a Leaflet publication at-uri to RSS URL and metadata
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export async function resolvePublicationToRss(publicationUri: string, env: Env): Promise<ResolvedPublication | null> {
+export async function resolvePublicationToRss(publicationUri: string, _env: Env): Promise<ResolvedPublication | null> {
   const parsed = parseAtUri(publicationUri);
   if (!parsed || parsed.collection !== 'pub.leaflet.publication') {
     console.error(`Invalid Leaflet publication URI: ${publicationUri}`);
