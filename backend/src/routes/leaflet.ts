@@ -139,29 +139,28 @@ export async function handleLeafletSync(request: Request, env: Env): Promise<Res
     });
   }
 
-  // TODO: Re-enable sync cooldown after testing
   // Check for sync cooldown (1 hour minimum between syncs)
-  // const settings = await env.DB.prepare(`
-  //   SELECT leaflet_last_synced_at FROM user_settings WHERE user_did = ?
-  // `).bind(session.did).first<{ leaflet_last_synced_at: number | null }>();
+  const settings = await env.DB.prepare(`
+    SELECT leaflet_last_synced_at FROM user_settings WHERE user_did = ?
+  `).bind(session.did).first<{ leaflet_last_synced_at: number | null }>();
 
-  // if (settings?.leaflet_last_synced_at) {
-  //   const lastSyncMs = settings.leaflet_last_synced_at * 1000;
-  //   const timeSinceSync = Date.now() - lastSyncMs;
-  //   if (timeSinceSync < SYNC_COOLDOWN_MS) {
-  //     const waitMinutes = Math.ceil((SYNC_COOLDOWN_MS - timeSinceSync) / 60000);
-  //     return new Response(JSON.stringify({
-  //       error: 'sync_cooldown',
-  //       message: `Please wait ${waitMinutes} minute${waitMinutes === 1 ? '' : 's'} before syncing again`,
-  //       added: 0,
-  //       removed: 0,
-  //       errors: [],
-  //     }), {
-  //       status: 429,
-  //       headers: { 'Content-Type': 'application/json' },
-  //     });
-  //   }
-  // }
+  if (settings?.leaflet_last_synced_at) {
+    const lastSyncMs = settings.leaflet_last_synced_at * 1000;
+    const timeSinceSync = Date.now() - lastSyncMs;
+    if (timeSinceSync < SYNC_COOLDOWN_MS) {
+      const waitMinutes = Math.ceil((SYNC_COOLDOWN_MS - timeSinceSync) / 60000);
+      return new Response(JSON.stringify({
+        error: 'sync_cooldown',
+        message: `Please wait ${waitMinutes} minute${waitMinutes === 1 ? '' : 's'} before syncing again`,
+        added: 0,
+        removed: 0,
+        errors: [],
+      }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
 
   const errors: string[] = [];
   let added = 0;
