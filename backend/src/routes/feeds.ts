@@ -809,6 +809,7 @@ export async function handleBatchFeedFetch(request: Request, env: Env): Promise<
 
   // Limit to prevent abuse
   if (feedUrls.length > 50) {
+    console.log(`[BatchFetch] Rejected request: ${feedUrls.length} URLs requested (max 50)`);
     return new Response(JSON.stringify({ error: 'Too many URLs (max 50)' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },

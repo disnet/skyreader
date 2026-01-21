@@ -616,8 +616,15 @@ function createSubscriptionsStore() {
     const readyFeeds = subscriptions.filter((s) => s.fetchStatus === 'ready' && s.id);
     if (readyFeeds.length > 0) {
       console.log(`Batch fetching ${readyFeeds.length} ready feeds from cache...`);
+      if (readyFeeds.length > 50) {
+        console.warn(
+          `[BatchFetch] ⚠️ Attempting to batch ${readyFeeds.length} feeds, but backend limit is 50 - this will fail and fall back to individual fetches`
+        );
+      }
       try {
         const feedUrls = readyFeeds.map((s) => s.feedUrl);
+        console.log('[BatchFetch] URLs being sent:', feedUrls);
+        console.log('[BatchFetch] Feed count:', feedUrls.length);
 
         // Collect most recent article timestamp per feed for delta sync
         const since: Record<string, number> = {};
@@ -635,6 +642,12 @@ function createSubscriptionsStore() {
             since[sub.feedUrl] = new Date(mostRecent.publishedAt).getTime();
           }
         }
+        console.log(
+          '[BatchFetch] Since timestamps:',
+          Object.fromEntries(
+            Object.entries(since).map(([url, ts]) => [url, new Date(ts).toISOString()])
+          )
+        );
 
         const { feeds } = await api.fetchFeedsBatch(feedUrls, since);
 
