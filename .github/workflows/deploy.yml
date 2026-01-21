@@ -1,183 +1,93 @@
-name: Deploy
+name: Deploy Frontend
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
-    types: [opened, synchronize, reopened]
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Deployment environment'
-        required: true
-        default: 'production'
-        type: choice
-        options:
-          - staging
-          - production
+    branches: [main]
+  release:
+    types: [published]
 
-permissions:
-  contents: read
-  pull-requests: read
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  changes:
-    runs-on: ubuntu-latest
-    outputs:
-      backend: ${{ steps.filter.outputs.backend }}
-      frontend: ${{ steps.filter.outputs.frontend }}
-      environment: ${{ steps.env.outputs.environment }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            backend:
-              - 'backend/**'
-            frontend:
-              - 'frontend/**'
-      - name: Determine environment
-        id: env
-        run: |
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            echo "environment=staging" >> $GITHUB_OUTPUT
-            echo "Deploying to STAGING (pull_request event)"
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
-            echo "Deploying to ${{ inputs.environment }} (workflow_dispatch event)"
-          else
-            echo "environment=production" >> $GITHUB_OUTPUT
-            echo "Deploying to PRODUCTION (push to main)"
-          fi
-
-  deploy-backend:
-    needs: changes
-    if: needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch'
+  typecheck:
+    name: Type Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure wrangler.toml with database IDs
-        working-directory: backend
-        run: |
-          sed -i 's/YOUR_D1_DATABASE_ID/${{ secrets.D1_DATABASE_ID }}/g' wrangler.toml
-          sed -i 's/YOUR_STAGING_D1_DATABASE_ID/${{ secrets.D1_DATABASE_ID_STAGING }}/g' wrangler.toml
-          echo "Verifying database IDs were replaced:"
-          grep -n "database_id" wrangler.toml | sed 's/[a-f0-9-]\{36\}/***REDACTED***/g'
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: backend/package-lock.json
 
       - name: Install dependencies
-        working-directory: backend
         run: npm ci
 
-      - name: Bootstrap D1 migrations table (staging)
-        if: needs.changes.outputs.environment == 'staging'
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: backend
-          command: d1 execute skyreader-staging --env=staging --remote --file=migrations/0000_bootstrap.sql
+      - name: Run type check
+        run: npm run check
 
-      - name: Run D1 migrations (staging)
-        if: needs.changes.outputs.environment == 'staging'
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: backend
-          command: d1 migrations apply skyreader-staging --env=staging --remote
-
-      - name: Deploy Worker (staging)
-        if: needs.changes.outputs.environment == 'staging'
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: backend
-          command: deploy --env=staging
-
-      - name: Bootstrap D1 migrations table (production)
-        if: needs.changes.outputs.environment != 'staging'
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: backend
-          command: d1 execute skyreader --remote --file=migrations/0000_bootstrap.sql
-
-      - name: Run D1 migrations (production)
-        if: needs.changes.outputs.environment != 'staging'
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: backend
-          command: d1 migrations apply skyreader --remote
-
-      - name: Deploy Worker (production)
-        if: needs.changes.outputs.environment != 'staging'
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: backend
-          command: deploy --env=""
-
-  deploy-frontend:
-    needs: changes
-    if: needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
+  deploy-staging:
+    name: Deploy to Staging
+    needs: typecheck
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: staging
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
-        working-directory: frontend
         run: npm ci
 
-      - name: Build (staging)
-        if: needs.changes.outputs.environment == 'staging'
-        working-directory: frontend
+      - name: Build for staging
+        run: npm run build
         env:
           VITE_API_URL: https://api-staging.skyreader.app
-        run: npm run build
-
-      - name: Build (production)
-        if: needs.changes.outputs.environment != 'staging'
-        working-directory: frontend
-        env:
-          VITE_API_URL: https://api.skyreader.app
-        run: npm run build
 
       - name: Deploy to Cloudflare Pages (staging)
-        if: needs.changes.outputs.environment == 'staging'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: frontend
-          command: pages deploy build --project-name=skyreader --branch=staging
+          command: pages deploy build --project-name=skyreader --branch=staging --commit-dirty=true
+
+  deploy-production:
+    name: Deploy to Production
+    needs: typecheck
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build for production
+        run: npm run build
+        env:
+          VITE_API_URL: https://api.skyreader.app
 
       - name: Deploy to Cloudflare Pages (production)
-        if: needs.changes.outputs.environment != 'staging'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: frontend
-          command: pages deploy build --project-name=skyreader --branch=main
+          command: pages deploy build --project-name=skyreader --branch=main --commit-dirty=true

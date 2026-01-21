@@ -1,180 +1,159 @@
-# Skyreader
+# Skyreader Frontend
 
-A decentralized RSS reader built on the [AT Protocol](https://atproto.com). Your subscriptions, reading progress, and shares are stored in your Personal Data Server (PDS), giving you full ownership and portability of your data.
+SvelteKit PWA for [Skyreader](https://skyreader.app), a decentralized RSS reader built on the AT Protocol.
 
-## Features
+## Overview
 
-- **Decentralized Storage**: All user data stored in your Bluesky PDS
-- **Social Sharing**: See what articles people you follow are sharing
-- **Offline Support**: PWA with IndexedDB for offline reading
-- **Background Sync**: Changes sync automatically when back online
+This frontend is a Progressive Web App that provides:
 
-## Architecture
+- **RSS Reading**: Subscribe to and read RSS/Atom feeds
+- **Offline Support**: IndexedDB caching via Dexie.js for offline reading
+- **Social Features**: See what articles people you follow are sharing
+- **AT Protocol Integration**: All data stored in your Bluesky PDS
+- **Real-time Updates**: WebSocket connection for live updates
 
-```
-┌─────────────────┐     ┌─────────────────────────────────────────────┐
-│  Svelte 5 PWA   │────▶│           CLOUDFLARE WORKERS                │
-│  (Frontend)     │     │                                             │
-└────────┬────────┘     │  Routes: auth, feeds, items, reading,       │
-         │              │          records, shares, social, discover  │
-    IndexedDB           │                                             │
-    (Offline)           │  ┌─────────────────────────────────────┐    │
-         │              │  │         Durable Objects             │    │
-         └─WebSocket───▶│  │  RealtimeHub     (WebSocket server) │    │
-                        │  │  JetstreamPoller (firehose events)  │    │
-                        │  │  FeedRefresher   (RSS refresh)      │    │
-                        │  └─────────────────────────────────────┘    │
-                        │                    │                        │
-                        │                   D1                        │
-                        │          (Users, Sessions, Feeds,           │
-                        │           Shares, Feed Cache, etc.)         │
-                        └──────────────┬──────────────────────────────┘
-                                       │
-                        ┌──────────────┼──────────────┐
-                        ↓              ↓              ↓
-                ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
-                │ User's PDS  │ │  Jetstream  │ │  RSS Feeds  │
-                │(AT Protocol)│ │  Firehose   │ │  (External) │
-                └─────────────┘ └─────────────┘ └─────────────┘
+## Prerequisites
+
+- Node.js 18+
+- A running [skyreader-backend](https://github.com/skyreader/skyreader-backend) instance
+- Bluesky account for testing
+
+## Quick Start
+
+### 1. Install Dependencies
+
+```bash
+npm install
 ```
 
-## Tech Stack
+### 2. Configure Environment
 
-- **Frontend**: SvelteKit + Svelte 5 (runes), Dexie.js (IndexedDB)
-- **Backend**: Cloudflare Workers + D1 + Durable Objects
+Create a `.env` file:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` to point to your backend:
+
+```
+VITE_API_URL=http://127.0.0.1:8787
+```
+
+For production, use your deployed backend URL:
+
+```
+VITE_API_URL=https://your-backend.workers.dev
+```
+
+### 3. Start Development Server
+
+```bash
+npm run dev
+```
+
+The app will be available at `http://127.0.0.1:5173`.
+
+**Important**: Use `127.0.0.1`, not `localhost`, for AT Protocol OAuth to work correctly (RFC 8252 requirement).
+
+### 4. Verify
+
+1. Open `http://127.0.0.1:5173` in your browser
+2. Click "Login with Bluesky"
+3. Enter your Bluesky handle
+4. You should be redirected to Bluesky's auth page
+
+## Build for Production
+
+```bash
+npm run build
+```
+
+The output will be in the `build/` directory, ready for deployment to Cloudflare Pages or any static hosting.
+
+## Deployment
+
+### Cloudflare Pages
+
+1. Connect your GitHub repo to Cloudflare Pages
+2. Set build command: `npm run build`
+3. Set output directory: `build`
+4. Add environment variable: `VITE_API_URL=https://your-backend.workers.dev`
+
+### Static Hosting
+
+The build output is a static site that can be hosted anywhere (Vercel, Netlify, etc.). Just ensure you set `VITE_API_URL` at build time.
 
 ## Project Structure
 
 ```
-skyreader/
-├── frontend/           # Svelte 5 PWA
-│   ├── src/
-│   │   ├── lib/
-│   │   │   ├── components/   # UI components (Sidebar, ArticleCard, ShareCard, etc.)
-│   │   │   ├── stores/       # Svelte 5 rune stores (auth, subscriptions,
-│   │   │   │                 #   reading, social, shares, shareReading,
-│   │   │   │                 #   preferences, sidebar, realtime, keyboard, sync)
-│   │   │   ├── services/     # API client, Dexie DB, sync queue, realtime
-│   │   │   └── types/        # TypeScript types
-│   │   ├── routes/           # SvelteKit pages (/, /social, /starred,
-│   │   │                     #   /discover, /settings, /auth/*)
-│   │   └── service-worker.ts # PWA service worker
-│   └── static/
-│       └── manifest.json     # PWA manifest
-├── backend/            # Cloudflare Workers
-│   ├── src/
-│   │   ├── routes/           # API handlers (auth, feeds, items, reading,
-│   │   │                     #   records, shares, social, discover)
-│   │   ├── services/         # OAuth, feed parser, article content,
-│   │   │                     #   rate limiting, PDS sync
-│   │   └── durable-objects/  # RealtimeHub, JetstreamPoller, FeedRefresher
-│   └── migrations/           # D1 SQL migrations (16 migrations)
-└── lexicons/           # AT Protocol schemas
-    └── app/skyreader/
-        ├── feed/             # subscription, readPosition
-        └── social/           # share, follow, shareReadPosition
+skyreader-frontend/
+├── src/
+│   ├── lib/
+│   │   ├── components/       # UI components
+│   │   │   ├── Sidebar.svelte
+│   │   │   ├── ArticleCard.svelte
+│   │   │   ├── ShareCard.svelte
+│   │   │   └── ...
+│   │   ├── stores/           # Svelte 5 rune stores
+│   │   │   ├── auth.svelte.ts
+│   │   │   ├── subscriptions.svelte.ts
+│   │   │   ├── reading.svelte.ts
+│   │   │   ├── social.svelte.ts
+│   │   │   └── sync.svelte.ts
+│   │   ├── services/         # Business logic
+│   │   │   ├── api.ts        # HTTP client
+│   │   │   ├── db.ts         # Dexie (IndexedDB)
+│   │   │   └── sync-queue.ts # Offline sync
+│   │   └── types/            # TypeScript types
+│   ├── routes/               # SvelteKit pages
+│   │   ├── +page.svelte      # Main feed
+│   │   ├── social/           # Social feed
+│   │   ├── starred/          # Starred articles
+│   │   ├── feeds/            # Manage subscriptions
+│   │   ├── settings/         # User settings
+│   │   └── auth/             # Login/callback
+│   └── service-worker.ts     # PWA service worker
+├── static/
+│   └── manifest.json         # PWA manifest
+├── lexicons/                 # AT Protocol schemas
+└── svelte.config.js
 ```
 
-## Setup
+## Key Routes
 
-### Prerequisites
+| Route | Purpose |
+|-------|---------|
+| `/` | Main feed (all articles) |
+| `/social` | Shares from followed users |
+| `/starred` | Starred articles |
+| `/feeds` | Manage subscriptions |
+| `/discover` | Discover new feeds |
+| `/settings` | Account and sync status |
+| `/auth/login` | Bluesky handle input |
+| `/auth/callback` | OAuth callback |
 
-- Node.js 18+
-- Cloudflare account (free tier works)
-- Bluesky account for testing
+## Environment Variables
 
-### Backend Setup
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `VITE_API_URL` | Backend API URL | `http://127.0.0.1:8787` |
 
-1. Install dependencies:
-   ```bash
-   cd backend
-   npm install
-   ```
-
-2. Create Cloudflare D1 database:
-   ```bash
-   npx wrangler d1 create skyreader
-   ```
-
-3. Update `wrangler.toml` with the database ID from step 2
-
-4. Run the database migration:
-   ```bash
-   npx wrangler d1 execute skyreader --remote --file=migrations/0001_initial.sql
-   ```
-
-5. Deploy:
-   ```bash
-   npx wrangler deploy
-   ```
-
-### Frontend Setup
-
-1. Install dependencies:
-   ```bash
-   cd frontend
-   npm install
-   ```
-
-2. Create `.env` with your backend URL:
-   ```
-   VITE_API_URL=https://skyreader-api.YOUR_SUBDOMAIN.workers.dev
-   ```
-
-3. Run development server:
-   ```bash
-   npm run dev
-   ```
-
-4. Open `http://127.0.0.1:5173` (must use IP, not localhost, for OAuth)
-
-## AT Protocol Integration
-
-### Lexicon Schemas
-
-The app defines five custom record types under the `app.skyreader` namespace:
-
-- **`app.skyreader.feed.subscription`**: RSS feed subscriptions
-- **`app.skyreader.feed.readPosition`**: Read/starred state for articles
-- **`app.skyreader.social.share`**: Shared articles with optional notes
-- **`app.skyreader.social.follow`**: In-app follow relationships
-- **`app.skyreader.social.shareReadPosition`**: Read state for others' shares
-
-See [Lexicon Documentation](docs/LEXICONS.md) for detailed schema information.
-
-### Data Flow
-
-- **Subscriptions**: Stored in user's PDS, cached locally in IndexedDB
-- **Reading Progress**: Stored in PDS, synced via background queue
-- **Social Shares**: Written to PDS, aggregated by backend via Jetstream firehose
-
-## Development
-
-### Local Development
-
-The AT Protocol OAuth requires publicly accessible URLs. For local development:
-
-1. Deploy backend to Cloudflare Workers (free)
-2. Run frontend locally pointing to deployed backend
-3. Access frontend via `127.0.0.1` (not `localhost` - RFC 8252 requirement)
-
-### Useful Commands
+## Useful Commands
 
 ```bash
-# Backend
-cd backend
-npx wrangler dev          # Local dev (limited - no real OAuth)
-npx wrangler deploy       # Deploy to Cloudflare
-npx wrangler tail         # Stream live logs
-npx wrangler d1 execute skyreader --remote --command "SELECT * FROM users"
-
-# Frontend
-cd frontend
-npm run dev               # Development server
-npm run build             # Production build
-npm run check             # Type checking
+npm run dev          # Start dev server
+npm run build        # Production build
+npm run preview      # Preview production build
+npm run check        # Type checking
+npm run check:watch  # Type checking (watch mode)
 ```
+
+## Related
+
+- [skyreader-backend](https://github.com/skyreader/skyreader-backend) - Cloudflare Workers API
+- [AT Protocol](https://atproto.com) - Decentralized social protocol
 
 ## License
 
-GPL
+GPL-3.0

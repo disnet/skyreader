@@ -1,8 +1,8 @@
-# Skyreader Development Guide
+# Skyreader Frontend Development Guide
 
 ## Project Overview
 
-Skyreader is a decentralized RSS reader using the AT Protocol (Bluesky's underlying protocol) for data storage. Users authenticate with their Bluesky account and their data is stored in their Personal Data Server (PDS).
+Skyreader frontend is a SvelteKit PWA that provides an RSS reading experience with AT Protocol integration. User data is stored in their Personal Data Server (PDS), giving them full ownership and portability.
 
 ## Key Concepts
 
@@ -14,66 +14,128 @@ Skyreader is a decentralized RSS reader using the AT Protocol (Bluesky's underly
 - **Lexicon**: Schema definition language for record types (like JSON Schema)
 - **NSID**: Namespaced identifier for schemas (e.g., `app.skyreader.feed.subscription`)
 
-### OAuth Requirements
+### OAuth Notes
 
-AT Protocol OAuth has specific requirements:
-- **PKCE**: Required for all flows
-- **DPoP**: Demonstrating Proof of Possession - tokens are bound to a key pair
-- **Nonce**: Auth servers may require nonce in DPoP proofs (handle `use_dpop_nonce` error)
-- **Loopback IP**: Use `127.0.0.1` not `localhost` for local dev (RFC 8252)
-- **Public client_id**: The `client_id` URL must be publicly fetchable
+- Use `127.0.0.1` not `localhost` for local dev (RFC 8252 requirement)
+- OAuth flow is handled by the backend; frontend just receives session ID
 
-## Architecture Details
+## Architecture
 
-See [backend/ARCHITECTURE.md](backend/ARCHITECTURE.md) for detailed backend documentation.
+### Stores (Svelte 5 Runes)
 
-### Backend (Cloudflare Workers)
+All stores use Svelte 5 runes (`.svelte.ts` files):
 
-**Entry Point**: `backend/src/index.ts`
-- Routes requests to handlers
-- Adds CORS headers
+| Store | Purpose |
+|-------|---------|
+| `auth.svelte.ts` | User session state |
+| `subscriptions.svelte.ts` | Feed subscriptions CRUD |
+| `reading.svelte.ts` | Read/starred state for articles |
+| `social.svelte.ts` | Social feed from followed users |
+| `sync.svelte.ts` | Online status and pending sync count |
+| `preferences.svelte.ts` | User preferences |
+| `realtime.svelte.ts` | WebSocket connection state |
 
-**Routes**:
-- `backend/src/routes/auth.ts` - OAuth flow (login, callback, logout, client metadata)
-- `backend/src/routes/feeds.ts` - RSS proxy with caching
-- `backend/src/routes/social.ts` - Social feed aggregation
+### Services
 
-**Services**:
-- `backend/src/services/oauth.ts` - PKCE, DPoP, handle resolution, session management
-- `backend/src/services/feed-parser.ts` - RSS/Atom parsing
-- `backend/src/services/jetstream-poller.ts` - Polls Jetstream for share events (cron-triggered)
-- `backend/src/services/scheduled-feeds.ts` - Refreshes RSS feeds on schedule
+| Service | Purpose |
+|---------|---------|
+| `api.ts` | HTTP client for backend API |
+| `db.ts` | Dexie (IndexedDB) schema for offline storage |
+| `sync-queue.ts` | Queue operations when offline, process when online |
+| `realtime.ts` | WebSocket connection management |
 
-**Durable Objects**:
-- `backend/src/durable-objects/realtime-hub.ts` - Broadcasts real-time updates to connected clients
+### Key Routes
 
-**Storage**:
-- D1: Users, sessions, follows cache, aggregated shares, feed metadata, feed cache, sync state
+| Route | Purpose |
+|-------|---------|
+| `/` | Main feed (all articles from subscribed feeds) |
+| `/social` | Shares from followed users |
+| `/starred` | Starred articles |
+| `/feeds` | Manage feed subscriptions |
+| `/discover` | Discover new feeds |
+| `/settings` | Account and sync status |
+| `/auth/login` | Bluesky handle input |
+| `/auth/callback` | OAuth callback handler |
 
-### Frontend (SvelteKit + Svelte 5)
+## Common Tasks
 
-**Stores** (using Svelte 5 runes in `.svelte.ts` files):
-- `auth.svelte.ts` - User session state
-- `subscriptions.svelte.ts` - Feed subscriptions CRUD
-- `reading.svelte.ts` - Read/starred state
-- `social.svelte.ts` - Social feed from followed users
-- `sync.svelte.ts` - Online status and pending sync count
+### Adding a New Lexicon Field
 
-**Services**:
-- `api.ts` - HTTP client for backend
-- `db.ts` - Dexie (IndexedDB) schema for offline storage
-- `sync-queue.ts` - Queue operations when offline, process when online
+1. Update schema in `lexicons/app/skyreader/...`
+2. Update TypeScript types in `src/lib/types/index.ts`
+3. Update Dexie schema version in `src/lib/services/db.ts`
+4. Update relevant store and components
 
-**Key Routes**:
-- `/` - Main feed (all articles)
-- `/auth/login` - Bluesky handle input
-- `/auth/callback` - OAuth callback handler
-- `/feeds` - Manage subscriptions
-- `/social` - Shares from followed users
-- `/starred` - Starred articles
-- `/settings` - Account and sync status
+### Adding a New Route
 
-### Lexicon Schemas
+1. Create directory in `src/routes/`
+2. Add `+page.svelte` (and `+page.ts` if needed)
+3. Update navigation in `src/lib/components/Sidebar.svelte`
+
+### Adding a New Store
+
+1. Create `src/lib/stores/name.svelte.ts`
+2. Use Svelte 5 runes pattern:
+   ```typescript
+   class NameStore {
+     data = $state<DataType | null>(null);
+     loading = $state(false);
+
+     async fetch() {
+       this.loading = true;
+       try {
+         this.data = await api.getData();
+       } finally {
+         this.loading = false;
+       }
+     }
+   }
+
+   export const nameStore = new NameStore();
+   ```
+
+### Working with IndexedDB
+
+The app uses Dexie.js for offline storage. Schema is defined in `src/lib/services/db.ts`.
+
+```typescript
+// Reading from cache
+const cached = await db.subscriptions.toArray();
+
+// Writing to cache
+await db.subscriptions.put(subscription);
+
+// Clearing cache
+await db.subscriptions.clear();
+```
+
+## Environment Variables
+
+### .env
+
+```
+VITE_API_URL=http://127.0.0.1:8787
+```
+
+For production:
+```
+VITE_API_URL=https://your-backend.workers.dev
+```
+
+## Local Development
+
+1. Ensure backend is running at `http://127.0.0.1:8787`
+2. Create `.env` with `VITE_API_URL=http://127.0.0.1:8787`
+3. Run `npm run dev`
+4. Access via `http://127.0.0.1:5173` (not `localhost`)
+
+## Deployment
+
+1. Set `VITE_API_URL` to your production backend URL
+2. Run `npm run build`
+3. Deploy `build/` directory to Cloudflare Pages or static host
+
+## Lexicon Schemas
 
 Located in `lexicons/app/skyreader/`:
 
@@ -98,56 +160,9 @@ social/share.json       - Shared article
   - createdAt (required)
 ```
 
-## Common Tasks
+## PWA Features
 
-### Adding a New Lexicon Field
-
-1. Update schema in `lexicons/app/skyreader/...`
-2. Update TypeScript types in `frontend/src/lib/types/index.ts`
-3. Update Dexie schema version in `frontend/src/lib/services/db.ts`
-4. Update relevant store and components
-
-### Adding a New API Endpoint
-
-1. Create handler in `backend/src/routes/`
-2. Add route case in `backend/src/index.ts`
-3. Add method in `frontend/src/lib/services/api.ts`
-
-### Debugging OAuth Issues
-
-1. Use `npx wrangler tail` to stream backend logs
-2. Common errors:
-   - `use_dpop_nonce`: Need to retry with nonce from response header
-   - `invalid_client_metadata`: client_id URL not accessible or metadata invalid
-   - `localhost` errors: Use `127.0.0.1` instead
-
-## Environment Variables
-
-### Backend (`wrangler.toml`)
-- `FRONTEND_URL`: Allowed CORS origin
-
-### Frontend (`.env`)
-- `VITE_API_URL`: Backend API URL
-
-## Local Development Setup
-
-### D1 Database Setup (for contributors)
-
-The `wrangler.toml` file contains placeholder values for database IDs. To run the backend locally:
-
-1. Create your own D1 database: `npx wrangler d1 create skyreader`
-2. Copy the `database_id` from the command output
-3. Replace `YOUR_D1_DATABASE_ID` in `backend/wrangler.toml` with your database ID
-4. Run migrations locally: `npx wrangler d1 execute skyreader --local --file=backend/migrations/0001_initial.sql`
-
-For staging, create a separate database with `npx wrangler d1 create skyreader-staging` and update the staging `database_id`.
-
-## Deployment Checklist
-
-1. Create D1 database: `npx wrangler d1 create skyreader`
-2. Update `wrangler.toml` with database ID
-3. Run migration: `npx wrangler d1 execute skyreader --remote --file=migrations/0001_initial.sql`
-4. Deploy backend: `npx wrangler deploy`
-5. Update frontend `.env` with backend URL
-6. Build frontend: `npm run build`
-7. Deploy frontend to Cloudflare Pages or other static host
+- **Service Worker**: `src/service-worker.ts` handles caching and offline support
+- **Manifest**: `static/manifest.json` defines PWA metadata
+- **IndexedDB**: Dexie.js provides offline data storage
+- **Sync Queue**: Operations made offline are queued and synced when back online
