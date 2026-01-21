@@ -631,35 +631,13 @@ function createSubscriptionsStore() {
       try {
         const feedUrls = readyFeeds.map((s) => s.feedUrl);
 
-        // Collect most recent article timestamp per feed for delta sync
-        const since: Record<string, number> = {};
-        for (const sub of readyFeeds) {
-          if (!sub.id) continue;
-          // Get the most recent article for this subscription
-          const mostRecent = await db.articles
-            .where('subscriptionId')
-            .equals(sub.id)
-            .reverse()
-            .sortBy('publishedAt')
-            .then((articles) => articles[0]);
-
-          if (mostRecent?.publishedAt) {
-            since[sub.feedUrl] = new Date(mostRecent.publishedAt).getTime();
-          }
-        }
-
         // Chunk URLs into batches to respect backend limit
         const urlChunks = chunkArray(feedUrls, BATCH_SIZE);
 
         // Fetch batches sequentially to avoid UI lockup
         const feeds: Record<string, { title: string; items: ParsedFeed['items'] }> = {};
         for (const chunk of urlChunks) {
-          // Build since object for just this chunk's URLs
-          const chunkSince: Record<string, number> = {};
-          for (const url of chunk) {
-            if (since[url]) chunkSince[url] = since[url];
-          }
-          const result = await api.fetchFeedsBatch(chunk, chunkSince);
+          const result = await api.fetchFeedsBatch(chunk, {});
           Object.assign(feeds, result.feeds);
         }
 
