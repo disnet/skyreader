@@ -641,38 +641,53 @@ function createSubscriptionsStore() {
           Object.assign(feeds, result.feeds);
         }
 
-        // Process batch response and store articles
+        // Collect all incoming GUIDs to check for duplicates in one query
+        const allIncomingGuids: string[] = [];
+        const guidToSubId: Map<string, number> = new Map();
+        for (const sub of readyFeeds) {
+          if (!sub.id) continue;
+          const feedData = feeds[sub.feedUrl];
+          if (!feedData) continue;
+          for (const item of feedData.items) {
+            allIncomingGuids.push(item.guid);
+            guidToSubId.set(item.guid, sub.id);
+          }
+        }
+
+        // Single query: find which GUIDs already exist
+        const existingGuids = new Set(
+          (await db.articles.where('guid').anyOf(allIncomingGuids).toArray()).map((a) => a.guid)
+        );
+
+        // Build all new articles at once
+        const allNewArticles: Article[] = [];
         for (const sub of readyFeeds) {
           if (!sub.id) continue;
           const feedData = feeds[sub.feedUrl];
           if (!feedData || feedData.items.length === 0) continue;
 
-          // Store new articles (backend already filtered by 'since', but double-check GUIDs)
-          const existingArticles = await db.articles
-            .where('subscriptionId')
-            .equals(sub.id)
-            .toArray();
-          const existingGuids = new Set(existingArticles.map((a) => a.guid));
-
-          const newArticles: Article[] = feedData.items
-            .filter((item) => !existingGuids.has(item.guid))
-            .map((item) => ({
-              subscriptionId: sub.id!,
-              guid: item.guid,
-              url: item.url,
-              title: item.title,
-              author: item.author,
-              content: item.content,
-              summary: item.summary,
-              imageUrl: item.imageUrl,
-              publishedAt: item.publishedAt,
-              fetchedAt: Date.now(),
-            }));
-
-          if (newArticles.length > 0) {
-            await db.articles.bulkAdd(newArticles);
-            articlesVersion++;
+          for (const item of feedData.items) {
+            if (!existingGuids.has(item.guid)) {
+              allNewArticles.push({
+                subscriptionId: sub.id,
+                guid: item.guid,
+                url: item.url,
+                title: item.title,
+                author: item.author,
+                content: item.content,
+                summary: item.summary,
+                imageUrl: item.imageUrl,
+                publishedAt: item.publishedAt,
+                fetchedAt: Date.now(),
+              });
+            }
           }
+        }
+
+        // Single bulkAdd for all new articles
+        if (allNewArticles.length > 0) {
+          await db.articles.bulkAdd(allNewArticles);
+          articlesVersion++;
         }
       } catch (e) {
         console.error('Batch feed fetch failed, falling back to individual fetches:', e);
