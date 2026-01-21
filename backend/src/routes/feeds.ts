@@ -3,6 +3,7 @@ import { parseFeed, discoverFeeds } from '../services/feed-parser';
 
 const MAX_ITEM_CONTENT_SIZE = 100000; // 100KB per item
 const MAX_INITIAL_ITEMS = 50; // Limit items on initial feed import
+const MAX_ITEMS_PER_FEED = 30; // Rolling limit - keep only most recent items per feed
 const MAX_SQL_PARAMS = 90; // Conservative limit for D1 (empirically lower than SQLite's 999)
 const BATCH_INSERT_SIZE = 90; // 90 items × 10 params = 900, under 999 limit
 
@@ -113,6 +114,18 @@ export async function storeItems(env: Env, feedUrl: string, items: FeedItem[]): 
   for (const chunk of statementChunks) {
     await env.DB.batch(chunk);
   }
+
+  // Trim to MAX_ITEMS_PER_FEED most recent items to bound storage
+  await env.DB.prepare(`
+    DELETE FROM feed_items
+    WHERE feed_url = ?
+    AND id NOT IN (
+      SELECT id FROM feed_items
+      WHERE feed_url = ?
+      ORDER BY published_at DESC
+      LIMIT ?
+    )
+  `).bind(feedUrl, feedUrl, MAX_ITEMS_PER_FEED).run();
 
   return { newCount, isInitialImport };
 }
