@@ -218,12 +218,13 @@
     </button>
   </section>
 
-  <section class="card">
-    <h2>Integrations</h2>
+  <section class="card experimental-section">
+    <h2>Experimental</h2>
+    <p class="experimental-notice">These features are still in development and may not work perfectly.</p>
     <div class="integration-item">
       <div class="integration-header">
         <div class="integration-info">
-          <h3>Leaflet</h3>
+          <h3>Leaflet Sync</h3>
           <p class="setting-description">
             Automatically sync your <a href="https://leaflet.pub" target="_blank" rel="noopener">Leaflet</a> subscriptions as RSS feeds in Skyreader.
           </p>
@@ -549,5 +550,27 @@
 
   .sync-errors {
     color: var(--color-error, #ef4444);
+  }
+
+  .experimental-section {
+    border: 1px dashed var(--color-border);
+    background: repeating-linear-gradient(
+      -45deg,
+      transparent,
+      transparent 10px,
+      rgba(128, 128, 128, 0.03) 10px,
+      rgba(128, 128, 128, 0.03) 20px
+    );
+  }
+
+  .experimental-notice {
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
+    font-style: italic;
+    margin: 0 0 1rem 0;
+    padding: 0.5rem 0.75rem;
+    background: rgba(251, 191, 36, 0.1);
+    border-radius: 4px;
+    border-left: 3px solid rgb(251, 191, 36);
   }
 </style>
