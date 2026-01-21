@@ -19,6 +19,19 @@ import {
 import { syncFollowsForUser } from './social';
 import { syncReadPositionsForUser } from '../services/pds-sync';
 
+// Granular OAuth scopes - only request permissions we actually need
+// See: https://atproto.com/specs/permission
+const OAUTH_SCOPES = [
+  'atproto',
+  'repo:app.skyreader.feed.subscription',
+  'repo:app.skyreader.feed.readPosition',
+  'repo:app.skyreader.social.share',
+  'repo:app.skyreader.social.follow',
+  'repo:app.skyreader.social.shareReadPosition',
+  'rpc:app.bsky.graph.getFollows?aud=*',
+  'rpc:app.bsky.actor.getProfile?aud=*',
+].join(' ');
+
 // RFC 8252 requires loopback IP instead of localhost for OAuth
 function getBaseUrl(url: URL): string {
   let host = url.host;
@@ -41,7 +54,7 @@ export function handleClientMetadata(request: Request, env: Env): Response {
     redirect_uris: [`${baseUrl}/api/auth/callback`],
     grant_types: ['authorization_code', 'refresh_token'],
     response_types: ['code'],
-    scope: 'atproto transition:generic',
+    scope: OAUTH_SCOPES,
     token_endpoint_auth_method: 'none',
     dpop_bound_access_tokens: true,
   };
@@ -105,7 +118,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
           client_id: clientId,
           redirect_uri: redirectUri,
           response_type: 'code',
-          scope: 'atproto transition:generic',
+          scope: OAUTH_SCOPES,
           state,
           code_challenge: codeChallenge,
           code_challenge_method: 'S256',
@@ -126,7 +139,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
         client_id: clientId,
         redirect_uri: redirectUri,
         response_type: 'code',
-        scope: 'atproto transition:generic',
+        scope: OAUTH_SCOPES,
         state,
         code_challenge: codeChallenge,
         code_challenge_method: 'S256',
