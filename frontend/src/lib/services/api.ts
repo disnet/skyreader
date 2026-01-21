@@ -305,10 +305,10 @@ class ApiClient {
     return this.fetch('/api/leaflet/settings');
   }
 
-  async updateLeafletSettings(enabled: boolean): Promise<{ success: boolean }> {
+  async updateLeafletSettings(options: { enabled?: boolean; lastSyncedAt?: number }): Promise<{ success: boolean }> {
     return this.fetch('/api/leaflet/settings', {
       method: 'POST',
-      body: JSON.stringify({ enabled }),
+      body: JSON.stringify(options),
     });
   }
 

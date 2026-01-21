@@ -42,9 +42,9 @@ export async function handleUpdateLeafletSettings(request: Request, env: Env): P
     });
   }
 
-  let body: { enabled: boolean };
+  let body: { enabled?: boolean; lastSyncedAt?: number };
   try {
-    body = await request.json() as { enabled: boolean };
+    body = await request.json() as { enabled?: boolean; lastSyncedAt?: number };
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
       status: 400,
@@ -52,13 +52,36 @@ export async function handleUpdateLeafletSettings(request: Request, env: Env): P
     });
   }
 
-  await env.DB.prepare(`
-    INSERT INTO user_settings (user_did, leaflet_sync_enabled, created_at, updated_at)
-    VALUES (?, ?, unixepoch(), unixepoch())
-    ON CONFLICT(user_did) DO UPDATE SET
-      leaflet_sync_enabled = excluded.leaflet_sync_enabled,
-      updated_at = unixepoch()
-  `).bind(session.did, body.enabled ? 1 : 0).run();
+  // Build update based on provided fields
+  if (body.enabled !== undefined && body.lastSyncedAt !== undefined) {
+    // Update both enabled and lastSyncedAt
+    await env.DB.prepare(`
+      INSERT INTO user_settings (user_did, leaflet_sync_enabled, leaflet_last_synced_at, created_at, updated_at)
+      VALUES (?, ?, ?, unixepoch(), unixepoch())
+      ON CONFLICT(user_did) DO UPDATE SET
+        leaflet_sync_enabled = excluded.leaflet_sync_enabled,
+        leaflet_last_synced_at = excluded.leaflet_last_synced_at,
+        updated_at = unixepoch()
+    `).bind(session.did, body.enabled ? 1 : 0, Math.floor(body.lastSyncedAt / 1000)).run();
+  } else if (body.enabled !== undefined) {
+    // Update only enabled
+    await env.DB.prepare(`
+      INSERT INTO user_settings (user_did, leaflet_sync_enabled, created_at, updated_at)
+      VALUES (?, ?, unixepoch(), unixepoch())
+      ON CONFLICT(user_did) DO UPDATE SET
+        leaflet_sync_enabled = excluded.leaflet_sync_enabled,
+        updated_at = unixepoch()
+    `).bind(session.did, body.enabled ? 1 : 0).run();
+  } else if (body.lastSyncedAt !== undefined) {
+    // Update only lastSyncedAt
+    await env.DB.prepare(`
+      INSERT INTO user_settings (user_did, leaflet_last_synced_at, created_at, updated_at)
+      VALUES (?, ?, unixepoch(), unixepoch())
+      ON CONFLICT(user_did) DO UPDATE SET
+        leaflet_last_synced_at = excluded.leaflet_last_synced_at,
+        updated_at = unixepoch()
+    `).bind(session.did, Math.floor(body.lastSyncedAt / 1000)).run();
+  }
 
   return new Response(JSON.stringify({ success: true }), {
     headers: { 'Content-Type': 'application/json' },

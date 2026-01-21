@@ -59,7 +59,7 @@
   async function handleLeafletToggle(enabled: boolean) {
     leafletLoading = true;
     try {
-      await api.updateLeafletSettings(enabled);
+      await api.updateLeafletSettings({ enabled });
       leafletEnabled = enabled;
       // If enabling, trigger immediate sync
       if (enabled) {
@@ -82,7 +82,10 @@
         leafletSyncProgress = { stage, current, total };
       });
       leafletSyncResult = result;
-      leafletLastSynced = Date.now();
+      const now = Date.now();
+      leafletLastSynced = now;
+      // Persist the sync timestamp to the backend
+      await api.updateLeafletSettings({ lastSyncedAt: now });
     } catch (error) {
       console.error('Leaflet sync failed:', error);
       const errorMessage = error instanceof Error ? error.message : 'Sync failed';

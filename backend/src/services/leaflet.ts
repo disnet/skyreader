@@ -136,7 +136,10 @@ export async function resolvePublicationToRss(publicationUri: string, _env: Env)
 
   // 4. Validate that the RSS feed actually exists
   try {
-    const rssResponse = await fetch(rssUrl, { method: 'HEAD' });
+    const rssResponse = await fetch(rssUrl, {
+      method: 'HEAD',
+      headers: { 'User-Agent': 'Skyreader/1.0' },
+    });
     if (!rssResponse.ok) {
       console.error(`RSS feed not found at ${rssUrl}: ${rssResponse.status}`);
       return null;
