@@ -26,15 +26,18 @@
         UserShare,
     } from "$lib/types";
 
+    const DISPLAY_LIMIT = 100; // Limit rendered articles to prevent UI hang
     let allArticles = $state<Article[]>([]);
     let isLoading = $state(true);
     let selectedIndex = $state(-1);
     let expandedIndex = $state(-1);
     let articleElements: HTMLElement[] = [];
     let showOnlyUnread = $state(true);
+    let displayLimit = $state(DISPLAY_LIMIT);
 
     // Snapshot of displayed items (doesn't change as you read items)
     let displayedArticles = $state<Article[]>([]);
+    let totalFilteredArticles = $state(0); // Track total before slicing for "Load more"
     let displayedShares = $state<SocialShare[]>([]);
     let displayedUserShares = $state<UserShare[]>([]);
     let displayedCombined = $state<CombinedFeedItem[]>([]);
@@ -151,12 +154,25 @@
                 }
             }
 
-            displayedArticles = filtered;
+            // Track total before limiting, for "Load more" button
+            totalFilteredArticles = filtered.length;
+            // Limit displayed articles to prevent UI hang from rendering too many
+            displayedArticles = filtered.slice(0, displayLimit);
             lastFilterKey = currentKey;
             lastArticlesVersion = currentVersion;
             lastArticlesLength = currentLength;
         }
     });
+
+    // Reset display limit when filter changes
+    $effect(() => {
+        filterKey; // Track filter changes
+        displayLimit = DISPLAY_LIMIT;
+    });
+
+    function loadMoreArticles() {
+        displayLimit += DISPLAY_LIMIT;
+    }
 
     // Snapshot shares when filter or source data changes
     $effect(() => {
@@ -1291,6 +1307,11 @@
                         />
                     </div>
                 {/each}
+                {#if displayedArticles.length < totalFilteredArticles}
+                    <button class="load-more" onclick={loadMoreArticles}>
+                        Load more ({totalFilteredArticles - displayedArticles.length} remaining)
+                    </button>
+                {/if}
             </div>
         {/if}
     </div>
@@ -1315,4 +1336,20 @@
         border-bottom: none;
     }
 
+    .load-more {
+        width: 100%;
+        padding: 1rem;
+        margin-top: 0.5rem;
+        background: var(--color-surface);
+        border: 1px solid var(--color-border);
+        border-radius: 8px;
+        color: var(--color-text-secondary);
+        cursor: pointer;
+        font-size: 0.875rem;
+    }
+
+    .load-more:hover {
+        background: var(--color-surface-hover);
+        color: var(--color-text);
+    }
 </style>
