@@ -152,7 +152,6 @@ function hashUrl(url: string): string {
 }
 
 const CACHE_TTL_SECONDS = 900; // 15 minutes
-const MAX_CONTENT_SIZE = 500000; // 500KB
 
 interface FeedItemRow {
   id: number;
@@ -234,31 +233,18 @@ export async function fetchAndCacheFeed(env: Env, feedUrl: string): Promise<void
   // Store individual items in feed_items table
   await storeItems(env, feedUrl, parsed.items);
 
-  // Cache with size limit
-  let contentToCache = JSON.stringify(parsed);
-  if (contentToCache.length > MAX_CONTENT_SIZE) {
-    const truncatedParsed = {
-      ...parsed,
-      items: parsed.items.slice(0, Math.floor(parsed.items.length / 2)),
-    };
-    contentToCache = JSON.stringify(truncatedParsed);
-    if (contentToCache.length > MAX_CONTENT_SIZE) {
-      contentToCache = JSON.stringify({ ...parsed, items: [] });
-    }
-  }
-
+  // Update feed_cache for TTL tracking (content no longer needed)
   await env.DB.prepare(`
     INSERT INTO feed_cache (url_hash, feed_url, content, etag, last_modified, cached_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, '{}', ?, ?, ?)
     ON CONFLICT(url_hash) DO UPDATE SET
-      content = excluded.content,
+      content = '{}',
       etag = excluded.etag,
       last_modified = excluded.last_modified,
       cached_at = excluded.cached_at
   `).bind(
     urlHash,
     feedUrl,
-    contentToCache,
     response.headers.get('ETag') || null,
     response.headers.get('Last-Modified') || null,
     now
@@ -497,33 +483,18 @@ export async function handleFeedFetch(request: Request, env: Env): Promise<Respo
 
     const parsedJson = JSON.stringify(parsed);
 
-    // Cache in D1 (with size limit to avoid SQLITE_TOOBIG)
-    const MAX_CONTENT_SIZE = 500000; // 500KB
-    let contentToCache = parsedJson;
-    if (contentToCache.length > MAX_CONTENT_SIZE) {
-      // Truncate items to fit within size limit
-      const truncatedParsed = {
-        ...parsed,
-        items: parsed.items.slice(0, Math.floor(parsed.items.length / 2)),
-      };
-      contentToCache = JSON.stringify(truncatedParsed);
-      if (contentToCache.length > MAX_CONTENT_SIZE) {
-        contentToCache = JSON.stringify({ ...parsed, items: [] });
-      }
-    }
-
+    // Update feed_cache for TTL tracking (content no longer needed)
     await env.DB.prepare(`
       INSERT INTO feed_cache (url_hash, feed_url, content, etag, last_modified, cached_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, '{}', ?, ?, ?)
       ON CONFLICT(url_hash) DO UPDATE SET
-        content = excluded.content,
+        content = '{}',
         etag = excluded.etag,
         last_modified = excluded.last_modified,
         cached_at = excluded.cached_at
     `).bind(
       urlHash,
       feedUrl,
-      contentToCache,
       response.headers.get('ETag') || null,
       response.headers.get('Last-Modified') || null,
       now
@@ -639,32 +610,18 @@ export async function handleArticleFetch(request: Request, env: Env): Promise<Re
     // Store individual items in feed_items table
     await storeItems(env, feedUrl, parsed.items);
 
-    // Cache in D1 (with size limit to avoid SQLITE_TOOBIG)
-    const MAX_CONTENT_SIZE = 500000; // 500KB
-    let contentToCache = JSON.stringify(parsed);
-    if (contentToCache.length > MAX_CONTENT_SIZE) {
-      const truncatedParsed = {
-        ...parsed,
-        items: parsed.items.slice(0, Math.floor(parsed.items.length / 2)),
-      };
-      contentToCache = JSON.stringify(truncatedParsed);
-      if (contentToCache.length > MAX_CONTENT_SIZE) {
-        contentToCache = JSON.stringify({ ...parsed, items: [] });
-      }
-    }
-
+    // Update feed_cache for TTL tracking (content no longer needed)
     await env.DB.prepare(`
       INSERT INTO feed_cache (url_hash, feed_url, content, etag, last_modified, cached_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, '{}', ?, ?, ?)
       ON CONFLICT(url_hash) DO UPDATE SET
-        content = excluded.content,
+        content = '{}',
         etag = excluded.etag,
         last_modified = excluded.last_modified,
         cached_at = excluded.cached_at
     `).bind(
       urlHash,
       feedUrl,
-      contentToCache,
       response.headers.get('ETag') || null,
       response.headers.get('Last-Modified') || null,
       now
