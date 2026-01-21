@@ -8,6 +8,16 @@ function generateTid(): string {
   return `${now.toString(36)}${random}`;
 }
 
+const MAX_SQL_PARAMS = 90; // Conservative limit for D1 (empirically lower than SQLite's 999)
+
+function chunkArray<T>(array: T[], chunkSize: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < array.length; i += chunkSize) {
+    chunks.push(array.slice(i, i + chunkSize));
+  }
+  return chunks;
+}
+
 interface ReadPositionRow {
   item_guid: string;
   item_url: string | null;
@@ -380,13 +390,20 @@ export async function handleBulkMarkAsRead(request: Request, env: Env): Promise<
   const results: Array<{ itemGuid: string; rkey: string }> = [];
 
   try {
-    // Get existing read positions for these items
-    const placeholders = items.map(() => '?').join(',');
-    const existingResult = await env.DB.prepare(
-      `SELECT item_guid FROM read_positions_cache WHERE user_did = ? AND item_guid IN (${placeholders})`
-    ).bind(session.did, ...items.map(i => i.itemGuid)).all<{ item_guid: string }>();
+    // Get existing read positions for these items (chunked to avoid SQL variable limit)
+    const existingGuids = new Set<string>();
+    const guidChunks = chunkArray(items.map(i => i.itemGuid), MAX_SQL_PARAMS - 1); // -1 for user_did param
 
-    const existingGuids = new Set(existingResult.results.map(r => r.item_guid));
+    for (const chunk of guidChunks) {
+      const placeholders = chunk.map(() => '?').join(',');
+      const existingResult = await env.DB.prepare(
+        `SELECT item_guid FROM read_positions_cache WHERE user_did = ? AND item_guid IN (${placeholders})`
+      ).bind(session.did, ...chunk).all<{ item_guid: string }>();
+
+      for (const row of existingResult.results) {
+        existingGuids.add(row.item_guid);
+      }
+    }
 
     // Filter out already-read items
     const newItems = items.filter(item => !existingGuids.has(item.itemGuid));
