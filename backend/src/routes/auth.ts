@@ -109,6 +109,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
           state,
           code_challenge: codeChallenge,
           code_challenge_method: 'S256',
+          login_hint: did,
         }),
       });
 
@@ -129,6 +130,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
         state,
         code_challenge: codeChallenge,
         code_challenge_method: 'S256',
+        login_hint: did,
       });
       authUrl = `${authMeta.authorization_endpoint}?${params}`;
     }
