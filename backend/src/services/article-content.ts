@@ -1,7 +1,6 @@
 import type { Env } from '../types';
 import { parseFeed } from './feed-parser';
-
-const CACHE_TTL_SECONDS = 900; // 15 minutes
+import { storeItems } from '../routes/feeds';
 
 function hashUrl(url: string): string {
   let hash = 0;
@@ -20,31 +19,24 @@ export async function fetchArticleContent(
   itemUrl?: string
 ): Promise<string | null> {
   try {
-    const urlHash = hashUrl(feedUrl);
-    const now = Math.floor(Date.now() / 1000);
+    // Query feed_items directly instead of parsing feed_cache JSON
+    let article = await env.DB.prepare(`
+      SELECT content, summary FROM feed_items
+      WHERE feed_url = ? AND guid = ?
+    `).bind(feedUrl, itemGuid).first<{ content: string | null; summary: string | null }>();
 
-    // Check D1 cache first
-    const cached = await env.DB.prepare(
-      'SELECT content, cached_at FROM feed_cache WHERE url_hash = ?'
-    ).bind(urlHash).first<{ content: string; cached_at: number }>();
-
-    const isCacheValid = cached && (now - cached.cached_at) <= CACHE_TTL_SECONDS;
-
-    if (isCacheValid && cached) {
-      const parsed = JSON.parse(cached.content) as { items?: { guid: string; url?: string; content?: string; summary?: string }[] };
-      if (parsed?.items) {
-        // Try matching by GUID first, then by URL
-        let article = parsed.items.find(item => item.guid === itemGuid);
-        if (!article && itemUrl) {
-          article = parsed.items.find(item => item.url === itemUrl);
-        }
-        if (article) {
-          return article.content || article.summary || null;
-        }
-      }
+    if (!article && itemUrl) {
+      article = await env.DB.prepare(`
+        SELECT content, summary FROM feed_items
+        WHERE feed_url = ? AND url = ?
+      `).bind(feedUrl, itemUrl).first<{ content: string | null; summary: string | null }>();
     }
 
-    // Not in cache or cache stale, fetch from source
+    if (article) {
+      return article.content || article.summary || null;
+    }
+
+    // Not in feed_items, fetch from source
     const response = await fetch(feedUrl, {
       headers: {
         'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)',
@@ -60,30 +52,34 @@ export async function fetchArticleContent(
     const xml = await response.text();
     const parsed = parseFeed(xml, feedUrl);
 
-    // Cache in D1
+    // Store items in feed_items table
+    await storeItems(env, feedUrl, parsed.items);
+
+    // Update feed_cache for TTL tracking (content no longer needed)
+    const urlHash = hashUrl(feedUrl);
+    const now = Math.floor(Date.now() / 1000);
     await env.DB.prepare(`
       INSERT INTO feed_cache (url_hash, feed_url, content, etag, last_modified, cached_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, '{}', ?, ?, ?)
       ON CONFLICT(url_hash) DO UPDATE SET
-        content = excluded.content,
+        content = '{}',
         etag = excluded.etag,
         last_modified = excluded.last_modified,
         cached_at = excluded.cached_at
     `).bind(
       urlHash,
       feedUrl,
-      JSON.stringify(parsed),
       response.headers.get('ETag') || null,
       response.headers.get('Last-Modified') || null,
       now
     ).run();
 
     // Try matching by GUID first, then by URL
-    let article = parsed.items.find(item => item.guid === itemGuid);
-    if (!article && itemUrl) {
-      article = parsed.items.find(item => item.url === itemUrl);
+    let foundArticle = parsed.items.find(item => item.guid === itemGuid);
+    if (!foundArticle && itemUrl) {
+      foundArticle = parsed.items.find(item => item.url === itemUrl);
     }
-    return article?.content || article?.summary || null;
+    return foundArticle?.content || foundArticle?.summary || null;
   } catch (error) {
     console.error(`Error fetching article content from ${feedUrl}:`, error);
     return null;
