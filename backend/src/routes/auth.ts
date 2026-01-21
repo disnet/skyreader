@@ -19,18 +19,10 @@ import {
 import { syncFollowsForUser } from './social';
 import { syncReadPositionsForUser } from '../services/pds-sync';
 
-// Granular OAuth scopes - only request permissions we actually need
-// See: https://atproto.com/specs/permission
-const OAUTH_SCOPES = [
-  'atproto',
-  'repo:app.skyreader.feed.subscription',
-  'repo:app.skyreader.feed.readPosition',
-  'repo:app.skyreader.social.share',
-  'repo:app.skyreader.social.follow',
-  'repo:app.skyreader.social.shareReadPosition',
-  'rpc:app.bsky.graph.getFollows?aud=*',
-  'rpc:app.bsky.actor.getProfile?aud=*',
-].join(' ');
+// Transitional scope - provides broad PDS permissions
+// TODO: Switch to granular scopes when AT Protocol "permission sets" feature
+// supports custom third-party lexicons (see atproto discussion #4118)
+const OAUTH_SCOPES = 'atproto transition:generic';
 
 // RFC 8252 requires loopback IP instead of localhost for OAuth
 function getBaseUrl(url: URL): string {
