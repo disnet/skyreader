@@ -144,6 +144,7 @@
     });
 
     let feedUnreadCounts = $state<Map<number, number>>(new Map());
+    let unreadCountsLoading = false;
 
     // Calculate total unread
     let totalUnread = $derived(
@@ -249,18 +250,26 @@
     });
 
     async function loadUnreadCounts() {
-        // Load all articles once instead of N queries
-        const allArticles = await db.articles.toArray();
-        const readPositions = readingStore.readPositions;
+        // Prevent concurrent runs
+        if (unreadCountsLoading) return;
+        unreadCountsLoading = true;
 
-        // Group by subscriptionId and count unread
-        const counts = new Map<number, number>();
-        for (const article of allArticles) {
-            if (!readPositions.has(article.guid)) {
-                counts.set(article.subscriptionId, (counts.get(article.subscriptionId) || 0) + 1);
+        try {
+            // Load all articles once instead of N queries
+            const allArticles = await db.articles.toArray();
+            const readPositions = readingStore.readPositions;
+
+            // Group by subscriptionId and count unread
+            const counts = new Map<number, number>();
+            for (const article of allArticles) {
+                if (!readPositions.has(article.guid)) {
+                    counts.set(article.subscriptionId, (counts.get(article.subscriptionId) || 0) + 1);
+                }
             }
+            feedUnreadCounts = counts;
+        } finally {
+            unreadCountsLoading = false;
         }
-        feedUnreadCounts = counts;
     }
 
     function selectFilter(type: string, id?: string | number) {

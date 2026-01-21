@@ -29,6 +29,7 @@
     const DISPLAY_LIMIT = 100; // Limit rendered articles to prevent UI hang
     let allArticles = $state<Article[]>([]);
     let isLoading = $state(true);
+    let articlesLoading = false; // Prevent concurrent article loads
     let selectedIndex = $state(-1);
     let expandedIndex = $state(-1);
     let articleElements: HTMLElement[] = [];
@@ -471,9 +472,13 @@
     // Reload articles when new ones are fetched
     $effect(() => {
         const version = subscriptionsStore.articlesVersion;
-        if (version > 0) {
+        if (version > 0 && !articlesLoading) {
+            articlesLoading = true;
             subscriptionsStore.getAllArticles().then((articles) => {
                 allArticles = articles;
+                articlesLoading = false;
+            }).catch(() => {
+                articlesLoading = false;
             });
         }
     });
