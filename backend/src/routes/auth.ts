@@ -64,11 +64,8 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
   }
 
   try {
-    // Normalize handle (remove @ if present)
-    const normalizedHandle = handle.startsWith('@') ? handle.substring(1) : handle;
-
-    // Resolve handle to DID
-    const did = await resolveHandle(normalizedHandle);
+    // Resolve handle to DID (resolveHandle handles normalization)
+    const did = await resolveHandle(handle);
 
     // Get PDS URL from DID
     const pdsUrl = await getPdsFromDid(did);
@@ -82,11 +79,11 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
     // Generate state
     const state = generateRandomString(32);
 
-    // Store state in KV
+    // Store state in KV (handle will be updated from profile in callback)
     await storeOAuthState(env, state, {
       codeVerifier,
       did,
-      handle: normalizedHandle,
+      handle,
       pdsUrl,
       authServer: authMeta.issuer,
       returnUrl,

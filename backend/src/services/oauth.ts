@@ -163,11 +163,37 @@ export async function createDPoPProof(
   return `${signingInput}.${encodedSignature}`;
 }
 
-// Resolve handle to DID
+// Normalize handle input (auto-append .bsky.social if needed)
+function normalizeHandleInput(handle: string): string {
+  let normalized = handle.startsWith('@') ? handle.substring(1) : handle;
+  normalized = normalized.toLowerCase().trim();
+  if (!normalized.includes('.')) {
+    normalized = `${normalized}.bsky.social`;
+  }
+  return normalized;
+}
+
+// Resolve handle to DID using multiple strategies
 export async function resolveHandle(handle: string): Promise<string> {
-  // Try DNS TXT record first
-  const dnsUrl = `https://dns.google/resolve?name=_atproto.${handle}&type=TXT`;
+  const normalizedHandle = normalizeHandleInput(handle);
+
+  // Strategy 1: Try Bluesky public API (works for all Bluesky handles)
   try {
+    const bskyUrl = `https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(normalizedHandle)}`;
+    const bskyResponse = await fetch(bskyUrl);
+    if (bskyResponse.ok) {
+      const data = await bskyResponse.json() as { did: string };
+      if (data.did) {
+        return data.did;
+      }
+    }
+  } catch {
+    // Bluesky API failed, continue to fallbacks
+  }
+
+  // Strategy 2: DNS TXT record lookup (for custom domains)
+  try {
+    const dnsUrl = `https://dns.google/resolve?name=_atproto.${normalizedHandle}&type=TXT`;
     const dnsResponse = await fetch(dnsUrl);
     const dnsData = await dnsResponse.json() as { Answer?: { data: string }[] };
     if (dnsData.Answer && dnsData.Answer.length > 0) {
@@ -180,15 +206,22 @@ export async function resolveHandle(handle: string): Promise<string> {
     // DNS lookup failed, try HTTP fallback
   }
 
-  // HTTP fallback via well-known
-  const httpUrl = `https://${handle}/.well-known/atproto-did`;
-  const httpResponse = await fetch(httpUrl);
-  if (httpResponse.ok) {
-    const did = await httpResponse.text();
-    return did.trim();
+  // Strategy 3: HTTP well-known (for custom domains without DNS TXT)
+  try {
+    const httpUrl = `https://${normalizedHandle}/.well-known/atproto-did`;
+    const httpResponse = await fetch(httpUrl);
+    if (httpResponse.ok) {
+      const did = await httpResponse.text();
+      return did.trim();
+    }
+  } catch {
+    // HTTP fallback also failed
   }
 
-  throw new Error(`Could not resolve handle: ${handle}`);
+  throw new Error(
+    `Could not resolve handle: ${normalizedHandle}. ` +
+    `Please ensure this is a valid Bluesky handle.`
+  );
 }
 
 // Get PDS URL from DID

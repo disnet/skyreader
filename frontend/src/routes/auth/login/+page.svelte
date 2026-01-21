@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { api } from '$lib/services/api';
   import Logo from '$lib/assets/logo.svg';
@@ -7,6 +6,22 @@
   let handle = $state('');
   let isLoading = $state(false);
   let error = $state<string | null>(null);
+
+  // Compute the normalized handle for display hint
+  const normalizedHandle = $derived.by(() => {
+    const trimmed = handle.trim().toLowerCase();
+    if (!trimmed) return '';
+    const withoutAt = trimmed.startsWith('@') ? trimmed.substring(1) : trimmed;
+    return withoutAt.includes('.') ? withoutAt : `${withoutAt}.bsky.social`;
+  });
+
+  // Show hint when user enters a handle without a dot
+  const showNormalizationHint = $derived.by(() => {
+    const trimmed = handle.trim();
+    if (!trimmed) return false;
+    const withoutAt = trimmed.startsWith('@') ? trimmed.substring(1) : trimmed;
+    return !withoutAt.includes('.') && withoutAt.length > 0;
+  });
 
   async function handleSubmit(e: Event) {
     e.preventDefault();
@@ -41,10 +56,16 @@
           type="text"
           id="handle"
           class="input"
-          placeholder="yourname.bsky.social"
+          placeholder="yourname or yourname.bsky.social"
           bind:value={handle}
           disabled={isLoading}
+          autocapitalize="none"
+          autocorrect="off"
+          spellcheck="false"
         />
+        {#if showNormalizationHint}
+          <p class="hint">Will sign in as <strong>{normalizedHandle}</strong></p>
+        {/if}
       </div>
 
       {#if error}
@@ -116,5 +137,16 @@
     color: var(--color-text-secondary);
     margin-top: 1rem;
     text-align: center;
+  }
+
+  .hint {
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
+    margin-top: 0.25rem;
+    margin-bottom: 0;
+  }
+
+  .hint strong {
+    color: var(--color-text-primary);
   }
 </style>
