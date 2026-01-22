@@ -22,6 +22,41 @@
 
 	let allArticles = $state<Article[]>([]);
 	let isLoading = $state(true);
+
+	// Centralized article loading function
+	// When showOnlyUnread is true, keeps loading until we have enough unread articles
+	async function loadArticles() {
+		subscriptionsStore.resetArticlesPagination();
+		const feedId = feedFilter ? parseInt(feedFilter) : undefined;
+		const targetCount = 50; // How many unread articles we want to display
+		const maxIterations = 10; // Safety limit to prevent infinite loops
+
+		let articles = await subscriptionsStore.getArticlesPaginated(feedId);
+
+		// If filtering for unread, keep loading until we have enough
+		if (showOnlyUnread && !starredFilter) {
+			let iterations = 0;
+			while (subscriptionsStore.articlesHasMore && iterations < maxIterations) {
+				// Count how many unread articles we have
+				const unreadCount = articles.filter((a) => !readingStore.isRead(a.guid)).length;
+
+				if (unreadCount >= targetCount) {
+					break; // We have enough unread articles
+				}
+
+				// Load more
+				const moreArticles = await subscriptionsStore.loadMoreArticles(feedId);
+				if (moreArticles.length === 0) {
+					break; // No more articles to load
+				}
+
+				articles = [...articles, ...moreArticles];
+				iterations++;
+			}
+		}
+
+		allArticles = articles;
+	}
 	let selectedIndex = $state(-1);
 	let expandedIndex = $state(-1);
 	let articleElements = $state<HTMLElement[]>([]);
@@ -399,25 +434,25 @@
 			await socialStore.loadFollowedUsers();
 			await socialStore.loadFeed(true);
 
-			// Reset pagination and load first page from IndexedDB
-			subscriptionsStore.resetArticlesPagination();
-			allArticles = await subscriptionsStore.getArticlesPaginated();
+			// Load initial articles from IndexedDB
+			await loadArticles();
 
 			// Fetch latest articles from backend (store handles deduplication)
 			if (subscriptionsStore.subscriptions.length > 0) {
-				// Check which feeds are ready on the backend
 				const feedUrls = subscriptionsStore.subscriptions.map((s) => s.feedUrl);
 				await subscriptionsStore.checkFeedStatuses(feedUrls);
-
-				// Await the full fetch operation (ready from cache, pending from source)
 				await subscriptionsStore.fetchAllNewFeeds();
 
-				// Reload first page after fetch to include any new articles
-				subscriptionsStore.resetArticlesPagination();
-				allArticles = await subscriptionsStore.getArticlesPaginated();
+				// Reload to include any new articles from backend
+				await loadArticles();
 			}
 		}
 		isLoading = false;
+
+		// Mark initial load complete by setting tracking variables
+		// This enables the reload effect to start watching for changes
+		lastLoadedFilter = feedFilter;
+		lastLoadedVersion = subscriptionsStore.articlesVersion;
 
 		// Set up scroll direction tracking for scroll-to-mark-as-read
 		window.addEventListener('scroll', updateScrollDirection, { passive: true });
@@ -428,9 +463,8 @@
 		lastVisibleTime = Date.now();
 	});
 
-	// Reset selection and pagination when filter changes
+	// Reset selection when any filter changes (synchronous, no async work)
 	$effect(() => {
-		// Access filter values to create dependency
 		feedFilter;
 		starredFilter;
 		sharedFilter;
@@ -439,31 +473,29 @@
 		feedsFilter;
 		selectedIndex = -1;
 		expandedIndex = -1;
-
-		// Reset article pagination when filter changes
-		subscriptionsStore.resetArticlesPagination();
-		// Reload first page with new filter
-		const currentFeedFilter = feedFilter;
-		subscriptionsStore
-			.getArticlesPaginated(currentFeedFilter ? parseInt(currentFeedFilter) : undefined)
-			.then((articles) => {
-				allArticles = articles;
-			});
 	});
 
-	// Reload articles when new ones are fetched (e.g., from WebSocket)
+	// Reload articles when filters change or new articles arrive (after initial load)
+	// We track changes by comparing to what we've already loaded
+	let lastLoadedFilter = $state<string | null | undefined>(undefined);
+	let lastLoadedVersion = $state(-1);
+
 	$effect(() => {
-		const version = subscriptionsStore.articlesVersion;
-		if (version > 0) {
-			// Get the feed filter inside the effect to use the current value
-			const currentFeedFilter = untrack(() => feedFilter);
-			// Reset pagination and reload to include new articles
-			subscriptionsStore.resetArticlesPagination();
-			subscriptionsStore
-				.getArticlesPaginated(currentFeedFilter ? parseInt(currentFeedFilter) : undefined)
-				.then((articles) => {
-					allArticles = articles;
-				});
+		const currentFilter = feedFilter;
+		const currentVersion = subscriptionsStore.articlesVersion;
+
+		// Get last values without triggering reactivity
+		const prevFilter = untrack(() => lastLoadedFilter);
+		const prevVersion = untrack(() => lastLoadedVersion);
+
+		// Skip initial run (before onMount sets lastLoadedFilter)
+		if (prevFilter === undefined) return;
+
+		// Reload if filter or version changed
+		if (currentFilter !== prevFilter || currentVersion !== prevVersion) {
+			lastLoadedFilter = currentFilter;
+			lastLoadedVersion = currentVersion;
+			loadArticles();
 		}
 	});
 
@@ -725,9 +757,21 @@
 			key: 'j',
 			description: 'Next item',
 			category: 'Navigation',
-			action: () => {
+			action: async () => {
 				if (currentItems.length > 0) {
-					selectItem(Math.min(selectedIndex + 1, currentItems.length - 1));
+					const nextIndex = Math.min(selectedIndex + 1, currentItems.length - 1);
+					selectItem(nextIndex);
+
+					// If we're at the last item, try to load more
+					if (nextIndex === currentItems.length - 1) {
+						if (viewMode === 'combined' && combinedHasMore) {
+							await loadMoreCombined();
+						} else if (viewMode === 'articles' && subscriptionsStore.articlesHasMore) {
+							await loadMoreArticles();
+						} else if (viewMode === 'shares' && socialStore.hasMore) {
+							await socialStore.loadFeed(false);
+						}
+					}
 				}
 			},
 			condition: () => auth.isAuthenticated && currentItems.length > 0,
@@ -737,9 +781,21 @@
 			key: 'ArrowDown',
 			description: 'Next item',
 			category: 'Navigation',
-			action: () => {
+			action: async () => {
 				if (currentItems.length > 0) {
-					selectItem(Math.min(selectedIndex + 1, currentItems.length - 1));
+					const nextIndex = Math.min(selectedIndex + 1, currentItems.length - 1);
+					selectItem(nextIndex);
+
+					// If we're at the last item, try to load more
+					if (nextIndex === currentItems.length - 1) {
+						if (viewMode === 'combined' && combinedHasMore) {
+							await loadMoreCombined();
+						} else if (viewMode === 'articles' && subscriptionsStore.articlesHasMore) {
+							await loadMoreArticles();
+						} else if (viewMode === 'shares' && socialStore.hasMore) {
+							await socialStore.loadFeed(false);
+						}
+					}
 				}
 			},
 			condition: () => auth.isAuthenticated && currentItems.length > 0,

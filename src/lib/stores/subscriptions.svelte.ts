@@ -362,7 +362,7 @@ function createSubscriptionsStore() {
 		return articles;
 	}
 
-	// Load more articles from backend (older than cursor)
+	// Load more articles from IndexedDB (older than cursor)
 	async function loadMoreArticles(
 		subscriptionId?: number,
 		limit = DEFAULT_PAGE_SIZE
@@ -372,65 +372,45 @@ function createSubscriptionsStore() {
 		articlesIsLoadingMore = true;
 
 		try {
-			// Get feed URLs for the query
-			const feedUrls = subscriptionId
-				? [subscriptions.find((s) => s.id === subscriptionId)?.feedUrl].filter(Boolean)
-				: subscriptions.map((s) => s.feedUrl);
+			// Query IndexedDB for articles older than cursor
+			let articles: Article[];
 
-			if (feedUrls.length === 0) {
-				articlesHasMore = false;
-				return [];
+			if (subscriptionId) {
+				// For a specific feed, filter by subscriptionId and publishedAt
+				articles = await db.articles
+					.where('subscriptionId')
+					.equals(subscriptionId)
+					.filter((a) => new Date(a.publishedAt).getTime() < articlesCursor!)
+					.reverse()
+					.sortBy('publishedAt');
+				// Take only the first `limit` items (sortBy doesn't support limit)
+				articles = articles.slice(0, limit);
+			} else {
+				// For all feeds, we need to filter by publishedAt
+				// Since publishedAt is indexed, we can use a range query
+				articles = await db.articles
+					.where('publishedAt')
+					.below(new Date(articlesCursor).toISOString())
+					.reverse()
+					.limit(limit)
+					.toArray();
 			}
 
-			// Fetch from backend with cursor
-			const { items, cursor: newCursor } = await api.getItems({
-				feedUrls: feedUrls as string[],
-				before: articlesCursor,
-				limit,
-			});
+			// Sort by publishedAt descending (newest first within this batch)
+			articles.sort(
+				(a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
+			);
 
-			// Map to Article format and store in IndexedDB
-			const subsByUrl = new Map(subscriptions.map((s) => [s.feedUrl, s.id]));
-			const newArticles: Article[] = [];
-
-			for (const item of items) {
-				const subId = subsByUrl.get(item.feedUrl);
-				if (!subId) continue;
-
-				// Check if already exists in IndexedDB
-				const existing = await db.articles.where('guid').equals(item.guid).first();
-				if (existing) continue;
-
-				const article: Article = {
-					subscriptionId: subId,
-					guid: item.guid,
-					url: item.url,
-					title: item.title,
-					author: item.author,
-					content: item.content,
-					summary: item.summary,
-					imageUrl: item.imageUrl,
-					publishedAt: item.publishedAt,
-					fetchedAt: Date.now(),
-				};
-
-				await db.articles.add(article);
-				newArticles.push(article);
-			}
-
-			// Update cursor
-			if (newCursor) {
-				articlesCursor = newCursor;
-				articlesHasMore = true;
+			// Update cursor to oldest article in this batch
+			if (articles.length > 0) {
+				const oldest = articles[articles.length - 1];
+				articlesCursor = new Date(oldest.publishedAt).getTime();
+				articlesHasMore = articles.length === limit;
 			} else {
 				articlesHasMore = false;
 			}
 
-			if (newArticles.length > 0) {
-				articlesVersion++;
-			}
-
-			return newArticles;
+			return articles;
 		} catch (e) {
 			console.error('Failed to load more articles:', e);
 			error = e instanceof Error ? e.message : 'Failed to load more articles';
