@@ -9,11 +9,11 @@
   import { sharesStore } from '$lib/stores/shares.svelte';
 
   onMount(async () => {
-    const sessionId = $page.url.searchParams.get('sessionId');
+    const code = $page.url.searchParams.get('code');
     const returnUrl = $page.url.searchParams.get('returnUrl') || '/';
 
-    if (!sessionId) {
-      goto('/auth/error?error=Missing+session');
+    if (!code) {
+      goto('/auth/error?error=Missing+code');
       return;
     }
 
@@ -25,6 +25,9 @@
     }
 
     try {
+      // Exchange the code for a session ID (single-use, not exposed in URL)
+      const { sessionId } = await api.exchangeCode(code);
+
       // Set the session ID so the API can make authenticated requests
       api.setSession(sessionId);
 
@@ -43,8 +46,8 @@
 
       goto(returnUrl);
     } catch (error) {
-      console.error('Failed to fetch user info:', error);
-      goto('/auth/error?error=Failed+to+fetch+user+info');
+      console.error('Failed to complete login:', error);
+      goto('/auth/error?error=Failed+to+complete+login');
     }
   });
 </script>

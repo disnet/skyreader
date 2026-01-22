@@ -55,6 +55,13 @@ class ApiClient {
     return this.fetch(`/api/auth/login?${params}`);
   }
 
+  async exchangeCode(code: string): Promise<{ sessionId: string }> {
+    return this.fetch('/api/auth/exchange', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+  }
+
   async logout(): Promise<void> {
     await this.fetch('/api/auth/logout', { method: 'POST' });
   }
