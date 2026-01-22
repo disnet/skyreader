@@ -30,6 +30,16 @@
 		// This ensures the snapshot effect sees consistent state during the async load
 		allArticles = [];
 
+		// For starred view, load articles by their guids directly
+		if (starredFilter) {
+			const starredGuids = Array.from(readingStore.readPositions.entries())
+				.filter(([, pos]) => pos.starred)
+				.map(([guid]) => guid);
+			const articles = await subscriptionsStore.getArticlesByGuids(starredGuids);
+			allArticles = articles;
+			return;
+		}
+
 		subscriptionsStore.resetArticlesPagination();
 		const feedId = feedFilter ? parseInt(feedFilter) : undefined;
 		const targetCount = 50; // How many unread articles we want to display
@@ -144,15 +154,25 @@
 		const currentVersion = subscriptionsStore.articlesVersion;
 		const currentArticles = allArticles;
 		const currentLength = currentArticles.length;
+		// For starred filter, we need to track readPositions changes
+		// Use the Map object itself as a dependency (changes when reassigned in store)
+		const currentReadPositions = starredFilter ? readingStore.readPositions : null;
 
 		// Untrack comparisons to avoid loops
 		const prevKey = untrack(() => lastFilterKey);
 		const prevVersion = untrack(() => lastArticlesVersion);
 		const prevLength = untrack(() => lastArticlesLength);
 
-		if (currentKey !== prevKey || currentVersion !== prevVersion || currentLength !== prevLength) {
-			// Take a snapshot using current read state (untracked to avoid reactivity)
-			const readPositions = untrack(() => readingStore.readPositions);
+		if (
+			currentKey !== prevKey ||
+			currentVersion !== prevVersion ||
+			currentLength !== prevLength ||
+			currentReadPositions
+		) {
+			// Take a snapshot using current read state (untracked to avoid reactivity for non-starred views)
+			const readPositions = starredFilter
+				? currentReadPositions!
+				: untrack(() => readingStore.readPositions);
 
 			let filtered: Article[];
 			if (feedFilter) {
@@ -456,6 +476,7 @@
 		// Mark initial load complete by setting tracking variables
 		// This enables the reload effect to start watching for changes
 		lastLoadedFilter = feedFilter;
+		lastLoadedStarredFilter = starredFilter;
 		lastLoadedVersion = subscriptionsStore.articlesVersion;
 
 		// Set up scroll direction tracking for scroll-to-mark-as-read
@@ -482,22 +503,30 @@
 	// Reload articles when filters change or new articles arrive (after initial load)
 	// We track changes by comparing to what we've already loaded
 	let lastLoadedFilter = $state<string | null | undefined>(undefined);
+	let lastLoadedStarredFilter = $state<string | null | undefined>(undefined);
 	let lastLoadedVersion = $state(-1);
 
 	$effect(() => {
 		const currentFilter = feedFilter;
+		const currentStarredFilter = starredFilter;
 		const currentVersion = subscriptionsStore.articlesVersion;
 
 		// Get last values without triggering reactivity
 		const prevFilter = untrack(() => lastLoadedFilter);
+		const prevStarredFilter = untrack(() => lastLoadedStarredFilter);
 		const prevVersion = untrack(() => lastLoadedVersion);
 
 		// Skip initial run (before onMount sets lastLoadedFilter)
 		if (prevFilter === undefined) return;
 
 		// Reload if filter or version changed
-		if (currentFilter !== prevFilter || currentVersion !== prevVersion) {
+		if (
+			currentFilter !== prevFilter ||
+			currentStarredFilter !== prevStarredFilter ||
+			currentVersion !== prevVersion
+		) {
 			lastLoadedFilter = currentFilter;
+			lastLoadedStarredFilter = currentStarredFilter;
 			lastLoadedVersion = currentVersion;
 			loadArticles();
 		}
@@ -1274,7 +1303,7 @@
 							shareNote={sharesStore.getShareNote(article.guid)}
 							selected={selectedIndex === index}
 							expanded={expandedIndex === index}
-							onToggleStar={() => readingStore.toggleStar(article.guid)}
+							onToggleStar={() => readingStore.toggleStar(article.guid, article.url, article.title)}
 							onShare={() =>
 								sharesStore.share(
 									sub?.rkey || '',

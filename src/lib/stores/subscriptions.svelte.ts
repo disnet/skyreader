@@ -358,6 +358,16 @@ function createSubscriptionsStore() {
 		return articles;
 	}
 
+	// Get articles by their guids from IndexedDB
+	async function getArticlesByGuids(guids: string[]): Promise<Article[]> {
+		if (guids.length === 0) return [];
+		// Dexie's anyOf is efficient for multiple key lookups
+		const articles = await db.articles.where('guid').anyOf(guids).toArray();
+		// Sort by publishedAt descending (newest first)
+		articles.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+		return articles;
+	}
+
 	// Load more articles from IndexedDB (older than cursor)
 	async function loadMoreArticles(
 		subscriptionId?: number,
@@ -786,6 +796,7 @@ function createSubscriptionsStore() {
 		getArticles,
 		getAllArticles,
 		getArticlesPaginated,
+		getArticlesByGuids,
 		loadMoreArticles,
 		resetArticlesPagination,
 		fetchRecentItems,

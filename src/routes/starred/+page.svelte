@@ -2,13 +2,25 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { auth } from '$lib/stores/auth.svelte';
-	import { readingStore, type StarredArticle } from '$lib/stores/reading.svelte';
+	import { readingStore } from '$lib/stores/reading.svelte';
 	import { formatRelativeDate } from '$lib/utils/date';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import LoadingState from '$lib/components/LoadingState.svelte';
 
-	let starredItems = $state<StarredArticle[]>([]);
 	let isLoading = $state(true);
+
+	// Derive starred items reactively from the store's readPositions
+	let starredItems = $derived.by(() => {
+		const positions = readingStore.readPositions;
+		return Array.from(positions.entries())
+			.filter(([, pos]) => pos.starred)
+			.map(([guid, pos]) => ({
+				articleGuid: guid,
+				articleUrl: pos.itemUrl,
+				articleTitle: pos.itemTitle,
+				readAt: pos.readAt,
+			}));
+	});
 
 	onMount(async () => {
 		if (!auth.isAuthenticated) {
@@ -16,7 +28,6 @@
 			return;
 		}
 		await readingStore.load();
-		starredItems = readingStore.getStarredArticles();
 		isLoading = false;
 	});
 </script>
