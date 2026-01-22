@@ -24,7 +24,7 @@
 	let isLoading = $state(true);
 	let selectedIndex = $state(-1);
 	let expandedIndex = $state(-1);
-	let articleElements: HTMLElement[] = [];
+	let articleElements = $state<HTMLElement[]>([]);
 	let showOnlyUnread = $state(true);
 
 	// Snapshot of displayed items (doesn't change as you read items)

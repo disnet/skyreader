@@ -21,6 +21,46 @@ function createReadingStore() {
 	let isLoading = $state(true);
 	let hasLoaded = false;
 
+	// Debounce state for batching mark-read calls
+	let pendingMarkRead: Array<{
+		articleGuid: string;
+		articleUrl: string;
+		articleTitle?: string;
+		position: ReadPosition;
+	}> = [];
+	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+	const DEBOUNCE_MS = 300;
+
+	// Flush pending mark-read items to the API
+	async function flushPendingMarkRead() {
+		if (pendingMarkRead.length === 0) return;
+
+		const itemsToFlush = [...pendingMarkRead];
+		pendingMarkRead = [];
+		debounceTimer = null;
+
+		try {
+			await api.markAsReadBulk(
+				itemsToFlush.map((item) => ({
+					itemGuid: item.articleGuid,
+					itemUrl: item.articleUrl,
+					itemTitle: item.articleTitle,
+				}))
+			);
+			// Update cache on success
+			for (const item of itemsToFlush) {
+				updateCache(item.articleGuid, item.position);
+			}
+		} catch (e) {
+			// Rollback on failure
+			for (const item of itemsToFlush) {
+				readPositions.delete(item.articleGuid);
+			}
+			readPositions = new Map(readPositions);
+			console.error('Failed to mark as read (batch):', e);
+		}
+	}
+
 	// Helper to update the local IndexedDB cache
 	async function updateCache(articleGuid: string, position: ReadPosition) {
 		try {
@@ -131,14 +171,15 @@ function createReadingStore() {
 		return readPositions.get(articleGuid)?.starred ?? false;
 	}
 
-	async function markAsRead(
+	function markAsRead(
 		_subscriptionAtUri: string,
 		articleGuid: string,
 		articleUrl: string,
 		articleTitle?: string
 	) {
-		// Skip if already read
+		// Skip if already read or already pending
 		if (readPositions.has(articleGuid)) return;
+		if (pendingMarkRead.some((item) => item.articleGuid === articleGuid)) return;
 
 		const position: ReadPosition = {
 			starred: false,
@@ -151,20 +192,14 @@ function createReadingStore() {
 		readPositions.set(articleGuid, position);
 		readPositions = new Map(readPositions);
 
-		try {
-			await api.markAsRead({
-				itemGuid: articleGuid,
-				itemUrl: articleUrl,
-				itemTitle: articleTitle,
-			});
-			// Update cache on success
-			updateCache(articleGuid, position);
-		} catch (e) {
-			// Rollback on failure
-			readPositions.delete(articleGuid);
-			readPositions = new Map(readPositions);
-			console.error('Failed to mark as read:', e);
+		// Add to pending batch
+		pendingMarkRead.push({ articleGuid, articleUrl, articleTitle, position });
+
+		// Reset debounce timer
+		if (debounceTimer) {
+			clearTimeout(debounceTimer);
 		}
+		debounceTimer = setTimeout(flushPendingMarkRead, DEBOUNCE_MS);
 	}
 
 	async function markAllAsRead(
