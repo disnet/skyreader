@@ -26,6 +26,10 @@
 	// Centralized article loading function
 	// When showOnlyUnread is true, keeps loading until we have enough unread articles
 	async function loadArticles() {
+		// Clear articles immediately to prevent stale data from showing with new filter
+		// This ensures the snapshot effect sees consistent state during the async load
+		allArticles = [];
+
 		subscriptionsStore.resetArticlesPagination();
 		const feedId = feedFilter ? parseInt(feedFilter) : undefined;
 		const targetCount = 50; // How many unread articles we want to display
