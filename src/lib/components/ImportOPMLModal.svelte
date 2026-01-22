@@ -132,7 +132,6 @@
 <Modal {open} onclose={handleClose} title="Import OPML" maxWidth="520px">
 	{#if modalState === 'select'}
 		<p class="description">Select an OPML file to import feeds from another RSS reader.</p>
-		<p class="info-notice">Your feed subscriptions are public.</p>
 		<input
 			bind:this={fileInput}
 			type="file"
@@ -256,12 +255,6 @@
 <style>
 	.description {
 		color: var(--color-text-secondary);
-		margin-bottom: 0.5rem;
-	}
-
-	.info-notice {
-		color: var(--color-text-secondary);
-		font-size: 0.75rem;
 		margin-bottom: 1rem;
 	}
 
