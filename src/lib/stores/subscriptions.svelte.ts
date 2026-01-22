@@ -252,6 +252,26 @@ function createSubscriptionsStore() {
 		subscriptions = subscriptions.filter((s) => s.id !== id);
 	}
 
+	async function removeAll(): Promise<void> {
+		const allSubs = await db.subscriptions.toArray();
+		if (allSubs.length === 0) return;
+
+		// Build bulk delete operations
+		const operations = allSubs.map((sub) => ({
+			operation: 'delete' as const,
+			collection: 'app.skyreader.feed.subscription',
+			rkey: sub.rkey,
+		}));
+
+		// Single bulk request to backend
+		await api.bulkSyncRecords(operations);
+
+		// Clear all local data
+		await db.articles.clear();
+		await db.subscriptions.clear();
+		subscriptions = [];
+	}
+
 	async function fetchFeed(id: number, force = false): Promise<ParsedFeed | null> {
 		const sub = await db.subscriptions.get(id);
 		if (!sub) return null;
@@ -873,6 +893,7 @@ function createSubscriptionsStore() {
 		addBulk,
 		update,
 		remove,
+		removeAll,
 		fetchFeed,
 		getArticles,
 		getAllArticles,

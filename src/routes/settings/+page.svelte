@@ -121,7 +121,6 @@
 	}
 
 	let isUnsubscribingAll = $state(false);
-	let unsubscribeProgress = $state({ current: 0, total: 0 });
 
 	async function handleUnsubscribeAll() {
 		const count = subscriptionsStore.subscriptions.length;
@@ -136,19 +135,11 @@
 		}
 
 		isUnsubscribingAll = true;
-		unsubscribeProgress = { current: 0, total: count };
-
-		// Get a copy of IDs since array will change as we delete
-		const ids = subscriptionsStore.subscriptions
-			.map((s) => s.id)
-			.filter((id): id is number => id !== undefined);
-
-		for (const id of ids) {
-			await subscriptionsStore.remove(id);
-			unsubscribeProgress = { current: unsubscribeProgress.current + 1, total: count };
+		try {
+			await subscriptionsStore.removeAll();
+		} finally {
+			isUnsubscribingAll = false;
 		}
-
-		isUnsubscribingAll = false;
 	}
 </script>
 
@@ -324,7 +315,7 @@
 			disabled={isUnsubscribingAll || subscriptionsStore.subscriptions.length === 0}
 		>
 			{#if isUnsubscribingAll}
-				Unsubscribing... ({unsubscribeProgress.current}/{unsubscribeProgress.total})
+				Unsubscribing...
 			{:else}
 				Unsubscribe from All ({subscriptionsStore.subscriptions.length} feeds)
 			{/if}
