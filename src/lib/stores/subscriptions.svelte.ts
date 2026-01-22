@@ -1,7 +1,6 @@
 import { db } from '$lib/services/db';
 import { syncQueue } from '$lib/services/sync-queue';
 import { api } from '$lib/services/api';
-import { realtime, type NewArticlesPayload, type FeedReadyPayload } from '$lib/services/realtime';
 import type { Subscription, Article, ParsedFeed } from '$lib/types';
 
 export const MAX_SUBSCRIPTIONS = 100;
@@ -30,36 +29,6 @@ function createSubscriptionsStore() {
           s.rkey === rkey ? { ...s, atUri: sub.atUri, syncStatus: 'synced' as const } : s
         );
       }
-    }
-  });
-
-  // Listen for realtime new articles notifications
-  realtime.on('new_articles', async (payload) => {
-    const data = payload as NewArticlesPayload;
-    // Find subscription by feed URL and refresh from cache (cron already updated it)
-    const sub = subscriptions.find((s) => s.feedUrl === data.feedUrl);
-    if (sub?.id) {
-      await fetchFeed(sub.id);
-    }
-  });
-
-  // Listen for feed_ready notifications (for bulk import tracking)
-  realtime.on('feed_ready', async (payload) => {
-    const data = payload as FeedReadyPayload;
-    // Find subscription by feed URL and update its fetchStatus
-    const sub = subscriptions.find((s) => s.feedUrl === data.feedUrl);
-    if (sub?.id) {
-      // Update local DB
-      await db.subscriptions.update(sub.id, {
-        fetchStatus: 'ready',
-        lastFetchedAt: data.timestamp,
-      });
-      // Update in-memory state
-      subscriptions = subscriptions.map((s) =>
-        s.id === sub.id ? { ...s, fetchStatus: 'ready' as const, lastFetchedAt: data.timestamp } : s
-      );
-      // Fetch the newly ready feed
-      await fetchFeed(sub.id);
     }
   });
 

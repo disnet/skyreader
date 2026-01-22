@@ -4,7 +4,6 @@
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
   import { auth } from '$lib/stores/auth.svelte';
-  import { realtimeStore } from '$lib/stores/realtime.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { keyboardStore } from '$lib/stores/keyboard.svelte';
@@ -200,15 +199,6 @@
       action: () => preferences.resetFontSize(),
       condition: () => auth.isAuthenticated,
     });
-  });
-
-  // Connect/disconnect realtime based on auth state
-  $effect(() => {
-    if (auth.isAuthenticated && auth.sessionId) {
-      realtimeStore.connect(auth.sessionId);
-    } else {
-      realtimeStore.disconnect();
-    }
   });
 
   // Apply article font preference to document

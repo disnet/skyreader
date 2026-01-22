@@ -1,12 +1,5 @@
 import { api } from '$lib/services/api';
 import { db, type ReadPositionCache } from '$lib/services/db';
-import {
-  realtime,
-  type ReadPositionSyncPayload,
-  type ReadPositionDeletePayload,
-  type ReadPositionStarPayload,
-  type ReadPositionBulkSyncPayload,
-} from '$lib/services/realtime';
 
 interface ReadPosition {
   starred: boolean;
@@ -286,78 +279,6 @@ function createReadingStore() {
       return 0;
     }
   }
-
-  // Listen for realtime updates from other devices
-  realtime.on('read_position_sync', (payload) => {
-    const data = payload as ReadPositionSyncPayload;
-    // Only add if we don't already have it (avoid duplicates from own actions)
-    if (!readPositions.has(data.itemGuid)) {
-      const position: ReadPosition = {
-        starred: data.starred,
-        readAt: data.readAt,
-        itemUrl: data.itemUrl,
-        itemTitle: data.itemTitle,
-      };
-      readPositions.set(data.itemGuid, position);
-      readPositions = new Map(readPositions);
-      // Update cache
-      updateCache(data.itemGuid, position);
-    }
-  });
-
-  realtime.on('read_position_delete', (payload) => {
-    const data = payload as ReadPositionDeletePayload;
-    if (readPositions.has(data.itemGuid)) {
-      readPositions.delete(data.itemGuid);
-      readPositions = new Map(readPositions);
-      // Update cache
-      removeFromCache(data.itemGuid);
-    }
-  });
-
-  realtime.on('read_position_star', (payload) => {
-    const data = payload as ReadPositionStarPayload;
-    const position = readPositions.get(data.itemGuid);
-    if (position) {
-      const newPosition = { ...position, starred: data.starred };
-      readPositions.set(data.itemGuid, newPosition);
-      readPositions = new Map(readPositions);
-      // Update cache
-      updateCache(data.itemGuid, newPosition);
-    }
-  });
-
-  realtime.on('read_position_bulk_sync', (payload) => {
-    const data = payload as ReadPositionBulkSyncPayload;
-    let changed = false;
-    const newItems: Array<{ guid: string; position: ReadPosition }> = [];
-    for (const item of data.items) {
-      if (!readPositions.has(item.itemGuid)) {
-        const position: ReadPosition = {
-          starred: item.starred,
-          readAt: item.readAt,
-        };
-        readPositions.set(item.itemGuid, position);
-        newItems.push({ guid: item.itemGuid, position });
-        changed = true;
-      }
-    }
-    if (changed) {
-      readPositions = new Map(readPositions);
-      // Update cache
-      for (const { guid, position } of newItems) {
-        updateCache(guid, position);
-      }
-    }
-  });
-
-  // Catch-up sync when reconnecting after being offline
-  realtime.onConnectionChange((connected) => {
-    if (connected && hasLoaded) {
-      // Reconnected after being offline - catch up from backend
-      load();
-    }
-  });
 
   return {
     get readPositions() {
