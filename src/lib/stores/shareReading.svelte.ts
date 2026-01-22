@@ -1,5 +1,5 @@
 import { db } from '$lib/services/db';
-import { syncQueue } from '$lib/services/sync-queue';
+import { api } from '$lib/services/api';
 import type { ShareReadPosition } from '$lib/types';
 
 function generateTid(): string {
@@ -45,16 +45,7 @@ function createShareReadingStore() {
 			itemUrl,
 			itemTitle,
 			readAt: now,
-			syncStatus: 'pending',
 		};
-
-		// Update map immediately to prevent race conditions
-		shareReadPositions.set(shareUri, { ...position });
-		shareReadPositions = new Map(shareReadPositions);
-
-		const id = await db.shareReadPositions.add(position);
-		shareReadPositions.set(shareUri, { ...position, id });
-		shareReadPositions = new Map(shareReadPositions);
 
 		// Build record, only including optional fields if they have valid values
 		const record: Record<string, unknown> = {
@@ -71,17 +62,35 @@ function createShareReadingStore() {
 			record.itemTitle = itemTitle;
 		}
 
-		await syncQueue.enqueue({
+		// Sync to backend first
+		await api.syncRecord({
 			operation: 'create',
 			collection: 'app.skyreader.social.shareReadPosition',
 			rkey,
 			record,
 		});
+
+		// Update local state and cache
+		shareReadPositions.set(shareUri, { ...position });
+		shareReadPositions = new Map(shareReadPositions);
+
+		const id = await db.shareReadPositions.add(position);
+		shareReadPositions.set(shareUri, { ...position, id });
+		shareReadPositions = new Map(shareReadPositions);
 	}
 
 	async function markAsUnread(shareUri: string) {
 		const position = shareReadPositions.get(shareUri);
 		if (!position || !position.id) return;
+
+		// Sync delete to backend
+		if (position.rkey) {
+			await api.syncRecord({
+				operation: 'delete',
+				collection: 'app.skyreader.social.shareReadPosition',
+				rkey: position.rkey,
+			});
+		}
 
 		// Delete from local DB
 		await db.shareReadPositions.delete(position.id);
@@ -89,15 +98,6 @@ function createShareReadingStore() {
 		// Remove from map
 		shareReadPositions.delete(shareUri);
 		shareReadPositions = new Map(shareReadPositions);
-
-		// Queue delete to sync to server
-		if (position.syncStatus === 'synced' && position.rkey) {
-			await syncQueue.enqueue({
-				operation: 'delete',
-				collection: 'app.skyreader.social.shareReadPosition',
-				rkey: position.rkey,
-			});
-		}
 	}
 
 	return {

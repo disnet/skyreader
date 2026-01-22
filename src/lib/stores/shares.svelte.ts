@@ -1,6 +1,5 @@
 import { api } from '$lib/services/api';
 import { db } from '$lib/services/db';
-import { syncQueue } from '$lib/services/sync-queue';
 import type { UserShare } from '$lib/types';
 
 function generateTid(): string {
@@ -39,11 +38,10 @@ function createSharesStore() {
 			const sharesForDb: UserShare[] = [];
 
 			for (const share of shares) {
-				// Extract rkey from recordUri: at://did/collection/rkey
+				// Extract rkey from recordUri: local://did/collection/rkey or at://did/collection/rkey
 				const rkey = share.recordUri.split('/').pop() || '';
 
 				const userShare: UserShare = {
-					atUri: share.recordUri,
 					rkey,
 					feedUrl: share.feedUrl,
 					articleGuid: share.articleGuid || share.articleUrl, // Fall back to URL if no GUID
@@ -55,7 +53,6 @@ function createSharesStore() {
 					articlePublishedAt: share.articlePublishedAt,
 					note: share.note,
 					createdAt: share.createdAt,
-					syncStatus: 'synced',
 				};
 
 				newShares.set(userShare.articleGuid, userShare);
@@ -94,7 +91,7 @@ function createSharesStore() {
 	}
 
 	async function share(
-		subscriptionAtUri: string,
+		subscriptionRkey: string,
 		feedUrl: string,
 		articleGuid: string,
 		articleUrl: string,
@@ -112,7 +109,7 @@ function createSharesStore() {
 
 		const shareData: Omit<UserShare, 'id'> = {
 			rkey,
-			subscriptionAtUri,
+			subscriptionRkey,
 			feedUrl,
 			articleGuid,
 			articleUrl,
@@ -122,26 +119,14 @@ function createSharesStore() {
 			articleImage,
 			articlePublishedAt,
 			createdAt: now,
-			syncStatus: 'pending',
 		};
 
-		// Update map immediately
-		userShares.set(articleGuid, { ...shareData });
-		userShares = new Map(userShares);
-
-		const id = await db.userShares.add(shareData);
-		userShares.set(articleGuid, { ...shareData, id });
-		userShares = new Map(userShares);
-
-		// Build record for AT Protocol
+		// Build record for backend
 		const record: Record<string, unknown> = {
 			itemUrl: articleUrl,
 			createdAt: now,
 		};
 
-		if (subscriptionAtUri && subscriptionAtUri.startsWith('at://')) {
-			record.subscriptionUri = subscriptionAtUri;
-		}
 		if (feedUrl) {
 			record.feedUrl = feedUrl;
 		}
@@ -167,34 +152,43 @@ function createSharesStore() {
 			record.itemPublishedAt = articlePublishedAt;
 		}
 
-		await syncQueue.enqueue({
+		// Sync to backend first
+		await api.syncRecord({
 			operation: 'create',
 			collection: 'app.skyreader.social.share',
 			rkey,
 			record,
 		});
+
+		// Update local state and cache
+		userShares.set(articleGuid, { ...shareData });
+		userShares = new Map(userShares);
+
+		const id = await db.userShares.add(shareData);
+		userShares.set(articleGuid, { ...shareData, id });
+		userShares = new Map(userShares);
 	}
 
 	async function unshare(articleGuid: string) {
 		const existingShare = userShares.get(articleGuid);
 		if (!existingShare) return;
 
-		// Remove from map immediately
+		// Sync delete to backend
+		if (existingShare.rkey) {
+			await api.syncRecord({
+				operation: 'delete',
+				collection: 'app.skyreader.social.share',
+				rkey: existingShare.rkey,
+			});
+		}
+
+		// Remove from map
 		userShares.delete(articleGuid);
 		userShares = new Map(userShares);
 
 		// Delete from IndexedDB
 		if (existingShare.id) {
 			await db.userShares.delete(existingShare.id);
-		}
-
-		// Queue delete if already synced
-		if (existingShare.syncStatus === 'synced' && existingShare.rkey) {
-			await syncQueue.enqueue({
-				operation: 'delete',
-				collection: 'app.skyreader.social.share',
-				rkey: existingShare.rkey,
-			});
 		}
 	}
 

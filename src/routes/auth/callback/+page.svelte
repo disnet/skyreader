@@ -37,8 +37,8 @@
 			// Store the session with the real user data
 			auth.setSession(user, sessionId);
 
-			// Sync subscriptions from PDS
-			await subscriptionsStore.syncFromPds();
+			// Sync subscriptions from backend
+			await subscriptionsStore.syncFromBackend();
 
 			// Load read positions and shares from backend
 			await readingStore.load();

@@ -1,5 +1,4 @@
 import { db } from '$lib/services/db';
-import { syncQueue } from '$lib/services/sync-queue';
 import { api } from '$lib/services/api';
 import type { Subscription, Article, ParsedFeed } from '$lib/types';
 
@@ -27,18 +26,6 @@ function createSubscriptionsStore() {
 	let articlesHasMore = $state(true);
 	let articlesIsLoadingMore = $state(false);
 
-	// Listen for sync completions and update local state
-	syncQueue.onSyncComplete(async (collection, rkey) => {
-		if (collection === 'app.skyreader.feed.subscription') {
-			const sub = await db.subscriptions.where('rkey').equals(rkey).first();
-			if (sub) {
-				subscriptions = subscriptions.map((s) =>
-					s.rkey === rkey ? { ...s, atUri: sub.atUri, syncStatus: 'synced' as const } : s
-				);
-			}
-		}
-	});
-
 	async function load() {
 		isLoading = true;
 		try {
@@ -60,7 +47,6 @@ function createSubscriptionsStore() {
 		const now = new Date().toISOString();
 
 		const subscription: Omit<Subscription, 'id'> = {
-			atUri: '',
 			rkey,
 			feedUrl,
 			title,
@@ -68,14 +54,11 @@ function createSubscriptionsStore() {
 			category: options?.category,
 			tags: options?.tags || [],
 			createdAt: now,
-			syncStatus: 'pending',
 			localUpdatedAt: Date.now(),
 		};
 
-		const id = await db.subscriptions.add(subscription);
-		subscriptions = [...subscriptions, { ...subscription, id }];
-
-		await syncQueue.enqueue({
+		// Sync to backend first
+		const response = await api.syncRecord({
 			operation: 'create',
 			collection: 'app.skyreader.feed.subscription',
 			rkey,
@@ -88,6 +71,10 @@ function createSubscriptionsStore() {
 				createdAt: now,
 			},
 		});
+
+		// Store locally after successful backend sync
+		const id = await db.subscriptions.add(subscription);
+		subscriptions = [...subscriptions, { ...subscription, id }];
 
 		return id;
 	}
@@ -140,98 +127,69 @@ function createSubscriptionsStore() {
 
 		onProgress?.(0, feedsToAdd.length);
 
-		// Create all subscriptions locally first
+		// Create all subscriptions with rkeys
 		const now = new Date().toISOString();
-		const localRecords: Array<{ id: number; rkey: string; feed: (typeof feedsToAdd)[0] }> = [];
+		const localRecords: Array<{ rkey: string; feed: (typeof feedsToAdd)[0] }> = [];
 
 		for (const feed of feedsToAdd) {
-			const rkey = generateTid();
-			const subscription: Omit<Subscription, 'id'> = {
-				atUri: '',
-				rkey,
-				feedUrl: feed.feedUrl,
-				title: feed.title,
-				siteUrl: feed.siteUrl,
-				category: feed.category,
-				tags: [],
-				createdAt: now,
-				syncStatus: 'pending',
-				localUpdatedAt: Date.now(),
-				fetchStatus: 'pending',
-				source,
-				externalRef: feed.externalRef,
-			};
-
-			try {
-				const id = await db.subscriptions.add(subscription);
-				subscriptions = [...subscriptions, { ...subscription, id }];
-				localRecords.push({ id, rkey, feed });
-				added.push(id);
-			} catch (e) {
-				failed.push({
-					url: feed.feedUrl,
-					error: e instanceof Error ? e.message : 'Failed to save locally',
-				});
-			}
+			localRecords.push({ rkey: generateTid(), feed });
 		}
 
-		onProgress?.(Math.floor(feedsToAdd.length / 2), feedsToAdd.length);
+		onProgress?.(Math.floor(feedsToAdd.length / 4), feedsToAdd.length);
 
-		// Bulk sync to PDS
-		if (localRecords.length > 0) {
-			try {
-				const operations = localRecords.map(({ rkey, feed }) => ({
-					operation: 'create' as const,
-					collection: 'app.skyreader.feed.subscription',
+		// Bulk sync to backend
+		try {
+			const operations = localRecords.map(({ rkey, feed }) => ({
+				operation: 'create' as const,
+				collection: 'app.skyreader.feed.subscription',
+				rkey,
+				record: {
+					feedUrl: feed.feedUrl,
+					title: feed.title,
+					siteUrl: feed.siteUrl,
+					category: feed.category,
+					createdAt: now,
+					source,
+					externalRef: feed.externalRef,
+				},
+			}));
+
+			await api.bulkSyncRecords(operations);
+
+			onProgress?.(Math.floor(feedsToAdd.length / 2), feedsToAdd.length);
+
+			// Store locally after successful backend sync
+			for (const { rkey, feed } of localRecords) {
+				const subscription: Omit<Subscription, 'id'> = {
 					rkey,
-					record: {
-						feedUrl: feed.feedUrl,
-						title: feed.title,
-						siteUrl: feed.siteUrl,
-						category: feed.category,
-						createdAt: now,
-						source,
-						externalRef: feed.externalRef,
-					},
-				}));
+					feedUrl: feed.feedUrl,
+					title: feed.title,
+					siteUrl: feed.siteUrl,
+					category: feed.category,
+					tags: [],
+					createdAt: now,
+					localUpdatedAt: Date.now(),
+					fetchStatus: 'pending',
+					source,
+					externalRef: feed.externalRef,
+				};
 
-				const result = await api.bulkSyncRecords(operations);
-
-				// Update local records with URIs from PDS
-				for (const res of result.results) {
-					const local = localRecords.find((r) => r.rkey === res.rkey);
-					if (local && res.uri) {
-						await db.subscriptions.update(local.id, {
-							atUri: res.uri,
-							syncStatus: 'synced',
-						});
-						subscriptions = subscriptions.map((s) =>
-							s.id === local.id ? { ...s, atUri: res.uri, syncStatus: 'synced' as const } : s
-						);
-					}
-				}
-			} catch (e) {
-				// Bulk sync failed - records are saved locally with pending status
-				// They'll sync individually via the sync queue later
-				console.error('Bulk sync failed, will retry individually:', e);
-
-				// Queue individual syncs as fallback
-				for (const { rkey, feed } of localRecords) {
-					await syncQueue.enqueue({
-						operation: 'create',
-						collection: 'app.skyreader.feed.subscription',
-						rkey,
-						record: {
-							feedUrl: feed.feedUrl,
-							title: feed.title,
-							siteUrl: feed.siteUrl,
-							category: feed.category,
-							createdAt: now,
-							source,
-							externalRef: feed.externalRef,
-						},
+				try {
+					const id = await db.subscriptions.add(subscription);
+					subscriptions = [...subscriptions, { ...subscription, id }];
+					added.push(id);
+				} catch (e) {
+					failed.push({
+						url: feed.feedUrl,
+						error: e instanceof Error ? e.message : 'Failed to save locally',
 					});
 				}
+			}
+		} catch (e) {
+			// Bulk sync failed
+			const errorMessage = e instanceof Error ? e.message : 'Bulk sync failed';
+			for (const { feed } of localRecords) {
+				failed.push({ url: feed.feedUrl, error: errorMessage });
 			}
 		}
 
@@ -246,7 +204,7 @@ function createSubscriptionsStore() {
 
 		const now = new Date().toISOString();
 
-		// Build the updated record for PDS sync
+		// Build the updated record for backend sync
 		const updatedRecord = {
 			feedUrl: updates.feedUrl ?? sub.feedUrl,
 			title: updates.title ?? sub.title,
@@ -257,68 +215,41 @@ function createSubscriptionsStore() {
 			updatedAt: now,
 		};
 
+		// Sync to backend
+		await api.syncRecord({
+			operation: 'update',
+			collection: 'app.skyreader.feed.subscription',
+			rkey: sub.rkey,
+			record: updatedRecord,
+		});
+
 		// Update local DB
 		await db.subscriptions.update(id, {
 			...updates,
 			updatedAt: now,
 			localUpdatedAt: Date.now(),
-			syncStatus: 'pending',
 		});
 
 		subscriptions = subscriptions.map((s) =>
-			s.id === id ? { ...s, ...updates, updatedAt: now, syncStatus: 'pending' as const } : s
+			s.id === id ? { ...s, ...updates, updatedAt: now } : s
 		);
-
-		// Try to update any pending create operation in the sync queue
-		const pendingCreateItems = await db.syncQueue
-			.where('rkey')
-			.equals(sub.rkey)
-			.filter(
-				(item) =>
-					item.operation === 'create' && item.collection === 'app.skyreader.feed.subscription'
-			)
-			.toArray();
-
-		if (pendingCreateItems.length > 0) {
-			// Update the pending create with new data
-			for (const item of pendingCreateItems) {
-				if (item.id && item.record) {
-					await db.syncQueue.update(item.id, {
-						record: {
-							...item.record,
-							...updatedRecord,
-						},
-					});
-				}
-			}
-		} else {
-			// No pending create found - either already synced or will be soon
-			// Enqueue an update operation to ensure PDS gets the latest data
-			await syncQueue.enqueue({
-				operation: 'update',
-				collection: 'app.skyreader.feed.subscription',
-				rkey: sub.rkey,
-				record: updatedRecord,
-			});
-		}
 	}
 
 	async function remove(id: number) {
 		const sub = await db.subscriptions.get(id);
 		if (!sub) return;
 
+		// Sync delete to backend
+		await api.syncRecord({
+			operation: 'delete',
+			collection: 'app.skyreader.feed.subscription',
+			rkey: sub.rkey,
+		});
+
 		// Delete articles for this subscription
 		await db.articles.where('subscriptionId').equals(id).delete();
 		await db.subscriptions.delete(id);
 		subscriptions = subscriptions.filter((s) => s.id !== id);
-
-		if (sub.syncStatus === 'synced') {
-			await syncQueue.enqueue({
-				operation: 'delete',
-				collection: 'app.skyreader.feed.subscription',
-				rkey: sub.rkey,
-			});
-		}
 	}
 
 	async function fetchFeed(id: number, force = false): Promise<ParsedFeed | null> {
@@ -592,7 +523,7 @@ function createSubscriptionsStore() {
 		}
 	}
 
-	async function syncFromPds(): Promise<void> {
+	async function syncFromBackend(): Promise<void> {
 		try {
 			const response = await api.listRecords<{
 				feedUrl: string;
@@ -609,12 +540,11 @@ function createSubscriptionsStore() {
 			const localByRkey = new Map(localSubs.map((s) => [s.rkey, s]));
 
 			for (const record of response.records) {
-				// Extract rkey from URI (at://did/collection/rkey)
+				// Extract rkey from URI (local://did/collection/rkey or at://did/collection/rkey)
 				const rkey = record.uri.split('/').pop() || '';
 				const existing = localByRkey.get(rkey);
 
 				const subscription: Omit<Subscription, 'id'> = {
-					atUri: record.uri,
 					rkey,
 					feedUrl: record.value.feedUrl,
 					title: record.value.title || record.value.feedUrl,
@@ -623,7 +553,6 @@ function createSubscriptionsStore() {
 					tags: record.value.tags || [],
 					createdAt: record.value.createdAt,
 					updatedAt: record.value.updatedAt,
-					syncStatus: 'synced',
 					localUpdatedAt: Date.now(),
 				};
 
@@ -631,7 +560,7 @@ function createSubscriptionsStore() {
 					// Update existing record
 					await db.subscriptions.update(existing.id!, subscription);
 				} else {
-					// Add new record from PDS
+					// Add new record from backend
 					await db.subscriptions.add(subscription);
 				}
 			}
@@ -639,8 +568,8 @@ function createSubscriptionsStore() {
 			// Reload subscriptions from DB
 			subscriptions = await db.subscriptions.toArray();
 		} catch (e) {
-			console.error('Failed to sync from PDS:', e);
-			error = e instanceof Error ? e.message : 'Failed to sync from PDS';
+			console.error('Failed to sync from backend:', e);
+			error = e instanceof Error ? e.message : 'Failed to sync from backend';
 		}
 	}
 
@@ -972,7 +901,7 @@ function createSubscriptionsStore() {
 		resetArticlesPagination,
 		fetchRecentItems,
 		searchArticles,
-		syncFromPds,
+		syncFromBackend,
 		clearFeedError,
 		checkFeedStatuses,
 		fetchPendingFeedsGradually,

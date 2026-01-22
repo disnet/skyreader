@@ -8,7 +8,6 @@ export interface User {
 
 export interface Subscription {
 	id?: number;
-	atUri: string;
 	rkey: string;
 	feedUrl: string;
 	title: string;
@@ -17,7 +16,6 @@ export interface Subscription {
 	tags: string[];
 	createdAt: string;
 	updatedAt?: string;
-	syncStatus: 'synced' | 'pending' | 'conflict';
 	localUpdatedAt: number;
 	fetchStatus?: 'pending' | 'ready' | 'error';
 	lastFetchedAt?: number;
@@ -42,28 +40,24 @@ export interface Article {
 
 export interface ReadPosition {
 	id?: number;
-	atUri?: string;
 	rkey?: string;
-	subscriptionAtUri: string;
+	subscriptionRkey: string;
 	articleGuid: string;
 	articleUrl: string;
 	articleTitle?: string;
 	readAt: string;
 	scrollPosition?: number;
 	starred: boolean;
-	syncStatus: 'synced' | 'pending';
 }
 
 export interface ShareReadPosition {
 	id?: number;
-	atUri?: string;
 	rkey?: string;
 	shareUri: string;
 	shareAuthorDid: string;
 	itemUrl: string;
 	itemTitle?: string;
 	readAt: string;
-	syncStatus: 'synced' | 'pending';
 }
 
 export interface SocialShare {
@@ -88,9 +82,8 @@ export interface SocialShare {
 
 export interface UserShare {
 	id?: number;
-	atUri?: string;
 	rkey?: string;
-	subscriptionAtUri?: string;
+	subscriptionRkey?: string;
 	feedUrl?: string;
 	articleGuid: string;
 	articleUrl: string;
@@ -101,18 +94,6 @@ export interface UserShare {
 	articlePublishedAt?: string;
 	note?: string;
 	createdAt: string;
-	syncStatus: 'synced' | 'pending';
-}
-
-export interface SyncQueueItem {
-	id?: number;
-	operation: 'create' | 'update' | 'delete';
-	collection: string;
-	rkey: string;
-	record?: Record<string, unknown>;
-	timestamp: number;
-	retryCount: number;
-	lastError?: string;
 }
 
 export interface ParsedFeed {
@@ -150,9 +131,7 @@ export interface DiscoverUser {
 
 export interface InappFollow {
 	id?: number;
-	atUri?: string;
 	rkey?: string;
 	subjectDid: string;
 	createdAt: string;
-	syncStatus: 'synced' | 'pending';
 }

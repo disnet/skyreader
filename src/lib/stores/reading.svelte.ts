@@ -204,7 +204,7 @@ function createReadingStore() {
 
 	async function markAllAsRead(
 		articles: Array<{
-			subscriptionAtUri: string;
+			subscriptionRkey: string;
 			articleGuid: string;
 			articleUrl: string;
 			articleTitle?: string;

@@ -285,7 +285,7 @@
 
 			const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
 			if (sub) {
-				readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+				readingStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
 			}
 		} else if (mode === 'shares') {
 			const share = displayedShares[index];
@@ -307,7 +307,7 @@
 
 				const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
 				if (sub) {
-					readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+					readingStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
 				}
 			} else {
 				const share = feedItem.item;
@@ -521,10 +521,13 @@
 					fetchedAt: Date.now(),
 				},
 				sub: {
-					atUri: '',
+					rkey: '',
 					feedUrl: share.feedUrl || '',
 					id: 0,
 					title: '',
+					tags: [],
+					createdAt: '',
+					localUpdatedAt: 0,
 				} as (typeof subscriptionsStore.subscriptions)[0],
 			};
 		}
@@ -569,7 +572,7 @@
 			sharesStore.unshare(article.guid);
 		} else {
 			sharesStore.share(
-				sub.atUri,
+				sub.rkey,
 				sub.feedUrl,
 				article.guid,
 				article.url,
@@ -596,7 +599,7 @@
 			if (readingStore.isRead(article.guid)) {
 				readingStore.markAsUnread(article.guid);
 			} else {
-				readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+				readingStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
 			}
 		} else if (mode === 'combined') {
 			const feedItem = displayedCombined[selectedIndex];
@@ -610,7 +613,7 @@
 				if (readingStore.isRead(article.guid)) {
 					readingStore.markAsUnread(article.guid);
 				} else {
-					readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+					readingStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
 				}
 			} else {
 				const share = feedItem.item;
@@ -704,7 +707,7 @@
 		const articlesToMark = allFeedArticles
 			.filter((a) => !readingStore.isRead(a.guid))
 			.map((a) => ({
-				subscriptionAtUri: sub.atUri,
+				subscriptionRkey: sub.rkey,
 				articleGuid: a.guid,
 				articleUrl: a.url,
 				articleTitle: a.title,
@@ -881,7 +884,7 @@
 			const article = displayedArticles[index];
 			const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
 			if (sub && !readingStore.isRead(article.guid)) {
-				readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+				readingStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
 			}
 		} else if (mode === 'shares') {
 			const share = displayedShares[index];
@@ -899,7 +902,7 @@
 				const article = feedItem.item;
 				const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
 				if (sub && !readingStore.isRead(article.guid)) {
-					readingStore.markAsRead(sub.atUri, article.guid, article.url, article.title);
+					readingStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
 				}
 			} else {
 				const share = feedItem.item;
@@ -1020,7 +1023,7 @@
 								onToggleStar={() => readingStore.toggleStar(article.guid)}
 								onShare={() =>
 									sharesStore.share(
-										sub?.atUri || '',
+										sub?.rkey || '',
 										sub?.feedUrl || '',
 										article.guid,
 										article.url,
@@ -1239,7 +1242,7 @@
 							onToggleStar={() => readingStore.toggleStar(article.guid)}
 							onShare={() =>
 								sharesStore.share(
-									sub?.atUri || '',
+									sub?.rkey || '',
 									sub?.feedUrl || '',
 									article.guid,
 									article.url,
