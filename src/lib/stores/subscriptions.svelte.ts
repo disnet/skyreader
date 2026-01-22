@@ -681,7 +681,7 @@ function createSubscriptionsStore() {
 
 	// Fetch all feeds that need content: ready feeds from cache (batch), pending feeds from source
 	// When force=true, bypass all caches and fetch all feeds from source
-	async function fetchAllNewFeeds(concurrency = 2, delayMs = 1000, force = false): Promise<void> {
+	async function fetchAllNewFeeds(concurrency = 1, delayMs = 5000, force = false): Promise<void> {
 		if (force) {
 			// Force refresh ALL feeds from source, bypassing all caches
 			const allFeeds = subscriptions.filter((s) => s.id);
@@ -725,8 +725,6 @@ function createSubscriptionsStore() {
 		if (readyFeeds.length > 0) {
 			console.log(`Batch fetching ${readyFeeds.length} ready feeds from cache...`);
 			try {
-				const feedUrls = readyFeeds.map((s) => s.feedUrl);
-
 				// Collect most recent article timestamp per feed for delta sync
 				const since: Record<string, number> = {};
 				for (const sub of readyFeeds) {
@@ -744,39 +742,52 @@ function createSubscriptionsStore() {
 					}
 				}
 
-				const { feeds } = await api.fetchFeedsBatch(feedUrls, since);
+				// Process in chunks of 50 (backend limit)
+				const BATCH_CHUNK_SIZE = 50;
+				for (let i = 0; i < readyFeeds.length; i += BATCH_CHUNK_SIZE) {
+					const chunk = readyFeeds.slice(i, i + BATCH_CHUNK_SIZE);
+					const feedUrls = chunk.map((s) => s.feedUrl);
 
-				// Process batch response and store articles
-				for (const sub of readyFeeds) {
-					if (!sub.id) continue;
-					const feedData = feeds[sub.feedUrl];
-					if (!feedData || feedData.items.length === 0) continue;
+					// Filter since to only include URLs in this chunk
+					const chunkSince: Record<string, number> = {};
+					for (const url of feedUrls) {
+						if (since[url]) chunkSince[url] = since[url];
+					}
 
-					// Store new articles (backend already filtered by 'since', but double-check GUIDs)
-					const existingArticles = await db.articles
-						.where('subscriptionId')
-						.equals(sub.id)
-						.toArray();
-					const existingGuids = new Set(existingArticles.map((a) => a.guid));
+					const { feeds } = await api.fetchFeedsBatch(feedUrls, chunkSince);
 
-					const newArticles: Article[] = feedData.items
-						.filter((item) => !existingGuids.has(item.guid))
-						.map((item) => ({
-							subscriptionId: sub.id!,
-							guid: item.guid,
-							url: item.url,
-							title: item.title,
-							author: item.author,
-							content: item.content,
-							summary: item.summary,
-							imageUrl: item.imageUrl,
-							publishedAt: item.publishedAt,
-							fetchedAt: Date.now(),
-						}));
+					// Process batch response and store articles
+					for (const sub of chunk) {
+						if (!sub.id) continue;
+						const feedData = feeds[sub.feedUrl];
+						if (!feedData || feedData.items.length === 0) continue;
 
-					if (newArticles.length > 0) {
-						await db.articles.bulkAdd(newArticles);
-						articlesVersion++;
+						// Store new articles (backend already filtered by 'since', but double-check GUIDs)
+						const existingArticles = await db.articles
+							.where('subscriptionId')
+							.equals(sub.id)
+							.toArray();
+						const existingGuids = new Set(existingArticles.map((a) => a.guid));
+
+						const newArticles: Article[] = feedData.items
+							.filter((item) => !existingGuids.has(item.guid))
+							.map((item) => ({
+								subscriptionId: sub.id!,
+								guid: item.guid,
+								url: item.url,
+								title: item.title,
+								author: item.author,
+								content: item.content,
+								summary: item.summary,
+								imageUrl: item.imageUrl,
+								publishedAt: item.publishedAt,
+								fetchedAt: Date.now(),
+							}));
+
+						if (newArticles.length > 0) {
+							await db.articles.bulkAdd(newArticles);
+							articlesVersion++;
+						}
 					}
 				}
 			} catch (e) {
@@ -792,7 +803,7 @@ function createSubscriptionsStore() {
 
 	// Gradually fetch pending feeds in background with rate limiting
 	// Uses force=true to trigger actual backend fetches for feeds not yet cached
-	async function fetchPendingFeedsGradually(concurrency = 2, delayMs = 1000): Promise<void> {
+	async function fetchPendingFeedsGradually(concurrency = 1, delayMs = 5000): Promise<void> {
 		const pendingFeeds = subscriptions.filter((s) => s.fetchStatus === 'pending' && s.id);
 
 		if (pendingFeeds.length === 0) return;

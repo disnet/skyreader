@@ -137,7 +137,15 @@
 				}
 			}
 
-			displayedArticles = filtered;
+			// Deduplicate by guid (race conditions can cause duplicates in IndexedDB)
+			const seen = new Set<string>();
+			const deduped = filtered.filter((a) => {
+				if (seen.has(a.guid)) return false;
+				seen.add(a.guid);
+				return true;
+			});
+
+			displayedArticles = deduped;
 			lastFilterKey = currentKey;
 			lastArticlesVersion = currentVersion;
 			lastArticlesLength = currentLength;
@@ -371,7 +379,7 @@
 			if (timeSinceVisible > STALE_THRESHOLD_MS) {
 				console.log('Tab was hidden for a while, checking for updates...');
 				// Fetch from backend cache (non-forced) to catch up on missed updates
-				await subscriptionsStore.fetchAllNewFeeds(2, 500);
+				await subscriptionsStore.fetchAllNewFeeds();
 				// Reset pagination and reload first page to show new articles at top
 				subscriptionsStore.resetArticlesPagination();
 				allArticles = await subscriptionsStore.getArticlesPaginated(
@@ -402,7 +410,7 @@
 				await subscriptionsStore.checkFeedStatuses(feedUrls);
 
 				// Await the full fetch operation (ready from cache, pending from source)
-				await subscriptionsStore.fetchAllNewFeeds(2, 1000);
+				await subscriptionsStore.fetchAllNewFeeds();
 
 				// Reload first page after fetch to include any new articles
 				subscriptionsStore.resetArticlesPagination();
@@ -642,7 +650,7 @@
 			await subscriptionsStore.fetchFeed(feedId, true);
 		} else {
 			// Force refresh all feeds - bypass all caches
-			await subscriptionsStore.fetchAllNewFeeds(2, 500, true);
+			await subscriptionsStore.fetchAllNewFeeds(1, 5000, true);
 		}
 		// Reset pagination and reload first page
 		subscriptionsStore.resetArticlesPagination();

@@ -114,7 +114,7 @@
 			await subscriptionsStore.checkFeedStatuses(newFeedUrls);
 
 			// Fetch ready feeds from cache immediately, then pending feeds gradually
-			subscriptionsStore.fetchAllNewFeeds(2, 1000);
+			subscriptionsStore.fetchAllNewFeeds();
 		}
 	}
 
