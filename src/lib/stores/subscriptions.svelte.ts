@@ -80,10 +80,9 @@ function createSubscriptionsStore() {
 			title: string;
 			siteUrl?: string;
 			category?: string;
-			externalRef?: string;
 		}>,
 		onProgress?: (current: number, total: number) => void,
-		options?: { source?: 'manual' | 'opml' | 'leaflet' }
+		options?: { source?: 'manual' | 'opml' }
 	): Promise<{
 		added: number[];
 		skipped: string[];
@@ -141,7 +140,6 @@ function createSubscriptionsStore() {
 				siteUrl: feed.siteUrl,
 				category: feed.category,
 				source,
-				externalRef: feed.externalRef,
 			}));
 
 			await api.bulkCreateSubscriptions(subscriptionsToCreate);
@@ -161,7 +159,6 @@ function createSubscriptionsStore() {
 					localUpdatedAt: Date.now(),
 					fetchStatus: 'pending',
 					source,
-					externalRef: feed.externalRef,
 				};
 
 				try {
@@ -751,94 +748,6 @@ function createSubscriptionsStore() {
 		console.log('Finished fetching pending feeds');
 	}
 
-	// Sync Leaflet subscriptions using batched resolution
-	async function syncLeaflet(
-		onProgress?: (stage: string, current: number, total: number) => void
-	): Promise<{ added: number; skipped: number; errors: string[] }> {
-		const BATCH_SIZE = 10;
-		const errors: string[] = [];
-
-		// 1. Fetch Leaflet subscriptions from backend
-		onProgress?.('Fetching subscriptions...', 0, 0);
-		const { subscriptions: leafletSubs } = await api.getLeafletSubscriptions();
-
-		if (leafletSubs.length === 0) {
-			return { added: 0, skipped: 0, errors: [] };
-		}
-
-		// 2. Filter out already-imported (check externalRef)
-		const existingRefs = new Set(
-			subscriptions.filter((s) => s.externalRef).map((s) => s.externalRef)
-		);
-		const toImport = leafletSubs.filter((s) => !existingRefs.has(s.uri));
-		const alreadyImported = leafletSubs.length - toImport.length;
-
-		if (toImport.length === 0) {
-			return { added: 0, skipped: alreadyImported, errors: [] };
-		}
-
-		// 3. Resolve in batches of 10
-		const resolved: Array<{
-			feedUrl: string;
-			title: string;
-			siteUrl?: string;
-			externalRef: string;
-		}> = [];
-
-		for (let i = 0; i < toImport.length; i += BATCH_SIZE) {
-			const batch = toImport.slice(i, i + BATCH_SIZE);
-			onProgress?.('Resolving feeds...', i, toImport.length);
-
-			try {
-				const { results } = await api.resolveLeafletPublications(batch.map((s) => s.publication));
-
-				for (let j = 0; j < results.length; j++) {
-					const result = results[j];
-					if (result.resolved) {
-						resolved.push({
-							feedUrl: result.resolved.rssUrl,
-							title: result.resolved.title || result.resolved.rssUrl,
-							siteUrl: result.resolved.siteUrl,
-							externalRef: batch[j].uri,
-						});
-					} else {
-						errors.push(`Could not resolve: ${result.publication}`);
-					}
-				}
-			} catch (e) {
-				errors.push(`Batch resolution failed: ${e instanceof Error ? e.message : String(e)}`);
-			}
-		}
-
-		onProgress?.('Resolving feeds...', toImport.length, toImport.length);
-
-		if (resolved.length === 0) {
-			return { added: 0, skipped: alreadyImported, errors };
-		}
-
-		// 4. Add via existing addBulk with source='leaflet'
-		onProgress?.('Adding feeds...', 0, resolved.length);
-		const result = await addBulk(
-			resolved,
-			(current, total) => {
-				onProgress?.('Adding feeds...', current, total);
-			},
-			{ source: 'leaflet' }
-		);
-
-		// 5. Fetch new feeds
-		if (result.added.length > 0) {
-			onProgress?.('Fetching feed content...', 0, result.added.length);
-			await fetchAllNewFeeds();
-		}
-
-		return {
-			added: result.added.length,
-			skipped: alreadyImported + result.skipped.length,
-			errors: [...errors, ...result.failed.map((f) => f.error)],
-		};
-	}
-
 	return {
 		get subscriptions() {
 			return subscriptions;
@@ -886,7 +795,6 @@ function createSubscriptionsStore() {
 		checkFeedStatuses,
 		fetchPendingFeedsGradually,
 		fetchAllNewFeeds,
-		syncLeaflet,
 	};
 }
 
