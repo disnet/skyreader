@@ -61,6 +61,37 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy build --project-name=skyreader --branch=staging --commit-dirty=true
 
+  deploy-staging-prod:
+    name: Deploy Staging (Prod Backend)
+    needs: typecheck
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build for staging-prod
+        run: npm run build
+        env:
+          VITE_API_URL: https://api.skyreader.app
+
+      - name: Deploy to Cloudflare Pages (staging-prod)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy build --project-name=skyreader --branch=staging-prod --commit-dirty=true
+
   deploy-production:
     name: Deploy to Production
     needs: typecheck
