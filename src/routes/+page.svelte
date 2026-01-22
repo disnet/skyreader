@@ -891,14 +891,6 @@
 		});
 
 		keyboardStore.register({
-			key: 'r',
-			description: 'Refresh',
-			category: 'Other',
-			action: refreshView,
-			condition: () => auth.isAuthenticated,
-		});
-
-		keyboardStore.register({
 			key: 'A',
 			shift: true,
 			description: 'Mark all as read',

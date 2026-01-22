@@ -33,7 +33,6 @@
 		// Other
 		{ category: 'Other', key: 'u', description: 'Toggle unread filter' },
 		{ category: 'Other', key: 'a', description: 'Add feed' },
-		{ category: 'Other', key: 'r', description: 'Refresh' },
 		{ category: 'Other', key: '?', description: 'Show shortcuts' },
 		{ category: 'Other', key: 'Esc', description: 'Close modal / Deselect' },
 	];
