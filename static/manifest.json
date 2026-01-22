@@ -1,43 +1,43 @@
 {
-  "name": "Skyreader",
-  "short_name": "Skyreader",
-  "description": "A decentralized RSS reader built on AT Protocol",
-  "start_url": "/",
-  "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#4A9FD4",
-  "orientation": "portrait-primary",
-  "icons": [
-    {
-      "src": "/icons/icon-192.svg",
-      "sizes": "192x192",
-      "type": "image/svg+xml"
-    },
-    {
-      "src": "/icons/icon-512.svg",
-      "sizes": "512x512",
-      "type": "image/svg+xml"
-    },
-    {
-      "src": "/icons/icon-512.svg",
-      "sizes": "512x512",
-      "type": "image/svg+xml",
-      "purpose": "maskable"
-    }
-  ],
-  "categories": ["news", "productivity"],
-  "shortcuts": [
-    {
-      "name": "Add Feed",
-      "short_name": "Add",
-      "url": "/feeds",
-      "description": "Add a new RSS feed subscription"
-    },
-    {
-      "name": "Social Feed",
-      "short_name": "Social",
-      "url": "/social",
-      "description": "See what people you follow are sharing"
-    }
-  ]
+	"name": "Skyreader",
+	"short_name": "Skyreader",
+	"description": "A decentralized RSS reader built on AT Protocol",
+	"start_url": "/",
+	"display": "standalone",
+	"background_color": "#ffffff",
+	"theme_color": "#4A9FD4",
+	"orientation": "portrait-primary",
+	"icons": [
+		{
+			"src": "/icons/icon-192.svg",
+			"sizes": "192x192",
+			"type": "image/svg+xml"
+		},
+		{
+			"src": "/icons/icon-512.svg",
+			"sizes": "512x512",
+			"type": "image/svg+xml"
+		},
+		{
+			"src": "/icons/icon-512.svg",
+			"sizes": "512x512",
+			"type": "image/svg+xml",
+			"purpose": "maskable"
+		}
+	],
+	"categories": ["news", "productivity"],
+	"shortcuts": [
+		{
+			"name": "Add Feed",
+			"short_name": "Add",
+			"url": "/feeds",
+			"description": "Add a new RSS feed subscription"
+		},
+		{
+			"name": "Social Feed",
+			"short_name": "Social",
+			"url": "/social",
+			"description": "See what people you follow are sharing"
+		}
+	]
 }

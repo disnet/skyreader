@@ -122,21 +122,21 @@ skyreader-frontend/
 
 ## Key Routes
 
-| Route | Purpose |
-|-------|---------|
-| `/` | Main feed (all articles) |
-| `/social` | Shares from followed users |
-| `/starred` | Starred articles |
-| `/feeds` | Manage subscriptions |
-| `/discover` | Discover new feeds |
-| `/settings` | Account and sync status |
-| `/auth/login` | Bluesky handle input |
-| `/auth/callback` | OAuth callback |
+| Route            | Purpose                    |
+| ---------------- | -------------------------- |
+| `/`              | Main feed (all articles)   |
+| `/social`        | Shares from followed users |
+| `/starred`       | Starred articles           |
+| `/feeds`         | Manage subscriptions       |
+| `/discover`      | Discover new feeds         |
+| `/settings`      | Account and sync status    |
+| `/auth/login`    | Bluesky handle input       |
+| `/auth/callback` | OAuth callback             |
 
 ## Environment Variables
 
-| Variable | Description | Example |
-|----------|-------------|---------|
+| Variable       | Description     | Example                 |
+| -------------- | --------------- | ----------------------- |
 | `VITE_API_URL` | Backend API URL | `http://127.0.0.1:8787` |
 
 ## Useful Commands

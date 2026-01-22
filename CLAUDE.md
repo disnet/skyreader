@@ -1,5 +1,7 @@
 # Skyreader Frontend Development Guide
 
+**Important:** Always run `npm run check` before finishing work to verify types and formatting.
+
 ## Project Overview
 
 Skyreader frontend is a SvelteKit PWA that provides an RSS reading experience with AT Protocol integration. User data is stored in their Personal Data Server (PDS), giving them full ownership and portability.
@@ -25,37 +27,37 @@ Skyreader frontend is a SvelteKit PWA that provides an RSS reading experience wi
 
 All stores use Svelte 5 runes (`.svelte.ts` files):
 
-| Store | Purpose |
-|-------|---------|
-| `auth.svelte.ts` | User session state |
-| `subscriptions.svelte.ts` | Feed subscriptions CRUD |
-| `reading.svelte.ts` | Read/starred state for articles |
-| `social.svelte.ts` | Social feed from followed users |
-| `sync.svelte.ts` | Online status and pending sync count |
-| `preferences.svelte.ts` | User preferences |
-| `realtime.svelte.ts` | WebSocket connection state |
+| Store                     | Purpose                              |
+| ------------------------- | ------------------------------------ |
+| `auth.svelte.ts`          | User session state                   |
+| `subscriptions.svelte.ts` | Feed subscriptions CRUD              |
+| `reading.svelte.ts`       | Read/starred state for articles      |
+| `social.svelte.ts`        | Social feed from followed users      |
+| `sync.svelte.ts`          | Online status and pending sync count |
+| `preferences.svelte.ts`   | User preferences                     |
+| `realtime.svelte.ts`      | WebSocket connection state           |
 
 ### Services
 
-| Service | Purpose |
-|---------|---------|
-| `api.ts` | HTTP client for backend API |
-| `db.ts` | Dexie (IndexedDB) schema for offline storage |
+| Service         | Purpose                                            |
+| --------------- | -------------------------------------------------- |
+| `api.ts`        | HTTP client for backend API                        |
+| `db.ts`         | Dexie (IndexedDB) schema for offline storage       |
 | `sync-queue.ts` | Queue operations when offline, process when online |
-| `realtime.ts` | WebSocket connection management |
+| `realtime.ts`   | WebSocket connection management                    |
 
 ### Key Routes
 
-| Route | Purpose |
-|-------|---------|
-| `/` | Main feed (all articles from subscribed feeds) |
-| `/social` | Shares from followed users |
-| `/starred` | Starred articles |
-| `/feeds` | Manage feed subscriptions |
-| `/discover` | Discover new feeds |
-| `/settings` | Account and sync status |
-| `/auth/login` | Bluesky handle input |
-| `/auth/callback` | OAuth callback handler |
+| Route            | Purpose                                        |
+| ---------------- | ---------------------------------------------- |
+| `/`              | Main feed (all articles from subscribed feeds) |
+| `/social`        | Shares from followed users                     |
+| `/starred`       | Starred articles                               |
+| `/feeds`         | Manage feed subscriptions                      |
+| `/discover`      | Discover new feeds                             |
+| `/settings`      | Account and sync status                        |
+| `/auth/login`    | Bluesky handle input                           |
+| `/auth/callback` | OAuth callback handler                         |
 
 ## Common Tasks
 
@@ -76,19 +78,20 @@ All stores use Svelte 5 runes (`.svelte.ts` files):
 
 1. Create `src/lib/stores/name.svelte.ts`
 2. Use Svelte 5 runes pattern:
+
    ```typescript
    class NameStore {
-     data = $state<DataType | null>(null);
-     loading = $state(false);
+   	data = $state<DataType | null>(null);
+   	loading = $state(false);
 
-     async fetch() {
-       this.loading = true;
-       try {
-         this.data = await api.getData();
-       } finally {
-         this.loading = false;
-       }
-     }
+   	async fetch() {
+   		this.loading = true;
+   		try {
+   			this.data = await api.getData();
+   		} finally {
+   			this.loading = false;
+   		}
+   	}
    }
 
    export const nameStore = new NameStore();
@@ -118,6 +121,7 @@ VITE_API_URL=http://127.0.0.1:8787
 ```
 
 For production:
+
 ```
 VITE_API_URL=https://your-backend.workers.dev
 ```

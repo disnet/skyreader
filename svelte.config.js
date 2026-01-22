@@ -3,22 +3,22 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
-  preprocess: vitePreprocess(),
+	preprocess: vitePreprocess(),
 
-  kit: {
-    adapter: adapter({
-      pages: 'build',
-      assets: 'build',
-      fallback: 'index.html',
-      precompress: false,
-      strict: true
-    }),
-    serviceWorker: {
-      // Service worker doesn't work in dev mode on Firefox due to ES module restrictions.
-      // Use `npm run build && npm run preview` to test the service worker.
-      register: process.env.NODE_ENV === 'production'
-    }
-  }
+	kit: {
+		adapter: adapter({
+			pages: 'build',
+			assets: 'build',
+			fallback: 'index.html',
+			precompress: false,
+			strict: true,
+		}),
+		serviceWorker: {
+			// Service worker doesn't work in dev mode on Firefox due to ES module restrictions.
+			// Use `npm run build && npm run preview` to test the service worker.
+			register: process.env.NODE_ENV === 'production',
+		},
+	},
 };
 
 export default config;

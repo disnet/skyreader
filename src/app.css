@@ -1,193 +1,196 @@
 :root {
-  --color-primary: #0066cc;
-  --color-primary-dark: #0052a3;
-  --color-bg: #ffffff;
-  --color-bg-secondary: #f5f5f5;
-  --color-text: #333333;
-  --color-text-secondary: #666666;
-  --color-border: #e0e0e0;
-  --color-success: #4caf50;
-  --color-warning: #ff9800;
-  --color-error: #f44336;
+	--color-primary: #0066cc;
+	--color-primary-dark: #0052a3;
+	--color-bg: #ffffff;
+	--color-bg-secondary: #f5f5f5;
+	--color-text: #333333;
+	--color-text-secondary: #666666;
+	--color-border: #e0e0e0;
+	--color-success: #4caf50;
+	--color-warning: #ff9800;
+	--color-error: #f44336;
 
-  /* Sidebar dimensions */
-  --sidebar-width: 260px;
-  --sidebar-collapsed-width: 60px;
-  --color-sidebar-active: rgba(0, 102, 204, 0.1);
+	/* Sidebar dimensions */
+	--sidebar-width: 260px;
+	--sidebar-collapsed-width: 60px;
+	--color-sidebar-active: rgba(0, 102, 204, 0.1);
 
-  /* Article font families */
-  --font-sans-serif: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-  --font-serif: Georgia, Cambria, 'Times New Roman', Times, serif;
-  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
-  --article-font: var(--font-sans-serif);
-  --article-font-size: 1rem;
+	/* Article font families */
+	--font-sans-serif:
+		-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+	--font-serif: Georgia, Cambria, 'Times New Roman', Times, serif;
+	--font-mono:
+		ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+	--article-font: var(--font-sans-serif);
+	--article-font-size: 1rem;
 
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-  line-height: 1.5;
-  color: var(--color-text);
-  background: var(--color-bg);
+	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+	line-height: 1.5;
+	color: var(--color-text);
+	background: var(--color-bg);
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --color-primary: #4da6ff;
-    --color-primary-dark: #3399ff;
-    --color-bg: #1a1a1a;
-    --color-bg-secondary: #2a2a2a;
-    --color-text: #e0e0e0;
-    --color-text-secondary: #999999;
-    --color-border: #404040;
-    --color-sidebar-active: rgba(77, 166, 255, 0.15);
-  }
+	:root {
+		--color-primary: #4da6ff;
+		--color-primary-dark: #3399ff;
+		--color-bg: #1a1a1a;
+		--color-bg-secondary: #2a2a2a;
+		--color-text: #e0e0e0;
+		--color-text-secondary: #999999;
+		--color-border: #404040;
+		--color-sidebar-active: rgba(77, 166, 255, 0.15);
+	}
 }
 
 * {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
 }
 
 body {
-  min-height: 100vh;
+	min-height: 100vh;
 }
 
 a {
-  color: var(--color-primary);
+	color: var(--color-primary);
 }
 
 button {
-  cursor: pointer;
-  font-family: inherit;
-  font-size: inherit;
+	cursor: pointer;
+	font-family: inherit;
+	font-size: inherit;
 }
 
-input, textarea {
-  font-family: inherit;
-  font-size: inherit;
+input,
+textarea {
+	font-family: inherit;
+	font-size: inherit;
 }
 
 .btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  border-radius: 6px;
-  border: none;
-  font-weight: 500;
-  transition: background-color 0.2s;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	padding: 0.5rem 1rem;
+	border-radius: 6px;
+	border: none;
+	font-weight: 500;
+	transition: background-color 0.2s;
 }
 
 .btn-primary {
-  background: var(--color-primary);
-  color: white;
+	background: var(--color-primary);
+	color: white;
 }
 
 .btn-primary:hover {
-  background: var(--color-primary-dark);
+	background: var(--color-primary-dark);
 }
 
 .btn-secondary {
-  background: var(--color-bg-secondary);
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
+	background: var(--color-bg-secondary);
+	color: var(--color-text);
+	border: 1px solid var(--color-border);
 }
 
 .btn-secondary:hover {
-  background: var(--color-border);
+	background: var(--color-border);
 }
 
 .btn-danger {
-  background: var(--color-error);
-  color: white;
+	background: var(--color-error);
+	color: white;
 }
 
 .btn-danger:hover {
-  background: #d32f2f;
+	background: #d32f2f;
 }
 
 .card {
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 1rem;
+	background: var(--color-bg);
+	border: 1px solid var(--color-border);
+	border-radius: 8px;
+	padding: 1rem;
 }
 
 .input {
-  width: 100%;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-bg);
-  color: var(--color-text);
+	width: 100%;
+	padding: 0.5rem 0.75rem;
+	border: 1px solid var(--color-border);
+	border-radius: 6px;
+	background: var(--color-bg);
+	color: var(--color-text);
 }
 
 .input:focus {
-  outline: none;
-  border-color: var(--color-primary);
+	outline: none;
+	border-color: var(--color-primary);
 }
 
 .error {
-  color: var(--color-error);
-  font-size: 0.875rem;
-  margin-top: 0.25rem;
+	color: var(--color-error);
+	font-size: 0.875rem;
+	margin-top: 0.25rem;
 }
 
 .empty-state {
-  text-align: center;
-  padding: 3rem;
-  color: var(--color-text-secondary);
+	text-align: center;
+	padding: 3rem;
+	color: var(--color-text-secondary);
 }
 
 .empty-state h2 {
-  margin-bottom: 0.5rem;
+	margin-bottom: 0.5rem;
 }
 
 /* Sidebar resize state */
 body.sidebar-resizing {
-  cursor: col-resize;
-  user-select: none;
+	cursor: col-resize;
+	user-select: none;
 }
 
 body.sidebar-resizing * {
-  transition: none !important;
+	transition: none !important;
 }
 
 /* Prevent body scroll when mobile sidebar is open */
 body.sidebar-open-mobile {
-  overflow: hidden;
+	overflow: hidden;
 }
 
 /* Article font preference */
-:root[data-article-font="sans-serif"] {
-  --article-font: var(--font-sans-serif);
+:root[data-article-font='sans-serif'] {
+	--article-font: var(--font-sans-serif);
 }
 
-:root[data-article-font="serif"] {
-  --article-font: var(--font-serif);
+:root[data-article-font='serif'] {
+	--article-font: var(--font-serif);
 }
 
-:root[data-article-font="mono"] {
-  --article-font: var(--font-mono);
+:root[data-article-font='mono'] {
+	--article-font: var(--font-mono);
 }
 
 /* Article font size preference */
-:root[data-article-font-size="xs"] {
-  --article-font-size: 0.75rem;
+:root[data-article-font-size='xs'] {
+	--article-font-size: 0.75rem;
 }
 
-:root[data-article-font-size="sm"] {
-  --article-font-size: 0.875rem;
+:root[data-article-font-size='sm'] {
+	--article-font-size: 0.875rem;
 }
 
-:root[data-article-font-size="md"] {
-  --article-font-size: 1rem;
+:root[data-article-font-size='md'] {
+	--article-font-size: 1rem;
 }
 
-:root[data-article-font-size="lg"] {
-  --article-font-size: 1.125rem;
+:root[data-article-font-size='lg'] {
+	--article-font-size: 1.125rem;
 }
 
-:root[data-article-font-size="xl"] {
-  --article-font-size: 1.25rem;
+:root[data-article-font-size='xl'] {
+	--article-font-size: 1.25rem;
 }

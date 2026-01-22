@@ -1,67 +1,67 @@
 {
-  "lexicon": 1,
-  "id": "app.skyreader.feed.subscription",
-  "defs": {
-    "main": {
-      "type": "record",
-      "description": "A subscription to an RSS/Atom feed",
-      "key": "tid",
-      "record": {
-        "type": "object",
-        "required": ["feedUrl", "createdAt"],
-        "properties": {
-          "feedUrl": {
-            "type": "string",
-            "format": "uri",
-            "maxLength": 2048,
-            "description": "The URL of the RSS/Atom feed"
-          },
-          "title": {
-            "type": "string",
-            "maxLength": 512,
-            "description": "User-provided or auto-detected feed title"
-          },
-          "siteUrl": {
-            "type": "string",
-            "format": "uri",
-            "maxLength": 2048,
-            "description": "The main website URL associated with the feed"
-          },
-          "category": {
-            "type": "string",
-            "maxLength": 128,
-            "description": "User-defined category/folder for organization"
-          },
-          "tags": {
-            "type": "array",
-            "maxLength": 10,
-            "items": {
-              "type": "string",
-              "maxLength": 64
-            },
-            "description": "User-defined tags for the subscription"
-          },
-          "createdAt": {
-            "type": "string",
-            "format": "datetime"
-          },
-          "updatedAt": {
-            "type": "string",
-            "format": "datetime"
-          },
-          "source": {
-            "type": "string",
-            "maxLength": 64,
-            "description": "Origin of this subscription (e.g., 'leaflet', 'opml', 'manual')"
-          },
-          "externalRef": {
-            "type": "string",
-            "format": "at-uri",
-            "maxLength": 2048,
-            "description": "Reference to the external source record (e.g., Leaflet subscription at-uri)"
-          }
-        }
-      }
-    }
-  }
+	"lexicon": 1,
+	"id": "app.skyreader.feed.subscription",
+	"defs": {
+		"main": {
+			"type": "record",
+			"description": "A subscription to an RSS/Atom feed",
+			"key": "tid",
+			"record": {
+				"type": "object",
+				"required": ["feedUrl", "createdAt"],
+				"properties": {
+					"feedUrl": {
+						"type": "string",
+						"format": "uri",
+						"maxLength": 2048,
+						"description": "The URL of the RSS/Atom feed"
+					},
+					"title": {
+						"type": "string",
+						"maxLength": 512,
+						"description": "User-provided or auto-detected feed title"
+					},
+					"siteUrl": {
+						"type": "string",
+						"format": "uri",
+						"maxLength": 2048,
+						"description": "The main website URL associated with the feed"
+					},
+					"category": {
+						"type": "string",
+						"maxLength": 128,
+						"description": "User-defined category/folder for organization"
+					},
+					"tags": {
+						"type": "array",
+						"maxLength": 10,
+						"items": {
+							"type": "string",
+							"maxLength": 64
+						},
+						"description": "User-defined tags for the subscription"
+					},
+					"createdAt": {
+						"type": "string",
+						"format": "datetime"
+					},
+					"updatedAt": {
+						"type": "string",
+						"format": "datetime"
+					},
+					"source": {
+						"type": "string",
+						"maxLength": 64,
+						"description": "Origin of this subscription (e.g., 'leaflet', 'opml', 'manual')"
+					},
+					"externalRef": {
+						"type": "string",
+						"format": "at-uri",
+						"maxLength": 2048,
+						"description": "Reference to the external source record (e.g., Leaflet subscription at-uri)"
+					}
+				}
+			}
+		}
+	}
 }
