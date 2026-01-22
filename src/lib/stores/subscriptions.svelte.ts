@@ -12,6 +12,8 @@ function generateTid(): string {
 	return `${now.toString(36)}${random}`;
 }
 
+const DEFAULT_PAGE_SIZE = 50;
+
 function createSubscriptionsStore() {
 	let subscriptions = $state<Subscription[]>([]);
 	let isLoading = $state(true);
@@ -19,6 +21,11 @@ function createSubscriptionsStore() {
 	let articlesVersion = $state(0);
 	let feedLoadingStates = $state<Map<number, 'loading' | 'error'>>(new Map());
 	let feedErrors = $state<Map<number, string>>(new Map());
+
+	// Pagination state
+	let articlesCursor = $state<number | null>(null);
+	let articlesHasMore = $state(true);
+	let articlesIsLoadingMore = $state(false);
 
 	// Listen for sync completions and update local state
 	syncQueue.onSyncComplete(async (collection, rkey) => {
@@ -391,6 +398,122 @@ function createSubscriptionsStore() {
 
 	async function getAllArticles(): Promise<Article[]> {
 		return db.articles.orderBy('publishedAt').reverse().toArray();
+	}
+
+	// Get first page of articles from IndexedDB (paginated)
+	async function getArticlesPaginated(
+		subscriptionId?: number,
+		limit = DEFAULT_PAGE_SIZE
+	): Promise<Article[]> {
+		let query = subscriptionId
+			? db.articles.where('subscriptionId').equals(subscriptionId)
+			: db.articles.orderBy('publishedAt');
+
+		const articles = await query.reverse().limit(limit).toArray();
+
+		// Sort by publishedAt for subscription-filtered queries (since we indexed by subscriptionId)
+		if (subscriptionId) {
+			articles.sort(
+				(a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
+			);
+		}
+
+		// Set cursor to oldest article's timestamp
+		if (articles.length > 0) {
+			const oldest = articles[articles.length - 1];
+			articlesCursor = new Date(oldest.publishedAt).getTime();
+			articlesHasMore = articles.length === limit;
+		} else {
+			articlesCursor = null;
+			articlesHasMore = false;
+		}
+
+		return articles;
+	}
+
+	// Load more articles from backend (older than cursor)
+	async function loadMoreArticles(
+		subscriptionId?: number,
+		limit = DEFAULT_PAGE_SIZE
+	): Promise<Article[]> {
+		if (articlesIsLoadingMore || !articlesHasMore || !articlesCursor) return [];
+
+		articlesIsLoadingMore = true;
+
+		try {
+			// Get feed URLs for the query
+			const feedUrls = subscriptionId
+				? [subscriptions.find((s) => s.id === subscriptionId)?.feedUrl].filter(Boolean)
+				: subscriptions.map((s) => s.feedUrl);
+
+			if (feedUrls.length === 0) {
+				articlesHasMore = false;
+				return [];
+			}
+
+			// Fetch from backend with cursor
+			const { items, cursor: newCursor } = await api.getItems({
+				feedUrls: feedUrls as string[],
+				before: articlesCursor,
+				limit,
+			});
+
+			// Map to Article format and store in IndexedDB
+			const subsByUrl = new Map(subscriptions.map((s) => [s.feedUrl, s.id]));
+			const newArticles: Article[] = [];
+
+			for (const item of items) {
+				const subId = subsByUrl.get(item.feedUrl);
+				if (!subId) continue;
+
+				// Check if already exists in IndexedDB
+				const existing = await db.articles.where('guid').equals(item.guid).first();
+				if (existing) continue;
+
+				const article: Article = {
+					subscriptionId: subId,
+					guid: item.guid,
+					url: item.url,
+					title: item.title,
+					author: item.author,
+					content: item.content,
+					summary: item.summary,
+					imageUrl: item.imageUrl,
+					publishedAt: item.publishedAt,
+					fetchedAt: Date.now(),
+				};
+
+				await db.articles.add(article);
+				newArticles.push(article);
+			}
+
+			// Update cursor
+			if (newCursor) {
+				articlesCursor = newCursor;
+				articlesHasMore = true;
+			} else {
+				articlesHasMore = false;
+			}
+
+			if (newArticles.length > 0) {
+				articlesVersion++;
+			}
+
+			return newArticles;
+		} catch (e) {
+			console.error('Failed to load more articles:', e);
+			error = e instanceof Error ? e.message : 'Failed to load more articles';
+			return [];
+		} finally {
+			articlesIsLoadingMore = false;
+		}
+	}
+
+	// Reset pagination state (call when filters change)
+	function resetArticlesPagination() {
+		articlesCursor = null;
+		articlesHasMore = true;
+		articlesIsLoadingMore = false;
 	}
 
 	// Fetch recent items across all subscribed feeds from the backend
@@ -816,6 +939,15 @@ function createSubscriptionsStore() {
 		get feedErrors() {
 			return feedErrors;
 		},
+		get articlesCursor() {
+			return articlesCursor;
+		},
+		get articlesHasMore() {
+			return articlesHasMore;
+		},
+		get articlesIsLoadingMore() {
+			return articlesIsLoadingMore;
+		},
 		load,
 		add,
 		addBulk,
@@ -824,6 +956,9 @@ function createSubscriptionsStore() {
 		fetchFeed,
 		getArticles,
 		getAllArticles,
+		getArticlesPaginated,
+		loadMoreArticles,
+		resetArticlesPagination,
 		fetchRecentItems,
 		searchArticles,
 		syncFromPds,

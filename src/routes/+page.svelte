@@ -372,7 +372,11 @@
 				console.log('Tab was hidden for a while, checking for updates...');
 				// Fetch from backend cache (non-forced) to catch up on missed updates
 				await subscriptionsStore.fetchAllNewFeeds(2, 500);
-				allArticles = await subscriptionsStore.getAllArticles();
+				// Reset pagination and reload first page to show new articles at top
+				subscriptionsStore.resetArticlesPagination();
+				allArticles = await subscriptionsStore.getArticlesPaginated(
+					feedFilter ? parseInt(feedFilter) : undefined
+				);
 			}
 		}
 		lastVisibleTime = Date.now();
@@ -387,8 +391,9 @@
 			await socialStore.loadFollowedUsers();
 			await socialStore.loadFeed(true);
 
-			// Load existing articles from IndexedDB first (instant display of cached data)
-			allArticles = await subscriptionsStore.getAllArticles();
+			// Reset pagination and load first page from IndexedDB
+			subscriptionsStore.resetArticlesPagination();
+			allArticles = await subscriptionsStore.getArticlesPaginated();
 
 			// Fetch latest articles from backend (store handles deduplication)
 			if (subscriptionsStore.subscriptions.length > 0) {
@@ -399,8 +404,9 @@
 				// Await the full fetch operation (ready from cache, pending from source)
 				await subscriptionsStore.fetchAllNewFeeds(2, 1000);
 
-				// Update articles after fetch completes
-				allArticles = await subscriptionsStore.getAllArticles();
+				// Reload first page after fetch to include any new articles
+				subscriptionsStore.resetArticlesPagination();
+				allArticles = await subscriptionsStore.getArticlesPaginated();
 			}
 		}
 		isLoading = false;
@@ -414,7 +420,7 @@
 		lastVisibleTime = Date.now();
 	});
 
-	// Reset selection when filter changes
+	// Reset selection and pagination when filter changes
 	$effect(() => {
 		// Access filter values to create dependency
 		feedFilter;
@@ -425,15 +431,31 @@
 		feedsFilter;
 		selectedIndex = -1;
 		expandedIndex = -1;
+
+		// Reset article pagination when filter changes
+		subscriptionsStore.resetArticlesPagination();
+		// Reload first page with new filter
+		const currentFeedFilter = feedFilter;
+		subscriptionsStore
+			.getArticlesPaginated(currentFeedFilter ? parseInt(currentFeedFilter) : undefined)
+			.then((articles) => {
+				allArticles = articles;
+			});
 	});
 
-	// Reload articles when new ones are fetched
+	// Reload articles when new ones are fetched (e.g., from WebSocket)
 	$effect(() => {
 		const version = subscriptionsStore.articlesVersion;
 		if (version > 0) {
-			subscriptionsStore.getAllArticles().then((articles) => {
-				allArticles = articles;
-			});
+			// Get the feed filter inside the effect to use the current value
+			const currentFeedFilter = untrack(() => feedFilter);
+			// Reset pagination and reload to include new articles
+			subscriptionsStore.resetArticlesPagination();
+			subscriptionsStore
+				.getArticlesPaginated(currentFeedFilter ? parseInt(currentFeedFilter) : undefined)
+				.then((articles) => {
+					allArticles = articles;
+				});
 		}
 	});
 
@@ -622,8 +644,43 @@
 			// Force refresh all feeds - bypass all caches
 			await subscriptionsStore.fetchAllNewFeeds(2, 500, true);
 		}
-		allArticles = await subscriptionsStore.getAllArticles();
+		// Reset pagination and reload first page
+		subscriptionsStore.resetArticlesPagination();
+		allArticles = await subscriptionsStore.getArticlesPaginated(
+			feedFilter ? parseInt(feedFilter) : undefined
+		);
 	}
+
+	// Load more articles (pagination)
+	async function loadMoreArticles() {
+		const feedId = feedFilter ? parseInt(feedFilter) : undefined;
+		const newArticles = await subscriptionsStore.loadMoreArticles(feedId);
+		if (newArticles.length > 0) {
+			// Append new articles to the list
+			allArticles = [...allArticles, ...newArticles];
+		}
+	}
+
+	// Load more for combined view (articles + shares)
+	async function loadMoreCombined() {
+		// Load more from both sources in parallel
+		const [, newArticles] = await Promise.all([
+			socialStore.hasMore ? socialStore.loadFeed(false) : Promise.resolve(),
+			subscriptionsStore.articlesHasMore
+				? subscriptionsStore.loadMoreArticles()
+				: Promise.resolve([]),
+		]);
+
+		if (newArticles && newArticles.length > 0) {
+			allArticles = [...allArticles, ...newArticles];
+		}
+	}
+
+	// Check if combined view has more to load
+	let combinedHasMore = $derived(subscriptionsStore.articlesHasMore || socialStore.hasMore);
+	let combinedIsLoadingMore = $derived(
+		subscriptionsStore.articlesIsLoadingMore || socialStore.isLoading
+	);
 
 	// Mark all articles in current feed as read
 	async function markAllAsReadInCurrentFeed() {
@@ -1033,6 +1090,16 @@
 						{/if}
 					</div>
 				{/each}
+
+				{#if combinedHasMore && !combinedIsLoadingMore}
+					<button class="btn btn-secondary load-more" onclick={loadMoreCombined}>
+						Load More
+					</button>
+				{/if}
+
+				{#if combinedIsLoadingMore}
+					<LoadingState message="Loading more..." />
+				{/if}
 			</div>
 		{:else if viewMode === 'shares'}
 			<!-- Social shares view -->
@@ -1079,6 +1146,16 @@
 						/>
 					</div>
 				{/each}
+
+				{#if socialStore.hasMore && !socialStore.isLoading}
+					<button class="btn btn-secondary load-more" onclick={() => socialStore.loadFeed(false)}>
+						Load More
+					</button>
+				{/if}
+
+				{#if socialStore.isLoading && displayedShares.length > 0}
+					<LoadingState message="Loading more shares..." />
+				{/if}
 			</div>
 		{:else if viewMode === 'userShares'}
 			<!-- User's own shares view -->
@@ -1187,6 +1264,16 @@
 						/>
 					</div>
 				{/each}
+
+				{#if subscriptionsStore.articlesHasMore && !subscriptionsStore.articlesIsLoadingMore}
+					<button class="btn btn-secondary load-more" onclick={loadMoreArticles}>
+						Load More
+					</button>
+				{/if}
+
+				{#if subscriptionsStore.articlesIsLoadingMore}
+					<LoadingState message="Loading more articles..." />
+				{/if}
 			</div>
 		{/if}
 	</div>
@@ -1209,5 +1296,10 @@
 
 	.article-list > div:last-child {
 		border-bottom: none;
+	}
+
+	.load-more {
+		width: 100%;
+		margin: 1rem 0;
 	}
 </style>
