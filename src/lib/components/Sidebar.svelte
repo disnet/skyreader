@@ -311,6 +311,7 @@
 			<img src={Logo} alt="Skyreader" class="sidebar-logo" />
 			{#if !sidebarStore.isCollapsed}
 				<span class="logo-text">Skyreader</span>
+				<span class="beta-badge">beta</span>
 			{/if}
 		</a>
 		<button class="add-feed-btn" onclick={handleAddFeed} aria-label="Add feed"> + </button>
@@ -535,6 +536,38 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	/* Web 2.0 style beta badge */
+	.beta-badge {
+		position: relative;
+		padding: 2px 6px;
+		font-size: 0.5rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+		color: white;
+		background: linear-gradient(180deg, #ff6b6b 0%, #ee2222 50%, #cc0000 100%);
+		border-radius: 3px;
+		transform: rotate(12deg);
+		box-shadow:
+			0 1px 2px rgba(0, 0, 0, 0.3),
+			inset 0 1px 0 rgba(255, 255, 255, 0.4);
+		border: 1px solid #aa0000;
+		flex-shrink: 0;
+	}
+
+	/* Glossy highlight effect */
+	.beta-badge::before {
+		content: '';
+		position: absolute;
+		top: 1px;
+		left: 1px;
+		right: 1px;
+		height: 45%;
+		background: linear-gradient(180deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0.1) 100%);
+		border-radius: 2px 2px 50% 50%;
+		pointer-events: none;
 	}
 
 	.user-info {
