@@ -28,6 +28,13 @@
 	<div class="error-card card">
 		<h1>Login Failed</h1>
 		<p class="error-message">{error}</p>
+		{#if errorCode === 'user_cap_reached'}
+			<p class="follow-link">
+				<a href="https://bsky.app/profile/skyreader.app" target="_blank" rel="noopener noreferrer"
+					>Follow @skyreader.app for updates</a
+				>
+			</p>
+		{/if}
 		<a href="/auth/login" class="btn btn-primary">Try Again</a>
 	</div>
 </div>
@@ -52,5 +59,18 @@
 	.error-message {
 		color: var(--color-text-secondary);
 		margin-bottom: 1.5rem;
+	}
+
+	.follow-link {
+		margin-bottom: 1.5rem;
+	}
+
+	.follow-link a {
+		color: var(--color-primary, #0066cc);
+		text-decoration: none;
+	}
+
+	.follow-link a:hover {
+		text-decoration: underline;
 	}
 </style>
