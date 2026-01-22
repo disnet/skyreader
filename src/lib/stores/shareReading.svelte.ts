@@ -47,27 +47,17 @@ function createShareReadingStore() {
 			readAt: now,
 		};
 
-		// Build record, only including optional fields if they have valid values
-		const record: Record<string, unknown> = {
+		// Use dedicated share read endpoint
+		await api.markShareAsRead({
+			rkey,
 			shareUri,
 			shareAuthorDid,
-			readAt: now,
-		};
-		// Only include itemUrl if it looks like a valid URL
-		if (itemUrl && (itemUrl.startsWith('http://') || itemUrl.startsWith('https://'))) {
-			record.itemUrl = itemUrl;
-		}
-		// Only include itemTitle if present
-		if (itemTitle) {
-			record.itemTitle = itemTitle;
-		}
-
-		// Sync to backend first
-		await api.syncRecord({
-			operation: 'create',
-			collection: 'app.skyreader.social.shareReadPosition',
-			rkey,
-			record,
+			// Only include itemUrl if it looks like a valid URL
+			itemUrl:
+				itemUrl && (itemUrl.startsWith('http://') || itemUrl.startsWith('https://'))
+					? itemUrl
+					: undefined,
+			itemTitle: itemTitle || undefined,
 		});
 
 		// Update local state and cache
@@ -83,13 +73,9 @@ function createShareReadingStore() {
 		const position = shareReadPositions.get(shareUri);
 		if (!position || !position.id) return;
 
-		// Sync delete to backend
+		// Use dedicated share read endpoint
 		if (position.rkey) {
-			await api.syncRecord({
-				operation: 'delete',
-				collection: 'app.skyreader.social.shareReadPosition',
-				rkey: position.rkey,
-			});
+			await api.markShareAsUnread(position.rkey);
 		}
 
 		// Delete from local DB

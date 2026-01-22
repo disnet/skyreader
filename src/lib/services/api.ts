@@ -248,33 +248,127 @@ class ApiClient {
 		return this.fetch('/api/shares/my');
 	}
 
-	// Record sync
-	async syncRecord(request: {
-		operation: 'create' | 'update' | 'delete';
-		collection: string;
+	// Subscriptions
+	async createSubscription(data: {
 		rkey: string;
-		record?: Record<string, unknown>;
-	}): Promise<{ uri?: string; cid?: string }> {
-		return this.fetch('/api/records/sync', {
+		feedUrl: string;
+		title?: string;
+		siteUrl?: string;
+		category?: string;
+		tags?: string[];
+		source?: string;
+		externalRef?: string;
+	}): Promise<{ rkey: string; uri: string }> {
+		return this.fetch('/api/subscriptions', {
 			method: 'POST',
-			body: JSON.stringify(request),
+			body: JSON.stringify(data),
 		});
 	}
 
-	async bulkSyncRecords(
-		operations: Array<{
-			operation: 'create' | 'update' | 'delete';
-			collection: string;
+	async deleteSubscription(rkey: string): Promise<{ success: boolean }> {
+		return this.fetch(`/api/subscriptions/${rkey}`, {
+			method: 'DELETE',
+		});
+	}
+
+	async bulkCreateSubscriptions(
+		subscriptions: Array<{
 			rkey: string;
-			record?: Record<string, unknown>;
+			feedUrl: string;
+			title?: string;
+			siteUrl?: string;
+			category?: string;
+			source?: string;
+			externalRef?: string;
 		}>
-	): Promise<{ results: Array<{ rkey: string; uri: string; cid?: string }> }> {
-		return this.fetch('/api/records/bulk-sync', {
+	): Promise<{ results: Array<{ rkey: string; uri: string }> }> {
+		return this.fetch('/api/subscriptions/bulk', {
 			method: 'POST',
-			body: JSON.stringify({ operations }),
+			body: JSON.stringify({ subscriptions }),
 		});
 	}
 
+	async bulkDeleteSubscriptions(rkeys: string[]): Promise<{ success: boolean; deleted: number }> {
+		return this.fetch('/api/subscriptions/bulk-delete', {
+			method: 'POST',
+			body: JSON.stringify({ rkeys }),
+		});
+	}
+
+	// Follows
+	async followUser(rkey: string, subject: string): Promise<{ rkey: string; uri: string }> {
+		return this.fetch('/api/social/follow', {
+			method: 'POST',
+			body: JSON.stringify({ rkey, subject }),
+		});
+	}
+
+	async unfollowUser(rkey: string): Promise<{ success: boolean }> {
+		return this.fetch(`/api/social/follow/${rkey}`, {
+			method: 'DELETE',
+		});
+	}
+
+	async listInAppFollows(): Promise<{
+		follows: Array<{
+			rkey: string;
+			did: string;
+			handle?: string;
+			displayName?: string;
+			avatarUrl?: string;
+			createdAt: number;
+		}>;
+	}> {
+		return this.fetch('/api/social/follows');
+	}
+
+	// Shares
+	async createShare(data: {
+		rkey: string;
+		itemUrl: string;
+		feedUrl?: string;
+		itemGuid?: string;
+		itemTitle?: string;
+		itemAuthor?: string;
+		itemDescription?: string;
+		itemImage?: string;
+		itemPublishedAt?: string;
+		note?: string;
+		tags?: string[];
+	}): Promise<{ rkey: string; uri: string }> {
+		return this.fetch('/api/shares', {
+			method: 'POST',
+			body: JSON.stringify(data),
+		});
+	}
+
+	async deleteShare(rkey: string): Promise<{ success: boolean }> {
+		return this.fetch(`/api/shares/${rkey}`, {
+			method: 'DELETE',
+		});
+	}
+
+	// Share read positions
+	async markShareAsRead(data: {
+		rkey: string;
+		shareUri: string;
+		shareAuthorDid: string;
+		itemUrl?: string;
+		itemTitle?: string;
+	}): Promise<{ rkey: string; uri: string }> {
+		return this.fetch('/api/social/share-read', {
+			method: 'POST',
+			body: JSON.stringify(data),
+		});
+	}
+
+	async markShareAsUnread(rkey: string): Promise<{ success: boolean }> {
+		return this.fetch(`/api/social/share-read/${rkey}`, {
+			method: 'DELETE',
+		});
+	}
+
+	// List records (still used for syncFromBackend)
 	async listRecords<T>(collection: string): Promise<{
 		records: Array<{ uri: string; cid: string; value: T }>;
 	}> {

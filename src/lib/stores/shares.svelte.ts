@@ -121,43 +121,20 @@ function createSharesStore() {
 			createdAt: now,
 		};
 
-		// Build record for backend
-		const record: Record<string, unknown> = {
-			itemUrl: articleUrl,
-			createdAt: now,
-		};
-
-		if (feedUrl) {
-			record.feedUrl = feedUrl;
-		}
-		if (articleTitle) {
-			record.itemTitle = articleTitle;
-		}
-		if (articleAuthor) {
-			record.itemAuthor = articleAuthor;
-		}
-		if (articleDescription) {
-			record.itemDescription = articleDescription.slice(0, 1000);
-		}
-		if (
-			articleImage &&
-			(articleImage.startsWith('http://') || articleImage.startsWith('https://'))
-		) {
-			record.itemImage = articleImage;
-		}
-		if (articleGuid) {
-			record.itemGuid = articleGuid;
-		}
-		if (articlePublishedAt) {
-			record.itemPublishedAt = articlePublishedAt;
-		}
-
-		// Sync to backend first
-		await api.syncRecord({
-			operation: 'create',
-			collection: 'app.skyreader.social.share',
+		// Use dedicated share endpoint
+		await api.createShare({
 			rkey,
-			record,
+			itemUrl: articleUrl,
+			feedUrl: feedUrl || undefined,
+			itemGuid: articleGuid || undefined,
+			itemTitle: articleTitle,
+			itemAuthor: articleAuthor,
+			itemDescription: articleDescription ? articleDescription.slice(0, 1000) : undefined,
+			itemImage:
+				articleImage && (articleImage.startsWith('http://') || articleImage.startsWith('https://'))
+					? articleImage
+					: undefined,
+			itemPublishedAt: articlePublishedAt,
 		});
 
 		// Update local state and cache
@@ -173,13 +150,9 @@ function createSharesStore() {
 		const existingShare = userShares.get(articleGuid);
 		if (!existingShare) return;
 
-		// Sync delete to backend
+		// Use dedicated delete endpoint
 		if (existingShare.rkey) {
-			await api.syncRecord({
-				operation: 'delete',
-				collection: 'app.skyreader.social.share',
-				rkey: existingShare.rkey,
-			});
+			await api.deleteShare(existingShare.rkey);
 		}
 
 		// Remove from map

@@ -120,17 +120,9 @@ function createSocialStore() {
 	async function followUser(did: string): Promise<boolean> {
 		try {
 			const rkey = generateTid();
-			const record = {
-				subject: did,
-				createdAt: new Date().toISOString(),
-			};
 
-			await api.syncRecord({
-				operation: 'create',
-				collection: 'app.skyreader.social.follow',
-				rkey,
-				record,
-			});
+			// Use dedicated follow endpoint
+			await api.followUser(rkey, did);
 
 			// Refresh followed users and remove from discover
 			await loadFollowedUsers();
@@ -145,26 +137,17 @@ function createSocialStore() {
 
 	async function unfollowInApp(did: string): Promise<boolean> {
 		try {
-			// Find the user's in-app follow record
-			const records = await api.listRecords<{ subject: string }>('app.skyreader.social.follow');
-			const followRecord = records.records.find((r) => r.value.subject === did);
+			// Get in-app follows with rkeys
+			const { follows } = await api.listInAppFollows();
+			const followRecord = follows.find((f) => f.did === did);
 
 			if (!followRecord) {
 				error = 'Follow record not found';
 				return false;
 			}
 
-			const rkey = followRecord.uri.split('/').pop();
-			if (!rkey) {
-				error = 'Invalid follow record URI';
-				return false;
-			}
-
-			await api.syncRecord({
-				operation: 'delete',
-				collection: 'app.skyreader.social.follow',
-				rkey,
-			});
+			// Use dedicated unfollow endpoint
+			await api.unfollowUser(followRecord.rkey);
 
 			// Refresh followed users
 			await loadFollowedUsers();

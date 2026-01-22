@@ -57,19 +57,14 @@ function createSubscriptionsStore() {
 			localUpdatedAt: Date.now(),
 		};
 
-		// Sync to backend first
-		const response = await api.syncRecord({
-			operation: 'create',
-			collection: 'app.skyreader.feed.subscription',
+		// Sync to backend using dedicated endpoint
+		await api.createSubscription({
 			rkey,
-			record: {
-				feedUrl,
-				title,
-				siteUrl: options?.siteUrl,
-				category: options?.category,
-				tags: options?.tags,
-				createdAt: now,
-			},
+			feedUrl,
+			title,
+			siteUrl: options?.siteUrl,
+			category: options?.category,
+			tags: options?.tags,
 		});
 
 		// Store locally after successful backend sync
@@ -137,24 +132,19 @@ function createSubscriptionsStore() {
 
 		onProgress?.(Math.floor(feedsToAdd.length / 4), feedsToAdd.length);
 
-		// Bulk sync to backend
+		// Bulk sync to backend using dedicated endpoint
 		try {
-			const operations = localRecords.map(({ rkey, feed }) => ({
-				operation: 'create' as const,
-				collection: 'app.skyreader.feed.subscription',
+			const subscriptionsToCreate = localRecords.map(({ rkey, feed }) => ({
 				rkey,
-				record: {
-					feedUrl: feed.feedUrl,
-					title: feed.title,
-					siteUrl: feed.siteUrl,
-					category: feed.category,
-					createdAt: now,
-					source,
-					externalRef: feed.externalRef,
-				},
+				feedUrl: feed.feedUrl,
+				title: feed.title,
+				siteUrl: feed.siteUrl,
+				category: feed.category,
+				source,
+				externalRef: feed.externalRef,
 			}));
 
-			await api.bulkSyncRecords(operations);
+			await api.bulkCreateSubscriptions(subscriptionsToCreate);
 
 			onProgress?.(Math.floor(feedsToAdd.length / 2), feedsToAdd.length);
 
@@ -204,34 +194,31 @@ function createSubscriptionsStore() {
 
 		const now = new Date().toISOString();
 
-		// Build the updated record for backend sync
-		const updatedRecord = {
+		// For updates, we delete and recreate since the new API doesn't have update
+		// First delete the old subscription
+		await api.deleteSubscription(sub.rkey);
+
+		// Create new subscription with updated values
+		const newRkey = generateTid();
+		await api.createSubscription({
+			rkey: newRkey,
 			feedUrl: updates.feedUrl ?? sub.feedUrl,
 			title: updates.title ?? sub.title,
 			siteUrl: updates.siteUrl ?? sub.siteUrl,
 			category: updates.category ?? sub.category,
 			tags: updates.tags ?? sub.tags,
-			createdAt: sub.createdAt,
-			updatedAt: now,
-		};
-
-		// Sync to backend
-		await api.syncRecord({
-			operation: 'update',
-			collection: 'app.skyreader.feed.subscription',
-			rkey: sub.rkey,
-			record: updatedRecord,
 		});
 
-		// Update local DB
+		// Update local DB with new rkey
 		await db.subscriptions.update(id, {
 			...updates,
+			rkey: newRkey,
 			updatedAt: now,
 			localUpdatedAt: Date.now(),
 		});
 
 		subscriptions = subscriptions.map((s) =>
-			s.id === id ? { ...s, ...updates, updatedAt: now } : s
+			s.id === id ? { ...s, ...updates, rkey: newRkey, updatedAt: now } : s
 		);
 	}
 
@@ -239,12 +226,8 @@ function createSubscriptionsStore() {
 		const sub = await db.subscriptions.get(id);
 		if (!sub) return;
 
-		// Sync delete to backend
-		await api.syncRecord({
-			operation: 'delete',
-			collection: 'app.skyreader.feed.subscription',
-			rkey: sub.rkey,
-		});
+		// Sync delete to backend using dedicated endpoint
+		await api.deleteSubscription(sub.rkey);
 
 		// Delete articles for this subscription
 		await db.articles.where('subscriptionId').equals(id).delete();
@@ -256,15 +239,11 @@ function createSubscriptionsStore() {
 		const allSubs = await db.subscriptions.toArray();
 		if (allSubs.length === 0) return;
 
-		// Build bulk delete operations
-		const operations = allSubs.map((sub) => ({
-			operation: 'delete' as const,
-			collection: 'app.skyreader.feed.subscription',
-			rkey: sub.rkey,
-		}));
+		// Build bulk delete request using dedicated endpoint
+		const rkeys = allSubs.map((sub) => sub.rkey);
 
 		// Single bulk request to backend
-		await api.bulkSyncRecords(operations);
+		await api.bulkDeleteSubscriptions(rkeys);
 
 		// Clear all local data
 		await db.articles.clear();
