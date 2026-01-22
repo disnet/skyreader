@@ -258,7 +258,7 @@
             <span>Skyreader</span>
           </a>
           <a href="https://github.com/disnet/skyreader/issues" class="feedback-link" target="_blank" rel="noopener noreferrer">Feedback ↗</a>
-          <span class="login-btn login-btn-disabled">Login</span>
+          <a href="/auth/login" class="login-btn">Login</a>
         </div>
       </header>
 
@@ -359,10 +359,8 @@
     text-decoration: none;
   }
 
-  .login-btn-disabled {
-    background: #6c757d;
-    cursor: not-allowed;
-    opacity: 0.65;
+  .login-btn:hover {
+    background: var(--color-primary-dark, #0052a3);
   }
 
   main {

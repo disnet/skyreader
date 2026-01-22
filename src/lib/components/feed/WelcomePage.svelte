@@ -8,18 +8,13 @@
     </div>
     <p>A decentralized RSS reader built on the AT Protocol.</p>
 
-    <div class="offline-notice">
-        <h2>Temporarily Offline</h2>
-        <p>We're experiencing higher than expected traffic and are working to scale up our servers. Check back soon!</p>
-    </div>
-
     <ul class="features">
         <li>Store your subscriptions in your own data server</li>
         <li>Share articles with your followers</li>
         <li>Works offline with automatic sync</li>
     </ul>
     <div class="cta">
-        <span class="btn btn-disabled">Login with Bluesky</span>
+        <a href="/auth/login" class="btn btn-primary">Login with Bluesky</a>
     </div>
 </div>
 
@@ -109,35 +104,17 @@
         text-align: center;
     }
 
-    .offline-notice {
-        background: linear-gradient(135deg, #fff3cd 0%, #ffe69c 100%);
-        border: 1px solid #ffc107;
-        border-radius: 8px;
-        padding: 1.5rem 2rem;
-        margin-bottom: 2rem;
-        text-align: center;
-    }
-
-    .offline-notice h2 {
-        margin: 0 0 0.5rem 0;
-        font-size: 1.25rem;
-        color: #856404;
-    }
-
-    .offline-notice p {
-        margin: 0;
-        font-size: 1rem;
-        color: #664d03;
-    }
-
-    .btn-disabled {
+    .btn-primary {
         display: inline-block;
         padding: 0.75rem 1.5rem;
-        background: #6c757d;
+        background: var(--color-primary, #0066cc);
         color: #fff;
         border-radius: 4px;
-        cursor: not-allowed;
-        opacity: 0.65;
         text-decoration: none;
+        font-weight: 500;
+    }
+
+    .btn-primary:hover {
+        background: var(--color-primary-dark, #0052a3);
     }
 </style>

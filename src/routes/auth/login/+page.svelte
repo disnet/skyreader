@@ -1,5 +1,30 @@
 <script lang="ts">
+  import { api } from '$lib/services/api';
   import Logo from '$lib/assets/logo.svg';
+
+  let handle = $state('');
+  let isLoading = $state(false);
+  let error = $state('');
+
+  async function handleSubmit(e: SubmitEvent) {
+    e.preventDefault();
+    error = '';
+
+    const trimmedHandle = handle.trim();
+    if (!trimmedHandle) {
+      error = 'Please enter your Bluesky handle';
+      return;
+    }
+
+    isLoading = true;
+    try {
+      const { authUrl } = await api.login(trimmedHandle);
+      window.location.href = authUrl;
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Failed to start login';
+      isLoading = false;
+    }
+  }
 </script>
 
 <div class="login-page">
@@ -9,13 +34,33 @@
       <h1>Skyreader</h1>
     </div>
 
-    <div class="offline-notice">
-      <h2>Temporarily Offline</h2>
-      <p>We're experiencing higher than expected traffic and are working to scale up our servers.</p>
-      <p>Check back soon!</p>
-    </div>
+    <p class="tagline">Sign in with your Bluesky account</p>
 
-    <a href="/" class="btn btn-secondary">Back to Home</a>
+    <form onsubmit={handleSubmit}>
+      <div class="form-group">
+        <label for="handle">Bluesky Handle</label>
+        <input
+          type="text"
+          id="handle"
+          bind:value={handle}
+          placeholder="you.bsky.social"
+          disabled={isLoading}
+          autocomplete="username"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+      </div>
+
+      {#if error}
+        <div class="error">{error}</div>
+      {/if}
+
+      <button type="submit" class="btn btn-primary" disabled={isLoading}>
+        {isLoading ? 'Connecting...' : 'Continue'}
+      </button>
+    </form>
+
+    <a href="/" class="back-link">Back to Home</a>
   </div>
 </div>
 
@@ -35,7 +80,7 @@
     flex-direction: column;
     align-items: center;
     gap: 0.75rem;
-    margin-bottom: 1.5rem;
+    margin-bottom: 1rem;
   }
 
   .login-logo {
@@ -48,37 +93,75 @@
     margin: 0;
   }
 
-  .offline-notice {
-    background: linear-gradient(135deg, #fff3cd 0%, #ffe69c 100%);
-    border: 1px solid #ffc107;
-    border-radius: 8px;
-    padding: 1.5rem;
+  .tagline {
+    color: var(--color-text-secondary, #666);
     margin-bottom: 1.5rem;
   }
 
-  .offline-notice h2 {
-    margin: 0 0 0.5rem 0;
-    font-size: 1.25rem;
-    color: #856404;
+  .form-group {
+    text-align: left;
+    margin-bottom: 1rem;
   }
 
-  .offline-notice p {
-    margin: 0.5rem 0 0 0;
-    font-size: 1rem;
-    color: #664d03;
+  .form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
   }
 
-  .btn-secondary {
-    display: inline-block;
-    padding: 0.75rem 1.5rem;
-    background: var(--color-bg-secondary, #e9ecef);
-    color: var(--color-text, #333);
-    border-radius: 4px;
-    text-decoration: none;
+  .form-group input {
+    width: 100%;
+    padding: 0.75rem;
     border: 1px solid var(--color-border, #dee2e6);
+    border-radius: 4px;
+    font-size: 1rem;
+    box-sizing: border-box;
   }
 
-  .btn-secondary:hover {
-    background: var(--color-border, #dee2e6);
+  .form-group input:focus {
+    outline: none;
+    border-color: var(--color-primary, #0066cc);
+    box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.2);
+  }
+
+  .error {
+    background: #f8d7da;
+    color: #721c24;
+    padding: 0.75rem;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+    font-size: 0.875rem;
+  }
+
+  .btn-primary {
+    width: 100%;
+    padding: 0.75rem 1.5rem;
+    background: var(--color-primary, #0066cc);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 1rem;
+    cursor: pointer;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: var(--color-primary-dark, #0052a3);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+  }
+
+  .back-link {
+    display: inline-block;
+    margin-top: 1.5rem;
+    color: var(--color-text-secondary, #666);
+    text-decoration: none;
+    font-size: 0.875rem;
+  }
+
+  .back-link:hover {
+    text-decoration: underline;
   }
 </style>
