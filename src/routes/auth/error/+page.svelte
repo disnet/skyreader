@@ -15,6 +15,7 @@
 			'The authentication server is temporarily unavailable. Please try again later.',
 		session_expired: 'Your session has expired. Please log in again.',
 		callback_failed: 'Authentication callback failed. Please try again.',
+		user_cap_reached: 'Skyreader is currently at capacity while in beta. Please check back later!',
 	};
 
 	const errorCode = $derived($page.url.searchParams.get('error') || 'unknown');
