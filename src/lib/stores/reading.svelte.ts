@@ -271,24 +271,28 @@ function createReadingStore() {
 		}
 	}
 
-	async function toggleStar(articleGuid: string) {
+	async function toggleStar(articleGuid: string, articleUrl?: string, articleTitle?: string) {
 		const position = readPositions.get(articleGuid);
-		if (!position) return;
-
-		const newStarred = !position.starred;
-		const newPosition = { ...position, starred: newStarred };
+		const newStarred = position ? !position.starred : true;
+		const newPosition: ReadPosition = position
+			? { ...position, starred: newStarred }
+			: { starred: newStarred, readAt: Date.now(), itemUrl: articleUrl, itemTitle: articleTitle };
 
 		// Optimistic update
 		readPositions.set(articleGuid, newPosition);
 		readPositions = new Map(readPositions);
 
 		try {
-			await api.toggleStar(articleGuid, newStarred);
+			await api.toggleStar(articleGuid, newStarred, articleUrl, articleTitle);
 			// Update cache on success
 			updateCache(articleGuid, newPosition);
 		} catch (e) {
 			// Rollback on failure
-			readPositions.set(articleGuid, position);
+			if (position) {
+				readPositions.set(articleGuid, position);
+			} else {
+				readPositions.delete(articleGuid);
+			}
 			readPositions = new Map(readPositions);
 			console.error('Failed to toggle star:', e);
 		}

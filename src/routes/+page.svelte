@@ -590,7 +590,7 @@
 	function toggleSelectedStar() {
 		const selected = getSelectedArticle();
 		if (selected) {
-			readingStore.toggleStar(selected.article.guid);
+			readingStore.toggleStar(selected.article.guid, selected.article.url, selected.article.title);
 		}
 	}
 
@@ -1068,7 +1068,8 @@
 								shareNote={sharesStore.getShareNote(article.guid)}
 								selected={selectedIndex === index}
 								expanded={expandedIndex === index}
-								onToggleStar={() => readingStore.toggleStar(article.guid)}
+								onToggleStar={() =>
+									readingStore.toggleStar(article.guid, article.url, article.title)}
 								onShare={() =>
 									sharesStore.share(
 										sub?.rkey || '',
@@ -1245,7 +1246,7 @@
 							shareNote={share.note}
 							selected={selectedIndex === index}
 							expanded={expandedIndex === index}
-							onToggleStar={() => readingStore.toggleStar(article.guid)}
+							onToggleStar={() => readingStore.toggleStar(article.guid, article.url, article.title)}
 							onUnshare={() => sharesStore.unshare(share.articleGuid)}
 							onSelect={() => {
 								if (selectedIndex === index) {

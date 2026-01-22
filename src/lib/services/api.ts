@@ -410,11 +410,13 @@ class ApiClient {
 
 	async toggleStar(
 		itemGuid: string,
-		starred: boolean
+		starred: boolean,
+		itemUrl?: string,
+		itemTitle?: string
 	): Promise<{ success: boolean; starred: boolean }> {
 		return this.fetch('/api/reading/toggle-star', {
 			method: 'POST',
-			body: JSON.stringify({ itemGuid, starred }),
+			body: JSON.stringify({ itemGuid, starred, itemUrl, itemTitle }),
 		});
 	}
 

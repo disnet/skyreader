@@ -40,7 +40,8 @@
 					</div>
 					<button
 						class="unstar-btn"
-						onclick={() => readingStore.toggleStar(item.articleGuid)}
+						onclick={() =>
+							readingStore.toggleStar(item.articleGuid, item.articleUrl, item.articleTitle)}
 						title="Remove star"
 					>
 						★
