@@ -681,23 +681,6 @@
 		}
 	}
 
-	// Refresh current view
-	async function refreshView() {
-		if (feedFilter) {
-			// Refresh specific feed with force (bypasses backend cache)
-			const feedId = parseInt(feedFilter);
-			await subscriptionsStore.fetchFeed(feedId, true);
-		} else {
-			// Force refresh all feeds - bypass all caches
-			await subscriptionsStore.fetchAllNewFeeds(1, 5000, true);
-		}
-		// Reset pagination and reload first page
-		subscriptionsStore.resetArticlesPagination();
-		allArticles = await subscriptionsStore.getArticlesPaginated(
-			feedFilter ? parseInt(feedFilter) : undefined
-		);
-	}
-
 	// Load more articles (pagination)
 	async function loadMoreArticles() {
 		const feedId = feedFilter ? parseInt(feedFilter) : undefined;
@@ -916,7 +899,6 @@
 		keyboardStore.unregister('S', true);
 		keyboardStore.unregister('m');
 		keyboardStore.unregister('u');
-		keyboardStore.unregister('r');
 		keyboardStore.unregister('A', true);
 
 		// Clean up scroll-to-mark-as-read
