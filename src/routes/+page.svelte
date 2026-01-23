@@ -8,15 +8,15 @@
 	import { shareReadingStore } from '$lib/stores/shareReading.svelte';
 	import { sharesStore } from '$lib/stores/shares.svelte';
 	import { socialStore } from '$lib/stores/social.svelte';
-	import { keyboardStore } from '$lib/stores/keyboard.svelte';
 	import { preferences } from '$lib/stores/preferences.svelte';
 	import { api } from '$lib/services/api';
-	import ArticleCard from '$lib/components/ArticleCard.svelte';
-	import ShareCard from '$lib/components/ShareCard.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import LoadingState from '$lib/components/LoadingState.svelte';
 	import WelcomePage from '$lib/components/feed/WelcomePage.svelte';
 	import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
+	import FeedListView from '$lib/components/feed/FeedListView.svelte';
+	import { useScrollMarkAsRead } from '$lib/hooks/useScrollMarkAsRead.svelte';
+	import { useFeedKeyboardShortcuts } from '$lib/hooks/useFeedKeyboardShortcuts.svelte';
 	import { goto } from '$app/navigation';
 	import type { Article, FeedItem, SocialShare, CombinedFeedItem, UserShare } from '$lib/types';
 
@@ -24,13 +24,9 @@
 	let isLoading = $state(true);
 
 	// Centralized article loading function
-	// When showOnlyUnread is true, keeps loading until we have enough unread articles
 	async function loadArticles() {
-		// Clear articles immediately to prevent stale data from showing with new filter
-		// This ensures the snapshot effect sees consistent state during the async load
 		allArticles = [];
 
-		// For starred view, load articles by their guids directly
 		if (starredFilter) {
 			const starredGuids = Array.from(readingStore.readPositions.entries())
 				.filter(([, pos]) => pos.starred)
@@ -42,26 +38,23 @@
 
 		subscriptionsStore.resetArticlesPagination();
 		const feedId = feedFilter ? parseInt(feedFilter) : undefined;
-		const targetCount = 50; // How many unread articles we want to display
-		const maxIterations = 10; // Safety limit to prevent infinite loops
+		const targetCount = 50;
+		const maxIterations = 10;
 
 		let articles = await subscriptionsStore.getArticlesPaginated(feedId);
 
-		// If filtering for unread, keep loading until we have enough
 		if (showOnlyUnread && !starredFilter) {
 			let iterations = 0;
 			while (subscriptionsStore.articlesHasMore && iterations < maxIterations) {
-				// Count how many unread articles we have
 				const unreadCount = articles.filter((a) => !readingStore.isRead(a.guid)).length;
 
 				if (unreadCount >= targetCount) {
-					break; // We have enough unread articles
+					break;
 				}
 
-				// Load more
 				const moreArticles = await subscriptionsStore.loadMoreArticles(feedId);
 				if (moreArticles.length === 0) {
-					break; // No more articles to load
+					break;
 				}
 
 				articles = [...articles, ...moreArticles];
@@ -71,32 +64,26 @@
 
 		allArticles = articles;
 	}
+
 	let selectedIndex = $state(-1);
 	let expandedIndex = $state(-1);
-	let articleElements = $state<HTMLElement[]>([]);
 	let showOnlyUnread = $state(true);
 
-	// Snapshot of displayed items (doesn't change as you read items)
+	// Snapshot of displayed items
 	let displayedArticles = $state<Article[]>([]);
 	let displayedShares = $state<SocialShare[]>([]);
 	let displayedUserShares = $state<UserShare[]>([]);
 	let displayedCombined = $state<CombinedFeedItem[]>([]);
 
-	// Map of guid -> article for looking up share content
 	let articlesByGuid = $derived(new Map(allArticles.map((a) => [a.guid, a])));
-
-	// Scroll-to-mark-as-read state
-	let lastScrollY = $state(0);
-	let scrollDirection = $state<'up' | 'down' | null>(null);
-	let scrollMarkObserver: IntersectionObserver | null = null;
-
-	// Tab visibility state for catching up on missed updates
-	let lastVisibleTime = $state(Date.now());
-	const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
 	// Cache for fetched articles (from backend, for shares not in local DB)
 	let fetchedArticles = $state<Map<string, FeedItem>>(new Map());
 	let fetchingArticles = $state<Set<string>>(new Set());
+
+	// Tab visibility state
+	let lastVisibleTime = $state(Date.now());
+	const STALE_THRESHOLD_MS = 5 * 60 * 1000;
 
 	async function fetchArticleContent(feedUrl: string, guid: string, itemUrl?: string) {
 		if (fetchedArticles.has(guid) || fetchingArticles.has(guid)) return;
@@ -127,12 +114,11 @@
 	let feedsFilter = $derived($page.url.searchParams.get('feeds'));
 
 	// Determine current view mode
-	// 'combined' = all view (articles + shares), 'shares' = following/sharer filter, 'userShares' = user's own shares, 'articles' = specific feed or starred or all feeds
 	let viewMode = $derived.by((): 'articles' | 'shares' | 'userShares' | 'combined' => {
 		if (sharedFilter) return 'userShares';
 		if (sharerFilter || followingFilter) return 'shares';
 		if (feedFilter || starredFilter || feedsFilter) return 'articles';
-		return 'combined'; // "All" view shows both
+		return 'combined';
 	});
 
 	// Build a filter key to detect when we need to recompute the snapshot
@@ -147,18 +133,14 @@
 	let lastArticlesLength = $state(-1);
 	let lastSharesLength = $state(-1);
 
-	// Snapshot articles when filter or source data changes (not read state)
+	// Snapshot articles when filter or source data changes
 	$effect(() => {
-		// Track these dependencies
 		const currentKey = filterKey;
 		const currentVersion = subscriptionsStore.articlesVersion;
 		const currentArticles = allArticles;
 		const currentLength = currentArticles.length;
-		// For starred filter, we need to track readPositions changes
-		// Use the Map object itself as a dependency (changes when reassigned in store)
 		const currentReadPositions = starredFilter ? readingStore.readPositions : null;
 
-		// Untrack comparisons to avoid loops
 		const prevKey = untrack(() => lastFilterKey);
 		const prevVersion = untrack(() => lastArticlesVersion);
 		const prevLength = untrack(() => lastArticlesLength);
@@ -169,7 +151,6 @@
 			currentLength !== prevLength ||
 			currentReadPositions
 		) {
-			// Take a snapshot using current read state (untracked to avoid reactivity for non-starred views)
 			const readPositions = starredFilter
 				? currentReadPositions!
 				: untrack(() => readingStore.readPositions);
@@ -178,7 +159,6 @@
 			if (feedFilter) {
 				const feedId = parseInt(feedFilter);
 				let feedArticles = currentArticles.filter((a) => a.subscriptionId === feedId);
-				// Apply showOnlyUnread filter for individual feeds too
 				const onlyUnread = untrack(() => showOnlyUnread);
 				if (onlyUnread) {
 					feedArticles = feedArticles.filter((a) => !readPositions.has(a.guid));
@@ -187,7 +167,6 @@
 			} else if (starredFilter) {
 				filtered = currentArticles.filter((a) => readPositions.get(a.guid)?.starred ?? false);
 			} else {
-				// Default: filter based on showOnlyUnread toggle
 				const onlyUnread = untrack(() => showOnlyUnread);
 				if (onlyUnread) {
 					filtered = currentArticles.filter((a) => !readPositions.has(a.guid));
@@ -196,7 +175,6 @@
 				}
 			}
 
-			// Deduplicate by guid (race conditions can cause duplicates in IndexedDB)
 			const seen = new Set<string>();
 			const deduped = filtered.filter((a) => {
 				if (seen.has(a.guid)) return false;
@@ -213,11 +191,9 @@
 
 	// Snapshot shares when filter or source data changes
 	$effect(() => {
-		// Track these dependencies
 		const shares = socialStore.shares;
 		const currentKey = filterKey;
 
-		// Untrack comparisons to avoid loops
 		const prevKey = untrack(() => lastSharesFilterKey);
 		const prevLength = untrack(() => lastSharesLength);
 
@@ -228,11 +204,9 @@
 			} else if (sharerFilter) {
 				filtered = shares.filter((s) => s.authorDid === sharerFilter);
 			} else {
-				// For "all" view and other views, include all shares
 				filtered = [...shares];
 			}
 
-			// Apply showOnlyUnread filter for shares
 			const onlyUnread = untrack(() => showOnlyUnread);
 			const readPositions = untrack(() => shareReadingStore.shareReadPositions);
 			if (onlyUnread && (followingFilter || sharerFilter)) {
@@ -251,7 +225,6 @@
 		const currentKey = filterKey;
 
 		if (sharedFilter) {
-			// Convert Map to array and sort by createdAt descending
 			const shares = Array.from(userShares.values());
 			shares.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 			displayedUserShares = shares;
@@ -260,9 +233,8 @@
 		}
 	});
 
-	// Combine articles and shares for the "all" view, sorted by date
+	// Combine articles and shares for the "all" view
 	$effect(() => {
-		// Track dependencies
 		const articles = displayedArticles;
 		const shares = displayedShares;
 		const mode = viewMode;
@@ -280,27 +252,11 @@
 					date: item.itemPublishedAt || item.createdAt,
 				})),
 			];
-			// Sort by date descending (newest first)
 			combined.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 			displayedCombined = combined;
 		} else {
 			displayedCombined = [];
 		}
-	});
-
-	// Setup/teardown scroll-to-mark-as-read observer when preference or content changes
-	$effect(() => {
-		// Track these dependencies to re-run when content changes
-		const _articles = displayedArticles;
-		const _shares = displayedShares;
-		const _combined = displayedCombined;
-		const _mode = viewMode;
-		const _enabled = preferences.scrollToMarkAsRead;
-
-		// Use tick to ensure DOM is updated before observing
-		tick().then(() => {
-			setupScrollMarkObserver();
-		});
 	});
 
 	// Get page title based on filter
@@ -320,22 +276,30 @@
 		return 'All';
 	});
 
-	// Scroll direction tracking for scroll-to-mark-as-read
-	function updateScrollDirection() {
-		const currentScrollY = window.scrollY;
-		if (currentScrollY > lastScrollY) {
-			scrollDirection = 'down';
-		} else if (currentScrollY < lastScrollY) {
-			scrollDirection = 'up';
-		}
-		lastScrollY = currentScrollY;
+	// Get current items based on view mode
+	let currentItems = $derived.by(() => {
+		const mode = viewMode;
+		if (mode === 'combined') return displayedCombined;
+		if (mode === 'shares') return displayedShares;
+		if (mode === 'userShares') return displayedUserShares;
+		return displayedArticles;
+	});
+
+	let combinedHasMore = $derived(subscriptionsStore.articlesHasMore || socialStore.hasMore);
+	let combinedIsLoadingMore = $derived(
+		subscriptionsStore.articlesIsLoadingMore || socialStore.isLoading
+	);
+
+	// Reference to FeedListView component for accessing article elements
+	let feedListView = $state<ReturnType<typeof FeedListView> | null>(null);
+
+	function getArticleElements(): HTMLElement[] {
+		return feedListView?.getArticleElements() ?? [];
 	}
 
-	// Mark an item as read by its index in the current view
+	// Mark an item as read by its index
 	function markItemAsReadByIndex(index: number) {
 		const mode = viewMode;
-
-		// Skip userShares - these are user's own shares
 		if (mode === 'userShares') return;
 
 		if (mode === 'articles') {
@@ -382,567 +346,42 @@
 		}
 	}
 
-	// Setup IntersectionObserver for scroll-to-mark-as-read
-	function setupScrollMarkObserver() {
-		// Clean up existing observer
-		if (scrollMarkObserver) {
-			scrollMarkObserver.disconnect();
-			scrollMarkObserver = null;
-		}
-
-		if (!preferences.scrollToMarkAsRead) return;
-
-		scrollMarkObserver = new IntersectionObserver(
-			(entries) => {
-				// Only process if scrolling down
-				if (scrollDirection !== 'down') return;
-
-				entries.forEach((entry) => {
-					// Article left viewport from top (boundingClientRect.top < 0) and is no longer intersecting
-					if (!entry.isIntersecting && entry.boundingClientRect.top < 0) {
-						const index = parseInt((entry.target as HTMLElement).dataset.index || '-1');
-						if (index >= 0) {
-							markItemAsReadByIndex(index);
-						}
-					}
-				});
-			},
-			{
-				root: null, // viewport
-				rootMargin: '0px',
-				threshold: 0,
-			}
-		);
-
-		// Observe all article elements
-		articleElements.forEach((el, index) => {
-			if (el) {
-				el.dataset.index = String(index);
-				scrollMarkObserver?.observe(el);
-			}
-		});
-	}
-
-	async function removeFeed(id: number) {
-		if (confirm('Are you sure you want to remove this subscription?')) {
-			await subscriptionsStore.remove(id);
-			goto('/');
-		}
-	}
-
-	// Handle tab visibility changes to catch up on missed updates
-	async function handleVisibilityChange() {
-		if (document.visibilityState === 'visible' && auth.isAuthenticated) {
-			const timeSinceVisible = Date.now() - lastVisibleTime;
-
-			if (timeSinceVisible > STALE_THRESHOLD_MS) {
-				console.log('Tab was hidden for a while, checking for updates...');
-				// Fetch from backend cache (non-forced) to catch up on missed updates
-				await subscriptionsStore.fetchAllNewFeeds();
-				// Reset pagination and reload first page to show new articles at top
-				subscriptionsStore.resetArticlesPagination();
-				allArticles = await subscriptionsStore.getArticlesPaginated(
-					feedFilter ? parseInt(feedFilter) : undefined
-				);
-			}
-		}
-		lastVisibleTime = Date.now();
-	}
-
-	onMount(async () => {
-		if (auth.isAuthenticated) {
-			await subscriptionsStore.load();
-			await readingStore.load();
-			await shareReadingStore.load();
-			await sharesStore.load();
-			await socialStore.loadFollowedUsers();
-			await socialStore.loadFeed(true);
-
-			// Load initial articles from IndexedDB
-			await loadArticles();
-
-			// Fetch latest articles from backend (store handles deduplication)
-			if (subscriptionsStore.subscriptions.length > 0) {
-				const feedUrls = subscriptionsStore.subscriptions.map((s) => s.feedUrl);
-				await subscriptionsStore.checkFeedStatuses(feedUrls);
-				await subscriptionsStore.fetchAllNewFeeds();
-
-				// Reload to include any new articles from backend
-				await loadArticles();
-			}
-		}
-		isLoading = false;
-
-		// Mark initial load complete by setting tracking variables
-		// This enables the reload effect to start watching for changes
-		lastLoadedFilter = feedFilter;
-		lastLoadedStarredFilter = starredFilter;
-		lastLoadedVersion = subscriptionsStore.articlesVersion;
-
-		// Set up scroll direction tracking for scroll-to-mark-as-read
-		window.addEventListener('scroll', updateScrollDirection, { passive: true });
-		lastScrollY = window.scrollY;
-
-		// Set up visibility change handler for catching up on missed updates
-		document.addEventListener('visibilitychange', handleVisibilityChange);
-		lastVisibleTime = Date.now();
+	// Initialize hooks
+	const scrollMarkAsRead = useScrollMarkAsRead({
+		getArticleElements,
+		enabled: preferences.scrollToMarkAsRead,
+		onMarkAsRead: markItemAsReadByIndex,
 	});
 
-	// Reset selection when any filter changes (synchronous, no async work)
+	// Setup/teardown scroll-to-mark-as-read observer when preference or content changes
 	$effect(() => {
-		feedFilter;
-		starredFilter;
-		sharedFilter;
-		sharerFilter;
-		followingFilter;
-		feedsFilter;
-		selectedIndex = -1;
-		expandedIndex = -1;
-	});
+		const _articles = displayedArticles;
+		const _shares = displayedShares;
+		const _combined = displayedCombined;
+		const _mode = viewMode;
+		const _enabled = preferences.scrollToMarkAsRead;
 
-	// Reload articles when filters change or new articles arrive (after initial load)
-	// We track changes by comparing to what we've already loaded
-	let lastLoadedFilter = $state<string | null | undefined>(undefined);
-	let lastLoadedStarredFilter = $state<string | null | undefined>(undefined);
-	let lastLoadedVersion = $state(-1);
-
-	$effect(() => {
-		const currentFilter = feedFilter;
-		const currentStarredFilter = starredFilter;
-		const currentVersion = subscriptionsStore.articlesVersion;
-
-		// Get last values without triggering reactivity
-		const prevFilter = untrack(() => lastLoadedFilter);
-		const prevStarredFilter = untrack(() => lastLoadedStarredFilter);
-		const prevVersion = untrack(() => lastLoadedVersion);
-
-		// Skip initial run (before onMount sets lastLoadedFilter)
-		if (prevFilter === undefined) return;
-
-		// Reload if filter or version changed
-		if (
-			currentFilter !== prevFilter ||
-			currentStarredFilter !== prevStarredFilter ||
-			currentVersion !== prevVersion
-		) {
-			lastLoadedFilter = currentFilter;
-			lastLoadedStarredFilter = currentStarredFilter;
-			lastLoadedVersion = currentVersion;
-			loadArticles();
-		}
-	});
-
-	// Get current items based on view mode (uses snapshots)
-	let currentItems = $derived.by(() => {
-		const mode = viewMode;
-		if (mode === 'combined') return displayedCombined;
-		if (mode === 'shares') return displayedShares;
-		if (mode === 'userShares') return displayedUserShares;
-		return displayedArticles;
-	});
-
-	// Helper to get selected article info (for keyboard shortcuts)
-	function getSelectedArticle(): {
-		article: Article;
-		sub: (typeof subscriptionsStore.subscriptions)[0];
-	} | null {
-		if (selectedIndex < 0) return null;
-		const mode = viewMode;
-
-		if (mode === 'articles') {
-			const article = displayedArticles[selectedIndex];
-			if (!article) return null;
-			const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
-			if (!sub) return null;
-			return { article, sub };
-		} else if (mode === 'combined') {
-			const feedItem = displayedCombined[selectedIndex];
-			if (!feedItem || feedItem.type !== 'article') return null;
-			const article = feedItem.item;
-			const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
-			if (!sub) return null;
-			return { article, sub };
-		} else if (mode === 'userShares') {
-			const share = displayedUserShares[selectedIndex];
-			if (!share) return null;
-			const localArticle = articlesByGuid.get(share.articleGuid);
-			if (localArticle) {
-				const sub = subscriptionsStore.subscriptions.find(
-					(s) => s.id === localArticle.subscriptionId
-				);
-				if (sub) return { article: localArticle, sub };
-			}
-			// For user shares without local article, create a minimal article object
-			return {
-				article: {
-					guid: share.articleGuid,
-					url: share.articleUrl,
-					title: share.articleTitle || share.articleUrl,
-					author: share.articleAuthor,
-					summary: share.articleDescription,
-					imageUrl: share.articleImage,
-					publishedAt: share.articlePublishedAt || share.createdAt,
-					subscriptionId: 0,
-					fetchedAt: Date.now(),
-				},
-				sub: {
-					rkey: '',
-					feedUrl: share.feedUrl || '',
-					id: 0,
-					title: '',
-					tags: [],
-					createdAt: '',
-					localUpdatedAt: 0,
-				} as (typeof subscriptionsStore.subscriptions)[0],
-			};
-		}
-		return null;
-	}
-
-	// Open selected item in new tab
-	function openSelectedItem() {
-		if (selectedIndex < 0) return;
-		const items = currentItems;
-		const item = items[selectedIndex];
-		const mode = viewMode;
-		let url: string;
-		if (mode === 'combined') {
-			const combined = item as CombinedFeedItem;
-			url = combined.type === 'article' ? combined.item.url : combined.item.itemUrl;
-		} else if (mode === 'shares') {
-			url = (item as SocialShare).itemUrl;
-		} else if (mode === 'userShares') {
-			url = (item as UserShare).articleUrl;
-		} else {
-			url = (item as Article).url;
-		}
-		window.open(url, '_blank');
-	}
-
-	// Toggle star on selected item
-	function toggleSelectedStar() {
-		const selected = getSelectedArticle();
-		if (selected) {
-			readingStore.toggleStar(selected.article.guid, selected.article.url, selected.article.title);
-		}
-	}
-
-	// Share/unshare selected item
-	function toggleSelectedShare() {
-		const selected = getSelectedArticle();
-		if (!selected) return;
-
-		const { article, sub } = selected;
-		if (sharesStore.isShared(article.guid)) {
-			sharesStore.unshare(article.guid);
-		} else {
-			sharesStore.share(
-				sub.rkey,
-				sub.feedUrl,
-				article.guid,
-				article.url,
-				article.title,
-				article.author,
-				article.summary,
-				article.imageUrl,
-				article.publishedAt
-			);
-		}
-	}
-
-	// Toggle read/unread on selected item
-	function toggleSelectedRead() {
-		if (selectedIndex < 0) return;
-		const mode = viewMode;
-
-		if (mode === 'articles') {
-			const article = displayedArticles[selectedIndex];
-			if (!article) return;
-			const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
-			if (!sub) return;
-
-			if (readingStore.isRead(article.guid)) {
-				readingStore.markAsUnread(article.guid);
-			} else {
-				readingStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
-			}
-		} else if (mode === 'combined') {
-			const feedItem = displayedCombined[selectedIndex];
-			if (!feedItem) return;
-
-			if (feedItem.type === 'article') {
-				const article = feedItem.item;
-				const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
-				if (!sub) return;
-
-				if (readingStore.isRead(article.guid)) {
-					readingStore.markAsUnread(article.guid);
-				} else {
-					readingStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
-				}
-			} else {
-				const share = feedItem.item;
-				if (shareReadingStore.isRead(share.recordUri)) {
-					shareReadingStore.markAsUnread(share.recordUri);
-				} else {
-					shareReadingStore.markAsRead(
-						share.recordUri,
-						share.authorDid,
-						share.itemUrl,
-						share.itemTitle
-					);
-				}
-			}
-		} else if (mode === 'shares') {
-			const share = displayedShares[selectedIndex];
-			if (!share) return;
-
-			if (shareReadingStore.isRead(share.recordUri)) {
-				shareReadingStore.markAsUnread(share.recordUri);
-			} else {
-				shareReadingStore.markAsRead(
-					share.recordUri,
-					share.authorDid,
-					share.itemUrl,
-					share.itemTitle
-				);
-			}
-		}
-	}
-
-	// Load more articles (pagination)
-	async function loadMoreArticles() {
-		const feedId = feedFilter ? parseInt(feedFilter) : undefined;
-		const newArticles = await subscriptionsStore.loadMoreArticles(feedId);
-		if (newArticles.length > 0) {
-			// Append new articles to the list
-			allArticles = [...allArticles, ...newArticles];
-		}
-	}
-
-	// Load more for combined view (articles + shares)
-	async function loadMoreCombined() {
-		// Load more from both sources in parallel
-		const [, newArticles] = await Promise.all([
-			socialStore.hasMore ? socialStore.loadFeed(false) : Promise.resolve(),
-			subscriptionsStore.articlesHasMore
-				? subscriptionsStore.loadMoreArticles()
-				: Promise.resolve([]),
-		]);
-
-		if (newArticles && newArticles.length > 0) {
-			allArticles = [...allArticles, ...newArticles];
-		}
-	}
-
-	// Check if combined view has more to load
-	let combinedHasMore = $derived(subscriptionsStore.articlesHasMore || socialStore.hasMore);
-	let combinedIsLoadingMore = $derived(
-		subscriptionsStore.articlesIsLoadingMore || socialStore.isLoading
-	);
-
-	// Mark all articles in current feed as read
-	async function markAllAsReadInCurrentFeed() {
-		if (!feedFilter) return;
-
-		const feedId = parseInt(feedFilter);
-		const sub = subscriptionsStore.subscriptions.find((s) => s.id === feedId);
-		if (!sub) return;
-
-		// Get ALL articles for this feed (not just displayed/filtered)
-		const allFeedArticles = await subscriptionsStore.getArticles(feedId);
-
-		const articlesToMark = allFeedArticles
-			.filter((a) => !readingStore.isRead(a.guid))
-			.map((a) => ({
-				subscriptionRkey: sub.rkey,
-				articleGuid: a.guid,
-				articleUrl: a.url,
-				articleTitle: a.title,
-			}));
-
-		if (articlesToMark.length > 0) {
-			await readingStore.markAllAsRead(articlesToMark);
-		}
-	}
-
-	// Register keyboard shortcuts
-	onMount(() => {
-		// Navigation shortcuts
-		keyboardStore.register({
-			key: 'j',
-			description: 'Next item',
-			category: 'Navigation',
-			action: async () => {
-				if (currentItems.length > 0) {
-					const nextIndex = Math.min(selectedIndex + 1, currentItems.length - 1);
-					selectItem(nextIndex);
-
-					// If we're at the last item, try to load more
-					if (nextIndex === currentItems.length - 1) {
-						if (viewMode === 'combined' && combinedHasMore) {
-							await loadMoreCombined();
-						} else if (viewMode === 'articles' && subscriptionsStore.articlesHasMore) {
-							await loadMoreArticles();
-						} else if (viewMode === 'shares' && socialStore.hasMore) {
-							await socialStore.loadFeed(false);
-						}
-					}
-				}
-			},
-			condition: () => auth.isAuthenticated && currentItems.length > 0,
-		});
-
-		keyboardStore.register({
-			key: 'ArrowDown',
-			description: 'Next item',
-			category: 'Navigation',
-			action: async () => {
-				if (currentItems.length > 0) {
-					const nextIndex = Math.min(selectedIndex + 1, currentItems.length - 1);
-					selectItem(nextIndex);
-
-					// If we're at the last item, try to load more
-					if (nextIndex === currentItems.length - 1) {
-						if (viewMode === 'combined' && combinedHasMore) {
-							await loadMoreCombined();
-						} else if (viewMode === 'articles' && subscriptionsStore.articlesHasMore) {
-							await loadMoreArticles();
-						} else if (viewMode === 'shares' && socialStore.hasMore) {
-							await socialStore.loadFeed(false);
-						}
-					}
-				}
-			},
-			condition: () => auth.isAuthenticated && currentItems.length > 0,
-		});
-
-		keyboardStore.register({
-			key: 'k',
-			description: 'Previous item',
-			category: 'Navigation',
-			action: () => {
-				if (currentItems.length > 0) {
-					selectItem(Math.max(selectedIndex - 1, 0));
-				}
-			},
-			condition: () => auth.isAuthenticated && currentItems.length > 0,
-		});
-
-		keyboardStore.register({
-			key: 'ArrowUp',
-			description: 'Previous item',
-			category: 'Navigation',
-			action: () => {
-				if (currentItems.length > 0) {
-					selectItem(Math.max(selectedIndex - 1, 0));
-				}
-			},
-			condition: () => auth.isAuthenticated && currentItems.length > 0,
-		});
-
-		keyboardStore.register({
-			key: 'o',
-			description: 'Open in new tab',
-			category: 'Navigation',
-			action: openSelectedItem,
-			condition: () => auth.isAuthenticated && selectedIndex >= 0,
-		});
-
-		keyboardStore.register({
-			key: 'Enter',
-			description: 'Toggle expand',
-			category: 'Navigation',
-			action: async () => {
-				if (selectedIndex >= 0) {
-					if (expandedIndex === selectedIndex) {
-						expandedIndex = -1;
-						await tick();
-						scrollToCenter();
-					} else {
-						expandedIndex = selectedIndex;
-						await tick();
-						scrollToCenter();
-					}
-				}
-			},
-			condition: () => auth.isAuthenticated && selectedIndex >= 0,
-		});
-
-		// Article action shortcuts
-		keyboardStore.register({
-			key: 's',
-			description: 'Toggle star',
-			category: 'Article',
-			action: toggleSelectedStar,
-			condition: () => auth.isAuthenticated && selectedIndex >= 0,
-		});
-
-		keyboardStore.register({
-			key: 'S',
-			shift: true,
-			description: 'Share/unshare',
-			category: 'Article',
-			action: toggleSelectedShare,
-			condition: () => auth.isAuthenticated && selectedIndex >= 0,
-		});
-
-		keyboardStore.register({
-			key: 'm',
-			description: 'Mark read/unread',
-			category: 'Article',
-			action: toggleSelectedRead,
-			condition: () => auth.isAuthenticated && selectedIndex >= 0,
-		});
-
-		// Other shortcuts
-		keyboardStore.register({
-			key: 'u',
-			description: 'Toggle unread filter',
-			category: 'Other',
-			action: () => {
-				showOnlyUnread = !showOnlyUnread;
-			},
-			condition: () => auth.isAuthenticated && !starredFilter && !sharedFilter,
-		});
-
-		keyboardStore.register({
-			key: 'A',
-			shift: true,
-			description: 'Mark all as read',
-			category: 'Article',
-			action: markAllAsReadInCurrentFeed,
-			condition: () => auth.isAuthenticated && !!feedFilter,
+		tick().then(() => {
+			scrollMarkAsRead.setupObserver();
 		});
 	});
 
-	// Unregister shortcuts when component unmounts
-	onDestroy(() => {
-		keyboardStore.unregister('j');
-		keyboardStore.unregister('k');
-		keyboardStore.unregister('ArrowDown');
-		keyboardStore.unregister('ArrowUp');
-		keyboardStore.unregister('o');
-		keyboardStore.unregister('Enter');
-		keyboardStore.unregister('s');
-		keyboardStore.unregister('S', true);
-		keyboardStore.unregister('m');
-		keyboardStore.unregister('u');
-		keyboardStore.unregister('A', true);
+	function scrollToCenter() {
+		const elements = getArticleElements();
+		const el = elements[selectedIndex];
+		if (!el) return;
 
-		// Clean up scroll-to-mark-as-read
-		window.removeEventListener('scroll', updateScrollDirection);
-		scrollMarkObserver?.disconnect();
+		const rect = el.getBoundingClientRect();
+		const targetY = window.innerHeight / 3;
+		const offset = rect.top - targetY;
 
-		// Clean up visibility change handler
-		document.removeEventListener('visibilitychange', handleVisibilityChange);
-	});
+		window.scrollBy({ top: offset, behavior: 'instant' });
+	}
 
 	async function selectItem(index: number) {
 		if (index === selectedIndex) return;
 
 		const mode = viewMode;
-		// Mark as read when selecting articles or shares
 		if (mode === 'articles') {
 			const article = displayedArticles[index];
 			const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
@@ -981,22 +420,198 @@
 		}
 
 		selectedIndex = index;
-		expandedIndex = -1; // Reset expanded when selecting new item
+		expandedIndex = -1;
 
-		await tick(); // Wait for DOM to update
+		await tick();
 		scrollToCenter();
 	}
 
-	function scrollToCenter() {
-		const el = articleElements[selectedIndex];
-		if (!el) return;
-
-		const rect = el.getBoundingClientRect();
-		const targetY = window.innerHeight / 3;
-		const offset = rect.top - targetY;
-
-		window.scrollBy({ top: offset, behavior: 'instant' });
+	async function loadMoreArticles() {
+		const feedId = feedFilter ? parseInt(feedFilter) : undefined;
+		const newArticles = await subscriptionsStore.loadMoreArticles(feedId);
+		if (newArticles.length > 0) {
+			allArticles = [...allArticles, ...newArticles];
+		}
 	}
+
+	async function loadMoreCombined() {
+		const [, newArticles] = await Promise.all([
+			socialStore.hasMore ? socialStore.loadFeed(false) : Promise.resolve(),
+			subscriptionsStore.articlesHasMore
+				? subscriptionsStore.loadMoreArticles()
+				: Promise.resolve([]),
+		]);
+
+		if (newArticles && newArticles.length > 0) {
+			allArticles = [...allArticles, ...newArticles];
+		}
+	}
+
+	async function markAllAsReadInCurrentFeed() {
+		if (!feedFilter) return;
+
+		const feedId = parseInt(feedFilter);
+		const sub = subscriptionsStore.subscriptions.find((s) => s.id === feedId);
+		if (!sub) return;
+
+		const allFeedArticles = await subscriptionsStore.getArticles(feedId);
+
+		const articlesToMark = allFeedArticles
+			.filter((a) => !readingStore.isRead(a.guid))
+			.map((a) => ({
+				subscriptionRkey: sub.rkey,
+				articleGuid: a.guid,
+				articleUrl: a.url,
+				articleTitle: a.title,
+			}));
+
+		if (articlesToMark.length > 0) {
+			await readingStore.markAllAsRead(articlesToMark);
+		}
+	}
+
+	// Keyboard shortcuts hook
+	const keyboardShortcuts = useFeedKeyboardShortcuts({
+		getCurrentItems: () => currentItems,
+		getSelectedIndex: () => selectedIndex,
+		getExpandedIndex: () => expandedIndex,
+		getViewMode: () => viewMode,
+		getDisplayedArticles: () => displayedArticles,
+		getDisplayedShares: () => displayedShares,
+		getDisplayedCombined: () => displayedCombined,
+		getDisplayedUserShares: () => displayedUserShares,
+		getSubscriptions: () => subscriptionsStore.subscriptions,
+		getArticlesByGuid: () => articlesByGuid,
+		getCombinedHasMore: () => combinedHasMore,
+		getArticlesHasMore: () => subscriptionsStore.articlesHasMore,
+		getSharesHasMore: () => socialStore.hasMore,
+		hasFeedFilter: () => !!feedFilter,
+		hasStarredFilter: () => !!starredFilter,
+		hasSharedFilter: () => !!sharedFilter,
+		selectItem,
+		setExpandedIndex: (index: number) => {
+			expandedIndex = index;
+		},
+		scrollToCenter,
+		loadMoreCombined,
+		loadMoreArticles,
+		loadMoreShares: () => socialStore.loadFeed(false),
+		toggleStar: (guid, url, title) => readingStore.toggleStar(guid, url, title),
+		share: (rkey, feedUrl, guid, url, title, author, summary, imageUrl, publishedAt) =>
+			sharesStore.share(rkey, feedUrl, guid, url, title, author, summary, imageUrl, publishedAt),
+		unshare: (guid) => sharesStore.unshare(guid),
+		isShared: (guid) => sharesStore.isShared(guid),
+		markAsRead: (rkey, guid, url, title) => readingStore.markAsRead(rkey, guid, url, title),
+		markAsUnread: (guid) => readingStore.markAsUnread(guid),
+		isRead: (guid) => readingStore.isRead(guid),
+		shareMarkAsRead: (uri, authorDid, url, title) =>
+			shareReadingStore.markAsRead(uri, authorDid, url, title),
+		shareMarkAsUnread: (uri) => shareReadingStore.markAsUnread(uri),
+		shareIsRead: (uri) => shareReadingStore.isRead(uri),
+		markAllAsReadInCurrentFeed,
+		toggleUnreadFilter: () => {
+			showOnlyUnread = !showOnlyUnread;
+		},
+	});
+
+	async function removeFeed(id: number) {
+		if (confirm('Are you sure you want to remove this subscription?')) {
+			await subscriptionsStore.remove(id);
+			goto('/');
+		}
+	}
+
+	async function handleVisibilityChange() {
+		if (document.visibilityState === 'visible' && auth.isAuthenticated) {
+			const timeSinceVisible = Date.now() - lastVisibleTime;
+
+			if (timeSinceVisible > STALE_THRESHOLD_MS) {
+				console.log('Tab was hidden for a while, checking for updates...');
+				await subscriptionsStore.fetchAllNewFeeds();
+				subscriptionsStore.resetArticlesPagination();
+				allArticles = await subscriptionsStore.getArticlesPaginated(
+					feedFilter ? parseInt(feedFilter) : undefined
+				);
+			}
+		}
+		lastVisibleTime = Date.now();
+	}
+
+	onMount(async () => {
+		if (auth.isAuthenticated) {
+			await subscriptionsStore.load();
+			await readingStore.load();
+			await shareReadingStore.load();
+			await sharesStore.load();
+			await socialStore.loadFollowedUsers();
+			await socialStore.loadFeed(true);
+
+			await loadArticles();
+
+			if (subscriptionsStore.subscriptions.length > 0) {
+				const feedUrls = subscriptionsStore.subscriptions.map((s) => s.feedUrl);
+				await subscriptionsStore.checkFeedStatuses(feedUrls);
+				await subscriptionsStore.fetchAllNewFeeds();
+
+				await loadArticles();
+			}
+		}
+		isLoading = false;
+
+		lastLoadedFilter = feedFilter;
+		lastLoadedStarredFilter = starredFilter;
+		lastLoadedVersion = subscriptionsStore.articlesVersion;
+
+		scrollMarkAsRead.init();
+		keyboardShortcuts.register();
+
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+		lastVisibleTime = Date.now();
+	});
+
+	// Reset selection when any filter changes
+	$effect(() => {
+		feedFilter;
+		starredFilter;
+		sharedFilter;
+		sharerFilter;
+		followingFilter;
+		feedsFilter;
+		selectedIndex = -1;
+		expandedIndex = -1;
+	});
+
+	// Reload articles when filters change or new articles arrive
+	let lastLoadedFilter = $state<string | null | undefined>(undefined);
+	let lastLoadedStarredFilter = $state<string | null | undefined>(undefined);
+	let lastLoadedVersion = $state(-1);
+
+	$effect(() => {
+		const currentFilter = feedFilter;
+		const currentStarredFilter = starredFilter;
+		const currentVersion = subscriptionsStore.articlesVersion;
+
+		const prevFilter = untrack(() => lastLoadedFilter);
+		const prevStarredFilter = untrack(() => lastLoadedStarredFilter);
+		const prevVersion = untrack(() => lastLoadedVersion);
+
+		if (prevFilter === undefined) return;
+
+		if (
+			currentFilter !== prevFilter ||
+			currentStarredFilter !== prevStarredFilter ||
+			currentVersion !== prevVersion
+		) {
+			lastLoadedFilter = currentFilter;
+			lastLoadedStarredFilter = currentStarredFilter;
+			lastLoadedVersion = currentVersion;
+			loadArticles();
+		}
+	});
+
+	onDestroy(() => {
+		document.removeEventListener('visibilitychange', handleVisibilityChange);
+	});
 </script>
 
 {#if !auth.isAuthenticated}
@@ -1064,292 +679,56 @@
 					description="Add some subscriptions using the + button in the sidebar"
 				/>
 			{/if}
-		{:else if viewMode === 'combined'}
-			<!-- Combined view (articles + shares) -->
-			<div class="article-list">
-				{#each displayedCombined as feedItem, index (feedItem.type === 'article' ? feedItem.item.guid : feedItem.item.recordUri)}
-					<div bind:this={articleElements[index]}>
-						{#if feedItem.type === 'article'}
-							{@const article = feedItem.item}
-							{@const sub = subscriptionsStore.subscriptions.find(
-								(s) => s.id === article.subscriptionId
-							)}
-							<ArticleCard
-								{article}
-								siteUrl={sub?.siteUrl}
-								isRead={readingStore.isRead(article.guid)}
-								isStarred={readingStore.isStarred(article.guid)}
-								isShared={sharesStore.isShared(article.guid)}
-								shareNote={sharesStore.getShareNote(article.guid)}
-								selected={selectedIndex === index}
-								expanded={expandedIndex === index}
-								onToggleStar={() =>
-									readingStore.toggleStar(article.guid, article.url, article.title)}
-								onShare={() =>
-									sharesStore.share(
-										sub?.rkey || '',
-										sub?.feedUrl || '',
-										article.guid,
-										article.url,
-										article.title,
-										article.author,
-										article.summary,
-										article.imageUrl,
-										article.publishedAt
-									)}
-								onUnshare={() => sharesStore.unshare(article.guid)}
-								onSelect={() => {
-									if (selectedIndex === index) {
-										selectedIndex = -1;
-										expandedIndex = -1;
-									} else {
-										selectItem(index);
-									}
-								}}
-								onExpand={async () => {
-									if (expandedIndex === index) {
-										expandedIndex = -1;
-										await tick();
-										scrollToCenter();
-									} else {
-										expandedIndex = index;
-										await tick();
-										scrollToCenter();
-									}
-								}}
-							/>
-						{:else}
-							{@const share = feedItem.item}
-							{@const localArticle = share.itemGuid
-								? articlesByGuid.get(share.itemGuid)
-								: undefined}
-							{@const remoteArticle = share.itemGuid
-								? fetchedArticles.get(share.itemGuid)
-								: undefined}
-							{@const isFetching = share.itemGuid ? fetchingArticles.has(share.itemGuid) : false}
-							<ShareCard
-								{share}
-								{localArticle}
-								{remoteArticle}
-								{isFetching}
-								isRead={shareReadingStore.isRead(share.recordUri)}
-								selected={selectedIndex === index}
-								expanded={expandedIndex === index}
-								onSelect={() => {
-									if (selectedIndex === index) {
-										selectedIndex = -1;
-										expandedIndex = -1;
-									} else {
-										selectItem(index);
-									}
-								}}
-								onExpand={async () => {
-									if (expandedIndex === index) {
-										expandedIndex = -1;
-										await tick();
-										scrollToCenter();
-									} else {
-										expandedIndex = index;
-										await tick();
-										scrollToCenter();
-									}
-								}}
-								onFetchContent={() => {
-									const hasLocalContent = localArticle?.content || localArticle?.summary;
-									const hasRemoteContent = remoteArticle?.content || remoteArticle?.summary;
-									if (share.feedUrl && share.itemGuid && !hasLocalContent && !hasRemoteContent) {
-										fetchArticleContent(share.feedUrl, share.itemGuid, share.itemUrl);
-									}
-								}}
-							/>
-						{/if}
-					</div>
-				{/each}
-
-				{#if combinedHasMore && !combinedIsLoadingMore}
-					<button class="btn btn-secondary load-more" onclick={loadMoreCombined}>
-						Load More
-					</button>
-				{/if}
-
-				{#if combinedIsLoadingMore}
-					<LoadingState message="Loading more..." />
-				{/if}
-			</div>
-		{:else if viewMode === 'shares'}
-			<!-- Social shares view -->
-			<div class="article-list">
-				{#each displayedShares as share, index (share.recordUri)}
-					{@const localArticle = share.itemGuid ? articlesByGuid.get(share.itemGuid) : undefined}
-					{@const remoteArticle = share.itemGuid ? fetchedArticles.get(share.itemGuid) : undefined}
-					{@const isFetching = share.itemGuid ? fetchingArticles.has(share.itemGuid) : false}
-					<div bind:this={articleElements[index]}>
-						<ShareCard
-							{share}
-							{localArticle}
-							{remoteArticle}
-							{isFetching}
-							isRead={shareReadingStore.isRead(share.recordUri)}
-							selected={selectedIndex === index}
-							expanded={expandedIndex === index}
-							onSelect={() => {
-								if (selectedIndex === index) {
-									selectedIndex = -1;
-									expandedIndex = -1;
-								} else {
-									selectItem(index);
-								}
-							}}
-							onExpand={async () => {
-								if (expandedIndex === index) {
-									expandedIndex = -1;
-									await tick();
-									scrollToCenter();
-								} else {
-									expandedIndex = index;
-									await tick();
-									scrollToCenter();
-								}
-							}}
-							onFetchContent={() => {
-								const hasLocalContent = localArticle?.content || localArticle?.summary;
-								const hasRemoteContent = remoteArticle?.content || remoteArticle?.summary;
-								if (share.feedUrl && share.itemGuid && !hasLocalContent && !hasRemoteContent) {
-									fetchArticleContent(share.feedUrl, share.itemGuid, share.itemUrl);
-								}
-							}}
-						/>
-					</div>
-				{/each}
-
-				{#if socialStore.hasMore && !socialStore.isLoading}
-					<button class="btn btn-secondary load-more" onclick={() => socialStore.loadFeed(false)}>
-						Load More
-					</button>
-				{/if}
-
-				{#if socialStore.isLoading && displayedShares.length > 0}
-					<LoadingState message="Loading more shares..." />
-				{/if}
-			</div>
-		{:else if viewMode === 'userShares'}
-			<!-- User's own shares view -->
-			<div class="article-list">
-				{#each displayedUserShares as share, index (share.articleGuid)}
-					{@const localArticle = articlesByGuid.get(share.articleGuid)}
-					{@const article = localArticle || {
-						guid: share.articleGuid,
-						url: share.articleUrl,
-						title: share.articleTitle || share.articleUrl,
-						author: share.articleAuthor,
-						summary: share.articleDescription,
-						imageUrl: share.articleImage,
-						publishedAt: share.articlePublishedAt || share.createdAt,
-						subscriptionId: 0,
-						fetchedAt: Date.now(),
-					}}
-					{@const sub = localArticle
-						? subscriptionsStore.subscriptions.find((s) => s.id === localArticle.subscriptionId)
-						: undefined}
-					<div bind:this={articleElements[index]}>
-						<ArticleCard
-							{article}
-							siteUrl={sub?.siteUrl}
-							isRead={readingStore.isRead(article.guid)}
-							isStarred={readingStore.isStarred(article.guid)}
-							isShared={true}
-							shareNote={share.note}
-							selected={selectedIndex === index}
-							expanded={expandedIndex === index}
-							onToggleStar={() => readingStore.toggleStar(article.guid, article.url, article.title)}
-							onUnshare={() => sharesStore.unshare(share.articleGuid)}
-							onSelect={() => {
-								if (selectedIndex === index) {
-									selectedIndex = -1;
-									expandedIndex = -1;
-								} else {
-									selectItem(index);
-								}
-							}}
-							onExpand={async () => {
-								if (expandedIndex === index) {
-									expandedIndex = -1;
-									await tick();
-									scrollToCenter();
-								} else {
-									expandedIndex = index;
-									await tick();
-									scrollToCenter();
-								}
-							}}
-						/>
-					</div>
-				{/each}
-			</div>
 		{:else}
-			<!-- Articles view -->
-			<div class="article-list">
-				{#each displayedArticles as article, index (article.guid)}
-					{@const sub = subscriptionsStore.subscriptions.find(
-						(s) => s.id === article.subscriptionId
+			<FeedListView
+				bind:this={feedListView}
+				{viewMode}
+				{displayedArticles}
+				{displayedShares}
+				{displayedUserShares}
+				{displayedCombined}
+				{articlesByGuid}
+				{fetchedArticles}
+				{fetchingArticles}
+				{selectedIndex}
+				{expandedIndex}
+				articlesHasMore={subscriptionsStore.articlesHasMore}
+				articlesIsLoadingMore={subscriptionsStore.articlesIsLoadingMore}
+				sharesHasMore={socialStore.hasMore}
+				sharesIsLoading={socialStore.isLoading}
+				{combinedHasMore}
+				{combinedIsLoadingMore}
+				onSelect={selectItem}
+				onDeselect={() => {
+					selectedIndex = -1;
+					expandedIndex = -1;
+				}}
+				onExpand={async (index) => {
+					expandedIndex = index;
+				}}
+				onCollapse={async () => {
+					expandedIndex = -1;
+				}}
+				onToggleStar={(article) =>
+					readingStore.toggleStar(article.guid, article.url, article.title)}
+				onShare={(article, sub) =>
+					sharesStore.share(
+						sub.rkey,
+						sub.feedUrl,
+						article.guid,
+						article.url,
+						article.title,
+						article.author,
+						article.summary,
+						article.imageUrl,
+						article.publishedAt
 					)}
-					<div bind:this={articleElements[index]}>
-						<ArticleCard
-							{article}
-							siteUrl={sub?.siteUrl}
-							isRead={readingStore.isRead(article.guid)}
-							isStarred={readingStore.isStarred(article.guid)}
-							isShared={sharesStore.isShared(article.guid)}
-							shareNote={sharesStore.getShareNote(article.guid)}
-							selected={selectedIndex === index}
-							expanded={expandedIndex === index}
-							onToggleStar={() => readingStore.toggleStar(article.guid, article.url, article.title)}
-							onShare={() =>
-								sharesStore.share(
-									sub?.rkey || '',
-									sub?.feedUrl || '',
-									article.guid,
-									article.url,
-									article.title,
-									article.author,
-									article.summary,
-									article.imageUrl,
-									article.publishedAt
-								)}
-							onUnshare={() => sharesStore.unshare(article.guid)}
-							onSelect={() => {
-								if (selectedIndex === index) {
-									selectedIndex = -1;
-									expandedIndex = -1;
-								} else {
-									selectItem(index);
-								}
-							}}
-							onExpand={async () => {
-								if (expandedIndex === index) {
-									expandedIndex = -1;
-									await tick();
-									scrollToCenter();
-								} else {
-									expandedIndex = index;
-									await tick();
-									scrollToCenter();
-								}
-							}}
-						/>
-					</div>
-				{/each}
-
-				{#if subscriptionsStore.articlesHasMore && !subscriptionsStore.articlesIsLoadingMore}
-					<button class="btn btn-secondary load-more" onclick={loadMoreArticles}>
-						Load More
-					</button>
-				{/if}
-
-				{#if subscriptionsStore.articlesIsLoadingMore}
-					<LoadingState message="Loading more articles..." />
-				{/if}
-			</div>
+				onUnshare={(guid) => sharesStore.unshare(guid)}
+				onFetchContent={fetchArticleContent}
+				onLoadMoreArticles={loadMoreArticles}
+				onLoadMoreShares={() => socialStore.loadFeed(false)}
+				onLoadMoreCombined={loadMoreCombined}
+			/>
 		{/if}
 	</div>
 {/if}
@@ -1358,23 +737,5 @@
 	.feed-page {
 		max-width: 800px;
 		margin: 0 auto;
-	}
-
-	.article-list {
-		display: flex;
-		flex-direction: column;
-	}
-
-	.article-list > div {
-		border-bottom: 1px solid var(--color-border);
-	}
-
-	.article-list > div:last-child {
-		border-bottom: none;
-	}
-
-	.load-more {
-		width: 100%;
-		margin: 1rem 0;
 	}
 </style>
