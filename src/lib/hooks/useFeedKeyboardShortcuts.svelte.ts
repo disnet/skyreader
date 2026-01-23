@@ -2,64 +2,16 @@ import { onDestroy } from 'svelte';
 import { tick } from 'svelte';
 import { keyboardStore } from '$lib/stores/keyboard.svelte';
 import { auth } from '$lib/stores/auth.svelte';
-import type { Article, SocialShare, CombinedFeedItem, UserShare, Subscription } from '$lib/types';
+import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
+import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+import { readingStore } from '$lib/stores/reading.svelte';
+import { shareReadingStore } from '$lib/stores/shareReading.svelte';
+import { sharesStore } from '$lib/stores/shares.svelte';
+import type { Article, Subscription } from '$lib/types';
 
 interface KeyboardShortcutsParams {
-	// Getters for current state
-	getCurrentItems: () => (Article | SocialShare | UserShare | CombinedFeedItem)[];
-	getSelectedIndex: () => number;
-	getExpandedIndex: () => number;
-	getViewMode: () => 'articles' | 'shares' | 'userShares' | 'combined';
-	getDisplayedArticles: () => Article[];
-	getDisplayedShares: () => SocialShare[];
-	getDisplayedCombined: () => CombinedFeedItem[];
-	getDisplayedUserShares: () => UserShare[];
-	getSubscriptions: () => Subscription[];
-	getArticlesByGuid: () => Map<string, Article>;
-
-	// Pagination state
-	getCombinedHasMore: () => boolean;
-	getArticlesHasMore: () => boolean;
-	getSharesHasMore: () => boolean;
-
-	// Filter state
-	hasFeedFilter: () => boolean;
-	hasStarredFilter: () => boolean;
-	hasSharedFilter: () => boolean;
-
-	// State setters
-	selectItem: (index: number) => void;
-	setExpandedIndex: (index: number) => void;
-
-	// Scroll helper
 	scrollToCenter: () => void;
-
-	// Action callbacks
-	loadMoreCombined: () => Promise<void>;
-	loadMoreArticles: () => Promise<void>;
-	loadMoreShares: () => Promise<void>;
-	toggleStar: (guid: string, url: string, title: string) => void;
-	share: (
-		rkey: string,
-		feedUrl: string,
-		guid: string,
-		url: string,
-		title: string,
-		author?: string,
-		summary?: string,
-		imageUrl?: string,
-		publishedAt?: string
-	) => void;
-	unshare: (guid: string) => void;
-	isShared: (guid: string) => boolean;
-	markAsRead: (rkey: string, guid: string, url: string, title?: string) => void;
-	markAsUnread: (guid: string) => void;
-	isRead: (guid: string) => boolean;
-	shareMarkAsRead: (uri: string, authorDid: string, url: string, title?: string) => void;
-	shareMarkAsUnread: (uri: string) => void;
-	shareIsRead: (uri: string) => boolean;
 	markAllAsReadInCurrentFeed: () => Promise<void>;
-	toggleUnreadFilter: () => void;
 }
 
 /**
@@ -67,80 +19,75 @@ interface KeyboardShortcutsParams {
  * Registers and unregisters keyboard shortcuts for the feed page.
  */
 export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
+	// Helper to get the article from a FeedDisplayItem
+	function getArticleFromItem(item: FeedDisplayItem): Article | null {
+		if (item.type === 'article') {
+			return item.item;
+		} else if (item.type === 'userShare') {
+			return item.article;
+		}
+		return null;
+	}
+
+	// Helper to get subscription for an article
+	function getSubscriptionForArticle(article: Article): Subscription | undefined {
+		return subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
+	}
+
 	// Helper to get selected article info
 	function getSelectedArticle(): {
 		article: Article;
 		sub: Subscription;
 	} | null {
-		const selectedIndex = params.getSelectedIndex();
+		const selectedIndex = feedViewStore.selectedIndex;
 		if (selectedIndex < 0) return null;
-		const mode = params.getViewMode();
 
-		if (mode === 'articles') {
-			const article = params.getDisplayedArticles()[selectedIndex];
-			if (!article) return null;
-			const sub = params.getSubscriptions().find((s) => s.id === article.subscriptionId);
-			if (!sub) return null;
-			return { article, sub };
-		} else if (mode === 'combined') {
-			const feedItem = params.getDisplayedCombined()[selectedIndex];
-			if (!feedItem || feedItem.type !== 'article') return null;
-			const article = feedItem.item;
-			const sub = params.getSubscriptions().find((s) => s.id === article.subscriptionId);
-			if (!sub) return null;
-			return { article, sub };
-		} else if (mode === 'userShares') {
-			const share = params.getDisplayedUserShares()[selectedIndex];
-			if (!share) return null;
-			const localArticle = params.getArticlesByGuid().get(share.articleGuid);
-			if (localArticle) {
-				const sub = params.getSubscriptions().find((s) => s.id === localArticle.subscriptionId);
-				if (sub) return { article: localArticle, sub };
+		const items = feedViewStore.currentItems;
+		const item = items[selectedIndex];
+		if (!item) return null;
+
+		const article = getArticleFromItem(item);
+		if (!article) return null;
+
+		const sub = getSubscriptionForArticle(article);
+		if (!sub) {
+			// For userShares without local subscription, create a minimal sub
+			if (item.type === 'userShare') {
+				return {
+					article,
+					sub: {
+						rkey: '',
+						feedUrl: item.item.feedUrl || '',
+						id: 0,
+						title: '',
+						tags: [],
+						createdAt: '',
+						localUpdatedAt: 0,
+					} as Subscription,
+				};
 			}
-			// For user shares without local article, create a minimal article object
-			return {
-				article: {
-					guid: share.articleGuid,
-					url: share.articleUrl,
-					title: share.articleTitle || share.articleUrl,
-					author: share.articleAuthor,
-					summary: share.articleDescription,
-					imageUrl: share.articleImage,
-					publishedAt: share.articlePublishedAt || share.createdAt,
-					subscriptionId: 0,
-					fetchedAt: Date.now(),
-				},
-				sub: {
-					rkey: '',
-					feedUrl: share.feedUrl || '',
-					id: 0,
-					title: '',
-					tags: [],
-					createdAt: '',
-					localUpdatedAt: 0,
-				} as Subscription,
-			};
+			return null;
 		}
-		return null;
+
+		return { article, sub };
 	}
 
 	// Open selected item in new tab
 	function openSelectedItem() {
-		const selectedIndex = params.getSelectedIndex();
+		const selectedIndex = feedViewStore.selectedIndex;
 		if (selectedIndex < 0) return;
-		const items = params.getCurrentItems();
+
+		const items = feedViewStore.currentItems;
 		const item = items[selectedIndex];
-		const mode = params.getViewMode();
+		if (!item) return;
+
 		let url: string;
-		if (mode === 'combined') {
-			const combined = item as CombinedFeedItem;
-			url = combined.type === 'article' ? combined.item.url : combined.item.itemUrl;
-		} else if (mode === 'shares') {
-			url = (item as SocialShare).itemUrl;
-		} else if (mode === 'userShares') {
-			url = (item as UserShare).articleUrl;
+		if (item.type === 'article') {
+			url = item.item.url;
+		} else if (item.type === 'share') {
+			url = item.item.itemUrl;
 		} else {
-			url = (item as Article).url;
+			url = item.item.articleUrl;
 		}
 		window.open(url, '_blank');
 	}
@@ -149,7 +96,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 	function toggleSelectedStar() {
 		const selected = getSelectedArticle();
 		if (selected) {
-			params.toggleStar(selected.article.guid, selected.article.url, selected.article.title);
+			readingStore.toggleStar(selected.article.guid, selected.article.url, selected.article.title);
 		}
 	}
 
@@ -159,10 +106,10 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 		if (!selected) return;
 
 		const { article, sub } = selected;
-		if (params.isShared(article.guid)) {
-			params.unshare(article.guid);
+		if (sharesStore.isShared(article.guid)) {
+			sharesStore.unshare(article.guid);
 		} else {
-			params.share(
+			sharesStore.share(
 				sub.rkey,
 				sub.feedUrl,
 				article.guid,
@@ -178,103 +125,79 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 
 	// Toggle read/unread on selected item
 	function toggleSelectedRead() {
-		const selectedIndex = params.getSelectedIndex();
+		const selectedIndex = feedViewStore.selectedIndex;
 		if (selectedIndex < 0) return;
-		const mode = params.getViewMode();
 
-		if (mode === 'articles') {
-			const article = params.getDisplayedArticles()[selectedIndex];
-			if (!article) return;
-			const sub = params.getSubscriptions().find((s) => s.id === article.subscriptionId);
+		const items = feedViewStore.currentItems;
+		const item = items[selectedIndex];
+		if (!item) return;
+
+		if (item.type === 'article' || item.type === 'userShare') {
+			const article = item.type === 'article' ? item.item : item.article;
+			const sub = getSubscriptionForArticle(article);
 			if (!sub) return;
 
-			if (params.isRead(article.guid)) {
-				params.markAsUnread(article.guid);
+			if (readingStore.isRead(article.guid)) {
+				readingStore.markAsUnread(article.guid);
 			} else {
-				params.markAsRead(sub.rkey, article.guid, article.url, article.title);
+				readingStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
 			}
-		} else if (mode === 'combined') {
-			const feedItem = params.getDisplayedCombined()[selectedIndex];
-			if (!feedItem) return;
-
-			if (feedItem.type === 'article') {
-				const article = feedItem.item;
-				const sub = params.getSubscriptions().find((s) => s.id === article.subscriptionId);
-				if (!sub) return;
-
-				if (params.isRead(article.guid)) {
-					params.markAsUnread(article.guid);
-				} else {
-					params.markAsRead(sub.rkey, article.guid, article.url, article.title);
-				}
+		} else if (item.type === 'share') {
+			const share = item.item;
+			if (shareReadingStore.isRead(share.recordUri)) {
+				shareReadingStore.markAsUnread(share.recordUri);
 			} else {
-				const share = feedItem.item;
-				if (params.shareIsRead(share.recordUri)) {
-					params.shareMarkAsUnread(share.recordUri);
-				} else {
-					params.shareMarkAsRead(share.recordUri, share.authorDid, share.itemUrl, share.itemTitle);
-				}
-			}
-		} else if (mode === 'shares') {
-			const share = params.getDisplayedShares()[selectedIndex];
-			if (!share) return;
-
-			if (params.shareIsRead(share.recordUri)) {
-				params.shareMarkAsUnread(share.recordUri);
-			} else {
-				params.shareMarkAsRead(share.recordUri, share.authorDid, share.itemUrl, share.itemTitle);
+				shareReadingStore.markAsRead(
+					share.recordUri,
+					share.authorDid,
+					share.itemUrl,
+					share.itemTitle
+				);
 			}
 		}
 	}
 
-	// Navigation actions (shared between j/ArrowDown and k/ArrowUp)
+	// Navigation actions
 	async function selectNextItem() {
-		const currentItems = params.getCurrentItems();
-		const selectedIndex = params.getSelectedIndex();
+		const currentItems = feedViewStore.currentItems;
+		const selectedIndex = feedViewStore.selectedIndex;
 		if (currentItems.length === 0) return;
 
 		const nextIndex = Math.min(selectedIndex + 1, currentItems.length - 1);
-		params.selectItem(nextIndex);
+		feedViewStore.select(nextIndex);
 
 		// If we're at the last item, try to load more
-		if (nextIndex === currentItems.length - 1) {
-			const viewMode = params.getViewMode();
-			if (viewMode === 'combined' && params.getCombinedHasMore()) {
-				await params.loadMoreCombined();
-			} else if (viewMode === 'articles' && params.getArticlesHasMore()) {
-				await params.loadMoreArticles();
-			} else if (viewMode === 'shares' && params.getSharesHasMore()) {
-				await params.loadMoreShares();
-			}
+		if (nextIndex === currentItems.length - 1 && feedViewStore.hasMore) {
+			await feedViewStore.loadMore();
 		}
 	}
 
 	function selectPreviousItem() {
-		const currentItems = params.getCurrentItems();
-		const selectedIndex = params.getSelectedIndex();
+		const currentItems = feedViewStore.currentItems;
+		const selectedIndex = feedViewStore.selectedIndex;
 		if (currentItems.length === 0) return;
 
-		params.selectItem(Math.max(selectedIndex - 1, 0));
+		feedViewStore.select(Math.max(selectedIndex - 1, 0));
 	}
 
 	function hasItems() {
-		return auth.isAuthenticated && params.getCurrentItems().length > 0;
+		return auth.isAuthenticated && feedViewStore.currentItems.length > 0;
 	}
 
 	function hasSelected() {
-		return auth.isAuthenticated && params.getSelectedIndex() >= 0;
+		return auth.isAuthenticated && feedViewStore.selectedIndex >= 0;
 	}
 
 	// Toggle expand action
 	async function toggleExpand() {
-		const selectedIndex = params.getSelectedIndex();
-		const expandedIndex = params.getExpandedIndex();
+		const selectedIndex = feedViewStore.selectedIndex;
+		const expandedIndex = feedViewStore.expandedIndex;
 		if (selectedIndex < 0) return;
 
 		if (expandedIndex === selectedIndex) {
-			params.setExpandedIndex(-1);
+			feedViewStore.collapse();
 		} else {
-			params.setExpandedIndex(selectedIndex);
+			feedViewStore.expand(selectedIndex);
 		}
 		await tick();
 		params.scrollToCenter();
@@ -361,9 +284,9 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 			key: 'u',
 			description: 'Toggle unread filter',
 			category: 'Other',
-			action: params.toggleUnreadFilter,
+			action: () => feedViewStore.toggleUnreadFilter(),
 			condition: () =>
-				auth.isAuthenticated && !params.hasStarredFilter() && !params.hasSharedFilter(),
+				auth.isAuthenticated && !feedViewStore.starredFilter && !feedViewStore.sharedFilter,
 		});
 
 		keyboardStore.register({
@@ -372,7 +295,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 			description: 'Mark all as read',
 			category: 'Article',
 			action: params.markAllAsReadInCurrentFeed,
-			condition: () => auth.isAuthenticated && params.hasFeedFilter(),
+			condition: () => auth.isAuthenticated && !!feedViewStore.feedFilter,
 		});
 	}
 
