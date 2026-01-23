@@ -366,6 +366,19 @@ class ApiClient {
 		});
 	}
 
+	async getShareReadPositions(): Promise<{
+		positions: Array<{
+			rkey: string;
+			shareUri: string;
+			shareAuthorDid: string;
+			itemUrl: string | null;
+			itemTitle: string | null;
+			readAt: string;
+		}>;
+	}> {
+		return this.fetch('/api/social/share-read');
+	}
+
 	// List records (still used for syncFromBackend)
 	async listRecords<T>(collection: string): Promise<{
 		records: Array<{ uri: string; cid: string; value: T }>;

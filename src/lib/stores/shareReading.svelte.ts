@@ -14,9 +14,44 @@ function createShareReadingStore() {
 
 	async function load() {
 		isLoading = true;
+
+		// 1. First, try to load from local cache for instant display
 		try {
-			const positions = await db.shareReadPositions.toArray();
-			shareReadPositions = new Map(positions.map((p) => [p.shareUri, p]));
+			const cached = await db.shareReadPositions.toArray();
+			if (cached.length > 0) {
+				shareReadPositions = new Map(cached.map((p) => [p.shareUri, p]));
+				// Show cached data immediately, but keep loading
+				isLoading = false;
+			}
+		} catch (e) {
+			console.error('Failed to load share read positions from cache:', e);
+		}
+
+		// 2. Then fetch from backend and update
+		try {
+			const { positions } = await api.getShareReadPositions();
+
+			// Clear and rebuild the cache
+			await db.shareReadPositions.clear();
+
+			const newPositions = new Map<string, ShareReadPosition>();
+			for (const p of positions) {
+				const position: Omit<ShareReadPosition, 'id'> = {
+					rkey: p.rkey,
+					shareUri: p.shareUri,
+					shareAuthorDid: p.shareAuthorDid,
+					itemUrl: p.itemUrl || '',
+					itemTitle: p.itemTitle || undefined,
+					readAt: p.readAt,
+				};
+				const id = await db.shareReadPositions.add(position);
+				newPositions.set(p.shareUri, { ...position, id });
+			}
+
+			shareReadPositions = newPositions;
+		} catch (e) {
+			console.error('Failed to load share read positions from backend:', e);
+			// If backend fails but we have cached data, that's ok
 		} finally {
 			isLoading = false;
 		}

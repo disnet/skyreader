@@ -212,7 +212,7 @@ function createFeedViewStore() {
 
 			const onlyUnread = untrack(() => showOnlyUnread);
 			const readPositions = untrack(() => shareReadingStore.shareReadPositions);
-			if (onlyUnread && (followingFilter || sharerFilter)) {
+			if (onlyUnread) {
 				filtered = filtered.filter((s) => !readPositions.has(s.recordUri));
 			}
 
