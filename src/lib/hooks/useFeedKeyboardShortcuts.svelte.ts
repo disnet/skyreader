@@ -227,88 +227,91 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 		}
 	}
 
+	// Navigation actions (shared between j/ArrowDown and k/ArrowUp)
+	async function selectNextItem() {
+		const currentItems = params.getCurrentItems();
+		const selectedIndex = params.getSelectedIndex();
+		if (currentItems.length === 0) return;
+
+		const nextIndex = Math.min(selectedIndex + 1, currentItems.length - 1);
+		params.selectItem(nextIndex);
+
+		// If we're at the last item, try to load more
+		if (nextIndex === currentItems.length - 1) {
+			const viewMode = params.getViewMode();
+			if (viewMode === 'combined' && params.getCombinedHasMore()) {
+				await params.loadMoreCombined();
+			} else if (viewMode === 'articles' && params.getArticlesHasMore()) {
+				await params.loadMoreArticles();
+			} else if (viewMode === 'shares' && params.getSharesHasMore()) {
+				await params.loadMoreShares();
+			}
+		}
+	}
+
+	function selectPreviousItem() {
+		const currentItems = params.getCurrentItems();
+		const selectedIndex = params.getSelectedIndex();
+		if (currentItems.length === 0) return;
+
+		params.selectItem(Math.max(selectedIndex - 1, 0));
+	}
+
+	function hasItems() {
+		return auth.isAuthenticated && params.getCurrentItems().length > 0;
+	}
+
+	function hasSelected() {
+		return auth.isAuthenticated && params.getSelectedIndex() >= 0;
+	}
+
+	// Toggle expand action
+	async function toggleExpand() {
+		const selectedIndex = params.getSelectedIndex();
+		const expandedIndex = params.getExpandedIndex();
+		if (selectedIndex < 0) return;
+
+		if (expandedIndex === selectedIndex) {
+			params.setExpandedIndex(-1);
+		} else {
+			params.setExpandedIndex(selectedIndex);
+		}
+		await tick();
+		params.scrollToCenter();
+	}
+
 	function register() {
 		// Navigation shortcuts
 		keyboardStore.register({
 			key: 'j',
 			description: 'Next item',
 			category: 'Navigation',
-			action: async () => {
-				const currentItems = params.getCurrentItems();
-				const selectedIndex = params.getSelectedIndex();
-				if (currentItems.length > 0) {
-					const nextIndex = Math.min(selectedIndex + 1, currentItems.length - 1);
-					params.selectItem(nextIndex);
-
-					// If we're at the last item, try to load more
-					if (nextIndex === currentItems.length - 1) {
-						const viewMode = params.getViewMode();
-						if (viewMode === 'combined' && params.getCombinedHasMore()) {
-							await params.loadMoreCombined();
-						} else if (viewMode === 'articles' && params.getArticlesHasMore()) {
-							await params.loadMoreArticles();
-						} else if (viewMode === 'shares' && params.getSharesHasMore()) {
-							await params.loadMoreShares();
-						}
-					}
-				}
-			},
-			condition: () => auth.isAuthenticated && params.getCurrentItems().length > 0,
+			action: selectNextItem,
+			condition: hasItems,
 		});
 
 		keyboardStore.register({
 			key: 'ArrowDown',
 			description: 'Next item',
 			category: 'Navigation',
-			action: async () => {
-				const currentItems = params.getCurrentItems();
-				const selectedIndex = params.getSelectedIndex();
-				if (currentItems.length > 0) {
-					const nextIndex = Math.min(selectedIndex + 1, currentItems.length - 1);
-					params.selectItem(nextIndex);
-
-					// If we're at the last item, try to load more
-					if (nextIndex === currentItems.length - 1) {
-						const viewMode = params.getViewMode();
-						if (viewMode === 'combined' && params.getCombinedHasMore()) {
-							await params.loadMoreCombined();
-						} else if (viewMode === 'articles' && params.getArticlesHasMore()) {
-							await params.loadMoreArticles();
-						} else if (viewMode === 'shares' && params.getSharesHasMore()) {
-							await params.loadMoreShares();
-						}
-					}
-				}
-			},
-			condition: () => auth.isAuthenticated && params.getCurrentItems().length > 0,
+			action: selectNextItem,
+			condition: hasItems,
 		});
 
 		keyboardStore.register({
 			key: 'k',
 			description: 'Previous item',
 			category: 'Navigation',
-			action: () => {
-				const currentItems = params.getCurrentItems();
-				const selectedIndex = params.getSelectedIndex();
-				if (currentItems.length > 0) {
-					params.selectItem(Math.max(selectedIndex - 1, 0));
-				}
-			},
-			condition: () => auth.isAuthenticated && params.getCurrentItems().length > 0,
+			action: selectPreviousItem,
+			condition: hasItems,
 		});
 
 		keyboardStore.register({
 			key: 'ArrowUp',
 			description: 'Previous item',
 			category: 'Navigation',
-			action: () => {
-				const currentItems = params.getCurrentItems();
-				const selectedIndex = params.getSelectedIndex();
-				if (currentItems.length > 0) {
-					params.selectItem(Math.max(selectedIndex - 1, 0));
-				}
-			},
-			condition: () => auth.isAuthenticated && params.getCurrentItems().length > 0,
+			action: selectPreviousItem,
+			condition: hasItems,
 		});
 
 		keyboardStore.register({
@@ -316,29 +319,15 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 			description: 'Open in new tab',
 			category: 'Navigation',
 			action: openSelectedItem,
-			condition: () => auth.isAuthenticated && params.getSelectedIndex() >= 0,
+			condition: hasSelected,
 		});
 
 		keyboardStore.register({
 			key: 'Enter',
 			description: 'Toggle expand',
 			category: 'Navigation',
-			action: async () => {
-				const selectedIndex = params.getSelectedIndex();
-				const expandedIndex = params.getExpandedIndex();
-				if (selectedIndex >= 0) {
-					if (expandedIndex === selectedIndex) {
-						params.setExpandedIndex(-1);
-						await tick();
-						params.scrollToCenter();
-					} else {
-						params.setExpandedIndex(selectedIndex);
-						await tick();
-						params.scrollToCenter();
-					}
-				}
-			},
-			condition: () => auth.isAuthenticated && params.getSelectedIndex() >= 0,
+			action: toggleExpand,
+			condition: hasSelected,
 		});
 
 		// Article action shortcuts
@@ -347,7 +336,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 			description: 'Toggle star',
 			category: 'Article',
 			action: toggleSelectedStar,
-			condition: () => auth.isAuthenticated && params.getSelectedIndex() >= 0,
+			condition: hasSelected,
 		});
 
 		keyboardStore.register({
@@ -356,7 +345,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 			description: 'Share/unshare',
 			category: 'Article',
 			action: toggleSelectedShare,
-			condition: () => auth.isAuthenticated && params.getSelectedIndex() >= 0,
+			condition: hasSelected,
 		});
 
 		keyboardStore.register({
@@ -364,7 +353,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 			description: 'Mark read/unread',
 			category: 'Article',
 			action: toggleSelectedRead,
-			condition: () => auth.isAuthenticated && params.getSelectedIndex() >= 0,
+			condition: hasSelected,
 		});
 
 		// Other shortcuts
