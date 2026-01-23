@@ -9,7 +9,6 @@
 	<p>A decentralized RSS reader built on the AT Protocol.</p>
 
 	<ul class="features">
-		<li>Store your subscriptions in your own data server</li>
 		<li>Share articles with your followers</li>
 		<li>Works offline with automatic sync</li>
 	</ul>
