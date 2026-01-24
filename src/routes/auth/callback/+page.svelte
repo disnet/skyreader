@@ -4,9 +4,7 @@
 	import { page } from '$app/stores';
 	import { auth } from '$lib/stores/auth.svelte';
 	import { api } from '$lib/services/api';
-	import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-	import { readingStore } from '$lib/stores/reading.svelte';
-	import { sharesStore } from '$lib/stores/shares.svelte';
+	import { appManager } from '$lib/stores/app.svelte';
 
 	onMount(async () => {
 		const code = $page.url.searchParams.get('code');
@@ -37,12 +35,8 @@
 			// Store the session with the real user data
 			auth.setSession(user, sessionId);
 
-			// Sync subscriptions from backend
-			await subscriptionsStore.syncFromBackend();
-
-			// Load read positions and shares from backend
-			await readingStore.load();
-			await sharesStore.load();
+			// Initialize the app (loads subscriptions, articles, read state, etc.)
+			await appManager.initialize();
 
 			goto(returnUrl);
 		} catch (error) {

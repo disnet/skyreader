@@ -1,5 +1,8 @@
 <script lang="ts">
 	import { subscriptionsStore, MAX_SUBSCRIPTIONS } from '$lib/stores/subscriptions.svelte';
+	import { articlesStore } from '$lib/stores/articles.svelte';
+	import { fetchSingleFeed } from '$lib/services/feedFetcher';
+	import { api } from '$lib/services/api';
 	import FeedDiscoveryForm from '$lib/components/FeedDiscoveryForm.svelte';
 	import Modal from '$lib/components/common/Modal.svelte';
 
@@ -27,20 +30,28 @@
 			// Add subscription with URL as temporary title
 			const tempTitle = new URL(url).hostname;
 			const id = await subscriptionsStore.add(url, tempTitle, {});
+			const sub = subscriptionsStore.getById(id);
 
 			// Close modal immediately
 			handleClose();
 
 			// Fetch feed in background (updates title and loads articles)
-			subscriptionsStore.fetchFeed(id, true).then(async (feed) => {
-				if (feed) {
-					// Update subscription with actual title and siteUrl
-					await subscriptionsStore.update(id, {
-						title: feed.title,
-						siteUrl: feed.siteUrl,
-					});
-				}
-			});
+			if (sub) {
+				fetchSingleFeed(sub, true, articlesStore.starredGuids).then(async () => {
+					// Try to get feed metadata to update the title
+					try {
+						const feed = await api.fetchCachedFeed(url);
+						if (feed?.title) {
+							await subscriptionsStore.update(id, {
+								title: feed.title,
+								siteUrl: feed.siteUrl,
+							});
+						}
+					} catch {
+						// Ignore errors updating title
+					}
+				});
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to add feed';
 		}

@@ -1,6 +1,7 @@
-import { db } from '$lib/services/db';
+import { liveDb } from '$lib/services/liveDb.svelte';
+import { feedStatusStore } from './feedStatus.svelte';
 import { api } from '$lib/services/api';
-import type { Subscription, Article, ParsedFeed } from '$lib/types';
+import type { Subscription } from '$lib/types';
 
 export const MAX_SUBSCRIPTIONS = 100;
 
@@ -11,26 +12,37 @@ function generateTid(): string {
 	return `${now.toString(36)}${random}`;
 }
 
-const DEFAULT_PAGE_SIZE = 50;
-
+/**
+ * Subscriptions Store - CRUD operations for feed subscriptions
+ *
+ * Uses liveDb for storage. Feed fetching is handled separately by feedFetcher.
+ * Article queries are handled by articlesStore.
+ */
 function createSubscriptionsStore() {
-	let subscriptions = $state<Subscription[]>([]);
-	let isLoading = $state(true);
+	let isLoading = $state(false);
 	let error = $state<string | null>(null);
-	let articlesVersion = $state(0);
-	let feedLoadingStates = $state<Map<number, 'loading' | 'error'>>(new Map());
-	let feedErrors = $state<Map<number, string>>(new Map());
 
-	// Pagination state
-	let articlesCursor = $state<number | null>(null);
-	let articlesHasMore = $state(true);
-	let articlesIsLoadingMore = $state(false);
+	// Derived: subscriptions from liveDb (reactive via version)
+	let subscriptions = $derived.by(() => {
+		const _version = liveDb.subscriptionsVersion;
+		return liveDb.subscriptions;
+	});
 
-	async function load() {
+	// Derived: subscription count
+	let count = $derived(subscriptions.length);
+
+	// Derived: can add more subscriptions
+	let canAddMore = $derived(count < MAX_SUBSCRIPTIONS);
+
+	/**
+	 * Load subscriptions from IndexedDB
+	 * Note: This is typically called by appManager.initialize()
+	 */
+	async function load(): Promise<void> {
 		isLoading = true;
+		error = null;
 		try {
-			subscriptions = await db.subscriptions.toArray();
-			error = null;
+			await liveDb.loadSubscriptions();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load subscriptions';
 		} finally {
@@ -38,26 +50,27 @@ function createSubscriptionsStore() {
 		}
 	}
 
-	async function add(feedUrl: string, title: string, options?: Partial<Subscription>) {
-		if (subscriptions.length >= MAX_SUBSCRIPTIONS) {
+	/**
+	 * Add a new subscription
+	 */
+	async function add(
+		feedUrl: string,
+		title: string,
+		options?: Partial<Subscription>
+	): Promise<number> {
+		if (count >= MAX_SUBSCRIPTIONS) {
 			throw new Error(`Feed limit reached. You can have up to ${MAX_SUBSCRIPTIONS} feeds.`);
+		}
+
+		// Check for duplicate
+		if (liveDb.getSubscriptionByUrl(feedUrl)) {
+			throw new Error('You are already subscribed to this feed');
 		}
 
 		const rkey = generateTid();
 		const now = new Date().toISOString();
 
-		const subscription: Omit<Subscription, 'id'> = {
-			rkey,
-			feedUrl,
-			title,
-			siteUrl: options?.siteUrl,
-			category: options?.category,
-			tags: options?.tags || [],
-			createdAt: now,
-			localUpdatedAt: Date.now(),
-		};
-
-		// Sync to backend using dedicated endpoint
+		// Sync to backend first
 		await api.createSubscription({
 			rkey,
 			feedUrl,
@@ -68,12 +81,28 @@ function createSubscriptionsStore() {
 		});
 
 		// Store locally after successful backend sync
-		const id = await db.subscriptions.add(subscription);
-		subscriptions = [...subscriptions, { ...subscription, id }];
+		const subscription: Omit<Subscription, 'id'> = {
+			rkey,
+			feedUrl,
+			title,
+			siteUrl: options?.siteUrl,
+			category: options?.category,
+			tags: options?.tags || [],
+			createdAt: now,
+			localUpdatedAt: Date.now(),
+			fetchStatus: 'pending',
+			source: options?.source,
+		};
+
+		const id = await liveDb.addSubscription(subscription);
+		feedStatusStore.markPending(feedUrl);
 
 		return id;
 	}
 
+	/**
+	 * Bulk add subscriptions (for OPML import)
+	 */
 	async function addBulk(
 		feeds: Array<{
 			feedUrl: string;
@@ -109,7 +138,7 @@ function createSubscriptionsStore() {
 		});
 
 		// Check subscription limit and truncate if needed
-		const availableSlots = MAX_SUBSCRIPTIONS - subscriptions.length;
+		const availableSlots = MAX_SUBSCRIPTIONS - count;
 		if (feedsToAdd.length > availableSlots) {
 			truncated = feedsToAdd.length - availableSlots;
 			feedsToAdd = feedsToAdd.slice(0, availableSlots);
@@ -131,7 +160,7 @@ function createSubscriptionsStore() {
 
 		onProgress?.(Math.floor(feedsToAdd.length / 4), feedsToAdd.length);
 
-		// Bulk sync to backend using dedicated endpoint
+		// Bulk sync to backend
 		try {
 			const subscriptionsToCreate = localRecords.map(({ rkey, feed }) => ({
 				rkey,
@@ -162,9 +191,9 @@ function createSubscriptionsStore() {
 				};
 
 				try {
-					const id = await db.subscriptions.add(subscription);
-					subscriptions = [...subscriptions, { ...subscription, id }];
+					const id = await liveDb.addSubscription(subscription);
 					added.push(id);
+					feedStatusStore.markPending(feed.feedUrl);
 				} catch (e) {
 					failed.push({
 						url: feed.feedUrl,
@@ -185,17 +214,18 @@ function createSubscriptionsStore() {
 		return { added, skipped, failed, truncated };
 	}
 
-	async function update(id: number, updates: Partial<Subscription>) {
-		const sub = await db.subscriptions.get(id);
+	/**
+	 * Update a subscription
+	 */
+	async function update(id: number, updates: Partial<Subscription>): Promise<void> {
+		const sub = liveDb.getSubscriptionById(id);
 		if (!sub) return;
 
 		const now = new Date().toISOString();
 
-		// For updates, we delete and recreate since the new API doesn't have update
-		// First delete the old subscription
+		// Delete old and recreate (API limitation)
 		await api.deleteSubscription(sub.rkey);
 
-		// Create new subscription with updated values
 		const newRkey = generateTid();
 		await api.createSubscription({
 			rkey: newRkey,
@@ -207,650 +237,63 @@ function createSubscriptionsStore() {
 		});
 
 		// Update local DB with new rkey
-		await db.subscriptions.update(id, {
+		await liveDb.updateSubscription(id, {
 			...updates,
 			rkey: newRkey,
 			updatedAt: now,
 			localUpdatedAt: Date.now(),
 		});
-
-		subscriptions = subscriptions.map((s) =>
-			s.id === id ? { ...s, ...updates, rkey: newRkey, updatedAt: now } : s
-		);
 	}
 
-	async function remove(id: number) {
-		const sub = await db.subscriptions.get(id);
+	/**
+	 * Remove a subscription
+	 */
+	async function remove(id: number): Promise<void> {
+		const sub = liveDb.getSubscriptionById(id);
 		if (!sub) return;
 
-		// Sync delete to backend using dedicated endpoint
+		// Sync delete to backend
 		await api.deleteSubscription(sub.rkey);
 
-		// Delete articles for this subscription
-		await db.articles.where('subscriptionId').equals(id).delete();
-		await db.subscriptions.delete(id);
-		subscriptions = subscriptions.filter((s) => s.id !== id);
+		// Delete locally (includes articles)
+		await liveDb.deleteSubscription(id);
+		feedStatusStore.clearStatus(sub.feedUrl);
 	}
 
+	/**
+	 * Remove all subscriptions
+	 */
 	async function removeAll(): Promise<void> {
-		const allSubs = await db.subscriptions.toArray();
+		const allSubs = subscriptions;
 		if (allSubs.length === 0) return;
 
-		// Build bulk delete request using dedicated endpoint
+		// Build bulk delete request
 		const rkeys = allSubs.map((sub) => sub.rkey);
 
 		// Single bulk request to backend
 		await api.bulkDeleteSubscriptions(rkeys);
 
 		// Clear all local data
-		await db.articles.clear();
-		await db.subscriptions.clear();
-		subscriptions = [];
+		await liveDb.clearAllSubscriptions();
+		feedStatusStore.clearAll();
 	}
 
-	async function fetchFeed(id: number, force = false): Promise<ParsedFeed | null> {
-		const sub = await db.subscriptions.get(id);
-		if (!sub) return null;
-
-		// Set loading state
-		feedLoadingStates = new Map(feedLoadingStates).set(id, 'loading');
-		feedErrors = new Map(feedErrors);
-		feedErrors.delete(id);
-
-		try {
-			// Use cached endpoint by default, direct fetch only when forced
-			const feed = force
-				? await api.fetchFeed(sub.feedUrl, true)
-				: await api.fetchCachedFeed(sub.feedUrl);
-
-			// If cache miss (no items), don't treat as error - cron will populate
-			if (!feed.items || feed.items.length === 0) {
-				feedLoadingStates = new Map(feedLoadingStates);
-				feedLoadingStates.delete(id);
-				return feed;
-			}
-
-			// Store articles
-			const existingArticles = await db.articles.where('subscriptionId').equals(id).toArray();
-			const existingGuids = new Set(existingArticles.map((a) => a.guid));
-
-			const newArticles: Article[] = feed.items
-				.filter((item) => !existingGuids.has(item.guid))
-				.map((item) => ({
-					subscriptionId: id,
-					guid: item.guid,
-					url: item.url,
-					title: item.title,
-					author: item.author,
-					content: item.content,
-					summary: item.summary,
-					imageUrl: item.imageUrl,
-					publishedAt: item.publishedAt,
-					fetchedAt: Date.now(),
-				}));
-
-			if (newArticles.length > 0) {
-				await db.articles.bulkAdd(newArticles);
-				articlesVersion++;
-			}
-
-			// Clear loading state on success
-			feedLoadingStates = new Map(feedLoadingStates);
-			feedLoadingStates.delete(id);
-
-			return feed;
-		} catch (e) {
-			const errorMessage = e instanceof Error ? e.message : 'Failed to fetch feed';
-			// Set error state
-			feedLoadingStates = new Map(feedLoadingStates).set(id, 'error');
-			feedErrors = new Map(feedErrors).set(id, errorMessage);
-			return null;
-		}
+	/**
+	 * Get a subscription by ID
+	 */
+	function getById(id: number): Subscription | undefined {
+		return liveDb.getSubscriptionById(id);
 	}
 
-	function clearFeedError(id: number) {
-		feedLoadingStates = new Map(feedLoadingStates);
-		feedLoadingStates.delete(id);
-		feedErrors = new Map(feedErrors);
-		feedErrors.delete(id);
-	}
-
-	async function getArticles(subscriptionId: number): Promise<Article[]> {
-		return db.articles
-			.where('subscriptionId')
-			.equals(subscriptionId)
-			.reverse()
-			.sortBy('publishedAt');
-	}
-
-	async function getAllArticles(): Promise<Article[]> {
-		return db.articles.orderBy('publishedAt').reverse().toArray();
-	}
-
-	// Get first page of articles from IndexedDB (paginated)
-	async function getArticlesPaginated(
-		subscriptionId?: number,
-		limit = DEFAULT_PAGE_SIZE
-	): Promise<Article[]> {
-		let query = subscriptionId
-			? db.articles.where('subscriptionId').equals(subscriptionId)
-			: db.articles.orderBy('publishedAt');
-
-		const articles = await query.reverse().limit(limit).toArray();
-
-		// Sort by publishedAt for subscription-filtered queries (since we indexed by subscriptionId)
-		if (subscriptionId) {
-			articles.sort(
-				(a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
-			);
-		}
-
-		// Set cursor to oldest article's timestamp
-		if (articles.length > 0) {
-			const oldest = articles[articles.length - 1];
-			articlesCursor = new Date(oldest.publishedAt).getTime();
-			articlesHasMore = articles.length === limit;
-		} else {
-			articlesCursor = null;
-			articlesHasMore = false;
-		}
-
-		return articles;
-	}
-
-	// Get articles by their guids from IndexedDB
-	async function getArticlesByGuids(guids: string[]): Promise<Article[]> {
-		if (guids.length === 0) return [];
-		// Dexie's anyOf is efficient for multiple key lookups
-		const articles = await db.articles.where('guid').anyOf(guids).toArray();
-		// Sort by publishedAt descending (newest first)
-		articles.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
-		return articles;
-	}
-
-	// Load more articles from IndexedDB (older than cursor)
-	async function loadMoreArticles(
-		subscriptionId?: number,
-		limit = DEFAULT_PAGE_SIZE
-	): Promise<Article[]> {
-		if (articlesIsLoadingMore || !articlesHasMore || !articlesCursor) return [];
-
-		articlesIsLoadingMore = true;
-
-		try {
-			// Query IndexedDB for articles older than cursor
-			let articles: Article[];
-
-			if (subscriptionId) {
-				// For a specific feed, filter by subscriptionId and publishedAt
-				articles = await db.articles
-					.where('subscriptionId')
-					.equals(subscriptionId)
-					.filter((a) => new Date(a.publishedAt).getTime() < articlesCursor!)
-					.reverse()
-					.sortBy('publishedAt');
-				// Take only the first `limit` items (sortBy doesn't support limit)
-				articles = articles.slice(0, limit);
-			} else {
-				// For all feeds, we need to filter by publishedAt
-				// Since publishedAt is indexed, we can use a range query
-				articles = await db.articles
-					.where('publishedAt')
-					.below(new Date(articlesCursor).toISOString())
-					.reverse()
-					.limit(limit)
-					.toArray();
-			}
-
-			// Sort by publishedAt descending (newest first within this batch)
-			articles.sort(
-				(a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
-			);
-
-			// Update cursor to oldest article in this batch
-			if (articles.length > 0) {
-				const oldest = articles[articles.length - 1];
-				articlesCursor = new Date(oldest.publishedAt).getTime();
-				articlesHasMore = articles.length === limit;
-			} else {
-				articlesHasMore = false;
-			}
-
-			return articles;
-		} catch (e) {
-			console.error('Failed to load more articles:', e);
-			error = e instanceof Error ? e.message : 'Failed to load more articles';
-			return [];
-		} finally {
-			articlesIsLoadingMore = false;
-		}
-	}
-
-	// Reset pagination state (call when filters change)
-	function resetArticlesPagination() {
-		articlesCursor = null;
-		articlesHasMore = true;
-		articlesIsLoadingMore = false;
-	}
-
-	// Fetch recent items across all subscribed feeds from the backend
-	async function fetchRecentItems(hours = 24): Promise<Article[]> {
-		try {
-			const { items } = await api.getRecentItems(hours);
-
-			// Find subscription IDs for each item
-			const subsByUrl = new Map(subscriptions.map((s) => [s.feedUrl, s.id]));
-
-			// Convert to Article format and store in IndexedDB
-			const articles: Article[] = [];
-			for (const item of items) {
-				const subscriptionId = subsByUrl.get(item.feedUrl);
-				if (!subscriptionId) continue;
-
-				// Check if already exists
-				const existing = await db.articles.where('guid').equals(item.guid).first();
-				if (existing) continue;
-
-				const article: Article = {
-					subscriptionId,
-					guid: item.guid,
-					url: item.url,
-					title: item.title,
-					author: item.author,
-					content: item.content,
-					summary: item.summary,
-					imageUrl: item.imageUrl,
-					publishedAt: item.publishedAt,
-					fetchedAt: Date.now(),
-				};
-
-				await db.articles.add(article);
-				articles.push(article);
-			}
-
-			if (articles.length > 0) {
-				articlesVersion++;
-			}
-
-			return articles;
-		} catch (e) {
-			console.error('Failed to fetch recent items:', e);
-			return [];
-		}
-	}
-
-	// Search articles across all feeds
-	async function searchArticles(
-		query: string,
-		limit = 50
-	): Promise<(Article & { feedTitle?: string })[]> {
-		try {
-			const { items } = await api.getItems({ search: query, limit });
-
-			// Map to Article format
-			const subsByUrl = new Map(subscriptions.map((s) => [s.feedUrl, s.id]));
-
-			return items.map((item) => ({
-				subscriptionId: subsByUrl.get(item.feedUrl) || 0,
-				guid: item.guid,
-				url: item.url,
-				title: item.title,
-				author: item.author,
-				content: item.content,
-				summary: item.summary,
-				imageUrl: item.imageUrl,
-				publishedAt: item.publishedAt,
-				fetchedAt: Date.now(),
-				feedTitle: item.feedTitle,
-			}));
-		} catch (e) {
-			console.error('Failed to search articles:', e);
-			return [];
-		}
-	}
-
-	async function syncFromBackend(): Promise<void> {
-		try {
-			const response = await api.listRecords<{
-				feedUrl: string;
-				title?: string;
-				siteUrl?: string;
-				category?: string;
-				tags?: string[];
-				createdAt: string;
-				updatedAt?: string;
-			}>('app.skyreader.feed.subscription');
-
-			// Get existing local subscriptions
-			const localSubs = await db.subscriptions.toArray();
-			const localByRkey = new Map(localSubs.map((s) => [s.rkey, s]));
-
-			for (const record of response.records) {
-				// Extract rkey from URI (local://did/collection/rkey or at://did/collection/rkey)
-				const rkey = record.uri.split('/').pop() || '';
-				const existing = localByRkey.get(rkey);
-
-				const subscription: Omit<Subscription, 'id'> = {
-					rkey,
-					feedUrl: record.value.feedUrl,
-					title: record.value.title || record.value.feedUrl,
-					siteUrl: record.value.siteUrl,
-					category: record.value.category,
-					tags: record.value.tags || [],
-					createdAt: record.value.createdAt,
-					updatedAt: record.value.updatedAt,
-					localUpdatedAt: Date.now(),
-				};
-
-				if (existing) {
-					// Update existing record
-					await db.subscriptions.update(existing.id!, subscription);
-				} else {
-					// Add new record from backend
-					await db.subscriptions.add(subscription);
-				}
-			}
-
-			// Reload subscriptions from DB
-			subscriptions = await db.subscriptions.toArray();
-		} catch (e) {
-			console.error('Failed to sync from backend:', e);
-			error = e instanceof Error ? e.message : 'Failed to sync from backend';
-		}
-	}
-
-	// Check feed statuses from backend and update local state
-	async function checkFeedStatuses(feedUrls: string[]): Promise<void> {
-		if (feedUrls.length === 0) return;
-
-		try {
-			const statuses = await api.getFeedStatuses(feedUrls);
-
-			// Update local subscriptions with status
-			for (const sub of subscriptions) {
-				const status = statuses[sub.feedUrl];
-				if (status) {
-					const newFetchStatus = status.cached ? 'ready' : status.error ? 'error' : 'pending';
-					const updates: Partial<Subscription> = {
-						fetchStatus: newFetchStatus as 'pending' | 'ready' | 'error',
-					};
-					if (status.lastFetchedAt) {
-						updates.lastFetchedAt = status.lastFetchedAt;
-					}
-					if (status.error) {
-						updates.fetchError = status.error;
-					}
-
-					if (sub.id) {
-						await db.subscriptions.update(sub.id, updates);
-					}
-				}
-			}
-
-			// Reload subscriptions from DB
-			subscriptions = await db.subscriptions.toArray();
-		} catch (e) {
-			console.error('Failed to check feed statuses:', e);
-		}
-	}
-
-	// Fetch all feeds that need content: ready feeds from cache (batch), pending feeds from source
-	// When force=true, bypass all caches and fetch all feeds from source
-	async function fetchAllNewFeeds(concurrency = 1, delayMs = 5000, force = false): Promise<void> {
-		if (force) {
-			// Force refresh ALL feeds from source, bypassing all caches
-			const allFeeds = subscriptions.filter((s) => s.id);
-			console.log(`Force refreshing ${allFeeds.length} feeds from source...`);
-
-			// Process in batches with rate limiting
-			for (let i = 0; i < allFeeds.length; i += concurrency) {
-				const batch = allFeeds.slice(i, i + concurrency);
-
-				await Promise.allSettled(
-					batch.map(async (sub) => {
-						if (!sub.id) return;
-						const result = await fetchFeed(sub.id, true); // force=true bypasses backend cache
-						// Update status if we got items
-						if (result && result.items && result.items.length > 0) {
-							await db.subscriptions.update(sub.id, {
-								fetchStatus: 'ready',
-								lastFetchedAt: Date.now(),
-							});
-							subscriptions = subscriptions.map((s) =>
-								s.id === sub.id
-									? { ...s, fetchStatus: 'ready' as const, lastFetchedAt: Date.now() }
-									: s
-							);
-						}
-					})
-				);
-
-				// Delay between batches
-				if (i + concurrency < allFeeds.length) {
-					await new Promise((resolve) => setTimeout(resolve, delayMs));
-				}
-			}
-
-			console.log('Force refresh complete');
-			return;
-		}
-
-		// Non-force path: batch fetch all feeds using v2 endpoint with GUID-based incremental sync
-		const allFeeds = subscriptions.filter((s) => s.id);
-		if (allFeeds.length > 0) {
-			console.log(`Batch fetching ${allFeeds.length} feeds via v2 proxy...`);
-			try {
-				// Collect recent GUIDs per feed for incremental sync (last 10 GUIDs per feed)
-				const feedsWithGuids: Array<{ url: string; since_guids?: string[] }> = [];
-				for (const sub of allFeeds) {
-					if (!sub.id) continue;
-					// Get recent articles for this subscription (sorted by publishedAt desc)
-					const recentArticles = await db.articles
-						.where('subscriptionId')
-						.equals(sub.id)
-						.reverse()
-						.sortBy('publishedAt')
-						.then((articles) => articles.slice(0, 10));
-
-					feedsWithGuids.push({
-						url: sub.feedUrl,
-						since_guids: recentArticles.length > 0 ? recentArticles.map((a) => a.guid) : undefined,
-					});
-				}
-
-				// Process in chunks of 50 (backend limit)
-				const BATCH_CHUNK_SIZE = 50;
-				for (let i = 0; i < feedsWithGuids.length; i += BATCH_CHUNK_SIZE) {
-					const chunk = feedsWithGuids.slice(i, i + BATCH_CHUNK_SIZE);
-
-					const { feeds } = await api.fetchFeedsBatchV2(chunk);
-
-					// Process batch response and store articles
-					for (const feedReq of chunk) {
-						const sub = allFeeds.find((s) => s.feedUrl === feedReq.url);
-						if (!sub?.id) continue;
-
-						const feedData = feeds[feedReq.url];
-						if (!feedData || feedData.status === 'error' || feedData.items.length === 0) {
-							// Log errors but continue
-							if (feedData?.error) {
-								console.warn(`Feed ${feedReq.url}: ${feedData.error}`);
-							}
-							continue;
-						}
-
-						// Store new articles (deduplicate by GUID)
-						const existingArticles = await db.articles
-							.where('subscriptionId')
-							.equals(sub.id)
-							.toArray();
-						const existingGuids = new Set(existingArticles.map((a) => a.guid));
-
-						const newArticles: Article[] = feedData.items
-							.filter((item) => !existingGuids.has(item.guid))
-							.map((item) => ({
-								subscriptionId: sub.id!,
-								guid: item.guid,
-								url: item.url,
-								title: item.title,
-								author: item.author,
-								content: item.content,
-								summary: item.summary,
-								imageUrl: item.imageUrl,
-								publishedAt: item.publishedAt,
-								fetchedAt: Date.now(),
-							}));
-
-						if (newArticles.length > 0) {
-							await db.articles.bulkAdd(newArticles);
-							articlesVersion++;
-						}
-
-						// Update subscription status
-						await db.subscriptions.update(sub.id, {
-							fetchStatus: 'ready',
-							lastFetchedAt: feedData.lastFetchedAt || Date.now(),
-						});
-						subscriptions = subscriptions.map((s) =>
-							s.id === sub.id
-								? {
-										...s,
-										fetchStatus: 'ready' as const,
-										lastFetchedAt: feedData.lastFetchedAt || Date.now(),
-									}
-								: s
-						);
-					}
-				}
-
-				console.log('V2 batch fetch complete');
-			} catch (e) {
-				console.error('V2 batch feed fetch failed, falling back to v1:', e);
-				// Fallback to v1 batch endpoint
-				await fetchAllNewFeedsV1(concurrency, delayMs);
-			}
-		}
-	}
-
-	// Fallback: v1 batch fetch using timestamps (used when v2 proxy fails)
-	async function fetchAllNewFeedsV1(concurrency = 1, delayMs = 5000): Promise<void> {
-		const readyFeeds = subscriptions.filter((s) => s.fetchStatus === 'ready' && s.id);
-		if (readyFeeds.length > 0) {
-			console.log(`V1 fallback: batch fetching ${readyFeeds.length} ready feeds...`);
-			try {
-				// Collect most recent article timestamp per feed for delta sync
-				const since: Record<string, number> = {};
-				for (const sub of readyFeeds) {
-					if (!sub.id) continue;
-					const mostRecent = await db.articles
-						.where('subscriptionId')
-						.equals(sub.id)
-						.reverse()
-						.sortBy('publishedAt')
-						.then((articles) => articles[0]);
-
-					if (mostRecent?.publishedAt) {
-						since[sub.feedUrl] = new Date(mostRecent.publishedAt).getTime();
-					}
-				}
-
-				// Process in chunks of 50 (backend limit)
-				const BATCH_CHUNK_SIZE = 50;
-				for (let i = 0; i < readyFeeds.length; i += BATCH_CHUNK_SIZE) {
-					const chunk = readyFeeds.slice(i, i + BATCH_CHUNK_SIZE);
-					const feedUrls = chunk.map((s) => s.feedUrl);
-
-					const chunkSince: Record<string, number> = {};
-					for (const url of feedUrls) {
-						if (since[url]) chunkSince[url] = since[url];
-					}
-
-					const { feeds } = await api.fetchFeedsBatch(feedUrls, chunkSince);
-
-					for (const sub of chunk) {
-						if (!sub.id) continue;
-						const feedData = feeds[sub.feedUrl];
-						if (!feedData || feedData.items.length === 0) continue;
-
-						const existingArticles = await db.articles
-							.where('subscriptionId')
-							.equals(sub.id)
-							.toArray();
-						const existingGuids = new Set(existingArticles.map((a) => a.guid));
-
-						const newArticles: Article[] = feedData.items
-							.filter((item) => !existingGuids.has(item.guid))
-							.map((item) => ({
-								subscriptionId: sub.id!,
-								guid: item.guid,
-								url: item.url,
-								title: item.title,
-								author: item.author,
-								content: item.content,
-								summary: item.summary,
-								imageUrl: item.imageUrl,
-								publishedAt: item.publishedAt,
-								fetchedAt: Date.now(),
-							}));
-
-						if (newArticles.length > 0) {
-							await db.articles.bulkAdd(newArticles);
-							articlesVersion++;
-						}
-					}
-				}
-			} catch (e) {
-				console.error('V1 batch feed fetch failed:', e);
-			}
-		}
-
-		// Fetch pending feeds from source
-		await fetchPendingFeedsGradually(concurrency, delayMs);
-	}
-
-	// Gradually fetch pending feeds in background with rate limiting
-	// Uses force=true to trigger actual backend fetches for feeds not yet cached
-	async function fetchPendingFeedsGradually(concurrency = 1, delayMs = 5000): Promise<void> {
-		const pendingFeeds = subscriptions.filter((s) => s.fetchStatus === 'pending' && s.id);
-
-		if (pendingFeeds.length === 0) return;
-
-		console.log(`Fetching ${pendingFeeds.length} pending feeds gradually...`);
-
-		// Process in batches with delay
-		for (let i = 0; i < pendingFeeds.length; i += concurrency) {
-			const batch = pendingFeeds.slice(i, i + concurrency);
-
-			await Promise.allSettled(
-				batch.map(async (sub) => {
-					if (!sub.id) return;
-					// Use force=true to trigger actual backend fetch if not cached
-					const result = await fetchFeed(sub.id, true);
-					// If we got items, mark as ready
-					if (result && result.items && result.items.length > 0) {
-						await db.subscriptions.update(sub.id, {
-							fetchStatus: 'ready',
-							lastFetchedAt: Date.now(),
-						});
-						subscriptions = subscriptions.map((s) =>
-							s.id === sub.id
-								? { ...s, fetchStatus: 'ready' as const, lastFetchedAt: Date.now() }
-								: s
-						);
-					}
-				})
-			);
-
-			// Delay between batches to avoid overwhelming the backend
-			if (i + concurrency < pendingFeeds.length) {
-				await new Promise((resolve) => setTimeout(resolve, delayMs));
-			}
-		}
-
-		console.log('Finished fetching pending feeds');
+	/**
+	 * Get a subscription by feed URL
+	 */
+	function getByUrl(feedUrl: string): Subscription | undefined {
+		return liveDb.getSubscriptionByUrl(feedUrl);
 	}
 
 	return {
+		// State
 		get subscriptions() {
 			return subscriptions;
 		},
@@ -860,44 +303,24 @@ function createSubscriptionsStore() {
 		get error() {
 			return error;
 		},
-		get articlesVersion() {
-			return articlesVersion;
+		get count() {
+			return count;
 		},
-		get feedLoadingStates() {
-			return feedLoadingStates;
+		get canAddMore() {
+			return canAddMore;
 		},
-		get feedErrors() {
-			return feedErrors;
-		},
-		get articlesCursor() {
-			return articlesCursor;
-		},
-		get articlesHasMore() {
-			return articlesHasMore;
-		},
-		get articlesIsLoadingMore() {
-			return articlesIsLoadingMore;
-		},
+
+		// CRUD operations
 		load,
 		add,
 		addBulk,
 		update,
 		remove,
 		removeAll,
-		fetchFeed,
-		getArticles,
-		getAllArticles,
-		getArticlesPaginated,
-		getArticlesByGuids,
-		loadMoreArticles,
-		resetArticlesPagination,
-		fetchRecentItems,
-		searchArticles,
-		syncFromBackend,
-		clearFeedError,
-		checkFeedStatuses,
-		fetchPendingFeedsGradually,
-		fetchAllNewFeeds,
+
+		// Lookups
+		getById,
+		getByUrl,
 	};
 }
 

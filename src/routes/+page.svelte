@@ -10,6 +10,8 @@
 	import { socialStore } from '$lib/stores/social.svelte';
 	import { preferences } from '$lib/stores/preferences.svelte';
 	import { feedViewStore } from '$lib/stores/feedView.svelte';
+	import { appManager } from '$lib/stores/app.svelte';
+	import { articlesStore } from '$lib/stores/articles.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import LoadingState from '$lib/components/LoadingState.svelte';
 	import WelcomePage from '$lib/components/feed/WelcomePage.svelte';
@@ -18,8 +20,6 @@
 	import { useScrollMarkAsRead } from '$lib/hooks/useScrollMarkAsRead.svelte';
 	import { useFeedKeyboardShortcuts } from '$lib/hooks/useFeedKeyboardShortcuts.svelte';
 	import { goto } from '$app/navigation';
-
-	let isLoading = $state(true);
 
 	// Sync URL filters to feedViewStore
 	$effect(() => {
@@ -109,41 +109,6 @@
 		});
 	});
 
-	// Snapshot effects - trigger snapshot updates when dependencies change
-	$effect(() => {
-		// Dependencies for article snapshot
-		const _ = [
-			feedViewStore.feedFilter,
-			feedViewStore.starredFilter,
-			feedViewStore.showOnlyUnread,
-			subscriptionsStore.articlesVersion,
-		];
-		feedViewStore.updateArticlesSnapshot();
-	});
-
-	$effect(() => {
-		// Dependencies for shares snapshot
-		const _ = [
-			feedViewStore.followingFilter,
-			feedViewStore.sharerFilter,
-			feedViewStore.showOnlyUnread,
-			socialStore.shares.length,
-		];
-		feedViewStore.updateSharesSnapshot();
-	});
-
-	$effect(() => {
-		// Dependencies for user shares snapshot
-		const _ = [feedViewStore.sharedFilter, sharesStore.userShares.size];
-		feedViewStore.updateUserSharesSnapshot();
-	});
-
-	$effect(() => {
-		// Dependencies for combined snapshot
-		const _ = [feedViewStore.viewMode];
-		feedViewStore.updateCombinedSnapshot();
-	});
-
 	function scrollToCenter() {
 		const elements = getArticleElements();
 		const el = elements[feedViewStore.selectedIndex];
@@ -163,7 +128,7 @@
 		const sub = subscriptionsStore.subscriptions.find((s) => s.id === feedId);
 		if (!sub) return;
 
-		const allFeedArticles = await subscriptionsStore.getArticles(feedId);
+		const allFeedArticles = articlesStore.getForSubscription(feedId);
 
 		const articlesToMark = allFeedArticles
 			.filter((a) => !readingStore.isRead(a.guid))
@@ -198,8 +163,7 @@
 
 			if (timeSinceVisible > STALE_THRESHOLD_MS) {
 				console.log('Tab was hidden for a while, checking for updates...');
-				await subscriptionsStore.fetchAllNewFeeds();
-				await feedViewStore.loadArticles();
+				await appManager.refreshFromBackend();
 			}
 		}
 		lastVisibleTime = Date.now();
@@ -207,24 +171,9 @@
 
 	onMount(async () => {
 		if (auth.isAuthenticated) {
-			await subscriptionsStore.load();
-			await readingStore.load();
-			await shareReadingStore.load();
-			await sharesStore.load();
-			await socialStore.loadFollowedUsers();
-			await socialStore.loadFeed(true);
-
-			await feedViewStore.loadArticles();
-
-			if (subscriptionsStore.subscriptions.length > 0) {
-				const feedUrls = subscriptionsStore.subscriptions.map((s) => s.feedUrl);
-				await subscriptionsStore.checkFeedStatuses(feedUrls);
-				await subscriptionsStore.fetchAllNewFeeds();
-
-				await feedViewStore.loadArticles();
-			}
+			// Use the new centralized app initialization
+			await appManager.initialize();
 		}
-		isLoading = false;
 
 		scrollMarkAsRead.init();
 		keyboardShortcuts.register();
@@ -244,23 +193,6 @@
 			feedViewStore.feedsFilter,
 		];
 		feedViewStore.resetSelection();
-	});
-
-	// Reload articles when filters change
-	let lastLoadedFilterKey = $state<string | undefined>(undefined);
-
-	$effect(() => {
-		const currentKey = `${feedViewStore.feedFilter}-${feedViewStore.starredFilter}`;
-
-		if (lastLoadedFilterKey === undefined) {
-			lastLoadedFilterKey = currentKey;
-			return;
-		}
-
-		if (currentKey !== lastLoadedFilterKey) {
-			lastLoadedFilterKey = currentKey;
-			feedViewStore.loadArticles();
-		}
 	});
 
 	onDestroy(() => {
@@ -285,7 +217,7 @@
 			onMobileMenuToggle={() => sidebarStore.toggleMobile()}
 		/>
 
-		{#if isLoading && feedViewStore.currentItems.length === 0}
+		{#if appManager.isHydrating && feedViewStore.currentItems.length === 0}
 			<LoadingState />
 		{:else if feedViewStore.currentItems.length === 0}
 			{#if feedViewStore.starredFilter}

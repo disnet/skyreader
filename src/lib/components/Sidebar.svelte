@@ -8,6 +8,10 @@
 	import { socialStore } from '$lib/stores/social.svelte';
 	import { sharesStore } from '$lib/stores/shares.svelte';
 	import { shareReadingStore } from '$lib/stores/shareReading.svelte';
+	import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
+	import { articlesStore } from '$lib/stores/articles.svelte';
+	import { liveDb } from '$lib/services/liveDb.svelte';
+	import { fetchSingleFeed } from '$lib/services/feedFetcher';
 	import { onMount, onDestroy } from 'svelte';
 	import AddFeedModal from './AddFeedModal.svelte';
 	import Logo from '$lib/assets/logo.svg';
@@ -238,18 +242,18 @@
 
 	// Load unread counts when subscriptions, articles, or read state changes
 	$effect(() => {
-		// Track dependencies
+		// Track dependencies - use liveDb.articlesVersion for reactivity
 		subscriptionsStore.subscriptions;
-		subscriptionsStore.articlesVersion;
+		liveDb.articlesVersion;
 		readingStore.readPositions;
 		loadUnreadCounts();
 	});
 
-	async function loadUnreadCounts() {
+	function loadUnreadCounts() {
 		const counts = new Map<number, number>();
 		for (const sub of subscriptionsStore.subscriptions) {
 			if (sub.id) {
-				counts.set(sub.id, await readingStore.getUnreadCount(sub.id));
+				counts.set(sub.id, articlesStore.getUnreadCount(sub.id));
 			}
 		}
 		feedUnreadCounts = counts;
@@ -433,20 +437,26 @@
 		>
 			{#each sortedSubscriptions() as sub (sub.id)}
 				{@const count = feedUnreadCounts.get(sub.id!) || 0}
-				{@const loadingState = subscriptionsStore.feedLoadingStates.get(sub.id!)}
-				{@const feedError = subscriptionsStore.feedErrors.get(sub.id!)}
+				{@const status = feedStatusStore.getStatus(sub.feedUrl)}
+				{@const loadingState =
+					status?.status === 'pending'
+						? 'loading'
+						: status?.status === 'error' || status?.status === 'circuit-open'
+							? 'error'
+							: undefined}
+				{@const feedError = feedStatusStore.getStatusMessage(sub.feedUrl)}
 				<FeedItem
 					subscription={sub}
 					unreadCount={count}
 					isActive={currentFilter().type === 'feed' && currentFilter().id === sub.id}
 					{loadingState}
-					errorMessage={feedError}
+					errorMessage={feedError || undefined}
 					onSelect={() => selectFilter('feed', sub.id)}
 					onContextMenu={(e) => sub.id && handleContextMenu(e, sub.id)}
 					onTouchStart={(e) => sub.id && handleTouchStart(e, sub.id)}
 					onTouchEnd={handleTouchEnd}
 					onTouchMove={handleTouchMove}
-					onRetry={() => subscriptionsStore.fetchFeed(sub.id!, true)}
+					onRetry={() => fetchSingleFeed(sub, true, articlesStore.starredGuids)}
 				/>
 			{:else}
 				<div class="empty-section">No subscriptions</div>

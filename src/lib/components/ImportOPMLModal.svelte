@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { parseOPMLFile, type OPMLFeed } from '$lib/utils/opml-parser';
 	import { subscriptionsStore, MAX_SUBSCRIPTIONS } from '$lib/stores/subscriptions.svelte';
+	import { articlesStore } from '$lib/stores/articles.svelte';
+	import { liveDb } from '$lib/services/liveDb.svelte';
+	import { fetchAllFeeds } from '$lib/services/feedFetcher';
 	import Modal from '$lib/components/common/Modal.svelte';
 
 	interface Props {
@@ -105,16 +108,13 @@
 
 		modalState = 'complete';
 
-		// Check which feeds are already cached on the backend (from other users)
-		// and start fetching them immediately
+		// Fetch the newly added feeds in the background
 		if (result.added.length > 0) {
-			const newFeedUrls = feedsToImport.map((f) => f.feedUrl);
+			// Get the newly added subscriptions
+			const newSubs = liveDb.subscriptions.filter((s) => result.added.includes(s.id!));
 
-			// Check backend status - feeds already cached will be marked 'ready'
-			await subscriptionsStore.checkFeedStatuses(newFeedUrls);
-
-			// Fetch ready feeds from cache immediately, then pending feeds gradually
-			subscriptionsStore.fetchAllNewFeeds();
+			// Fetch feeds in background
+			fetchAllFeeds(newSubs, articlesStore.starredGuids);
 		}
 	}
 

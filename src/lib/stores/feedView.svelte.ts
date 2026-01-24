@@ -1,4 +1,4 @@
-import { untrack } from 'svelte';
+import { articlesStore } from './articles.svelte';
 import { subscriptionsStore } from './subscriptions.svelte';
 import { readingStore } from './reading.svelte';
 import { shareReadingStore } from './shareReading.svelte';
@@ -17,31 +17,24 @@ export type FeedDisplayItem =
 	| { type: 'share'; item: SocialShare; key: string }
 	| { type: 'userShare'; item: UserShare; article: Article; key: string };
 
-function createFeedViewStore() {
-	// Source data
-	let allArticles = $state<Article[]>([]);
+const DEFAULT_PAGE_SIZE = 50;
 
+/**
+ * Feed View Store - Manages the unified feed view display
+ *
+ * Simplified to use articlesStore for article data.
+ * Focuses on filtering, view mode, and display logic.
+ */
+function createFeedViewStore() {
 	// UI state
 	let showOnlyUnread = $state(true);
 	let selectedIndex = $state(-1);
 	let expandedIndex = $state(-1);
+	let loadedArticleCount = $state(DEFAULT_PAGE_SIZE);
 
 	// Cache for fetched articles (from backend, for shares not in local DB)
 	let fetchedArticles = $state<Map<string, FeedItem>>(new Map());
 	let fetchingArticles = $state<Set<string>>(new Set());
-
-	// Snapshot tracking
-	let lastFilterKey = $state('');
-	let lastSharesFilterKey = $state('');
-	let lastArticlesVersion = $state(-1);
-	let lastArticlesLength = $state(-1);
-	let lastSharesLength = $state(-1);
-
-	// Snapshots of displayed items
-	let displayedArticles = $state<Article[]>([]);
-	let displayedShares = $state<SocialShare[]>([]);
-	let displayedUserShares = $state<UserShare[]>([]);
-	let displayedCombined = $state<CombinedFeedItem[]>([]);
 
 	// URL filters (set by component from $page store)
 	let feedFilter = $state<string | null>(null);
@@ -59,13 +52,93 @@ function createFeedViewStore() {
 		return 'combined';
 	});
 
-	// Derived: filter key for snapshot detection
-	let filterKey = $derived(
-		`${feedFilter || ''}-${starredFilter || ''}-${sharedFilter || ''}-${sharerFilter || ''}-${followingFilter || ''}-${feedsFilter || ''}-${showOnlyUnread}`
-	);
+	// Derived: filtered articles based on current filters
+	let filteredArticles = $derived.by((): Article[] => {
+		// Access articlesStore version for reactivity
+		const allArticles = articlesStore.allArticles;
+		const positions = readingStore.readPositions;
+
+		if (starredFilter) {
+			// Starred view
+			return allArticles.filter((a) => positions.get(a.guid)?.starred === true);
+		}
+
+		let articles = allArticles;
+
+		// Filter by subscription
+		if (feedFilter) {
+			const feedId = parseInt(feedFilter);
+			articles = articles.filter((a) => a.subscriptionId === feedId);
+		}
+
+		// Filter to unread only
+		if (showOnlyUnread) {
+			articles = articles.filter((a) => !positions.has(a.guid));
+		}
+
+		// Deduplicate by GUID
+		const seen = new Set<string>();
+		return articles.filter((a) => {
+			if (seen.has(a.guid)) return false;
+			seen.add(a.guid);
+			return true;
+		});
+	});
+
+	// Derived: paginated articles (limited to loadedArticleCount)
+	let displayedArticles = $derived(filteredArticles.slice(0, loadedArticleCount));
+
+	// Derived: filtered shares
+	let displayedShares = $derived.by((): SocialShare[] => {
+		const shares = socialStore.shares;
+		const positions = shareReadingStore.shareReadPositions;
+
+		let filtered: SocialShare[];
+		if (sharerFilter) {
+			filtered = shares.filter((s) => s.authorDid === sharerFilter);
+		} else {
+			filtered = [...shares];
+		}
+
+		if (showOnlyUnread) {
+			filtered = filtered.filter((s) => !positions.has(s.recordUri));
+		}
+
+		return filtered;
+	});
+
+	// Derived: user's own shares
+	let displayedUserShares = $derived.by((): UserShare[] => {
+		if (!sharedFilter) return [];
+
+		const shares = Array.from(sharesStore.userShares.values());
+		shares.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+		return shares;
+	});
+
+	// Derived: combined view (articles + shares merged by date)
+	let displayedCombined = $derived.by((): CombinedFeedItem[] => {
+		if (viewMode !== 'combined') return [];
+
+		const combined: CombinedFeedItem[] = [
+			...displayedArticles.map((item) => ({
+				type: 'article' as const,
+				item,
+				date: item.publishedAt,
+			})),
+			...displayedShares.map((item) => ({
+				type: 'share' as const,
+				item,
+				date: item.itemPublishedAt || item.createdAt,
+			})),
+		];
+
+		combined.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+		return combined;
+	});
 
 	// Derived: article lookup by guid
-	let articlesByGuid = $derived(new Map(allArticles.map((a) => [a.guid, a])));
+	let articlesByGuid = $derived(articlesStore.articlesByGuid);
 
 	// Derived: unified current items for the active view mode
 	let currentItems = $derived.by((): FeedDisplayItem[] => {
@@ -110,7 +183,7 @@ function createFeedViewStore() {
 			});
 		}
 
-		// articles
+		// articles mode
 		return displayedArticles.map((item) => ({
 			type: 'article' as const,
 			item,
@@ -121,208 +194,58 @@ function createFeedViewStore() {
 	// Derived: unified pagination state
 	let hasMore = $derived.by(() => {
 		const mode = viewMode;
-		if (mode === 'combined') return subscriptionsStore.articlesHasMore || socialStore.hasMore;
+		if (mode === 'combined') {
+			return loadedArticleCount < filteredArticles.length || socialStore.hasMore;
+		}
 		if (mode === 'shares') return socialStore.hasMore;
 		if (mode === 'userShares') return false;
-		return subscriptionsStore.articlesHasMore;
+		return loadedArticleCount < filteredArticles.length;
 	});
 
 	let isLoadingMore = $derived.by(() => {
 		const mode = viewMode;
-		if (mode === 'combined')
-			return subscriptionsStore.articlesIsLoadingMore || socialStore.isLoading;
+		if (mode === 'combined') return socialStore.isLoading;
 		if (mode === 'shares') return socialStore.isLoading;
-		if (mode === 'userShares') return false;
-		return subscriptionsStore.articlesIsLoadingMore;
+		return false;
 	});
-
-	// Snapshot articles when filter or source data changes
-	function updateArticlesSnapshot() {
-		const currentKey = filterKey;
-		const currentVersion = subscriptionsStore.articlesVersion;
-		const currentArticles = allArticles;
-		const currentLength = currentArticles.length;
-		const currentReadPositions = starredFilter ? readingStore.readPositions : null;
-
-		const prevKey = untrack(() => lastFilterKey);
-		const prevVersion = untrack(() => lastArticlesVersion);
-		const prevLength = untrack(() => lastArticlesLength);
-
-		if (
-			currentKey !== prevKey ||
-			currentVersion !== prevVersion ||
-			currentLength !== prevLength ||
-			currentReadPositions
-		) {
-			const readPositions = starredFilter
-				? currentReadPositions!
-				: untrack(() => readingStore.readPositions);
-
-			let filtered: Article[];
-			if (feedFilter) {
-				const feedId = parseInt(feedFilter);
-				let feedArticles = currentArticles.filter((a) => a.subscriptionId === feedId);
-				const onlyUnread = untrack(() => showOnlyUnread);
-				if (onlyUnread) {
-					feedArticles = feedArticles.filter((a) => !readPositions.has(a.guid));
-				}
-				filtered = feedArticles;
-			} else if (starredFilter) {
-				filtered = currentArticles.filter((a) => readPositions.get(a.guid)?.starred ?? false);
-			} else {
-				const onlyUnread = untrack(() => showOnlyUnread);
-				if (onlyUnread) {
-					filtered = currentArticles.filter((a) => !readPositions.has(a.guid));
-				} else {
-					filtered = [...currentArticles];
-				}
-			}
-
-			const seen = new Set<string>();
-			const deduped = filtered.filter((a) => {
-				if (seen.has(a.guid)) return false;
-				seen.add(a.guid);
-				return true;
-			});
-
-			displayedArticles = deduped;
-			lastFilterKey = currentKey;
-			lastArticlesVersion = currentVersion;
-			lastArticlesLength = currentLength;
-		}
-	}
-
-	// Snapshot shares when filter or source data changes
-	function updateSharesSnapshot() {
-		const shares = socialStore.shares;
-		const currentKey = filterKey;
-
-		const prevKey = untrack(() => lastSharesFilterKey);
-		const prevLength = untrack(() => lastSharesLength);
-
-		if (currentKey !== prevKey || shares.length !== prevLength) {
-			let filtered: SocialShare[];
-			if (followingFilter) {
-				filtered = [...shares];
-			} else if (sharerFilter) {
-				filtered = shares.filter((s) => s.authorDid === sharerFilter);
-			} else {
-				filtered = [...shares];
-			}
-
-			const onlyUnread = untrack(() => showOnlyUnread);
-			const readPositions = untrack(() => shareReadingStore.shareReadPositions);
-			if (onlyUnread) {
-				filtered = filtered.filter((s) => !readPositions.has(s.recordUri));
-			}
-
-			displayedShares = filtered;
-			lastSharesFilterKey = currentKey;
-			lastSharesLength = shares.length;
-		}
-	}
-
-	// Snapshot user's own shares
-	function updateUserSharesSnapshot() {
-		const userShares = sharesStore.userShares;
-
-		if (sharedFilter) {
-			const shares = Array.from(userShares.values());
-			shares.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-			displayedUserShares = shares;
-		} else {
-			displayedUserShares = [];
-		}
-	}
-
-	// Combine articles and shares for "all" view
-	function updateCombinedSnapshot() {
-		const articles = displayedArticles;
-		const shares = displayedShares;
-		const mode = viewMode;
-
-		if (mode === 'combined') {
-			const combined: CombinedFeedItem[] = [
-				...articles.map((item) => ({
-					type: 'article' as const,
-					item,
-					date: item.publishedAt,
-				})),
-				...shares.map((item) => ({
-					type: 'share' as const,
-					item,
-					date: item.itemPublishedAt || item.createdAt,
-				})),
-			];
-			combined.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-			displayedCombined = combined;
-		} else {
-			displayedCombined = [];
-		}
-	}
 
 	// Actions
 	async function loadArticles() {
-		allArticles = [];
+		// Reset pagination
+		loadedArticleCount = DEFAULT_PAGE_SIZE;
 
-		if (starredFilter) {
-			const starredGuids = Array.from(readingStore.readPositions.entries())
-				.filter(([, pos]) => pos.starred)
-				.map(([guid]) => guid);
-			const articles = await subscriptionsStore.getArticlesByGuids(starredGuids);
-			allArticles = articles;
-			return;
-		}
-
-		subscriptionsStore.resetArticlesPagination();
-		const feedId = feedFilter ? parseInt(feedFilter) : undefined;
-		const targetCount = 50;
-		const maxIterations = 10;
-
-		let articles = await subscriptionsStore.getArticlesPaginated(feedId);
-
+		// For unread view, load more articles until we have enough unread ones
 		if (showOnlyUnread && !starredFilter) {
-			let iterations = 0;
-			while (subscriptionsStore.articlesHasMore && iterations < maxIterations) {
-				const unreadCount = articles.filter((a) => !readingStore.isRead(a.guid)).length;
+			const targetCount = DEFAULT_PAGE_SIZE;
+			const maxCount = DEFAULT_PAGE_SIZE * 10;
 
-				if (unreadCount >= targetCount) {
+			while (loadedArticleCount < maxCount) {
+				const unreadCount = displayedArticles.length;
+				if (unreadCount >= targetCount || loadedArticleCount >= filteredArticles.length) {
 					break;
 				}
-
-				const moreArticles = await subscriptionsStore.loadMoreArticles(feedId);
-				if (moreArticles.length === 0) {
-					break;
-				}
-
-				articles = [...articles, ...moreArticles];
-				iterations++;
+				loadedArticleCount += DEFAULT_PAGE_SIZE;
 			}
 		}
-
-		allArticles = articles;
 	}
 
 	async function loadMore() {
 		const mode = viewMode;
 
 		if (mode === 'combined') {
-			const [, newArticles] = await Promise.all([
+			await Promise.all([
 				socialStore.hasMore ? socialStore.loadFeed(false) : Promise.resolve(),
-				subscriptionsStore.articlesHasMore
-					? subscriptionsStore.loadMoreArticles()
-					: Promise.resolve([]),
+				Promise.resolve().then(() => {
+					if (loadedArticleCount < filteredArticles.length) {
+						loadedArticleCount += DEFAULT_PAGE_SIZE;
+					}
+				}),
 			]);
-			if (newArticles && newArticles.length > 0) {
-				allArticles = [...allArticles, ...newArticles];
-			}
 		} else if (mode === 'shares') {
 			await socialStore.loadFeed(false);
 		} else if (mode === 'articles') {
-			const feedId = feedFilter ? parseInt(feedFilter) : undefined;
-			const newArticles = await subscriptionsStore.loadMoreArticles(feedId);
-			if (newArticles.length > 0) {
-				allArticles = [...allArticles, ...newArticles];
+			if (loadedArticleCount < filteredArticles.length) {
+				loadedArticleCount += DEFAULT_PAGE_SIZE;
 			}
 		}
 	}
@@ -462,12 +385,6 @@ function createFeedViewStore() {
 		getFetchedArticle,
 		isFetchingArticle,
 
-		// Snapshot updates (call from $effect in page)
-		updateArticlesSnapshot,
-		updateSharesSnapshot,
-		updateUserSharesSnapshot,
-		updateCombinedSnapshot,
-
 		// Actions
 		loadArticles,
 		loadMore,
@@ -495,6 +412,8 @@ function createFeedViewStore() {
 			sharerFilter = filters.sharer;
 			followingFilter = filters.following;
 			feedsFilter = filters.feeds;
+			// Reset pagination when filters change
+			loadedArticleCount = DEFAULT_PAGE_SIZE;
 		},
 	};
 }
