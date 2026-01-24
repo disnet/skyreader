@@ -97,6 +97,7 @@ function createSharesStore() {
 		articleUrl: string,
 		articleTitle?: string,
 		articleAuthor?: string,
+		articleContent?: string,
 		articleDescription?: string,
 		articleImage?: string,
 		articlePublishedAt?: string
@@ -130,6 +131,7 @@ function createSharesStore() {
 			itemTitle: articleTitle,
 			itemAuthor: articleAuthor,
 			itemDescription: articleDescription ? articleDescription.slice(0, 1000) : undefined,
+			content: articleContent,
 			itemImage:
 				articleImage && (articleImage.startsWith('http://') || articleImage.startsWith('https://'))
 					? articleImage

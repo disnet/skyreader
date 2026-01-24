@@ -280,6 +280,7 @@
 						article.url,
 						article.title,
 						article.author,
+						article.content,
 						article.summary,
 						article.imageUrl,
 						article.publishedAt

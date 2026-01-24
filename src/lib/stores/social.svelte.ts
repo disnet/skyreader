@@ -17,17 +17,23 @@ function createSocialStore() {
 	let popularShares = $state<(SocialShare & { shareCount: number })[]>([]);
 	let followedUsers = $state<FollowedUser[]>([]);
 	let discoverUsers = $state<DiscoverUser[]>([]);
-	let isLoading = $state(false);
+	let isLoadingFeed = $state(false);
+	let isLoadingUsers = $state(false);
 	let isDiscoverLoading = $state(false);
 	let isSyncing = $state(false);
 	let cursor = $state<string | null>(null);
 	let hasMore = $state(true);
 	let error = $state<string | null>(null);
 
-	async function loadFeed(reset = false) {
-		if (isLoading || (!hasMore && !reset)) return;
+	// Derived: any loading operation in progress
+	let isLoading = $derived(isLoadingFeed || isLoadingUsers);
 
-		isLoading = true;
+	async function loadFeed(reset = false) {
+		if (isLoadingFeed || (!hasMore && !reset)) {
+			return;
+		}
+
+		isLoadingFeed = true;
 		error = null;
 
 		try {
@@ -53,12 +59,12 @@ function createSocialStore() {
 				shares = await db.socialShares.orderBy('createdAt').reverse().toArray();
 			}
 		} finally {
-			isLoading = false;
+			isLoadingFeed = false;
 		}
 	}
 
 	async function loadPopular(period: 'day' | 'week' | 'month' = 'week') {
-		isLoading = true;
+		isLoadingFeed = true;
 		error = null;
 
 		try {
@@ -67,12 +73,12 @@ function createSocialStore() {
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load popular shares';
 		} finally {
-			isLoading = false;
+			isLoadingFeed = false;
 		}
 	}
 
 	async function loadFollowedUsers() {
-		isLoading = true;
+		isLoadingUsers = true;
 		error = null;
 
 		try {
@@ -81,7 +87,7 @@ function createSocialStore() {
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load followed users';
 		} finally {
-			isLoading = false;
+			isLoadingUsers = false;
 		}
 	}
 

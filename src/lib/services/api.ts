@@ -365,6 +365,7 @@ class ApiClient {
 		itemTitle?: string;
 		itemAuthor?: string;
 		itemDescription?: string;
+		content?: string;
 		itemImage?: string;
 		itemPublishedAt?: string;
 		note?: string;

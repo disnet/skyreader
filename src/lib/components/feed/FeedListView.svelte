@@ -96,6 +96,8 @@
 					onSelect={() => handleSelect(index)}
 					onExpand={() => handleExpand(index)}
 					onFetchContent={() => {
+						// Content should be included in share record; only fetch as fallback for old shares
+						if (share.content) return;
 						const hasLocalContent = localArticle?.content || localArticle?.summary;
 						const hasRemoteContent = remoteArticle?.content || remoteArticle?.summary;
 						if (share.feedUrl && share.itemGuid && !hasLocalContent && !hasRemoteContent) {

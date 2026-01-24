@@ -42,6 +42,11 @@
 						"maxLength": 1000,
 						"description": "Brief description/excerpt from the article"
 					},
+					"content": {
+						"type": "string",
+						"maxLength": 100000,
+						"description": "Article content (HTML)"
+					},
 					"itemImage": {
 						"type": "string",
 						"format": "uri",
