@@ -217,7 +217,7 @@
 			onMobileMenuToggle={() => sidebarStore.toggleMobile()}
 		/>
 
-		{#if appManager.isHydrating && feedViewStore.currentItems.length === 0}
+		{#if (appManager.isHydrating || appManager.isRefreshing) && feedViewStore.currentItems.length === 0}
 			<LoadingState />
 		{:else if feedViewStore.currentItems.length === 0}
 			{#if feedViewStore.starredFilter}

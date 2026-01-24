@@ -33,7 +33,6 @@
 	}: Props = $props();
 
 	let faviconUrl = $derived(getFaviconUrl(subscription.siteUrl || subscription.feedUrl));
-	let isPending = $derived(subscription.fetchStatus === 'pending');
 </script>
 
 <button
@@ -47,7 +46,7 @@
 	ontouchmove={onTouchMove}
 	title={errorMessage}
 >
-	{#if loadingState === 'loading' || isPending}
+	{#if loadingState === 'loading'}
 		<span class="feed-loading-spinner"></span>
 	{:else if loadingState === 'error'}
 		<span class="feed-error-icon" title={errorMessage}>!</span>
