@@ -635,16 +635,113 @@ function createSubscriptionsStore() {
 			return;
 		}
 
-		// Non-force path: batch fetch ready feeds from cache, then fetch pending from source
+		// Non-force path: batch fetch all feeds using v2 endpoint with GUID-based incremental sync
+		const allFeeds = subscriptions.filter((s) => s.id);
+		if (allFeeds.length > 0) {
+			console.log(`Batch fetching ${allFeeds.length} feeds via v2 proxy...`);
+			try {
+				// Collect recent GUIDs per feed for incremental sync (last 10 GUIDs per feed)
+				const feedsWithGuids: Array<{ url: string; since_guids?: string[] }> = [];
+				for (const sub of allFeeds) {
+					if (!sub.id) continue;
+					// Get recent articles for this subscription (sorted by publishedAt desc)
+					const recentArticles = await db.articles
+						.where('subscriptionId')
+						.equals(sub.id)
+						.reverse()
+						.sortBy('publishedAt')
+						.then((articles) => articles.slice(0, 10));
+
+					feedsWithGuids.push({
+						url: sub.feedUrl,
+						since_guids: recentArticles.length > 0 ? recentArticles.map((a) => a.guid) : undefined,
+					});
+				}
+
+				// Process in chunks of 50 (backend limit)
+				const BATCH_CHUNK_SIZE = 50;
+				for (let i = 0; i < feedsWithGuids.length; i += BATCH_CHUNK_SIZE) {
+					const chunk = feedsWithGuids.slice(i, i + BATCH_CHUNK_SIZE);
+
+					const { feeds } = await api.fetchFeedsBatchV2(chunk);
+
+					// Process batch response and store articles
+					for (const feedReq of chunk) {
+						const sub = allFeeds.find((s) => s.feedUrl === feedReq.url);
+						if (!sub?.id) continue;
+
+						const feedData = feeds[feedReq.url];
+						if (!feedData || feedData.status === 'error' || feedData.items.length === 0) {
+							// Log errors but continue
+							if (feedData?.error) {
+								console.warn(`Feed ${feedReq.url}: ${feedData.error}`);
+							}
+							continue;
+						}
+
+						// Store new articles (deduplicate by GUID)
+						const existingArticles = await db.articles
+							.where('subscriptionId')
+							.equals(sub.id)
+							.toArray();
+						const existingGuids = new Set(existingArticles.map((a) => a.guid));
+
+						const newArticles: Article[] = feedData.items
+							.filter((item) => !existingGuids.has(item.guid))
+							.map((item) => ({
+								subscriptionId: sub.id!,
+								guid: item.guid,
+								url: item.url,
+								title: item.title,
+								author: item.author,
+								content: item.content,
+								summary: item.summary,
+								imageUrl: item.imageUrl,
+								publishedAt: item.publishedAt,
+								fetchedAt: Date.now(),
+							}));
+
+						if (newArticles.length > 0) {
+							await db.articles.bulkAdd(newArticles);
+							articlesVersion++;
+						}
+
+						// Update subscription status
+						await db.subscriptions.update(sub.id, {
+							fetchStatus: 'ready',
+							lastFetchedAt: feedData.lastFetchedAt || Date.now(),
+						});
+						subscriptions = subscriptions.map((s) =>
+							s.id === sub.id
+								? {
+										...s,
+										fetchStatus: 'ready' as const,
+										lastFetchedAt: feedData.lastFetchedAt || Date.now(),
+									}
+								: s
+						);
+					}
+				}
+
+				console.log('V2 batch fetch complete');
+			} catch (e) {
+				console.error('V2 batch feed fetch failed, falling back to v1:', e);
+				// Fallback to v1 batch endpoint
+				await fetchAllNewFeedsV1(concurrency, delayMs);
+			}
+		}
+	}
+
+	// Fallback: v1 batch fetch using timestamps (used when v2 proxy fails)
+	async function fetchAllNewFeedsV1(concurrency = 1, delayMs = 5000): Promise<void> {
 		const readyFeeds = subscriptions.filter((s) => s.fetchStatus === 'ready' && s.id);
 		if (readyFeeds.length > 0) {
-			console.log(`Batch fetching ${readyFeeds.length} ready feeds from cache...`);
+			console.log(`V1 fallback: batch fetching ${readyFeeds.length} ready feeds...`);
 			try {
 				// Collect most recent article timestamp per feed for delta sync
 				const since: Record<string, number> = {};
 				for (const sub of readyFeeds) {
 					if (!sub.id) continue;
-					// Get the most recent article for this subscription
 					const mostRecent = await db.articles
 						.where('subscriptionId')
 						.equals(sub.id)
@@ -663,7 +760,6 @@ function createSubscriptionsStore() {
 					const chunk = readyFeeds.slice(i, i + BATCH_CHUNK_SIZE);
 					const feedUrls = chunk.map((s) => s.feedUrl);
 
-					// Filter since to only include URLs in this chunk
 					const chunkSince: Record<string, number> = {};
 					for (const url of feedUrls) {
 						if (since[url]) chunkSince[url] = since[url];
@@ -671,13 +767,11 @@ function createSubscriptionsStore() {
 
 					const { feeds } = await api.fetchFeedsBatch(feedUrls, chunkSince);
 
-					// Process batch response and store articles
 					for (const sub of chunk) {
 						if (!sub.id) continue;
 						const feedData = feeds[sub.feedUrl];
 						if (!feedData || feedData.items.length === 0) continue;
 
-						// Store new articles (backend already filtered by 'since', but double-check GUIDs)
 						const existingArticles = await db.articles
 							.where('subscriptionId')
 							.equals(sub.id)
@@ -706,13 +800,11 @@ function createSubscriptionsStore() {
 					}
 				}
 			} catch (e) {
-				console.error('Batch feed fetch failed, falling back to individual fetches:', e);
-				// Fallback to individual fetches
-				await Promise.all(readyFeeds.map((sub) => sub.id && fetchFeed(sub.id, false)));
+				console.error('V1 batch feed fetch failed:', e);
 			}
 		}
 
-		// Then gradually fetch pending feeds from source (these need actual backend fetches)
+		// Fetch pending feeds from source
 		await fetchPendingFeedsGradually(concurrency, delayMs);
 	}
 

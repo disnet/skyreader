@@ -131,6 +131,42 @@ class ApiClient {
 		});
 	}
 
+	async fetchFeedV2(url: string, sinceGuids?: string[], limit?: number): Promise<ParsedFeed> {
+		const params = new URLSearchParams({ url });
+		if (sinceGuids && sinceGuids.length > 0) {
+			params.set('since_guids', sinceGuids.join(','));
+		}
+		if (limit) {
+			params.set('limit', limit.toString());
+		}
+		return this.fetch(`/api/v2/feeds/fetch?${params}`);
+	}
+
+	async fetchFeedsBatchV2(
+		feeds: Array<{ url: string; since_guids?: string[]; limit?: number }>
+	): Promise<{
+		feeds: Record<
+			string,
+			{
+				title: string;
+				description?: string;
+				siteUrl?: string;
+				imageUrl?: string;
+				items: FeedItem[];
+				status: 'ready' | 'error';
+				error?: string;
+				errorCount?: number;
+				nextRetryAt?: number;
+				lastFetchedAt?: number;
+			}
+		>;
+	}> {
+		return this.fetch('/api/v2/feeds/batch', {
+			method: 'POST',
+			body: JSON.stringify({ feeds }),
+		});
+	}
+
 	// Items (paginated queries)
 	async getItems(options: {
 		feedUrls?: string[];
