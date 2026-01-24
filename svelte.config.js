@@ -18,6 +18,9 @@ const config = {
 			// Use `npm run build && npm run preview` to test the service worker.
 			register: process.env.NODE_ENV === 'production',
 		},
+		// CSP is handled by:
+		// - Dev: hooks.server.ts
+		// - Production: functions/_middleware.ts
 	},
 };
 

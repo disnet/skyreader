@@ -59,7 +59,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy build --project-name=skyreader --branch=staging --commit-dirty=true
+          command: pages deploy --project-name=skyreader --branch=staging --commit-dirty=true
 
   deploy-staging-prod:
     name: Deploy Staging (Prod Backend)
@@ -90,7 +90,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy build --project-name=skyreader --branch=staging-prod --commit-dirty=true
+          command: pages deploy --project-name=skyreader --branch=staging-prod --commit-dirty=true
 
   deploy-production:
     name: Deploy to Production
@@ -121,4 +121,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy build --project-name=skyreader --branch=main --commit-dirty=true
+          command: pages deploy --project-name=skyreader --branch=main --commit-dirty=true

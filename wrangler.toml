@@ -1,0 +1,5 @@
+name = "skyreader"
+pages_build_output_dir = "build"
+compatibility_date = "2024-01-01"
+
+# Functions are automatically picked up from functions/ directory
