@@ -3,7 +3,7 @@ import { liveDb } from './liveDb.svelte';
 import { feedStatusStore, type V2FeedResult } from '$lib/stores/feedStatus.svelte';
 import type { Subscription } from '$lib/types';
 
-const BATCH_SIZE = 50;
+const BATCH_SIZE = 5;
 const GUIDS_PER_FEED = 10;
 
 export interface FetchResult {

@@ -5,7 +5,7 @@ import { sharesStore } from './shares.svelte';
 import { socialStore } from './social.svelte';
 import { feedStatusStore } from './feedStatus.svelte';
 import { articlesStore } from './articles.svelte';
-import { fetchAllFeeds, fetchNewSubscriptionFeeds } from '$lib/services/feedFetcher';
+import { fetchAllFeeds } from '$lib/services/feedFetcher';
 import { api } from '$lib/services/api';
 import type { Subscription } from '$lib/types';
 
@@ -92,17 +92,9 @@ function createAppManager() {
 				socialStore.loadFeed(true),
 			]);
 
-			// Fetch feeds for existing subscriptions
-			const existingSubs = liveDb.subscriptions.filter(
-				(s) => !syncResult.added.includes(s.feedUrl)
-			);
-			if (existingSubs.length > 0) {
-				await fetchAllFeeds(existingSubs, articlesStore.starredGuids);
-			}
-
-			// Fetch newly added subscriptions (they need full content)
-			if (syncResult.addedSubs.length > 0) {
-				await fetchNewSubscriptionFeeds(syncResult.addedSubs, articlesStore.starredGuids);
+			// Fetch all feeds using batch API
+			if (liveDb.subscriptions.length > 0) {
+				await fetchAllFeeds(liveDb.subscriptions, articlesStore.starredGuids);
 			}
 
 			lastRefreshAt = Date.now();
