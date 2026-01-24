@@ -3,12 +3,7 @@ import type { DiscoverUser, FeedItem, ParsedFeed, SocialShare, User } from '$lib
 const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8787';
 
 class ApiClient {
-	private sessionId: string | null = null;
 	private onUnauthorized: (() => void) | null = null;
-
-	setSession(sessionId: string | null) {
-		this.sessionId = sessionId;
-	}
 
 	// Set callback for when 401 is received (session invalid)
 	setOnUnauthorized(callback: () => void) {
@@ -21,10 +16,7 @@ class ApiClient {
 			...options.headers,
 		};
 
-		if (this.sessionId) {
-			(headers as Record<string, string>)['Authorization'] = `Bearer ${this.sessionId}`;
-		}
-
+		// Session is managed via HTTP-only cookies, no Authorization header needed
 		const response = await fetch(`${API_BASE}${path}`, {
 			...options,
 			headers,
@@ -53,13 +45,6 @@ class ApiClient {
 		const params = new URLSearchParams({ handle });
 		if (returnUrl) params.set('returnUrl', returnUrl);
 		return this.fetch(`/api/auth/login?${params}`);
-	}
-
-	async exchangeCode(code: string): Promise<{ sessionId: string }> {
-		return this.fetch('/api/auth/exchange', {
-			method: 'POST',
-			body: JSON.stringify({ code }),
-		});
 	}
 
 	async logout(): Promise<void> {

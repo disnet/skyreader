@@ -5,7 +5,6 @@ import type { User } from '$lib/types';
 
 interface AuthState {
 	user: User | null;
-	sessionId: string | null;
 	isLoading: boolean;
 	error: string | null;
 }
@@ -13,7 +12,6 @@ interface AuthState {
 function createAuthStore() {
 	let state = $state<AuthState>({
 		user: null,
-		sessionId: null,
 		isLoading: true,
 		error: null,
 	});
@@ -22,8 +20,6 @@ function createAuthStore() {
 	function handleUnauthorized() {
 		console.log('Handling unauthorized - clearing session');
 		state.user = null;
-		state.sessionId = null;
-		api.setSession(null);
 
 		if (browser) {
 			localStorage.removeItem('skyreader-auth');
@@ -33,14 +29,14 @@ function createAuthStore() {
 	}
 
 	// Restore session from localStorage on init
+	// User data is cached for display, but session is verified via cookie
 	if (browser) {
 		const stored = localStorage.getItem('skyreader-auth');
 		if (stored) {
 			try {
 				const parsed = JSON.parse(stored);
+				// Support both old format { user, sessionId } and new format { user }
 				state.user = parsed.user;
-				state.sessionId = parsed.sessionId;
-				api.setSession(parsed.sessionId);
 			} catch {
 				localStorage.removeItem('skyreader-auth');
 			}
@@ -51,14 +47,15 @@ function createAuthStore() {
 		api.setOnUnauthorized(handleUnauthorized);
 	}
 
-	function setSession(user: User, sessionId: string) {
+	// Set user after successful authentication
+	// Session is managed via HTTP-only cookies
+	function setUser(user: User) {
 		state.user = user;
-		state.sessionId = sessionId;
 		state.error = null;
-		api.setSession(sessionId);
 
 		if (browser) {
-			localStorage.setItem('skyreader-auth', JSON.stringify({ user, sessionId }));
+			// Store only user info for display caching (session is in HTTP-only cookie)
+			localStorage.setItem('skyreader-auth', JSON.stringify({ user }));
 		}
 	}
 
@@ -70,12 +67,26 @@ function createAuthStore() {
 		}
 
 		state.user = null;
-		state.sessionId = null;
-		api.setSession(null);
 
 		if (browser) {
 			localStorage.removeItem('skyreader-auth');
 			await clearAllData();
+		}
+	}
+
+	// Verify session is still valid by calling the backend
+	async function verifySession(): Promise<boolean> {
+		try {
+			const user = await api.getMe();
+			setUser(user);
+			return true;
+		} catch {
+			// Session invalid - clear local state
+			state.user = null;
+			if (browser) {
+				localStorage.removeItem('skyreader-auth');
+			}
+			return false;
 		}
 	}
 
@@ -91,9 +102,6 @@ function createAuthStore() {
 		get user() {
 			return state.user;
 		},
-		get sessionId() {
-			return state.sessionId;
-		},
 		get isLoading() {
 			return state.isLoading;
 		},
@@ -103,7 +111,8 @@ function createAuthStore() {
 		get error() {
 			return state.error;
 		},
-		setSession,
+		setUser,
+		verifySession,
 		logout,
 		setError,
 		clearError,

@@ -7,33 +7,15 @@
 	import { appManager } from '$lib/stores/app.svelte';
 
 	onMount(async () => {
-		const code = $page.url.searchParams.get('code');
 		const returnUrl = $page.url.searchParams.get('returnUrl') || '/';
 
-		if (!code) {
-			goto('/auth/error?error=Missing+code');
-			return;
-		}
-
-		// Check if we already have a valid session
-		const stored = localStorage.getItem('skyreader-auth');
-		if (stored) {
-			goto(returnUrl);
-			return;
-		}
-
 		try {
-			// Exchange the code for a session ID (single-use, not exposed in URL)
-			const { sessionId } = await api.exchangeCode(code);
-
-			// Set the session ID so the API can make authenticated requests
-			api.setSession(sessionId);
-
-			// Fetch the user info from the backend
+			// Session cookie was set by the OAuth callback redirect
+			// Fetch user info to verify session and get user data
 			const user = await api.getMe();
 
-			// Store the session with the real user data
-			auth.setSession(user, sessionId);
+			// Store the user data for display caching
+			auth.setUser(user);
 
 			// Initialize the app (loads subscriptions, articles, read state, etc.)
 			await appManager.initialize();
