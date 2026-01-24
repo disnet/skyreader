@@ -1,5 +1,7 @@
 import { db } from '$lib/services/db';
 import { api } from '$lib/services/api';
+import { syncQueue, type FollowPayload } from '$lib/services/sync-queue';
+import { syncStore } from './sync.svelte';
 import type { DiscoverUser, SocialShare } from '$lib/types';
 import { generateTid } from '$lib/utils/tid';
 
@@ -124,24 +126,39 @@ function createSocialStore() {
 	}
 
 	async function followUser(did: string): Promise<boolean> {
-		try {
-			const rkey = generateTid();
+		const rkey = generateTid();
 
-			// Use dedicated follow endpoint
-			await api.followUser(rkey, did);
+		// Optimistic update - remove from discover
+		discoverUsers = discoverUsers.filter((u) => u.did !== did);
 
-			// Refresh followed users and remove from discover
-			await loadFollowedUsers();
-			discoverUsers = discoverUsers.filter((u) => u.did !== did);
+		const payload: FollowPayload = { rkey, did };
 
-			return true;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to follow user';
-			return false;
+		if (syncStore.isOnline) {
+			try {
+				await api.followUser(rkey, did);
+				// Refresh followed users
+				await loadFollowedUsers();
+				return true;
+			} catch (e) {
+				error = e instanceof Error ? e.message : 'Failed to follow user';
+				// Queue for retry
+				await syncQueue.enqueue('create', 'follows', did, payload);
+				return false;
+			}
+		} else {
+			// Offline - queue the operation
+			await syncQueue.enqueue('create', 'follows', did, payload);
+			return true; // Optimistically return success
 		}
 	}
 
 	async function unfollowInApp(did: string): Promise<boolean> {
+		// Need to get the rkey first - this requires being online
+		if (!syncStore.isOnline) {
+			error = 'Cannot unfollow while offline';
+			return false;
+		}
+
 		try {
 			// Get in-app follows with rkeys
 			const { follows } = await api.listInAppFollows();
@@ -152,13 +169,19 @@ function createSocialStore() {
 				return false;
 			}
 
-			// Use dedicated unfollow endpoint
-			await api.unfollowUser(followRecord.rkey);
+			const payload: FollowPayload = { rkey: followRecord.rkey, did };
 
-			// Refresh followed users
-			await loadFollowedUsers();
-
-			return true;
+			try {
+				await api.unfollowUser(followRecord.rkey);
+				// Refresh followed users
+				await loadFollowedUsers();
+				return true;
+			} catch (e) {
+				error = e instanceof Error ? e.message : 'Failed to unfollow user';
+				// Queue for retry
+				await syncQueue.enqueue('delete', 'follows', did, payload);
+				return false;
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to unfollow user';
 			return false;

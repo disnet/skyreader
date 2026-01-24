@@ -1,5 +1,7 @@
 import { db } from '$lib/services/db';
 import { api } from '$lib/services/api';
+import { syncQueue, type ShareReadingPayload } from '$lib/services/sync-queue';
+import { syncStore } from './sync.svelte';
 import type { ShareReadPosition } from '$lib/types';
 
 function generateTid(): string {
@@ -82,43 +84,71 @@ function createShareReadingStore() {
 			readAt: now,
 		};
 
-		// Use dedicated share read endpoint
-		await api.markShareAsRead({
-			rkey,
-			shareUri,
-			shareAuthorDid,
-			// Only include itemUrl if it looks like a valid URL
-			itemUrl:
-				itemUrl && (itemUrl.startsWith('http://') || itemUrl.startsWith('https://'))
-					? itemUrl
-					: undefined,
-			itemTitle: itemTitle || undefined,
-		});
-
-		// Update local state and cache
+		// Optimistic update - add to local state and cache
 		shareReadPositions.set(shareUri, { ...position });
 		shareReadPositions = new Map(shareReadPositions);
 
 		const id = await db.shareReadPositions.add(position);
 		shareReadPositions.set(shareUri, { ...position, id });
 		shareReadPositions = new Map(shareReadPositions);
+
+		const payload: ShareReadingPayload = {
+			rkey,
+			shareUri,
+			shareAuthorDid,
+			itemUrl:
+				itemUrl && (itemUrl.startsWith('http://') || itemUrl.startsWith('https://'))
+					? itemUrl
+					: undefined,
+			itemTitle: itemTitle || undefined,
+		};
+
+		if (syncStore.isOnline) {
+			try {
+				await api.markShareAsRead({
+					rkey,
+					shareUri,
+					shareAuthorDid,
+					itemUrl: payload.itemUrl,
+					itemTitle: payload.itemTitle,
+				});
+			} catch (e) {
+				console.error('Failed to mark share as read, queueing for retry:', e);
+				await syncQueue.enqueue('create', 'shareReading', shareUri, payload);
+			}
+		} else {
+			// Offline - queue the operation
+			await syncQueue.enqueue('create', 'shareReading', shareUri, payload);
+		}
 	}
 
 	async function markAsUnread(shareUri: string) {
 		const position = shareReadPositions.get(shareUri);
-		if (!position || !position.id) return;
+		if (!position || !position.id || !position.rkey) return;
 
-		// Use dedicated share read endpoint
-		if (position.rkey) {
-			await api.markShareAsUnread(position.rkey);
-		}
-
-		// Delete from local DB
-		await db.shareReadPositions.delete(position.id);
-
-		// Remove from map
+		// Optimistic update - remove from local state and cache
 		shareReadPositions.delete(shareUri);
 		shareReadPositions = new Map(shareReadPositions);
+
+		await db.shareReadPositions.delete(position.id);
+
+		const payload: ShareReadingPayload = {
+			rkey: position.rkey,
+			shareUri,
+			shareAuthorDid: position.shareAuthorDid,
+		};
+
+		if (syncStore.isOnline) {
+			try {
+				await api.markShareAsUnread(position.rkey);
+			} catch (e) {
+				console.error('Failed to mark share as unread, queueing for retry:', e);
+				await syncQueue.enqueue('delete', 'shareReading', shareUri, payload);
+			}
+		} else {
+			// Offline - queue the operation
+			await syncQueue.enqueue('delete', 'shareReading', shareUri, payload);
+		}
 	}
 
 	return {

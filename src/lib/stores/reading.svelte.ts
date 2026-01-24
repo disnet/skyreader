@@ -1,5 +1,7 @@
 import { api } from '$lib/services/api';
 import { db, type ReadPositionCache } from '$lib/services/db';
+import { syncQueue, type ReadingPayload } from '$lib/services/sync-queue';
+import { syncStore } from './sync.svelte';
 
 interface ReadPosition {
 	starred: boolean;
@@ -39,25 +41,40 @@ function createReadingStore() {
 		pendingMarkRead = [];
 		debounceTimer = null;
 
-		try {
-			await api.markAsReadBulk(
-				itemsToFlush.map((item) => ({
-					itemGuid: item.articleGuid,
-					itemUrl: item.articleUrl,
-					itemTitle: item.articleTitle,
-				}))
-			);
-			// Update cache on success
-			for (const item of itemsToFlush) {
-				updateCache(item.articleGuid, item.position);
+		// Update cache optimistically
+		for (const item of itemsToFlush) {
+			updateCache(item.articleGuid, item.position);
+		}
+
+		if (syncStore.isOnline) {
+			try {
+				await api.markAsReadBulk(
+					itemsToFlush.map((item) => ({
+						itemGuid: item.articleGuid,
+						itemUrl: item.articleUrl,
+						itemTitle: item.articleTitle,
+					}))
+				);
+			} catch (e) {
+				console.error('Failed to mark as read (batch), queueing for retry:', e);
+				// Queue each item for retry
+				for (const item of itemsToFlush) {
+					await syncQueue.enqueue('create', 'reading', item.articleGuid, {
+						articleGuid: item.articleGuid,
+						articleUrl: item.articleUrl,
+						articleTitle: item.articleTitle,
+					} as ReadingPayload);
+				}
 			}
-		} catch (e) {
-			// Rollback on failure
+		} else {
+			// Offline - queue all items
 			for (const item of itemsToFlush) {
-				readPositions.delete(item.articleGuid);
+				await syncQueue.enqueue('create', 'reading', item.articleGuid, {
+					articleGuid: item.articleGuid,
+					articleUrl: item.articleUrl,
+					articleTitle: item.articleTitle,
+				} as ReadingPayload);
 			}
-			readPositions = new Map(readPositions);
-			console.error('Failed to mark as read (batch):', e);
 		}
 	}
 
@@ -229,25 +246,40 @@ function createReadingStore() {
 		}
 		readPositions = new Map(readPositions);
 
-		try {
-			await api.markAsReadBulk(
-				unreadArticles.map((a) => ({
-					itemGuid: a.articleGuid,
-					itemUrl: a.articleUrl,
-					itemTitle: a.articleTitle,
-				}))
-			);
-			// Update cache on success
-			for (const { guid, position } of newPositions) {
-				updateCache(guid, position);
+		// Update cache
+		for (const { guid, position } of newPositions) {
+			updateCache(guid, position);
+		}
+
+		if (syncStore.isOnline) {
+			try {
+				await api.markAsReadBulk(
+					unreadArticles.map((a) => ({
+						itemGuid: a.articleGuid,
+						itemUrl: a.articleUrl,
+						itemTitle: a.articleTitle,
+					}))
+				);
+			} catch (e) {
+				console.error('Failed to mark all as read, queueing for retry:', e);
+				// Queue each item for retry
+				for (const article of unreadArticles) {
+					await syncQueue.enqueue('create', 'reading', article.articleGuid, {
+						articleGuid: article.articleGuid,
+						articleUrl: article.articleUrl,
+						articleTitle: article.articleTitle,
+					} as ReadingPayload);
+				}
 			}
-		} catch (e) {
-			// Rollback on failure
+		} else {
+			// Offline - queue all items
 			for (const article of unreadArticles) {
-				readPositions.delete(article.articleGuid);
+				await syncQueue.enqueue('create', 'reading', article.articleGuid, {
+					articleGuid: article.articleGuid,
+					articleUrl: article.articleUrl,
+					articleTitle: article.articleTitle,
+				} as ReadingPayload);
 			}
-			readPositions = new Map(readPositions);
-			console.error('Failed to mark all as read:', e);
 		}
 	}
 
@@ -259,15 +291,23 @@ function createReadingStore() {
 		readPositions.delete(articleGuid);
 		readPositions = new Map(readPositions);
 
-		try {
-			await api.markAsUnread(articleGuid);
-			// Update cache on success
-			removeFromCache(articleGuid);
-		} catch (e) {
-			// Rollback on failure
-			readPositions.set(articleGuid, position);
-			readPositions = new Map(readPositions);
-			console.error('Failed to mark as unread:', e);
+		// Update cache
+		removeFromCache(articleGuid);
+
+		if (syncStore.isOnline) {
+			try {
+				await api.markAsUnread(articleGuid);
+			} catch (e) {
+				console.error('Failed to mark as unread, queueing for retry:', e);
+				await syncQueue.enqueue('delete', 'reading', articleGuid, {
+					articleGuid,
+				} as ReadingPayload);
+			}
+		} else {
+			// Offline - queue the operation
+			await syncQueue.enqueue('delete', 'reading', articleGuid, {
+				articleGuid,
+			} as ReadingPayload);
 		}
 	}
 
@@ -282,19 +322,29 @@ function createReadingStore() {
 		readPositions.set(articleGuid, newPosition);
 		readPositions = new Map(readPositions);
 
-		try {
-			await api.toggleStar(articleGuid, newStarred, articleUrl, articleTitle);
-			// Update cache on success
-			updateCache(articleGuid, newPosition);
-		} catch (e) {
-			// Rollback on failure
-			if (position) {
-				readPositions.set(articleGuid, position);
-			} else {
-				readPositions.delete(articleGuid);
+		// Update cache
+		updateCache(articleGuid, newPosition);
+
+		if (syncStore.isOnline) {
+			try {
+				await api.toggleStar(articleGuid, newStarred, articleUrl, articleTitle);
+			} catch (e) {
+				console.error('Failed to toggle star, queueing for retry:', e);
+				await syncQueue.enqueue('update', 'reading', articleGuid, {
+					articleGuid,
+					articleUrl,
+					articleTitle,
+					starred: newStarred,
+				} as ReadingPayload);
 			}
-			readPositions = new Map(readPositions);
-			console.error('Failed to toggle star:', e);
+		} else {
+			// Offline - queue the operation
+			await syncQueue.enqueue('update', 'reading', articleGuid, {
+				articleGuid,
+				articleUrl,
+				articleTitle,
+				starred: newStarred,
+			} as ReadingPayload);
 		}
 	}
 

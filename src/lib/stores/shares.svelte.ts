@@ -1,5 +1,7 @@
 import { api } from '$lib/services/api';
 import { db } from '$lib/services/db';
+import { syncQueue, type SharePayload } from '$lib/services/sync-queue';
+import { syncStore } from './sync.svelte';
 import type { UserShare } from '$lib/types';
 
 function generateTid(): string {
@@ -122,48 +124,91 @@ function createSharesStore() {
 			createdAt: now,
 		};
 
-		// Use dedicated share endpoint
-		await api.createShare({
-			rkey,
-			itemUrl: articleUrl,
-			feedUrl: feedUrl || undefined,
-			itemGuid: articleGuid || undefined,
-			itemTitle: articleTitle,
-			itemAuthor: articleAuthor,
-			itemDescription: articleDescription ? articleDescription.slice(0, 1000) : undefined,
-			content: articleContent,
-			itemImage:
-				articleImage && (articleImage.startsWith('http://') || articleImage.startsWith('https://'))
-					? articleImage
-					: undefined,
-			itemPublishedAt: articlePublishedAt,
-		});
-
-		// Update local state and cache
+		// Optimistic update - add to local state and cache
 		userShares.set(articleGuid, { ...shareData });
 		userShares = new Map(userShares);
 
 		const id = await db.userShares.add(shareData);
 		userShares.set(articleGuid, { ...shareData, id });
 		userShares = new Map(userShares);
+
+		const payload: SharePayload = {
+			rkey,
+			subscriptionRkey,
+			feedUrl,
+			articleGuid,
+			articleUrl,
+			articleTitle,
+			articleAuthor,
+			articleContent,
+			articleDescription,
+			articleImage,
+			articlePublishedAt,
+		};
+
+		if (syncStore.isOnline) {
+			try {
+				await api.createShare({
+					rkey,
+					itemUrl: articleUrl,
+					feedUrl: feedUrl || undefined,
+					itemGuid: articleGuid || undefined,
+					itemTitle: articleTitle,
+					itemAuthor: articleAuthor,
+					itemDescription: articleDescription ? articleDescription.slice(0, 1000) : undefined,
+					content: articleContent,
+					itemImage:
+						articleImage &&
+						(articleImage.startsWith('http://') || articleImage.startsWith('https://'))
+							? articleImage
+							: undefined,
+					itemPublishedAt: articlePublishedAt,
+				});
+			} catch (e) {
+				console.error('Failed to create share, queueing for retry:', e);
+				await syncQueue.enqueue('create', 'shares', articleGuid, payload);
+			}
+		} else {
+			// Offline - queue the operation
+			await syncQueue.enqueue('create', 'shares', articleGuid, payload);
+		}
 	}
 
 	async function unshare(articleGuid: string) {
 		const existingShare = userShares.get(articleGuid);
 		if (!existingShare) return;
 
-		// Use dedicated delete endpoint
-		if (existingShare.rkey) {
-			await api.deleteShare(existingShare.rkey);
-		}
-
-		// Remove from map
+		// Optimistic update - remove from map and cache
 		userShares.delete(articleGuid);
 		userShares = new Map(userShares);
 
-		// Delete from IndexedDB
 		if (existingShare.id) {
 			await db.userShares.delete(existingShare.id);
+		}
+
+		const payload: SharePayload = {
+			rkey: existingShare.rkey || '',
+			feedUrl: existingShare.feedUrl || '',
+			articleGuid,
+			articleUrl: existingShare.articleUrl,
+		};
+
+		if (syncStore.isOnline) {
+			try {
+				if (existingShare.rkey) {
+					await api.deleteShare(existingShare.rkey);
+				}
+			} catch (e) {
+				console.error('Failed to delete share, queueing for retry:', e);
+				if (existingShare.rkey) {
+					await syncQueue.enqueue('delete', 'shares', articleGuid, payload);
+				}
+			}
+		} else {
+			// Offline - queue the operation
+			if (existingShare.rkey) {
+				await syncQueue.enqueue('delete', 'shares', articleGuid, payload);
+			}
 		}
 	}
 

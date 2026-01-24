@@ -10,6 +10,18 @@ export interface ReadPositionCache {
 	itemTitle?: string;
 }
 
+// Sync queue for offline operations
+export interface SyncQueueEntry {
+	id?: number;
+	operation: 'create' | 'update' | 'delete';
+	collection: 'reading' | 'shares' | 'shareReading' | 'follows';
+	key: string; // Deduplication key (e.g., articleGuid, rkey)
+	payload: string; // JSON-serialized data
+	timestamp: number;
+	retryCount: number;
+	status: 'pending' | 'processing' | 'failed';
+}
+
 class SkyreaderDatabase extends Dexie {
 	subscriptions!: Table<Subscription>;
 	articles!: Table<Article>;
@@ -17,6 +29,7 @@ class SkyreaderDatabase extends Dexie {
 	shareReadPositions!: Table<ShareReadPosition>;
 	socialShares!: Table<SocialShare>;
 	userShares!: Table<UserShare>;
+	syncQueue!: Table<SyncQueueEntry>;
 
 	constructor() {
 		super('skyreader');
@@ -78,6 +91,11 @@ class SkyreaderDatabase extends Dexie {
 			userShares: '++id, rkey, articleGuid, articleUrl',
 			shareReadPositions: '++id, rkey, shareUri, shareAuthorDid',
 		});
+
+		// Add syncQueue back for offline support
+		this.version(11).stores({
+			syncQueue: '++id, [collection+key], status, timestamp',
+		});
 	}
 }
 
@@ -92,5 +110,6 @@ export async function clearAllData(): Promise<void> {
 		db.shareReadPositions.clear(),
 		db.socialShares.clear(),
 		db.userShares.clear(),
+		db.syncQueue.clear(),
 	]);
 }

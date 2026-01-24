@@ -5,6 +5,7 @@ import { sharesStore } from './shares.svelte';
 import { socialStore } from './social.svelte';
 import { feedStatusStore } from './feedStatus.svelte';
 import { articlesStore } from './articles.svelte';
+import { syncStore } from './sync.svelte';
 import { fetchAllFeeds } from '$lib/services/feedFetcher';
 import { api } from '$lib/services/api';
 import type { Subscription } from '$lib/types';
@@ -56,6 +57,13 @@ function createAppManager() {
 			// Initialize feed statuses for existing subscriptions
 			const feedUrls = liveDb.subscriptions.map((s) => s.feedUrl);
 			feedStatusStore.initializeFeeds(feedUrls);
+
+			// Initialize pending count and process queue if online
+			await syncStore.updatePendingCount();
+			if (syncStore.isOnline && syncStore.pendingCount > 0) {
+				// Process queue in background - don't block initialization
+				syncStore.triggerSync();
+			}
 
 			// Phase 2: Refresh from backend (background)
 			phase = 'refreshing';
