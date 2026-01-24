@@ -52,6 +52,11 @@ function createFeedViewStore() {
 		return 'combined';
 	});
 
+	// Track items that were read during this view session to keep them visible
+	// These are cleared when switching views/feeds
+	let readArticleGuidsThisSession = $state<Set<string>>(new Set());
+	let readShareUrisThisSession = $state<Set<string>>(new Set());
+
 	// Derived: filtered articles based on current filters
 	let filteredArticles = $derived.by((): Article[] => {
 		// Access articlesStore version for reactivity
@@ -71,9 +76,11 @@ function createFeedViewStore() {
 			articles = articles.filter((a) => a.subscriptionId === feedId);
 		}
 
-		// Filter to unread only
+		// Filter to unread only, but keep articles read this session visible
 		if (showOnlyUnread) {
-			articles = articles.filter((a) => !positions.has(a.guid));
+			articles = articles.filter(
+				(a) => !positions.has(a.guid) || readArticleGuidsThisSession.has(a.guid)
+			);
 		}
 
 		// Deduplicate by GUID
@@ -100,8 +107,11 @@ function createFeedViewStore() {
 			filtered = [...shares];
 		}
 
+		// Filter to unread only, but keep shares read this session visible
 		if (showOnlyUnread) {
-			filtered = filtered.filter((s) => !positions.has(s.recordUri));
+			filtered = filtered.filter(
+				(s) => !positions.has(s.recordUri) || readShareUrisThisSession.has(s.recordUri)
+			);
 		}
 
 		return filtered;
@@ -277,7 +287,20 @@ function createFeedViewStore() {
 		const item = items[index];
 		if (!item) return;
 
-		// Mark as read when selecting
+		// Set selectedIndex first
+		selectedIndex = index;
+		expandedIndex = -1;
+
+		// Track the item to keep it visible in unread filter for this session
+		if (item.type === 'article') {
+			readArticleGuidsThisSession.add(item.item.guid);
+			readArticleGuidsThisSession = new Set(readArticleGuidsThisSession);
+		} else if (item.type === 'share') {
+			readShareUrisThisSession.add(item.item.recordUri);
+			readShareUrisThisSession = new Set(readShareUrisThisSession);
+		}
+
+		// Mark as read when selecting (after updating selection state)
 		if (item.type === 'article') {
 			const article = item.item;
 			const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
@@ -296,14 +319,12 @@ function createFeedViewStore() {
 			}
 		}
 		// userShare items don't auto-mark as read
-
-		selectedIndex = index;
-		expandedIndex = -1;
 	}
 
 	function deselect() {
 		selectedIndex = -1;
 		expandedIndex = -1;
+		// Don't clear session sets - items should stay visible until view changes
 	}
 
 	function expand(index: number) {
@@ -317,6 +338,9 @@ function createFeedViewStore() {
 	function resetSelection() {
 		selectedIndex = -1;
 		expandedIndex = -1;
+		// Clear session sets when switching views/feeds
+		readArticleGuidsThisSession = new Set();
+		readShareUrisThisSession = new Set();
 	}
 
 	function toggleUnreadFilter() {

@@ -63,7 +63,7 @@
 				{@const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId)}
 				<ArticleCard
 					{article}
-					siteUrl={sub?.siteUrl}
+					siteUrl={sub?.siteUrl || sub?.feedUrl}
 					isRead={readingStore.isRead(article.guid)}
 					isStarred={readingStore.isStarred(article.guid)}
 					isShared={sharesStore.isShared(article.guid)}
@@ -111,7 +111,7 @@
 				{@const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId)}
 				<ArticleCard
 					{article}
-					siteUrl={sub?.siteUrl}
+					siteUrl={sub?.siteUrl || sub?.feedUrl}
 					isRead={readingStore.isRead(article.guid)}
 					isStarred={readingStore.isStarred(article.guid)}
 					isShared={true}
