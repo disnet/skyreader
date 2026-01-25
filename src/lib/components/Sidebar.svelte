@@ -411,7 +411,9 @@
 			onLabelClick={() => selectFilter('following')}
 			onUnreadToggle={() => sidebarStore.toggleShowOnlyUnread('shared')}
 		>
-			{#each sortedFollowedUsers() as user (user.did)}
+			{@const allUsers = sortedFollowedUsers()}
+			{@const displayedUsers = allUsers.slice(0, 10)}
+			{#each displayedUsers as user (user.did)}
 				{@const count = sharerCounts().get(user.did) || 0}
 				<UserItem
 					{user}
@@ -422,6 +424,9 @@
 			{:else}
 				<div class="empty-section">No followed users</div>
 			{/each}
+			{#if allUsers.length > 10}
+				<div class="more-indicator">...</div>
+			{/if}
 		</NavSection>
 
 		<!-- Feeds section -->
@@ -696,6 +701,12 @@
 		font-size: 0.8125rem;
 		color: var(--color-text-secondary);
 		font-style: italic;
+	}
+
+	.more-indicator {
+		padding: 0.25rem 1.5rem;
+		font-size: 0.8125rem;
+		color: var(--color-text-secondary);
 	}
 
 	/* Mobile styles */
