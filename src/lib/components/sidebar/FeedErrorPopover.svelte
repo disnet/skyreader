@@ -22,10 +22,17 @@
 		</p>
 	{/if}
 
-	{#if errorDetails.rawError}
+	{#if errorDetails.errorCode || errorDetails.rawError}
 		<details class="error-raw">
 			<summary>Technical details</summary>
-			<code>{errorDetails.rawError}</code>
+			<div class="error-details-content">
+				{#if errorDetails.errorCode}
+					<div class="error-code">{errorDetails.errorCode}</div>
+				{/if}
+				{#if errorDetails.rawError}
+					<code>{errorDetails.rawError}</code>
+				{/if}
+			</div>
 		</details>
 	{/if}
 </div>
@@ -107,9 +114,20 @@
 		color: var(--color-text-secondary);
 	}
 
+	.error-details-content {
+		margin-top: 0.5rem;
+	}
+
+	.error-code {
+		font-family: monospace;
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--color-text);
+		margin-bottom: 0.25rem;
+	}
+
 	.error-raw code {
 		display: block;
-		margin-top: 0.5rem;
 		padding: 0.5rem;
 		background: var(--color-bg-secondary);
 		border-radius: 4px;

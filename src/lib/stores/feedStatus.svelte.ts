@@ -16,6 +16,7 @@ export interface ErrorDetails {
 	description: string;
 	isPermanent: boolean;
 	errorCount: number;
+	errorCode?: string;
 	nextRetryAt?: number;
 	rawError?: string;
 }
@@ -281,6 +282,13 @@ function createFeedStatusStore() {
 
 		let title: string;
 		let description: string;
+		let errorCode: string | undefined;
+
+		// Extract HTTP status code if present
+		const httpMatch = status.errorMessage?.match(/\b([45]\d{2})\b/);
+		if (httpMatch) {
+			errorCode = `HTTP ${httpMatch[1]}`;
+		}
 
 		// Parse HTTP status codes and common error patterns
 		if (errorMsg.includes('401')) {
@@ -342,6 +350,7 @@ function createFeedStatusStore() {
 			description,
 			isPermanent,
 			errorCount: status.errorCount,
+			errorCode,
 			nextRetryAt: status.nextRetryAt,
 			rawError: status.errorMessage,
 		};

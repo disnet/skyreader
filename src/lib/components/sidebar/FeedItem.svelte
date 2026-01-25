@@ -48,7 +48,7 @@
 	}
 
 	let showErrorPopover = $state(false);
-	let wrapperRef: HTMLDivElement | null = $state(null);
+	let errorIconRef: HTMLSpanElement | null = $state(null);
 	let popoverPosition = $state({ top: 0, left: 0 });
 	let hideTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -57,11 +57,11 @@
 			clearTimeout(hideTimeout);
 			hideTimeout = null;
 		}
-		if (wrapperRef) {
-			const rect = wrapperRef.getBoundingClientRect();
+		if (errorIconRef) {
+			const rect = errorIconRef.getBoundingClientRect();
 			popoverPosition = {
 				top: rect.bottom + 4,
-				left: rect.left + 24,
+				left: rect.left,
 			};
 		}
 		showErrorPopover = true;
@@ -87,13 +87,7 @@
 	}
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div
-	bind:this={wrapperRef}
-	class="feed-item-wrapper"
-	onmouseenter={loadingState === 'error' ? handleErrorIconMouseEnter : undefined}
-	onmouseleave={loadingState === 'error' ? handleErrorIconMouseLeave : undefined}
->
+<div class="feed-item-wrapper">
 	<button
 		class="nav-item sub-item feed-item"
 		class:active={isActive}
@@ -107,7 +101,14 @@
 		{#if loadingState === 'loading'}
 			<span class="feed-loading-spinner"></span>
 		{:else if loadingState === 'error'}
-			<span class="feed-error-icon" class:permanent={errorDetails?.isPermanent}>!</span>
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<span
+				bind:this={errorIconRef}
+				class="feed-error-icon"
+				class:permanent={errorDetails?.isPermanent}
+				onmouseenter={handleErrorIconMouseEnter}
+				onmouseleave={handleErrorIconMouseLeave}>!</span
+			>
 		{:else if faviconUrl}
 			<img
 				src={faviconUrl}
