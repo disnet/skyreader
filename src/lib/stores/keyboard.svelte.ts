@@ -59,6 +59,9 @@ function createKeyboardStore() {
 		// Ignore if typing in an input (except for help toggle)
 		if (isInputFocused()) return;
 
+		// Ignore if Cmd/Ctrl/Alt are held (browser shortcuts like Cmd+1 to switch tabs)
+		if (e.metaKey || e.ctrlKey || e.altKey) return;
+
 		// Toggle help modal with ?
 		if (e.key === '?' || (e.shiftKey && e.key === '/')) {
 			state.isHelpOpen = !state.isHelpOpen;
