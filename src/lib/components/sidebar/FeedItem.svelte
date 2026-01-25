@@ -37,6 +37,15 @@
 	}: Props = $props();
 
 	let faviconUrl = $derived(getFaviconUrl(subscription.siteUrl || subscription.feedUrl));
+	let faviconLoaded = $state(false);
+
+	function handleFaviconLoad() {
+		faviconLoaded = true;
+	}
+
+	function handleFaviconError() {
+		faviconLoaded = true; // Show broken state rather than staying hidden
+	}
 
 	let showErrorPopover = $state(false);
 	let errorIconRef: HTMLSpanElement | null = $state(null);
@@ -110,7 +119,14 @@
 			</div>
 		{/if}
 	{:else if faviconUrl}
-		<img src={faviconUrl} alt="" class="feed-favicon" />
+		<img
+			src={faviconUrl}
+			alt=""
+			class="feed-favicon"
+			class:favicon-loaded={faviconLoaded}
+			onload={handleFaviconLoad}
+			onerror={handleFaviconError}
+		/>
 	{:else}
 		<span class="feed-favicon-placeholder"></span>
 	{/if}
@@ -203,6 +219,12 @@
 		height: 16px;
 		flex-shrink: 0;
 		border-radius: 2px;
+		opacity: 0;
+		transition: opacity 0.2s ease;
+	}
+
+	.feed-favicon.favicon-loaded {
+		opacity: 1;
 	}
 
 	.feed-favicon-placeholder {
