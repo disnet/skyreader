@@ -23,7 +23,7 @@ function createSidebarStore() {
 		isOpen: false,
 		addFeedModalOpen: false,
 		expandedSections: {
-			shared: true,
+			shared: false,
 			feeds: true,
 		},
 		showOnlyUnread: {
@@ -41,7 +41,7 @@ function createSidebarStore() {
 			try {
 				const parsed = JSON.parse(stored);
 				state.isCollapsed = parsed.isCollapsed ?? false;
-				state.expandedSections = parsed.expandedSections ?? { shared: true, feeds: true };
+				state.expandedSections = parsed.expandedSections ?? { shared: false, feeds: true };
 				state.showOnlyUnread = parsed.showOnlyUnread ?? { shared: false, feeds: false };
 			} catch {
 				// Ignore parse errors
