@@ -9,7 +9,7 @@ const devCsp = [
 	"script-src 'self' 'unsafe-inline'", // unsafe-inline OK for local dev
 	"style-src 'self' 'unsafe-inline'",
 	"img-src 'self' https: data:",
-	"connect-src 'self' http://127.0.0.1:8787 ws://127.0.0.1:5173",
+	"connect-src 'self' http://127.0.0.1:8787 ws://127.0.0.1:5173 https:",
 	"font-src 'self' data:",
 	"frame-src 'none'",
 	"frame-ancestors 'none'",

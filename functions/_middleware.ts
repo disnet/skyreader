@@ -13,7 +13,7 @@ export const onRequest: PagesFunction = async (context) => {
 		`script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
 		"style-src 'self' 'unsafe-inline'",
 		"img-src 'self' https: data:",
-		"connect-src 'self' https://*.skyreader.app",
+		"connect-src 'self' https://*.skyreader.app https:",
 		"font-src 'self' data:",
 		"frame-src 'none'",
 		"frame-ancestors 'none'",
