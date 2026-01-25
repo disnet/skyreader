@@ -94,7 +94,6 @@
 	ontouchstart={onTouchStart}
 	ontouchend={onTouchEnd}
 	ontouchmove={onTouchMove}
-	title={errorMessage}
 >
 	{#if loadingState === 'loading'}
 		<span class="feed-loading-spinner"></span>
