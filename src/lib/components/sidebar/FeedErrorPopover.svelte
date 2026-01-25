@@ -3,18 +3,9 @@
 
 	interface Props {
 		errorDetails: ErrorDetails;
-		onRetry: () => void;
 	}
 
-	let { errorDetails, onRetry }: Props = $props();
-
-	let retryCountdown = $derived.by(() => {
-		if (!errorDetails.nextRetryAt) return null;
-		const minutes = Math.max(0, Math.ceil((errorDetails.nextRetryAt - Date.now()) / 60000));
-		if (minutes === 0) return 'less than a minute';
-		if (minutes === 1) return '1 minute';
-		return `${minutes} minutes`;
-	});
+	let { errorDetails }: Props = $props();
 </script>
 
 <div class="error-popover">
@@ -30,16 +21,6 @@
 			Failed {errorDetails.errorCount} times
 		</p>
 	{/if}
-
-	{#if retryCountdown}
-		<p class="error-meta">
-			Auto-retry in {retryCountdown}
-		</p>
-	{/if}
-
-	<div class="error-actions">
-		<button class="retry-button" onclick={onRetry}> Retry Now </button>
-	</div>
 
 	{#if errorDetails.rawError}
 		<details class="error-raw">
@@ -109,29 +90,6 @@
 		padding: 0 1rem 0.5rem;
 		font-size: 0.75rem;
 		color: var(--color-text-tertiary, var(--color-text-secondary));
-	}
-
-	.error-actions {
-		padding: 0.5rem 1rem 0.75rem;
-		border-top: 1px solid var(--color-border);
-	}
-
-	.retry-button {
-		width: 100%;
-		padding: 0.5rem 1rem;
-		background: var(--color-primary);
-		color: white;
-		border: none;
-		border-radius: 6px;
-		font-size: 0.8125rem;
-		font-weight: 500;
-		cursor: pointer;
-		transition: background-color 0.15s;
-	}
-
-	.retry-button:hover {
-		background: var(--color-primary-hover, var(--color-primary));
-		filter: brightness(1.1);
 	}
 
 	.error-raw {

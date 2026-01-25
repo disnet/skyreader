@@ -48,14 +48,21 @@
 	}
 
 	let showErrorPopover = $state(false);
-	let errorIconRef: HTMLSpanElement | null = $state(null);
-	let popoverRef: HTMLDivElement | null = $state(null);
+	let wrapperRef: HTMLDivElement | null = $state(null);
+	let popoverPosition = $state({ top: 0, left: 0 });
 	let hideTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	function handleErrorIconMouseEnter() {
 		if (hideTimeout) {
 			clearTimeout(hideTimeout);
 			hideTimeout = null;
+		}
+		if (wrapperRef) {
+			const rect = wrapperRef.getBoundingClientRect();
+			popoverPosition = {
+				top: rect.bottom + 4,
+				left: rect.left + 24,
+			};
 		}
 		showErrorPopover = true;
 	}
@@ -78,15 +85,11 @@
 			showErrorPopover = false;
 		}, 150);
 	}
-
-	function handleRetryFromPopover() {
-		showErrorPopover = false;
-		onRetry();
-	}
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
+	bind:this={wrapperRef}
 	class="feed-item-wrapper"
 	onmouseenter={loadingState === 'error' ? handleErrorIconMouseEnter : undefined}
 	onmouseleave={loadingState === 'error' ? handleErrorIconMouseLeave : undefined}
@@ -104,11 +107,7 @@
 		{#if loadingState === 'loading'}
 			<span class="feed-loading-spinner"></span>
 		{:else if loadingState === 'error'}
-			<span
-				bind:this={errorIconRef}
-				class="feed-error-icon"
-				class:permanent={errorDetails?.isPermanent}>!</span
-			>
+			<span class="feed-error-icon" class:permanent={errorDetails?.isPermanent}>!</span>
 		{:else if faviconUrl}
 			<img
 				src={faviconUrl}
@@ -150,12 +149,12 @@
 	{#if showErrorPopover && errorDetails}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
-			bind:this={popoverRef}
 			class="error-popover-container"
+			style="top: {popoverPosition.top}px; left: {popoverPosition.left}px;"
 			onmouseenter={handlePopoverMouseEnter}
 			onmouseleave={handlePopoverMouseLeave}
 		>
-			<FeedErrorPopover {errorDetails} onRetry={handleRetryFromPopover} />
+			<FeedErrorPopover {errorDetails} />
 		</div>
 	{/if}
 </div>
@@ -278,11 +277,8 @@
 	}
 
 	.error-popover-container {
-		position: absolute;
-		left: 1.5rem;
-		top: 100%;
-		margin-top: 4px;
-		z-index: 100;
+		position: fixed;
+		z-index: 1000;
 	}
 
 	.retry-btn {
