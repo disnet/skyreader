@@ -85,75 +85,80 @@
 	}
 </script>
 
-<button
-	class="nav-item sub-item feed-item"
-	class:active={isActive}
-	class:has-error={loadingState === 'error'}
-	onclick={onSelect}
-	oncontextmenu={onContextMenu}
-	ontouchstart={onTouchStart}
-	ontouchend={onTouchEnd}
-	ontouchmove={onTouchMove}
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+	class="feed-item-wrapper"
+	onmouseenter={loadingState === 'error' ? handleErrorIconMouseEnter : undefined}
+	onmouseleave={loadingState === 'error' ? handleErrorIconMouseLeave : undefined}
 >
-	{#if loadingState === 'loading'}
-		<span class="feed-loading-spinner"></span>
-	{:else if loadingState === 'error'}
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<span
-			bind:this={errorIconRef}
-			class="feed-error-icon"
-			class:permanent={errorDetails?.isPermanent}
-			onmouseenter={handleErrorIconMouseEnter}
-			onmouseleave={handleErrorIconMouseLeave}>!</span
-		>
-		{#if showErrorPopover && errorDetails}
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
-			<div
-				bind:this={popoverRef}
-				class="error-popover-container"
-				onmouseenter={handlePopoverMouseEnter}
-				onmouseleave={handlePopoverMouseLeave}
+	<button
+		class="nav-item sub-item feed-item"
+		class:active={isActive}
+		class:has-error={loadingState === 'error'}
+		onclick={onSelect}
+		oncontextmenu={onContextMenu}
+		ontouchstart={onTouchStart}
+		ontouchend={onTouchEnd}
+		ontouchmove={onTouchMove}
+	>
+		{#if loadingState === 'loading'}
+			<span class="feed-loading-spinner"></span>
+		{:else if loadingState === 'error'}
+			<span
+				bind:this={errorIconRef}
+				class="feed-error-icon"
+				class:permanent={errorDetails?.isPermanent}>!</span
 			>
-				<FeedErrorPopover {errorDetails} onRetry={handleRetryFromPopover} />
-			</div>
+		{:else if faviconUrl}
+			<img
+				src={faviconUrl}
+				alt=""
+				class="feed-favicon"
+				class:favicon-loaded={faviconLoaded}
+				onload={handleFaviconLoad}
+				onerror={handleFaviconError}
+			/>
+		{:else}
+			<span class="feed-favicon-placeholder"></span>
 		{/if}
-	{:else if faviconUrl}
-		<img
-			src={faviconUrl}
-			alt=""
-			class="feed-favicon"
-			class:favicon-loaded={faviconLoaded}
-			onload={handleFaviconLoad}
-			onerror={handleFaviconError}
-		/>
-	{:else}
-		<span class="feed-favicon-placeholder"></span>
-	{/if}
-	<span class="nav-label">{subscription.title}</span>
-	{#if loadingState === 'error'}
-		<span
-			class="retry-btn"
-			role="button"
-			tabindex="0"
-			onclick={(e) => {
-				e.stopPropagation();
-				onRetry();
-			}}
-			onkeydown={(e) => {
-				if (e.key === 'Enter' || e.key === ' ') {
-					e.preventDefault();
+		<span class="nav-label">{subscription.title}</span>
+		{#if loadingState === 'error'}
+			<span
+				class="retry-btn"
+				role="button"
+				tabindex="0"
+				onclick={(e) => {
 					e.stopPropagation();
 					onRetry();
-				}
-			}}
-			title="Retry"
+				}}
+				onkeydown={(e) => {
+					if (e.key === 'Enter' || e.key === ' ') {
+						e.preventDefault();
+						e.stopPropagation();
+						onRetry();
+					}
+				}}
+				title="Retry"
+			>
+				↻
+			</span>
+		{:else if unreadCount > 0}
+			<span class="nav-count">{unreadCount}</span>
+		{/if}
+	</button>
+
+	{#if showErrorPopover && errorDetails}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			bind:this={popoverRef}
+			class="error-popover-container"
+			onmouseenter={handlePopoverMouseEnter}
+			onmouseleave={handlePopoverMouseLeave}
 		>
-			↻
-		</span>
-	{:else if unreadCount > 0}
-		<span class="nav-count">{unreadCount}</span>
+			<FeedErrorPopover {errorDetails} onRetry={handleRetryFromPopover} />
+		</div>
 	{/if}
-</button>
+</div>
 
 <style>
 	.nav-item {
@@ -206,11 +211,14 @@
 		color: var(--color-primary);
 	}
 
+	.feed-item-wrapper {
+		position: relative;
+	}
+
 	.feed-item {
 		-webkit-touch-callout: none;
 		-webkit-user-select: none;
 		user-select: none;
-		position: relative;
 	}
 
 	.feed-favicon {
