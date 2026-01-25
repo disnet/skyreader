@@ -450,12 +450,14 @@
 							? 'error'
 							: undefined}
 				{@const feedError = feedStatusStore.getStatusMessage(sub.feedUrl)}
+				{@const errorDetails = feedStatusStore.getErrorDetails(sub.feedUrl)}
 				<FeedItem
 					subscription={sub}
 					unreadCount={count}
 					isActive={currentFilter().type === 'feed' && currentFilter().id === sub.id}
 					{loadingState}
 					errorMessage={feedError || undefined}
+					{errorDetails}
 					onSelect={() => selectFilter('feed', sub.id)}
 					onContextMenu={(e) => sub.id && handleContextMenu(e, sub.id)}
 					onTouchStart={(e) => sub.id && handleTouchStart(e, sub.id)}

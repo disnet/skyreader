@@ -11,6 +11,15 @@
 export type FeedStatusType = 'ready' | 'pending' | 'error' | 'circuit-open';
 export type ErrorType = 'transient' | 'permanent';
 
+export interface ErrorDetails {
+	title: string;
+	description: string;
+	isPermanent: boolean;
+	errorCount: number;
+	nextRetryAt?: number;
+	rawError?: string;
+}
+
 export interface FeedStatus {
 	status: FeedStatusType;
 	errorCount: number;
@@ -259,6 +268,86 @@ function createFeedStatusStore() {
 	}
 
 	/**
+	 * Get human-readable error details for display in the error popover
+	 */
+	function getErrorDetails(feedUrl: string): ErrorDetails | null {
+		const status = statuses.get(feedUrl);
+		if (!status || (status.status !== 'error' && status.status !== 'circuit-open')) {
+			return null;
+		}
+
+		const errorMsg = status.errorMessage?.toLowerCase() || '';
+		const isPermanent = status.errorType === 'permanent';
+
+		let title: string;
+		let description: string;
+
+		// Parse HTTP status codes and common error patterns
+		if (errorMsg.includes('401')) {
+			title = 'Authentication Required';
+			description = 'This feed requires login credentials that Skyreader cannot provide.';
+		} else if (errorMsg.includes('403')) {
+			title = 'Access Denied';
+			description = 'The server is blocking access to this feed.';
+		} else if (errorMsg.includes('404') || errorMsg.includes('not found')) {
+			title = 'Feed Not Found';
+			description =
+				'This feed could not be found. The URL may have changed or the feed may no longer exist.';
+		} else if (errorMsg.includes('410') || errorMsg.includes('gone')) {
+			title = 'Feed Removed';
+			description = 'This feed has been permanently removed by its owner.';
+		} else if (errorMsg.includes('429')) {
+			title = 'Rate Limited';
+			description =
+				"The feed's server is limiting requests. Skyreader will automatically retry later.";
+		} else if (errorMsg.includes('500')) {
+			title = 'Server Error';
+			description = "The feed's server is experiencing internal issues.";
+		} else if (errorMsg.includes('502')) {
+			title = 'Bad Gateway';
+			description = "Unable to reach the feed's server through its gateway.";
+		} else if (errorMsg.includes('503')) {
+			title = 'Service Unavailable';
+			description = "The feed's server is temporarily unavailable for maintenance.";
+		} else if (errorMsg.includes('504') || errorMsg.includes('timeout')) {
+			title = 'Connection Timeout';
+			description = "The feed's server took too long to respond.";
+		} else if (
+			errorMsg.includes('network') ||
+			errorMsg.includes('econnrefused') ||
+			errorMsg.includes('econnreset')
+		) {
+			title = 'Connection Failed';
+			description = "Unable to establish a connection to the feed's server.";
+		} else if (errorMsg.includes('dns') || errorMsg.includes('enotfound')) {
+			title = 'DNS Error';
+			description = "Could not resolve the feed's domain name. The domain may no longer exist.";
+		} else if (errorMsg.includes('ssl') || errorMsg.includes('certificate')) {
+			title = 'SSL/TLS Error';
+			description = "The feed's security certificate is invalid or expired.";
+		} else if (errorMsg.includes('parse') || errorMsg.includes('invalid')) {
+			title = 'Invalid Feed';
+			description =
+				'The feed content could not be parsed. It may be malformed or not a valid RSS/Atom feed.';
+		} else if (isPermanent) {
+			title = 'Feed Unavailable';
+			description = 'This feed is no longer accessible and may need to be removed.';
+		} else {
+			title = 'Temporarily Unavailable';
+			description = 'There was a problem loading this feed. Skyreader will automatically retry.';
+		}
+
+		return {
+			title,
+			description,
+			isPermanent,
+			errorCount: status.errorCount,
+			nextRetryAt: status.nextRetryAt,
+			rawError: status.errorMessage,
+		};
+	}
+
+	/**
 	 * Initialize statuses for a list of feed URLs (mark as pending)
 	 */
 	function initializeFeeds(feedUrls: string[]): void {
@@ -296,6 +385,7 @@ function createFeedStatusStore() {
 		getStatus,
 		canFetch,
 		getStatusMessage,
+		getErrorDetails,
 		initializeFeeds,
 	};
 }

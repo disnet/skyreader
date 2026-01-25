@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { getFaviconUrl } from '$lib/utils/favicon';
 	import type { Subscription } from '$lib/types';
+	import type { ErrorDetails } from '$lib/stores/feedStatus.svelte';
+	import FeedErrorPopover from './FeedErrorPopover.svelte';
 
 	type LoadingState = 'loading' | 'error' | 'ready';
 
@@ -10,6 +12,7 @@
 		isActive: boolean;
 		loadingState?: LoadingState;
 		errorMessage?: string;
+		errorDetails?: ErrorDetails | null;
 		onSelect: () => void;
 		onContextMenu: (e: MouseEvent) => void;
 		onTouchStart: (e: TouchEvent) => void;
@@ -24,6 +27,7 @@
 		isActive,
 		loadingState = 'ready',
 		errorMessage = '',
+		errorDetails = null,
 		onSelect,
 		onContextMenu,
 		onTouchStart,
@@ -33,6 +37,43 @@
 	}: Props = $props();
 
 	let faviconUrl = $derived(getFaviconUrl(subscription.siteUrl || subscription.feedUrl));
+
+	let showErrorPopover = $state(false);
+	let errorIconRef: HTMLSpanElement | null = $state(null);
+	let popoverRef: HTMLDivElement | null = $state(null);
+	let hideTimeout: ReturnType<typeof setTimeout> | null = null;
+
+	function handleErrorIconMouseEnter() {
+		if (hideTimeout) {
+			clearTimeout(hideTimeout);
+			hideTimeout = null;
+		}
+		showErrorPopover = true;
+	}
+
+	function handleErrorIconMouseLeave() {
+		hideTimeout = setTimeout(() => {
+			showErrorPopover = false;
+		}, 150);
+	}
+
+	function handlePopoverMouseEnter() {
+		if (hideTimeout) {
+			clearTimeout(hideTimeout);
+			hideTimeout = null;
+		}
+	}
+
+	function handlePopoverMouseLeave() {
+		hideTimeout = setTimeout(() => {
+			showErrorPopover = false;
+		}, 150);
+	}
+
+	function handleRetryFromPopover() {
+		showErrorPopover = false;
+		onRetry();
+	}
 </script>
 
 <button
@@ -49,7 +90,25 @@
 	{#if loadingState === 'loading'}
 		<span class="feed-loading-spinner"></span>
 	{:else if loadingState === 'error'}
-		<span class="feed-error-icon" title={errorMessage}>!</span>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<span
+			bind:this={errorIconRef}
+			class="feed-error-icon"
+			class:permanent={errorDetails?.isPermanent}
+			onmouseenter={handleErrorIconMouseEnter}
+			onmouseleave={handleErrorIconMouseLeave}>!</span
+		>
+		{#if showErrorPopover && errorDetails}
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div
+				bind:this={popoverRef}
+				class="error-popover-container"
+				onmouseenter={handlePopoverMouseEnter}
+				onmouseleave={handlePopoverMouseLeave}
+			>
+				<FeedErrorPopover {errorDetails} onRetry={handleRetryFromPopover} />
+			</div>
+		{/if}
 	{:else if faviconUrl}
 		<img src={faviconUrl} alt="" class="feed-favicon" />
 	{:else}
@@ -136,6 +195,7 @@
 		-webkit-touch-callout: none;
 		-webkit-user-select: none;
 		user-select: none;
+		position: relative;
 	}
 
 	.feed-favicon {
@@ -176,11 +236,24 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: var(--color-error);
+		background: var(--color-warning, #ff9800);
 		color: white;
 		border-radius: 50%;
 		font-size: 0.75rem;
 		font-weight: bold;
+		cursor: help;
+	}
+
+	.feed-error-icon.permanent {
+		background: var(--color-error);
+	}
+
+	.error-popover-container {
+		position: absolute;
+		left: 1.5rem;
+		top: 100%;
+		margin-top: 4px;
+		z-index: 100;
 	}
 
 	.retry-btn {
