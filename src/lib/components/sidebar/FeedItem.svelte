@@ -18,8 +18,10 @@
 		onTouchStart: (e: TouchEvent) => void;
 		onTouchEnd: (e: TouchEvent) => void;
 		onTouchMove: () => void;
-		onRetry: () => void;
+		onRetry: () => void | Promise<unknown>;
 	}
+
+	const MIN_SPINNER_TIME = 600;
 
 	let {
 		subscription,
@@ -85,6 +87,19 @@
 			showErrorPopover = false;
 		}, 150);
 	}
+
+	let retrying = $state(false);
+
+	async function handleRetry() {
+		if (retrying) return;
+		retrying = true;
+
+		const minTimePromise = new Promise((resolve) => setTimeout(resolve, MIN_SPINNER_TIME));
+		const retryPromise = Promise.resolve(onRetry());
+
+		await Promise.all([minTimePromise, retryPromise]);
+		retrying = false;
+	}
 </script>
 
 <div class="feed-item-wrapper">
@@ -125,22 +140,27 @@
 		{#if loadingState === 'error'}
 			<span
 				class="retry-btn"
+				class:retrying
 				role="button"
 				tabindex="0"
 				onclick={(e) => {
 					e.stopPropagation();
-					onRetry();
+					handleRetry();
 				}}
 				onkeydown={(e) => {
 					if (e.key === 'Enter' || e.key === ' ') {
 						e.preventDefault();
 						e.stopPropagation();
-						onRetry();
+						handleRetry();
 					}
 				}}
 				title="Retry"
 			>
-				↻
+				{#if retrying}
+					<span class="retry-spinner"></span>
+				{:else}
+					↻
+				{/if}
 			</span>
 		{:else if unreadCount > 0}
 			<span class="nav-count">{unreadCount}</span>
@@ -283,13 +303,32 @@
 	}
 
 	.retry-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.25rem;
+		height: 1.25rem;
 		background: none;
 		border: none;
 		cursor: pointer;
 		color: var(--color-text-secondary);
 		font-size: 1rem;
-		padding: 0 0.25rem;
+		padding: 0;
 		line-height: 1;
+	}
+
+	.retry-btn.retrying {
+		cursor: default;
+		pointer-events: none;
+	}
+
+	.retry-spinner {
+		width: 12px;
+		height: 12px;
+		border: 2px solid var(--color-border);
+		border-top-color: var(--color-primary);
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
 	}
 
 	.retry-btn:hover {
