@@ -2,8 +2,9 @@ import { onDestroy } from 'svelte';
 
 interface ScrollMarkAsReadParams {
 	getArticleElements: () => HTMLElement[];
+	getItemKey: (index: number) => string | undefined;
 	enabled: boolean;
-	onMarkAsRead: (index: number) => void;
+	onMarkAsRead: (key: string) => void;
 }
 
 /**
@@ -34,6 +35,10 @@ export function useScrollMarkAsRead(params: ScrollMarkAsReadParams) {
 
 		if (!params.enabled) return;
 
+		// Reset scroll direction to prevent stale direction from marking items
+		// when content changes cause elements to shift above the viewport
+		scrollDirection = null;
+
 		scrollMarkObserver = new IntersectionObserver(
 			(entries) => {
 				// Only process if scrolling down
@@ -42,9 +47,9 @@ export function useScrollMarkAsRead(params: ScrollMarkAsReadParams) {
 				entries.forEach((entry) => {
 					// Article left viewport from top (boundingClientRect.top < 0) and is no longer intersecting
 					if (!entry.isIntersecting && entry.boundingClientRect.top < 0) {
-						const index = parseInt((entry.target as HTMLElement).dataset.index || '-1');
-						if (index >= 0) {
-							params.onMarkAsRead(index);
+						const key = (entry.target as HTMLElement).dataset.key;
+						if (key) {
+							params.onMarkAsRead(key);
 						}
 					}
 				});
@@ -59,8 +64,9 @@ export function useScrollMarkAsRead(params: ScrollMarkAsReadParams) {
 		// Observe all article elements
 		const elements = params.getArticleElements();
 		elements.forEach((el, index) => {
-			if (el) {
-				el.dataset.index = String(index);
+			const key = params.getItemKey(index);
+			if (el && key) {
+				el.dataset.key = key;
 				scrollMarkObserver?.observe(el);
 			}
 		});
