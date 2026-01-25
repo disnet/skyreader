@@ -347,6 +347,17 @@ function createFeedViewStore() {
 		showOnlyUnread = !showOnlyUnread;
 	}
 
+	// Track an item as "seen this session" so it stays visible after being marked read
+	function trackSeenThisSession(item: FeedDisplayItem) {
+		if (item.type === 'article') {
+			readArticleGuidsThisSession.add(item.item.guid);
+			readArticleGuidsThisSession = new Set(readArticleGuidsThisSession);
+		} else if (item.type === 'share') {
+			readShareUrisThisSession.add(item.item.recordUri);
+			readShareUrisThisSession = new Set(readShareUrisThisSession);
+		}
+	}
+
 	function getArticleForShare(share: SocialShare): Article | undefined {
 		if (!share.itemGuid) return undefined;
 		return articlesByGuid.get(share.itemGuid);
@@ -419,6 +430,7 @@ function createFeedViewStore() {
 		collapse,
 		resetSelection,
 		toggleUnreadFilter,
+		trackSeenThisSession,
 		setShowOnlyUnread(value: boolean) {
 			showOnlyUnread = value;
 		},

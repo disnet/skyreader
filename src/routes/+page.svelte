@@ -64,11 +64,14 @@
 		return 'All';
 	});
 
-	// Mark an item as read by its index
-	function markItemAsReadByIndex(index: number) {
+	// Mark an item as read by its stable key
+	function markItemAsReadByKey(key: string) {
 		const items = feedViewStore.currentItems;
-		const item = items[index];
+		const item = items.find((i) => i.key === key);
 		if (!item) return;
+
+		// Track the item so it stays visible in unread filter until view changes
+		feedViewStore.trackSeenThisSession(item);
 
 		if (item.type === 'article') {
 			const article = item.item;
@@ -95,8 +98,9 @@
 	// Initialize scroll-to-mark-as-read hook
 	const scrollMarkAsRead = useScrollMarkAsRead({
 		getArticleElements,
+		getItemKey: (index) => feedViewStore.currentItems[index]?.key,
 		enabled: preferences.scrollToMarkAsRead,
-		onMarkAsRead: markItemAsReadByIndex,
+		onMarkAsRead: markItemAsReadByKey,
 	});
 
 	// Setup/teardown scroll-to-mark-as-read observer when content changes
