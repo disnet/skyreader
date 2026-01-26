@@ -96,55 +96,6 @@ class ApiClient {
 		return this.fetch(`/api/v2/feeds/discover?url=${encodeURIComponent(url)}`);
 	}
 
-	// Items (paginated queries)
-	async getItems(options: {
-		feedUrls?: string[];
-		since?: number;
-		before?: number;
-		limit?: number;
-		search?: string;
-	}): Promise<{
-		items: (FeedItem & { feedUrl: string; feedTitle?: string })[];
-		cursor: number | null;
-	}> {
-		const params = new URLSearchParams();
-		options.feedUrls?.forEach((url) => params.append('feedUrl', url));
-		if (options.since) params.set('since', options.since.toString());
-		if (options.before) params.set('before', options.before.toString());
-		if (options.limit) params.set('limit', options.limit.toString());
-		if (options.search) params.set('search', options.search);
-		return this.fetch(`/api/items?${params}`);
-	}
-
-	async getRecentItems(
-		hours = 24,
-		limit = 100
-	): Promise<{ items: (FeedItem & { feedUrl: string; feedTitle?: string })[] }> {
-		return this.fetch(`/api/items/recent?hours=${hours}&limit=${limit}`);
-	}
-
-	async getItem(
-		feedUrl: string,
-		guid: string
-	): Promise<{ item: FeedItem & { feedUrl: string; feedTitle?: string } }> {
-		const params = new URLSearchParams({ feedUrl, guid });
-		return this.fetch(`/api/items/get?${params}`);
-	}
-
-	async getItemsByFeed(
-		feedUrl: string,
-		options?: { limit?: number; before?: number }
-	): Promise<{
-		feed: { title: string; siteUrl?: string; description?: string; imageUrl?: string } | null;
-		items: (FeedItem & { feedUrl: string; feedTitle?: string })[];
-		cursor: number | null;
-	}> {
-		const params = new URLSearchParams({ feedUrl });
-		if (options?.limit) params.set('limit', options.limit.toString());
-		if (options?.before) params.set('before', options.before.toString());
-		return this.fetch(`/api/items/by-feed?${params}`);
-	}
-
 	// Social
 	async getSocialFeed(
 		cursor?: string,
