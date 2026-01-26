@@ -28,7 +28,7 @@
 		discoveredFeeds = [];
 
 		try {
-			const result = await api.discoverFeeds(feedUrl.trim());
+			const result = await api.discoverFeedsV2(feedUrl.trim());
 			if (result.feeds.length === 0) {
 				error = 'No feeds found at this URL';
 			} else if (result.feeds.length === 1) {

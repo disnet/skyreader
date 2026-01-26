@@ -55,67 +55,7 @@ class ApiClient {
 		return this.fetch('/api/auth/me');
 	}
 
-	// Feeds
-	async fetchFeed(url: string, force = false): Promise<ParsedFeed> {
-		const params = new URLSearchParams({ url });
-		if (force) params.set('force', 'true');
-		return this.fetch(`/api/feeds/fetch?${params}`);
-	}
-
-	async fetchCachedFeed(url: string): Promise<ParsedFeed & { cached?: boolean }> {
-		return this.fetch(`/api/feeds/cached?url=${encodeURIComponent(url)}`);
-	}
-
-	async discoverFeeds(url: string): Promise<{ feeds: string[] }> {
-		return this.fetch(`/api/feeds/discover?url=${encodeURIComponent(url)}`);
-	}
-
-	async fetchArticle(feedUrl: string, guid: string, itemUrl?: string): Promise<FeedItem | null> {
-		const params = new URLSearchParams({ feedUrl, guid });
-		if (itemUrl) params.set('itemUrl', itemUrl);
-		const result = await this.fetch<{ article: FeedItem }>(`/api/feeds/article?${params}`);
-		return result.article;
-	}
-
-	async getFeedStatuses(feedUrls: string[]): Promise<
-		Record<
-			string,
-			{
-				cached: boolean;
-				lastFetchedAt?: number;
-				error?: string;
-				itemCount?: number;
-			}
-		>
-	> {
-		const params = new URLSearchParams();
-		feedUrls.forEach((url) => params.append('url', url));
-		return this.fetch(`/api/feeds/status?${params}`);
-	}
-
-	async fetchFeedsBatch(
-		urls: string[],
-		since?: Record<string, number>
-	): Promise<{
-		feeds: Record<
-			string,
-			{
-				title: string;
-				description?: string;
-				siteUrl?: string;
-				imageUrl?: string;
-				items: FeedItem[];
-				status: 'ready' | 'pending';
-				lastFetchedAt?: number;
-			}
-		>;
-	}> {
-		return this.fetch('/api/feeds/batch', {
-			method: 'POST',
-			body: JSON.stringify({ urls, since }),
-		});
-	}
-
+	// Feeds (V2 - via Fly.io proxy)
 	async fetchFeedV2(url: string, sinceGuids?: string[], limit?: number): Promise<ParsedFeed> {
 		const params = new URLSearchParams({ url });
 		if (sinceGuids && sinceGuids.length > 0) {
@@ -150,6 +90,10 @@ class ApiClient {
 			method: 'POST',
 			body: JSON.stringify({ feeds }),
 		});
+	}
+
+	async discoverFeedsV2(url: string): Promise<{ feeds: string[] }> {
+		return this.fetch(`/api/v2/feeds/discover?url=${encodeURIComponent(url)}`);
 	}
 
 	// Items (paginated queries)

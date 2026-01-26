@@ -9,7 +9,7 @@ const CACHE_NAME = `skyreader-${version}`;
 const STATIC_ASSETS = [...build, ...files];
 
 // API routes to cache with network-first strategy
-const API_CACHE_ROUTES = ['/api/feeds/fetch', '/api/social/feed', '/api/social/popular'];
+const API_CACHE_ROUTES = ['/api/v2/feeds/fetch', '/api/social/feed', '/api/social/popular'];
 
 self.addEventListener('install', (event) => {
 	event.waitUntil(

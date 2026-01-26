@@ -4,8 +4,7 @@ import { readingStore } from './reading.svelte';
 import { shareReadingStore } from './shareReading.svelte';
 import { sharesStore } from './shares.svelte';
 import { socialStore } from './social.svelte';
-import { api } from '$lib/services/api';
-import type { Article, FeedItem, SocialShare, CombinedFeedItem, UserShare } from '$lib/types';
+import type { Article, SocialShare, CombinedFeedItem, UserShare } from '$lib/types';
 
 export type ViewMode = 'articles' | 'shares' | 'userShares' | 'combined';
 
@@ -31,10 +30,6 @@ function createFeedViewStore() {
 	let selectedIndex = $state(-1);
 	let expandedIndex = $state(-1);
 	let loadedArticleCount = $state(DEFAULT_PAGE_SIZE);
-
-	// Cache for fetched articles (from backend, for shares not in local DB)
-	let fetchedArticles = $state<Map<string, FeedItem>>(new Map());
-	let fetchingArticles = $state<Set<string>>(new Set());
 
 	// URL filters (set by component from $page store)
 	let feedFilter = $state<string | null>(null);
@@ -260,26 +255,6 @@ function createFeedViewStore() {
 		}
 	}
 
-	async function fetchArticleContent(feedUrl: string, guid: string, itemUrl?: string) {
-		if (fetchedArticles.has(guid) || fetchingArticles.has(guid)) return;
-
-		fetchingArticles.add(guid);
-		fetchingArticles = new Set(fetchingArticles);
-
-		try {
-			const article = await api.fetchArticle(feedUrl, guid, itemUrl);
-			if (article) {
-				fetchedArticles.set(guid, article);
-				fetchedArticles = new Map(fetchedArticles);
-			}
-		} catch (e) {
-			console.error('Failed to fetch article:', e);
-		} finally {
-			fetchingArticles.delete(guid);
-			fetchingArticles = new Set(fetchingArticles);
-		}
-	}
-
 	function select(index: number) {
 		if (index === selectedIndex) return;
 
@@ -363,14 +338,6 @@ function createFeedViewStore() {
 		return articlesByGuid.get(share.itemGuid);
 	}
 
-	function getFetchedArticle(guid: string): FeedItem | undefined {
-		return fetchedArticles.get(guid);
-	}
-
-	function isFetchingArticle(guid: string): boolean {
-		return fetchingArticles.has(guid);
-	}
-
 	return {
 		// State
 		get viewMode() {
@@ -417,13 +384,10 @@ function createFeedViewStore() {
 
 		// Article lookup
 		getArticleForShare,
-		getFetchedArticle,
-		isFetchingArticle,
 
 		// Actions
 		loadArticles,
 		loadMore,
-		fetchArticleContent,
 		select,
 		deselect,
 		expand,

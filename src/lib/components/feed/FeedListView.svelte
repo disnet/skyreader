@@ -79,31 +79,14 @@
 			{:else if displayItem.type === 'share'}
 				{@const share = displayItem.item}
 				{@const localArticle = feedViewStore.getArticleForShare(share)}
-				{@const remoteArticle = share.itemGuid
-					? feedViewStore.getFetchedArticle(share.itemGuid)
-					: undefined}
-				{@const isFetching = share.itemGuid
-					? feedViewStore.isFetchingArticle(share.itemGuid)
-					: false}
 				<ShareCard
 					{share}
 					{localArticle}
-					{remoteArticle}
-					{isFetching}
 					isRead={shareReadingStore.isRead(share.recordUri)}
 					selected={feedViewStore.selectedIndex === index}
 					expanded={feedViewStore.expandedIndex === index}
 					onSelect={() => handleSelect(index)}
 					onExpand={() => handleExpand(index)}
-					onFetchContent={() => {
-						// Content should be included in share record; only fetch as fallback for old shares
-						if (share.content) return;
-						const hasLocalContent = localArticle?.content || localArticle?.summary;
-						const hasRemoteContent = remoteArticle?.content || remoteArticle?.summary;
-						if (share.feedUrl && share.itemGuid && !hasLocalContent && !hasRemoteContent) {
-							feedViewStore.fetchArticleContent(share.feedUrl, share.itemGuid, share.itemUrl);
-						}
-					}}
 				/>
 			{:else if displayItem.type === 'userShare'}
 				{@const share = displayItem.item}
