@@ -8,6 +8,7 @@
 		showOnlyUnread: boolean;
 		onToggleUnread: (value: boolean) => void;
 		onMarkAllAsRead?: () => void;
+		onEdit?: () => void;
 		onDelete?: () => void;
 		onMobileMenuToggle: () => void;
 	}
@@ -19,6 +20,7 @@
 		showOnlyUnread,
 		onToggleUnread,
 		onMarkAllAsRead,
+		onEdit,
 		onDelete,
 		onMobileMenuToggle,
 	}: Props = $props();
@@ -32,6 +34,13 @@
 				label: 'Mark all as read',
 				icon: '✓',
 				onclick: onMarkAllAsRead,
+			});
+		}
+		if (onEdit) {
+			items.push({
+				label: 'Edit',
+				icon: '✏',
+				onclick: onEdit,
 			});
 		}
 		if (onDelete) {

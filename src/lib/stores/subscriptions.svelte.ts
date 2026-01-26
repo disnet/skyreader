@@ -246,6 +246,17 @@ function createSubscriptionsStore() {
 	}
 
 	/**
+	 * Update subscription locally only (no backend sync)
+	 * Used for local-only fields like customTitle and customIconUrl
+	 */
+	async function updateLocal(
+		id: number,
+		updates: { customTitle?: string; customIconUrl?: string }
+	): Promise<void> {
+		await liveDb.updateSubscriptionLocal(id, updates);
+	}
+
+	/**
 	 * Remove a subscription
 	 */
 	async function remove(id: number): Promise<void> {
@@ -315,6 +326,7 @@ function createSubscriptionsStore() {
 		add,
 		addBulk,
 		update,
+		updateLocal,
 		remove,
 		removeAll,
 

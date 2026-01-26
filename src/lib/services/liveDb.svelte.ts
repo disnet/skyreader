@@ -85,6 +85,19 @@ class LiveDatabase {
 	}
 
 	/**
+	 * Update subscription locally only (no backend sync)
+	 * Used for local-only fields like customTitle and customIconUrl
+	 */
+	async updateSubscriptionLocal(
+		id: number,
+		updates: { customTitle?: string; customIconUrl?: string }
+	): Promise<void> {
+		await db.subscriptions.update(id, updates);
+		this._subscriptions = this._subscriptions.map((s) => (s.id === id ? { ...s, ...updates } : s));
+		this.subscriptionsVersion++;
+	}
+
+	/**
 	 * Delete a subscription and its articles
 	 */
 	async deleteSubscription(id: number): Promise<void> {

@@ -17,6 +17,8 @@
 	import WelcomePage from '$lib/components/feed/WelcomePage.svelte';
 	import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
 	import FeedListView from '$lib/components/feed/FeedListView.svelte';
+	import EditFeedModal from '$lib/components/EditFeedModal.svelte';
+	import type { Subscription } from '$lib/types';
 	import { useScrollMarkAsRead } from '$lib/hooks/useScrollMarkAsRead.svelte';
 	import { useFeedKeyboardShortcuts } from '$lib/hooks/useFeedKeyboardShortcuts.svelte';
 	import { goto } from '$app/navigation';
@@ -45,13 +47,32 @@
 		return feedListView?.getArticleElements() ?? [];
 	}
 
+	// Edit modal state
+	let editingSubscription = $state<Subscription | null>(null);
+	let editModalOpen = $state(false);
+
+	function handleEditFeed() {
+		if (!feedViewStore.feedFilter) return;
+		const feedId = parseInt(feedViewStore.feedFilter);
+		const sub = subscriptionsStore.subscriptions.find((s) => s.id === feedId);
+		if (sub) {
+			editingSubscription = sub;
+			editModalOpen = true;
+		}
+	}
+
+	function closeEditModal() {
+		editModalOpen = false;
+		editingSubscription = null;
+	}
+
 	// Get page title based on filter
 	let pageTitle = $derived.by(() => {
 		if (feedViewStore.feedFilter) {
 			const sub = subscriptionsStore.subscriptions.find(
 				(s) => s.id === parseInt(feedViewStore.feedFilter!)
 			);
-			return sub?.title || 'Feed';
+			return sub?.customTitle || sub?.title || 'Feed';
 		}
 		if (feedViewStore.starredFilter) return 'Starred';
 		if (feedViewStore.sharedFilter) return 'Shared';
@@ -204,6 +225,8 @@
 	});
 </script>
 
+<EditFeedModal open={editModalOpen} subscription={editingSubscription} onclose={closeEditModal} />
+
 {#if !auth.isAuthenticated}
 	<WelcomePage />
 {:else}
@@ -215,6 +238,7 @@
 			showOnlyUnread={feedViewStore.showOnlyUnread}
 			onToggleUnread={(value) => feedViewStore.setShowOnlyUnread(value)}
 			onMarkAllAsRead={feedViewStore.feedFilter ? markAllAsReadInCurrentFeed : undefined}
+			onEdit={feedViewStore.feedFilter ? handleEditFeed : undefined}
 			onDelete={feedViewStore.feedFilter
 				? () => removeFeed(parseInt(feedViewStore.feedFilter!))
 				: undefined}

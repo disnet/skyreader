@@ -14,12 +14,14 @@
 	import { fetchSingleFeed } from '$lib/services/feedFetcher';
 	import { onMount, onDestroy } from 'svelte';
 	import AddFeedModal from './AddFeedModal.svelte';
+	import EditFeedModal from './EditFeedModal.svelte';
 	import Logo from '$lib/assets/logo.svg';
 	import ResizeHandle from './sidebar/ResizeHandle.svelte';
 	import ContextMenu from './sidebar/ContextMenu.svelte';
 	import NavSection from './sidebar/NavSection.svelte';
 	import FeedItem from './sidebar/FeedItem.svelte';
 	import UserItem from './sidebar/UserItem.svelte';
+	import type { Subscription } from '$lib/types';
 
 	async function removeFeed(id: number) {
 		if (confirm('Are you sure you want to remove this subscription?')) {
@@ -75,6 +77,23 @@
 	let contextMenu = $state<{ x: number; y: number; feedId: number } | null>(null);
 	let longPressTimer: ReturnType<typeof setTimeout> | null = null;
 	let longPressTriggered = $state(false);
+
+	// Edit modal state
+	let editingSubscription = $state<Subscription | null>(null);
+	let editModalOpen = $state(false);
+
+	function handleEditFeed(feedId: number) {
+		const sub = subscriptionsStore.getById(feedId);
+		if (sub) {
+			editingSubscription = sub;
+			editModalOpen = true;
+		}
+	}
+
+	function closeEditModal() {
+		editModalOpen = false;
+		editingSubscription = null;
+	}
 
 	function handleContextMenu(e: MouseEvent, feedId: number) {
 		e.preventDefault();
@@ -464,6 +483,7 @@
 					onTouchEnd={handleTouchEnd}
 					onTouchMove={handleTouchMove}
 					onRetry={() => fetchSingleFeed(sub, true, articlesStore.starredGuids)}
+					onMoreClick={(e) => sub.id && handleContextMenu(e, sub.id)}
 				/>
 			{:else}
 				<div class="empty-section">No subscriptions</div>
@@ -482,10 +502,13 @@
 	<ContextMenu
 		x={contextMenu.x}
 		y={contextMenu.y}
+		onEdit={() => handleEditFeed(feedId)}
 		onDelete={() => removeFeed(feedId)}
 		onClose={closeContextMenu}
 	/>
 {/if}
+
+<EditFeedModal open={editModalOpen} subscription={editingSubscription} onclose={closeEditModal} />
 
 <style>
 	.sidebar-backdrop {
