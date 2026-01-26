@@ -114,6 +114,13 @@ export async function fetchAllFeeds(
 	return result;
 }
 
+export interface FetchSingleFeedResult {
+	success: boolean;
+	newArticles: number;
+	title?: string;
+	siteUrl?: string;
+}
+
 /**
  * Fetch a single feed using V2 API
  *
@@ -125,7 +132,7 @@ export async function fetchSingleFeed(
 	subscription: Subscription,
 	force = false,
 	starredGuids: Set<string> = new Set()
-): Promise<{ success: boolean; newArticles: number }> {
+): Promise<FetchSingleFeedResult> {
 	if (!subscription.id) {
 		return { success: false, newArticles: 0 };
 	}
@@ -149,7 +156,12 @@ export async function fetchSingleFeed(
 			newArticles = await liveDb.mergeArticles(subscription.id, feed.items, starredGuids);
 		}
 
-		return { success: true, newArticles };
+		return {
+			success: true,
+			newArticles,
+			title: feed.title,
+			siteUrl: feed.siteUrl,
+		};
 	} catch (e) {
 		const errorMessage = e instanceof Error ? e.message : 'Failed to fetch feed';
 		feedStatusStore.markError(subscription.feedUrl, errorMessage);

@@ -2,7 +2,6 @@
 	import { subscriptionsStore, MAX_SUBSCRIPTIONS } from '$lib/stores/subscriptions.svelte';
 	import { articlesStore } from '$lib/stores/articles.svelte';
 	import { fetchSingleFeed } from '$lib/services/feedFetcher';
-	import { api } from '$lib/services/api';
 	import FeedDiscoveryForm from '$lib/components/FeedDiscoveryForm.svelte';
 	import Modal from '$lib/components/common/Modal.svelte';
 
@@ -37,18 +36,17 @@
 
 			// Fetch feed in background (updates title and loads articles)
 			if (sub) {
-				fetchSingleFeed(sub, true, articlesStore.starredGuids).then(async () => {
-					// Try to get feed metadata to update the title
-					try {
-						const feed = await api.fetchCachedFeed(url);
-						if (feed?.title) {
+				fetchSingleFeed(sub, true, articlesStore.starredGuids).then(async (result) => {
+					// Update subscription with feed metadata from V2 response
+					if (result.success && result.title) {
+						try {
 							await subscriptionsStore.update(id, {
-								title: feed.title,
-								siteUrl: feed.siteUrl,
+								title: result.title,
+								siteUrl: result.siteUrl,
 							});
+						} catch {
+							// Ignore errors updating title
 						}
-					} catch {
-						// Ignore errors updating title
 					}
 				});
 			}
