@@ -19,6 +19,7 @@
 		onTouchEnd: (e: TouchEvent) => void;
 		onTouchMove: () => void;
 		onRetry: () => void | Promise<unknown>;
+		onMoreClick: (e: MouseEvent) => void;
 	}
 
 	const MIN_SPINNER_TIME = 600;
@@ -36,9 +37,12 @@
 		onTouchEnd,
 		onTouchMove,
 		onRetry,
+		onMoreClick,
 	}: Props = $props();
 
-	let faviconUrl = $derived(getFaviconUrl(subscription.siteUrl || subscription.feedUrl));
+	let faviconUrl = $derived(
+		subscription.customIconUrl || getFaviconUrl(subscription.siteUrl || subscription.feedUrl)
+	);
 	let faviconLoaded = $state(false);
 
 	function handleFaviconLoad() {
@@ -136,7 +140,26 @@
 		{:else}
 			<span class="feed-favicon-placeholder"></span>
 		{/if}
-		<span class="nav-label">{subscription.title}</span>
+		<span class="nav-label">{subscription.customTitle || subscription.title}</span>
+		<span
+			class="more-btn"
+			role="button"
+			tabindex="0"
+			onclick={(e) => {
+				e.stopPropagation();
+				onMoreClick(e);
+			}}
+			onkeydown={(e) => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					e.stopPropagation();
+					onMoreClick(e as unknown as MouseEvent);
+				}
+			}}
+			title="More options"
+		>
+			&#x22EF;
+		</span>
 		{#if loadingState === 'error'}
 			<span
 				class="retry-btn"
@@ -333,6 +356,35 @@
 
 	.retry-btn:hover {
 		color: var(--color-primary);
+	}
+
+	.more-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.25rem;
+		height: 1.25rem;
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: var(--color-text-secondary);
+		font-size: 1rem;
+		padding: 0;
+		line-height: 1;
+		opacity: 0;
+		transition: opacity 0.15s;
+		flex-shrink: 0;
+	}
+
+	.feed-item:hover .more-btn,
+	.more-btn:focus {
+		opacity: 1;
+	}
+
+	.more-btn:hover {
+		color: var(--color-text);
+		background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.1));
+		border-radius: 4px;
 	}
 
 	@media (prefers-color-scheme: dark) {

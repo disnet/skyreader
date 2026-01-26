@@ -21,6 +21,8 @@ export interface Subscription {
 	lastFetchedAt?: number;
 	fetchError?: string;
 	source?: 'manual' | 'opml';
+	customTitle?: string; // User-set title override (local only)
+	customIconUrl?: string; // User-set icon override (local only)
 }
 
 export interface Article {
