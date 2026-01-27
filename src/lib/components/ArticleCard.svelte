@@ -236,6 +236,12 @@
 		text-decoration: underline;
 	}
 
+	.article-item.selected .article-title-link,
+	.article-item.expanded .article-title-link {
+		white-space: normal;
+		text-overflow: unset;
+	}
+
 	.article-date {
 		flex-shrink: 0;
 		font-size: 0.875rem;
