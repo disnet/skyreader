@@ -7,21 +7,36 @@
 	import { readingStore } from '$lib/stores/reading.svelte';
 	import { shareReadingStore } from '$lib/stores/shareReading.svelte';
 	import { sharesStore } from '$lib/stores/shares.svelte';
-	import { socialStore } from '$lib/stores/social.svelte';
 	import { preferences } from '$lib/stores/preferences.svelte';
 	import { feedViewStore } from '$lib/stores/feedView.svelte';
 	import { appManager } from '$lib/stores/app.svelte';
 	import { articlesStore } from '$lib/stores/articles.svelte';
+	import { profileService } from '$lib/services/profiles';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import LoadingState from '$lib/components/LoadingState.svelte';
 	import WelcomePage from '$lib/components/feed/WelcomePage.svelte';
 	import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
 	import FeedListView from '$lib/components/feed/FeedListView.svelte';
 	import EditFeedModal from '$lib/components/EditFeedModal.svelte';
-	import type { Subscription } from '$lib/types';
+	import type { Subscription, BlueskyProfile } from '$lib/types';
 	import { useScrollMarkAsRead } from '$lib/hooks/useScrollMarkAsRead.svelte';
 	import { useFeedKeyboardShortcuts } from '$lib/hooks/useFeedKeyboardShortcuts.svelte';
 	import { goto } from '$app/navigation';
+
+	// Profile for sharer filter title
+	let sharerProfile = $state<BlueskyProfile | null>(null);
+
+	// Fetch sharer profile when filter changes
+	$effect(() => {
+		const sharerDid = feedViewStore.sharerFilter;
+		if (sharerDid) {
+			profileService.getProfile(sharerDid).then((p) => {
+				sharerProfile = p;
+			});
+		} else {
+			sharerProfile = null;
+		}
+	});
 
 	// Sync URL filters to feedViewStore
 	$effect(() => {
@@ -78,8 +93,7 @@
 		if (feedViewStore.sharedFilter) return 'Shared';
 		if (feedViewStore.followingFilter) return 'Following';
 		if (feedViewStore.sharerFilter) {
-			const user = socialStore.followedUsers.find((u) => u.did === feedViewStore.sharerFilter);
-			return user?.displayName || user?.handle || 'Shared';
+			return sharerProfile?.displayName || sharerProfile?.handle || 'Shared';
 		}
 		if (feedViewStore.feedsFilter) return 'Feeds';
 		return 'All';

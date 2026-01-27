@@ -113,17 +113,21 @@ class ApiClient {
 		return this.fetch('/api/social/sync-follows', { method: 'POST' });
 	}
 
-	async getFollowedUsers(): Promise<{
+	async getFollowedUsers(
+		cursor?: string,
+		limit?: number
+	): Promise<{
 		users: Array<{
 			did: string;
-			handle: string;
-			displayName?: string;
-			avatarUrl?: string;
-			onApp?: boolean;
 			source: 'bluesky' | 'inapp' | 'both';
 		}>;
+		cursor: string | null;
 	}> {
-		return this.fetch('/api/social/following');
+		const params = new URLSearchParams();
+		if (cursor) params.set('cursor', cursor);
+		if (limit) params.set('limit', limit.toString());
+		const query = params.toString();
+		return this.fetch(`/api/social/following${query ? `?${query}` : ''}`);
 	}
 
 	async getDiscoverUsers(limit = 20): Promise<{ users: DiscoverUser[] }> {

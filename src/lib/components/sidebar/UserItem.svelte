@@ -1,5 +1,7 @@
 <script lang="ts">
 	import type { FollowedUser } from '$lib/stores/social.svelte';
+	import { profileService } from '$lib/services/profiles';
+	import type { BlueskyProfile } from '$lib/types';
 
 	interface Props {
 		user: FollowedUser;
@@ -9,20 +11,31 @@
 	}
 
 	let { user, unreadCount, isActive, onSelect }: Props = $props();
+
+	let profile = $state<BlueskyProfile | null>(null);
+
+	$effect(() => {
+		profileService.getProfile(user.did).then((p) => {
+			profile = p;
+		});
+	});
+
+	let displayName = $derived(profile?.displayName || profile?.handle || user.did);
+	let isInApp = $derived(user.source === 'inapp' || user.source === 'both');
 </script>
 
 <button
 	class="nav-item sub-item"
 	class:active={isActive}
-	class:not-on-app={!user.onApp}
+	class:not-on-app={!isInApp}
 	onclick={onSelect}
 >
-	{#if user.avatarUrl}
-		<img src={user.avatarUrl} alt="" class="small-avatar" />
+	{#if profile?.avatar}
+		<img src={profile.avatar} alt="" class="small-avatar" />
 	{:else}
 		<div class="small-avatar-placeholder"></div>
 	{/if}
-	<span class="nav-label">{user.displayName || user.handle}</span>
+	<span class="nav-label">{displayName}</span>
 	{#if unreadCount > 0}
 		<span class="nav-count">{unreadCount}</span>
 	{/if}

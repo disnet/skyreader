@@ -1,7 +1,8 @@
 <script lang="ts">
-	import type { Article, FeedItem, SocialShare } from '$lib/types';
+	import type { Article, FeedItem, SocialShare, BlueskyProfile } from '$lib/types';
 	import { formatRelativeDate } from '$lib/utils/date';
 	import { getFaviconUrl } from '$lib/utils/favicon';
+	import { profileService } from '$lib/services/profiles';
 	import DOMPurify from 'dompurify';
 
 	let {
@@ -27,6 +28,16 @@
 		onExpand?: () => void;
 		onFetchContent?: () => void;
 	} = $props();
+
+	let authorProfile = $state<BlueskyProfile | null>(null);
+
+	$effect(() => {
+		profileService.getProfile(share.authorDid).then((p) => {
+			authorProfile = p;
+		});
+	});
+
+	let authorHandle = $derived(authorProfile?.handle || share.authorDid);
 
 	function handleHeaderClick() {
 		const wasSelected = selected;
@@ -76,9 +87,7 @@
 <div class="share-item" class:read={isRead} class:selected class:expanded>
 	<div class="share-sticky-header">
 		<div class="share-attribution">
-			shared by <a href="/?sharer={share.authorDid}" class="share-author-link"
-				>@{share.authorHandle}</a
-			>
+			shared by <a href="/?sharer={share.authorDid}" class="share-author-link">@{authorHandle}</a>
 		</div>
 		<button class="share-header" onclick={handleHeaderClick}>
 			<img src={getFaviconUrl(share.itemUrl)} alt="" class="favicon" />

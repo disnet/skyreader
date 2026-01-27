@@ -64,9 +64,6 @@ export interface ShareReadPosition {
 export interface SocialShare {
 	id?: number;
 	authorDid: string;
-	authorHandle: string;
-	authorDisplayName?: string;
-	authorAvatar?: string;
 	recordUri: string;
 	feedUrl?: string;
 	itemUrl: string;
@@ -79,6 +76,14 @@ export interface SocialShare {
 	note?: string;
 	content?: string;
 	createdAt: string;
+}
+
+// Profile info fetched from Bluesky
+export interface BlueskyProfile {
+	did: string;
+	handle: string;
+	displayName?: string;
+	avatar?: string;
 }
 
 export interface UserShare {

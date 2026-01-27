@@ -213,7 +213,7 @@
 		return subs;
 	});
 
-	// Sort followed users: 1) with unread shares, 2) followed in-app, 3) others
+	// Sort followed users: 1) with unread shares, 2) followed in-app, 3) others (by DID)
 	let sortedFollowedUsers = $derived(() => {
 		const counts = sharerCounts();
 		let users = [...socialStore.followedUsers].sort((a, b) => {
@@ -232,13 +232,13 @@
 			}
 
 			// Tier 2: accounts followed in-app
-			if (a.onApp && !b.onApp) return -1;
-			if (!a.onApp && b.onApp) return 1;
+			const aIsInApp = a.source === 'inapp' || a.source === 'both';
+			const bIsInApp = b.source === 'inapp' || b.source === 'both';
+			if (aIsInApp && !bIsInApp) return -1;
+			if (!aIsInApp && bIsInApp) return 1;
 
-			// Tier 3: alphabetical by display name or handle
-			const nameA = (a.displayName || a.handle).toLowerCase();
-			const nameB = (b.displayName || b.handle).toLowerCase();
-			return nameA.localeCompare(nameB);
+			// Tier 3: by DID (stable sort - profiles are fetched async in UserItem)
+			return a.did.localeCompare(b.did);
 		});
 		if (sidebarStore.showOnlyUnread.shared) {
 			users = users.filter((u) => (counts.get(u.did) || 0) > 0);

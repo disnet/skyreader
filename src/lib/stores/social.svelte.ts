@@ -1,5 +1,6 @@
 import { db } from '$lib/services/db';
 import { api } from '$lib/services/api';
+import { profileService } from '$lib/services/profiles';
 import { syncQueue, type FollowPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
 import type { DiscoverUser, SocialShare } from '$lib/types';
@@ -7,10 +8,6 @@ import { generateTid } from '$lib/utils/tid';
 
 export interface FollowedUser {
 	did: string;
-	handle: string;
-	displayName?: string;
-	avatarUrl?: string;
-	onApp?: boolean;
 	source: 'bluesky' | 'inapp' | 'both';
 }
 
@@ -53,6 +50,10 @@ function createSocialStore() {
 
 			cursor = result.cursor;
 			hasMore = !!result.cursor;
+
+			// Prefetch author profiles from Bluesky (fire and forget)
+			const authorDids = [...new Set(result.shares.map((s) => s.authorDid))];
+			profileService.prefetch(authorDids);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load social feed';
 
@@ -72,6 +73,9 @@ function createSocialStore() {
 		try {
 			const result = await api.getPopularShares(period);
 			popularShares = result.shares;
+			// Prefetch author profiles from Bluesky (fire and forget)
+			const authorDids = [...new Set(result.shares.map((s) => s.authorDid))];
+			profileService.prefetch(authorDids);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load popular shares';
 		} finally {
@@ -86,6 +90,8 @@ function createSocialStore() {
 		try {
 			const result = await api.getFollowedUsers();
 			followedUsers = result.users;
+			// Prefetch profiles from Bluesky (fire and forget)
+			profileService.prefetch(result.users.map((u) => u.did));
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load followed users';
 		} finally {
