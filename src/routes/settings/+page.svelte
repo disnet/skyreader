@@ -151,9 +151,18 @@
 		<h2>About</h2>
 		<p>Skyreader is a decentralized RSS reader built on the AT Protocol.</p>
 		<p>
-			Your data is stored in your Personal Data Server (PDS), giving you full ownership and
-			portability.
+			When you share articles, those shares are stored in your Personal Data Server (PDS), making
+			them portable and under your control.
 		</p>
+		<div class="about-links">
+			<a href="/terms">Terms of Service</a>
+			<span class="separator">·</span>
+			<a href="mailto:abuse@skyreader.app">Report Abuse</a>
+			<span class="separator">·</span>
+			<a href="https://github.com/disnet/skyreader/issues" target="_blank" rel="noopener noreferrer"
+				>Feedback</a
+			>
+		</div>
 	</section>
 
 	<section class="card debug-section">
@@ -355,5 +364,27 @@
 		font-size: 0.875rem;
 		color: var(--color-text-secondary);
 		margin: 0.5rem 0 0 0;
+	}
+
+	.about-links {
+		margin-top: 1rem;
+		padding-top: 1rem;
+		border-top: 1px solid var(--color-border);
+		font-size: 0.875rem;
+	}
+
+	.about-links a {
+		color: var(--color-text-secondary);
+		text-decoration: none;
+	}
+
+	.about-links a:hover {
+		color: var(--color-primary);
+		text-decoration: underline;
+	}
+
+	.about-links .separator {
+		margin: 0 0.5rem;
+		color: var(--color-text-secondary);
 	}
 </style>

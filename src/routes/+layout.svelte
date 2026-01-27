@@ -264,6 +264,17 @@
 			<main class="main-full">
 				{@render children()}
 			</main>
+			<footer class="app-footer">
+				<a href="/terms">Terms</a>
+				<span class="separator">·</span>
+				<a href="mailto:abuse@skyreader.app">Report Abuse</a>
+				<span class="separator">·</span>
+				<a
+					href="https://github.com/disnet/skyreader/issues"
+					target="_blank"
+					rel="noopener noreferrer">Feedback</a
+				>
+			</footer>
 		{/if}
 	{:else}
 		<div class="loading">Loading...</div>
@@ -385,6 +396,31 @@
 		height: 100vh;
 		font-size: 1.25rem;
 		color: var(--color-text-secondary, #666);
+	}
+
+	.app-footer {
+		padding: 1.5rem 1rem;
+		text-align: center;
+		font-size: 0.8125rem;
+		color: var(--color-text-secondary);
+		border-top: 1px solid var(--color-border);
+		max-width: 1200px;
+		margin: auto auto 0;
+		width: 100%;
+	}
+
+	.app-footer a {
+		color: var(--color-text-secondary);
+		text-decoration: none;
+	}
+
+	.app-footer a:hover {
+		color: var(--color-primary);
+		text-decoration: underline;
+	}
+
+	.app-footer .separator {
+		margin: 0 0.5rem;
 	}
 
 	@media (max-width: 768px) {
