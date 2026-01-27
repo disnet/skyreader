@@ -268,6 +268,12 @@
 		text-decoration: underline;
 	}
 
+	.share-item.selected .share-title-link,
+	.share-item.expanded .share-title-link {
+		white-space: normal;
+		text-overflow: unset;
+	}
+
 	.share-date {
 		flex-shrink: 0;
 		font-size: 0.875rem;
