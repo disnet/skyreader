@@ -51,10 +51,18 @@ function createSharesStore() {
 					articleTitle: share.articleTitle,
 					articleAuthor: share.articleAuthor,
 					articleDescription: share.articleDescription,
+					articleContent: share.articleContent,
 					articleImage: share.articleImage,
 					articlePublishedAt: share.articlePublishedAt,
 					note: share.note,
 					createdAt: share.createdAt,
+					reshareOf: share.reshareOf
+						? {
+								uri: share.reshareOf.uri,
+								authorDid: share.reshareOf.authorDid || '',
+							}
+						: undefined,
+					reshareCount: share.reshareCount,
 				};
 
 				newShares.set(userShare.articleGuid, userShare);
@@ -216,6 +224,116 @@ function createSharesStore() {
 		return db.userShares.orderBy('createdAt').reverse().toArray();
 	}
 
+	// Reshare an existing share (one-click reshare)
+	async function reshare(
+		reshareOfUri: string,
+		reshareOfAuthorDid: string,
+		articleUrl: string,
+		articleGuid?: string,
+		articleTitle?: string,
+		articleAuthor?: string,
+		articleDescription?: string,
+		articleContent?: string,
+		articleImage?: string,
+		articlePublishedAt?: string,
+		feedUrl?: string
+	) {
+		// Use URL as guid if not provided
+		const effectiveGuid = articleGuid || articleUrl;
+
+		// Already shared this article - skip
+		if (userShares.has(effectiveGuid)) return;
+
+		const rkey = generateTid();
+		const now = new Date().toISOString();
+
+		const shareData: Omit<UserShare, 'id'> = {
+			rkey,
+			feedUrl,
+			articleGuid: effectiveGuid,
+			articleUrl,
+			articleTitle,
+			articleAuthor,
+			articleDescription,
+			articleImage,
+			articlePublishedAt,
+			createdAt: now,
+			reshareOf: {
+				uri: reshareOfUri,
+				authorDid: reshareOfAuthorDid,
+			},
+		};
+
+		// Optimistic update - add to local state and cache
+		userShares.set(effectiveGuid, { ...shareData });
+		userShares = new Map(userShares);
+
+		const id = await db.userShares.add(shareData);
+		userShares.set(effectiveGuid, { ...shareData, id });
+		userShares = new Map(userShares);
+
+		if (syncStore.isOnline) {
+			try {
+				await api.createShare({
+					rkey,
+					itemUrl: articleUrl,
+					feedUrl: feedUrl || undefined,
+					itemGuid: articleGuid || undefined,
+					itemTitle: articleTitle,
+					itemAuthor: articleAuthor,
+					itemDescription: articleDescription ? articleDescription.slice(0, 1000) : undefined,
+					content: articleContent,
+					itemImage:
+						articleImage &&
+						(articleImage.startsWith('http://') || articleImage.startsWith('https://'))
+							? articleImage
+							: undefined,
+					itemPublishedAt: articlePublishedAt,
+					reshareOf: {
+						uri: reshareOfUri,
+						authorDid: reshareOfAuthorDid,
+					},
+				});
+			} catch (e) {
+				console.error('Failed to create reshare, queueing for retry:', e);
+				await syncQueue.enqueue('create', 'shares', effectiveGuid, {
+					rkey,
+					feedUrl: feedUrl || '',
+					articleGuid: effectiveGuid,
+					articleUrl,
+					articleTitle,
+					articleAuthor,
+					articleContent,
+					articleDescription,
+					articleImage,
+					articlePublishedAt,
+					reshareOf: {
+						uri: reshareOfUri,
+						authorDid: reshareOfAuthorDid,
+					},
+				});
+			}
+		} else {
+			// Offline - queue the operation
+			await syncQueue.enqueue('create', 'shares', effectiveGuid, {
+				rkey,
+				feedUrl: feedUrl || '',
+				articleGuid: effectiveGuid,
+				articleUrl,
+				articleTitle,
+				articleAuthor,
+				articleContent,
+				articleDescription,
+				articleImage,
+				articlePublishedAt,
+				reshareOf: {
+					uri: reshareOfUri,
+					authorDid: reshareOfAuthorDid,
+				},
+			});
+		}
+	}
+
 	return {
 		get userShares() {
 			return userShares;
@@ -228,6 +346,7 @@ function createSharesStore() {
 		getShareNote,
 		share,
 		unshare,
+		reshare,
 		getSharedArticles,
 	};
 }

@@ -99,6 +99,7 @@
 					isStarred={readingStore.isStarred(article.guid)}
 					isShared={true}
 					shareNote={share.note}
+					reshareCount={share.reshareCount || 0}
 					selected={feedViewStore.selectedIndex === index}
 					expanded={feedViewStore.expandedIndex === index}
 					onToggleStar={() => onToggleStar(article)}

@@ -26,6 +26,10 @@ export interface SharePayload {
 	articleDescription?: string;
 	articleImage?: string;
 	articlePublishedAt?: string;
+	reshareOf?: {
+		uri: string;
+		authorDid: string;
+	};
 }
 
 export interface ShareReadingPayload {
@@ -266,6 +270,7 @@ class SyncQueue {
 							? payload.articleImage
 							: undefined,
 					itemPublishedAt: payload.articlePublishedAt,
+					reshareOf: payload.reshareOf,
 				});
 				break;
 			case 'delete':

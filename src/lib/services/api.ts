@@ -1,4 +1,12 @@
-import type { DiscoverUser, FeedItem, ParsedFeed, SocialShare, User } from '$lib/types';
+import type {
+	DiscoverUser,
+	FeedItem,
+	GroupedShare,
+	ParsedFeed,
+	ReshareActivity,
+	SocialShare,
+	User,
+} from '$lib/types';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8787';
 
@@ -109,6 +117,30 @@ class ApiClient {
 		return this.fetch(`/api/social/feed?${params}`);
 	}
 
+	async getGroupedSocialFeed(
+		cursor?: string,
+		limit = 30
+	): Promise<{
+		groups: GroupedShare[];
+		cursor: string | null;
+	}> {
+		const params = new URLSearchParams({ limit: limit.toString() });
+		if (cursor) params.set('cursor', cursor);
+		return this.fetch(`/api/social/feed/grouped?${params}`);
+	}
+
+	async getReshareActivity(
+		cursor?: string,
+		limit = 50
+	): Promise<{
+		activity: ReshareActivity[];
+		cursor: string | null;
+	}> {
+		const params = new URLSearchParams({ limit: limit.toString() });
+		if (cursor) params.set('cursor', cursor);
+		return this.fetch(`/api/activity/reshares?${params}`);
+	}
+
 	async syncFollows(): Promise<{ synced: number }> {
 		return this.fetch('/api/social/sync-follows', { method: 'POST' });
 	}
@@ -159,10 +191,16 @@ class ApiClient {
 			articleTitle?: string;
 			articleAuthor?: string;
 			articleDescription?: string;
+			articleContent?: string;
 			articleImage?: string;
 			articlePublishedAt?: string;
 			note?: string;
 			createdAt: string;
+			reshareOf?: {
+				uri: string;
+				authorDid: string | null;
+			};
+			reshareCount?: number;
 		}>;
 	}> {
 		return this.fetch('/api/shares/my');
@@ -254,6 +292,10 @@ class ApiClient {
 		itemPublishedAt?: string;
 		note?: string;
 		tags?: string[];
+		reshareOf?: {
+			uri: string;
+			authorDid: string;
+		};
 	}): Promise<{ rkey: string; uri: string }> {
 		return this.fetch('/api/shares', {
 			method: 'POST',

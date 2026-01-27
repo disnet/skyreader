@@ -76,6 +76,52 @@ export interface SocialShare {
 	note?: string;
 	content?: string;
 	createdAt: string;
+	reshareOf?: {
+		uri: string;
+		authorDid: string;
+	};
+	reshareCount?: number;
+}
+
+// Grouped share for deduplicated feed
+export interface GroupedShare {
+	itemUrl: string;
+	itemTitle?: string;
+	itemAuthor?: string;
+	itemDescription?: string;
+	itemImage?: string;
+	itemGuid?: string;
+	itemPublishedAt?: string;
+	feedUrl?: string;
+	content?: string;
+	sharers: Array<{
+		did: string;
+		recordUri: string;
+		createdAt: string;
+		note?: string;
+		reshareCount: number;
+	}>;
+	firstSharer: {
+		did: string;
+		recordUri: string;
+	};
+	totalShareCount: number;
+	latestShareAt: string;
+}
+
+// Reshare activity item (grouped by article)
+export interface ReshareActivity {
+	originalShare: {
+		uri: string;
+		itemUrl: string;
+		itemTitle?: string;
+	};
+	resharers: Array<{
+		did: string;
+		resharedAt: string;
+	}>;
+	totalCount: number;
+	latestReshareAt: string;
 }
 
 // Profile info fetched from Bluesky
@@ -96,10 +142,16 @@ export interface UserShare {
 	articleTitle?: string;
 	articleAuthor?: string;
 	articleDescription?: string;
+	articleContent?: string;
 	articleImage?: string;
 	articlePublishedAt?: string;
 	note?: string;
 	createdAt: string;
+	reshareOf?: {
+		uri: string;
+		authorDid: string;
+	};
+	reshareCount?: number;
 }
 
 export interface ParsedFeed {

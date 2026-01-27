@@ -10,6 +10,7 @@
 	import { shareReadingStore } from '$lib/stores/shareReading.svelte';
 	import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
 	import { articlesStore } from '$lib/stores/articles.svelte';
+	import { activityStore } from '$lib/stores/activity.svelte';
 	import { liveDb } from '$lib/services/liveDb.svelte';
 	import { fetchSingleFeed } from '$lib/services/feedFetcher';
 	import { onMount, onDestroy } from 'svelte';
@@ -146,6 +147,11 @@
 		loadSavedWidth();
 		document.addEventListener('click', handleClickOutside);
 		document.addEventListener('keydown', handleKeydown);
+
+		// Load activity count if authenticated
+		if (auth.isAuthenticated && !activityStore.hasLoadedInitial) {
+			activityStore.loadReshareActivity();
+		}
 	});
 
 	onDestroy(() => {
@@ -397,6 +403,16 @@
 			<span class="nav-icon">&#x1F50D;</span>
 			{#if !sidebarStore.isCollapsed}
 				<span class="nav-label">Discover</span>
+			{/if}
+		</a>
+
+		<a href="/activity" class="nav-item nav-link" onclick={() => sidebarStore.closeMobile()}>
+			<span class="nav-icon">&#x1F514;</span>
+			{#if !sidebarStore.isCollapsed}
+				<span class="nav-label">Activity</span>
+				{#if activityStore.totalReshareCount > 0}
+					<span class="nav-count">{activityStore.totalReshareCount}</span>
+				{/if}
 			{/if}
 		</a>
 

@@ -173,6 +173,7 @@ function createFeedViewStore() {
 					url: share.articleUrl,
 					title: share.articleTitle || share.articleUrl,
 					author: share.articleAuthor,
+					content: share.articleContent,
 					summary: share.articleDescription,
 					imageUrl: share.articleImage,
 					publishedAt: share.articlePublishedAt || share.createdAt,

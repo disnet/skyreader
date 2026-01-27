@@ -1,12 +1,15 @@
 <script lang="ts">
-	import type { Article, FeedItem, SocialShare, BlueskyProfile } from '$lib/types';
+	import type { Article, FeedItem, SocialShare, GroupedShare, BlueskyProfile } from '$lib/types';
 	import { formatRelativeDate } from '$lib/utils/date';
 	import { getFaviconUrl } from '$lib/utils/favicon';
 	import { profileService } from '$lib/services/profiles';
+	import { sharesStore } from '$lib/stores/shares.svelte';
+	import { auth } from '$lib/stores/auth.svelte';
 	import DOMPurify from 'dompurify';
 
 	let {
 		share,
+		groupedShare,
 		localArticle,
 		remoteArticle,
 		isFetching = false,
@@ -17,7 +20,8 @@
 		onExpand,
 		onFetchContent,
 	}: {
-		share: SocialShare;
+		share?: SocialShare;
+		groupedShare?: GroupedShare;
 		localArticle?: Article;
 		remoteArticle?: FeedItem;
 		isFetching?: boolean;
@@ -29,15 +33,114 @@
 		onFetchContent?: () => void;
 	} = $props();
 
+	// Normalize data for both single share and grouped share modes
+	let itemUrl = $derived(share?.itemUrl || groupedShare?.itemUrl || '');
+	let itemTitle = $derived(share?.itemTitle || groupedShare?.itemTitle);
+	let itemDescription = $derived(share?.itemDescription || groupedShare?.itemDescription);
+	let itemPublishedAt = $derived(share?.itemPublishedAt || groupedShare?.itemPublishedAt);
+	let itemGuid = $derived(share?.itemGuid || groupedShare?.itemGuid);
+	let feedUrl = $derived(share?.feedUrl || groupedShare?.feedUrl);
+	let displayContent = $derived(share?.content || groupedShare?.content);
+	let displayDate = $derived(
+		share?.itemPublishedAt || share?.createdAt || groupedShare?.latestShareAt || ''
+	);
+
+	// For grouped shares, get profile info for first few sharers
+	let sharerProfiles = $state<Map<string, BlueskyProfile>>(new Map());
 	let authorProfile = $state<BlueskyProfile | null>(null);
 
+	// Single share mode - get author profile
 	$effect(() => {
-		profileService.getProfile(share.authorDid).then((p) => {
-			authorProfile = p;
-		});
+		if (share) {
+			profileService.getProfile(share.authorDid).then((p) => {
+				authorProfile = p;
+			});
+		}
 	});
 
-	let authorHandle = $derived(authorProfile?.handle || share.authorDid);
+	// Grouped share mode - get profiles for sharers
+	$effect(() => {
+		if (groupedShare) {
+			for (const sharer of groupedShare.sharers.slice(0, 3)) {
+				profileService.getProfile(sharer.did).then((p) => {
+					if (p) {
+						sharerProfiles.set(sharer.did, p);
+						sharerProfiles = new Map(sharerProfiles);
+					}
+				});
+			}
+		}
+	});
+
+	let authorHandle = $derived(authorProfile?.handle || share?.authorDid);
+
+	// Build attribution text for grouped shares
+	let groupedAttribution = $derived.by(() => {
+		if (!groupedShare) return '';
+		const sharers = groupedShare.sharers;
+		if (sharers.length === 0) return '';
+
+		const firstSharer = sharers[0];
+		const firstHandle =
+			sharerProfiles.get(firstSharer.did)?.handle || firstSharer.did.slice(0, 16) + '...';
+
+		if (sharers.length === 1) {
+			return `@${firstHandle}`;
+		}
+		if (sharers.length === 2) {
+			const secondHandle =
+				sharerProfiles.get(sharers[1].did)?.handle || sharers[1].did.slice(0, 16) + '...';
+			return `@${firstHandle} and @${secondHandle}`;
+		}
+
+		const othersCount = sharers.length - 1;
+		return `@${firstHandle} and ${othersCount} others`;
+	});
+
+	// Reshare functionality
+	let isResharing = $state(false);
+	let hasReshared = $derived.by(() => {
+		const guid = itemGuid || itemUrl;
+		return sharesStore.isShared(guid);
+	});
+
+	// Get reshare count - for single share or first sharer in grouped
+	let reshareCount = $derived.by(() => {
+		if (share?.reshareCount) return share.reshareCount;
+		if (groupedShare?.sharers?.[0]?.reshareCount) return groupedShare.sharers[0].reshareCount;
+		return 0;
+	});
+
+	async function handleReshare(e: MouseEvent) {
+		e.stopPropagation();
+		if (isResharing || hasReshared) return;
+		if (!auth.user) return;
+
+		isResharing = true;
+		try {
+			// Get the target share URI and author for reshare
+			const targetUri = share?.recordUri || groupedShare?.firstSharer?.recordUri;
+			const targetAuthorDid = share?.authorDid || groupedShare?.firstSharer?.did;
+
+			if (!targetUri || !targetAuthorDid) return;
+
+			await sharesStore.reshare(
+				targetUri,
+				targetAuthorDid,
+				itemUrl,
+				itemGuid,
+				itemTitle,
+				undefined, // articleAuthor
+				itemDescription,
+				displayContent,
+				share?.itemImage || groupedShare?.itemImage,
+				itemPublishedAt,
+				feedUrl
+			);
+		} finally {
+			isResharing = false;
+		}
+	}
 
 	function handleHeaderClick() {
 		const wasSelected = selected;
@@ -55,17 +158,15 @@
 
 	let isOpen = $derived(selected || expanded);
 	let articleContent = $derived(
-		share.content ||
+		displayContent ||
 			localArticle?.content ||
 			localArticle?.summary ||
 			remoteArticle?.content ||
 			remoteArticle?.summary
 	);
 	let sanitizedContent = $derived(articleContent ? DOMPurify.sanitize(articleContent) : '');
-	let sanitizedDescription = $derived(
-		share.itemDescription ? DOMPurify.sanitize(share.itemDescription) : ''
-	);
-	let hasContent = $derived(Boolean(articleContent || share.itemDescription));
+	let sanitizedDescription = $derived(itemDescription ? DOMPurify.sanitize(itemDescription) : '');
+	let hasContent = $derived(Boolean(articleContent || itemDescription));
 
 	let bodyEl = $state<HTMLElement | undefined>(undefined);
 	let isTruncated = $state(false);
@@ -87,30 +188,37 @@
 <div class="share-item" class:read={isRead} class:selected class:expanded>
 	<div class="share-sticky-header">
 		<div class="share-attribution">
-			shared by <a href="/?sharer={share.authorDid}" class="share-author-link">@{authorHandle}</a>
+			{#if groupedShare}
+				shared by {groupedAttribution}
+			{:else if share}
+				shared by <a href="/?sharer={share.authorDid}" class="share-author-link">@{authorHandle}</a>
+			{/if}
+			{#if reshareCount > 0}
+				<span class="reshare-count" title="{reshareCount} reshares">({reshareCount})</span>
+			{/if}
 		</div>
 		<button class="share-header" onclick={handleHeaderClick}>
-			<img src={getFaviconUrl(share.itemUrl)} alt="" class="favicon" />
+			<img src={getFaviconUrl(itemUrl)} alt="" class="favicon" />
 			{#if isOpen}
 				<a
-					href={share.itemUrl}
+					href={itemUrl}
 					target="_blank"
 					rel="noopener"
 					class="share-title-link"
 					onclick={(e) => e.stopPropagation()}
 				>
-					{share.itemTitle || share.itemUrl}
+					{itemTitle || itemUrl}
 				</a>
 			{:else}
-				<span class="share-title">{share.itemTitle || share.itemUrl}</span>
+				<span class="share-title">{itemTitle || itemUrl}</span>
 			{/if}
-			<span class="share-date">{formatRelativeDate(share.itemPublishedAt || share.createdAt)}</span>
+			<span class="share-date">{formatRelativeDate(displayDate)}</span>
 		</button>
 
 		{#if isOpen}
 			<div class="share-actions">
 				<a
-					href={share.itemUrl}
+					href={itemUrl}
 					target="_blank"
 					rel="noopener"
 					class="action-btn"
@@ -118,6 +226,23 @@
 				>
 					↗ Open
 				</a>
+				{#if auth.user}
+					<button
+						class="action-btn reshare-btn"
+						class:reshared={hasReshared}
+						onclick={handleReshare}
+						disabled={isResharing || hasReshared}
+						title={hasReshared ? 'Already reshared' : 'Reshare'}
+					>
+						{#if isResharing}
+							...
+						{:else if hasReshared}
+							Reshared
+						{:else}
+							Reshare
+						{/if}
+					</button>
+				{/if}
 				{#if hasContent}
 					<button class="action-btn expand-btn" onclick={handleExpandClick}>
 						{expanded ? '↑ Collapse' : '↓ Expand'}
@@ -310,6 +435,29 @@
 
 	.action-btn.expand-btn {
 		margin-left: auto;
+	}
+
+	.action-btn.reshare-btn {
+		color: var(--color-text-secondary);
+	}
+
+	.action-btn.reshare-btn:hover:not(:disabled) {
+		color: var(--color-primary);
+	}
+
+	.action-btn.reshare-btn.reshared {
+		color: var(--color-success, #22c55e);
+	}
+
+	.action-btn.reshare-btn:disabled {
+		cursor: default;
+		opacity: 0.7;
+	}
+
+	.reshare-count {
+		font-size: 0.7rem;
+		color: var(--color-text-secondary);
+		margin-left: 0.25rem;
 	}
 
 	.share-body-wrapper {

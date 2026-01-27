@@ -11,6 +11,7 @@
 		isStarred = false,
 		isShared = false,
 		shareNote,
+		reshareCount = 0,
 		selected = false,
 		expanded = false,
 		onToggleStar,
@@ -25,6 +26,7 @@
 		isStarred?: boolean;
 		isShared?: boolean;
 		shareNote?: string;
+		reshareCount?: number;
 		selected?: boolean;
 		expanded?: boolean;
 		onToggleStar?: () => void;
@@ -111,7 +113,9 @@
 					{isStarred ? '★ Starred' : '☆ Star'}
 				</button>
 				{#if isShared}
-					<button class="action-btn shared" onclick={handleUnshare}> ↑ Shared </button>
+					<button class="action-btn shared" onclick={handleUnshare}>
+						↑ Shared{#if reshareCount > 0}<span class="reshare-count">({reshareCount})</span>{/if}
+					</button>
 				{:else}
 					<button class="action-btn" onclick={handleShare}> ↑ Share </button>
 				{/if}
@@ -377,6 +381,11 @@
 
 	.action-btn.shared {
 		color: var(--color-primary, #0066cc);
+	}
+
+	.reshare-count {
+		font-size: 0.75rem;
+		margin-left: 0.25rem;
 	}
 
 	.action-btn.expand-btn {
