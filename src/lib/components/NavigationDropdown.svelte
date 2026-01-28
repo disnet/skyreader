@@ -111,10 +111,15 @@
 	let filteredItems = $derived.by((): { section: string; items: NavItem[] }[] => {
 		const query = searchQuery.toLowerCase().trim();
 
+		// Calculate following unread count (sum of all sharer counts)
+		const followingUnread = Array.from(sharerCounts.values()).reduce((a, b) => a + b, 0);
+
 		const views: NavItem[] = [
 			{ type: 'view', id: 'all', label: 'All', count: totalUnread, icon: '✉' },
 			{ type: 'view', id: 'starred', label: 'Starred', count: starredCount, icon: '☆' },
 			{ type: 'view', id: 'shared', label: 'Shared', count: sharedCount, icon: '↗' },
+			{ type: 'view', id: 'following', label: 'Following', count: followingUnread, icon: '👥' },
+			{ type: 'view', id: 'feeds', label: 'Feeds', count: totalUnread, icon: '📰' },
 		];
 
 		const users: NavItem[] = followedUsers.map((u) => {
@@ -183,10 +188,14 @@
 		const starred = url.searchParams.get('starred');
 		const shared = url.searchParams.get('shared');
 		const sharer = url.searchParams.get('sharer');
+		const following = url.searchParams.get('following');
+		const feeds = url.searchParams.get('feeds');
 		if (feed) return { type: 'feed', id: parseInt(feed) };
 		if (starred) return { type: 'starred' };
 		if (shared) return { type: 'shared' };
 		if (sharer) return { type: 'sharer', id: sharer };
+		if (following) return { type: 'following' };
+		if (feeds) return { type: 'feeds' };
 		return { type: 'all' };
 	});
 
@@ -196,6 +205,8 @@
 			if (item.id === 'all' && filter.type === 'all') return true;
 			if (item.id === 'starred' && filter.type === 'starred') return true;
 			if (item.id === 'shared' && filter.type === 'shared') return true;
+			if (item.id === 'following' && filter.type === 'following') return true;
+			if (item.id === 'feeds' && filter.type === 'feeds') return true;
 		}
 		if (item.type === 'feed' && filter.type === 'feed' && filter.id === item.id) return true;
 		if (item.type === 'user' && filter.type === 'sharer' && filter.id === item.did) return true;
@@ -257,6 +268,8 @@
 		if (item.type === 'view') {
 			if (item.id === 'starred') url = '/?starred=true';
 			else if (item.id === 'shared') url = '/?shared=true';
+			else if (item.id === 'following') url = '/?following=true';
+			else if (item.id === 'feeds') url = '/?feeds=true';
 		} else if (item.type === 'feed') {
 			url = `/?feed=${item.id}`;
 		} else if (item.type === 'user') {
@@ -552,7 +565,7 @@
 		border: 1px solid var(--color-border);
 		border-radius: 6px;
 		font: inherit;
-		font-size: 0.875rem;
+		font-size: 1rem; /* 16px prevents iOS auto-zoom */
 		background: var(--color-bg-secondary);
 		color: var(--color-text);
 	}
