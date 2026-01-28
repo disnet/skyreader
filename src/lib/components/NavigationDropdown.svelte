@@ -342,6 +342,17 @@
 			};
 		}
 	});
+
+	let panelEl = $state<HTMLDivElement | null>(null);
+
+	function handlePanelTouchMove(e: TouchEvent) {
+		// Allow scrolling within items-container, prevent elsewhere
+		const target = e.target as HTMLElement;
+		const itemsContainer = target.closest('.items-container');
+		if (!itemsContainer) {
+			e.preventDefault();
+		}
+	}
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -382,19 +393,33 @@
 			aria-label="Close navigation"
 		></button>
 		<div
+			bind:this={panelEl}
 			class="dropdown-panel"
 			class:mobile={isMobile}
 			role="listbox"
 			style={!isMobile ? `top: ${dropdownPosition.top}px; left: ${dropdownPosition.left}px;` : ''}
+			ontouchmove={isMobile ? handlePanelTouchMove : undefined}
 		>
-			<div class="search-container">
+			<div class="search-container" class:mobile={isMobile}>
 				<input
 					bind:this={searchInputEl}
 					type="text"
 					class="search-input"
-					placeholder="Search..."
+					placeholder="Quick switch..."
 					bind:value={searchQuery}
 				/>
+				{#if isMobile}
+					<button class="mobile-close-btn" onclick={close} aria-label="Close">
+						<svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+							<path
+								d="M18 6L6 18M6 6l12 12"
+								stroke="currentColor"
+								stroke-width="2"
+								stroke-linecap="round"
+							/>
+						</svg>
+					</button>
+				{/if}
 			</div>
 			<div class="items-container">
 				{#each filteredItems as { section, items }, sectionIndex}
@@ -516,8 +541,9 @@
 	}
 
 	.backdrop.mobile {
-		background: rgba(0, 0, 0, 0.5);
+		background: var(--color-bg);
 		cursor: pointer;
+		touch-action: none;
 	}
 
 	.dropdown-panel {
@@ -535,28 +561,63 @@
 	}
 
 	.dropdown-panel.mobile {
-		top: auto !important;
+		top: 0 !important;
 		bottom: 0;
 		left: 0 !important;
 		right: 0;
 		width: 100%;
-		max-height: 70vh;
-		border-radius: 16px 16px 0 0;
-		animation: slideUp 0.25s ease-out;
+		max-height: none;
+		border-radius: 0;
+		padding-top: env(safe-area-inset-top, 0);
+		padding-left: env(safe-area-inset-left, 0);
+		padding-right: env(safe-area-inset-right, 0);
+		animation: fadeIn 0.2s ease-out;
+		overscroll-behavior: contain;
 	}
 
-	@keyframes slideUp {
+	@keyframes fadeIn {
 		from {
-			transform: translateY(100%);
+			opacity: 0;
 		}
 		to {
-			transform: translateY(0);
+			opacity: 1;
 		}
+	}
+
+	.mobile-close-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 2.5rem;
+		height: 2.5rem;
+		background: none;
+		border: none;
+		border-radius: 50%;
+		color: var(--color-text);
+		cursor: pointer;
+	}
+
+	.mobile-close-btn:hover {
+		background: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+	}
+
+	.dropdown-panel.mobile .items-container {
+		padding-bottom: calc(50vh + env(safe-area-inset-bottom, 0));
 	}
 
 	.search-container {
 		padding: 0.75rem;
 		border-bottom: 1px solid var(--color-border);
+	}
+
+	.search-container.mobile {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.search-container.mobile .search-input {
+		flex: 1;
 	}
 
 	.search-input {
@@ -579,6 +640,8 @@
 		flex: 1;
 		overflow-y: auto;
 		padding: 0.5rem 0;
+		overscroll-behavior: contain;
+		-webkit-overflow-scrolling: touch;
 	}
 
 	.section-header {
