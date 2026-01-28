@@ -2,7 +2,6 @@
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { page } from '$app/stores';
 	import { auth } from '$lib/stores/auth.svelte';
-	import { sidebarStore } from '$lib/stores/sidebar.svelte';
 	import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 	import { readingStore } from '$lib/stores/reading.svelte';
 	import { shareReadingStore } from '$lib/stores/shareReading.svelte';
@@ -258,7 +257,6 @@
 			onDelete={feedViewStore.feedFilter
 				? () => removeFeed(parseInt(feedViewStore.feedFilter!))
 				: undefined}
-			onMobileMenuToggle={() => sidebarStore.toggleMobile()}
 		/>
 
 		{#if (appManager.isHydrating || appManager.isRefreshing) && feedViewStore.currentItems.length === 0}

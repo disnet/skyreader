@@ -369,12 +369,20 @@ function createReadingStore() {
 		}
 	}
 
+	// Derived starred count
+	let starredCount = $derived(
+		Array.from(readPositions.values()).filter((pos) => pos.starred).length
+	);
+
 	return {
 		get readPositions() {
 			return readPositions;
 		},
 		get isLoading() {
 			return isLoading;
+		},
+		get starredCount() {
+			return starredCount;
 		},
 		load,
 		isRead,

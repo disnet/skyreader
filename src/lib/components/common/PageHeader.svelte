@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
 
 	interface Props {
 		title: string;
@@ -12,7 +13,7 @@
 
 <div class="page-header">
 	<div class="header-content">
-		<h1>{title}</h1>
+		<NavigationDropdown currentTitle={title} />
 		{#if subtitle}
 			<p class="subtitle">{subtitle}</p>
 		{/if}
@@ -30,7 +31,7 @@
 		justify-content: space-between;
 		align-items: flex-start;
 		gap: 1rem;
-		padding: 1rem;
+		padding: 0.75rem 0;
 		border-bottom: 1px solid var(--color-border);
 		position: sticky;
 		top: 0;
@@ -40,11 +41,7 @@
 
 	.header-content {
 		min-width: 0;
-	}
-
-	.page-header h1 {
-		font-size: 1.5rem;
-		margin: 0;
+		flex: 1;
 	}
 
 	.subtitle {

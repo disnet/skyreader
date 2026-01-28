@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import PopoverMenu from '$lib/components/PopoverMenu.svelte';
+	import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
 	import { formatRelativeTime } from '$lib/utils/date';
 
 	interface Props {
@@ -15,7 +16,6 @@
 		onMarkAllAsRead?: () => void;
 		onEdit?: () => void;
 		onDelete?: () => void;
-		onMobileMenuToggle: () => void;
 	}
 
 	let {
@@ -30,7 +30,6 @@
 		onMarkAllAsRead,
 		onEdit,
 		onDelete,
-		onMobileMenuToggle,
 	}: Props = $props();
 
 	// Tick counter to force re-evaluation of relative time
@@ -95,11 +94,8 @@
 </script>
 
 <div class="feed-header">
-	<button class="mobile-menu-btn" onclick={onMobileMenuToggle} aria-label="Open menu">
-		&lt;
-	</button>
 	<div class="feed-title-group">
-		<h1>{title}</h1>
+		<NavigationDropdown currentTitle={title} />
 		{#if feedId && menuItems.length > 0}
 			<PopoverMenu items={menuItems} />
 		{/if}
@@ -132,7 +128,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-		padding: 0.75rem 1rem;
+		padding: 0.75rem 0;
 		border-bottom: 1px solid var(--color-border);
 		position: sticky;
 		top: 0;
@@ -140,34 +136,11 @@
 		z-index: 10;
 	}
 
-	.mobile-menu-btn {
-		display: none;
-		background: none;
-		border: none;
-		font-size: 1.25rem;
-		cursor: pointer;
-		padding: 0.25rem 0.5rem;
-		color: var(--color-text-secondary);
-	}
-
 	.feed-title-group {
 		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-		flex: 1 1 auto;
+		align-items: center;
+		gap: 0.25rem;
 		min-width: 0;
-		overflow: hidden;
-	}
-
-	.feed-title-group h1 {
-		margin: 0;
-		font-size: 1.25rem;
-		font-weight: 600;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		min-width: 0;
-		flex: 0 1 auto;
 	}
 
 	.last-updated {
@@ -178,7 +151,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.25rem;
-		flex: 0 100 auto;
+		margin-left: auto;
 		min-width: 1.25rem;
 		overflow: hidden;
 	}
@@ -250,11 +223,5 @@
 
 	.view-toggle button:hover:not(.active) {
 		color: var(--color-text);
-	}
-
-	@media (max-width: 768px) {
-		.mobile-menu-btn {
-			display: block;
-		}
 	}
 </style>

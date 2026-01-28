@@ -4,6 +4,7 @@
 
 	const shortcuts = [
 		// Navigation
+		{ category: 'Navigation', key: '/', description: 'Open switcher' },
 		{ category: 'Navigation', key: 'j', description: 'Next item' },
 		{ category: 'Navigation', key: 'k', description: 'Previous item' },
 		{ category: 'Navigation', key: 'Enter', description: 'Toggle expand' },

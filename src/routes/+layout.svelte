@@ -172,6 +172,15 @@
 			condition: () => auth.isAuthenticated,
 		});
 
+		// Navigation switcher shortcut
+		keyboardStore.register({
+			key: '/',
+			description: 'Open switcher',
+			category: 'Navigation',
+			action: () => sidebarStore.toggleNavigationDropdown(),
+			condition: () => auth.isAuthenticated,
+		});
+
 		// Font size shortcuts (use resulting character from Shift+key)
 		keyboardStore.register({
 			key: '+',

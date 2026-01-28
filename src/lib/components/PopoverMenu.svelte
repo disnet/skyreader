@@ -18,9 +18,17 @@
 	let menuRef: HTMLDivElement | null = $state(null);
 	let buttonRef: HTMLButtonElement | null = $state(null);
 	let closeTimeout: ReturnType<typeof setTimeout> | null = null;
+	let menuPosition = $state({ top: 0, right: 0 });
 
 	function toggle(e: MouseEvent) {
 		e.stopPropagation();
+		if (!isOpen && buttonRef) {
+			const rect = buttonRef.getBoundingClientRect();
+			menuPosition = {
+				top: rect.bottom + 4,
+				right: window.innerWidth - rect.right,
+			};
+		}
 		isOpen = !isOpen;
 	}
 
@@ -92,7 +100,12 @@
 	</button>
 
 	{#if isOpen}
-		<div bind:this={menuRef} class="menu-dropdown" role="menu">
+		<div
+			bind:this={menuRef}
+			class="menu-dropdown"
+			role="menu"
+			style="top: {menuPosition.top}px; right: {menuPosition.right}px;"
+		>
 			{#each items as item}
 				<button
 					class="menu-item"
@@ -144,16 +157,13 @@
 	}
 
 	.menu-dropdown {
-		position: absolute;
-		top: 100%;
-		right: 0;
-		margin-top: 4px;
+		position: fixed;
 		min-width: 140px;
 		background: var(--color-bg);
 		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-		z-index: 50;
+		z-index: 200;
 		overflow: hidden;
 	}
 
