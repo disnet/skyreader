@@ -8,7 +8,10 @@ import { articlesStore } from './articles.svelte';
 import { syncStore } from './sync.svelte';
 import { fetchAllFeeds } from '$lib/services/feedFetcher';
 import { api } from '$lib/services/api';
+import { getMetadata, setMetadata } from '$lib/services/db';
 import type { Subscription } from '$lib/types';
+
+const LAST_REFRESH_KEY = 'lastRefreshAt';
 
 export type AppPhase = 'idle' | 'hydrating' | 'refreshing' | 'ready' | 'error';
 
@@ -45,6 +48,12 @@ function createAppManager() {
 		error = null;
 
 		try {
+			// Load persisted lastRefreshAt from IndexedDB
+			const persistedRefreshAt = await getMetadata<number>(LAST_REFRESH_KEY);
+			if (persistedRefreshAt) {
+				lastRefreshAt = persistedRefreshAt;
+			}
+
 			// Phase 1: Hydrate from cache (parallel)
 			await Promise.all([
 				liveDb.loadSubscriptions(),
@@ -72,6 +81,8 @@ function createAppManager() {
 
 			phase = 'ready';
 			lastRefreshAt = Date.now();
+			// Persist to IndexedDB for service worker and cross-session access
+			setMetadata(LAST_REFRESH_KEY, lastRefreshAt);
 		} catch (e) {
 			console.error('App initialization failed:', e);
 			error = e instanceof Error ? e.message : 'Initialization failed';
@@ -88,7 +99,7 @@ function createAppManager() {
 	 */
 	async function refreshFromBackend(): Promise<void> {
 		const wasPhase = phase;
-		if (phase === 'idle') {
+		if (phase === 'idle' || phase === 'ready') {
 			phase = 'refreshing';
 		}
 
@@ -106,12 +117,14 @@ function createAppManager() {
 			}
 
 			lastRefreshAt = Date.now();
+			// Persist to IndexedDB for service worker and cross-session access
+			setMetadata(LAST_REFRESH_KEY, lastRefreshAt);
 		} catch (e) {
 			console.error('Background refresh failed:', e);
 			// Don't set error phase for background refresh failures
 			// The app can still work with cached data
 		} finally {
-			if (wasPhase === 'idle') {
+			if (wasPhase === 'idle' || wasPhase === 'ready') {
 				phase = 'ready';
 			}
 		}
@@ -222,6 +235,8 @@ function createAppManager() {
 			const { forceRefreshAllFeeds } = await import('$lib/services/feedFetcher');
 			await forceRefreshAllFeeds(liveDb.subscriptions, articlesStore.starredGuids);
 			lastRefreshAt = Date.now();
+			// Persist to IndexedDB for service worker and cross-session access
+			setMetadata(LAST_REFRESH_KEY, lastRefreshAt);
 		} catch (e) {
 			console.error('Force refresh failed:', e);
 		} finally {

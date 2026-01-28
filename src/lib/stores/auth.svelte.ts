@@ -1,6 +1,7 @@
 import { browser } from '$app/environment';
 import { api } from '$lib/services/api';
 import { clearAllData } from '$lib/services/db';
+import { unregisterPeriodicSync } from '$lib/services/backgroundRefresh';
 import type { User } from '$lib/types';
 
 interface AuthState {
@@ -71,6 +72,8 @@ function createAuthStore() {
 		if (browser) {
 			localStorage.removeItem('skyreader-auth');
 			await clearAllData();
+			// Unregister from periodic background sync
+			await unregisterPeriodicSync();
 		}
 	}
 

@@ -5,6 +5,7 @@
 	import { auth } from '$lib/stores/auth.svelte';
 	import { api } from '$lib/services/api';
 	import { appManager } from '$lib/stores/app.svelte';
+	import { registerPeriodicSync } from '$lib/services/backgroundRefresh';
 
 	onMount(async () => {
 		const returnUrl = $page.url.searchParams.get('returnUrl') || '/';
@@ -19,6 +20,9 @@
 
 			// Initialize the app (loads subscriptions, articles, read state, etc.)
 			await appManager.initialize();
+
+			// Register for periodic background sync (Chromium only, fails gracefully on other browsers)
+			registerPeriodicSync();
 
 			goto(returnUrl);
 		} catch (error) {

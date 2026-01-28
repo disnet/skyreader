@@ -34,6 +34,14 @@ function createSyncStore() {
 			navigator.serviceWorker.addEventListener('message', async (event) => {
 				if (event.data?.type === 'PROCESS_SYNC_QUEUE') {
 					await triggerSync();
+				} else if (event.data?.type === 'BACKGROUND_REFRESH_REQUESTED') {
+					// Handle background refresh request from periodic sync
+					console.log('Background refresh requested by service worker');
+					// Dynamically import to avoid circular dependency
+					const { appManager } = await import('./app.svelte');
+					if (appManager.isInitialized) {
+						await appManager.refreshFromBackend();
+					}
 				}
 			});
 		}

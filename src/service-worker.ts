@@ -8,6 +8,11 @@ declare const self: ServiceWorkerGlobalScope;
 const CACHE_NAME = `skyreader-${version}`;
 const STATIC_ASSETS = [...build, ...files];
 
+// Constants for background refresh
+const PERIODIC_SYNC_TAG = 'background-feed-refresh';
+const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+const LAST_REFRESH_KEY = 'lastRefreshAt';
+
 // API routes to cache with network-first strategy
 const API_CACHE_ROUTES = ['/api/v2/feeds/fetch', '/api/social/feed', '/api/social/popular'];
 
@@ -122,3 +127,87 @@ self.addEventListener('message', (event) => {
 		self.skipWaiting();
 	}
 });
+
+// Periodic background sync handler (Chromium only)
+self.addEventListener('periodicsync', (event: Event) => {
+	const syncEvent = event as ExtendableEvent & { tag: string };
+	if (syncEvent.tag === PERIODIC_SYNC_TAG) {
+		syncEvent.waitUntil(handlePeriodicSync());
+	}
+});
+
+async function handlePeriodicSync(): Promise<void> {
+	try {
+		// Check if data is stale by reading from IndexedDB
+		const lastRefreshAt = await getLastRefreshFromIndexedDB();
+		const now = Date.now();
+
+		if (lastRefreshAt && now - lastRefreshAt < STALE_THRESHOLD_MS) {
+			console.log('Data is fresh, skipping background refresh');
+			return;
+		}
+
+		// Try to notify any open clients to refresh
+		const clients = await self.clients.matchAll({ type: 'window' });
+
+		if (clients.length > 0) {
+			// Send message to clients to trigger refresh
+			clients.forEach((client) => {
+				client.postMessage({ type: 'BACKGROUND_REFRESH_REQUESTED' });
+			});
+			console.log('Background refresh requested via client message');
+		} else {
+			// No clients open - just update the timestamp
+			// The actual refresh will happen when the app is opened
+			console.log('No clients available for background refresh');
+		}
+	} catch (error) {
+		console.error('Periodic sync failed:', error);
+	}
+}
+
+async function getLastRefreshFromIndexedDB(): Promise<number | null> {
+	return new Promise((resolve) => {
+		const request = indexedDB.open('skyreader');
+
+		request.onerror = () => resolve(null);
+
+		request.onsuccess = () => {
+			const db = request.result;
+
+			// Check if metadata store exists
+			if (!db.objectStoreNames.contains('metadata')) {
+				db.close();
+				resolve(null);
+				return;
+			}
+
+			try {
+				const transaction = db.transaction('metadata', 'readonly');
+				const store = transaction.objectStore('metadata');
+				const getRequest = store.get(LAST_REFRESH_KEY);
+
+				getRequest.onsuccess = () => {
+					db.close();
+					if (getRequest.result?.value) {
+						try {
+							resolve(JSON.parse(getRequest.result.value));
+						} catch {
+							resolve(null);
+						}
+					} else {
+						resolve(null);
+					}
+				};
+
+				getRequest.onerror = () => {
+					db.close();
+					resolve(null);
+				};
+			} catch {
+				db.close();
+				resolve(null);
+			}
+		};
+	});
+}

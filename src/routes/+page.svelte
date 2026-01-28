@@ -53,7 +53,7 @@
 
 	// Tab visibility state
 	let lastVisibleTime = $state(Date.now());
-	const STALE_THRESHOLD_MS = 5 * 60 * 1000;
+	const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 
 	// Reference to FeedListView component for accessing article elements
 	let feedListView = $state<ReturnType<typeof FeedListView> | null>(null);
@@ -198,10 +198,9 @@
 
 	async function handleVisibilityChange() {
 		if (document.visibilityState === 'visible' && auth.isAuthenticated) {
-			const timeSinceVisible = Date.now() - lastVisibleTime;
-
-			if (timeSinceVisible > STALE_THRESHOLD_MS) {
-				console.log('Tab was hidden for a while, checking for updates...');
+			// Check if data is actually stale using persisted lastRefreshAt
+			if (appManager.isStale(STALE_THRESHOLD_MS)) {
+				console.log('Data is stale, refreshing...');
 				await appManager.refreshFromBackend();
 			}
 		}
@@ -250,7 +249,10 @@
 			feedId={feedViewStore.feedFilter ? parseInt(feedViewStore.feedFilter) : undefined}
 			showViewToggle={!feedViewStore.starredFilter && !feedViewStore.sharedFilter}
 			showOnlyUnread={feedViewStore.showOnlyUnread}
+			lastRefreshAt={appManager.lastRefreshAt}
+			isRefreshing={appManager.isRefreshing}
 			onToggleUnread={(value) => feedViewStore.setShowOnlyUnread(value)}
+			onRefresh={() => appManager.refreshFromBackend()}
 			onMarkAllAsRead={feedViewStore.feedFilter ? markAllAsReadInCurrentFeed : undefined}
 			onEdit={feedViewStore.feedFilter ? handleEditFeed : undefined}
 			onDelete={feedViewStore.feedFilter

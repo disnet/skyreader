@@ -1,15 +1,8 @@
 /**
- * Format a date string as a relative time (e.g., "5m ago", "2h ago", "3d ago")
- * Falls back to locale date string for dates older than 7 days
+ * Format a timestamp (ms) as a relative time (e.g., "5m ago", "2h ago", "3d ago")
  */
-export function formatRelativeDate(dateString: string): string {
-	const date = new Date(dateString);
-	if (isNaN(date.getTime())) {
-		return dateString;
-	}
-
-	const now = new Date();
-	const diffMs = now.getTime() - date.getTime();
+export function formatRelativeTime(timestamp: number): string {
+	const diffMs = Date.now() - timestamp;
 
 	// Handle future dates or just now
 	if (diffMs < 60000) {
@@ -43,4 +36,16 @@ export function formatRelativeDate(dateString: string): string {
 
 	const years = Math.floor(diffDays / 365);
 	return `${years}y ago`;
+}
+
+/**
+ * Format a date string as a relative time (e.g., "5m ago", "2h ago", "3d ago")
+ * Falls back to the original string if invalid
+ */
+export function formatRelativeDate(dateString: string): string {
+	const date = new Date(dateString);
+	if (isNaN(date.getTime())) {
+		return dateString;
+	}
+	return formatRelativeTime(date.getTime());
 }

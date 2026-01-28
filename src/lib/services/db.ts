@@ -22,6 +22,12 @@ export interface SyncQueueEntry {
 	status: 'pending' | 'processing' | 'failed';
 }
 
+// Metadata key-value store for app state persistence
+export interface MetadataEntry {
+	key: string; // primary key
+	value: string; // JSON-serialized value
+}
+
 class SkyreaderDatabase extends Dexie {
 	subscriptions!: Table<Subscription>;
 	articles!: Table<Article>;
@@ -30,6 +36,7 @@ class SkyreaderDatabase extends Dexie {
 	socialShares!: Table<SocialShare>;
 	userShares!: Table<UserShare>;
 	syncQueue!: Table<SyncQueueEntry>;
+	metadata!: Table<MetadataEntry>;
 
 	constructor() {
 		super('skyreader');
@@ -96,6 +103,11 @@ class SkyreaderDatabase extends Dexie {
 		this.version(11).stores({
 			syncQueue: '++id, [collection+key], status, timestamp',
 		});
+
+		// Add metadata table for persisting app state
+		this.version(12).stores({
+			metadata: 'key',
+		});
 	}
 }
 
@@ -111,5 +123,21 @@ export async function clearAllData(): Promise<void> {
 		db.socialShares.clear(),
 		db.userShares.clear(),
 		db.syncQueue.clear(),
+		db.metadata.clear(),
 	]);
+}
+
+// Metadata helpers for persisting app state
+export async function getMetadata<T>(key: string): Promise<T | null> {
+	const entry = await db.metadata.get(key);
+	if (!entry) return null;
+	try {
+		return JSON.parse(entry.value) as T;
+	} catch {
+		return null;
+	}
+}
+
+export async function setMetadata<T>(key: string, value: T): Promise<void> {
+	await db.metadata.put({ key, value: JSON.stringify(value) });
 }

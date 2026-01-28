@@ -1,12 +1,17 @@
 <script lang="ts">
+	import { onMount, onDestroy } from 'svelte';
 	import PopoverMenu from '$lib/components/PopoverMenu.svelte';
+	import { formatRelativeTime } from '$lib/utils/date';
 
 	interface Props {
 		title: string;
 		feedId?: number;
 		showViewToggle?: boolean;
 		showOnlyUnread: boolean;
+		lastRefreshAt?: number | null;
+		isRefreshing?: boolean;
 		onToggleUnread: (value: boolean) => void;
+		onRefresh?: () => void;
 		onMarkAllAsRead?: () => void;
 		onEdit?: () => void;
 		onDelete?: () => void;
@@ -18,12 +23,46 @@
 		feedId,
 		showViewToggle = true,
 		showOnlyUnread,
+		lastRefreshAt,
+		isRefreshing = false,
 		onToggleUnread,
+		onRefresh,
 		onMarkAllAsRead,
 		onEdit,
 		onDelete,
 		onMobileMenuToggle,
 	}: Props = $props();
+
+	// Tick counter to force re-evaluation of relative time
+	let tick = $state(0);
+	let intervalId: ReturnType<typeof setInterval> | null = null;
+
+	// Debounce refresh button
+	let lastRefreshClick = 0;
+	const DEBOUNCE_MS = 2000;
+
+	function handleRefresh() {
+		const now = Date.now();
+		if (now - lastRefreshClick < DEBOUNCE_MS) return;
+		lastRefreshClick = now;
+		onRefresh?.();
+	}
+
+	onMount(() => {
+		// Update relative time every minute
+		intervalId = setInterval(() => {
+			tick++;
+		}, 60000);
+	});
+
+	onDestroy(() => {
+		if (intervalId) clearInterval(intervalId);
+	});
+
+	// Use tick to force re-evaluation (void to suppress unused warning)
+	let relativeTime = $derived(
+		lastRefreshAt ? (void tick, formatRelativeTime(lastRefreshAt)) : null
+	);
 
 	let menuItems = $derived.by(() => {
 		if (!feedId) return [];
@@ -65,6 +104,21 @@
 			<PopoverMenu items={menuItems} />
 		{/if}
 	</div>
+	{#if relativeTime}
+		<span class="last-updated">
+			<span class="last-updated-text">Updated {relativeTime}</span>
+			{#if onRefresh}
+				<button
+					class="refresh-btn"
+					onclick={handleRefresh}
+					disabled={isRefreshing}
+					aria-label="Refresh feeds"
+				>
+					<span class:spinning={isRefreshing}>↻</span>
+				</button>
+			{/if}
+		</span>
+	{/if}
 	{#if showViewToggle}
 		<div class="view-toggle">
 			<button class:active={showOnlyUnread} onclick={() => onToggleUnread(true)}> Unread </button>
@@ -98,10 +152,11 @@
 
 	.feed-title-group {
 		display: flex;
-		align-items: center;
+		align-items: baseline;
 		gap: 0.5rem;
-		flex: 1;
+		flex: 1 1 auto;
 		min-width: 0;
+		overflow: hidden;
 	}
 
 	.feed-title-group h1 {
@@ -111,6 +166,60 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		min-width: 0;
+		flex: 0 1 auto;
+	}
+
+	.last-updated {
+		font-size: 0.6875rem;
+		color: var(--color-text-muted, var(--color-text-secondary));
+		opacity: 0.6;
+		white-space: nowrap;
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+		flex: 0 100 auto;
+		min-width: 1.25rem;
+		overflow: hidden;
+	}
+
+	.last-updated-text {
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.refresh-btn {
+		background: none;
+		border: none;
+		padding: 0.125rem;
+		cursor: pointer;
+		color: inherit;
+		font-size: 0.875rem;
+		line-height: 1;
+		opacity: 0.8;
+		transition: opacity 0.15s;
+	}
+
+	.refresh-btn:hover:not(:disabled) {
+		opacity: 1;
+	}
+
+	.refresh-btn:disabled {
+		cursor: default;
+	}
+
+	.refresh-btn .spinning {
+		display: inline-block;
+		animation: spin 1s linear infinite;
+	}
+
+	@keyframes spin {
+		from {
+			transform: rotate(0deg);
+		}
+		to {
+			transform: rotate(360deg);
+		}
 	}
 
 	.view-toggle {
@@ -119,6 +228,7 @@
 		background: var(--color-bg-secondary);
 		border-radius: 6px;
 		padding: 0.125rem;
+		flex-shrink: 0;
 	}
 
 	.view-toggle button {
