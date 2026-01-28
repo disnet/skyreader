@@ -76,7 +76,7 @@
 	});
 </script>
 
-<article class="article-item" class:read={isRead} class:selected class:expanded>
+<article class="article-item" class:read={isRead} class:selected class:expanded class:open={isOpen}>
 	<div class="article-sticky-header">
 		<button class="article-header" onclick={handleHeaderClick}>
 			{#if siteUrl}
@@ -169,13 +169,13 @@
 		position: relative;
 	}
 
-	.article-item.expanded .article-sticky-header {
+	.article-item.open .article-sticky-header {
 		position: sticky;
-		top: 0;
+		top: 3rem;
 		z-index: 10;
 	}
 
-	.article-item.expanded .article-sticky-header::before {
+	.article-item.open .article-sticky-header::before {
 		content: '';
 		position: absolute;
 		top: 0;
@@ -186,14 +186,8 @@
 		z-index: -1;
 	}
 
-	@media (max-width: 768px) {
-		.article-item.expanded .article-sticky-header {
-			top: 3rem;
-		}
-	}
-
 	@media (prefers-color-scheme: dark) {
-		.article-item.expanded .article-sticky-header::before {
+		.article-item.open .article-sticky-header::before {
 			background: var(--color-bg, #1a1a1a);
 		}
 	}

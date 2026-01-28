@@ -9,6 +9,7 @@
 		type ArticleFontSize,
 	} from '$lib/stores/preferences.svelte';
 	import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
+	import PageHeader from '$lib/components/common/PageHeader.svelte';
 
 	const fontOptions: { value: ArticleFont; label: string }[] = [
 		{ value: 'sans-serif', label: 'Sans Serif' },
@@ -68,7 +69,7 @@
 </script>
 
 <div class="settings-page">
-	<h1>Settings</h1>
+	<PageHeader title="Settings" />
 
 	{#if auth.user}
 		<section class="card">
@@ -188,10 +189,6 @@
 	.settings-page {
 		max-width: 600px;
 		margin: 0 auto;
-	}
-
-	.settings-page h1 {
-		margin-bottom: 1.5rem;
 	}
 
 	section {

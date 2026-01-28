@@ -2,6 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import PopoverMenu from '$lib/components/PopoverMenu.svelte';
 	import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
+	import { sidebarStore } from '$lib/stores/sidebar.svelte';
 	import { formatRelativeTime } from '$lib/utils/date';
 
 	interface Props {
@@ -63,6 +64,8 @@
 		lastRefreshAt ? (void tick, formatRelativeTime(lastRefreshAt)) : null
 	);
 
+	let dropdownOpen = $derived(sidebarStore.navigationDropdownOpen);
+
 	let menuItems = $derived.by(() => {
 		if (!feedId) return [];
 		const items: Array<{ label: string; icon: string; onclick: () => void; variant?: 'danger' }> =
@@ -93,7 +96,7 @@
 	});
 </script>
 
-<div class="feed-header">
+<div class="feed-header" class:dropdown-open={dropdownOpen}>
 	<div class="feed-title-group">
 		<NavigationDropdown currentTitle={title} />
 		{#if feedId && menuItems.length > 0}
@@ -134,6 +137,10 @@
 		top: 0;
 		background: var(--color-bg);
 		z-index: 10;
+	}
+
+	.feed-header.dropdown-open {
+		z-index: 1002;
 	}
 
 	.feed-title-group {

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
+	import { sidebarStore } from '$lib/stores/sidebar.svelte';
 
 	interface Props {
 		title: string;
@@ -9,9 +10,11 @@
 	}
 
 	let { title, subtitle, children }: Props = $props();
+
+	let dropdownOpen = $derived(sidebarStore.navigationDropdownOpen);
 </script>
 
-<div class="page-header">
+<div class="page-header" class:dropdown-open={dropdownOpen}>
 	<div class="header-content">
 		<NavigationDropdown currentTitle={title} />
 		{#if subtitle}
@@ -37,6 +40,10 @@
 		top: 0;
 		background: var(--color-bg);
 		z-index: 10;
+	}
+
+	.page-header.dropdown-open {
+		z-index: 1002;
 	}
 
 	.header-content {

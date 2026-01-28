@@ -535,7 +535,7 @@
 		position: fixed;
 		inset: 0;
 		background: transparent;
-		z-index: 100;
+		z-index: 1000;
 		border: none;
 		cursor: default;
 	}
@@ -554,7 +554,7 @@
 		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-		z-index: 101;
+		z-index: 1001;
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
