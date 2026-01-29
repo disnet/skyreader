@@ -18,18 +18,56 @@
 	let menuRef: HTMLDivElement | null = $state(null);
 	let buttonRef: HTMLButtonElement | null = $state(null);
 	let closeTimeout: ReturnType<typeof setTimeout> | null = null;
-	let menuPosition = $state({ top: 0, right: 0 });
+	let menuPosition = $state<{
+		top?: number;
+		bottom?: number;
+		left?: number;
+		right?: number;
+	}>({});
+
+	function updateMenuPosition() {
+		if (!buttonRef || !menuRef) return;
+
+		const buttonRect = buttonRef.getBoundingClientRect();
+		const menuRect = menuRef.getBoundingClientRect();
+		const viewportHeight = window.innerHeight;
+		const viewportWidth = window.innerWidth;
+
+		const position: typeof menuPosition = {};
+
+		// Vertical positioning: prefer below, but flip to above if not enough space
+		const spaceBelow = viewportHeight - buttonRect.bottom;
+		const spaceAbove = buttonRect.top;
+		const menuHeight = menuRect.height;
+
+		if (spaceBelow >= menuHeight + 4 || spaceBelow >= spaceAbove) {
+			position.top = buttonRect.bottom + 4;
+		} else {
+			position.bottom = viewportHeight - buttonRect.top + 4;
+		}
+
+		// Horizontal positioning: prefer right-aligned, but flip if not enough space
+		const spaceOnRight = buttonRect.right;
+		const menuWidth = menuRect.width;
+
+		if (spaceOnRight >= menuWidth || spaceOnRight >= viewportWidth - buttonRect.left) {
+			position.right = viewportWidth - buttonRect.right;
+		} else {
+			position.left = buttonRect.left;
+		}
+
+		menuPosition = position;
+	}
 
 	function toggle(e: MouseEvent) {
 		e.stopPropagation();
-		if (!isOpen && buttonRef) {
-			const rect = buttonRef.getBoundingClientRect();
-			menuPosition = {
-				top: rect.bottom + 4,
-				right: window.innerWidth - rect.right,
-			};
-		}
 		isOpen = !isOpen;
+		if (isOpen) {
+			// Position after the menu is rendered
+			requestAnimationFrame(() => {
+				updateMenuPosition();
+			});
+		}
 	}
 
 	function handleMouseLeave() {
@@ -104,7 +142,13 @@
 			bind:this={menuRef}
 			class="menu-dropdown"
 			role="menu"
-			style="top: {menuPosition.top}px; right: {menuPosition.right}px;"
+			style="{menuPosition.top !== undefined
+				? `top: ${menuPosition.top}px;`
+				: ''} {menuPosition.bottom !== undefined
+				? `bottom: ${menuPosition.bottom}px;`
+				: ''} {menuPosition.left !== undefined
+				? `left: ${menuPosition.left}px;`
+				: ''} {menuPosition.right !== undefined ? `right: ${menuPosition.right}px;` : ''}"
 		>
 			{#each items as item}
 				<button

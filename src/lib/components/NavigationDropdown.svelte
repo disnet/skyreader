@@ -472,7 +472,7 @@
 <style>
 	.nav-dropdown {
 		position: relative;
-		flex: 1 1 auto;
+		flex: 0 1 auto;
 		min-width: 0;
 	}
 
@@ -480,27 +480,19 @@
 		display: flex;
 		align-items: center;
 		gap: 0.25rem;
-		background: var(--color-bg-secondary);
-		border: 1px solid var(--color-border);
-		border-radius: 5px;
-		padding: 0.25rem 0.5rem;
+		background: none;
+		border: none;
+		padding: 0;
 		cursor: pointer;
 		font: inherit;
 		color: var(--color-text);
 		max-width: 100%;
 		min-width: 0;
-		transition:
-			background-color 0.15s,
-			border-color 0.15s;
+		transition: color 0.15s;
 	}
 
 	.trigger:hover {
-		background: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
-		border-color: var(--color-text-secondary);
-	}
-
-	.trigger:active {
-		background: var(--color-bg-secondary);
+		color: var(--color-primary);
 	}
 
 	.trigger-title {
@@ -511,20 +503,10 @@
 		white-space: nowrap;
 	}
 
-	@media (prefers-color-scheme: dark) {
-		.trigger:hover {
-			background: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
-		}
-	}
-
 	.trigger-chevron {
 		flex-shrink: 0;
 		transition: transform 0.2s ease;
 		opacity: 0.6;
-	}
-
-	.trigger:hover .trigger-chevron {
-		opacity: 1;
 	}
 
 	.trigger-chevron.open {

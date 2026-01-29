@@ -182,6 +182,47 @@
 		}
 	}
 
+	async function markAllAsReadInCurrentView() {
+		const items = feedViewStore.currentItems;
+		const articlesToMark: Array<{
+			subscriptionRkey: string;
+			articleGuid: string;
+			articleUrl: string;
+			articleTitle: string;
+		}> = [];
+
+		for (const item of items) {
+			if (item.type === 'article') {
+				const article = item.item;
+				if (!readingStore.isRead(article.guid)) {
+					const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
+					if (sub) {
+						articlesToMark.push({
+							subscriptionRkey: sub.rkey,
+							articleGuid: article.guid,
+							articleUrl: article.url,
+							articleTitle: article.title,
+						});
+					}
+				}
+			} else if (item.type === 'share') {
+				const share = item.item;
+				if (!shareReadingStore.isRead(share.recordUri)) {
+					shareReadingStore.markAsRead(
+						share.recordUri,
+						share.authorDid,
+						share.itemUrl,
+						share.itemTitle
+					);
+				}
+			}
+		}
+
+		if (articlesToMark.length > 0) {
+			await readingStore.markAllAsRead(articlesToMark);
+		}
+	}
+
 	// Keyboard shortcuts hook
 	const keyboardShortcuts = useFeedKeyboardShortcuts({
 		scrollToCenter,
@@ -252,7 +293,9 @@
 			isRefreshing={appManager.isRefreshing}
 			onToggleUnread={(value) => feedViewStore.setShowOnlyUnread(value)}
 			onRefresh={() => appManager.refreshFromBackend()}
-			onMarkAllAsRead={feedViewStore.feedFilter ? markAllAsReadInCurrentFeed : undefined}
+			onMarkAllAsRead={!feedViewStore.starredFilter && !feedViewStore.sharedFilter
+				? markAllAsReadInCurrentView
+				: undefined}
 			onEdit={feedViewStore.feedFilter ? handleEditFeed : undefined}
 			onDelete={feedViewStore.feedFilter
 				? () => removeFeed(parseInt(feedViewStore.feedFilter!))
@@ -337,5 +380,6 @@
 	.feed-page {
 		max-width: 800px;
 		margin: 0 auto;
+		padding-top: 3rem;
 	}
 </style>
