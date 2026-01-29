@@ -241,7 +241,7 @@
 		padding: 0.125rem;
 		cursor: pointer;
 		color: inherit;
-		font-size: 0.875rem;
+		font-size: 1rem;
 		line-height: 1;
 		opacity: 0.8;
 		transition: opacity 0.15s;
@@ -284,7 +284,7 @@
 		background: none;
 		border: none;
 		padding: 0.5rem;
-		font-size: 0.8125rem;
+		font-size: 1rem;
 		font-weight: 500;
 		border-radius: 999px;
 		cursor: pointer;

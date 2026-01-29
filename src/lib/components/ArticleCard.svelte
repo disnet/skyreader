@@ -375,7 +375,7 @@
 		white-space: nowrap;
 		background: none;
 		border: none;
-		font-size: 0.875rem;
+		font-size: 1rem;
 		color: var(--color-text-secondary);
 		padding: 0;
 		cursor: pointer;
@@ -457,7 +457,7 @@
 			display: none;
 		}
 		.action-btn {
-			font-size: 1rem;
+			font-size: 1.125rem;
 		}
 	}
 </style>

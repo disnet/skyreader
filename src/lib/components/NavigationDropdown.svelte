@@ -560,7 +560,7 @@
 	}
 
 	.trigger-title {
-		font-size: 0.9375rem;
+		font-size: 1rem;
 		font-weight: 600;
 		overflow: hidden;
 		text-overflow: ellipsis;
