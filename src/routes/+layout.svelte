@@ -240,18 +240,20 @@
 <div class="app">
 	{#if !auth.isLoading}
 		{#if auth.isAuthenticated}
-			<Sidebar />
-			<button
-				class="mobile-menu-btn"
-				onclick={() => sidebarStore.toggleMobile()}
-				aria-label="Open menu"
-			>
-				&#x2630;
-			</button>
-			<div class="main-wrapper" class:sidebar-collapsed={sidebarStore.isCollapsed}>
-				<main>
-					{@render children()}
-				</main>
+			<div class="app-container">
+				<Sidebar />
+				<button
+					class="mobile-menu-btn"
+					onclick={() => sidebarStore.toggleMobile()}
+					aria-label="Open menu"
+				>
+					&#x2630;
+				</button>
+				<div class="main-wrapper">
+					<main>
+						{@render children()}
+					</main>
+				</div>
 			</div>
 		{:else}
 			<header class="header-full">
@@ -297,17 +299,22 @@
 		flex-direction: column;
 	}
 
-	/* Main wrapper with sidebar margin */
+	/* Centered container for sidebar + main content */
+	.app-container {
+		display: flex;
+		max-width: 1200px;
+		width: 100%;
+		margin: 0 auto;
+		min-height: 100vh;
+	}
+
+	/* Main wrapper next to sidebar */
 	.main-wrapper {
-		margin-left: var(--sidebar-width, 260px);
+		flex: 1;
 		min-height: 100vh;
 		display: flex;
 		flex-direction: column;
-		transition: margin-left 0.2s ease;
-	}
-
-	.main-wrapper.sidebar-collapsed {
-		margin-left: var(--sidebar-collapsed-width, 60px);
+		min-width: 0;
 	}
 
 	.header-full {
@@ -384,9 +391,7 @@
 
 	main {
 		flex: 1;
-		max-width: 900px;
 		width: 100%;
-		margin: 0 auto;
 		padding: 1rem;
 	}
 
@@ -433,12 +438,8 @@
 	}
 
 	@media (max-width: 768px) {
-		.main-wrapper {
-			margin-left: 0;
-		}
-
-		.main-wrapper.sidebar-collapsed {
-			margin-left: 0;
+		.app-container {
+			flex-direction: column;
 		}
 
 		/* Hide floating hamburger - mobile header in page handles this now */

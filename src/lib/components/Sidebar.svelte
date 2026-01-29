@@ -16,8 +16,6 @@
 	import { onMount, onDestroy } from 'svelte';
 	import AddFeedModal from './AddFeedModal.svelte';
 	import EditFeedModal from './EditFeedModal.svelte';
-	import Logo from '$lib/assets/logo.svg';
-	import ResizeHandle from './sidebar/ResizeHandle.svelte';
 	import ContextMenu from './sidebar/ContextMenu.svelte';
 	import NavSection from './sidebar/NavSection.svelte';
 	import FeedItem from './sidebar/FeedItem.svelte';
@@ -28,50 +26,6 @@
 		if (confirm('Are you sure you want to remove this subscription?')) {
 			await subscriptionsStore.remove(id);
 		}
-	}
-
-	// Sidebar resize state
-	const MIN_WIDTH = 180;
-	const MAX_WIDTH = 400;
-	const DEFAULT_WIDTH = 260;
-	let sidebarWidth = $state(DEFAULT_WIDTH);
-	let isResizing = $state(false);
-
-	function loadSavedWidth() {
-		const saved = localStorage.getItem('sidebar-width');
-		if (saved) {
-			const width = parseInt(saved, 10);
-			if (width >= MIN_WIDTH && width <= MAX_WIDTH) {
-				sidebarWidth = width;
-			}
-		}
-		updateCssVariable(sidebarWidth);
-	}
-
-	function saveWidth(width: number) {
-		localStorage.setItem('sidebar-width', String(width));
-	}
-
-	function updateCssVariable(width: number) {
-		document.documentElement.style.setProperty('--sidebar-width', `${width}px`);
-	}
-
-	// Update CSS variable whenever width changes
-	$effect(() => {
-		updateCssVariable(sidebarWidth);
-	});
-
-	function handleWidthChange(width: number) {
-		sidebarWidth = width;
-	}
-
-	function handleResizeStart() {
-		isResizing = true;
-	}
-
-	function handleResizeEnd() {
-		isResizing = false;
-		saveWidth(sidebarWidth);
 	}
 
 	// Context menu state
@@ -144,7 +98,6 @@
 	}
 
 	onMount(() => {
-		loadSavedWidth();
 		document.addEventListener('click', handleClickOutside);
 		document.addEventListener('keydown', handleKeydown);
 
@@ -191,6 +144,10 @@
 
 	// Current filter from URL
 	let currentFilter = $derived(() => {
+		// Only show feed filters as active on the home page
+		if ($page.url.pathname !== '/') {
+			return { type: 'none' as const };
+		}
 		const feed = $page.url.searchParams.get('feed');
 		const starred = $page.url.searchParams.get('starred');
 		const shared = $page.url.searchParams.get('shared');
@@ -317,46 +274,21 @@
 	></button>
 {/if}
 
-<aside
-	class="sidebar"
-	class:collapsed={sidebarStore.isCollapsed}
-	class:open={sidebarStore.isOpen}
-	class:resizing={isResizing}
-	style="--sidebar-width: {sidebarWidth}px"
->
-	<!-- Resize handle -->
-	<ResizeHandle
-		width={sidebarWidth}
-		onWidthChange={handleWidthChange}
-		onResizeStart={handleResizeStart}
-		onResizeEnd={handleResizeEnd}
-		minWidth={MIN_WIDTH}
-		maxWidth={MAX_WIDTH}
-	/>
-
+<aside class="sidebar" class:collapsed={sidebarStore.isCollapsed} class:open={sidebarStore.isOpen}>
 	<!-- Header row -->
 	<div class="sidebar-header">
-		<a href="/" class="logo-link" onclick={() => sidebarStore.closeMobile()}>
-			<img src={Logo} alt="Skyreader" class="sidebar-logo" />
+		<a href="/settings" class="user-info" onclick={() => sidebarStore.closeMobile()}>
+			{#if auth.user?.avatarUrl}
+				<img src={auth.user.avatarUrl} alt="" class="avatar" />
+			{:else}
+				<div class="avatar-placeholder"></div>
+			{/if}
 			{#if !sidebarStore.isCollapsed}
-				<span class="logo-text">Skyreader</span>
-				<span class="beta-badge">beta</span>
+				<span class="username">@{auth.user?.handle}</span>
 			{/if}
 		</a>
 		<button class="add-feed-btn" onclick={handleAddFeed} aria-label="Add feed"> + </button>
 	</div>
-
-	<!-- User info row -->
-	<a href="/settings" class="user-info" onclick={() => sidebarStore.closeMobile()}>
-		{#if auth.user?.avatarUrl}
-			<img src={auth.user.avatarUrl} alt="" class="avatar" />
-		{:else}
-			<div class="avatar-placeholder"></div>
-		{/if}
-		{#if !sidebarStore.isCollapsed}
-			<span class="username">@{auth.user?.handle}</span>
-		{/if}
-	</a>
 
 	<!-- Navigation items -->
 	<nav class="sidebar-nav">
@@ -399,14 +331,24 @@
 			{/if}
 		</button>
 
-		<a href="/discover" class="nav-item nav-link" onclick={() => sidebarStore.closeMobile()}>
+		<a
+			href="/discover"
+			class="nav-item nav-link"
+			class:active={$page.url.pathname === '/discover'}
+			onclick={() => sidebarStore.closeMobile()}
+		>
 			<span class="nav-icon">&#x1F50D;</span>
 			{#if !sidebarStore.isCollapsed}
 				<span class="nav-label">Discover</span>
 			{/if}
 		</a>
 
-		<a href="/activity" class="nav-item nav-link" onclick={() => sidebarStore.closeMobile()}>
+		<a
+			href="/activity"
+			class="nav-item nav-link"
+			class:active={$page.url.pathname === '/activity'}
+			onclick={() => sidebarStore.closeMobile()}
+		>
 			<span class="nav-icon">&#x1F514;</span>
 			{#if !sidebarStore.isCollapsed}
 				<span class="nav-label">Activity</span>
@@ -416,7 +358,12 @@
 			{/if}
 		</a>
 
-		<a href="/settings" class="nav-item nav-link" onclick={() => sidebarStore.closeMobile()}>
+		<a
+			href="/settings"
+			class="nav-item nav-link"
+			class:active={$page.url.pathname === '/settings'}
+			onclick={() => sidebarStore.closeMobile()}
+		>
 			<span class="nav-icon">⚙</span>
 			{#if !sidebarStore.isCollapsed}
 				<span class="nav-label">Settings</span>
@@ -538,25 +485,18 @@
 	}
 
 	.sidebar {
-		position: fixed;
-		left: 0;
+		position: sticky;
 		top: 0;
-		bottom: 0;
+		height: 100vh;
 		width: var(--sidebar-width, 260px);
-		background: var(--color-bg-secondary);
-		border-right: 1px solid var(--color-border);
+		flex-shrink: 0;
+		background: var(--color-bg);
 		display: flex;
 		flex-direction: column;
 		z-index: 50;
-		transition:
-			width 0.2s ease,
-			transform 0.2s ease;
+		transition: width 0.2s ease;
 		overflow-y: auto;
-	}
-
-	.sidebar.resizing {
-		transition: none;
-		user-select: none;
+		padding: 0 0.5rem;
 	}
 
 	.sidebar.collapsed {
@@ -567,63 +507,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: 0.75rem;
-		border-bottom: 1px solid var(--color-border);
+		padding: 0.75rem 0;
 		flex-shrink: 0;
-	}
-
-	.logo-link {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		text-decoration: none;
-		color: var(--color-primary);
-		font-weight: 700;
-		font-size: 1rem;
-	}
-
-	.sidebar-logo {
-		width: 28px;
-		height: 28px;
-		flex-shrink: 0;
-	}
-
-	.logo-text {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	/* Web 2.0 style beta badge */
-	.beta-badge {
-		position: relative;
-		padding: 2px 6px;
-		font-size: 0.5rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.5px;
-		color: white;
-		background: linear-gradient(180deg, #ff6b6b 0%, #ee2222 50%, #cc0000 100%);
-		border-radius: 3px;
-		transform: rotate(12deg);
-		box-shadow:
-			0 1px 2px rgba(0, 0, 0, 0.3),
-			inset 0 1px 0 rgba(255, 255, 255, 0.4);
-		border: 1px solid #aa0000;
-		flex-shrink: 0;
-	}
-
-	/* Glossy highlight effect */
-	.beta-badge::before {
-		content: '';
-		position: absolute;
-		top: 1px;
-		left: 1px;
-		right: 1px;
-		height: 45%;
-		background: linear-gradient(180deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0.1) 100%);
-		border-radius: 2px 2px 50% 50%;
-		pointer-events: none;
 	}
 
 	.user-info {
@@ -634,6 +519,7 @@
 		color: var(--color-text);
 		min-width: 0;
 		padding: 0.5rem 0.75rem;
+		border-radius: 12px;
 		transition: background-color 0.15s;
 	}
 
@@ -668,20 +554,26 @@
 		background: none;
 		border: none;
 		cursor: pointer;
-		padding: 0.25rem 0.5rem;
+		padding: 0.5rem 0.75rem;
 		color: var(--color-text-secondary);
 		font-size: 1.25rem;
 		line-height: 1;
 		flex-shrink: 0;
+		border-radius: 12px;
+		transition: background-color 0.15s;
 	}
 
 	.add-feed-btn:hover {
 		color: var(--color-primary);
+		background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
 	}
 
 	.sidebar-nav {
 		flex: 1;
 		padding: 0.5rem 0;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
 	}
 
 	.nav-item {
@@ -692,6 +584,7 @@
 		padding: 0.5rem 0.75rem;
 		background: none;
 		border: none;
+		border-radius: 12px;
 		cursor: pointer;
 		text-align: left;
 		font: inherit;
@@ -757,9 +650,11 @@
 		}
 
 		.sidebar {
+			position: fixed;
+			left: 0;
+			top: 0;
 			width: 100% !important;
 			height: 100%;
-			border-right: none;
 			transform: translateX(-100%);
 			transition: transform 0.25s ease-out;
 		}

@@ -66,6 +66,7 @@
 		gap: 0.5rem;
 		width: 100%;
 		padding: 0.5rem 0.75rem;
+		border-radius: 12px;
 		color: var(--color-text-secondary);
 		font-size: 0.75rem;
 		text-transform: uppercase;
@@ -143,5 +144,8 @@
 
 	.section-items {
 		margin-top: 0.25rem;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
 	}
 </style>

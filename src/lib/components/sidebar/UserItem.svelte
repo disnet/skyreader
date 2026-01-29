@@ -50,6 +50,7 @@
 		padding: 0.5rem 0.75rem;
 		background: none;
 		border: none;
+		border-radius: 12px;
 		cursor: pointer;
 		text-align: left;
 		font: inherit;
