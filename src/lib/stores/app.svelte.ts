@@ -104,9 +104,11 @@ function createAppManager() {
 		}
 
 		try {
-			// Sync subscriptions and fetch feeds in parallel
+			// Sync subscriptions, read positions, and social data in parallel
 			const [syncResult] = await Promise.all([
 				syncSubscriptions(),
+				readingStore.load(),
+				shareReadingStore.load(),
 				socialStore.loadFollowedUsers(),
 				socialStore.loadFeed(true),
 			]);
