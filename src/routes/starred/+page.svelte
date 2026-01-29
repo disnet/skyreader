@@ -33,12 +33,12 @@
 </script>
 
 <div class="starred-page">
-	<h1>Starred Articles</h1>
+	<h1>Later</h1>
 
 	{#if isLoading}
-		<LoadingState message="Loading starred articles..." />
+		<LoadingState message="Loading saved articles..." />
 	{:else if starredItems.length === 0}
-		<EmptyState title="No starred articles" description="Star articles to save them for later" />
+		<EmptyState title="No saved articles" description="Save articles for later to see them here" />
 	{:else}
 		<div class="starred-list">
 			{#each starredItems as item (item.articleGuid)}

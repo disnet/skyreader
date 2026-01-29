@@ -12,7 +12,7 @@
 
 		// Views
 		{ category: 'Views', key: '1', description: 'All' },
-		{ category: 'Views', key: '2', description: 'Starred' },
+		{ category: 'Views', key: '2', description: 'Later' },
 		{ category: 'Views', key: '3', description: 'Shared' },
 		{ category: 'Views', key: '4', description: 'Feeds' },
 		{ category: 'Views', key: '5', description: 'Following' },
@@ -24,7 +24,7 @@
 		{ category: 'Feed/User', key: ']', description: 'Next feed/user' },
 
 		// Article actions
-		{ category: 'Article', key: 's', description: 'Toggle star' },
+		{ category: 'Article', key: 's', description: 'Save for later' },
 		{ category: 'Article', key: 'S', description: 'Share/unshare' },
 		{ category: 'Article', key: 'm', description: 'Mark read/unread' },
 		{ category: 'Article', key: '+', description: 'Increase font size' },

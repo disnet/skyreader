@@ -127,7 +127,7 @@
 					{isRead ? '○' : '●'}<span class="action-label">{isRead ? 'Read' : 'Unread'}</span>
 				</button>
 				<button class="action-btn" class:starred={isStarred} onclick={handleStarClick}>
-					{isStarred ? '★' : '☆'}<span class="action-label">{isStarred ? ' Starred' : 'Star'}</span>
+					{isStarred ? '★' : '☆'}<span class="action-label">{isStarred ? ' Later' : 'Later'}</span>
 				</button>
 				{#if isShared}
 					<button class="action-btn shared" onclick={handleUnshare}>

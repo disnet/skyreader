@@ -314,7 +314,7 @@
 		>
 			<span class="nav-icon"><Icon name="star" /></span>
 			{#if !sidebarStore.isCollapsed}
-				<span class="nav-label">Starred</span>
+				<span class="nav-label">Later</span>
 			{/if}
 		</button>
 
