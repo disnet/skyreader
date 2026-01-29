@@ -54,15 +54,11 @@
 
 	function toggle(e: MouseEvent) {
 		e.stopPropagation();
-		console.log('PopoverMenu toggle clicked, isOpen was:', isOpen);
 		isOpen = !isOpen;
-		console.log('PopoverMenu isOpen now:', isOpen);
 		if (isOpen) {
 			// Position after the menu is rendered
 			requestAnimationFrame(() => {
-				console.log('PopoverMenu positioning, menuRef:', menuRef, 'buttonRef:', buttonRef);
 				updateMenuPosition();
-				console.log('PopoverMenu menuPosition:', menuPosition);
 			});
 		}
 	}

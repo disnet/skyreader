@@ -92,16 +92,6 @@
 				onclick: onDelete,
 			});
 		}
-		console.log(
-			'FeedPageHeader menuItems:',
-			items.length,
-			'onMarkAllAsRead:',
-			!!onMarkAllAsRead,
-			'onEdit:',
-			!!onEdit,
-			'onDelete:',
-			!!onDelete
-		);
 		return items;
 	});
 </script>

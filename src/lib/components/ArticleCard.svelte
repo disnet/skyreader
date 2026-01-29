@@ -352,6 +352,8 @@
 
 	.article-actions {
 		display: flex;
+		flex-wrap: nowrap;
+		align-items: center;
 		gap: 0.875rem;
 		padding: 0.5rem 1rem;
 		background: rgba(255, 255, 255, 0.85);
@@ -368,6 +370,9 @@
 	}
 
 	.action-btn {
+		display: flex;
+		align-items: center;
+		white-space: nowrap;
 		background: none;
 		border: none;
 		font-size: 0.875rem;
@@ -434,9 +439,25 @@
 		margin-left: 0.25rem;
 	}
 
-	@container (max-width: 340px) {
+	/* Stage 2: Stack icon above text */
+	@container (max-width: 420px) {
+		.action-btn {
+			flex-direction: column;
+			gap: 0.125rem;
+		}
+		.action-label {
+			margin-left: 0;
+			font-size: 0.75rem;
+		}
+	}
+
+	/* Stage 3: Icons only */
+	@container (max-width: 320px) {
 		.action-label {
 			display: none;
+		}
+		.action-btn {
+			font-size: 1rem;
 		}
 	}
 </style>
