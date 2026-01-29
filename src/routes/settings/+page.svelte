@@ -10,6 +10,7 @@
 	} from '$lib/stores/preferences.svelte';
 	import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
 	import PageHeader from '$lib/components/common/PageHeader.svelte';
+	import { downloadOPML } from '$lib/utils/opml-exporter';
 
 	const fontOptions: { value: ArticleFont; label: string }[] = [
 		{ value: 'sans-serif', label: 'Sans Serif' },
@@ -142,10 +143,19 @@
 
 	<section class="card">
 		<h2>Import / Export</h2>
-		<p>Import feeds from other RSS readers using OPML files.</p>
-		<button class="btn btn-secondary" onclick={() => (showImportModal = true)}>
-			Import OPML
-		</button>
+		<p>Import or export your subscriptions using OPML files.</p>
+		<div class="button-row">
+			<button class="btn btn-secondary" onclick={() => (showImportModal = true)}>
+				Import OPML
+			</button>
+			<button
+				class="btn btn-secondary"
+				onclick={() => downloadOPML(subscriptionsStore.subscriptions)}
+				disabled={subscriptionsStore.subscriptions.length === 0}
+			>
+				Export OPML
+			</button>
+		</div>
 	</section>
 
 	<section class="card">
@@ -383,5 +393,11 @@
 	.about-links .separator {
 		margin: 0 0.5rem;
 		color: var(--color-text-secondary);
+	}
+
+	.button-row {
+		display: flex;
+		gap: 0.75rem;
+		flex-wrap: wrap;
 	}
 </style>
