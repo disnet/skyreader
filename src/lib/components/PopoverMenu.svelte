@@ -17,7 +17,6 @@
 	let isOpen = $state(false);
 	let menuRef: HTMLDivElement | null = $state(null);
 	let buttonRef: HTMLButtonElement | null = $state(null);
-	let closeTimeout: ReturnType<typeof setTimeout> | null = null;
 	let menuPosition = $state<{
 		top?: number;
 		bottom?: number;
@@ -30,30 +29,24 @@
 
 		const buttonRect = buttonRef.getBoundingClientRect();
 		const menuRect = menuRef.getBoundingClientRect();
-		const viewportHeight = window.innerHeight;
 		const viewportWidth = window.innerWidth;
 
 		const position: typeof menuPosition = {};
 
-		// Vertical positioning: prefer below, but flip to above if not enough space
-		const spaceBelow = viewportHeight - buttonRect.bottom;
-		const spaceAbove = buttonRect.top;
-		const menuHeight = menuRect.height;
+		// Vertical positioning: always below the button (absolute positioning)
+		position.top = buttonRef.offsetHeight + 4;
 
-		if (spaceBelow >= menuHeight + 4 || spaceBelow >= spaceAbove) {
-			position.top = buttonRect.bottom + 4;
-		} else {
-			position.bottom = viewportHeight - buttonRect.top + 4;
-		}
-
-		// Horizontal positioning: prefer right-aligned, but flip if not enough space
-		const spaceOnRight = buttonRect.right;
+		// Horizontal positioning: left-align menu with button by default
+		// The menu is absolutely positioned relative to .popover-menu
 		const menuWidth = menuRect.width;
 
-		if (spaceOnRight >= menuWidth || spaceOnRight >= viewportWidth - buttonRect.left) {
-			position.right = viewportWidth - buttonRect.right;
+		// Check if left-aligned menu would go off the right edge of viewport
+		if (buttonRect.left + menuWidth > viewportWidth - 8) {
+			// Right-align instead
+			position.right = 0;
 		} else {
-			position.left = buttonRect.left;
+			// Left-align (menu's left edge aligns with button's left edge)
+			position.left = 0;
 		}
 
 		menuPosition = position;
@@ -61,25 +54,16 @@
 
 	function toggle(e: MouseEvent) {
 		e.stopPropagation();
+		console.log('PopoverMenu toggle clicked, isOpen was:', isOpen);
 		isOpen = !isOpen;
+		console.log('PopoverMenu isOpen now:', isOpen);
 		if (isOpen) {
 			// Position after the menu is rendered
 			requestAnimationFrame(() => {
+				console.log('PopoverMenu positioning, menuRef:', menuRef, 'buttonRef:', buttonRef);
 				updateMenuPosition();
+				console.log('PopoverMenu menuPosition:', menuPosition);
 			});
-		}
-	}
-
-	function handleMouseLeave() {
-		closeTimeout = setTimeout(() => {
-			isOpen = false;
-		}, 150);
-	}
-
-	function handleMouseEnter() {
-		if (closeTimeout) {
-			clearTimeout(closeTimeout);
-			closeTimeout = null;
 		}
 	}
 
@@ -116,17 +100,11 @@
 	onDestroy(() => {
 		document.removeEventListener('click', handleClickOutside);
 		document.removeEventListener('keydown', handleKeydown);
-		if (closeTimeout) clearTimeout(closeTimeout);
 	});
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div
-	class="popover-menu"
-	role="group"
-	onmouseleave={handleMouseLeave}
-	onmouseenter={handleMouseEnter}
->
+<!-- Menu closes on click outside or item selection, not on mouse leave -->
+<div class="popover-menu" role="group">
 	<button
 		bind:this={buttonRef}
 		class="menu-trigger"
@@ -201,13 +179,13 @@
 	}
 
 	.menu-dropdown {
-		position: fixed;
+		position: absolute;
 		min-width: 140px;
 		background: var(--color-bg);
 		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-		z-index: 200;
+		z-index: 9999;
 		overflow: hidden;
 	}
 
