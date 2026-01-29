@@ -3,6 +3,7 @@
 	import type { Subscription } from '$lib/types';
 	import type { ErrorDetails } from '$lib/stores/feedStatus.svelte';
 	import FeedErrorPopover from './FeedErrorPopover.svelte';
+	import Icon from '../Icon.svelte';
 
 	type LoadingState = 'loading' | 'error' | 'ready';
 
@@ -158,7 +159,7 @@
 			}}
 			title="More options"
 		>
-			&#x22EF;
+			<Icon name="more-horizontal" size={14} />
 		</span>
 		{#if loadingState === 'error'}
 			<span
@@ -182,7 +183,7 @@
 				{#if retrying}
 					<span class="retry-spinner"></span>
 				{:else}
-					↻
+					<Icon name="refresh-cw" size={12} />
 				{/if}
 			</span>
 		{:else if unreadCount > 0}

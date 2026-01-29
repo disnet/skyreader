@@ -20,6 +20,7 @@
 	import NavSection from './sidebar/NavSection.svelte';
 	import FeedItem from './sidebar/FeedItem.svelte';
 	import UserItem from './sidebar/UserItem.svelte';
+	import Icon from './Icon.svelte';
 	import type { Subscription } from '$lib/types';
 
 	async function removeFeed(id: number) {
@@ -297,7 +298,7 @@
 			class:active={currentFilter().type === 'all'}
 			onclick={() => selectFilter('all')}
 		>
-			<span class="nav-icon">&#x2709;</span>
+			<span class="nav-icon"><Icon name="inbox" /></span>
 			{#if !sidebarStore.isCollapsed}
 				<span class="nav-label">All</span>
 				{#if totalUnread > 0}
@@ -311,7 +312,7 @@
 			class:active={currentFilter().type === 'starred'}
 			onclick={() => selectFilter('starred')}
 		>
-			<span class="nav-icon">&#x2606;</span>
+			<span class="nav-icon"><Icon name="star" /></span>
 			{#if !sidebarStore.isCollapsed}
 				<span class="nav-label">Starred</span>
 			{/if}
@@ -322,7 +323,7 @@
 			class:active={currentFilter().type === 'shared'}
 			onclick={() => selectFilter('shared')}
 		>
-			<span class="nav-icon">&#x2197;</span>
+			<span class="nav-icon"><Icon name="share" /></span>
 			{#if !sidebarStore.isCollapsed}
 				<span class="nav-label">Shared</span>
 				{#if sharesStore.userShares.size > 0}
@@ -337,7 +338,7 @@
 			class:active={$page.url.pathname === '/discover'}
 			onclick={() => sidebarStore.closeMobile()}
 		>
-			<span class="nav-icon">&#x1F50D;</span>
+			<span class="nav-icon"><Icon name="search" /></span>
 			{#if !sidebarStore.isCollapsed}
 				<span class="nav-label">Discover</span>
 			{/if}
@@ -349,7 +350,7 @@
 			class:active={$page.url.pathname === '/activity'}
 			onclick={() => sidebarStore.closeMobile()}
 		>
-			<span class="nav-icon">&#x1F514;</span>
+			<span class="nav-icon"><Icon name="bell" /></span>
 			{#if !sidebarStore.isCollapsed}
 				<span class="nav-label">Activity</span>
 				{#if activityStore.totalReshareCount > 0}
@@ -364,7 +365,7 @@
 			class:active={$page.url.pathname === '/settings'}
 			onclick={() => sidebarStore.closeMobile()}
 		>
-			<span class="nav-icon">⚙</span>
+			<span class="nav-icon"><Icon name="settings" /></span>
 			{#if !sidebarStore.isCollapsed}
 				<span class="nav-label">Settings</span>
 			{/if}
@@ -376,9 +377,9 @@
 			target="_blank"
 			rel="noopener noreferrer"
 		>
-			<span class="nav-icon">&#x1F4AC;</span>
+			<span class="nav-icon"><Icon name="message-circle" /></span>
 			{#if !sidebarStore.isCollapsed}
-				<span class="nav-label">Feedback ↗</span>
+				<span class="nav-label">Feedback</span>
 			{/if}
 		</a>
 
@@ -606,10 +607,11 @@
 	}
 
 	.nav-icon {
-		font-size: 1rem;
 		flex-shrink: 0;
 		width: 1.25rem;
-		text-align: center;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 
 	.nav-label {

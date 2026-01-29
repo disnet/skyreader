@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import Icon from '../Icon.svelte';
 
 	interface Props {
 		x: number;
@@ -67,11 +68,11 @@
 	role="menu"
 >
 	<button class="context-menu-item" onclick={handleEdit} role="menuitem">
-		<span class="context-menu-icon">✏</span>
+		<span class="context-menu-icon"><Icon name="edit" size={16} /></span>
 		Edit
 	</button>
 	<button class="context-menu-item danger" onclick={handleDelete} role="menuitem">
-		<span class="context-menu-icon">🗑</span>
+		<span class="context-menu-icon"><Icon name="trash" size={16} /></span>
 		Delete
 	</button>
 </div>
@@ -116,6 +117,9 @@
 	}
 
 	.context-menu-icon {
-		font-size: 1rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 1rem;
 	}
 </style>

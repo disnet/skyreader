@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import Icon from '../Icon.svelte';
 
 	interface Props {
 		title: string;
@@ -29,7 +30,9 @@
 <div class="nav-section">
 	<div class="section-header" class:active={isActive}>
 		<button class="disclosure-btn" onclick={onToggle} aria-label="Toggle section">
-			<span class="disclosure">{isExpanded ? '▼' : '▶'}</span>
+			<span class="disclosure">
+				<Icon name={isExpanded ? 'chevron-down' : 'chevron-right'} size={12} strokeWidth={2.5} />
+			</span>
 		</button>
 		{#if !isCollapsed}
 			<button class="section-label-btn" class:active={isActive} onclick={onLabelClick}>
@@ -44,7 +47,7 @@
 				}}
 				title={showOnlyUnread ? 'Show all' : 'Show only unread'}
 			>
-				{showOnlyUnread ? '●' : '○'}
+				<Icon name={showOnlyUnread ? 'circle-dot' : 'circle'} size={12} strokeWidth={2} />
 			</button>
 		{/if}
 	</div>
@@ -96,7 +99,9 @@
 	}
 
 	.disclosure {
-		font-size: 0.625rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 		flex-shrink: 0;
 	}
 
@@ -126,10 +131,11 @@
 		background: none;
 		border: none;
 		cursor: pointer;
-		font-size: 0.75rem;
 		color: var(--color-text-secondary);
-		padding: 0 0.25rem;
-		line-height: 1;
+		padding: 0.125rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 		opacity: 0.6;
 	}
 
