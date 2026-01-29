@@ -26,7 +26,7 @@
 		if (!el) return;
 
 		const rect = el.getBoundingClientRect();
-		const targetY = window.innerHeight / 3;
+		const targetY = window.innerHeight / 4;
 		const offset = rect.top - targetY;
 
 		window.scrollBy({ top: offset, behavior: 'instant' });
@@ -35,11 +35,11 @@
 	async function handleExpand(index: number) {
 		if (feedViewStore.expandedIndex === index) {
 			feedViewStore.collapse();
-			await tick();
-			scrollToCenter();
 		} else {
 			feedViewStore.expand(index);
 		}
+		await tick();
+		scrollToCenter();
 	}
 
 	function handleSelect(index: number) {
@@ -62,6 +62,8 @@
 	export function getArticleElements(): HTMLElement[] {
 		return articleElements;
 	}
+
+	export { scrollToCenter };
 </script>
 
 <div class="article-list">

@@ -61,6 +61,10 @@
 		return feedListView?.getArticleElements() ?? [];
 	}
 
+	function scrollToCenter() {
+		feedListView?.scrollToCenter();
+	}
+
 	// Edit modal state
 	let editingSubscription = $state<Subscription | null>(null);
 	let editModalOpen = $state(false);
@@ -146,18 +150,6 @@
 			scrollMarkAsRead.setupObserver();
 		});
 	});
-
-	function scrollToCenter() {
-		const elements = getArticleElements();
-		const el = elements[feedViewStore.selectedIndex];
-		if (!el) return;
-
-		const rect = el.getBoundingClientRect();
-		const targetY = window.innerHeight / 3;
-		const offset = rect.top - targetY;
-
-		window.scrollBy({ top: offset, behavior: 'instant' });
-	}
 
 	async function markAllAsReadInCurrentFeed() {
 		if (!feedViewStore.feedFilter) return;

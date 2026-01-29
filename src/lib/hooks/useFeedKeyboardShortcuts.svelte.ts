@@ -170,14 +170,20 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 		if (nextIndex === currentItems.length - 1 && feedViewStore.hasMore) {
 			await feedViewStore.loadMore();
 		}
+
+		await tick();
+		params.scrollToCenter();
 	}
 
-	function selectPreviousItem() {
+	async function selectPreviousItem() {
 		const currentItems = feedViewStore.currentItems;
 		const selectedIndex = feedViewStore.selectedIndex;
 		if (currentItems.length === 0) return;
 
 		feedViewStore.select(Math.max(selectedIndex - 1, 0));
+
+		await tick();
+		params.scrollToCenter();
 	}
 
 	function hasItems() {
@@ -214,23 +220,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 		});
 
 		keyboardStore.register({
-			key: 'ArrowDown',
-			description: 'Next item',
-			category: 'Navigation',
-			action: selectNextItem,
-			condition: hasItems,
-		});
-
-		keyboardStore.register({
 			key: 'k',
-			description: 'Previous item',
-			category: 'Navigation',
-			action: selectPreviousItem,
-			condition: hasItems,
-		});
-
-		keyboardStore.register({
-			key: 'ArrowUp',
 			description: 'Previous item',
 			category: 'Navigation',
 			action: selectPreviousItem,
@@ -302,8 +292,6 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 	function unregister() {
 		keyboardStore.unregister('j');
 		keyboardStore.unregister('k');
-		keyboardStore.unregister('ArrowDown');
-		keyboardStore.unregister('ArrowUp');
 		keyboardStore.unregister('o');
 		keyboardStore.unregister('Enter');
 		keyboardStore.unregister('s');
