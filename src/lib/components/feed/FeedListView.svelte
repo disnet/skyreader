@@ -35,11 +35,11 @@
 	async function handleExpand(index: number) {
 		if (feedViewStore.expandedIndex === index) {
 			feedViewStore.collapse();
+			await tick();
+			scrollToCenter();
 		} else {
 			feedViewStore.expand(index);
 		}
-		await tick();
-		scrollToCenter();
 	}
 
 	function handleSelect(index: number) {
@@ -47,6 +47,15 @@
 			feedViewStore.deselect();
 		} else {
 			feedViewStore.select(index);
+		}
+	}
+
+	function handleToggleRead(article: Article) {
+		if (readingStore.isRead(article.guid)) {
+			readingStore.markAsUnread(article.guid);
+		} else {
+			const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
+			readingStore.markAsRead(sub?.rkey || '', article.guid, article.url, article.title);
 		}
 	}
 
@@ -71,6 +80,7 @@
 					selected={feedViewStore.selectedIndex === index}
 					expanded={feedViewStore.expandedIndex === index}
 					onToggleStar={() => onToggleStar(article)}
+					onToggleRead={() => handleToggleRead(article)}
 					onShare={() => sub && onShare(article, sub)}
 					onUnshare={() => onUnshare(article.guid)}
 					onSelect={() => handleSelect(index)}
@@ -103,6 +113,7 @@
 					selected={feedViewStore.selectedIndex === index}
 					expanded={feedViewStore.expandedIndex === index}
 					onToggleStar={() => onToggleStar(article)}
+					onToggleRead={() => handleToggleRead(article)}
 					onUnshare={() => onUnshare(share.articleGuid)}
 					onSelect={() => handleSelect(index)}
 					onExpand={() => handleExpand(index)}

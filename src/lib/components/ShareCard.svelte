@@ -214,42 +214,6 @@
 			{/if}
 			<span class="share-date">{formatRelativeDate(displayDate)}</span>
 		</button>
-
-		{#if isOpen}
-			<div class="share-actions">
-				<a
-					href={itemUrl}
-					target="_blank"
-					rel="noopener"
-					class="action-btn"
-					onclick={(e) => e.stopPropagation()}
-				>
-					↗ Open
-				</a>
-				{#if auth.user}
-					<button
-						class="action-btn reshare-btn"
-						class:reshared={hasReshared}
-						onclick={handleReshare}
-						disabled={isResharing || hasReshared}
-						title={hasReshared ? 'Already reshared' : 'Reshare'}
-					>
-						{#if isResharing}
-							...
-						{:else if hasReshared}
-							Reshared
-						{:else}
-							Reshare
-						{/if}
-					</button>
-				{/if}
-				{#if hasContent}
-					<button class="action-btn expand-btn" onclick={handleExpandClick}>
-						{expanded ? '↑ Collapse' : '↓ Expand'}
-					</button>
-				{/if}
-			</div>
-		{/if}
 	</div>
 
 	{#if isOpen}
@@ -265,7 +229,7 @@
 					</div>
 				</div>
 				{#if selected && !expanded && isTruncated}
-					<button class="show-more-btn" onclick={handleExpandClick}> Show more </button>
+					<button class="show-more-btn" onclick={handleExpandClick}>Show more ↓</button>
 				{/if}
 			{:else if isFetching}
 				<p class="share-loading">Loading article content...</p>
@@ -276,8 +240,40 @@
 					</div>
 				</div>
 				{#if selected && !expanded && isTruncated}
-					<button class="show-more-btn" onclick={handleExpandClick}> Show more </button>
+					<button class="show-more-btn" onclick={handleExpandClick}>Show more ↓</button>
 				{/if}
+			{/if}
+		</div>
+
+		<div class="share-actions">
+			<a
+				href={itemUrl}
+				target="_blank"
+				rel="noopener"
+				class="action-btn"
+				onclick={(e) => e.stopPropagation()}
+			>
+				↗ Open
+			</a>
+			{#if auth.user}
+				<button
+					class="action-btn reshare-btn"
+					class:reshared={hasReshared}
+					onclick={handleReshare}
+					disabled={isResharing || hasReshared}
+					title={hasReshared ? 'Already reshared' : 'Reshare'}
+				>
+					{#if isResharing}
+						...
+					{:else if hasReshared}
+						Reshared
+					{:else}
+						Reshare
+					{/if}
+				</button>
+			{/if}
+			{#if expanded}
+				<button class="action-btn show-less-btn" onclick={handleExpandClick}>Show less ↑</button>
 			{/if}
 		</div>
 	{/if}
@@ -320,35 +316,6 @@
 
 	.share-sticky-header {
 		position: relative;
-	}
-
-	.share-item.expanded .share-sticky-header {
-		position: sticky;
-		top: 0;
-		z-index: 10;
-	}
-
-	.share-item.expanded .share-sticky-header::before {
-		content: '';
-		position: absolute;
-		top: 0;
-		bottom: 0;
-		left: -1rem;
-		right: -1rem;
-		background: var(--color-bg, #ffffff);
-		z-index: -1;
-	}
-
-	@media (max-width: 768px) {
-		.share-item.expanded .share-sticky-header {
-			top: 3rem;
-		}
-	}
-
-	@media (prefers-color-scheme: dark) {
-		.share-item.expanded .share-sticky-header::before {
-			background: var(--color-bg, #1a1a1a);
-		}
 	}
 
 	.share-header {
@@ -406,7 +373,7 @@
 	}
 
 	.share-content {
-		padding: 0 0.5rem 1rem;
+		padding: 0 0.5rem;
 	}
 
 	.share-content[role='button'] {
@@ -416,7 +383,19 @@
 	.share-actions {
 		display: flex;
 		gap: 1rem;
-		padding: 0 0.5rem 0.5rem;
+		padding: 0.5rem 0.5rem 1rem;
+		position: sticky;
+		bottom: 0;
+		background: var(--color-bg, #ffffff);
+		margin: 0 -0.5rem;
+		padding-left: 1rem;
+		padding-right: 1rem;
+	}
+
+	@media (prefers-color-scheme: dark) {
+		.share-actions {
+			background: var(--color-bg, #1a1a1a);
+		}
 	}
 
 	.action-btn {
@@ -431,10 +410,6 @@
 
 	.action-btn:hover {
 		color: var(--color-primary);
-	}
-
-	.action-btn.expand-btn {
-		margin-left: auto;
 	}
 
 	.action-btn.reshare-btn {
@@ -559,16 +534,37 @@
 	}
 
 	.show-more-btn {
-		background: none;
-		border: none;
-		color: var(--color-primary);
+		display: block;
+		margin: 0.75rem auto 0;
+		background: var(--color-bg-secondary, #f3f4f6);
+		border: 1px solid var(--color-border, #e5e7eb);
+		border-radius: 9999px;
+		color: var(--color-primary, #0066cc);
 		font-size: 0.875rem;
-		padding: 0.5rem 0 0;
+		font-weight: 500;
+		padding: 0.5rem 1.25rem;
 		cursor: pointer;
+		transition: background-color 0.15s ease;
 	}
 
 	.show-more-btn:hover {
-		text-decoration: underline;
+		background: var(--color-bg-hover, #e5e7eb);
+	}
+
+	.action-btn.show-less-btn {
+		margin-left: auto;
+		color: var(--color-primary, #0066cc);
+	}
+
+	@media (prefers-color-scheme: dark) {
+		.show-more-btn {
+			background: var(--color-bg-secondary, #2a2a2a);
+			border-color: var(--color-border, #404040);
+		}
+
+		.show-more-btn:hover {
+			background: var(--color-bg-hover, #3a3a3a);
+		}
 	}
 
 	@media (prefers-color-scheme: dark) {

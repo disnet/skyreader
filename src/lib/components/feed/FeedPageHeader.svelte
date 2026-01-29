@@ -184,7 +184,8 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		background: var(--color-bg);
+		background: rgba(255, 255, 255, 0.85);
+		backdrop-filter: blur(8px);
 		border-radius: 999px;
 		padding: 0.25rem 0.75rem;
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
@@ -272,7 +273,8 @@
 		display: flex;
 		align-items: center;
 		gap: 0.25rem;
-		background: var(--color-bg);
+		background: rgba(255, 255, 255, 0.85);
+		backdrop-filter: blur(8px);
 		border-radius: 999px;
 		padding: 0.25rem;
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
@@ -297,5 +299,12 @@
 
 	.view-toggle button:hover:not(.active) {
 		color: var(--color-text);
+	}
+
+	@media (prefers-color-scheme: dark) {
+		.feed-title-group,
+		.view-toggle {
+			background: rgba(40, 40, 40, 0.95);
+		}
 	}
 </style>

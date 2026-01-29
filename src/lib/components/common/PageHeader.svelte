@@ -38,8 +38,15 @@
 		border-bottom: 1px solid var(--color-border);
 		position: sticky;
 		top: 0;
-		background: var(--color-bg);
+		background: rgba(255, 255, 255, 0.85);
+		backdrop-filter: blur(8px);
 		z-index: 10;
+	}
+
+	@media (prefers-color-scheme: dark) {
+		.page-header {
+			background: rgba(40, 40, 40, 0.95);
+		}
 	}
 
 	.page-header.dropdown-open {

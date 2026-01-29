@@ -15,6 +15,7 @@
 		selected = false,
 		expanded = false,
 		onToggleStar,
+		onToggleRead,
 		onShare,
 		onUnshare,
 		onSelect,
@@ -30,6 +31,7 @@
 		selected?: boolean;
 		expanded?: boolean;
 		onToggleStar?: () => void;
+		onToggleRead?: () => void;
 		onShare?: () => void;
 		onUnshare?: () => void;
 		onSelect?: () => void;
@@ -59,6 +61,11 @@
 	function handleUnshare(e: MouseEvent) {
 		e.stopPropagation();
 		onUnshare?.();
+	}
+
+	function handleToggleRead(e: MouseEvent) {
+		e.stopPropagation();
+		onToggleRead?.();
 	}
 
 	let isOpen = $derived(selected || expanded);
@@ -97,35 +104,6 @@
 			{/if}
 			<span class="article-date">{formatRelativeDate(article.publishedAt)}</span>
 		</button>
-
-		{#if isOpen}
-			<div class="article-actions">
-				<a
-					href={article.url}
-					target="_blank"
-					rel="noopener"
-					class="action-btn"
-					onclick={(e) => e.stopPropagation()}
-				>
-					↗ Open
-				</a>
-				<button class="action-btn" class:starred={isStarred} onclick={handleStarClick}>
-					{isStarred ? '★ Starred' : '☆ Star'}
-				</button>
-				{#if isShared}
-					<button class="action-btn shared" onclick={handleUnshare}>
-						↑ Shared{#if reshareCount > 0}<span class="reshare-count">({reshareCount})</span>{/if}
-					</button>
-				{:else}
-					<button class="action-btn" onclick={handleShare}> ↑ Share </button>
-				{/if}
-				{#if hasContent}
-					<button class="action-btn expand-btn" onclick={handleExpandClick}>
-						{expanded ? '↑ Collapse' : '↓ Expand'}
-					</button>
-				{/if}
-			</div>
-		{/if}
 	</div>
 
 	{#if isOpen}
@@ -140,10 +118,49 @@
 						{@html sanitizedContent}
 					</div>
 				</div>
-				{#if selected && !expanded && isTruncated}
-					<button class="show-more-btn" onclick={handleExpandClick}> Show more </button>
-				{/if}
 			{/if}
+		</div>
+
+		<div class="article-actions-container">
+			<div class="article-actions">
+				<button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
+					{isRead ? '○' : '●'}<span class="action-label">{isRead ? 'Read' : 'Unread'}</span>
+				</button>
+				<button class="action-btn" class:starred={isStarred} onclick={handleStarClick}>
+					{isStarred ? '★' : '☆'}<span class="action-label">{isStarred ? ' Starred' : 'Star'}</span>
+				</button>
+				{#if isShared}
+					<button class="action-btn shared" onclick={handleUnshare}>
+						⤴<span class="action-label"> Shared</span>{#if reshareCount > 0}<span
+								class="reshare-count">({reshareCount})</span
+							>{/if}
+					</button>
+				{:else}
+					<button class="action-btn" onclick={handleShare}
+						>⤴<span class="action-label"> Share</span></button
+					>
+				{/if}
+				<a
+					href={article.url}
+					target="_blank"
+					rel="noopener"
+					class="action-btn"
+					onclick={(e) => e.stopPropagation()}
+				>
+					↗<span class="action-label"> Open</span>
+				</a>
+				{#if selected && !expanded && isTruncated}
+					<span class="action-separator"></span>
+					<button class="action-btn show-more-btn" onclick={handleExpandClick}
+						>↓<span class="action-label"> More</span></button
+					>
+				{:else if expanded}
+					<span class="action-separator"></span>
+					<button class="action-btn show-less-btn" onclick={handleExpandClick}
+						>↑<span class="action-label"> Less</span></button
+					>
+				{/if}
+			</div>
 		</div>
 	{/if}
 </article>
@@ -167,29 +184,6 @@
 
 	.article-sticky-header {
 		position: relative;
-	}
-
-	.article-item.open .article-sticky-header {
-		position: sticky;
-		top: 3rem;
-		z-index: 10;
-	}
-
-	.article-item.open .article-sticky-header::before {
-		content: '';
-		position: absolute;
-		top: 0;
-		bottom: 0;
-		left: -1rem;
-		right: -1rem;
-		background: var(--color-bg, #ffffff);
-		z-index: -1;
-	}
-
-	@media (prefers-color-scheme: dark) {
-		.article-item.open .article-sticky-header::before {
-			background: var(--color-bg, #1a1a1a);
-		}
 	}
 
 	.article-header {
@@ -247,7 +241,7 @@
 	}
 
 	.article-content {
-		padding: 0 0.5rem 1rem;
+		padding: 0 0.5rem;
 	}
 
 	.article-content[role='button'] {
@@ -345,10 +339,30 @@
 		margin: 0.25rem 0;
 	}
 
+	.article-actions-container {
+		position: sticky;
+		bottom: 0;
+		display: flex;
+		justify-content: center;
+		container-type: inline-size;
+		padding: 1rem 0;
+	}
+
 	.article-actions {
 		display: flex;
-		gap: 1rem;
-		padding: 0 0.5rem 0.5rem;
+		gap: 0.875rem;
+		padding: 0.5rem 1rem;
+		background: rgba(255, 255, 255, 0.85);
+		backdrop-filter: blur(8px);
+		border-radius: 9999px;
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+	}
+
+	@media (prefers-color-scheme: dark) {
+		.article-actions {
+			background: rgba(40, 40, 40, 0.95);
+			box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+		}
 	}
 
 	.action-btn {
@@ -373,6 +387,14 @@
 		color: #ffc107;
 	}
 
+	.action-btn.unread {
+		color: var(--color-primary, #0066cc);
+	}
+
+	.action-btn.unread:hover {
+		color: var(--color-primary, #0066cc);
+	}
+
 	.action-btn.shared {
 		color: var(--color-primary, #0066cc);
 	}
@@ -382,26 +404,37 @@
 		margin-left: 0.25rem;
 	}
 
-	.action-btn.expand-btn {
-		margin-left: auto;
+	.action-separator {
+		width: 1px;
+		background: var(--color-border, #e5e7eb);
+		align-self: stretch;
+		margin: -0.25rem 0;
 	}
 
-	.show-more-btn {
-		background: none;
-		border: none;
+	.action-btn.show-more-btn,
+	.action-btn.show-less-btn {
 		color: var(--color-primary, #0066cc);
-		font-size: 0.875rem;
-		padding: 0.5rem 0 0;
-		cursor: pointer;
 	}
 
-	.show-more-btn:hover {
-		text-decoration: underline;
+	@media (prefers-color-scheme: dark) {
+		.action-separator {
+			background: var(--color-border, #404040);
+		}
 	}
 
 	@media (prefers-color-scheme: dark) {
 		.article-item:not(.selected):not(.expanded):hover {
 			background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
+		}
+	}
+
+	.action-label {
+		margin-left: 0.25rem;
+	}
+
+	@container (max-width: 340px) {
+		.action-label {
+			display: none;
 		}
 	}
 </style>
