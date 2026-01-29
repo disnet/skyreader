@@ -60,10 +60,9 @@
 	let searchQuery = $state('');
 	let highlightedIndex = $state(-1);
 	let dropdownEl = $state<HTMLDivElement | null>(null);
-	let triggerEl = $state<HTMLButtonElement | null>(null);
 	let searchInputEl = $state<HTMLInputElement | null>(null);
+	let mobilePanelEl = $state<HTMLDivElement | null>(null);
 	let isMobile = $state(false);
-	let dropdownPosition = $state({ top: 0, left: 0 });
 
 	// Use store for open state so it can be controlled externally (keyboard shortcut)
 	let isOpen = $derived(sidebarStore.navigationDropdownOpen);
@@ -118,33 +117,34 @@
 			{ type: 'view', id: 'all', label: 'All', count: totalUnread, icon: '✉' },
 			{ type: 'view', id: 'starred', label: 'Starred', count: starredCount, icon: '☆' },
 			{ type: 'view', id: 'shared', label: 'Shared', count: sharedCount, icon: '↗' },
-			{ type: 'view', id: 'following', label: 'Following', count: followingUnread, icon: '👥' },
-			{ type: 'view', id: 'feeds', label: 'Feeds', count: totalUnread, icon: '📰' },
-		];
-
-		const users: NavItem[] = followedUsers.map((u) => {
-			const profile = userProfiles.get(u.did);
-			return {
-				type: 'user' as const,
-				did: u.did,
-				label: profile?.displayName || profile?.handle || u.did.slice(0, 20) + '...',
-				count: sharerCounts.get(u.did) || 0,
-				avatarUrl: profile?.avatar || null,
-			};
-		});
-
-		const feeds: NavItem[] = subscriptions.map((s) => ({
-			type: 'feed' as const,
-			id: s.id!,
-			label: s.customTitle || s.title,
-			count: feedUnreadCounts.get(s.id!) || 0,
-			iconUrl: s.customIconUrl || getFaviconUrl(s.siteUrl || s.feedUrl),
-		}));
-
-		const utilities: NavItem[] = [
 			{ type: 'utility', id: 'discover', label: 'Discover', icon: '🔍' },
 			{ type: 'utility', id: 'activity', label: 'Activity', count: activityCount, icon: '🔔' },
 			{ type: 'utility', id: 'settings', label: 'Settings', icon: '⚙' },
+		];
+
+		const users: NavItem[] = [
+			{ type: 'view', id: 'following', label: 'Following', count: followingUnread, icon: '👥' },
+			...followedUsers.map((u) => {
+				const profile = userProfiles.get(u.did);
+				return {
+					type: 'user' as const,
+					did: u.did,
+					label: profile?.displayName || profile?.handle || u.did.slice(0, 20) + '...',
+					count: sharerCounts.get(u.did) || 0,
+					avatarUrl: profile?.avatar || null,
+				};
+			}),
+		];
+
+		const feeds: NavItem[] = [
+			{ type: 'view', id: 'feeds', label: 'Feeds', count: totalUnread, icon: '📰' },
+			...subscriptions.map((s) => ({
+				type: 'feed' as const,
+				id: s.id!,
+				label: s.customTitle || s.title,
+				count: feedUnreadCounts.get(s.id!) || 0,
+				iconUrl: s.customIconUrl || getFaviconUrl(s.siteUrl || s.feedUrl),
+			})),
 		];
 
 		// Filter by search query
@@ -162,17 +162,12 @@
 
 		const filteredUsers = users.filter(filterItem);
 		if (filteredUsers.length > 0) {
-			sections.push({ section: 'Following', items: filteredUsers });
+			sections.push({ section: '', items: filteredUsers });
 		}
 
 		const filteredFeeds = feeds.filter(filterItem);
 		if (filteredFeeds.length > 0) {
-			sections.push({ section: 'Feeds', items: filteredFeeds });
-		}
-
-		const filteredUtilities = utilities.filter(filterItem);
-		if (filteredUtilities.length > 0) {
-			sections.push({ section: '', items: filteredUtilities });
+			sections.push({ section: '', items: filteredFeeds });
 		}
 
 		return sections;
@@ -214,17 +209,9 @@
 	}
 
 	function open() {
-		sidebarStore.toggleNavigationDropdown();
 		searchQuery = '';
 		highlightedIndex = 0;
-		// Calculate dropdown position from trigger button
-		if (triggerEl && !isMobile) {
-			const rect = triggerEl.getBoundingClientRect();
-			dropdownPosition = {
-				top: rect.bottom + 8,
-				left: rect.left,
-			};
-		}
+		sidebarStore.toggleNavigationDropdown();
 		// Focus search input after opening
 		requestAnimationFrame(() => {
 			searchInputEl?.focus();
@@ -245,18 +232,11 @@
 		highlightedIndex = -1;
 	}
 
-	// When opened externally (keyboard shortcut), set up positioning and focus
+	// When opened externally (keyboard shortcut), set up focus
 	$effect(() => {
 		if (isOpen) {
 			searchQuery = '';
 			highlightedIndex = 0;
-			if (triggerEl && !isMobile) {
-				const rect = triggerEl.getBoundingClientRect();
-				dropdownPosition = {
-					top: rect.bottom + 8,
-					left: rect.left,
-				};
-			}
 			requestAnimationFrame(() => {
 				searchInputEl?.focus();
 			});
@@ -343,7 +323,30 @@
 		}
 	});
 
-	let panelEl = $state<HTMLDivElement | null>(null);
+	// Adjust panel size when virtual keyboard appears (using Visual Viewport API)
+	$effect(() => {
+		if (!isMobile || !isOpen || !mobilePanelEl) return;
+
+		const viewport = window.visualViewport;
+		if (!viewport) return;
+
+		function updatePanelHeight() {
+			if (!mobilePanelEl || !viewport) return;
+			// Calculate available height from visual viewport (accounts for keyboard)
+			const availableHeight = viewport.height - 24; // 24px for margins
+			mobilePanelEl.style.maxHeight = `${availableHeight}px`;
+		}
+
+		updatePanelHeight();
+		viewport.addEventListener('resize', updatePanelHeight);
+
+		return () => {
+			viewport.removeEventListener('resize', updatePanelHeight);
+			if (mobilePanelEl) {
+				mobilePanelEl.style.maxHeight = '';
+			}
+		};
+	});
 
 	function handlePanelTouchMove(e: TouchEvent) {
 		// Allow scrolling within items-container, prevent elsewhere
@@ -353,18 +356,22 @@
 			e.preventDefault();
 		}
 	}
+
+	// Portal action to move element to body
+	function portal(node: HTMLElement) {
+		document.body.appendChild(node);
+		return {
+			destroy() {
+				node.remove();
+			},
+		};
+	}
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
 <div class="nav-dropdown" bind:this={dropdownEl}>
-	<button
-		bind:this={triggerEl}
-		class="trigger"
-		onclick={toggle}
-		aria-haspopup="listbox"
-		aria-expanded={isOpen}
-	>
+	<button class="trigger" onclick={toggle} aria-haspopup="listbox" aria-expanded={isOpen}>
 		<span class="trigger-title">{currentTitle}</span>
 		<svg
 			class="trigger-chevron"
@@ -385,22 +392,11 @@
 		</svg>
 	</button>
 
-	{#if isOpen}
-		<button
-			class="backdrop"
-			class:mobile={isMobile}
-			onclick={handleBackdropClick}
-			aria-label="Close navigation"
-		></button>
-		<div
-			bind:this={panelEl}
-			class="dropdown-panel"
-			class:mobile={isMobile}
-			role="listbox"
-			style={!isMobile ? `top: ${dropdownPosition.top}px; left: ${dropdownPosition.left}px;` : ''}
-			ontouchmove={isMobile ? handlePanelTouchMove : undefined}
-		>
-			<div class="search-container" class:mobile={isMobile}>
+	{#if isOpen && !isMobile}
+		<!-- Desktop dropdown (absolute positioned within container) -->
+		<button class="backdrop" onclick={handleBackdropClick} aria-label="Close navigation"></button>
+		<div class="dropdown-panel" role="listbox">
+			<div class="search-container">
 				<input
 					bind:this={searchInputEl}
 					type="text"
@@ -408,18 +404,6 @@
 					placeholder="Quick switch..."
 					bind:value={searchQuery}
 				/>
-				{#if isMobile}
-					<button class="mobile-close-btn" onclick={close} aria-label="Close">
-						<svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-							<path
-								d="M18 6L6 18M6 6l12 12"
-								stroke="currentColor"
-								stroke-width="2"
-								stroke-linecap="round"
-							/>
-						</svg>
-					</button>
-				{/if}
 			</div>
 			<div class="items-container">
 				{#each filteredItems as { section, items }, sectionIndex}
@@ -434,6 +418,7 @@
 							class="nav-item"
 							class:active={isItemActive(item)}
 							class:highlighted={flatIndex === highlightedIndex}
+							class:child={item.type === 'user' || item.type === 'feed'}
 							role="option"
 							aria-selected={isItemActive(item)}
 							onclick={() => selectItem(item)}
@@ -468,6 +453,85 @@
 		</div>
 	{/if}
 </div>
+
+{#if isOpen && isMobile}
+	<!-- Mobile overlay (portaled to body to escape backdrop-filter containing block) -->
+	<div class="mobile-portal" use:portal>
+		<button class="backdrop mobile" onclick={handleBackdropClick} aria-label="Close navigation"
+		></button>
+		<div
+			class="dropdown-panel mobile"
+			role="listbox"
+			ontouchmove={handlePanelTouchMove}
+			bind:this={mobilePanelEl}
+		>
+			<div class="search-container mobile">
+				<input
+					bind:this={searchInputEl}
+					type="text"
+					class="search-input"
+					placeholder="Quick switch..."
+					bind:value={searchQuery}
+				/>
+				<button class="mobile-close-btn" onclick={close} aria-label="Close">
+					<svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+						<path
+							d="M18 6L6 18M6 6l12 12"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+						/>
+					</svg>
+				</button>
+			</div>
+			<div class="items-container">
+				{#each filteredItems as { section, items }, sectionIndex}
+					{#if section}
+						<div class="section-header">{section}</div>
+					{/if}
+					{#each items as item, itemIndex}
+						{@const flatIndex =
+							filteredItems.slice(0, sectionIndex).reduce((acc, s) => acc + s.items.length, 0) +
+							itemIndex}
+						<button
+							class="nav-item"
+							class:active={isItemActive(item)}
+							class:highlighted={flatIndex === highlightedIndex}
+							class:child={item.type === 'user' || item.type === 'feed'}
+							role="option"
+							aria-selected={isItemActive(item)}
+							onclick={() => selectItem(item)}
+							onmouseenter={() => (highlightedIndex = flatIndex)}
+						>
+							{#if item.type === 'view' || item.type === 'utility'}
+								<span class="item-icon">{item.icon}</span>
+							{:else if item.type === 'feed'}
+								{#if item.iconUrl}
+									<img src={item.iconUrl} alt="" class="feed-icon" />
+								{:else}
+									<span class="feed-icon-placeholder"></span>
+								{/if}
+							{:else if item.type === 'user'}
+								{#if item.avatarUrl}
+									<img src={item.avatarUrl} alt="" class="user-avatar" />
+								{:else}
+									<span class="user-avatar-placeholder"></span>
+								{/if}
+							{/if}
+							<span class="item-label">{item.label}</span>
+							{#if item.count && item.count > 0}
+								<span class="item-count">{item.count}</span>
+							{/if}
+						</button>
+					{/each}
+				{/each}
+				{#if flatItems.length === 0}
+					<div class="no-results">No matches found</div>
+				{/if}
+			</div>
+		</div>
+	</div>
+{/if}
 
 <style>
 	.nav-dropdown {
@@ -522,14 +586,26 @@
 		cursor: default;
 	}
 
-	.backdrop.mobile {
-		background: var(--color-bg);
+	/* Mobile styles need :global because content is portaled to body */
+	:global(.mobile-portal) {
+		display: contents;
+	}
+
+	:global(.mobile-portal .backdrop.mobile) {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.5);
+		z-index: 1000;
+		border: none;
 		cursor: pointer;
 		touch-action: none;
 	}
 
 	.dropdown-panel {
-		position: fixed;
+		position: absolute;
+		top: 100%;
+		left: 0;
+		margin-top: 8px;
 		width: 300px;
 		max-height: 60vh;
 		background: var(--color-bg);
@@ -542,19 +618,37 @@
 		overflow: hidden;
 	}
 
-	.dropdown-panel.mobile {
-		top: 0 !important;
-		bottom: 0;
-		left: 0 !important;
-		right: 0;
-		width: 100%;
-		max-height: none;
-		border-radius: 0;
-		padding-top: env(safe-area-inset-top, 0);
-		padding-left: env(safe-area-inset-left, 0);
-		padding-right: env(safe-area-inset-right, 0);
-		animation: fadeIn 0.2s ease-out;
+	:global(.mobile-portal .dropdown-panel.mobile) {
+		position: fixed;
+		top: calc(env(safe-area-inset-top, 0px) + 12px);
+		left: 12px;
+		right: 12px;
+		bottom: auto;
+		width: auto;
+		max-height: calc(
+			100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 24px
+		);
+		background: var(--color-bg);
+		border: 1px solid var(--color-border);
+		border-radius: 20px;
+		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+		z-index: 1001;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+		animation: slideDown 0.2s ease-out;
 		overscroll-behavior: contain;
+	}
+
+	@keyframes slideDown {
+		from {
+			opacity: 0;
+			transform: translateY(-8px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
 	}
 
 	@keyframes fadeIn {
@@ -581,10 +675,6 @@
 
 	.mobile-close-btn:hover {
 		background: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
-	}
-
-	.dropdown-panel.mobile .items-container {
-		padding-bottom: calc(50vh + env(safe-area-inset-bottom, 0));
 	}
 
 	.search-container {
@@ -661,6 +751,10 @@
 		color: var(--color-primary);
 	}
 
+	.nav-item.child {
+		padding-left: 1.75rem;
+	}
+
 	.item-icon {
 		width: 1.25rem;
 		text-align: center;
@@ -735,6 +829,171 @@
 
 		.dropdown-panel {
 			box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+		}
+	}
+
+	/* Global styles for mobile portal content */
+	:global(.mobile-portal .search-container.mobile) {
+		padding: 0.75rem;
+		border-bottom: 1px solid var(--color-border);
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	:global(.mobile-portal .search-input) {
+		flex: 1;
+		padding: 0.5rem 0.75rem;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		font: inherit;
+		font-size: 1rem;
+		background: var(--color-bg-secondary);
+		color: var(--color-text);
+	}
+
+	:global(.mobile-portal .search-input:focus) {
+		outline: none;
+		border-color: var(--color-primary);
+	}
+
+	:global(.mobile-portal .mobile-close-btn) {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 2.5rem;
+		height: 2.5rem;
+		background: none;
+		border: none;
+		border-radius: 50%;
+		color: var(--color-text);
+		cursor: pointer;
+	}
+
+	:global(.mobile-portal .items-container) {
+		flex: 1;
+		overflow-y: auto;
+		padding: 0.5rem 0;
+		overscroll-behavior: contain;
+		-webkit-overflow-scrolling: touch;
+	}
+
+	:global(.mobile-portal .items-container::after) {
+		content: '';
+		display: block;
+		height: calc(env(safe-area-inset-bottom, 0px) + 2rem);
+	}
+
+	:global(.mobile-portal .section-header) {
+		padding: 0.5rem 0.75rem 0.25rem;
+		font-size: 0.6875rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--color-text-secondary);
+	}
+
+	:global(.mobile-portal .nav-item) {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		width: 100%;
+		padding: 0.5rem 0.75rem;
+		background: none;
+		border: none;
+		cursor: pointer;
+		text-align: left;
+		font: inherit;
+		font-size: 0.875rem;
+		color: var(--color-text);
+	}
+
+	:global(.mobile-portal .nav-item.active) {
+		background-color: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
+		color: var(--color-primary);
+	}
+
+	:global(.mobile-portal .nav-item.highlighted) {
+		background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+	}
+
+	:global(.mobile-portal .nav-item.child) {
+		padding-left: 1.75rem;
+	}
+
+	:global(.mobile-portal .item-icon) {
+		width: 1.25rem;
+		text-align: center;
+		flex-shrink: 0;
+	}
+
+	:global(.mobile-portal .feed-icon) {
+		width: 16px;
+		height: 16px;
+		flex-shrink: 0;
+		border-radius: 2px;
+		object-fit: contain;
+	}
+
+	:global(.mobile-portal .feed-icon-placeholder) {
+		width: 16px;
+		height: 16px;
+		flex-shrink: 0;
+		background: var(--color-border);
+		border-radius: 2px;
+	}
+
+	:global(.mobile-portal .user-avatar) {
+		width: 18px;
+		height: 18px;
+		flex-shrink: 0;
+		border-radius: 50%;
+		object-fit: cover;
+	}
+
+	:global(.mobile-portal .user-avatar-placeholder) {
+		width: 18px;
+		height: 18px;
+		flex-shrink: 0;
+		background: var(--color-border);
+		border-radius: 50%;
+	}
+
+	:global(.mobile-portal .item-label) {
+		flex: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	:global(.mobile-portal .item-count) {
+		flex-shrink: 0;
+		font-size: 0.75rem;
+		color: var(--color-text-secondary);
+	}
+
+	:global(.mobile-portal .nav-item.active .item-count) {
+		color: var(--color-primary);
+	}
+
+	:global(.mobile-portal .no-results) {
+		padding: 1rem 0.75rem;
+		text-align: center;
+		color: var(--color-text-secondary);
+		font-size: 0.875rem;
+	}
+
+	@media (prefers-color-scheme: dark) {
+		:global(.mobile-portal .nav-item.highlighted) {
+			background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
+		}
+
+		:global(.mobile-portal .backdrop.mobile) {
+			background: rgba(0, 0, 0, 0.7);
+		}
+
+		:global(.mobile-portal .dropdown-panel.mobile) {
+			box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 		}
 	}
 </style>
