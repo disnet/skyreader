@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
 	import { sidebarStore } from '$lib/stores/sidebar.svelte';
 
@@ -12,9 +13,26 @@
 	let { title, subtitle, children }: Props = $props();
 
 	let dropdownOpen = $derived(sidebarStore.navigationDropdownOpen);
+	let isMobile = $state(false);
+
+	function checkMobile() {
+		isMobile = window.matchMedia('(max-width: 768px)').matches;
+	}
+
+	onMount(() => {
+		checkMobile();
+		window.addEventListener('resize', checkMobile);
+	});
+
+	onDestroy(() => {
+		window.removeEventListener('resize', checkMobile);
+	});
+
+	// Hide header when dropdown is open on mobile (since it uses a portal overlay)
+	let hideOnMobile = $derived(dropdownOpen && isMobile);
 </script>
 
-<div class="page-header" class:dropdown-open={dropdownOpen}>
+<div class="page-header" class:dropdown-open={dropdownOpen} class:hidden-mobile={hideOnMobile}>
 	<div class="header-content">
 		<NavigationDropdown currentTitle={title} />
 		{#if subtitle}
@@ -51,6 +69,10 @@
 
 	.page-header.dropdown-open {
 		z-index: 1002;
+	}
+
+	.page-header.hidden-mobile {
+		visibility: hidden;
 	}
 
 	.header-content {
