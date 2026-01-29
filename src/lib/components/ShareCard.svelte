@@ -378,6 +378,8 @@
 
 	.share-content[role='button'] {
 		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+		touch-action: manipulation;
 	}
 
 	.share-actions {

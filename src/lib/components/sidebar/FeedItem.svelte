@@ -340,6 +340,8 @@
 		font-size: 1rem;
 		padding: 0;
 		line-height: 1;
+		-webkit-tap-highlight-color: transparent;
+		touch-action: manipulation;
 	}
 
 	.retry-btn.retrying {
@@ -376,6 +378,8 @@
 		opacity: 0;
 		transition: opacity 0.15s;
 		flex-shrink: 0;
+		-webkit-tap-highlight-color: transparent;
+		touch-action: manipulation;
 	}
 
 	.feed-item:hover .more-btn,

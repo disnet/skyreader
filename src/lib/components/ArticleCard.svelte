@@ -246,6 +246,8 @@
 
 	.article-content[role='button'] {
 		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+		touch-action: manipulation;
 	}
 
 	.article-body-wrapper {

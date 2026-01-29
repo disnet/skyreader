@@ -55,12 +55,15 @@ body {
 
 a {
 	color: var(--color-primary);
+	-webkit-tap-highlight-color: transparent;
 }
 
 button {
 	cursor: pointer;
 	font-family: inherit;
 	font-size: inherit;
+	-webkit-tap-highlight-color: transparent;
+	touch-action: manipulation;
 }
 
 input,

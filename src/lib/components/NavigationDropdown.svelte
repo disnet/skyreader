@@ -584,6 +584,7 @@
 		z-index: 1000;
 		border: none;
 		cursor: default;
+		-webkit-tap-highlight-color: transparent;
 	}
 
 	/* Mobile styles need :global because content is portaled to body */
@@ -599,6 +600,7 @@
 		border: none;
 		cursor: pointer;
 		touch-action: none;
+		-webkit-tap-highlight-color: transparent;
 	}
 
 	.dropdown-panel {
@@ -868,6 +870,8 @@
 		border-radius: 50%;
 		color: var(--color-text);
 		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+		touch-action: manipulation;
 	}
 
 	:global(.mobile-portal .items-container) {
@@ -906,6 +910,8 @@
 		font: inherit;
 		font-size: 0.875rem;
 		color: var(--color-text);
+		-webkit-tap-highlight-color: transparent;
+		touch-action: manipulation;
 	}
 
 	:global(.mobile-portal .nav-item.active) {

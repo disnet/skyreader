@@ -483,6 +483,7 @@
 		z-index: 40;
 		border: none;
 		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
 	}
 
 	.sidebar {
