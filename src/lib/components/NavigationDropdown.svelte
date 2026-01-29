@@ -13,6 +13,7 @@
 	import { activityStore } from '$lib/stores/activity.svelte';
 	import { articlesStore } from '$lib/stores/articles.svelte';
 	import { liveDb } from '$lib/services/liveDb.svelte';
+	import Icon from './Icon.svelte';
 	import type { BlueskyProfile } from '$lib/types';
 
 	interface Props {
@@ -99,12 +100,15 @@
 		}
 	});
 
+	// Icon names type (matches Icon.svelte)
+	type IconName = 'inbox' | 'star' | 'share' | 'search' | 'bell' | 'settings' | 'users' | 'rss';
+
 	// Navigation item type
 	type NavItem =
-		| { type: 'view'; id: string; label: string; count?: number; icon: string }
+		| { type: 'view'; id: string; label: string; count?: number; icon: IconName }
 		| { type: 'feed'; id: number; label: string; count: number; iconUrl: string | null }
 		| { type: 'user'; did: string; label: string; count: number; avatarUrl: string | null }
-		| { type: 'utility'; id: string; label: string; count?: number; icon: string };
+		| { type: 'utility'; id: string; label: string; count?: number; icon: IconName };
 
 	// Build filtered items list
 	let filteredItems = $derived.by((): { section: string; items: NavItem[] }[] => {
@@ -114,16 +118,16 @@
 		const followingUnread = Array.from(sharerCounts.values()).reduce((a, b) => a + b, 0);
 
 		const views: NavItem[] = [
-			{ type: 'view', id: 'all', label: 'All', count: totalUnread, icon: '✉' },
-			{ type: 'view', id: 'starred', label: 'Starred', count: starredCount, icon: '☆' },
-			{ type: 'view', id: 'shared', label: 'Shared', count: sharedCount, icon: '↗' },
-			{ type: 'utility', id: 'discover', label: 'Discover', icon: '🔍' },
-			{ type: 'utility', id: 'activity', label: 'Activity', count: activityCount, icon: '🔔' },
-			{ type: 'utility', id: 'settings', label: 'Settings', icon: '⚙' },
+			{ type: 'view', id: 'all', label: 'All', count: totalUnread, icon: 'inbox' },
+			{ type: 'view', id: 'starred', label: 'Starred', count: starredCount, icon: 'star' },
+			{ type: 'view', id: 'shared', label: 'Shared', count: sharedCount, icon: 'share' },
+			{ type: 'utility', id: 'discover', label: 'Discover', icon: 'search' },
+			{ type: 'utility', id: 'activity', label: 'Activity', count: activityCount, icon: 'bell' },
+			{ type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' },
 		];
 
 		const users: NavItem[] = [
-			{ type: 'view', id: 'following', label: 'Following', count: followingUnread, icon: '👥' },
+			{ type: 'view', id: 'following', label: 'Following', count: followingUnread, icon: 'users' },
 			...followedUsers.map((u) => {
 				const profile = userProfiles.get(u.did);
 				return {
@@ -137,7 +141,7 @@
 		];
 
 		const feeds: NavItem[] = [
-			{ type: 'view', id: 'feeds', label: 'Feeds', count: totalUnread, icon: '📰' },
+			{ type: 'view', id: 'feeds', label: 'Feeds', count: totalUnread, icon: 'rss' },
 			...subscriptions.map((s) => ({
 				type: 'feed' as const,
 				id: s.id!,
@@ -425,7 +429,7 @@
 							onmouseenter={() => (highlightedIndex = flatIndex)}
 						>
 							{#if item.type === 'view' || item.type === 'utility'}
-								<span class="item-icon">{item.icon}</span>
+								<span class="item-icon"><Icon name={item.icon} size={16} /></span>
 							{:else if item.type === 'feed'}
 								{#if item.iconUrl}
 									<img src={item.iconUrl} alt="" class="feed-icon" />
@@ -504,7 +508,7 @@
 							onmouseenter={() => (highlightedIndex = flatIndex)}
 						>
 							{#if item.type === 'view' || item.type === 'utility'}
-								<span class="item-icon">{item.icon}</span>
+								<span class="item-icon"><Icon name={item.icon} size={16} /></span>
 							{:else if item.type === 'feed'}
 								{#if item.iconUrl}
 									<img src={item.iconUrl} alt="" class="feed-icon" />
@@ -759,7 +763,9 @@
 
 	.item-icon {
 		width: 1.25rem;
-		text-align: center;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 		flex-shrink: 0;
 	}
 
@@ -929,7 +935,9 @@
 
 	:global(.mobile-portal .item-icon) {
 		width: 1.25rem;
-		text-align: center;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 		flex-shrink: 0;
 	}
 
