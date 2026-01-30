@@ -1,29 +1,25 @@
 import DOMPurify from 'dompurify';
 
 /**
- * Sanitizes HTML content and rewrites relative URLs to be absolute
- * based on the article's source URL.
+ * Sanitizes HTML content, rewrites relative URLs to be absolute
+ * based on the article's source URL, and opens all links in new tab.
  */
 export function sanitizeHtml(html: string, baseUrl?: string): string {
 	if (!html) return '';
 
-	// If no base URL, just sanitize without URL rewriting
-	if (!baseUrl) {
-		return DOMPurify.sanitize(html);
+	let base: URL | null = null;
+	if (baseUrl) {
+		try {
+			base = new URL(baseUrl);
+		} catch {
+			// Invalid base URL, continue without URL rewriting
+		}
 	}
 
-	let base: URL;
-	try {
-		base = new URL(baseUrl);
-	} catch {
-		// Invalid base URL, just sanitize without rewriting
-		return DOMPurify.sanitize(html);
-	}
-
-	// Add hook to rewrite URLs before sanitization
+	// Add hook to process URLs and links
 	DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-		// Rewrite img src
-		if (node.tagName === 'IMG' && node.hasAttribute('src')) {
+		// Rewrite img src (only if we have a valid base)
+		if (base && node.tagName === 'IMG' && node.hasAttribute('src')) {
 			const src = node.getAttribute('src');
 			if (src) {
 				const absoluteUrl = resolveUrl(src, base);
@@ -33,8 +29,8 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
 			}
 		}
 
-		// Rewrite srcset
-		if (node.hasAttribute('srcset')) {
+		// Rewrite srcset (only if we have a valid base)
+		if (base && node.hasAttribute('srcset')) {
 			const srcset = node.getAttribute('srcset');
 			if (srcset) {
 				const rewritten = rewriteSrcset(srcset, base);
@@ -42,19 +38,26 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
 			}
 		}
 
-		// Rewrite anchor href
+		// Process anchor tags: rewrite href and open in new tab
 		if (node.tagName === 'A' && node.hasAttribute('href')) {
 			const href = node.getAttribute('href');
-			if (href) {
+			if (href && base) {
 				const absoluteUrl = resolveUrl(href, base);
 				if (absoluteUrl) {
 					node.setAttribute('href', absoluteUrl);
 				}
 			}
+			// Open all links in new tab
+			node.setAttribute('target', '_blank');
+			node.setAttribute('rel', 'noopener noreferrer');
 		}
 
-		// Rewrite video/audio src and poster
-		if ((node.tagName === 'VIDEO' || node.tagName === 'AUDIO') && node.hasAttribute('src')) {
+		// Rewrite video/audio src and poster (only if we have a valid base)
+		if (
+			base &&
+			(node.tagName === 'VIDEO' || node.tagName === 'AUDIO') &&
+			node.hasAttribute('src')
+		) {
 			const src = node.getAttribute('src');
 			if (src) {
 				const absoluteUrl = resolveUrl(src, base);
@@ -63,7 +66,7 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
 				}
 			}
 		}
-		if (node.tagName === 'VIDEO' && node.hasAttribute('poster')) {
+		if (base && node.tagName === 'VIDEO' && node.hasAttribute('poster')) {
 			const poster = node.getAttribute('poster');
 			if (poster) {
 				const absoluteUrl = resolveUrl(poster, base);
@@ -73,8 +76,8 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
 			}
 		}
 
-		// Rewrite source src
-		if (node.tagName === 'SOURCE' && node.hasAttribute('src')) {
+		// Rewrite source src (only if we have a valid base)
+		if (base && node.tagName === 'SOURCE' && node.hasAttribute('src')) {
 			const src = node.getAttribute('src');
 			if (src) {
 				const absoluteUrl = resolveUrl(src, base);
