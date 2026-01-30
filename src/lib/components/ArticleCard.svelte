@@ -564,12 +564,16 @@
 	}
 
 	.article-actions-container {
-		position: sticky;
-		bottom: 0;
 		display: flex;
 		justify-content: center;
 		container-type: inline-size;
 		padding: 1rem 0;
+	}
+
+	/* Only make controls sticky when article is fully expanded */
+	.article-item.expanded .article-actions-container {
+		position: sticky;
+		bottom: 0;
 	}
 
 	.article-actions {
