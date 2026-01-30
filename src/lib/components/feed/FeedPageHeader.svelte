@@ -2,6 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import PopoverMenu from '$lib/components/PopoverMenu.svelte';
 	import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 	import { sidebarStore } from '$lib/stores/sidebar.svelte';
 	import { formatRelativeTime } from '$lib/utils/date';
 
@@ -128,34 +129,51 @@
 		</div>
 
 		<div class="control-right">
-			{#if onToggleExpandAll}
-				<div class="view-toggle" role="group" aria-label="View mode">
-					<button
-						class:active={!expandAllItems}
-						onclick={() => onToggleExpandAll(false)}
-						aria-label="List view"
-						title="List view"
-					>
-						☰
-					</button>
-					<button
-						class:active={expandAllItems}
-						onclick={() => onToggleExpandAll(true)}
-						aria-label="Expanded view"
-						title="Expanded view"
-					>
-						▤
-					</button>
-				</div>
-			{/if}
-			{#if showViewToggle}
-				<div class="view-toggle">
-					<button class:active={showOnlyUnread} onclick={() => onToggleUnread(true)}>
-						Unread
-					</button>
-					<button class:active={!showOnlyUnread} onclick={() => onToggleUnread(false)}>
-						All
-					</button>
+			{#if onToggleExpandAll || showViewToggle}
+				<div class="view-toggle" role="group" aria-label="View controls">
+					{#if onToggleExpandAll}
+						<button
+							class:active={!expandAllItems}
+							onclick={() => onToggleExpandAll(false)}
+							aria-label="List view"
+							title="List view"
+						>
+							<Icon name="list" size={16} />
+							<span class="btn-label">List</span>
+						</button>
+						<button
+							class:active={expandAllItems}
+							onclick={() => onToggleExpandAll(true)}
+							aria-label="Expanded view"
+							title="Expanded view"
+						>
+							<Icon name="newspaper" size={16} />
+							<span class="btn-label">Expand</span>
+						</button>
+					{/if}
+					{#if onToggleExpandAll && showViewToggle}
+						<span class="toggle-divider"></span>
+					{/if}
+					{#if showViewToggle}
+						<button
+							class:active={showOnlyUnread}
+							onclick={() => onToggleUnread(true)}
+							aria-label="Show unread only"
+							title="Unread only"
+						>
+							<Icon name="circle-dot" size={16} />
+							<span class="btn-label">Unread</span>
+						</button>
+						<button
+							class:active={!showOnlyUnread}
+							onclick={() => onToggleUnread(false)}
+							aria-label="Show all"
+							title="All items"
+						>
+							<Icon name="layers" size={16} />
+							<span class="btn-label">All</span>
+						</button>
+					{/if}
 				</div>
 			{/if}
 		</div>
@@ -296,7 +314,7 @@
 	.view-toggle {
 		display: flex;
 		align-items: center;
-		gap: 0.25rem;
+		gap: 0.125rem;
 		background: rgba(255, 255, 255, 0.85);
 		backdrop-filter: blur(8px);
 		border-radius: 999px;
@@ -305,11 +323,13 @@
 	}
 
 	.view-toggle button {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.35rem;
 		background: none;
 		border: none;
-		padding: 0.5rem;
-		font-size: 1rem;
-		font-weight: 500;
+		padding: 0.4rem 0.6rem;
 		border-radius: 999px;
 		cursor: pointer;
 		color: var(--color-text-secondary);
@@ -325,10 +345,41 @@
 		color: var(--color-text);
 	}
 
+	.btn-label {
+		font-size: 0.8125rem;
+		font-weight: 500;
+	}
+
+	.toggle-divider {
+		width: 1px;
+		height: 1rem;
+		background: var(--color-border, #e0e0e0);
+		margin: 0 0.25rem;
+		opacity: 0.5;
+	}
+
+	@media (max-width: 900px) {
+		.btn-label {
+			display: none;
+		}
+
+		.view-toggle button {
+			padding: 0.4rem;
+		}
+	}
+
 	@media (prefers-color-scheme: dark) {
 		.feed-title-group,
 		.view-toggle {
 			background: rgba(40, 40, 40, 0.95);
+		}
+
+		.toggle-divider {
+			background: rgba(255, 255, 255, 0.2);
+		}
+
+		.view-toggle button.active {
+			background: rgba(255, 255, 255, 0.15);
 		}
 	}
 </style>

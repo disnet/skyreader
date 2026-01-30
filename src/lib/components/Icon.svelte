@@ -17,7 +17,10 @@
 		| 'trash'
 		| 'more-horizontal'
 		| 'refresh-cw'
-		| 'alert-circle';
+		| 'alert-circle'
+		| 'list'
+		| 'newspaper'
+		| 'layers';
 
 	interface Props {
 		name: IconName;
@@ -104,6 +107,19 @@
 		<circle cx="12" cy="12" r="10" />
 		<line x1="12" x2="12" y1="8" y2="12" />
 		<line x1="12" x2="12.01" y1="16" y2="16" />
+	{:else if name === 'list'}
+		<line x1="4" x2="20" y1="6" y2="6" />
+		<line x1="4" x2="20" y1="12" y2="12" />
+		<line x1="4" x2="20" y1="18" y2="18" />
+	{:else if name === 'newspaper'}
+		<path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2" />
+		<path d="M18 14h-8" />
+		<path d="M15 18h-5" />
+		<path d="M10 6h8v4h-8V6Z" />
+	{:else if name === 'layers'}
+		<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z" />
+		<path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65" />
+		<path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65" />
 	{/if}
 </svg>
 

@@ -379,6 +379,6 @@
 	.feed-page {
 		max-width: 800px;
 		margin: 0 auto;
-		padding-top: 3rem;
+		padding-top: 3.5rem;
 	}
 </style>
