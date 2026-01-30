@@ -220,10 +220,16 @@
 	.article-item:hover {
 		background-color: rgba(128, 128, 128, 0.05);
 		border-radius: 8px;
+		--fade-bg: #f9f9f9;
 	}
 
 	.article-item.highlighted:hover {
 		background-color: rgba(96, 165, 250, 0.08);
+		--fade-bg: #f2f8ff;
+	}
+
+	.article-item.highlighted {
+		--fade-bg: #f7fbff;
 	}
 
 	.article-sticky-header {
@@ -305,13 +311,13 @@
 		left: 0;
 		right: 0;
 		height: 4em;
-		background: linear-gradient(to bottom, transparent, var(--color-bg, #ffffff));
+		background: linear-gradient(to bottom, transparent, var(--fade-bg, var(--color-bg, #ffffff)));
 		pointer-events: none;
 	}
 
 	@media (prefers-color-scheme: dark) {
 		.article-body-wrapper.has-fade::after {
-			background: linear-gradient(to bottom, transparent, var(--color-bg, #1a1a1a));
+			background: linear-gradient(to bottom, transparent, var(--fade-bg, var(--color-bg, #1a1a1a)));
 		}
 	}
 
@@ -482,6 +488,18 @@
 	@media (prefers-color-scheme: dark) {
 		.article-item:not(.selected):not(.expanded):hover {
 			background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
+		}
+
+		.article-item:hover {
+			--fade-bg: #1f1f1f;
+		}
+
+		.article-item.highlighted {
+			--fade-bg: #1e2125;
+		}
+
+		.article-item.highlighted:hover {
+			--fade-bg: #20252c;
 		}
 	}
 
