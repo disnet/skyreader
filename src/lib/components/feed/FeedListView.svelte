@@ -38,6 +38,7 @@
 		if (feedViewStore.expandedIndex === index) {
 			feedViewStore.collapse();
 		} else {
+			feedViewStore.select(index);
 			feedViewStore.expand(index);
 		}
 		await tick();

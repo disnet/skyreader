@@ -51,6 +51,20 @@
 		onExpand?.();
 	}
 
+	function handleContentClick(e: MouseEvent) {
+		// Don't interfere with link clicks
+		if ((e.target as HTMLElement).closest('a')) return;
+		e.stopPropagation();
+
+		if (selected && !expanded && isTruncated) {
+			// Content is truncated, expand it (this also selects)
+			onExpand?.();
+		} else {
+			// Not truncated or already expanded, just select
+			onSelect?.();
+		}
+	}
+
 	function handleStarClick(e: MouseEvent) {
 		e.stopPropagation();
 		onToggleStar?.();
@@ -124,11 +138,8 @@
 	</div>
 
 	{#if isOpen}
-		<div
-			class="article-content"
-			onclick={selected && !expanded && isTruncated ? handleExpandClick : undefined}
-			role={selected && !expanded && isTruncated ? 'button' : undefined}
-		>
+		<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+		<div class="article-content" onclick={handleContentClick}>
 			{#if hasContent}
 				<div class="article-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
 					<div bind:this={bodyEl} class="article-body" class:truncated={selected && !expanded}>
@@ -292,9 +303,6 @@
 
 	.article-content {
 		padding: 0;
-	}
-
-	.article-content[role='button'] {
 		cursor: pointer;
 		-webkit-tap-highlight-color: transparent;
 		touch-action: manipulation;
