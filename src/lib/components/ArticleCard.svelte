@@ -2,7 +2,7 @@
 	import type { Article } from '$lib/types';
 	import { formatRelativeDate } from '$lib/utils/date';
 	import { getFaviconUrl } from '$lib/utils/favicon';
-	import DOMPurify from 'dompurify';
+	import { sanitizeHtml } from '$lib/utils/sanitize';
 
 	let {
 		article,
@@ -70,7 +70,9 @@
 
 	let isOpen = $derived(selected || expanded);
 	let hasContent = $derived(Boolean(article.content || article.summary));
-	let sanitizedContent = $derived(DOMPurify.sanitize(article.content || article.summary || ''));
+	let sanitizedContent = $derived(
+		sanitizeHtml(article.content || article.summary || '', article.url)
+	);
 
 	let bodyEl = $state<HTMLElement | undefined>(undefined);
 	let isTruncated = $state(false);

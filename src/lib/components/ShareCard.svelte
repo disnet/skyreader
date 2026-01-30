@@ -5,7 +5,7 @@
 	import { profileService } from '$lib/services/profiles';
 	import { sharesStore } from '$lib/stores/shares.svelte';
 	import { auth } from '$lib/stores/auth.svelte';
-	import DOMPurify from 'dompurify';
+	import { sanitizeHtml } from '$lib/utils/sanitize';
 
 	let {
 		share,
@@ -164,8 +164,10 @@
 			remoteArticle?.content ||
 			remoteArticle?.summary
 	);
-	let sanitizedContent = $derived(articleContent ? DOMPurify.sanitize(articleContent) : '');
-	let sanitizedDescription = $derived(itemDescription ? DOMPurify.sanitize(itemDescription) : '');
+	let sanitizedContent = $derived(articleContent ? sanitizeHtml(articleContent, itemUrl) : '');
+	let sanitizedDescription = $derived(
+		itemDescription ? sanitizeHtml(itemDescription, itemUrl) : ''
+	);
 	let hasContent = $derived(Boolean(articleContent || itemDescription));
 
 	let bodyEl = $state<HTMLElement | undefined>(undefined);
