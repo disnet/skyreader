@@ -10,6 +10,7 @@
 		| 'users'
 		| 'rss'
 		| 'chevron-down'
+		| 'chevron-up'
 		| 'chevron-right'
 		| 'circle'
 		| 'circle-dot'
@@ -20,7 +21,8 @@
 		| 'alert-circle'
 		| 'list'
 		| 'newspaper'
-		| 'layers';
+		| 'layers'
+		| 'external-link';
 
 	interface Props {
 		name: IconName;
@@ -53,7 +55,7 @@
 			points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
 		/>
 	{:else if name === 'share'}
-		<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+		<path d="M4 10v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10" />
 		<polyline points="16 6 12 2 8 6" />
 		<line x1="12" x2="12" y1="2" y2="15" />
 	{:else if name === 'search'}
@@ -80,6 +82,8 @@
 		<circle cx="5" cy="19" r="1" />
 	{:else if name === 'chevron-down'}
 		<path d="m6 9 6 6 6-6" />
+	{:else if name === 'chevron-up'}
+		<path d="m18 15-6-6-6 6" />
 	{:else if name === 'chevron-right'}
 		<path d="m9 18 6-6-6-6" />
 	{:else if name === 'circle'}
@@ -120,6 +124,10 @@
 		<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z" />
 		<path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65" />
 		<path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65" />
+	{:else if name === 'external-link'}
+		<path d="M15 3h6v6" />
+		<path d="M10 14 21 3" />
+		<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6" />
 	{/if}
 </svg>
 

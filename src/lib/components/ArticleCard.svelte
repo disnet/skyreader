@@ -3,6 +3,7 @@
 	import { formatRelativeDate } from '$lib/utils/date';
 	import { getFaviconUrl } from '$lib/utils/favicon';
 	import { sanitizeHtml } from '$lib/utils/sanitize';
+	import Icon from './Icon.svelte';
 
 	let {
 		article,
@@ -70,6 +71,11 @@
 		onToggleRead?.();
 	}
 
+	function handleOpenUrl(e: MouseEvent) {
+		e.stopPropagation();
+		window.open(article.url, '_blank', 'noopener');
+	}
+
 	let isOpen = $derived(selected || expanded);
 	let hasContent = $derived(Boolean(article.content || article.summary));
 	let sanitizedContent = $derived(
@@ -135,40 +141,52 @@
 		<div class="article-actions-container">
 			<div class="article-actions">
 				<button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
-					{isRead ? '○' : '●'}<span class="action-label">{isRead ? 'Read' : 'Unread'}</span>
+					<span class="action-icon">
+						{#if isRead}
+							<Icon name="circle" size={16} />
+						{:else}
+							<Icon name="circle-dot" size={16} />
+						{/if}
+					</span><span class="action-label">Read</span>
 				</button>
 				<button class="action-btn" class:starred={isStarred} onclick={handleStarClick}>
-					{isStarred ? '★' : '☆'}<span class="action-label">{isStarred ? ' Later' : 'Later'}</span>
+					<span class="action-icon"><Icon name="star" size={16} /></span><span class="action-label"
+						>Later</span
+					>
 				</button>
 				{#if isShared}
 					<button class="action-btn shared" onclick={handleUnshare}>
-						⤴<span class="action-label"> Shared</span>{#if reshareCount > 0}<span
-								class="reshare-count">({reshareCount})</span
-							>{/if}
+						<span class="action-icon"><Icon name="share" size={16} /></span><span
+							class="action-label">Share</span
+						>{#if reshareCount > 0}<span class="reshare-count">({reshareCount})</span>{/if}
 					</button>
 				{:else}
 					<button class="action-btn" onclick={handleShare}
-						>⤴<span class="action-label"> Share</span></button
+						><span class="action-icon"><Icon name="share" size={16} /></span><span
+							class="action-label">Share</span
+						></button
 					>
 				{/if}
-				<a
-					href={article.url}
-					target="_blank"
-					rel="noopener"
-					class="action-btn"
-					onclick={(e) => e.stopPropagation()}
-				>
-					↗<span class="action-label"> Open</span>
-				</a>
-				{#if selected && !expanded && isTruncated}
-					<span class="action-separator"></span>
-					<button class="action-btn show-more-btn" onclick={handleExpandClick}
-						>↓<span class="action-label"> More</span></button
+				<button class="action-btn" onclick={handleOpenUrl}>
+					<span class="action-icon"><Icon name="external-link" size={16} /></span><span
+						class="action-label">Open</span
 					>
-				{:else if expanded}
-					<span class="action-separator"></span>
+				</button>
+				<span class="action-separator"></span>
+				{#if expanded}
 					<button class="action-btn show-less-btn" onclick={handleExpandClick}
-						>↑<span class="action-label"> Less</span></button
+						><span class="action-icon"><Icon name="chevron-up" size={16} /></span><span
+							class="action-label">Less</span
+						></button
+					>
+				{:else}
+					<button
+						class="action-btn show-more-btn"
+						class:disabled={!isTruncated}
+						onclick={isTruncated ? handleExpandClick : undefined}
+						><span class="action-icon"><Icon name="chevron-down" size={16} /></span><span
+							class="action-label">More</span
+						></button
 					>
 				{/if}
 			</div>
@@ -449,6 +467,12 @@
 		color: var(--color-primary, #0066cc);
 	}
 
+	.action-btn.disabled {
+		color: var(--color-text-secondary);
+		opacity: 0.4;
+		cursor: default;
+	}
+
 	@media (prefers-color-scheme: dark) {
 		.action-separator {
 			background: var(--color-border, #404040);
@@ -461,15 +485,32 @@
 		}
 	}
 
+	.action-icon {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.action-btn.starred .action-icon :global(.icon) {
+		fill: currentColor;
+	}
+
 	.action-label {
 		margin-left: 0.25rem;
+		font-size: 0.875rem;
 	}
 
 	/* Stage 2: Stack icon above text */
 	@container (max-width: 420px) {
+		.article-actions {
+			padding: 0.375rem 1rem;
+		}
 		.action-btn {
 			flex-direction: column;
+			align-items: center;
+			justify-content: center;
 			gap: 0.125rem;
+			text-align: center;
 		}
 		.action-label {
 			margin-left: 0;
@@ -481,9 +522,6 @@
 	@container (max-width: 320px) {
 		.action-label {
 			display: none;
-		}
-		.action-btn {
-			font-size: 1.125rem;
 		}
 	}
 </style>
