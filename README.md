@@ -93,7 +93,6 @@ skyreader-frontend/
 │   │   ├── components/       # UI components
 │   │   │   ├── Sidebar.svelte
 │   │   │   ├── ArticleCard.svelte
-│   │   │   ├── ShareCard.svelte
 │   │   │   └── ...
 │   │   ├── stores/           # Svelte 5 rune stores
 │   │   │   ├── auth.svelte.ts

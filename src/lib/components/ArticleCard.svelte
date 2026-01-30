@@ -1,18 +1,24 @@
 <script lang="ts">
-	import type { Article } from '$lib/types';
+	import type { Article, SocialShare, BlueskyProfile } from '$lib/types';
 	import { formatRelativeDate } from '$lib/utils/date';
 	import { getFaviconUrl } from '$lib/utils/favicon';
 	import { sanitizeHtml } from '$lib/utils/sanitize';
+	import { profileService } from '$lib/services/profiles';
+	import { sharesStore } from '$lib/stores/shares.svelte';
+	import { auth } from '$lib/stores/auth.svelte';
 	import Icon from './Icon.svelte';
 
 	let {
 		article,
+		share,
+		localArticle,
 		siteUrl,
 		isRead = false,
 		isStarred = false,
 		isShared = false,
 		shareNote,
 		reshareCount = 0,
+		isFetching = false,
 		selected = false,
 		expanded = false,
 		highlighted = false,
@@ -20,16 +26,21 @@
 		onToggleRead,
 		onShare,
 		onUnshare,
+		onReshare,
 		onSelect,
 		onExpand,
+		onFetchContent,
 	}: {
-		article: Article;
+		article?: Article;
+		share?: SocialShare;
+		localArticle?: Article;
 		siteUrl?: string;
 		isRead?: boolean;
 		isStarred?: boolean;
 		isShared?: boolean;
 		shareNote?: string;
 		reshareCount?: number;
+		isFetching?: boolean;
 		selected?: boolean;
 		expanded?: boolean;
 		highlighted?: boolean;
@@ -37,13 +48,90 @@
 		onToggleRead?: () => void;
 		onShare?: () => void;
 		onUnshare?: () => void;
+		onReshare?: () => void;
 		onSelect?: () => void;
 		onExpand?: () => void;
+		onFetchContent?: () => void;
 	} = $props();
 
+	// Determine if we're in share mode (showing someone else's share)
+	let isShareMode = $derived(Boolean(share && !article));
+
+	// Normalize data for both article and share modes
+	let itemUrl = $derived(article?.url || share?.itemUrl || '');
+	let itemTitle = $derived(article?.title || share?.itemTitle || itemUrl);
+	let itemPublishedAt = $derived(
+		article?.publishedAt || share?.itemPublishedAt || share?.createdAt || ''
+	);
+	let itemGuid = $derived(article?.guid || share?.itemGuid || itemUrl);
+	let displaySiteUrl = $derived(siteUrl || share?.feedUrl || itemUrl);
+
+	// Content handling - article has priority, then share content, then localArticle
+	let displayContent = $derived(
+		article?.content ||
+			article?.summary ||
+			share?.content ||
+			localArticle?.content ||
+			localArticle?.summary ||
+			share?.itemDescription ||
+			''
+	);
+
+	// Profile fetching for share mode
+	let authorProfile = $state<BlueskyProfile | null>(null);
+	$effect(() => {
+		if (share) {
+			profileService.getProfile(share.authorDid).then((p) => {
+				authorProfile = p;
+			});
+		}
+	});
+	let authorHandle = $derived(authorProfile?.handle || share?.authorDid);
+
+	// Reshare state for share mode
+	let isResharing = $state(false);
+	let hasReshared = $derived.by(() => {
+		if (!isShareMode) return false;
+		const guid = itemGuid;
+		return sharesStore.isShared(guid);
+	});
+
+	// Get reshare count from share if in share mode
+	let displayReshareCount = $derived(share?.reshareCount || reshareCount);
+
+	async function handleReshare(e: MouseEvent) {
+		e.stopPropagation();
+		if (isResharing || hasReshared || !share) return;
+		if (!auth.user) return;
+
+		isResharing = true;
+		try {
+			await sharesStore.reshare(
+				share.recordUri,
+				share.authorDid,
+				share.itemUrl,
+				share.itemGuid,
+				share.itemTitle,
+				undefined,
+				share.itemDescription,
+				share.content,
+				share.itemImage,
+				share.itemPublishedAt,
+				share.feedUrl
+			);
+		} finally {
+			isResharing = false;
+		}
+	}
+
 	function handleHeaderClick() {
+		const wasSelected = selected;
 		onSelect?.();
 		// Note: onRead is NOT called here - selectArticle in +page.svelte handles marking as read
+		// For shares, fetch content when first selecting
+		if (isShareMode && !wasSelected && onFetchContent) {
+			onFetchContent();
+		}
 	}
 
 	function handleExpandClick(e: MouseEvent) {
@@ -87,14 +175,12 @@
 
 	function handleOpenUrl(e: MouseEvent) {
 		e.stopPropagation();
-		window.open(article.url, '_blank', 'noopener');
+		window.open(itemUrl, '_blank', 'noopener');
 	}
 
 	let isOpen = $derived(selected || expanded);
-	let hasContent = $derived(Boolean(article.content || article.summary));
-	let sanitizedContent = $derived(
-		sanitizeHtml(article.content || article.summary || '', article.url)
-	);
+	let hasContent = $derived(Boolean(displayContent));
+	let sanitizedContent = $derived(sanitizeHtml(displayContent, itemUrl));
 
 	let bodyEl = $state<HTMLElement | undefined>(undefined);
 	let isTruncated = $state(false);
@@ -116,31 +202,47 @@
 	class:highlighted
 >
 	<div class="article-sticky-header">
+		{#if isShareMode && share}
+			<div class="share-attribution">
+				shared by <a
+					href="/?sharer={share.authorDid}"
+					class="share-author-link"
+					onclick={(e) => e.stopPropagation()}>@{authorHandle}</a
+				>
+				{#if displayReshareCount > 0}
+					<span class="attribution-reshare-count" title="{displayReshareCount} reshares"
+						>({displayReshareCount})</span
+					>
+				{/if}
+			</div>
+		{/if}
 		<button class="article-header" onclick={handleHeaderClick}>
-			{#if siteUrl}
-				<img src={getFaviconUrl(siteUrl)} alt="" class="favicon" />
+			{#if displaySiteUrl}
+				<img src={getFaviconUrl(displaySiteUrl)} alt="" class="favicon" />
 			{/if}
 			{#if isOpen}
 				<a
-					href={article.url}
+					href={itemUrl}
 					target="_blank"
 					rel="noopener"
 					class="article-title-link"
 					onclick={(e) => e.stopPropagation()}
 				>
-					{article.title}
+					{itemTitle}
 				</a>
 			{:else}
-				<span class="article-title">{article.title}</span>
+				<span class="article-title">{itemTitle}</span>
 			{/if}
-			<span class="article-date">{formatRelativeDate(article.publishedAt)}</span>
+			<span class="article-date">{formatRelativeDate(itemPublishedAt)}</span>
 		</button>
 	</div>
 
 	{#if isOpen}
 		<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
 		<div class="article-content" onclick={handleContentClick}>
-			{#if hasContent}
+			{#if isFetching}
+				<p class="article-loading">Loading article content...</p>
+			{:else if hasContent}
 				<div class="article-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
 					<div bind:this={bodyEl} class="article-body" class:truncated={selected && !expanded}>
 						{@html sanitizedContent}
@@ -151,38 +253,72 @@
 
 		<div class="article-actions-container">
 			<div class="article-actions">
-				<button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
-					<span class="action-icon">
-						{#if isRead}
-							<Icon name="circle" size={16} />
-						{:else}
-							<Icon name="circle-dot" size={16} />
-						{/if}
-					</span><span class="action-label">Read</span>
-				</button>
-				<button class="action-btn" class:starred={isStarred} onclick={handleStarClick}>
-					<span class="action-icon"><Icon name="star" size={16} /></span><span class="action-label"
-						>Later</span
-					>
-				</button>
-				{#if isShared}
-					<button class="action-btn shared" onclick={handleUnshare}>
-						<span class="action-icon"><Icon name="share" size={16} /></span><span
-							class="action-label">Share</span
-						>{#if reshareCount > 0}<span class="reshare-count">({reshareCount})</span>{/if}
+				{#if isShareMode}
+					<!-- Share mode: read, reshare, and open -->
+					<button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
+						<span class="action-icon">
+							{#if isRead}
+								<Icon name="circle" size={16} />
+							{:else}
+								<Icon name="circle-dot" size={16} />
+							{/if}
+						</span><span class="action-label">Read</span>
+					</button>
+					{#if auth.user}
+						<button
+							class="action-btn"
+							class:reshared={hasReshared}
+							onclick={handleReshare}
+							disabled={isResharing || hasReshared}
+						>
+							<span class="action-icon"><Icon name="share" size={16} /></span><span
+								class="action-label"
+								>{#if isResharing}...{:else if hasReshared}Reshared{:else}Reshare{/if}</span
+							>
+						</button>
+					{/if}
+					<button class="action-btn" onclick={handleOpenUrl}>
+						<span class="action-icon"><Icon name="external-link" size={16} /></span><span
+							class="action-label">Open</span
+						>
 					</button>
 				{:else}
-					<button class="action-btn" onclick={handleShare}
-						><span class="action-icon"><Icon name="share" size={16} /></span><span
-							class="action-label">Share</span
-						></button
-					>
+					<!-- Article mode: full controls -->
+					<button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
+						<span class="action-icon">
+							{#if isRead}
+								<Icon name="circle" size={16} />
+							{:else}
+								<Icon name="circle-dot" size={16} />
+							{/if}
+						</span><span class="action-label">Read</span>
+					</button>
+					<button class="action-btn" class:starred={isStarred} onclick={handleStarClick}>
+						<span class="action-icon"><Icon name="star" size={16} /></span><span
+							class="action-label">Later</span
+						>
+					</button>
+					{#if isShared}
+						<button class="action-btn shared" onclick={handleUnshare}>
+							<span class="action-icon"><Icon name="share" size={16} /></span><span
+								class="action-label">Share</span
+							>{#if displayReshareCount > 0}<span class="reshare-count"
+									>({displayReshareCount})</span
+								>{/if}
+						</button>
+					{:else}
+						<button class="action-btn" onclick={handleShare}
+							><span class="action-icon"><Icon name="share" size={16} /></span><span
+								class="action-label">Share</span
+							></button
+						>
+					{/if}
+					<button class="action-btn" onclick={handleOpenUrl}>
+						<span class="action-icon"><Icon name="external-link" size={16} /></span><span
+							class="action-label">Open</span
+						>
+					</button>
 				{/if}
-				<button class="action-btn" onclick={handleOpenUrl}>
-					<span class="action-icon"><Icon name="external-link" size={16} /></span><span
-						class="action-label">Open</span
-					>
-				</button>
 				<span class="action-separator"></span>
 				{#if expanded}
 					<button class="action-btn show-less-btn" onclick={handleExpandClick}
@@ -245,6 +381,28 @@
 
 	.article-sticky-header {
 		position: relative;
+	}
+
+	.share-attribution {
+		font-size: 0.75rem;
+		color: var(--color-text-secondary);
+		padding: 0.25rem 0 0;
+	}
+
+	.share-author-link {
+		color: var(--color-text-secondary);
+		text-decoration: none;
+	}
+
+	.share-author-link:hover {
+		color: var(--color-primary);
+		text-decoration: underline;
+	}
+
+	.attribution-reshare-count {
+		font-size: 0.7rem;
+		color: var(--color-text-secondary);
+		margin-left: 0.25rem;
 	}
 
 	.article-header {
@@ -399,6 +557,13 @@
 		margin: 0.25rem 0;
 	}
 
+	.article-loading {
+		font-size: 0.875rem;
+		color: var(--color-text-secondary);
+		margin-top: 0.5rem;
+		font-style: italic;
+	}
+
 	.article-actions-container {
 		position: sticky;
 		bottom: 0;
@@ -462,6 +627,15 @@
 
 	.action-btn.shared {
 		color: var(--color-primary, #0066cc);
+	}
+
+	.action-btn.reshared {
+		color: var(--color-success, #22c55e);
+	}
+
+	.action-btn:disabled {
+		cursor: default;
+		opacity: 0.7;
 	}
 
 	.reshare-count {

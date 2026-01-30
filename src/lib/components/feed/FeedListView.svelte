@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import ArticleCard from '$lib/components/ArticleCard.svelte';
-	import ShareCard from '$lib/components/ShareCard.svelte';
 	import LoadingState from '$lib/components/LoadingState.svelte';
 	import { feedViewStore } from '$lib/stores/feedView.svelte';
 	import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
@@ -95,13 +94,25 @@
 			{:else if displayItem.type === 'share'}
 				{@const share = displayItem.item}
 				{@const localArticle = feedViewStore.getArticleForShare(share)}
-				<ShareCard
+				<ArticleCard
 					{share}
 					{localArticle}
 					isRead={shareReadingStore.isRead(share.recordUri)}
 					selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
 					expanded={feedViewStore.expandedIndex === index}
 					highlighted={feedViewStore.selectedIndex === index}
+					onToggleRead={() => {
+						if (shareReadingStore.isRead(share.recordUri)) {
+							shareReadingStore.markAsUnread(share.recordUri);
+						} else {
+							shareReadingStore.markAsRead(
+								share.recordUri,
+								share.authorDid,
+								share.itemUrl,
+								share.itemTitle
+							);
+						}
+					}}
 					onSelect={() => handleSelect(index)}
 					onExpand={() => handleExpand(index)}
 				/>
