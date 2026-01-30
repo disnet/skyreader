@@ -281,9 +281,16 @@
 			feedId={feedViewStore.feedFilter ? parseInt(feedViewStore.feedFilter) : undefined}
 			showViewToggle={!feedViewStore.starredFilter && !feedViewStore.sharedFilter}
 			showOnlyUnread={feedViewStore.showOnlyUnread}
+			expandAllItems={preferences.expandAllItems}
 			lastRefreshAt={appManager.lastRefreshAt}
 			isRefreshing={appManager.isRefreshing}
 			onToggleUnread={(value) => feedViewStore.setShowOnlyUnread(value)}
+			onToggleExpandAll={(value) => {
+				preferences.setExpandAllItems(value);
+				if (!value) {
+					feedViewStore.resetSelection();
+				}
+			}}
 			onRefresh={() => appManager.refreshFromBackend()}
 			onMarkAllAsRead={!feedViewStore.starredFilter && !feedViewStore.sharedFilter
 				? markAllAsReadInCurrentView

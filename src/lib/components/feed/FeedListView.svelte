@@ -8,6 +8,7 @@
 	import { readingStore } from '$lib/stores/reading.svelte';
 	import { shareReadingStore } from '$lib/stores/shareReading.svelte';
 	import { sharesStore } from '$lib/stores/shares.svelte';
+	import { preferences } from '$lib/stores/preferences.svelte';
 	import type { Article } from '$lib/types';
 
 	interface Props {
@@ -79,8 +80,9 @@
 					isStarred={readingStore.isStarred(article.guid)}
 					isShared={sharesStore.isShared(article.guid)}
 					shareNote={sharesStore.getShareNote(article.guid)}
-					selected={feedViewStore.selectedIndex === index}
+					selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
 					expanded={feedViewStore.expandedIndex === index}
+					highlighted={feedViewStore.selectedIndex === index}
 					onToggleStar={() => onToggleStar(article)}
 					onToggleRead={() => handleToggleRead(article)}
 					onShare={() => sub && onShare(article, sub)}
@@ -95,8 +97,9 @@
 					{share}
 					{localArticle}
 					isRead={shareReadingStore.isRead(share.recordUri)}
-					selected={feedViewStore.selectedIndex === index}
+					selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
 					expanded={feedViewStore.expandedIndex === index}
+					highlighted={feedViewStore.selectedIndex === index}
 					onSelect={() => handleSelect(index)}
 					onExpand={() => handleExpand(index)}
 				/>
@@ -112,8 +115,9 @@
 					isShared={true}
 					shareNote={share.note}
 					reshareCount={share.reshareCount || 0}
-					selected={feedViewStore.selectedIndex === index}
+					selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
 					expanded={feedViewStore.expandedIndex === index}
+					highlighted={feedViewStore.selectedIndex === index}
 					onToggleStar={() => onToggleStar(article)}
 					onToggleRead={() => handleToggleRead(article)}
 					onUnshare={() => onUnshare(share.articleGuid)}
@@ -139,14 +143,7 @@
 	.article-list {
 		display: flex;
 		flex-direction: column;
-	}
-
-	.article-list > div {
-		border-bottom: 1px solid var(--color-border);
-	}
-
-	.article-list > div:last-child {
-		border-bottom: none;
+		gap: 0.5rem;
 	}
 
 	.load-more {

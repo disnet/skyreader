@@ -16,6 +16,7 @@
 		isRead = false,
 		selected = false,
 		expanded = false,
+		highlighted = false,
 		onSelect,
 		onExpand,
 		onFetchContent,
@@ -28,6 +29,7 @@
 		isRead?: boolean;
 		selected?: boolean;
 		expanded?: boolean;
+		highlighted?: boolean;
 		onSelect?: () => void;
 		onExpand?: () => void;
 		onFetchContent?: () => void;
@@ -187,7 +189,7 @@
 	});
 </script>
 
-<div class="share-item" class:read={isRead} class:selected class:expanded>
+<div class="share-item" class:read={isRead} class:selected class:expanded class:highlighted>
 	<div class="share-sticky-header">
 		<div class="share-attribution">
 			{#if groupedShare}
@@ -283,6 +285,7 @@
 
 <style>
 	.share-item {
+		padding: 0 1rem;
 		transition:
 			background-color 0.15s ease,
 			opacity 0.15s ease;
@@ -296,6 +299,20 @@
 		opacity: 0.8;
 	}
 
+	.share-item.highlighted {
+		background-color: rgba(96, 165, 250, 0.05);
+		border-radius: 8px;
+	}
+
+	.share-item:hover {
+		background-color: rgba(128, 128, 128, 0.05);
+		border-radius: 8px;
+	}
+
+	.share-item.highlighted:hover {
+		background-color: rgba(96, 165, 250, 0.08);
+	}
+
 	.share-item:not(.selected):not(.expanded):hover {
 		background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
 	}
@@ -303,7 +320,7 @@
 	.share-attribution {
 		font-size: 0.75rem;
 		color: var(--color-text-secondary);
-		padding: 0.5rem 0.5rem 0;
+		padding: 0.25rem 0 0;
 	}
 
 	.share-author-link {
@@ -325,7 +342,7 @@
 		align-items: center;
 		gap: 0.75rem;
 		width: 100%;
-		padding: 0.5rem 0.5rem 0.75rem;
+		padding: 0.25rem 0 0.5rem;
 		background: none;
 		border: none;
 		cursor: pointer;
@@ -375,7 +392,7 @@
 	}
 
 	.share-content {
-		padding: 0 0.5rem;
+		padding: 0;
 	}
 
 	.share-content[role='button'] {
@@ -387,13 +404,10 @@
 	.share-actions {
 		display: flex;
 		gap: 1rem;
-		padding: 0.5rem 0.5rem 1rem;
+		padding: 0.5rem 0 1rem;
 		position: sticky;
 		bottom: 0;
 		background: var(--color-bg, #ffffff);
-		margin: 0 -0.5rem;
-		padding-left: 1rem;
-		padding-right: 1rem;
 	}
 
 	@media (prefers-color-scheme: dark) {

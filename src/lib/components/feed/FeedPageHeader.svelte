@@ -10,9 +10,11 @@
 		feedId?: number;
 		showViewToggle?: boolean;
 		showOnlyUnread: boolean;
+		expandAllItems?: boolean;
 		lastRefreshAt?: number | null;
 		isRefreshing?: boolean;
 		onToggleUnread: (value: boolean) => void;
+		onToggleExpandAll?: (value: boolean) => void;
 		onRefresh?: () => void;
 		onMarkAllAsRead?: () => void;
 		onEdit?: () => void;
@@ -24,9 +26,11 @@
 		feedId,
 		showViewToggle = true,
 		showOnlyUnread,
+		expandAllItems = false,
 		lastRefreshAt,
 		isRefreshing = false,
 		onToggleUnread,
+		onToggleExpandAll,
 		onRefresh,
 		onMarkAllAsRead,
 		onEdit,
@@ -124,6 +128,26 @@
 		</div>
 
 		<div class="control-right">
+			{#if onToggleExpandAll}
+				<div class="view-toggle" role="group" aria-label="View mode">
+					<button
+						class:active={!expandAllItems}
+						onclick={() => onToggleExpandAll(false)}
+						aria-label="List view"
+						title="List view"
+					>
+						☰
+					</button>
+					<button
+						class:active={expandAllItems}
+						onclick={() => onToggleExpandAll(true)}
+						aria-label="Expanded view"
+						title="Expanded view"
+					>
+						▤
+					</button>
+				</div>
+			{/if}
 			{#if showViewToggle}
 				<div class="view-toggle">
 					<button class:active={showOnlyUnread} onclick={() => onToggleUnread(true)}>

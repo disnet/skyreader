@@ -9,6 +9,7 @@ interface PreferencesState {
 	articleFont: ArticleFont;
 	articleFontSize: ArticleFontSize;
 	scrollToMarkAsRead: boolean;
+	expandAllItems: boolean;
 }
 
 const STORAGE_KEY = 'skyreader-preferences';
@@ -18,6 +19,7 @@ function createPreferencesStore() {
 		articleFont: 'sans-serif',
 		articleFontSize: 'md',
 		scrollToMarkAsRead: false,
+		expandAllItems: false,
 	});
 
 	// Restore from localStorage on init
@@ -34,6 +36,9 @@ function createPreferencesStore() {
 				}
 				if (parsed.scrollToMarkAsRead !== undefined) {
 					state.scrollToMarkAsRead = parsed.scrollToMarkAsRead;
+				}
+				if (parsed.expandAllItems !== undefined) {
+					state.expandAllItems = parsed.expandAllItems;
 				}
 			} catch {
 				localStorage.removeItem(STORAGE_KEY);
@@ -83,6 +88,11 @@ function createPreferencesStore() {
 		save();
 	}
 
+	function setExpandAllItems(enabled: boolean) {
+		state.expandAllItems = enabled;
+		save();
+	}
+
 	return {
 		get articleFont() {
 			return state.articleFont;
@@ -93,12 +103,16 @@ function createPreferencesStore() {
 		get scrollToMarkAsRead() {
 			return state.scrollToMarkAsRead;
 		},
+		get expandAllItems() {
+			return state.expandAllItems;
+		},
 		setArticleFont,
 		setArticleFontSize,
 		increaseFontSize,
 		decreaseFontSize,
 		resetFontSize,
 		setScrollToMarkAsRead,
+		setExpandAllItems,
 	};
 }
 

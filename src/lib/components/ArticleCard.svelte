@@ -14,6 +14,7 @@
 		reshareCount = 0,
 		selected = false,
 		expanded = false,
+		highlighted = false,
 		onToggleStar,
 		onToggleRead,
 		onShare,
@@ -30,6 +31,7 @@
 		reshareCount?: number;
 		selected?: boolean;
 		expanded?: boolean;
+		highlighted?: boolean;
 		onToggleStar?: () => void;
 		onToggleRead?: () => void;
 		onShare?: () => void;
@@ -85,7 +87,14 @@
 	});
 </script>
 
-<article class="article-item" class:read={isRead} class:selected class:expanded class:open={isOpen}>
+<article
+	class="article-item"
+	class:read={isRead}
+	class:selected
+	class:expanded
+	class:open={isOpen}
+	class:highlighted
+>
 	<div class="article-sticky-header">
 		<button class="article-header" onclick={handleHeaderClick}>
 			{#if siteUrl}
@@ -169,6 +178,7 @@
 
 <style>
 	.article-item {
+		padding: 0 1rem;
 		transition: background-color 0.15s ease;
 	}
 
@@ -184,6 +194,20 @@
 		opacity: 0.8;
 	}
 
+	.article-item.highlighted {
+		background-color: rgba(96, 165, 250, 0.05);
+		border-radius: 8px;
+	}
+
+	.article-item:hover {
+		background-color: rgba(128, 128, 128, 0.05);
+		border-radius: 8px;
+	}
+
+	.article-item.highlighted:hover {
+		background-color: rgba(96, 165, 250, 0.08);
+	}
+
 	.article-sticky-header {
 		position: relative;
 	}
@@ -193,7 +217,7 @@
 		align-items: center;
 		gap: 0.75rem;
 		width: 100%;
-		padding: 0.75rem 0.5rem;
+		padding: 0.5rem 0;
 		background: none;
 		border: none;
 		cursor: pointer;
@@ -243,7 +267,7 @@
 	}
 
 	.article-content {
-		padding: 0 0.5rem;
+		padding: 0;
 	}
 
 	.article-content[role='button'] {
