@@ -744,7 +744,7 @@
 	@media (max-width: 480px) {
 		.article-actions {
 			gap: 1rem;
-			padding: 0.625rem 1.25rem;
+			padding: 0.5rem 1rem;
 		}
 
 		.action-btn {
