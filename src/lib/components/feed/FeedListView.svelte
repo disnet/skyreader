@@ -22,8 +22,9 @@
 	// Element refs for scroll observation
 	let articleElements = $state<HTMLElement[]>([]);
 
-	function scrollToCenter() {
-		const el = articleElements[feedViewStore.selectedIndex];
+	function scrollToCenter(index?: number) {
+		const targetIndex = index ?? feedViewStore.selectedIndex;
+		const el = articleElements[targetIndex];
 		if (!el) return;
 
 		const rect = el.getBoundingClientRect();
@@ -40,7 +41,7 @@
 			feedViewStore.expand(index);
 		}
 		await tick();
-		scrollToCenter();
+		scrollToCenter(index);
 	}
 
 	function handleSelect(index: number) {
