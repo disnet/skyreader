@@ -715,38 +715,21 @@
 		font-size: 0.875rem;
 	}
 
-	/* Mobile: Larger touch targets */
-	@media (max-width: 768px) {
-		.article-actions {
-			gap: 1.25rem;
-			padding: 0.75rem 1.25rem;
-		}
-		.action-btn {
-			padding: 0.25rem;
-		}
-		.action-icon {
-			transform: scale(1.25);
-		}
-		.action-label {
-			font-size: 1rem;
-		}
-	}
-
 	/* Stage 2: Stack icon above text */
-	@container (max-width: 550px) {
+	@container (max-width: 420px) {
 		.article-actions {
-			padding: 0.5rem 1.25rem;
+			padding: 0.375rem 1rem;
 		}
 		.action-btn {
 			flex-direction: column;
 			align-items: center;
 			justify-content: center;
-			gap: 0.25rem;
+			gap: 0.125rem;
 			text-align: center;
 		}
 		.action-label {
 			margin-left: 0;
-			font-size: 0.875rem;
+			font-size: 0.75rem;
 		}
 	}
 
@@ -754,13 +737,6 @@
 	@container (max-width: 320px) {
 		.action-label {
 			display: none;
-		}
-		.action-icon {
-			transform: scale(1.4);
-		}
-		.article-actions {
-			gap: 1.5rem;
-			padding: 0.75rem 1.5rem;
 		}
 	}
 </style>
