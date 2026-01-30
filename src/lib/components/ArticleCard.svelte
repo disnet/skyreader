@@ -344,7 +344,6 @@
 <style>
 	.article-item {
 		padding: 0 1rem;
-		transition: background-color 0.15s ease;
 	}
 
 	.article-item:not(.selected):not(.expanded):hover {
@@ -583,6 +582,18 @@
 		backdrop-filter: blur(8px);
 		border-radius: 9999px;
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+	}
+
+	/* Mute controls for non-highlighted articles in expanded view (desktop only) */
+	@media (min-width: 768px) {
+		.article-item.open .article-actions {
+			opacity: 0.3;
+		}
+
+		.article-item.open.highlighted .article-actions,
+		.article-item.open:hover .article-actions {
+			opacity: 1;
+		}
 	}
 
 	@media (prefers-color-scheme: dark) {
