@@ -126,20 +126,35 @@ function resolveUrl(url: string, base: URL): string | null {
 }
 
 /**
- * Rewrites srcset attribute to use absolute URLs
+ * Rewrites srcset attribute to use absolute URLs.
+ * Handles URLs that contain commas (like Cloudflare image URLs).
  */
 function rewriteSrcset(srcset: string, base: URL): string {
-	return srcset
-		.split(',')
-		.map((entry) => {
-			const parts = entry.trim().split(/\s+/);
-			if (parts.length >= 1) {
-				const absoluteUrl = resolveUrl(parts[0], base);
-				if (absoluteUrl) {
-					parts[0] = absoluteUrl;
-				}
-			}
-			return parts.join(' ');
-		})
-		.join(', ');
+	// Parse srcset entries. Each entry is a URL followed by whitespace and a descriptor.
+	// Entries are separated by commas, but URLs can contain commas (e.g., /image/format=auto,width=500/photo.jpg).
+	// The descriptor is a width (e.g., 500w) or pixel density (e.g., 2x).
+	// We match: URL (anything), then whitespace, then descriptor, then comma or end.
+	const entryRegex = /\s*(.+?)\s+(\d+(?:\.\d+)?[wx])\s*(?:,|$)/gi;
+
+	const entries: string[] = [];
+	let match;
+
+	while ((match = entryRegex.exec(srcset)) !== null) {
+		const url = match[1].trim();
+		const descriptor = match[2];
+		const absoluteUrl = resolveUrl(url, base) || url;
+		entries.push(`${absoluteUrl} ${descriptor}`);
+	}
+
+	if (entries.length === 0) {
+		// Fallback: maybe there's no descriptor, treat as single URL
+		const trimmed = srcset.trim();
+		if (trimmed) {
+			const absoluteUrl = resolveUrl(trimmed, base);
+			return absoluteUrl || trimmed;
+		}
+		return srcset;
+	}
+
+	return entries.join(', ');
 }
