@@ -739,4 +739,25 @@
 			display: none;
 		}
 	}
+
+	/* Mobile: bigger touch targets */
+	@media (max-width: 480px) {
+		.article-actions {
+			gap: 1rem;
+			padding: 0.625rem 1.25rem;
+		}
+
+		.action-btn {
+			font-size: 1.125rem;
+		}
+
+		.action-icon :global(.icon) {
+			width: 20px;
+			height: 20px;
+		}
+
+		.action-label {
+			font-size: 0.9375rem;
+		}
+	}
 </style>

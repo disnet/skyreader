@@ -368,6 +368,22 @@
 		}
 	}
 
+	@media (max-width: 480px) {
+		.view-toggle button {
+			padding: 0.5rem;
+		}
+
+		.view-toggle button :global(.icon) {
+			width: 20px;
+			height: 20px;
+		}
+
+		.refresh-btn {
+			font-size: 1.25rem;
+			padding: 0.25rem;
+		}
+	}
+
 	@media (prefers-color-scheme: dark) {
 		.feed-title-group,
 		.view-toggle {
