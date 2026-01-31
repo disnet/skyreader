@@ -406,6 +406,60 @@ class ApiClient {
 			body: JSON.stringify({ items }),
 		});
 	}
+
+	// Settings
+	async getSettings(): Promise<{
+		pdsSyncEnabled: boolean;
+		lastPdsSyncSubscriptions: number | null;
+		lastPdsSyncReadPositions: number | null;
+		createdAt: number;
+		updatedAt: number;
+	}> {
+		return this.fetch('/api/settings');
+	}
+
+	async updateSettings(settings: { pdsSyncEnabled?: boolean }): Promise<{
+		pdsSyncEnabled: boolean;
+		lastPdsSyncSubscriptions: number | null;
+		lastPdsSyncReadPositions: number | null;
+		createdAt: number;
+		updatedAt: number;
+	}> {
+		return this.fetch('/api/settings', {
+			method: 'PUT',
+			body: JSON.stringify(settings),
+		});
+	}
+
+	// PDS Sync
+	async triggerFullSync(): Promise<{
+		success: boolean;
+		subscriptions?: {
+			success: boolean;
+			pulledFromPds: number;
+			pushedToPds: number;
+			skipped: number;
+			warnings: string[];
+		};
+		readPositions?: {
+			success: boolean;
+			pulledFromPds: number;
+			pushedToPds: number;
+			skipped: number;
+			warnings: string[];
+		};
+		error?: string;
+	}> {
+		return this.fetch('/api/sync/full', { method: 'POST' });
+	}
+
+	async getSyncStatus(): Promise<{
+		pdsSyncEnabled: boolean;
+		lastSyncSubscriptions: number | null;
+		lastSyncReadPositions: number | null;
+	}> {
+		return this.fetch('/api/sync/status');
+	}
 }
 
 export const api = new ApiClient();

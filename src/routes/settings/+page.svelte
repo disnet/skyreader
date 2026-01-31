@@ -11,6 +11,7 @@
 	import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
 	import PageHeader from '$lib/components/common/PageHeader.svelte';
 	import { downloadOPML } from '$lib/utils/opml-exporter';
+	import { api } from '$lib/services/api';
 
 	const fontOptions: { value: ArticleFont; label: string }[] = [
 		{ value: 'sans-serif', label: 'Sans Serif' },
@@ -28,6 +29,15 @@
 
 	let showImportModal = $state(false);
 
+	// PDS Sync state
+	let pdsSyncEnabled = $state(false);
+	let lastSyncSubscriptions = $state<number | null>(null);
+	let lastSyncReadPositions = $state<number | null>(null);
+	let isSyncLoading = $state(false);
+	let isSyncing = $state(false);
+	let syncError = $state<string | null>(null);
+	let syncSuccess = $state<string | null>(null);
+
 	onMount(async () => {
 		if (!auth.isAuthenticated) {
 			goto('/auth/login?returnUrl=/settings');
@@ -37,7 +47,98 @@
 		if (subscriptionsStore.subscriptions.length === 0) {
 			await subscriptionsStore.load();
 		}
+
+		// Load PDS sync settings
+		await loadSyncSettings();
 	});
+
+	async function loadSyncSettings() {
+		isSyncLoading = true;
+		try {
+			const settings = await api.getSettings();
+			pdsSyncEnabled = settings.pdsSyncEnabled;
+			lastSyncSubscriptions = settings.lastPdsSyncSubscriptions;
+			lastSyncReadPositions = settings.lastPdsSyncReadPositions;
+		} catch (error) {
+			console.error('Failed to load sync settings:', error);
+		} finally {
+			isSyncLoading = false;
+		}
+	}
+
+	async function handleTogglePdsSync(event: Event) {
+		const target = event.currentTarget as HTMLInputElement;
+		const newValue = target.checked;
+
+		syncError = null;
+		syncSuccess = null;
+
+		try {
+			const settings = await api.updateSettings({ pdsSyncEnabled: newValue });
+			pdsSyncEnabled = settings.pdsSyncEnabled;
+
+			// If enabling sync, trigger an initial sync
+			if (newValue) {
+				await handleSync();
+			}
+		} catch (error) {
+			console.error('Failed to update sync setting:', error);
+			syncError = error instanceof Error ? error.message : 'Failed to update setting';
+			// Revert the checkbox
+			pdsSyncEnabled = !newValue;
+		}
+	}
+
+	async function handleSync() {
+		if (isSyncing) return;
+
+		isSyncing = true;
+		syncError = null;
+		syncSuccess = null;
+
+		try {
+			const result = await api.triggerFullSync();
+
+			if (result.success) {
+				const subsPulled = result.subscriptions?.pulledFromPds || 0;
+				const subsPushed = result.subscriptions?.pushedToPds || 0;
+				const readPulled = result.readPositions?.pulledFromPds || 0;
+				const readPushed = result.readPositions?.pushedToPds || 0;
+
+				syncSuccess = `Sync complete: ${subsPulled + readPulled} pulled, ${subsPushed + readPushed} pushed`;
+
+				// Show warnings if any
+				const warnings = [
+					...(result.subscriptions?.warnings || []),
+					...(result.readPositions?.warnings || []),
+				];
+				if (warnings.length > 0) {
+					syncSuccess += `. Warning: ${warnings.join(', ')}`;
+				}
+
+				// Refresh sync status
+				const status = await api.getSyncStatus();
+				lastSyncSubscriptions = status.lastSyncSubscriptions;
+				lastSyncReadPositions = status.lastSyncReadPositions;
+
+				// Reload subscriptions to show any pulled items
+				await subscriptionsStore.load();
+			} else {
+				syncError = result.error || 'Sync failed';
+			}
+		} catch (error) {
+			console.error('Sync error:', error);
+			syncError = error instanceof Error ? error.message : 'Sync failed';
+		} finally {
+			isSyncing = false;
+		}
+	}
+
+	function formatSyncTime(timestamp: number | null): string {
+		if (!timestamp) return 'Never';
+		const date = new Date(timestamp * 1000);
+		return date.toLocaleString();
+	}
 
 	async function handleLogout() {
 		if (confirm('Are you sure you want to log out?')) {
@@ -88,6 +189,47 @@
 			<button class="btn btn-danger" onclick={handleLogout}> Log Out </button>
 		</section>
 	{/if}
+
+	<section class="card">
+		<h2>Data Portability</h2>
+		{#if isSyncLoading}
+			<p class="loading">Loading sync settings...</p>
+		{:else}
+			<label class="toggle-setting">
+				<input type="checkbox" checked={pdsSyncEnabled} onchange={handleTogglePdsSync} />
+				<span>Sync to Personal Data Server</span>
+			</label>
+			<p class="setting-description">
+				Store subscriptions and starred articles in your AT Protocol PDS for backup and portability.
+				Your data stays under your control and can be moved to any compatible service.
+			</p>
+
+			{#if pdsSyncEnabled}
+				<div class="sync-status">
+					<p class="sync-time">
+						Subscriptions last synced: {formatSyncTime(lastSyncSubscriptions)}
+					</p>
+					<p class="sync-time">Reading data last synced: {formatSyncTime(lastSyncReadPositions)}</p>
+				</div>
+
+				<button class="btn btn-secondary" onclick={handleSync} disabled={isSyncing}>
+					{#if isSyncing}
+						Syncing...
+					{:else}
+						Sync Now
+					{/if}
+				</button>
+
+				{#if syncError}
+					<p class="sync-error">{syncError}</p>
+				{/if}
+
+				{#if syncSuccess}
+					<p class="sync-success">{syncSuccess}</p>
+				{/if}
+			{/if}
+		{/if}
+	</section>
 
 	<section class="card">
 		<h2>Appearance</h2>
@@ -399,5 +541,35 @@
 		display: flex;
 		gap: 0.75rem;
 		flex-wrap: wrap;
+	}
+
+	.loading {
+		color: var(--color-text-secondary);
+		font-style: italic;
+	}
+
+	.sync-status {
+		margin: 1rem 0;
+		padding: 0.75rem;
+		background: var(--color-bg-secondary);
+		border-radius: 6px;
+	}
+
+	.sync-time {
+		font-size: 0.875rem;
+		color: var(--color-text-secondary);
+		margin: 0.25rem 0;
+	}
+
+	.sync-error {
+		color: var(--color-danger);
+		font-size: 0.875rem;
+		margin-top: 0.5rem;
+	}
+
+	.sync-success {
+		color: var(--color-success, #22c55e);
+		font-size: 0.875rem;
+		margin-top: 0.5rem;
 	}
 </style>
