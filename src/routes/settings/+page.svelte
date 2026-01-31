@@ -192,17 +192,32 @@
 
 	<section class="card">
 		<h2>Data Portability</h2>
+		<p class="setting-description" style="margin-top: 0;">
+			Your <strong>shares are always stored</strong> in your Personal Data Server (PDS). This makes
+			them publicly visible and portable to any AT Protocol compatible service.
+			{#if auth.user}
+				<a
+					href="https://pdsls.dev/at://{auth.user.did}"
+					target="_blank"
+					rel="noopener noreferrer"
+					class="pds-link">View your public PDS data</a
+				>
+			{/if}
+		</p>
+
 		{#if isSyncLoading}
 			<p class="loading">Loading sync settings...</p>
 		{:else}
-			<label class="toggle-setting">
-				<input type="checkbox" checked={pdsSyncEnabled} onchange={handleTogglePdsSync} />
-				<span>Sync to Personal Data Server</span>
-			</label>
-			<p class="setting-description">
-				Store subscriptions and starred articles in your AT Protocol PDS for backup and portability.
-				Your data stays under your control and can be moved to any compatible service.
-			</p>
+			<div class="sync-toggle-section">
+				<label class="toggle-setting">
+					<input type="checkbox" checked={pdsSyncEnabled} onchange={handleTogglePdsSync} />
+					<span>Also sync subscriptions and reading data</span>
+				</label>
+				<p class="setting-description">
+					Optionally store your feed subscriptions and read/starred articles in your PDS. Note: this
+					data will be <strong>publicly visible</strong> on your PDS, but gives you full backup and portability.
+				</p>
+			</div>
 
 			{#if pdsSyncEnabled}
 				<div class="sync-status">
@@ -304,8 +319,8 @@
 		<h2>About</h2>
 		<p>Skyreader is a decentralized RSS reader built on the AT Protocol.</p>
 		<p>
-			When you share articles, those shares are stored in your Personal Data Server (PDS), making
-			them portable and under your control.
+			Your data is stored in your Personal Data Server (PDS), making it portable and under your
+			control.
 		</p>
 		<div class="about-links">
 			<a href="/terms">Terms of Service</a>
@@ -515,6 +530,17 @@
 		margin: 0.5rem 0 0 0;
 	}
 
+	.pds-link {
+		display: inline-block;
+		margin-top: 0.5rem;
+		color: var(--color-primary);
+		text-decoration: none;
+	}
+
+	.pds-link:hover {
+		text-decoration: underline;
+	}
+
 	.about-links {
 		margin-top: 1rem;
 		padding-top: 1rem;
@@ -546,6 +572,12 @@
 	.loading {
 		color: var(--color-text-secondary);
 		font-style: italic;
+	}
+
+	.sync-toggle-section {
+		margin-top: 1rem;
+		padding-top: 1rem;
+		border-top: 1px solid var(--color-border);
 	}
 
 	.sync-status {
