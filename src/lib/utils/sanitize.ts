@@ -41,10 +41,15 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
 		// Process anchor tags: rewrite href and open in new tab
 		if (node.tagName === 'A' && node.hasAttribute('href')) {
 			const href = node.getAttribute('href');
-			if (href && base) {
-				const absoluteUrl = resolveUrl(href, base);
-				if (absoluteUrl) {
-					node.setAttribute('href', absoluteUrl);
+			if (href) {
+				// Handle anchor-only links by pointing to original article
+				if (href.startsWith('#') && base) {
+					node.setAttribute('href', base.href + href);
+				} else if (base) {
+					const absoluteUrl = resolveUrl(href, base);
+					if (absoluteUrl) {
+						node.setAttribute('href', absoluteUrl);
+					}
 				}
 			}
 			// Open all links in new tab
