@@ -124,6 +124,18 @@
 		}
 	}
 
+	async function handleUnreshare(e: MouseEvent) {
+		e.stopPropagation();
+		if (isResharing || !hasReshared) return;
+
+		isResharing = true;
+		try {
+			await sharesStore.unshare(itemGuid);
+		} finally {
+			isResharing = false;
+		}
+	}
+
 	function handleHeaderClick() {
 		const wasSelected = selected;
 		onSelect?.();
@@ -270,17 +282,19 @@
 						</span><span class="action-label">Read</span>
 					</button>
 					{#if auth.user}
-						<button
-							class="action-btn"
-							class:reshared={hasReshared}
-							onclick={handleReshare}
-							disabled={isResharing || hasReshared}
-						>
-							<span class="action-icon"><Icon name="share" size={16} /></span><span
-								class="action-label"
-								>{#if isResharing}...{:else if hasReshared}Reshared{:else}Reshare{/if}</span
-							>
-						</button>
+						{#if hasReshared}
+							<button class="action-btn reshared" onclick={handleUnreshare} disabled={isResharing}>
+								<span class="action-icon"><Icon name="share" size={16} /></span><span
+									class="action-label">{isResharing ? '...' : 'Reshared'}</span
+								>
+							</button>
+						{:else}
+							<button class="action-btn" onclick={handleReshare} disabled={isResharing}>
+								<span class="action-icon"><Icon name="share" size={16} /></span><span
+									class="action-label">{isResharing ? '...' : 'Reshare'}</span
+								>
+							</button>
+						{/if}
 					{/if}
 					<button class="action-btn" onclick={handleOpenUrl}>
 						<span class="action-icon"><Icon name="external-link" size={16} /></span><span
