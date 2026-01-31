@@ -144,11 +144,16 @@
 		if ((e.target as HTMLElement).closest('a')) return;
 		e.stopPropagation();
 
+		if (expanded) {
+			// Already expanded, don't close on tap (use button instead)
+			return;
+		}
+
 		if (selected && !expanded && isTruncated) {
 			// Content is truncated, expand it (this also selects)
 			onExpand?.();
 		} else {
-			// Not truncated or already expanded, just select
+			// Not truncated, just select
 			onSelect?.();
 		}
 	}
