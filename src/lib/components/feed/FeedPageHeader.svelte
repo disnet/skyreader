@@ -5,6 +5,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import { sidebarStore } from '$lib/stores/sidebar.svelte';
 	import { formatRelativeTime } from '$lib/utils/date';
+	import { preferences } from '$lib/stores/preferences.svelte';
 
 	interface Props {
 		title: string;
@@ -155,6 +156,21 @@
 						<span class="toggle-divider"></span>
 					{/if}
 					{#if showViewToggle}
+						<button
+							class="sort-toggle"
+							onclick={() => preferences.toggleSortOrder()}
+							aria-label={preferences.sortOrder === 'newest'
+								? 'Sorted by newest first, click to sort by oldest'
+								: 'Sorted by oldest first, click to sort by newest'}
+							title={preferences.sortOrder === 'newest' ? 'Newest first' : 'Oldest first'}
+						>
+							<Icon
+								name={preferences.sortOrder === 'newest' ? 'arrow-down' : 'arrow-up'}
+								size={16}
+							/>
+							<span class="btn-label">{preferences.sortOrder === 'newest' ? 'New' : 'Old'}</span>
+						</button>
+						<span class="toggle-divider"></span>
 						<button
 							class:active={showOnlyUnread}
 							onclick={() => onToggleUnread(true)}

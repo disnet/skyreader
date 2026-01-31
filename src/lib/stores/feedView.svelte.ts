@@ -4,6 +4,7 @@ import { readingStore } from './reading.svelte';
 import { shareReadingStore } from './shareReading.svelte';
 import { sharesStore } from './shares.svelte';
 import { socialStore } from './social.svelte';
+import { preferences } from './preferences.svelte';
 import type { Article, SocialShare, CombinedFeedItem, UserShare } from '$lib/types';
 
 export type ViewMode = 'articles' | 'shares' | 'userShares' | 'combined';
@@ -57,34 +58,44 @@ function createFeedViewStore() {
 		// Access articlesStore version for reactivity
 		const allArticles = articlesStore.allArticles;
 		const positions = readingStore.readPositions;
+		const sortOrder = preferences.sortOrder;
+
+		let articles: Article[];
 
 		if (starredFilter) {
 			// Starred view
-			return allArticles.filter((a) => positions.get(a.guid)?.starred === true);
-		}
+			articles = allArticles.filter((a) => positions.get(a.guid)?.starred === true);
+		} else {
+			articles = allArticles;
 
-		let articles = allArticles;
+			// Filter by subscription
+			if (feedFilter) {
+				const feedId = parseInt(feedFilter);
+				articles = articles.filter((a) => a.subscriptionId === feedId);
+			}
 
-		// Filter by subscription
-		if (feedFilter) {
-			const feedId = parseInt(feedFilter);
-			articles = articles.filter((a) => a.subscriptionId === feedId);
-		}
-
-		// Filter to unread only, but keep articles read this session visible
-		if (showOnlyUnread) {
-			articles = articles.filter(
-				(a) => !positions.has(a.guid) || readArticleGuidsThisSession.has(a.guid)
-			);
+			// Filter to unread only, but keep articles read this session visible
+			if (showOnlyUnread) {
+				articles = articles.filter(
+					(a) => !positions.has(a.guid) || readArticleGuidsThisSession.has(a.guid)
+				);
+			}
 		}
 
 		// Deduplicate by GUID
 		const seen = new Set<string>();
-		return articles.filter((a) => {
+		articles = articles.filter((a) => {
 			if (seen.has(a.guid)) return false;
 			seen.add(a.guid);
 			return true;
 		});
+
+		// Apply sort order (articles come from liveDb sorted newest first)
+		if (sortOrder === 'oldest') {
+			articles = [...articles].reverse();
+		}
+
+		return articles;
 	});
 
 	// Derived: paginated articles (limited to loadedArticleCount)
@@ -94,6 +105,7 @@ function createFeedViewStore() {
 	let displayedShares = $derived.by((): SocialShare[] => {
 		const shares = socialStore.shares;
 		const positions = shareReadingStore.shareReadPositions;
+		const sortOrder = preferences.sortOrder;
 
 		let filtered: SocialShare[];
 		if (sharerFilter) {
@@ -109,6 +121,13 @@ function createFeedViewStore() {
 			);
 		}
 
+		// Apply sort order
+		filtered.sort((a, b) => {
+			const dateA = new Date(a.itemPublishedAt || a.createdAt).getTime();
+			const dateB = new Date(b.itemPublishedAt || b.createdAt).getTime();
+			return sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
+		});
+
 		return filtered;
 	});
 
@@ -116,8 +135,12 @@ function createFeedViewStore() {
 	let displayedUserShares = $derived.by((): UserShare[] => {
 		if (!sharedFilter) return [];
 
+		const sortOrder = preferences.sortOrder;
 		const shares = Array.from(sharesStore.userShares.values());
-		shares.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+		shares.sort((a, b) => {
+			const diff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+			return sortOrder === 'newest' ? diff : -diff;
+		});
 		return shares;
 	});
 
@@ -138,7 +161,11 @@ function createFeedViewStore() {
 			})),
 		];
 
-		combined.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+		const sortOrder = preferences.sortOrder;
+		combined.sort((a, b) => {
+			const diff = new Date(b.date).getTime() - new Date(a.date).getTime();
+			return sortOrder === 'newest' ? diff : -diff;
+		});
 		return combined;
 	});
 

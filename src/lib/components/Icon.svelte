@@ -22,7 +22,9 @@
 		| 'list'
 		| 'newspaper'
 		| 'layers'
-		| 'external-link';
+		| 'external-link'
+		| 'arrow-down'
+		| 'arrow-up';
 
 	interface Props {
 		name: IconName;
@@ -132,6 +134,12 @@
 		<path d="M15 3h6v6" />
 		<path d="M10 14 21 3" />
 		<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6" />
+	{:else if name === 'arrow-down'}
+		<path d="M12 5v14" />
+		<path d="m19 12-7 7-7-7" />
+	{:else if name === 'arrow-up'}
+		<path d="M12 19V5" />
+		<path d="m5 12 7-7 7 7" />
 	{/if}
 </svg>
 

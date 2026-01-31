@@ -2,6 +2,7 @@ import { browser } from '$app/environment';
 
 export type ArticleFont = 'sans-serif' | 'serif' | 'mono';
 export type ArticleFontSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+export type SortOrder = 'newest' | 'oldest';
 
 const FONT_SIZE_ORDER: ArticleFontSize[] = ['xs', 'sm', 'md', 'lg', 'xl'];
 
@@ -10,6 +11,7 @@ interface PreferencesState {
 	articleFontSize: ArticleFontSize;
 	scrollToMarkAsRead: boolean;
 	expandAllItems: boolean;
+	sortOrder: SortOrder;
 }
 
 const STORAGE_KEY = 'skyreader-preferences';
@@ -20,6 +22,7 @@ function createPreferencesStore() {
 		articleFontSize: 'md',
 		scrollToMarkAsRead: false,
 		expandAllItems: false,
+		sortOrder: 'newest',
 	});
 
 	// Restore from localStorage on init
@@ -39,6 +42,9 @@ function createPreferencesStore() {
 				}
 				if (parsed.expandAllItems !== undefined) {
 					state.expandAllItems = parsed.expandAllItems;
+				}
+				if (parsed.sortOrder) {
+					state.sortOrder = parsed.sortOrder;
 				}
 			} catch {
 				localStorage.removeItem(STORAGE_KEY);
@@ -93,6 +99,16 @@ function createPreferencesStore() {
 		save();
 	}
 
+	function setSortOrder(order: SortOrder) {
+		state.sortOrder = order;
+		save();
+	}
+
+	function toggleSortOrder() {
+		state.sortOrder = state.sortOrder === 'newest' ? 'oldest' : 'newest';
+		save();
+	}
+
 	return {
 		get articleFont() {
 			return state.articleFont;
@@ -106,6 +122,9 @@ function createPreferencesStore() {
 		get expandAllItems() {
 			return state.expandAllItems;
 		},
+		get sortOrder() {
+			return state.sortOrder;
+		},
 		setArticleFont,
 		setArticleFontSize,
 		increaseFontSize,
@@ -113,6 +132,8 @@ function createPreferencesStore() {
 		resetFontSize,
 		setScrollToMarkAsRead,
 		setExpandAllItems,
+		setSortOrder,
+		toggleSortOrder,
 	};
 }
 
