@@ -11,7 +11,7 @@
 	import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
 	import PageHeader from '$lib/components/common/PageHeader.svelte';
 	import { downloadOPML } from '$lib/utils/opml-exporter';
-	import { api } from '$lib/services/api';
+	import { api, RateLimitError } from '$lib/services/api';
 
 	const fontOptions: { value: ArticleFont; label: string }[] = [
 		{ value: 'sans-serif', label: 'Sans Serif' },
@@ -32,7 +32,6 @@
 	// PDS Sync state
 	let pdsSyncEnabled = $state(false);
 	let lastSyncSubscriptions = $state<number | null>(null);
-	let lastSyncReadPositions = $state<number | null>(null);
 	let isSyncLoading = $state(false);
 	let isSyncing = $state(false);
 	let syncError = $state<string | null>(null);
@@ -58,7 +57,6 @@
 			const settings = await api.getSettings();
 			pdsSyncEnabled = settings.pdsSyncEnabled;
 			lastSyncSubscriptions = settings.lastPdsSyncSubscriptions;
-			lastSyncReadPositions = settings.lastPdsSyncReadPositions;
 		} catch (error) {
 			console.error('Failed to load sync settings:', error);
 		} finally {
@@ -89,6 +87,10 @@
 		}
 	}
 
+	function sleep(ms: number): Promise<void> {
+		return new Promise((resolve) => setTimeout(resolve, ms));
+	}
+
 	async function handleSync() {
 		if (isSyncing) return;
 
@@ -96,36 +98,70 @@
 		syncError = null;
 		syncSuccess = null;
 
+		// Track totals across multiple sync calls (for batched hasMore syncs)
+		let totalPulled = 0;
+		let totalPushed = 0;
+		let allWarnings: string[] = [];
+		let batchCount = 0;
+		const maxBatches = 50; // Safety limit to prevent infinite loops
+
 		try {
-			const result = await api.triggerFullSync();
+			let hasMore = true;
 
-			if (result.success) {
-				const subsPulled = result.subscriptions?.pulledFromPds || 0;
-				const subsPushed = result.subscriptions?.pushedToPds || 0;
-				const readPulled = result.readPositions?.pulledFromPds || 0;
-				const readPushed = result.readPositions?.pushedToPds || 0;
-
-				syncSuccess = `Sync complete: ${subsPulled + readPulled} pulled, ${subsPushed + readPushed} pushed`;
-
-				// Show warnings if any
-				const warnings = [
-					...(result.subscriptions?.warnings || []),
-					...(result.readPositions?.warnings || []),
-				];
-				if (warnings.length > 0) {
-					syncSuccess += `. Warning: ${warnings.join(', ')}`;
+			while (hasMore && batchCount < maxBatches) {
+				batchCount++;
+				if (batchCount > 1) {
+					syncSuccess = `Syncing batch ${batchCount}...`;
 				}
 
-				// Refresh sync status
-				const status = await api.getSyncStatus();
-				lastSyncSubscriptions = status.lastSyncSubscriptions;
-				lastSyncReadPositions = status.lastSyncReadPositions;
+				let result;
+				try {
+					result = await api.triggerFullSync();
+				} catch (error) {
+					// Handle rate limit by waiting and retrying
+					if (error instanceof RateLimitError) {
+						const waitSeconds = Math.min(error.retryAfter, 300); // Cap at 5 minutes
+						syncSuccess = `Rate limit reached. Waiting ${waitSeconds}s before continuing...`;
+						await sleep(waitSeconds * 1000);
+						// Retry this batch
+						batchCount--;
+						continue;
+					}
+					throw error;
+				}
 
-				// Reload subscriptions to show any pulled items
-				await subscriptionsStore.load();
-			} else {
-				syncError = result.error || 'Sync failed';
+				if (!result.success) {
+					syncError = result.error || 'Sync failed';
+					return;
+				}
+
+				// Accumulate totals
+				totalPulled += result.subscriptions?.pulledFromPds || 0;
+				totalPushed += result.subscriptions?.pushedToPds || 0;
+
+				// Collect warnings
+				allWarnings = [...allWarnings, ...(result.subscriptions?.warnings || [])];
+
+				// Check if there's more to sync
+				hasMore = result.hasMore || false;
 			}
+
+			syncSuccess = `Sync complete: ${totalPulled} pulled, ${totalPushed} pushed`;
+			if (batchCount > 1) {
+				syncSuccess += ` (${batchCount} batches)`;
+			}
+
+			// Show warnings if any
+			if (allWarnings.length > 0) {
+				syncSuccess += `. Warning: ${allWarnings.join(', ')}`;
+			}
+
+			// Refresh sync status
+			const status = await api.getSyncStatus();
+			lastSyncSubscriptions = status.lastSyncSubscriptions;
+
+			// Reload subscriptions to show any pulled items
+			await subscriptionsStore.load();
 		} catch (error) {
 			console.error('Sync error:', error);
 			syncError = error instanceof Error ? error.message : 'Sync failed';
@@ -211,11 +247,12 @@
 			<div class="sync-toggle-section">
 				<label class="toggle-setting">
 					<input type="checkbox" checked={pdsSyncEnabled} onchange={handleTogglePdsSync} />
-					<span>Also sync subscriptions and reading data</span>
+					<span>Also sync subscriptions</span>
 				</label>
 				<p class="setting-description">
-					Optionally store your feed subscriptions and read/starred articles in your PDS. Note: this
-					data will be <strong>publicly visible</strong> on your PDS, but gives you full backup and portability.
+					Optionally store your feed subscriptions in your PDS. Note: this data will be <strong
+						>publicly visible</strong
+					> on your PDS, but gives you full backup and portability.
 				</p>
 			</div>
 
@@ -224,7 +261,6 @@
 					<p class="sync-time">
 						Subscriptions last synced: {formatSyncTime(lastSyncSubscriptions)}
 					</p>
-					<p class="sync-time">Reading data last synced: {formatSyncTime(lastSyncReadPositions)}</p>
 				</div>
 
 				<button class="btn btn-secondary" onclick={handleSync} disabled={isSyncing}>

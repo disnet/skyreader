@@ -10,6 +10,16 @@ import type {
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8787';
 
+export class RateLimitError extends Error {
+	retryAfter: number;
+
+	constructor(retryAfter: number) {
+		super(`Rate limit exceeded. Try again in ${retryAfter} seconds.`);
+		this.name = 'RateLimitError';
+		this.retryAfter = retryAfter;
+	}
+}
+
 class ApiClient {
 	private onUnauthorized: (() => void) | null = null;
 
@@ -39,6 +49,12 @@ class ApiClient {
 					this.onUnauthorized();
 				}
 				throw new Error('Session expired');
+			}
+
+			// Handle 429 - rate limit exceeded
+			if (response.status === 429) {
+				const retryAfter = parseInt(response.headers.get('Retry-After') || '60', 10);
+				throw new RateLimitError(retryAfter);
 			}
 
 			const error = await response.json().catch(() => ({ error: 'Request failed' }));
@@ -440,15 +456,10 @@ class ApiClient {
 			pushedToPds: number;
 			skipped: number;
 			warnings: string[];
-		};
-		readPositions?: {
-			success: boolean;
-			pulledFromPds: number;
-			pushedToPds: number;
-			skipped: number;
-			warnings: string[];
+			hasMore?: boolean;
 		};
 		error?: string;
+		hasMore?: boolean;
 	}> {
 		return this.fetch('/api/sync/full', { method: 'POST' });
 	}
@@ -456,7 +467,6 @@ class ApiClient {
 	async getSyncStatus(): Promise<{
 		pdsSyncEnabled: boolean;
 		lastSyncSubscriptions: number | null;
-		lastSyncReadPositions: number | null;
 	}> {
 		return this.fetch('/api/sync/status');
 	}
