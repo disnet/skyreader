@@ -209,9 +209,9 @@
 			<p class="loading">Loading sync settings...</p>
 		{:else}
 			<div class="sync-toggle-section">
-				<label class="toggle-setting">
-					<input type="checkbox" checked={pdsSyncEnabled} onchange={handleTogglePdsSync} />
-					<span>Also sync subscriptions and reading data</span>
+				<label class="toggle-setting disabled">
+					<input type="checkbox" checked={pdsSyncEnabled} onchange={handleTogglePdsSync} disabled />
+					<span>Also sync subscriptions and reading data <em>(temporarily disabled)</em></span>
 				</label>
 				<p class="setting-description">
 					Optionally store your feed subscriptions and read/starred articles in your PDS. Note: this
@@ -227,12 +227,8 @@
 					<p class="sync-time">Reading data last synced: {formatSyncTime(lastSyncReadPositions)}</p>
 				</div>
 
-				<button class="btn btn-secondary" onclick={handleSync} disabled={isSyncing}>
-					{#if isSyncing}
-						Syncing...
-					{:else}
-						Sync Now
-					{/if}
+				<button class="btn btn-secondary" onclick={handleSync} disabled={true}>
+					Sync Now
 				</button>
 
 				{#if syncError}
@@ -522,6 +518,15 @@
 		width: 1rem;
 		height: 1rem;
 		cursor: pointer;
+	}
+
+	.toggle-setting.disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.toggle-setting.disabled input[type='checkbox'] {
+		cursor: not-allowed;
 	}
 
 	.setting-description {
