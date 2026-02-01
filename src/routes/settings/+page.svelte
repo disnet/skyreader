@@ -227,9 +227,7 @@
 					<p class="sync-time">Reading data last synced: {formatSyncTime(lastSyncReadPositions)}</p>
 				</div>
 
-				<button class="btn btn-secondary" onclick={handleSync} disabled={true}>
-					Sync Now
-				</button>
+				<button class="btn btn-secondary" onclick={handleSync} disabled={true}> Sync Now </button>
 
 				{#if syncError}
 					<p class="sync-error">{syncError}</p>
