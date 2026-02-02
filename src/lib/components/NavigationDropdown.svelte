@@ -101,14 +101,24 @@
 	});
 
 	// Icon names type (matches Icon.svelte)
-	type IconName = 'inbox' | 'star' | 'share' | 'search' | 'bell' | 'settings' | 'users' | 'rss';
+	type IconName =
+		| 'inbox'
+		| 'star'
+		| 'share'
+		| 'search'
+		| 'bell'
+		| 'settings'
+		| 'users'
+		| 'rss'
+		| 'plus';
 
 	// Navigation item type
 	type NavItem =
 		| { type: 'view'; id: string; label: string; count?: number; icon: IconName }
 		| { type: 'feed'; id: number; label: string; count: number; iconUrl: string | null }
 		| { type: 'user'; did: string; label: string; count: number; avatarUrl: string | null }
-		| { type: 'utility'; id: string; label: string; count?: number; icon: IconName };
+		| { type: 'utility'; id: string; label: string; count?: number; icon: IconName }
+		| { type: 'action'; id: string; label: string; icon: IconName };
 
 	// Build filtered items list
 	let filteredItems = $derived.by((): { section: string; items: NavItem[] }[] => {
@@ -149,6 +159,7 @@
 				count: feedUnreadCounts.get(s.id!) || 0,
 				iconUrl: s.customIconUrl || getFaviconUrl(s.siteUrl || s.feedUrl),
 			})),
+			{ type: 'action', id: 'add-feed', label: 'Add Feed', icon: 'plus' },
 		];
 
 		// Filter by search query
@@ -248,6 +259,11 @@
 	});
 
 	function selectItem(item: NavItem) {
+		if (item.type === 'action' && item.id === 'add-feed') {
+			close();
+			sidebarStore.openAddFeedModal();
+			return;
+		}
 		let url = '/';
 		if (item.type === 'view') {
 			if (item.id === 'starred') url = '/?starred=true';
@@ -428,7 +444,7 @@
 							onclick={() => selectItem(item)}
 							onmouseenter={() => (highlightedIndex = flatIndex)}
 						>
-							{#if item.type === 'view' || item.type === 'utility'}
+							{#if item.type === 'view' || item.type === 'utility' || item.type === 'action'}
 								<span class="item-icon"><Icon name={item.icon} size={16} /></span>
 							{:else if item.type === 'feed'}
 								{#if item.iconUrl}
@@ -444,7 +460,7 @@
 								{/if}
 							{/if}
 							<span class="item-label">{item.label}</span>
-							{#if item.count && item.count > 0}
+							{#if item.type !== 'action' && item.count && item.count > 0}
 								<span class="item-count">{item.count}</span>
 							{/if}
 						</button>
@@ -507,7 +523,7 @@
 							onclick={() => selectItem(item)}
 							onmouseenter={() => (highlightedIndex = flatIndex)}
 						>
-							{#if item.type === 'view' || item.type === 'utility'}
+							{#if item.type === 'view' || item.type === 'utility' || item.type === 'action'}
 								<span class="item-icon"><Icon name={item.icon} size={16} /></span>
 							{:else if item.type === 'feed'}
 								{#if item.iconUrl}
@@ -523,7 +539,7 @@
 								{/if}
 							{/if}
 							<span class="item-label">{item.label}</span>
-							{#if item.count && item.count > 0}
+							{#if item.type !== 'action' && item.count && item.count > 0}
 								<span class="item-count">{item.count}</span>
 							{/if}
 						</button>

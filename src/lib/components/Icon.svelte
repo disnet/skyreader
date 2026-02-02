@@ -24,7 +24,8 @@
 		| 'layers'
 		| 'external-link'
 		| 'arrow-down'
-		| 'arrow-up';
+		| 'arrow-up'
+		| 'plus';
 
 	interface Props {
 		name: IconName;
@@ -140,6 +141,9 @@
 	{:else if name === 'arrow-up'}
 		<path d="M12 19V5" />
 		<path d="m5 12 7-7 7 7" />
+	{:else if name === 'plus'}
+		<path d="M12 5v14" />
+		<path d="M5 12h14" />
 	{/if}
 </svg>
 
