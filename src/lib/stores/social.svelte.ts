@@ -197,16 +197,36 @@ function createSocialStore() {
 		// Optimistic update - remove from discover
 		discoverUsers = discoverUsers.filter((u) => u.did !== did);
 
+		// Optimistic update - add to followed users for sidebar
+		const existingUser = followedUsers.find((u) => u.did === did);
+		if (existingUser) {
+			// Update source to 'both' if already following on Bluesky
+			followedUsers = followedUsers.map((u) =>
+				u.did === did ? { ...u, source: 'both' as const } : u
+			);
+		} else {
+			// Add new follow
+			followedUsers = [...followedUsers, { did, source: 'inapp' as const }];
+		}
+
 		const payload: FollowPayload = { rkey, did };
 
 		if (syncStore.isOnline) {
 			try {
 				await api.followUser(rkey, did);
-				// Refresh followed users
+				// Refresh followed users to get accurate data
 				await loadFollowedUsers();
 				return true;
 			} catch (e) {
 				error = e instanceof Error ? e.message : 'Failed to follow user';
+				// Revert optimistic update on error
+				if (existingUser) {
+					followedUsers = followedUsers.map((u) =>
+						u.did === did ? { ...u, source: existingUser.source } : u
+					);
+				} else {
+					followedUsers = followedUsers.filter((u) => u.did !== did);
+				}
 				// Queue for retry
 				await syncQueue.enqueue('create', 'follows', did, payload);
 				return false;
@@ -225,12 +245,36 @@ function createSocialStore() {
 			return false;
 		}
 
+		// Store original state for potential rollback
+		const originalUser = followedUsers.find((u) => u.did === did);
+
+		// Optimistic update - update source or remove from followed users
+		if (originalUser?.source === 'both') {
+			// If following on both, change to bluesky-only
+			followedUsers = followedUsers.map((u) =>
+				u.did === did ? { ...u, source: 'bluesky' as const } : u
+			);
+		} else {
+			// If only following in-app, remove entirely
+			followedUsers = followedUsers.filter((u) => u.did !== did);
+		}
+
 		try {
 			// Get in-app follows with rkeys
 			const { follows } = await api.listInAppFollows();
 			const followRecord = follows.find((f) => f.did === did);
 
 			if (!followRecord) {
+				// Revert optimistic update
+				if (originalUser) {
+					if (originalUser.source === 'both') {
+						followedUsers = followedUsers.map((u) =>
+							u.did === did ? { ...u, source: 'both' as const } : u
+						);
+					} else {
+						followedUsers = [...followedUsers, originalUser];
+					}
+				}
 				error = 'Follow record not found';
 				return false;
 			}
@@ -239,16 +283,36 @@ function createSocialStore() {
 
 			try {
 				await api.unfollowUser(followRecord.rkey);
-				// Refresh followed users
+				// Refresh followed users to get accurate data
 				await loadFollowedUsers();
 				return true;
 			} catch (e) {
 				error = e instanceof Error ? e.message : 'Failed to unfollow user';
+				// Revert optimistic update
+				if (originalUser) {
+					if (originalUser.source === 'both') {
+						followedUsers = followedUsers.map((u) =>
+							u.did === did ? { ...u, source: 'both' as const } : u
+						);
+					} else {
+						followedUsers = [...followedUsers, originalUser];
+					}
+				}
 				// Queue for retry
 				await syncQueue.enqueue('delete', 'follows', did, payload);
 				return false;
 			}
 		} catch (e) {
+			// Revert optimistic update
+			if (originalUser) {
+				if (originalUser.source === 'both') {
+					followedUsers = followedUsers.map((u) =>
+						u.did === did ? { ...u, source: 'both' as const } : u
+					);
+				} else {
+					followedUsers = [...followedUsers, originalUser];
+				}
+			}
 			error = e instanceof Error ? e.message : 'Failed to unfollow user';
 			return false;
 		}
