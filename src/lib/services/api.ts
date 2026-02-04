@@ -1,6 +1,7 @@
 import type {
 	DiscoverUser,
 	FeedItem,
+	FollowedUserDetailed,
 	GroupedShare,
 	ParsedFeed,
 	ReshareActivity,
@@ -176,6 +177,22 @@ class ApiClient {
 		if (limit) params.set('limit', limit.toString());
 		const query = params.toString();
 		return this.fetch(`/api/social/following${query ? `?${query}` : ''}`);
+	}
+
+	async getFollowingDetailed(
+		source: 'skyreader' | 'bluesky',
+		limit = 50,
+		offset = 0
+	): Promise<{
+		users: FollowedUserDetailed[];
+		nextOffset: number | null;
+	}> {
+		const params = new URLSearchParams({
+			source,
+			limit: limit.toString(),
+			offset: offset.toString(),
+		});
+		return this.fetch(`/api/social/following-detailed?${params}`);
 	}
 
 	async getDiscoverUsers(limit = 20): Promise<{ users: DiscoverUser[] }> {

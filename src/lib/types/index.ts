@@ -193,3 +193,17 @@ export interface InappFollow {
 	subjectDid: string;
 	createdAt: string;
 }
+
+export interface FollowedUserDetailed {
+	did: string;
+	source: 'bluesky' | 'inapp' | 'both';
+	shareCount: number;
+	lastSharedAt: string | null;
+	followedAt: number;
+	rkey?: string;
+	recentShares?: Array<{
+		itemUrl: string;
+		itemTitle?: string;
+		createdAt: string;
+	}>;
+}

@@ -3,7 +3,7 @@ import { api } from '$lib/services/api';
 import { profileService } from '$lib/services/profiles';
 import { syncQueue, type FollowPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
-import type { DiscoverUser, SocialShare } from '$lib/types';
+import type { DiscoverUser, FollowedUserDetailed, SocialShare } from '$lib/types';
 import { generateTid } from '$lib/utils/tid';
 
 export interface FollowedUser {
@@ -16,8 +16,14 @@ function createSocialStore() {
 	let popularShares = $state<(SocialShare & { shareCount: number })[]>([]);
 	let followedUsers = $state<FollowedUser[]>([]);
 	let discoverUsers = $state<DiscoverUser[]>([]);
+	let skyreaderFollows = $state<FollowedUserDetailed[]>([]);
+	let blueskyFollows = $state<FollowedUserDetailed[]>([]);
+	let skyreaderFollowsNextOffset = $state<number | null>(null);
+	let blueskyFollowsNextOffset = $state<number | null>(null);
 	let isLoadingFeed = $state(false);
 	let isLoadingUsers = $state(false);
+	let isLoadingSkyreaderFollows = $state(false);
+	let isLoadingBlueskyFollows = $state(false);
 	let isDiscoverLoading = $state(false);
 	let isSyncing = $state(false);
 	let cursor = $state<string | null>(null);
@@ -131,6 +137,60 @@ function createSocialStore() {
 		}
 	}
 
+	async function loadSkyreaderFollows(reset = true) {
+		if (isLoadingSkyreaderFollows) return;
+		if (!reset && skyreaderFollowsNextOffset === null) return;
+
+		isLoadingSkyreaderFollows = true;
+		error = null;
+
+		try {
+			const offset = reset ? 0 : (skyreaderFollowsNextOffset ?? 0);
+			const result = await api.getFollowingDetailed('skyreader', 50, offset);
+
+			if (reset) {
+				skyreaderFollows = result.users;
+			} else {
+				skyreaderFollows = [...skyreaderFollows, ...result.users];
+			}
+			skyreaderFollowsNextOffset = result.nextOffset;
+
+			// Prefetch profiles from Bluesky
+			profileService.prefetch(result.users.map((u) => u.did));
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to load Skyreader follows';
+		} finally {
+			isLoadingSkyreaderFollows = false;
+		}
+	}
+
+	async function loadBlueskyFollows(reset = true) {
+		if (isLoadingBlueskyFollows) return;
+		if (!reset && blueskyFollowsNextOffset === null) return;
+
+		isLoadingBlueskyFollows = true;
+		error = null;
+
+		try {
+			const offset = reset ? 0 : (blueskyFollowsNextOffset ?? 0);
+			const result = await api.getFollowingDetailed('bluesky', 50, offset);
+
+			if (reset) {
+				blueskyFollows = result.users;
+			} else {
+				blueskyFollows = [...blueskyFollows, ...result.users];
+			}
+			blueskyFollowsNextOffset = result.nextOffset;
+
+			// Prefetch profiles from Bluesky
+			profileService.prefetch(result.users.map((u) => u.did));
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to load Bluesky follows';
+		} finally {
+			isLoadingBlueskyFollows = false;
+		}
+	}
+
 	async function followUser(did: string): Promise<boolean> {
 		const rkey = generateTid();
 
@@ -199,6 +259,10 @@ function createSocialStore() {
 		popularShares = [];
 		followedUsers = [];
 		discoverUsers = [];
+		skyreaderFollows = [];
+		blueskyFollows = [];
+		skyreaderFollowsNextOffset = null;
+		blueskyFollowsNextOffset = null;
 		cursor = null;
 		hasMore = true;
 		error = null;
@@ -221,8 +285,26 @@ function createSocialStore() {
 		get discoverUsers() {
 			return discoverUsers;
 		},
+		get skyreaderFollows() {
+			return skyreaderFollows;
+		},
+		get blueskyFollows() {
+			return blueskyFollows;
+		},
+		get hasMoreSkyreaderFollows() {
+			return skyreaderFollowsNextOffset !== null;
+		},
+		get hasMoreBlueskyFollows() {
+			return blueskyFollowsNextOffset !== null;
+		},
 		get isLoading() {
 			return isLoading;
+		},
+		get isLoadingSkyreaderFollows() {
+			return isLoadingSkyreaderFollows;
+		},
+		get isLoadingBlueskyFollows() {
+			return isLoadingBlueskyFollows;
 		},
 		get isDiscoverLoading() {
 			return isDiscoverLoading;
@@ -240,6 +322,8 @@ function createSocialStore() {
 		loadPopular,
 		loadFollowedUsers,
 		loadDiscoverUsers,
+		loadSkyreaderFollows,
+		loadBlueskyFollows,
 		followUser,
 		unfollowInApp,
 		syncFollows,

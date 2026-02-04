@@ -177,33 +177,30 @@
 		return subs;
 	});
 
-	// Sort followed users: 1) with unread shares, 2) followed in-app, 3) others (by DID)
+	// Sort followed users: only Skyreader (in-app) follows, sorted by unread shares then by DID
 	let sortedFollowedUsers = $derived(() => {
 		const counts = sharerCounts();
-		let users = [...socialStore.followedUsers].sort((a, b) => {
-			const countA = counts.get(a.did) || 0;
-			const countB = counts.get(b.did) || 0;
-			const hasUnreadA = countA > 0;
-			const hasUnreadB = countB > 0;
+		// Filter to only Skyreader follows (source 'inapp' or 'both')
+		let users = [...socialStore.followedUsers]
+			.filter((u) => u.source === 'inapp' || u.source === 'both')
+			.sort((a, b) => {
+				const countA = counts.get(a.did) || 0;
+				const countB = counts.get(b.did) || 0;
+				const hasUnreadA = countA > 0;
+				const hasUnreadB = countB > 0;
 
-			// Tier 1: accounts with unread shares
-			if (hasUnreadA && !hasUnreadB) return -1;
-			if (!hasUnreadA && hasUnreadB) return 1;
+				// Tier 1: accounts with unread shares
+				if (hasUnreadA && !hasUnreadB) return -1;
+				if (!hasUnreadA && hasUnreadB) return 1;
 
-			// Within unread tier, sort by count descending
-			if (hasUnreadA && hasUnreadB) {
-				return countB - countA;
-			}
+				// Within unread tier, sort by count descending
+				if (hasUnreadA && hasUnreadB) {
+					return countB - countA;
+				}
 
-			// Tier 2: accounts followed in-app
-			const aIsInApp = a.source === 'inapp' || a.source === 'both';
-			const bIsInApp = b.source === 'inapp' || b.source === 'both';
-			if (aIsInApp && !bIsInApp) return -1;
-			if (!aIsInApp && bIsInApp) return 1;
-
-			// Tier 3: by DID (stable sort - profiles are fetched async in UserItem)
-			return a.did.localeCompare(b.did);
-		});
+				// Tier 2: by DID (stable sort - profiles are fetched async in UserItem)
+				return a.did.localeCompare(b.did);
+			});
 		if (sidebarStore.showOnlyUnread.shared) {
 			users = users.filter((u) => (counts.get(u.did) || 0) > 0);
 		}
@@ -394,6 +391,9 @@
 			onLabelClick={() => selectFilter('following')}
 			onUnreadToggle={() => sidebarStore.toggleShowOnlyUnread('shared')}
 		>
+			<a href="/following" class="manage-link" onclick={() => sidebarStore.closeMobile()}>
+				Manage
+			</a>
 			{@const allUsers = sortedFollowedUsers()}
 			{@const displayedUsers = allUsers.slice(0, 10)}
 			{#each displayedUsers as user (user.did)}
@@ -648,6 +648,21 @@
 		padding: 0.25rem 1.5rem;
 		font-size: 0.8125rem;
 		color: var(--color-text-secondary);
+	}
+
+	.manage-link {
+		display: block;
+		padding: 0.5rem 1.5rem;
+		font-size: 0.8125rem;
+		color: var(--color-text-secondary);
+		text-decoration: none;
+		transition: background-color 0.15s;
+		border-radius: 8px;
+	}
+
+	.manage-link:hover {
+		background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+		color: var(--color-primary);
 	}
 
 	.add-feed-item {
