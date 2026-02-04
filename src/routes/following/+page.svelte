@@ -213,7 +213,7 @@
 						</div>
 					</div>
 
-					{#if activeTab === 'bluesky' && hasShares}
+					{#if hasShares}
 						<button class="disclosure-toggle" onclick={() => toggleExpanded(user.did)}>
 							<span class="disclosure-icon">{isExpanded ? '▼' : '▶'}</span>
 							<span>Recent shares</span>

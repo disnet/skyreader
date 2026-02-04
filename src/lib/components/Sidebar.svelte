@@ -392,7 +392,8 @@
 			onUnreadToggle={() => sidebarStore.toggleShowOnlyUnread('shared')}
 		>
 			<a href="/following" class="manage-link" onclick={() => sidebarStore.closeMobile()}>
-				Manage
+				<Icon name="users" size={16} />
+				<span>Manage</span>
 			</a>
 			{@const allUsers = sortedFollowedUsers()}
 			{@const displayedUsers = allUsers.slice(0, 10)}
@@ -651,7 +652,9 @@
 	}
 
 	.manage-link {
-		display: block;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 		padding: 0.5rem 1.5rem;
 		font-size: 0.8125rem;
 		color: var(--color-text-secondary);

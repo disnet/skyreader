@@ -63,7 +63,8 @@
 
 	@media (prefers-color-scheme: dark) {
 		.page-header {
-			background: rgba(40, 40, 40, 0.95);
+			background: rgba(26, 26, 26, 0.9);
+			backdrop-filter: blur(12px);
 		}
 	}
 
