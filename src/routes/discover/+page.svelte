@@ -8,6 +8,16 @@
 	import UserCard from '$lib/components/common/UserCard.svelte';
 
 	let followingDids = $state<Set<string>>(new Set());
+	let expandedUsers = $state<Set<string>>(new Set());
+
+	function toggleExpanded(did: string) {
+		if (expandedUsers.has(did)) {
+			expandedUsers.delete(did);
+		} else {
+			expandedUsers.add(did);
+		}
+		expandedUsers = new Set(expandedUsers);
+	}
 
 	onMount(async () => {
 		if (!auth.isAuthenticated) {
@@ -54,44 +64,73 @@
 		emptyTitle="No users to discover"
 		emptyDescription="Check back later when more users have shared articles"
 	>
-		<div class="users-grid">
+		<div class="users-list">
 			{#each socialStore.discoverUsers as user (user.did)}
-				<div class="user-card card">
-					<UserCard
-						avatarUrl={user.avatarUrl}
-						displayName={user.displayName}
-						handle={user.handle}
-						size="large"
-					/>
-					<div class="user-stats">
-						{user.shareCount}
-						{user.shareCount === 1 ? 'share' : 'shares'} in last 30 days
+				{@const isExpanded = expandedUsers.has(user.did)}
+				{@const hasShares = user.recentShares && user.recentShares.length > 0}
+				<div class="user-row card">
+					<div class="user-main">
+						<div class="user-info">
+							<UserCard
+								avatarUrl={user.avatarUrl}
+								displayName={user.displayName}
+								handle={user.handle}
+								size="large"
+							/>
+							<div class="user-stats">
+								<span class="share-count">
+									{user.shareCount}
+									{user.shareCount === 1 ? 'share' : 'shares'}
+								</span>
+								<span class="time-period">in last 30 days</span>
+							</div>
+						</div>
+
+						<div class="user-actions">
+							<button
+								class="btn follow-btn"
+								class:btn-primary={!isFollowing(user.did)}
+								class:btn-secondary={isFollowing(user.did)}
+								disabled={isFollowing(user.did) || followingDids.has(user.did)}
+								onclick={() => handleFollow(user.did)}
+							>
+								{#if isFollowing(user.did)}
+									Following
+								{:else if followingDids.has(user.did)}
+									Following...
+								{:else}
+									Follow on Skyreader
+								{/if}
+							</button>
+							<a
+								href="https://bsky.app/profile/{user.handle}"
+								target="_blank"
+								rel="noopener"
+								class="btn btn-outline bluesky-link"
+							>
+								Bluesky Profile
+							</a>
+						</div>
 					</div>
-					<div class="follow-buttons">
-						<button
-							class="btn follow-btn"
-							class:btn-primary={!isFollowing(user.did)}
-							class:btn-secondary={isFollowing(user.did)}
-							disabled={isFollowing(user.did) || followingDids.has(user.did)}
-							onclick={() => handleFollow(user.did)}
-						>
-							{#if isFollowing(user.did)}
-								Following on Skyreader
-							{:else if followingDids.has(user.did)}
-								Following...
-							{:else}
-								Follow on Skyreader
-							{/if}
+
+					{#if hasShares}
+						<button class="disclosure-toggle" onclick={() => toggleExpanded(user.did)}>
+							<span class="disclosure-icon">{isExpanded ? '▼' : '▶'}</span>
+							<span>Recent shares</span>
 						</button>
-						<a
-							href="https://bsky.app/profile/{user.handle}"
-							target="_blank"
-							rel="noopener"
-							class="btn btn-outline bluesky-btn"
-						>
-							Follow on Bluesky ↗
-						</a>
-					</div>
+
+						{#if isExpanded}
+							<ul class="recent-shares">
+								{#each user.recentShares! as share}
+									<li>
+										<a href={share.itemUrl} target="_blank" rel="noopener">
+											{share.itemTitle || share.itemUrl}
+										</a>
+									</li>
+								{/each}
+							</ul>
+						{/if}
+					{/if}
 				</div>
 			{/each}
 		</div>
@@ -105,46 +144,113 @@
 		padding: 0 1rem;
 	}
 
-	.users-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-		gap: 1rem;
-	}
-
-	.user-card {
-		padding: 1rem;
+	.users-list {
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
+		margin-top: 1rem;
 	}
 
-	.user-stats {
-		font-size: 0.875rem;
-		color: var(--color-text-secondary);
+	.user-row {
+		display: flex;
+		flex-direction: column;
+		padding: 1rem;
+		gap: 0.75rem;
 	}
 
-	.follow-buttons {
+	.user-main {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1rem;
+		width: 100%;
+	}
+
+	.user-info {
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
-		margin-top: 0.25rem;
+		min-width: 0;
+		flex: 1;
+	}
+
+	.user-stats {
+		display: flex;
+		gap: 0.5rem;
+		font-size: 0.875rem;
+		color: var(--color-text-secondary);
+		padding-left: 3.5rem;
+	}
+
+	.share-count {
+		font-weight: 500;
+	}
+
+	.user-actions {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		flex-shrink: 0;
 	}
 
 	.follow-btn {
-		width: 100%;
+		min-width: 150px;
 	}
 
-	.bluesky-btn {
-		width: 100%;
+	.bluesky-link {
 		text-align: center;
 		text-decoration: none;
-		background: transparent;
-		color: var(--color-text);
-		border: 1px solid var(--color-border);
+		font-size: 0.875rem;
 	}
 
-	.bluesky-btn:hover {
-		background: var(--color-bg-secondary);
+	.disclosure-toggle {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		background: none;
+		border: none;
+		padding: 0.5rem 0;
+		font: inherit;
+		font-size: 0.875rem;
+		color: var(--color-text-secondary);
+		cursor: pointer;
+		transition: color 0.15s;
+	}
+
+	.disclosure-toggle:hover {
+		color: var(--color-primary);
+	}
+
+	.disclosure-icon {
+		font-size: 0.625rem;
+		width: 1rem;
+	}
+
+	.recent-shares {
+		list-style: none;
+		margin: 0;
+		padding: 0 0 0 1.5rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	.recent-shares li {
+		font-size: 0.875rem;
+	}
+
+	.recent-shares a {
+		color: var(--color-text);
+		text-decoration: none;
+		display: block;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.recent-shares a:hover {
+		color: var(--color-primary);
+		text-decoration: underline;
 	}
 
 	.error {
@@ -153,5 +259,27 @@
 		background: var(--color-error-bg, #f8d7da);
 		border-radius: 8px;
 		margin-bottom: 1rem;
+	}
+
+	@media (max-width: 600px) {
+		.user-main {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.user-stats {
+			padding-left: 0;
+		}
+
+		.user-actions {
+			flex-direction: row;
+			flex-wrap: wrap;
+		}
+
+		.follow-btn,
+		.bluesky-link {
+			flex: 1;
+			min-width: 120px;
+		}
 	}
 </style>

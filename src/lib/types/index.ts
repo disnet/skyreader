@@ -185,6 +185,11 @@ export interface DiscoverUser {
 	displayName?: string;
 	avatarUrl?: string;
 	shareCount: number;
+	recentShares?: Array<{
+		itemUrl: string;
+		itemTitle?: string;
+		createdAt: string;
+	}>;
 }
 
 export interface InappFollow {
