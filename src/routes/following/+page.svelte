@@ -90,19 +90,27 @@
 		actionInProgress = new Set(actionInProgress);
 	}
 
-	function formatRelativeTime(dateString: string | null): string {
-		if (!dateString) return 'Never shared';
+	function formatRelativeTime(dateString: string | null, prefix: string = 'Last active'): string {
+		if (!dateString) return 'No activity';
 		const date = new Date(dateString);
 		const now = new Date();
 		const diffMs = now.getTime() - date.getTime();
 		const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-		if (diffDays === 0) return 'Last shared today';
-		if (diffDays === 1) return 'Last shared yesterday';
-		if (diffDays < 7) return `Last shared ${diffDays} days ago`;
-		if (diffDays < 30) return `Last shared ${Math.floor(diffDays / 7)} weeks ago`;
-		if (diffDays < 365) return `Last shared ${Math.floor(diffDays / 30)} months ago`;
-		return `Last shared ${Math.floor(diffDays / 365)} years ago`;
+		if (diffDays === 0) return `${prefix} today`;
+		if (diffDays === 1) return `${prefix} yesterday`;
+		if (diffDays < 7) return `${prefix} ${diffDays} days ago`;
+		if (diffDays < 30) return `${prefix} ${Math.floor(diffDays / 7)} weeks ago`;
+		if (diffDays < 365) return `${prefix} ${Math.floor(diffDays / 30)} months ago`;
+		return `${prefix} ${Math.floor(diffDays / 365)} years ago`;
+	}
+
+	function getLastActivityDate(user: FollowedUserDetailed): string | null {
+		const dates: number[] = [];
+		if (user.lastSharedAt) dates.push(new Date(user.lastSharedAt).getTime());
+		if (user.lastPublishedAt) dates.push(new Date(user.lastPublishedAt).getTime());
+		if (dates.length === 0) return null;
+		return new Date(Math.max(...dates)).toISOString();
 	}
 
 	function getProfile(did: string): BlueskyProfile | undefined {
@@ -164,6 +172,8 @@
 				{@const profile = getProfile(user.did)}
 				{@const isExpanded = expandedUsers.has(user.did)}
 				{@const hasShares = user.recentShares && user.recentShares.length > 0}
+				{@const hasDocuments = user.recentDocuments && user.recentDocuments.length > 0}
+				{@const hasContent = hasShares || hasDocuments}
 				<div class="user-row card">
 					<div class="user-main">
 						<div class="user-info">
@@ -174,11 +184,22 @@
 								size="large"
 							/>
 							<div class="user-stats">
-								<span class="share-count">
-									{user.shareCount}
-									{user.shareCount === 1 ? 'share' : 'shares'}
-								</span>
-								<span class="last-shared">{formatRelativeTime(user.lastSharedAt)}</span>
+								{#if user.shareCount > 0}
+									<span class="share-count">
+										{user.shareCount}
+										{user.shareCount === 1 ? 'share' : 'shares'}
+									</span>
+								{/if}
+								{#if user.documentCount && user.documentCount > 0}
+									<span class="document-count">
+										{user.documentCount}
+										{user.documentCount === 1 ? 'post' : 'posts'}
+									</span>
+								{/if}
+								{#if user.shareCount === 0 && (!user.documentCount || user.documentCount === 0)}
+									<span class="no-activity">No activity</span>
+								{/if}
+								<span class="last-shared">{formatRelativeTime(getLastActivityDate(user))}</span>
 							</div>
 						</div>
 
@@ -213,22 +234,41 @@
 						</div>
 					</div>
 
-					{#if hasShares}
+					{#if hasContent}
 						<button class="disclosure-toggle" onclick={() => toggleExpanded(user.did)}>
 							<span class="disclosure-icon">{isExpanded ? '▼' : '▶'}</span>
-							<span>Recent shares</span>
+							<span>Recent activity</span>
 						</button>
 
 						{#if isExpanded}
-							<ul class="recent-shares">
-								{#each user.recentShares! as share}
-									<li>
-										<a href={share.itemUrl} target="_blank" rel="noopener">
-											{share.itemTitle || share.itemUrl}
-										</a>
-									</li>
-								{/each}
-							</ul>
+							{#if hasShares}
+								<div class="recent-section">
+									<h4 class="recent-section-title">Shares</h4>
+									<ul class="recent-items">
+										{#each user.recentShares! as share}
+											<li>
+												<a href={share.itemUrl} target="_blank" rel="noopener">
+													{share.itemTitle || share.itemUrl}
+												</a>
+											</li>
+										{/each}
+									</ul>
+								</div>
+							{/if}
+							{#if hasDocuments}
+								<div class="recent-section">
+									<h4 class="recent-section-title">Posts</h4>
+									<ul class="recent-items">
+										{#each user.recentDocuments! as doc}
+											<li>
+												<a href={doc.url} target="_blank" rel="noopener">
+													{doc.title || doc.url}
+												</a>
+											</li>
+										{/each}
+									</ul>
+								</div>
+							{/if}
 						{/if}
 					{/if}
 				</div>
@@ -354,7 +394,20 @@
 		width: 1rem;
 	}
 
-	.recent-shares {
+	.recent-section {
+		margin-top: 0.5rem;
+	}
+
+	.recent-section-title {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--color-text-secondary);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		margin: 0 0 0.25rem 1.5rem;
+	}
+
+	.recent-items {
 		list-style: none;
 		margin: 0;
 		padding: 0 0 0 1.5rem;
@@ -363,11 +416,11 @@
 		gap: 0.5rem;
 	}
 
-	.recent-shares li {
+	.recent-items li {
 		font-size: 0.875rem;
 	}
 
-	.recent-shares a {
+	.recent-items a {
 		color: var(--color-text);
 		text-decoration: none;
 		display: block;
@@ -376,9 +429,17 @@
 		white-space: nowrap;
 	}
 
-	.recent-shares a:hover {
+	.recent-items a:hover {
 		color: var(--color-primary);
 		text-decoration: underline;
+	}
+
+	.document-count {
+		font-weight: 500;
+	}
+
+	.no-activity {
+		color: var(--color-text-secondary);
 	}
 
 	.follow-btn,

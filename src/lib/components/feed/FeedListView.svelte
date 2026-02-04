@@ -139,6 +139,17 @@
 					onSelect={() => handleSelect(index)}
 					onExpand={() => handleExpand(index)}
 				/>
+			{:else if displayItem.type === 'document'}
+				{@const doc = displayItem.item}
+				<ArticleCard
+					document={doc}
+					isRead={false}
+					selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
+					expanded={feedViewStore.expandedIndex === index}
+					highlighted={feedViewStore.selectedIndex === index}
+					onSelect={() => handleSelect(index)}
+					onExpand={() => handleExpand(index)}
+				/>
 			{/if}
 		</div>
 	{/each}

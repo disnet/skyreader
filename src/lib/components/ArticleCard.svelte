@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Article, SocialShare, BlueskyProfile } from '$lib/types';
+	import type { Article, SocialShare, SocialDocument, BlueskyProfile } from '$lib/types';
 	import { formatRelativeDate } from '$lib/utils/date';
 	import { getFaviconUrl } from '$lib/utils/favicon';
 	import { sanitizeHtml } from '$lib/utils/sanitize';
@@ -11,6 +11,7 @@
 	let {
 		article,
 		share,
+		document,
 		localArticle,
 		siteUrl,
 		isRead = false,
@@ -33,6 +34,7 @@
 	}: {
 		article?: Article;
 		share?: SocialShare;
+		document?: SocialDocument;
 		localArticle?: Article;
 		siteUrl?: string;
 		isRead?: boolean;
@@ -55,18 +57,26 @@
 	} = $props();
 
 	// Determine if we're in share mode (showing someone else's share)
-	let isShareMode = $derived(Boolean(share && !article));
+	let isShareMode = $derived(Boolean(share && !article && !document));
+	// Determine if we're in document mode (showing someone's published document)
+	let isDocumentMode = $derived(Boolean(document && !article && !share));
 
-	// Normalize data for both article and share modes
-	let itemUrl = $derived(article?.url || share?.itemUrl || '');
-	let itemTitle = $derived(article?.title || share?.itemTitle || itemUrl);
-	let itemPublishedAt = $derived(
-		article?.publishedAt || share?.itemPublishedAt || share?.createdAt || ''
+	// Normalize data for article, share, and document modes
+	let itemUrl = $derived(
+		article?.url || share?.itemUrl || document?.canonicalUrl || document?.path || ''
 	);
-	let itemGuid = $derived(article?.guid || share?.itemGuid || itemUrl);
-	let displaySiteUrl = $derived(siteUrl || share?.feedUrl || itemUrl);
+	let itemTitle = $derived(article?.title || share?.itemTitle || document?.title || itemUrl);
+	let itemPublishedAt = $derived(
+		article?.publishedAt ||
+			share?.itemPublishedAt ||
+			share?.createdAt ||
+			document?.publishedAt ||
+			''
+	);
+	let itemGuid = $derived(article?.guid || share?.itemGuid || document?.recordUri || itemUrl);
+	let displaySiteUrl = $derived(siteUrl || share?.feedUrl || document?.siteUri || itemUrl);
 
-	// Content handling - article has priority, then share content, then localArticle
+	// Content handling - article has priority, then share content, then localArticle, then document
 	let displayContent = $derived(
 		article?.content ||
 			article?.summary ||
@@ -74,19 +84,22 @@
 			localArticle?.content ||
 			localArticle?.summary ||
 			share?.itemDescription ||
+			document?.textContent ||
+			document?.description ||
 			''
 	);
 
-	// Profile fetching for share mode
+	// Profile fetching for share mode and document mode
 	let authorProfile = $state<BlueskyProfile | null>(null);
 	$effect(() => {
-		if (share) {
-			profileService.getProfile(share.authorDid).then((p) => {
+		const authorDid = share?.authorDid || document?.authorDid;
+		if (authorDid) {
+			profileService.getProfile(authorDid).then((p) => {
 				authorProfile = p;
 			});
 		}
 	});
-	let authorHandle = $derived(authorProfile?.handle || share?.authorDid);
+	let authorHandle = $derived(authorProfile?.handle || share?.authorDid || document?.authorDid);
 
 	// Reshare state for share mode
 	let isResharing = $state(false);
@@ -232,6 +245,14 @@
 					>
 				{/if}
 			</div>
+		{:else if isDocumentMode && document}
+			<div class="share-attribution">
+				published by <a
+					href="/?author={document.authorDid}"
+					class="share-author-link"
+					onclick={(e) => e.stopPropagation()}>@{authorHandle}</a
+				>
+			</div>
 		{/if}
 		<button class="article-header" onclick={handleHeaderClick}>
 			{#if displaySiteUrl}
@@ -296,6 +317,22 @@
 							</button>
 						{/if}
 					{/if}
+					<button class="action-btn" onclick={handleOpenUrl}>
+						<span class="action-icon"><Icon name="external-link" size={16} /></span><span
+							class="action-label">Open</span
+						>
+					</button>
+				{:else if isDocumentMode}
+					<!-- Document mode: read and open -->
+					<button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
+						<span class="action-icon">
+							{#if isRead}
+								<Icon name="circle" size={16} />
+							{:else}
+								<Icon name="circle-dot" size={16} />
+							{/if}
+						</span><span class="action-label">Read</span>
+					</button>
 					<button class="action-btn" onclick={handleOpenUrl}>
 						<span class="action-icon"><Icon name="external-link" size={16} /></span><span
 							class="action-label">Open</span

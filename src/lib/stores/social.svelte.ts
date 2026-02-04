@@ -3,7 +3,7 @@ import { api } from '$lib/services/api';
 import { profileService } from '$lib/services/profiles';
 import { syncQueue, type FollowPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
-import type { DiscoverUser, FollowedUserDetailed, SocialShare } from '$lib/types';
+import type { DiscoverUser, FollowedUserDetailed, SocialDocument, SocialShare } from '$lib/types';
 import { generateTid } from '$lib/utils/tid';
 
 export interface FollowedUser {
@@ -13,6 +13,7 @@ export interface FollowedUser {
 
 function createSocialStore() {
 	let shares = $state<SocialShare[]>([]);
+	let documents = $state<SocialDocument[]>([]);
 	let popularShares = $state<(SocialShare & { shareCount: number })[]>([]);
 	let followedUsers = $state<FollowedUser[]>([]);
 	let discoverUsers = $state<DiscoverUser[]>([]);
@@ -46,19 +47,30 @@ function createSocialStore() {
 
 			if (reset) {
 				shares = result.shares;
+				documents = result.documents || [];
 				// Cache in IndexedDB
 				await db.socialShares.clear();
 				await db.socialShares.bulkAdd(result.shares);
+				await db.socialDocuments.clear();
+				if (result.documents && result.documents.length > 0) {
+					await db.socialDocuments.bulkAdd(result.documents);
+				}
 			} else {
 				shares = [...shares, ...result.shares];
+				documents = [...documents, ...(result.documents || [])];
 				await db.socialShares.bulkAdd(result.shares);
+				if (result.documents && result.documents.length > 0) {
+					await db.socialDocuments.bulkAdd(result.documents);
+				}
 			}
 
 			cursor = result.cursor;
 			hasMore = !!result.cursor;
 
 			// Prefetch author profiles from Bluesky (fire and forget)
-			const authorDids = [...new Set(result.shares.map((s) => s.authorDid))];
+			const shareAuthorDids = result.shares.map((s) => s.authorDid);
+			const docAuthorDids = (result.documents || []).map((d) => d.authorDid);
+			const authorDids = [...new Set([...shareAuthorDids, ...docAuthorDids])];
 			profileService.prefetch(authorDids);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load social feed';
@@ -66,6 +78,7 @@ function createSocialStore() {
 			// Load from cache on error
 			if (reset) {
 				shares = await db.socialShares.orderBy('createdAt').reverse().toArray();
+				documents = await db.socialDocuments.orderBy('publishedAt').reverse().toArray();
 			}
 		} finally {
 			isLoadingFeed = false;
@@ -320,6 +333,7 @@ function createSocialStore() {
 
 	function reset() {
 		shares = [];
+		documents = [];
 		popularShares = [];
 		followedUsers = [];
 		discoverUsers = [];
@@ -339,6 +353,9 @@ function createSocialStore() {
 	return {
 		get shares() {
 			return shares;
+		},
+		get documents() {
+			return documents;
 		},
 		get popularShares() {
 			return popularShares;

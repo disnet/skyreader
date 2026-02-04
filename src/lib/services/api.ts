@@ -5,6 +5,7 @@ import type {
 	GroupedShare,
 	ParsedFeed,
 	ReshareActivity,
+	SocialDocument,
 	SocialShare,
 	User,
 } from '$lib/types';
@@ -124,13 +125,16 @@ class ApiClient {
 	// Social
 	async getSocialFeed(
 		cursor?: string,
-		limit = 50
+		limit = 50,
+		includeDocuments = true
 	): Promise<{
 		shares: SocialShare[];
+		documents?: SocialDocument[];
 		cursor: string | null;
 	}> {
 		const params = new URLSearchParams({ limit: limit.toString() });
 		if (cursor) params.set('cursor', cursor);
+		if (includeDocuments) params.set('include', 'documents');
 		return this.fetch(`/api/social/feed?${params}`);
 	}
 

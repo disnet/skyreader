@@ -86,10 +86,14 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 			url = item.item.url;
 		} else if (item.type === 'share') {
 			url = item.item.itemUrl;
+		} else if (item.type === 'document') {
+			url = item.item.canonicalUrl || item.item.path || '';
 		} else {
 			url = item.item.articleUrl;
 		}
-		window.open(url, '_blank');
+		if (url) {
+			window.open(url, '_blank');
+		}
 	}
 
 	// Toggle star on selected item

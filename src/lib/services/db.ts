@@ -1,5 +1,12 @@
 import Dexie, { type Table } from 'dexie';
-import type { Subscription, Article, ShareReadPosition, SocialShare, UserShare } from '$lib/types';
+import type {
+	Subscription,
+	Article,
+	ShareReadPosition,
+	SocialDocument,
+	SocialShare,
+	UserShare,
+} from '$lib/types';
 
 // Local cache for read positions (backend is source of truth)
 export interface ReadPositionCache {
@@ -34,6 +41,7 @@ class SkyreaderDatabase extends Dexie {
 	readPositionsCache!: Table<ReadPositionCache>;
 	shareReadPositions!: Table<ShareReadPosition>;
 	socialShares!: Table<SocialShare>;
+	socialDocuments!: Table<SocialDocument>;
 	userShares!: Table<UserShare>;
 	syncQueue!: Table<SyncQueueEntry>;
 	metadata!: Table<MetadataEntry>;
@@ -108,6 +116,11 @@ class SkyreaderDatabase extends Dexie {
 		this.version(12).stores({
 			metadata: 'key',
 		});
+
+		// Add socialDocuments table for caching site.standard.document records
+		this.version(13).stores({
+			socialDocuments: '++id, authorDid, recordUri, canonicalUrl, publishedAt',
+		});
 	}
 }
 
@@ -121,6 +134,7 @@ export async function clearAllData(): Promise<void> {
 		db.readPositionsCache.clear(),
 		db.shareReadPositions.clear(),
 		db.socialShares.clear(),
+		db.socialDocuments.clear(),
 		db.userShares.clear(),
 		db.syncQueue.clear(),
 		db.metadata.clear(),

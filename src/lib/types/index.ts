@@ -83,6 +83,25 @@ export interface SocialShare {
 	reshareCount?: number;
 }
 
+export interface SocialDocument {
+	id?: number;
+	authorDid: string;
+	recordUri: string;
+	siteUri: string;
+	title: string;
+	publishedAt: string;
+	path?: string;
+	description?: string;
+	coverImageCid?: string;
+	textContent?: string;
+	bskyPostUri?: string;
+	tags?: string[];
+	updatedAt?: string;
+	canonicalUrl?: string;
+	indexedAt?: string;
+	createdAt: string;
+}
+
 // Grouped share for deduplicated feed
 export interface GroupedShare {
 	itemUrl: string;
@@ -177,7 +196,8 @@ export interface FeedItem {
 // Combined feed item for unified "all" view
 export type CombinedFeedItem =
 	| { type: 'article'; item: Article; date: string }
-	| { type: 'share'; item: SocialShare; date: string };
+	| { type: 'share'; item: SocialShare; date: string }
+	| { type: 'document'; item: SocialDocument; date: string };
 
 export interface DiscoverUser {
 	did: string;
@@ -210,5 +230,12 @@ export interface FollowedUserDetailed {
 		itemUrl: string;
 		itemTitle?: string;
 		createdAt: string;
+	}>;
+	documentCount?: number;
+	lastPublishedAt?: string | null;
+	recentDocuments?: Array<{
+		url: string;
+		title: string;
+		publishedAt: string;
 	}>;
 }

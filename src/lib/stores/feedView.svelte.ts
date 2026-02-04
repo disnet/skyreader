@@ -5,7 +5,7 @@ import { shareReadingStore } from './shareReading.svelte';
 import { sharesStore } from './shares.svelte';
 import { socialStore } from './social.svelte';
 import { preferences } from './preferences.svelte';
-import type { Article, SocialShare, CombinedFeedItem, UserShare } from '$lib/types';
+import type { Article, SocialShare, SocialDocument, CombinedFeedItem, UserShare } from '$lib/types';
 
 export type ViewMode = 'articles' | 'shares' | 'userShares' | 'combined';
 
@@ -15,7 +15,8 @@ export type ViewMode = 'articles' | 'shares' | 'userShares' | 'combined';
 export type FeedDisplayItem =
 	| { type: 'article'; item: Article; key: string }
 	| { type: 'share'; item: SocialShare; key: string }
-	| { type: 'userShare'; item: UserShare; article: Article; key: string };
+	| { type: 'userShare'; item: UserShare; article: Article; key: string }
+	| { type: 'document'; item: SocialDocument; key: string };
 
 const DEFAULT_PAGE_SIZE = 50;
 
@@ -144,7 +145,24 @@ function createFeedViewStore() {
 		return shares;
 	});
 
-	// Derived: combined view (articles + shares merged by date)
+	// Derived: filtered documents
+	let displayedDocuments = $derived.by((): SocialDocument[] => {
+		const docs = socialStore.documents;
+		const sortOrder = preferences.sortOrder;
+
+		let filtered = [...docs];
+
+		// Apply sort order
+		filtered.sort((a, b) => {
+			const dateA = new Date(a.publishedAt).getTime();
+			const dateB = new Date(b.publishedAt).getTime();
+			return sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
+		});
+
+		return filtered;
+	});
+
+	// Derived: combined view (articles + shares + documents merged by date)
 	let displayedCombined = $derived.by((): CombinedFeedItem[] => {
 		if (viewMode !== 'combined') return [];
 
@@ -158,6 +176,11 @@ function createFeedViewStore() {
 				type: 'share' as const,
 				item,
 				date: item.itemPublishedAt || item.createdAt,
+			})),
+			...displayedDocuments.map((item) => ({
+				type: 'document' as const,
+				item,
+				date: item.publishedAt,
 			})),
 		];
 
@@ -177,11 +200,15 @@ function createFeedViewStore() {
 		const mode = viewMode;
 
 		if (mode === 'combined') {
-			return displayedCombined.map((item) =>
-				item.type === 'article'
-					? { type: 'article' as const, item: item.item, key: item.item.guid }
-					: { type: 'share' as const, item: item.item, key: item.item.recordUri }
-			);
+			return displayedCombined.map((item) => {
+				if (item.type === 'article') {
+					return { type: 'article' as const, item: item.item, key: item.item.guid };
+				} else if (item.type === 'share') {
+					return { type: 'share' as const, item: item.item, key: item.item.recordUri };
+				} else {
+					return { type: 'document' as const, item: item.item, key: item.item.recordUri };
+				}
+			});
 		}
 
 		if (mode === 'shares') {
