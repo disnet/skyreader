@@ -7,7 +7,7 @@
 	import { readingStore } from '$lib/stores/reading.svelte';
 	import { socialStore } from '$lib/stores/social.svelte';
 	import { sharesStore } from '$lib/stores/shares.svelte';
-	import { shareReadingStore } from '$lib/stores/shareReading.svelte';
+	import { socialReadingStore } from '$lib/stores/socialReading.svelte';
 	import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
 	import { articlesStore } from '$lib/stores/articles.svelte';
 	import { activityStore } from '$lib/stores/activity.svelte';
@@ -133,21 +133,25 @@
 	// Group unread shares by author for counts
 	let sharerCounts = $derived(() => {
 		// Track dependency on read positions
-		shareReadingStore.shareReadPositions;
+		socialReadingStore.positions;
 		const counts = new Map<string, number>();
 		for (const share of socialStore.shares) {
-			if (!shareReadingStore.isRead(share.recordUri)) {
+			if (!socialReadingStore.isRead(share.recordUri)) {
 				counts.set(share.authorDid, (counts.get(share.authorDid) || 0) + 1);
 			}
 		}
 		return counts;
 	});
 
-	// Group documents by author for counts
+	// Group unread documents by author for counts
 	let sharerDocCounts = $derived(() => {
+		// Track dependency on read positions
+		socialReadingStore.positions;
 		const counts = new Map<string, number>();
 		for (const doc of socialStore.documents) {
-			counts.set(doc.authorDid, (counts.get(doc.authorDid) || 0) + 1);
+			if (!socialReadingStore.isRead(doc.recordUri)) {
+				counts.set(doc.authorDid, (counts.get(doc.authorDid) || 0) + 1);
+			}
 		}
 		return counts;
 	});

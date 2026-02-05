@@ -4,7 +4,7 @@ import { api } from './api';
 const MAX_RETRIES = 5;
 
 export type SyncOperation = 'create' | 'update' | 'delete';
-export type SyncCollection = 'reading' | 'shares' | 'shareReading' | 'follows';
+export type SyncCollection = 'reading' | 'shares' | 'shareReading' | 'socialReading' | 'follows';
 
 // Payload types for each collection
 export interface ReadingPayload {
@@ -40,12 +40,26 @@ export interface ShareReadingPayload {
 	itemTitle?: string;
 }
 
+export interface SocialReadingPayload {
+	type: 'share' | 'document';
+	rkey: string;
+	itemUri: string;
+	authorDid: string;
+	itemUrl?: string;
+	itemTitle?: string;
+}
+
 export interface FollowPayload {
 	rkey: string;
 	did: string;
 }
 
-type SyncPayload = ReadingPayload | SharePayload | ShareReadingPayload | FollowPayload;
+type SyncPayload =
+	| ReadingPayload
+	| SharePayload
+	| ShareReadingPayload
+	| SocialReadingPayload
+	| FollowPayload;
 
 class SyncQueue {
 	private processing = false;
@@ -212,6 +226,9 @@ class SyncQueue {
 			case 'shareReading':
 				await this.executeShareReadingOperation(entry.operation, payload as ShareReadingPayload);
 				break;
+			case 'socialReading':
+				await this.executeSocialReadingOperation(entry.operation, payload as SocialReadingPayload);
+				break;
 			case 'follows':
 				await this.executeFollowOperation(entry.operation, payload as FollowPayload);
 				break;
@@ -299,6 +316,31 @@ class SyncQueue {
 				break;
 			case 'delete':
 				await api.markShareAsUnread(payload.rkey);
+				break;
+		}
+	}
+
+	private async executeSocialReadingOperation(
+		operation: SyncOperation,
+		payload: SocialReadingPayload
+	): Promise<void> {
+		switch (operation) {
+			case 'create':
+				await api.markSocialItemAsRead({
+					type: payload.type,
+					rkey: payload.rkey,
+					itemUri: payload.itemUri,
+					authorDid: payload.authorDid,
+					itemUrl:
+						payload.itemUrl &&
+						(payload.itemUrl.startsWith('http://') || payload.itemUrl.startsWith('https://'))
+							? payload.itemUrl
+							: undefined,
+					itemTitle: payload.itemTitle || undefined,
+				});
+				break;
+			case 'delete':
+				await api.markSocialItemAsUnread(payload.rkey);
 				break;
 		}
 	}

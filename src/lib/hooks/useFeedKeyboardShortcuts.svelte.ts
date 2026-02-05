@@ -5,7 +5,7 @@ import { auth } from '$lib/stores/auth.svelte';
 import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
 import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 import { readingStore } from '$lib/stores/reading.svelte';
-import { shareReadingStore } from '$lib/stores/shareReading.svelte';
+import { socialReadingStore } from '$lib/stores/socialReading.svelte';
 import { sharesStore } from '$lib/stores/shares.svelte';
 import type { Article, Subscription } from '$lib/types';
 
@@ -148,14 +148,30 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 			}
 		} else if (item.type === 'share') {
 			const share = item.item;
-			if (shareReadingStore.isRead(share.recordUri)) {
-				shareReadingStore.markAsUnread(share.recordUri);
+			if (socialReadingStore.isRead(share.recordUri)) {
+				socialReadingStore.markAsUnread(share.recordUri);
 			} else {
-				shareReadingStore.markAsRead(
+				feedViewStore.trackSeenThisSession(item);
+				socialReadingStore.markAsRead(
+					'share',
 					share.recordUri,
 					share.authorDid,
 					share.itemUrl,
 					share.itemTitle
+				);
+			}
+		} else if (item.type === 'document') {
+			const doc = item.item;
+			if (socialReadingStore.isRead(doc.recordUri)) {
+				socialReadingStore.markAsUnread(doc.recordUri);
+			} else {
+				feedViewStore.trackSeenThisSession(item);
+				socialReadingStore.markAsRead(
+					'document',
+					doc.recordUri,
+					doc.authorDid,
+					doc.canonicalUrl || '',
+					doc.title
 				);
 			}
 		}

@@ -1,6 +1,7 @@
 import { liveDb } from '$lib/services/liveDb.svelte';
 import { readingStore } from './reading.svelte';
 import { shareReadingStore } from './shareReading.svelte';
+import { socialReadingStore } from './socialReading.svelte';
 import { sharesStore } from './shares.svelte';
 import { socialStore } from './social.svelte';
 import { feedStatusStore } from './feedStatus.svelte';
@@ -60,6 +61,7 @@ function createAppManager() {
 				liveDb.loadArticles(),
 				readingStore.load(),
 				shareReadingStore.load(),
+				socialReadingStore.load(),
 				sharesStore.load(),
 			]);
 
@@ -109,6 +111,7 @@ function createAppManager() {
 				syncSubscriptions(),
 				readingStore.load(),
 				shareReadingStore.load(),
+				socialReadingStore.load(),
 				socialStore.loadFollowedUsers(),
 				socialStore.loadInAppFollowCount(),
 				socialStore.loadFeed(true),

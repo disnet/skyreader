@@ -5,10 +5,10 @@
 	import { feedViewStore } from '$lib/stores/feedView.svelte';
 	import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 	import { readingStore } from '$lib/stores/reading.svelte';
-	import { shareReadingStore } from '$lib/stores/shareReading.svelte';
+	import { socialReadingStore } from '$lib/stores/socialReading.svelte';
 	import { sharesStore } from '$lib/stores/shares.svelte';
 	import { preferences } from '$lib/stores/preferences.svelte';
-	import type { Article } from '$lib/types';
+	import type { Article, SocialDocument } from '$lib/types';
 
 	interface Props {
 		onToggleStar: (article: Article) => void;
@@ -63,6 +63,22 @@
 		}
 	}
 
+	function handleToggleDocumentRead(doc: SocialDocument) {
+		if (socialReadingStore.isRead(doc.recordUri)) {
+			socialReadingStore.markAsUnread(doc.recordUri);
+		} else {
+			// Track item to keep it visible in unread filter for this session
+			feedViewStore.trackSeenThisSession({ type: 'document', item: doc, key: doc.recordUri });
+			socialReadingStore.markAsRead(
+				'document',
+				doc.recordUri,
+				doc.authorDid,
+				doc.canonicalUrl || '',
+				doc.title
+			);
+		}
+	}
+
 	export function getArticleElements(): HTMLElement[] {
 		return articleElements;
 	}
@@ -99,15 +115,21 @@
 				<ArticleCard
 					{share}
 					{localArticle}
-					isRead={shareReadingStore.isRead(share.recordUri)}
+					isRead={socialReadingStore.isRead(share.recordUri)}
 					selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
 					expanded={feedViewStore.expandedIndex === index}
 					highlighted={feedViewStore.selectedIndex === index}
 					onToggleRead={() => {
-						if (shareReadingStore.isRead(share.recordUri)) {
-							shareReadingStore.markAsUnread(share.recordUri);
+						if (socialReadingStore.isRead(share.recordUri)) {
+							socialReadingStore.markAsUnread(share.recordUri);
 						} else {
-							shareReadingStore.markAsRead(
+							feedViewStore.trackSeenThisSession({
+								type: 'share',
+								item: share,
+								key: share.recordUri,
+							});
+							socialReadingStore.markAsRead(
+								'share',
 								share.recordUri,
 								share.authorDid,
 								share.itemUrl,
@@ -143,10 +165,11 @@
 				{@const doc = displayItem.item}
 				<ArticleCard
 					document={doc}
-					isRead={false}
+					isRead={socialReadingStore.isRead(doc.recordUri)}
 					selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
 					expanded={feedViewStore.expandedIndex === index}
 					highlighted={feedViewStore.selectedIndex === index}
+					onToggleRead={() => handleToggleDocumentRead(doc)}
 					onSelect={() => handleSelect(index)}
 					onExpand={() => handleExpand(index)}
 				/>

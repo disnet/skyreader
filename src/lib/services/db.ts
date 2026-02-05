@@ -3,6 +3,7 @@ import type {
 	Subscription,
 	Article,
 	ShareReadPosition,
+	SocialReadPosition,
 	SocialDocument,
 	SocialShare,
 	UserShare,
@@ -21,7 +22,7 @@ export interface ReadPositionCache {
 export interface SyncQueueEntry {
 	id?: number;
 	operation: 'create' | 'update' | 'delete';
-	collection: 'reading' | 'shares' | 'shareReading' | 'follows';
+	collection: 'reading' | 'shares' | 'shareReading' | 'socialReading' | 'follows';
 	key: string; // Deduplication key (e.g., articleGuid, rkey)
 	payload: string; // JSON-serialized data
 	timestamp: number;
@@ -40,6 +41,7 @@ class SkyreaderDatabase extends Dexie {
 	articles!: Table<Article>;
 	readPositionsCache!: Table<ReadPositionCache>;
 	shareReadPositions!: Table<ShareReadPosition>;
+	socialReadPositions!: Table<SocialReadPosition>;
 	socialShares!: Table<SocialShare>;
 	socialDocuments!: Table<SocialDocument>;
 	userShares!: Table<UserShare>;
@@ -127,6 +129,28 @@ class SkyreaderDatabase extends Dexie {
 		this.version(14).stores({
 			socialDocuments: '++id, authorDid, recordUri, canonicalUrl, publishedAt',
 		});
+
+		// Add unified socialReadPositions table for tracking read state across all social item types
+		this.version(15)
+			.stores({
+				socialReadPositions: '++id, rkey, type, itemUri, authorDid',
+			})
+			.upgrade(async (tx) => {
+				// Migrate existing shareReadPositions to socialReadPositions with type='share'
+				const sharePositions = await tx.table('shareReadPositions').toArray();
+				const migrated = sharePositions.map((p: ShareReadPosition) => ({
+					rkey: p.rkey,
+					type: 'share' as const,
+					itemUri: p.shareUri,
+					authorDid: p.shareAuthorDid,
+					itemUrl: p.itemUrl,
+					itemTitle: p.itemTitle,
+					readAt: p.readAt,
+				}));
+				if (migrated.length > 0) {
+					await tx.table('socialReadPositions').bulkAdd(migrated);
+				}
+			});
 	}
 }
 
@@ -139,6 +163,7 @@ export async function clearAllData(): Promise<void> {
 		db.articles.clear(),
 		db.readPositionsCache.clear(),
 		db.shareReadPositions.clear(),
+		db.socialReadPositions.clear(),
 		db.socialShares.clear(),
 		db.socialDocuments.clear(),
 		db.userShares.clear(),

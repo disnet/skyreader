@@ -2,6 +2,7 @@ import { articlesStore } from './articles.svelte';
 import { subscriptionsStore } from './subscriptions.svelte';
 import { readingStore } from './reading.svelte';
 import { shareReadingStore } from './shareReading.svelte';
+import { socialReadingStore } from './socialReading.svelte';
 import { sharesStore } from './shares.svelte';
 import { socialStore } from './social.svelte';
 import { preferences } from './preferences.svelte';
@@ -54,6 +55,7 @@ function createFeedViewStore() {
 	// These are cleared when switching views/feeds
 	let readArticleGuidsThisSession = $state<Set<string>>(new Set());
 	let readShareUrisThisSession = $state<Set<string>>(new Set());
+	let readDocumentUrisThisSession = $state<Set<string>>(new Set());
 
 	// Derived: filtered articles based on current filters
 	let filteredArticles = $derived.by((): Article[] => {
@@ -109,7 +111,6 @@ function createFeedViewStore() {
 		if (contentTypeFilter === 'documents') return [];
 
 		const shares = socialStore.shares;
-		const positions = shareReadingStore.shareReadPositions;
 		const sortOrder = preferences.sortOrder;
 
 		let filtered: SocialShare[];
@@ -120,9 +121,10 @@ function createFeedViewStore() {
 		}
 
 		// Filter to unread only, but keep shares read this session visible
+		// Use socialReadingStore for unified read tracking
 		if (showOnlyUnread) {
 			filtered = filtered.filter(
-				(s) => !positions.has(s.recordUri) || readShareUrisThisSession.has(s.recordUri)
+				(s) => !socialReadingStore.isRead(s.recordUri) || readShareUrisThisSession.has(s.recordUri)
 			);
 		}
 
@@ -162,6 +164,15 @@ function createFeedViewStore() {
 		// Filter by author if sharerFilter is set
 		if (sharerFilter) {
 			filtered = filtered.filter((d) => d.authorDid === sharerFilter);
+		}
+
+		// Filter to unread only, but keep documents read this session visible
+		// Use socialReadingStore for unified read tracking
+		if (showOnlyUnread) {
+			filtered = filtered.filter(
+				(d) =>
+					!socialReadingStore.isRead(d.recordUri) || readDocumentUrisThisSession.has(d.recordUri)
+			);
 		}
 
 		// Apply sort order
@@ -359,6 +370,9 @@ function createFeedViewStore() {
 		} else if (item.type === 'share') {
 			readShareUrisThisSession.add(item.item.recordUri);
 			readShareUrisThisSession = new Set(readShareUrisThisSession);
+		} else if (item.type === 'document') {
+			readDocumentUrisThisSession.add(item.item.recordUri);
+			readDocumentUrisThisSession = new Set(readDocumentUrisThisSession);
 		}
 
 		// Mark as read when selecting (after updating selection state)
@@ -370,12 +384,24 @@ function createFeedViewStore() {
 			}
 		} else if (item.type === 'share') {
 			const share = item.item;
-			if (!shareReadingStore.isRead(share.recordUri)) {
-				shareReadingStore.markAsRead(
+			if (!socialReadingStore.isRead(share.recordUri)) {
+				socialReadingStore.markAsRead(
+					'share',
 					share.recordUri,
 					share.authorDid,
 					share.itemUrl,
 					share.itemTitle
+				);
+			}
+		} else if (item.type === 'document') {
+			const doc = item.item;
+			if (!socialReadingStore.isRead(doc.recordUri)) {
+				socialReadingStore.markAsRead(
+					'document',
+					doc.recordUri,
+					doc.authorDid,
+					doc.canonicalUrl || '',
+					doc.title
 				);
 			}
 		}
@@ -402,6 +428,7 @@ function createFeedViewStore() {
 		// Clear session sets when switching views/feeds
 		readArticleGuidsThisSession = new Set();
 		readShareUrisThisSession = new Set();
+		readDocumentUrisThisSession = new Set();
 	}
 
 	function toggleUnreadFilter() {
@@ -416,6 +443,9 @@ function createFeedViewStore() {
 		} else if (item.type === 'share') {
 			readShareUrisThisSession.add(item.item.recordUri);
 			readShareUrisThisSession = new Set(readShareUrisThisSession);
+		} else if (item.type === 'document') {
+			readDocumentUrisThisSession.add(item.item.recordUri);
+			readDocumentUrisThisSession = new Set(readDocumentUrisThisSession);
 		}
 	}
 

@@ -61,6 +61,20 @@ export interface ShareReadPosition {
 	readAt: string;
 }
 
+// Unified social read position types
+export type SocialItemType = 'share' | 'document';
+
+export interface SocialReadPosition {
+	id?: number;
+	rkey?: string;
+	type: SocialItemType;
+	itemUri: string;
+	authorDid: string;
+	itemUrl: string;
+	itemTitle?: string;
+	readAt: string;
+}
+
 export interface SocialShare {
 	id?: number;
 	authorDid: string;

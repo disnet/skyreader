@@ -346,7 +346,43 @@ class ApiClient {
 		});
 	}
 
-	// Share read positions
+	// Unified social read positions (new API)
+	async getSocialReadPositions(type?: 'share' | 'document'): Promise<{
+		positions: Array<{
+			rkey: string;
+			type: 'share' | 'document';
+			itemUri: string;
+			authorDid: string;
+			itemUrl: string | null;
+			itemTitle: string | null;
+			readAt: string;
+		}>;
+	}> {
+		const params = type ? `?type=${type}` : '';
+		return this.fetch(`/api/social/read-positions${params}`);
+	}
+
+	async markSocialItemAsRead(data: {
+		type: 'share' | 'document';
+		rkey: string;
+		itemUri: string;
+		authorDid: string;
+		itemUrl?: string;
+		itemTitle?: string;
+	}): Promise<{ rkey: string; uri: string }> {
+		return this.fetch('/api/social/read-positions', {
+			method: 'POST',
+			body: JSON.stringify(data),
+		});
+	}
+
+	async markSocialItemAsUnread(rkey: string): Promise<{ success: boolean }> {
+		return this.fetch(`/api/social/read-positions/${rkey}`, {
+			method: 'DELETE',
+		});
+	}
+
+	// Share read positions (legacy API - kept for backwards compatibility)
 	async markShareAsRead(data: {
 		rkey: string;
 		shareUri: string;
