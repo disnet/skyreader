@@ -110,6 +110,7 @@ function createAppManager() {
 				readingStore.load(),
 				shareReadingStore.load(),
 				socialStore.loadFollowedUsers(),
+				socialStore.loadInAppFollowCount(),
 				socialStore.loadFeed(true),
 			]);
 

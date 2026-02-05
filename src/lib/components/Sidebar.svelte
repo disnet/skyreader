@@ -196,12 +196,12 @@
 		return subs;
 	});
 
-	// Sort followed users: only Skyreader (in-app) follows, sorted by unread shares then by DID
+	// Sort followed users: all in-app follows, sorted by unread shares then by DID
 	let sortedFollowedUsers = $derived(() => {
 		const counts = sharerCounts();
-		// Filter to only Skyreader follows (source 'inapp' or 'both')
-		let users = [...socialStore.followedUsers]
-			.filter((u) => u.source === 'inapp' || u.source === 'both')
+		// Use inAppFollows which includes ALL users we follow on Skyreader (not just those with shares)
+		let users = socialStore.inAppFollows
+			.map((f) => ({ did: f.did, source: 'inapp' as const }))
 			.sort((a, b) => {
 				const countA = counts.get(a.did) || 0;
 				const countB = counts.get(b.did) || 0;

@@ -6,6 +6,9 @@ import { syncStore } from './sync.svelte';
 import type { DiscoverUser, FollowedUserDetailed, SocialDocument, SocialShare } from '$lib/types';
 import { generateTid } from '$lib/utils/tid';
 
+// Maximum number of Bluesky accounts that can be followed on Skyreader during beta
+export const FOLLOW_LIMIT = 50;
+
 export interface FollowedUser {
 	did: string;
 	source: 'bluesky' | 'inapp' | 'both';
@@ -30,9 +33,23 @@ function createSocialStore() {
 	let cursor = $state<string | null>(null);
 	let hasMore = $state(true);
 	let error = $state<string | null>(null);
+	let inAppFollowCount = $state(0);
+	let inAppFollows = $state<
+		Array<{
+			rkey: string;
+			did: string;
+			handle?: string;
+			displayName?: string;
+			avatarUrl?: string;
+			createdAt: number;
+		}>
+	>([]);
 
 	// Derived: any loading operation in progress
 	let isLoading = $derived(isLoadingFeed || isLoadingUsers);
+
+	// Derived: whether we've hit the follow limit
+	let isAtFollowLimit = $derived(inAppFollowCount >= FOLLOW_LIMIT);
 
 	async function loadFeed(reset = false) {
 		if (isLoadingFeed || (!hasMore && !reset)) {
@@ -115,6 +132,17 @@ function createSocialStore() {
 			error = e instanceof Error ? e.message : 'Failed to load followed users';
 		} finally {
 			isLoadingUsers = false;
+		}
+	}
+
+	async function loadInAppFollowCount() {
+		try {
+			const result = await api.listInAppFollows();
+			inAppFollowCount = result.follows.length;
+			inAppFollows = result.follows;
+		} catch (e) {
+			// Silently fail - the count will stay at its previous value
+			console.error('Failed to load in-app follow count:', e);
 		}
 	}
 
@@ -222,6 +250,9 @@ function createSocialStore() {
 			followedUsers = [...followedUsers, { did, source: 'inapp' as const }];
 		}
 
+		// Optimistic update - increment follow count
+		inAppFollowCount++;
+
 		const payload: FollowPayload = { rkey, did };
 
 		if (syncStore.isOnline) {
@@ -229,6 +260,7 @@ function createSocialStore() {
 				await api.followUser(rkey, did);
 				// Refresh followed users to get accurate data
 				await loadFollowedUsers();
+				await loadInAppFollowCount();
 				return true;
 			} catch (e) {
 				error = e instanceof Error ? e.message : 'Failed to follow user';
@@ -240,6 +272,8 @@ function createSocialStore() {
 				} else {
 					followedUsers = followedUsers.filter((u) => u.did !== did);
 				}
+				// Revert count
+				inAppFollowCount--;
 				// Queue for retry
 				await syncQueue.enqueue('create', 'follows', did, payload);
 				return false;
@@ -260,6 +294,7 @@ function createSocialStore() {
 
 		// Store original state for potential rollback
 		const originalUser = followedUsers.find((u) => u.did === did);
+		const originalCount = inAppFollowCount;
 
 		// Optimistic update - update source or remove from followed users
 		if (originalUser?.source === 'both') {
@@ -271,6 +306,9 @@ function createSocialStore() {
 			// If only following in-app, remove entirely
 			followedUsers = followedUsers.filter((u) => u.did !== did);
 		}
+
+		// Optimistic update - decrement follow count
+		inAppFollowCount = Math.max(0, inAppFollowCount - 1);
 
 		try {
 			// Get in-app follows with rkeys
@@ -288,6 +326,7 @@ function createSocialStore() {
 						followedUsers = [...followedUsers, originalUser];
 					}
 				}
+				inAppFollowCount = originalCount;
 				error = 'Follow record not found';
 				return false;
 			}
@@ -298,6 +337,7 @@ function createSocialStore() {
 				await api.unfollowUser(followRecord.rkey);
 				// Refresh followed users to get accurate data
 				await loadFollowedUsers();
+				await loadInAppFollowCount();
 				return true;
 			} catch (e) {
 				error = e instanceof Error ? e.message : 'Failed to unfollow user';
@@ -311,6 +351,7 @@ function createSocialStore() {
 						followedUsers = [...followedUsers, originalUser];
 					}
 				}
+				inAppFollowCount = originalCount;
 				// Queue for retry
 				await syncQueue.enqueue('delete', 'follows', did, payload);
 				return false;
@@ -326,6 +367,7 @@ function createSocialStore() {
 					followedUsers = [...followedUsers, originalUser];
 				}
 			}
+			inAppFollowCount = originalCount;
 			error = e instanceof Error ? e.message : 'Failed to unfollow user';
 			return false;
 		}
@@ -399,9 +441,19 @@ function createSocialStore() {
 		get error() {
 			return error;
 		},
+		get inAppFollowCount() {
+			return inAppFollowCount;
+		},
+		get inAppFollows() {
+			return inAppFollows;
+		},
+		get isAtFollowLimit() {
+			return isAtFollowLimit;
+		},
 		loadFeed,
 		loadPopular,
 		loadFollowedUsers,
+		loadInAppFollowCount,
 		loadDiscoverUsers,
 		loadSkyreaderFollows,
 		loadBlueskyFollows,

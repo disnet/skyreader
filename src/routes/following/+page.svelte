@@ -2,11 +2,12 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { auth } from '$lib/stores/auth.svelte';
-	import { socialStore } from '$lib/stores/social.svelte';
+	import { socialStore, FOLLOW_LIMIT } from '$lib/stores/social.svelte';
 	import { profileService } from '$lib/services/profiles';
 	import PageHeader from '$lib/components/common/PageHeader.svelte';
 	import StateView from '$lib/components/common/StateView.svelte';
 	import UserCard from '$lib/components/common/UserCard.svelte';
+	import Modal from '$lib/components/common/Modal.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import logo from '$lib/assets/logo.svg';
 	import type { BlueskyProfile, FollowedUserDetailed } from '$lib/types';
@@ -15,6 +16,7 @@
 	let profiles = $state<Map<string, BlueskyProfile>>(new Map());
 	let actionInProgress = $state<Set<string>>(new Set());
 	let expandedUsers = $state<Set<string>>(new Set());
+	let showLimitModal = $state(false);
 
 	function toggleExpanded(did: string) {
 		if (expandedUsers.has(did)) {
@@ -30,7 +32,11 @@
 			goto('/auth/login?returnUrl=/following');
 			return;
 		}
-		await loadCurrentTab(true);
+		await Promise.all([
+			loadCurrentTab(true),
+			socialStore.loadFollowedUsers(),
+			socialStore.loadInAppFollowCount(),
+		]);
 	});
 
 	async function loadCurrentTab(reset = true) {
@@ -77,6 +83,12 @@
 	}
 
 	async function handleFollow(user: FollowedUserDetailed) {
+		// Check if already at follow limit
+		if (socialStore.isAtFollowLimit) {
+			showLimitModal = true;
+			return;
+		}
+
 		actionInProgress.add(user.did);
 		actionInProgress = new Set(actionInProgress);
 
@@ -295,7 +307,39 @@
 	</StateView>
 </div>
 
+<Modal open={showLimitModal} onclose={() => (showLimitModal = false)} title="Follow Limit Reached">
+	<div class="limit-modal-content">
+		<p>
+			While Skyreader is in beta, you can follow up to <strong>{FOLLOW_LIMIT}</strong> accounts.
+		</p>
+		<p>This limit will be lifted once we're out of beta.</p>
+		<p class="current-count">
+			You're currently following {socialStore.inAppFollowCount} of {FOLLOW_LIMIT} accounts.
+		</p>
+	</div>
+	{#snippet footer()}
+		<button class="btn btn-primary" onclick={() => (showLimitModal = false)}>Got it</button>
+	{/snippet}
+</Modal>
+
 <style>
+	.limit-modal-content {
+		text-align: center;
+	}
+
+	.limit-modal-content p {
+		margin: 0 0 1rem;
+		color: var(--color-text-secondary);
+	}
+
+	.limit-modal-content p:last-child {
+		margin-bottom: 0;
+	}
+
+	.limit-modal-content .current-count {
+		font-size: 0.875rem;
+		color: var(--color-text-tertiary);
+	}
 	.following-page {
 		max-width: 800px;
 		margin: 0 auto;
