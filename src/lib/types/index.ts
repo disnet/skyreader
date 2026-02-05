@@ -83,6 +83,96 @@ export interface SocialShare {
 	reshareCount?: number;
 }
 
+// Leaflet content types for pub.leaflet.content format
+export interface LeafletFacetIndex {
+	byteStart: number;
+	byteEnd: number;
+}
+
+export interface LeafletFacetFeature {
+	$type: string;
+	uri?: string; // for links
+	did?: string; // for mentions
+}
+
+export interface LeafletFacet {
+	index: LeafletFacetIndex;
+	features: LeafletFacetFeature[];
+}
+
+export interface LeafletTextBlock {
+	$type: 'pub.leaflet.blocks.text';
+	plaintext: string;
+	textSize?: 'default' | 'small' | 'large';
+	facets?: LeafletFacet[];
+}
+
+export interface LeafletHeaderBlock {
+	$type: 'pub.leaflet.blocks.header';
+	plaintext: string;
+	level?: 1 | 2 | 3 | 4 | 5 | 6;
+	facets?: LeafletFacet[];
+}
+
+export interface LeafletCodeBlock {
+	$type: 'pub.leaflet.blocks.code';
+	plaintext: string;
+	language?: string;
+}
+
+export interface LeafletBlockquoteBlock {
+	$type: 'pub.leaflet.blocks.blockquote';
+	plaintext: string;
+	facets?: LeafletFacet[];
+}
+
+export interface LeafletHorizontalRuleBlock {
+	$type: 'pub.leaflet.blocks.horizontalRule';
+}
+
+export interface LeafletListItemBlock {
+	plaintext: string;
+	facets?: LeafletFacet[];
+	children?: LeafletListItemBlock[];
+}
+
+export interface LeafletUnorderedListBlock {
+	$type: 'pub.leaflet.blocks.unorderedList';
+	items: LeafletListItemBlock[];
+}
+
+export interface LeafletImageBlock {
+	$type: 'pub.leaflet.blocks.image';
+	image: { ref: { $link: string }; mimeType: string };
+	aspectRatio?: { width: number; height: number };
+	alt?: string;
+}
+
+// Union of all supported block types
+export type LeafletBlock =
+	| LeafletTextBlock
+	| LeafletHeaderBlock
+	| LeafletCodeBlock
+	| LeafletBlockquoteBlock
+	| LeafletHorizontalRuleBlock
+	| LeafletUnorderedListBlock
+	| LeafletImageBlock;
+
+export interface LeafletBlockWrapper {
+	block: LeafletBlock;
+	alignment?: 'left' | 'center' | 'right';
+}
+
+export interface LeafletLinearDocument {
+	$type: 'pub.leaflet.pages.linearDocument';
+	blocks: LeafletBlockWrapper[];
+}
+
+export interface LeafletContent {
+	$type: 'pub.leaflet.content';
+	pages: LeafletLinearDocument[];
+}
+
 export interface SocialDocument {
 	id?: number;
 	authorDid: string;
@@ -98,6 +188,7 @@ export interface SocialDocument {
 	tags?: string[];
 	updatedAt?: string;
 	canonicalUrl?: string;
+	content?: LeafletContent | unknown; // Open union for future content types
 	indexedAt?: string;
 	createdAt: string;
 	siteIcon?: string;

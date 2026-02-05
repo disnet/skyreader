@@ -121,6 +121,12 @@ class SkyreaderDatabase extends Dexie {
 		this.version(13).stores({
 			socialDocuments: '++id, authorDid, recordUri, canonicalUrl, publishedAt',
 		});
+
+		// Add content field to socialDocuments for pub.leaflet.content support
+		// Note: Dexie handles new fields automatically, but we increment version for clarity
+		this.version(14).stores({
+			socialDocuments: '++id, authorDid, recordUri, canonicalUrl, publishedAt',
+		});
 	}
 }
 

@@ -1,8 +1,15 @@
 <script lang="ts">
-	import type { Article, SocialShare, SocialDocument, BlueskyProfile } from '$lib/types';
+	import type {
+		Article,
+		SocialShare,
+		SocialDocument,
+		BlueskyProfile,
+		LeafletContent,
+	} from '$lib/types';
 	import { formatRelativeDate } from '$lib/utils/date';
 	import { getFaviconUrl } from '$lib/utils/favicon';
 	import { sanitizeHtml } from '$lib/utils/sanitize';
+	import { isLeafletContent, renderLeafletContent } from '$lib/utils/leaflet-renderer';
 	import { profileService } from '$lib/services/profiles';
 	import { sharesStore } from '$lib/stores/shares.svelte';
 	import { auth } from '$lib/stores/auth.svelte';
@@ -78,17 +85,26 @@
 	let displaySiteUrl = $derived(siteUrl || share?.feedUrl || document?.siteUri || itemUrl);
 
 	// Content handling - article has priority, then share content, then localArticle, then document
-	let displayContent = $derived(
-		article?.content ||
-			article?.summary ||
-			share?.content ||
-			localArticle?.content ||
-			localArticle?.summary ||
-			share?.itemDescription ||
-			document?.textContent ||
-			document?.description ||
-			''
-	);
+	let displayContent = $derived.by(() => {
+		// For articles and shares, use existing logic
+		if (article?.content) return article.content;
+		if (article?.summary) return article.summary;
+		if (share?.content) return share.content;
+		if (localArticle?.content) return localArticle.content;
+		if (localArticle?.summary) return localArticle.summary;
+		if (share?.itemDescription) return share.itemDescription;
+
+		// For documents with structured Leaflet content, render it
+		if (document?.content && isLeafletContent(document.content)) {
+			return renderLeafletContent(document.content as LeafletContent, document.authorDid);
+		}
+
+		// Fall back to flat text content or description
+		if (document?.textContent) return document.textContent;
+		if (document?.description) return document.description;
+
+		return '';
+	});
 
 	// Profile fetching for share mode and document mode
 	let authorProfile = $state<BlueskyProfile | null>(null);
