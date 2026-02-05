@@ -7,6 +7,7 @@
 	import PageHeader from '$lib/components/common/PageHeader.svelte';
 	import StateView from '$lib/components/common/StateView.svelte';
 	import UserCard from '$lib/components/common/UserCard.svelte';
+	import UserSearch from '$lib/components/UserSearch.svelte';
 	import Modal from '$lib/components/common/Modal.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import logo from '$lib/assets/logo.svg';
@@ -146,10 +147,32 @@
 			? socialStore.hasMoreSkyreaderFollows
 			: socialStore.hasMoreBlueskyFollows
 	);
+
+	// Set of DIDs that user is already following (for search result badges)
+	let followedDids = $derived(new Set(socialStore.followedUsers.map((u) => u.did)));
+
+	async function handleSearchFollow(did: string) {
+		// Check if already at follow limit
+		if (socialStore.isAtFollowLimit) {
+			showLimitModal = true;
+			return;
+		}
+
+		const success = await socialStore.followUser(did);
+		if (success) {
+			// Refresh the lists
+			await loadCurrentTab();
+			await socialStore.loadFollowedUsers();
+		}
+	}
 </script>
 
 <div class="following-page">
 	<PageHeader title="Following" subtitle="Manage who you follow on Skyreader" />
+
+	<div class="search-section">
+		<UserSearch {followedDids} onFollow={handleSearchFollow} />
+	</div>
 
 	{#if socialStore.error}
 		<p class="error">{socialStore.error}</p>
@@ -323,6 +346,10 @@
 </Modal>
 
 <style>
+	.search-section {
+		margin: 1rem 0;
+	}
+
 	.limit-modal-content {
 		text-align: center;
 	}
