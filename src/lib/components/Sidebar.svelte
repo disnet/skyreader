@@ -22,6 +22,7 @@
 	import FeedItem from './sidebar/FeedItem.svelte';
 	import UserItem from './sidebar/UserItem.svelte';
 	import UserSearchCompact from './sidebar/UserSearchCompact.svelte';
+	import FeedAddCompact from './sidebar/FeedAddCompact.svelte';
 	import Icon from './Icon.svelte';
 	import type { Subscription } from '$lib/types';
 
@@ -556,6 +557,7 @@
 			onLabelClick={() => selectFilter('feeds')}
 			onUnreadToggle={() => sidebarStore.toggleShowOnlyUnread('feeds')}
 		>
+			<FeedAddCompact />
 			{#each sortedSubscriptions() as sub (sub.id)}
 				{@const count = feedUnreadCounts.get(sub.id!) || 0}
 				{@const status = feedStatusStore.getStatus(sub.feedUrl)}
@@ -585,10 +587,6 @@
 			{:else}
 				<div class="empty-section">No subscriptions</div>
 			{/each}
-			<button class="add-feed-item" onclick={handleAddFeed}>
-				<span class="add-feed-icon"><Icon name="plus" size={16} /></span>
-				<span class="add-feed-label">Add Feed</span>
-			</button>
 		</NavSection>
 	</nav>
 </aside>
@@ -835,39 +833,6 @@
 
 	.sub-nav-item.active .sub-nav-count {
 		color: var(--color-primary);
-	}
-
-	.add-feed-item {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		width: 100%;
-		padding: 0.5rem 1.5rem;
-		background: none;
-		border: none;
-		cursor: pointer;
-		text-align: left;
-		font: inherit;
-		font-size: 0.8125rem;
-		color: var(--color-text-secondary);
-		transition: background-color 0.15s;
-		border-radius: 8px;
-	}
-
-	.add-feed-item:hover {
-		background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
-		color: var(--color-primary);
-	}
-
-	.add-feed-icon {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-	}
-
-	.add-feed-label {
-		flex: 1;
 	}
 
 	/* Mobile styles */
