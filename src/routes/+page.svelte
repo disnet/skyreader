@@ -104,7 +104,7 @@
 				return `${baseName} - Shares`;
 			}
 			if (feedViewStore.contentTypeFilter === 'documents') {
-				return `${baseName} - Documents`;
+				return `${baseName} - Articles`;
 			}
 			return baseName;
 		}

@@ -232,7 +232,7 @@
 									<span class="document-count">
 										<Icon name="newspaper" size={14} />
 										{user.documentCount}
-										{user.documentCount === 1 ? 'post' : 'posts'}
+										{user.documentCount === 1 ? 'article' : 'articles'}
 									</span>
 								{/if}
 								{#if user.shareCount === 0 && (!user.documentCount || user.documentCount === 0)}
@@ -301,7 +301,7 @@
 								<div class="recent-section">
 									<h4 class="recent-section-title">
 										<Icon name="newspaper" size={12} />
-										Posts
+										Articles
 									</h4>
 									<ul class="recent-items">
 										{#each user.recentDocuments! as doc}

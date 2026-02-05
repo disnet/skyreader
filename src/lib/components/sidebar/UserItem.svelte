@@ -94,7 +94,7 @@
 			onclick={onSelectDocuments}
 		>
 			<span class="sub-item-icon-wrapper"><Icon name="newspaper" size={14} /></span>
-			<span class="nav-label">Documents</span>
+			<span class="nav-label">Articles</span>
 			{#if documentCount > 0}
 				<span class="nav-count">{documentCount}</span>
 			{/if}
