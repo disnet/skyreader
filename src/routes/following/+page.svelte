@@ -7,6 +7,8 @@
 	import PageHeader from '$lib/components/common/PageHeader.svelte';
 	import StateView from '$lib/components/common/StateView.svelte';
 	import UserCard from '$lib/components/common/UserCard.svelte';
+	import Icon from '$lib/components/Icon.svelte';
+	import logo from '$lib/assets/logo.svg';
 	import type { BlueskyProfile, FollowedUserDetailed } from '$lib/types';
 
 	let activeTab = $state<'skyreader' | 'bluesky'>('skyreader');
@@ -186,12 +188,14 @@
 							<div class="user-stats">
 								{#if user.shareCount > 0}
 									<span class="share-count">
+										<img src={logo} alt="" class="stat-icon" />
 										{user.shareCount}
 										{user.shareCount === 1 ? 'share' : 'shares'}
 									</span>
 								{/if}
 								{#if user.documentCount && user.documentCount > 0}
 									<span class="document-count">
+										<Icon name="newspaper" size={14} />
 										{user.documentCount}
 										{user.documentCount === 1 ? 'post' : 'posts'}
 									</span>
@@ -243,7 +247,10 @@
 						{#if isExpanded}
 							{#if hasShares}
 								<div class="recent-section">
-									<h4 class="recent-section-title">Shares</h4>
+									<h4 class="recent-section-title">
+										<img src={logo} alt="" class="section-icon" />
+										Shares
+									</h4>
 									<ul class="recent-items">
 										{#each user.recentShares! as share}
 											<li>
@@ -257,7 +264,10 @@
 							{/if}
 							{#if hasDocuments}
 								<div class="recent-section">
-									<h4 class="recent-section-title">Posts</h4>
+									<h4 class="recent-section-title">
+										<Icon name="newspaper" size={12} />
+										Posts
+									</h4>
 									<ul class="recent-items">
 										{#each user.recentDocuments! as doc}
 											<li>
@@ -360,8 +370,17 @@
 		padding-left: 3.5rem;
 	}
 
-	.share-count {
+	.share-count,
+	.document-count {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
 		font-weight: 500;
+	}
+
+	.stat-icon {
+		width: 14px;
+		height: 14px;
 	}
 
 	.user-actions {
@@ -399,12 +418,20 @@
 	}
 
 	.recent-section-title {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
 		font-size: 0.75rem;
 		font-weight: 600;
 		color: var(--color-text-secondary);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		margin: 0 0 0.25rem 1.5rem;
+	}
+
+	.section-icon {
+		width: 12px;
+		height: 12px;
 	}
 
 	.recent-items {
@@ -432,10 +459,6 @@
 	.recent-items a:hover {
 		color: var(--color-primary);
 		text-decoration: underline;
-	}
-
-	.document-count {
-		font-weight: 500;
 	}
 
 	.no-activity {

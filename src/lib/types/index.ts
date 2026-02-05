@@ -100,6 +100,7 @@ export interface SocialDocument {
 	canonicalUrl?: string;
 	indexedAt?: string;
 	createdAt: string;
+	siteIcon?: string;
 }
 
 // Grouped share for deduplicated feed

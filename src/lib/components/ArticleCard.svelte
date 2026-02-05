@@ -260,7 +260,9 @@
 			</div>
 		{/if}
 		<button class="article-header" onclick={handleHeaderClick}>
-			{#if displaySiteUrl}
+			{#if document?.siteIcon}
+				<img src={document.siteIcon} alt="" class="favicon" />
+			{:else if displaySiteUrl}
 				<img src={getFaviconUrl(displaySiteUrl)} alt="" class="favicon" />
 			{/if}
 			{#if isOpen}
