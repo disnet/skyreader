@@ -9,6 +9,7 @@
 	import { keyboardStore } from '$lib/stores/keyboard.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import KeyboardShortcutsModal from '$lib/components/KeyboardShortcutsModal.svelte';
+	import FollowUserModal from '$lib/components/FollowUserModal.svelte';
 	import Logo from '$lib/assets/logo.svg';
 	import '../app.css';
 
@@ -236,6 +237,10 @@
 </svelte:head>
 
 <KeyboardShortcutsModal />
+<FollowUserModal
+	open={sidebarStore.followUserModalOpen}
+	onclose={() => sidebarStore.closeFollowUserModal()}
+/>
 
 <div class="app">
 	{#if !auth.isLoading}

@@ -14,73 +14,8 @@
 	import { activityStore } from '$lib/stores/activity.svelte';
 	import { articlesStore } from '$lib/stores/articles.svelte';
 	import { liveDb } from '$lib/services/liveDb.svelte';
-	import { searchBlueskyActors, type BlueskySearchResult } from '$lib/services/blueskySearch';
-	import { FOLLOW_LIMIT } from '$lib/stores/social.svelte';
 	import Icon from './Icon.svelte';
 	import type { BlueskyProfile } from '$lib/types';
-
-	// User search state
-	let userSearchQuery = $state('');
-	let userSearchResults = $state<BlueskySearchResult[]>([]);
-	let isUserSearching = $state(false);
-	let userSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-	let showFollowLimitWarning = $state(false);
-
-	// Set of DIDs that user is already following
-	let followedDids = $derived(new Set(socialStore.followedUsers.map((u) => u.did)));
-
-	async function searchUsers(query: string) {
-		if (query.length < 2) {
-			userSearchResults = [];
-			return;
-		}
-
-		isUserSearching = true;
-		try {
-			userSearchResults = await searchBlueskyActors(query, 5);
-		} catch (error) {
-			console.error('Search error:', error);
-			userSearchResults = [];
-		} finally {
-			isUserSearching = false;
-		}
-	}
-
-	function handleUserSearchInput(event: Event) {
-		const target = event.target as HTMLInputElement;
-		userSearchQuery = target.value;
-		showFollowLimitWarning = false;
-
-		if (userSearchDebounceTimer) {
-			clearTimeout(userSearchDebounceTimer);
-		}
-
-		userSearchDebounceTimer = setTimeout(() => {
-			searchUsers(userSearchQuery);
-		}, 300);
-	}
-
-	async function followUser(did: string) {
-		if (followedDids.has(did)) return;
-
-		if (socialStore.isAtFollowLimit) {
-			showFollowLimitWarning = true;
-			return;
-		}
-
-		const success = await socialStore.followUser(did);
-		if (success) {
-			await socialStore.loadFollowedUsers();
-			userSearchQuery = '';
-			userSearchResults = [];
-		}
-	}
-
-	function clearUserSearch() {
-		userSearchQuery = '';
-		userSearchResults = [];
-		showFollowLimitWarning = false;
-	}
 
 	interface Props {
 		currentTitle: string;
@@ -163,9 +98,6 @@
 
 	onDestroy(() => {
 		window.removeEventListener('resize', checkMobile);
-		if (userSearchDebounceTimer) {
-			clearTimeout(userSearchDebounceTimer);
-		}
 	});
 
 	// Load profiles for followed users when they change
@@ -202,8 +134,7 @@
 		| { type: 'feed'; id: number; label: string; count: number; iconUrl: string | null }
 		| { type: 'user'; did: string; label: string; count: number; avatarUrl: string | null }
 		| { type: 'utility'; id: string; label: string; count?: number; icon: IconName }
-		| { type: 'action'; id: string; label: string; icon: IconName }
-		| { type: 'user-search' };
+		| { type: 'action'; id: string; label: string; icon: IconName };
 
 	// Build filtered items list
 	let filteredItems = $derived.by((): { section: string; items: NavItem[] }[] => {
@@ -224,7 +155,7 @@
 
 		const users: NavItem[] = [
 			{ type: 'utility', id: 'following', label: 'Following', icon: 'users' },
-			{ type: 'user-search' },
+			{ type: 'action', id: 'follow-user', label: 'Follow user', icon: 'plus' },
 			{
 				type: 'view',
 				id: 'following-shares',
@@ -271,7 +202,6 @@
 		// Filter by search query
 		const filterItem = (item: NavItem) => {
 			if (!query) return true;
-			if (item.type === 'user-search') return true; // Always show user search
 			return item.label.toLowerCase().includes(query);
 		};
 
@@ -380,9 +310,13 @@
 	});
 
 	function selectItem(item: NavItem) {
-		if (item.type === 'action' && item.id === 'add-feed') {
+		if (item.type === 'action') {
 			close();
-			sidebarStore.openAddFeedModal();
+			if (item.id === 'add-feed') {
+				sidebarStore.openAddFeedModal();
+			} else if (item.id === 'follow-user') {
+				sidebarStore.openFollowUserModal();
+			}
 			return;
 		}
 		let url = '/';
@@ -556,88 +490,40 @@
 						{@const flatIndex =
 							filteredItems.slice(0, sectionIndex).reduce((acc, s) => acc + s.items.length, 0) +
 							itemIndex}
-						{#if item.type === 'user-search'}
-							<div class="user-search-container">
-								<div class="user-search-input-wrapper">
-									<span class="user-search-icon">@</span>
-									<input
-										type="text"
-										class="user-search-input"
-										placeholder="Follow user..."
-										value={userSearchQuery}
-										oninput={handleUserSearchInput}
-										onclick={(e) => e.stopPropagation()}
-									/>
-									{#if isUserSearching}
-										<span class="user-search-spinner"></span>
-									{/if}
-								</div>
-								{#if showFollowLimitWarning}
-									<div class="follow-limit-warning">
-										Follow limit reached ({FOLLOW_LIMIT} max)
-									</div>
+						<button
+							class="nav-item"
+							class:active={isItemActive(item)}
+							class:highlighted={flatIndex === highlightedIndex}
+							class:child={item.type === 'user' ||
+								item.type === 'feed' ||
+								(item.type === 'view' &&
+									(item.id === 'following-shares' || item.id === 'following-articles')) ||
+								(item.type === 'action' && item.id === 'follow-user')}
+							role="option"
+							aria-selected={isItemActive(item)}
+							onclick={() => selectItem(item)}
+							onmouseenter={() => (highlightedIndex = flatIndex)}
+						>
+							{#if item.type === 'view' || item.type === 'utility' || item.type === 'action'}
+								<span class="item-icon"><Icon name={item.icon} size={16} /></span>
+							{:else if item.type === 'feed'}
+								{#if item.iconUrl}
+									<img src={item.iconUrl} alt="" class="feed-icon" />
+								{:else}
+									<span class="feed-icon-placeholder"></span>
 								{/if}
-								{#if userSearchResults.length > 0}
-									<div class="user-search-results">
-										{#each userSearchResults as result (result.did)}
-											{@const isFollowed = followedDids.has(result.did)}
-											<button
-												class="user-search-result"
-												class:is-followed={isFollowed}
-												onclick={() => followUser(result.did)}
-											>
-												{#if result.avatar}
-													<img src={result.avatar} alt="" class="result-avatar" />
-												{:else}
-													<span class="result-avatar-placeholder"></span>
-												{/if}
-												<span class="result-info">
-													<span class="result-name">{result.displayName || result.handle}</span>
-													<span class="result-handle">@{result.handle}</span>
-												</span>
-												{#if isFollowed}
-													<span class="following-badge">Following</span>
-												{/if}
-											</button>
-										{/each}
-									</div>
+							{:else if item.type === 'user'}
+								{#if item.avatarUrl}
+									<img src={item.avatarUrl} alt="" class="user-avatar" />
+								{:else}
+									<span class="user-avatar-placeholder"></span>
 								{/if}
-							</div>
-						{:else}
-							<button
-								class="nav-item"
-								class:active={isItemActive(item)}
-								class:highlighted={flatIndex === highlightedIndex}
-								class:child={item.type === 'user' ||
-									item.type === 'feed' ||
-									(item.type === 'view' &&
-										(item.id === 'following-shares' || item.id === 'following-articles'))}
-								role="option"
-								aria-selected={isItemActive(item)}
-								onclick={() => selectItem(item)}
-								onmouseenter={() => (highlightedIndex = flatIndex)}
-							>
-								{#if item.type === 'view' || item.type === 'utility' || item.type === 'action'}
-									<span class="item-icon"><Icon name={item.icon} size={16} /></span>
-								{:else if item.type === 'feed'}
-									{#if item.iconUrl}
-										<img src={item.iconUrl} alt="" class="feed-icon" />
-									{:else}
-										<span class="feed-icon-placeholder"></span>
-									{/if}
-								{:else if item.type === 'user'}
-									{#if item.avatarUrl}
-										<img src={item.avatarUrl} alt="" class="user-avatar" />
-									{:else}
-										<span class="user-avatar-placeholder"></span>
-									{/if}
-								{/if}
-								<span class="item-label">{item.label}</span>
-								{#if item.type !== 'action' && item.count && item.count > 0}
-									<span class="item-count">{item.count}</span>
-								{/if}
-							</button>
-						{/if}
+							{/if}
+							<span class="item-label">{item.label}</span>
+							{#if item.type !== 'action' && item.count && item.count > 0}
+								<span class="item-count">{item.count}</span>
+							{/if}
+						</button>
 					{/each}
 				{/each}
 				{#if flatItems.length === 0}
@@ -687,88 +573,40 @@
 						{@const flatIndex =
 							filteredItems.slice(0, sectionIndex).reduce((acc, s) => acc + s.items.length, 0) +
 							itemIndex}
-						{#if item.type === 'user-search'}
-							<div class="user-search-container">
-								<div class="user-search-input-wrapper">
-									<span class="user-search-icon">@</span>
-									<input
-										type="text"
-										class="user-search-input"
-										placeholder="Follow user..."
-										value={userSearchQuery}
-										oninput={handleUserSearchInput}
-										onclick={(e) => e.stopPropagation()}
-									/>
-									{#if isUserSearching}
-										<span class="user-search-spinner"></span>
-									{/if}
-								</div>
-								{#if showFollowLimitWarning}
-									<div class="follow-limit-warning">
-										Follow limit reached ({FOLLOW_LIMIT} max)
-									</div>
+						<button
+							class="nav-item"
+							class:active={isItemActive(item)}
+							class:highlighted={flatIndex === highlightedIndex}
+							class:child={item.type === 'user' ||
+								item.type === 'feed' ||
+								(item.type === 'view' &&
+									(item.id === 'following-shares' || item.id === 'following-articles')) ||
+								(item.type === 'action' && item.id === 'follow-user')}
+							role="option"
+							aria-selected={isItemActive(item)}
+							onclick={() => selectItem(item)}
+							onmouseenter={() => (highlightedIndex = flatIndex)}
+						>
+							{#if item.type === 'view' || item.type === 'utility' || item.type === 'action'}
+								<span class="item-icon"><Icon name={item.icon} size={16} /></span>
+							{:else if item.type === 'feed'}
+								{#if item.iconUrl}
+									<img src={item.iconUrl} alt="" class="feed-icon" />
+								{:else}
+									<span class="feed-icon-placeholder"></span>
 								{/if}
-								{#if userSearchResults.length > 0}
-									<div class="user-search-results">
-										{#each userSearchResults as result (result.did)}
-											{@const isFollowed = followedDids.has(result.did)}
-											<button
-												class="user-search-result"
-												class:is-followed={isFollowed}
-												onclick={() => followUser(result.did)}
-											>
-												{#if result.avatar}
-													<img src={result.avatar} alt="" class="result-avatar" />
-												{:else}
-													<span class="result-avatar-placeholder"></span>
-												{/if}
-												<span class="result-info">
-													<span class="result-name">{result.displayName || result.handle}</span>
-													<span class="result-handle">@{result.handle}</span>
-												</span>
-												{#if isFollowed}
-													<span class="following-badge">Following</span>
-												{/if}
-											</button>
-										{/each}
-									</div>
+							{:else if item.type === 'user'}
+								{#if item.avatarUrl}
+									<img src={item.avatarUrl} alt="" class="user-avatar" />
+								{:else}
+									<span class="user-avatar-placeholder"></span>
 								{/if}
-							</div>
-						{:else}
-							<button
-								class="nav-item"
-								class:active={isItemActive(item)}
-								class:highlighted={flatIndex === highlightedIndex}
-								class:child={item.type === 'user' ||
-									item.type === 'feed' ||
-									(item.type === 'view' &&
-										(item.id === 'following-shares' || item.id === 'following-articles'))}
-								role="option"
-								aria-selected={isItemActive(item)}
-								onclick={() => selectItem(item)}
-								onmouseenter={() => (highlightedIndex = flatIndex)}
-							>
-								{#if item.type === 'view' || item.type === 'utility' || item.type === 'action'}
-									<span class="item-icon"><Icon name={item.icon} size={16} /></span>
-								{:else if item.type === 'feed'}
-									{#if item.iconUrl}
-										<img src={item.iconUrl} alt="" class="feed-icon" />
-									{:else}
-										<span class="feed-icon-placeholder"></span>
-									{/if}
-								{:else if item.type === 'user'}
-									{#if item.avatarUrl}
-										<img src={item.avatarUrl} alt="" class="user-avatar" />
-									{:else}
-										<span class="user-avatar-placeholder"></span>
-									{/if}
-								{/if}
-								<span class="item-label">{item.label}</span>
-								{#if item.type !== 'action' && item.count && item.count > 0}
-									<span class="item-count">{item.count}</span>
-								{/if}
-							</button>
-						{/if}
+							{/if}
+							<span class="item-label">{item.label}</span>
+							{#if item.type !== 'action' && item.count && item.count > 0}
+								<span class="item-count">{item.count}</span>
+							{/if}
+						</button>
 					{/each}
 				{/each}
 				{#if flatItems.length === 0}
@@ -1251,285 +1089,5 @@
 		:global(.mobile-portal .dropdown-panel.mobile) {
 			box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 		}
-	}
-
-	/* User search styles */
-	.user-search-container {
-		padding: 0.25rem 0.75rem;
-		padding-left: 1.75rem;
-	}
-
-	.user-search-input-wrapper {
-		position: relative;
-		display: flex;
-		align-items: center;
-	}
-
-	.user-search-icon {
-		position: absolute;
-		left: 0.5rem;
-		color: var(--color-text-secondary);
-		font-size: 0.8125rem;
-		pointer-events: none;
-	}
-
-	.user-search-input {
-		width: 100%;
-		padding: 0.375rem 0.5rem;
-		padding-left: 1.5rem;
-		font-size: 0.8125rem;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		background: var(--color-bg-secondary);
-		color: var(--color-text);
-		font: inherit;
-	}
-
-	.user-search-input:focus {
-		outline: none;
-		border-color: var(--color-primary);
-	}
-
-	.user-search-input::placeholder {
-		color: var(--color-text-secondary);
-	}
-
-	.user-search-spinner {
-		position: absolute;
-		right: 0.5rem;
-		width: 0.75rem;
-		height: 0.75rem;
-		border: 2px solid var(--color-border);
-		border-top-color: var(--color-primary);
-		border-radius: 50%;
-		animation: spin 0.6s linear infinite;
-	}
-
-	.follow-limit-warning {
-		margin-top: 0.25rem;
-		padding: 0.25rem 0.5rem;
-		font-size: 0.75rem;
-		color: var(--color-warning, #ff9800);
-		background: rgba(255, 152, 0, 0.1);
-		border-radius: 4px;
-	}
-
-	.user-search-results {
-		margin-top: 0.25rem;
-		background: var(--color-bg);
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		overflow: hidden;
-	}
-
-	.user-search-result {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		width: 100%;
-		padding: 0.5rem;
-		background: none;
-		border: none;
-		text-align: left;
-		cursor: pointer;
-		color: var(--color-text);
-		font: inherit;
-		transition: background-color 0.1s;
-	}
-
-	.user-search-result:hover {
-		background: var(--color-bg-secondary);
-	}
-
-	.user-search-result.is-followed {
-		cursor: default;
-		opacity: 0.6;
-	}
-
-	.result-avatar {
-		width: 24px;
-		height: 24px;
-		border-radius: 50%;
-		flex-shrink: 0;
-		object-fit: cover;
-	}
-
-	.result-avatar-placeholder {
-		width: 24px;
-		height: 24px;
-		border-radius: 50%;
-		background: var(--color-border);
-		flex-shrink: 0;
-	}
-
-	.result-info {
-		flex: 1;
-		min-width: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.125rem;
-	}
-
-	.result-name {
-		font-size: 0.8125rem;
-		font-weight: 500;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.result-handle {
-		font-size: 0.75rem;
-		color: var(--color-text-secondary);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.following-badge {
-		font-size: 0.625rem;
-		padding: 0.125rem 0.375rem;
-		background: var(--color-sidebar-active);
-		color: var(--color-primary);
-		border-radius: 9999px;
-		font-weight: 500;
-		flex-shrink: 0;
-	}
-
-	/* Mobile portal user search styles */
-	:global(.mobile-portal .user-search-container) {
-		padding: 0.25rem 0.75rem;
-		padding-left: 1.75rem;
-	}
-
-	:global(.mobile-portal .user-search-input-wrapper) {
-		position: relative;
-		display: flex;
-		align-items: center;
-	}
-
-	:global(.mobile-portal .user-search-icon) {
-		position: absolute;
-		left: 0.5rem;
-		color: var(--color-text-secondary);
-		font-size: 0.8125rem;
-		pointer-events: none;
-	}
-
-	:global(.mobile-portal .user-search-input) {
-		width: 100%;
-		padding: 0.375rem 0.5rem;
-		padding-left: 1.5rem;
-		font-size: 1rem;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		background: var(--color-bg-secondary);
-		color: var(--color-text);
-	}
-
-	:global(.mobile-portal .user-search-input:focus) {
-		outline: none;
-		border-color: var(--color-primary);
-	}
-
-	:global(.mobile-portal .user-search-spinner) {
-		position: absolute;
-		right: 0.5rem;
-		width: 0.75rem;
-		height: 0.75rem;
-		border: 2px solid var(--color-border);
-		border-top-color: var(--color-primary);
-		border-radius: 50%;
-		animation: spin 0.6s linear infinite;
-	}
-
-	:global(.mobile-portal .follow-limit-warning) {
-		margin-top: 0.25rem;
-		padding: 0.25rem 0.5rem;
-		font-size: 0.75rem;
-		color: var(--color-warning, #ff9800);
-		background: rgba(255, 152, 0, 0.1);
-		border-radius: 4px;
-	}
-
-	:global(.mobile-portal .user-search-results) {
-		margin-top: 0.25rem;
-		background: var(--color-bg);
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		overflow: hidden;
-	}
-
-	:global(.mobile-portal .user-search-result) {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		width: 100%;
-		padding: 0.5rem;
-		background: none;
-		border: none;
-		text-align: left;
-		cursor: pointer;
-		color: var(--color-text);
-		-webkit-tap-highlight-color: transparent;
-	}
-
-	:global(.mobile-portal .user-search-result:active) {
-		background: var(--color-bg-secondary);
-	}
-
-	:global(.mobile-portal .user-search-result.is-followed) {
-		cursor: default;
-		opacity: 0.6;
-	}
-
-	:global(.mobile-portal .result-avatar) {
-		width: 24px;
-		height: 24px;
-		border-radius: 50%;
-		flex-shrink: 0;
-		object-fit: cover;
-	}
-
-	:global(.mobile-portal .result-avatar-placeholder) {
-		width: 24px;
-		height: 24px;
-		border-radius: 50%;
-		background: var(--color-border);
-		flex-shrink: 0;
-	}
-
-	:global(.mobile-portal .result-info) {
-		flex: 1;
-		min-width: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.125rem;
-	}
-
-	:global(.mobile-portal .result-name) {
-		font-size: 0.8125rem;
-		font-weight: 500;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	:global(.mobile-portal .result-handle) {
-		font-size: 0.75rem;
-		color: var(--color-text-secondary);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	:global(.mobile-portal .following-badge) {
-		font-size: 0.625rem;
-		padding: 0.125rem 0.375rem;
-		background: var(--color-sidebar-active);
-		color: var(--color-primary);
-		border-radius: 9999px;
-		font-weight: 500;
-		flex-shrink: 0;
 	}
 </style>

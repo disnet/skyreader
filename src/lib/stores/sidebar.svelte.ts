@@ -4,6 +4,7 @@ interface SidebarState {
 	isCollapsed: boolean;
 	isOpen: boolean; // For mobile overlay
 	addFeedModalOpen: boolean;
+	followUserModalOpen: boolean; // For follow user modal
 	navigationDropdownOpen: boolean; // For navigation dropdown
 	expandedSections: {
 		shared: boolean;
@@ -25,6 +26,7 @@ function createSidebarStore() {
 		isCollapsed: false,
 		isOpen: false,
 		addFeedModalOpen: false,
+		followUserModalOpen: false,
 		navigationDropdownOpen: false,
 		expandedSections: {
 			shared: false,
@@ -100,6 +102,14 @@ function createSidebarStore() {
 		state.addFeedModalOpen = false;
 	}
 
+	function openFollowUserModal() {
+		state.followUserModalOpen = true;
+	}
+
+	function closeFollowUserModal() {
+		state.followUserModalOpen = false;
+	}
+
 	function toggleNavigationDropdown() {
 		state.navigationDropdownOpen = !state.navigationDropdownOpen;
 	}
@@ -140,6 +150,9 @@ function createSidebarStore() {
 		get addFeedModalOpen() {
 			return state.addFeedModalOpen;
 		},
+		get followUserModalOpen() {
+			return state.followUserModalOpen;
+		},
 		get navigationDropdownOpen() {
 			return state.navigationDropdownOpen;
 		},
@@ -165,6 +178,8 @@ function createSidebarStore() {
 		toggleShowOnlyUnread,
 		openAddFeedModal,
 		closeAddFeedModal,
+		openFollowUserModal,
+		closeFollowUserModal,
 		toggleNavigationDropdown,
 		closeNavigationDropdown,
 		setSortedFeedIds,
