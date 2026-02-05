@@ -285,6 +285,8 @@
 		<button class="article-header" onclick={handleHeaderClick}>
 			{#if document?.siteIcon}
 				<img src={document.siteIcon} alt="" class="favicon" />
+			{:else if document?.canonicalUrl}
+				<img src={getFaviconUrl(document.canonicalUrl)} alt="" class="favicon" />
 			{:else if displaySiteUrl}
 				<img src={getFaviconUrl(displaySiteUrl)} alt="" class="favicon" />
 			{/if}
