@@ -15,6 +15,9 @@ import type {
 	LeafletOrderedListBlock,
 	LeafletImageBlock,
 	LeafletListItemBlock,
+	LeafletWebsiteBlock,
+	LeafletBskyPostBlock,
+	LeafletPageBlock,
 } from '$lib/types';
 
 /**
@@ -273,6 +276,69 @@ function renderImageBlock(block: LeafletImageBlock, authorDid: string): string {
 }
 
 /**
+ * Render a website preview block
+ */
+function renderWebsiteBlock(block: LeafletWebsiteBlock, authorDid: string): string {
+	const url = block.url;
+	if (!url) {
+		return '';
+	}
+
+	const title = block.title || url;
+	const description = block.description || '';
+	const thumbCid = block.thumb?.ref?.$link;
+
+	let html =
+		'<div class="website-preview" style="border: 1px solid var(--border, #e5e5e5); border-radius: 8px; overflow: hidden; margin: 1em 0">';
+
+	if (thumbCid) {
+		const thumbUrl = getBlobUrl(authorDid, thumbCid);
+		html += `<img src="${thumbUrl}" alt="" style="width: 100%; max-height: 200px; object-fit: cover" loading="lazy" />`;
+	}
+
+	html += '<div style="padding: 12px">';
+	html += `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" style="font-weight: 600; text-decoration: none">${escapeHtml(title)}</a>`;
+
+	if (description) {
+		html += `<p style="margin: 4px 0 0; font-size: 0.875em; color: var(--text-secondary, #666)">${escapeHtml(description)}</p>`;
+	}
+
+	html += '</div></div>';
+
+	return html;
+}
+
+/**
+ * Render a Bluesky post embed block
+ * Returns a placeholder div that gets hydrated by the bskyEmbed action
+ */
+function renderBskyPostBlock(block: LeafletBskyPostBlock): string {
+	const postUri = block.postRef?.uri;
+	if (!postUri) {
+		return '';
+	}
+
+	// Return placeholder that will be hydrated by Svelte action
+	return `<div class="bsky-post-embed" data-uri="${escapeHtml(postUri)}"></div>`;
+}
+
+/**
+ * Render a page reference block (sub-page)
+ */
+function renderPageBlock(block: LeafletPageBlock): string {
+	const pageId = block.pageId;
+	if (!pageId) {
+		return '';
+	}
+
+	// Page blocks reference other pages in the same document
+	// For now, render as a placeholder since we'd need the full document context
+	return `<div class="page-reference" style="border: 1px solid var(--border, #e5e5e5); border-radius: 8px; padding: 12px; margin: 1em 0; background: var(--bg-secondary, #f5f5f5)">
+		<em>[Sub-page: ${escapeHtml(pageId)}]</em>
+	</div>`;
+}
+
+/**
  * Render a single block based on its type
  */
 function renderBlock(block: LeafletBlock, authorDid: string): string {
@@ -293,6 +359,12 @@ function renderBlock(block: LeafletBlock, authorDid: string): string {
 			return renderOrderedListBlock(block as LeafletOrderedListBlock);
 		case 'pub.leaflet.blocks.image':
 			return renderImageBlock(block as LeafletImageBlock, authorDid);
+		case 'pub.leaflet.blocks.website':
+			return renderWebsiteBlock(block as LeafletWebsiteBlock, authorDid);
+		case 'pub.leaflet.blocks.bskyPost':
+			return renderBskyPostBlock(block as LeafletBskyPostBlock);
+		case 'pub.leaflet.blocks.page':
+			return renderPageBlock(block as LeafletPageBlock);
 		default: {
 			// Unsupported block type - try to extract plaintext if available
 			const unknownBlock = block as unknown as { plaintext?: string };

@@ -12,6 +12,7 @@
 	import { sanitizeHtml } from '$lib/utils/sanitize';
 	import { isLeafletContent, renderLeafletContent } from '$lib/utils/leaflet-renderer';
 	import { isPcktBlogContent, renderPcktBlogContent } from '$lib/utils/pckt-blog-renderer';
+	import { bskyEmbed } from '$lib/actions/bsky-embed';
 	import { profileService } from '$lib/services/profiles';
 	import { sharesStore } from '$lib/stores/shares.svelte';
 	import { auth } from '$lib/stores/auth.svelte';
@@ -371,7 +372,12 @@
 				<p class="article-loading">Loading article content...</p>
 			{:else if hasContent}
 				<div class="article-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
-					<div bind:this={bodyEl} class="article-body" class:truncated={selected && !expanded}>
+					<div
+						bind:this={bodyEl}
+						class="article-body"
+						class:truncated={selected && !expanded}
+						use:bskyEmbed
+					>
 						{@html sanitizedContent}
 					</div>
 				</div>

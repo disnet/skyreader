@@ -173,6 +173,30 @@ export interface LeafletImageBlock {
 	alt?: string;
 }
 
+export interface LeafletWebsiteBlock {
+	$type: 'pub.leaflet.blocks.website';
+	url: string;
+	title?: string;
+	description?: string;
+	thumb?: {
+		ref: { $link: string };
+		mimeType: string;
+	};
+}
+
+export interface LeafletBskyPostBlock {
+	$type: 'pub.leaflet.blocks.bskyPost';
+	postRef: {
+		uri: string;
+		cid?: string;
+	};
+}
+
+export interface LeafletPageBlock {
+	$type: 'pub.leaflet.blocks.page';
+	pageId: string;
+}
+
 // Union of all supported block types
 export type LeafletBlock =
 	| LeafletTextBlock
@@ -182,7 +206,10 @@ export type LeafletBlock =
 	| LeafletHorizontalRuleBlock
 	| LeafletUnorderedListBlock
 	| LeafletOrderedListBlock
-	| LeafletImageBlock;
+	| LeafletImageBlock
+	| LeafletWebsiteBlock
+	| LeafletBskyPostBlock
+	| LeafletPageBlock;
 
 export interface LeafletBlockWrapper {
 	block: LeafletBlock;
