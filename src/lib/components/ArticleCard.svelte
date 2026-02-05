@@ -5,11 +5,13 @@
 		SocialDocument,
 		BlueskyProfile,
 		LeafletContent,
+		PcktBlogContent,
 	} from '$lib/types';
 	import { formatRelativeDate } from '$lib/utils/date';
 	import { getFaviconUrl } from '$lib/utils/favicon';
 	import { sanitizeHtml } from '$lib/utils/sanitize';
 	import { isLeafletContent, renderLeafletContent } from '$lib/utils/leaflet-renderer';
+	import { isPcktBlogContent, renderPcktBlogContent } from '$lib/utils/pckt-blog-renderer';
 	import { profileService } from '$lib/services/profiles';
 	import { sharesStore } from '$lib/stores/shares.svelte';
 	import { auth } from '$lib/stores/auth.svelte';
@@ -97,6 +99,11 @@
 		// For documents with structured Leaflet content, render it
 		if (document?.content && isLeafletContent(document.content)) {
 			return renderLeafletContent(document.content as LeafletContent, document.authorDid);
+		}
+
+		// For documents with structured pckt.blog content, render it
+		if (document?.content && isPcktBlogContent(document.content)) {
+			return renderPcktBlogContent(document.content as PcktBlogContent, document.authorDid);
 		}
 
 		// Fall back to flat text content or description

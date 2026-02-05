@@ -173,6 +173,141 @@ export interface LeafletContent {
 	pages: LeafletLinearDocument[];
 }
 
+// pckt.blog content types for blog.pckt.content format
+export interface PcktBlogFacetIndex {
+	byteStart: number;
+	byteEnd: number;
+}
+
+export interface PcktBlogFacetFeature {
+	$type: string;
+	uri?: string; // for links
+	did?: string; // for didMention
+}
+
+export interface PcktBlogFacet {
+	index: PcktBlogFacetIndex;
+	features: PcktBlogFacetFeature[];
+}
+
+export interface PcktBlogTextBlock {
+	$type: 'blog.pckt.block.text';
+	plaintext: string;
+	facets?: PcktBlogFacet[];
+}
+
+export interface PcktBlogHeadingBlock {
+	$type: 'blog.pckt.block.heading';
+	plaintext: string;
+	level?: 1 | 2 | 3 | 4 | 5 | 6;
+}
+
+export interface PcktBlogHorizontalRuleBlock {
+	$type: 'blog.pckt.block.horizontalRule';
+}
+
+export interface PcktBlogImageBlock {
+	$type: 'blog.pckt.block.image';
+	attrs: {
+		alt?: string;
+		src?: string;
+		blob?: {
+			$type: 'blob';
+			ref: { $link: string };
+			mimeType: string;
+			size: number;
+		};
+		align?: 'left' | 'center' | 'right';
+	};
+}
+
+export interface PcktBlogListItemBlock {
+	$type: 'blog.pckt.block.listItem';
+	content?: PcktBlogBlock[];
+}
+
+export interface PcktBlogOrderedListBlock {
+	$type: 'blog.pckt.block.orderedList';
+	attrs?: {
+		start?: number;
+	};
+	content?: PcktBlogListItemBlock[];
+}
+
+export interface PcktBlogBlockquoteBlock {
+	$type: 'blog.pckt.block.blockquote';
+	content?: PcktBlogBlock[];
+}
+
+export interface PcktBlogTableCellBlock {
+	$type: 'blog.pckt.block.tableCell' | 'blog.pckt.block.tableHeader';
+	attrs?: {
+		colspan?: number;
+		rowspan?: number;
+		colwidth?: number[];
+	};
+	content?: PcktBlogBlock[];
+}
+
+export interface PcktBlogTableRowBlock {
+	$type: 'blog.pckt.block.tableRow';
+	content?: PcktBlogTableCellBlock[];
+}
+
+export interface PcktBlogTableBlock {
+	$type: 'blog.pckt.block.table';
+	content?: PcktBlogTableRowBlock[];
+}
+
+export interface PcktBlogBlueskyEmbedBlock {
+	$type: 'blog.pckt.block.blueskyEmbed';
+	attrs?: {
+		postRef?: {
+			uri: string;
+			cid: string;
+		};
+	};
+}
+
+export interface PcktBlogIframeBlock {
+	$type: 'blog.pckt.block.iframe';
+	attrs?: {
+		url?: string;
+		height?: number;
+	};
+}
+
+export interface PcktBlogWebsiteBlock {
+	$type: 'blog.pckt.block.website';
+	attrs?: {
+		src?: string;
+		title?: string;
+		description?: string;
+		previewImage?: string;
+	};
+}
+
+// Union of all supported pckt.blog block types
+export type PcktBlogBlock =
+	| PcktBlogTextBlock
+	| PcktBlogHeadingBlock
+	| PcktBlogHorizontalRuleBlock
+	| PcktBlogImageBlock
+	| PcktBlogListItemBlock
+	| PcktBlogOrderedListBlock
+	| PcktBlogBlockquoteBlock
+	| PcktBlogTableCellBlock
+	| PcktBlogTableRowBlock
+	| PcktBlogTableBlock
+	| PcktBlogBlueskyEmbedBlock
+	| PcktBlogIframeBlock
+	| PcktBlogWebsiteBlock;
+
+export interface PcktBlogContent {
+	$type: 'blog.pckt.content';
+	items: PcktBlogBlock[];
+}
+
 export interface SocialDocument {
 	id?: number;
 	authorDid: string;
@@ -188,7 +323,7 @@ export interface SocialDocument {
 	tags?: string[];
 	updatedAt?: string;
 	canonicalUrl?: string;
-	content?: LeafletContent | unknown; // Open union for future content types
+	content?: LeafletContent | PcktBlogContent | unknown; // Open union for future content types
 	indexedAt?: string;
 	createdAt: string;
 	siteIcon?: string;
