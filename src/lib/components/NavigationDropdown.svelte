@@ -24,7 +24,9 @@
 
 	// Derive data from stores
 	let subscriptions = $derived(subscriptionsStore.subscriptions);
-	let followedUsers = $derived(socialStore.followedUsers);
+	// Use inAppFollows instead of followedUsers to show ALL followed accounts,
+	// not just those with shares/content
+	let followedUsers = $derived(socialStore.inAppFollows);
 
 	// Compute feed unread counts
 	let feedUnreadCounts = $derived.by(() => {
@@ -143,9 +145,14 @@
 				return {
 					type: 'user' as const,
 					did: u.did,
-					label: profile?.displayName || profile?.handle || u.did.slice(0, 20) + '...',
+					label:
+						profile?.displayName ||
+						u.displayName ||
+						profile?.handle ||
+						u.handle ||
+						u.did.slice(0, 20) + '...',
 					count: sharerCounts.get(u.did) || 0,
-					avatarUrl: profile?.avatar || null,
+					avatarUrl: profile?.avatar || u.avatarUrl || null,
 				};
 			}),
 		];
