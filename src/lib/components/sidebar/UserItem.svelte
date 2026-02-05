@@ -3,19 +3,21 @@
 	import { profileService } from '$lib/services/profiles';
 	import type { BlueskyProfile } from '$lib/types';
 	import Icon from '../Icon.svelte';
-	import logo from '$lib/assets/logo.svg';
 
 	interface Props {
 		user: FollowedUser;
 		shareCount: number;
 		documentCount: number;
 		isActive: boolean;
-		isExpanded: boolean;
 		contentType: 'shares' | 'documents' | null;
 		onSelect: () => void;
-		onToggleExpand: () => void;
 		onSelectShares: () => void;
 		onSelectDocuments: () => void;
+		onContextMenu: (e: MouseEvent) => void;
+		onTouchStart: (e: TouchEvent) => void;
+		onTouchEnd: (e: TouchEvent) => void;
+		onTouchMove: () => void;
+		onMoreClick: (e: MouseEvent) => void;
 	}
 
 	let {
@@ -23,12 +25,15 @@
 		shareCount,
 		documentCount,
 		isActive,
-		isExpanded,
 		contentType,
 		onSelect,
-		onToggleExpand,
 		onSelectShares,
 		onSelectDocuments,
+		onContextMenu,
+		onTouchStart,
+		onTouchEnd,
+		onTouchMove,
+		onMoreClick,
 	}: Props = $props();
 
 	let profile = $state<BlueskyProfile | null>(null);
@@ -42,64 +47,71 @@
 	let displayName = $derived(profile?.displayName || profile?.handle || user.did);
 	let isInApp = $derived(user.source === 'inapp' || user.source === 'both');
 	let totalCount = $derived(shareCount + documentCount);
-
-	function handleDisclosureClick(e: MouseEvent) {
-		e.stopPropagation();
-		onToggleExpand();
-	}
 </script>
 
 <div class="user-item-wrapper">
-	<div class="nav-item-row">
-		<button
-			class="disclosure"
-			onclick={onToggleExpand}
-			aria-label={isExpanded ? 'Collapse' : 'Expand'}
+	<button
+		class="nav-item"
+		class:active={isActive && contentType === null}
+		class:not-on-app={!isInApp}
+		onclick={onSelect}
+		oncontextmenu={onContextMenu}
+		ontouchstart={onTouchStart}
+		ontouchend={onTouchEnd}
+		ontouchmove={onTouchMove}
+	>
+		{#if profile?.avatar}
+			<img src={profile.avatar} alt="" class="small-avatar" />
+		{:else}
+			<div class="small-avatar-placeholder"></div>
+		{/if}
+		<span class="nav-label">{displayName}</span>
+		<span
+			class="more-btn"
+			role="button"
+			tabindex="0"
+			onclick={(e) => {
+				e.stopPropagation();
+				onMoreClick(e);
+			}}
+			onkeydown={(e) => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					e.stopPropagation();
+					onMoreClick(e as unknown as MouseEvent);
+				}
+			}}
+			title="More options"
 		>
-			<Icon name={isExpanded ? 'chevron-down' : 'chevron-right'} size={14} />
-		</button>
-		<button
-			class="nav-item"
-			class:active={isActive && contentType === null}
-			class:not-on-app={!isInApp}
-			onclick={onSelect}
-		>
-			{#if profile?.avatar}
-				<img src={profile.avatar} alt="" class="small-avatar" />
-			{:else}
-				<div class="small-avatar-placeholder"></div>
-			{/if}
-			<span class="nav-label">{displayName}</span>
-			{#if totalCount > 0}
-				<span class="nav-count">{totalCount}</span>
-			{/if}
-		</button>
-	</div>
+			<Icon name="more-horizontal" size={14} />
+		</span>
+		{#if totalCount > 0}
+			<span class="nav-count">{totalCount}</span>
+		{/if}
+	</button>
 
-	{#if isExpanded}
-		<button
-			class="sub-item"
-			class:active={isActive && contentType === 'shares'}
-			onclick={onSelectShares}
-		>
-			<img src={logo} alt="" class="sub-item-icon" />
-			<span class="nav-label">Shares</span>
-			{#if shareCount > 0}
-				<span class="nav-count">{shareCount}</span>
-			{/if}
-		</button>
-		<button
-			class="sub-item"
-			class:active={isActive && contentType === 'documents'}
-			onclick={onSelectDocuments}
-		>
-			<span class="sub-item-icon-wrapper"><Icon name="newspaper" size={14} /></span>
-			<span class="nav-label">Articles</span>
-			{#if documentCount > 0}
-				<span class="nav-count">{documentCount}</span>
-			{/if}
-		</button>
-	{/if}
+	<button
+		class="sub-item"
+		class:active={isActive && contentType === 'shares'}
+		onclick={onSelectShares}
+	>
+		<span class="sub-item-icon-wrapper"><Icon name="share" size={14} /></span>
+		<span class="nav-label">Shares</span>
+		{#if shareCount > 0}
+			<span class="nav-count">{shareCount}</span>
+		{/if}
+	</button>
+	<button
+		class="sub-item"
+		class:active={isActive && contentType === 'documents'}
+		onclick={onSelectDocuments}
+	>
+		<span class="sub-item-icon-wrapper"><Icon name="newspaper" size={14} /></span>
+		<span class="nav-label">Articles</span>
+		{#if documentCount > 0}
+			<span class="nav-count">{documentCount}</span>
+		{/if}
+	</button>
 </div>
 
 <style>
@@ -108,19 +120,13 @@
 		flex-direction: column;
 	}
 
-	.nav-item-row {
-		display: flex;
-		align-items: center;
-		padding-left: 1rem;
-	}
-
 	.nav-item {
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		flex: 1;
+		width: 100%;
 		padding: 0.5rem 0.75rem;
-		padding-left: 0.5rem;
+		padding-left: 2rem;
 		background: none;
 		border: none;
 		border-radius: 12px;
@@ -144,24 +150,6 @@
 		opacity: 0.5;
 	}
 
-	.disclosure {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: none;
-		border: none;
-		padding: 0.25rem;
-		cursor: pointer;
-		color: var(--color-text-secondary);
-		flex-shrink: 0;
-		border-radius: 4px;
-	}
-
-	.disclosure:hover {
-		color: var(--color-text);
-		background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
-	}
-
 	.nav-label {
 		flex: 1;
 		overflow: hidden;
@@ -179,6 +167,37 @@
 	.nav-item.active .nav-count,
 	.sub-item.active .nav-count {
 		color: var(--color-primary);
+	}
+
+	.more-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.25rem;
+		height: 1.25rem;
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: var(--color-text-secondary);
+		font-size: 1rem;
+		padding: 0;
+		line-height: 1;
+		opacity: 0;
+		transition: opacity 0.15s;
+		flex-shrink: 0;
+		-webkit-tap-highlight-color: transparent;
+		touch-action: manipulation;
+	}
+
+	.nav-item:hover .more-btn,
+	.more-btn:focus {
+		opacity: 1;
+	}
+
+	.more-btn:hover {
+		color: var(--color-text);
+		background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.1));
+		border-radius: 4px;
 	}
 
 	.small-avatar {
@@ -202,7 +221,7 @@
 		gap: 0.5rem;
 		width: 100%;
 		padding: 0.4rem 0.75rem;
-		padding-left: 3.25rem;
+		padding-left: 3rem;
 		background: none;
 		border: none;
 		border-radius: 12px;
@@ -222,12 +241,6 @@
 	.sub-item.active {
 		background-color: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
 		color: var(--color-primary);
-	}
-
-	.sub-item-icon {
-		width: 14px;
-		height: 14px;
-		flex-shrink: 0;
 	}
 
 	.sub-item-icon-wrapper {

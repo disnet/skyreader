@@ -17,11 +17,23 @@
 	import AddFeedModal from './AddFeedModal.svelte';
 	import EditFeedModal from './EditFeedModal.svelte';
 	import ContextMenu from './sidebar/ContextMenu.svelte';
+	import UserContextMenu from './sidebar/UserContextMenu.svelte';
 	import NavSection from './sidebar/NavSection.svelte';
 	import FeedItem from './sidebar/FeedItem.svelte';
 	import UserItem from './sidebar/UserItem.svelte';
+	import UserSearchCompact from './sidebar/UserSearchCompact.svelte';
 	import Icon from './Icon.svelte';
 	import type { Subscription } from '$lib/types';
+
+	// Set of DIDs that user is already following (for search)
+	let followedDids = $derived(new Set(socialStore.followedUsers.map((u) => u.did)));
+
+	async function handleFollowUser(did: string) {
+		const success = await socialStore.followUser(did);
+		if (success) {
+			await socialStore.loadFollowedUsers();
+		}
+	}
 
 	async function removeFeed(id: number) {
 		if (confirm('Are you sure you want to remove this subscription?')) {
@@ -29,10 +41,15 @@
 		}
 	}
 
-	// Context menu state
+	// Context menu state (feeds)
 	let contextMenu = $state<{ x: number; y: number; feedId: number } | null>(null);
 	let longPressTimer: ReturnType<typeof setTimeout> | null = null;
 	let longPressTriggered = $state(false);
+
+	// User context menu state
+	let userContextMenu = $state<{ x: number; y: number; userDid: string } | null>(null);
+	let userLongPressTimer: ReturnType<typeof setTimeout> | null = null;
+	let userLongPressTriggered = $state(false);
 
 	// Edit modal state
 	let editingSubscription = $state<Subscription | null>(null);
@@ -86,15 +103,63 @@
 		contextMenu = null;
 	}
 
+	// User context menu handlers
+	function handleUserContextMenu(e: MouseEvent, userDid: string) {
+		e.preventDefault();
+		userContextMenu = { x: e.clientX, y: e.clientY, userDid };
+	}
+
+	function handleUserTouchStart(e: TouchEvent, userDid: string) {
+		userLongPressTriggered = false;
+		const touch = e.touches[0];
+		userLongPressTimer = setTimeout(() => {
+			userLongPressTriggered = true;
+			userContextMenu = { x: touch.clientX, y: touch.clientY, userDid };
+		}, 500);
+	}
+
+	function handleUserTouchEnd(e: TouchEvent) {
+		if (userLongPressTimer) {
+			clearTimeout(userLongPressTimer);
+			userLongPressTimer = null;
+		}
+		if (userLongPressTriggered) {
+			e.preventDefault();
+		}
+	}
+
+	function handleUserTouchMove() {
+		if (userLongPressTimer) {
+			clearTimeout(userLongPressTimer);
+			userLongPressTimer = null;
+		}
+	}
+
+	function closeUserContextMenu() {
+		userContextMenu = null;
+	}
+
+	async function handleUnfollowUser(userDid: string) {
+		if (confirm('Are you sure you want to unfollow this user?')) {
+			await socialStore.unfollowInApp(userDid);
+		}
+	}
+
 	function handleClickOutside(e: MouseEvent) {
 		if (contextMenu) {
 			closeContextMenu();
+		}
+		if (userContextMenu) {
+			closeUserContextMenu();
 		}
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (contextMenu && e.key === 'Escape') {
 			closeContextMenu();
+		}
+		if (userContextMenu && e.key === 'Escape') {
+			closeUserContextMenu();
 		}
 	}
 
@@ -112,6 +177,7 @@
 		document.removeEventListener('click', handleClickOutside);
 		document.removeEventListener('keydown', handleKeydown);
 		if (longPressTimer) clearTimeout(longPressTimer);
+		if (userLongPressTimer) clearTimeout(userLongPressTimer);
 		document.body.classList.remove('sidebar-open-mobile');
 	});
 
@@ -179,8 +245,7 @@
 			return { type: 'starred' as const, contentType: null as 'shares' | 'documents' | null };
 		if (shared)
 			return { type: 'shared' as const, contentType: null as 'shares' | 'documents' | null };
-		if (following)
-			return { type: 'following' as const, contentType: null as 'shares' | 'documents' | null };
+		if (following) return { type: 'following' as const, contentType: type };
 		if (sharer) return { type: 'sharer' as const, id: sharer, contentType: type };
 		if (feeds)
 			return { type: 'feeds' as const, contentType: null as 'shares' | 'documents' | null };
@@ -269,8 +334,10 @@
 		if (type === 'feed' && id) params.set('feed', String(id));
 		else if (type === 'starred') params.set('starred', 'true');
 		else if (type === 'shared') params.set('shared', 'true');
-		else if (type === 'following') params.set('following', 'true');
-		else if (type === 'sharer' && id) {
+		else if (type === 'following') {
+			params.set('following', 'true');
+			if (contentType) params.set('type', contentType);
+		} else if (type === 'sharer' && id) {
 			params.set('sharer', String(id));
 			if (contentType) params.set('type', contentType);
 		} else if (type === 'feeds') params.set('feeds', 'true');
@@ -413,15 +480,40 @@
 			isExpanded={sidebarStore.expandedSections.shared}
 			isCollapsed={sidebarStore.isCollapsed}
 			showOnlyUnread={sidebarStore.showOnlyUnread.shared}
-			isActive={currentFilter().type === 'following'}
+			isActive={$page.url.pathname === '/following'}
 			onToggle={() => sidebarStore.toggleSection('shared')}
-			onLabelClick={() => selectFilter('following')}
+			onLabelClick={() => {
+				goto('/following');
+				sidebarStore.closeMobile();
+			}}
 			onUnreadToggle={() => sidebarStore.toggleShowOnlyUnread('shared')}
 		>
-			<a href="/following" class="manage-link" onclick={() => sidebarStore.closeMobile()}>
-				<Icon name="users" size={16} />
-				<span>Manage</span>
-			</a>
+			{@const totalShareCount = Array.from(sharerCounts().values()).reduce((a, b) => a + b, 0)}
+			{@const totalDocCount = Array.from(sharerDocCounts().values()).reduce((a, b) => a + b, 0)}
+			{@const filter = currentFilter()}
+			<UserSearchCompact {followedDids} onFollow={handleFollowUser} />
+			<button
+				class="sub-nav-item"
+				class:active={filter.type === 'following' && filter.contentType === 'shares'}
+				onclick={() => selectFilter('following', undefined, 'shares')}
+			>
+				<Icon name="share" size={16} />
+				<span class="sub-nav-label">Shares</span>
+				{#if totalShareCount > 0}
+					<span class="sub-nav-count">{totalShareCount}</span>
+				{/if}
+			</button>
+			<button
+				class="sub-nav-item"
+				class:active={filter.type === 'following' && filter.contentType === 'documents'}
+				onclick={() => selectFilter('following', undefined, 'documents')}
+			>
+				<Icon name="newspaper" size={16} />
+				<span class="sub-nav-label">Articles</span>
+				{#if totalDocCount > 0}
+					<span class="sub-nav-count">{totalDocCount}</span>
+				{/if}
+			</button>
 			{@const allUsers = sortedFollowedUsers()}
 			{@const displayedUsers = allUsers.slice(0, 10)}
 			{#each displayedUsers as user (user.did)}
@@ -433,14 +525,17 @@
 					{shareCount}
 					documentCount={docCount}
 					isActive={filter.type === 'sharer' && filter.id === user.did}
-					isExpanded={sidebarStore.isUserExpanded(user.did)}
 					contentType={filter.type === 'sharer' && filter.id === user.did
 						? filter.contentType
 						: null}
 					onSelect={() => selectFilter('sharer', user.did)}
-					onToggleExpand={() => sidebarStore.toggleUserExpanded(user.did)}
 					onSelectShares={() => selectFilter('sharer', user.did, 'shares')}
 					onSelectDocuments={() => selectFilter('sharer', user.did, 'documents')}
+					onContextMenu={(e) => handleUserContextMenu(e, user.did)}
+					onTouchStart={(e) => handleUserTouchStart(e, user.did)}
+					onTouchEnd={handleUserTouchEnd}
+					onTouchMove={handleUserTouchMove}
+					onMoreClick={(e) => handleUserContextMenu(e, user.did)}
 				/>
 			{:else}
 				<div class="empty-section">No followed users</div>
@@ -511,6 +606,16 @@
 		onEdit={() => handleEditFeed(feedId)}
 		onDelete={() => removeFeed(feedId)}
 		onClose={closeContextMenu}
+	/>
+{/if}
+
+{#if userContextMenu}
+	{@const userDid = userContextMenu.userDid}
+	<UserContextMenu
+		x={userContextMenu.x}
+		y={userContextMenu.y}
+		onUnfollow={() => handleUnfollowUser(userDid)}
+		onClose={closeUserContextMenu}
 	/>
 {/if}
 
@@ -688,20 +793,47 @@
 		color: var(--color-text-secondary);
 	}
 
-	.manage-link {
+	.sub-nav-item {
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		padding: 0.5rem 1.5rem;
+		width: 100%;
+		padding: 0.5rem 0.75rem;
+		padding-left: 2rem;
+		background: none;
+		border: none;
+		cursor: pointer;
+		text-align: left;
+		font: inherit;
 		font-size: 0.8125rem;
-		color: var(--color-text-secondary);
-		text-decoration: none;
+		color: var(--color-text);
 		transition: background-color 0.15s;
 		border-radius: 8px;
 	}
 
-	.manage-link:hover {
+	.sub-nav-item:hover {
 		background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+	}
+
+	.sub-nav-item.active {
+		background-color: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
+		color: var(--color-primary);
+	}
+
+	.sub-nav-label {
+		flex: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.sub-nav-count {
+		flex-shrink: 0;
+		font-size: 0.75rem;
+		color: var(--color-text-secondary);
+	}
+
+	.sub-nav-item.active .sub-nav-count {
 		color: var(--color-primary);
 	}
 
