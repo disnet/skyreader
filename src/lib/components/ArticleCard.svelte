@@ -133,6 +133,13 @@
 		return sharesStore.isShared(guid);
 	});
 
+	// Share state for document mode
+	let isSharingDocument = $state(false);
+	let hasSharedDocument = $derived.by(() => {
+		if (!isDocumentMode || !document) return false;
+		return sharesStore.isShared(document.recordUri);
+	});
+
 	// Get reshare count from share if in share mode
 	let displayReshareCount = $derived(share?.reshareCount || reshareCount);
 
@@ -170,6 +177,46 @@
 			await sharesStore.unshare(itemGuid);
 		} finally {
 			isResharing = false;
+		}
+	}
+
+	async function handleShareDocument(e: MouseEvent) {
+		e.stopPropagation();
+		if (isSharingDocument || hasSharedDocument || !document) return;
+		if (!auth.user) return;
+
+		isSharingDocument = true;
+		try {
+			// Reuse reshare function - document recordUri as reshareOf
+			await sharesStore.reshare(
+				document.recordUri, // reshareOfUri
+				document.authorDid, // reshareOfAuthorDid
+				document.canonicalUrl || document.path || '', // articleUrl
+				document.recordUri, // articleGuid (use recordUri for dedup)
+				document.title, // articleTitle
+				undefined, // articleAuthor (resolve from DID elsewhere)
+				document.description, // articleDescription
+				displayContent, // articleContent (rendered HTML)
+				document.coverImageCid
+					? `https://cdn.bsky.app/img/feed_fullsize/plain/${document.authorDid}/${document.coverImageCid}@jpeg`
+					: undefined, // articleImage
+				document.publishedAt, // articlePublishedAt
+				document.siteUri // feedUrl
+			);
+		} finally {
+			isSharingDocument = false;
+		}
+	}
+
+	async function handleUnshareDocument(e: MouseEvent) {
+		e.stopPropagation();
+		if (isSharingDocument || !hasSharedDocument || !document) return;
+
+		isSharingDocument = true;
+		try {
+			await sharesStore.unshare(document.recordUri);
+		} finally {
+			isSharingDocument = false;
 		}
 	}
 
@@ -236,6 +283,20 @@
 	let hasContent = $derived(Boolean(displayContent));
 	let sanitizedContent = $derived(sanitizeHtml(displayContent, itemUrl));
 
+	// Compute favicon URL - for shares of documents, feedUrl may be an AT Protocol URI
+	// which getFaviconUrl can't handle, so fall back to itemUrl
+	let faviconUrl = $derived.by(() => {
+		if (document?.siteIcon) return document.siteIcon;
+		if (document?.canonicalUrl) return getFaviconUrl(document.canonicalUrl);
+		// For shares, check if feedUrl is an AT Protocol URI
+		if (share?.feedUrl?.startsWith('at://')) {
+			// Use itemUrl for favicon instead
+			return getFaviconUrl(share.itemUrl);
+		}
+		if (displaySiteUrl) return getFaviconUrl(displaySiteUrl);
+		return '';
+	});
+
 	let bodyEl = $state<HTMLElement | undefined>(undefined);
 	let isTruncated = $state(false);
 
@@ -283,12 +344,8 @@
 			</div>
 		{/if}
 		<button class="article-header" onclick={handleHeaderClick}>
-			{#if document?.siteIcon}
-				<img src={document.siteIcon} alt="" class="favicon" />
-			{:else if document?.canonicalUrl}
-				<img src={getFaviconUrl(document.canonicalUrl)} alt="" class="favicon" />
-			{:else if displaySiteUrl}
-				<img src={getFaviconUrl(displaySiteUrl)} alt="" class="favicon" />
+			{#if faviconUrl}
+				<img src={faviconUrl} alt="" class="favicon" />
 			{/if}
 			{#if isOpen}
 				<a
@@ -355,7 +412,7 @@
 						>
 					</button>
 				{:else if isDocumentMode}
-					<!-- Document mode: read and open -->
+					<!-- Document mode: read, share, and open -->
 					<button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
 						<span class="action-icon">
 							{#if isRead}
@@ -365,6 +422,23 @@
 							{/if}
 						</span><span class="action-label">Read</span>
 					</button>
+					{#if auth.user}
+						{#if hasSharedDocument}
+							<button
+								class="action-btn shared"
+								onclick={handleUnshareDocument}
+								disabled={isSharingDocument}
+							>
+								<span class="action-icon"><Icon name="share" size={16} /></span>
+								<span class="action-label">{isSharingDocument ? '...' : 'Shared'}</span>
+							</button>
+						{:else}
+							<button class="action-btn" onclick={handleShareDocument} disabled={isSharingDocument}>
+								<span class="action-icon"><Icon name="share" size={16} /></span>
+								<span class="action-label">{isSharingDocument ? '...' : 'Share'}</span>
+							</button>
+						{/if}
+					{/if}
 					<button class="action-btn" onclick={handleOpenUrl}>
 						<span class="action-icon"><Icon name="external-link" size={16} /></span><span
 							class="action-label">Open</span
