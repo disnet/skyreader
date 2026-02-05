@@ -200,19 +200,20 @@
 		return subs;
 	});
 
-	// Sort followed users: all in-app follows, sorted by unread shares then by DID
+	// Sort followed users: all in-app follows, sorted by unread items (shares + documents) then by DID
 	let sortedFollowedUsers = $derived(() => {
-		const counts = sharerCounts();
+		const shareCounts = sharerCounts();
+		const docCounts = sharerDocCounts();
 		// Use inAppFollows which includes ALL users we follow on Skyreader (not just those with shares)
 		let users = socialStore.inAppFollows
 			.map((f) => ({ did: f.did, source: 'inapp' as const }))
 			.sort((a, b) => {
-				const countA = counts.get(a.did) || 0;
-				const countB = counts.get(b.did) || 0;
+				const countA = (shareCounts.get(a.did) || 0) + (docCounts.get(a.did) || 0);
+				const countB = (shareCounts.get(b.did) || 0) + (docCounts.get(b.did) || 0);
 				const hasUnreadA = countA > 0;
 				const hasUnreadB = countB > 0;
 
-				// Tier 1: accounts with unread shares
+				// Tier 1: accounts with unread items (shares or documents)
 				if (hasUnreadA && !hasUnreadB) return -1;
 				if (!hasUnreadA && hasUnreadB) return 1;
 
@@ -225,7 +226,8 @@
 				return a.did.localeCompare(b.did);
 			});
 		if (sidebarStore.showOnlyUnread.shared) {
-			users = users.filter((u) => (counts.get(u.did) || 0) > 0);
+			const totalCount = (did: string) => (shareCounts.get(did) || 0) + (docCounts.get(did) || 0);
+			users = users.filter((u) => totalCount(u.did) > 0);
 		}
 		return users;
 	});
