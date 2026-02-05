@@ -143,11 +143,20 @@
 		return counts;
 	});
 
+	// Group documents by author for counts
+	let sharerDocCounts = $derived(() => {
+		const counts = new Map<string, number>();
+		for (const doc of socialStore.documents) {
+			counts.set(doc.authorDid, (counts.get(doc.authorDid) || 0) + 1);
+		}
+		return counts;
+	});
+
 	// Current filter from URL
 	let currentFilter = $derived(() => {
 		// Only show feed filters as active on the home page
 		if ($page.url.pathname !== '/') {
-			return { type: 'none' as const };
+			return { type: 'none' as const, contentType: null as 'shares' | 'documents' | null };
 		}
 		const feed = $page.url.searchParams.get('feed');
 		const starred = $page.url.searchParams.get('starred');
@@ -155,13 +164,23 @@
 		const sharer = $page.url.searchParams.get('sharer');
 		const following = $page.url.searchParams.get('following');
 		const feeds = $page.url.searchParams.get('feeds');
-		if (feed) return { type: 'feed' as const, id: parseInt(feed) };
-		if (starred) return { type: 'starred' as const };
-		if (shared) return { type: 'shared' as const };
-		if (following) return { type: 'following' as const };
-		if (sharer) return { type: 'sharer' as const, id: sharer };
-		if (feeds) return { type: 'feeds' as const };
-		return { type: 'all' as const };
+		const type = $page.url.searchParams.get('type') as 'shares' | 'documents' | null;
+		if (feed)
+			return {
+				type: 'feed' as const,
+				id: parseInt(feed),
+				contentType: null as 'shares' | 'documents' | null,
+			};
+		if (starred)
+			return { type: 'starred' as const, contentType: null as 'shares' | 'documents' | null };
+		if (shared)
+			return { type: 'shared' as const, contentType: null as 'shares' | 'documents' | null };
+		if (following)
+			return { type: 'following' as const, contentType: null as 'shares' | 'documents' | null };
+		if (sharer) return { type: 'sharer' as const, id: sharer, contentType: type };
+		if (feeds)
+			return { type: 'feeds' as const, contentType: null as 'shares' | 'documents' | null };
+		return { type: 'all' as const, contentType: null as 'shares' | 'documents' | null };
 	});
 
 	// Sort and optionally filter subscriptions by unread count (descending)
@@ -239,14 +258,16 @@
 		feedUnreadCounts = counts;
 	}
 
-	function selectFilter(type: string, id?: string | number) {
+	function selectFilter(type: string, id?: string | number, contentType?: 'shares' | 'documents') {
 		const params = new URLSearchParams();
 		if (type === 'feed' && id) params.set('feed', String(id));
 		else if (type === 'starred') params.set('starred', 'true');
 		else if (type === 'shared') params.set('shared', 'true');
 		else if (type === 'following') params.set('following', 'true');
-		else if (type === 'sharer' && id) params.set('sharer', String(id));
-		else if (type === 'feeds') params.set('feeds', 'true');
+		else if (type === 'sharer' && id) {
+			params.set('sharer', String(id));
+			if (contentType) params.set('type', contentType);
+		} else if (type === 'feeds') params.set('feeds', 'true');
 
 		const query = params.toString();
 		goto(query ? `/?${query}` : '/');
@@ -398,12 +419,22 @@
 			{@const allUsers = sortedFollowedUsers()}
 			{@const displayedUsers = allUsers.slice(0, 10)}
 			{#each displayedUsers as user (user.did)}
-				{@const count = sharerCounts().get(user.did) || 0}
+				{@const shareCount = sharerCounts().get(user.did) || 0}
+				{@const docCount = sharerDocCounts().get(user.did) || 0}
+				{@const filter = currentFilter()}
 				<UserItem
 					{user}
-					unreadCount={count}
-					isActive={currentFilter().type === 'sharer' && currentFilter().id === user.did}
+					{shareCount}
+					documentCount={docCount}
+					isActive={filter.type === 'sharer' && filter.id === user.did}
+					isExpanded={sidebarStore.isUserExpanded(user.did)}
+					contentType={filter.type === 'sharer' && filter.id === user.did
+						? filter.contentType
+						: null}
 					onSelect={() => selectFilter('sharer', user.did)}
+					onToggleExpand={() => sidebarStore.toggleUserExpanded(user.did)}
+					onSelectShares={() => selectFilter('sharer', user.did, 'shares')}
+					onSelectDocuments={() => selectFilter('sharer', user.did, 'documents')}
 				/>
 			{:else}
 				<div class="empty-section">No followed users</div>

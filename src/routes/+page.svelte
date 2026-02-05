@@ -40,6 +40,8 @@
 	// Sync URL filters to feedViewStore
 	$effect(() => {
 		const url = $page.url;
+		const typeParam = url.searchParams.get('type');
+		const contentType = typeParam === 'shares' || typeParam === 'documents' ? typeParam : null;
 		feedViewStore.setFilters({
 			feed: url.searchParams.get('feed'),
 			starred: url.searchParams.get('starred'),
@@ -47,6 +49,7 @@
 			sharer: url.searchParams.get('sharer'),
 			following: url.searchParams.get('following'),
 			feeds: url.searchParams.get('feeds'),
+			contentType,
 		});
 	});
 
@@ -96,7 +99,14 @@
 		if (feedViewStore.sharedFilter) return 'Shared';
 		if (feedViewStore.followingFilter) return 'Following';
 		if (feedViewStore.sharerFilter) {
-			return sharerProfile?.displayName || sharerProfile?.handle || 'Shared';
+			const baseName = sharerProfile?.displayName || sharerProfile?.handle || 'Shared';
+			if (feedViewStore.contentTypeFilter === 'shares') {
+				return `${baseName} - Shares`;
+			}
+			if (feedViewStore.contentTypeFilter === 'documents') {
+				return `${baseName} - Documents`;
+			}
+			return baseName;
 		}
 		if (feedViewStore.feedsFilter) return 'Feeds';
 		return 'All';
@@ -261,6 +271,7 @@
 			feedViewStore.sharerFilter,
 			feedViewStore.followingFilter,
 			feedViewStore.feedsFilter,
+			feedViewStore.contentTypeFilter,
 		];
 		feedViewStore.resetSelection();
 	});

@@ -40,6 +40,7 @@ function createFeedViewStore() {
 	let sharerFilter = $state<string | null>(null);
 	let followingFilter = $state<string | null>(null);
 	let feedsFilter = $state<string | null>(null);
+	let contentTypeFilter = $state<'shares' | 'documents' | null>(null);
 
 	// Derived: view mode
 	let viewMode = $derived.by((): ViewMode => {
@@ -104,6 +105,9 @@ function createFeedViewStore() {
 
 	// Derived: filtered shares
 	let displayedShares = $derived.by((): SocialShare[] => {
+		// Return empty if contentTypeFilter is 'documents'
+		if (contentTypeFilter === 'documents') return [];
+
 		const shares = socialStore.shares;
 		const positions = shareReadingStore.shareReadPositions;
 		const sortOrder = preferences.sortOrder;
@@ -147,10 +151,18 @@ function createFeedViewStore() {
 
 	// Derived: filtered documents
 	let displayedDocuments = $derived.by((): SocialDocument[] => {
+		// Return empty if contentTypeFilter is 'shares'
+		if (contentTypeFilter === 'shares') return [];
+
 		const docs = socialStore.documents;
 		const sortOrder = preferences.sortOrder;
 
 		let filtered = [...docs];
+
+		// Filter by author if sharerFilter is set
+		if (sharerFilter) {
+			filtered = filtered.filter((d) => d.authorDid === sharerFilter);
+		}
 
 		// Apply sort order
 		filtered.sort((a, b) => {
@@ -212,11 +224,30 @@ function createFeedViewStore() {
 		}
 
 		if (mode === 'shares') {
-			return displayedShares.map((item) => ({
-				type: 'share' as const,
-				item,
-				key: item.recordUri,
-			}));
+			// Combine shares and documents, sorted by date
+			const sortOrder = preferences.sortOrder;
+			type ItemWithDate = FeedDisplayItem & { date: number };
+			const items: ItemWithDate[] = [
+				...displayedShares.map((item) => ({
+					type: 'share' as const,
+					item,
+					key: item.recordUri,
+					date: new Date(item.itemPublishedAt || item.createdAt).getTime(),
+				})),
+				...displayedDocuments.map((item) => ({
+					type: 'document' as const,
+					item,
+					key: item.recordUri,
+					date: new Date(item.publishedAt).getTime(),
+				})),
+			];
+
+			items.sort((a, b) => {
+				const diff = b.date - a.date;
+				return sortOrder === 'newest' ? diff : -diff;
+			});
+
+			return items.map(({ type, item, key }) => ({ type, item, key }) as FeedDisplayItem);
 		}
 
 		if (mode === 'userShares') {
@@ -436,6 +467,9 @@ function createFeedViewStore() {
 		get feedsFilter() {
 			return feedsFilter;
 		},
+		get contentTypeFilter() {
+			return contentTypeFilter;
+		},
 
 		// Article lookup
 		getArticleForShare,
@@ -460,6 +494,7 @@ function createFeedViewStore() {
 			sharer: string | null;
 			following: string | null;
 			feeds: string | null;
+			contentType?: 'shares' | 'documents' | null;
 		}) {
 			feedFilter = filters.feed;
 			starredFilter = filters.starred;
@@ -467,6 +502,7 @@ function createFeedViewStore() {
 			sharerFilter = filters.sharer;
 			followingFilter = filters.following;
 			feedsFilter = filters.feeds;
+			contentTypeFilter = filters.contentType ?? null;
 			// Reset pagination when filters change
 			loadedArticleCount = DEFAULT_PAGE_SIZE;
 		},

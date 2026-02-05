@@ -7,6 +7,7 @@
 	import { sharesStore } from '$lib/stores/shares.svelte';
 	import { auth } from '$lib/stores/auth.svelte';
 	import Icon from './Icon.svelte';
+	import logo from '$lib/assets/logo.svg';
 
 	let {
 		article,
@@ -234,7 +235,9 @@
 	<div class="article-sticky-header">
 		{#if isShareMode && share}
 			<div class="share-attribution">
-				shared by <a
+				<img src={logo} alt="" class="attribution-icon" />
+				shared by
+				<a
 					href="/?sharer={share.authorDid}"
 					class="share-author-link"
 					onclick={(e) => e.stopPropagation()}>@{authorHandle}</a
@@ -247,7 +250,9 @@
 			</div>
 		{:else if isDocumentMode && document}
 			<div class="share-attribution">
-				published by <a
+				<span class="attribution-icon-wrapper"><Icon name="newspaper" size={12} /></span>
+				published by
+				<a
 					href="/?author={document.authorDid}"
 					class="share-author-link"
 					onclick={(e) => e.stopPropagation()}>@{authorHandle}</a
@@ -439,9 +444,25 @@
 	}
 
 	.share-attribution {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
 		font-size: 0.75rem;
 		color: var(--color-text-secondary);
 		padding: 0.25rem 0 0;
+	}
+
+	.attribution-icon {
+		width: 12px;
+		height: 12px;
+		flex-shrink: 0;
+	}
+
+	.attribution-icon-wrapper {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
 	}
 
 	.share-author-link {

@@ -16,6 +16,8 @@ interface SidebarState {
 	// Sorted IDs for keyboard navigation (matches visual sidebar order)
 	sortedFeedIds: number[];
 	sortedUserDids: string[];
+	// Expanded users in Following section
+	expandedUsers: Set<string>;
 }
 
 function createSidebarStore() {
@@ -34,6 +36,7 @@ function createSidebarStore() {
 		},
 		sortedFeedIds: [],
 		sortedUserDids: [],
+		expandedUsers: new Set(),
 	});
 
 	// Restore from localStorage on init
@@ -45,6 +48,7 @@ function createSidebarStore() {
 				state.isCollapsed = parsed.isCollapsed ?? false;
 				state.expandedSections = parsed.expandedSections ?? { shared: false, feeds: true };
 				state.showOnlyUnread = parsed.showOnlyUnread ?? { shared: false, feeds: false };
+				state.expandedUsers = new Set(parsed.expandedUsers ?? []);
 			} catch {
 				// Ignore parse errors
 			}
@@ -59,6 +63,7 @@ function createSidebarStore() {
 					isCollapsed: state.isCollapsed,
 					expandedSections: state.expandedSections,
 					showOnlyUnread: state.showOnlyUnread,
+					expandedUsers: Array.from(state.expandedUsers),
 				})
 			);
 		}
@@ -111,6 +116,20 @@ function createSidebarStore() {
 		state.sortedUserDids = dids;
 	}
 
+	function toggleUserExpanded(did: string) {
+		if (state.expandedUsers.has(did)) {
+			state.expandedUsers.delete(did);
+		} else {
+			state.expandedUsers.add(did);
+		}
+		state.expandedUsers = new Set(state.expandedUsers); // Trigger reactivity
+		persist();
+	}
+
+	function isUserExpanded(did: string) {
+		return state.expandedUsers.has(did);
+	}
+
 	return {
 		get isCollapsed() {
 			return state.isCollapsed;
@@ -136,6 +155,9 @@ function createSidebarStore() {
 		get sortedUserDids() {
 			return state.sortedUserDids;
 		},
+		get expandedUsers() {
+			return state.expandedUsers;
+		},
 		toggle,
 		toggleMobile,
 		closeMobile,
@@ -147,6 +169,8 @@ function createSidebarStore() {
 		closeNavigationDropdown,
 		setSortedFeedIds,
 		setSortedUserDids,
+		toggleUserExpanded,
+		isUserExpanded,
 	};
 }
 
