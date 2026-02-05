@@ -133,7 +133,7 @@
 			bind:this={inputRef}
 			type="text"
 			class="search-input"
-			placeholder="Search for Bluesky users to follow..."
+			placeholder="Search for Bluesky users to follow on Skyreader..."
 			value={query}
 			oninput={handleInput}
 			onkeydown={handleKeydown}
