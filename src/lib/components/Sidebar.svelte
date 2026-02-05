@@ -493,28 +493,6 @@
 			{@const totalDocCount = Array.from(sharerDocCounts().values()).reduce((a, b) => a + b, 0)}
 			{@const filter = currentFilter()}
 			<UserSearchCompact {followedDids} onFollow={handleFollowUser} />
-			<button
-				class="sub-nav-item"
-				class:active={filter.type === 'following' && filter.contentType === 'shares'}
-				onclick={() => selectFilter('following', undefined, 'shares')}
-			>
-				<Icon name="share" size={16} />
-				<span class="sub-nav-label">Shares</span>
-				{#if totalShareCount > 0}
-					<span class="sub-nav-count">{totalShareCount}</span>
-				{/if}
-			</button>
-			<button
-				class="sub-nav-item"
-				class:active={filter.type === 'following' && filter.contentType === 'documents'}
-				onclick={() => selectFilter('following', undefined, 'documents')}
-			>
-				<Icon name="newspaper" size={16} />
-				<span class="sub-nav-label">Articles</span>
-				{#if totalDocCount > 0}
-					<span class="sub-nav-count">{totalDocCount}</span>
-				{/if}
-			</button>
 			{@const allUsers = sortedFollowedUsers()}
 			{@const displayedUsers = allUsers.slice(0, 10)}
 			{#each displayedUsers as user (user.did)}
@@ -789,50 +767,6 @@
 		padding: 0.25rem 1.5rem;
 		font-size: 0.8125rem;
 		color: var(--color-text-secondary);
-	}
-
-	.sub-nav-item {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		width: 100%;
-		padding: 0.5rem 0.75rem;
-		padding-left: 2rem;
-		background: none;
-		border: none;
-		cursor: pointer;
-		text-align: left;
-		font: inherit;
-		font-size: 0.8125rem;
-		color: var(--color-text);
-		transition: background-color 0.15s;
-		border-radius: 8px;
-	}
-
-	.sub-nav-item:hover {
-		background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
-	}
-
-	.sub-nav-item.active {
-		background-color: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
-		color: var(--color-primary);
-	}
-
-	.sub-nav-label {
-		flex: 1;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.sub-nav-count {
-		flex-shrink: 0;
-		font-size: 0.75rem;
-		color: var(--color-text-secondary);
-	}
-
-	.sub-nav-item.active .sub-nav-count {
-		color: var(--color-primary);
 	}
 
 	/* Mobile styles */

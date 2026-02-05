@@ -9,7 +9,6 @@
 	import { socialStore } from '$lib/stores/social.svelte';
 	import { readingStore } from '$lib/stores/reading.svelte';
 	import { shareReadingStore } from '$lib/stores/shareReading.svelte';
-	import { socialReadingStore } from '$lib/stores/socialReading.svelte';
 	import { sharesStore } from '$lib/stores/shares.svelte';
 	import { activityStore } from '$lib/stores/activity.svelte';
 	import { articlesStore } from '$lib/stores/articles.svelte';
@@ -52,18 +51,6 @@
 		for (const share of socialStore.shares) {
 			if (!shareReadingStore.isRead(share.recordUri)) {
 				counts.set(share.authorDid, (counts.get(share.authorDid) || 0) + 1);
-			}
-		}
-		return counts;
-	});
-
-	// Group unread documents by author for counts
-	let sharerDocCounts = $derived.by(() => {
-		socialReadingStore.positions;
-		const counts = new Map<string, number>();
-		for (const doc of socialStore.documents) {
-			if (!socialReadingStore.isRead(doc.recordUri)) {
-				counts.set(doc.authorDid, (counts.get(doc.authorDid) || 0) + 1);
 			}
 		}
 		return counts;
@@ -140,10 +127,6 @@
 	let filteredItems = $derived.by((): { section: string; items: NavItem[] }[] => {
 		const query = searchQuery.toLowerCase().trim();
 
-		// Calculate following unread counts
-		const totalSharesUnread = Array.from(sharerCounts.values()).reduce((a, b) => a + b, 0);
-		const totalDocsUnread = Array.from(sharerDocCounts.values()).reduce((a, b) => a + b, 0);
-
 		const views: NavItem[] = [
 			{ type: 'view', id: 'all', label: 'All', count: totalUnread, icon: 'inbox' },
 			{ type: 'view', id: 'starred', label: 'Later', count: starredCount, icon: 'star' },
@@ -156,20 +139,6 @@
 		const users: NavItem[] = [
 			{ type: 'utility', id: 'following', label: 'Following', icon: 'users' },
 			{ type: 'action', id: 'follow-user', label: 'Follow user', icon: 'plus' },
-			{
-				type: 'view',
-				id: 'following-shares',
-				label: 'Shares',
-				count: totalSharesUnread,
-				icon: 'share',
-			},
-			{
-				type: 'view',
-				id: 'following-articles',
-				label: 'Articles',
-				count: totalDocsUnread,
-				icon: 'newspaper',
-			},
 			...followedUsers.map((u) => {
 				const profile = userProfiles.get(u.did);
 				return {
@@ -254,18 +223,6 @@
 			if (item.id === 'starred' && filter.type === 'starred') return true;
 			if (item.id === 'shared' && filter.type === 'shared') return true;
 			if (item.id === 'feeds' && filter.type === 'feeds') return true;
-			if (
-				item.id === 'following-shares' &&
-				filter.type === 'following' &&
-				filter.contentType === 'shares'
-			)
-				return true;
-			if (
-				item.id === 'following-articles' &&
-				filter.type === 'following' &&
-				filter.contentType === 'documents'
-			)
-				return true;
 		}
 		if (item.type === 'utility' && item.id === 'following' && $page.url.pathname === '/following')
 			return true;
@@ -323,8 +280,6 @@
 		if (item.type === 'view') {
 			if (item.id === 'starred') url = '/?starred=true';
 			else if (item.id === 'shared') url = '/?shared=true';
-			else if (item.id === 'following-shares') url = '/?following=true&type=shares';
-			else if (item.id === 'following-articles') url = '/?following=true&type=documents';
 			else if (item.id === 'feeds') url = '/?feeds=true';
 		} else if (item.type === 'feed') {
 			url = `/?feed=${item.id}`;
@@ -496,8 +451,6 @@
 							class:highlighted={flatIndex === highlightedIndex}
 							class:child={item.type === 'user' ||
 								item.type === 'feed' ||
-								(item.type === 'view' &&
-									(item.id === 'following-shares' || item.id === 'following-articles')) ||
 								(item.type === 'action' && item.id === 'follow-user')}
 							role="option"
 							aria-selected={isItemActive(item)}
@@ -579,8 +532,6 @@
 							class:highlighted={flatIndex === highlightedIndex}
 							class:child={item.type === 'user' ||
 								item.type === 'feed' ||
-								(item.type === 'view' &&
-									(item.id === 'following-shares' || item.id === 'following-articles')) ||
 								(item.type === 'action' && item.id === 'follow-user')}
 							role="option"
 							aria-selected={isItemActive(item)}
