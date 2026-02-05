@@ -12,6 +12,7 @@ import type {
 	LeafletCodeBlock,
 	LeafletBlockquoteBlock,
 	LeafletUnorderedListBlock,
+	LeafletOrderedListBlock,
 	LeafletImageBlock,
 	LeafletListItemBlock,
 } from '$lib/types';
@@ -197,20 +198,28 @@ function renderHorizontalRuleBlock(): string {
 
 /**
  * Render list items recursively
+ * @param children - List item children to render
+ * @param listTag - Tag for nested lists ('ul' or 'ol')
  */
-function renderListItems(items: LeafletListItemBlock[] | undefined): string {
-	if (!items || items.length === 0) {
+function renderListItems(
+	children: LeafletListItemBlock[] | undefined,
+	listTag: 'ul' | 'ol' = 'ul'
+): string {
+	if (!children || children.length === 0) {
 		return '';
 	}
 
-	return items
+	return children
 		.map((item) => {
-			const content = applyFacets(item.plaintext || '', item.facets);
+			// Extract plaintext and facets from the content block
+			const plaintext = item.content?.plaintext || '';
+			const facets = item.content?.facets;
+			const content = applyFacets(plaintext, facets);
 			let html = `<li>${content}`;
 
-			// Handle nested lists
+			// Handle nested lists (inherit parent list type)
 			if (item.children && item.children.length > 0) {
-				html += `<ul>${renderListItems(item.children)}</ul>`;
+				html += `<${listTag}>${renderListItems(item.children, listTag)}</${listTag}>`;
 			}
 
 			html += '</li>';
@@ -223,11 +232,22 @@ function renderListItems(items: LeafletListItemBlock[] | undefined): string {
  * Render an unordered list block
  */
 function renderUnorderedListBlock(block: LeafletUnorderedListBlock): string {
-	const itemsHtml = renderListItems(block.items);
+	const itemsHtml = renderListItems(block.children, 'ul');
 	if (!itemsHtml) {
 		return '';
 	}
 	return `<ul>${itemsHtml}</ul>`;
+}
+
+/**
+ * Render an ordered list block
+ */
+function renderOrderedListBlock(block: LeafletOrderedListBlock): string {
+	const itemsHtml = renderListItems(block.children, 'ol');
+	if (!itemsHtml) {
+		return '';
+	}
+	return `<ol>${itemsHtml}</ol>`;
 }
 
 /**
@@ -269,6 +289,8 @@ function renderBlock(block: LeafletBlock, authorDid: string): string {
 			return renderHorizontalRuleBlock();
 		case 'pub.leaflet.blocks.unorderedList':
 			return renderUnorderedListBlock(block as LeafletUnorderedListBlock);
+		case 'pub.leaflet.blocks.orderedList':
+			return renderOrderedListBlock(block as LeafletOrderedListBlock);
 		case 'pub.leaflet.blocks.image':
 			return renderImageBlock(block as LeafletImageBlock, authorDid);
 		default: {

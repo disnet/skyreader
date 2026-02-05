@@ -144,15 +144,26 @@ export interface LeafletHorizontalRuleBlock {
 	$type: 'pub.leaflet.blocks.horizontalRule';
 }
 
-export interface LeafletListItemBlock {
+export interface LeafletListItemContent {
+	$type: 'pub.leaflet.blocks.text';
 	plaintext: string;
 	facets?: LeafletFacet[];
+}
+
+export interface LeafletListItemBlock {
+	$type: 'pub.leaflet.blocks.unorderedList#listItem' | 'pub.leaflet.blocks.orderedList#listItem';
+	content: LeafletListItemContent;
 	children?: LeafletListItemBlock[];
 }
 
 export interface LeafletUnorderedListBlock {
 	$type: 'pub.leaflet.blocks.unorderedList';
-	items: LeafletListItemBlock[];
+	children: LeafletListItemBlock[];
+}
+
+export interface LeafletOrderedListBlock {
+	$type: 'pub.leaflet.blocks.orderedList';
+	children: LeafletListItemBlock[];
 }
 
 export interface LeafletImageBlock {
@@ -170,6 +181,7 @@ export type LeafletBlock =
 	| LeafletBlockquoteBlock
 	| LeafletHorizontalRuleBlock
 	| LeafletUnorderedListBlock
+	| LeafletOrderedListBlock
 	| LeafletImageBlock;
 
 export interface LeafletBlockWrapper {
