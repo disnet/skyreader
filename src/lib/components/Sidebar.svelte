@@ -10,15 +10,18 @@
 	import { articlesStore } from '$lib/stores/articles.svelte';
 	import { activityStore } from '$lib/stores/activity.svelte';
 	import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
+	import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
 	import { fetchSingleFeed } from '$lib/services/feedFetcher';
 	import { onMount, onDestroy } from 'svelte';
 	import AddFeedModal from './AddFeedModal.svelte';
 	import EditFeedModal from './EditFeedModal.svelte';
+	import FilteredViewModal from './FilteredViewModal.svelte';
 	import ContextMenu from './sidebar/ContextMenu.svelte';
 	import UserContextMenu from './sidebar/UserContextMenu.svelte';
 	import NavSection from './sidebar/NavSection.svelte';
 	import FeedItem from './sidebar/FeedItem.svelte';
 	import UserItem from './sidebar/UserItem.svelte';
+	import ViewItem from './sidebar/ViewItem.svelte';
 	import UserSearchCompact from './sidebar/UserSearchCompact.svelte';
 	import FeedAddCompact from './sidebar/FeedAddCompact.svelte';
 	import Icon from './Icon.svelte';
@@ -151,6 +154,9 @@
 		if (userContextMenu) {
 			closeUserContextMenu();
 		}
+		if (viewContextMenu) {
+			closeViewContextMenu();
+		}
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -159,6 +165,9 @@
 		}
 		if (userContextMenu && e.key === 'Escape') {
 			closeUserContextMenu();
+		}
+		if (viewContextMenu && e.key === 'Escape') {
+			closeViewContextMenu();
 		}
 	}
 
@@ -177,6 +186,7 @@
 		document.removeEventListener('keydown', handleKeydown);
 		if (longPressTimer) clearTimeout(longPressTimer);
 		if (userLongPressTimer) clearTimeout(userLongPressTimer);
+		if (viewLongPressTimer) clearTimeout(viewLongPressTimer);
 		document.body.classList.remove('sidebar-open-mobile');
 	});
 
@@ -201,6 +211,7 @@
 		if ($page.url.pathname !== '/') {
 			return { type: 'none' as const, contentType: null as 'shares' | 'documents' | null };
 		}
+		const view = $page.url.searchParams.get('view');
 		const feed = $page.url.searchParams.get('feed');
 		const starred = $page.url.searchParams.get('starred');
 		const shared = $page.url.searchParams.get('shared');
@@ -208,6 +219,12 @@
 		const following = $page.url.searchParams.get('following');
 		const feeds = $page.url.searchParams.get('feeds');
 		const type = $page.url.searchParams.get('type') as 'shares' | 'documents' | null;
+		if (view)
+			return {
+				type: 'view' as const,
+				id: parseInt(view),
+				contentType: null as 'shares' | 'documents' | null,
+			};
 		if (feed)
 			return {
 				type: 'feed' as const,
@@ -283,9 +300,60 @@
 		sidebarStore.setSortedUserDids(dids);
 	});
 
+	// View context menu state
+	let viewContextMenu = $state<{ x: number; y: number; viewId: number } | null>(null);
+	let viewLongPressTimer: ReturnType<typeof setTimeout> | null = null;
+	let viewLongPressTriggered = $state(false);
+
+	function handleViewContextMenu(e: MouseEvent, viewId: number) {
+		e.preventDefault();
+		viewContextMenu = { x: e.clientX, y: e.clientY, viewId };
+	}
+
+	function handleViewTouchStart(e: TouchEvent, viewId: number) {
+		viewLongPressTriggered = false;
+		const touch = e.touches[0];
+		viewLongPressTimer = setTimeout(() => {
+			viewLongPressTriggered = true;
+			viewContextMenu = { x: touch.clientX, y: touch.clientY, viewId };
+		}, 500);
+	}
+
+	function handleViewTouchEnd(e: TouchEvent) {
+		if (viewLongPressTimer) {
+			clearTimeout(viewLongPressTimer);
+			viewLongPressTimer = null;
+		}
+		if (viewLongPressTriggered) {
+			e.preventDefault();
+		}
+	}
+
+	function handleViewTouchMove() {
+		if (viewLongPressTimer) {
+			clearTimeout(viewLongPressTimer);
+			viewLongPressTimer = null;
+		}
+	}
+
+	function closeViewContextMenu() {
+		viewContextMenu = null;
+	}
+
+	function handleEditView(viewId: number) {
+		sidebarStore.openViewModal(viewId);
+	}
+
+	async function handleDeleteView(viewId: number) {
+		if (confirm('Are you sure you want to delete this view?')) {
+			await filteredViewsStore.remove(viewId);
+		}
+	}
+
 	function selectFilter(type: string, id?: string | number, contentType?: 'shares' | 'documents') {
 		const params = new URLSearchParams();
-		if (type === 'feed' && id) params.set('feed', String(id));
+		if (type === 'view' && id) params.set('view', String(id));
+		else if (type === 'feed' && id) params.set('feed', String(id));
 		else if (type === 'starred') params.set('starred', 'true');
 		else if (type === 'shared') params.set('shared', 'true');
 		else if (type === 'following') {
@@ -428,6 +496,44 @@
 			{/if}
 		</a>
 
+		<!-- Views section -->
+		{#if filteredViewsStore.views.length > 0 || !sidebarStore.isCollapsed}
+			<NavSection
+				title="Views"
+				isExpanded={sidebarStore.expandedSections.views}
+				isCollapsed={sidebarStore.isCollapsed}
+				showOnlyUnread={false}
+				isActive={false}
+				onToggle={() => sidebarStore.toggleSection('views')}
+				onLabelClick={() => sidebarStore.toggleSection('views')}
+				onUnreadToggle={() => {}}
+			>
+				{@const filter = currentFilter()}
+				{#each filteredViewsStore.views as view (view.id)}
+					<ViewItem
+						{view}
+						isActive={filter.type === 'view' && filter.id === view.id}
+						onSelect={() => selectFilter('view', view.id)}
+						onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+						onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
+						onTouchEnd={handleViewTouchEnd}
+						onTouchMove={handleViewTouchMove}
+						onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+					/>
+				{/each}
+				<button
+					class="add-view-btn"
+					onclick={(e) => {
+						e.stopPropagation();
+						sidebarStore.openViewModal();
+					}}
+				>
+					<Icon name="plus" size={14} />
+					<span>New View</span>
+				</button>
+			</NavSection>
+		{/if}
+
 		<!-- Following section -->
 		<NavSection
 			title="Following"
@@ -549,6 +655,23 @@
 {/if}
 
 <EditFeedModal open={editModalOpen} subscription={editingSubscription} onclose={closeEditModal} />
+
+<FilteredViewModal
+	open={sidebarStore.viewModalOpen}
+	editingViewId={sidebarStore.editingViewId}
+	onclose={() => sidebarStore.closeViewModal()}
+/>
+
+{#if viewContextMenu}
+	{@const viewId = viewContextMenu.viewId}
+	<ContextMenu
+		x={viewContextMenu.x}
+		y={viewContextMenu.y}
+		onEdit={() => handleEditView(viewId)}
+		onDelete={() => handleDeleteView(viewId)}
+		onClose={closeViewContextMenu}
+	/>
+{/if}
 
 <style>
 	.sidebar-backdrop {
@@ -720,6 +843,26 @@
 		padding: 0.25rem 1.5rem;
 		font-size: 0.8125rem;
 		color: var(--color-text-secondary);
+	}
+
+	.add-view-btn {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		width: 100%;
+		padding: 0.375rem 1.5rem;
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: var(--color-text-secondary);
+		font-size: 0.8125rem;
+		border-radius: 8px;
+		transition: background-color 0.15s;
+	}
+
+	.add-view-btn:hover {
+		background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+		color: var(--color-primary);
 	}
 
 	/* Mobile styles */

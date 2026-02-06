@@ -3,40 +3,41 @@
 	import PopoverMenu from '$lib/components/PopoverMenu.svelte';
 	import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import FilterToolbar from './FilterToolbar.svelte';
 	import { sidebarStore } from '$lib/stores/sidebar.svelte';
 	import { formatRelativeTime } from '$lib/utils/date';
-	import { preferences } from '$lib/stores/preferences.svelte';
+	import { feedViewStore } from '$lib/stores/feedView.svelte';
 
 	interface Props {
 		title: string;
 		feedId?: number;
-		showViewToggle?: boolean;
-		showOnlyUnread: boolean;
 		expandAllItems?: boolean;
 		lastRefreshAt?: number | null;
 		isRefreshing?: boolean;
-		onToggleUnread: (value: boolean) => void;
 		onToggleExpandAll?: (value: boolean) => void;
 		onRefresh?: () => void;
 		onMarkAllAsRead?: () => void;
 		onEdit?: () => void;
 		onDelete?: () => void;
+		showContentTypeFilter?: boolean;
+		showFeedFilter?: boolean;
+		showAccountFilter?: boolean;
 	}
 
 	let {
 		title,
 		feedId,
-		showViewToggle = true,
-		showOnlyUnread,
 		expandAllItems = false,
 		lastRefreshAt,
 		isRefreshing = false,
-		onToggleUnread,
 		onToggleExpandAll,
 		onRefresh,
 		onMarkAllAsRead,
 		onEdit,
 		onDelete,
+		showContentTypeFilter = true,
+		showFeedFilter = true,
+		showAccountFilter = true,
 	}: Props = $props();
 
 	// Tick counter to force re-evaluation of relative time
@@ -130,70 +131,51 @@
 		</div>
 
 		<div class="control-right">
-			{#if onToggleExpandAll || showViewToggle}
-				<div class="view-toggle" role="group" aria-label="View controls">
-					{#if onToggleExpandAll}
-						<button
-							class:active={!expandAllItems}
-							onclick={() => onToggleExpandAll(false)}
-							aria-label="List view"
-							title="List view"
-						>
-							<Icon name="list" size={16} />
-							<span class="btn-label">List</span>
-						</button>
-						<button
-							class:active={expandAllItems}
-							onclick={() => onToggleExpandAll(true)}
-							aria-label="Expanded view"
-							title="Expanded view"
-						>
-							<Icon name="newspaper" size={16} />
-							<span class="btn-label">Expand</span>
-						</button>
+			<div class="view-toggle" role="group" aria-label="View controls">
+				{#if onToggleExpandAll}
+					<button
+						class:active={!expandAllItems}
+						onclick={() => onToggleExpandAll(false)}
+						aria-label="List view"
+						title="List view"
+					>
+						<Icon name="list" size={16} />
+						<span class="btn-label">List</span>
+					</button>
+					<button
+						class:active={expandAllItems}
+						onclick={() => onToggleExpandAll(true)}
+						aria-label="Expanded view"
+						title="Expanded view"
+					>
+						<Icon name="newspaper" size={16} />
+						<span class="btn-label">Expand</span>
+					</button>
+					<span class="toggle-divider"></span>
+				{/if}
+				<button
+					class="filter-toggle-btn"
+					class:active={feedViewStore.filterToolbarOpen}
+					class:has-filters={feedViewStore.hasActiveFilters}
+					onclick={() => feedViewStore.setFilterToolbarOpen(!feedViewStore.filterToolbarOpen)}
+					aria-label="Toggle filters"
+					title="Filter"
+				>
+					<Icon name="filter" size={16} />
+					<span class="btn-label">Filter</span>
+					{#if feedViewStore.hasActiveFilters}
+						<span class="filter-dot"></span>
 					{/if}
-					{#if onToggleExpandAll && showViewToggle}
-						<span class="toggle-divider"></span>
-					{/if}
-					{#if showViewToggle}
-						<button
-							class="sort-toggle"
-							onclick={() => preferences.toggleSortOrder()}
-							aria-label={preferences.sortOrder === 'newest'
-								? 'Sorted by newest first, click to sort by oldest'
-								: 'Sorted by oldest first, click to sort by newest'}
-							title={preferences.sortOrder === 'newest' ? 'Newest first' : 'Oldest first'}
-						>
-							<Icon
-								name={preferences.sortOrder === 'newest' ? 'arrow-down' : 'arrow-up'}
-								size={16}
-							/>
-							<span class="btn-label">{preferences.sortOrder === 'newest' ? 'New' : 'Old'}</span>
-						</button>
-						<span class="toggle-divider"></span>
-						<button
-							class:active={showOnlyUnread}
-							onclick={() => onToggleUnread(true)}
-							aria-label="Show unread only"
-							title="Unread only"
-						>
-							<Icon name="circle-dot" size={16} />
-							<span class="btn-label">Unread</span>
-						</button>
-						<button
-							class:active={!showOnlyUnread}
-							onclick={() => onToggleUnread(false)}
-							aria-label="Show all"
-							title="All items"
-						>
-							<Icon name="layers" size={16} />
-							<span class="btn-label">All</span>
-						</button>
-					{/if}
-				</div>
-			{/if}
+				</button>
+			</div>
 		</div>
 	</div>
+
+	{#if feedViewStore.filterToolbarOpen}
+		<div class="filter-toolbar-row">
+			<FilterToolbar {showContentTypeFilter} {showFeedFilter} {showAccountFilter} />
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -374,6 +356,34 @@
 		opacity: 0.5;
 	}
 
+	/* Filter toggle button */
+	.filter-toggle-btn {
+		position: relative;
+	}
+
+	.filter-toggle-btn.has-filters:not(.active) {
+		color: var(--color-primary, #2563eb);
+	}
+
+	.filter-dot {
+		position: absolute;
+		top: 4px;
+		right: 4px;
+		width: 6px;
+		height: 6px;
+		background: var(--color-primary, #2563eb);
+		border-radius: 50%;
+	}
+
+	/* Filter toolbar row */
+	.filter-toolbar-row {
+		max-width: 800px;
+		margin: 0 auto;
+		padding-bottom: 0.5rem;
+		display: flex;
+		justify-content: flex-end;
+	}
+
 	@media (max-width: 900px) {
 		.btn-label {
 			display: none;
@@ -397,6 +407,10 @@
 		.refresh-btn {
 			font-size: 1.25rem;
 			padding: 0.25rem;
+		}
+
+		.filter-toolbar-row {
+			justify-content: center;
 		}
 	}
 

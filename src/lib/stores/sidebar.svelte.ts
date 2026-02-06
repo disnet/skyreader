@@ -9,6 +9,7 @@ interface SidebarState {
 	expandedSections: {
 		shared: boolean;
 		feeds: boolean;
+		views: boolean;
 	};
 	showOnlyUnread: {
 		shared: boolean;
@@ -19,6 +20,9 @@ interface SidebarState {
 	sortedUserDids: string[];
 	// Expanded users in Following section
 	expandedUsers: Set<string>;
+	// View modal state
+	viewModalOpen: boolean;
+	editingViewId: number | null;
 }
 
 function createSidebarStore() {
@@ -31,6 +35,7 @@ function createSidebarStore() {
 		expandedSections: {
 			shared: false,
 			feeds: true,
+			views: true,
 		},
 		showOnlyUnread: {
 			shared: false,
@@ -39,6 +44,8 @@ function createSidebarStore() {
 		sortedFeedIds: [],
 		sortedUserDids: [],
 		expandedUsers: new Set(),
+		viewModalOpen: false,
+		editingViewId: null,
 	});
 
 	// Restore from localStorage on init
@@ -48,7 +55,12 @@ function createSidebarStore() {
 			try {
 				const parsed = JSON.parse(stored);
 				state.isCollapsed = parsed.isCollapsed ?? false;
-				state.expandedSections = parsed.expandedSections ?? { shared: false, feeds: true };
+				state.expandedSections = {
+					shared: false,
+					feeds: true,
+					views: true,
+					...parsed.expandedSections,
+				};
 				state.showOnlyUnread = parsed.showOnlyUnread ?? { shared: false, feeds: false };
 				state.expandedUsers = new Set(parsed.expandedUsers ?? []);
 			} catch {
@@ -84,7 +96,7 @@ function createSidebarStore() {
 		state.isOpen = false;
 	}
 
-	function toggleSection(section: 'shared' | 'feeds') {
+	function toggleSection(section: 'shared' | 'feeds' | 'views') {
 		state.expandedSections[section] = !state.expandedSections[section];
 		persist();
 	}
@@ -116,6 +128,16 @@ function createSidebarStore() {
 
 	function closeNavigationDropdown() {
 		state.navigationDropdownOpen = false;
+	}
+
+	function openViewModal(id?: number) {
+		state.editingViewId = id ?? null;
+		state.viewModalOpen = true;
+	}
+
+	function closeViewModal() {
+		state.viewModalOpen = false;
+		state.editingViewId = null;
 	}
 
 	function setSortedFeedIds(ids: number[]) {
@@ -171,6 +193,12 @@ function createSidebarStore() {
 		get expandedUsers() {
 			return state.expandedUsers;
 		},
+		get viewModalOpen() {
+			return state.viewModalOpen;
+		},
+		get editingViewId() {
+			return state.editingViewId;
+		},
 		toggle,
 		toggleMobile,
 		closeMobile,
@@ -180,6 +208,8 @@ function createSidebarStore() {
 		closeAddFeedModal,
 		openFollowUserModal,
 		closeFollowUserModal,
+		openViewModal,
+		closeViewModal,
 		toggleNavigationDropdown,
 		closeNavigationDropdown,
 		setSortedFeedIds,

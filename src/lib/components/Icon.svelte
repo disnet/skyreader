@@ -25,7 +25,11 @@
 		| 'external-link'
 		| 'arrow-down'
 		| 'arrow-up'
-		| 'plus';
+		| 'plus'
+		| 'sliders'
+		| 'filter'
+		| 'check'
+		| 'file-text';
 
 	interface Props {
 		name: IconName;
@@ -144,6 +148,26 @@
 	{:else if name === 'plus'}
 		<path d="M12 5v14" />
 		<path d="M5 12h14" />
+	{:else if name === 'sliders'}
+		<line x1="21" x2="14" y1="4" y2="4" />
+		<line x1="10" x2="3" y1="4" y2="4" />
+		<line x1="21" x2="12" y1="12" y2="12" />
+		<line x1="8" x2="3" y1="12" y2="12" />
+		<line x1="21" x2="16" y1="20" y2="20" />
+		<line x1="12" x2="3" y1="20" y2="20" />
+		<line x1="14" x2="14" y1="2" y2="6" />
+		<line x1="8" x2="8" y1="10" y2="14" />
+		<line x1="16" x2="16" y1="18" y2="22" />
+	{:else if name === 'filter'}
+		<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+	{:else if name === 'check'}
+		<path d="M20 6 9 17l-5-5" />
+	{:else if name === 'file-text'}
+		<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+		<path d="M14 2v4a2 2 0 0 0 2 2h4" />
+		<path d="M10 9H8" />
+		<path d="M16 13H8" />
+		<path d="M16 17H8" />
 	{/if}
 </svg>
 

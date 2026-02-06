@@ -479,6 +479,23 @@ export type CombinedFeedItem =
 	| { type: 'share'; item: SocialShare; date: string }
 	| { type: 'document'; item: SocialDocument; date: string };
 
+export interface FilteredView {
+	id?: number;
+	name: string;
+	showArticles: boolean;
+	showShares: boolean;
+	showDocuments: boolean;
+	feedMode: 'all' | 'include' | 'exclude';
+	feedIds: number[];
+	accountMode: 'all' | 'include' | 'exclude';
+	accountDids: string[];
+	readFilter: 'all' | 'unread' | 'read';
+	sortOrder: 'newest' | 'oldest';
+	createdAt: number;
+	updatedAt: number;
+	position: number;
+}
+
 export interface DiscoverUser {
 	did: string;
 	handle: string;

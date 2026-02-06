@@ -7,6 +7,7 @@ import type {
 	SocialDocument,
 	SocialShare,
 	UserShare,
+	FilteredView,
 } from '$lib/types';
 
 // Local cache for read positions (backend is source of truth)
@@ -47,6 +48,7 @@ class SkyreaderDatabase extends Dexie {
 	userShares!: Table<UserShare>;
 	syncQueue!: Table<SyncQueueEntry>;
 	metadata!: Table<MetadataEntry>;
+	filteredViews!: Table<FilteredView>;
 
 	constructor() {
 		super('skyreader');
@@ -151,6 +153,11 @@ class SkyreaderDatabase extends Dexie {
 					await tx.table('socialReadPositions').bulkAdd(migrated);
 				}
 			});
+
+		// Add filteredViews table for user-created filtered views
+		this.version(16).stores({
+			filteredViews: '++id, name, position',
+		});
 	}
 }
 
@@ -169,6 +176,7 @@ export async function clearAllData(): Promise<void> {
 		db.userShares.clear(),
 		db.syncQueue.clear(),
 		db.metadata.clear(),
+		db.filteredViews.clear(),
 	]);
 }
 

@@ -4,6 +4,7 @@ import { shareReadingStore } from './shareReading.svelte';
 import { socialReadingStore } from './socialReading.svelte';
 import { sharesStore } from './shares.svelte';
 import { socialStore } from './social.svelte';
+import { filteredViewsStore } from './filteredViews.svelte';
 import { feedStatusStore } from './feedStatus.svelte';
 import { articlesStore } from './articles.svelte';
 import { syncStore } from './sync.svelte';
@@ -63,6 +64,7 @@ function createAppManager() {
 				shareReadingStore.load(),
 				socialReadingStore.load(),
 				sharesStore.load(),
+				filteredViewsStore.load(),
 			]);
 
 			// Initialize feed statuses for existing subscriptions

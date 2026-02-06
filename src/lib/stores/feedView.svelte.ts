@@ -6,6 +6,7 @@ import { socialReadingStore } from './socialReading.svelte';
 import { sharesStore } from './shares.svelte';
 import { socialStore } from './social.svelte';
 import { preferences } from './preferences.svelte';
+import { filteredViewsStore } from './filteredViews.svelte';
 import type { Article, SocialShare, SocialDocument, CombinedFeedItem, UserShare } from '$lib/types';
 
 export type ViewMode = 'articles' | 'shares' | 'userShares' | 'combined';
@@ -21,6 +22,18 @@ export type FeedDisplayItem =
 
 const DEFAULT_PAGE_SIZE = 50;
 
+export interface EffectiveFilters {
+	showArticles: boolean;
+	showShares: boolean;
+	showDocuments: boolean;
+	feedMode: 'all' | 'include' | 'exclude';
+	feedIds: number[];
+	accountMode: 'all' | 'include' | 'exclude';
+	accountDids: string[];
+	readFilter: 'all' | 'unread' | 'read';
+	sortOrder: 'newest' | 'oldest';
+}
+
 /**
  * Feed View Store - Manages the unified feed view display
  *
@@ -34,6 +47,16 @@ function createFeedViewStore() {
 	let expandedIndex = $state(-1);
 	let loadedArticleCount = $state(DEFAULT_PAGE_SIZE);
 
+	// Toolbar filter state
+	let filterToolbarOpen = $state(false);
+	let toolbarShowArticles = $state(true);
+	let toolbarShowShares = $state(true);
+	let toolbarShowDocuments = $state(true);
+	let toolbarFeedMode = $state<'all' | 'include' | 'exclude'>('all');
+	let toolbarFeedIds = $state<number[]>([]);
+	let toolbarAccountMode = $state<'all' | 'include' | 'exclude'>('all');
+	let toolbarAccountDids = $state<string[]>([]);
+
 	// URL filters (set by component from $page store)
 	let feedFilter = $state<string | null>(null);
 	let starredFilter = $state<string | null>(null);
@@ -42,12 +65,62 @@ function createFeedViewStore() {
 	let followingFilter = $state<string | null>(null);
 	let feedsFilter = $state<string | null>(null);
 	let contentTypeFilter = $state<'shares' | 'documents' | null>(null);
+	let viewFilter = $state<string | null>(null);
+
+	// Derived: active filtered view (looked up from store)
+	let activeFilteredView = $derived.by(() => {
+		if (!viewFilter) return null;
+		return filteredViewsStore.getById(parseInt(viewFilter)) ?? null;
+	});
+
+	// Derived: effective filters (prefer activeFilteredView for reactivity + persistence)
+	let effectiveFilters = $derived.by((): EffectiveFilters => {
+		if (activeFilteredView) {
+			return {
+				showArticles: activeFilteredView.showArticles,
+				showShares: activeFilteredView.showShares,
+				showDocuments: activeFilteredView.showDocuments,
+				feedMode: activeFilteredView.feedMode,
+				feedIds: activeFilteredView.feedIds,
+				accountMode: activeFilteredView.accountMode,
+				accountDids: activeFilteredView.accountDids,
+				readFilter: activeFilteredView.readFilter,
+				sortOrder: activeFilteredView.sortOrder,
+			};
+		}
+		return {
+			showArticles: toolbarShowArticles,
+			showShares: toolbarShowShares,
+			showDocuments: toolbarShowDocuments,
+			feedMode: toolbarFeedMode,
+			feedIds: toolbarFeedIds,
+			accountMode: toolbarAccountMode,
+			accountDids: toolbarAccountDids,
+			readFilter: showOnlyUnread ? 'unread' : 'all',
+			sortOrder: preferences.sortOrder,
+		};
+	});
+
+	// Derived: whether any toolbar filter differs from defaults
+	let hasActiveFilters = $derived.by(() => {
+		if (activeFilteredView) return true;
+		return (
+			!toolbarShowArticles ||
+			!toolbarShowShares ||
+			!toolbarShowDocuments ||
+			toolbarFeedMode !== 'all' ||
+			toolbarAccountMode !== 'all'
+		);
+	});
 
 	// Derived: view mode
 	let viewMode = $derived.by((): ViewMode => {
+		if (activeFilteredView) return 'combined';
 		if (sharedFilter) return 'userShares';
 		if (sharerFilter || followingFilter) return 'shares';
 		if (feedFilter || starredFilter || feedsFilter) return 'articles';
+		// If any content type is toggled off via toolbar, use combined mode
+		if (!toolbarShowArticles || !toolbarShowShares || !toolbarShowDocuments) return 'combined';
 		return 'combined';
 	});
 
@@ -59,10 +132,15 @@ function createFeedViewStore() {
 
 	// Derived: filtered articles based on current filters
 	let filteredArticles = $derived.by((): Article[] => {
+		const fv = effectiveFilters;
+
+		// If articles are disabled, return empty
+		if (!fv.showArticles) return [];
+
 		// Access articlesStore version for reactivity
 		const allArticles = articlesStore.allArticles;
 		const positions = readingStore.readPositions;
-		const sortOrder = preferences.sortOrder;
+		const sortOrder = fv.sortOrder;
 
 		let articles: Article[];
 
@@ -78,11 +156,23 @@ function createFeedViewStore() {
 				articles = articles.filter((a) => a.subscriptionId === feedId);
 			}
 
-			// Filter to unread only, but keep articles read this session visible
-			if (showOnlyUnread) {
+			// Apply feed inclusion/exclusion
+			if (fv.feedMode !== 'all' && fv.feedIds.length > 0) {
+				const feedIdSet = new Set(fv.feedIds);
+				if (fv.feedMode === 'include') {
+					articles = articles.filter((a) => feedIdSet.has(a.subscriptionId));
+				} else {
+					articles = articles.filter((a) => !feedIdSet.has(a.subscriptionId));
+				}
+			}
+
+			// Apply read filter
+			if (fv.readFilter === 'unread') {
 				articles = articles.filter(
 					(a) => !positions.has(a.guid) || readArticleGuidsThisSession.has(a.guid)
 				);
+			} else if (fv.readFilter === 'read') {
+				articles = articles.filter((a) => positions.has(a.guid));
 			}
 		}
 
@@ -107,11 +197,16 @@ function createFeedViewStore() {
 
 	// Derived: filtered shares
 	let displayedShares = $derived.by((): SocialShare[] => {
+		const fv = effectiveFilters;
+
+		// If shares are disabled, return empty
+		if (!fv.showShares) return [];
+
 		// Return empty if contentTypeFilter is 'documents'
 		if (contentTypeFilter === 'documents') return [];
 
 		const shares = socialStore.shares;
-		const sortOrder = preferences.sortOrder;
+		const sortOrder = fv.sortOrder;
 
 		let filtered: SocialShare[];
 		if (sharerFilter) {
@@ -120,12 +215,23 @@ function createFeedViewStore() {
 			filtered = [...shares];
 		}
 
-		// Filter to unread only, but keep shares read this session visible
-		// Use socialReadingStore for unified read tracking
-		if (showOnlyUnread) {
+		// Apply account inclusion/exclusion
+		if (fv.accountMode !== 'all' && fv.accountDids.length > 0) {
+			const didSet = new Set(fv.accountDids);
+			if (fv.accountMode === 'include') {
+				filtered = filtered.filter((s) => didSet.has(s.authorDid));
+			} else {
+				filtered = filtered.filter((s) => !didSet.has(s.authorDid));
+			}
+		}
+
+		// Apply read filter
+		if (fv.readFilter === 'unread') {
 			filtered = filtered.filter(
 				(s) => !socialReadingStore.isRead(s.recordUri) || readShareUrisThisSession.has(s.recordUri)
 			);
+		} else if (fv.readFilter === 'read') {
+			filtered = filtered.filter((s) => socialReadingStore.isRead(s.recordUri));
 		}
 
 		// Apply sort order
@@ -153,11 +259,16 @@ function createFeedViewStore() {
 
 	// Derived: filtered documents
 	let displayedDocuments = $derived.by((): SocialDocument[] => {
+		const fv = effectiveFilters;
+
+		// If documents are disabled, return empty
+		if (!fv.showDocuments) return [];
+
 		// Return empty if contentTypeFilter is 'shares'
 		if (contentTypeFilter === 'shares') return [];
 
 		const docs = socialStore.documents;
-		const sortOrder = preferences.sortOrder;
+		const sortOrder = fv.sortOrder;
 
 		let filtered = [...docs];
 
@@ -166,13 +277,24 @@ function createFeedViewStore() {
 			filtered = filtered.filter((d) => d.authorDid === sharerFilter);
 		}
 
-		// Filter to unread only, but keep documents read this session visible
-		// Use socialReadingStore for unified read tracking
-		if (showOnlyUnread) {
+		// Apply account inclusion/exclusion
+		if (fv.accountMode !== 'all' && fv.accountDids.length > 0) {
+			const didSet = new Set(fv.accountDids);
+			if (fv.accountMode === 'include') {
+				filtered = filtered.filter((d) => didSet.has(d.authorDid));
+			} else {
+				filtered = filtered.filter((d) => !didSet.has(d.authorDid));
+			}
+		}
+
+		// Apply read filter
+		if (fv.readFilter === 'unread') {
 			filtered = filtered.filter(
 				(d) =>
 					!socialReadingStore.isRead(d.recordUri) || readDocumentUrisThisSession.has(d.recordUri)
 			);
+		} else if (fv.readFilter === 'read') {
+			filtered = filtered.filter((d) => socialReadingStore.isRead(d.recordUri));
 		}
 
 		// Apply sort order
@@ -189,6 +311,7 @@ function createFeedViewStore() {
 	let displayedCombined = $derived.by((): CombinedFeedItem[] => {
 		if (viewMode !== 'combined') return [];
 
+		const fv = effectiveFilters;
 		const combined: CombinedFeedItem[] = [
 			...displayedArticles.map((item) => ({
 				type: 'article' as const,
@@ -207,7 +330,7 @@ function createFeedViewStore() {
 			})),
 		];
 
-		const sortOrder = preferences.sortOrder;
+		const sortOrder = fv.sortOrder;
 		combined.sort((a, b) => {
 			const diff = new Date(b.date).getTime() - new Date(a.date).getTime();
 			return sortOrder === 'newest' ? diff : -diff;
@@ -431,6 +554,34 @@ function createFeedViewStore() {
 		readDocumentUrisThisSession = new Set();
 	}
 
+	function syncToolbarToSavedView() {
+		if (!viewFilter) return;
+		const id = parseInt(viewFilter);
+		const fv = filteredViewsStore.getById(id);
+		if (!fv) return;
+		filteredViewsStore.update(id, {
+			showArticles: toolbarShowArticles,
+			showShares: toolbarShowShares,
+			showDocuments: toolbarShowDocuments,
+			feedMode: toolbarFeedMode,
+			feedIds: [...toolbarFeedIds],
+			accountMode: toolbarAccountMode,
+			accountDids: [...toolbarAccountDids],
+			readFilter: showOnlyUnread ? 'unread' : 'all',
+			sortOrder: preferences.sortOrder,
+		});
+	}
+
+	function resetToolbarFilters() {
+		toolbarShowArticles = true;
+		toolbarShowShares = true;
+		toolbarShowDocuments = true;
+		toolbarFeedMode = 'all';
+		toolbarFeedIds = [];
+		toolbarAccountMode = 'all';
+		toolbarAccountDids = [];
+	}
+
 	function toggleUnreadFilter() {
 		showOnlyUnread = !showOnlyUnread;
 	}
@@ -500,6 +651,21 @@ function createFeedViewStore() {
 		get contentTypeFilter() {
 			return contentTypeFilter;
 		},
+		get viewFilter() {
+			return viewFilter;
+		},
+		get activeFilteredView() {
+			return activeFilteredView;
+		},
+		get effectiveFilters() {
+			return effectiveFilters;
+		},
+		get filterToolbarOpen() {
+			return filterToolbarOpen;
+		},
+		get hasActiveFilters() {
+			return hasActiveFilters;
+		},
 
 		// Article lookup
 		getArticleForShare,
@@ -516,7 +682,29 @@ function createFeedViewStore() {
 		trackSeenThisSession,
 		setShowOnlyUnread(value: boolean) {
 			showOnlyUnread = value;
+			syncToolbarToSavedView();
 		},
+		setFilterToolbarOpen(open: boolean) {
+			filterToolbarOpen = open;
+		},
+		setToolbarContentTypes(articles: boolean, shares: boolean, docs: boolean) {
+			toolbarShowArticles = articles;
+			toolbarShowShares = shares;
+			toolbarShowDocuments = docs;
+			syncToolbarToSavedView();
+		},
+		setToolbarFeedFilter(mode: 'all' | 'include' | 'exclude', feedIds: number[]) {
+			toolbarFeedMode = mode;
+			toolbarFeedIds = feedIds;
+			syncToolbarToSavedView();
+		},
+		setToolbarAccountFilter(mode: 'all' | 'include' | 'exclude', dids: string[]) {
+			toolbarAccountMode = mode;
+			toolbarAccountDids = dids;
+			syncToolbarToSavedView();
+		},
+		resetToolbarFilters,
+		syncToolbarToSavedView,
 		setFilters(filters: {
 			feed: string | null;
 			starred: string | null;
@@ -525,6 +713,7 @@ function createFeedViewStore() {
 			following: string | null;
 			feeds: string | null;
 			contentType?: 'shares' | 'documents' | null;
+			view?: string | null;
 		}) {
 			feedFilter = filters.feed;
 			starredFilter = filters.starred;
@@ -533,8 +722,27 @@ function createFeedViewStore() {
 			followingFilter = filters.following;
 			feedsFilter = filters.feeds;
 			contentTypeFilter = filters.contentType ?? null;
+			viewFilter = filters.view ?? null;
 			// Reset pagination when filters change
 			loadedArticleCount = DEFAULT_PAGE_SIZE;
+			// Populate toolbar from saved view, or reset to defaults
+			if (filters.view) {
+				const fv = filteredViewsStore.getById(parseInt(filters.view));
+				if (fv) {
+					toolbarShowArticles = fv.showArticles;
+					toolbarShowShares = fv.showShares;
+					toolbarShowDocuments = fv.showDocuments;
+					toolbarFeedMode = fv.feedMode;
+					toolbarFeedIds = [...fv.feedIds];
+					toolbarAccountMode = fv.accountMode;
+					toolbarAccountDids = [...fv.accountDids];
+					showOnlyUnread = fv.readFilter === 'unread';
+				} else {
+					resetToolbarFilters();
+				}
+			} else {
+				resetToolbarFilters();
+			}
 		},
 	};
 }

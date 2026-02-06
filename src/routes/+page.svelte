@@ -9,6 +9,7 @@
 	import { preferences } from '$lib/stores/preferences.svelte';
 	import { feedViewStore } from '$lib/stores/feedView.svelte';
 	import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
+	import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
 	import { appManager } from '$lib/stores/app.svelte';
 	import { articlesStore } from '$lib/stores/articles.svelte';
 	import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
@@ -52,6 +53,7 @@
 			following: url.searchParams.get('following'),
 			feeds: url.searchParams.get('feeds'),
 			contentType,
+			view: url.searchParams.get('view'),
 		});
 	});
 
@@ -91,6 +93,10 @@
 
 	// Get page title based on filter
 	let pageTitle = $derived.by(() => {
+		if (feedViewStore.viewFilter) {
+			const fv = feedViewStore.activeFilteredView;
+			return fv?.name || 'View';
+		}
 		if (feedViewStore.feedFilter) {
 			const sub = subscriptionsStore.subscriptions.find(
 				(s) => s.id === parseInt(feedViewStore.feedFilter!)
@@ -301,6 +307,7 @@
 			feedViewStore.followingFilter,
 			feedViewStore.feedsFilter,
 			feedViewStore.contentTypeFilter,
+			feedViewStore.viewFilter,
 		];
 		feedViewStore.resetSelection();
 	});
@@ -319,12 +326,9 @@
 		<FeedPageHeader
 			title={pageTitle}
 			feedId={feedViewStore.feedFilter ? parseInt(feedViewStore.feedFilter) : undefined}
-			showViewToggle={!feedViewStore.starredFilter && !feedViewStore.sharedFilter}
-			showOnlyUnread={feedViewStore.showOnlyUnread}
 			expandAllItems={preferences.expandAllItems}
 			lastRefreshAt={appManager.lastRefreshAt}
 			isRefreshing={appManager.isRefreshing}
-			onToggleUnread={(value) => feedViewStore.setShowOnlyUnread(value)}
 			onToggleExpandAll={(value) => {
 				preferences.setExpandAllItems(value);
 				if (!value) {
@@ -339,12 +343,29 @@
 			onDelete={feedViewStore.feedFilter
 				? () => removeFeed(parseInt(feedViewStore.feedFilter!))
 				: undefined}
+			showContentTypeFilter={!feedViewStore.feedFilter &&
+				!feedViewStore.starredFilter &&
+				!feedViewStore.sharedFilter}
+			showFeedFilter={!feedViewStore.feedFilter &&
+				!feedViewStore.starredFilter &&
+				!feedViewStore.sharedFilter &&
+				!feedViewStore.sharerFilter &&
+				!feedViewStore.followingFilter}
+			showAccountFilter={!feedViewStore.feedFilter &&
+				!feedViewStore.starredFilter &&
+				!feedViewStore.sharedFilter &&
+				!feedViewStore.feedsFilter}
 		/>
 
 		{#if (appManager.isHydrating || appManager.isRefreshing) && feedViewStore.currentItems.length === 0}
 			<LoadingState />
 		{:else if feedViewStore.currentItems.length === 0}
-			{#if feedViewStore.starredFilter}
+			{#if feedViewStore.viewFilter}
+				<EmptyState
+					title="No matching items"
+					description="This filtered view has no items matching its criteria"
+				/>
+			{:else if feedViewStore.starredFilter}
 				<EmptyState
 					title="No starred articles"
 					description="Star articles to save them for later"
