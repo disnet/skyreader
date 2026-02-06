@@ -19,7 +19,6 @@
 		onMarkAllAsRead?: () => void;
 		onEdit?: () => void;
 		onDelete?: () => void;
-		showContentTypeFilter?: boolean;
 		showFeedFilter?: boolean;
 		showAccountFilter?: boolean;
 	}
@@ -35,7 +34,6 @@
 		onMarkAllAsRead,
 		onEdit,
 		onDelete,
-		showContentTypeFilter = true,
 		showFeedFilter = true,
 		showAccountFilter = true,
 	}: Props = $props();
@@ -173,7 +171,7 @@
 
 	{#if feedViewStore.filterToolbarOpen}
 		<div class="filter-toolbar-row">
-			<FilterToolbar {showContentTypeFilter} {showFeedFilter} {showAccountFilter} />
+			<FilterToolbar {showFeedFilter} {showAccountFilter} />
 		</div>
 	{/if}
 </div>

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy, tick } from 'svelte';
+	import { onMount, onDestroy, tick, untrack } from 'svelte';
 	import { page } from '$app/stores';
 	import { auth } from '$lib/stores/auth.svelte';
 	import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
@@ -41,11 +41,14 @@
 	});
 
 	// Sync URL filters to feedViewStore
+	// Use untrack for setFilters to prevent re-running when saved view data changes
+	// (syncToolbarToSavedView updates filteredViewsStore which setFilters reads from)
 	$effect(() => {
 		const url = $page.url;
 		const typeParam = url.searchParams.get('type');
-		const contentType = typeParam === 'shares' || typeParam === 'documents' ? typeParam : null;
-		feedViewStore.setFilters({
+		const contentType: 'shares' | 'documents' | null =
+			typeParam === 'shares' || typeParam === 'documents' ? typeParam : null;
+		const filters = {
 			feed: url.searchParams.get('feed'),
 			starred: url.searchParams.get('starred'),
 			shared: url.searchParams.get('shared'),
@@ -54,7 +57,8 @@
 			feeds: url.searchParams.get('feeds'),
 			contentType,
 			view: url.searchParams.get('view'),
-		});
+		};
+		untrack(() => feedViewStore.setFilters(filters));
 	});
 
 	// Tab visibility state
@@ -343,9 +347,6 @@
 			onDelete={feedViewStore.feedFilter
 				? () => removeFeed(parseInt(feedViewStore.feedFilter!))
 				: undefined}
-			showContentTypeFilter={!feedViewStore.feedFilter &&
-				!feedViewStore.starredFilter &&
-				!feedViewStore.sharedFilter}
 			showFeedFilter={!feedViewStore.feedFilter &&
 				!feedViewStore.starredFilter &&
 				!feedViewStore.sharedFilter &&

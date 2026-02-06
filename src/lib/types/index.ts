@@ -485,9 +485,9 @@ export interface FilteredView {
 	showArticles: boolean;
 	showShares: boolean;
 	showDocuments: boolean;
-	feedMode: 'all' | 'include' | 'exclude';
+	feedMode: 'none' | 'all' | 'include' | 'exclude';
 	feedIds: number[];
-	accountMode: 'all' | 'include' | 'exclude';
+	accountMode: 'none' | 'all' | 'include' | 'exclude';
 	accountDids: string[];
 	readFilter: 'all' | 'unread' | 'read';
 	sortOrder: 'newest' | 'oldest';

@@ -7,12 +7,11 @@
 	import { socialStore } from '$lib/stores/social.svelte';
 
 	interface Props {
-		showContentTypeFilter: boolean;
 		showFeedFilter: boolean;
 		showAccountFilter: boolean;
 	}
 
-	let { showContentTypeFilter, showFeedFilter, showAccountFilter }: Props = $props();
+	let { showFeedFilter, showAccountFilter }: Props = $props();
 
 	let ef = $derived(feedViewStore.effectiveFilters);
 
@@ -22,8 +21,11 @@
 	let feedPopoverRef: HTMLDivElement | null = $state(null);
 	let accountPopoverRef: HTMLDivElement | null = $state(null);
 
-	function setFeedMode(mode: 'all' | 'include' | 'exclude') {
-		feedViewStore.setToolbarFeedFilter(mode, mode === 'all' ? [] : ef.feedIds);
+	function setFeedMode(mode: 'none' | 'all' | 'include' | 'exclude') {
+		feedViewStore.setToolbarFeedFilter(
+			mode,
+			mode === 'all' || mode === 'none' ? [] : [...ef.feedIds]
+		);
 	}
 
 	function toggleFeedId(id: number) {
@@ -31,8 +33,29 @@
 		feedViewStore.setToolbarFeedFilter(ef.feedMode, ids);
 	}
 
-	function setAccountMode(mode: 'all' | 'include' | 'exclude') {
-		feedViewStore.setToolbarAccountFilter(mode, mode === 'all' ? [] : ef.accountDids);
+	function setAccountMode(mode: 'none' | 'all' | 'include' | 'exclude') {
+		feedViewStore.setToolbarAccountFilter(
+			mode,
+			mode === 'all' || mode === 'none' ? [] : [...ef.accountDids]
+		);
+	}
+
+	function toggleShares() {
+		feedViewStore.setToolbarAccountFilter(
+			ef.accountMode,
+			[...ef.accountDids],
+			!ef.showShares,
+			ef.showDocuments
+		);
+	}
+
+	function toggleDocuments() {
+		feedViewStore.setToolbarAccountFilter(
+			ef.accountMode,
+			[...ef.accountDids],
+			ef.showShares,
+			!ef.showDocuments
+		);
 	}
 
 	function toggleAccountDid(did: string) {
@@ -69,6 +92,7 @@
 	});
 
 	let feedFilterLabel = $derived.by(() => {
+		if (ef.feedMode === 'none') return 'Feeds (off)';
 		if (ef.feedMode === 'all') return 'Feeds';
 		const count = ef.feedIds.length;
 		if (ef.feedMode === 'include') return `Feeds (${count})`;
@@ -76,6 +100,7 @@
 	});
 
 	let accountFilterLabel = $derived.by(() => {
+		if (ef.accountMode === 'none') return 'Accounts (off)';
 		if (ef.accountMode === 'all') return 'Accounts';
 		const count = ef.accountDids.length;
 		if (ef.accountMode === 'include') return `Accounts (${count})`;
@@ -118,46 +143,6 @@
 		</div>
 	</div>
 
-	{#if showContentTypeFilter}
-		<span class="toolbar-divider group-divider"></span>
-
-		<!-- Group 2: Content type chips -->
-		<div class="filter-group">
-			<div class="chip-group" role="group" aria-label="Content types">
-				<button
-					class="chip"
-					class:active={ef.showArticles}
-					onclick={() =>
-						feedViewStore.setToolbarContentTypes(!ef.showArticles, ef.showShares, ef.showDocuments)}
-					title="Toggle articles"
-				>
-					<Icon name="rss" size={16} />
-					<span class="chip-label">Articles</span>
-				</button>
-				<button
-					class="chip"
-					class:active={ef.showShares}
-					onclick={() =>
-						feedViewStore.setToolbarContentTypes(ef.showArticles, !ef.showShares, ef.showDocuments)}
-					title="Toggle shares"
-				>
-					<Icon name="share" size={16} />
-					<span class="chip-label">Shares</span>
-				</button>
-				<button
-					class="chip"
-					class:active={ef.showDocuments}
-					onclick={() =>
-						feedViewStore.setToolbarContentTypes(ef.showArticles, ef.showShares, !ef.showDocuments)}
-					title="Toggle documents"
-				>
-					<Icon name="file-text" size={16} />
-					<span class="chip-label">Docs</span>
-				</button>
-			</div>
-		</div>
-	{/if}
-
 	{#if showFeedFilter || showAccountFilter}
 		<span class="toolbar-divider group-divider"></span>
 
@@ -182,6 +167,16 @@
 						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 						<div class="popover" onclick={(e) => e.stopPropagation()}>
 							<div class="popover-section">
+								<label class="radio-label">
+									<input
+										type="radio"
+										name="feedMode"
+										value="none"
+										checked={ef.feedMode === 'none'}
+										onchange={() => setFeedMode('none')}
+									/>
+									None
+								</label>
 								<label class="radio-label">
 									<input
 										type="radio"
@@ -214,7 +209,7 @@
 								</label>
 							</div>
 
-							{#if ef.feedMode !== 'all'}
+							{#if ef.feedMode === 'include' || ef.feedMode === 'exclude'}
 								<div class="popover-list">
 									{#each subscriptionsStore.subscriptions as sub}
 										{#if sub.id != null}
@@ -258,6 +253,16 @@
 									<input
 										type="radio"
 										name="accountMode"
+										value="none"
+										checked={ef.accountMode === 'none'}
+										onchange={() => setAccountMode('none')}
+									/>
+									None
+								</label>
+								<label class="radio-label">
+									<input
+										type="radio"
+										name="accountMode"
 										value="all"
 										checked={ef.accountMode === 'all'}
 										onchange={() => setAccountMode('all')}
@@ -286,7 +291,28 @@
 								</label>
 							</div>
 
-							{#if ef.accountMode !== 'all'}
+							{#if ef.accountMode !== 'none'}
+								<div class="popover-section">
+									<label class="check-label">
+										<input
+											type="checkbox"
+											checked={ef.showShares}
+											onchange={() => toggleShares()}
+										/>
+										<span class="check-text">Shares</span>
+									</label>
+									<label class="check-label">
+										<input
+											type="checkbox"
+											checked={ef.showDocuments}
+											onchange={() => toggleDocuments()}
+										/>
+										<span class="check-text">Articles</span>
+									</label>
+								</div>
+							{/if}
+
+							{#if ef.accountMode === 'include' || ef.accountMode === 'exclude'}
 								<div class="popover-list">
 									{#each socialStore.inAppFollows as follow}
 										<label class="check-label">
@@ -395,42 +421,6 @@
 		color: var(--color-text);
 	}
 
-	/* Content type chips */
-	.chip-group {
-		display: flex;
-		gap: 0.125rem;
-	}
-
-	.chip {
-		display: flex;
-		align-items: center;
-		gap: 0.35rem;
-		background: none;
-		border: none;
-		padding: 0.4rem 0.6rem;
-		border-radius: 999px;
-		cursor: pointer;
-		color: var(--color-text-secondary);
-		font-size: 0.8125rem;
-		font-weight: 500;
-		transition: all 0.2s ease;
-		opacity: 0.5;
-	}
-
-	.chip.active {
-		opacity: 1;
-		color: var(--color-text);
-		background: var(--color-bg-secondary, #f5f5f5);
-	}
-
-	.chip:hover:not(.active) {
-		opacity: 0.8;
-	}
-
-	.chip-label {
-		white-space: nowrap;
-	}
-
 	/* Dropdown wrapper */
 	.dropdown-wrapper {
 		position: relative;
@@ -491,14 +481,12 @@
 
 	/* Tablet: hide labels, keep horizontal */
 	@media (max-width: 900px) {
-		.chip-label,
 		.filter-label {
 			display: none;
 		}
 
 		.filter-btn,
-		.segment-btn,
-		.chip {
+		.segment-btn {
 			padding: 0.4rem;
 		}
 	}
@@ -527,22 +515,19 @@
 			display: none;
 		}
 
-		.chip-label,
 		.filter-label {
 			display: inline;
 		}
 
 		.filter-btn,
-		.segment-btn,
-		.chip {
+		.segment-btn {
 			padding: 0.4rem 0.6rem;
 		}
 	}
 
 	@media (max-width: 480px) {
 		.filter-btn,
-		.segment-btn,
-		.chip {
+		.segment-btn {
 			padding: 0.5rem;
 		}
 
@@ -561,8 +546,7 @@
 			background: rgba(255, 255, 255, 0.2);
 		}
 
-		.segment-btn.active,
-		.chip.active {
+		.segment-btn.active {
 			background: rgba(255, 255, 255, 0.15);
 		}
 

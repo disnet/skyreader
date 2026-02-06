@@ -26,9 +26,9 @@ export interface EffectiveFilters {
 	showArticles: boolean;
 	showShares: boolean;
 	showDocuments: boolean;
-	feedMode: 'all' | 'include' | 'exclude';
+	feedMode: 'none' | 'all' | 'include' | 'exclude';
 	feedIds: number[];
-	accountMode: 'all' | 'include' | 'exclude';
+	accountMode: 'none' | 'all' | 'include' | 'exclude';
 	accountDids: string[];
 	readFilter: 'all' | 'unread' | 'read';
 	sortOrder: 'newest' | 'oldest';
@@ -49,12 +49,11 @@ function createFeedViewStore() {
 
 	// Toolbar filter state
 	let filterToolbarOpen = $state(false);
-	let toolbarShowArticles = $state(true);
 	let toolbarShowShares = $state(true);
 	let toolbarShowDocuments = $state(true);
-	let toolbarFeedMode = $state<'all' | 'include' | 'exclude'>('all');
+	let toolbarFeedMode = $state<'none' | 'all' | 'include' | 'exclude'>('all');
 	let toolbarFeedIds = $state<number[]>([]);
-	let toolbarAccountMode = $state<'all' | 'include' | 'exclude'>('all');
+	let toolbarAccountMode = $state<'none' | 'all' | 'include' | 'exclude'>('all');
 	let toolbarAccountDids = $state<string[]>([]);
 
 	// URL filters (set by component from $page store)
@@ -76,25 +75,35 @@ function createFeedViewStore() {
 	// Derived: effective filters (prefer activeFilteredView for reactivity + persistence)
 	let effectiveFilters = $derived.by((): EffectiveFilters => {
 		if (activeFilteredView) {
+			// Backward compat: derive modes from legacy showArticles/showShares/showDocuments
+			let fMode = activeFilteredView.feedMode;
+			let aMode = activeFilteredView.accountMode;
+			if (fMode !== 'none' && !activeFilteredView.showArticles) fMode = 'none';
+			if (aMode !== 'none' && !activeFilteredView.showShares && !activeFilteredView.showDocuments)
+				aMode = 'none';
 			return {
-				showArticles: activeFilteredView.showArticles,
-				showShares: activeFilteredView.showShares,
-				showDocuments: activeFilteredView.showDocuments,
-				feedMode: activeFilteredView.feedMode,
+				showArticles: fMode !== 'none',
+				showShares: aMode !== 'none' && activeFilteredView.showShares,
+				showDocuments: aMode !== 'none' && activeFilteredView.showDocuments,
+				feedMode: fMode,
 				feedIds: activeFilteredView.feedIds,
-				accountMode: activeFilteredView.accountMode,
+				accountMode: aMode,
 				accountDids: activeFilteredView.accountDids,
 				readFilter: activeFilteredView.readFilter,
 				sortOrder: activeFilteredView.sortOrder,
 			};
 		}
+		// Read all toolbar state unconditionally to ensure consistent reactive tracking
+		const shares = toolbarShowShares;
+		const docs = toolbarShowDocuments;
+		const accountMode = toolbarAccountMode;
 		return {
-			showArticles: toolbarShowArticles,
-			showShares: toolbarShowShares,
-			showDocuments: toolbarShowDocuments,
+			showArticles: toolbarFeedMode !== 'none',
+			showShares: accountMode !== 'none' && shares,
+			showDocuments: accountMode !== 'none' && docs,
 			feedMode: toolbarFeedMode,
 			feedIds: toolbarFeedIds,
-			accountMode: toolbarAccountMode,
+			accountMode,
 			accountDids: toolbarAccountDids,
 			readFilter: showOnlyUnread ? 'unread' : 'all',
 			sortOrder: preferences.sortOrder,
@@ -105,11 +114,10 @@ function createFeedViewStore() {
 	let hasActiveFilters = $derived.by(() => {
 		if (activeFilteredView) return true;
 		return (
-			!toolbarShowArticles ||
-			!toolbarShowShares ||
-			!toolbarShowDocuments ||
 			toolbarFeedMode !== 'all' ||
-			toolbarAccountMode !== 'all'
+			toolbarAccountMode !== 'all' ||
+			!toolbarShowShares ||
+			!toolbarShowDocuments
 		);
 	});
 
@@ -119,8 +127,6 @@ function createFeedViewStore() {
 		if (sharedFilter) return 'userShares';
 		if (sharerFilter || followingFilter) return 'shares';
 		if (feedFilter || starredFilter || feedsFilter) return 'articles';
-		// If any content type is toggled off via toolbar, use combined mode
-		if (!toolbarShowArticles || !toolbarShowShares || !toolbarShowDocuments) return 'combined';
 		return 'combined';
 	});
 
@@ -157,13 +163,12 @@ function createFeedViewStore() {
 			}
 
 			// Apply feed inclusion/exclusion
-			if (fv.feedMode !== 'all' && fv.feedIds.length > 0) {
+			if (fv.feedMode === 'include') {
 				const feedIdSet = new Set(fv.feedIds);
-				if (fv.feedMode === 'include') {
-					articles = articles.filter((a) => feedIdSet.has(a.subscriptionId));
-				} else {
-					articles = articles.filter((a) => !feedIdSet.has(a.subscriptionId));
-				}
+				articles = articles.filter((a) => feedIdSet.has(a.subscriptionId));
+			} else if (fv.feedMode === 'exclude' && fv.feedIds.length > 0) {
+				const feedIdSet = new Set(fv.feedIds);
+				articles = articles.filter((a) => !feedIdSet.has(a.subscriptionId));
 			}
 
 			// Apply read filter
@@ -216,13 +221,12 @@ function createFeedViewStore() {
 		}
 
 		// Apply account inclusion/exclusion
-		if (fv.accountMode !== 'all' && fv.accountDids.length > 0) {
+		if (fv.accountMode === 'include') {
 			const didSet = new Set(fv.accountDids);
-			if (fv.accountMode === 'include') {
-				filtered = filtered.filter((s) => didSet.has(s.authorDid));
-			} else {
-				filtered = filtered.filter((s) => !didSet.has(s.authorDid));
-			}
+			filtered = filtered.filter((s) => didSet.has(s.authorDid));
+		} else if (fv.accountMode === 'exclude' && fv.accountDids.length > 0) {
+			const didSet = new Set(fv.accountDids);
+			filtered = filtered.filter((s) => !didSet.has(s.authorDid));
 		}
 
 		// Apply read filter
@@ -278,13 +282,12 @@ function createFeedViewStore() {
 		}
 
 		// Apply account inclusion/exclusion
-		if (fv.accountMode !== 'all' && fv.accountDids.length > 0) {
+		if (fv.accountMode === 'include') {
 			const didSet = new Set(fv.accountDids);
-			if (fv.accountMode === 'include') {
-				filtered = filtered.filter((d) => didSet.has(d.authorDid));
-			} else {
-				filtered = filtered.filter((d) => !didSet.has(d.authorDid));
-			}
+			filtered = filtered.filter((d) => didSet.has(d.authorDid));
+		} else if (fv.accountMode === 'exclude' && fv.accountDids.length > 0) {
+			const didSet = new Set(fv.accountDids);
+			filtered = filtered.filter((d) => !didSet.has(d.authorDid));
 		}
 
 		// Apply read filter
@@ -560,7 +563,7 @@ function createFeedViewStore() {
 		const fv = filteredViewsStore.getById(id);
 		if (!fv) return;
 		filteredViewsStore.update(id, {
-			showArticles: toolbarShowArticles,
+			showArticles: toolbarFeedMode !== 'none',
 			showShares: toolbarShowShares,
 			showDocuments: toolbarShowDocuments,
 			feedMode: toolbarFeedMode,
@@ -573,7 +576,6 @@ function createFeedViewStore() {
 	}
 
 	function resetToolbarFilters() {
-		toolbarShowArticles = true;
 		toolbarShowShares = true;
 		toolbarShowDocuments = true;
 		toolbarFeedMode = 'all';
@@ -687,20 +689,21 @@ function createFeedViewStore() {
 		setFilterToolbarOpen(open: boolean) {
 			filterToolbarOpen = open;
 		},
-		setToolbarContentTypes(articles: boolean, shares: boolean, docs: boolean) {
-			toolbarShowArticles = articles;
-			toolbarShowShares = shares;
-			toolbarShowDocuments = docs;
-			syncToolbarToSavedView();
-		},
-		setToolbarFeedFilter(mode: 'all' | 'include' | 'exclude', feedIds: number[]) {
+		setToolbarFeedFilter(mode: 'none' | 'all' | 'include' | 'exclude', feedIds: number[]) {
 			toolbarFeedMode = mode;
 			toolbarFeedIds = feedIds;
 			syncToolbarToSavedView();
 		},
-		setToolbarAccountFilter(mode: 'all' | 'include' | 'exclude', dids: string[]) {
+		setToolbarAccountFilter(
+			mode: 'none' | 'all' | 'include' | 'exclude',
+			dids: string[],
+			showShares?: boolean,
+			showDocs?: boolean
+		) {
 			toolbarAccountMode = mode;
 			toolbarAccountDids = dids;
+			if (showShares !== undefined) toolbarShowShares = showShares;
+			if (showDocs !== undefined) toolbarShowDocuments = showDocs;
 			syncToolbarToSavedView();
 		},
 		resetToolbarFilters,
@@ -729,12 +732,15 @@ function createFeedViewStore() {
 			if (filters.view) {
 				const fv = filteredViewsStore.getById(parseInt(filters.view));
 				if (fv) {
-					toolbarShowArticles = fv.showArticles;
+					// Backward compat: old views may not have 'none' mode
+					toolbarFeedMode = fv.feedMode !== 'none' && !fv.showArticles ? 'none' : fv.feedMode;
+					toolbarAccountMode =
+						fv.accountMode !== 'none' && !fv.showShares && !fv.showDocuments
+							? 'none'
+							: fv.accountMode;
 					toolbarShowShares = fv.showShares;
 					toolbarShowDocuments = fv.showDocuments;
-					toolbarFeedMode = fv.feedMode;
 					toolbarFeedIds = [...fv.feedIds];
-					toolbarAccountMode = fv.accountMode;
 					toolbarAccountDids = [...fv.accountDids];
 					showOnlyUnread = fv.readFilter === 'unread';
 				} else {

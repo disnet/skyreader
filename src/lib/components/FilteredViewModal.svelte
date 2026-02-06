@@ -16,12 +16,11 @@
 
 	// Form state
 	let name = $state('');
-	let showArticles = $state(true);
 	let showShares = $state(true);
 	let showDocuments = $state(true);
-	let feedMode = $state<'all' | 'include' | 'exclude'>('all');
+	let feedMode = $state<'none' | 'all' | 'include' | 'exclude'>('all');
 	let feedIds = $state<Set<number>>(new Set());
-	let accountMode = $state<'all' | 'include' | 'exclude'>('all');
+	let accountMode = $state<'none' | 'all' | 'include' | 'exclude'>('all');
 	let accountDids = $state<Set<string>>(new Set());
 	let readFilter = $state<'all' | 'unread' | 'read'>('all');
 	let sortOrder = $state<'newest' | 'oldest'>('newest');
@@ -53,12 +52,15 @@
 				const view = filteredViewsStore.getById(editingViewId);
 				if (view) {
 					name = view.name;
-					showArticles = view.showArticles;
 					showShares = view.showShares;
 					showDocuments = view.showDocuments;
-					feedMode = view.feedMode;
+					// Backward compat: old views may lack 'none' mode
+					feedMode = view.feedMode !== 'none' && !view.showArticles ? 'none' : view.feedMode;
 					feedIds = new Set(view.feedIds);
-					accountMode = view.accountMode;
+					accountMode =
+						view.accountMode !== 'none' && !view.showShares && !view.showDocuments
+							? 'none'
+							: view.accountMode;
 					accountDids = new Set(view.accountDids);
 					readFilter = view.readFilter;
 					sortOrder = view.sortOrder;
@@ -67,7 +69,6 @@
 			}
 			// New view defaults
 			name = '';
-			showArticles = true;
 			showShares = true;
 			showDocuments = true;
 			feedMode = 'all';
@@ -117,9 +118,9 @@
 		try {
 			const viewData = {
 				name: name.trim(),
-				showArticles,
-				showShares,
-				showDocuments,
+				showArticles: feedMode !== 'none',
+				showShares: accountMode !== 'none' ? showShares : false,
+				showDocuments: accountMode !== 'none' ? showDocuments : false,
 				feedMode,
 				feedIds: Array.from(feedIds),
 				accountMode,
@@ -157,103 +158,100 @@
 			<input id="view-name" type="text" bind:value={name} placeholder="My view" required />
 		</div>
 
-		<!-- Content Types -->
+		<!-- Feeds -->
 		<div class="form-group">
-			<span class="form-label">Content Types</span>
-			<div class="checkbox-group">
-				<label class="checkbox-label">
-					<input type="checkbox" bind:checked={showArticles} />
-					Articles
+			<span class="form-label">Feeds</span>
+			<div class="radio-group">
+				<label class="radio-label">
+					<input type="radio" bind:group={feedMode} value="none" />
+					None
 				</label>
-				<label class="checkbox-label">
-					<input type="checkbox" bind:checked={showShares} />
-					Shares
+				<label class="radio-label">
+					<input type="radio" bind:group={feedMode} value="all" />
+					All feeds
 				</label>
-				<label class="checkbox-label">
-					<input type="checkbox" bind:checked={showDocuments} />
-					Documents
+				<label class="radio-label">
+					<input type="radio" bind:group={feedMode} value="include" />
+					Include only
+				</label>
+				<label class="radio-label">
+					<input type="radio" bind:group={feedMode} value="exclude" />
+					Exclude
 				</label>
 			</div>
-		</div>
-
-		<!-- Feed Filters -->
-		{#if showArticles}
-			<div class="form-group">
-				<span class="form-label">Feed Filters</span>
-				<div class="radio-group">
-					<label class="radio-label">
-						<input type="radio" bind:group={feedMode} value="all" />
-						All feeds
-					</label>
-					<label class="radio-label">
-						<input type="radio" bind:group={feedMode} value="include" />
-						Include only
-					</label>
-					<label class="radio-label">
-						<input type="radio" bind:group={feedMode} value="exclude" />
-						Exclude
-					</label>
-				</div>
-				{#if feedMode !== 'all'}
-					<div class="checklist">
-						{#each subscriptionsStore.subscriptions as sub (sub.id)}
-							{#if sub.id != null}
-								<label class="checklist-item">
-									<input
-										type="checkbox"
-										checked={feedIds.has(sub.id)}
-										onchange={() => toggleFeedId(sub.id!)}
-									/>
-									<span class="checklist-label">{sub.customTitle || sub.title}</span>
-								</label>
-							{/if}
-						{/each}
-					</div>
-				{/if}
-			</div>
-		{/if}
-
-		<!-- Account Filters -->
-		{#if showShares || showDocuments}
-			<div class="form-group">
-				<span class="form-label">Account Filters</span>
-				<div class="radio-group">
-					<label class="radio-label">
-						<input type="radio" bind:group={accountMode} value="all" />
-						All accounts
-					</label>
-					<label class="radio-label">
-						<input type="radio" bind:group={accountMode} value="include" />
-						Include only
-					</label>
-					<label class="radio-label">
-						<input type="radio" bind:group={accountMode} value="exclude" />
-						Exclude
-					</label>
-				</div>
-				{#if accountMode !== 'all'}
-					<div class="checklist">
-						{#each socialStore.inAppFollows as follow (follow.did)}
-							{@const profile = accountProfiles.get(follow.did)}
+			{#if feedMode === 'include' || feedMode === 'exclude'}
+				<div class="checklist">
+					{#each subscriptionsStore.subscriptions as sub (sub.id)}
+						{#if sub.id != null}
 							<label class="checklist-item">
 								<input
 									type="checkbox"
-									checked={accountDids.has(follow.did)}
-									onchange={() => toggleAccountDid(follow.did)}
+									checked={feedIds.has(sub.id)}
+									onchange={() => toggleFeedId(sub.id!)}
 								/>
-								<span class="checklist-label">
-									{#if profile}
-										{profile.displayName || profile.handle}
-									{:else}
-										{follow.did.slice(0, 20)}...
-									{/if}
-								</span>
+								<span class="checklist-label">{sub.customTitle || sub.title}</span>
 							</label>
-						{/each}
-					</div>
-				{/if}
+						{/if}
+					{/each}
+				</div>
+			{/if}
+		</div>
+
+		<!-- Accounts -->
+		<div class="form-group">
+			<span class="form-label">Accounts</span>
+			<div class="radio-group">
+				<label class="radio-label">
+					<input type="radio" bind:group={accountMode} value="none" />
+					None
+				</label>
+				<label class="radio-label">
+					<input type="radio" bind:group={accountMode} value="all" />
+					All accounts
+				</label>
+				<label class="radio-label">
+					<input type="radio" bind:group={accountMode} value="include" />
+					Include only
+				</label>
+				<label class="radio-label">
+					<input type="radio" bind:group={accountMode} value="exclude" />
+					Exclude
+				</label>
 			</div>
-		{/if}
+			{#if accountMode !== 'none'}
+				<div class="checkbox-group" style="margin-top: 0.25rem;">
+					<label class="checkbox-label">
+						<input type="checkbox" bind:checked={showShares} />
+						Shares
+					</label>
+					<label class="checkbox-label">
+						<input type="checkbox" bind:checked={showDocuments} />
+						Articles
+					</label>
+				</div>
+			{/if}
+			{#if accountMode === 'include' || accountMode === 'exclude'}
+				<div class="checklist">
+					{#each socialStore.inAppFollows as follow (follow.did)}
+						{@const profile = accountProfiles.get(follow.did)}
+						<label class="checklist-item">
+							<input
+								type="checkbox"
+								checked={accountDids.has(follow.did)}
+								onchange={() => toggleAccountDid(follow.did)}
+							/>
+							<span class="checklist-label">
+								{#if profile}
+									{profile.displayName || profile.handle}
+								{:else}
+									{follow.did.slice(0, 20)}...
+								{/if}
+							</span>
+						</label>
+					{/each}
+				</div>
+			{/if}
+		</div>
 
 		<!-- Read State -->
 		<div class="form-group">
