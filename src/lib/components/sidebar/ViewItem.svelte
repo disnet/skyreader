@@ -1,60 +1,109 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import type { FilteredView } from '$lib/types';
 	import Icon from '../Icon.svelte';
 
 	interface Props {
 		view: FilteredView;
 		isActive: boolean;
+		isRenaming: boolean;
 		onSelect: () => void;
 		onContextMenu: (e: MouseEvent) => void;
 		onTouchStart: (e: TouchEvent) => void;
 		onTouchEnd: (e: TouchEvent) => void;
 		onTouchMove: () => void;
 		onMoreClick: (e: MouseEvent) => void;
+		onRename: (name: string) => void;
+		onRenameCancel: () => void;
 	}
 
 	let {
 		view,
 		isActive,
+		isRenaming,
 		onSelect,
 		onContextMenu,
 		onTouchStart,
 		onTouchEnd,
 		onTouchMove,
 		onMoreClick,
+		onRename,
+		onRenameCancel,
 	}: Props = $props();
+
+	let inputRef: HTMLInputElement | null = $state(null);
+	let renameValue = $state('');
+
+	$effect(() => {
+		if (isRenaming) {
+			renameValue = view.name;
+			tick().then(() => {
+				inputRef?.focus();
+				inputRef?.select();
+			});
+		}
+	});
+
+	function commitRename() {
+		const trimmed = renameValue.trim();
+		if (trimmed && trimmed !== view.name) {
+			onRename(trimmed);
+		} else {
+			onRenameCancel();
+		}
+	}
 </script>
 
 <button
 	class="nav-item sub-item view-item"
 	class:active={isActive}
-	onclick={onSelect}
+	onclick={isRenaming ? undefined : onSelect}
 	oncontextmenu={onContextMenu}
 	ontouchstart={onTouchStart}
 	ontouchend={onTouchEnd}
 	ontouchmove={onTouchMove}
 >
 	<span class="view-icon"><Icon name="sliders" size={14} /></span>
-	<span class="nav-label">{view.name}</span>
-	<span
-		class="more-btn"
-		role="button"
-		tabindex="0"
-		onclick={(e) => {
-			e.stopPropagation();
-			onMoreClick(e);
-		}}
-		onkeydown={(e) => {
-			if (e.key === 'Enter' || e.key === ' ') {
-				e.preventDefault();
+	{#if isRenaming}
+		<!-- svelte-ignore a11y_autofocus -->
+		<input
+			bind:this={inputRef}
+			bind:value={renameValue}
+			class="rename-input"
+			onclick={(e) => e.stopPropagation()}
+			onkeydown={(e) => {
+				if (e.key === 'Enter') {
+					e.preventDefault();
+					commitRename();
+				} else if (e.key === 'Escape') {
+					e.preventDefault();
+					onRenameCancel();
+				}
+			}}
+			onblur={commitRename}
+		/>
+	{:else}
+		<span class="nav-label">{view.name}</span>
+		<span
+			class="more-btn"
+			role="button"
+			tabindex="0"
+			onclick={(e) => {
 				e.stopPropagation();
-				onMoreClick(e as unknown as MouseEvent);
-			}
-		}}
-		title="More options"
-	>
-		<Icon name="more-horizontal" size={14} />
-	</span>
+				onMoreClick(e);
+			}}
+			onkeydown={(e) => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					e.stopPropagation();
+					onMoreClick(e as unknown as MouseEvent);
+				}
+			}}
+			title="More options"
+		>
+			<Icon name="more-horizontal" size={14} />
+		</span>
+	{/if}
 </button>
 
 <style>
@@ -144,6 +193,19 @@
 		color: var(--color-text);
 		background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.1));
 		border-radius: 4px;
+	}
+
+	.rename-input {
+		flex: 1;
+		min-width: 0;
+		font: inherit;
+		font-size: 0.875rem;
+		padding: 0.125rem 0.25rem;
+		border: 1px solid var(--color-primary);
+		border-radius: 4px;
+		background: var(--color-bg);
+		color: var(--color-text);
+		outline: none;
 	}
 
 	@media (prefers-color-scheme: dark) {

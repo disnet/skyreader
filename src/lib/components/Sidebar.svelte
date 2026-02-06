@@ -11,11 +11,11 @@
 	import { activityStore } from '$lib/stores/activity.svelte';
 	import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
 	import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
+	import { feedViewStore } from '$lib/stores/feedView.svelte';
 	import { fetchSingleFeed } from '$lib/services/feedFetcher';
 	import { onMount, onDestroy } from 'svelte';
 	import AddFeedModal from './AddFeedModal.svelte';
 	import EditFeedModal from './EditFeedModal.svelte';
-	import FilteredViewModal from './FilteredViewModal.svelte';
 	import ContextMenu from './sidebar/ContextMenu.svelte';
 	import UserContextMenu from './sidebar/UserContextMenu.svelte';
 	import NavSection from './sidebar/NavSection.svelte';
@@ -304,6 +304,7 @@
 	let viewContextMenu = $state<{ x: number; y: number; viewId: number } | null>(null);
 	let viewLongPressTimer: ReturnType<typeof setTimeout> | null = null;
 	let viewLongPressTriggered = $state(false);
+	let renamingViewId = $state<number | null>(null);
 
 	function handleViewContextMenu(e: MouseEvent, viewId: number) {
 		e.preventDefault();
@@ -340,8 +341,8 @@
 		viewContextMenu = null;
 	}
 
-	function handleEditView(viewId: number) {
-		sidebarStore.openViewModal(viewId);
+	function handleRenameView(viewId: number) {
+		renamingViewId = viewId;
 	}
 
 	async function handleDeleteView(viewId: number) {
@@ -513,19 +514,35 @@
 					<ViewItem
 						{view}
 						isActive={filter.type === 'view' && filter.id === view.id}
+						isRenaming={renamingViewId === view.id}
 						onSelect={() => selectFilter('view', view.id)}
 						onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
 						onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
 						onTouchEnd={handleViewTouchEnd}
 						onTouchMove={handleViewTouchMove}
 						onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+						onRename={async (name) => {
+							if (view.id != null) {
+								await filteredViewsStore.update(view.id, { name });
+							}
+							renamingViewId = null;
+						}}
+						onRenameCancel={() => (renamingViewId = null)}
 					/>
 				{/each}
 				<button
 					class="add-view-btn"
-					onclick={(e) => {
+					onclick={async (e) => {
 						e.stopPropagation();
-						sidebarStore.openViewModal();
+						const id = await filteredViewsStore.create({
+							name: 'new view',
+							sourceMode: 'all',
+							sourceKeys: [],
+							readFilter: 'unread',
+							sortOrder: 'newest',
+						});
+						selectFilter('view', id);
+						feedViewStore.setFilterToolbarOpen(true);
 					}}
 				>
 					<Icon name="plus" size={14} />
@@ -656,18 +673,12 @@
 
 <EditFeedModal open={editModalOpen} subscription={editingSubscription} onclose={closeEditModal} />
 
-<FilteredViewModal
-	open={sidebarStore.viewModalOpen}
-	editingViewId={sidebarStore.editingViewId}
-	onclose={() => sidebarStore.closeViewModal()}
-/>
-
 {#if viewContextMenu}
 	{@const viewId = viewContextMenu.viewId}
 	<ContextMenu
 		x={viewContextMenu.x}
 		y={viewContextMenu.y}
-		onEdit={() => handleEditView(viewId)}
+		onRename={() => handleRenameView(viewId)}
 		onDelete={() => handleDeleteView(viewId)}
 		onClose={closeViewContextMenu}
 	/>

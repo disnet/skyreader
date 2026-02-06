@@ -5,12 +5,13 @@
 	interface Props {
 		x: number;
 		y: number;
-		onEdit: () => void;
+		onEdit?: () => void;
+		onRename?: () => void;
 		onDelete: () => void;
 		onClose: () => void;
 	}
 
-	let { x, y, onEdit, onDelete, onClose }: Props = $props();
+	let { x, y, onEdit, onRename, onDelete, onClose }: Props = $props();
 
 	let menuRef: HTMLDivElement | null = $state(null);
 	let adjustedX = $state(0);
@@ -51,7 +52,12 @@
 	});
 
 	function handleEdit() {
-		onEdit();
+		onEdit?.();
+		onClose();
+	}
+
+	function handleRename() {
+		onRename?.();
 		onClose();
 	}
 
@@ -67,10 +73,18 @@
 	style="left: {adjustedX}px; top: {adjustedY}px;"
 	role="menu"
 >
-	<button class="context-menu-item" onclick={handleEdit} role="menuitem">
-		<span class="context-menu-icon"><Icon name="edit" size={16} /></span>
-		Edit
-	</button>
+	{#if onEdit}
+		<button class="context-menu-item" onclick={handleEdit} role="menuitem">
+			<span class="context-menu-icon"><Icon name="edit" size={16} /></span>
+			Edit
+		</button>
+	{/if}
+	{#if onRename}
+		<button class="context-menu-item" onclick={handleRename} role="menuitem">
+			<span class="context-menu-icon"><Icon name="edit" size={16} /></span>
+			Rename
+		</button>
+	{/if}
 	<button class="context-menu-item danger" onclick={handleDelete} role="menuitem">
 		<span class="context-menu-icon"><Icon name="trash" size={16} /></span>
 		Delete

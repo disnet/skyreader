@@ -20,9 +20,6 @@ interface SidebarState {
 	sortedUserDids: string[];
 	// Expanded users in Following section
 	expandedUsers: Set<string>;
-	// View modal state
-	viewModalOpen: boolean;
-	editingViewId: number | null;
 }
 
 function createSidebarStore() {
@@ -44,8 +41,6 @@ function createSidebarStore() {
 		sortedFeedIds: [],
 		sortedUserDids: [],
 		expandedUsers: new Set(),
-		viewModalOpen: false,
-		editingViewId: null,
 	});
 
 	// Restore from localStorage on init
@@ -130,16 +125,6 @@ function createSidebarStore() {
 		state.navigationDropdownOpen = false;
 	}
 
-	function openViewModal(id?: number) {
-		state.editingViewId = id ?? null;
-		state.viewModalOpen = true;
-	}
-
-	function closeViewModal() {
-		state.viewModalOpen = false;
-		state.editingViewId = null;
-	}
-
 	function setSortedFeedIds(ids: number[]) {
 		state.sortedFeedIds = ids;
 	}
@@ -193,12 +178,6 @@ function createSidebarStore() {
 		get expandedUsers() {
 			return state.expandedUsers;
 		},
-		get viewModalOpen() {
-			return state.viewModalOpen;
-		},
-		get editingViewId() {
-			return state.editingViewId;
-		},
 		toggle,
 		toggleMobile,
 		closeMobile,
@@ -208,8 +187,6 @@ function createSidebarStore() {
 		closeAddFeedModal,
 		openFollowUserModal,
 		closeFollowUserModal,
-		openViewModal,
-		closeViewModal,
 		toggleNavigationDropdown,
 		closeNavigationDropdown,
 		setSortedFeedIds,
