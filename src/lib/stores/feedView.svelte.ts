@@ -85,6 +85,8 @@ function createFeedViewStore() {
 	let filterToolbarOpen = $state(false);
 	let toolbarSourceMode = $state<'all' | 'include'>('all');
 	let toolbarSourceKeys = $state<string[]>([]);
+	// View-local sort order override (null = use global preferences.sortOrder)
+	let toolbarSortOrder = $state<'newest' | 'oldest' | null>(null);
 
 	// URL filters (set by component from $page store)
 	let feedFilter = $state<string | null>(null);
@@ -113,52 +115,13 @@ function createFeedViewStore() {
 		return socialStore.inAppFollows.map((f) => f.did);
 	}
 
-	// Derived: effective filters (prefer activeFilteredView for reactivity + persistence)
+	// Derived: effective filters (always uses toolbar state as the working copy)
 	let effectiveFilters = $derived.by((): EffectiveFilters => {
-		if (activeFilteredView) {
-			if (activeFilteredView.sourceMode != null) {
-				// New format — use directly (coerce any stale 'exclude' to 'include')
-				const mode = activeFilteredView.sourceMode === 'all' ? 'all' : 'include';
-				return {
-					sourceMode: mode,
-					sourceKeys: mode === 'all' ? [] : (activeFilteredView.sourceKeys ?? []),
-					readFilter: activeFilteredView.readFilter,
-					sortOrder: activeFilteredView.sortOrder,
-				};
-			}
-			// Legacy format — migrate at read time
-			const migrated = migrateLegacyView(
-				{
-					showArticles: activeFilteredView.showArticles,
-					showShares: activeFilteredView.showShares,
-					showDocuments: activeFilteredView.showDocuments,
-					feedMode: activeFilteredView.feedMode,
-					feedIds: activeFilteredView.feedIds,
-					accountMode: activeFilteredView.accountMode,
-					accountDids: activeFilteredView.accountDids,
-				},
-				getAllSubIds(),
-				getAllFollowDids()
-			);
-			// Fire-and-forget write-back of migrated data
-			if (activeFilteredView.id != null) {
-				filteredViewsStore.update(activeFilteredView.id, {
-					sourceMode: migrated.sourceMode,
-					sourceKeys: migrated.sourceKeys,
-				});
-			}
-			return {
-				...migrated,
-				readFilter: activeFilteredView.readFilter,
-				sortOrder: activeFilteredView.sortOrder,
-			};
-		}
-		// Read toolbar state
 		return {
 			sourceMode: toolbarSourceMode,
 			sourceKeys: toolbarSourceKeys,
 			readFilter: showOnlyUnread ? 'unread' : 'all',
-			sortOrder: preferences.sortOrder,
+			sortOrder: toolbarSortOrder ?? preferences.sortOrder,
 		};
 	});
 
@@ -166,6 +129,25 @@ function createFeedViewStore() {
 	let hasActiveFilters = $derived.by(() => {
 		if (activeFilteredView) return true;
 		return toolbarSourceMode !== 'all';
+	});
+
+	// Derived: whether toolbar state differs from the persisted saved view
+	let hasUnsavedChanges = $derived.by(() => {
+		if (!activeFilteredView) return false;
+		const view = activeFilteredView;
+		const savedMode = view.sourceMode === 'all' ? 'all' : 'include';
+		const savedKeys = new Set(view.sourceKeys ?? []);
+		const currentReadFilter = showOnlyUnread ? 'unread' : 'all';
+		const currentSortOrder = toolbarSortOrder ?? preferences.sortOrder;
+
+		if (toolbarSourceMode !== savedMode) return true;
+		if (currentReadFilter !== view.readFilter) return true;
+		if (currentSortOrder !== view.sortOrder) return true;
+		if (toolbarSourceKeys.length !== savedKeys.size) return true;
+		for (const key of toolbarSourceKeys) {
+			if (!savedKeys.has(key)) return true;
+		}
+		return false;
 	});
 
 	// Derived: view mode
@@ -625,13 +607,14 @@ function createFeedViewStore() {
 			sourceMode: toolbarSourceMode,
 			sourceKeys: [...toolbarSourceKeys],
 			readFilter: showOnlyUnread ? 'unread' : 'all',
-			sortOrder: preferences.sortOrder,
+			sortOrder: toolbarSortOrder ?? preferences.sortOrder,
 		});
 	}
 
 	function resetToolbarFilters() {
 		toolbarSourceMode = 'all';
 		toolbarSourceKeys = [];
+		toolbarSortOrder = null;
 	}
 
 	function toggleUnreadFilter() {
@@ -718,6 +701,12 @@ function createFeedViewStore() {
 		get hasActiveFilters() {
 			return hasActiveFilters;
 		},
+		get hasUnsavedChanges() {
+			return hasUnsavedChanges;
+		},
+		get currentSortOrder() {
+			return toolbarSortOrder ?? preferences.sortOrder;
+		},
 
 		// Article lookup
 		getArticleForShare,
@@ -734,7 +723,6 @@ function createFeedViewStore() {
 		trackSeenThisSession,
 		setShowOnlyUnread(value: boolean) {
 			showOnlyUnread = value;
-			syncToolbarToSavedView();
 		},
 		setFilterToolbarOpen(open: boolean) {
 			filterToolbarOpen = open;
@@ -742,7 +730,14 @@ function createFeedViewStore() {
 		setToolbarSourceFilter(mode: 'all' | 'include', keys: string[]) {
 			toolbarSourceMode = mode;
 			toolbarSourceKeys = keys;
-			syncToolbarToSavedView();
+		},
+		toggleSortOrder() {
+			if (viewFilter) {
+				const current = toolbarSortOrder ?? preferences.sortOrder;
+				toolbarSortOrder = current === 'newest' ? 'oldest' : 'newest';
+			} else {
+				preferences.toggleSortOrder();
+			}
 		},
 		resetToolbarFilters,
 		syncToolbarToSavedView,
@@ -793,6 +788,14 @@ function createFeedViewStore() {
 						toolbarSourceKeys = migrated.sourceKeys;
 					}
 					showOnlyUnread = fv.readFilter === 'unread';
+					toolbarSortOrder = fv.sortOrder;
+					// Fire-and-forget legacy migration write-back
+					if (fv.sourceMode == null && fv.id != null) {
+						filteredViewsStore.update(fv.id, {
+							sourceMode: toolbarSourceMode,
+							sourceKeys: [...toolbarSourceKeys],
+						});
+					}
 				} else {
 					resetToolbarFilters();
 				}

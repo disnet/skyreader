@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
-	import { preferences } from '$lib/stores/preferences.svelte';
 	import { feedViewStore } from '$lib/stores/feedView.svelte';
+	import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
 	import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 	import { socialStore } from '$lib/stores/social.svelte';
 	import { profileService } from '$lib/services/profiles';
 	import { getFaviconUrl } from '$lib/utils/favicon';
+	import { goto } from '$app/navigation';
 	import {
 		rssSourceKey,
 		sharesSourceKey,
@@ -144,6 +145,59 @@
 		return `Sources (${ef.sourceKeys.length})`;
 	});
 
+	// Save view state
+	let showNameInput = $state(false);
+	let newViewName = $state('');
+	let nameInputRef = $state<HTMLInputElement | null>(null);
+	let saving = $state(false);
+
+	// Whether we're editing an existing saved view
+	let isEditingView = $derived(!!feedViewStore.viewFilter);
+
+	async function handleSave() {
+		if (isEditingView) {
+			// Update existing view
+			feedViewStore.syncToolbarToSavedView();
+		} else {
+			// Show name input for new view
+			showNameInput = true;
+			newViewName = '';
+			// Focus the input after it renders
+			requestAnimationFrame(() => nameInputRef?.focus());
+		}
+	}
+
+	async function handleCreateView() {
+		const name = newViewName.trim();
+		if (!name || saving) return;
+
+		saving = true;
+		try {
+			const id = await filteredViewsStore.create({
+				name,
+				sourceMode: ef.sourceMode,
+				sourceKeys: [...ef.sourceKeys],
+				readFilter: feedViewStore.showOnlyUnread ? 'unread' : 'all',
+				sortOrder: feedViewStore.currentSortOrder,
+			});
+			showNameInput = false;
+			newViewName = '';
+			goto(`/?view=${id}`);
+		} finally {
+			saving = false;
+		}
+	}
+
+	function handleNameKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			handleCreateView();
+		} else if (e.key === 'Escape') {
+			showNameInput = false;
+			newViewName = '';
+		}
+	}
+
 	// Svelte action: reposition popover to stay within viewport
 	function viewportAware(node: HTMLElement) {
 		const PADDING = 8;
@@ -210,14 +264,15 @@
 	<div class="filter-group">
 		<button
 			class="filter-btn"
-			onclick={() => {
-				preferences.toggleSortOrder();
-				feedViewStore.syncToolbarToSavedView();
-			}}
-			title={preferences.sortOrder === 'newest' ? 'Newest first' : 'Oldest first'}
+			onclick={() => feedViewStore.toggleSortOrder()}
+			title={feedViewStore.currentSortOrder === 'newest' ? 'Newest first' : 'Oldest first'}
 		>
-			<Icon name={preferences.sortOrder === 'newest' ? 'arrow-down' : 'arrow-up'} size={16} />
-			<span class="filter-label">{preferences.sortOrder === 'newest' ? 'New' : 'Old'}</span>
+			<Icon
+				name={feedViewStore.currentSortOrder === 'newest' ? 'arrow-down' : 'arrow-up'}
+				size={16}
+			/>
+			<span class="filter-label">{feedViewStore.currentSortOrder === 'newest' ? 'New' : 'Old'}</span
+			>
 		</button>
 
 		<span class="toolbar-divider"></span>
@@ -366,6 +421,43 @@
 			</div>
 		</div>
 	{/if}
+
+	<span class="toolbar-divider group-divider"></span>
+
+	<!-- Save button -->
+	<div class="filter-group">
+		{#if showNameInput}
+			<div class="save-name-input">
+				<input
+					type="text"
+					bind:this={nameInputRef}
+					bind:value={newViewName}
+					placeholder="View name..."
+					onkeydown={handleNameKeydown}
+					class="name-input"
+				/>
+				<button
+					class="filter-btn save-confirm-btn"
+					onclick={handleCreateView}
+					disabled={!newViewName.trim() || saving}
+					title="Create view"
+				>
+					<Icon name="check" size={16} />
+				</button>
+			</div>
+		{:else}
+			<button
+				class="filter-btn save-btn"
+				class:has-changes={isEditingView && feedViewStore.hasUnsavedChanges}
+				onclick={handleSave}
+				disabled={isEditingView && !feedViewStore.hasUnsavedChanges}
+				title={isEditingView ? 'Update view' : 'Save as view'}
+			>
+				<Icon name="save" size={16} />
+				<span class="filter-label">{isEditingView ? 'Update' : 'Save'}</span>
+			</button>
+		{/if}
+	</div>
 </div>
 
 <style>
@@ -591,6 +683,65 @@
 		padding: 0.25rem 0.375rem 0.25rem 1.5rem;
 	}
 
+	/* Save button */
+	.save-btn {
+		color: var(--color-text-secondary);
+	}
+
+	.save-btn:disabled {
+		opacity: 0.35;
+		cursor: default;
+	}
+
+	.save-btn:disabled:hover {
+		background: none;
+		color: var(--color-text-secondary);
+	}
+
+	.save-btn.has-changes {
+		color: var(--color-primary, #2563eb);
+	}
+
+	.save-btn.has-changes:hover {
+		background: rgba(37, 99, 235, 0.08);
+		color: var(--color-primary, #2563eb);
+	}
+
+	.save-btn:not(:disabled):not(.has-changes):hover {
+		color: var(--color-text);
+		background: var(--color-bg-secondary, #f5f5f5);
+	}
+
+	.save-name-input {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+	}
+
+	.name-input {
+		width: 120px;
+		padding: 0.3rem 0.5rem;
+		border: 1px solid var(--color-primary, #2563eb);
+		border-radius: 999px;
+		font-size: 0.8125rem;
+		background: var(--color-bg, #fff);
+		color: var(--color-text);
+		outline: none;
+	}
+
+	.name-input::placeholder {
+		color: var(--color-text-secondary, #999);
+	}
+
+	.save-confirm-btn {
+		color: var(--color-primary, #2563eb);
+	}
+
+	.save-confirm-btn:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+
 	/* Tablet: hide labels, keep horizontal */
 	@media (max-width: 900px) {
 		.filter-label {
@@ -671,6 +822,10 @@
 		}
 
 		.popover {
+			background: var(--color-bg, #1a1a1a);
+		}
+
+		.name-input {
 			background: var(--color-bg, #1a1a1a);
 		}
 	}
