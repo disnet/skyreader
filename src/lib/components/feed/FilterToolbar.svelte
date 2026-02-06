@@ -7,6 +7,17 @@
 	import { socialStore } from '$lib/stores/social.svelte';
 	import { profileService } from '$lib/services/profiles';
 	import { getFaviconUrl } from '$lib/utils/favicon';
+	import {
+		rssSourceKey,
+		sharesSourceKey,
+		documentsSourceKey,
+		isRssSource,
+		getRssSubscriptionId,
+		getSourceDid,
+		isSharesSource,
+		isDocumentsSource,
+		ACCOUNT_SOURCE_KINDS,
+	} from '$lib/utils/sourceKeys';
 	import type { BlueskyProfile } from '$lib/types';
 
 	// Resolved profiles for accounts that only have DIDs
@@ -45,77 +56,76 @@
 	}
 
 	interface Props {
-		showFeedFilter: boolean;
-		showAccountFilter: boolean;
+		showSourceFilter: boolean;
 	}
 
-	let { showFeedFilter, showAccountFilter }: Props = $props();
+	let { showSourceFilter }: Props = $props();
 
 	let ef = $derived(feedViewStore.effectiveFilters);
 
 	// Popover open/close state
-	let feedPopoverOpen = $state(false);
-	let accountPopoverOpen = $state(false);
-	let feedPopoverRef: HTMLDivElement | null = $state(null);
-	let accountPopoverRef: HTMLDivElement | null = $state(null);
+	let sourcePopoverOpen = $state(false);
+	let sourcePopoverRef: HTMLDivElement | null = $state(null);
 
-	function setFeedMode(mode: 'none' | 'all' | 'include' | 'exclude') {
-		feedViewStore.setToolbarFeedFilter(
-			mode,
-			mode === 'all' || mode === 'none' ? [] : [...ef.feedIds]
-		);
+	// Derive a Set for quick membership checks
+	let sourceKeySet = $derived(new Set(ef.sourceKeys));
+
+	// Search state for filtering lists
+	let feedSearch = $state('');
+	let accountSearch = $state('');
+
+	// Clear search when popover closes
+	$effect(() => {
+		if (!sourcePopoverOpen) {
+			feedSearch = '';
+			accountSearch = '';
+		}
+	});
+
+	// Filtered subscriptions based on search
+	let filteredSubscriptions = $derived(
+		feedSearch
+			? subscriptionsStore.subscriptions.filter((sub) => {
+					const term = feedSearch.toLowerCase();
+					return (
+						(sub.customTitle || sub.title).toLowerCase().includes(term) ||
+						sub.feedUrl.toLowerCase().includes(term)
+					);
+				})
+			: subscriptionsStore.subscriptions
+	);
+
+	// Filtered follows based on search
+	let filteredFollows = $derived(
+		accountSearch
+			? socialStore.inAppFollows.filter((follow) => {
+					const term = accountSearch.toLowerCase();
+					const displayName = getAccountDisplayName(follow).toLowerCase();
+					return displayName.includes(term) || follow.did.toLowerCase().includes(term);
+				})
+			: socialStore.inAppFollows
+	);
+
+	function setSourceMode(mode: 'all' | 'include' | 'exclude') {
+		feedViewStore.setToolbarSourceFilter(mode, mode === 'all' ? [] : [...ef.sourceKeys]);
 	}
 
-	function toggleFeedId(id: number) {
-		const ids = ef.feedIds.includes(id) ? ef.feedIds.filter((f) => f !== id) : [...ef.feedIds, id];
-		feedViewStore.setToolbarFeedFilter(ef.feedMode, ids);
-	}
-
-	function setAccountMode(mode: 'none' | 'all' | 'include' | 'exclude') {
-		feedViewStore.setToolbarAccountFilter(
-			mode,
-			mode === 'all' || mode === 'none' ? [] : [...ef.accountDids]
-		);
-	}
-
-	function toggleShares() {
-		feedViewStore.setToolbarAccountFilter(
-			ef.accountMode,
-			[...ef.accountDids],
-			!ef.showShares,
-			ef.showDocuments
-		);
-	}
-
-	function toggleDocuments() {
-		feedViewStore.setToolbarAccountFilter(
-			ef.accountMode,
-			[...ef.accountDids],
-			ef.showShares,
-			!ef.showDocuments
-		);
-	}
-
-	function toggleAccountDid(did: string) {
-		const dids = ef.accountDids.includes(did)
-			? ef.accountDids.filter((d) => d !== did)
-			: [...ef.accountDids, did];
-		feedViewStore.setToolbarAccountFilter(ef.accountMode, dids);
+	function toggleSourceKey(key: string) {
+		const keys = sourceKeySet.has(key)
+			? ef.sourceKeys.filter((k) => k !== key)
+			: [...ef.sourceKeys, key];
+		feedViewStore.setToolbarSourceFilter(ef.sourceMode, keys);
 	}
 
 	function handleClickOutside(e: MouseEvent) {
-		if (feedPopoverOpen && feedPopoverRef && !feedPopoverRef.contains(e.target as Node)) {
-			feedPopoverOpen = false;
-		}
-		if (accountPopoverOpen && accountPopoverRef && !accountPopoverRef.contains(e.target as Node)) {
-			accountPopoverOpen = false;
+		if (sourcePopoverOpen && sourcePopoverRef && !sourcePopoverRef.contains(e.target as Node)) {
+			sourcePopoverOpen = false;
 		}
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
-			feedPopoverOpen = false;
-			accountPopoverOpen = false;
+			sourcePopoverOpen = false;
 		}
 	}
 
@@ -129,21 +139,72 @@
 		document.removeEventListener('keydown', handleKeydown);
 	});
 
-	let feedFilterLabel = $derived.by(() => {
-		if (ef.feedMode === 'none') return 'Feeds (off)';
-		if (ef.feedMode === 'all') return 'Feeds';
-		const count = ef.feedIds.length;
-		if (ef.feedMode === 'include') return `Feeds (${count})`;
-		return `Feeds -${count}`;
+	let sourceFilterLabel = $derived.by(() => {
+		if (ef.sourceMode === 'all') return 'Sources';
+		const count = ef.sourceKeys.length;
+		if (ef.sourceMode === 'include') return `Sources (${count})`;
+		return `Sources -${count}`;
 	});
 
-	let accountFilterLabel = $derived.by(() => {
-		if (ef.accountMode === 'none') return 'Accounts (off)';
-		if (ef.accountMode === 'all') return 'Accounts';
-		const count = ef.accountDids.length;
-		if (ef.accountMode === 'include') return `Accounts (${count})`;
-		return `Accounts -${count}`;
-	});
+	// Svelte action: reposition popover to stay within viewport
+	function viewportAware(node: HTMLElement) {
+		const PADDING = 8;
+
+		function reposition() {
+			// Reset inline overrides so we measure from default CSS position
+			node.style.left = '';
+			node.style.right = '';
+			node.style.top = '';
+			node.style.bottom = '';
+			node.style.maxHeight = '';
+
+			const rect = node.getBoundingClientRect();
+			const vw = window.innerWidth;
+			const vh = window.innerHeight;
+
+			// Horizontal: if overflowing right, anchor to right edge of parent instead
+			if (rect.right > vw - PADDING) {
+				node.style.left = 'auto';
+				node.style.right = '0';
+			}
+			// If it still overflows left after flipping, pin to left edge of viewport
+			const rectAfter = node.getBoundingClientRect();
+			if (rectAfter.left < PADDING) {
+				node.style.left = '0';
+				node.style.right = 'auto';
+			}
+
+			// Vertical: constrain max-height so it doesn't overflow bottom
+			const topAfterH = node.getBoundingClientRect().top;
+			const availableBelow = vh - topAfterH - PADDING;
+			if (rect.height > availableBelow && availableBelow > 120) {
+				node.style.maxHeight = `${availableBelow}px`;
+			} else if (availableBelow < 120) {
+				// Not enough room below — flip above the trigger
+				node.style.top = 'auto';
+				node.style.bottom = 'calc(100% + 4px)';
+				// Constrain max-height above too
+				const parent = node.offsetParent as HTMLElement | null;
+				const parentRect = parent?.getBoundingClientRect();
+				const availableAbove = parentRect ? parentRect.top - PADDING : vh / 2;
+				if (rect.height > availableAbove) {
+					node.style.maxHeight = `${availableAbove}px`;
+				}
+			}
+		}
+
+		requestAnimationFrame(reposition);
+
+		window.addEventListener('resize', reposition);
+		window.addEventListener('scroll', reposition, true);
+
+		return {
+			destroy() {
+				window.removeEventListener('resize', reposition);
+				window.removeEventListener('scroll', reposition, true);
+			},
+		};
+	}
 </script>
 
 <div class="filter-toolbar" role="toolbar" aria-label="Filter controls">
@@ -181,83 +242,83 @@
 		</div>
 	</div>
 
-	{#if showFeedFilter || showAccountFilter}
+	{#if showSourceFilter}
 		<span class="toolbar-divider group-divider"></span>
 
-		<!-- Group 3: Feeds + Accounts dropdowns -->
+		<!-- Group 2: Sources dropdown -->
 		<div class="filter-group">
-			{#if showFeedFilter}
-				<div class="dropdown-wrapper" bind:this={feedPopoverRef}>
-					<button
-						class="filter-btn"
-						class:has-filter={ef.feedMode !== 'all'}
-						onclick={(e) => {
-							e.stopPropagation();
-							feedPopoverOpen = !feedPopoverOpen;
-							accountPopoverOpen = false;
-						}}
-					>
-						<span class="filter-label">{feedFilterLabel}</span>
-						<Icon name="chevron-down" size={12} />
-					</button>
+			<div class="dropdown-wrapper" bind:this={sourcePopoverRef}>
+				<button
+					class="filter-btn"
+					class:has-filter={ef.sourceMode !== 'all'}
+					onclick={(e) => {
+						e.stopPropagation();
+						sourcePopoverOpen = !sourcePopoverOpen;
+					}}
+				>
+					<span class="filter-label">{sourceFilterLabel}</span>
+					<Icon name="chevron-down" size={12} />
+				</button>
 
-					{#if feedPopoverOpen}
-						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-						<div class="popover" onclick={(e) => e.stopPropagation()}>
-							<div class="popover-section">
-								<label class="radio-label">
-									<input
-										type="radio"
-										name="feedMode"
-										value="none"
-										checked={ef.feedMode === 'none'}
-										onchange={() => setFeedMode('none')}
-									/>
-									None
-								</label>
-								<label class="radio-label">
-									<input
-										type="radio"
-										name="feedMode"
-										value="all"
-										checked={ef.feedMode === 'all'}
-										onchange={() => setFeedMode('all')}
-									/>
-									All feeds
-								</label>
-								<label class="radio-label">
-									<input
-										type="radio"
-										name="feedMode"
-										value="include"
-										checked={ef.feedMode === 'include'}
-										onchange={() => setFeedMode('include')}
-									/>
-									Include only
-								</label>
-								<label class="radio-label">
-									<input
-										type="radio"
-										name="feedMode"
-										value="exclude"
-										checked={ef.feedMode === 'exclude'}
-										onchange={() => setFeedMode('exclude')}
-									/>
-									Exclude
-								</label>
-							</div>
+				{#if sourcePopoverOpen}
+					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+					<div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
+						<div class="popover-section">
+							<label class="radio-label">
+								<input
+									type="radio"
+									name="sourceMode"
+									value="all"
+									checked={ef.sourceMode === 'all'}
+									onchange={() => setSourceMode('all')}
+								/>
+								All sources
+							</label>
+							<label class="radio-label">
+								<input
+									type="radio"
+									name="sourceMode"
+									value="include"
+									checked={ef.sourceMode === 'include'}
+									onchange={() => setSourceMode('include')}
+								/>
+								Include only
+							</label>
+							<label class="radio-label">
+								<input
+									type="radio"
+									name="sourceMode"
+									value="exclude"
+									checked={ef.sourceMode === 'exclude'}
+									onchange={() => setSourceMode('exclude')}
+								/>
+								Exclude
+							</label>
+						</div>
 
-							{#if ef.feedMode === 'include' || ef.feedMode === 'exclude'}
+						{#if ef.sourceMode === 'include' || ef.sourceMode === 'exclude'}
+							<!-- Feeds group -->
+							{#if subscriptionsStore.subscriptions.length > 0}
+								<div class="popover-group-header">Feeds</div>
+								<div class="popover-search">
+									<input
+										type="text"
+										placeholder="Search feeds..."
+										bind:value={feedSearch}
+										class="search-input"
+									/>
+								</div>
 								<div class="popover-list">
-									{#each subscriptionsStore.subscriptions as sub}
+									{#each filteredSubscriptions as sub}
 										{#if sub.id != null}
+											{@const key = rssSourceKey(sub.id)}
 											{@const iconUrl =
 												sub.customIconUrl || getFaviconUrl(sub.siteUrl || sub.feedUrl)}
 											<label class="check-label">
 												<input
 													type="checkbox"
-													checked={ef.feedIds.includes(sub.id)}
-													onchange={() => toggleFeedId(sub.id!)}
+													checked={sourceKeySet.has(key)}
+													onchange={() => toggleSourceKey(key)}
 												/>
 												{#if iconUrl}
 													<img src={iconUrl} alt="" class="check-icon" />
@@ -266,119 +327,55 @@
 											</label>
 										{/if}
 									{/each}
-								</div>
-							{/if}
-						</div>
-					{/if}
-				</div>
-			{/if}
-
-			{#if showAccountFilter}
-				<div class="dropdown-wrapper" bind:this={accountPopoverRef}>
-					<button
-						class="filter-btn"
-						class:has-filter={ef.accountMode !== 'all'}
-						onclick={(e) => {
-							e.stopPropagation();
-							accountPopoverOpen = !accountPopoverOpen;
-							feedPopoverOpen = false;
-						}}
-					>
-						<span class="filter-label">{accountFilterLabel}</span>
-						<Icon name="chevron-down" size={12} />
-					</button>
-
-					{#if accountPopoverOpen}
-						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-						<div class="popover" onclick={(e) => e.stopPropagation()}>
-							<div class="popover-section">
-								<label class="radio-label">
-									<input
-										type="radio"
-										name="accountMode"
-										value="none"
-										checked={ef.accountMode === 'none'}
-										onchange={() => setAccountMode('none')}
-									/>
-									None
-								</label>
-								<label class="radio-label">
-									<input
-										type="radio"
-										name="accountMode"
-										value="all"
-										checked={ef.accountMode === 'all'}
-										onchange={() => setAccountMode('all')}
-									/>
-									All accounts
-								</label>
-								<label class="radio-label">
-									<input
-										type="radio"
-										name="accountMode"
-										value="include"
-										checked={ef.accountMode === 'include'}
-										onchange={() => setAccountMode('include')}
-									/>
-									Include only
-								</label>
-								<label class="radio-label">
-									<input
-										type="radio"
-										name="accountMode"
-										value="exclude"
-										checked={ef.accountMode === 'exclude'}
-										onchange={() => setAccountMode('exclude')}
-									/>
-									Exclude
-								</label>
-							</div>
-
-							{#if ef.accountMode !== 'none'}
-								<div class="popover-section">
-									<label class="check-label">
-										<input
-											type="checkbox"
-											checked={ef.showShares}
-											onchange={() => toggleShares()}
-										/>
-										<span class="check-text">Shares</span>
-									</label>
-									<label class="check-label">
-										<input
-											type="checkbox"
-											checked={ef.showDocuments}
-											onchange={() => toggleDocuments()}
-										/>
-										<span class="check-text">Articles</span>
-									</label>
+									{#if feedSearch && filteredSubscriptions.length === 0}
+										<div class="no-results">No feeds match</div>
+									{/if}
 								</div>
 							{/if}
 
-							{#if ef.accountMode === 'include' || ef.accountMode === 'exclude'}
-								<div class="popover-list">
-									{#each socialStore.inAppFollows as follow}
-										{@const avatarUrl = getAccountAvatarUrl(follow)}
-										<label class="check-label">
-											<input
-												type="checkbox"
-												checked={ef.accountDids.includes(follow.did)}
-												onchange={() => toggleAccountDid(follow.did)}
-											/>
-											{#if avatarUrl}
-												<img src={avatarUrl} alt="" class="check-avatar" />
-											{:else}
-												<div class="check-avatar-placeholder"></div>
-											{/if}
-											<span class="check-text">{getAccountDisplayName(follow)}</span>
-										</label>
-									{/each}
+							<!-- Account groups -->
+							{#if socialStore.inAppFollows.length > 0}
+								<div class="popover-group-header">Accounts</div>
+								<div class="popover-search">
+									<input
+										type="text"
+										placeholder="Search accounts..."
+										bind:value={accountSearch}
+										class="search-input"
+									/>
 								</div>
+								{#each filteredFollows as follow}
+									{@const avatarUrl = getAccountAvatarUrl(follow)}
+									<div class="popover-group-header account-group-header">
+										{#if avatarUrl}
+											<img src={avatarUrl} alt="" class="group-avatar" />
+										{:else}
+											<div class="group-avatar-placeholder"></div>
+										{/if}
+										{getAccountDisplayName(follow)}
+									</div>
+									<div class="popover-list account-kind-list">
+										{#each ACCOUNT_SOURCE_KINDS as { kind, label, keyFn }}
+											{@const key = keyFn(follow.did)}
+											<label class="check-label">
+												<input
+													type="checkbox"
+													checked={sourceKeySet.has(key)}
+													onchange={() => toggleSourceKey(key)}
+												/>
+												<span class="check-text">{label}</span>
+											</label>
+										{/each}
+									</div>
+								{/each}
+								{#if accountSearch && filteredFollows.length === 0}
+									<div class="no-results">No accounts match</div>
+								{/if}
 							{/if}
-						</div>
-					{/if}
-				</div>
-			{/if}
+						{/if}
+					</div>
+				{/if}
+			</div>
 		</div>
 	{/if}
 </div>
@@ -485,6 +482,8 @@
 		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
 		z-index: 100;
 		overflow: hidden;
+		max-height: 400px;
+		overflow-y: auto;
 	}
 
 	.popover-section {
@@ -493,6 +492,41 @@
 		flex-direction: column;
 		gap: 0.25rem;
 		border-bottom: 1px solid var(--color-border);
+	}
+
+	.popover-group-header {
+		padding: 0.375rem 0.5rem 0.125rem;
+		font-size: 0.6875rem;
+		font-weight: 600;
+		color: var(--color-text-secondary);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		border-top: 1px solid var(--color-border);
+	}
+
+	.account-group-header {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		text-transform: none;
+		font-size: 0.75rem;
+		letter-spacing: normal;
+	}
+
+	.group-avatar {
+		width: 16px;
+		height: 16px;
+		flex-shrink: 0;
+		border-radius: 50%;
+		object-fit: cover;
+	}
+
+	.group-avatar-placeholder {
+		width: 16px;
+		height: 16px;
+		flex-shrink: 0;
+		border-radius: 50%;
+		background: var(--color-border, #e0e0e0);
 	}
 
 	.radio-label,
@@ -524,20 +558,35 @@
 		border-radius: 2px;
 	}
 
-	.check-avatar {
-		width: 18px;
-		height: 18px;
-		flex-shrink: 0;
-		border-radius: 50%;
-		object-fit: cover;
+	.popover-search {
+		padding: 0.375rem 0.5rem;
 	}
 
-	.check-avatar-placeholder {
-		width: 18px;
-		height: 18px;
-		flex-shrink: 0;
-		border-radius: 50%;
-		background: var(--color-border, #e0e0e0);
+	.search-input {
+		width: 100%;
+		padding: 0.3rem 0.5rem;
+		border: 1px solid var(--color-border, #e0e0e0);
+		border-radius: 4px;
+		font-size: 0.75rem;
+		background: var(--color-bg, #fff);
+		color: var(--color-text);
+		outline: none;
+		box-sizing: border-box;
+	}
+
+	.search-input:focus {
+		border-color: var(--color-primary, #2563eb);
+	}
+
+	.search-input::placeholder {
+		color: var(--color-text-secondary, #999);
+	}
+
+	.no-results {
+		padding: 0.375rem 0.5rem;
+		font-size: 0.75rem;
+		color: var(--color-text-secondary, #999);
+		text-align: center;
 	}
 
 	.popover-list {
@@ -547,6 +596,11 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.125rem;
+	}
+
+	.account-kind-list {
+		max-height: none;
+		padding: 0.25rem 0.375rem 0.25rem 1.5rem;
 	}
 
 	/* Tablet: hide labels, keep horizontal */

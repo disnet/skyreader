@@ -482,13 +482,17 @@ export type CombinedFeedItem =
 export interface FilteredView {
 	id?: number;
 	name: string;
-	showArticles: boolean;
-	showShares: boolean;
-	showDocuments: boolean;
-	feedMode: 'none' | 'all' | 'include' | 'exclude';
-	feedIds: number[];
-	accountMode: 'none' | 'all' | 'include' | 'exclude';
-	accountDids: string[];
+	// Unified source filter (new format)
+	sourceMode?: 'all' | 'include' | 'exclude';
+	sourceKeys?: string[];
+	// Legacy fields (kept for backward compat with existing IndexedDB records)
+	showArticles?: boolean;
+	showShares?: boolean;
+	showDocuments?: boolean;
+	feedMode?: 'none' | 'all' | 'include' | 'exclude';
+	feedIds?: number[];
+	accountMode?: 'none' | 'all' | 'include' | 'exclude';
+	accountDids?: string[];
 	readFilter: 'all' | 'unread' | 'read';
 	sortOrder: 'newest' | 'oldest';
 	createdAt: number;

@@ -4,7 +4,15 @@
 	import { socialStore } from '$lib/stores/social.svelte';
 	import { profileService } from '$lib/services/profiles';
 	import Modal from '$lib/components/common/Modal.svelte';
-	import type { FilteredView, BlueskyProfile } from '$lib/types';
+	import type { BlueskyProfile } from '$lib/types';
+	import {
+		rssSourceKey,
+		sharesSourceKey,
+		documentsSourceKey,
+		ACCOUNT_SOURCE_KINDS,
+		migrateLegacyView,
+	} from '$lib/utils/sourceKeys';
+	import { getFaviconUrl } from '$lib/utils/favicon';
 
 	interface Props {
 		open: boolean;
@@ -16,16 +24,16 @@
 
 	// Form state
 	let name = $state('');
-	let showShares = $state(true);
-	let showDocuments = $state(true);
-	let feedMode = $state<'none' | 'all' | 'include' | 'exclude'>('all');
-	let feedIds = $state<Set<number>>(new Set());
-	let accountMode = $state<'none' | 'all' | 'include' | 'exclude'>('all');
-	let accountDids = $state<Set<string>>(new Set());
+	let sourceMode = $state<'all' | 'include' | 'exclude'>('all');
+	let sourceKeys = $state<Set<string>>(new Set());
 	let readFilter = $state<'all' | 'unread' | 'read'>('all');
 	let sortOrder = $state<'newest' | 'oldest'>('newest');
 	let saving = $state(false);
 	let error = $state<string | null>(null);
+
+	// Search state for filtering source lists
+	let feedSearch = $state('');
+	let accountSearch = $state('');
 
 	// Account profiles for display
 	let accountProfiles = $state<Map<string, BlueskyProfile>>(new Map());
@@ -45,6 +53,36 @@
 		}
 	});
 
+	function getModalAccountDisplayName(did: string): string {
+		const profile = accountProfiles.get(did);
+		if (profile) return profile.displayName || profile.handle;
+		return did;
+	}
+
+	// Filtered subscriptions based on search
+	let filteredSubscriptions = $derived(
+		feedSearch
+			? subscriptionsStore.subscriptions.filter((sub) => {
+					const term = feedSearch.toLowerCase();
+					return (
+						(sub.customTitle || sub.title).toLowerCase().includes(term) ||
+						sub.feedUrl.toLowerCase().includes(term)
+					);
+				})
+			: subscriptionsStore.subscriptions
+	);
+
+	// Filtered follows based on search
+	let filteredFollows = $derived(
+		accountSearch
+			? socialStore.inAppFollows.filter((follow) => {
+					const term = accountSearch.toLowerCase();
+					const displayName = getModalAccountDisplayName(follow.did).toLowerCase();
+					return displayName.includes(term) || follow.did.toLowerCase().includes(term);
+				})
+			: socialStore.inAppFollows
+	);
+
 	// Reset form when modal opens or editingViewId changes
 	$effect(() => {
 		if (open) {
@@ -52,31 +90,48 @@
 				const view = filteredViewsStore.getById(editingViewId);
 				if (view) {
 					name = view.name;
-					showShares = view.showShares;
-					showDocuments = view.showDocuments;
-					// Backward compat: old views may lack 'none' mode
-					feedMode = view.feedMode !== 'none' && !view.showArticles ? 'none' : view.feedMode;
-					feedIds = new Set(view.feedIds);
-					accountMode =
-						view.accountMode !== 'none' && !view.showShares && !view.showDocuments
-							? 'none'
-							: view.accountMode;
-					accountDids = new Set(view.accountDids);
 					readFilter = view.readFilter;
 					sortOrder = view.sortOrder;
+
+					if (view.sourceMode != null) {
+						// New format
+						sourceMode = view.sourceMode;
+						sourceKeys = new Set(view.sourceKeys ?? []);
+					} else {
+						// Legacy format — migrate
+						const allSubIds = subscriptionsStore.subscriptions
+							.map((s) => s.id)
+							.filter((id): id is number => id != null);
+						const allDids = socialStore.inAppFollows.map((f) => f.did);
+						const migrated = migrateLegacyView(
+							{
+								showArticles: view.showArticles,
+								showShares: view.showShares,
+								showDocuments: view.showDocuments,
+								feedMode: view.feedMode,
+								feedIds: view.feedIds,
+								accountMode: view.accountMode,
+								accountDids: view.accountDids,
+							},
+							allSubIds,
+							allDids
+						);
+						sourceMode = migrated.sourceMode;
+						sourceKeys = new Set(migrated.sourceKeys);
+					}
+					feedSearch = '';
+					accountSearch = '';
 					return;
 				}
 			}
 			// New view defaults
 			name = '';
-			showShares = true;
-			showDocuments = true;
-			feedMode = 'all';
-			feedIds = new Set();
-			accountMode = 'all';
-			accountDids = new Set();
+			sourceMode = 'all';
+			sourceKeys = new Set();
 			readFilter = 'all';
 			sortOrder = 'newest';
+			feedSearch = '';
+			accountSearch = '';
 		}
 	});
 
@@ -86,24 +141,14 @@
 		onclose();
 	}
 
-	function toggleFeedId(id: number) {
-		const next = new Set(feedIds);
-		if (next.has(id)) {
-			next.delete(id);
+	function toggleSourceKey(key: string) {
+		const next = new Set(sourceKeys);
+		if (next.has(key)) {
+			next.delete(key);
 		} else {
-			next.add(id);
+			next.add(key);
 		}
-		feedIds = next;
-	}
-
-	function toggleAccountDid(did: string) {
-		const next = new Set(accountDids);
-		if (next.has(did)) {
-			next.delete(did);
-		} else {
-			next.add(did);
-		}
-		accountDids = next;
+		sourceKeys = next;
 	}
 
 	async function handleSave() {
@@ -118,13 +163,8 @@
 		try {
 			const viewData = {
 				name: name.trim(),
-				showArticles: feedMode !== 'none',
-				showShares: accountMode !== 'none' ? showShares : false,
-				showDocuments: accountMode !== 'none' ? showDocuments : false,
-				feedMode,
-				feedIds: Array.from(feedIds),
-				accountMode,
-				accountDids: Array.from(accountDids),
+				sourceMode,
+				sourceKeys: Array.from(sourceKeys),
 				readFilter,
 				sortOrder,
 			};
@@ -158,98 +198,99 @@
 			<input id="view-name" type="text" bind:value={name} placeholder="My view" required />
 		</div>
 
-		<!-- Feeds -->
+		<!-- Sources -->
 		<div class="form-group">
-			<span class="form-label">Feeds</span>
+			<span class="form-label">Sources</span>
 			<div class="radio-group">
 				<label class="radio-label">
-					<input type="radio" bind:group={feedMode} value="none" />
-					None
+					<input type="radio" bind:group={sourceMode} value="all" />
+					All sources
 				</label>
 				<label class="radio-label">
-					<input type="radio" bind:group={feedMode} value="all" />
-					All feeds
-				</label>
-				<label class="radio-label">
-					<input type="radio" bind:group={feedMode} value="include" />
+					<input type="radio" bind:group={sourceMode} value="include" />
 					Include only
 				</label>
 				<label class="radio-label">
-					<input type="radio" bind:group={feedMode} value="exclude" />
+					<input type="radio" bind:group={sourceMode} value="exclude" />
 					Exclude
 				</label>
 			</div>
-			{#if feedMode === 'include' || feedMode === 'exclude'}
-				<div class="checklist">
-					{#each subscriptionsStore.subscriptions as sub (sub.id)}
-						{#if sub.id != null}
-							<label class="checklist-item">
-								<input
-									type="checkbox"
-									checked={feedIds.has(sub.id)}
-									onchange={() => toggleFeedId(sub.id!)}
-								/>
-								<span class="checklist-label">{sub.customTitle || sub.title}</span>
-							</label>
-						{/if}
-					{/each}
-				</div>
-			{/if}
-		</div>
 
-		<!-- Accounts -->
-		<div class="form-group">
-			<span class="form-label">Accounts</span>
-			<div class="radio-group">
-				<label class="radio-label">
-					<input type="radio" bind:group={accountMode} value="none" />
-					None
-				</label>
-				<label class="radio-label">
-					<input type="radio" bind:group={accountMode} value="all" />
-					All accounts
-				</label>
-				<label class="radio-label">
-					<input type="radio" bind:group={accountMode} value="include" />
-					Include only
-				</label>
-				<label class="radio-label">
-					<input type="radio" bind:group={accountMode} value="exclude" />
-					Exclude
-				</label>
-			</div>
-			{#if accountMode !== 'none'}
-				<div class="checkbox-group" style="margin-top: 0.25rem;">
-					<label class="checkbox-label">
-						<input type="checkbox" bind:checked={showShares} />
-						Shares
-					</label>
-					<label class="checkbox-label">
-						<input type="checkbox" bind:checked={showDocuments} />
-						Articles
-					</label>
-				</div>
-			{/if}
-			{#if accountMode === 'include' || accountMode === 'exclude'}
-				<div class="checklist">
-					{#each socialStore.inAppFollows as follow (follow.did)}
+			{#if sourceMode === 'include' || sourceMode === 'exclude'}
+				<!-- Feeds -->
+				{#if subscriptionsStore.subscriptions.length > 0}
+					<div class="source-group-header">Feeds</div>
+					<input
+						type="text"
+						placeholder="Search feeds..."
+						bind:value={feedSearch}
+						class="search-input"
+					/>
+					<div class="checklist">
+						{#each filteredSubscriptions as sub (sub.id)}
+							{#if sub.id != null}
+								{@const key = rssSourceKey(sub.id)}
+								{@const iconUrl = sub.customIconUrl || getFaviconUrl(sub.siteUrl || sub.feedUrl)}
+								<label class="checklist-item">
+									<input
+										type="checkbox"
+										checked={sourceKeys.has(key)}
+										onchange={() => toggleSourceKey(key)}
+									/>
+									{#if iconUrl}
+										<img src={iconUrl} alt="" class="checklist-icon" />
+									{/if}
+									<span class="checklist-label">{sub.customTitle || sub.title}</span>
+								</label>
+							{/if}
+						{/each}
+						{#if feedSearch && filteredSubscriptions.length === 0}
+							<div class="no-results">No feeds match</div>
+						{/if}
+					</div>
+				{/if}
+
+				<!-- Account groups -->
+				{#if socialStore.inAppFollows.length > 0}
+					<div class="source-group-header">Accounts</div>
+					<input
+						type="text"
+						placeholder="Search accounts..."
+						bind:value={accountSearch}
+						class="search-input"
+					/>
+					{#each filteredFollows as follow (follow.did)}
 						{@const profile = accountProfiles.get(follow.did)}
-						<label class="checklist-item">
-							<input
-								type="checkbox"
-								checked={accountDids.has(follow.did)}
-								onchange={() => toggleAccountDid(follow.did)}
-							/>
-							<span class="checklist-label">
-								{#if profile}
-									{profile.displayName || profile.handle}
-								{:else}
-									{follow.did.slice(0, 20)}...
-								{/if}
-							</span>
-						</label>
+						<div class="source-group-header account-header">
+							{#if profile?.avatar}
+								<img src={profile.avatar} alt="" class="header-avatar" />
+							{:else}
+								<div class="header-avatar-placeholder"></div>
+							{/if}
+							{#if profile}
+								{profile.displayName || profile.handle}
+							{:else}
+								{follow.did.slice(0, 20)}...
+							{/if}
+						</div>
+						<div class="checklist account-kind-checklist">
+							{#each ACCOUNT_SOURCE_KINDS as { kind, label, keyFn }}
+								{@const key = keyFn(follow.did)}
+								<label class="checklist-item">
+									<input
+										type="checkbox"
+										checked={sourceKeys.has(key)}
+										onchange={() => toggleSourceKey(key)}
+									/>
+									<span class="checklist-label">{label}</span>
+								</label>
+							{/each}
+						</div>
 					{/each}
-				</div>
+					{#if accountSearch && filteredFollows.length === 0}
+						<div class="no-results">No accounts match</div>
+					{/if}
+				{/if}
 			{/if}
 		</div>
 
@@ -343,14 +384,12 @@
 		box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1);
 	}
 
-	.checkbox-group,
 	.radio-group {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.75rem;
 	}
 
-	.checkbox-label,
 	.radio-label {
 		display: flex;
 		align-items: center;
@@ -359,6 +398,67 @@
 		font-weight: 400;
 		color: var(--color-text);
 		cursor: pointer;
+	}
+
+	.source-group-header {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--color-text-secondary);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		margin-top: 0.5rem;
+	}
+
+	.account-header {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		text-transform: none;
+		letter-spacing: normal;
+	}
+
+	.header-avatar {
+		width: 16px;
+		height: 16px;
+		flex-shrink: 0;
+		border-radius: 50%;
+		object-fit: cover;
+	}
+
+	.header-avatar-placeholder {
+		width: 16px;
+		height: 16px;
+		flex-shrink: 0;
+		border-radius: 50%;
+		background: var(--color-border, #e0e0e0);
+	}
+
+	.search-input {
+		width: 100%;
+		padding: 0.375rem 0.5rem;
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		font-size: 0.8125rem;
+		background: var(--color-bg);
+		color: var(--color-text);
+		outline: none;
+		margin-top: 0.25rem;
+		box-sizing: border-box;
+	}
+
+	.search-input:focus {
+		border-color: var(--color-primary);
+	}
+
+	.search-input::placeholder {
+		color: var(--color-text-secondary, #999);
+	}
+
+	.no-results {
+		padding: 0.375rem;
+		font-size: 0.8125rem;
+		color: var(--color-text-secondary, #999);
+		text-align: center;
 	}
 
 	.checklist {
@@ -373,6 +473,11 @@
 		gap: 0.25rem;
 	}
 
+	.account-kind-checklist {
+		max-height: none;
+		padding-left: 1.5rem;
+	}
+
 	.checklist-item {
 		display: flex;
 		align-items: center;
@@ -385,6 +490,13 @@
 
 	.checklist-item:hover {
 		background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+	}
+
+	.checklist-icon {
+		width: 16px;
+		height: 16px;
+		flex-shrink: 0;
+		border-radius: 2px;
 	}
 
 	.checklist-label {

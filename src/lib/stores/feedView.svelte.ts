@@ -8,6 +8,17 @@ import { socialStore } from './social.svelte';
 import { preferences } from './preferences.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
 import type { Article, SocialShare, SocialDocument, CombinedFeedItem, UserShare } from '$lib/types';
+import {
+	isRssSource,
+	isSharesSource,
+	isDocumentsSource,
+	getRssSubscriptionId,
+	getSourceDid,
+	rssSourceKey,
+	sharesSourceKey,
+	documentsSourceKey,
+	migrateLegacyView,
+} from '$lib/utils/sourceKeys';
 
 export type ViewMode = 'articles' | 'shares' | 'userShares' | 'combined';
 
@@ -23,15 +34,74 @@ export type FeedDisplayItem =
 const DEFAULT_PAGE_SIZE = 50;
 
 export interface EffectiveFilters {
-	showArticles: boolean;
-	showShares: boolean;
-	showDocuments: boolean;
-	feedMode: 'none' | 'all' | 'include' | 'exclude';
-	feedIds: number[];
-	accountMode: 'none' | 'all' | 'include' | 'exclude';
-	accountDids: string[];
+	sourceMode: 'all' | 'include' | 'exclude';
+	sourceKeys: string[];
 	readFilter: 'all' | 'unread' | 'read';
 	sortOrder: 'newest' | 'oldest';
+}
+
+/**
+ * Derive allowed RSS subscription IDs from effective filters.
+ * Returns null if all RSS sources are allowed.
+ */
+function deriveAllowedRssIds(
+	fv: EffectiveFilters,
+	subscriptions: { id?: number }[]
+): Set<number> | null {
+	if (fv.sourceMode === 'all') return null;
+
+	if (fv.sourceMode === 'include') {
+		const ids = new Set<number>();
+		for (const key of fv.sourceKeys) {
+			if (isRssSource(key)) ids.add(getRssSubscriptionId(key));
+		}
+		return ids;
+	}
+
+	// exclude mode
+	const excludedIds = new Set<number>();
+	for (const key of fv.sourceKeys) {
+		if (isRssSource(key)) excludedIds.add(getRssSubscriptionId(key));
+	}
+	if (excludedIds.size === 0) return null;
+	const ids = new Set<number>();
+	for (const sub of subscriptions) {
+		if (sub.id != null && !excludedIds.has(sub.id)) ids.add(sub.id);
+	}
+	return ids;
+}
+
+/**
+ * Derive allowed DIDs for a given account source kind.
+ * Returns null if all DIDs are allowed for that kind.
+ */
+function deriveAllowedDids(
+	fv: EffectiveFilters,
+	kindTest: (key: string) => boolean,
+	allFollowDids: string[]
+): Set<string> | null {
+	if (fv.sourceMode === 'all') return null;
+
+	if (fv.sourceMode === 'include') {
+		const dids = new Set<string>();
+		for (const key of fv.sourceKeys) {
+			if (kindTest(key)) dids.add(getSourceDid(key));
+		}
+		// If no keys of this kind are included, return empty set (nothing allowed)
+		return dids;
+	}
+
+	// exclude mode
+	const excludedDids = new Set<string>();
+	for (const key of fv.sourceKeys) {
+		if (kindTest(key)) excludedDids.add(getSourceDid(key));
+	}
+	if (excludedDids.size === 0) return null;
+	const dids = new Set<string>();
+	for (const did of allFollowDids) {
+		if (!excludedDids.has(did)) dids.add(did);
+	}
+	return dids;
 }
 
 /**
@@ -47,14 +117,10 @@ function createFeedViewStore() {
 	let expandedIndex = $state(-1);
 	let loadedArticleCount = $state(DEFAULT_PAGE_SIZE);
 
-	// Toolbar filter state
+	// Toolbar filter state (unified source model)
 	let filterToolbarOpen = $state(false);
-	let toolbarShowShares = $state(true);
-	let toolbarShowDocuments = $state(true);
-	let toolbarFeedMode = $state<'none' | 'all' | 'include' | 'exclude'>('all');
-	let toolbarFeedIds = $state<number[]>([]);
-	let toolbarAccountMode = $state<'none' | 'all' | 'include' | 'exclude'>('all');
-	let toolbarAccountDids = $state<string[]>([]);
+	let toolbarSourceMode = $state<'all' | 'include' | 'exclude'>('all');
+	let toolbarSourceKeys = $state<string[]>([]);
 
 	// URL filters (set by component from $page store)
 	let feedFilter = $state<string | null>(null);
@@ -72,39 +138,60 @@ function createFeedViewStore() {
 		return filteredViewsStore.getById(parseInt(viewFilter)) ?? null;
 	});
 
+	// Helper to get current subscription IDs and follow DIDs for migration
+	function getAllSubIds(): number[] {
+		return subscriptionsStore.subscriptions
+			.map((s) => s.id)
+			.filter((id): id is number => id != null);
+	}
+
+	function getAllFollowDids(): string[] {
+		return socialStore.inAppFollows.map((f) => f.did);
+	}
+
 	// Derived: effective filters (prefer activeFilteredView for reactivity + persistence)
 	let effectiveFilters = $derived.by((): EffectiveFilters => {
 		if (activeFilteredView) {
-			// Backward compat: derive modes from legacy showArticles/showShares/showDocuments
-			let fMode = activeFilteredView.feedMode;
-			let aMode = activeFilteredView.accountMode;
-			if (fMode !== 'none' && !activeFilteredView.showArticles) fMode = 'none';
-			if (aMode !== 'none' && !activeFilteredView.showShares && !activeFilteredView.showDocuments)
-				aMode = 'none';
+			if (activeFilteredView.sourceMode != null) {
+				// New format — use directly
+				return {
+					sourceMode: activeFilteredView.sourceMode,
+					sourceKeys: activeFilteredView.sourceKeys ?? [],
+					readFilter: activeFilteredView.readFilter,
+					sortOrder: activeFilteredView.sortOrder,
+				};
+			}
+			// Legacy format — migrate at read time
+			const migrated = migrateLegacyView(
+				{
+					showArticles: activeFilteredView.showArticles,
+					showShares: activeFilteredView.showShares,
+					showDocuments: activeFilteredView.showDocuments,
+					feedMode: activeFilteredView.feedMode,
+					feedIds: activeFilteredView.feedIds,
+					accountMode: activeFilteredView.accountMode,
+					accountDids: activeFilteredView.accountDids,
+				},
+				getAllSubIds(),
+				getAllFollowDids()
+			);
+			// Fire-and-forget write-back of migrated data
+			if (activeFilteredView.id != null) {
+				filteredViewsStore.update(activeFilteredView.id, {
+					sourceMode: migrated.sourceMode,
+					sourceKeys: migrated.sourceKeys,
+				});
+			}
 			return {
-				showArticles: fMode !== 'none',
-				showShares: aMode !== 'none' && activeFilteredView.showShares,
-				showDocuments: aMode !== 'none' && activeFilteredView.showDocuments,
-				feedMode: fMode,
-				feedIds: activeFilteredView.feedIds,
-				accountMode: aMode,
-				accountDids: activeFilteredView.accountDids,
+				...migrated,
 				readFilter: activeFilteredView.readFilter,
 				sortOrder: activeFilteredView.sortOrder,
 			};
 		}
-		// Read all toolbar state unconditionally to ensure consistent reactive tracking
-		const shares = toolbarShowShares;
-		const docs = toolbarShowDocuments;
-		const accountMode = toolbarAccountMode;
+		// Read toolbar state
 		return {
-			showArticles: toolbarFeedMode !== 'none',
-			showShares: accountMode !== 'none' && shares,
-			showDocuments: accountMode !== 'none' && docs,
-			feedMode: toolbarFeedMode,
-			feedIds: toolbarFeedIds,
-			accountMode,
-			accountDids: toolbarAccountDids,
+			sourceMode: toolbarSourceMode,
+			sourceKeys: toolbarSourceKeys,
 			readFilter: showOnlyUnread ? 'unread' : 'all',
 			sortOrder: preferences.sortOrder,
 		};
@@ -113,12 +200,7 @@ function createFeedViewStore() {
 	// Derived: whether any toolbar filter differs from defaults
 	let hasActiveFilters = $derived.by(() => {
 		if (activeFilteredView) return true;
-		return (
-			toolbarFeedMode !== 'all' ||
-			toolbarAccountMode !== 'all' ||
-			!toolbarShowShares ||
-			!toolbarShowDocuments
-		);
+		return toolbarSourceMode !== 'all';
 	});
 
 	// Derived: view mode
@@ -136,12 +218,47 @@ function createFeedViewStore() {
 	let readShareUrisThisSession = $state<Set<string>>(new Set());
 	let readDocumentUrisThisSession = $state<Set<string>>(new Set());
 
+	// Derived: whether articles are shown (any RSS source allowed)
+	let showArticles = $derived.by((): boolean => {
+		const fv = effectiveFilters;
+		if (fv.sourceMode === 'all') return true;
+		if (fv.sourceMode === 'include') {
+			return fv.sourceKeys.some(isRssSource);
+		}
+		// exclude: articles shown unless ALL subscriptions excluded
+		const excludedRssCount = fv.sourceKeys.filter(isRssSource).length;
+		return excludedRssCount < subscriptionsStore.subscriptions.length;
+	});
+
+	// Derived: whether shares are shown (any shares source allowed)
+	let showShares = $derived.by((): boolean => {
+		const fv = effectiveFilters;
+		if (fv.sourceMode === 'all') return true;
+		if (fv.sourceMode === 'include') {
+			return fv.sourceKeys.some(isSharesSource);
+		}
+		// exclude: shown unless ALL share sources excluded
+		const excludedShareCount = fv.sourceKeys.filter(isSharesSource).length;
+		return excludedShareCount < socialStore.inAppFollows.length;
+	});
+
+	// Derived: whether documents are shown (any documents source allowed)
+	let showDocuments = $derived.by((): boolean => {
+		const fv = effectiveFilters;
+		if (fv.sourceMode === 'all') return true;
+		if (fv.sourceMode === 'include') {
+			return fv.sourceKeys.some(isDocumentsSource);
+		}
+		const excludedDocCount = fv.sourceKeys.filter(isDocumentsSource).length;
+		return excludedDocCount < socialStore.inAppFollows.length;
+	});
+
 	// Derived: filtered articles based on current filters
 	let filteredArticles = $derived.by((): Article[] => {
 		const fv = effectiveFilters;
 
-		// If articles are disabled, return empty
-		if (!fv.showArticles) return [];
+		// If no articles are allowed by source filter, return empty
+		if (!showArticles) return [];
 
 		// Access articlesStore version for reactivity
 		const allArticles = articlesStore.allArticles;
@@ -156,19 +273,16 @@ function createFeedViewStore() {
 		} else {
 			articles = allArticles;
 
-			// Filter by subscription
+			// Filter by subscription (URL filter)
 			if (feedFilter) {
 				const feedId = parseInt(feedFilter);
 				articles = articles.filter((a) => a.subscriptionId === feedId);
 			}
 
-			// Apply feed inclusion/exclusion
-			if (fv.feedMode === 'include') {
-				const feedIdSet = new Set(fv.feedIds);
-				articles = articles.filter((a) => feedIdSet.has(a.subscriptionId));
-			} else if (fv.feedMode === 'exclude' && fv.feedIds.length > 0) {
-				const feedIdSet = new Set(fv.feedIds);
-				articles = articles.filter((a) => !feedIdSet.has(a.subscriptionId));
+			// Apply source-based RSS filtering
+			const allowedIds = deriveAllowedRssIds(fv, subscriptionsStore.subscriptions);
+			if (allowedIds !== null) {
+				articles = articles.filter((a) => allowedIds.has(a.subscriptionId));
 			}
 
 			// Apply read filter
@@ -204,8 +318,8 @@ function createFeedViewStore() {
 	let displayedShares = $derived.by((): SocialShare[] => {
 		const fv = effectiveFilters;
 
-		// If shares are disabled, return empty
-		if (!fv.showShares) return [];
+		// If shares are not shown by source filter, return empty
+		if (!showShares) return [];
 
 		// Return empty if contentTypeFilter is 'documents'
 		if (contentTypeFilter === 'documents') return [];
@@ -220,13 +334,10 @@ function createFeedViewStore() {
 			filtered = [...shares];
 		}
 
-		// Apply account inclusion/exclusion
-		if (fv.accountMode === 'include') {
-			const didSet = new Set(fv.accountDids);
-			filtered = filtered.filter((s) => didSet.has(s.authorDid));
-		} else if (fv.accountMode === 'exclude' && fv.accountDids.length > 0) {
-			const didSet = new Set(fv.accountDids);
-			filtered = filtered.filter((s) => !didSet.has(s.authorDid));
+		// Apply source-based DID filtering for shares
+		const allowedDids = deriveAllowedDids(fv, isSharesSource, getAllFollowDids());
+		if (allowedDids !== null) {
+			filtered = filtered.filter((s) => allowedDids.has(s.authorDid));
 		}
 
 		// Apply read filter
@@ -265,8 +376,8 @@ function createFeedViewStore() {
 	let displayedDocuments = $derived.by((): SocialDocument[] => {
 		const fv = effectiveFilters;
 
-		// If documents are disabled, return empty
-		if (!fv.showDocuments) return [];
+		// If documents are not shown by source filter, return empty
+		if (!showDocuments) return [];
 
 		// Return empty if contentTypeFilter is 'shares'
 		if (contentTypeFilter === 'shares') return [];
@@ -281,13 +392,10 @@ function createFeedViewStore() {
 			filtered = filtered.filter((d) => d.authorDid === sharerFilter);
 		}
 
-		// Apply account inclusion/exclusion
-		if (fv.accountMode === 'include') {
-			const didSet = new Set(fv.accountDids);
-			filtered = filtered.filter((d) => didSet.has(d.authorDid));
-		} else if (fv.accountMode === 'exclude' && fv.accountDids.length > 0) {
-			const didSet = new Set(fv.accountDids);
-			filtered = filtered.filter((d) => !didSet.has(d.authorDid));
+		// Apply source-based DID filtering for documents
+		const allowedDids = deriveAllowedDids(fv, isDocumentsSource, getAllFollowDids());
+		if (allowedDids !== null) {
+			filtered = filtered.filter((d) => allowedDids.has(d.authorDid));
 		}
 
 		// Apply read filter
@@ -563,25 +671,16 @@ function createFeedViewStore() {
 		const fv = filteredViewsStore.getById(id);
 		if (!fv) return;
 		filteredViewsStore.update(id, {
-			showArticles: toolbarFeedMode !== 'none',
-			showShares: toolbarShowShares,
-			showDocuments: toolbarShowDocuments,
-			feedMode: toolbarFeedMode,
-			feedIds: [...toolbarFeedIds],
-			accountMode: toolbarAccountMode,
-			accountDids: [...toolbarAccountDids],
+			sourceMode: toolbarSourceMode,
+			sourceKeys: [...toolbarSourceKeys],
 			readFilter: showOnlyUnread ? 'unread' : 'all',
 			sortOrder: preferences.sortOrder,
 		});
 	}
 
 	function resetToolbarFilters() {
-		toolbarShowShares = true;
-		toolbarShowDocuments = true;
-		toolbarFeedMode = 'all';
-		toolbarFeedIds = [];
-		toolbarAccountMode = 'all';
-		toolbarAccountDids = [];
+		toolbarSourceMode = 'all';
+		toolbarSourceKeys = [];
 	}
 
 	function toggleUnreadFilter() {
@@ -689,21 +788,9 @@ function createFeedViewStore() {
 		setFilterToolbarOpen(open: boolean) {
 			filterToolbarOpen = open;
 		},
-		setToolbarFeedFilter(mode: 'none' | 'all' | 'include' | 'exclude', feedIds: number[]) {
-			toolbarFeedMode = mode;
-			toolbarFeedIds = feedIds;
-			syncToolbarToSavedView();
-		},
-		setToolbarAccountFilter(
-			mode: 'none' | 'all' | 'include' | 'exclude',
-			dids: string[],
-			showShares?: boolean,
-			showDocs?: boolean
-		) {
-			toolbarAccountMode = mode;
-			toolbarAccountDids = dids;
-			if (showShares !== undefined) toolbarShowShares = showShares;
-			if (showDocs !== undefined) toolbarShowDocuments = showDocs;
+		setToolbarSourceFilter(mode: 'all' | 'include' | 'exclude', keys: string[]) {
+			toolbarSourceMode = mode;
+			toolbarSourceKeys = keys;
 			syncToolbarToSavedView();
 		},
 		resetToolbarFilters,
@@ -732,16 +819,28 @@ function createFeedViewStore() {
 			if (filters.view) {
 				const fv = filteredViewsStore.getById(parseInt(filters.view));
 				if (fv) {
-					// Backward compat: old views may not have 'none' mode
-					toolbarFeedMode = fv.feedMode !== 'none' && !fv.showArticles ? 'none' : fv.feedMode;
-					toolbarAccountMode =
-						fv.accountMode !== 'none' && !fv.showShares && !fv.showDocuments
-							? 'none'
-							: fv.accountMode;
-					toolbarShowShares = fv.showShares;
-					toolbarShowDocuments = fv.showDocuments;
-					toolbarFeedIds = [...fv.feedIds];
-					toolbarAccountDids = [...fv.accountDids];
+					if (fv.sourceMode != null) {
+						// New format
+						toolbarSourceMode = fv.sourceMode;
+						toolbarSourceKeys = [...(fv.sourceKeys ?? [])];
+					} else {
+						// Legacy format — migrate
+						const migrated = migrateLegacyView(
+							{
+								showArticles: fv.showArticles,
+								showShares: fv.showShares,
+								showDocuments: fv.showDocuments,
+								feedMode: fv.feedMode,
+								feedIds: fv.feedIds,
+								accountMode: fv.accountMode,
+								accountDids: fv.accountDids,
+							},
+							getAllSubIds(),
+							getAllFollowDids()
+						);
+						toolbarSourceMode = migrated.sourceMode;
+						toolbarSourceKeys = migrated.sourceKeys;
+					}
 					showOnlyUnread = fv.readFilter === 'unread';
 				} else {
 					resetToolbarFilters();

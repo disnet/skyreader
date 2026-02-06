@@ -347,14 +347,11 @@
 			onDelete={feedViewStore.feedFilter
 				? () => removeFeed(parseInt(feedViewStore.feedFilter!))
 				: undefined}
-			showFeedFilter={!feedViewStore.feedFilter &&
+			showSourceFilter={!feedViewStore.feedFilter &&
 				!feedViewStore.starredFilter &&
 				!feedViewStore.sharedFilter &&
 				!feedViewStore.sharerFilter &&
-				!feedViewStore.followingFilter}
-			showAccountFilter={!feedViewStore.feedFilter &&
-				!feedViewStore.starredFilter &&
-				!feedViewStore.sharedFilter &&
+				!feedViewStore.followingFilter &&
 				!feedViewStore.feedsFilter}
 		/>
 

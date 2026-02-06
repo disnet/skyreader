@@ -19,8 +19,7 @@
 		onMarkAllAsRead?: () => void;
 		onEdit?: () => void;
 		onDelete?: () => void;
-		showFeedFilter?: boolean;
-		showAccountFilter?: boolean;
+		showSourceFilter?: boolean;
 	}
 
 	let {
@@ -34,8 +33,7 @@
 		onMarkAllAsRead,
 		onEdit,
 		onDelete,
-		showFeedFilter = true,
-		showAccountFilter = true,
+		showSourceFilter = true,
 	}: Props = $props();
 
 	// Tick counter to force re-evaluation of relative time
@@ -171,7 +169,7 @@
 
 	{#if feedViewStore.filterToolbarOpen}
 		<div class="filter-toolbar-row">
-			<FilterToolbar {showFeedFilter} {showAccountFilter} />
+			<FilterToolbar {showSourceFilter} />
 		</div>
 	{/if}
 </div>
