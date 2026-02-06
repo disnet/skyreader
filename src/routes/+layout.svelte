@@ -4,6 +4,7 @@
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import { auth } from '$lib/stores/auth.svelte';
+	import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
 	import { sidebarStore } from '$lib/stores/sidebar.svelte';
 	import { preferences } from '$lib/stores/preferences.svelte';
 	import { keyboardStore } from '$lib/stores/keyboard.svelte';
@@ -14,6 +15,14 @@
 	import '../app.css';
 
 	let { children } = $props();
+
+	let pageTitle = $derived.by(() => {
+		if (!auth.isAuthenticated) return 'Skyreader';
+		const count = viewTitleStore.unreadCount;
+		const view = viewTitleStore.current;
+		const suffix = view ? `${view} - Skyreader` : 'Skyreader';
+		return count > 0 ? `(${count}) ${suffix}` : suffix;
+	});
 
 	// Helper functions for feed/user cycling
 	function getCurrentFeedId(): number | null {
@@ -229,7 +238,7 @@
 <svelte:window onkeydown={keyboardStore.handleKeydown} />
 
 <svelte:head>
-	<title>Skyreader</title>
+	<title>{pageTitle}</title>
 	<meta name="description" content="A decentralized RSS reader built on AT Protocol" />
 	<link rel="icon" type="image/svg+xml" href={Logo} />
 	<link rel="manifest" href="/manifest.json" />

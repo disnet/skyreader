@@ -4,14 +4,12 @@
 	import { auth } from '$lib/stores/auth.svelte';
 	import { sidebarStore } from '$lib/stores/sidebar.svelte';
 	import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-	import { readingStore } from '$lib/stores/reading.svelte';
 	import { socialStore } from '$lib/stores/social.svelte';
 	import { sharesStore } from '$lib/stores/shares.svelte';
-	import { socialReadingStore } from '$lib/stores/socialReading.svelte';
 	import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
 	import { articlesStore } from '$lib/stores/articles.svelte';
 	import { activityStore } from '$lib/stores/activity.svelte';
-	import { liveDb } from '$lib/services/liveDb.svelte';
+	import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
 	import { fetchSingleFeed } from '$lib/services/feedFetcher';
 	import { onMount, onDestroy } from 'svelte';
 	import AddFeedModal from './AddFeedModal.svelte';
@@ -192,36 +190,10 @@
 		}
 	});
 
-	let feedUnreadCounts = $state<Map<number, number>>(new Map());
-
-	// Calculate total unread
-	let totalUnread = $derived(Array.from(feedUnreadCounts.values()).reduce((a, b) => a + b, 0));
-
-	// Group unread shares by author for counts
-	let sharerCounts = $derived(() => {
-		// Track dependency on read positions
-		socialReadingStore.positions;
-		const counts = new Map<string, number>();
-		for (const share of socialStore.shares) {
-			if (!socialReadingStore.isRead(share.recordUri)) {
-				counts.set(share.authorDid, (counts.get(share.authorDid) || 0) + 1);
-			}
-		}
-		return counts;
-	});
-
-	// Group unread documents by author for counts
-	let sharerDocCounts = $derived(() => {
-		// Track dependency on read positions
-		socialReadingStore.positions;
-		const counts = new Map<string, number>();
-		for (const doc of socialStore.documents) {
-			if (!socialReadingStore.isRead(doc.recordUri)) {
-				counts.set(doc.authorDid, (counts.get(doc.authorDid) || 0) + 1);
-			}
-		}
-		return counts;
-	});
+	let feedUnreadCounts = $derived(unreadCounts.feedCounts);
+	let totalUnread = $derived(unreadCounts.totalArticles);
+	let sharerCounts = $derived(() => unreadCounts.sharerShareCounts);
+	let sharerDocCounts = $derived(() => unreadCounts.sharerDocCounts);
 
 	// Current filter from URL
 	let currentFilter = $derived(() => {
@@ -310,25 +282,6 @@
 		const dids = sorted.map((u) => u.did);
 		sidebarStore.setSortedUserDids(dids);
 	});
-
-	// Load unread counts when subscriptions, articles, or read state changes
-	$effect(() => {
-		// Track dependencies - use liveDb.articlesVersion for reactivity
-		subscriptionsStore.subscriptions;
-		liveDb.articlesVersion;
-		readingStore.readPositions;
-		loadUnreadCounts();
-	});
-
-	function loadUnreadCounts() {
-		const counts = new Map<number, number>();
-		for (const sub of subscriptionsStore.subscriptions) {
-			if (sub.id) {
-				counts.set(sub.id, articlesStore.getUnreadCount(sub.id));
-			}
-		}
-		feedUnreadCounts = counts;
-	}
 
 	function selectFilter(type: string, id?: string | number, contentType?: 'shares' | 'documents') {
 		const params = new URLSearchParams();

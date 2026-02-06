@@ -8,11 +8,9 @@
 	import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 	import { socialStore } from '$lib/stores/social.svelte';
 	import { readingStore } from '$lib/stores/reading.svelte';
-	import { shareReadingStore } from '$lib/stores/shareReading.svelte';
 	import { sharesStore } from '$lib/stores/shares.svelte';
 	import { activityStore } from '$lib/stores/activity.svelte';
-	import { articlesStore } from '$lib/stores/articles.svelte';
-	import { liveDb } from '$lib/services/liveDb.svelte';
+	import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
 	import Icon from './Icon.svelte';
 	import type { BlueskyProfile } from '$lib/types';
 
@@ -28,33 +26,9 @@
 	// not just those with shares/content
 	let followedUsers = $derived(socialStore.inAppFollows);
 
-	// Compute feed unread counts
-	let feedUnreadCounts = $derived.by(() => {
-		// Track dependencies
-		liveDb.articlesVersion;
-		readingStore.readPositions;
-		const counts = new Map<number, number>();
-		for (const sub of subscriptions) {
-			if (sub.id) {
-				counts.set(sub.id, articlesStore.getUnreadCount(sub.id));
-			}
-		}
-		return counts;
-	});
-
-	let totalUnread = $derived(Array.from(feedUnreadCounts.values()).reduce((a, b) => a + b, 0));
-
-	// Group unread shares by author for counts
-	let sharerCounts = $derived.by(() => {
-		shareReadingStore.shareReadPositions;
-		const counts = new Map<string, number>();
-		for (const share of socialStore.shares) {
-			if (!shareReadingStore.isRead(share.recordUri)) {
-				counts.set(share.authorDid, (counts.get(share.authorDid) || 0) + 1);
-			}
-		}
-		return counts;
-	});
+	let feedUnreadCounts = $derived(unreadCounts.feedCounts);
+	let totalUnread = $derived(unreadCounts.totalArticles);
+	let sharerCounts = $derived(unreadCounts.sharerShareCounts);
 
 	let starredCount = $derived(readingStore.starredCount);
 	let sharedCount = $derived(sharesStore.userShares.size);

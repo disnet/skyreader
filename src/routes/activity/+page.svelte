@@ -8,6 +8,12 @@
 	import StateView from '$lib/components/common/StateView.svelte';
 	import { formatRelativeDate } from '$lib/utils/date';
 	import type { BlueskyProfile, ReshareActivity } from '$lib/types';
+	import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
+
+	$effect(() => {
+		viewTitleStore.set('Activity');
+		return () => viewTitleStore.set('');
+	});
 
 	let profiles = $state<Map<string, BlueskyProfile>>(new Map());
 

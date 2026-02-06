@@ -7,6 +7,12 @@
 	import StateView from '$lib/components/common/StateView.svelte';
 	import UserCard from '$lib/components/common/UserCard.svelte';
 	import Modal from '$lib/components/common/Modal.svelte';
+	import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
+
+	$effect(() => {
+		viewTitleStore.set('Discover');
+		return () => viewTitleStore.set('');
+	});
 
 	let followingDids = $state<Set<string>>(new Set());
 	let expandedUsers = $state<Set<string>>(new Set());

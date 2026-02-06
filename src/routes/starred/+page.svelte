@@ -6,6 +6,12 @@
 	import { formatRelativeDate } from '$lib/utils/date';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import LoadingState from '$lib/components/LoadingState.svelte';
+	import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
+
+	$effect(() => {
+		viewTitleStore.set('Starred');
+		return () => viewTitleStore.set('');
+	});
 
 	let isLoading = $state(true);
 

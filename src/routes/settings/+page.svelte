@@ -12,6 +12,12 @@
 	import PageHeader from '$lib/components/common/PageHeader.svelte';
 	import { downloadOPML } from '$lib/utils/opml-exporter';
 	import { api, RateLimitError } from '$lib/services/api';
+	import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
+
+	$effect(() => {
+		viewTitleStore.set('Settings');
+		return () => viewTitleStore.set('');
+	});
 
 	const fontOptions: { value: ArticleFont; label: string }[] = [
 		{ value: 'sans-serif', label: 'Sans Serif' },

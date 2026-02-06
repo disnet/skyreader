@@ -12,6 +12,12 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import logo from '$lib/assets/logo.svg';
 	import type { BlueskyProfile, FollowedUserDetailed } from '$lib/types';
+	import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
+
+	$effect(() => {
+		viewTitleStore.set('Following');
+		return () => viewTitleStore.set('');
+	});
 
 	let activeTab = $state<'skyreader' | 'bluesky'>('skyreader');
 	let profiles = $state<Map<string, BlueskyProfile>>(new Map());

@@ -8,8 +8,10 @@
 	import { sharesStore } from '$lib/stores/shares.svelte';
 	import { preferences } from '$lib/stores/preferences.svelte';
 	import { feedViewStore } from '$lib/stores/feedView.svelte';
+	import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
 	import { appManager } from '$lib/stores/app.svelte';
 	import { articlesStore } from '$lib/stores/articles.svelte';
+	import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
 	import { profileService } from '$lib/services/profiles';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import LoadingState from '$lib/components/LoadingState.svelte';
@@ -110,6 +112,33 @@
 		}
 		if (feedViewStore.feedsFilter) return 'Feeds';
 		return 'All';
+	});
+
+	// Get unread count for the current view
+	let viewUnreadCount = $derived.by(() => {
+		if (feedViewStore.feedFilter) {
+			return unreadCounts.feedCounts.get(parseInt(feedViewStore.feedFilter)) || 0;
+		}
+		if (feedViewStore.starredFilter || feedViewStore.sharedFilter || feedViewStore.feedsFilter) {
+			return 0;
+		}
+		if (feedViewStore.sharerFilter) {
+			const did = feedViewStore.sharerFilter;
+			if (feedViewStore.contentTypeFilter === 'shares') return unreadCounts.getSharesForSharer(did);
+			if (feedViewStore.contentTypeFilter === 'documents')
+				return unreadCounts.getDocsForSharer(did);
+			return unreadCounts.getUnreadForSharer(did);
+		}
+		if (feedViewStore.followingFilter) {
+			return unreadCounts.totalSocial;
+		}
+		// "All" view
+		return unreadCounts.totalArticles + unreadCounts.totalSocial;
+	});
+
+	$effect(() => {
+		viewTitleStore.set(pageTitle, viewUnreadCount);
+		return () => viewTitleStore.set('');
 	});
 
 	// Mark an item as read by its stable key
