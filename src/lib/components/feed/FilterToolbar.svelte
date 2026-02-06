@@ -84,219 +84,224 @@
 </script>
 
 <div class="filter-toolbar" role="toolbar" aria-label="Filter controls">
-	<!-- Sort toggle -->
-	<button
-		class="filter-btn"
-		onclick={() => {
-			preferences.toggleSortOrder();
-			feedViewStore.syncToolbarToSavedView();
-		}}
-		title={preferences.sortOrder === 'newest' ? 'Newest first' : 'Oldest first'}
-	>
-		<Icon name={preferences.sortOrder === 'newest' ? 'arrow-down' : 'arrow-up'} size={16} />
-		<span class="filter-label">{preferences.sortOrder === 'newest' ? 'New' : 'Old'}</span>
-	</button>
-
-	<span class="toolbar-divider"></span>
-
-	<!-- Read state toggle -->
-	<div class="segment-group" role="group" aria-label="Read filter">
+	<!-- Group 1: Sort + Read state -->
+	<div class="filter-group">
 		<button
-			class="segment-btn"
-			class:active={feedViewStore.showOnlyUnread}
-			onclick={() => feedViewStore.setShowOnlyUnread(true)}
+			class="filter-btn"
+			onclick={() => {
+				preferences.toggleSortOrder();
+				feedViewStore.syncToolbarToSavedView();
+			}}
+			title={preferences.sortOrder === 'newest' ? 'Newest first' : 'Oldest first'}
 		>
-			Unread
+			<Icon name={preferences.sortOrder === 'newest' ? 'arrow-down' : 'arrow-up'} size={16} />
+			<span class="filter-label">{preferences.sortOrder === 'newest' ? 'New' : 'Old'}</span>
 		</button>
-		<button
-			class="segment-btn"
-			class:active={!feedViewStore.showOnlyUnread}
-			onclick={() => feedViewStore.setShowOnlyUnread(false)}
-		>
-			All
-		</button>
+
+		<span class="toolbar-divider"></span>
+
+		<div class="segment-group" role="group" aria-label="Read filter">
+			<button
+				class="segment-btn"
+				class:active={feedViewStore.showOnlyUnread}
+				onclick={() => feedViewStore.setShowOnlyUnread(true)}
+			>
+				Unread
+			</button>
+			<button
+				class="segment-btn"
+				class:active={!feedViewStore.showOnlyUnread}
+				onclick={() => feedViewStore.setShowOnlyUnread(false)}
+			>
+				All
+			</button>
+		</div>
 	</div>
 
 	{#if showContentTypeFilter}
-		<span class="toolbar-divider"></span>
+		<span class="toolbar-divider group-divider"></span>
 
-		<!-- Content type chips -->
-		<div class="chip-group" role="group" aria-label="Content types">
-			<button
-				class="chip"
-				class:active={ef.showArticles}
-				onclick={() =>
-					feedViewStore.setToolbarContentTypes(!ef.showArticles, ef.showShares, ef.showDocuments)}
-				title="Toggle articles"
-			>
-				<Icon name="rss" size={16} />
-				<span class="chip-label">Articles</span>
-			</button>
-			<button
-				class="chip"
-				class:active={ef.showShares}
-				onclick={() =>
-					feedViewStore.setToolbarContentTypes(ef.showArticles, !ef.showShares, ef.showDocuments)}
-				title="Toggle shares"
-			>
-				<Icon name="share" size={16} />
-				<span class="chip-label">Shares</span>
-			</button>
-			<button
-				class="chip"
-				class:active={ef.showDocuments}
-				onclick={() =>
-					feedViewStore.setToolbarContentTypes(ef.showArticles, ef.showShares, !ef.showDocuments)}
-				title="Toggle documents"
-			>
-				<Icon name="file-text" size={16} />
-				<span class="chip-label">Docs</span>
-			</button>
+		<!-- Group 2: Content type chips -->
+		<div class="filter-group">
+			<div class="chip-group" role="group" aria-label="Content types">
+				<button
+					class="chip"
+					class:active={ef.showArticles}
+					onclick={() =>
+						feedViewStore.setToolbarContentTypes(!ef.showArticles, ef.showShares, ef.showDocuments)}
+					title="Toggle articles"
+				>
+					<Icon name="rss" size={16} />
+					<span class="chip-label">Articles</span>
+				</button>
+				<button
+					class="chip"
+					class:active={ef.showShares}
+					onclick={() =>
+						feedViewStore.setToolbarContentTypes(ef.showArticles, !ef.showShares, ef.showDocuments)}
+					title="Toggle shares"
+				>
+					<Icon name="share" size={16} />
+					<span class="chip-label">Shares</span>
+				</button>
+				<button
+					class="chip"
+					class:active={ef.showDocuments}
+					onclick={() =>
+						feedViewStore.setToolbarContentTypes(ef.showArticles, ef.showShares, !ef.showDocuments)}
+					title="Toggle documents"
+				>
+					<Icon name="file-text" size={16} />
+					<span class="chip-label">Docs</span>
+				</button>
+			</div>
 		</div>
 	{/if}
 
-	{#if showFeedFilter}
-		<span class="toolbar-divider"></span>
+	{#if showFeedFilter || showAccountFilter}
+		<span class="toolbar-divider group-divider"></span>
 
-		<!-- Feeds dropdown -->
-		<div class="dropdown-wrapper" bind:this={feedPopoverRef}>
-			<button
-				class="filter-btn"
-				class:has-filter={ef.feedMode !== 'all'}
-				onclick={(e) => {
-					e.stopPropagation();
-					feedPopoverOpen = !feedPopoverOpen;
-					accountPopoverOpen = false;
-				}}
-			>
-				<span class="filter-label">{feedFilterLabel}</span>
-				<Icon name="chevron-down" size={12} />
-			</button>
+		<!-- Group 3: Feeds + Accounts dropdowns -->
+		<div class="filter-group">
+			{#if showFeedFilter}
+				<div class="dropdown-wrapper" bind:this={feedPopoverRef}>
+					<button
+						class="filter-btn"
+						class:has-filter={ef.feedMode !== 'all'}
+						onclick={(e) => {
+							e.stopPropagation();
+							feedPopoverOpen = !feedPopoverOpen;
+							accountPopoverOpen = false;
+						}}
+					>
+						<span class="filter-label">{feedFilterLabel}</span>
+						<Icon name="chevron-down" size={12} />
+					</button>
 
-			{#if feedPopoverOpen}
-				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-				<div class="popover" onclick={(e) => e.stopPropagation()}>
-					<div class="popover-section">
-						<label class="radio-label">
-							<input
-								type="radio"
-								name="feedMode"
-								value="all"
-								checked={ef.feedMode === 'all'}
-								onchange={() => setFeedMode('all')}
-							/>
-							All feeds
-						</label>
-						<label class="radio-label">
-							<input
-								type="radio"
-								name="feedMode"
-								value="include"
-								checked={ef.feedMode === 'include'}
-								onchange={() => setFeedMode('include')}
-							/>
-							Include only
-						</label>
-						<label class="radio-label">
-							<input
-								type="radio"
-								name="feedMode"
-								value="exclude"
-								checked={ef.feedMode === 'exclude'}
-								onchange={() => setFeedMode('exclude')}
-							/>
-							Exclude
-						</label>
-					</div>
+					{#if feedPopoverOpen}
+						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+						<div class="popover" onclick={(e) => e.stopPropagation()}>
+							<div class="popover-section">
+								<label class="radio-label">
+									<input
+										type="radio"
+										name="feedMode"
+										value="all"
+										checked={ef.feedMode === 'all'}
+										onchange={() => setFeedMode('all')}
+									/>
+									All feeds
+								</label>
+								<label class="radio-label">
+									<input
+										type="radio"
+										name="feedMode"
+										value="include"
+										checked={ef.feedMode === 'include'}
+										onchange={() => setFeedMode('include')}
+									/>
+									Include only
+								</label>
+								<label class="radio-label">
+									<input
+										type="radio"
+										name="feedMode"
+										value="exclude"
+										checked={ef.feedMode === 'exclude'}
+										onchange={() => setFeedMode('exclude')}
+									/>
+									Exclude
+								</label>
+							</div>
 
-					{#if ef.feedMode !== 'all'}
-						<div class="popover-list">
-							{#each subscriptionsStore.subscriptions as sub}
-								{#if sub.id != null}
-									<label class="check-label">
-										<input
-											type="checkbox"
-											checked={ef.feedIds.includes(sub.id)}
-											onchange={() => toggleFeedId(sub.id!)}
-										/>
-										<span class="check-text">{sub.customTitle || sub.title}</span>
-									</label>
-								{/if}
-							{/each}
+							{#if ef.feedMode !== 'all'}
+								<div class="popover-list">
+									{#each subscriptionsStore.subscriptions as sub}
+										{#if sub.id != null}
+											<label class="check-label">
+												<input
+													type="checkbox"
+													checked={ef.feedIds.includes(sub.id)}
+													onchange={() => toggleFeedId(sub.id!)}
+												/>
+												<span class="check-text">{sub.customTitle || sub.title}</span>
+											</label>
+										{/if}
+									{/each}
+								</div>
+							{/if}
 						</div>
 					{/if}
 				</div>
 			{/if}
-		</div>
-	{/if}
 
-	{#if showAccountFilter}
-		<span class="toolbar-divider"></span>
+			{#if showAccountFilter}
+				<div class="dropdown-wrapper" bind:this={accountPopoverRef}>
+					<button
+						class="filter-btn"
+						class:has-filter={ef.accountMode !== 'all'}
+						onclick={(e) => {
+							e.stopPropagation();
+							accountPopoverOpen = !accountPopoverOpen;
+							feedPopoverOpen = false;
+						}}
+					>
+						<span class="filter-label">{accountFilterLabel}</span>
+						<Icon name="chevron-down" size={12} />
+					</button>
 
-		<!-- Accounts dropdown -->
-		<div class="dropdown-wrapper" bind:this={accountPopoverRef}>
-			<button
-				class="filter-btn"
-				class:has-filter={ef.accountMode !== 'all'}
-				onclick={(e) => {
-					e.stopPropagation();
-					accountPopoverOpen = !accountPopoverOpen;
-					feedPopoverOpen = false;
-				}}
-			>
-				<span class="filter-label">{accountFilterLabel}</span>
-				<Icon name="chevron-down" size={12} />
-			</button>
-
-			{#if accountPopoverOpen}
-				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-				<div class="popover" onclick={(e) => e.stopPropagation()}>
-					<div class="popover-section">
-						<label class="radio-label">
-							<input
-								type="radio"
-								name="accountMode"
-								value="all"
-								checked={ef.accountMode === 'all'}
-								onchange={() => setAccountMode('all')}
-							/>
-							All accounts
-						</label>
-						<label class="radio-label">
-							<input
-								type="radio"
-								name="accountMode"
-								value="include"
-								checked={ef.accountMode === 'include'}
-								onchange={() => setAccountMode('include')}
-							/>
-							Include only
-						</label>
-						<label class="radio-label">
-							<input
-								type="radio"
-								name="accountMode"
-								value="exclude"
-								checked={ef.accountMode === 'exclude'}
-								onchange={() => setAccountMode('exclude')}
-							/>
-							Exclude
-						</label>
-					</div>
-
-					{#if ef.accountMode !== 'all'}
-						<div class="popover-list">
-							{#each socialStore.inAppFollows as follow}
-								<label class="check-label">
+					{#if accountPopoverOpen}
+						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+						<div class="popover" onclick={(e) => e.stopPropagation()}>
+							<div class="popover-section">
+								<label class="radio-label">
 									<input
-										type="checkbox"
-										checked={ef.accountDids.includes(follow.did)}
-										onchange={() => toggleAccountDid(follow.did)}
+										type="radio"
+										name="accountMode"
+										value="all"
+										checked={ef.accountMode === 'all'}
+										onchange={() => setAccountMode('all')}
 									/>
-									<span class="check-text">{follow.displayName || follow.handle || follow.did}</span
-									>
+									All accounts
 								</label>
-							{/each}
+								<label class="radio-label">
+									<input
+										type="radio"
+										name="accountMode"
+										value="include"
+										checked={ef.accountMode === 'include'}
+										onchange={() => setAccountMode('include')}
+									/>
+									Include only
+								</label>
+								<label class="radio-label">
+									<input
+										type="radio"
+										name="accountMode"
+										value="exclude"
+										checked={ef.accountMode === 'exclude'}
+										onchange={() => setAccountMode('exclude')}
+									/>
+									Exclude
+								</label>
+							</div>
+
+							{#if ef.accountMode !== 'all'}
+								<div class="popover-list">
+									{#each socialStore.inAppFollows as follow}
+										<label class="check-label">
+											<input
+												type="checkbox"
+												checked={ef.accountDids.includes(follow.did)}
+												onchange={() => toggleAccountDid(follow.did)}
+											/>
+											<span class="check-text"
+												>{follow.displayName || follow.handle || follow.did}</span
+											>
+										</label>
+									{/each}
+								</div>
+							{/if}
 						</div>
 					{/if}
 				</div>
@@ -310,13 +315,18 @@
 		display: flex;
 		align-items: center;
 		gap: 0.125rem;
-		flex-wrap: wrap;
 		padding: 0.25rem;
 		background: rgba(255, 255, 255, 0.85);
 		backdrop-filter: blur(8px);
 		border-radius: 999px;
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 		pointer-events: auto;
+	}
+
+	.filter-group {
+		display: flex;
+		align-items: center;
+		gap: 0.125rem;
 	}
 
 	.toolbar-divider {
@@ -479,6 +489,7 @@
 		gap: 0.125rem;
 	}
 
+	/* Tablet: hide labels, keep horizontal */
 	@media (max-width: 900px) {
 		.chip-label,
 		.filter-label {
@@ -492,9 +503,39 @@
 		}
 	}
 
+	/* Mobile: vertical stacked layout with labels restored */
 	@media (max-width: 640px) {
 		.filter-toolbar {
+			flex-direction: column;
 			border-radius: 12px;
+			gap: 0;
+			padding: 0;
+		}
+
+		.filter-group {
+			width: 100%;
+			justify-content: center;
+			padding: 0.375rem 0.25rem;
+		}
+
+		.filter-group + .group-divider + .filter-group,
+		.filter-group:not(:first-child) {
+			border-top: 1px solid var(--color-border, #e0e0e0);
+		}
+
+		.group-divider {
+			display: none;
+		}
+
+		.chip-label,
+		.filter-label {
+			display: inline;
+		}
+
+		.filter-btn,
+		.segment-btn,
+		.chip {
+			padding: 0.4rem 0.6rem;
 		}
 	}
 
@@ -535,6 +576,14 @@
 
 		.popover {
 			background: var(--color-bg, #1a1a1a);
+		}
+	}
+
+	/* Dark mode + mobile border color */
+	@media (prefers-color-scheme: dark) and (max-width: 640px) {
+		.filter-group + .group-divider + .filter-group,
+		.filter-group:not(:first-child) {
+			border-top-color: rgba(255, 255, 255, 0.15);
 		}
 	}
 </style>
