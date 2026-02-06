@@ -141,6 +141,14 @@ function createSocialStore() {
 			const result = await api.listInAppFollows();
 			inAppFollowCount = result.follows.length;
 			inAppFollows = result.follows;
+
+			// Prefetch profiles for follows that only have a DID as their handle
+			const needsProfile = result.follows
+				.filter((f) => !f.handle || f.handle === f.did || f.handle.startsWith('did:'))
+				.map((f) => f.did);
+			if (needsProfile.length > 0) {
+				profileService.prefetch(needsProfile);
+			}
 		} catch (e) {
 			// Silently fail - the count will stay at its previous value
 			console.error('Failed to load in-app follow count:', e);

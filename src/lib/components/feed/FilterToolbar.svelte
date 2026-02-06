@@ -5,6 +5,37 @@
 	import { feedViewStore } from '$lib/stores/feedView.svelte';
 	import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 	import { socialStore } from '$lib/stores/social.svelte';
+	import { profileService } from '$lib/services/profiles';
+	import type { BlueskyProfile } from '$lib/types';
+
+	// Resolved profiles for accounts that only have DIDs
+	let resolvedProfiles = $state<Map<string, BlueskyProfile>>(new Map());
+
+	// Resolve profiles when inAppFollows changes
+	$effect(() => {
+		const follows = socialStore.inAppFollows;
+		const needsResolving = follows.filter(
+			(f) => !f.displayName && (!f.handle || f.handle === f.did || f.handle.startsWith('did:'))
+		);
+		if (needsResolving.length > 0) {
+			profileService.getProfiles(needsResolving.map((f) => f.did)).then((profiles) => {
+				resolvedProfiles = profiles;
+			});
+		}
+	});
+
+	function getAccountDisplayName(follow: {
+		did: string;
+		handle?: string;
+		displayName?: string;
+	}): string {
+		if (follow.displayName) return follow.displayName;
+		if (follow.handle && follow.handle !== follow.did && !follow.handle.startsWith('did:'))
+			return follow.handle;
+		const resolved = resolvedProfiles.get(follow.did);
+		if (resolved) return resolved.displayName || resolved.handle;
+		return follow.did;
+	}
 
 	interface Props {
 		showFeedFilter: boolean;
@@ -321,9 +352,7 @@
 												checked={ef.accountDids.includes(follow.did)}
 												onchange={() => toggleAccountDid(follow.did)}
 											/>
-											<span class="check-text"
-												>{follow.displayName || follow.handle || follow.did}</span
-											>
+											<span class="check-text">{getAccountDisplayName(follow)}</span>
 										</label>
 									{/each}
 								</div>
