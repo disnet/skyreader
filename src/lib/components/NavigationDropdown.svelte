@@ -11,6 +11,8 @@
 	import { sharesStore } from '$lib/stores/shares.svelte';
 	import { activityStore } from '$lib/stores/activity.svelte';
 	import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
+	import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
+	import { feedViewStore } from '$lib/stores/feedView.svelte';
 	import Icon from './Icon.svelte';
 	import type { BlueskyProfile } from '$lib/types';
 
@@ -87,7 +89,8 @@
 		| 'users'
 		| 'rss'
 		| 'newspaper'
-		| 'plus';
+		| 'plus'
+		| 'filter';
 
 	// Navigation item type
 	type NavItem =
@@ -95,7 +98,8 @@
 		| { type: 'feed'; id: number; label: string; count: number; iconUrl: string | null }
 		| { type: 'user'; did: string; label: string; count: number; avatarUrl: string | null }
 		| { type: 'utility'; id: string; label: string; count?: number; icon: IconName }
-		| { type: 'action'; id: string; label: string; icon: IconName };
+		| { type: 'action'; id: string; label: string; icon: IconName }
+		| { type: 'filteredView'; id: number; label: string; icon: IconName };
 
 	// Build filtered items list
 	let filteredItems = $derived.by((): { section: string; items: NavItem[] }[] => {
@@ -155,6 +159,20 @@
 			sections.push({ section: 'Views', items: filteredViews });
 		}
 
+		const customViews: NavItem[] = [
+			...filteredViewsStore.views.map((v) => ({
+				type: 'filteredView' as const,
+				id: v.id!,
+				label: v.name,
+				icon: 'filter' as const,
+			})),
+			{ type: 'action' as const, id: 'add-view', label: 'New View', icon: 'plus' as const },
+		];
+		const filteredCustomViews = customViews.filter(filterItem);
+		if (filteredCustomViews.length > 0) {
+			sections.push({ section: 'Custom Views', items: filteredCustomViews });
+		}
+
 		const filteredUsers = users.filter(filterItem);
 		if (filteredUsers.length > 0) {
 			sections.push({ section: '', items: filteredUsers });
@@ -180,7 +198,9 @@
 		const sharer = url.searchParams.get('sharer');
 		const following = url.searchParams.get('following');
 		const feeds = url.searchParams.get('feeds');
+		const view = url.searchParams.get('view');
 		const type = url.searchParams.get('type') as 'shares' | 'documents' | null;
+		if (view) return { type: 'filteredView', id: parseInt(view) };
 		if (feed) return { type: 'feed', id: parseInt(feed) };
 		if (starred) return { type: 'starred' };
 		if (shared) return { type: 'shared' };
@@ -202,6 +222,8 @@
 			return true;
 		if (item.type === 'feed' && filter.type === 'feed' && filter.id === item.id) return true;
 		if (item.type === 'user' && filter.type === 'sharer' && filter.id === item.did) return true;
+		if (item.type === 'filteredView' && filter.type === 'filteredView' && filter.id === item.id)
+			return true;
 		return false;
 	}
 
@@ -247,6 +269,19 @@
 				sidebarStore.openAddFeedModal();
 			} else if (item.id === 'follow-user') {
 				sidebarStore.openFollowUserModal();
+			} else if (item.id === 'add-view') {
+				filteredViewsStore
+					.create({
+						name: 'new view',
+						sourceMode: 'all',
+						sourceKeys: [],
+						readFilter: 'unread',
+						sortOrder: 'newest',
+					})
+					.then((id) => {
+						goto(`/?view=${id}`);
+						feedViewStore.setFilterToolbarOpen(true);
+					});
 			}
 			return;
 		}
@@ -257,6 +292,8 @@
 			else if (item.id === 'feeds') url = '/?feeds=true';
 		} else if (item.type === 'feed') {
 			url = `/?feed=${item.id}`;
+		} else if (item.type === 'filteredView') {
+			url = `/?view=${item.id}`;
 		} else if (item.type === 'user') {
 			url = `/?sharer=${item.did}`;
 		} else if (item.type === 'utility') {
@@ -425,13 +462,14 @@
 							class:highlighted={flatIndex === highlightedIndex}
 							class:child={item.type === 'user' ||
 								item.type === 'feed' ||
-								(item.type === 'action' && item.id === 'follow-user')}
+								item.type === 'filteredView' ||
+								(item.type === 'action' && (item.id === 'follow-user' || item.id === 'add-view'))}
 							role="option"
 							aria-selected={isItemActive(item)}
 							onclick={() => selectItem(item)}
 							onmouseenter={() => (highlightedIndex = flatIndex)}
 						>
-							{#if item.type === 'view' || item.type === 'utility' || item.type === 'action'}
+							{#if item.type === 'view' || item.type === 'utility' || item.type === 'action' || item.type === 'filteredView'}
 								<span class="item-icon"><Icon name={item.icon} size={16} /></span>
 							{:else if item.type === 'feed'}
 								{#if item.iconUrl}
@@ -447,7 +485,7 @@
 								{/if}
 							{/if}
 							<span class="item-label">{item.label}</span>
-							{#if item.type !== 'action' && item.count && item.count > 0}
+							{#if item.type !== 'action' && item.type !== 'filteredView' && item.count && item.count > 0}
 								<span class="item-count">{item.count}</span>
 							{/if}
 						</button>
@@ -506,13 +544,14 @@
 							class:highlighted={flatIndex === highlightedIndex}
 							class:child={item.type === 'user' ||
 								item.type === 'feed' ||
-								(item.type === 'action' && item.id === 'follow-user')}
+								item.type === 'filteredView' ||
+								(item.type === 'action' && (item.id === 'follow-user' || item.id === 'add-view'))}
 							role="option"
 							aria-selected={isItemActive(item)}
 							onclick={() => selectItem(item)}
 							onmouseenter={() => (highlightedIndex = flatIndex)}
 						>
-							{#if item.type === 'view' || item.type === 'utility' || item.type === 'action'}
+							{#if item.type === 'view' || item.type === 'utility' || item.type === 'action' || item.type === 'filteredView'}
 								<span class="item-icon"><Icon name={item.icon} size={16} /></span>
 							{:else if item.type === 'feed'}
 								{#if item.iconUrl}
@@ -528,7 +567,7 @@
 								{/if}
 							{/if}
 							<span class="item-label">{item.label}</span>
-							{#if item.type !== 'action' && item.count && item.count > 0}
+							{#if item.type !== 'action' && item.type !== 'filteredView' && item.count && item.count > 0}
 								<span class="item-count">{item.count}</span>
 							{/if}
 						</button>

@@ -63,7 +63,7 @@
 	ontouchend={onTouchEnd}
 	ontouchmove={onTouchMove}
 >
-	<span class="view-icon"><Icon name="sliders" size={14} /></span>
+	<span class="view-icon"><Icon name="filter" size={14} /></span>
 	{#if isRenaming}
 		<!-- svelte-ignore a11y_autofocus -->
 		<input
