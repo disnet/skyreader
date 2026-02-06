@@ -6,6 +6,7 @@
 	import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 	import { socialStore } from '$lib/stores/social.svelte';
 	import { profileService } from '$lib/services/profiles';
+	import { getFaviconUrl } from '$lib/utils/favicon';
 	import type { BlueskyProfile } from '$lib/types';
 
 	// Resolved profiles for accounts that only have DIDs
@@ -35,6 +36,12 @@
 		const resolved = resolvedProfiles.get(follow.did);
 		if (resolved) return resolved.displayName || resolved.handle;
 		return follow.did;
+	}
+
+	function getAccountAvatarUrl(follow: { did: string; avatarUrl?: string }): string | undefined {
+		if (follow.avatarUrl) return follow.avatarUrl;
+		const resolved = resolvedProfiles.get(follow.did);
+		return resolved?.avatar;
 	}
 
 	interface Props {
@@ -244,12 +251,17 @@
 								<div class="popover-list">
 									{#each subscriptionsStore.subscriptions as sub}
 										{#if sub.id != null}
+											{@const iconUrl =
+												sub.customIconUrl || getFaviconUrl(sub.siteUrl || sub.feedUrl)}
 											<label class="check-label">
 												<input
 													type="checkbox"
 													checked={ef.feedIds.includes(sub.id)}
 													onchange={() => toggleFeedId(sub.id!)}
 												/>
+												{#if iconUrl}
+													<img src={iconUrl} alt="" class="check-icon" />
+												{/if}
 												<span class="check-text">{sub.customTitle || sub.title}</span>
 											</label>
 										{/if}
@@ -346,12 +358,18 @@
 							{#if ef.accountMode === 'include' || ef.accountMode === 'exclude'}
 								<div class="popover-list">
 									{#each socialStore.inAppFollows as follow}
+										{@const avatarUrl = getAccountAvatarUrl(follow)}
 										<label class="check-label">
 											<input
 												type="checkbox"
 												checked={ef.accountDids.includes(follow.did)}
 												onchange={() => toggleAccountDid(follow.did)}
 											/>
+											{#if avatarUrl}
+												<img src={avatarUrl} alt="" class="check-avatar" />
+											{:else}
+												<div class="check-avatar-placeholder"></div>
+											{/if}
 											<span class="check-text">{getAccountDisplayName(follow)}</span>
 										</label>
 									{/each}
@@ -497,6 +515,29 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.check-icon {
+		width: 16px;
+		height: 16px;
+		flex-shrink: 0;
+		border-radius: 2px;
+	}
+
+	.check-avatar {
+		width: 18px;
+		height: 18px;
+		flex-shrink: 0;
+		border-radius: 50%;
+		object-fit: cover;
+	}
+
+	.check-avatar-placeholder {
+		width: 18px;
+		height: 18px;
+		flex-shrink: 0;
+		border-radius: 50%;
+		background: var(--color-border, #e0e0e0);
 	}
 
 	.popover-list {
