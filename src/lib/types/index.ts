@@ -483,7 +483,7 @@ export interface FilteredView {
 	id?: number;
 	name: string;
 	// Unified source filter (new format)
-	sourceMode?: 'all' | 'include' | 'exclude';
+	sourceMode?: 'all' | 'include';
 	sourceKeys?: string[];
 	// Legacy fields (kept for backward compat with existing IndexedDB records)
 	showArticles?: boolean;

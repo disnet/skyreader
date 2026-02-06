@@ -106,7 +106,7 @@
 			: socialStore.inAppFollows
 	);
 
-	function setSourceMode(mode: 'all' | 'include' | 'exclude') {
+	function setSourceMode(mode: 'all' | 'include') {
 		feedViewStore.setToolbarSourceFilter(mode, mode === 'all' ? [] : [...ef.sourceKeys]);
 	}
 
@@ -141,9 +141,7 @@
 
 	let sourceFilterLabel = $derived.by(() => {
 		if (ef.sourceMode === 'all') return 'Sources';
-		const count = ef.sourceKeys.length;
-		if (ef.sourceMode === 'include') return `Sources (${count})`;
-		return `Sources -${count}`;
+		return `Sources (${ef.sourceKeys.length})`;
 	});
 
 	// Svelte action: reposition popover to stay within viewport
@@ -284,19 +282,9 @@
 								/>
 								Include only
 							</label>
-							<label class="radio-label">
-								<input
-									type="radio"
-									name="sourceMode"
-									value="exclude"
-									checked={ef.sourceMode === 'exclude'}
-									onchange={() => setSourceMode('exclude')}
-								/>
-								Exclude
-							</label>
 						</div>
 
-						{#if ef.sourceMode === 'include' || ef.sourceMode === 'exclude'}
+						{#if ef.sourceMode === 'include'}
 							<!-- Feeds group -->
 							{#if subscriptionsStore.subscriptions.length > 0}
 								<div class="popover-group-header">Feeds</div>

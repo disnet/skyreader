@@ -14,9 +14,6 @@ import {
 	isDocumentsSource,
 	getRssSubscriptionId,
 	getSourceDid,
-	rssSourceKey,
-	sharesSourceKey,
-	documentsSourceKey,
 	migrateLegacyView,
 } from '$lib/utils/sourceKeys';
 
@@ -34,7 +31,7 @@ export type FeedDisplayItem =
 const DEFAULT_PAGE_SIZE = 50;
 
 export interface EffectiveFilters {
-	sourceMode: 'all' | 'include' | 'exclude';
+	sourceMode: 'all' | 'include';
 	sourceKeys: string[];
 	readFilter: 'all' | 'unread' | 'read';
 	sortOrder: 'newest' | 'oldest';
@@ -44,29 +41,12 @@ export interface EffectiveFilters {
  * Derive allowed RSS subscription IDs from effective filters.
  * Returns null if all RSS sources are allowed.
  */
-function deriveAllowedRssIds(
-	fv: EffectiveFilters,
-	subscriptions: { id?: number }[]
-): Set<number> | null {
+function deriveAllowedRssIds(fv: EffectiveFilters): Set<number> | null {
 	if (fv.sourceMode === 'all') return null;
 
-	if (fv.sourceMode === 'include') {
-		const ids = new Set<number>();
-		for (const key of fv.sourceKeys) {
-			if (isRssSource(key)) ids.add(getRssSubscriptionId(key));
-		}
-		return ids;
-	}
-
-	// exclude mode
-	const excludedIds = new Set<number>();
-	for (const key of fv.sourceKeys) {
-		if (isRssSource(key)) excludedIds.add(getRssSubscriptionId(key));
-	}
-	if (excludedIds.size === 0) return null;
 	const ids = new Set<number>();
-	for (const sub of subscriptions) {
-		if (sub.id != null && !excludedIds.has(sub.id)) ids.add(sub.id);
+	for (const key of fv.sourceKeys) {
+		if (isRssSource(key)) ids.add(getRssSubscriptionId(key));
 	}
 	return ids;
 }
@@ -77,29 +57,13 @@ function deriveAllowedRssIds(
  */
 function deriveAllowedDids(
 	fv: EffectiveFilters,
-	kindTest: (key: string) => boolean,
-	allFollowDids: string[]
+	kindTest: (key: string) => boolean
 ): Set<string> | null {
 	if (fv.sourceMode === 'all') return null;
 
-	if (fv.sourceMode === 'include') {
-		const dids = new Set<string>();
-		for (const key of fv.sourceKeys) {
-			if (kindTest(key)) dids.add(getSourceDid(key));
-		}
-		// If no keys of this kind are included, return empty set (nothing allowed)
-		return dids;
-	}
-
-	// exclude mode
-	const excludedDids = new Set<string>();
-	for (const key of fv.sourceKeys) {
-		if (kindTest(key)) excludedDids.add(getSourceDid(key));
-	}
-	if (excludedDids.size === 0) return null;
 	const dids = new Set<string>();
-	for (const did of allFollowDids) {
-		if (!excludedDids.has(did)) dids.add(did);
+	for (const key of fv.sourceKeys) {
+		if (kindTest(key)) dids.add(getSourceDid(key));
 	}
 	return dids;
 }
@@ -119,7 +83,7 @@ function createFeedViewStore() {
 
 	// Toolbar filter state (unified source model)
 	let filterToolbarOpen = $state(false);
-	let toolbarSourceMode = $state<'all' | 'include' | 'exclude'>('all');
+	let toolbarSourceMode = $state<'all' | 'include'>('all');
 	let toolbarSourceKeys = $state<string[]>([]);
 
 	// URL filters (set by component from $page store)
@@ -153,10 +117,11 @@ function createFeedViewStore() {
 	let effectiveFilters = $derived.by((): EffectiveFilters => {
 		if (activeFilteredView) {
 			if (activeFilteredView.sourceMode != null) {
-				// New format — use directly
+				// New format — use directly (coerce any stale 'exclude' to 'include')
+				const mode = activeFilteredView.sourceMode === 'all' ? 'all' : 'include';
 				return {
-					sourceMode: activeFilteredView.sourceMode,
-					sourceKeys: activeFilteredView.sourceKeys ?? [],
+					sourceMode: mode,
+					sourceKeys: mode === 'all' ? [] : (activeFilteredView.sourceKeys ?? []),
 					readFilter: activeFilteredView.readFilter,
 					sortOrder: activeFilteredView.sortOrder,
 				};
@@ -222,35 +187,21 @@ function createFeedViewStore() {
 	let showArticles = $derived.by((): boolean => {
 		const fv = effectiveFilters;
 		if (fv.sourceMode === 'all') return true;
-		if (fv.sourceMode === 'include') {
-			return fv.sourceKeys.some(isRssSource);
-		}
-		// exclude: articles shown unless ALL subscriptions excluded
-		const excludedRssCount = fv.sourceKeys.filter(isRssSource).length;
-		return excludedRssCount < subscriptionsStore.subscriptions.length;
+		return fv.sourceKeys.some(isRssSource);
 	});
 
 	// Derived: whether shares are shown (any shares source allowed)
 	let showShares = $derived.by((): boolean => {
 		const fv = effectiveFilters;
 		if (fv.sourceMode === 'all') return true;
-		if (fv.sourceMode === 'include') {
-			return fv.sourceKeys.some(isSharesSource);
-		}
-		// exclude: shown unless ALL share sources excluded
-		const excludedShareCount = fv.sourceKeys.filter(isSharesSource).length;
-		return excludedShareCount < socialStore.inAppFollows.length;
+		return fv.sourceKeys.some(isSharesSource);
 	});
 
 	// Derived: whether documents are shown (any documents source allowed)
 	let showDocuments = $derived.by((): boolean => {
 		const fv = effectiveFilters;
 		if (fv.sourceMode === 'all') return true;
-		if (fv.sourceMode === 'include') {
-			return fv.sourceKeys.some(isDocumentsSource);
-		}
-		const excludedDocCount = fv.sourceKeys.filter(isDocumentsSource).length;
-		return excludedDocCount < socialStore.inAppFollows.length;
+		return fv.sourceKeys.some(isDocumentsSource);
 	});
 
 	// Derived: filtered articles based on current filters
@@ -280,7 +231,7 @@ function createFeedViewStore() {
 			}
 
 			// Apply source-based RSS filtering
-			const allowedIds = deriveAllowedRssIds(fv, subscriptionsStore.subscriptions);
+			const allowedIds = deriveAllowedRssIds(fv);
 			if (allowedIds !== null) {
 				articles = articles.filter((a) => allowedIds.has(a.subscriptionId));
 			}
@@ -335,7 +286,7 @@ function createFeedViewStore() {
 		}
 
 		// Apply source-based DID filtering for shares
-		const allowedDids = deriveAllowedDids(fv, isSharesSource, getAllFollowDids());
+		const allowedDids = deriveAllowedDids(fv, isSharesSource);
 		if (allowedDids !== null) {
 			filtered = filtered.filter((s) => allowedDids.has(s.authorDid));
 		}
@@ -393,7 +344,7 @@ function createFeedViewStore() {
 		}
 
 		// Apply source-based DID filtering for documents
-		const allowedDids = deriveAllowedDids(fv, isDocumentsSource, getAllFollowDids());
+		const allowedDids = deriveAllowedDids(fv, isDocumentsSource);
 		if (allowedDids !== null) {
 			filtered = filtered.filter((d) => allowedDids.has(d.authorDid));
 		}
@@ -788,7 +739,7 @@ function createFeedViewStore() {
 		setFilterToolbarOpen(open: boolean) {
 			filterToolbarOpen = open;
 		},
-		setToolbarSourceFilter(mode: 'all' | 'include' | 'exclude', keys: string[]) {
+		setToolbarSourceFilter(mode: 'all' | 'include', keys: string[]) {
 			toolbarSourceMode = mode;
 			toolbarSourceKeys = keys;
 			syncToolbarToSavedView();
@@ -820,9 +771,9 @@ function createFeedViewStore() {
 				const fv = filteredViewsStore.getById(parseInt(filters.view));
 				if (fv) {
 					if (fv.sourceMode != null) {
-						// New format
-						toolbarSourceMode = fv.sourceMode;
-						toolbarSourceKeys = [...(fv.sourceKeys ?? [])];
+						// New format (coerce any stale 'exclude' to 'include')
+						toolbarSourceMode = fv.sourceMode === 'all' ? 'all' : 'include';
+						toolbarSourceKeys = toolbarSourceMode === 'all' ? [] : [...(fv.sourceKeys ?? [])];
 					} else {
 						// Legacy format — migrate
 						const migrated = migrateLegacyView(

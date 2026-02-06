@@ -24,7 +24,7 @@
 
 	// Form state
 	let name = $state('');
-	let sourceMode = $state<'all' | 'include' | 'exclude'>('all');
+	let sourceMode = $state<'all' | 'include'>('all');
 	let sourceKeys = $state<Set<string>>(new Set());
 	let readFilter = $state<'all' | 'unread' | 'read'>('all');
 	let sortOrder = $state<'newest' | 'oldest'>('newest');
@@ -94,9 +94,9 @@
 					sortOrder = view.sortOrder;
 
 					if (view.sourceMode != null) {
-						// New format
-						sourceMode = view.sourceMode;
-						sourceKeys = new Set(view.sourceKeys ?? []);
+						// New format (coerce any stale 'exclude' to 'include')
+						sourceMode = view.sourceMode === 'all' ? 'all' : 'include';
+						sourceKeys = sourceMode === 'all' ? new Set() : new Set(view.sourceKeys ?? []);
 					} else {
 						// Legacy format — migrate
 						const allSubIds = subscriptionsStore.subscriptions
@@ -210,13 +210,9 @@
 					<input type="radio" bind:group={sourceMode} value="include" />
 					Include only
 				</label>
-				<label class="radio-label">
-					<input type="radio" bind:group={sourceMode} value="exclude" />
-					Exclude
-				</label>
 			</div>
 
-			{#if sourceMode === 'include' || sourceMode === 'exclude'}
+			{#if sourceMode === 'include'}
 				<!-- Feeds -->
 				{#if subscriptionsStore.subscriptions.length > 0}
 					<div class="source-group-header">Feeds</div>
