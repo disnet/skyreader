@@ -325,15 +325,19 @@
 				class="segment-btn"
 				class:active={feedViewStore.showOnlyUnread}
 				onclick={() => feedViewStore.setShowOnlyUnread(true)}
+				title="Unread"
 			>
-				Unread
+				<Icon name="circle-dot" size={16} />
+				<span class="segment-label">Unread</span>
 			</button>
 			<button
 				class="segment-btn"
 				class:active={!feedViewStore.showOnlyUnread}
 				onclick={() => feedViewStore.setShowOnlyUnread(false)}
+				title="All"
 			>
-				All
+				<Icon name="inbox" size={16} />
+				<span class="segment-label">All</span>
 			</button>
 		</div>
 	</div>
@@ -345,13 +349,14 @@
 		<div class="filter-group">
 			<div class="dropdown-wrapper" bind:this={sourcePopoverRef}>
 				<button
-					class="filter-btn"
+					class="filter-btn source-btn"
 					class:has-filter={ef.sourceMode !== 'all'}
 					onclick={(e) => {
 						e.stopPropagation();
 						sourcePopoverOpen = !sourcePopoverOpen;
 					}}
 				>
+					<Icon name="filter" size={16} />
 					<span class="filter-label">{sourceFilterLabel}</span>
 					<Icon name="chevron-down" size={12} />
 				</button>
@@ -584,6 +589,9 @@
 	}
 
 	.segment-btn {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
 		background: none;
 		border: none;
 		padding: 0.4rem 0.6rem;
@@ -826,55 +834,25 @@
 			display: none;
 		}
 
+		.source-btn :global(.icon:last-child) {
+			display: none;
+		}
+
 		.filter-btn,
 		.segment-btn {
 			padding: 0.4rem;
 		}
 	}
 
-	/* Mobile: vertical stacked layout with labels restored */
+	/* Mobile: horizontal icon-only layout */
 	@media (max-width: 640px) {
-		.filter-toolbar {
-			flex-direction: column;
-			border-radius: 12px;
-			gap: 0;
-			padding: 0;
-		}
-
-		.filter-group {
-			width: 100%;
-			justify-content: center;
-			padding: 0.375rem 0.25rem;
-		}
-
-		.filter-group + .group-divider + .filter-group,
-		.filter-group:not(:first-child) {
-			border-top: 1px solid var(--color-border, #e0e0e0);
-		}
-
-		.group-divider {
+		.segment-label {
 			display: none;
 		}
 
-		.filter-label {
-			display: inline;
-		}
-
 		.filter-btn,
 		.segment-btn {
-			padding: 0.4rem 0.6rem;
-		}
-	}
-
-	@media (max-width: 480px) {
-		.filter-btn,
-		.segment-btn {
-			padding: 0.5rem;
-		}
-
-		.filter-toolbar :global(.icon) {
-			width: 20px;
-			height: 20px;
+			padding: 0.4rem;
 		}
 	}
 
@@ -905,14 +883,6 @@
 
 		.name-input {
 			background: var(--color-bg, #1a1a1a);
-		}
-	}
-
-	/* Dark mode + mobile border color */
-	@media (prefers-color-scheme: dark) and (max-width: 640px) {
-		.filter-group + .group-divider + .filter-group,
-		.filter-group:not(:first-child) {
-			border-top-color: rgba(255, 255, 255, 0.15);
 		}
 	}
 </style>

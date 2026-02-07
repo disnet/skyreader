@@ -406,7 +406,7 @@
 		}
 
 		.filter-toolbar-row {
-			justify-content: center;
+			justify-content: flex-end;
 		}
 	}
 
