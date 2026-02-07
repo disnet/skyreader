@@ -517,10 +517,12 @@
 		{:else}
 			<button
 				class="filter-btn save-btn"
-				class:has-changes={isEditingView && feedViewStore.hasUnsavedChanges}
+				class:has-changes={isEditingView
+					? feedViewStore.hasUnsavedChanges
+					: ef.sourceMode !== 'all'}
 				onclick={handleSave}
-				disabled={isEditingView && !feedViewStore.hasUnsavedChanges}
-				title={isEditingView ? 'Update view' : 'Save as view'}
+				disabled={isEditingView ? !feedViewStore.hasUnsavedChanges : ef.sourceMode === 'all'}
+				title={isEditingView ? 'Update view' : 'Save as new view'}
 			>
 				<Icon name="save" size={16} />
 				<span class="filter-label">{isEditingView ? 'Update' : 'Save'}</span>

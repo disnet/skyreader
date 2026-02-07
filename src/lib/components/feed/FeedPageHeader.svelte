@@ -77,7 +77,8 @@
 		if (
 			(styleToolbarOpen || feedViewStore.filterToolbarOpen) &&
 			headerRef &&
-			!headerRef.contains(e.target as Node)
+			!headerRef.contains(e.target as Node) &&
+			document.contains(e.target as Node)
 		) {
 			styleToolbarOpen = false;
 			feedViewStore.setFilterToolbarOpen(false);
