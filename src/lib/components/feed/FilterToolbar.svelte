@@ -680,6 +680,7 @@
 	.account-group-header {
 		display: flex;
 		align-items: center;
+		justify-content: flex-start;
 		gap: 0.375rem;
 		text-transform: none;
 		font-size: 0.75rem;
