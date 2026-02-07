@@ -609,6 +609,8 @@
 
 	.article-title {
 		flex: 1;
+		font-family: var(--article-font);
+		font-size: var(--article-font-size);
 		font-weight: 500;
 		color: var(--color-text);
 		overflow: hidden;
@@ -618,6 +620,8 @@
 
 	.article-title-link {
 		flex: 1;
+		font-family: var(--article-font);
+		font-size: var(--article-font-size);
 		font-weight: 500;
 		color: var(--color-primary, #0066cc);
 		overflow: hidden;

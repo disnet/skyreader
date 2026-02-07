@@ -4,6 +4,7 @@
 	import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import FilterToolbar from './FilterToolbar.svelte';
+	import AppearanceToolbar from './AppearanceToolbar.svelte';
 	import { sidebarStore } from '$lib/stores/sidebar.svelte';
 	import { formatRelativeTime } from '$lib/utils/date';
 	import { feedViewStore } from '$lib/stores/feedView.svelte';
@@ -56,16 +57,32 @@
 		intervalId = setInterval(() => {
 			tick++;
 		}, 60000);
+		document.addEventListener('click', handleClickOutside);
 	});
 
 	onDestroy(() => {
 		if (intervalId) clearInterval(intervalId);
+		document.removeEventListener('click', handleClickOutside);
 	});
 
 	// Use tick to force re-evaluation (void to suppress unused warning)
 	let relativeTime = $derived(
 		lastRefreshAt ? (void tick, formatRelativeTime(lastRefreshAt)) : null
 	);
+
+	let styleToolbarOpen = $state(false);
+	let headerRef: HTMLDivElement | undefined = $state();
+
+	function handleClickOutside(e: MouseEvent) {
+		if (
+			(styleToolbarOpen || feedViewStore.filterToolbarOpen) &&
+			headerRef &&
+			!headerRef.contains(e.target as Node)
+		) {
+			styleToolbarOpen = false;
+			feedViewStore.setFilterToolbarOpen(false);
+		}
+	}
 
 	let dropdownOpen = $derived(sidebarStore.navigationDropdownOpen);
 	let sidebarCollapsed = $derived(sidebarStore.isCollapsed);
@@ -99,7 +116,7 @@
 	});
 </script>
 
-<div class="feed-header-fixed" class:sidebar-collapsed={sidebarCollapsed}>
+<div class="feed-header-fixed" class:sidebar-collapsed={sidebarCollapsed} bind:this={headerRef}>
 	<div class="feed-header-controls">
 		<div class="control-left feed-title-group" class:dropdown-open={dropdownOpen}>
 			<NavigationDropdown currentTitle={title} />
@@ -150,23 +167,40 @@
 					<span class="toggle-divider"></span>
 				{/if}
 				<button
+					class:active={styleToolbarOpen}
+					onclick={() => {
+						styleToolbarOpen = !styleToolbarOpen;
+						if (styleToolbarOpen) feedViewStore.setFilterToolbarOpen(false);
+					}}
+					aria-label="Toggle style"
+					title="Style"
+				>
+					<Icon name="type" size={16} />
+					<span class="btn-label">Style</span>
+				</button>
+				<span class="toggle-divider"></span>
+				<button
 					class="filter-toggle-btn"
 					class:active={feedViewStore.filterToolbarOpen}
-					class:has-filters={feedViewStore.hasActiveFilters}
-					onclick={() => feedViewStore.setFilterToolbarOpen(!feedViewStore.filterToolbarOpen)}
+					onclick={() => {
+						feedViewStore.setFilterToolbarOpen(!feedViewStore.filterToolbarOpen);
+						if (feedViewStore.filterToolbarOpen) styleToolbarOpen = false;
+					}}
 					aria-label="Toggle filters"
 					title="Filter"
 				>
 					<Icon name="filter" size={16} />
 					<span class="btn-label">Filter</span>
-					{#if feedViewStore.hasActiveFilters}
-						<span class="filter-dot"></span>
-					{/if}
 				</button>
 			</div>
 		</div>
 	</div>
 
+	{#if styleToolbarOpen}
+		<div class="filter-toolbar-row">
+			<AppearanceToolbar />
+		</div>
+	{/if}
 	{#if feedViewStore.filterToolbarOpen}
 		<div class="filter-toolbar-row">
 			<FilterToolbar {showSourceFilter} />
@@ -355,20 +389,6 @@
 	/* Filter toggle button */
 	.filter-toggle-btn {
 		position: relative;
-	}
-
-	.filter-toggle-btn.has-filters:not(.active) {
-		color: var(--color-primary, #2563eb);
-	}
-
-	.filter-dot {
-		position: absolute;
-		top: 4px;
-		right: 4px;
-		width: 6px;
-		height: 6px;
-		background: var(--color-primary, #2563eb);
-		border-radius: 50%;
 	}
 
 	/* Filter toolbar row */

@@ -174,12 +174,12 @@
 	}
 
 	onMount(() => {
-		document.addEventListener('click', handleClickOutside);
+		document.addEventListener('click', handleClickOutside, true);
 		document.addEventListener('keydown', handleKeydown);
 	});
 
 	onDestroy(() => {
-		document.removeEventListener('click', handleClickOutside);
+		document.removeEventListener('click', handleClickOutside, true);
 		document.removeEventListener('keydown', handleKeydown);
 	});
 
@@ -257,16 +257,16 @@
 			const vw = window.innerWidth;
 			const vh = window.innerHeight;
 
-			// Horizontal: if overflowing right, anchor to right edge of parent instead
-			if (rect.right > vw - PADDING) {
-				node.style.left = 'auto';
-				node.style.right = '0';
-			}
-			// If it still overflows left after flipping, pin to left edge of viewport
-			const rectAfter = node.getBoundingClientRect();
-			if (rectAfter.left < PADDING) {
-				node.style.left = '0';
+			// Horizontal: if overflowing left, anchor to left edge of parent instead
+			if (rect.left < PADDING) {
 				node.style.right = 'auto';
+				node.style.left = '0';
+			}
+			// If it still overflows right after flipping, pin to right edge of viewport
+			const rectAfter = node.getBoundingClientRect();
+			if (rectAfter.right > vw - PADDING) {
+				node.style.right = '0';
+				node.style.left = 'auto';
 			}
 
 			// Vertical: constrain max-height so it doesn't overflow bottom
@@ -293,10 +293,15 @@
 		window.addEventListener('resize', reposition);
 		window.addEventListener('scroll', reposition, true);
 
+		// Reposition when content changes (e.g. switching source mode)
+		const observer = new MutationObserver(() => requestAnimationFrame(reposition));
+		observer.observe(node, { childList: true, subtree: true });
+
 		return {
 			destroy() {
 				window.removeEventListener('resize', reposition);
 				window.removeEventListener('scroll', reposition, true);
+				observer.disconnect();
 			},
 		};
 	}
@@ -620,7 +625,7 @@
 	.popover {
 		position: absolute;
 		top: calc(100% + 4px);
-		left: 0;
+		right: 0;
 		min-width: 200px;
 		max-width: 280px;
 		background: var(--color-bg, #fff);

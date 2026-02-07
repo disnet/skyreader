@@ -30,7 +30,10 @@
 		| 'filter'
 		| 'check'
 		| 'file-text'
-		| 'save';
+		| 'save'
+		| 'type'
+		| 'minus'
+		| 'a-large-small';
 
 	interface Props {
 		name: IconName;
@@ -173,6 +176,17 @@
 		<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
 		<polyline points="17 21 17 13 7 13 7 21" />
 		<polyline points="7 3 7 8 15 8" />
+	{:else if name === 'type'}
+		<polyline points="4 7 4 4 20 4 20 7" />
+		<line x1="9" x2="15" y1="20" y2="20" />
+		<line x1="12" x2="12" y1="4" y2="20" />
+	{:else if name === 'minus'}
+		<path d="M5 12h14" />
+	{:else if name === 'a-large-small'}
+		<path d="M21 16h-3l-3-10h-.5L11.5 16H9" />
+		<path d="M9 12h6" />
+		<path d="M3 21 6 12l3 9" />
+		<path d="M4 18h4" />
 	{/if}
 </svg>
 
