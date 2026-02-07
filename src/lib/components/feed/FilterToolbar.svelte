@@ -118,6 +118,49 @@
 		feedViewStore.setToolbarSourceFilter(ef.sourceMode, keys);
 	}
 
+	// All possible feed keys
+	let allFeedKeys = $derived(
+		subscriptionsStore.subscriptions.filter((s) => s.id != null).map((s) => rssSourceKey(s.id!))
+	);
+
+	// All possible account keys
+	let allAccountKeys = $derived(
+		socialStore.inAppFollows.flatMap((f) => ACCOUNT_SOURCE_KINDS.map(({ keyFn }) => keyFn(f.did)))
+	);
+
+	let allFeedsSelected = $derived(
+		allFeedKeys.length > 0 && allFeedKeys.every((k) => sourceKeySet.has(k))
+	);
+	let allAccountsSelected = $derived(
+		allAccountKeys.length > 0 && allAccountKeys.every((k) => sourceKeySet.has(k))
+	);
+
+	function selectAllFeeds() {
+		const newKeys = allFeedKeys.filter((k) => !sourceKeySet.has(k));
+		if (newKeys.length > 0) {
+			feedViewStore.setToolbarSourceFilter(ef.sourceMode, [...ef.sourceKeys, ...newKeys]);
+		}
+	}
+
+	function deselectAllFeeds() {
+		const feedKeySet = new Set(allFeedKeys);
+		const keys = ef.sourceKeys.filter((k) => !feedKeySet.has(k));
+		feedViewStore.setToolbarSourceFilter(ef.sourceMode, keys);
+	}
+
+	function selectAllAccounts() {
+		const newKeys = allAccountKeys.filter((k) => !sourceKeySet.has(k));
+		if (newKeys.length > 0) {
+			feedViewStore.setToolbarSourceFilter(ef.sourceMode, [...ef.sourceKeys, ...newKeys]);
+		}
+	}
+
+	function deselectAllAccounts() {
+		const accountKeySet = new Set(allAccountKeys);
+		const keys = ef.sourceKeys.filter((k) => !accountKeySet.has(k));
+		feedViewStore.setToolbarSourceFilter(ef.sourceMode, keys);
+	}
+
 	function handleClickOutside(e: MouseEvent) {
 		if (sourcePopoverOpen && sourcePopoverRef && !sourcePopoverRef.contains(e.target as Node)) {
 			sourcePopoverOpen = false;
@@ -342,7 +385,15 @@
 						{#if ef.sourceMode === 'include'}
 							<!-- Feeds group -->
 							{#if subscriptionsStore.subscriptions.length > 0}
-								<div class="popover-group-header">Feeds</div>
+								<div class="popover-group-header">
+									<span>Feeds</span>
+									<button
+										class="select-all-btn"
+										onclick={allFeedsSelected ? deselectAllFeeds : selectAllFeeds}
+									>
+										{allFeedsSelected ? 'Deselect all' : 'Select all'}
+									</button>
+								</div>
 								<div class="popover-search">
 									<input
 										type="text"
@@ -378,7 +429,15 @@
 
 							<!-- Account groups -->
 							{#if socialStore.inAppFollows.length > 0}
-								<div class="popover-group-header">Accounts</div>
+								<div class="popover-group-header">
+									<span>Accounts</span>
+									<button
+										class="select-all-btn"
+										onclick={allAccountsSelected ? deselectAllAccounts : selectAllAccounts}
+									>
+										{allAccountsSelected ? 'Deselect all' : 'Select all'}
+									</button>
+								</div>
 								<div class="popover-search">
 									<input
 										type="text"
@@ -575,6 +634,9 @@
 	}
 
 	.popover-group-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
 		padding: 0.375rem 0.5rem 0.125rem;
 		font-size: 0.6875rem;
 		font-weight: 600;
@@ -582,6 +644,22 @@
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		border-top: 1px solid var(--color-border);
+	}
+
+	.select-all-btn {
+		background: none;
+		border: none;
+		padding: 0;
+		font-size: 0.625rem;
+		font-weight: 500;
+		color: var(--color-primary, #2563eb);
+		cursor: pointer;
+		text-transform: none;
+		letter-spacing: normal;
+	}
+
+	.select-all-btn:hover {
+		text-decoration: underline;
 	}
 
 	.account-group-header {
