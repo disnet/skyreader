@@ -189,6 +189,57 @@
 	// Flat list of all items for keyboard navigation
 	let flatItems = $derived(filteredItems.flatMap((s) => s.items));
 
+	// Derive the current view's icon for the trigger button
+	type TriggerIcon =
+		| { type: 'icon'; name: IconName }
+		| { type: 'favicon'; url: string }
+		| { type: 'avatar'; url: string };
+
+	let currentIcon = $derived.by((): TriggerIcon => {
+		const pathname = $page.url.pathname;
+
+		// Utility pages (separate routes)
+		if (pathname === '/discover') return { type: 'icon', name: 'search' };
+		if (pathname === '/activity') return { type: 'icon', name: 'bell' };
+		if (pathname === '/settings') return { type: 'icon', name: 'settings' };
+		if (pathname === '/following') return { type: 'icon', name: 'users' };
+
+		// Feed page filters (query params on /)
+		const url = $page.url;
+		const feed = url.searchParams.get('feed');
+		const starred = url.searchParams.get('starred');
+		const shared = url.searchParams.get('shared');
+		const sharer = url.searchParams.get('sharer');
+		const following = url.searchParams.get('following');
+		const feeds = url.searchParams.get('feeds');
+		const view = url.searchParams.get('view');
+
+		if (view) return { type: 'icon', name: 'filter' };
+		if (starred) return { type: 'icon', name: 'star' };
+		if (shared) return { type: 'icon', name: 'share' };
+		if (following) return { type: 'icon', name: 'users' };
+		if (feeds) return { type: 'icon', name: 'rss' };
+
+		if (feed) {
+			const sub = subscriptions.find((s) => s.id === parseInt(feed));
+			if (sub) {
+				const iconUrl = sub.customIconUrl || getFaviconUrl(sub.siteUrl || sub.feedUrl);
+				return { type: 'favicon', url: iconUrl };
+			}
+			return { type: 'icon', name: 'rss' };
+		}
+
+		if (sharer) {
+			const profile = userProfiles.get(sharer);
+			const user = followedUsers.find((u) => u.did === sharer);
+			const avatarUrl = profile?.avatar || user?.avatarUrl;
+			if (avatarUrl) return { type: 'avatar', url: avatarUrl };
+			return { type: 'icon', name: 'users' };
+		}
+
+		return { type: 'icon', name: 'inbox' };
+	});
+
 	// Get current filter from URL
 	let currentFilter = $derived.by(() => {
 		const url = $page.url;
@@ -414,6 +465,13 @@
 
 <div class="nav-dropdown" bind:this={dropdownEl}>
 	<button class="trigger" onclick={toggle} aria-haspopup="listbox" aria-expanded={isOpen}>
+		{#if currentIcon.type === 'icon'}
+			<span class="trigger-icon"><Icon name={currentIcon.name} size={16} /></span>
+		{:else if currentIcon.type === 'favicon'}
+			<img src={currentIcon.url} alt="" class="trigger-favicon" />
+		{:else if currentIcon.type === 'avatar'}
+			<img src={currentIcon.url} alt="" class="trigger-avatar" />
+		{/if}
 		<span class="trigger-title">{currentTitle}</span>
 		<svg
 			class="trigger-chevron"
@@ -607,12 +665,43 @@
 		color: var(--color-primary);
 	}
 
+	.trigger-icon {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+	}
+
+	.trigger-favicon {
+		width: 16px;
+		height: 16px;
+		flex-shrink: 0;
+		border-radius: 2px;
+		object-fit: contain;
+		display: block;
+	}
+
+	.trigger-avatar {
+		width: 18px;
+		height: 18px;
+		flex-shrink: 0;
+		border-radius: 50%;
+		object-fit: cover;
+		display: block;
+	}
+
 	.trigger-title {
 		font-size: 1rem;
 		font-weight: 600;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	@media (max-width: 640px) {
+		.trigger-title {
+			display: none;
+		}
 	}
 
 	.trigger-chevron {
