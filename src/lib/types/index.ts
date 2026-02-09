@@ -361,6 +361,155 @@ export interface PcktBlogContent {
 	items: PcktBlogBlock[];
 }
 
+// Offprint content types for app.offprint.content format
+export interface OffprintFacetFeature {
+	$type: string;
+	uri?: string;
+	did?: string;
+	handle?: string;
+	color?: string;
+	title?: string;
+	siteName?: string;
+}
+
+export interface OffprintFacet {
+	index: { byteStart: number; byteEnd: number };
+	features: OffprintFacetFeature[];
+}
+
+export interface OffprintTextBlock {
+	$type: 'app.offprint.block.text';
+	plaintext: string;
+	facets?: OffprintFacet[];
+	textAlign?: 'left' | 'center' | 'right';
+}
+
+export interface OffprintHeadingBlock {
+	$type: 'app.offprint.block.heading';
+	plaintext: string;
+	facets?: OffprintFacet[];
+	textAlign?: 'left' | 'center' | 'right';
+	level: 1 | 2 | 3;
+}
+
+export interface OffprintBlockquoteBlock {
+	$type: 'app.offprint.block.blockquote';
+	content: (OffprintTextBlock | OffprintHeadingBlock)[];
+}
+
+export interface OffprintCalloutBlock {
+	$type: 'app.offprint.block.callout';
+	plaintext: string;
+	facets?: OffprintFacet[];
+	emoji?: string;
+	color?: string;
+}
+
+export interface OffprintListItemContent {
+	plaintext: string;
+	facets?: OffprintFacet[];
+}
+
+export interface OffprintListItem {
+	content: OffprintListItemContent;
+	children?: OffprintListItem[];
+}
+
+export interface OffprintBulletListBlock {
+	$type: 'app.offprint.block.bulletList';
+	children: OffprintListItem[];
+}
+
+export interface OffprintOrderedListBlock {
+	$type: 'app.offprint.block.orderedList';
+	start?: number;
+	children: OffprintListItem[];
+}
+
+export interface OffprintTaskItem {
+	checked: boolean;
+	content: OffprintListItemContent;
+	children?: OffprintTaskItem[];
+}
+
+export interface OffprintTaskListBlock {
+	$type: 'app.offprint.block.taskList';
+	children: OffprintTaskItem[];
+}
+
+export interface OffprintCodeBlockBlock {
+	$type: 'app.offprint.block.codeBlock';
+	code: string;
+	language?: string;
+	showLineNumbers?: boolean;
+}
+
+export interface OffprintHorizontalRuleBlock {
+	$type: 'app.offprint.block.horizontalRule';
+}
+
+export interface OffprintImageBlock {
+	$type: 'app.offprint.block.image';
+	blob: { ref: { $link: string }; mimeType: string; size?: number };
+	alt?: string;
+	width?: number;
+	caption?: string;
+	captionFacets?: OffprintFacet[];
+	alignment?: 'left' | 'center' | 'right';
+	aspectRatio?: { width: number; height: number };
+}
+
+export interface OffprintImageGridImage {
+	blob: { ref: { $link: string }; mimeType: string; size?: number };
+	alt?: string;
+}
+
+export interface OffprintImageGridBlock {
+	$type: 'app.offprint.block.imageGrid';
+	images: OffprintImageGridImage[];
+	caption?: string;
+	gridRows?: number;
+	aspectRatio?: { width: number; height: number };
+}
+
+export interface OffprintImageCarouselBlock {
+	$type: 'app.offprint.block.imageCarousel';
+	images: OffprintImageGridImage[];
+	caption?: string;
+	autoplay?: boolean;
+	interval?: number;
+}
+
+export interface OffprintImageDiffBlock {
+	$type: 'app.offprint.block.imageDiff';
+	images: [OffprintImageGridImage, OffprintImageGridImage];
+	labels?: [string, string];
+	caption?: string;
+	width?: number;
+	alignment?: 'left' | 'center' | 'right';
+}
+
+// Union of all supported Offprint block types
+export type OffprintBlock =
+	| OffprintTextBlock
+	| OffprintHeadingBlock
+	| OffprintBlockquoteBlock
+	| OffprintCalloutBlock
+	| OffprintBulletListBlock
+	| OffprintOrderedListBlock
+	| OffprintTaskListBlock
+	| OffprintCodeBlockBlock
+	| OffprintHorizontalRuleBlock
+	| OffprintImageBlock
+	| OffprintImageGridBlock
+	| OffprintImageCarouselBlock
+	| OffprintImageDiffBlock;
+
+export interface OffprintContent {
+	$type: 'app.offprint.content';
+	items: OffprintBlock[];
+}
+
 export interface SocialDocument {
 	id?: number;
 	authorDid: string;
@@ -376,7 +525,7 @@ export interface SocialDocument {
 	tags?: string[];
 	updatedAt?: string;
 	canonicalUrl?: string;
-	content?: LeafletContent | PcktBlogContent | unknown; // Open union for future content types
+	content?: LeafletContent | PcktBlogContent | OffprintContent | unknown; // Open union for future content types
 	indexedAt?: string;
 	createdAt: string;
 	siteIcon?: string;

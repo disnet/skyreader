@@ -6,12 +6,14 @@
 		BlueskyProfile,
 		LeafletContent,
 		PcktBlogContent,
+		OffprintContent,
 	} from '$lib/types';
 	import { formatRelativeDate } from '$lib/utils/date';
 	import { getFaviconUrl } from '$lib/utils/favicon';
 	import { sanitizeHtml } from '$lib/utils/sanitize';
 	import { isLeafletContent, renderLeafletContent } from '$lib/utils/leaflet-renderer';
 	import { isPcktBlogContent, renderPcktBlogContent } from '$lib/utils/pckt-blog-renderer';
+	import { isOffprintContent, renderOffprintContent } from '$lib/utils/offprint-renderer';
 	import { bskyEmbed } from '$lib/actions/bsky-embed';
 	import { profileService } from '$lib/services/profiles';
 	import { sharesStore } from '$lib/stores/shares.svelte';
@@ -105,6 +107,11 @@
 		// For documents with structured pckt.blog content, render it
 		if (document?.content && isPcktBlogContent(document.content)) {
 			return renderPcktBlogContent(document.content as PcktBlogContent, document.authorDid);
+		}
+
+		// For documents with structured Offprint content, render it
+		if (document?.content && isOffprintContent(document.content)) {
+			return renderOffprintContent(document.content as OffprintContent, document.authorDid);
 		}
 
 		// Fall back to flat text content or description
