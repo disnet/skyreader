@@ -7,6 +7,7 @@
 		LeafletContent,
 		PcktBlogContent,
 		OffprintContent,
+		GreengaleContent,
 	} from '$lib/types';
 	import { formatRelativeDate } from '$lib/utils/date';
 	import { getFaviconUrl } from '$lib/utils/favicon';
@@ -14,6 +15,7 @@
 	import { isLeafletContent, renderLeafletContent } from '$lib/utils/leaflet-renderer';
 	import { isPcktBlogContent, renderPcktBlogContent } from '$lib/utils/pckt-blog-renderer';
 	import { isOffprintContent, renderOffprintContent } from '$lib/utils/offprint-renderer';
+	import { isGreengaleContent, renderGreengaleContent } from '$lib/utils/greengale-renderer';
 	import { bskyEmbed } from '$lib/actions/bsky-embed';
 	import { profileService } from '$lib/services/profiles';
 	import { sharesStore } from '$lib/stores/shares.svelte';
@@ -112,6 +114,11 @@
 		// For documents with structured Offprint content, render it
 		if (document?.content && isOffprintContent(document.content)) {
 			return renderOffprintContent(document.content as OffprintContent, document.authorDid);
+		}
+
+		// For documents with structured Greengale content, render it
+		if (document?.content && isGreengaleContent(document.content)) {
+			return renderGreengaleContent(document.content as GreengaleContent, document.authorDid);
 		}
 
 		// Fall back to flat text content or description

@@ -510,6 +510,19 @@ export interface OffprintContent {
 	items: OffprintBlock[];
 }
 
+// Greengale content types for app.greengale.document format (markdown-based)
+export interface GreengaleBlobRef {
+	name: string;
+	cid: string;
+	mimeType?: string;
+}
+
+export interface GreengaleContent {
+	$type: 'app.greengale.document';
+	markdown: string;
+	blobs?: GreengaleBlobRef[];
+}
+
 export interface SocialDocument {
 	id?: number;
 	authorDid: string;
@@ -525,7 +538,7 @@ export interface SocialDocument {
 	tags?: string[];
 	updatedAt?: string;
 	canonicalUrl?: string;
-	content?: LeafletContent | PcktBlogContent | OffprintContent | unknown; // Open union for future content types
+	content?: LeafletContent | PcktBlogContent | OffprintContent | GreengaleContent | unknown; // Open union for future content types
 	indexedAt?: string;
 	createdAt: string;
 	siteIcon?: string;
