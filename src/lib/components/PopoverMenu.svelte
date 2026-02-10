@@ -1,218 +1,218 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
 
-	interface MenuItem {
-		label: string;
-		icon?: string;
-		variant?: 'default' | 'danger';
-		onclick: () => void;
-	}
+  interface MenuItem {
+    label: string;
+    icon?: string;
+    variant?: 'default' | 'danger';
+    onclick: () => void;
+  }
 
-	interface Props {
-		items: MenuItem[];
-	}
+  interface Props {
+    items: MenuItem[];
+  }
 
-	let { items }: Props = $props();
+  let { items }: Props = $props();
 
-	let isOpen = $state(false);
-	let menuRef: HTMLDivElement | null = $state(null);
-	let buttonRef: HTMLButtonElement | null = $state(null);
-	let menuPosition = $state<{
-		top?: number;
-		bottom?: number;
-		left?: number;
-		right?: number;
-	}>({});
+  let isOpen = $state(false);
+  let menuRef: HTMLDivElement | null = $state(null);
+  let buttonRef: HTMLButtonElement | null = $state(null);
+  let menuPosition = $state<{
+    top?: number;
+    bottom?: number;
+    left?: number;
+    right?: number;
+  }>({});
 
-	function updateMenuPosition() {
-		if (!buttonRef || !menuRef) return;
+  function updateMenuPosition() {
+    if (!buttonRef || !menuRef) return;
 
-		const buttonRect = buttonRef.getBoundingClientRect();
-		const menuRect = menuRef.getBoundingClientRect();
-		const viewportWidth = window.innerWidth;
+    const buttonRect = buttonRef.getBoundingClientRect();
+    const menuRect = menuRef.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
 
-		const position: typeof menuPosition = {};
+    const position: typeof menuPosition = {};
 
-		// Vertical positioning: always below the button (absolute positioning)
-		position.top = buttonRef.offsetHeight + 4;
+    // Vertical positioning: always below the button (absolute positioning)
+    position.top = buttonRef.offsetHeight + 4;
 
-		// Horizontal positioning: left-align menu with button by default
-		// The menu is absolutely positioned relative to .popover-menu
-		const menuWidth = menuRect.width;
+    // Horizontal positioning: left-align menu with button by default
+    // The menu is absolutely positioned relative to .popover-menu
+    const menuWidth = menuRect.width;
 
-		// Check if left-aligned menu would go off the right edge of viewport
-		if (buttonRect.left + menuWidth > viewportWidth - 8) {
-			// Right-align instead
-			position.right = 0;
-		} else {
-			// Left-align (menu's left edge aligns with button's left edge)
-			position.left = 0;
-		}
+    // Check if left-aligned menu would go off the right edge of viewport
+    if (buttonRect.left + menuWidth > viewportWidth - 8) {
+      // Right-align instead
+      position.right = 0;
+    } else {
+      // Left-align (menu's left edge aligns with button's left edge)
+      position.left = 0;
+    }
 
-		menuPosition = position;
-	}
+    menuPosition = position;
+  }
 
-	function toggle(e: MouseEvent) {
-		e.stopPropagation();
-		isOpen = !isOpen;
-		if (isOpen) {
-			// Position after the menu is rendered
-			requestAnimationFrame(() => {
-				updateMenuPosition();
-			});
-		}
-	}
+  function toggle(e: MouseEvent) {
+    e.stopPropagation();
+    isOpen = !isOpen;
+    if (isOpen) {
+      // Position after the menu is rendered
+      requestAnimationFrame(() => {
+        updateMenuPosition();
+      });
+    }
+  }
 
-	function handleItemClick(item: MenuItem, e: MouseEvent) {
-		e.stopPropagation();
-		isOpen = false;
-		item.onclick();
-	}
+  function handleItemClick(item: MenuItem, e: MouseEvent) {
+    e.stopPropagation();
+    isOpen = false;
+    item.onclick();
+  }
 
-	function handleClickOutside(e: MouseEvent) {
-		if (
-			isOpen &&
-			menuRef &&
-			buttonRef &&
-			!menuRef.contains(e.target as Node) &&
-			!buttonRef.contains(e.target as Node)
-		) {
-			isOpen = false;
-		}
-	}
+  function handleClickOutside(e: MouseEvent) {
+    if (
+      isOpen &&
+      menuRef &&
+      buttonRef &&
+      !menuRef.contains(e.target as Node) &&
+      !buttonRef.contains(e.target as Node)
+    ) {
+      isOpen = false;
+    }
+  }
 
-	function handleKeydown(e: KeyboardEvent) {
-		if (isOpen && e.key === 'Escape') {
-			isOpen = false;
-			buttonRef?.focus();
-		}
-	}
+  function handleKeydown(e: KeyboardEvent) {
+    if (isOpen && e.key === 'Escape') {
+      isOpen = false;
+      buttonRef?.focus();
+    }
+  }
 
-	onMount(() => {
-		document.addEventListener('click', handleClickOutside);
-		document.addEventListener('keydown', handleKeydown);
-	});
+  onMount(() => {
+    document.addEventListener('click', handleClickOutside);
+    document.addEventListener('keydown', handleKeydown);
+  });
 
-	onDestroy(() => {
-		document.removeEventListener('click', handleClickOutside);
-		document.removeEventListener('keydown', handleKeydown);
-	});
+  onDestroy(() => {
+    document.removeEventListener('click', handleClickOutside);
+    document.removeEventListener('keydown', handleKeydown);
+  });
 </script>
 
 <!-- Menu closes on click outside or item selection, not on mouse leave -->
 <div class="popover-menu" role="group">
-	<button
-		bind:this={buttonRef}
-		class="menu-trigger"
-		onclick={toggle}
-		aria-haspopup="true"
-		aria-expanded={isOpen}
-	>
-		<span class="dots">⋯</span>
-	</button>
+  <button
+    bind:this={buttonRef}
+    class="menu-trigger"
+    onclick={toggle}
+    aria-haspopup="true"
+    aria-expanded={isOpen}
+  >
+    <span class="dots">⋯</span>
+  </button>
 
-	{#if isOpen}
-		<div
-			bind:this={menuRef}
-			class="menu-dropdown"
-			role="menu"
-			style="{menuPosition.top !== undefined
-				? `top: ${menuPosition.top}px;`
-				: ''} {menuPosition.bottom !== undefined
-				? `bottom: ${menuPosition.bottom}px;`
-				: ''} {menuPosition.left !== undefined
-				? `left: ${menuPosition.left}px;`
-				: ''} {menuPosition.right !== undefined ? `right: ${menuPosition.right}px;` : ''}"
-		>
-			{#each items as item}
-				<button
-					class="menu-item"
-					class:danger={item.variant === 'danger'}
-					onclick={(e) => handleItemClick(item, e)}
-					role="menuitem"
-				>
-					{#if item.icon}
-						<span class="item-icon">{item.icon}</span>
-					{/if}
-					{item.label}
-				</button>
-			{/each}
-		</div>
-	{/if}
+  {#if isOpen}
+    <div
+      bind:this={menuRef}
+      class="menu-dropdown"
+      role="menu"
+      style="{menuPosition.top !== undefined
+        ? `top: ${menuPosition.top}px;`
+        : ''} {menuPosition.bottom !== undefined
+        ? `bottom: ${menuPosition.bottom}px;`
+        : ''} {menuPosition.left !== undefined
+        ? `left: ${menuPosition.left}px;`
+        : ''} {menuPosition.right !== undefined ? `right: ${menuPosition.right}px;` : ''}"
+    >
+      {#each items as item}
+        <button
+          class="menu-item"
+          class:danger={item.variant === 'danger'}
+          onclick={(e) => handleItemClick(item, e)}
+          role="menuitem"
+        >
+          {#if item.icon}
+            <span class="item-icon">{item.icon}</span>
+          {/if}
+          {item.label}
+        </button>
+      {/each}
+    </div>
+  {/if}
 </div>
 
 <style>
-	.popover-menu {
-		position: relative;
-		display: inline-block;
-	}
+  .popover-menu {
+    position: relative;
+    display: inline-block;
+  }
 
-	.menu-trigger {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 32px;
-		height: 32px;
-		padding: 0;
-		border: none;
-		background: transparent;
-		border-radius: 6px;
-		color: var(--color-text-secondary);
-		cursor: pointer;
-		transition:
-			background-color 0.2s,
-			color 0.2s;
-	}
+  .menu-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition:
+      background-color 0.2s,
+      color 0.2s;
+  }
 
-	.menu-trigger:hover {
-		background: var(--color-bg-secondary);
-		color: var(--color-text);
-	}
+  .menu-trigger:hover {
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
 
-	.dots {
-		font-size: 1.25rem;
-		line-height: 1;
-	}
+  .dots {
+    font-size: 1.25rem;
+    line-height: 1;
+  }
 
-	.menu-dropdown {
-		position: absolute;
-		min-width: 140px;
-		background: var(--color-bg);
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-		z-index: 9999;
-		overflow: hidden;
-	}
+  .menu-dropdown {
+    position: absolute;
+    min-width: 140px;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 9999;
+    overflow: hidden;
+  }
 
-	.menu-item {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		width: 100%;
-		padding: 0.625rem 0.875rem;
-		border: none;
-		background: transparent;
-		color: var(--color-text);
-		font-size: 0.875rem;
-		text-align: left;
-		cursor: pointer;
-		transition: background-color 0.15s;
-	}
+  .menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.625rem 0.875rem;
+    border: none;
+    background: transparent;
+    color: var(--color-text);
+    font-size: 0.875rem;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.15s;
+  }
 
-	.menu-item:hover {
-		background: var(--color-bg-secondary);
-	}
+  .menu-item:hover {
+    background: var(--color-bg-secondary);
+  }
 
-	.menu-item.danger {
-		color: var(--color-error);
-	}
+  .menu-item.danger {
+    color: var(--color-error);
+  }
 
-	.menu-item.danger:hover {
-		background: rgba(244, 67, 54, 0.1);
-	}
+  .menu-item.danger:hover {
+    background: rgba(244, 67, 54, 0.1);
+  }
 
-	.item-icon {
-		font-size: 1rem;
-	}
+  .item-icon {
+    font-size: 1rem;
+  }
 </style>

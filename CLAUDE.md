@@ -81,17 +81,17 @@ All stores use Svelte 5 runes (`.svelte.ts` files):
 
    ```typescript
    class NameStore {
-   	data = $state<DataType | null>(null);
-   	loading = $state(false);
+     data = $state<DataType | null>(null);
+     loading = $state(false);
 
-   	async fetch() {
-   		this.loading = true;
-   		try {
-   			this.data = await api.getData();
-   		} finally {
-   			this.loading = false;
-   		}
-   	}
+     async fetch() {
+       this.loading = true;
+       try {
+         this.data = await api.getData();
+       } finally {
+         this.loading = false;
+       }
+     }
    }
 
    export const nameStore = new NameStore();

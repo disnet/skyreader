@@ -58,21 +58,21 @@ The reactive IndexedDB wrapper. Holds in-memory copies of data with version coun
 
 ```typescript
 class LiveDatabase {
-	// Version counters - bump to trigger reactive updates
-	subscriptionsVersion = $state(0);
-	articlesVersion = $state(0);
+  // Version counters - bump to trigger reactive updates
+  subscriptionsVersion = $state(0);
+  articlesVersion = $state(0);
 
-	// In-memory data (reactive)
-	private _subscriptions = $state<Subscription[]>([]);
-	private _articles = $state<Article[]>([]);
+  // In-memory data (reactive)
+  private _subscriptions = $state<Subscription[]>([]);
+  private _articles = $state<Article[]>([]);
 
-	// Getters for external access
-	get subscriptions() {
-		return this._subscriptions;
-	}
-	get articles() {
-		return this._articles;
-	}
+  // Getters for external access
+  get subscriptions() {
+    return this._subscriptions;
+  }
+  get articles() {
+    return this._articles;
+  }
 }
 ```
 
@@ -89,8 +89,8 @@ class LiveDatabase {
 // Any component/store that accesses liveDb.subscriptions will re-render
 // when subscriptionsVersion changes
 let subscriptions = $derived.by(() => {
-	const _version = liveDb.subscriptionsVersion; // Track version
-	return liveDb.subscriptions;
+  const _version = liveDb.subscriptionsVersion; // Track version
+  return liveDb.subscriptions;
 });
 ```
 
@@ -104,24 +104,24 @@ Central orchestrator that coordinates initialization and refresh cycles.
 type AppPhase = 'idle' | 'hydrating' | 'refreshing' | 'ready' | 'error';
 
 function createAppManager() {
-	let phase = $state<AppPhase>('idle');
+  let phase = $state<AppPhase>('idle');
 
-	async function initialize() {
-		phase = 'hydrating';
-		// Phase 1: Load from cache (parallel)
-		await Promise.all([
-			liveDb.loadSubscriptions(),
-			liveDb.loadArticles(),
-			readingStore.load(),
-			// ...
-		]);
+  async function initialize() {
+    phase = 'hydrating';
+    // Phase 1: Load from cache (parallel)
+    await Promise.all([
+      liveDb.loadSubscriptions(),
+      liveDb.loadArticles(),
+      readingStore.load(),
+      // ...
+    ]);
 
-		phase = 'refreshing';
-		// Phase 2: Sync with backend
-		await refreshFromBackend();
+    phase = 'refreshing';
+    // Phase 2: Sync with backend
+    await refreshFromBackend();
 
-		phase = 'ready';
-	}
+    phase = 'ready';
+  }
 }
 ```
 
@@ -144,28 +144,28 @@ Tracks per-feed status for error display and circuit breaker awareness.
 type FeedStatusType = 'ready' | 'pending' | 'error' | 'circuit-open';
 
 interface FeedStatus {
-	status: FeedStatusType;
-	errorCount: number;
-	errorMessage?: string;
-	errorType?: 'transient' | 'permanent';
-	nextRetryAt?: number; // Circuit breaker cooldown
+  status: FeedStatusType;
+  errorCount: number;
+  errorMessage?: string;
+  errorType?: 'transient' | 'permanent';
+  nextRetryAt?: number; // Circuit breaker cooldown
 }
 
 function createFeedStatusStore() {
-	let statuses = $state<Map<string, FeedStatus>>(new Map());
+  let statuses = $state<Map<string, FeedStatus>>(new Map());
 
-	// Derived: feeds that can be fetched (not in cooldown)
-	let fetchableFeeds = $derived.by(() => {
-		const now = Date.now();
-		// Filter out feeds in circuit-breaker cooldown
-		return [...statuses.keys()].filter((url) => {
-			const status = statuses.get(url);
-			if (status?.status === 'circuit-open' && status.nextRetryAt > now) {
-				return false;
-			}
-			return true;
-		});
-	});
+  // Derived: feeds that can be fetched (not in cooldown)
+  let fetchableFeeds = $derived.by(() => {
+    const now = Date.now();
+    // Filter out feeds in circuit-breaker cooldown
+    return [...statuses.keys()].filter((url) => {
+      const status = statuses.get(url);
+      if (status?.status === 'circuit-open' && status.nextRetryAt > now) {
+        return false;
+      }
+      return true;
+    });
+  });
 }
 ```
 
@@ -187,31 +187,31 @@ const BATCH_SIZE = 50;
 const GUIDS_PER_FEED = 10;
 
 async function fetchAllFeeds(
-	subscriptions: Subscription[],
-	starredGuids: Set<string>
+  subscriptions: Subscription[],
+  starredGuids: Set<string>
 ): Promise<FetchResult> {
-	// Build requests with since_guids per feed
-	const feedRequests = subscriptions.map((sub) => ({
-		url: sub.feedUrl,
-		since_guids: liveDb.getRecentGuids(sub.id, GUIDS_PER_FEED),
-		subscriptionId: sub.id,
-	}));
+  // Build requests with since_guids per feed
+  const feedRequests = subscriptions.map((sub) => ({
+    url: sub.feedUrl,
+    since_guids: liveDb.getRecentGuids(sub.id, GUIDS_PER_FEED),
+    subscriptionId: sub.id,
+  }));
 
-	// Process in batches of 50
-	for (let i = 0; i < feedRequests.length; i += BATCH_SIZE) {
-		const batch = feedRequests.slice(i, i + BATCH_SIZE);
-		const { feeds } = await api.fetchFeedsBatchV2(batch);
+  // Process in batches of 50
+  for (let i = 0; i < feedRequests.length; i += BATCH_SIZE) {
+    const batch = feedRequests.slice(i, i + BATCH_SIZE);
+    const { feeds } = await api.fetchFeedsBatchV2(batch);
 
-		// Update feedStatusStore and merge articles
-		for (const req of batch) {
-			const result = feeds[req.url];
-			feedStatusStore.updateFromV2Result(req.url, result);
+    // Update feedStatusStore and merge articles
+    for (const req of batch) {
+      const result = feeds[req.url];
+      feedStatusStore.updateFromV2Result(req.url, result);
 
-			if (result.status === 'ready' && result.items.length > 0) {
-				await liveDb.mergeArticles(req.subscriptionId, result.items, starredGuids);
-			}
-		}
-	}
+      if (result.status === 'ready' && result.items.length > 0) {
+        await liveDb.mergeArticles(req.subscriptionId, result.items, starredGuids);
+      }
+    }
+  }
 }
 ```
 
@@ -229,30 +229,30 @@ Provides derived views of articles from liveDb.
 
 ```typescript
 function createArticlesStore() {
-	// Derived: all articles (reactive via liveDb.articlesVersion)
-	let allArticles = $derived.by(() => {
-		const _version = liveDb.articlesVersion;
-		return liveDb.articles;
-	});
+  // Derived: all articles (reactive via liveDb.articlesVersion)
+  let allArticles = $derived.by(() => {
+    const _version = liveDb.articlesVersion;
+    return liveDb.articles;
+  });
 
-	// Derived: article lookup by guid
-	let articlesByGuid = $derived(new Map(allArticles.map((a) => [a.guid, a])));
+  // Derived: article lookup by guid
+  let articlesByGuid = $derived(new Map(allArticles.map((a) => [a.guid, a])));
 
-	// Derived: unread articles
-	let unreadArticles = $derived.by(() => {
-		const positions = readingStore.readPositions;
-		return allArticles.filter((a) => !positions.has(a.guid));
-	});
+  // Derived: unread articles
+  let unreadArticles = $derived.by(() => {
+    const positions = readingStore.readPositions;
+    return allArticles.filter((a) => !positions.has(a.guid));
+  });
 
-	// Derived: starred GUIDs (for article retention)
-	let starredGuids = $derived.by(() => {
-		const positions = readingStore.readPositions;
-		const starred = new Set<string>();
-		for (const [guid, pos] of positions) {
-			if (pos.starred) starred.add(guid);
-		}
-		return starred;
-	});
+  // Derived: starred GUIDs (for article retention)
+  let starredGuids = $derived.by(() => {
+    const positions = readingStore.readPositions;
+    const starred = new Set<string>();
+    for (const [guid, pos] of positions) {
+      if (pos.starred) starred.add(guid);
+    }
+    return starred;
+  });
 }
 ```
 
@@ -264,35 +264,35 @@ CRUD operations for subscriptions. Uses liveDb for storage.
 
 ```typescript
 function createSubscriptionsStore() {
-	// Derived: subscriptions from liveDb
-	let subscriptions = $derived.by(() => {
-		const _version = liveDb.subscriptionsVersion;
-		return liveDb.subscriptions;
-	});
+  // Derived: subscriptions from liveDb
+  let subscriptions = $derived.by(() => {
+    const _version = liveDb.subscriptionsVersion;
+    return liveDb.subscriptions;
+  });
 
-	async function add(feedUrl: string, title: string) {
-		// 1. Sync to backend first
-		await api.createSubscription({ rkey, feedUrl, title });
+  async function add(feedUrl: string, title: string) {
+    // 1. Sync to backend first
+    await api.createSubscription({ rkey, feedUrl, title });
 
-		// 2. Store locally after success
-		await liveDb.addSubscription(subscription);
+    // 2. Store locally after success
+    await liveDb.addSubscription(subscription);
 
-		// 3. Mark feed as pending
-		feedStatusStore.markPending(feedUrl);
-	}
+    // 3. Mark feed as pending
+    feedStatusStore.markPending(feedUrl);
+  }
 
-	async function remove(id: number) {
-		const sub = liveDb.getSubscriptionById(id);
+  async function remove(id: number) {
+    const sub = liveDb.getSubscriptionById(id);
 
-		// 1. Delete from backend
-		await api.deleteSubscription(sub.rkey);
+    // 1. Delete from backend
+    await api.deleteSubscription(sub.rkey);
 
-		// 2. Delete locally (includes articles)
-		await liveDb.deleteSubscription(id);
+    // 2. Delete locally (includes articles)
+    await liveDb.deleteSubscription(id);
 
-		// 3. Clear feed status
-		feedStatusStore.clearStatus(sub.feedUrl);
-	}
+    // 3. Clear feed status
+    feedStatusStore.clearStatus(sub.feedUrl);
+  }
 }
 ```
 
@@ -306,42 +306,42 @@ Manages the unified feed view display. Handles filtering, view modes, and pagina
 type ViewMode = 'articles' | 'shares' | 'userShares' | 'combined';
 
 function createFeedViewStore() {
-	// UI state
-	let showOnlyUnread = $state(true);
-	let loadedArticleCount = $state(50);
+  // UI state
+  let showOnlyUnread = $state(true);
+  let loadedArticleCount = $state(50);
 
-	// URL filters
-	let feedFilter = $state<string | null>(null);
-	let starredFilter = $state<string | null>(null);
+  // URL filters
+  let feedFilter = $state<string | null>(null);
+  let starredFilter = $state<string | null>(null);
 
-	// Derived: view mode based on URL params
-	let viewMode = $derived.by((): ViewMode => {
-		if (sharedFilter) return 'userShares';
-		if (sharerFilter || followingFilter) return 'shares';
-		if (feedFilter || starredFilter) return 'articles';
-		return 'combined';
-	});
+  // Derived: view mode based on URL params
+  let viewMode = $derived.by((): ViewMode => {
+    if (sharedFilter) return 'userShares';
+    if (sharerFilter || followingFilter) return 'shares';
+    if (feedFilter || starredFilter) return 'articles';
+    return 'combined';
+  });
 
-	// Derived: filtered articles
-	let filteredArticles = $derived.by(() => {
-		const allArticles = articlesStore.allArticles;
-		const positions = readingStore.readPositions;
+  // Derived: filtered articles
+  let filteredArticles = $derived.by(() => {
+    const allArticles = articlesStore.allArticles;
+    const positions = readingStore.readPositions;
 
-		let articles = allArticles;
+    let articles = allArticles;
 
-		if (feedFilter) {
-			articles = articles.filter((a) => a.subscriptionId === parseInt(feedFilter));
-		}
+    if (feedFilter) {
+      articles = articles.filter((a) => a.subscriptionId === parseInt(feedFilter));
+    }
 
-		if (showOnlyUnread) {
-			articles = articles.filter((a) => !positions.has(a.guid));
-		}
+    if (showOnlyUnread) {
+      articles = articles.filter((a) => !positions.has(a.guid));
+    }
 
-		return articles;
-	});
+    return articles;
+  });
 
-	// Derived: paginated articles
-	let displayedArticles = $derived(filteredArticles.slice(0, loadedArticleCount));
+  // Derived: paginated articles
+  let displayedArticles = $derived(filteredArticles.slice(0, loadedArticleCount));
 }
 ```
 
@@ -539,25 +539,25 @@ To prevent unbounded growth, articles are limited per feed:
 const MAX_ARTICLES_PER_FEED = 100;
 
 async function enforceArticleLimit(subscriptionId, starredGuids) {
-	const feedArticles = this._articles
-		.filter((a) => a.subscriptionId === subscriptionId)
-		.sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
+  const feedArticles = this._articles
+    .filter((a) => a.subscriptionId === subscriptionId)
+    .sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
 
-	if (feedArticles.length <= MAX_ARTICLES_PER_FEED) return;
+  if (feedArticles.length <= MAX_ARTICLES_PER_FEED) return;
 
-	// Keep all starred + newest non-starred up to limit
-	const starred = feedArticles.filter((a) => starredGuids.has(a.guid));
-	const nonStarred = feedArticles.filter((a) => !starredGuids.has(a.guid));
+  // Keep all starred + newest non-starred up to limit
+  const starred = feedArticles.filter((a) => starredGuids.has(a.guid));
+  const nonStarred = feedArticles.filter((a) => !starredGuids.has(a.guid));
 
-	const keepCount = Math.max(0, MAX_ARTICLES_PER_FEED - starred.length);
-	const toKeep = new Set([
-		...starred.map((a) => a.guid),
-		...nonStarred.slice(0, keepCount).map((a) => a.guid),
-	]);
+  const keepCount = Math.max(0, MAX_ARTICLES_PER_FEED - starred.length);
+  const toKeep = new Set([
+    ...starred.map((a) => a.guid),
+    ...nonStarred.slice(0, keepCount).map((a) => a.guid),
+  ]);
 
-	// Delete excess articles from IndexedDB
-	const toDelete = feedArticles.filter((a) => !toKeep.has(a.guid));
-	await db.articles.bulkDelete(toDelete.map((a) => a.id));
+  // Delete excess articles from IndexedDB
+  const toDelete = feedArticles.filter((a) => !toKeep.has(a.guid));
+  await db.articles.bulkDelete(toDelete.map((a) => a.id));
 }
 ```
 
@@ -570,13 +570,13 @@ async function enforceArticleLimit(subscriptionId, starredGuids) {
 ```typescript
 // In feedFetcher.ts
 try {
-	const { feeds } = await api.fetchFeedsBatchV2(batch);
-	// Process results...
+  const { feeds } = await api.fetchFeedsBatchV2(batch);
+  // Process results...
 } catch (e) {
-	// Batch failed - mark all feeds in batch as error
-	for (const req of batch) {
-		feedStatusStore.markError(req.url, e.message);
-	}
+  // Batch failed - mark all feeds in batch as error
+  for (const req of batch) {
+    feedStatusStore.markError(req.url, e.message);
+  }
 }
 ```
 
