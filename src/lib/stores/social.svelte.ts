@@ -24,13 +24,12 @@ function createSocialStore() {
 	let skyreaderFollows = $state<FollowedUserDetailed[]>([]);
 	let blueskyFollows = $state<FollowedUserDetailed[]>([]);
 	let skyreaderFollowsNextOffset = $state<number | null>(null);
-	let blueskyFollowsNextOffset = $state<number | null>(null);
+	let blueskyFollowsCursor = $state<string | null>(null);
 	let isLoadingFeed = $state(false);
 	let isLoadingUsers = $state(false);
 	let isLoadingSkyreaderFollows = $state(false);
 	let isLoadingBlueskyFollows = $state(false);
 	let isDiscoverLoading = $state(false);
-	let isSyncing = $state(false);
 	let cursor = $state<string | null>(null);
 	let hasMore = $state(true);
 	let error = $state<string | null>(null);
@@ -155,24 +154,6 @@ function createSocialStore() {
 		}
 	}
 
-	async function syncFollows() {
-		isSyncing = true;
-		error = null;
-
-		try {
-			const result = await api.syncFollows();
-			// Refresh followed users list and feed after syncing
-			await loadFollowedUsers();
-			await loadFeed(true);
-			return result.synced;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to sync follows';
-			return 0;
-		} finally {
-			isSyncing = false;
-		}
-	}
-
 	async function loadDiscoverUsers() {
 		isDiscoverLoading = true;
 		error = null;
@@ -196,7 +177,7 @@ function createSocialStore() {
 
 		try {
 			const offset = reset ? 0 : (skyreaderFollowsNextOffset ?? 0);
-			const result = await api.getFollowingDetailed('skyreader', 50, offset);
+			const result = await api.getFollowingDetailed(50, offset);
 
 			if (reset) {
 				skyreaderFollows = result.users;
@@ -214,26 +195,63 @@ function createSocialStore() {
 		}
 	}
 
-	async function loadBlueskyFollows(reset = true) {
+	async function loadBlueskyFollows(reset = true, userDid?: string) {
 		if (isLoadingBlueskyFollows) return;
-		if (!reset && blueskyFollowsNextOffset === null) return;
+		if (!reset && blueskyFollowsCursor === null) return;
+		if (!userDid) return;
 
 		isLoadingBlueskyFollows = true;
 		error = null;
 
 		try {
-			const offset = reset ? 0 : (blueskyFollowsNextOffset ?? 0);
-			const result = await api.getFollowingDetailed('bluesky', 50, offset);
+			const params = new URLSearchParams({
+				actor: userDid,
+				limit: '50',
+			});
+			if (!reset && blueskyFollowsCursor) {
+				params.set('cursor', blueskyFollowsCursor);
+			}
+
+			const response = await fetch(
+				`https://public.api.bsky.app/xrpc/app.bsky.graph.getFollows?${params}`
+			);
+			if (!response.ok) {
+				throw new Error(`Failed to fetch Bluesky follows: ${response.status}`);
+			}
+
+			const data = (await response.json()) as {
+				follows: Array<{
+					did: string;
+					handle: string;
+					displayName?: string;
+					avatar?: string;
+				}>;
+				cursor?: string;
+			};
+
+			// Map Bluesky follows into FollowedUserDetailed shape
+			// Check which are also followed in-app
+			const inappDids = new Set(inAppFollows.map((f) => f.did));
+			const inappRkeys = new Map(inAppFollows.map((f) => [f.did, f.rkey]));
+
+			const users: FollowedUserDetailed[] = data.follows.map((f) => ({
+				did: f.did,
+				source: inappDids.has(f.did) ? 'both' : 'bluesky',
+				shareCount: 0,
+				lastSharedAt: null,
+				followedAt: 0,
+				rkey: inappRkeys.get(f.did),
+			}));
 
 			if (reset) {
-				blueskyFollows = result.users;
+				blueskyFollows = users;
 			} else {
-				blueskyFollows = [...blueskyFollows, ...result.users];
+				blueskyFollows = [...blueskyFollows, ...users];
 			}
-			blueskyFollowsNextOffset = result.nextOffset;
+			blueskyFollowsCursor = data.cursor || null;
 
 			// Prefetch profiles from Bluesky
-			profileService.prefetch(result.users.map((u) => u.did));
+			profileService.prefetch(users.map((u) => u.did));
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load Bluesky follows';
 		} finally {
@@ -398,7 +416,7 @@ function createSocialStore() {
 		skyreaderFollows = [];
 		blueskyFollows = [];
 		skyreaderFollowsNextOffset = null;
-		blueskyFollowsNextOffset = null;
+		blueskyFollowsCursor = null;
 		cursor = null;
 		hasMore = true;
 		error = null;
@@ -434,7 +452,7 @@ function createSocialStore() {
 			return skyreaderFollowsNextOffset !== null;
 		},
 		get hasMoreBlueskyFollows() {
-			return blueskyFollowsNextOffset !== null;
+			return blueskyFollowsCursor !== null;
 		},
 		get isLoading() {
 			return isLoading;
@@ -447,9 +465,6 @@ function createSocialStore() {
 		},
 		get isDiscoverLoading() {
 			return isDiscoverLoading;
-		},
-		get isSyncing() {
-			return isSyncing;
 		},
 		get hasMore() {
 			return hasMore;
@@ -475,7 +490,6 @@ function createSocialStore() {
 		loadBlueskyFollows,
 		followUser,
 		unfollowInApp,
-		syncFollows,
 		reset,
 		getSharesByAuthor,
 	};

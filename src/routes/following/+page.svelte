@@ -54,7 +54,7 @@
 			const fetched = await profileService.getProfiles(dids);
 			profiles = new Map([...profiles, ...fetched]);
 		} else {
-			await socialStore.loadBlueskyFollows(reset);
+			await socialStore.loadBlueskyFollows(reset, auth.user?.did);
 			// Fetch profiles for displayed users
 			const dids = socialStore.blueskyFollows.map((u) => u.did);
 			const fetched = await profileService.getProfiles(dids);
@@ -226,26 +226,27 @@
 								handle={profile?.handle || user.did}
 								size="large"
 							/>
-							<div class="user-stats">
-								{#if user.shareCount > 0}
-									<span class="share-count">
-										<img src={logo} alt="" class="stat-icon" />
-										{user.shareCount}
-										{user.shareCount === 1 ? 'share' : 'shares'}
-									</span>
-								{/if}
-								{#if user.documentCount && user.documentCount > 0}
-									<span class="document-count">
-										<Icon name="newspaper" size={14} />
-										{user.documentCount}
-										{user.documentCount === 1 ? 'article' : 'articles'}
-									</span>
-								{/if}
-								{#if user.shareCount === 0 && (!user.documentCount || user.documentCount === 0)}
-									<span class="no-activity">No activity</span>
-								{/if}
-								<span class="last-shared">{formatRelativeTime(getLastActivityDate(user))}</span>
-							</div>
+							{#if activeTab === 'skyreader'}
+								<div class="user-stats">
+									{#if user.shareCount > 0}
+										<span class="share-count">
+											<img src={logo} alt="" class="stat-icon" />
+											{user.shareCount}
+											{user.shareCount === 1 ? 'share' : 'shares'}
+										</span>
+									{/if}
+									{#if user.documentCount && user.documentCount > 0}
+										<span class="document-count">
+											<Icon name="newspaper" size={14} />
+											{user.documentCount}
+											{user.documentCount === 1 ? 'article' : 'articles'}
+										</span>
+									{/if}
+									{#if getLastActivityDate(user)}
+										<span class="last-shared">{formatRelativeTime(getLastActivityDate(user))}</span>
+									{/if}
+								</div>
+							{/if}
 						</div>
 
 						<div class="user-actions">

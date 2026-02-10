@@ -162,10 +162,6 @@ class ApiClient {
 		return this.fetch(`/api/activity/reshares?${params}`);
 	}
 
-	async syncFollows(): Promise<{ synced: number }> {
-		return this.fetch('/api/social/sync-follows', { method: 'POST' });
-	}
-
 	async getFollowedUsers(
 		cursor?: string,
 		limit?: number
@@ -184,7 +180,6 @@ class ApiClient {
 	}
 
 	async getFollowingDetailed(
-		source: 'skyreader' | 'bluesky',
 		limit = 50,
 		offset = 0
 	): Promise<{
@@ -192,7 +187,7 @@ class ApiClient {
 		nextOffset: number | null;
 	}> {
 		const params = new URLSearchParams({
-			source,
+			source: 'skyreader',
 			limit: limit.toString(),
 			offset: offset.toString(),
 		});
