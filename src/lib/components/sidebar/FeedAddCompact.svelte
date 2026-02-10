@@ -186,7 +186,7 @@
   .feed-add-compact {
     position: relative;
     padding: 0.25rem 0.75rem;
-    padding-left: 0.75rem;
+    padding-left: 1.5rem;
   }
 
   .input-wrapper {
