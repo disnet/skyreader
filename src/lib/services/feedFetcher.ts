@@ -6,6 +6,29 @@ import type { Subscription } from '$lib/types';
 const BATCH_SIZE = 5;
 const GUIDS_PER_FEED = 10;
 
+/**
+ * Check if a subscription's title should be updated from feed metadata.
+ * Returns true when the current title is a fallback (URL, hostname, etc.)
+ * and the feed provides a real title.
+ */
+function shouldUpdateTitle(currentTitle: string, feedUrl: string, fetchedTitle: string): boolean {
+  if (!fetchedTitle || fetchedTitle === 'Untitled Feed') return false;
+  if (currentTitle === fetchedTitle) return false;
+
+  // Update if current title is the feed URL
+  if (currentTitle === feedUrl) return true;
+
+  // Update if current title is just a hostname
+  try {
+    const hostname = new URL(feedUrl).hostname;
+    if (currentTitle === hostname) return true;
+  } catch {
+    // ignore invalid URL
+  }
+
+  return false;
+}
+
 export interface FetchResult {
   totalFeeds: number;
   successfulFeeds: number;
@@ -89,6 +112,18 @@ export async function fetchAllFeeds(
           continue;
         }
 
+        // Update subscription title/siteUrl from feed metadata
+        if (feedResult.title) {
+          const sub = liveDb.getSubscriptionById(req.subscriptionId);
+          if (sub && shouldUpdateTitle(sub.title, sub.feedUrl, feedResult.title)) {
+            await liveDb.updateSubscription(req.subscriptionId, {
+              title: feedResult.title,
+              siteUrl: feedResult.siteUrl ?? sub.siteUrl,
+              localUpdatedAt: Date.now(),
+            });
+          }
+        }
+
         // Merge new articles
         if (feedResult.items && feedResult.items.length > 0) {
           const newCount = await liveDb.mergeArticles(
@@ -149,6 +184,15 @@ export async function fetchSingleFeed(
 
     // Mark as ready
     feedStatusStore.markReady(subscription.feedUrl);
+
+    // Update subscription title/siteUrl from feed metadata
+    if (feed.title && shouldUpdateTitle(subscription.title, subscription.feedUrl, feed.title)) {
+      await liveDb.updateSubscription(subscription.id, {
+        title: feed.title,
+        siteUrl: feed.siteUrl ?? subscription.siteUrl,
+        localUpdatedAt: Date.now(),
+      });
+    }
 
     // Merge articles
     let newArticles = 0;
