@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { parseOPMLFile, type OPMLFeed } from '$lib/utils/opml-parser';
+  import { parseImportFile, type OPMLFeed } from '$lib/utils/opml-parser';
   import { subscriptionsStore, MAX_SUBSCRIPTIONS } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { liveDb } from '$lib/services/liveDb.svelte';
@@ -50,7 +50,7 @@
     const file = input.files?.[0];
     if (!file) return;
 
-    const result = await parseOPMLFile(file);
+    const result = await parseImportFile(file);
     parsedFeeds = result.feeds;
     parseErrors = result.errors;
 
@@ -129,13 +129,13 @@
   });
 </script>
 
-<Modal {open} onclose={handleClose} title="Import OPML" maxWidth="520px">
+<Modal {open} onclose={handleClose} title="Import Feeds" maxWidth="520px">
   {#if modalState === 'select'}
-    <p class="description">Select an OPML file to import feeds from another RSS reader.</p>
+    <p class="description">Select an OPML file or a text file with one feed URL per line.</p>
     <input
       bind:this={fileInput}
       type="file"
-      accept=".opml,.xml"
+      accept=".opml,.xml,.txt"
       onchange={handleFileSelect}
       class="file-input"
     />

@@ -342,10 +342,10 @@
 
   <section class="card">
     <h2>Import / Export</h2>
-    <p>Import or export your subscriptions using OPML files.</p>
+    <p>Import or export your subscriptions using OPML or text files.</p>
     <div class="button-row">
       <button class="btn btn-secondary" onclick={() => (showImportModal = true)}>
-        Import OPML
+        Import Feeds
       </button>
       <button
         class="btn btn-secondary"

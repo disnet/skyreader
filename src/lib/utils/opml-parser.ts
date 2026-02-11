@@ -79,7 +79,64 @@ export function parseOPML(xmlContent: string): OPMLParseResult {
 }
 
 /**
+ * Parse a newline-delimited list of feed URLs.
+ */
+export function parseTextFeedList(text: string): OPMLParseResult {
+  const feeds: OPMLFeed[] = [];
+  const errors: string[] = [];
+
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'));
+
+  if (lines.length === 0) {
+    errors.push('No URLs found in file');
+    return { feeds, errors };
+  }
+
+  for (const line of lines) {
+    try {
+      new URL(line);
+    } catch {
+      errors.push(`Invalid URL: ${line}`);
+      continue;
+    }
+    feeds.push({ feedUrl: line, title: line });
+  }
+
+  return { feeds, errors };
+}
+
+/**
+ * Read a File object and parse it as OPML or a newline-delimited URL list.
+ * Auto-detects format based on file extension and content.
+ */
+export function parseImportFile(file: File): Promise<OPMLParseResult> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const content = (reader.result as string).trim();
+      const isXml =
+        file.name.endsWith('.opml') ||
+        file.name.endsWith('.xml') ||
+        content.startsWith('<?xml') ||
+        content.startsWith('<opml');
+      resolve(isXml ? parseOPML(content) : parseTextFeedList(content));
+    };
+
+    reader.onerror = () => {
+      resolve({ feeds: [], errors: ['Failed to read file'] });
+    };
+
+    reader.readAsText(file);
+  });
+}
+
+/**
  * Read a File object and parse it as OPML.
+ * @deprecated Use parseImportFile instead.
  */
 export function parseOPMLFile(file: File): Promise<OPMLParseResult> {
   return new Promise((resolve) => {
