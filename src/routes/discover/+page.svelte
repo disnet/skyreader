@@ -2,11 +2,11 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
-  import { socialStore, FOLLOW_LIMIT } from '$lib/stores/social.svelte';
+  import { socialStore } from '$lib/stores/social.svelte';
   import PageHeader from '$lib/components/common/PageHeader.svelte';
   import StateView from '$lib/components/common/StateView.svelte';
   import UserCard from '$lib/components/common/UserCard.svelte';
-  import Modal from '$lib/components/common/Modal.svelte';
+  import FollowLimitModal from '$lib/components/FollowLimitModal.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
 
   $effect(() => {
@@ -155,39 +155,9 @@
   </StateView>
 </div>
 
-<Modal open={showLimitModal} onclose={() => (showLimitModal = false)} title="Follow Limit Reached">
-  <div class="limit-modal-content">
-    <p>
-      While Skyreader is in beta, you can follow up to <strong>{FOLLOW_LIMIT}</strong> accounts.
-    </p>
-    <p>This limit will be lifted once we're out of beta.</p>
-    <p class="current-count">
-      You're currently following {socialStore.inAppFollowCount} of {FOLLOW_LIMIT} accounts.
-    </p>
-  </div>
-  {#snippet footer()}
-    <button class="btn btn-primary" onclick={() => (showLimitModal = false)}>Got it</button>
-  {/snippet}
-</Modal>
+<FollowLimitModal open={showLimitModal} onclose={() => (showLimitModal = false)} />
 
 <style>
-  .limit-modal-content {
-    text-align: center;
-  }
-
-  .limit-modal-content p {
-    margin: 0 0 1rem;
-    color: var(--color-text-secondary);
-  }
-
-  .limit-modal-content p:last-child {
-    margin-bottom: 0;
-  }
-
-  .limit-modal-content .current-count {
-    font-size: 0.875rem;
-    color: var(--color-text-tertiary);
-  }
   .discover-page {
     max-width: 800px;
     margin: 0 auto;
