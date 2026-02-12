@@ -2,7 +2,9 @@
   import { onMount } from 'svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+  import { articlesStore } from '$lib/stores/articles.svelte';
   import { api } from '$lib/services/api';
+  import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import StateView from '$lib/components/common/StateView.svelte';
   import Modal from '$lib/components/common/Modal.svelte';
   import Icon from '$lib/components/Icon.svelte';
@@ -181,6 +183,16 @@
     }
   }
 
+  async function addAndFetch(feedUrl: string, title: string, siteUrl: string) {
+    const id = await subscriptionsStore.add(feedUrl, title, { siteUrl });
+    const sub = subscriptionsStore.getById(id);
+    if (sub) {
+      // Fetch feed in background so articles appear immediately
+      fetchSingleFeed(sub, true, articlesStore.starredGuids);
+    }
+    return id;
+  }
+
   async function handleAddSubscription(sub: StandardSub) {
     const pubUrl = sub.publication.url;
     addingFeeds.add(pubUrl);
@@ -193,9 +205,7 @@
       if (feeds.length === 0) {
         standardError = `No RSS feed found for ${sub.publication.name}`;
       } else if (feeds.length === 1) {
-        await subscriptionsStore.add(feeds[0], sub.publication.name, {
-          siteUrl: pubUrl,
-        });
+        await addAndFetch(feeds[0], sub.publication.name, pubUrl);
         addedFeeds.add(pubUrl);
         addedFeeds = new Set(addedFeeds);
       } else {
@@ -222,9 +232,7 @@
     addingFeeds = new Set(addingFeeds);
 
     try {
-      await subscriptionsStore.add(feedUrl, sub.publication.name, {
-        siteUrl: pubUrl,
-      });
+      await addAndFetch(feedUrl, sub.publication.name, pubUrl);
       addedFeeds.add(pubUrl);
       addedFeeds = new Set(addedFeeds);
     } catch (e) {
@@ -255,9 +263,7 @@
         const feeds = result.feeds;
 
         if (feeds.length >= 1) {
-          await subscriptionsStore.add(feeds[0], sub.publication.name, {
-            siteUrl: pubUrl,
-          });
+          await addAndFetch(feeds[0], sub.publication.name, pubUrl);
           addedFeeds.add(pubUrl);
           addedFeeds = new Set(addedFeeds);
         } else {
