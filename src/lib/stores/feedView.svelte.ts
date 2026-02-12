@@ -83,6 +83,7 @@ function createFeedViewStore() {
 
   // Toolbar filter state (unified source model)
   let filterToolbarOpen = $state(false);
+  let sourcePopoverOpen = $state(false);
   let toolbarSourceMode = $state<'all' | 'include'>('all');
   let toolbarSourceKeys = $state<string[]>([]);
   // View-local sort order override (null = use global preferences.sortOrder)
@@ -698,6 +699,9 @@ function createFeedViewStore() {
     get filterToolbarOpen() {
       return filterToolbarOpen;
     },
+    get sourcePopoverOpen() {
+      return sourcePopoverOpen;
+    },
     get hasActiveFilters() {
       return hasActiveFilters;
     },
@@ -726,6 +730,9 @@ function createFeedViewStore() {
     },
     setFilterToolbarOpen(open: boolean) {
       filterToolbarOpen = open;
+    },
+    setSourcePopoverOpen(open: boolean) {
+      sourcePopoverOpen = open;
     },
     setToolbarSourceFilter(mode: 'all' | 'include', keys: string[]) {
       toolbarSourceMode = mode;

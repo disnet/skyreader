@@ -324,7 +324,7 @@
         filteredViewsStore
           .create({
             name: 'new view',
-            sourceMode: 'all',
+            sourceMode: 'include',
             sourceKeys: [],
             readFilter: 'unread',
             sortOrder: 'newest',
@@ -332,6 +332,7 @@
           .then((id) => {
             goto(`/?view=${id}`);
             feedViewStore.setFilterToolbarOpen(true);
+            feedViewStore.setSourcePopoverOpen(true);
           });
       }
       return;

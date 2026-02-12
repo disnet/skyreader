@@ -64,8 +64,8 @@
 
   let ef = $derived(feedViewStore.effectiveFilters);
 
-  // Popover open/close state
-  let sourcePopoverOpen = $state(false);
+  // Popover open/close state (stored in feedViewStore so it can be opened externally)
+  let sourcePopoverOpen = $derived(feedViewStore.sourcePopoverOpen);
   let sourcePopoverRef: HTMLDivElement | null = $state(null);
 
   // Derive a Set for quick membership checks
@@ -163,13 +163,13 @@
 
   function handleClickOutside(e: MouseEvent) {
     if (sourcePopoverOpen && sourcePopoverRef && !sourcePopoverRef.contains(e.target as Node)) {
-      sourcePopoverOpen = false;
+      feedViewStore.setSourcePopoverOpen(false);
     }
   }
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
-      sourcePopoverOpen = false;
+      feedViewStore.setSourcePopoverOpen(false);
     }
   }
 
@@ -358,7 +358,7 @@
           class:has-filter={ef.sourceMode !== 'all'}
           onclick={(e) => {
             e.stopPropagation();
-            sourcePopoverOpen = !sourcePopoverOpen;
+            feedViewStore.setSourcePopoverOpen(!sourcePopoverOpen);
           }}
         >
           <Icon name="filter" size={16} />
@@ -636,7 +636,7 @@
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
     z-index: 100;
     overflow: hidden;
-    max-height: 400px;
+    max-height: 520px;
     overflow-y: auto;
   }
 

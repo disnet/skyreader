@@ -82,6 +82,7 @@
     ) {
       styleToolbarOpen = false;
       feedViewStore.setFilterToolbarOpen(false);
+      feedViewStore.setSourcePopoverOpen(false);
     }
   }
 
@@ -184,8 +185,13 @@
           class="filter-toggle-btn"
           class:active={feedViewStore.filterToolbarOpen}
           onclick={() => {
-            feedViewStore.setFilterToolbarOpen(!feedViewStore.filterToolbarOpen);
-            if (feedViewStore.filterToolbarOpen) styleToolbarOpen = false;
+            const opening = !feedViewStore.filterToolbarOpen;
+            feedViewStore.setFilterToolbarOpen(opening);
+            if (opening) {
+              styleToolbarOpen = false;
+            } else {
+              feedViewStore.setSourcePopoverOpen(false);
+            }
           }}
           aria-label="Toggle filters"
           title="Filter"

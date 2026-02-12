@@ -536,13 +536,14 @@
             e.stopPropagation();
             const id = await filteredViewsStore.create({
               name: 'new view',
-              sourceMode: 'all',
+              sourceMode: 'include',
               sourceKeys: [],
               readFilter: 'unread',
               sortOrder: 'newest',
             });
             selectFilter('view', id);
             feedViewStore.setFilterToolbarOpen(true);
+            feedViewStore.setSourcePopoverOpen(true);
           }}
         >
           <Icon name="plus" size={14} />
