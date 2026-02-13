@@ -1,6 +1,6 @@
 <script lang="ts">
   import { searchBlueskyActors, type BlueskySearchResult } from '$lib/services/blueskySearch';
-  import { socialStore, FOLLOW_LIMIT } from '$lib/stores/social.svelte';
+  import { socialStore } from '$lib/stores/social.svelte';
 
   interface Props {
     followedDids: Set<string>;
@@ -154,7 +154,7 @@
 
   {#if showLimitWarning}
     <div class="limit-warning">
-      Follow limit reached ({FOLLOW_LIMIT} max during beta)
+      Follow limit reached ({socialStore.followLimit} max)
     </div>
   {/if}
 

@@ -4,6 +4,11 @@ export interface User {
   displayName?: string;
   avatarUrl?: string;
   pdsUrl: string;
+  tier?: string;
+  limits?: {
+    maxSubscriptions: number;
+    maxFollows: number;
+  };
 }
 
 export interface Subscription {

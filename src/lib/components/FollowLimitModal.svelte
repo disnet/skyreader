@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { socialStore, FOLLOW_LIMIT } from '$lib/stores/social.svelte';
+  import { socialStore } from '$lib/stores/social.svelte';
   import Modal from '$lib/components/common/Modal.svelte';
 
   interface Props {
@@ -13,11 +13,10 @@
 <Modal {open} {onclose} title="Follow Limit Reached">
   <div class="limit-modal-content">
     <p>
-      While Skyreader is in beta, you can follow up to <strong>{FOLLOW_LIMIT}</strong> accounts.
+      You can follow up to <strong>{socialStore.followLimit}</strong> accounts.
     </p>
-    <p>This limit will be lifted once we're out of beta.</p>
     <p class="current-count">
-      You're currently following {socialStore.inAppFollowCount} of {FOLLOW_LIMIT} accounts.
+      You're currently following {socialStore.inAppFollowCount} of {socialStore.followLimit} accounts.
     </p>
   </div>
   {#snippet footer()}

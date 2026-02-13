@@ -1,9 +1,8 @@
 import { liveDb } from '$lib/services/liveDb.svelte';
 import { feedStatusStore } from './feedStatus.svelte';
 import { api } from '$lib/services/api';
+import { auth } from './auth.svelte';
 import type { Subscription } from '$lib/types';
-
-export const MAX_SUBSCRIPTIONS = 100;
 
 // Generate a TID (Timestamp Identifier) for AT Protocol records
 function generateTid(): string {
@@ -31,8 +30,11 @@ function createSubscriptionsStore() {
   // Derived: subscription count
   let count = $derived(subscriptions.length);
 
+  // Derived: max subscriptions from user tier (fallback to 100 for free)
+  let maxSubscriptions = $derived(auth.user?.limits?.maxSubscriptions ?? 100);
+
   // Derived: can add more subscriptions
-  let canAddMore = $derived(count < MAX_SUBSCRIPTIONS);
+  let canAddMore = $derived(count < maxSubscriptions);
 
   /**
    * Load subscriptions from IndexedDB
@@ -58,8 +60,8 @@ function createSubscriptionsStore() {
     title: string,
     options?: Partial<Subscription>
   ): Promise<number> {
-    if (count >= MAX_SUBSCRIPTIONS) {
-      throw new Error(`Feed limit reached. You can have up to ${MAX_SUBSCRIPTIONS} feeds.`);
+    if (count >= maxSubscriptions) {
+      throw new Error(`Feed limit reached. You can have up to ${maxSubscriptions} feeds.`);
     }
 
     // Check for duplicate
@@ -138,7 +140,7 @@ function createSubscriptionsStore() {
     });
 
     // Check subscription limit and truncate if needed
-    const availableSlots = MAX_SUBSCRIPTIONS - count;
+    const availableSlots = maxSubscriptions - count;
     if (feedsToAdd.length > availableSlots) {
       truncated = feedsToAdd.length - availableSlots;
       feedsToAdd = feedsToAdd.slice(0, availableSlots);
@@ -319,6 +321,9 @@ function createSubscriptionsStore() {
     },
     get canAddMore() {
       return canAddMore;
+    },
+    get maxSubscriptions() {
+      return maxSubscriptions;
     },
 
     // CRUD operations

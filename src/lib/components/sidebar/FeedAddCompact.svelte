@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api } from '$lib/services/api';
-  import { subscriptionsStore, MAX_SUBSCRIPTIONS } from '$lib/stores/subscriptions.svelte';
+  import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import Icon from '../Icon.svelte';
@@ -14,13 +14,15 @@
   let containerRef: HTMLDivElement | undefined = $state();
   let inputRef: HTMLInputElement | undefined = $state();
 
-  const isAtLimit = $derived(subscriptionsStore.subscriptions.length >= MAX_SUBSCRIPTIONS);
+  const isAtLimit = $derived(
+    subscriptionsStore.subscriptions.length >= subscriptionsStore.maxSubscriptions
+  );
 
   async function addFeed() {
     if (!feedUrl.trim() || isAdding) return;
 
     if (isAtLimit) {
-      error = `Feed limit reached (${MAX_SUBSCRIPTIONS} max)`;
+      error = `Feed limit reached (${subscriptionsStore.maxSubscriptions} max)`;
       return;
     }
 

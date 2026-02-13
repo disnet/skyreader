@@ -400,6 +400,9 @@
       {/if}
       {#if !sidebarStore.isCollapsed}
         <span class="username">@{auth.user?.handle}</span>
+        {#if auth.user?.tier && auth.user.tier !== 'free'}
+          <span class="tier-badge">{auth.user.tier}</span>
+        {/if}
       {/if}
     </a>
     <button class="add-feed-btn" onclick={handleAddFeed} aria-label="Add feed"> + </button>
@@ -761,6 +764,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .tier-badge {
+    font-size: 0.625rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    background-color: var(--color-primary, #3b82f6);
+    color: #fff;
+    flex-shrink: 0;
+    line-height: 1.2;
   }
 
   .add-feed-btn {

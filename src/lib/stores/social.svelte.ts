@@ -6,9 +6,7 @@ import { syncStore } from './sync.svelte';
 import { socialReadingStore } from './socialReading.svelte';
 import type { DiscoverUser, FollowedUserDetailed, SocialDocument, SocialShare } from '$lib/types';
 import { generateTid } from '$lib/utils/tid';
-
-// Maximum number of Bluesky accounts that can be followed on Skyreader during beta
-export const FOLLOW_LIMIT = 50;
+import { auth } from './auth.svelte';
 
 export interface FollowedUser {
   did: string;
@@ -48,8 +46,11 @@ function createSocialStore() {
   // Derived: any loading operation in progress
   let isLoading = $derived(isLoadingFeed || isLoadingUsers);
 
+  // Derived: follow limit from user tier (fallback to 50 for free)
+  let followLimit = $derived(auth.user?.limits?.maxFollows ?? 50);
+
   // Derived: whether we've hit the follow limit
-  let isAtFollowLimit = $derived(inAppFollowCount >= FOLLOW_LIMIT);
+  let isAtFollowLimit = $derived(inAppFollowCount >= followLimit);
 
   async function loadFeed(reset = false) {
     if (isLoadingFeed || (!hasMore && !reset)) {
@@ -480,6 +481,9 @@ function createSocialStore() {
     },
     get isAtFollowLimit() {
       return isAtFollowLimit;
+    },
+    get followLimit() {
+      return followLimit;
     },
     loadFeed,
     loadPopular,

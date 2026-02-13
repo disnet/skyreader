@@ -1,6 +1,6 @@
 <script lang="ts">
   import { parseImportFile, type OPMLFeed } from '$lib/utils/opml-parser';
-  import { subscriptionsStore, MAX_SUBSCRIPTIONS } from '$lib/stores/subscriptions.svelte';
+  import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { liveDb } from '$lib/services/liveDb.svelte';
   import { fetchAllFeeds } from '$lib/services/feedFetcher';
@@ -23,7 +23,9 @@
   let results = $state({ added: 0, skipped: 0, failed: [] as string[], truncated: 0 });
   let fileInput: HTMLInputElement | undefined = $state();
 
-  const availableSlots = $derived(MAX_SUBSCRIPTIONS - subscriptionsStore.subscriptions.length);
+  const availableSlots = $derived(
+    subscriptionsStore.maxSubscriptions - subscriptionsStore.subscriptions.length
+  );
   const selectedNonDuplicates = $derived(
     [...selectedUrls].filter((url) => !existingUrls.has(url.toLowerCase())).length
   );
@@ -156,7 +158,7 @@
     </div>
     {#if willExceedLimit}
       <div class="limit-warning">
-        You can only add {availableSlots} more feed{availableSlots === 1 ? '' : 's'} (limit: {MAX_SUBSCRIPTIONS}).
+        You can only add {availableSlots} more feed{availableSlots === 1 ? '' : 's'} (limit: {subscriptionsStore.maxSubscriptions}).
         {#if availableSlots > 0}
           The first {availableSlots} will be imported.
         {:else}

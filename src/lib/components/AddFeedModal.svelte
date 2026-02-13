@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { subscriptionsStore, MAX_SUBSCRIPTIONS } from '$lib/stores/subscriptions.svelte';
+  import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import FeedDiscoveryForm from '$lib/components/FeedDiscoveryForm.svelte';
@@ -14,7 +14,9 @@
   let feedFormRef: { reset: () => void } | undefined = $state();
   let error = $state<string | null>(null);
 
-  const isAtLimit = $derived(subscriptionsStore.subscriptions.length >= MAX_SUBSCRIPTIONS);
+  const isAtLimit = $derived(
+    subscriptionsStore.subscriptions.length >= subscriptionsStore.maxSubscriptions
+  );
 
   function handleClose() {
     feedFormRef?.reset();
@@ -59,7 +61,8 @@
 <Modal {open} onclose={handleClose} title="Add Feed">
   {#if isAtLimit}
     <p class="limit-message">
-      You've reached the maximum of {MAX_SUBSCRIPTIONS} feeds. Remove some feeds to add new ones.
+      You've reached the maximum of {subscriptionsStore.maxSubscriptions} feeds. Remove some feeds to
+      add new ones.
     </p>
   {:else}
     <FeedDiscoveryForm bind:this={feedFormRef} onFeedSelected={handleFeedSelected} />
