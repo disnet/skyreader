@@ -4,6 +4,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { activityStore } from '$lib/stores/activity.svelte';
   import { profileService } from '$lib/services/profiles';
+  import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
   import PageHeader from '$lib/components/common/PageHeader.svelte';
   import StateView from '$lib/components/common/StateView.svelte';
   import { formatRelativeDate } from '$lib/utils/date';
@@ -96,13 +97,11 @@
       {/each}
     </div>
 
-    {#if activityStore.hasMore}
-      <div class="load-more">
-        <button class="btn btn-secondary" onclick={loadMore} disabled={activityStore.isLoading}>
-          {activityStore.isLoading ? 'Loading...' : 'Load More'}
-        </button>
-      </div>
-    {/if}
+    <InfiniteScrollSentinel
+      hasMore={activityStore.hasMore}
+      isLoading={activityStore.isLoading}
+      onLoadMore={loadMore}
+    />
   </StateView>
 </div>
 
@@ -160,10 +159,5 @@
   .activity-date {
     font-size: 0.8125rem;
     color: var(--color-text-secondary);
-  }
-
-  .load-more {
-    margin-top: 1rem;
-    text-align: center;
   }
 </style>

@@ -4,6 +4,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
   import { profileService } from '$lib/services/profiles';
+  import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
   import PageHeader from '$lib/components/common/PageHeader.svelte';
   import StateView from '$lib/components/common/StateView.svelte';
   import UserSearch from '$lib/components/UserSearch.svelte';
@@ -206,13 +207,7 @@
         {/each}
       </div>
 
-      {#if hasMore}
-        <div class="load-more">
-          <button class="btn btn-secondary" onclick={loadMore} disabled={isLoading}>
-            {isLoading ? 'Loading...' : 'Load More'}
-          </button>
-        </div>
-      {/if}
+      <InfiniteScrollSentinel {hasMore} {isLoading} onLoadMore={loadMore} />
     </StateView>
   {/if}
 </div>
@@ -273,11 +268,5 @@
     background: var(--color-error-bg, #f8d7da);
     border-radius: 8px;
     margin-bottom: 1rem;
-  }
-
-  .load-more {
-    display: flex;
-    justify-content: center;
-    padding: 1.5rem 0;
   }
 </style>

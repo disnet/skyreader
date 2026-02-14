@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import ArticleCard from '$lib/components/ArticleCard.svelte';
-  import LoadingState from '$lib/components/LoadingState.svelte';
+  import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { readingStore } from '$lib/stores/reading.svelte';
@@ -181,15 +181,11 @@
     </div>
   {/each}
 
-  {#if feedViewStore.hasMore && !feedViewStore.isLoadingMore}
-    <button class="btn btn-secondary load-more" onclick={() => feedViewStore.loadMore()}>
-      Load More
-    </button>
-  {/if}
-
-  {#if feedViewStore.isLoadingMore}
-    <LoadingState message="Loading more..." />
-  {/if}
+  <InfiniteScrollSentinel
+    hasMore={feedViewStore.hasMore}
+    isLoading={feedViewStore.isLoadingMore}
+    onLoadMore={() => feedViewStore.loadMore()}
+  />
 </div>
 
 <style>
@@ -197,10 +193,5 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-  }
-
-  .load-more {
-    width: 100%;
-    margin: 1rem 0;
   }
 </style>
