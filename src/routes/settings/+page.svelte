@@ -278,6 +278,16 @@
           </div>
         </div>
       {/if}
+
+      {#if auth.user.tier !== 'supporter'}
+        <p class="plan-upgrade">
+          <a href="https://github.com/sponsors/disnet" target="_blank" rel="noopener noreferrer"
+            >Become a sponsor</a
+          >
+          to get raised limits, help Skyreader become self-sustaining, and support
+          <a href="https://bsky.app/profile/disnetdev.com" target="_blank">Tim</a>!
+        </p>
+      {/if}
     </section>
   {/if}
 
@@ -500,6 +510,21 @@
     border-radius: 4px;
     background: var(--color-bg-secondary);
     color: var(--color-text-secondary);
+  }
+
+  .plan-upgrade {
+    margin-top: 1rem;
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+  }
+
+  .plan-upgrade a {
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+
+  .plan-upgrade a:hover {
+    text-decoration: underline;
   }
 
   .plan-limits {

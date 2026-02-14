@@ -2,6 +2,7 @@
   import { api } from '$lib/services/api';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import Icon from '../Icon.svelte';
 
@@ -163,7 +164,17 @@
   </div>
 
   {#if error}
-    <div class="error-message">{error}</div>
+    <div class="error-message">
+      {error}
+      {#if isAtLimit && auth.user?.tier !== 'supporter'}
+        <a
+          href="https://github.com/sponsors/disnet"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="sponsor-link">Become a sponsor</a
+        > to get raised limits.
+      {/if}
+    </div>
   {/if}
 
   {#if isOpen && discoveredFeeds.length > 0}
@@ -255,6 +266,15 @@
     color: var(--color-error, #f44336);
     background: rgba(244, 67, 54, 0.1);
     border-radius: 4px;
+  }
+
+  .sponsor-link {
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+
+  .sponsor-link:hover {
+    text-decoration: underline;
   }
 
   .dropdown {

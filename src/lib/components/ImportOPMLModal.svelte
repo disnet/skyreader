@@ -2,6 +2,7 @@
   import { parseImportFile, type OPMLFeed } from '$lib/utils/opml-parser';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
   import { liveDb } from '$lib/services/liveDb.svelte';
   import { fetchAllFeeds } from '$lib/services/feedFetcher';
   import Modal from '$lib/components/common/Modal.svelte';
@@ -164,6 +165,14 @@
         {:else}
           Remove some existing feeds to import new ones.
         {/if}
+        {#if auth.user?.tier !== 'supporter'}
+          <a
+            href="https://github.com/sponsors/disnet"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="sponsor-link">Become a sponsor</a
+          > to get raised limits.
+        {/if}
       </div>
     {/if}
     <ul class="feed-list">
@@ -295,6 +304,15 @@
     border-radius: 4px;
     font-size: 0.875rem;
     margin-bottom: 1rem;
+  }
+
+  .sponsor-link {
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+
+  .sponsor-link:hover {
+    text-decoration: underline;
   }
 
   .selection-actions {

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { searchBlueskyActors, type BlueskySearchResult } from '$lib/services/blueskySearch';
   import { socialStore } from '$lib/stores/social.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
 
   interface Props {
     followedDids: Set<string>;
@@ -154,7 +155,15 @@
 
   {#if showLimitWarning}
     <div class="limit-warning">
-      Follow limit reached ({socialStore.followLimit} max)
+      Follow limit reached ({socialStore.followLimit} max).
+      {#if auth.user?.tier !== 'supporter'}
+        <a
+          href="https://github.com/sponsors/disnet"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="sponsor-link">Become a sponsor</a
+        > to get raised limits.
+      {/if}
     </div>
   {/if}
 
@@ -254,6 +263,15 @@
     color: var(--color-warning, #ff9800);
     background: rgba(255, 152, 0, 0.1);
     border-radius: 4px;
+  }
+
+  .sponsor-link {
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+
+  .sponsor-link:hover {
+    text-decoration: underline;
   }
 
   .dropdown {

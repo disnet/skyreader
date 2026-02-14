@@ -1,5 +1,6 @@
 <script lang="ts">
   import { socialStore } from '$lib/stores/social.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
   import Modal from '$lib/components/common/Modal.svelte';
 
   interface Props {
@@ -18,6 +19,13 @@
     <p class="current-count">
       You're currently following {socialStore.inAppFollowCount} of {socialStore.followLimit} accounts.
     </p>
+    {#if auth.user?.tier !== 'supporter'}
+      <p class="sponsor-cta">
+        <a href="https://github.com/sponsors/disnet" target="_blank" rel="noopener noreferrer"
+          >Become a sponsor</a
+        > to get raised limits.
+      </p>
+    {/if}
   </div>
   {#snippet footer()}
     <button class="btn btn-primary" onclick={onclose}>Got it</button>
@@ -41,5 +49,18 @@
   .limit-modal-content .current-count {
     font-size: 0.875rem;
     color: var(--color-text-tertiary);
+  }
+
+  .sponsor-cta {
+    font-size: 0.875rem;
+  }
+
+  .sponsor-cta a {
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+
+  .sponsor-cta a:hover {
+    text-decoration: underline;
   }
 </style>
