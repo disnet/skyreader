@@ -359,22 +359,22 @@
       </div>
     {/if}
     <button class="article-header" onclick={handleHeaderClick}>
-      {#if faviconUrl}
-        <img src={faviconUrl} alt="" class="favicon" />
-      {/if}
-      {#if isOpen}
-        <a
-          href={itemUrl}
-          target="_blank"
-          rel="noopener"
-          class="article-title-link"
-          onclick={(e) => e.stopPropagation()}
-        >
+      <span class="article-title">
+        {#if faviconUrl}
+          <img src={faviconUrl} alt="" class="favicon" />
+        {/if}
+        {#if isOpen}
+          <a
+            href={itemUrl}
+            target="_blank"
+            rel="noopener"
+            class="article-title-link"
+            onclick={(e) => e.stopPropagation()}>{itemTitle}</a
+          >
+        {:else}
           {itemTitle}
-        </a>
-      {:else}
-        <span class="article-title">{itemTitle}</span>
-      {/if}
+        {/if}
+      </span>
       <span class="article-date">{formatRelativeDate(itemPublishedAt)}</span>
     </button>
   </div>
@@ -618,7 +618,8 @@
   .favicon {
     width: 16px;
     height: 16px;
-    flex-shrink: 0;
+    vertical-align: baseline;
+    margin-right: 0.75rem;
   }
 
   .article-title {
@@ -633,14 +634,7 @@
   }
 
   .article-title-link {
-    flex: 1;
-    font-family: var(--article-font);
-    font-size: var(--article-font-size);
-    font-weight: 500;
     color: var(--color-primary, #0066cc);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     text-decoration: none;
   }
 
@@ -648,8 +642,8 @@
     text-decoration: underline;
   }
 
-  .article-item.selected .article-title-link,
-  .article-item.expanded .article-title-link {
+  .article-item.selected .article-title,
+  .article-item.expanded .article-title {
     white-space: normal;
     text-overflow: unset;
   }
