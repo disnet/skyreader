@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+  import { socialStore } from '$lib/stores/social.svelte';
   import {
     preferences,
     type ArticleFont,
@@ -52,6 +53,9 @@
     if (subscriptionsStore.subscriptions.length === 0) {
       await subscriptionsStore.load();
     }
+
+    // Load follow count for plan usage
+    socialStore.loadInAppFollowCount();
 
     // Load PDS sync settings
     await loadSyncSettings();
@@ -229,6 +233,51 @@
         </div>
       </div>
       <button class="btn btn-danger" onclick={handleLogout}> Log Out </button>
+    </section>
+
+    <section class="card">
+      <h2>Plan</h2>
+      <div class="plan-header">
+        <span class="plan-name">{auth.user.tier === 'supporter' ? 'Supporter' : 'Free'}</span>
+      </div>
+
+      {#if auth.user.limits}
+        {@const subCount = subscriptionsStore.subscriptions.length}
+        {@const subLimit = auth.user.limits.maxSubscriptions}
+        {@const followCount = socialStore.inAppFollowCount}
+        {@const followLimit = auth.user.limits.maxFollows}
+        <div class="plan-limits">
+          <div class="limit-row">
+            <div class="limit-label">
+              <span>Feed subscriptions</span>
+              <span class="limit-numbers">{subCount} / {subLimit}</span>
+            </div>
+            <div class="limit-bar">
+              <div
+                class="limit-bar-fill"
+                class:limit-bar-warning={subCount / subLimit > 0.8}
+                class:limit-bar-full={subCount >= subLimit}
+                style:width="{Math.min((subCount / subLimit) * 100, 100)}%"
+              ></div>
+            </div>
+          </div>
+
+          <div class="limit-row">
+            <div class="limit-label">
+              <span>Follows</span>
+              <span class="limit-numbers">{followCount} / {followLimit}</span>
+            </div>
+            <div class="limit-bar">
+              <div
+                class="limit-bar-fill"
+                class:limit-bar-warning={followCount / followLimit > 0.8}
+                class:limit-bar-full={followCount >= followLimit}
+                style:width="{Math.min((followCount / followLimit) * 100, 100)}%"
+              ></div>
+            </div>
+          </div>
+        </div>
+      {/if}
     </section>
   {/if}
 
@@ -435,6 +484,67 @@
     font-size: 0.75rem;
     color: var(--color-text-secondary);
     word-break: break-all;
+  }
+
+  .plan-header {
+    margin-bottom: 1rem;
+  }
+
+  .plan-name {
+    display: inline-block;
+    font-weight: 600;
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.25rem 0.625rem;
+    border-radius: 4px;
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+  }
+
+  .plan-limits {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .limit-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .limit-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.875rem;
+  }
+
+  .limit-numbers {
+    color: var(--color-text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .limit-bar {
+    height: 6px;
+    background: var(--color-bg-secondary);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .limit-bar-fill {
+    height: 100%;
+    background: var(--color-primary);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+  }
+
+  .limit-bar-warning {
+    background: var(--color-warning, #f59e0b);
+  }
+
+  .limit-bar-full {
+    background: var(--color-danger);
   }
 
   .debug-section {
