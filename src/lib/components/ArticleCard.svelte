@@ -29,6 +29,8 @@
     document,
     localArticle,
     siteUrl,
+    feedTitle,
+    feedId,
     isRead = false,
     isStarred = false,
     isShared = false,
@@ -52,6 +54,8 @@
     document?: SocialDocument;
     localArticle?: Article;
     siteUrl?: string;
+    feedTitle?: string;
+    feedId?: number;
     isRead?: boolean;
     isStarred?: boolean;
     isShared?: boolean;
@@ -375,6 +379,11 @@
           {itemTitle}
         {/if}
       </span>
+      {#if feedTitle}
+        <a href="/?feed={feedId}" class="feed-title-link" onclick={(e) => e.stopPropagation()}
+          >{feedTitle}</a
+        >
+      {/if}
       <span class="article-date">{formatRelativeDate(itemPublishedAt)}</span>
     </button>
   </div>
@@ -604,7 +613,7 @@
 
   .article-header {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: 0.75rem;
     width: 100%;
     padding: 0.5rem 0;
@@ -652,6 +661,22 @@
     flex-shrink: 0;
     font-size: 0.875rem;
     color: var(--color-text-secondary);
+  }
+
+  .feed-title-link {
+    flex-shrink: 0;
+    max-width: 12rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
+    text-decoration: none;
+  }
+
+  .feed-title-link:hover {
+    color: var(--color-primary);
+    text-decoration: underline;
   }
 
   .article-content {

@@ -95,6 +95,8 @@
         <ArticleCard
           {article}
           siteUrl={sub?.siteUrl || sub?.feedUrl}
+          feedTitle={sub?.customTitle || sub?.title}
+          feedId={sub?.id}
           isRead={readingStore.isRead(article.guid)}
           isStarred={readingStore.isStarred(article.guid)}
           isShared={sharesStore.isShared(article.guid)}
@@ -147,6 +149,8 @@
         <ArticleCard
           {article}
           siteUrl={sub?.siteUrl || sub?.feedUrl}
+          feedTitle={sub?.customTitle || sub?.title}
+          feedId={sub?.id}
           isRead={readingStore.isRead(article.guid)}
           isStarred={readingStore.isStarred(article.guid)}
           isShared={true}
