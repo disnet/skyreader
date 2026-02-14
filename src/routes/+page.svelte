@@ -4,7 +4,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { readingStore } from '$lib/stores/reading.svelte';
-  import { shareReadingStore } from '$lib/stores/shareReading.svelte';
+  import { socialReadingStore } from '$lib/stores/socialReading.svelte';
   import { sharesStore } from '$lib/stores/shares.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
@@ -170,9 +170,10 @@
       }
     } else if (item.type === 'share') {
       const share = item.item;
-      if (shareReadingStore.isRead(share.recordUri)) return;
+      if (socialReadingStore.isRead(share.recordUri)) return;
 
-      shareReadingStore.markAsRead(
+      socialReadingStore.markAsRead(
+        'share',
         share.recordUri,
         share.authorDid,
         share.itemUrl,
@@ -248,8 +249,9 @@
         }
       } else if (item.type === 'share') {
         const share = item.item;
-        if (!shareReadingStore.isRead(share.recordUri)) {
-          shareReadingStore.markAsRead(
+        if (!socialReadingStore.isRead(share.recordUri)) {
+          socialReadingStore.markAsRead(
+            'share',
             share.recordUri,
             share.authorDid,
             share.itemUrl,

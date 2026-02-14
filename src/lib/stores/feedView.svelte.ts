@@ -353,29 +353,56 @@ function createFeedViewStore() {
   });
 
   // Derived: combined view (articles + shares + documents merged by date)
+  // When there are more articles to load, social items are limited to the date range
+  // of currently loaded articles. This prevents old social items (e.g. from a year ago)
+  // from dominating the tail of the list while there are plenty of unloaded articles
+  // that should fill the gap. As more articles load, the date range expands and more
+  // social items become visible.
   let displayedCombined = $derived.by((): CombinedFeedItem[] => {
     if (viewMode !== 'combined') return [];
 
     const fv = effectiveFilters;
+    const sortOrder = fv.sortOrder;
+    const hasMoreArticlesToLoad = loadedArticleCount < filteredArticles.length;
+
+    let sharesToInclude = displayedShares;
+    let documentsToInclude = displayedDocuments;
+
+    if (hasMoreArticlesToLoad && displayedArticles.length > 0) {
+      // Find the oldest displayed article's date based on sort order.
+      // filteredArticles (and thus displayedArticles) are sorted newest-first by default.
+      const oldestArticle =
+        sortOrder === 'newest'
+          ? displayedArticles[displayedArticles.length - 1]
+          : displayedArticles[0];
+      const cutoffTime = new Date(oldestArticle.publishedAt).getTime();
+
+      sharesToInclude = displayedShares.filter(
+        (s) => new Date(s.itemPublishedAt || s.createdAt).getTime() >= cutoffTime
+      );
+      documentsToInclude = displayedDocuments.filter(
+        (d) => new Date(d.publishedAt).getTime() >= cutoffTime
+      );
+    }
+
     const combined: CombinedFeedItem[] = [
       ...displayedArticles.map((item) => ({
         type: 'article' as const,
         item,
         date: item.publishedAt,
       })),
-      ...displayedShares.map((item) => ({
+      ...sharesToInclude.map((item) => ({
         type: 'share' as const,
         item,
         date: item.itemPublishedAt || item.createdAt,
       })),
-      ...displayedDocuments.map((item) => ({
+      ...documentsToInclude.map((item) => ({
         type: 'document' as const,
         item,
         date: item.publishedAt,
       })),
     ];
 
-    const sortOrder = fv.sortOrder;
     combined.sort((a, b) => {
       const diff = new Date(b.date).getTime() - new Date(a.date).getTime();
       return sortOrder === 'newest' ? diff : -diff;

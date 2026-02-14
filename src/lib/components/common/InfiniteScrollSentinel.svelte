@@ -13,6 +13,11 @@
   $effect(() => {
     if (!sentinel) return;
 
+    // Track isLoading so the observer is recreated when loading state changes.
+    // This ensures that when an async load completes (isLoading: true → false)
+    // and the sentinel is still in view, the new observer fires immediately.
+    const _isLoading = isLoading;
+
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && hasMore && !isLoading) {

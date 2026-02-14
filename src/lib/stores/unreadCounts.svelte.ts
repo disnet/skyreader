@@ -23,8 +23,20 @@ function createUnreadCountsStore() {
     return counts;
   });
 
-  // Total unread articles
-  let totalArticles = $derived(Array.from(feedCounts.values()).reduce((a, b) => a + b, 0));
+  // Total unread articles (deduplicated by GUID across feeds to match combined view)
+  let totalArticles = $derived.by(() => {
+    liveDb.articlesVersion;
+    const positions = readingStore.readPositions;
+    const seen = new Set<string>();
+    let count = 0;
+    for (const article of articlesStore.allArticles) {
+      if (!seen.has(article.guid) && !positions.has(article.guid)) {
+        seen.add(article.guid);
+        count++;
+      }
+    }
+    return count;
+  });
 
   // Unread shares by author
   let sharerShareCounts = $derived.by(() => {
