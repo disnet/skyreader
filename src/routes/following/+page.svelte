@@ -78,11 +78,7 @@
     actionInProgress.add(user.did);
     actionInProgress = new Set(actionInProgress);
 
-    const success = await socialStore.unfollowInApp(user.did);
-    if (success) {
-      await loadCurrentTab();
-      await socialStore.loadFollowedUsers();
-    }
+    await socialStore.unfollowInApp(user.did);
 
     actionInProgress.delete(user.did);
     actionInProgress = new Set(actionInProgress);
@@ -97,11 +93,7 @@
     actionInProgress.add(user.did);
     actionInProgress = new Set(actionInProgress);
 
-    const success = await socialStore.followUser(user.did);
-    if (success) {
-      await loadCurrentTab();
-      await socialStore.loadFollowedUsers();
-    }
+    await socialStore.followUser(user.did);
 
     actionInProgress.delete(user.did);
     actionInProgress = new Set(actionInProgress);
@@ -137,11 +129,7 @@
       return;
     }
 
-    const success = await socialStore.followUser(did);
-    if (success) {
-      await loadCurrentTab();
-      await socialStore.loadFollowedUsers();
-    }
+    await socialStore.followUser(did);
   }
 </script>
 

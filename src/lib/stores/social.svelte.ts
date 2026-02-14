@@ -278,6 +278,14 @@ function createSocialStore() {
       followedUsers = [...followedUsers, { did, source: 'inapp' as const }];
     }
 
+    // Optimistic update - update blueskyFollows source to 'both'
+    const originalBlueskyFollow = blueskyFollows.find((u) => u.did === did);
+    if (originalBlueskyFollow) {
+      blueskyFollows = blueskyFollows.map((u) =>
+        u.did === did ? { ...u, source: 'both' as const } : u
+      );
+    }
+
     // Optimistic update - increment follow count
     inAppFollowCount++;
 
@@ -306,6 +314,12 @@ function createSocialStore() {
           );
         } else {
           followedUsers = followedUsers.filter((u) => u.did !== did);
+        }
+        // Revert blueskyFollows
+        if (originalBlueskyFollow) {
+          blueskyFollows = blueskyFollows.map((u) =>
+            u.did === did ? { ...u, source: originalBlueskyFollow.source } : u
+          );
         }
         // Revert count
         inAppFollowCount--;
@@ -342,6 +356,18 @@ function createSocialStore() {
       followedUsers = followedUsers.filter((u) => u.did !== did);
     }
 
+    // Optimistic update - remove from skyreaderFollows
+    const originalSkyreaderFollows = skyreaderFollows;
+    skyreaderFollows = skyreaderFollows.filter((u) => u.did !== did);
+
+    // Optimistic update - update blueskyFollows source
+    const originalBlueskyFollowForUnfollow = blueskyFollows.find((u) => u.did === did);
+    if (originalBlueskyFollowForUnfollow) {
+      blueskyFollows = blueskyFollows.map((u) =>
+        u.did === did ? { ...u, source: 'bluesky' as const } : u
+      );
+    }
+
     // Optimistic update - decrement follow count
     inAppFollowCount = Math.max(0, inAppFollowCount - 1);
 
@@ -360,6 +386,12 @@ function createSocialStore() {
           } else {
             followedUsers = [...followedUsers, originalUser];
           }
+        }
+        skyreaderFollows = originalSkyreaderFollows;
+        if (originalBlueskyFollowForUnfollow) {
+          blueskyFollows = blueskyFollows.map((u) =>
+            u.did === did ? { ...u, source: originalBlueskyFollowForUnfollow.source } : u
+          );
         }
         inAppFollowCount = originalCount;
         error = 'Follow record not found';
@@ -386,6 +418,12 @@ function createSocialStore() {
             followedUsers = [...followedUsers, originalUser];
           }
         }
+        skyreaderFollows = originalSkyreaderFollows;
+        if (originalBlueskyFollowForUnfollow) {
+          blueskyFollows = blueskyFollows.map((u) =>
+            u.did === did ? { ...u, source: originalBlueskyFollowForUnfollow.source } : u
+          );
+        }
         inAppFollowCount = originalCount;
         // Queue for retry
         await syncQueue.enqueue('delete', 'follows', did, payload);
@@ -401,6 +439,12 @@ function createSocialStore() {
         } else {
           followedUsers = [...followedUsers, originalUser];
         }
+      }
+      skyreaderFollows = originalSkyreaderFollows;
+      if (originalBlueskyFollowForUnfollow) {
+        blueskyFollows = blueskyFollows.map((u) =>
+          u.did === did ? { ...u, source: originalBlueskyFollowForUnfollow.source } : u
+        );
       }
       inAppFollowCount = originalCount;
       error = e instanceof Error ? e.message : 'Failed to unfollow user';
