@@ -219,48 +219,104 @@
         articleTitle: a.title,
       }));
 
-    if (articlesToMark.length > 0) {
-      await readingStore.markAllAsRead(articlesToMark);
+    if (articlesToMark.length === 0) return;
+
+    if (articlesToMark.length > 100) {
+      if (!confirm(`Mark ${articlesToMark.length} items as read?`)) return;
     }
+
+    // Track in session sets so items stay visible (greyed out) in unread filter
+    feedViewStore.trackItemsAsReadThisSession(
+      articlesToMark.map((a) => a.articleGuid),
+      [],
+      []
+    );
+
+    await readingStore.markAllAsRead(articlesToMark);
   }
 
   async function markAllAsReadInCurrentView() {
-    const items = feedViewStore.currentItems;
+    // Use all filtered items (not just paginated/displayed) for articles
+    const allArticles = feedViewStore.filteredArticles;
+    const allShares = feedViewStore.displayedShares;
+    const allDocuments = feedViewStore.displayedDocuments;
+
     const articlesToMark: Array<{
       subscriptionRkey: string;
       articleGuid: string;
       articleUrl: string;
       articleTitle: string;
     }> = [];
+    const shareUrisToTrack: string[] = [];
+    const documentUrisToTrack: string[] = [];
 
-    for (const item of items) {
-      if (item.type === 'article') {
-        const article = item.item;
-        if (!readingStore.isRead(article.guid)) {
-          const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
-          if (sub) {
-            articlesToMark.push({
-              subscriptionRkey: sub.rkey,
-              articleGuid: article.guid,
-              articleUrl: article.url,
-              articleTitle: article.title,
-            });
-          }
-        }
-      } else if (item.type === 'share') {
-        const share = item.item;
-        if (!socialReadingStore.isRead(share.recordUri)) {
-          socialReadingStore.markAsRead(
-            'share',
-            share.recordUri,
-            share.authorDid,
-            share.itemUrl,
-            share.itemTitle
-          );
+    for (const article of allArticles) {
+      if (!readingStore.isRead(article.guid)) {
+        const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
+        if (sub) {
+          articlesToMark.push({
+            subscriptionRkey: sub.rkey,
+            articleGuid: article.guid,
+            articleUrl: article.url,
+            articleTitle: article.title,
+          });
         }
       }
     }
 
+    for (const share of allShares) {
+      if (!socialReadingStore.isRead(share.recordUri)) {
+        shareUrisToTrack.push(share.recordUri);
+      }
+    }
+
+    for (const doc of allDocuments) {
+      if (!socialReadingStore.isRead(doc.recordUri)) {
+        documentUrisToTrack.push(doc.recordUri);
+      }
+    }
+
+    const totalCount = articlesToMark.length + shareUrisToTrack.length + documentUrisToTrack.length;
+    if (totalCount === 0) return;
+
+    if (totalCount > 100) {
+      if (!confirm(`Mark ${totalCount} items as read?`)) return;
+    }
+
+    // Track in session sets so items stay visible (greyed out) in unread filter
+    feedViewStore.trackItemsAsReadThisSession(
+      articlesToMark.map((a) => a.articleGuid),
+      shareUrisToTrack,
+      documentUrisToTrack
+    );
+
+    // Mark shares as read
+    for (const share of allShares) {
+      if (shareUrisToTrack.includes(share.recordUri)) {
+        socialReadingStore.markAsRead(
+          'share',
+          share.recordUri,
+          share.authorDid,
+          share.itemUrl,
+          share.itemTitle
+        );
+      }
+    }
+
+    // Mark documents as read
+    for (const doc of allDocuments) {
+      if (documentUrisToTrack.includes(doc.recordUri)) {
+        socialReadingStore.markAsRead(
+          'document',
+          doc.recordUri,
+          doc.authorDid,
+          doc.canonicalUrl || '',
+          doc.title
+        );
+      }
+    }
+
+    // Mark articles as read
     if (articlesToMark.length > 0) {
       await readingStore.markAllAsRead(articlesToMark);
     }

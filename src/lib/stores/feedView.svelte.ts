@@ -663,6 +663,26 @@ function createFeedViewStore() {
     }
   }
 
+  // Bulk-track items as read this session so they stay visible in unread filter
+  function trackItemsAsReadThisSession(
+    articleGuids: string[],
+    shareUris: string[],
+    documentUris: string[]
+  ) {
+    if (articleGuids.length > 0) {
+      for (const guid of articleGuids) readArticleGuidsThisSession.add(guid);
+      readArticleGuidsThisSession = new Set(readArticleGuidsThisSession);
+    }
+    if (shareUris.length > 0) {
+      for (const uri of shareUris) readShareUrisThisSession.add(uri);
+      readShareUrisThisSession = new Set(readShareUrisThisSession);
+    }
+    if (documentUris.length > 0) {
+      for (const uri of documentUris) readDocumentUrisThisSession.add(uri);
+      readDocumentUrisThisSession = new Set(readDocumentUrisThisSession);
+    }
+  }
+
   function getArticleForShare(share: SocialShare): Article | undefined {
     if (!share.itemGuid) return undefined;
     return articlesByGuid.get(share.itemGuid);
@@ -739,6 +759,17 @@ function createFeedViewStore() {
       return toolbarSortOrder ?? preferences.sortOrder;
     },
 
+    // All filtered items (not paginated) — for bulk operations like mark-all-as-read
+    get filteredArticles() {
+      return filteredArticles;
+    },
+    get displayedShares() {
+      return displayedShares;
+    },
+    get displayedDocuments() {
+      return displayedDocuments;
+    },
+
     // Article lookup
     getArticleForShare,
 
@@ -752,6 +783,7 @@ function createFeedViewStore() {
     resetSelection,
     toggleUnreadFilter,
     trackSeenThisSession,
+    trackItemsAsReadThisSession,
     setShowOnlyUnread(value: boolean) {
       showOnlyUnread = value;
     },
