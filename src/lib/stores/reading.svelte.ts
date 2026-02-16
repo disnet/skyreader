@@ -3,6 +3,8 @@ import { db, type ReadPositionCache } from '$lib/services/db';
 import { syncQueue, type ReadingPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
 
+const BULK_BATCH_SIZE = 500; // Must match backend limit
+
 interface ReadPosition {
   starred: boolean;
   readAt: number;
@@ -48,13 +50,15 @@ function createReadingStore() {
 
     if (syncStore.isOnline) {
       try {
-        await api.markAsReadBulk(
-          itemsToFlush.map((item) => ({
-            itemGuid: item.articleGuid,
-            itemUrl: item.articleUrl,
-            itemTitle: item.articleTitle,
-          }))
-        );
+        const bulkItems = itemsToFlush.map((item) => ({
+          itemGuid: item.articleGuid,
+          itemUrl: item.articleUrl,
+          itemTitle: item.articleTitle,
+        }));
+        // Chunk to stay within backend's 500-item limit
+        for (let i = 0; i < bulkItems.length; i += BULK_BATCH_SIZE) {
+          await api.markAsReadBulk(bulkItems.slice(i, i + BULK_BATCH_SIZE));
+        }
       } catch (e) {
         console.error('Failed to mark as read (batch), queueing for retry:', e);
         // Queue each item for retry
@@ -253,13 +257,15 @@ function createReadingStore() {
 
     if (syncStore.isOnline) {
       try {
-        await api.markAsReadBulk(
-          unreadArticles.map((a) => ({
-            itemGuid: a.articleGuid,
-            itemUrl: a.articleUrl,
-            itemTitle: a.articleTitle,
-          }))
-        );
+        const bulkItems = unreadArticles.map((a) => ({
+          itemGuid: a.articleGuid,
+          itemUrl: a.articleUrl,
+          itemTitle: a.articleTitle,
+        }));
+        // Chunk to stay within backend's 500-item limit
+        for (let i = 0; i < bulkItems.length; i += BULK_BATCH_SIZE) {
+          await api.markAsReadBulk(bulkItems.slice(i, i + BULK_BATCH_SIZE));
+        }
       } catch (e) {
         console.error('Failed to mark all as read, queueing for retry:', e);
         // Queue each item for retry

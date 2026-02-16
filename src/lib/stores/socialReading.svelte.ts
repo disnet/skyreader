@@ -4,6 +4,8 @@ import { syncQueue, type SocialReadingPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
 import type { SocialReadPosition, SocialItemType } from '$lib/types';
 
+const BULK_BATCH_SIZE = 500; // Must match backend limit
+
 function generateTid(): string {
   const now = Date.now();
   const random = Math.random().toString(36).substring(2, 8);
@@ -127,6 +129,99 @@ function createSocialReadingStore() {
     }
   }
 
+  async function markAllAsRead(
+    items: Array<{
+      type: SocialItemType;
+      itemUri: string;
+      authorDid: string;
+      itemUrl: string;
+      itemTitle?: string;
+    }>
+  ) {
+    // Filter out already-read items
+    const unreadItems = items.filter((item) => !positions.has(item.itemUri));
+    if (unreadItems.length === 0) return;
+
+    const now = new Date().toISOString();
+    const itemsWithRkeys = unreadItems.map((item) => ({
+      ...item,
+      rkey: generateTid(),
+    }));
+
+    // Optimistic update - add all to local state
+    for (const item of itemsWithRkeys) {
+      const position: Omit<SocialReadPosition, 'id'> = {
+        rkey: item.rkey,
+        type: item.type,
+        itemUri: item.itemUri,
+        authorDid: item.authorDid,
+        itemUrl: item.itemUrl,
+        itemTitle: item.itemTitle,
+        readAt: now,
+      };
+      positions.set(item.itemUri, { ...position });
+    }
+    positions = new Map(positions);
+
+    // Update local cache
+    for (const item of itemsWithRkeys) {
+      const position: Omit<SocialReadPosition, 'id'> = {
+        rkey: item.rkey,
+        type: item.type,
+        itemUri: item.itemUri,
+        authorDid: item.authorDid,
+        itemUrl: item.itemUrl,
+        itemTitle: item.itemTitle,
+        readAt: now,
+      };
+      const id = await db.socialReadPositions.add(position);
+      positions.set(item.itemUri, { ...position, id });
+    }
+    positions = new Map(positions);
+
+    // Build API payloads once
+    const apiItems = itemsWithRkeys.map((item) => ({
+      type: item.type,
+      rkey: item.rkey,
+      itemUri: item.itemUri,
+      authorDid: item.authorDid,
+      itemUrl:
+        item.itemUrl && (item.itemUrl.startsWith('http://') || item.itemUrl.startsWith('https://'))
+          ? item.itemUrl
+          : undefined,
+      itemTitle: item.itemTitle || undefined,
+    }));
+
+    // Send to backend
+    if (syncStore.isOnline) {
+      try {
+        // Chunk to stay within backend's 500-item limit
+        for (let i = 0; i < apiItems.length; i += BULK_BATCH_SIZE) {
+          await api.markSocialItemsAsReadBulk(apiItems.slice(i, i + BULK_BATCH_SIZE));
+        }
+      } catch (e) {
+        console.error('Failed to bulk mark social items as read, queueing for retry:', e);
+        for (const item of apiItems) {
+          await syncQueue.enqueue(
+            'create',
+            'socialReading',
+            item.itemUri,
+            item as SocialReadingPayload
+          );
+        }
+      }
+    } else {
+      for (const item of apiItems) {
+        await syncQueue.enqueue(
+          'create',
+          'socialReading',
+          item.itemUri,
+          item as SocialReadingPayload
+        );
+      }
+    }
+  }
+
   async function markAsUnread(itemUri: string) {
     const position = positions.get(itemUri);
     if (!position || !position.id || !position.rkey) return;
@@ -167,6 +262,7 @@ function createSocialReadingStore() {
     load,
     isRead,
     markAsRead,
+    markAllAsRead,
     markAsUnread,
   };
 }

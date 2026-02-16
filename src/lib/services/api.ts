@@ -371,6 +371,22 @@ class ApiClient {
     });
   }
 
+  async markSocialItemsAsReadBulk(
+    items: Array<{
+      type: 'share' | 'document';
+      rkey: string;
+      itemUri: string;
+      authorDid: string;
+      itemUrl?: string;
+      itemTitle?: string;
+    }>
+  ): Promise<{ success: boolean; marked: number }> {
+    return this.fetch('/api/social/read-positions/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    });
+  }
+
   async markSocialItemAsUnread(rkey: string): Promise<{ success: boolean }> {
     return this.fetch(`/api/social/read-positions/${rkey}`, {
       method: 'DELETE',

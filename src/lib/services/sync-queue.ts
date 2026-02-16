@@ -148,7 +148,8 @@ class SyncQueue {
   }
 
   /**
-   * Process all pending items in the queue
+   * Process all pending items in the queue.
+   * Batches reading and social reading create operations into bulk API calls.
    */
   async processQueue(): Promise<{ processed: number; failed: number }> {
     if (this.processing) {
@@ -162,44 +163,54 @@ class SyncQueue {
     try {
       const pendingItems = await db.syncQueue.where('status').equals('pending').sortBy('timestamp');
 
+      // Partition items into batchable and non-batchable
+      const readingCreateBatch: SyncQueueEntry[] = [];
+      const socialReadingCreateBatch: SyncQueueEntry[] = [];
+      const individualItems: SyncQueueEntry[] = [];
+
       for (const item of pendingItems) {
-        // Mark as processing
+        if (item.collection === 'reading' && item.operation === 'create') {
+          const payload = JSON.parse(item.payload) as ReadingPayload;
+          // Star toggles can't be batched — the bulk endpoint doesn't support starred
+          if (payload.starred !== undefined) {
+            individualItems.push(item);
+          } else {
+            readingCreateBatch.push(item);
+          }
+        } else if (item.collection === 'socialReading' && item.operation === 'create') {
+          socialReadingCreateBatch.push(item);
+        } else {
+          individualItems.push(item);
+        }
+      }
+
+      // Process reading creates in bulk
+      if (readingCreateBatch.length > 0) {
+        const result = await this.processBatchReadingCreates(readingCreateBatch);
+        processed += result.processed;
+        failed += result.failed;
+      }
+
+      // Process social reading creates in bulk
+      if (socialReadingCreateBatch.length > 0) {
+        const result = await this.processBatchSocialReadingCreates(socialReadingCreateBatch);
+        processed += result.processed;
+        failed += result.failed;
+      }
+
+      // Process remaining items individually
+      for (const item of individualItems) {
         await db.syncQueue.update(item.id!, { status: 'processing' });
 
         try {
           await this.executeOperation(item);
-          // Success - delete from queue
           await db.syncQueue.delete(item.id!);
           processed++;
         } catch (e) {
           const error = e as Error;
           console.error(`Sync queue error for ${item.collection}/${item.key}:`, error);
-
-          // Check if we should retry
-          if (this.isRetryableError(error)) {
-            const newRetryCount = item.retryCount + 1;
-            if (newRetryCount >= MAX_RETRIES) {
-              // Max retries reached - mark as failed
-              await db.syncQueue.update(item.id!, {
-                status: 'failed',
-                retryCount: newRetryCount,
-              });
-              failed++;
-            } else {
-              // Back to pending for retry
-              await db.syncQueue.update(item.id!, {
-                status: 'pending',
-                retryCount: newRetryCount,
-              });
-            }
-          } else {
-            // Non-retryable error (400, 409) - mark as failed
-            await db.syncQueue.update(item.id!, {
-              status: 'failed',
-              retryCount: item.retryCount + 1,
-            });
-            failed++;
-          }
+          const result = await this.handleItemError(item, error);
+          if (result === 'failed') failed++;
         }
       }
     } finally {
@@ -208,6 +219,159 @@ class SyncQueue {
     }
 
     return { processed, failed };
+  }
+
+  /**
+   * Batch-process reading create operations using the bulk API.
+   * Sends up to 500 items per request (matching backend limit).
+   */
+  private async processBatchReadingCreates(
+    items: SyncQueueEntry[]
+  ): Promise<{ processed: number; failed: number }> {
+    let processed = 0;
+    let failed = 0;
+    const BATCH_SIZE = 500;
+
+    for (let i = 0; i < items.length; i += BATCH_SIZE) {
+      const batch = items.slice(i, i + BATCH_SIZE);
+
+      // Mark all as processing
+      for (const item of batch) {
+        await db.syncQueue.update(item.id!, { status: 'processing' });
+      }
+
+      try {
+        const bulkItems = batch.map((item) => {
+          const payload = JSON.parse(item.payload) as ReadingPayload;
+          return {
+            itemGuid: payload.articleGuid,
+            itemUrl: payload.articleUrl,
+            itemTitle: payload.articleTitle,
+          };
+        });
+
+        await api.markAsReadBulk(bulkItems);
+
+        // Success — delete all from queue
+        for (const item of batch) {
+          await db.syncQueue.delete(item.id!);
+        }
+        processed += batch.length;
+      } catch (e) {
+        const error = e as Error;
+        console.error('Bulk reading sync failed, falling back to individual:', error);
+
+        // Fall back to individual processing
+        for (const item of batch) {
+          try {
+            await this.executeOperation(item);
+            await db.syncQueue.delete(item.id!);
+            processed++;
+          } catch (itemError) {
+            const result = await this.handleItemError(item, itemError as Error);
+            if (result === 'failed') failed++;
+          }
+        }
+      }
+    }
+
+    return { processed, failed };
+  }
+
+  /**
+   * Batch-process social reading create operations using the bulk API.
+   * Sends up to 500 items per request (matching backend limit).
+   */
+  private async processBatchSocialReadingCreates(
+    items: SyncQueueEntry[]
+  ): Promise<{ processed: number; failed: number }> {
+    let processed = 0;
+    let failed = 0;
+    const BATCH_SIZE = 500;
+
+    for (let i = 0; i < items.length; i += BATCH_SIZE) {
+      const batch = items.slice(i, i + BATCH_SIZE);
+
+      // Mark all as processing
+      for (const item of batch) {
+        await db.syncQueue.update(item.id!, { status: 'processing' });
+      }
+
+      try {
+        const bulkItems = batch.map((item) => {
+          const payload = JSON.parse(item.payload) as SocialReadingPayload;
+          return {
+            type: payload.type,
+            rkey: payload.rkey,
+            itemUri: payload.itemUri,
+            authorDid: payload.authorDid,
+            itemUrl:
+              payload.itemUrl &&
+              (payload.itemUrl.startsWith('http://') || payload.itemUrl.startsWith('https://'))
+                ? payload.itemUrl
+                : undefined,
+            itemTitle: payload.itemTitle || undefined,
+          };
+        });
+
+        await api.markSocialItemsAsReadBulk(bulkItems);
+
+        // Success — delete all from queue
+        for (const item of batch) {
+          await db.syncQueue.delete(item.id!);
+        }
+        processed += batch.length;
+      } catch (e) {
+        const error = e as Error;
+        console.error('Bulk social reading sync failed, falling back to individual:', error);
+
+        // Fall back to individual processing
+        for (const item of batch) {
+          try {
+            await this.executeOperation(item);
+            await db.syncQueue.delete(item.id!);
+            processed++;
+          } catch (itemError) {
+            const result = await this.handleItemError(item, itemError as Error);
+            if (result === 'failed') failed++;
+          }
+        }
+      }
+    }
+
+    return { processed, failed };
+  }
+
+  /**
+   * Handle an error for a single queue item (retry or fail).
+   * Returns 'failed' if the item was marked as permanently failed.
+   */
+  private async handleItemError(
+    item: SyncQueueEntry,
+    error: Error
+  ): Promise<'retrying' | 'failed'> {
+    if (this.isRetryableError(error)) {
+      const newRetryCount = item.retryCount + 1;
+      if (newRetryCount >= MAX_RETRIES) {
+        await db.syncQueue.update(item.id!, {
+          status: 'failed',
+          retryCount: newRetryCount,
+        });
+        return 'failed';
+      } else {
+        await db.syncQueue.update(item.id!, {
+          status: 'pending',
+          retryCount: newRetryCount,
+        });
+        return 'retrying';
+      }
+    } else {
+      await db.syncQueue.update(item.id!, {
+        status: 'failed',
+        retryCount: item.retryCount + 1,
+      });
+      return 'failed';
+    }
   }
 
   /**

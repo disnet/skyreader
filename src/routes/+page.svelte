@@ -290,36 +290,48 @@
       documentUrisToTrack
     );
 
-    // Mark shares as read
+    // Build social items for bulk marking
+    const socialItemsToMark: Array<{
+      type: 'share' | 'document';
+      itemUri: string;
+      authorDid: string;
+      itemUrl: string;
+      itemTitle?: string;
+    }> = [];
+
     for (const share of allShares) {
       if (shareUrisToTrack.includes(share.recordUri)) {
-        socialReadingStore.markAsRead(
-          'share',
-          share.recordUri,
-          share.authorDid,
-          share.itemUrl,
-          share.itemTitle
-        );
+        socialItemsToMark.push({
+          type: 'share',
+          itemUri: share.recordUri,
+          authorDid: share.authorDid,
+          itemUrl: share.itemUrl,
+          itemTitle: share.itemTitle,
+        });
       }
     }
 
-    // Mark documents as read
     for (const doc of allDocuments) {
       if (documentUrisToTrack.includes(doc.recordUri)) {
-        socialReadingStore.markAsRead(
-          'document',
-          doc.recordUri,
-          doc.authorDid,
-          doc.canonicalUrl || '',
-          doc.title
-        );
+        socialItemsToMark.push({
+          type: 'document',
+          itemUri: doc.recordUri,
+          authorDid: doc.authorDid,
+          itemUrl: doc.canonicalUrl || '',
+          itemTitle: doc.title,
+        });
       }
     }
 
-    // Mark articles as read
+    // Mark all using bulk operations
+    const promises: Promise<void>[] = [];
     if (articlesToMark.length > 0) {
-      await readingStore.markAllAsRead(articlesToMark);
+      promises.push(readingStore.markAllAsRead(articlesToMark));
     }
+    if (socialItemsToMark.length > 0) {
+      promises.push(socialReadingStore.markAllAsRead(socialItemsToMark));
+    }
+    await Promise.all(promises);
   }
 
   // Keyboard shortcuts hook
