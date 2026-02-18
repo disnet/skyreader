@@ -282,7 +282,7 @@
     flex-shrink: 0;
   }
 
-  @media (max-width: 768px) {
+  @media (max-width: 1000px) {
     .feed-header-fixed {
       left: 0;
     }

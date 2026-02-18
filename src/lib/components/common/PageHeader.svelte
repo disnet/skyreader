@@ -16,7 +16,7 @@
   let isMobile = $state(false);
 
   function checkMobile() {
-    isMobile = window.matchMedia('(max-width: 768px)').matches;
+    isMobile = window.matchMedia('(max-width: 1000px)').matches;
   }
 
   onMount(() => {

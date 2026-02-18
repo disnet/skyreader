@@ -451,7 +451,7 @@
     margin: 0 0.5rem;
   }
 
-  @media (max-width: 768px) {
+  @media (max-width: 1000px) {
     .app-container {
       flex-direction: column;
     }
