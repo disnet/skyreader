@@ -107,7 +107,7 @@
       );
       return sub?.customTitle || sub?.title || 'Feed';
     }
-    if (feedViewStore.starredFilter) return 'Starred';
+    if (feedViewStore.starredFilter) return 'Bookmarks';
     if (feedViewStore.sharedFilter) return 'Shared';
     if (feedViewStore.followingFilter) return 'Following';
     if (feedViewStore.sharerFilter) {
@@ -435,8 +435,8 @@
         />
       {:else if feedViewStore.starredFilter}
         <EmptyState
-          title="No starred articles"
-          description="Star articles to save them for later"
+          title="No bookmarked articles"
+          description="Bookmark articles to see them here"
         />
       {:else if feedViewStore.sharedFilter}
         <EmptyState title="No shared articles" description="Share articles to see them here" />

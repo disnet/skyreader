@@ -81,7 +81,7 @@
   // Icon names type (matches Icon.svelte)
   type IconName =
     | 'inbox'
-    | 'star'
+    | 'bookmark'
     | 'share'
     | 'search'
     | 'bell'
@@ -90,7 +90,8 @@
     | 'rss'
     | 'newspaper'
     | 'plus'
-    | 'filter';
+    | 'filter'
+    | 'share-2';
 
   // Navigation item type
   type NavItem =
@@ -107,9 +108,9 @@
 
     const views: NavItem[] = [
       { type: 'view', id: 'all', label: 'All', count: totalUnread, icon: 'inbox' },
-      { type: 'view', id: 'starred', label: 'Later', count: starredCount, icon: 'star' },
+      { type: 'view', id: 'starred', label: 'Bookmarks', count: starredCount, icon: 'bookmark' },
       { type: 'view', id: 'shared', label: 'Shared', count: sharedCount, icon: 'share' },
-      { type: 'utility', id: 'discover', label: 'Discover', icon: 'search' },
+      { type: 'utility', id: 'discover', label: 'Discover', icon: 'share-2' },
       { type: 'utility', id: 'activity', label: 'Activity', count: activityCount, icon: 'bell' },
       { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' },
     ];
@@ -199,7 +200,7 @@
     const pathname = $page.url.pathname;
 
     // Utility pages (separate routes)
-    if (pathname === '/discover') return { type: 'icon', name: 'search' };
+    if (pathname === '/discover') return { type: 'icon', name: 'share-2' };
     if (pathname === '/activity') return { type: 'icon', name: 'bell' };
     if (pathname === '/settings') return { type: 'icon', name: 'settings' };
     if (pathname === '/following') return { type: 'icon', name: 'users' };
@@ -215,7 +216,7 @@
     const view = url.searchParams.get('view');
 
     if (view) return { type: 'icon', name: 'filter' };
-    if (starred) return { type: 'icon', name: 'star' };
+    if (starred) return { type: 'icon', name: 'bookmark' };
     if (shared) return { type: 'icon', name: 'share' };
     if (following) return { type: 'icon', name: 'users' };
     if (feeds) return { type: 'icon', name: 'rss' };

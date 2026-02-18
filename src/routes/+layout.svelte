@@ -110,7 +110,7 @@
 
     keyboardStore.register({
       key: '2',
-      description: 'Starred',
+      description: 'Bookmarks',
       category: 'Views',
       action: () => goto('/?starred=true'),
       condition: () => auth.isAuthenticated,

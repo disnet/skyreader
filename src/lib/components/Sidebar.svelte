@@ -429,9 +429,9 @@
       class:active={currentFilter().type === 'starred'}
       onclick={() => selectFilter('starred')}
     >
-      <span class="nav-icon"><Icon name="star" /></span>
+      <span class="nav-icon"><Icon name="bookmark" /></span>
       {#if !sidebarStore.isCollapsed}
-        <span class="nav-label">Later</span>
+        <span class="nav-label">Bookmarks</span>
       {/if}
     </button>
 
@@ -455,7 +455,7 @@
       class:active={$page.url.pathname === '/discover'}
       onclick={() => sidebarStore.closeMobile()}
     >
-      <span class="nav-icon"><Icon name="search" /></span>
+      <span class="nav-icon"><Icon name="share-2" /></span>
       {#if !sidebarStore.isCollapsed}
         <span class="nav-label">Discover</span>
       {/if}
