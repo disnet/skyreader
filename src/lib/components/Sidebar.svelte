@@ -192,7 +192,7 @@
 
   // Lock body scroll when sidebar is open on mobile
   $effect(() => {
-    const isMobile = window.matchMedia('(max-width: 768px)').matches;
+    const isMobile = window.matchMedia('(max-width: 1000px)').matches;
     if (isMobile && sidebarStore.isOpen) {
       document.body.classList.add('sidebar-open-mobile');
     } else {
@@ -894,7 +894,7 @@
   }
 
   /* Mobile styles */
-  @media (max-width: 768px) {
+  @media (max-width: 1000px) {
     .sidebar-backdrop {
       display: none;
     }

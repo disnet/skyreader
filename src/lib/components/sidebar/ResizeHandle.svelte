@@ -80,7 +80,7 @@
     background: var(--color-primary);
   }
 
-  @media (max-width: 768px) {
+  @media (max-width: 1000px) {
     .resize-handle {
       display: none;
     }

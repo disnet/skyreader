@@ -810,7 +810,7 @@
   }
 
   /* Mute controls for non-highlighted articles in expanded view (desktop only) */
-  @media (min-width: 768px) {
+  @media (min-width: 1000px) {
     .article-item.open .article-actions {
       opacity: 0.3;
     }
