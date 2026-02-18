@@ -9,7 +9,7 @@
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
 
   $effect(() => {
-    viewTitleStore.set('Starred');
+    viewTitleStore.set('Bookmarks');
     return () => viewTitleStore.set('');
   });
 
@@ -39,12 +39,12 @@
 </script>
 
 <div class="starred-page">
-  <h1>Later</h1>
+  <h1>Bookmarks</h1>
 
   {#if isLoading}
     <LoadingState message="Loading saved articles..." />
   {:else if starredItems.length === 0}
-    <EmptyState title="No saved articles" description="Save articles for later to see them here" />
+    <EmptyState title="No bookmarked articles" description="Bookmark articles to see them here" />
   {:else}
     <div class="starred-list">
       {#each starredItems as item (item.articleGuid)}
@@ -53,13 +53,13 @@
             <a href={item.articleUrl} target="_blank" rel="noopener" class="article-link">
               <h3>{item.articleTitle || item.articleUrl}</h3>
             </a>
-            <p class="meta">Starred {formatRelativeDate(new Date(item.readAt).toISOString())}</p>
+            <p class="meta">Bookmarked {formatRelativeDate(new Date(item.readAt).toISOString())}</p>
           </div>
           <button
             class="unstar-btn"
             onclick={() =>
               readingStore.toggleStar(item.articleGuid, item.articleUrl, item.articleTitle)}
-            title="Remove star"
+            title="Remove bookmark"
           >
             ★
           </button>

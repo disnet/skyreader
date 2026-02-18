@@ -485,8 +485,8 @@
             </span><span class="action-label">Read</span>
           </button>
           <button class="action-btn" class:starred={isStarred} onclick={handleStarClick}>
-            <span class="action-icon"><Icon name="star" size={16} /></span><span
-              class="action-label">Later</span
+            <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
+              class="action-label">Bookmark</span
             >
           </button>
           {#if isShared}

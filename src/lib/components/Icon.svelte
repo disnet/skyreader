@@ -1,7 +1,7 @@
 <script lang="ts">
   type IconName =
     | 'inbox'
-    | 'star'
+    | 'bookmark'
     | 'share'
     | 'search'
     | 'bell'
@@ -33,7 +33,8 @@
     | 'save'
     | 'type'
     | 'minus'
-    | 'a-large-small';
+    | 'a-large-small'
+    | 'share-2';
 
   interface Props {
     name: IconName;
@@ -61,14 +62,13 @@
     <path
       d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"
     />
-  {:else if name === 'star'}
-    <polygon
-      points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
-    />
+  {:else if name === 'bookmark'}
+    <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
   {:else if name === 'share'}
-    <path d="M4 10v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10" />
-    <polyline points="16 6 12 2 8 6" />
-    <line x1="12" x2="12" y1="2" y2="15" />
+    <polyline points="17 1 21 5 17 9" />
+    <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+    <polyline points="7 23 3 19 7 15" />
+    <path d="M21 13v2a4 4 0 0 1-4 4H3" />
   {:else if name === 'search'}
     <circle cx="11" cy="11" r="8" />
     <path d="m21 21-4.3-4.3" />
@@ -187,6 +187,12 @@
     <path d="M9 12h6" />
     <path d="M3 21 6 12l3 9" />
     <path d="M4 18h4" />
+  {:else if name === 'share-2'}
+    <circle cx="18" cy="5" r="3" />
+    <circle cx="6" cy="12" r="3" />
+    <circle cx="18" cy="19" r="3" />
+    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+    <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
   {/if}
 </svg>
 
