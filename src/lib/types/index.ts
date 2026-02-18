@@ -662,9 +662,19 @@ export interface FilteredView {
   accountDids?: string[];
   readFilter: 'all' | 'unread' | 'read';
   sortOrder: 'newest' | 'oldest';
+  tagFilter?: string[];
   createdAt: number;
   updatedAt: number;
   position: number;
+}
+
+export type ItemType = 'article' | 'share' | 'userShare' | 'document';
+
+export interface ItemTag {
+  id?: number;
+  itemType: ItemType;
+  itemKey: string;
+  tag: string;
 }
 
 export interface DiscoverUser {

@@ -7,6 +7,7 @@ import { sharesStore } from './shares.svelte';
 import { socialStore } from './social.svelte';
 import { preferences } from './preferences.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
+import { tagsStore } from './tags.svelte';
 import type { Article, SocialShare, SocialDocument, CombinedFeedItem, UserShare } from '$lib/types';
 import {
   isRssSource,
@@ -35,6 +36,7 @@ export interface EffectiveFilters {
   sourceKeys: string[];
   readFilter: 'all' | 'unread' | 'read';
   sortOrder: 'newest' | 'oldest';
+  tagFilter: string[];
 }
 
 /**
@@ -88,6 +90,8 @@ function createFeedViewStore() {
   let toolbarSourceKeys = $state<string[]>([]);
   // View-local sort order override (null = use global preferences.sortOrder)
   let toolbarSortOrder = $state<'newest' | 'oldest' | null>(null);
+  // Tag filter state
+  let toolbarTagFilter = $state<string[]>([]);
 
   // URL filters (set by component from $page store)
   let feedFilter = $state<string | null>(null);
@@ -123,13 +127,16 @@ function createFeedViewStore() {
       sourceKeys: toolbarSourceKeys,
       readFilter: showOnlyUnread ? 'unread' : 'all',
       sortOrder: toolbarSortOrder ?? preferences.sortOrder,
+      tagFilter: toolbarTagFilter,
     };
   });
 
   // Derived: whether any toolbar filter differs from defaults
   let hasActiveFilters = $derived.by(() => {
     if (activeFilteredView) return true;
-    return toolbarSourceMode !== 'all';
+    if (toolbarSourceMode !== 'all') return true;
+    if (toolbarTagFilter.length > 0) return true;
+    return false;
   });
 
   // Derived: whether toolbar state differs from the persisted saved view
@@ -147,6 +154,11 @@ function createFeedViewStore() {
     if (toolbarSourceKeys.length !== savedKeys.size) return true;
     for (const key of toolbarSourceKeys) {
       if (!savedKeys.has(key)) return true;
+    }
+    const savedTags = new Set(view.tagFilter ?? []);
+    if (toolbarTagFilter.length !== savedTags.size) return true;
+    for (const tag of toolbarTagFilter) {
+      if (!savedTags.has(tag)) return true;
     }
     return false;
   });
@@ -229,6 +241,11 @@ function createFeedViewStore() {
       }
     }
 
+    // Apply tag filter
+    if (fv.tagFilter.length > 0) {
+      articles = articles.filter((a) => tagsStore.hasAnyTag('article', a.guid, fv.tagFilter));
+    }
+
     // Deduplicate by GUID
     const seen = new Set<string>();
     articles = articles.filter((a) => {
@@ -281,6 +298,11 @@ function createFeedViewStore() {
       );
     } else if (fv.readFilter === 'read') {
       filtered = filtered.filter((s) => socialReadingStore.isRead(s.recordUri));
+    }
+
+    // Apply tag filter
+    if (fv.tagFilter.length > 0) {
+      filtered = filtered.filter((s) => tagsStore.hasAnyTag('share', s.recordUri, fv.tagFilter));
     }
 
     // Apply sort order
@@ -340,6 +362,11 @@ function createFeedViewStore() {
       );
     } else if (fv.readFilter === 'read') {
       filtered = filtered.filter((d) => socialReadingStore.isRead(d.recordUri));
+    }
+
+    // Apply tag filter
+    if (fv.tagFilter.length > 0) {
+      filtered = filtered.filter((d) => tagsStore.hasAnyTag('document', d.recordUri, fv.tagFilter));
     }
 
     // Apply sort order
@@ -636,6 +663,7 @@ function createFeedViewStore() {
       sourceKeys: [...toolbarSourceKeys],
       readFilter: showOnlyUnread ? 'unread' : 'all',
       sortOrder: toolbarSortOrder ?? preferences.sortOrder,
+      tagFilter: [...toolbarTagFilter],
     });
   }
 
@@ -643,6 +671,7 @@ function createFeedViewStore() {
     toolbarSourceMode = 'all';
     toolbarSourceKeys = [];
     toolbarSortOrder = null;
+    toolbarTagFilter = [];
   }
 
   function toggleUnreadFilter() {
@@ -755,6 +784,9 @@ function createFeedViewStore() {
     get hasUnsavedChanges() {
       return hasUnsavedChanges;
     },
+    get tagFilter() {
+      return toolbarTagFilter;
+    },
     get currentSortOrder() {
       return toolbarSortOrder ?? preferences.sortOrder;
     },
@@ -796,6 +828,16 @@ function createFeedViewStore() {
     setToolbarSourceFilter(mode: 'all' | 'include', keys: string[]) {
       toolbarSourceMode = mode;
       toolbarSourceKeys = keys;
+    },
+    setTagFilter(tags: string[]) {
+      toolbarTagFilter = tags;
+    },
+    toggleTagFilter(tag: string) {
+      if (toolbarTagFilter.includes(tag)) {
+        toolbarTagFilter = toolbarTagFilter.filter((t) => t !== tag);
+      } else {
+        toolbarTagFilter = [...toolbarTagFilter, tag];
+      }
     },
     toggleSortOrder() {
       if (viewFilter) {
@@ -855,6 +897,7 @@ function createFeedViewStore() {
           }
           showOnlyUnread = fv.readFilter === 'unread';
           toolbarSortOrder = fv.sortOrder;
+          toolbarTagFilter = fv.tagFilter ? [...fv.tagFilter] : [];
           // Fire-and-forget legacy migration write-back
           if (fv.sourceMode == null && fv.id != null) {
             filteredViewsStore.update(fv.id, {

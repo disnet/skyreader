@@ -13,6 +13,7 @@
     migrateLegacyView,
   } from '$lib/utils/sourceKeys';
   import { getFaviconUrl } from '$lib/utils/favicon';
+  import { tagsStore } from '$lib/stores/tags.svelte';
 
   interface Props {
     open: boolean;
@@ -28,6 +29,7 @@
   let sourceKeys = $state<Set<string>>(new Set());
   let readFilter = $state<'all' | 'unread' | 'read'>('all');
   let sortOrder = $state<'newest' | 'oldest'>('newest');
+  let tagFilter = $state<Set<string>>(new Set());
   let saving = $state(false);
   let error = $state<string | null>(null);
 
@@ -119,6 +121,7 @@
             sourceMode = migrated.sourceMode;
             sourceKeys = new Set(migrated.sourceKeys);
           }
+          tagFilter = new Set(view.tagFilter ?? []);
           feedSearch = '';
           accountSearch = '';
           return;
@@ -130,6 +133,7 @@
       sourceKeys = new Set();
       readFilter = 'all';
       sortOrder = 'newest';
+      tagFilter = new Set();
       feedSearch = '';
       accountSearch = '';
     }
@@ -167,6 +171,7 @@
         sourceKeys: Array.from(sourceKeys),
         readFilter,
         sortOrder,
+        tagFilter: Array.from(tagFilter),
       };
 
       if (editingViewId != null) {
@@ -323,6 +328,33 @@
         </label>
       </div>
     </div>
+
+    <!-- Tags -->
+    {#if tagsStore.allTags.length > 0}
+      <div class="form-group">
+        <span class="form-label">Tags</span>
+        <div class="checklist">
+          {#each tagsStore.allTags as tag}
+            <label class="checklist-item">
+              <input
+                type="checkbox"
+                checked={tagFilter.has(tag)}
+                onchange={() => {
+                  const next = new Set(tagFilter);
+                  if (next.has(tag)) {
+                    next.delete(tag);
+                  } else {
+                    next.add(tag);
+                  }
+                  tagFilter = next;
+                }}
+              />
+              <span class="checklist-label">{tag}</span>
+            </label>
+          {/each}
+        </div>
+      </div>
+    {/if}
 
     {#if error}
       <p class="error-message">{error}</p>

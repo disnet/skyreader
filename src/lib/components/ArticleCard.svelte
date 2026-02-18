@@ -19,9 +19,12 @@
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { profileService } from '$lib/services/profiles';
   import { sharesStore } from '$lib/stores/shares.svelte';
+  import { tagsStore } from '$lib/stores/tags.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import Icon from './Icon.svelte';
+  import TagInput from './TagInput.svelte';
   import logo from '$lib/assets/logo.svg';
+  import type { ItemType } from '$lib/types';
 
   let {
     article,
@@ -325,6 +328,29 @@
       isTruncated = bodyEl.scrollHeight > bodyEl.clientHeight;
     }
   });
+
+  // Tagging
+  let tagItemType = $derived.by((): ItemType => {
+    if (share) return 'share';
+    if (document) return 'document';
+    return 'article';
+  });
+
+  let tagItemKey = $derived.by((): string => {
+    if (share) return share.recordUri;
+    if (document) return document.recordUri;
+    return article?.guid || '';
+  });
+
+  let itemTags = $derived(tagsStore.getTagsForItem(tagItemType, tagItemKey));
+
+  function handleAddTag(tag: string) {
+    tagsStore.addTag(tagItemType, tagItemKey, tag);
+  }
+
+  function handleRemoveTag(tag: string) {
+    tagsStore.removeTag(tagItemType, tagItemKey, tag);
+  }
 </script>
 
 <article
@@ -388,7 +414,17 @@
     </button>
   </div>
 
+  {#if !isOpen && itemTags.length > 0}
+    <div class="tag-chips-collapsed">
+      {#each itemTags as tag}
+        <span class="tag-chip-readonly">{tag}</span>
+      {/each}
+    </div>
+  {/if}
+
   {#if isOpen}
+    <TagInput tags={itemTags} onAdd={handleAddTag} onRemove={handleRemoveTag} />
+
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <div class="article-content" onclick={handleContentClick}>
       {#if isFetching}
@@ -677,6 +713,24 @@
   .feed-title-link:hover {
     color: var(--color-primary);
     text-decoration: underline;
+  }
+
+  .tag-chips-collapsed {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    padding: 0 0 0.25rem;
+  }
+
+  .tag-chip-readonly {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.0625rem 0.375rem;
+    background: var(--color-bg-secondary, #f3f4f6);
+    border-radius: 999px;
+    font-size: 0.65rem;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
   }
 
   .article-content {

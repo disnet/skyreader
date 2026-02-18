@@ -5,6 +5,7 @@
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
+  import { tagsStore } from '$lib/stores/tags.svelte';
   import { profileService } from '$lib/services/profiles';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { goto } from '$app/navigation';
@@ -165,11 +166,13 @@
     if (sourcePopoverOpen && sourcePopoverRef && !sourcePopoverRef.contains(e.target as Node)) {
       feedViewStore.setSourcePopoverOpen(false);
     }
+    handleTagClickOutside(e);
   }
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       feedViewStore.setSourcePopoverOpen(false);
+      tagPopoverOpen = false;
     }
   }
 
@@ -187,6 +190,31 @@
     if (ef.sourceMode === 'all') return 'Sources';
     return `Sources (${ef.sourceKeys.length})`;
   });
+
+  // Tag filter state
+  let tagPopoverOpen = $state(false);
+  let tagPopoverRef: HTMLDivElement | null = $state(null);
+  let tagSearch = $state('');
+
+  let filteredTagOptions = $derived(
+    tagSearch
+      ? tagsStore.allTags.filter((t) => t.toLowerCase().includes(tagSearch.toLowerCase()))
+      : tagsStore.allTags
+  );
+
+  let tagFilterSet = $derived(new Set(feedViewStore.tagFilter));
+
+  let tagFilterLabel = $derived.by(() => {
+    const count = feedViewStore.tagFilter.length;
+    if (count === 0) return 'Tags';
+    return `Tags (${count})`;
+  });
+
+  function handleTagClickOutside(e: MouseEvent) {
+    if (tagPopoverOpen && tagPopoverRef && !tagPopoverRef.contains(e.target as Node)) {
+      tagPopoverOpen = false;
+    }
+  }
 
   // Save view state
   let showNameInput = $state(false);
@@ -222,6 +250,7 @@
         sourceKeys: [...ef.sourceKeys],
         readFilter: feedViewStore.showOnlyUnread ? 'unread' : 'all',
         sortOrder: feedViewStore.currentSortOrder,
+        tagFilter: [...feedViewStore.tagFilter],
       });
       showNameInput = false;
       newViewName = '';
@@ -491,6 +520,69 @@
     </div>
   {/if}
 
+  {#if tagsStore.allTags.length > 0}
+    <span class="toolbar-divider group-divider"></span>
+
+    <!-- Tag filter dropdown -->
+    <div class="filter-group">
+      <div class="dropdown-wrapper" bind:this={tagPopoverRef}>
+        <button
+          class="filter-btn tag-btn"
+          class:has-filter={feedViewStore.tagFilter.length > 0}
+          onclick={(e) => {
+            e.stopPropagation();
+            tagPopoverOpen = !tagPopoverOpen;
+          }}
+        >
+          <Icon name="tag" size={16} />
+          <span class="filter-label">{tagFilterLabel}</span>
+          <Icon name="chevron-down" size={12} />
+        </button>
+
+        {#if tagPopoverOpen}
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
+            {#if tagsStore.allTags.length > 5}
+              <div class="popover-search">
+                <input
+                  type="text"
+                  placeholder="Search tags..."
+                  bind:value={tagSearch}
+                  class="search-input"
+                />
+              </div>
+            {/if}
+            <div class="popover-list">
+              {#each filteredTagOptions as tag}
+                <label class="check-label">
+                  <input
+                    type="checkbox"
+                    checked={tagFilterSet.has(tag)}
+                    onchange={() => feedViewStore.toggleTagFilter(tag)}
+                  />
+                  <span class="check-text">{tag}</span>
+                </label>
+              {/each}
+              {#if filteredTagOptions.length === 0}
+                <div class="no-results">No tags match</div>
+              {/if}
+            </div>
+            {#if feedViewStore.tagFilter.length > 0}
+              <div
+                class="popover-section"
+                style="border-top: 1px solid var(--color-border); border-bottom: none;"
+              >
+                <button class="select-all-btn" onclick={() => feedViewStore.setTagFilter([])}>
+                  Clear all
+                </button>
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
   <span class="toolbar-divider group-divider"></span>
 
   <!-- Save button -->
@@ -519,9 +611,11 @@
         class="filter-btn save-btn"
         class:has-changes={isEditingView
           ? feedViewStore.hasUnsavedChanges
-          : ef.sourceMode !== 'all'}
+          : ef.sourceMode !== 'all' || feedViewStore.tagFilter.length > 0}
         onclick={handleSave}
-        disabled={isEditingView ? !feedViewStore.hasUnsavedChanges : ef.sourceMode === 'all'}
+        disabled={isEditingView
+          ? !feedViewStore.hasUnsavedChanges
+          : ef.sourceMode === 'all' && feedViewStore.tagFilter.length === 0}
         title={isEditingView ? 'Update view' : 'Save as new view'}
       >
         <Icon name="save" size={16} />
