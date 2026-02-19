@@ -325,6 +325,21 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       action: params.markAllAsReadInCurrentFeed,
       condition: () => auth.isAuthenticated && !!feedViewStore.feedFilter,
     });
+
+    // Bookmarks-specific: archive item
+    keyboardStore.register({
+      key: 'e',
+      description: 'Archive/unarchive bookmark',
+      category: 'Article',
+      action: () => {
+        const idx = feedViewStore.selectedIndex;
+        if (idx < 0) return;
+        const item = feedViewStore.currentItems[idx];
+        if (!item || item.type !== 'article') return;
+        readingStore.toggleArchive(item.item.guid);
+      },
+      condition: () => hasSelected() && !!feedViewStore.starredFilter,
+    });
   }
 
   function unregister() {
@@ -338,6 +353,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     keyboardStore.unregister('t');
     keyboardStore.unregister('u');
     keyboardStore.unregister('A', true);
+    keyboardStore.unregister('e');
   }
 
   // Auto-cleanup on component destroy
