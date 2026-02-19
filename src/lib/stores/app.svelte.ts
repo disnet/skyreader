@@ -1,11 +1,9 @@
 import { liveDb } from '$lib/services/liveDb.svelte';
-import { readingStore } from './reading.svelte';
+import { itemLabelsStore } from './itemLabels.svelte';
 import { shareReadingStore } from './shareReading.svelte';
-import { socialReadingStore } from './socialReading.svelte';
 import { sharesStore } from './shares.svelte';
 import { socialStore } from './social.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
-import { tagsStore } from './tags.svelte';
 import { feedStatusStore } from './feedStatus.svelte';
 import { articlesStore } from './articles.svelte';
 import { syncStore } from './sync.svelte';
@@ -61,12 +59,10 @@ function createAppManager() {
       await Promise.all([
         liveDb.loadSubscriptions(),
         liveDb.loadArticles(),
-        readingStore.load(),
+        itemLabelsStore.load(),
         shareReadingStore.load(),
-        socialReadingStore.load(),
         sharesStore.load(),
         filteredViewsStore.load(),
-        tagsStore.load(),
       ]);
 
       // Initialize feed statuses for existing subscriptions
@@ -113,9 +109,8 @@ function createAppManager() {
       // Sync subscriptions, read positions, and social data in parallel
       const [syncResult] = await Promise.all([
         syncSubscriptions(),
-        readingStore.load(),
+        itemLabelsStore.load(),
         shareReadingStore.load(),
-        socialReadingStore.load(),
         socialStore.loadFollowedUsers(),
         socialStore.loadInAppFollowCount(),
         socialStore.loadFeed(true),

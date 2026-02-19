@@ -3,7 +3,7 @@ import { api } from '$lib/services/api';
 import { profileService } from '$lib/services/profiles';
 import { syncQueue, type FollowPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
-import { socialReadingStore } from './socialReading.svelte';
+import { itemLabelsStore } from './itemLabels.svelte';
 import type { DiscoverUser, FollowedUserDetailed, SocialDocument, SocialShare } from '$lib/types';
 import { generateTid } from '$lib/utils/tid';
 import { auth } from './auth.svelte';
@@ -299,7 +299,7 @@ function createSocialStore() {
         await loadInAppFollowCount();
         // Load social feed and read positions to include the new user's shares/articles
         try {
-          await Promise.all([loadFeed(true), socialReadingStore.load()]);
+          await Promise.all([loadFeed(true), itemLabelsStore.load()]);
         } catch (e) {
           console.error('Failed to reload social feed after follow:', e);
           // Don't propagate - follow succeeded, feed will load on next refresh

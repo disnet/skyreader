@@ -9,6 +9,7 @@ import type {
   UserShare,
   FilteredView,
   ItemTags,
+  ItemLabel,
 } from '$lib/types';
 
 // Local cache for read positions (backend is source of truth)
@@ -25,7 +26,7 @@ export interface ReadPositionCache {
 export interface SyncQueueEntry {
   id?: number;
   operation: 'create' | 'update' | 'delete';
-  collection: 'reading' | 'shares' | 'shareReading' | 'socialReading' | 'follows';
+  collection: 'reading' | 'shares' | 'shareReading' | 'socialReading' | 'follows' | 'label';
   key: string; // Deduplication key (e.g., articleGuid, rkey)
   payload: string; // JSON-serialized data
   timestamp: number;
@@ -52,6 +53,7 @@ class SkyreaderDatabase extends Dexie {
   metadata!: Table<MetadataEntry>;
   filteredViews!: Table<FilteredView>;
   itemTags!: Table<ItemTags>;
+  itemLabels!: Table<ItemLabel>;
 
   constructor() {
     super('skyreader');
@@ -171,6 +173,77 @@ class SkyreaderDatabase extends Dexie {
     this.version(18).stores({
       readPositionsCache: 'articleGuid, starred, archived',
     });
+
+    // Add unified itemLabels table, replacing readPositionsCache and itemTags
+    this.version(19)
+      .stores({
+        itemLabels: '[itemKey+label], itemKey, label, itemType',
+        // Keep old tables during migration for safety - they'll be unused
+        readPositionsCache: 'articleGuid, starred, archived',
+        itemTags: 'itemKey, *tags',
+      })
+      .upgrade(async (tx) => {
+        const labelsTable = tx.table('itemLabels');
+        const now = Date.now();
+
+        // Migrate readPositionsCache → itemLabels
+        const readPositions = await tx.table('readPositionsCache').toArray();
+        for (const pos of readPositions) {
+          // Create 'read' label
+          await labelsTable.put({
+            itemKey: pos.articleGuid,
+            itemType: 'article',
+            label: 'read',
+            props: { readAt: pos.readAt, itemUrl: pos.itemUrl, itemTitle: pos.itemTitle },
+            createdAt: pos.readAt || now,
+            updatedAt: now,
+          });
+
+          // Create 'starred' label if starred
+          if (pos.starred) {
+            await labelsTable.put({
+              itemKey: pos.articleGuid,
+              itemType: 'article',
+              label: 'starred',
+              props: {
+                starredAt: pos.readAt || now,
+                itemUrl: pos.itemUrl,
+                itemTitle: pos.itemTitle,
+              },
+              createdAt: pos.readAt || now,
+              updatedAt: now,
+            });
+          }
+
+          // Create 'archived' label if archived
+          if (pos.archived) {
+            await labelsTable.put({
+              itemKey: pos.articleGuid,
+              itemType: 'article',
+              label: 'archived',
+              props: { archivedAt: now },
+              createdAt: now,
+              updatedAt: now,
+            });
+          }
+        }
+
+        // Migrate itemTags → itemLabels
+        const tagEntries = await tx.table('itemTags').toArray();
+        for (const entry of tagEntries) {
+          if (!Array.isArray(entry.tags)) continue;
+          for (const tag of entry.tags) {
+            await labelsTable.put({
+              itemKey: entry.itemKey,
+              itemType: entry.itemType || 'article',
+              label: `tag:${tag}`,
+              props: {},
+              createdAt: now,
+              updatedAt: now,
+            });
+          }
+        }
+      });
   }
 }
 
@@ -191,6 +264,7 @@ export async function clearAllData(): Promise<void> {
     db.metadata.clear(),
     db.filteredViews.clear(),
     db.itemTags.clear(),
+    db.itemLabels.clear(),
   ]);
 }
 

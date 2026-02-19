@@ -1,8 +1,7 @@
 import { articlesStore } from './articles.svelte';
 import { subscriptionsStore } from './subscriptions.svelte';
 import { socialStore } from './social.svelte';
-import { socialReadingStore } from './socialReading.svelte';
-import { readingStore } from './reading.svelte';
+import { itemLabelsStore } from './itemLabels.svelte';
 import { liveDb } from '$lib/services/liveDb.svelte';
 
 /**
@@ -13,7 +12,7 @@ function createUnreadCountsStore() {
   // Per-feed unread counts
   let feedCounts = $derived.by(() => {
     liveDb.articlesVersion;
-    readingStore.readPositions;
+    itemLabelsStore.readPositions;
     const counts = new Map<number, number>();
     for (const sub of subscriptionsStore.subscriptions) {
       if (sub.id) {
@@ -26,7 +25,7 @@ function createUnreadCountsStore() {
   // Total unread articles (deduplicated by GUID across feeds to match combined view)
   let totalArticles = $derived.by(() => {
     liveDb.articlesVersion;
-    const positions = readingStore.readPositions;
+    const positions = itemLabelsStore.readPositions;
     const seen = new Set<string>();
     let count = 0;
     for (const article of articlesStore.allArticles) {
@@ -40,10 +39,10 @@ function createUnreadCountsStore() {
 
   // Unread shares by author
   let sharerShareCounts = $derived.by(() => {
-    socialReadingStore.positions;
+    itemLabelsStore.socialPositions;
     const counts = new Map<string, number>();
     for (const share of socialStore.shares) {
-      if (!socialReadingStore.isRead(share.recordUri)) {
+      if (!itemLabelsStore.isSocialRead(share.recordUri)) {
         counts.set(share.authorDid, (counts.get(share.authorDid) || 0) + 1);
       }
     }
@@ -52,10 +51,10 @@ function createUnreadCountsStore() {
 
   // Unread documents by author
   let sharerDocCounts = $derived.by(() => {
-    socialReadingStore.positions;
+    itemLabelsStore.socialPositions;
     const counts = new Map<string, number>();
     for (const doc of socialStore.documents) {
-      if (!socialReadingStore.isRead(doc.recordUri)) {
+      if (!itemLabelsStore.isSocialRead(doc.recordUri)) {
         counts.set(doc.authorDid, (counts.get(doc.authorDid) || 0) + 1);
       }
     }

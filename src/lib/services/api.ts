@@ -3,6 +3,8 @@ import type {
   FeedItem,
   FollowedUserDetailed,
   GroupedShare,
+  ItemLabel,
+  ItemLabelType,
   ParsedFeed,
   ReshareActivity,
   SocialDocument,
@@ -488,6 +490,97 @@ class ApiClient {
     return this.fetch('/api/reading/mark-read-bulk', {
       method: 'POST',
       body: JSON.stringify({ items }),
+    });
+  }
+
+  // Labels (unified item labels API)
+  async getLabels(
+    options: {
+      label?: string;
+      itemType?: ItemLabelType;
+      cursor?: string;
+      limit?: number;
+    } = {}
+  ): Promise<{
+    labels: Array<{
+      itemKey: string;
+      itemType: string;
+      label: string;
+      props: Record<string, unknown>;
+      rkey?: string;
+      createdAt: number;
+      updatedAt: number;
+    }>;
+    cursor?: string;
+  }> {
+    const params = new URLSearchParams();
+    if (options.label) params.set('label', options.label);
+    if (options.itemType) params.set('itemType', options.itemType);
+    if (options.cursor) params.set('cursor', options.cursor);
+    if (options.limit) params.set('limit', String(options.limit));
+    const query = params.toString();
+    return this.fetch(`/api/labels${query ? `?${query}` : ''}`);
+  }
+
+  async getAllLabels(options: { label?: string; itemType?: ItemLabelType } = {}): Promise<
+    Array<{
+      itemKey: string;
+      itemType: string;
+      label: string;
+      props: Record<string, unknown>;
+      rkey?: string;
+      createdAt: number;
+      updatedAt: number;
+    }>
+  > {
+    const all: Array<{
+      itemKey: string;
+      itemType: string;
+      label: string;
+      props: Record<string, unknown>;
+      rkey?: string;
+      createdAt: number;
+      updatedAt: number;
+    }> = [];
+    let cursor: string | undefined;
+    do {
+      const response = await this.getLabels({ ...options, cursor });
+      all.push(...response.labels);
+      cursor = response.cursor;
+    } while (cursor);
+    return all;
+  }
+
+  async addLabel(data: {
+    itemKey: string;
+    itemType: ItemLabelType;
+    label: string;
+    props?: Record<string, unknown>;
+  }): Promise<{ success: boolean }> {
+    return this.fetch('/api/labels', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteLabel(itemKey: string, label: string): Promise<{ success: boolean }> {
+    return this.fetch('/api/labels', {
+      method: 'DELETE',
+      body: JSON.stringify({ itemKey, label }),
+    });
+  }
+
+  async bulkAddLabels(
+    labels: Array<{
+      itemKey: string;
+      itemType: ItemLabelType;
+      label: string;
+      props?: Record<string, unknown>;
+    }>
+  ): Promise<{ success: boolean; added: number }> {
+    return this.fetch('/api/labels/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ labels }),
     });
   }
 

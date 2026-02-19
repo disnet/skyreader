@@ -4,7 +4,13 @@ import { api } from './api';
 const MAX_RETRIES = 5;
 
 export type SyncOperation = 'create' | 'update' | 'delete';
-export type SyncCollection = 'reading' | 'shares' | 'shareReading' | 'socialReading' | 'follows';
+export type SyncCollection =
+  | 'reading'
+  | 'shares'
+  | 'shareReading'
+  | 'socialReading'
+  | 'follows'
+  | 'label';
 
 // Payload types for each collection
 export interface ReadingPayload {
@@ -54,12 +60,20 @@ export interface FollowPayload {
   did: string;
 }
 
+export interface LabelPayload {
+  itemKey: string;
+  itemType: string;
+  label: string;
+  props?: Record<string, unknown>;
+}
+
 type SyncPayload =
   | ReadingPayload
   | SharePayload
   | ShareReadingPayload
   | SocialReadingPayload
-  | FollowPayload;
+  | FollowPayload
+  | LabelPayload;
 
 class SyncQueue {
   private processing = false;
@@ -396,6 +410,9 @@ class SyncQueue {
       case 'follows':
         await this.executeFollowOperation(entry.operation, payload as FollowPayload);
         break;
+      case 'label':
+        await this.executeLabelOperation(entry.operation, payload as LabelPayload);
+        break;
     }
   }
 
@@ -519,6 +536,25 @@ class SyncQueue {
         break;
       case 'delete':
         await api.unfollowUser(payload.rkey);
+        break;
+    }
+  }
+
+  private async executeLabelOperation(
+    operation: SyncOperation,
+    payload: LabelPayload
+  ): Promise<void> {
+    switch (operation) {
+      case 'create':
+        await api.addLabel({
+          itemKey: payload.itemKey,
+          itemType: payload.itemType as 'article' | 'share' | 'document' | 'userShare',
+          label: payload.label,
+          props: payload.props,
+        });
+        break;
+      case 'delete':
+        await api.deleteLabel(payload.itemKey, payload.label);
         break;
     }
   }

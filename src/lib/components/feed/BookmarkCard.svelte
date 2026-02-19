@@ -3,8 +3,7 @@
   import { formatRelativeDate } from '$lib/utils/date';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { readingStore } from '$lib/stores/reading.svelte';
-  import { tagsStore } from '$lib/stores/tags.svelte';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
@@ -26,8 +25,8 @@
   let sub = $derived(subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId));
   let faviconUrl = $derived(getFaviconUrl(sub?.siteUrl || sub?.feedUrl || article.url));
   let feedTitle = $derived(sub?.customTitle || sub?.title || '');
-  let isArchived = $derived(readingStore.isArchived(article.guid));
-  let tags = $derived(tagsStore.getTagsForItem(article.guid));
+  let isArchived = $derived(itemLabelsStore.isArchived(article.guid));
+  let tags = $derived(itemLabelsStore.getTagsForItem(article.guid));
 
   // Estimate read time from content (~200 words/min)
   let readTimeMinutes = $derived.by(() => {

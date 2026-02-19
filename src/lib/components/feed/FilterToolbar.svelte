@@ -7,7 +7,7 @@
   import { socialStore } from '$lib/stores/social.svelte';
   import { profileService } from '$lib/services/profiles';
   import { getFaviconUrl } from '$lib/utils/favicon';
-  import { tagsStore } from '$lib/stores/tags.svelte';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { goto } from '$app/navigation';
   import {
     rssSourceKey,
@@ -111,7 +111,7 @@
   // Tag filter state
   let tagPopoverOpen = $state(false);
   let tagPopoverRef = $state<HTMLDivElement | null>(null);
-  let allTags = $derived(tagsStore.allTags);
+  let allTags = $derived(itemLabelsStore.allTags);
   let activeTagFilter = $derived(feedViewStore.toolbarTagFilter);
   let activeTagSet = $derived(new Set(activeTagFilter));
 

@@ -4,8 +4,7 @@
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { readingStore } from '$lib/stores/reading.svelte';
-  import { socialReadingStore } from '$lib/stores/socialReading.svelte';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { sharesStore } from '$lib/stores/shares.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import type { Article, SocialDocument } from '$lib/types';
@@ -53,23 +52,23 @@
   }
 
   function handleToggleRead(article: Article) {
-    if (readingStore.isRead(article.guid)) {
-      readingStore.markAsUnread(article.guid);
+    if (itemLabelsStore.isRead(article.guid)) {
+      itemLabelsStore.markAsUnread(article.guid);
     } else {
       // Track item to keep it visible in unread filter for this session
       feedViewStore.trackSeenThisSession({ type: 'article', item: article, key: article.guid });
       const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
-      readingStore.markAsRead(sub?.rkey || '', article.guid, article.url, article.title);
+      itemLabelsStore.markAsRead(sub?.rkey || '', article.guid, article.url, article.title);
     }
   }
 
   function handleToggleDocumentRead(doc: SocialDocument) {
-    if (socialReadingStore.isRead(doc.recordUri)) {
-      socialReadingStore.markAsUnread(doc.recordUri);
+    if (itemLabelsStore.isSocialRead(doc.recordUri)) {
+      itemLabelsStore.markSocialAsUnread(doc.recordUri);
     } else {
       // Track item to keep it visible in unread filter for this session
       feedViewStore.trackSeenThisSession({ type: 'document', item: doc, key: doc.recordUri });
-      socialReadingStore.markAsRead(
+      itemLabelsStore.markSocialAsRead(
         'document',
         doc.recordUri,
         doc.authorDid,
@@ -97,8 +96,8 @@
           siteUrl={sub?.siteUrl || sub?.feedUrl}
           feedTitle={sub?.customTitle || sub?.title}
           feedId={sub?.id}
-          isRead={readingStore.isRead(article.guid)}
-          isStarred={readingStore.isStarred(article.guid)}
+          isRead={itemLabelsStore.isRead(article.guid)}
+          isStarred={itemLabelsStore.isStarred(article.guid)}
           isShared={sharesStore.isShared(article.guid)}
           shareNote={sharesStore.getShareNote(article.guid)}
           selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
@@ -117,20 +116,20 @@
         <ArticleCard
           {share}
           {localArticle}
-          isRead={socialReadingStore.isRead(share.recordUri)}
+          isRead={itemLabelsStore.isSocialRead(share.recordUri)}
           selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
           expanded={feedViewStore.expandedIndex === index}
           highlighted={feedViewStore.selectedIndex === index}
           onToggleRead={() => {
-            if (socialReadingStore.isRead(share.recordUri)) {
-              socialReadingStore.markAsUnread(share.recordUri);
+            if (itemLabelsStore.isSocialRead(share.recordUri)) {
+              itemLabelsStore.markSocialAsUnread(share.recordUri);
             } else {
               feedViewStore.trackSeenThisSession({
                 type: 'share',
                 item: share,
                 key: share.recordUri,
               });
-              socialReadingStore.markAsRead(
+              itemLabelsStore.markSocialAsRead(
                 'share',
                 share.recordUri,
                 share.authorDid,
@@ -151,8 +150,8 @@
           siteUrl={sub?.siteUrl || sub?.feedUrl}
           feedTitle={sub?.customTitle || sub?.title}
           feedId={sub?.id}
-          isRead={readingStore.isRead(article.guid)}
-          isStarred={readingStore.isStarred(article.guid)}
+          isRead={itemLabelsStore.isRead(article.guid)}
+          isStarred={itemLabelsStore.isStarred(article.guid)}
           isShared={true}
           shareNote={share.note}
           reshareCount={share.reshareCount || 0}
@@ -169,7 +168,7 @@
         {@const doc = displayItem.item}
         <ArticleCard
           document={doc}
-          isRead={socialReadingStore.isRead(doc.recordUri)}
+          isRead={itemLabelsStore.isSocialRead(doc.recordUri)}
           selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
           expanded={feedViewStore.expandedIndex === index}
           highlighted={feedViewStore.selectedIndex === index}
