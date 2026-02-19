@@ -12,6 +12,7 @@ import type { Article, Subscription } from '$lib/types';
 interface KeyboardShortcutsParams {
   scrollToCenter: () => void;
   markAllAsReadInCurrentFeed: () => Promise<void>;
+  openBookmarkReader?: () => void;
 }
 
 /**
@@ -214,12 +215,17 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     return auth.isAuthenticated && feedViewStore.selectedIndex >= 0;
   }
 
-  // Toggle expand action
+  // Toggle expand action (or open bookmark reader in bookmarks view)
   async function toggleExpand() {
     const selectedIndex = feedViewStore.selectedIndex;
-    const expandedIndex = feedViewStore.expandedIndex;
     if (selectedIndex < 0) return;
 
+    if (feedViewStore.starredFilter && params.openBookmarkReader) {
+      params.openBookmarkReader();
+      return;
+    }
+
+    const expandedIndex = feedViewStore.expandedIndex;
     if (expandedIndex === selectedIndex) {
       feedViewStore.collapse();
     } else {

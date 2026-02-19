@@ -349,6 +349,7 @@
   const keyboardShortcuts = useFeedKeyboardShortcuts({
     scrollToCenter,
     markAllAsReadInCurrentFeed,
+    openBookmarkReader: () => bookmarkListView?.openSelectedReader(),
   });
 
   async function removeFeed(id: number) {

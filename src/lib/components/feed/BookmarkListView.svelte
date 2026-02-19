@@ -54,6 +54,15 @@
     }
   }
 
+  export function openSelectedReader() {
+    const index = feedViewStore.selectedIndex;
+    if (index < 0) return;
+    const item = feedViewStore.currentItems[index];
+    if (item?.type === 'article') {
+      openReader(item.item);
+    }
+  }
+
   export function getArticleElements(): HTMLElement[] {
     return articleElements;
   }
