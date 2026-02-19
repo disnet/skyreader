@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
-  import { tagsStore } from '$lib/stores/tags.svelte';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import type { ItemTags } from '$lib/types';
 
   interface Props {
@@ -18,8 +18,8 @@
   let showNewTagInput = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
 
-  let allTags = $derived(tagsStore.allTags);
-  let itemTags = $derived(tagsStore.getTagsForItem(itemKey));
+  let allTags = $derived(itemLabelsStore.allTags);
+  let itemTags = $derived(itemLabelsStore.getTagsForItem(itemKey));
 
   // Show up to 9 existing tags
   let displayTags = $derived(allTags.slice(0, 9));
@@ -49,7 +49,7 @@
 
     const tagIndex = num - 1;
     if (tagIndex < displayTags.length) {
-      tagsStore.toggleTag(itemKey, itemType, displayTags[tagIndex]);
+      itemLabelsStore.toggleTag(itemKey, itemType, displayTags[tagIndex]);
     }
   }
 
@@ -62,7 +62,7 @@
   async function handleNewTagSubmit() {
     const tag = newTagInput.trim();
     if (!tag) return;
-    await tagsStore.addTag(itemKey, itemType, tag);
+    await itemLabelsStore.addTag(itemKey, itemType, tag);
     newTagInput = '';
     showNewTagInput = false;
   }
@@ -141,7 +141,7 @@
         <button
           class="tag-item"
           class:active={isActive}
-          onclick={() => tagsStore.toggleTag(itemKey, itemType, tag)}
+          onclick={() => itemLabelsStore.toggleTag(itemKey, itemType, tag)}
         >
           <span class="tag-number">{i + 1}</span>
           <span class="tag-name">{tag}</span>

@@ -4,7 +4,7 @@
   import { formatRelativeDate } from '$lib/utils/date';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { readingStore } from '$lib/stores/reading.svelte';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { isLeafletContent, renderLeafletContent } from '$lib/utils/leaflet-renderer';
   import { isPcktBlogContent, renderPcktBlogContent } from '$lib/utils/pckt-blog-renderer';
   import { isOffprintContent, renderOffprintContent } from '$lib/utils/offprint-renderer';
@@ -12,7 +12,6 @@
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import Icon from '$lib/components/Icon.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
-  import { tagsStore } from '$lib/stores/tags.svelte';
   import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
 
   let {
@@ -32,7 +31,7 @@
   let lastScrollY = $state(0);
   let overlayEl: HTMLElement | undefined = $state();
 
-  let itemTags = $derived(tagsStore.getTagsForItem(article.guid));
+  let itemTags = $derived(itemLabelsStore.getTagsForItem(article.guid));
 
   const fontOptions: { value: ArticleFont; label: string; family: string }[] = [
     { value: 'sans-serif', label: 'Sans', family: 'sans-serif' },
@@ -65,7 +64,7 @@
   let sub = $derived(subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId));
   let feedTitle = $derived(sub?.customTitle || sub?.title || '');
   let faviconUrl = $derived(getFaviconUrl(sub?.siteUrl || sub?.feedUrl || article.url));
-  let isArchived = $derived(readingStore.isArchived(article.guid));
+  let isArchived = $derived(itemLabelsStore.isArchived(article.guid));
 
   let displayContent = $derived(article.content || article.summary || '');
   let sanitizedContent = $derived(sanitizeHtml(displayContent, article.url));

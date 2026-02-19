@@ -4,8 +4,7 @@ import { keyboardStore } from '$lib/stores/keyboard.svelte';
 import { auth } from '$lib/stores/auth.svelte';
 import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
 import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-import { readingStore } from '$lib/stores/reading.svelte';
-import { socialReadingStore } from '$lib/stores/socialReading.svelte';
+import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { sharesStore } from '$lib/stores/shares.svelte';
 import type { Article, Subscription } from '$lib/types';
 
@@ -101,7 +100,11 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
   function toggleSelectedStar() {
     const selected = getSelectedArticle();
     if (selected) {
-      readingStore.toggleStar(selected.article.guid, selected.article.url, selected.article.title);
+      itemLabelsStore.toggleStar(
+        selected.article.guid,
+        selected.article.url,
+        selected.article.title
+      );
     }
   }
 
@@ -142,18 +145,18 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       const sub = getSubscriptionForArticle(article);
       if (!sub) return;
 
-      if (readingStore.isRead(article.guid)) {
-        readingStore.markAsUnread(article.guid);
+      if (itemLabelsStore.isRead(article.guid)) {
+        itemLabelsStore.markAsUnread(article.guid);
       } else {
-        readingStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
+        itemLabelsStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
       }
     } else if (item.type === 'share') {
       const share = item.item;
-      if (socialReadingStore.isRead(share.recordUri)) {
-        socialReadingStore.markAsUnread(share.recordUri);
+      if (itemLabelsStore.isSocialRead(share.recordUri)) {
+        itemLabelsStore.markSocialAsUnread(share.recordUri);
       } else {
         feedViewStore.trackSeenThisSession(item);
-        socialReadingStore.markAsRead(
+        itemLabelsStore.markSocialAsRead(
           'share',
           share.recordUri,
           share.authorDid,
@@ -163,11 +166,11 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       }
     } else if (item.type === 'document') {
       const doc = item.item;
-      if (socialReadingStore.isRead(doc.recordUri)) {
-        socialReadingStore.markAsUnread(doc.recordUri);
+      if (itemLabelsStore.isSocialRead(doc.recordUri)) {
+        itemLabelsStore.markSocialAsUnread(doc.recordUri);
       } else {
         feedViewStore.trackSeenThisSession(item);
-        socialReadingStore.markAsRead(
+        itemLabelsStore.markSocialAsRead(
           'document',
           doc.recordUri,
           doc.authorDid,
@@ -342,7 +345,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
         if (idx < 0) return;
         const item = feedViewStore.currentItems[idx];
         if (!item || item.type !== 'article') return;
-        readingStore.toggleArchive(item.item.guid);
+        itemLabelsStore.toggleArchive(item.item.guid);
       },
       condition: () => hasSelected() && !!feedViewStore.starredFilter,
     });

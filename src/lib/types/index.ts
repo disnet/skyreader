@@ -674,6 +674,17 @@ export interface ItemTags {
   itemType: 'article' | 'share' | 'document' | 'userShare';
 }
 
+export type ItemLabelType = 'article' | 'share' | 'document' | 'userShare';
+
+export interface ItemLabel {
+  itemKey: string;
+  itemType: ItemLabelType;
+  label: string; // 'read', 'starred', 'archived', 'tag:<name>'
+  props: Record<string, unknown>; // label-specific metadata
+  createdAt: number; // epoch ms
+  updatedAt: number; // epoch ms
+}
+
 export interface DiscoverUser {
   did: string;
   handle: string;

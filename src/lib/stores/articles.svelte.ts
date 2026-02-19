@@ -1,5 +1,5 @@
 import { liveDb } from '$lib/services/liveDb.svelte';
-import { readingStore } from './reading.svelte';
+import { itemLabelsStore } from './itemLabels.svelte';
 import type { Article } from '$lib/types';
 
 const DEFAULT_PAGE_SIZE = 50;
@@ -38,19 +38,19 @@ function createArticlesStore() {
 
   // Derived: unread articles (excluding those in readPositions)
   let unreadArticles = $derived.by(() => {
-    const positions = readingStore.readPositions;
+    const positions = itemLabelsStore.readPositions;
     return allArticles.filter((a) => !positions.has(a.guid));
   });
 
   // Derived: starred articles
   let starredArticles = $derived.by(() => {
-    const positions = readingStore.readPositions;
+    const positions = itemLabelsStore.readPositions;
     return allArticles.filter((a) => positions.get(a.guid)?.starred === true);
   });
 
   // Derived: set of starred GUIDs (useful for article retention)
   let starredGuids = $derived.by(() => {
-    const positions = readingStore.readPositions;
+    const positions = itemLabelsStore.readPositions;
     const starred = new Set<string>();
     for (const [guid, pos] of positions) {
       if (pos.starred) starred.add(guid);
@@ -69,7 +69,7 @@ function createArticlesStore() {
    * Get unread articles for a specific subscription
    */
   function getUnreadForSubscription(subscriptionId: number): Article[] {
-    const positions = readingStore.readPositions;
+    const positions = itemLabelsStore.readPositions;
     const subArticles = getForSubscription(subscriptionId);
     return subArticles.filter((a) => !positions.has(a.guid));
   }
@@ -103,7 +103,7 @@ function createArticlesStore() {
     count?: number;
   }): Article[] {
     const { subscriptionId, showOnlyUnread, showOnlyStarred, count = pageSize } = options;
-    const positions = readingStore.readPositions;
+    const positions = itemLabelsStore.readPositions;
 
     let filtered: Article[];
 
@@ -161,7 +161,7 @@ function createArticlesStore() {
     showOnlyStarred?: boolean;
   }): boolean {
     const { subscriptionId, showOnlyUnread, showOnlyStarred } = options;
-    const positions = readingStore.readPositions;
+    const positions = itemLabelsStore.readPositions;
 
     let total: number;
 

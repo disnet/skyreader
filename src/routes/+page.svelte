@@ -3,8 +3,7 @@
   import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { readingStore } from '$lib/stores/reading.svelte';
-  import { socialReadingStore } from '$lib/stores/socialReading.svelte';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { sharesStore } from '$lib/stores/shares.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
@@ -173,17 +172,17 @@
 
     if (item.type === 'article') {
       const article = item.item;
-      if (readingStore.isRead(article.guid)) return;
+      if (itemLabelsStore.isRead(article.guid)) return;
 
       const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
       if (sub) {
-        readingStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
+        itemLabelsStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
       }
     } else if (item.type === 'share') {
       const share = item.item;
-      if (socialReadingStore.isRead(share.recordUri)) return;
+      if (itemLabelsStore.isSocialRead(share.recordUri)) return;
 
-      socialReadingStore.markAsRead(
+      itemLabelsStore.markSocialAsRead(
         'share',
         share.recordUri,
         share.authorDid,
@@ -222,7 +221,7 @@
     const allFeedArticles = articlesStore.getForSubscription(feedId);
 
     const articlesToMark = allFeedArticles
-      .filter((a) => !readingStore.isRead(a.guid))
+      .filter((a) => !itemLabelsStore.isRead(a.guid))
       .map((a) => ({
         subscriptionRkey: sub.rkey,
         articleGuid: a.guid,
@@ -243,7 +242,7 @@
       []
     );
 
-    await readingStore.markAllAsRead(articlesToMark);
+    await itemLabelsStore.markAllAsRead(articlesToMark);
   }
 
   async function markAllAsReadInCurrentView() {
@@ -262,7 +261,7 @@
     const documentUrisToTrack: string[] = [];
 
     for (const article of allArticles) {
-      if (!readingStore.isRead(article.guid)) {
+      if (!itemLabelsStore.isRead(article.guid)) {
         const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
         if (sub) {
           articlesToMark.push({
@@ -276,13 +275,13 @@
     }
 
     for (const share of allShares) {
-      if (!socialReadingStore.isRead(share.recordUri)) {
+      if (!itemLabelsStore.isSocialRead(share.recordUri)) {
         shareUrisToTrack.push(share.recordUri);
       }
     }
 
     for (const doc of allDocuments) {
-      if (!socialReadingStore.isRead(doc.recordUri)) {
+      if (!itemLabelsStore.isSocialRead(doc.recordUri)) {
         documentUrisToTrack.push(doc.recordUri);
       }
     }
@@ -337,10 +336,10 @@
     // Mark all using bulk operations
     const promises: Promise<void>[] = [];
     if (articlesToMark.length > 0) {
-      promises.push(readingStore.markAllAsRead(articlesToMark));
+      promises.push(itemLabelsStore.markAllAsRead(articlesToMark));
     }
     if (socialItemsToMark.length > 0) {
-      promises.push(socialReadingStore.markAllAsRead(socialItemsToMark));
+      promises.push(itemLabelsStore.markAllSocialAsRead(socialItemsToMark));
     }
     await Promise.all(promises);
   }
@@ -493,7 +492,7 @@
       <FeedListView
         bind:this={feedListView}
         onToggleStar={(article) =>
-          readingStore.toggleStar(article.guid, article.url, article.title)}
+          itemLabelsStore.toggleStar(article.guid, article.url, article.title)}
         onShare={(article, sub) =>
           sharesStore.share(
             sub.rkey,

@@ -22,7 +22,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import Icon from './Icon.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
-  import { tagsStore } from '$lib/stores/tags.svelte';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import type { ItemTags } from '$lib/types';
   import logo from '$lib/assets/logo.svg';
@@ -343,7 +343,7 @@
     return 'article';
   });
 
-  let itemTagCount = $derived(tagsStore.getTagsForItem(itemGuid).length);
+  let itemTagCount = $derived(itemLabelsStore.getTagsForItem(itemGuid).length);
 
   function handleTagClick(e: MouseEvent) {
     e.stopPropagation();
@@ -582,7 +582,7 @@
 
     {#if itemTagCount > 0}
       <div class="tag-chips">
-        {#each tagsStore.getTagsForItem(itemGuid) as tag}
+        {#each itemLabelsStore.getTagsForItem(itemGuid) as tag}
           <span class="tag-chip">{tag}</span>
         {/each}
       </div>

@@ -4,7 +4,7 @@
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
-  import { readingStore } from '$lib/stores/reading.svelte';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import type { Article } from '$lib/types';
 
   let readerArticle = $state<Article | null>(null);
@@ -33,14 +33,14 @@
   }
 
   function handleArchive(articleGuid: string) {
-    readingStore.toggleArchive(articleGuid);
+    itemLabelsStore.toggleArchive(articleGuid);
     if (readerArticle?.guid === articleGuid) {
       closeReader();
     }
   }
 
   function handleRemoveBookmark(articleGuid: string) {
-    readingStore.toggleStar(articleGuid);
+    itemLabelsStore.toggleStar(articleGuid);
     if (readerArticle?.guid === articleGuid) {
       closeReader();
     }

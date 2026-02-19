@@ -1,13 +1,10 @@
 import { articlesStore } from './articles.svelte';
 import { subscriptionsStore } from './subscriptions.svelte';
-import { readingStore } from './reading.svelte';
-import { shareReadingStore } from './shareReading.svelte';
-import { socialReadingStore } from './socialReading.svelte';
+import { itemLabelsStore } from './itemLabels.svelte';
 import { sharesStore } from './shares.svelte';
 import { socialStore } from './social.svelte';
 import { preferences } from './preferences.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
-import { tagsStore } from './tags.svelte';
 import type { Article, SocialShare, SocialDocument, CombinedFeedItem, UserShare } from '$lib/types';
 import {
   isRssSource,
@@ -205,7 +202,7 @@ function createFeedViewStore() {
 
     // Access articlesStore version for reactivity
     const allArticles = articlesStore.allArticles;
-    const positions = readingStore.readPositions;
+    const positions = itemLabelsStore.readPositions;
     const sortOrder = fv.sortOrder;
 
     let articles: Article[];
@@ -296,10 +293,11 @@ function createFeedViewStore() {
     // Apply read filter
     if (fv.readFilter === 'unread') {
       filtered = filtered.filter(
-        (s) => !socialReadingStore.isRead(s.recordUri) || readShareUrisThisSession.has(s.recordUri)
+        (s) =>
+          !itemLabelsStore.isSocialRead(s.recordUri) || readShareUrisThisSession.has(s.recordUri)
       );
     } else if (fv.readFilter === 'read') {
-      filtered = filtered.filter((s) => socialReadingStore.isRead(s.recordUri));
+      filtered = filtered.filter((s) => itemLabelsStore.isSocialRead(s.recordUri));
     }
 
     // Apply sort order
@@ -355,10 +353,10 @@ function createFeedViewStore() {
     if (fv.readFilter === 'unread') {
       filtered = filtered.filter(
         (d) =>
-          !socialReadingStore.isRead(d.recordUri) || readDocumentUrisThisSession.has(d.recordUri)
+          !itemLabelsStore.isSocialRead(d.recordUri) || readDocumentUrisThisSession.has(d.recordUri)
       );
     } else if (fv.readFilter === 'read') {
-      filtered = filtered.filter((d) => socialReadingStore.isRead(d.recordUri));
+      filtered = filtered.filter((d) => itemLabelsStore.isSocialRead(d.recordUri));
     }
 
     // Apply sort order
@@ -506,8 +504,8 @@ function createFeedViewStore() {
     // Apply tag filter
     if (toolbarTagFilter.length > 0) {
       // Access tagsByItem for reactivity
-      const _tags = tagsStore.tagsByItem;
-      items = items.filter((item) => tagsStore.itemHasAnyTag(item.key, toolbarTagFilter));
+      const _tags = itemLabelsStore.tagsByItem;
+      items = items.filter((item) => itemLabelsStore.itemHasAnyTag(item.key, toolbarTagFilter));
     }
 
     return items;
@@ -599,13 +597,13 @@ function createFeedViewStore() {
     if (item.type === 'article') {
       const article = item.item;
       const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
-      if (sub && !readingStore.isRead(article.guid)) {
-        readingStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
+      if (sub && !itemLabelsStore.isRead(article.guid)) {
+        itemLabelsStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
       }
     } else if (item.type === 'share') {
       const share = item.item;
-      if (!socialReadingStore.isRead(share.recordUri)) {
-        socialReadingStore.markAsRead(
+      if (!itemLabelsStore.isSocialRead(share.recordUri)) {
+        itemLabelsStore.markSocialAsRead(
           'share',
           share.recordUri,
           share.authorDid,
@@ -615,8 +613,8 @@ function createFeedViewStore() {
       }
     } else if (item.type === 'document') {
       const doc = item.item;
-      if (!socialReadingStore.isRead(doc.recordUri)) {
-        socialReadingStore.markAsRead(
+      if (!itemLabelsStore.isSocialRead(doc.recordUri)) {
+        itemLabelsStore.markSocialAsRead(
           'document',
           doc.recordUri,
           doc.authorDid,

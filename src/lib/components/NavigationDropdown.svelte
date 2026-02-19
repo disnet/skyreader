@@ -7,7 +7,7 @@
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
-  import { readingStore } from '$lib/stores/reading.svelte';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { sharesStore } from '$lib/stores/shares.svelte';
   import { activityStore } from '$lib/stores/activity.svelte';
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
@@ -32,7 +32,7 @@
   let totalUnread = $derived(unreadCounts.totalArticles);
   let sharerCounts = $derived(unreadCounts.sharerShareCounts);
 
-  let starredCount = $derived(readingStore.starredCount);
+  let starredCount = $derived(itemLabelsStore.starredCount);
   let sharedCount = $derived(sharesStore.userShares.size);
   let activityCount = $derived(activityStore.totalReshareCount);
 
