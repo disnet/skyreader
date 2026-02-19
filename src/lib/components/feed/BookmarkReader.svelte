@@ -99,33 +99,80 @@
         </button>
       </div>
 
-      <div class="reader-actions-right">
-        <button
-          class="action-btn"
-          class:active={styleMenuOpen}
-          onclick={() => (styleMenuOpen = !styleMenuOpen)}
-          title="Style"
-        >
-          <Icon name="type" size={18} />
-        </button>
+      <div class="reader-actions-right-wrapper">
+        <div class="reader-actions-right">
+          <button
+            class="action-btn"
+            class:active={styleMenuOpen}
+            onclick={() => (styleMenuOpen = !styleMenuOpen)}
+            title="Style"
+          >
+            <Icon name="type" size={18} />
+          </button>
 
-        <span class="action-separator"></span>
+          <span class="action-separator"></span>
 
-        <button
-          class="action-btn"
-          onclick={() => onArchive?.()}
-          title={isArchived ? 'Move to inbox' : 'Archive (e)'}
-        >
-          <Icon name={isArchived ? 'inbox' : 'archive'} size={18} />
-        </button>
+          <button
+            class="action-btn"
+            onclick={() => onArchive?.()}
+            title={isArchived ? 'Move to inbox' : 'Archive (e)'}
+          >
+            <Icon name={isArchived ? 'inbox' : 'archive'} size={18} />
+          </button>
 
-        <button class="action-btn" onclick={() => onRemoveBookmark?.()} title="Remove bookmark">
-          <Icon name="bookmark" size={18} />
-        </button>
+          <button class="action-btn" onclick={() => onRemoveBookmark?.()} title="Remove bookmark">
+            <Icon name="bookmark" size={18} />
+          </button>
 
-        <button class="action-btn" onclick={handleOpenUrl} title="Open in new tab">
-          <Icon name="external-link" size={18} />
-        </button>
+          <button class="action-btn" onclick={handleOpenUrl} title="Open in new tab">
+            <Icon name="external-link" size={18} />
+          </button>
+        </div>
+
+        {#if styleMenuOpen}
+          <div class="style-toolbar">
+            <div class="toolbar-group">
+              <span class="group-label">Font</span>
+              <div class="segment-group" role="group" aria-label="Font style">
+                {#each fontOptions as option}
+                  <button
+                    class="segment-btn"
+                    class:active={preferences.articleFont === option.value}
+                    onclick={() => preferences.setArticleFont(option.value)}
+                    title={option.label}
+                  >
+                    <span class="font-preview" style:font-family={option.family}>Aa</span>
+                  </button>
+                {/each}
+              </div>
+            </div>
+
+            <span class="toolbar-divider"></span>
+
+            <div class="toolbar-group">
+              <span class="group-label">Size</span>
+              <div class="size-controls" role="group" aria-label="Font size">
+                <button
+                  class="size-btn"
+                  onclick={() => preferences.decreaseFontSize()}
+                  disabled={preferences.articleFontSize === 'xs'}
+                  title="Decrease font size"
+                >
+                  <Icon name="minus" size={14} />
+                </button>
+                <span class="size-label">{sizeLabels[preferences.articleFontSize]}</span>
+                <button
+                  class="size-btn"
+                  onclick={() => preferences.increaseFontSize()}
+                  disabled={preferences.articleFontSize === 'xl'}
+                  title="Increase font size"
+                >
+                  <Icon name="plus" size={14} />
+                </button>
+              </div>
+            </div>
+          </div>
+        {/if}
       </div>
     </header>
 
@@ -156,53 +203,6 @@
     </article>
   </div>
 </div>
-
-{#if styleMenuOpen}
-  <div class="style-toolbar-wrapper">
-    <div class="style-toolbar">
-      <div class="toolbar-group">
-        <span class="group-label">Font</span>
-        <div class="segment-group" role="group" aria-label="Font style">
-          {#each fontOptions as option}
-            <button
-              class="segment-btn"
-              class:active={preferences.articleFont === option.value}
-              onclick={() => preferences.setArticleFont(option.value)}
-              title={option.label}
-            >
-              <span class="font-preview" style:font-family={option.family}>Aa</span>
-            </button>
-          {/each}
-        </div>
-      </div>
-
-      <span class="toolbar-divider"></span>
-
-      <div class="toolbar-group">
-        <span class="group-label">Size</span>
-        <div class="size-controls" role="group" aria-label="Font size">
-          <button
-            class="size-btn"
-            onclick={() => preferences.decreaseFontSize()}
-            disabled={preferences.articleFontSize === 'xs'}
-            title="Decrease font size"
-          >
-            <Icon name="minus" size={14} />
-          </button>
-          <span class="size-label">{sizeLabels[preferences.articleFontSize]}</span>
-          <button
-            class="size-btn"
-            onclick={() => preferences.increaseFontSize()}
-            disabled={preferences.articleFontSize === 'xl'}
-            title="Increase font size"
-          >
-            <Icon name="plus" size={14} />
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-{/if}
 
 <style>
   .reader-overlay {
@@ -255,13 +255,11 @@
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   }
 
-  .style-toolbar-wrapper {
-    position: fixed;
-    top: 3.75rem;
-    right: 1.5rem;
-    z-index: 110;
+  .reader-actions-right-wrapper {
     display: flex;
-    justify-content: flex-end;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.5rem;
   }
 
   .action-btn {
