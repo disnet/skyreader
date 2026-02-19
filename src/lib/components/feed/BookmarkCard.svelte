@@ -175,10 +175,16 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.375rem;
     margin-top: 0.375rem;
     font-size: 0.75rem;
     color: var(--color-text-secondary);
+  }
+
+  .bookmark-meta > :not(:first-child)::before {
+    content: '·';
+    margin-right: 0.375rem;
+    opacity: 0.5;
   }
 
   .meta-feed {

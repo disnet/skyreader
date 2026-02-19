@@ -34,6 +34,9 @@
 
   function handleArchive(articleGuid: string) {
     readingStore.toggleArchive(articleGuid);
+    if (readerArticle?.guid === articleGuid) {
+      closeReader();
+    }
   }
 
   function handleRemoveBookmark(articleGuid: string) {
@@ -63,7 +66,6 @@
     article={readerArticle}
     onClose={closeReader}
     onArchive={() => handleArchive(readerArticle!.guid)}
-    onRemoveBookmark={() => handleRemoveBookmark(readerArticle!.guid)}
   />
 {:else}
   <div class="bookmark-list">

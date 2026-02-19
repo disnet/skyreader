@@ -17,12 +17,10 @@
     article,
     onClose,
     onArchive,
-    onRemoveBookmark,
   }: {
     article: Article;
     onClose: () => void;
     onArchive?: () => void;
-    onRemoveBookmark?: () => void;
   } = $props();
 
   let styleMenuOpen = $state(false);
@@ -99,37 +97,35 @@
         </button>
       </div>
 
-      <div class="reader-actions-right-wrapper">
-        <div class="reader-actions-right">
-          <button
-            class="action-btn"
-            class:active={styleMenuOpen}
-            onclick={() => (styleMenuOpen = !styleMenuOpen)}
-            title="Style"
-          >
-            <Icon name="type" size={18} />
-          </button>
+      <div class="reader-actions-right">
+        <button
+          class="action-btn"
+          class:active={styleMenuOpen}
+          onclick={() => (styleMenuOpen = !styleMenuOpen)}
+          title="Style"
+        >
+          <Icon name="type" size={18} />
+        </button>
 
-          <span class="action-separator"></span>
+        <span class="action-separator"></span>
 
-          <button
-            class="action-btn"
-            onclick={() => onArchive?.()}
-            title={isArchived ? 'Move to inbox' : 'Archive (e)'}
-          >
-            <Icon name={isArchived ? 'inbox' : 'archive'} size={18} />
-          </button>
+        <button
+          class="action-btn"
+          onclick={() => onArchive?.()}
+          title={isArchived ? 'Move to inbox' : 'Archive (e)'}
+        >
+          <Icon name={isArchived ? 'inbox' : 'archive'} size={18} />
+        </button>
 
-          <button class="action-btn" onclick={() => onRemoveBookmark?.()} title="Remove bookmark">
-            <Icon name="bookmark" size={18} />
-          </button>
+        <button class="action-btn" onclick={handleOpenUrl} title="Open in new tab">
+          <Icon name="external-link" size={18} />
+        </button>
+      </div>
+    </header>
 
-          <button class="action-btn" onclick={handleOpenUrl} title="Open in new tab">
-            <Icon name="external-link" size={18} />
-          </button>
-        </div>
-
-        {#if styleMenuOpen}
+    {#if styleMenuOpen}
+      <div class="style-toolbar-fixed">
+        <div class="style-toolbar-inner">
           <div class="style-toolbar">
             <div class="toolbar-group">
               <span class="group-label">Font</span>
@@ -172,9 +168,9 @@
               </div>
             </div>
           </div>
-        {/if}
+        </div>
       </div>
-    </header>
+    {/if}
 
     <article class="reader-article">
       <div class="reader-article-header">
@@ -184,7 +180,7 @@
             <img src={faviconUrl} alt="" class="reader-favicon" />
           {/if}
           {#if feedTitle}
-            <span class="reader-feed">{feedTitle}</span>
+            <a href="/?feed={sub?.id}" class="reader-feed">{feedTitle}</a>
           {/if}
           {#if article.author}
             <span class="reader-author">by {article.author}</span>
@@ -255,13 +251,6 @@
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   }
 
-  .reader-actions-right-wrapper {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 0.5rem;
-  }
-
   .action-btn {
     display: flex;
     align-items: center;
@@ -286,6 +275,25 @@
     margin: -0.25rem 0;
   }
 
+  .style-toolbar-fixed {
+    position: fixed;
+    top: 4rem;
+    left: 0;
+    right: 0;
+    z-index: 11;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+  }
+
+  .style-toolbar-inner {
+    display: flex;
+    justify-content: flex-end;
+    width: 100%;
+    max-width: 720px;
+    padding: 0 1.5rem;
+  }
+
   .style-toolbar {
     display: flex;
     align-items: center;
@@ -295,6 +303,7 @@
     backdrop-filter: blur(8px);
     border-radius: 999px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    pointer-events: auto;
   }
 
   .toolbar-group {
@@ -422,6 +431,12 @@
 
   .reader-feed {
     font-weight: 500;
+    color: var(--color-text-secondary);
+    text-decoration: none;
+  }
+
+  .reader-feed:hover {
+    color: var(--color-primary, #0066cc);
   }
 
   .reader-read-time {
@@ -517,6 +532,10 @@
   @media (max-width: 640px) {
     .reader-container {
       padding: 0 1rem 3rem;
+    }
+
+    .style-toolbar-inner {
+      padding: 0 1rem;
     }
 
     .reader-title {

@@ -161,11 +161,13 @@ function createReadingStore() {
     // 2. Then fetch from backend and update
     try {
       const { positions } = await api.getReadPositions();
+      const oldPositions = readPositions;
       const newPositions = new Map(
         positions.map((p) => [
           p.item_guid,
           {
             starred: !!p.starred,
+            archived: oldPositions.get(p.item_guid)?.archived,
             readAt: p.read_at,
             itemUrl: p.item_url || undefined,
             itemTitle: p.item_title || undefined,
