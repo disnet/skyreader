@@ -18,6 +18,8 @@
   let isCreatingTag = $state(false);
   let newTagValue = $state('');
   let newTagInputRef = $state<HTMLInputElement | null>(null);
+  let menuEl = $state<HTMLDivElement | null>(null);
+  let menuStyle = $state('');
 
   // Sync external open prop to internal showMenu
   $effect(() => {
@@ -126,6 +128,41 @@
     }
   }
 
+  // Position menu to avoid viewport edges
+  function positionMenu() {
+    if (!menuEl) return;
+    // Reset to default (above, centered)
+    menuEl.style.bottom = '';
+    menuEl.style.top = '';
+    menuEl.style.left = '';
+    menuEl.style.right = '';
+    menuEl.style.transform = '';
+    menuStyle = '';
+
+    const rect = menuEl.getBoundingClientRect();
+    const pad = 8;
+
+    // If menu overflows top, position below the button instead
+    if (rect.top < pad) {
+      menuStyle = 'top: calc(100% + 8px); bottom: auto;';
+    }
+
+    // Adjust horizontal if overflowing left or right
+    if (rect.left < pad) {
+      menuStyle += ` left: 0; transform: none;`;
+    } else if (rect.right > window.innerWidth - pad) {
+      menuStyle += ` left: auto; right: 0; transform: none;`;
+    }
+  }
+
+  // Reposition when menu is shown or items change
+  $effect(() => {
+    if (showMenu && menuEl) {
+      // Run after render
+      requestAnimationFrame(() => positionMenu());
+    }
+  });
+
   // Listen for keyboard shortcuts while menu is open
   $effect(() => {
     if (showMenu) {
@@ -163,7 +200,7 @@
   {#if showMenu}
     <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
     <div class="tag-menu-backdrop" onclick={handleClose}></div>
-    <div class="tag-menu" onclick={(e) => e.stopPropagation()}>
+    <div class="tag-menu" bind:this={menuEl} style={menuStyle} onclick={(e) => e.stopPropagation()}>
       {#each tagsStore.allTags as tag, i}
         <button
           class="tag-menu-item"

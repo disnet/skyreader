@@ -295,7 +295,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       description: 'Toggle tags',
       category: 'Article',
       action: () => document.dispatchEvent(new CustomEvent('toggle-tag-menu')),
-      condition: () => auth.isAuthenticated && feedViewStore.expandedIndex >= 0,
+      condition: () => auth.isAuthenticated && feedViewStore.selectedIndex >= 0,
     });
 
     // Other shortcuts

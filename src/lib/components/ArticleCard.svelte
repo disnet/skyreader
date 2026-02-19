@@ -474,7 +474,7 @@
               class="action-label">Open</span
             >
           </button>
-          <TagMenuButton tags={itemTags} onAdd={handleAddTag} onRemove={handleRemoveTag} listenForToggle={expanded} />
+          <TagMenuButton tags={itemTags} onAdd={handleAddTag} onRemove={handleRemoveTag} listenForToggle={isOpen} />
         {:else if isDocumentMode}
           <!-- Document mode: read, share, and open -->
           <button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
@@ -508,7 +508,7 @@
               class="action-label">Open</span
             >
           </button>
-          <TagMenuButton tags={itemTags} onAdd={handleAddTag} onRemove={handleRemoveTag} listenForToggle={expanded} />
+          <TagMenuButton tags={itemTags} onAdd={handleAddTag} onRemove={handleRemoveTag} listenForToggle={isOpen} />
         {:else}
           <!-- Article mode: full controls -->
           <button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
@@ -545,7 +545,7 @@
               class="action-label">Open</span
             >
           </button>
-          <TagMenuButton tags={itemTags} onAdd={handleAddTag} onRemove={handleRemoveTag} listenForToggle={expanded} />
+          <TagMenuButton tags={itemTags} onAdd={handleAddTag} onRemove={handleRemoveTag} listenForToggle={isOpen} />
         {/if}
         <span class="action-separator"></span>
         {#if expanded}
