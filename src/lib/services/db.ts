@@ -26,7 +26,7 @@ export interface ReadPositionCache {
 export interface SyncQueueEntry {
   id?: number;
   operation: 'create' | 'update' | 'delete';
-  collection: 'reading' | 'shares' | 'shareReading' | 'socialReading' | 'follows';
+  collection: 'reading' | 'shares' | 'shareReading' | 'socialReading' | 'follows' | 'label';
   key: string; // Deduplication key (e.g., articleGuid, rkey)
   payload: string; // JSON-serialized data
   timestamp: number;

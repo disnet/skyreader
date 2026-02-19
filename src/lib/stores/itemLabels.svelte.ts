@@ -4,6 +4,7 @@ import {
   syncQueue,
   type ReadingPayload,
   type SocialReadingPayload,
+  type LabelPayload,
 } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
 import type { ItemLabel, ItemLabelType, SocialItemType, SocialReadPosition } from '$lib/types';
@@ -163,7 +164,11 @@ function createItemLabelsStore() {
 
     // 2. Fetch from backend and reconcile
     try {
-      await Promise.all([loadReadPositionsFromBackend(), loadSocialReadPositionsFromBackend()]);
+      await Promise.all([
+        loadReadPositionsFromBackend(),
+        loadSocialReadPositionsFromBackend(),
+        loadTagsFromBackend(),
+      ]);
       hasLoaded = true;
     } catch (e) {
       console.error('Failed to load labels from backend:', e);
@@ -324,6 +329,53 @@ function createItemLabelsStore() {
     }
   }
 
+  async function loadTagsFromBackend() {
+    const taggedLabels = await api.getAllLabels({ label: 'tagged' });
+
+    // Remove old tagged labels from state
+    const toRemove: string[] = [];
+    for (const [, lbl] of labelMap) {
+      if (lbl.label === 'tagged') {
+        toRemove.push(lbl.itemKey);
+      }
+    }
+    for (const itemKey of toRemove) {
+      removeFromState(itemKey, 'tagged');
+    }
+
+    // Add from backend
+    const dbOps: ItemLabel[] = [];
+    for (const t of taggedLabels) {
+      const tags = (t.props?.tags as string[]) || [];
+      if (tags.length === 0) continue;
+      const lbl: ItemLabel = {
+        itemKey: t.itemKey,
+        itemType: t.itemType as ItemLabelType,
+        label: 'tagged',
+        props: { tags },
+        createdAt: t.createdAt,
+        updatedAt: t.updatedAt,
+      };
+      addToState(lbl);
+      dbOps.push(lbl);
+    }
+
+    triggerReactivity();
+
+    // Sync to IndexedDB
+    try {
+      const oldTagged = await db.itemLabels.where('label').equals('tagged').toArray();
+      for (const l of oldTagged) {
+        await db.itemLabels.where('[itemKey+label]').equals([l.itemKey, 'tagged']).delete();
+      }
+      if (dbOps.length > 0) {
+        await db.itemLabels.bulkPut(dbOps);
+      }
+    } catch (e) {
+      console.error('Failed to sync tags to cache:', e);
+    }
+  }
+
   // --- Query methods ---
 
   function hasLabel(itemKey: string, label: string): boolean {
@@ -347,32 +399,33 @@ function createItemLabelsStore() {
   }
 
   function getTagsForItem(itemKey: string): string[] {
-    const labels = labelsByItem.get(itemKey);
-    if (!labels) return [];
-    const tags: string[] = [];
-    for (const l of labels) {
-      if (l.startsWith('tag:')) {
-        tags.push(l.slice(4));
-      }
-    }
-    return tags.sort();
+    const lbl = getLabel(itemKey, 'tagged');
+    if (!lbl) return [];
+    const tags = (lbl.props.tags as string[]) || [];
+    return [...tags].sort();
   }
 
   function hasTag(itemKey: string, tag: string): boolean {
-    return hasLabel(itemKey, `tag:${tag}`);
+    const lbl = getLabel(itemKey, 'tagged');
+    if (!lbl) return false;
+    return ((lbl.props.tags as string[]) || []).includes(tag);
   }
 
   function itemHasAnyTag(itemKey: string, tags: string[]): boolean {
-    return tags.some((t) => hasLabel(itemKey, `tag:${t}`));
+    const lbl = getLabel(itemKey, 'tagged');
+    if (!lbl) return false;
+    const itemTags = (lbl.props.tags as string[]) || [];
+    return tags.some((t) => itemTags.includes(t));
   }
 
   // All unique tags across all items
   let allTags = $derived.by((): string[] => {
     const tagSet = new Set<string>();
-    for (const labels of labelsByItem.values()) {
-      for (const l of labels) {
-        if (l.startsWith('tag:')) {
-          tagSet.add(l.slice(4));
+    for (const [, lbl] of labelMap) {
+      if (lbl.label === 'tagged') {
+        const tags = (lbl.props.tags as string[]) || [];
+        for (const t of tags) {
+          tagSet.add(t);
         }
       }
     }
@@ -643,38 +696,96 @@ function createItemLabelsStore() {
 
   // --- Tag mutations ---
 
+  async function syncTaggedLabel(itemKey: string, itemType: ItemLabelType, tags: string[]) {
+    const payload: LabelPayload = {
+      itemKey,
+      itemType,
+      label: 'tagged',
+      props: { tags },
+    };
+    if (tags.length === 0) {
+      // No tags left — delete the label
+      if (syncStore.isOnline) {
+        try {
+          await api.deleteLabel(itemKey, 'tagged');
+        } catch (e) {
+          console.error('Failed to delete tagged label, queueing for retry:', e);
+          await syncQueue.enqueue('delete', 'label', `${itemKey}\0tagged`, payload);
+        }
+      } else {
+        await syncQueue.enqueue('delete', 'label', `${itemKey}\0tagged`, payload);
+      }
+    } else {
+      // Upsert the tagged label with current tags
+      if (syncStore.isOnline) {
+        try {
+          await api.addLabel({ itemKey, itemType, label: 'tagged', props: { tags } });
+        } catch (e) {
+          console.error('Failed to sync tagged label, queueing for retry:', e);
+          await syncQueue.enqueue('create', 'label', `${itemKey}\0tagged`, payload);
+        }
+      } else {
+        await syncQueue.enqueue('create', 'label', `${itemKey}\0tagged`, payload);
+      }
+    }
+  }
+
   async function addTag(itemKey: string, itemType: ItemLabelType, tag: string) {
     const trimmed = tag.trim().slice(0, 64);
     if (!trimmed) return;
-
-    const tagLabel = `tag:${trimmed}`;
-    if (hasLabel(itemKey, tagLabel)) return;
+    if (hasTag(itemKey, trimmed)) return;
 
     // Max 10 tags per item
     const currentTags = getTagsForItem(itemKey);
     if (currentTags.length >= 10) return;
 
     const now = Date.now();
+    const newTags = [...currentTags, trimmed];
+    const existing = getLabel(itemKey, 'tagged');
+
     const label: ItemLabel = {
       itemKey,
-      itemType,
-      label: tagLabel,
-      props: {},
-      createdAt: now,
+      itemType: existing?.itemType || itemType,
+      label: 'tagged',
+      props: { tags: newTags },
+      createdAt: existing?.createdAt || now,
       updatedAt: now,
     };
     addToState(label);
     triggerReactivity();
     await db.itemLabels.put(label);
+
+    await syncTaggedLabel(itemKey, label.itemType as ItemLabelType, newTags);
   }
 
   async function removeTag(itemKey: string, tag: string) {
-    const tagLabel = `tag:${tag}`;
-    if (!hasLabel(itemKey, tagLabel)) return;
+    if (!hasTag(itemKey, tag)) return;
 
-    removeFromState(itemKey, tagLabel);
-    triggerReactivity();
-    await deleteLabel(itemKey, tagLabel);
+    const existing = getLabel(itemKey, 'tagged')!;
+    const currentTags = (existing.props.tags as string[]) || [];
+    const newTags = currentTags.filter((t) => t !== tag);
+    const now = Date.now();
+
+    if (newTags.length === 0) {
+      removeFromState(itemKey, 'tagged');
+      triggerReactivity();
+      try {
+        await db.itemLabels.where('[itemKey+label]').equals([itemKey, 'tagged']).delete();
+      } catch (e) {
+        console.error('Failed to delete tagged label from DB:', e);
+      }
+    } else {
+      const label: ItemLabel = {
+        ...existing,
+        props: { tags: newTags },
+        updatedAt: now,
+      };
+      addToState(label);
+      triggerReactivity();
+      await db.itemLabels.put(label);
+    }
+
+    await syncTaggedLabel(itemKey, existing.itemType as ItemLabelType, newTags);
   }
 
   async function toggleTag(itemKey: string, itemType: ItemLabelType, tag: string) {
@@ -686,27 +797,39 @@ function createItemLabelsStore() {
   }
 
   async function deleteTagFromAll(tag: string) {
-    const tagLabel = `tag:${tag}`;
-    const toRemove: string[] = [];
-
-    for (const [itemKey, labels] of labelsByItem) {
-      if (labels.has(tagLabel)) {
-        toRemove.push(itemKey);
+    // Find all items that have this tag
+    const toUpdate: Array<{ itemKey: string; lbl: ItemLabel }> = [];
+    for (const [, lbl] of labelMap) {
+      if (lbl.label === 'tagged') {
+        const tags = (lbl.props.tags as string[]) || [];
+        if (tags.includes(tag)) {
+          toUpdate.push({ itemKey: lbl.itemKey, lbl });
+        }
       }
     }
 
-    for (const itemKey of toRemove) {
-      removeFromState(itemKey, tagLabel);
+    const now = Date.now();
+    for (const { itemKey, lbl } of toUpdate) {
+      const currentTags = (lbl.props.tags as string[]) || [];
+      const newTags = currentTags.filter((t) => t !== tag);
+
+      if (newTags.length === 0) {
+        removeFromState(itemKey, 'tagged');
+        try {
+          await db.itemLabels.where('[itemKey+label]').equals([itemKey, 'tagged']).delete();
+        } catch (e) {
+          console.error('Failed to delete tagged label from DB:', e);
+        }
+      } else {
+        const updated: ItemLabel = { ...lbl, props: { tags: newTags }, updatedAt: now };
+        addToState(updated);
+        await db.itemLabels.put(updated);
+      }
+
+      await syncTaggedLabel(itemKey, lbl.itemType as ItemLabelType, newTags);
     }
+
     triggerReactivity();
-
-    for (const itemKey of toRemove) {
-      try {
-        await db.itemLabels.where('[itemKey+label]').equals([itemKey, tagLabel]).delete();
-      } catch (e) {
-        console.error('Failed to delete tag label from DB:', e);
-      }
-    }
   }
 
   // --- Social reading mutations ---
