@@ -167,6 +167,19 @@
             <Icon name="archive" size={16} />
             <span class="btn-label">Archive</span>
           </button>
+          <span class="toggle-divider"></span>
+          <button
+            onclick={() => feedViewStore.toggleSortOrder()}
+            title={feedViewStore.currentSortOrder === 'newest' ? 'Newest first' : 'Oldest first'}
+          >
+            <Icon
+              name={feedViewStore.currentSortOrder === 'newest' ? 'arrow-down' : 'arrow-up'}
+              size={16}
+            />
+            <span class="btn-label"
+              >{feedViewStore.currentSortOrder === 'newest' ? 'New' : 'Old'}</span
+            >
+          </button>
         </div>
       {:else}
         <div class="view-toggle" role="group" aria-label="View controls">

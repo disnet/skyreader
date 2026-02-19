@@ -11,6 +11,7 @@
   import { isGreengaleContent, renderGreengaleContent } from '$lib/utils/greengale-renderer';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import Icon from '$lib/components/Icon.svelte';
+  import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
 
   let {
     article,
@@ -23,6 +24,22 @@
     onArchive?: () => void;
     onRemoveBookmark?: () => void;
   } = $props();
+
+  let styleMenuOpen = $state(false);
+
+  const fontOptions: { value: ArticleFont; label: string; family: string }[] = [
+    { value: 'sans-serif', label: 'Sans', family: 'sans-serif' },
+    { value: 'serif', label: 'Serif', family: 'serif' },
+    { value: 'mono', label: 'Mono', family: 'monospace' },
+  ];
+
+  const sizeLabels: Record<string, string> = {
+    xs: 'XS',
+    sm: 'S',
+    md: 'M',
+    lg: 'L',
+    xl: 'XL',
+  };
 
   let sub = $derived(subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId));
   let feedTitle = $derived(sub?.customTitle || sub?.title || '');
@@ -59,27 +76,85 @@
 <div class="reader-overlay">
   <div class="reader-container">
     <header class="reader-header">
-      <button class="reader-btn" onclick={onClose} title="Back (Escape)">
-        <Icon name="arrow-left" size={20} />
-      </button>
+      <div class="reader-actions">
+        <button class="action-btn" onclick={onClose} title="Back (Escape)">
+          <Icon name="arrow-left" size={18} />
+        </button>
 
-      <div class="reader-header-spacer"></div>
+        <span class="action-separator"></span>
 
-      <button
-        class="reader-btn"
-        onclick={() => onArchive?.()}
-        title={isArchived ? 'Move to inbox' : 'Archive (e)'}
-      >
-        <Icon name={isArchived ? 'inbox' : 'archive'} size={20} />
-      </button>
+        <button
+          class="action-btn"
+          onclick={() => onArchive?.()}
+          title={isArchived ? 'Move to inbox' : 'Archive (e)'}
+        >
+          <Icon name={isArchived ? 'inbox' : 'archive'} size={18} />
+        </button>
 
-      <button class="reader-btn" onclick={() => onRemoveBookmark?.()} title="Remove bookmark">
-        <Icon name="bookmark" size={20} />
-      </button>
+        <button class="action-btn" onclick={() => onRemoveBookmark?.()} title="Remove bookmark">
+          <Icon name="bookmark" size={18} />
+        </button>
 
-      <button class="reader-btn" onclick={handleOpenUrl} title="Open in new tab">
-        <Icon name="external-link" size={20} />
-      </button>
+        <button class="action-btn" onclick={handleOpenUrl} title="Open in new tab">
+          <Icon name="external-link" size={18} />
+        </button>
+
+        <span class="action-separator"></span>
+
+        <button
+          class="action-btn"
+          class:active={styleMenuOpen}
+          onclick={() => (styleMenuOpen = !styleMenuOpen)}
+          title="Style"
+        >
+          <Icon name="type" size={18} />
+        </button>
+      </div>
+
+      {#if styleMenuOpen}
+        <div class="style-toolbar">
+          <div class="toolbar-group">
+            <span class="group-label">Font</span>
+            <div class="segment-group" role="group" aria-label="Font style">
+              {#each fontOptions as option}
+                <button
+                  class="segment-btn"
+                  class:active={preferences.articleFont === option.value}
+                  onclick={() => preferences.setArticleFont(option.value)}
+                  title={option.label}
+                >
+                  <span class="font-preview" style:font-family={option.family}>Aa</span>
+                </button>
+              {/each}
+            </div>
+          </div>
+
+          <span class="toolbar-divider"></span>
+
+          <div class="toolbar-group">
+            <span class="group-label">Size</span>
+            <div class="size-controls" role="group" aria-label="Font size">
+              <button
+                class="size-btn"
+                onclick={() => preferences.decreaseFontSize()}
+                disabled={preferences.articleFontSize === 'xs'}
+                title="Decrease font size"
+              >
+                <Icon name="minus" size={14} />
+              </button>
+              <span class="size-label">{sizeLabels[preferences.articleFontSize]}</span>
+              <button
+                class="size-btn"
+                onclick={() => preferences.increaseFontSize()}
+                disabled={preferences.articleFontSize === 'xl'}
+                title="Increase font size"
+              >
+                <Icon name="plus" size={14} />
+              </button>
+            </div>
+          </div>
+        </div>
+      {/if}
     </header>
 
     <article class="reader-article">
@@ -130,36 +205,157 @@
 
   .reader-header {
     display: flex;
+    flex-direction: column;
     align-items: center;
     gap: 0.5rem;
     padding: 0.75rem 0;
     position: sticky;
     top: 0;
-    background: var(--color-bg, #ffffff);
     z-index: 10;
-    border-bottom: 1px solid var(--color-border, #e5e7eb);
     margin-bottom: 1.5rem;
   }
 
-  .reader-header-spacer {
-    flex: 1;
+  .reader-actions {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 0.875rem;
+    padding: 0.5rem 1rem;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(8px);
+    border-radius: 9999px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   }
 
-  .reader-btn {
+  .action-btn {
     display: flex;
     align-items: center;
     justify-content: center;
     background: none;
     border: none;
-    padding: 0.5rem;
+    padding: 0;
     cursor: pointer;
     color: var(--color-text-secondary);
-    border-radius: 6px;
+    font-size: 1rem;
   }
 
-  .reader-btn:hover {
+  .action-btn:hover,
+  .action-btn.active {
     color: var(--color-primary, #0066cc);
-    background: rgba(0, 0, 0, 0.05);
+  }
+
+  .action-separator {
+    width: 1px;
+    background: var(--color-border, #e5e7eb);
+    align-self: stretch;
+    margin: -0.25rem 0;
+  }
+
+  .style-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.125rem;
+    padding: 0.25rem;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(8px);
+    border-radius: 999px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+
+  .toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+  }
+
+  .group-label {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding-left: 0.375rem;
+    white-space: nowrap;
+  }
+
+  .toolbar-divider {
+    width: 1px;
+    height: 1rem;
+    background: var(--color-border, #e0e0e0);
+    margin: 0 0.25rem;
+    opacity: 0.5;
+  }
+
+  .segment-group {
+    display: flex;
+    gap: 1px;
+    border-radius: 999px;
+  }
+
+  .segment-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    padding: 0.35rem 0.5rem;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    border-radius: 999px;
+    transition: all 0.2s ease;
+  }
+
+  .segment-btn.active {
+    background: var(--color-bg-secondary, #f5f5f5);
+    color: var(--color-text);
+  }
+
+  .segment-btn:hover:not(.active) {
+    color: var(--color-text);
+  }
+
+  .font-preview {
+    font-size: 0.875rem;
+    line-height: 1;
+  }
+
+  .size-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.125rem;
+  }
+
+  .size-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    padding: 0.3rem;
+    border-radius: 999px;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    transition: all 0.2s ease;
+  }
+
+  .size-btn:hover:not(:disabled) {
+    color: var(--color-text);
+    background: var(--color-bg-secondary, #f5f5f5);
+  }
+
+  .size-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+
+  .size-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-text);
+    min-width: 1.25rem;
+    text-align: center;
   }
 
   .reader-article-header {
@@ -260,7 +456,24 @@
   }
 
   @media (prefers-color-scheme: dark) {
-    .reader-btn:hover {
+    .reader-actions {
+      background: rgba(40, 40, 40, 0.95);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    }
+
+    .style-toolbar {
+      background: rgba(40, 40, 40, 0.95);
+    }
+
+    .toolbar-divider {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .segment-btn.active {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    .size-btn:hover:not(:disabled) {
       background: rgba(255, 255, 255, 0.1);
     }
   }

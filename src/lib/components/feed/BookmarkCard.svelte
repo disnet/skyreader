@@ -61,7 +61,7 @@
     {#if faviconUrl}
       <img src={faviconUrl} alt="" class="favicon" />
     {:else}
-      <Icon name="rss" size={20} />
+      <Icon name="rss" size={28} />
     {/if}
   </div>
 
@@ -104,7 +104,7 @@
 <style>
   .bookmark-card {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 0.75rem;
     padding: 0.75rem 1rem;
     cursor: pointer;
@@ -122,19 +122,21 @@
 
   .bookmark-icon {
     flex-shrink: 0;
-    width: 32px;
-    height: 32px;
+    width: 40px;
+    height: 40px;
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-top: 0.125rem;
+    align-self: center;
     color: var(--color-text-secondary);
+    background: var(--color-bg-secondary, #f5f5f5);
+    border-radius: 8px;
   }
 
   .favicon {
-    width: 20px;
-    height: 20px;
-    border-radius: 4px;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
   }
 
   .bookmark-content {
@@ -215,7 +217,6 @@
     cursor: pointer;
     color: var(--color-text-secondary);
     border-radius: 4px;
-    margin-top: 0.125rem;
   }
 
   .archive-btn:hover {
