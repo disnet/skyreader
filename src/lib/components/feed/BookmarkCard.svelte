@@ -1,50 +1,149 @@
 <script lang="ts">
-  import type { Article } from '$lib/types';
+  import type { Article, SocialShare, SocialDocument } from '$lib/types';
+  import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import { formatRelativeDate } from '$lib/utils/date';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
+  import { profileService } from '$lib/services/profiles';
   import Icon from '$lib/components/Icon.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
 
   let {
-    article,
+    displayItem,
     selected = false,
     onOpen,
     onArchive,
     onHover,
   }: {
-    article: Article;
+    displayItem: FeedDisplayItem;
     selected?: boolean;
     onOpen?: () => void;
     onArchive?: () => void;
     onHover?: () => void;
   } = $props();
 
-  let sub = $derived(subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId));
-  let faviconUrl = $derived(getFaviconUrl(sub?.siteUrl || sub?.feedUrl || article.url));
+  // Normalize data across item types
+  let itemKey = $derived(displayItem.key);
+  let itemType = $derived(displayItem.type);
+
+  let title = $derived.by(() => {
+    if (displayItem.type === 'article') return displayItem.item.title || displayItem.item.url;
+    if (displayItem.type === 'share') return displayItem.item.itemTitle || displayItem.item.itemUrl;
+    if (displayItem.type === 'document')
+      return displayItem.item.title || displayItem.item.recordUri;
+    return '';
+  });
+
+  let url = $derived.by(() => {
+    if (displayItem.type === 'article') return displayItem.item.url;
+    if (displayItem.type === 'share') return displayItem.item.itemUrl;
+    if (displayItem.type === 'document')
+      return displayItem.item.canonicalUrl || displayItem.item.path || '';
+    return '';
+  });
+
+  let publishedAt = $derived.by(() => {
+    if (displayItem.type === 'article') return displayItem.item.publishedAt;
+    if (displayItem.type === 'share')
+      return displayItem.item.itemPublishedAt || displayItem.item.createdAt;
+    if (displayItem.type === 'document') return displayItem.item.publishedAt;
+    return '';
+  });
+
+  // Feed info (for articles only)
+  let sub = $derived(
+    displayItem.type === 'article'
+      ? subscriptionsStore.subscriptions.find((s) => s.id === displayItem.item.subscriptionId)
+      : undefined
+  );
   let feedTitle = $derived(sub?.customTitle || sub?.title || '');
-  let isArchived = $derived(itemLabelsStore.isArchived(article.guid));
-  let tags = $derived(itemLabelsStore.getTagsForItem(article.guid));
+
+  // Author info (for shares/documents)
+  let authorProfile = $state<{ handle?: string } | null>(null);
+  $effect(() => {
+    if (displayItem.type === 'share') {
+      profileService.getProfile(displayItem.item.authorDid).then((p) => {
+        authorProfile = p;
+      });
+    } else if (displayItem.type === 'document') {
+      profileService.getProfile(displayItem.item.authorDid).then((p) => {
+        authorProfile = p;
+      });
+    } else {
+      authorProfile = null;
+    }
+  });
+  let authorHandle = $derived.by(() => {
+    if (displayItem.type === 'share') return authorProfile?.handle || displayItem.item.authorDid;
+    if (displayItem.type === 'document') return authorProfile?.handle || displayItem.item.authorDid;
+    return '';
+  });
+
+  let faviconUrl = $derived.by(() => {
+    if (displayItem.type === 'article') {
+      return getFaviconUrl(sub?.siteUrl || sub?.feedUrl || displayItem.item.url);
+    }
+    if (displayItem.type === 'document' && displayItem.item.siteIcon) {
+      return displayItem.item.siteIcon;
+    }
+    if (displayItem.type === 'document' && displayItem.item.canonicalUrl) {
+      return getFaviconUrl(displayItem.item.canonicalUrl);
+    }
+    if (displayItem.type === 'share') {
+      return getFaviconUrl(displayItem.item.itemUrl);
+    }
+    return url ? getFaviconUrl(url) : '';
+  });
+
+  let isArchived = $derived(itemLabelsStore.isArchived(itemKey));
+  let tags = $derived(itemLabelsStore.getTagsForItem(itemKey));
 
   // Estimate read time from content (~200 words/min)
   let readTimeMinutes = $derived.by(() => {
-    const text = (article.content || article.summary || '').replace(/<[^>]*>/g, '');
+    let content = '';
+    if (displayItem.type === 'article') {
+      content = displayItem.item.content || displayItem.item.summary || '';
+    } else if (displayItem.type === 'share') {
+      content = displayItem.item.content || displayItem.item.itemDescription || '';
+    } else if (displayItem.type === 'document') {
+      content = displayItem.item.textContent || displayItem.item.description || '';
+    }
+    const text = content.replace(/<[^>]*>/g, '');
     const wordCount = text.split(/\s+/).filter(Boolean).length;
     return Math.max(1, Math.round(wordCount / 200));
   });
 
   // Strip HTML for summary display
   let summaryText = $derived.by(() => {
-    const raw = article.summary || article.content || '';
+    let raw = '';
+    if (displayItem.type === 'article') {
+      raw = displayItem.item.summary || displayItem.item.content || '';
+    } else if (displayItem.type === 'share') {
+      raw = displayItem.item.itemDescription || displayItem.item.content || '';
+    } else if (displayItem.type === 'document') {
+      raw = displayItem.item.description || displayItem.item.textContent || '';
+    }
     const text = raw.replace(/<[^>]*>/g, '').trim();
     return text.length > 200 ? text.slice(0, 200) + '...' : text;
   });
 
+  // Type badge
+  let typeBadge = $derived.by(() => {
+    if (displayItem.type === 'share') return `Shared by @${authorHandle}`;
+    if (displayItem.type === 'document') return `By @${authorHandle}`;
+    return '';
+  });
+
   let tagMenuOpenLocal = $state(false);
   let tagBtnRef = $state<HTMLButtonElement | null>(null);
-  let tagMenuOpen = $derived(tagMenuOpenLocal || feedViewStore.tagMenuItemKey === article.guid);
+  let tagMenuOpen = $derived(tagMenuOpenLocal || feedViewStore.tagMenuItemKey === itemKey);
+
+  let labelItemType = $derived.by((): 'article' | 'share' | 'document' | 'userShare' => {
+    if (displayItem.type === 'userShare') return 'userShare';
+    return displayItem.type;
+  });
 
   function handleArchiveClick(e: MouseEvent) {
     e.stopPropagation();
@@ -54,7 +153,7 @@
   function handleTagClick(e: MouseEvent) {
     e.stopPropagation();
     tagMenuOpenLocal = !tagMenuOpenLocal;
-    if (feedViewStore.tagMenuItemKey === article.guid) {
+    if (feedViewStore.tagMenuItemKey === itemKey) {
       feedViewStore.closeTagMenu();
     }
   }
@@ -81,22 +180,24 @@
   </div>
 
   <div class="bookmark-content">
-    <h3 class="bookmark-title">{article.title || article.url}</h3>
+    <h3 class="bookmark-title">{title}</h3>
     {#if summaryText}
       <p class="bookmark-summary">{summaryText}</p>
     {/if}
     <div class="bookmark-meta">
-      {#if feedTitle}
+      {#if typeBadge}
+        <span class="meta-type-badge">{typeBadge}</span>
+      {:else if feedTitle}
         <span class="meta-feed">{feedTitle}</span>
       {/if}
-      {#if article.author}
-        <span class="meta-author">{article.author}</span>
+      {#if displayItem.type === 'article' && displayItem.item.author}
+        <span class="meta-author">{displayItem.item.author}</span>
       {/if}
       <span class="meta-read-time">
         <Icon name="clock" size={12} />
         {readTimeMinutes} min
       </span>
-      <span class="meta-date">{formatRelativeDate(article.publishedAt)}</span>
+      <span class="meta-date">{formatRelativeDate(publishedAt)}</span>
       {#each tags as tag, i}
         {#if i === 0}<span class="meta-dot" aria-hidden="true">·</span>{/if}
         <span class="tag-chip">{tag}</span>
@@ -125,8 +226,8 @@
 
   {#if tagMenuOpen}
     <TagMenu
-      itemKey={article.guid}
-      itemType="article"
+      {itemKey}
+      itemType={labelItemType}
       anchorEl={tagBtnRef}
       onClose={() => {
         tagMenuOpenLocal = false;
@@ -220,6 +321,11 @@
 
   .meta-feed {
     font-weight: 500;
+  }
+
+  .meta-type-badge {
+    font-weight: 500;
+    color: var(--color-primary, #2563eb);
   }
 
   .meta-read-time {

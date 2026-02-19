@@ -438,7 +438,7 @@
     <div class="article-actions-container">
       <div class="article-actions">
         {#if isShareMode}
-          <!-- Share mode: read, reshare, and open -->
+          <!-- Share mode: read, bookmark, reshare, and open -->
           <button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
             <span class="action-icon">
               {#if isRead}
@@ -447,6 +447,11 @@
                 <Icon name="circle-dot" size={16} />
               {/if}
             </span><span class="action-label">Read</span>
+          </button>
+          <button class="action-btn" class:starred={isStarred} onclick={handleStarClick}>
+            <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
+              class="action-label">Bookmark</span
+            >
           </button>
           {#if auth.user}
             {#if hasReshared}
@@ -469,7 +474,7 @@
             >
           </button>
         {:else if isDocumentMode}
-          <!-- Document mode: read, share, and open -->
+          <!-- Document mode: read, bookmark, share, and open -->
           <button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
             <span class="action-icon">
               {#if isRead}
@@ -478,6 +483,11 @@
                 <Icon name="circle-dot" size={16} />
               {/if}
             </span><span class="action-label">Read</span>
+          </button>
+          <button class="action-btn" class:starred={isStarred} onclick={handleStarClick}>
+            <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
+              class="action-label">Bookmark</span
+            >
           </button>
           {#if auth.user}
             {#if hasSharedDocument}

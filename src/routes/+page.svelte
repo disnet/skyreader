@@ -492,7 +492,7 @@
       <FeedListView
         bind:this={feedListView}
         onToggleStar={(article) =>
-          itemLabelsStore.toggleStar(article.guid, article.url, article.title)}
+          itemLabelsStore.toggleStar(article.guid, 'article', article.url, article.title)}
         onShare={(article, sub) =>
           sharesStore.share(
             sub.rkey,

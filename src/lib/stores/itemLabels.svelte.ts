@@ -169,6 +169,7 @@ function createItemLabelsStore() {
         loadSocialReadPositionsFromBackend(),
         loadTagsFromBackend(),
         loadArchivedFromBackend(),
+        loadStarredNonArticlesFromBackend(),
       ]);
       hasLoaded = true;
     } catch (e) {
@@ -422,6 +423,59 @@ function createItemLabelsStore() {
     }
   }
 
+  async function loadStarredNonArticlesFromBackend() {
+    const starredLabels = await api.getAllLabels({ label: 'starred' });
+
+    // Only process non-article starred labels (articles are handled by loadReadPositionsFromBackend)
+    const nonArticleStarred = starredLabels.filter((l) => l.itemType !== 'article');
+    if (nonArticleStarred.length === 0) return;
+
+    // Remove old non-article starred labels from state
+    const toRemove: string[] = [];
+    for (const [, lbl] of labelMap) {
+      if (lbl.label === 'starred' && lbl.itemType !== 'article') {
+        toRemove.push(lbl.itemKey);
+      }
+    }
+    for (const itemKey of toRemove) {
+      removeFromState(itemKey, 'starred');
+    }
+
+    // Add from backend
+    const dbOps: ItemLabel[] = [];
+    for (const s of nonArticleStarred) {
+      const lbl: ItemLabel = {
+        itemKey: s.itemKey,
+        itemType: (s.itemType as ItemLabelType) || 'share',
+        label: 'starred',
+        props: s.props || {},
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+      };
+      addToState(lbl);
+      dbOps.push(lbl);
+    }
+
+    triggerReactivity();
+
+    // Sync to IndexedDB
+    try {
+      const oldStarred = await db.itemLabels
+        .where('label')
+        .equals('starred')
+        .filter((l) => l.itemType !== 'article')
+        .toArray();
+      for (const l of oldStarred) {
+        await db.itemLabels.where('[itemKey+label]').equals([l.itemKey, 'starred']).delete();
+      }
+      if (dbOps.length > 0) {
+        await db.itemLabels.bulkPut(dbOps);
+      }
+    } catch (e) {
+      console.error('Failed to sync starred non-article labels to cache:', e);
+    }
+  }
+
   // --- Query methods ---
 
   function hasLabel(itemKey: string, label: string): boolean {
@@ -647,58 +701,99 @@ function createItemLabelsStore() {
 
   // --- Star mutations (decoupled from read state) ---
 
-  async function toggleStar(articleGuid: string, articleUrl?: string, articleTitle?: string) {
-    const wasStarred = isStarred(articleGuid);
+  async function toggleStar(
+    itemKey: string,
+    itemType: ItemLabelType = 'article',
+    itemUrl?: string,
+    itemTitle?: string
+  ) {
+    const wasStarred = isStarred(itemKey);
     const newStarred = !wasStarred;
     const now = Date.now();
 
     if (newStarred) {
       const starLabel: ItemLabel = {
-        itemKey: articleGuid,
-        itemType: 'article',
+        itemKey,
+        itemType,
         label: 'starred',
-        props: { starredAt: now, itemUrl: articleUrl, itemTitle: articleTitle },
+        props: { starredAt: now, itemUrl, itemTitle },
         createdAt: now,
         updatedAt: now,
       };
       addToState(starLabel);
       await db.itemLabels.put(starLabel);
     } else {
-      removeFromState(articleGuid, 'starred');
-      await deleteLabel(articleGuid, 'starred');
+      removeFromState(itemKey, 'starred');
+      await deleteLabel(itemKey, 'starred');
     }
     triggerReactivity();
 
-    // Backend still uses the old toggle-star API which couples with read positions.
-    // We need to ensure a read position exists for the backend when starring.
-    if (syncStore.isOnline) {
-      try {
-        await api.toggleStar(articleGuid, newStarred, articleUrl, articleTitle);
-      } catch (e) {
-        console.error('Failed to toggle star, queueing for retry:', e);
-        await syncQueue.enqueue('update', 'reading', articleGuid, {
-          articleGuid,
-          articleUrl,
-          articleTitle,
+    // For articles, use the old toggle-star API (backward compat with read positions)
+    if (itemType === 'article') {
+      if (syncStore.isOnline) {
+        try {
+          await api.toggleStar(itemKey, newStarred, itemUrl, itemTitle);
+        } catch (e) {
+          console.error('Failed to toggle star, queueing for retry:', e);
+          await syncQueue.enqueue('update', 'reading', itemKey, {
+            articleGuid: itemKey,
+            articleUrl: itemUrl,
+            articleTitle: itemTitle,
+            starred: newStarred,
+          } as ReadingPayload);
+        }
+      } else {
+        await syncQueue.enqueue('update', 'reading', itemKey, {
+          articleGuid: itemKey,
+          articleUrl: itemUrl,
+          articleTitle: itemTitle,
           starred: newStarred,
         } as ReadingPayload);
       }
     } else {
-      await syncQueue.enqueue('update', 'reading', articleGuid, {
-        articleGuid,
-        articleUrl,
-        articleTitle,
-        starred: newStarred,
-      } as ReadingPayload);
+      // For non-article types, use the labels API
+      const payload: LabelPayload = {
+        itemKey,
+        itemType,
+        label: 'starred',
+        props: { starredAt: now, itemUrl, itemTitle },
+      };
+      if (newStarred) {
+        if (syncStore.isOnline) {
+          try {
+            await api.addLabel({ itemKey, itemType, label: 'starred', props: payload.props });
+          } catch (e) {
+            console.error('Failed to add starred label, queueing for retry:', e);
+            await syncQueue.enqueue('create', 'label', `${itemKey}\0starred`, payload);
+          }
+        } else {
+          await syncQueue.enqueue('create', 'label', `${itemKey}\0starred`, payload);
+        }
+      } else {
+        if (syncStore.isOnline) {
+          try {
+            await api.deleteLabel(itemKey, 'starred');
+          } catch (e) {
+            console.error('Failed to delete starred label, queueing for retry:', e);
+            await syncQueue.enqueue('delete', 'label', `${itemKey}\0starred`, payload);
+          }
+        } else {
+          await syncQueue.enqueue('delete', 'label', `${itemKey}\0starred`, payload);
+        }
+      }
     }
   }
 
   // --- Archive mutations ---
 
-  async function syncArchiveToBackend(itemKey: string, archived: boolean) {
+  async function syncArchiveToBackend(
+    itemKey: string,
+    archived: boolean,
+    itemType: ItemLabelType = 'article'
+  ) {
     const payload: LabelPayload = {
       itemKey,
-      itemType: 'article',
+      itemType,
       label: 'archived',
       props: { archivedAt: Date.now() },
     };
@@ -732,17 +827,17 @@ function createItemLabelsStore() {
     }
   }
 
-  async function toggleArchive(articleGuid: string) {
-    const wasArchived = isArchived(articleGuid);
+  async function toggleArchive(itemKey: string, itemType: ItemLabelType = 'article') {
+    const wasArchived = isArchived(itemKey);
     const now = Date.now();
 
     if (wasArchived) {
-      removeFromState(articleGuid, 'archived');
-      await deleteLabel(articleGuid, 'archived');
+      removeFromState(itemKey, 'archived');
+      await deleteLabel(itemKey, 'archived');
     } else {
       const label: ItemLabel = {
-        itemKey: articleGuid,
-        itemType: 'article',
+        itemKey,
+        itemType,
         label: 'archived',
         props: { archivedAt: now },
         createdAt: now,
@@ -753,15 +848,15 @@ function createItemLabelsStore() {
     }
     triggerReactivity();
 
-    await syncArchiveToBackend(articleGuid, !wasArchived);
+    await syncArchiveToBackend(itemKey, !wasArchived, itemType);
   }
 
-  async function archiveItem(articleGuid: string) {
-    if (isArchived(articleGuid)) return;
+  async function archiveItem(itemKey: string, itemType: ItemLabelType = 'article') {
+    if (isArchived(itemKey)) return;
     const now = Date.now();
     const label: ItemLabel = {
-      itemKey: articleGuid,
-      itemType: 'article',
+      itemKey,
+      itemType,
       label: 'archived',
       props: { archivedAt: now },
       createdAt: now,
@@ -771,16 +866,16 @@ function createItemLabelsStore() {
     triggerReactivity();
     await db.itemLabels.put(label);
 
-    await syncArchiveToBackend(articleGuid, true);
+    await syncArchiveToBackend(itemKey, true, itemType);
   }
 
-  async function unarchiveItem(articleGuid: string) {
-    if (!isArchived(articleGuid)) return;
-    removeFromState(articleGuid, 'archived');
+  async function unarchiveItem(itemKey: string, itemType: ItemLabelType = 'article') {
+    if (!isArchived(itemKey)) return;
+    removeFromState(itemKey, 'archived');
     triggerReactivity();
-    await deleteLabel(articleGuid, 'archived');
+    await deleteLabel(itemKey, 'archived');
 
-    await syncArchiveToBackend(articleGuid, false);
+    await syncArchiveToBackend(itemKey, false, itemType);
   }
 
   // --- Tag mutations ---
@@ -1169,6 +1264,22 @@ function createItemLabelsStore() {
     return result;
   }
 
+  /** Get all starred item keys grouped by type */
+  function getStarredItemKeys(): Map<ItemLabelType, Set<string>> {
+    const result = new Map<ItemLabelType, Set<string>>();
+    for (const [, lbl] of labelMap) {
+      if (lbl.label === 'starred') {
+        let set = result.get(lbl.itemType as ItemLabelType);
+        if (!set) {
+          set = new Set();
+          result.set(lbl.itemType as ItemLabelType, set);
+        }
+        set.add(lbl.itemKey);
+      }
+    }
+    return result;
+  }
+
   async function getUnreadCount(subscriptionId: number): Promise<number> {
     try {
       const articles = await db.articles.where('subscriptionId').equals(subscriptionId).toArray();
@@ -1233,6 +1344,7 @@ function createItemLabelsStore() {
     markSocialAsUnread,
     // Derived helpers
     getStarredArticles,
+    getStarredItemKeys,
     getUnreadCount,
   };
 }

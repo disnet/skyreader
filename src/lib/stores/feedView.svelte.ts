@@ -72,6 +72,18 @@ function deriveAllowedDids(
  * Simplified to use articlesStore for article data.
  * Focuses on filtering, view mode, and display logic.
  */
+function getItemDate(item: FeedDisplayItem): number {
+  if (item.type === 'article') {
+    return new Date(item.item.publishedAt).getTime();
+  } else if (item.type === 'share') {
+    return new Date(item.item.itemPublishedAt || item.item.createdAt).getTime();
+  } else if (item.type === 'document') {
+    return new Date(item.item.publishedAt).getTime();
+  } else {
+    return new Date(item.item.createdAt).getTime();
+  }
+}
+
 function createFeedViewStore() {
   // UI state
   let showOnlyUnread = $state(true);
@@ -434,6 +446,62 @@ function createFeedViewStore() {
   let currentItems = $derived.by((): FeedDisplayItem[] => {
     const mode = viewMode;
     let items: FeedDisplayItem[];
+
+    // Special handling for bookmarks view: include starred items of all types
+    if (starredFilter) {
+      const sortOrder = effectiveFilters.sortOrder;
+      const isArchiveView = bookmarksView === 'archive';
+
+      // Start with starred articles from filteredArticles (already filtered by bookmarksView)
+      const articleItems: FeedDisplayItem[] = displayedArticles.map((item) => ({
+        type: 'article' as const,
+        item,
+        key: item.guid,
+      }));
+
+      // Add starred shares
+      const starredShareItems: FeedDisplayItem[] = socialStore.shares
+        .filter((s) => {
+          if (!itemLabelsStore.isStarred(s.recordUri)) return false;
+          if (isArchiveView) return itemLabelsStore.isArchived(s.recordUri);
+          return !itemLabelsStore.isArchived(s.recordUri);
+        })
+        .map((s) => ({
+          type: 'share' as const,
+          item: s,
+          key: s.recordUri,
+        }));
+
+      // Add starred documents
+      const starredDocumentItems: FeedDisplayItem[] = socialStore.documents
+        .filter((d) => {
+          if (!itemLabelsStore.isStarred(d.recordUri)) return false;
+          if (isArchiveView) return itemLabelsStore.isArchived(d.recordUri);
+          return !itemLabelsStore.isArchived(d.recordUri);
+        })
+        .map((d) => ({
+          type: 'document' as const,
+          item: d,
+          key: d.recordUri,
+        }));
+
+      items = [...articleItems, ...starredShareItems, ...starredDocumentItems];
+
+      // Sort by date
+      items.sort((a, b) => {
+        const dateA = getItemDate(a);
+        const dateB = getItemDate(b);
+        return sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
+      });
+
+      // Apply tag filter
+      if (toolbarTagFilter.length > 0) {
+        const _tags = itemLabelsStore.tagsByItem;
+        items = items.filter((item) => itemLabelsStore.itemHasAnyTag(item.key, toolbarTagFilter));
+      }
+
+      return items;
+    }
 
     if (mode === 'combined') {
       items = displayedCombined.map((item) => {
