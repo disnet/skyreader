@@ -129,53 +129,6 @@
       </div>
     </header>
 
-    {#if styleMenuOpen && controlsVisible}
-      <div class="style-toolbar-wrapper">
-        <div class="style-toolbar">
-          <div class="toolbar-group">
-            <span class="group-label">Font</span>
-            <div class="segment-group" role="group" aria-label="Font style">
-              {#each fontOptions as option}
-                <button
-                  class="segment-btn"
-                  class:active={preferences.articleFont === option.value}
-                  onclick={() => preferences.setArticleFont(option.value)}
-                  title={option.label}
-                >
-                  <span class="font-preview" style:font-family={option.family}>Aa</span>
-                </button>
-              {/each}
-            </div>
-          </div>
-
-          <span class="toolbar-divider"></span>
-
-          <div class="toolbar-group">
-            <span class="group-label">Size</span>
-            <div class="size-controls" role="group" aria-label="Font size">
-              <button
-                class="size-btn"
-                onclick={() => preferences.decreaseFontSize()}
-                disabled={preferences.articleFontSize === 'xs'}
-                title="Decrease font size"
-              >
-                <Icon name="minus" size={14} />
-              </button>
-              <span class="size-label">{sizeLabels[preferences.articleFontSize]}</span>
-              <button
-                class="size-btn"
-                onclick={() => preferences.increaseFontSize()}
-                disabled={preferences.articleFontSize === 'xl'}
-                title="Increase font size"
-              >
-                <Icon name="plus" size={14} />
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    {/if}
-
     <article class="reader-article">
       <div class="reader-article-header">
         <h1 class="reader-title">{article.title || article.url}</h1>
@@ -203,6 +156,53 @@
     </article>
   </div>
 </div>
+
+{#if styleMenuOpen}
+  <div class="style-toolbar-wrapper">
+    <div class="style-toolbar">
+      <div class="toolbar-group">
+        <span class="group-label">Font</span>
+        <div class="segment-group" role="group" aria-label="Font style">
+          {#each fontOptions as option}
+            <button
+              class="segment-btn"
+              class:active={preferences.articleFont === option.value}
+              onclick={() => preferences.setArticleFont(option.value)}
+              title={option.label}
+            >
+              <span class="font-preview" style:font-family={option.family}>Aa</span>
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <span class="toolbar-divider"></span>
+
+      <div class="toolbar-group">
+        <span class="group-label">Size</span>
+        <div class="size-controls" role="group" aria-label="Font size">
+          <button
+            class="size-btn"
+            onclick={() => preferences.decreaseFontSize()}
+            disabled={preferences.articleFontSize === 'xs'}
+            title="Decrease font size"
+          >
+            <Icon name="minus" size={14} />
+          </button>
+          <span class="size-label">{sizeLabels[preferences.articleFontSize]}</span>
+          <button
+            class="size-btn"
+            onclick={() => preferences.increaseFontSize()}
+            disabled={preferences.articleFontSize === 'xl'}
+            title="Increase font size"
+          >
+            <Icon name="plus" size={14} />
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .reader-overlay {
@@ -256,12 +256,12 @@
   }
 
   .style-toolbar-wrapper {
-    position: sticky;
-    top: 3.25rem;
-    z-index: 10;
+    position: fixed;
+    top: 3.75rem;
+    right: 1.5rem;
+    z-index: 110;
     display: flex;
     justify-content: flex-end;
-    margin-bottom: 0.5rem;
   }
 
   .action-btn {

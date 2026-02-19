@@ -1,7 +1,6 @@
 import { browser } from '$app/environment';
 
 interface SidebarState {
-  isCollapsed: boolean;
   isOpen: boolean; // For mobile overlay
   addFeedModalOpen: boolean;
   followUserModalOpen: boolean; // For follow user modal
@@ -24,7 +23,6 @@ interface SidebarState {
 
 function createSidebarStore() {
   let state = $state<SidebarState>({
-    isCollapsed: false,
     isOpen: false,
     addFeedModalOpen: false,
     followUserModalOpen: false,
@@ -49,7 +47,6 @@ function createSidebarStore() {
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
-        state.isCollapsed = parsed.isCollapsed ?? false;
         state.expandedSections = {
           shared: false,
           feeds: true,
@@ -69,18 +66,12 @@ function createSidebarStore() {
       localStorage.setItem(
         'skyreader-sidebar',
         JSON.stringify({
-          isCollapsed: state.isCollapsed,
           expandedSections: state.expandedSections,
           showOnlyUnread: state.showOnlyUnread,
           expandedUsers: Array.from(state.expandedUsers),
         })
       );
     }
-  }
-
-  function toggle() {
-    state.isCollapsed = !state.isCollapsed;
-    persist();
   }
 
   function toggleMobile() {
@@ -148,9 +139,6 @@ function createSidebarStore() {
   }
 
   return {
-    get isCollapsed() {
-      return state.isCollapsed;
-    },
     get isOpen() {
       return state.isOpen;
     },
@@ -178,7 +166,6 @@ function createSidebarStore() {
     get expandedUsers() {
       return state.expandedUsers;
     },
-    toggle,
     toggleMobile,
     closeMobile,
     toggleSection,

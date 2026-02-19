@@ -87,7 +87,6 @@
   }
 
   let dropdownOpen = $derived(sidebarStore.navigationDropdownOpen);
-  let sidebarCollapsed = $derived(sidebarStore.isCollapsed);
   let isBookmarksView = $derived(Boolean(feedViewStore.starredFilter));
 
   let menuItems = $derived.by(() => {
@@ -119,7 +118,7 @@
   });
 </script>
 
-<div class="feed-header-fixed" class:sidebar-collapsed={sidebarCollapsed} bind:this={headerRef}>
+<div class="feed-header-fixed" bind:this={headerRef}>
   <div class="feed-header-controls">
     <div class="control-left feed-title-group" class:dropdown-open={dropdownOpen}>
       <NavigationDropdown currentTitle={title} />
@@ -263,10 +262,6 @@
     padding: 0 1rem;
   }
 
-  .feed-header-fixed.sidebar-collapsed {
-    left: var(--sidebar-collapsed-width, 60px);
-  }
-
   .feed-header-controls {
     display: flex;
     justify-content: space-between;
@@ -321,10 +316,6 @@
 
   @media (max-width: 1000px) {
     .feed-header-fixed {
-      left: 0;
-    }
-
-    .feed-header-fixed.sidebar-collapsed {
       left: 0;
     }
   }
