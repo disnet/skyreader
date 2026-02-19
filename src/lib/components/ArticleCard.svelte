@@ -343,6 +343,7 @@
   });
 
   let itemTags = $derived(tagsStore.getTagsForItem(tagItemType, tagItemKey));
+  let tagMenuOpen = $state(false);
 
   function handleAddTag(tag: string) {
     tagsStore.addTag(tagItemType, tagItemKey, tag);
@@ -360,6 +361,7 @@
   class:expanded
   class:open={isOpen}
   class:highlighted
+  class:tag-menu-open={tagMenuOpen}
 >
   <div class="article-sticky-header">
     {#if isShareMode && share}
@@ -474,7 +476,7 @@
               class="action-label">Open</span
             >
           </button>
-          <TagMenuButton tags={itemTags} onAdd={handleAddTag} onRemove={handleRemoveTag} listenForToggle={isOpen} />
+          <TagMenuButton tags={itemTags} onAdd={handleAddTag} onRemove={handleRemoveTag} listenForToggle={isOpen} bind:open={tagMenuOpen} />
         {:else if isDocumentMode}
           <!-- Document mode: read, share, and open -->
           <button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
@@ -508,7 +510,7 @@
               class="action-label">Open</span
             >
           </button>
-          <TagMenuButton tags={itemTags} onAdd={handleAddTag} onRemove={handleRemoveTag} listenForToggle={isOpen} />
+          <TagMenuButton tags={itemTags} onAdd={handleAddTag} onRemove={handleRemoveTag} listenForToggle={isOpen} bind:open={tagMenuOpen} />
         {:else}
           <!-- Article mode: full controls -->
           <button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
@@ -545,7 +547,7 @@
               class="action-label">Open</span
             >
           </button>
-          <TagMenuButton tags={itemTags} onAdd={handleAddTag} onRemove={handleRemoveTag} listenForToggle={isOpen} />
+          <TagMenuButton tags={itemTags} onAdd={handleAddTag} onRemove={handleRemoveTag} listenForToggle={isOpen} bind:open={tagMenuOpen} />
         {/if}
         <span class="action-separator"></span>
         {#if expanded}
@@ -572,6 +574,11 @@
 <style>
   .article-item {
     padding: 0 1rem;
+  }
+
+  .article-item.tag-menu-open {
+    position: relative;
+    z-index: 10;
   }
 
   .article-item:not(.selected):not(.expanded):hover {

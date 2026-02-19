@@ -19,6 +19,7 @@
   let newTagValue = $state('');
   let newTagInputRef = $state<HTMLInputElement | null>(null);
   let menuEl = $state<HTMLDivElement | null>(null);
+  let buttonEl = $state<HTMLButtonElement | null>(null);
   let menuStyle = $state('');
 
   // Sync external open prop to internal showMenu
@@ -97,6 +98,27 @@
   function handleClose(e?: MouseEvent) {
     closeMenu();
   }
+
+  // Click-outside detection using window listener
+  // (Can't use a fixed backdrop because container-type: inline-size on parent
+  //  makes fixed positioning relative to the container, not the viewport)
+  $effect(() => {
+    if (!showMenu) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (menuEl && menuEl.contains(target)) return;
+      if (buttonEl && buttonEl.contains(target)) return;
+      closeMenu();
+    };
+    // Delay to avoid catching the click that opened the menu
+    const timer = setTimeout(() => {
+      window.addEventListener('click', handler, true);
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('click', handler, true);
+    };
+  });
 
   function handleMenuKeydown(e: KeyboardEvent) {
     if (!showMenu) return;
@@ -199,14 +221,12 @@
 </script>
 
 <div class="tag-menu-anchor">
-  <button class="action-btn" class:has-tags={tags.length > 0} onclick={handleButtonClick}>
+  <button bind:this={buttonEl} class="action-btn" class:has-tags={tags.length > 0} onclick={handleButtonClick}>
     <span class="action-icon"><Icon name="tag" size={16} /></span><span class="action-label"
       >Tag{tags.length > 0 ? ` (${tags.length})` : ''}</span
     >
   </button>
   {#if showMenu}
-    <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-    <div class="tag-menu-backdrop" onclick={handleClose}></div>
     <div class="tag-menu" bind:this={menuEl} style={menuStyle} onclick={(e) => e.stopPropagation()}>
       {#each tagsStore.allTags as tag, i}
         <button
@@ -279,12 +299,6 @@
   .action-label {
     margin-left: 0.25rem;
     font-size: 0.875rem;
-  }
-
-  .tag-menu-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 9998;
   }
 
   .tag-menu {
