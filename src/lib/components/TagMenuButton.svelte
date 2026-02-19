@@ -74,9 +74,16 @@
         isCreatingTag = false;
       }
     } else if (e.key === 'Escape') {
+      e.preventDefault();
       e.stopPropagation();
-      isCreatingTag = false;
-      newTagValue = '';
+      if (newTagValue.trim()) {
+        // If there's text, just clear the input
+        isCreatingTag = false;
+        newTagValue = '';
+      } else {
+        // If empty, close the whole menu
+        closeMenu();
+      }
     }
   }
 
@@ -277,7 +284,7 @@
   .tag-menu-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 100;
+    z-index: 9998;
   }
 
   .tag-menu {
@@ -290,7 +297,7 @@
     border: 1px solid var(--color-border, #e5e7eb);
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    z-index: 110;
+    z-index: 9999;
     overflow: hidden;
     padding: 0.25rem 0;
   }
