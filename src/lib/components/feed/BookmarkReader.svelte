@@ -11,6 +11,8 @@
   import { isGreengaleContent, renderGreengaleContent } from '$lib/utils/greengale-renderer';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import Icon from '$lib/components/Icon.svelte';
+  import TagMenu from '$lib/components/feed/TagMenu.svelte';
+  import { tagsStore } from '$lib/stores/tags.svelte';
   import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
 
   let {
@@ -24,9 +26,13 @@
   } = $props();
 
   let styleMenuOpen = $state(false);
+  let tagMenuOpen = $state(false);
+  let tagBtnRef = $state<HTMLButtonElement | null>(null);
   let controlsVisible = $state(true);
   let lastScrollY = $state(0);
   let overlayEl: HTMLElement | undefined = $state();
+
+  let itemTags = $derived(tagsStore.getTagsForItem(article.guid));
 
   const fontOptions: { value: ArticleFont; label: string; family: string }[] = [
     { value: 'sans-serif', label: 'Sans', family: 'sans-serif' },
@@ -72,12 +78,16 @@
   });
 
   function handleKeydown(e: KeyboardEvent) {
+    if (tagMenuOpen) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       onClose();
     } else if (e.key === 'e' && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
       onArchive?.();
+    } else if (e.key === 't' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      tagMenuOpen = !tagMenuOpen;
     }
   }
 
@@ -94,6 +104,7 @@
       <div class="reader-actions-left">
         <button class="action-btn" onclick={onClose} title="Back (Escape)">
           <Icon name="arrow-left" size={18} />
+          <span class="action-label">Back</span>
         </button>
       </div>
 
@@ -105,6 +116,22 @@
           title="Style"
         >
           <Icon name="type" size={18} />
+          <span class="action-label">Style</span>
+        </button>
+
+        <button
+          class="action-btn"
+          class:active={tagMenuOpen}
+          class:tagged={itemTags.length > 0}
+          onclick={() => (tagMenuOpen = !tagMenuOpen)}
+          bind:this={tagBtnRef}
+          title="Tag (t)"
+        >
+          <Icon name="tag" size={18} />
+          <span class="action-label"
+            >Tag{#if itemTags.length > 0}<span class="tag-count">({itemTags.length})</span
+              >{/if}</span
+          >
         </button>
 
         <span class="action-separator"></span>
@@ -115,12 +142,23 @@
           title={isArchived ? 'Move to inbox' : 'Archive (e)'}
         >
           <Icon name={isArchived ? 'inbox' : 'archive'} size={18} />
+          <span class="action-label">{isArchived ? 'Inbox' : 'Archive'}</span>
         </button>
 
         <button class="action-btn" onclick={handleOpenUrl} title="Open in new tab">
           <Icon name="external-link" size={18} />
+          <span class="action-label">Open</span>
         </button>
       </div>
+
+      {#if tagMenuOpen}
+        <TagMenu
+          itemKey={article.guid}
+          itemType="article"
+          anchorEl={tagBtnRef}
+          onClose={() => (tagMenuOpen = false)}
+        />
+      {/if}
     </header>
 
     {#if styleMenuOpen}
@@ -191,6 +229,13 @@
             {readTimeMinutes} min read
           </span>
         </div>
+        {#if itemTags.length > 0}
+          <div class="reader-tags">
+            {#each itemTags as tag}
+              <span class="reader-tag-chip">{tag}</span>
+            {/each}
+          </div>
+        {/if}
       </div>
 
       <div class="reader-body" use:bskyEmbed>
@@ -255,6 +300,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    gap: 0.375rem;
     background: none;
     border: none;
     padding: 0;
@@ -263,9 +309,23 @@
     font-size: 1rem;
   }
 
+  .action-label {
+    font-size: 0.8125rem;
+    font-weight: 500;
+  }
+
   .action-btn:hover,
   .action-btn.active {
     color: var(--color-primary, #0066cc);
+  }
+
+  .action-btn.tagged {
+    color: var(--color-primary, #2563eb);
+  }
+
+  .tag-count {
+    margin-left: 0.125rem;
+    font-size: 0.75rem;
   }
 
   .action-separator {
@@ -445,6 +505,24 @@
     gap: 0.2rem;
   }
 
+  .reader-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-top: 0.5rem;
+  }
+
+  .reader-tag-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    background: rgba(37, 99, 235, 0.08);
+    color: var(--color-primary, #2563eb);
+    border-radius: 999px;
+  }
+
   .reader-body {
     font-family: var(--article-font, Georgia, 'Times New Roman', serif);
     font-size: var(--article-font-size, 1.0625rem);
@@ -526,6 +604,12 @@
 
     .size-btn:hover:not(:disabled) {
       background: rgba(255, 255, 255, 0.1);
+    }
+  }
+
+  @media (max-width: 900px) {
+    .action-label {
+      display: none;
     }
   }
 

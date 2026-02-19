@@ -47,11 +47,7 @@
   }
 
   function handleSelect(index: number) {
-    if (feedViewStore.selectedIndex === index) {
-      feedViewStore.deselect();
-    } else {
-      feedViewStore.select(index);
-    }
+    feedViewStore.select(index);
   }
 
   export function openSelectedReader() {
@@ -84,10 +80,8 @@
           <BookmarkCard
             article={displayItem.item}
             selected={feedViewStore.selectedIndex === index}
-            onOpen={() => {
-              handleSelect(index);
-              openReader(displayItem.item);
-            }}
+            onOpen={() => openReader(displayItem.item)}
+            onHover={() => handleSelect(index)}
             onArchive={() => handleArchive(displayItem.item.guid)}
           />
         </div>

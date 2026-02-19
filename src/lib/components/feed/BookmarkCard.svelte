@@ -7,17 +7,20 @@
   import { tagsStore } from '$lib/stores/tags.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import TagMenu from '$lib/components/feed/TagMenu.svelte';
 
   let {
     article,
     selected = false,
     onOpen,
     onArchive,
+    onHover,
   }: {
     article: Article;
     selected?: boolean;
     onOpen?: () => void;
     onArchive?: () => void;
+    onHover?: () => void;
   } = $props();
 
   let sub = $derived(subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId));
@@ -40,9 +43,21 @@
     return text.length > 200 ? text.slice(0, 200) + '...' : text;
   });
 
+  let tagMenuOpenLocal = $state(false);
+  let tagBtnRef = $state<HTMLButtonElement | null>(null);
+  let tagMenuOpen = $derived(tagMenuOpenLocal || feedViewStore.tagMenuItemKey === article.guid);
+
   function handleArchiveClick(e: MouseEvent) {
     e.stopPropagation();
     onArchive?.();
+  }
+
+  function handleTagClick(e: MouseEvent) {
+    e.stopPropagation();
+    tagMenuOpenLocal = !tagMenuOpenLocal;
+    if (feedViewStore.tagMenuItemKey === article.guid) {
+      feedViewStore.closeTagMenu();
+    }
   }
 </script>
 
@@ -53,6 +68,7 @@
   role="button"
   tabindex="0"
   onclick={() => onOpen?.()}
+  onmouseenter={() => onHover?.()}
   onkeydown={(e) => {
     if (e.key === 'Enter') onOpen?.();
   }}
@@ -82,23 +98,43 @@
         {readTimeMinutes} min
       </span>
       <span class="meta-date">{formatRelativeDate(article.publishedAt)}</span>
+      {#each tags as tag, i}
+        {#if i === 0}<span class="meta-dot" aria-hidden="true">·</span>{/if}
+        <span class="tag-chip">{tag}</span>
+      {/each}
     </div>
-    {#if tags.length > 0}
-      <div class="tag-chips">
-        {#each tags as tag}
-          <span class="tag-chip">{tag}</span>
-        {/each}
-      </div>
-    {/if}
   </div>
 
-  <button
-    class="archive-btn"
-    onclick={handleArchiveClick}
-    title={isArchived ? 'Move to inbox' : 'Archive'}
-  >
-    <Icon name={isArchived ? 'inbox' : 'archive'} size={18} />
-  </button>
+  <div class="card-actions">
+    <button
+      class="card-action-btn"
+      class:tagged={tags.length > 0}
+      onclick={handleTagClick}
+      bind:this={tagBtnRef}
+      title="Tag"
+    >
+      <Icon name="tag" size={18} />
+    </button>
+    <button
+      class="card-action-btn"
+      onclick={handleArchiveClick}
+      title={isArchived ? 'Move to inbox' : 'Archive'}
+    >
+      <Icon name={isArchived ? 'inbox' : 'archive'} size={18} />
+    </button>
+  </div>
+
+  {#if tagMenuOpen}
+    <TagMenu
+      itemKey={article.guid}
+      itemType="article"
+      anchorEl={tagBtnRef}
+      onClose={() => {
+        tagMenuOpenLocal = false;
+        feedViewStore.closeTagMenu();
+      }}
+    />
+  {/if}
 </article>
 
 <style>
@@ -112,12 +148,8 @@
     transition: background-color 0.15s;
   }
 
-  .bookmark-card:hover {
-    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
-  }
-
   .bookmark-card.selected {
-    background-color: rgba(96, 165, 250, 0.08);
+    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
   }
 
   .bookmark-icon {
@@ -197,17 +229,10 @@
     gap: 0.2rem;
   }
 
-  .tag-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.25rem;
-    margin-top: 0.375rem;
-  }
-
   .tag-chip {
     display: inline-flex;
     align-items: center;
-    padding: 0.125rem 0.5rem;
+    padding: 0.0625rem 0.375rem;
     font-size: 0.6875rem;
     font-weight: 500;
     background: rgba(37, 99, 235, 0.08);
@@ -215,8 +240,29 @@
     border-radius: 999px;
   }
 
-  .archive-btn {
+  .bookmark-meta > .meta-dot,
+  .bookmark-meta > .tag-chip {
+    margin-right: 0;
+  }
+
+  .bookmark-meta > .meta-dot::before,
+  .bookmark-meta > .tag-chip::before {
+    content: none;
+    margin-right: 0;
+  }
+
+  .meta-dot {
+    opacity: 0.5;
+  }
+
+  .card-actions {
+    display: flex;
     flex-shrink: 0;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .card-action-btn {
     background: none;
     border: none;
     padding: 0.375rem;
@@ -225,9 +271,13 @@
     border-radius: 4px;
   }
 
-  .archive-btn:hover {
+  .card-action-btn:hover {
     color: var(--color-primary, #0066cc);
     background: rgba(0, 0, 0, 0.05);
+  }
+
+  .card-action-btn.tagged {
+    color: var(--color-primary, #2563eb);
   }
 
   @media (prefers-color-scheme: dark) {
@@ -235,7 +285,7 @@
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
     }
 
-    .archive-btn:hover {
+    .card-action-btn:hover {
       background: rgba(255, 255, 255, 0.1);
     }
   }
