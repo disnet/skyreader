@@ -485,58 +485,56 @@
     </a>
 
     <!-- Views section -->
-    {#if filteredViewsStore.views.length > 0}
-      <NavSection
-        title="Views"
-        isExpanded={sidebarStore.expandedSections.views}
-        showOnlyUnread={false}
-        isActive={false}
-        onToggle={() => sidebarStore.toggleSection('views')}
-        onLabelClick={() => sidebarStore.toggleSection('views')}
-        onUnreadToggle={() => {}}
-      >
-        {@const filter = currentFilter()}
-        {#each filteredViewsStore.views as view (view.id)}
-          <ViewItem
-            {view}
-            isActive={filter.type === 'view' && filter.id === view.id}
-            isRenaming={renamingViewId === view.id}
-            onSelect={() => selectFilter('view', view.id)}
-            onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-            onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
-            onTouchEnd={handleViewTouchEnd}
-            onTouchMove={handleViewTouchMove}
-            onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-            onRename={async (name) => {
-              if (view.id != null) {
-                await filteredViewsStore.update(view.id, { name });
-              }
-              renamingViewId = null;
-            }}
-            onRenameCancel={() => (renamingViewId = null)}
-          />
-        {/each}
-        <button
-          class="add-view-btn"
-          onclick={async (e) => {
-            e.stopPropagation();
-            const id = await filteredViewsStore.create({
-              name: 'new view',
-              sourceMode: 'include',
-              sourceKeys: [],
-              readFilter: 'unread',
-              sortOrder: 'newest',
-            });
-            selectFilter('view', id);
-            feedViewStore.setFilterToolbarOpen(true);
-            feedViewStore.setSourcePopoverOpen(true);
+    <NavSection
+      title="Views"
+      isExpanded={sidebarStore.expandedSections.views}
+      showOnlyUnread={false}
+      isActive={false}
+      onToggle={() => sidebarStore.toggleSection('views')}
+      onLabelClick={() => sidebarStore.toggleSection('views')}
+      onUnreadToggle={() => {}}
+    >
+      {@const filter = currentFilter()}
+      {#each filteredViewsStore.views as view (view.id)}
+        <ViewItem
+          {view}
+          isActive={filter.type === 'view' && filter.id === view.id}
+          isRenaming={renamingViewId === view.id}
+          onSelect={() => selectFilter('view', view.id)}
+          onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+          onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
+          onTouchEnd={handleViewTouchEnd}
+          onTouchMove={handleViewTouchMove}
+          onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+          onRename={async (name) => {
+            if (view.id != null) {
+              await filteredViewsStore.update(view.id, { name });
+            }
+            renamingViewId = null;
           }}
-        >
-          <Icon name="plus" size={14} />
-          <span>New View</span>
-        </button>
-      </NavSection>
-    {/if}
+          onRenameCancel={() => (renamingViewId = null)}
+        />
+      {/each}
+      <button
+        class="add-view-btn"
+        onclick={async (e) => {
+          e.stopPropagation();
+          const id = await filteredViewsStore.create({
+            name: 'new view',
+            sourceMode: 'include',
+            sourceKeys: [],
+            readFilter: 'unread',
+            sortOrder: 'newest',
+          });
+          selectFilter('view', id);
+          feedViewStore.setFilterToolbarOpen(true);
+          feedViewStore.setSourcePopoverOpen(true);
+        }}
+      >
+        <Icon name="plus" size={14} />
+        <span>New View</span>
+      </button>
+    </NavSection>
 
     <!-- Following section -->
     <NavSection
