@@ -495,23 +495,60 @@ class ApiClient {
 
   // Labels (unified item labels API)
   async getLabels(
-    label?: string,
-    itemType?: ItemLabelType
+    options: {
+      label?: string;
+      itemType?: ItemLabelType;
+      cursor?: string;
+      limit?: number;
+    } = {}
   ): Promise<{
     labels: Array<{
-      item_key: string;
-      item_type: string;
+      itemKey: string;
+      itemType: string;
       label: string;
-      props: string;
-      created_at: number;
-      updated_at: number;
+      props: Record<string, unknown>;
+      rkey?: string;
+      createdAt: number;
+      updatedAt: number;
     }>;
+    cursor?: string;
   }> {
     const params = new URLSearchParams();
-    if (label) params.set('label', label);
-    if (itemType) params.set('itemType', itemType);
+    if (options.label) params.set('label', options.label);
+    if (options.itemType) params.set('itemType', options.itemType);
+    if (options.cursor) params.set('cursor', options.cursor);
+    if (options.limit) params.set('limit', String(options.limit));
     const query = params.toString();
     return this.fetch(`/api/labels${query ? `?${query}` : ''}`);
+  }
+
+  async getAllLabels(options: { label?: string; itemType?: ItemLabelType } = {}): Promise<
+    Array<{
+      itemKey: string;
+      itemType: string;
+      label: string;
+      props: Record<string, unknown>;
+      rkey?: string;
+      createdAt: number;
+      updatedAt: number;
+    }>
+  > {
+    const all: Array<{
+      itemKey: string;
+      itemType: string;
+      label: string;
+      props: Record<string, unknown>;
+      rkey?: string;
+      createdAt: number;
+      updatedAt: number;
+    }> = [];
+    let cursor: string | undefined;
+    do {
+      const response = await this.getLabels({ ...options, cursor });
+      all.push(...response.labels);
+      cursor = response.cursor;
+    } while (cursor);
+    return all;
   }
 
   async addLabel(data: {
