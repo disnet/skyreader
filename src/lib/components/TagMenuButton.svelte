@@ -2,26 +2,48 @@
   import Icon from './Icon.svelte';
   import NumberIcon from './NumberIcon.svelte';
   import { tagsStore } from '$lib/stores/tags.svelte';
-  import { onMount } from 'svelte';
+  import { keyboardStore } from '$lib/stores/keyboard.svelte';
 
   interface Props {
     tags: string[];
     onAdd: (tag: string) => void;
     onRemove: (tag: string) => void;
+    open?: boolean;
+    listenForToggle?: boolean;
   }
 
-  let { tags, onAdd, onRemove }: Props = $props();
+  let { tags, onAdd, onRemove, open = $bindable(false), listenForToggle = false }: Props = $props();
 
   let showMenu = $state(false);
   let isCreatingTag = $state(false);
   let newTagValue = $state('');
   let newTagInputRef = $state<HTMLInputElement | null>(null);
 
+  // Sync external open prop to internal showMenu
+  $effect(() => {
+    if (open && !showMenu) {
+      showMenu = true;
+      isCreatingTag = false;
+      newTagValue = '';
+      keyboardStore.suppress();
+    }
+  });
+
+  // Keep open prop in sync with showMenu
+  $effect(() => {
+    open = showMenu;
+  });
+
   function handleButtonClick(e: MouseEvent) {
     e.stopPropagation();
-    showMenu = !showMenu;
-    isCreatingTag = false;
-    newTagValue = '';
+    if (showMenu) {
+      closeMenu();
+    } else {
+      showMenu = true;
+      isCreatingTag = false;
+      newTagValue = '';
+      keyboardStore.suppress();
+    }
   }
 
   function handleTagToggle(e: MouseEvent, tag: string) {
@@ -56,10 +78,15 @@
     }
   }
 
-  function handleClose(e?: MouseEvent) {
+  function closeMenu() {
     showMenu = false;
     isCreatingTag = false;
     newTagValue = '';
+    keyboardStore.unsuppress();
+  }
+
+  function handleClose(e?: MouseEvent) {
+    closeMenu();
   }
 
   function handleMenuKeydown(e: KeyboardEvent) {
@@ -72,7 +99,7 @@
     if (key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      handleClose();
+      closeMenu();
       return;
     }
 
@@ -106,6 +133,24 @@
       window.addEventListener('keydown', handler);
       return () => window.removeEventListener('keydown', handler);
     }
+  });
+
+  // Listen for external toggle event (from 't' keyboard shortcut)
+  // Only the expanded card's TagMenuButton should respond
+  $effect(() => {
+    if (!listenForToggle) return;
+    const handler = () => {
+      if (showMenu) {
+        closeMenu();
+      } else {
+        showMenu = true;
+        isCreatingTag = false;
+        newTagValue = '';
+        keyboardStore.suppress();
+      }
+    };
+    document.addEventListener('toggle-tag-menu', handler);
+    return () => document.removeEventListener('toggle-tag-menu', handler);
   });
 </script>
 

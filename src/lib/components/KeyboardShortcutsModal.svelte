@@ -26,6 +26,7 @@
     // Article actions
     { category: 'Article', key: 's', description: 'Bookmark' },
     { category: 'Article', key: 'S', description: 'Share/unshare' },
+    { category: 'Article', key: 't', description: 'Toggle tags' },
     { category: 'Article', key: 'm', description: 'Mark read/unread' },
     { category: 'Article', key: '+', description: 'Increase font size' },
     { category: 'Article', key: '_', description: 'Decrease font size' },

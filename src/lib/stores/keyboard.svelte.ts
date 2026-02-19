@@ -11,12 +11,14 @@ export interface Shortcut {
 
 interface KeyboardState {
   isHelpOpen: boolean;
+  suppressed: boolean;
   shortcuts: Map<string, Shortcut>;
 }
 
 function createKeyboardStore() {
   let state = $state<KeyboardState>({
     isHelpOpen: false,
+    suppressed: false,
     shortcuts: new Map(),
   });
 
@@ -32,6 +34,14 @@ function createKeyboardStore() {
   function unregister(key: string, shift?: boolean) {
     const shortcutKey = getShortcutKey(key, shift);
     state.shortcuts.delete(shortcutKey);
+  }
+
+  function suppress() {
+    state.suppressed = true;
+  }
+
+  function unsuppress() {
+    state.suppressed = false;
   }
 
   function isInputFocused(): boolean {
@@ -58,6 +68,9 @@ function createKeyboardStore() {
 
     // Ignore if typing in an input (except for help toggle)
     if (isInputFocused()) return;
+
+    // Ignore all shortcuts when suppressed (e.g., tag menu is open)
+    if (state.suppressed) return;
 
     // Ignore if Cmd/Ctrl/Alt are held (browser shortcuts like Cmd+1 to switch tabs)
     if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -118,8 +131,13 @@ function createKeyboardStore() {
     get isHelpOpen() {
       return state.isHelpOpen;
     },
+    get suppressed() {
+      return state.suppressed;
+    },
     register,
     unregister,
+    suppress,
+    unsuppress,
     handleKeydown,
     toggleHelp,
     closeHelp,

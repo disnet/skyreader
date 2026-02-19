@@ -289,6 +289,15 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       condition: hasSelected,
     });
 
+    // Tag shortcut
+    keyboardStore.register({
+      key: 't',
+      description: 'Toggle tags',
+      category: 'Article',
+      action: () => document.dispatchEvent(new CustomEvent('toggle-tag-menu')),
+      condition: () => auth.isAuthenticated && feedViewStore.expandedIndex >= 0,
+    });
+
     // Other shortcuts
     keyboardStore.register({
       key: 'u',
@@ -317,6 +326,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     keyboardStore.unregister('s');
     keyboardStore.unregister('S', true);
     keyboardStore.unregister('m');
+    keyboardStore.unregister('t');
     keyboardStore.unregister('u');
     keyboardStore.unregister('A', true);
   }
