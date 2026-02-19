@@ -5,11 +5,8 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { readingStore } from '$lib/stores/reading.svelte';
-  import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import type { Article } from '$lib/types';
 
-  // Track whether we collapsed the sidebar for reader mode
-  let sidebarWasCollapsed = $state(false);
   let readerArticle = $state<Article | null>(null);
 
   // Element refs for scroll management
@@ -28,17 +25,10 @@
   }
 
   function openReader(article: Article) {
-    sidebarWasCollapsed = sidebarStore.isCollapsed;
-    if (!sidebarStore.isCollapsed) {
-      sidebarStore.toggle();
-    }
     readerArticle = article;
   }
 
   function closeReader() {
-    if (!sidebarWasCollapsed && sidebarStore.isCollapsed) {
-      sidebarStore.toggle();
-    }
     readerArticle = null;
   }
 

@@ -26,6 +26,9 @@
   } = $props();
 
   let styleMenuOpen = $state(false);
+  let controlsVisible = $state(true);
+  let lastScrollY = $state(0);
+  let overlayEl: HTMLElement | undefined = $state();
 
   const fontOptions: { value: ArticleFont; label: string; family: string }[] = [
     { value: 'sans-serif', label: 'Sans', family: 'sans-serif' },
@@ -40,6 +43,20 @@
     lg: 'L',
     xl: 'XL',
   };
+
+  function handleScroll() {
+    if (!overlayEl) return;
+    const currentY = overlayEl.scrollTop;
+    if (currentY > lastScrollY && currentY > 60) {
+      // Scrolling down
+      controlsVisible = false;
+      styleMenuOpen = false;
+    } else {
+      // Scrolling up
+      controlsVisible = true;
+    }
+    lastScrollY = currentY;
+  }
 
   let sub = $derived(subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId));
   let feedTitle = $derived(sub?.customTitle || sub?.title || '');
@@ -73,12 +90,23 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="reader-overlay">
+<div class="reader-overlay" bind:this={overlayEl} onscroll={handleScroll}>
   <div class="reader-container">
-    <header class="reader-header">
-      <div class="reader-actions">
+    <header class="reader-header" class:hidden={!controlsVisible}>
+      <div class="reader-actions-left">
         <button class="action-btn" onclick={onClose} title="Back (Escape)">
           <Icon name="arrow-left" size={18} />
+        </button>
+      </div>
+
+      <div class="reader-actions-right">
+        <button
+          class="action-btn"
+          class:active={styleMenuOpen}
+          onclick={() => (styleMenuOpen = !styleMenuOpen)}
+          title="Style"
+        >
+          <Icon name="type" size={18} />
         </button>
 
         <span class="action-separator"></span>
@@ -98,20 +126,11 @@
         <button class="action-btn" onclick={handleOpenUrl} title="Open in new tab">
           <Icon name="external-link" size={18} />
         </button>
-
-        <span class="action-separator"></span>
-
-        <button
-          class="action-btn"
-          class:active={styleMenuOpen}
-          onclick={() => (styleMenuOpen = !styleMenuOpen)}
-          title="Style"
-        >
-          <Icon name="type" size={18} />
-        </button>
       </div>
+    </header>
 
-      {#if styleMenuOpen}
+    {#if styleMenuOpen && controlsVisible}
+      <div class="style-toolbar-wrapper">
         <div class="style-toolbar">
           <div class="toolbar-group">
             <span class="group-label">Font</span>
@@ -154,8 +173,8 @@
             </div>
           </div>
         </div>
-      {/if}
-    </header>
+      </div>
+    {/if}
 
     <article class="reader-article">
       <div class="reader-article-header">
@@ -205,17 +224,26 @@
 
   .reader-header {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
+    justify-content: space-between;
+    align-items: flex-start;
     padding: 0.75rem 0;
     position: sticky;
     top: 0;
     z-index: 10;
     margin-bottom: 1.5rem;
+    transition:
+      transform 0.25s ease,
+      opacity 0.25s ease;
   }
 
-  .reader-actions {
+  .reader-header.hidden {
+    transform: translateY(-100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .reader-actions-left,
+  .reader-actions-right {
     display: flex;
     flex-wrap: nowrap;
     align-items: center;
@@ -225,6 +253,15 @@
     backdrop-filter: blur(8px);
     border-radius: 9999px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+
+  .style-toolbar-wrapper {
+    position: sticky;
+    top: 3.25rem;
+    z-index: 10;
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 0.5rem;
   }
 
   .action-btn {
@@ -456,7 +493,8 @@
   }
 
   @media (prefers-color-scheme: dark) {
-    .reader-actions {
+    .reader-actions-left,
+    .reader-actions-right {
       background: rgba(40, 40, 40, 0.95);
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
     }
