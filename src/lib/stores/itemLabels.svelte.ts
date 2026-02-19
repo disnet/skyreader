@@ -168,6 +168,7 @@ function createItemLabelsStore() {
         loadReadPositionsFromBackend(),
         loadSocialReadPositionsFromBackend(),
         loadTagsFromBackend(),
+        loadArchivedFromBackend(),
       ]);
       hasLoaded = true;
     } catch (e) {
@@ -373,6 +374,51 @@ function createItemLabelsStore() {
       }
     } catch (e) {
       console.error('Failed to sync tags to cache:', e);
+    }
+  }
+
+  async function loadArchivedFromBackend() {
+    const archivedLabels = await api.getAllLabels({ label: 'archived' });
+
+    // Remove old archived labels from state
+    const toRemove: string[] = [];
+    for (const [, lbl] of labelMap) {
+      if (lbl.label === 'archived') {
+        toRemove.push(lbl.itemKey);
+      }
+    }
+    for (const itemKey of toRemove) {
+      removeFromState(itemKey, 'archived');
+    }
+
+    // Add from backend
+    const dbOps: ItemLabel[] = [];
+    for (const a of archivedLabels) {
+      const lbl: ItemLabel = {
+        itemKey: a.itemKey,
+        itemType: (a.itemType as ItemLabelType) || 'article',
+        label: 'archived',
+        props: a.props || {},
+        createdAt: a.createdAt,
+        updatedAt: a.updatedAt,
+      };
+      addToState(lbl);
+      dbOps.push(lbl);
+    }
+
+    triggerReactivity();
+
+    // Sync to IndexedDB
+    try {
+      const oldArchived = await db.itemLabels.where('label').equals('archived').toArray();
+      for (const l of oldArchived) {
+        await db.itemLabels.where('[itemKey+label]').equals([l.itemKey, 'archived']).delete();
+      }
+      if (dbOps.length > 0) {
+        await db.itemLabels.bulkPut(dbOps);
+      }
+    } catch (e) {
+      console.error('Failed to sync archived labels to cache:', e);
     }
   }
 
@@ -647,7 +693,44 @@ function createItemLabelsStore() {
     }
   }
 
-  // --- Archive mutations (client-only) ---
+  // --- Archive mutations ---
+
+  async function syncArchiveToBackend(itemKey: string, archived: boolean) {
+    const payload: LabelPayload = {
+      itemKey,
+      itemType: 'article',
+      label: 'archived',
+      props: { archivedAt: Date.now() },
+    };
+    if (archived) {
+      if (syncStore.isOnline) {
+        try {
+          await api.addLabel({
+            itemKey,
+            itemType: 'article',
+            label: 'archived',
+            props: payload.props,
+          });
+        } catch (e) {
+          console.error('Failed to sync archive label, queueing for retry:', e);
+          await syncQueue.enqueue('create', 'label', `${itemKey}\0archived`, payload);
+        }
+      } else {
+        await syncQueue.enqueue('create', 'label', `${itemKey}\0archived`, payload);
+      }
+    } else {
+      if (syncStore.isOnline) {
+        try {
+          await api.deleteLabel(itemKey, 'archived');
+        } catch (e) {
+          console.error('Failed to delete archive label, queueing for retry:', e);
+          await syncQueue.enqueue('delete', 'label', `${itemKey}\0archived`, payload);
+        }
+      } else {
+        await syncQueue.enqueue('delete', 'label', `${itemKey}\0archived`, payload);
+      }
+    }
+  }
 
   async function toggleArchive(articleGuid: string) {
     const wasArchived = isArchived(articleGuid);
@@ -669,6 +752,8 @@ function createItemLabelsStore() {
       await db.itemLabels.put(label);
     }
     triggerReactivity();
+
+    await syncArchiveToBackend(articleGuid, !wasArchived);
   }
 
   async function archiveItem(articleGuid: string) {
@@ -685,6 +770,8 @@ function createItemLabelsStore() {
     addToState(label);
     triggerReactivity();
     await db.itemLabels.put(label);
+
+    await syncArchiveToBackend(articleGuid, true);
   }
 
   async function unarchiveItem(articleGuid: string) {
@@ -692,6 +779,8 @@ function createItemLabelsStore() {
     removeFromState(articleGuid, 'archived');
     triggerReactivity();
     await deleteLabel(articleGuid, 'archived');
+
+    await syncArchiveToBackend(articleGuid, false);
   }
 
   // --- Tag mutations ---
