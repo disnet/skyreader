@@ -22,7 +22,7 @@
   import { tagsStore } from '$lib/stores/tags.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import Icon from './Icon.svelte';
-  import TagInput from './TagInput.svelte';
+  import TagMenuButton from './TagMenuButton.svelte';
   import logo from '$lib/assets/logo.svg';
   import type { ItemType } from '$lib/types';
 
@@ -423,8 +423,6 @@
   {/if}
 
   {#if isOpen}
-    <TagInput tags={itemTags} onAdd={handleAddTag} onRemove={handleRemoveTag} />
-
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <div class="article-content" onclick={handleContentClick}>
       {#if isFetching}
@@ -476,6 +474,7 @@
               class="action-label">Open</span
             >
           </button>
+          <TagMenuButton tags={itemTags} onAdd={handleAddTag} onRemove={handleRemoveTag} />
         {:else if isDocumentMode}
           <!-- Document mode: read, share, and open -->
           <button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
@@ -509,6 +508,7 @@
               class="action-label">Open</span
             >
           </button>
+          <TagMenuButton tags={itemTags} onAdd={handleAddTag} onRemove={handleRemoveTag} />
         {:else}
           <!-- Article mode: full controls -->
           <button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
@@ -545,6 +545,7 @@
               class="action-label">Open</span
             >
           </button>
+          <TagMenuButton tags={itemTags} onAdd={handleAddTag} onRemove={handleRemoveTag} />
         {/if}
         <span class="action-separator"></span>
         {#if expanded}
