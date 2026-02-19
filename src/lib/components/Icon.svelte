@@ -34,7 +34,9 @@
     | 'type'
     | 'minus'
     | 'a-large-small'
-    | 'share-2';
+    | 'share-2'
+    | 'tag'
+    | 'x';
 
   interface Props {
     name: IconName;
@@ -193,6 +195,14 @@
     <circle cx="18" cy="19" r="3" />
     <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
     <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+  {:else if name === 'tag'}
+    <path
+      d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"
+    />
+    <circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none" />
+  {:else if name === 'x'}
+    <path d="M18 6 6 18" />
+    <path d="m6 6 12 12" />
   {/if}
 </svg>
 

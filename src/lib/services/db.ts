@@ -8,6 +8,7 @@ import type {
   SocialShare,
   UserShare,
   FilteredView,
+  ItemTags,
 } from '$lib/types';
 
 // Local cache for read positions (backend is source of truth)
@@ -49,6 +50,7 @@ class SkyreaderDatabase extends Dexie {
   syncQueue!: Table<SyncQueueEntry>;
   metadata!: Table<MetadataEntry>;
   filteredViews!: Table<FilteredView>;
+  itemTags!: Table<ItemTags>;
 
   constructor() {
     super('skyreader');
@@ -158,6 +160,11 @@ class SkyreaderDatabase extends Dexie {
     this.version(16).stores({
       filteredViews: '++id, name, position',
     });
+
+    // Add itemTags table for client-side tagging of feed items
+    this.version(17).stores({
+      itemTags: 'itemKey, *tags',
+    });
   }
 }
 
@@ -177,6 +184,7 @@ export async function clearAllData(): Promise<void> {
     db.syncQueue.clear(),
     db.metadata.clear(),
     db.filteredViews.clear(),
+    db.itemTags.clear(),
   ]);
 }
 
