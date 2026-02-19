@@ -7,6 +7,7 @@ import { sharesStore } from './shares.svelte';
 import { socialStore } from './social.svelte';
 import { preferences } from './preferences.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
+import { tagsStore } from './tags.svelte';
 import type { Article, SocialShare, SocialDocument, CombinedFeedItem, UserShare } from '$lib/types';
 import {
   isRssSource,
@@ -81,6 +82,9 @@ function createFeedViewStore() {
   let expandedIndex = $state(-1);
   let loadedArticleCount = $state(DEFAULT_PAGE_SIZE);
 
+  // Tag menu state (which item key should show the tag menu, null = closed)
+  let tagMenuItemKey = $state<string | null>(null);
+
   // Toolbar filter state (unified source model)
   let filterToolbarOpen = $state(false);
   let sourcePopoverOpen = $state(false);
@@ -88,6 +92,8 @@ function createFeedViewStore() {
   let toolbarSourceKeys = $state<string[]>([]);
   // View-local sort order override (null = use global preferences.sortOrder)
   let toolbarSortOrder = $state<'newest' | 'oldest' | null>(null);
+  // Tag filter (empty = no tag filter)
+  let toolbarTagFilter = $state<string[]>([]);
 
   // URL filters (set by component from $page store)
   let feedFilter = $state<string | null>(null);
@@ -416,9 +422,10 @@ function createFeedViewStore() {
   // Derived: unified current items for the active view mode
   let currentItems = $derived.by((): FeedDisplayItem[] => {
     const mode = viewMode;
+    let items: FeedDisplayItem[];
 
     if (mode === 'combined') {
-      return displayedCombined.map((item) => {
+      items = displayedCombined.map((item) => {
         if (item.type === 'article') {
           return { type: 'article' as const, item: item.item, key: item.item.guid };
         } else if (item.type === 'share') {
@@ -427,13 +434,11 @@ function createFeedViewStore() {
           return { type: 'document' as const, item: item.item, key: item.item.recordUri };
         }
       });
-    }
-
-    if (mode === 'shares') {
+    } else if (mode === 'shares') {
       // Combine shares and documents, sorted by date
       const sortOrder = preferences.sortOrder;
       type ItemWithDate = FeedDisplayItem & { date: number };
-      const items: ItemWithDate[] = [
+      const rawItems: ItemWithDate[] = [
         ...displayedShares.map((item) => ({
           type: 'share' as const,
           item,
@@ -448,16 +453,14 @@ function createFeedViewStore() {
         })),
       ];
 
-      items.sort((a, b) => {
+      rawItems.sort((a, b) => {
         const diff = b.date - a.date;
         return sortOrder === 'newest' ? diff : -diff;
       });
 
-      return items.map(({ type, item, key }) => ({ type, item, key }) as FeedDisplayItem);
-    }
-
-    if (mode === 'userShares') {
-      return displayedUserShares.map((share) => {
+      items = rawItems.map(({ type, item, key }) => ({ type, item, key }) as FeedDisplayItem);
+    } else if (mode === 'userShares') {
+      items = displayedUserShares.map((share) => {
         const localArticle = articlesByGuid.get(share.articleGuid);
         const article: Article = localArticle || {
           guid: share.articleGuid,
@@ -478,14 +481,23 @@ function createFeedViewStore() {
           key: share.articleGuid,
         };
       });
+    } else {
+      // articles mode
+      items = displayedArticles.map((item) => ({
+        type: 'article' as const,
+        item,
+        key: item.guid,
+      }));
     }
 
-    // articles mode
-    return displayedArticles.map((item) => ({
-      type: 'article' as const,
-      item,
-      key: item.guid,
-    }));
+    // Apply tag filter
+    if (toolbarTagFilter.length > 0) {
+      // Access tagsByItem for reactivity
+      const _tags = tagsStore.tagsByItem;
+      items = items.filter((item) => tagsStore.itemHasAnyTag(item.key, toolbarTagFilter));
+    }
+
+    return items;
   });
 
   // Derived: unified pagination state
@@ -636,6 +648,7 @@ function createFeedViewStore() {
       sourceKeys: [...toolbarSourceKeys],
       readFilter: showOnlyUnread ? 'unread' : 'all',
       sortOrder: toolbarSortOrder ?? preferences.sortOrder,
+      tagFilter: toolbarTagFilter.length > 0 ? [...toolbarTagFilter] : undefined,
     });
   }
 
@@ -643,6 +656,7 @@ function createFeedViewStore() {
     toolbarSourceMode = 'all';
     toolbarSourceKeys = [];
     toolbarSortOrder = null;
+    toolbarTagFilter = [];
   }
 
   function toggleUnreadFilter() {
@@ -755,8 +769,14 @@ function createFeedViewStore() {
     get hasUnsavedChanges() {
       return hasUnsavedChanges;
     },
+    get toolbarTagFilter() {
+      return toolbarTagFilter;
+    },
     get currentSortOrder() {
       return toolbarSortOrder ?? preferences.sortOrder;
+    },
+    get tagMenuItemKey() {
+      return tagMenuItemKey;
     },
 
     // All filtered items (not paginated) — for bulk operations like mark-all-as-read
@@ -793,6 +813,9 @@ function createFeedViewStore() {
     setSourcePopoverOpen(open: boolean) {
       sourcePopoverOpen = open;
     },
+    setToolbarTagFilter(tags: string[]) {
+      toolbarTagFilter = tags;
+    },
     setToolbarSourceFilter(mode: 'all' | 'include', keys: string[]) {
       toolbarSourceMode = mode;
       toolbarSourceKeys = keys;
@@ -807,6 +830,12 @@ function createFeedViewStore() {
     },
     resetToolbarFilters,
     syncToolbarToSavedView,
+    openTagMenu(itemKey: string) {
+      tagMenuItemKey = itemKey;
+    },
+    closeTagMenu() {
+      tagMenuItemKey = null;
+    },
     setFilters(filters: {
       feed: string | null;
       starred: string | null;
@@ -855,6 +884,7 @@ function createFeedViewStore() {
           }
           showOnlyUnread = fv.readFilter === 'unread';
           toolbarSortOrder = fv.sortOrder;
+          toolbarTagFilter = fv.tagFilter ? [...fv.tagFilter] : [];
           // Fire-and-forget legacy migration write-back
           if (fv.sourceMode == null && fv.id != null) {
             filteredViewsStore.update(fv.id, {

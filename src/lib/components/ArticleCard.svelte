@@ -21,6 +21,10 @@
   import { sharesStore } from '$lib/stores/shares.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import Icon from './Icon.svelte';
+  import TagMenu from '$lib/components/feed/TagMenu.svelte';
+  import { tagsStore } from '$lib/stores/tags.svelte';
+  import { feedViewStore } from '$lib/stores/feedView.svelte';
+  import type { ItemTags } from '$lib/types';
   import logo from '$lib/assets/logo.svg';
 
   let {
@@ -325,6 +329,30 @@
       isTruncated = bodyEl.scrollHeight > bodyEl.clientHeight;
     }
   });
+
+  // Tag menu state
+  let tagMenuOpenLocal = $state(false);
+  let tagBtnRef = $state<HTMLButtonElement | null>(null);
+
+  // Tag menu can be opened via button click or keyboard shortcut (via feedViewStore)
+  let tagMenuOpen = $derived(tagMenuOpenLocal || feedViewStore.tagMenuItemKey === itemGuid);
+
+  let itemTagType = $derived.by((): ItemTags['itemType'] => {
+    if (isShareMode) return 'share';
+    if (isDocumentMode) return 'document';
+    return 'article';
+  });
+
+  let itemTagCount = $derived(tagsStore.getTagsForItem(itemGuid).length);
+
+  function handleTagClick(e: MouseEvent) {
+    e.stopPropagation();
+    tagMenuOpenLocal = !tagMenuOpenLocal;
+    // Clear store-level tag menu if we're toggling
+    if (feedViewStore.tagMenuItemKey === itemGuid) {
+      feedViewStore.closeTagMenu();
+    }
+  }
 </script>
 
 <article
@@ -510,6 +538,16 @@
             >
           </button>
         {/if}
+        <button
+          class="action-btn"
+          class:tagged={itemTagCount > 0}
+          onclick={handleTagClick}
+          bind:this={tagBtnRef}
+        >
+          <span class="action-icon"><Icon name="tag" size={16} /></span><span class="action-label"
+            >Tag{#if itemTagCount > 0}<span class="tag-count">({itemTagCount})</span>{/if}</span
+          >
+        </button>
         <span class="action-separator"></span>
         {#if expanded}
           <button class="action-btn show-less-btn" onclick={handleExpandClick}
@@ -529,6 +567,26 @@
         {/if}
       </div>
     </div>
+
+    {#if tagMenuOpen}
+      <TagMenu
+        itemKey={itemGuid}
+        itemType={itemTagType}
+        anchorEl={tagBtnRef}
+        onClose={() => {
+          tagMenuOpenLocal = false;
+          feedViewStore.closeTagMenu();
+        }}
+      />
+    {/if}
+
+    {#if itemTagCount > 0}
+      <div class="tag-chips">
+        {#each tagsStore.getTagsForItem(itemGuid) as tag}
+          <span class="tag-chip">{tag}</span>
+        {/each}
+      </div>
+    {/if}
   {/if}
 </article>
 
@@ -889,6 +947,33 @@
   .action-btn.show-more-btn,
   .action-btn.show-less-btn {
     color: var(--color-primary, #0066cc);
+  }
+
+  .action-btn.tagged {
+    color: var(--color-primary, #0066cc);
+  }
+
+  .tag-count {
+    font-size: 0.75rem;
+    margin-left: 0.125rem;
+  }
+
+  .tag-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    padding: 0 0 0.5rem;
+  }
+
+  .tag-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    background: rgba(37, 99, 235, 0.08);
+    color: var(--color-primary, #2563eb);
+    border-radius: 999px;
   }
 
   .action-btn.disabled {

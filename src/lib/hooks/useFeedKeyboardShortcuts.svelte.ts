@@ -289,6 +289,24 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       condition: hasSelected,
     });
 
+    keyboardStore.register({
+      key: 't',
+      description: 'Tag item',
+      category: 'Article',
+      action: () => {
+        const idx = feedViewStore.selectedIndex;
+        if (idx < 0) return;
+        const item = feedViewStore.currentItems[idx];
+        if (!item) return;
+        if (feedViewStore.tagMenuItemKey === item.key) {
+          feedViewStore.closeTagMenu();
+        } else {
+          feedViewStore.openTagMenu(item.key);
+        }
+      },
+      condition: hasSelected,
+    });
+
     // Other shortcuts
     keyboardStore.register({
       key: 'u',
@@ -317,6 +335,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     keyboardStore.unregister('s');
     keyboardStore.unregister('S', true);
     keyboardStore.unregister('m');
+    keyboardStore.unregister('t');
     keyboardStore.unregister('u');
     keyboardStore.unregister('A', true);
   }

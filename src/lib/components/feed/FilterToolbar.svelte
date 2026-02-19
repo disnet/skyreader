@@ -7,6 +7,7 @@
   import { socialStore } from '$lib/stores/social.svelte';
   import { profileService } from '$lib/services/profiles';
   import { getFaviconUrl } from '$lib/utils/favicon';
+  import { tagsStore } from '$lib/stores/tags.svelte';
   import { goto } from '$app/navigation';
   import {
     rssSourceKey,
@@ -107,6 +108,35 @@
       : socialStore.inAppFollows
   );
 
+  // Tag filter state
+  let tagPopoverOpen = $state(false);
+  let tagPopoverRef = $state<HTMLDivElement | null>(null);
+  let allTags = $derived(tagsStore.allTags);
+  let activeTagFilter = $derived(feedViewStore.toolbarTagFilter);
+  let activeTagSet = $derived(new Set(activeTagFilter));
+
+  let tagFilterLabel = $derived.by(() => {
+    if (activeTagFilter.length === 0) return 'Tags';
+    return `Tags (${activeTagFilter.length})`;
+  });
+
+  function toggleTagFilter(tag: string) {
+    const newTags = activeTagSet.has(tag)
+      ? activeTagFilter.filter((t) => t !== tag)
+      : [...activeTagFilter, tag];
+    feedViewStore.setToolbarTagFilter(newTags);
+  }
+
+  function clearTagFilter() {
+    feedViewStore.setToolbarTagFilter([]);
+  }
+
+  function handleTagClickOutside(e: MouseEvent) {
+    if (tagPopoverOpen && tagPopoverRef && !tagPopoverRef.contains(e.target as Node)) {
+      tagPopoverOpen = false;
+    }
+  }
+
   function setSourceMode(mode: 'all' | 'include') {
     feedViewStore.setToolbarSourceFilter(mode, mode === 'all' ? [] : [...ef.sourceKeys]);
   }
@@ -165,11 +195,13 @@
     if (sourcePopoverOpen && sourcePopoverRef && !sourcePopoverRef.contains(e.target as Node)) {
       feedViewStore.setSourcePopoverOpen(false);
     }
+    handleTagClickOutside(e);
   }
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       feedViewStore.setSourcePopoverOpen(false);
+      tagPopoverOpen = false;
     }
   }
 
@@ -222,6 +254,7 @@
         sourceKeys: [...ef.sourceKeys],
         readFilter: feedViewStore.showOnlyUnread ? 'unread' : 'all',
         sortOrder: feedViewStore.currentSortOrder,
+        tagFilter: activeTagFilter.length > 0 ? [...activeTagFilter] : undefined,
       });
       showNameInput = false;
       newViewName = '';
@@ -485,6 +518,52 @@
                 {/if}
               {/if}
             {/if}
+          </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
+  {#if allTags.length > 0}
+    <span class="toolbar-divider group-divider"></span>
+
+    <!-- Group 3: Tags dropdown -->
+    <div class="filter-group">
+      <div class="dropdown-wrapper" bind:this={tagPopoverRef}>
+        <button
+          class="filter-btn"
+          class:has-filter={activeTagFilter.length > 0}
+          onclick={(e) => {
+            e.stopPropagation();
+            tagPopoverOpen = !tagPopoverOpen;
+          }}
+        >
+          <Icon name="tag" size={16} />
+          <span class="filter-label">{tagFilterLabel}</span>
+          <Icon name="chevron-down" size={12} />
+        </button>
+
+        {#if tagPopoverOpen}
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
+            <div class="popover-group-header">
+              <span>Tags</span>
+              {#if activeTagFilter.length > 0}
+                <button class="select-all-btn" onclick={clearTagFilter}>Clear</button>
+              {/if}
+            </div>
+            <div class="popover-list">
+              {#each allTags as tag}
+                <label class="check-label">
+                  <input
+                    type="checkbox"
+                    checked={activeTagSet.has(tag)}
+                    onchange={() => toggleTagFilter(tag)}
+                  />
+                  <span class="check-text">{tag}</span>
+                </label>
+              {/each}
+            </div>
           </div>
         {/if}
       </div>
