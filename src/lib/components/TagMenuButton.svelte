@@ -1,6 +1,8 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
+  import NumberIcon from './NumberIcon.svelte';
   import { tagsStore } from '$lib/stores/tags.svelte';
+  import { onMount } from 'svelte';
 
   interface Props {
     tags: string[];
@@ -31,8 +33,8 @@
     }
   }
 
-  function handleStartCreate(e: MouseEvent) {
-    e.stopPropagation();
+  function handleStartCreate(e?: MouseEvent) {
+    e?.stopPropagation();
     isCreatingTag = true;
     requestAnimationFrame(() => newTagInputRef?.focus());
   }
@@ -54,11 +56,57 @@
     }
   }
 
-  function handleClose(e: MouseEvent) {
+  function handleClose(e?: MouseEvent) {
     showMenu = false;
     isCreatingTag = false;
     newTagValue = '';
   }
+
+  function handleMenuKeydown(e: KeyboardEvent) {
+    if (!showMenu) return;
+    // Don't intercept when typing in the new tag input
+    if (isCreatingTag) return;
+
+    const key = e.key;
+
+    if (key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      handleClose();
+      return;
+    }
+
+    if (key === '0') {
+      e.preventDefault();
+      e.stopPropagation();
+      handleStartCreate();
+      return;
+    }
+
+    const num = parseInt(key);
+    if (num >= 1 && num <= 9) {
+      const tagIndex = num - 1;
+      if (tagIndex < tagsStore.allTags.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        const tag = tagsStore.allTags[tagIndex];
+        if (tags.includes(tag)) {
+          onRemove(tag);
+        } else {
+          onAdd(tag);
+        }
+      }
+    }
+  }
+
+  // Listen for keyboard shortcuts while menu is open
+  $effect(() => {
+    if (showMenu) {
+      const handler = (e: KeyboardEvent) => handleMenuKeydown(e);
+      window.addEventListener('keydown', handler);
+      return () => window.removeEventListener('keydown', handler);
+    }
+  });
 </script>
 
 <div class="tag-menu-anchor">
@@ -77,7 +125,7 @@
           class:active={tags.includes(tag)}
           onclick={(e) => handleTagToggle(e, tag)}
         >
-          <span class="tag-menu-number">[{i + 1}]</span>
+          <span class="tag-menu-number"><NumberIcon number={i + 1} size={16} /></span>
           <span class="tag-menu-label">{tag}</span>
           {#if tags.includes(tag)}
             <span class="tag-menu-check"><Icon name="x" size={10} /></span>
@@ -86,7 +134,7 @@
       {/each}
       {#if isCreatingTag}
         <div class="tag-menu-item tag-menu-create-input">
-          <span class="tag-menu-number">[0]</span>
+          <span class="tag-menu-number"><NumberIcon number={0} size={16} /></span>
           <input
             bind:this={newTagInputRef}
             type="text"
@@ -99,7 +147,7 @@
         </div>
       {:else}
         <button class="tag-menu-item tag-menu-create" onclick={handleStartCreate}>
-          <span class="tag-menu-number">[0]</span>
+          <span class="tag-menu-number"><NumberIcon number={0} size={16} /></span>
           <span class="tag-menu-label">create new tag</span>
         </button>
       {/if}
@@ -189,10 +237,10 @@
   }
 
   .tag-menu-number {
-    font-family: monospace;
-    font-size: 0.75rem;
-    color: var(--color-text-secondary);
+    display: inline-flex;
+    align-items: center;
     flex-shrink: 0;
+    color: var(--color-text-secondary);
   }
 
   .tag-menu-label {
