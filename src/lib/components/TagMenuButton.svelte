@@ -37,15 +37,21 @@
     open = showMenu;
   });
 
+  function openMenu() {
+    showMenu = true;
+    isCreatingTag = false;
+    newTagValue = '';
+    keyboardStore.suppress();
+    // Position after render
+    requestAnimationFrame(() => positionMenu());
+  }
+
   function handleButtonClick(e: MouseEvent) {
     e.stopPropagation();
     if (showMenu) {
       closeMenu();
     } else {
-      showMenu = true;
-      isCreatingTag = false;
-      newTagValue = '';
-      keyboardStore.suppress();
+      openMenu();
     }
   }
 
@@ -95,48 +101,24 @@
     keyboardStore.unsuppress();
   }
 
-  function handleClose(e?: MouseEvent) {
-    closeMenu();
-  }
-
-  // Click-outside detection using window listener
-  // (Can't use a fixed backdrop because container-type: inline-size on parent
-  //  makes fixed positioning relative to the container, not the viewport)
-  $effect(() => {
+  // Global keydown handler via <svelte:window> - handles Escape and number keys
+  function handleWindowKeydown(e: KeyboardEvent) {
     if (!showMenu) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (menuEl && menuEl.contains(target)) return;
-      if (buttonEl && buttonEl.contains(target)) return;
-      closeMenu();
-    };
-    // Delay to avoid catching the click that opened the menu
-    const timer = setTimeout(() => {
-      window.addEventListener('click', handler, true);
-    }, 0);
-    return () => {
-      clearTimeout(timer);
-      window.removeEventListener('click', handler, true);
-    };
-  });
-
-  function handleMenuKeydown(e: KeyboardEvent) {
-    if (!showMenu) return;
-    // Don't intercept when typing in the new tag input
+    // Don't intercept when typing in the new tag input (except Escape, handled by onkeydown on the input)
     if (isCreatingTag) return;
 
     const key = e.key;
 
     if (key === 'Escape') {
       e.preventDefault();
-      e.stopPropagation();
+      e.stopImmediatePropagation();
       closeMenu();
       return;
     }
 
     if (key === '0') {
       e.preventDefault();
-      e.stopPropagation();
+      e.stopImmediatePropagation();
       handleStartCreate();
       return;
     }
@@ -146,7 +128,7 @@
       const tagIndex = num - 1;
       if (tagIndex < tagsStore.allTags.length) {
         e.preventDefault();
-        e.stopPropagation();
+        e.stopImmediatePropagation();
         const tag = tagsStore.allTags[tagIndex];
         if (tags.includes(tag)) {
           onRemove(tag);
@@ -157,47 +139,61 @@
     }
   }
 
-  // Position menu to avoid viewport edges
-  function positionMenu() {
-    if (!menuEl) return;
-    // Reset to default (above, centered)
-    menuEl.style.bottom = '';
-    menuEl.style.top = '';
-    menuEl.style.left = '';
-    menuEl.style.right = '';
-    menuEl.style.transform = '';
-    menuStyle = '';
+  // Global click handler via <svelte:window> - handles click-outside
+  function handleWindowClick(e: MouseEvent) {
+    if (!showMenu) return;
+    const target = e.target as Node;
+    if (menuEl && menuEl.contains(target)) return;
+    if (buttonEl && buttonEl.contains(target)) return;
+    closeMenu();
+  }
 
-    const rect = menuEl.getBoundingClientRect();
+  // Position menu using fixed positioning to escape stacking contexts
+  function positionMenu() {
+    if (!buttonEl) return;
+    const btnRect = buttonEl.getBoundingClientRect();
     const pad = 8;
 
-    // If menu overflows top, position below the button instead
-    if (rect.top < pad) {
-      menuStyle = 'top: calc(100% + 8px); bottom: auto;';
-    }
+    // Default: above the button, centered horizontally
+    let top = btnRect.top - pad; // Will be set as bottom via CSS
+    let left = btnRect.left + btnRect.width / 2;
 
-    // Adjust horizontal if overflowing left or right
-    if (rect.left < pad) {
-      menuStyle += ` left: 0; transform: none;`;
-    } else if (rect.right > window.innerWidth - pad) {
-      menuStyle += ` left: auto; right: 0; transform: none;`;
-    }
+    // Start with above-button positioning
+    menuStyle = `position: fixed; bottom: ${window.innerHeight - btnRect.top + pad}px; left: ${left}px; transform: translateX(-50%);`;
+
+    // After render, check if it overflows and adjust
+    requestAnimationFrame(() => {
+      if (!menuEl) return;
+      const menuRect = menuEl.getBoundingClientRect();
+
+      let style = '';
+
+      // If menu overflows top, position below the button instead
+      if (menuRect.top < pad) {
+        style = `position: fixed; top: ${btnRect.bottom + pad}px; left: ${left}px; transform: translateX(-50%);`;
+      } else {
+        style = `position: fixed; bottom: ${window.innerHeight - btnRect.top + pad}px; left: ${left}px; transform: translateX(-50%);`;
+      }
+
+      // Check horizontal overflow after setting vertical position
+      if (menuRect.left < pad) {
+        style = style
+          .replace(/left: [^;]+;/, `left: ${pad}px;`)
+          .replace(/transform: [^;]+;/, 'transform: none;');
+      } else if (menuRect.right > window.innerWidth - pad) {
+        style = style
+          .replace(/left: [^;]+;/, `right: ${pad}px; left: auto;`)
+          .replace(/transform: [^;]+;/, 'transform: none;');
+      }
+
+      menuStyle = style;
+    });
   }
 
   // Reposition when menu is shown or items change
   $effect(() => {
-    if (showMenu && menuEl) {
-      // Run after render
+    if (showMenu && buttonEl) {
       requestAnimationFrame(() => positionMenu());
-    }
-  });
-
-  // Listen for keyboard shortcuts while menu is open
-  $effect(() => {
-    if (showMenu) {
-      const handler = (e: KeyboardEvent) => handleMenuKeydown(e);
-      window.addEventListener('keydown', handler);
-      return () => window.removeEventListener('keydown', handler);
     }
   });
 
@@ -209,10 +205,7 @@
       if (showMenu) {
         closeMenu();
       } else {
-        showMenu = true;
-        isCreatingTag = false;
-        newTagValue = '';
-        keyboardStore.suppress();
+        openMenu();
       }
     };
     document.addEventListener('toggle-tag-menu', handler);
@@ -220,8 +213,15 @@
   });
 </script>
 
+<svelte:window onkeydown={handleWindowKeydown} onclick={handleWindowClick} />
+
 <div class="tag-menu-anchor">
-  <button bind:this={buttonEl} class="action-btn" class:has-tags={tags.length > 0} onclick={handleButtonClick}>
+  <button
+    bind:this={buttonEl}
+    class="action-btn"
+    class:has-tags={tags.length > 0}
+    onclick={handleButtonClick}
+  >
     <span class="action-icon"><Icon name="tag" size={16} /></span><span class="action-label"
       >Tag{tags.length > 0 ? ` (${tags.length})` : ''}</span
     >
@@ -302,16 +302,13 @@
   }
 
   .tag-menu {
-    position: absolute;
-    bottom: calc(100% + 8px);
-    left: 50%;
-    transform: translateX(-50%);
+    /* position: fixed is set dynamically via style attribute */
     min-width: 180px;
     background: var(--color-bg, #fff);
     border: 1px solid var(--color-border, #e5e7eb);
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    z-index: 9999;
+    z-index: 10000;
     overflow: hidden;
     padding: 0.25rem 0;
   }
