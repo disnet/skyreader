@@ -389,7 +389,7 @@
   ></button>
 {/if}
 
-<aside class="sidebar" class:collapsed={sidebarStore.isCollapsed} class:open={sidebarStore.isOpen}>
+<aside class="sidebar" class:open={sidebarStore.isOpen}>
   <!-- Header row -->
   <div class="sidebar-header">
     <a href="/settings" class="user-info" onclick={() => sidebarStore.closeMobile()}>
@@ -398,11 +398,9 @@
       {:else}
         <div class="avatar-placeholder"></div>
       {/if}
-      {#if !sidebarStore.isCollapsed}
-        <span class="username">@{auth.user?.handle}</span>
-        {#if auth.user?.tier && auth.user.tier !== 'free'}
-          <span class="tier-badge">{auth.user.tier}</span>
-        {/if}
+      <span class="username">@{auth.user?.handle}</span>
+      {#if auth.user?.tier && auth.user.tier !== 'free'}
+        <span class="tier-badge">{auth.user.tier}</span>
       {/if}
     </a>
     <button class="add-feed-btn" onclick={handleAddFeed} aria-label="Add feed"> + </button>
@@ -416,11 +414,9 @@
       onclick={() => selectFilter('all')}
     >
       <span class="nav-icon"><Icon name="inbox" /></span>
-      {#if !sidebarStore.isCollapsed}
-        <span class="nav-label">All</span>
-        {#if totalUnread > 0}
-          <span class="nav-count">{totalUnread}</span>
-        {/if}
+      <span class="nav-label">All</span>
+      {#if totalUnread > 0}
+        <span class="nav-count">{totalUnread}</span>
       {/if}
     </button>
 
@@ -430,9 +426,7 @@
       onclick={() => selectFilter('starred')}
     >
       <span class="nav-icon"><Icon name="bookmark" /></span>
-      {#if !sidebarStore.isCollapsed}
-        <span class="nav-label">Bookmarks</span>
-      {/if}
+      <span class="nav-label">Bookmarks</span>
     </button>
 
     <button
@@ -441,11 +435,9 @@
       onclick={() => selectFilter('shared')}
     >
       <span class="nav-icon"><Icon name="share" /></span>
-      {#if !sidebarStore.isCollapsed}
-        <span class="nav-label">Shared</span>
-        {#if sharesStore.userShares.size > 0}
-          <span class="nav-count">{sharesStore.userShares.size}</span>
-        {/if}
+      <span class="nav-label">Shared</span>
+      {#if sharesStore.userShares.size > 0}
+        <span class="nav-count">{sharesStore.userShares.size}</span>
       {/if}
     </button>
 
@@ -456,9 +448,7 @@
       onclick={() => sidebarStore.closeMobile()}
     >
       <span class="nav-icon"><Icon name="share-2" /></span>
-      {#if !sidebarStore.isCollapsed}
-        <span class="nav-label">Discover</span>
-      {/if}
+      <span class="nav-label">Discover</span>
     </a>
 
     <a
@@ -468,11 +458,9 @@
       onclick={() => sidebarStore.closeMobile()}
     >
       <span class="nav-icon"><Icon name="bell" /></span>
-      {#if !sidebarStore.isCollapsed}
-        <span class="nav-label">Activity</span>
-        {#if activityStore.totalReshareCount > 0}
-          <span class="nav-count">{activityStore.totalReshareCount}</span>
-        {/if}
+      <span class="nav-label">Activity</span>
+      {#if activityStore.totalReshareCount > 0}
+        <span class="nav-count">{activityStore.totalReshareCount}</span>
       {/if}
     </a>
 
@@ -483,9 +471,7 @@
       onclick={() => sidebarStore.closeMobile()}
     >
       <span class="nav-icon"><Icon name="settings" /></span>
-      {#if !sidebarStore.isCollapsed}
-        <span class="nav-label">Settings</span>
-      {/if}
+      <span class="nav-label">Settings</span>
     </a>
 
     <a
@@ -495,71 +481,65 @@
       rel="noopener noreferrer"
     >
       <span class="nav-icon"><Icon name="message-circle" /></span>
-      {#if !sidebarStore.isCollapsed}
-        <span class="nav-label">Feedback</span>
-      {/if}
+      <span class="nav-label">Feedback</span>
     </a>
 
     <!-- Views section -->
-    {#if filteredViewsStore.views.length > 0 || !sidebarStore.isCollapsed}
-      <NavSection
-        title="Views"
-        isExpanded={sidebarStore.expandedSections.views}
-        isCollapsed={sidebarStore.isCollapsed}
-        showOnlyUnread={false}
-        isActive={false}
-        onToggle={() => sidebarStore.toggleSection('views')}
-        onLabelClick={() => sidebarStore.toggleSection('views')}
-        onUnreadToggle={() => {}}
-      >
-        {@const filter = currentFilter()}
-        {#each filteredViewsStore.views as view (view.id)}
-          <ViewItem
-            {view}
-            isActive={filter.type === 'view' && filter.id === view.id}
-            isRenaming={renamingViewId === view.id}
-            onSelect={() => selectFilter('view', view.id)}
-            onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-            onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
-            onTouchEnd={handleViewTouchEnd}
-            onTouchMove={handleViewTouchMove}
-            onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-            onRename={async (name) => {
-              if (view.id != null) {
-                await filteredViewsStore.update(view.id, { name });
-              }
-              renamingViewId = null;
-            }}
-            onRenameCancel={() => (renamingViewId = null)}
-          />
-        {/each}
-        <button
-          class="add-view-btn"
-          onclick={async (e) => {
-            e.stopPropagation();
-            const id = await filteredViewsStore.create({
-              name: 'new view',
-              sourceMode: 'include',
-              sourceKeys: [],
-              readFilter: 'unread',
-              sortOrder: 'newest',
-            });
-            selectFilter('view', id);
-            feedViewStore.setFilterToolbarOpen(true);
-            feedViewStore.setSourcePopoverOpen(true);
+    <NavSection
+      title="Views"
+      isExpanded={sidebarStore.expandedSections.views}
+      showOnlyUnread={false}
+      isActive={false}
+      onToggle={() => sidebarStore.toggleSection('views')}
+      onLabelClick={() => sidebarStore.toggleSection('views')}
+      onUnreadToggle={() => {}}
+    >
+      {@const filter = currentFilter()}
+      {#each filteredViewsStore.views as view (view.id)}
+        <ViewItem
+          {view}
+          isActive={filter.type === 'view' && filter.id === view.id}
+          isRenaming={renamingViewId === view.id}
+          onSelect={() => selectFilter('view', view.id)}
+          onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+          onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
+          onTouchEnd={handleViewTouchEnd}
+          onTouchMove={handleViewTouchMove}
+          onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+          onRename={async (name) => {
+            if (view.id != null) {
+              await filteredViewsStore.update(view.id, { name });
+            }
+            renamingViewId = null;
           }}
-        >
-          <Icon name="plus" size={14} />
-          <span>New View</span>
-        </button>
-      </NavSection>
-    {/if}
+          onRenameCancel={() => (renamingViewId = null)}
+        />
+      {/each}
+      <button
+        class="add-view-btn"
+        onclick={async (e) => {
+          e.stopPropagation();
+          const id = await filteredViewsStore.create({
+            name: 'new view',
+            sourceMode: 'include',
+            sourceKeys: [],
+            readFilter: 'unread',
+            sortOrder: 'newest',
+          });
+          selectFilter('view', id);
+          feedViewStore.setFilterToolbarOpen(true);
+          feedViewStore.setSourcePopoverOpen(true);
+        }}
+      >
+        <Icon name="plus" size={14} />
+        <span>New View</span>
+      </button>
+    </NavSection>
 
     <!-- Following section -->
     <NavSection
       title="Following"
       isExpanded={sidebarStore.expandedSections.shared}
-      isCollapsed={sidebarStore.isCollapsed}
       showOnlyUnread={sidebarStore.showOnlyUnread.shared}
       isActive={$page.url.pathname === '/following'}
       onToggle={() => sidebarStore.toggleSection('shared')}
@@ -608,7 +588,6 @@
     <NavSection
       title="Feeds"
       isExpanded={sidebarStore.expandedSections.feeds}
-      isCollapsed={sidebarStore.isCollapsed}
       showOnlyUnread={sidebarStore.showOnlyUnread.feeds}
       isActive={currentFilter().type === 'feeds'}
       onToggle={() => sidebarStore.toggleSection('feeds')}
@@ -713,10 +692,6 @@
     transition: width 0.2s ease;
     overflow-y: auto;
     padding: 0 0.5rem;
-  }
-
-  .sidebar.collapsed {
-    width: var(--sidebar-collapsed-width, 60px);
   }
 
   .sidebar-header {

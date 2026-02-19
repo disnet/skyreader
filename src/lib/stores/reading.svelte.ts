@@ -7,6 +7,7 @@ const BULK_BATCH_SIZE = 500; // Must match backend limit
 
 interface ReadPosition {
   starred: boolean;
+  archived?: boolean;
   readAt: number;
   itemUrl?: string;
   itemTitle?: string;
@@ -88,6 +89,7 @@ function createReadingStore() {
       await db.readPositionsCache.put({
         articleGuid,
         starred: position.starred,
+        archived: position.archived,
         readAt: position.readAt,
         itemUrl: position.itemUrl,
         itemTitle: position.itemTitle,
@@ -115,6 +117,7 @@ function createReadingStore() {
         ([articleGuid, pos]) => ({
           articleGuid,
           starred: pos.starred,
+          archived: pos.archived,
           readAt: pos.readAt,
           itemUrl: pos.itemUrl,
           itemTitle: pos.itemTitle,
@@ -141,6 +144,7 @@ function createReadingStore() {
             p.articleGuid,
             {
               starred: p.starred,
+              archived: p.archived,
               readAt: p.readAt,
               itemUrl: p.itemUrl,
               itemTitle: p.itemTitle,
@@ -157,11 +161,13 @@ function createReadingStore() {
     // 2. Then fetch from backend and update
     try {
       const { positions } = await api.getReadPositions();
+      const oldPositions = readPositions;
       const newPositions = new Map(
         positions.map((p) => [
           p.item_guid,
           {
             starred: !!p.starred,
+            archived: oldPositions.get(p.item_guid)?.archived,
             readAt: p.read_at,
             itemUrl: p.item_url || undefined,
             itemTitle: p.item_title || undefined,
@@ -375,9 +381,48 @@ function createReadingStore() {
     }
   }
 
+  // Archive methods (client-only, no backend sync)
+  function isArchived(articleGuid: string): boolean {
+    return readPositions.get(articleGuid)?.archived === true;
+  }
+
+  async function toggleArchive(articleGuid: string) {
+    const position = readPositions.get(articleGuid);
+    if (!position) return;
+
+    const newPosition: ReadPosition = { ...position, archived: !position.archived };
+    readPositions.set(articleGuid, newPosition);
+    readPositions = new Map(readPositions);
+    updateCache(articleGuid, newPosition);
+  }
+
+  async function archiveItem(articleGuid: string) {
+    const position = readPositions.get(articleGuid);
+    if (!position) return;
+
+    const newPosition: ReadPosition = { ...position, archived: true };
+    readPositions.set(articleGuid, newPosition);
+    readPositions = new Map(readPositions);
+    updateCache(articleGuid, newPosition);
+  }
+
+  async function unarchiveItem(articleGuid: string) {
+    const position = readPositions.get(articleGuid);
+    if (!position) return;
+
+    const newPosition: ReadPosition = { ...position, archived: false };
+    readPositions.set(articleGuid, newPosition);
+    readPositions = new Map(readPositions);
+    updateCache(articleGuid, newPosition);
+  }
+
   // Derived starred count
   let starredCount = $derived(
     Array.from(readPositions.values()).filter((pos) => pos.starred).length
+  );
+
+  let archivedCount = $derived(
+    Array.from(readPositions.values()).filter((pos) => pos.starred && pos.archived).length
   );
 
   return {
@@ -390,13 +435,20 @@ function createReadingStore() {
     get starredCount() {
       return starredCount;
     },
+    get archivedCount() {
+      return archivedCount;
+    },
     load,
     isRead,
     isStarred,
+    isArchived,
     markAsRead,
     markAllAsRead,
     markAsUnread,
     toggleStar,
+    toggleArchive,
+    archiveItem,
+    unarchiveItem,
     getStarredArticles,
     getUnreadCount,
   };

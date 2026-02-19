@@ -36,7 +36,10 @@
     | 'a-large-small'
     | 'share-2'
     | 'tag'
-    | 'x';
+    | 'x'
+    | 'archive'
+    | 'arrow-left'
+    | 'clock';
 
   interface Props {
     name: IconName;
@@ -203,6 +206,16 @@
   {:else if name === 'x'}
     <path d="M18 6 6 18" />
     <path d="m6 6 12 12" />
+  {:else if name === 'archive'}
+    <rect width="20" height="5" x="2" y="3" rx="1" />
+    <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
+    <path d="M10 12h4" />
+  {:else if name === 'arrow-left'}
+    <path d="m12 19-7-7 7-7" />
+    <path d="M19 12H5" />
+  {:else if name === 'clock'}
+    <circle cx="12" cy="12" r="10" />
+    <polyline points="12 6 12 12 16 14" />
   {/if}
 </svg>
 

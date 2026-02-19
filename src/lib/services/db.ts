@@ -15,6 +15,7 @@ import type {
 export interface ReadPositionCache {
   articleGuid: string; // primary key
   starred: boolean;
+  archived?: boolean; // for read-it-later inbox/archive
   readAt: number;
   itemUrl?: string;
   itemTitle?: string;
@@ -164,6 +165,11 @@ class SkyreaderDatabase extends Dexie {
     // Add itemTags table for client-side tagging of feed items
     this.version(17).stores({
       itemTags: 'itemKey, *tags',
+    });
+
+    // Add archived field index to readPositionsCache for inbox/archive bookmarks view
+    this.version(18).stores({
+      readPositionsCache: 'articleGuid, starred, archived',
     });
   }
 }

@@ -87,7 +87,7 @@
   }
 
   let dropdownOpen = $derived(sidebarStore.navigationDropdownOpen);
-  let sidebarCollapsed = $derived(sidebarStore.isCollapsed);
+  let isBookmarksView = $derived(Boolean(feedViewStore.starredFilter));
 
   let menuItems = $derived.by(() => {
     const items: Array<{ label: string; icon: string; onclick: () => void; variant?: 'danger' }> =
@@ -118,7 +118,7 @@
   });
 </script>
 
-<div class="feed-header-fixed" class:sidebar-collapsed={sidebarCollapsed} bind:this={headerRef}>
+<div class="feed-header-fixed" bind:this={headerRef}>
   <div class="feed-header-controls">
     <div class="control-left feed-title-group" class:dropdown-open={dropdownOpen}>
       <NavigationDropdown currentTitle={title} />
@@ -146,69 +146,105 @@
     </div>
 
     <div class="control-right">
-      <div class="view-toggle" role="group" aria-label="View controls">
-        {#if onToggleExpandAll}
+      {#if isBookmarksView}
+        <div class="view-toggle" role="group" aria-label="Bookmarks view">
           <button
-            class:active={!expandAllItems}
-            onclick={() => onToggleExpandAll(false)}
-            aria-label="List view"
-            title="List view"
+            class:active={feedViewStore.bookmarksView === 'inbox'}
+            onclick={() => feedViewStore.setBookmarksView('inbox')}
+            aria-label="Inbox"
+            title="Inbox"
           >
-            <Icon name="list" size={16} />
-            <span class="btn-label">List</span>
+            <Icon name="inbox" size={16} />
+            <span class="btn-label">Inbox</span>
           </button>
           <button
-            class:active={expandAllItems}
-            onclick={() => onToggleExpandAll(true)}
-            aria-label="Expanded view"
-            title="Expanded view"
+            class:active={feedViewStore.bookmarksView === 'archive'}
+            onclick={() => feedViewStore.setBookmarksView('archive')}
+            aria-label="Archive"
+            title="Archive"
           >
-            <Icon name="newspaper" size={16} />
-            <span class="btn-label">Expand</span>
+            <Icon name="archive" size={16} />
+            <span class="btn-label">Archive</span>
           </button>
           <span class="toggle-divider"></span>
-        {/if}
-        <button
-          class:active={styleToolbarOpen}
-          onclick={() => {
-            styleToolbarOpen = !styleToolbarOpen;
-            if (styleToolbarOpen) feedViewStore.setFilterToolbarOpen(false);
-          }}
-          aria-label="Toggle style"
-          title="Style"
-        >
-          <Icon name="type" size={16} />
-          <span class="btn-label">Style</span>
-        </button>
-        <span class="toggle-divider"></span>
-        <button
-          class="filter-toggle-btn"
-          class:active={feedViewStore.filterToolbarOpen}
-          onclick={() => {
-            const opening = !feedViewStore.filterToolbarOpen;
-            feedViewStore.setFilterToolbarOpen(opening);
-            if (opening) {
-              styleToolbarOpen = false;
-            } else {
-              feedViewStore.setSourcePopoverOpen(false);
-            }
-          }}
-          aria-label="Toggle filters"
-          title="Filter"
-        >
-          <Icon name="filter" size={16} />
-          <span class="btn-label">Filter</span>
-        </button>
-      </div>
+          <button
+            onclick={() => feedViewStore.toggleSortOrder()}
+            title={feedViewStore.currentSortOrder === 'newest' ? 'Newest first' : 'Oldest first'}
+          >
+            <Icon
+              name={feedViewStore.currentSortOrder === 'newest' ? 'arrow-down' : 'arrow-up'}
+              size={16}
+            />
+            <span class="btn-label"
+              >{feedViewStore.currentSortOrder === 'newest' ? 'New' : 'Old'}</span
+            >
+          </button>
+        </div>
+      {:else}
+        <div class="view-toggle" role="group" aria-label="View controls">
+          {#if onToggleExpandAll}
+            <button
+              class:active={!expandAllItems}
+              onclick={() => onToggleExpandAll(false)}
+              aria-label="List view"
+              title="List view"
+            >
+              <Icon name="list" size={16} />
+              <span class="btn-label">List</span>
+            </button>
+            <button
+              class:active={expandAllItems}
+              onclick={() => onToggleExpandAll(true)}
+              aria-label="Expanded view"
+              title="Expanded view"
+            >
+              <Icon name="newspaper" size={16} />
+              <span class="btn-label">Expand</span>
+            </button>
+            <span class="toggle-divider"></span>
+          {/if}
+          <button
+            class:active={styleToolbarOpen}
+            onclick={() => {
+              styleToolbarOpen = !styleToolbarOpen;
+              if (styleToolbarOpen) feedViewStore.setFilterToolbarOpen(false);
+            }}
+            aria-label="Toggle style"
+            title="Style"
+          >
+            <Icon name="type" size={16} />
+            <span class="btn-label">Style</span>
+          </button>
+          <span class="toggle-divider"></span>
+          <button
+            class="filter-toggle-btn"
+            class:active={feedViewStore.filterToolbarOpen}
+            onclick={() => {
+              const opening = !feedViewStore.filterToolbarOpen;
+              feedViewStore.setFilterToolbarOpen(opening);
+              if (opening) {
+                styleToolbarOpen = false;
+              } else {
+                feedViewStore.setSourcePopoverOpen(false);
+              }
+            }}
+            aria-label="Toggle filters"
+            title="Filter"
+          >
+            <Icon name="filter" size={16} />
+            <span class="btn-label">Filter</span>
+          </button>
+        </div>
+      {/if}
     </div>
   </div>
 
-  {#if styleToolbarOpen}
+  {#if !isBookmarksView && styleToolbarOpen}
     <div class="filter-toolbar-row">
       <AppearanceToolbar />
     </div>
   {/if}
-  {#if feedViewStore.filterToolbarOpen}
+  {#if !isBookmarksView && feedViewStore.filterToolbarOpen}
     <div class="filter-toolbar-row">
       <FilterToolbar {showSourceFilter} />
     </div>
@@ -224,10 +260,6 @@
     pointer-events: none;
     z-index: 10;
     padding: 0 1rem;
-  }
-
-  .feed-header-fixed.sidebar-collapsed {
-    left: var(--sidebar-collapsed-width, 60px);
   }
 
   .feed-header-controls {
@@ -284,10 +316,6 @@
 
   @media (max-width: 1000px) {
     .feed-header-fixed {
-      left: 0;
-    }
-
-    .feed-header-fixed.sidebar-collapsed {
       left: 0;
     }
   }

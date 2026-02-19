@@ -12,6 +12,7 @@ import type { Article, Subscription } from '$lib/types';
 interface KeyboardShortcutsParams {
   scrollToCenter: () => void;
   markAllAsReadInCurrentFeed: () => Promise<void>;
+  openBookmarkReader?: () => void;
 }
 
 /**
@@ -214,12 +215,17 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     return auth.isAuthenticated && feedViewStore.selectedIndex >= 0;
   }
 
-  // Toggle expand action
+  // Toggle expand action (or open bookmark reader in bookmarks view)
   async function toggleExpand() {
     const selectedIndex = feedViewStore.selectedIndex;
-    const expandedIndex = feedViewStore.expandedIndex;
     if (selectedIndex < 0) return;
 
+    if (feedViewStore.starredFilter && params.openBookmarkReader) {
+      params.openBookmarkReader();
+      return;
+    }
+
+    const expandedIndex = feedViewStore.expandedIndex;
     if (expandedIndex === selectedIndex) {
       feedViewStore.collapse();
     } else {
@@ -325,6 +331,21 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       action: params.markAllAsReadInCurrentFeed,
       condition: () => auth.isAuthenticated && !!feedViewStore.feedFilter,
     });
+
+    // Bookmarks-specific: archive item
+    keyboardStore.register({
+      key: 'e',
+      description: 'Archive/unarchive bookmark',
+      category: 'Article',
+      action: () => {
+        const idx = feedViewStore.selectedIndex;
+        if (idx < 0) return;
+        const item = feedViewStore.currentItems[idx];
+        if (!item || item.type !== 'article') return;
+        readingStore.toggleArchive(item.item.guid);
+      },
+      condition: () => hasSelected() && !!feedViewStore.starredFilter,
+    });
   }
 
   function unregister() {
@@ -338,6 +359,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     keyboardStore.unregister('t');
     keyboardStore.unregister('u');
     keyboardStore.unregister('A', true);
+    keyboardStore.unregister('e');
   }
 
   // Auto-cleanup on component destroy

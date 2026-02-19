@@ -5,7 +5,6 @@
   interface Props {
     title: string;
     isExpanded: boolean;
-    isCollapsed: boolean;
     showOnlyUnread: boolean;
     isActive: boolean;
     onToggle: () => void;
@@ -17,7 +16,6 @@
   let {
     title,
     isExpanded,
-    isCollapsed,
     showOnlyUnread,
     isActive,
     onToggle,
@@ -34,24 +32,22 @@
         <Icon name={isExpanded ? 'chevron-down' : 'chevron-right'} size={12} strokeWidth={2.5} />
       </span>
     </button>
-    {#if !isCollapsed}
-      <button class="section-label-btn" class:active={isActive} onclick={onLabelClick}>
-        {title}
-      </button>
-      <button
-        class="filter-toggle"
-        class:active={showOnlyUnread}
-        onclick={(e) => {
-          e.stopPropagation();
-          onUnreadToggle();
-        }}
-        title={showOnlyUnread ? 'Show all' : 'Show only unread'}
-      >
-        <Icon name={showOnlyUnread ? 'circle-dot' : 'circle'} size={12} strokeWidth={2} />
-      </button>
-    {/if}
+    <button class="section-label-btn" class:active={isActive} onclick={onLabelClick}>
+      {title}
+    </button>
+    <button
+      class="filter-toggle"
+      class:active={showOnlyUnread}
+      onclick={(e) => {
+        e.stopPropagation();
+        onUnreadToggle();
+      }}
+      title={showOnlyUnread ? 'Show all' : 'Show only unread'}
+    >
+      <Icon name={showOnlyUnread ? 'circle-dot' : 'circle'} size={12} strokeWidth={2} />
+    </button>
   </div>
-  {#if isExpanded && !isCollapsed}
+  {#if isExpanded}
     <div class="section-items">
       {@render children()}
     </div>

@@ -95,6 +95,9 @@ function createFeedViewStore() {
   // Tag filter (empty = no tag filter)
   let toolbarTagFilter = $state<string[]>([]);
 
+  // Bookmarks view sub-filter (inbox vs archive)
+  let bookmarksView = $state<'inbox' | 'archive'>('inbox');
+
   // URL filters (set by component from $page store)
   let feedFilter = $state<string | null>(null);
   let starredFilter = $state<string | null>(null);
@@ -208,8 +211,18 @@ function createFeedViewStore() {
     let articles: Article[];
 
     if (starredFilter) {
-      // Starred view
-      articles = allArticles.filter((a) => positions.get(a.guid)?.starred === true);
+      // Starred view with inbox/archive sub-filter
+      if (bookmarksView === 'inbox') {
+        articles = allArticles.filter((a) => {
+          const pos = positions.get(a.guid);
+          return pos?.starred === true && pos.archived !== true;
+        });
+      } else {
+        articles = allArticles.filter((a) => {
+          const pos = positions.get(a.guid);
+          return pos?.starred === true && pos.archived === true;
+        });
+      }
     } else {
       articles = allArticles;
 
@@ -778,6 +791,9 @@ function createFeedViewStore() {
     get tagMenuItemKey() {
       return tagMenuItemKey;
     },
+    get bookmarksView() {
+      return bookmarksView;
+    },
 
     // All filtered items (not paginated) — for bulk operations like mark-all-as-read
     get filteredArticles() {
@@ -830,6 +846,9 @@ function createFeedViewStore() {
     },
     resetToolbarFilters,
     syncToolbarToSavedView,
+    setBookmarksView(view: 'inbox' | 'archive') {
+      bookmarksView = view;
+    },
     openTagMenu(itemKey: string) {
       tagMenuItemKey = itemKey;
     },

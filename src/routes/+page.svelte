@@ -19,6 +19,7 @@
   import WelcomePage from '$lib/components/feed/WelcomePage.svelte';
   import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
   import FeedListView from '$lib/components/feed/FeedListView.svelte';
+  import BookmarkListView from '$lib/components/feed/BookmarkListView.svelte';
   import EditFeedModal from '$lib/components/EditFeedModal.svelte';
   import type { Subscription, BlueskyProfile } from '$lib/types';
   import { useScrollMarkAsRead } from '$lib/hooks/useScrollMarkAsRead.svelte';
@@ -65,15 +66,25 @@
   let lastVisibleTime = $state(Date.now());
   const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 
-  // Reference to FeedListView component for accessing article elements
+  // Reference to FeedListView or BookmarkListView component for accessing article elements
   let feedListView = $state<ReturnType<typeof FeedListView> | null>(null);
+  let bookmarkListView = $state<ReturnType<typeof BookmarkListView> | null>(null);
+
+  let isBookmarksView = $derived(Boolean(feedViewStore.starredFilter));
 
   function getArticleElements(): HTMLElement[] {
+    if (isBookmarksView) {
+      return bookmarkListView?.getArticleElements() ?? [];
+    }
     return feedListView?.getArticleElements() ?? [];
   }
 
   function scrollToCenter() {
-    feedListView?.scrollToCenter();
+    if (isBookmarksView) {
+      bookmarkListView?.scrollToCenter();
+    } else {
+      feedListView?.scrollToCenter();
+    }
   }
 
   // Edit modal state
@@ -338,6 +349,7 @@
   const keyboardShortcuts = useFeedKeyboardShortcuts({
     scrollToCenter,
     markAllAsReadInCurrentFeed,
+    openBookmarkReader: () => bookmarkListView?.openSelectedReader(),
   });
 
   async function removeFeed(id: number) {
@@ -427,16 +439,11 @@
 
     {#if (appManager.isHydrating || appManager.isRefreshing) && feedViewStore.currentItems.length === 0}
       <LoadingState />
-    {:else if feedViewStore.currentItems.length === 0}
+    {:else if !isBookmarksView && feedViewStore.currentItems.length === 0}
       {#if feedViewStore.viewFilter}
         <EmptyState
           title="No matching items"
           description="This filtered view has no items matching its criteria"
-        />
-      {:else if feedViewStore.starredFilter}
-        <EmptyState
-          title="No bookmarked articles"
-          description="Bookmark articles to see them here"
         />
       {:else if feedViewStore.sharedFilter}
         <EmptyState title="No shared articles" description="Share articles to see them here" />
@@ -480,6 +487,8 @@
           description="Add some subscriptions using the + button in the sidebar"
         />
       {/if}
+    {:else if isBookmarksView}
+      <BookmarkListView bind:this={bookmarkListView} />
     {:else}
       <FeedListView
         bind:this={feedListView}
