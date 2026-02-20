@@ -3,7 +3,7 @@ import { subscriptionsStore } from './subscriptions.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
 import { sharesStore } from './shares.svelte';
 import { socialStore } from './social.svelte';
-import { bookmarksStore } from './bookmarks.svelte';
+import { savesStore } from './saves.svelte';
 import { preferences } from './preferences.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
 import type {
@@ -12,7 +12,7 @@ import type {
   SocialDocument,
   CombinedFeedItem,
   UserShare,
-  Bookmark,
+  SavedItem,
 } from '$lib/types';
 import {
   isRssSource,
@@ -33,7 +33,7 @@ export type FeedDisplayItem =
   | { type: 'share'; item: SocialShare; key: string }
   | { type: 'userShare'; item: UserShare; article: Article; key: string }
   | { type: 'document'; item: SocialDocument; key: string }
-  | { type: 'bookmark'; item: Bookmark; key: string };
+  | { type: 'saved'; item: SavedItem; key: string };
 
 const DEFAULT_PAGE_SIZE = 50;
 
@@ -88,7 +88,7 @@ function getItemDate(item: FeedDisplayItem): number {
     return new Date(item.item.itemPublishedAt || item.item.createdAt).getTime();
   } else if (item.type === 'document') {
     return new Date(item.item.publishedAt).getTime();
-  } else if (item.type === 'bookmark') {
+  } else if (item.type === 'saved') {
     return new Date(item.item.savedAt).getTime();
   } else {
     return new Date(item.item.createdAt).getTime();
@@ -116,11 +116,11 @@ function createFeedViewStore() {
   let toolbarTagFilter = $state<string[]>([]);
 
   // Bookmarks view sub-filter (inbox vs archive)
-  let bookmarksView = $state<'inbox' | 'archive'>('inbox');
+  let savedView = $state<'inbox' | 'archive'>('inbox');
 
   // URL filters (set by component from $page store)
   let feedFilter = $state<string | null>(null);
-  let starredFilter = $state<string | null>(null);
+  let savedFilter = $state<string | null>(null);
   let sharedFilter = $state<string | null>(null);
   let sharerFilter = $state<string | null>(null);
   let followingFilter = $state<string | null>(null);
@@ -185,7 +185,7 @@ function createFeedViewStore() {
     if (activeFilteredView) return 'combined';
     if (sharedFilter) return 'userShares';
     if (sharerFilter || followingFilter) return 'shares';
-    if (feedFilter || starredFilter || feedsFilter) return 'articles';
+    if (feedFilter || savedFilter || feedsFilter) return 'articles';
     return 'combined';
   });
 
@@ -229,15 +229,15 @@ function createFeedViewStore() {
 
     let articles: Article[];
 
-    if (starredFilter) {
+    if (savedFilter) {
       // Starred view with inbox/archive sub-filter
-      if (bookmarksView === 'inbox') {
+      if (savedView === 'inbox') {
         articles = allArticles.filter((a) => {
-          return itemLabelsStore.isStarred(a.guid) && !itemLabelsStore.isArchived(a.guid);
+          return itemLabelsStore.isSaved(a.guid) && !itemLabelsStore.isArchived(a.guid);
         });
       } else {
         articles = allArticles.filter((a) => {
-          return itemLabelsStore.isStarred(a.guid) && itemLabelsStore.isArchived(a.guid);
+          return itemLabelsStore.isSaved(a.guid) && itemLabelsStore.isArchived(a.guid);
         });
       }
     } else {
@@ -456,11 +456,11 @@ function createFeedViewStore() {
     let items: FeedDisplayItem[];
 
     // Special handling for bookmarks view: include starred items of all types
-    if (starredFilter) {
+    if (savedFilter) {
       const sortOrder = effectiveFilters.sortOrder;
-      const isArchiveView = bookmarksView === 'archive';
+      const isArchiveView = savedView === 'archive';
 
-      // Start with starred articles from filteredArticles (already filtered by bookmarksView)
+      // Start with starred articles from filteredArticles (already filtered by savedView)
       const articleItems: FeedDisplayItem[] = displayedArticles.map((item) => ({
         type: 'article' as const,
         item,
@@ -470,7 +470,7 @@ function createFeedViewStore() {
       // Add starred shares
       const starredShareItems: FeedDisplayItem[] = socialStore.shares
         .filter((s) => {
-          if (!itemLabelsStore.isStarred(s.recordUri)) return false;
+          if (!itemLabelsStore.isSaved(s.recordUri)) return false;
           if (isArchiveView) return itemLabelsStore.isArchived(s.recordUri);
           return !itemLabelsStore.isArchived(s.recordUri);
         })
@@ -483,7 +483,7 @@ function createFeedViewStore() {
       // Add starred documents
       const starredDocumentItems: FeedDisplayItem[] = socialStore.documents
         .filter((d) => {
-          if (!itemLabelsStore.isStarred(d.recordUri)) return false;
+          if (!itemLabelsStore.isSaved(d.recordUri)) return false;
           if (isArchiveView) return itemLabelsStore.isArchived(d.recordUri);
           return !itemLabelsStore.isArchived(d.recordUri);
         })
@@ -497,7 +497,7 @@ function createFeedViewStore() {
       const articleGuids = new Set(displayedArticles.map((a) => a.guid));
       const shareRecordUris = new Set(starredShareItems.map((s) => s.key));
       const documentRecordUris = new Set(starredDocumentItems.map((d) => d.key));
-      const bookmarkItems: FeedDisplayItem[] = bookmarksStore.articles
+      const bookmarkItems: FeedDisplayItem[] = savesStore.articles
         .filter((bm) => {
           // Skip feed-source bookmarks whose guid matches a displayed article
           if (bm.source === 'feed' && bm.itemGuid && articleGuids.has(bm.itemGuid)) return false;
@@ -511,7 +511,7 @@ function createFeedViewStore() {
           return !itemLabelsStore.isArchived(bm.uri || bm.itemGuid || '');
         })
         .map((bm) => ({
-          type: 'bookmark' as const,
+          type: 'saved' as const,
           item: bm,
           key: bm.uri || bm.itemGuid || bm.rkey,
         }));
@@ -634,7 +634,7 @@ function createFeedViewStore() {
     loadedArticleCount = DEFAULT_PAGE_SIZE;
 
     // For unread view, load more articles until we have enough unread ones
-    if (showOnlyUnread && !starredFilter) {
+    if (showOnlyUnread && !savedFilter) {
       const targetCount = DEFAULT_PAGE_SIZE;
       const maxCount = DEFAULT_PAGE_SIZE * 10;
 
@@ -840,8 +840,8 @@ function createFeedViewStore() {
     get feedFilter() {
       return feedFilter;
     },
-    get starredFilter() {
-      return starredFilter;
+    get savedFilter() {
+      return savedFilter;
     },
     get sharedFilter() {
       return sharedFilter;
@@ -888,8 +888,8 @@ function createFeedViewStore() {
     get tagMenuItemKey() {
       return tagMenuItemKey;
     },
-    get bookmarksView() {
-      return bookmarksView;
+    get savedView() {
+      return savedView;
     },
 
     // All filtered items (not paginated) — for bulk operations like mark-all-as-read
@@ -943,8 +943,8 @@ function createFeedViewStore() {
     },
     resetToolbarFilters,
     syncToolbarToSavedView,
-    setBookmarksView(view: 'inbox' | 'archive') {
-      bookmarksView = view;
+    setSavedView(view: 'inbox' | 'archive') {
+      savedView = view;
     },
     openTagMenu(itemKey: string) {
       tagMenuItemKey = itemKey;
@@ -954,7 +954,7 @@ function createFeedViewStore() {
     },
     setFilters(filters: {
       feed: string | null;
-      starred: string | null;
+      saved: string | null;
       shared: string | null;
       sharer: string | null;
       following: string | null;
@@ -963,7 +963,7 @@ function createFeedViewStore() {
       view?: string | null;
     }) {
       feedFilter = filters.feed;
-      starredFilter = filters.starred;
+      savedFilter = filters.saved;
       sharedFilter = filters.shared;
       sharerFilter = filters.sharer;
       followingFilter = filters.following;

@@ -10,7 +10,7 @@ import type {
   FilteredView,
   ItemTags,
   ItemLabel,
-  Bookmark,
+  SavedItem,
 } from '$lib/types';
 
 // Sync queue for offline operations
@@ -51,7 +51,7 @@ class SkyreaderDatabase extends Dexie {
   filteredViews!: Table<FilteredView>;
   itemTags!: Table<ItemTags>;
   itemLabels!: Table<ItemLabel>;
-  bookmarks!: Table<Bookmark>;
+  saved!: Table<SavedItem>;
 
   constructor() {
     super('skyreader');
@@ -263,6 +263,19 @@ class SkyreaderDatabase extends Dexie {
     this.version(23).stores({
       bookmarks: 'rkey, url, itemGuid',
     });
+
+    // Rename bookmarks table to saved
+    this.version(24)
+      .stores({
+        saved: 'rkey, url, itemGuid',
+        bookmarks: null,
+      })
+      .upgrade(async (tx) => {
+        const oldRows = await tx.table('bookmarks').toArray();
+        if (oldRows.length > 0) {
+          await tx.table('saved').bulkAdd(oldRows);
+        }
+      });
   }
 }
 
@@ -283,7 +296,7 @@ export async function clearAllData(): Promise<void> {
     db.filteredViews.clear(),
     db.itemTags.clear(),
     db.itemLabels.clear(),
-    db.bookmarks.clear(),
+    db.saved.clear(),
   ]);
 }
 

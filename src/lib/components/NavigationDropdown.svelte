@@ -32,7 +32,7 @@
   let totalUnread = $derived(unreadCounts.totalArticles);
   let sharerCounts = $derived(unreadCounts.sharerShareCounts);
 
-  let starredCount = $derived(itemLabelsStore.starredCount);
+  let savedCount = $derived(itemLabelsStore.savedCount);
   let sharedCount = $derived(sharesStore.userShares.size);
   let activityCount = $derived(activityStore.totalReshareCount);
 
@@ -108,7 +108,7 @@
 
     const views: NavItem[] = [
       { type: 'view', id: 'all', label: 'All', count: totalUnread, icon: 'inbox' },
-      { type: 'view', id: 'starred', label: 'Saved', count: starredCount, icon: 'bookmark' },
+      { type: 'view', id: 'saved', label: 'Saved', count: savedCount, icon: 'bookmark' },
       { type: 'view', id: 'shared', label: 'Shared', count: sharedCount, icon: 'share' },
       { type: 'utility', id: 'discover', label: 'Discover', icon: 'share-2' },
       { type: 'utility', id: 'activity', label: 'Activity', count: activityCount, icon: 'bell' },
@@ -208,7 +208,7 @@
     // Feed page filters (query params on /)
     const url = $page.url;
     const feed = url.searchParams.get('feed');
-    const starred = url.searchParams.get('starred');
+    const saved = url.searchParams.get('saved');
     const shared = url.searchParams.get('shared');
     const sharer = url.searchParams.get('sharer');
     const following = url.searchParams.get('following');
@@ -216,7 +216,7 @@
     const view = url.searchParams.get('view');
 
     if (view) return { type: 'icon', name: 'filter' };
-    if (starred) return { type: 'icon', name: 'bookmark' };
+    if (saved) return { type: 'icon', name: 'bookmark' };
     if (shared) return { type: 'icon', name: 'share' };
     if (following) return { type: 'icon', name: 'users' };
     if (feeds) return { type: 'icon', name: 'rss' };
@@ -245,7 +245,7 @@
   let currentFilter = $derived.by(() => {
     const url = $page.url;
     const feed = url.searchParams.get('feed');
-    const starred = url.searchParams.get('starred');
+    const saved = url.searchParams.get('saved');
     const shared = url.searchParams.get('shared');
     const sharer = url.searchParams.get('sharer');
     const following = url.searchParams.get('following');
@@ -254,7 +254,7 @@
     const type = url.searchParams.get('type') as 'shares' | 'documents' | null;
     if (view) return { type: 'filteredView', id: parseInt(view) };
     if (feed) return { type: 'feed', id: parseInt(feed) };
-    if (starred) return { type: 'starred' };
+    if (saved) return { type: 'saved' };
     if (shared) return { type: 'shared' };
     if (sharer) return { type: 'sharer', id: sharer };
     if (following) return { type: 'following', contentType: type };
@@ -266,7 +266,7 @@
     const filter = currentFilter;
     if (item.type === 'view') {
       if (item.id === 'all' && filter.type === 'all') return true;
-      if (item.id === 'starred' && filter.type === 'starred') return true;
+      if (item.id === 'saved' && filter.type === 'saved') return true;
       if (item.id === 'shared' && filter.type === 'shared') return true;
       if (item.id === 'feeds' && filter.type === 'feeds') return true;
     }
@@ -340,7 +340,7 @@
     }
     let url = '/';
     if (item.type === 'view') {
-      if (item.id === 'starred') url = '/?starred=true';
+      if (item.id === 'saved') url = '/?saved=true';
       else if (item.id === 'shared') url = '/?shared=true';
       else if (item.id === 'feeds') url = '/?feeds=true';
     } else if (item.type === 'feed') {

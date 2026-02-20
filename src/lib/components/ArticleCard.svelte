@@ -38,7 +38,7 @@
     feedTitle,
     feedId,
     isRead = false,
-    isStarred = false,
+    isSaved = false,
     isShared = false,
     shareNote,
     reshareCount = 0,
@@ -46,7 +46,7 @@
     selected = false,
     expanded = false,
     highlighted = false,
-    onToggleStar,
+    onToggleSave,
     onToggleRead,
     onShare,
     onUnshare,
@@ -63,7 +63,7 @@
     feedTitle?: string;
     feedId?: number;
     isRead?: boolean;
-    isStarred?: boolean;
+    isSaved?: boolean;
     isShared?: boolean;
     shareNote?: string;
     reshareCount?: number;
@@ -71,7 +71,7 @@
     selected?: boolean;
     expanded?: boolean;
     highlighted?: boolean;
-    onToggleStar?: () => void;
+    onToggleSave?: () => void;
     onToggleRead?: () => void;
     onShare?: () => void;
     onUnshare?: () => void;
@@ -279,9 +279,9 @@
     }
   }
 
-  function handleStarClick(e: MouseEvent) {
+  function handleSaveClick(e: MouseEvent) {
     e.stopPropagation();
-    onToggleStar?.();
+    onToggleSave?.();
   }
 
   function handleShare(e: MouseEvent) {
@@ -490,7 +490,7 @@
               {/if}
             </span><span class="action-label">Read</span>
           </button>
-          <button class="action-btn" class:starred={isStarred} onclick={handleStarClick}>
+          <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
               class="action-label">Save</span
             >
@@ -526,7 +526,7 @@
               {/if}
             </span><span class="action-label">Read</span>
           </button>
-          <button class="action-btn" class:starred={isStarred} onclick={handleStarClick}>
+          <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
               class="action-label">Save</span
             >
@@ -564,7 +564,7 @@
               {/if}
             </span><span class="action-label">Read</span>
           </button>
-          <button class="action-btn" class:starred={isStarred} onclick={handleStarClick}>
+          <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
               class="action-label">Save</span
             >
@@ -956,11 +956,11 @@
     color: var(--color-primary, #0066cc);
   }
 
-  .action-btn.starred {
+  .action-btn.saved {
     color: #ffc107;
   }
 
-  .action-btn.starred:hover {
+  .action-btn.saved:hover {
     color: #ffc107;
   }
 
@@ -1065,7 +1065,7 @@
     justify-content: center;
   }
 
-  .action-btn.starred .action-icon :global(.icon) {
+  .action-btn.saved .action-icon :global(.icon) {
     fill: currentColor;
   }
 

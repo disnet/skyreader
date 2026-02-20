@@ -3,21 +3,21 @@ import { api } from '$lib/services/api';
 import { generateTid } from '$lib/utils/tid';
 import { syncQueue, type SavedPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
-import type { Bookmark } from '$lib/types';
+import type { SavedItem } from '$lib/types';
 
-function createBookmarksStore() {
-  let articles = $state<Bookmark[]>([]);
+function createSavesStore() {
+  let articles = $state<SavedItem[]>([]);
   let loading = $state(false);
   let saving = $state(false);
   let error = $state<string | null>(null);
 
   // O(1) lookup maps
-  let savedByGuid = $state<Map<string, Bookmark>>(new Map());
-  let savedByUrl = $state<Map<string, Bookmark>>(new Map());
+  let savedByGuid = $state<Map<string, SavedItem>>(new Map());
+  let savedByUrl = $state<Map<string, SavedItem>>(new Map());
 
   function rebuildMaps() {
-    const byGuid = new Map<string, Bookmark>();
-    const byUrl = new Map<string, Bookmark>();
+    const byGuid = new Map<string, SavedItem>();
+    const byUrl = new Map<string, SavedItem>();
     for (const bm of articles) {
       if (bm.itemGuid) byGuid.set(bm.itemGuid, bm);
       if (bm.url) byUrl.set(bm.url, bm);
@@ -31,38 +31,38 @@ function createBookmarksStore() {
     error = null;
     try {
       // Load from local cache first
-      const cached = await db.bookmarks.orderBy('rkey').reverse().toArray();
+      const cached = await db.saved.orderBy('rkey').reverse().toArray();
       if (cached.length > 0) {
         articles = cached;
         rebuildMaps();
       }
 
       // Then fetch from backend
-      const response = await api.getBookmarks();
+      const response = await api.getSaved();
       articles = response.articles;
       rebuildMaps();
 
       // Update local cache
-      await db.bookmarks.clear();
+      await db.saved.clear();
       if (response.articles.length > 0) {
-        await db.bookmarks.bulkPut(response.articles);
+        await db.saved.bulkPut(response.articles);
       }
     } catch (err) {
-      console.error('Failed to load bookmarks:', err);
+      console.error('Failed to load saved items:', err);
       // Keep cached data if backend fails
     } finally {
       loading = false;
     }
   }
 
-  async function saveFromUrl(url: string): Promise<Bookmark> {
+  async function saveFromUrl(url: string): Promise<SavedItem> {
     saving = true;
     error = null;
     try {
       const rkey = generateTid();
-      const result = await api.saveBookmarkFromUrl(url, rkey);
+      const result = await api.saveFromUrl(url, rkey);
 
-      const bookmark: Bookmark = {
+      const savedItem: SavedItem = {
         rkey: result.rkey,
         uri: result.uri,
         url: result.url,
@@ -81,11 +81,11 @@ function createBookmarksStore() {
       };
 
       // Add to local state and cache
-      articles = [bookmark, ...articles];
+      articles = [savedItem, ...articles];
       rebuildMaps();
-      await db.bookmarks.put(bookmark);
+      await db.saved.put(savedItem);
 
-      return bookmark;
+      return savedItem;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to save bookmark';
       error = msg;
@@ -103,7 +103,7 @@ function createBookmarksStore() {
     summary?: string;
     imageUrl?: string;
     publishedAt?: string;
-  }): Promise<Bookmark> {
+  }): Promise<SavedItem> {
     saving = true;
     error = null;
     try {
@@ -111,7 +111,7 @@ function createBookmarksStore() {
       const now = new Date().toISOString();
 
       // Optimistically add to local state
-      const bookmark: Bookmark = {
+      const savedItem: SavedItem = {
         rkey,
         uri: '', // Will be set by backend
         url: article.url,
@@ -129,13 +129,13 @@ function createBookmarksStore() {
         itemGuid: article.guid,
       };
 
-      articles = [bookmark, ...articles];
+      articles = [savedItem, ...articles];
       rebuildMaps();
-      await db.bookmarks.put(bookmark);
+      await db.saved.put(savedItem);
 
       if (syncStore.isOnline) {
         try {
-          const result = await api.saveBookmarkFromUrl(article.url, rkey, {
+          const result = await api.saveFromUrl(article.url, rkey, {
             fromFeed: true,
             itemGuid: article.guid,
             title: article.title,
@@ -146,14 +146,14 @@ function createBookmarksStore() {
           });
 
           // Update with server response
-          const updated: Bookmark = {
-            ...bookmark,
+          const updated: SavedItem = {
+            ...savedItem,
             uri: result.uri,
             rkey: result.rkey,
           };
           articles = articles.map((a) => (a.rkey === rkey ? updated : a));
           rebuildMaps();
-          await db.bookmarks.put(updated);
+          await db.saved.put(updated);
 
           return updated;
         } catch (err) {
@@ -170,7 +170,7 @@ function createBookmarksStore() {
             image: article.imageUrl,
             publishedAt: article.publishedAt,
           } as SavedPayload);
-          return bookmark;
+          return savedItem;
         }
       } else {
         // Offline: queue the API call
@@ -185,7 +185,7 @@ function createBookmarksStore() {
           image: article.imageUrl,
           publishedAt: article.publishedAt,
         } as SavedPayload);
-        return bookmark;
+        return savedItem;
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to save article';
@@ -204,14 +204,14 @@ function createBookmarksStore() {
     itemDescription?: string;
     itemImage?: string;
     itemPublishedAt?: string;
-  }): Promise<Bookmark> {
+  }): Promise<SavedItem> {
     saving = true;
     error = null;
     try {
       const rkey = generateTid();
       const now = new Date().toISOString();
 
-      const bookmark: Bookmark = {
+      const savedItem: SavedItem = {
         rkey,
         uri: '',
         url: share.itemUrl || '',
@@ -229,13 +229,13 @@ function createBookmarksStore() {
         itemGuid: share.recordUri,
       };
 
-      articles = [bookmark, ...articles];
+      articles = [savedItem, ...articles];
       rebuildMaps();
-      await db.bookmarks.put(bookmark);
+      await db.saved.put(savedItem);
 
       if (syncStore.isOnline) {
         try {
-          const result = await api.saveBookmarkFromUrl(share.itemUrl || '', rkey, {
+          const result = await api.saveFromUrl(share.itemUrl || '', rkey, {
             source: 'share',
             itemGuid: share.recordUri,
             title: share.itemTitle,
@@ -245,14 +245,14 @@ function createBookmarksStore() {
             publishedAt: share.itemPublishedAt,
           });
 
-          const updated: Bookmark = {
-            ...bookmark,
+          const updated: SavedItem = {
+            ...savedItem,
             uri: result.uri,
             rkey: result.rkey,
           };
           articles = articles.map((a) => (a.rkey === rkey ? updated : a));
           rebuildMaps();
-          await db.bookmarks.put(updated);
+          await db.saved.put(updated);
           return updated;
         } catch (err) {
           console.error('Failed to save share to backend, queueing:', err);
@@ -267,7 +267,7 @@ function createBookmarksStore() {
             image: share.itemImage,
             publishedAt: share.itemPublishedAt,
           } as SavedPayload);
-          return bookmark;
+          return savedItem;
         }
       } else {
         await syncQueue.enqueue('create', 'saved', share.recordUri, {
@@ -281,7 +281,7 @@ function createBookmarksStore() {
           image: share.itemImage,
           publishedAt: share.itemPublishedAt,
         } as SavedPayload);
-        return bookmark;
+        return savedItem;
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to save share';
@@ -298,14 +298,14 @@ function createBookmarksStore() {
     title?: string;
     description?: string;
     publishedAt?: string;
-  }): Promise<Bookmark> {
+  }): Promise<SavedItem> {
     saving = true;
     error = null;
     try {
       const rkey = generateTid();
       const now = new Date().toISOString();
 
-      const bookmark: Bookmark = {
+      const savedItem: SavedItem = {
         rkey,
         uri: '',
         url: doc.url || '',
@@ -323,13 +323,13 @@ function createBookmarksStore() {
         itemGuid: doc.recordUri,
       };
 
-      articles = [bookmark, ...articles];
+      articles = [savedItem, ...articles];
       rebuildMaps();
-      await db.bookmarks.put(bookmark);
+      await db.saved.put(savedItem);
 
       if (syncStore.isOnline) {
         try {
-          const result = await api.saveBookmarkFromUrl(doc.url || '', rkey, {
+          const result = await api.saveFromUrl(doc.url || '', rkey, {
             source: 'document',
             itemGuid: doc.recordUri,
             title: doc.title,
@@ -337,14 +337,14 @@ function createBookmarksStore() {
             publishedAt: doc.publishedAt,
           });
 
-          const updated: Bookmark = {
-            ...bookmark,
+          const updated: SavedItem = {
+            ...savedItem,
             uri: result.uri,
             rkey: result.rkey,
           };
           articles = articles.map((a) => (a.rkey === rkey ? updated : a));
           rebuildMaps();
-          await db.bookmarks.put(updated);
+          await db.saved.put(updated);
           return updated;
         } catch (err) {
           console.error('Failed to save document to backend, queueing:', err);
@@ -357,7 +357,7 @@ function createBookmarksStore() {
             description: doc.description,
             publishedAt: doc.publishedAt,
           } as SavedPayload);
-          return bookmark;
+          return savedItem;
         }
       } else {
         await syncQueue.enqueue('create', 'saved', doc.recordUri, {
@@ -369,7 +369,7 @@ function createBookmarksStore() {
           description: doc.description,
           publishedAt: doc.publishedAt,
         } as SavedPayload);
-        return bookmark;
+        return savedItem;
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to save document';
@@ -381,29 +381,29 @@ function createBookmarksStore() {
   }
 
   async function unsaveByGuid(guid: string) {
-    const bookmark = savedByGuid.get(guid);
-    if (!bookmark) return;
+    const item = savedByGuid.get(guid);
+    if (!item) return;
 
     // Optimistically remove from local state
     articles = articles.filter((a) => a.itemGuid !== guid);
     rebuildMaps();
-    await db.bookmarks.where('itemGuid').equals(guid).delete();
+    await db.saved.where('itemGuid').equals(guid).delete();
 
     if (syncStore.isOnline) {
       try {
-        await api.deleteBookmarkByGuid(guid);
+        await api.deleteSavedByGuid(guid);
       } catch (err) {
         console.error('Failed to unsave by guid, queueing:', err);
         await syncQueue.enqueue('delete', 'saved', guid, {
-          rkey: bookmark.rkey,
-          url: bookmark.url,
+          rkey: item.rkey,
+          url: item.url,
           itemGuid: guid,
         } as SavedPayload);
       }
     } else {
       await syncQueue.enqueue('delete', 'saved', guid, {
-        rkey: bookmark.rkey,
-        url: bookmark.url,
+        rkey: item.rkey,
+        url: item.url,
         itemGuid: guid,
       } as SavedPayload);
     }
@@ -411,12 +411,12 @@ function createBookmarksStore() {
 
   async function remove(rkey: string) {
     try {
-      await api.deleteBookmark(rkey);
+      await api.deleteSaved(rkey);
       articles = articles.filter((a) => a.rkey !== rkey);
       rebuildMaps();
-      await db.bookmarks.delete(rkey);
+      await db.saved.delete(rkey);
     } catch (err) {
-      console.error('Failed to delete bookmark:', err);
+      console.error('Failed to delete saved item:', err);
       throw err;
     }
   }
@@ -425,15 +425,15 @@ function createBookmarksStore() {
     return savedByGuid.has(guidOrUrl) || savedByUrl.has(guidOrUrl);
   }
 
-  function getByUri(uri: string): Bookmark | undefined {
+  function getByUri(uri: string): SavedItem | undefined {
     return articles.find((a) => a.uri === uri);
   }
 
-  function getByUrl(url: string): Bookmark | undefined {
+  function getByUrl(url: string): SavedItem | undefined {
     return savedByUrl.get(url);
   }
 
-  function getByGuid(guid: string): Bookmark | undefined {
+  function getByGuid(guid: string): SavedItem | undefined {
     return savedByGuid.get(guid);
   }
 
@@ -464,4 +464,4 @@ function createBookmarksStore() {
   };
 }
 
-export const bookmarksStore = createBookmarksStore();
+export const savesStore = createSavesStore();

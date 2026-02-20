@@ -42,15 +42,15 @@ function createArticlesStore() {
   });
 
   // Derived: starred articles
-  let starredArticles = $derived.by(() => {
-    return allArticles.filter((a) => itemLabelsStore.isStarred(a.guid));
+  let savedArticles = $derived.by(() => {
+    return allArticles.filter((a) => itemLabelsStore.isSaved(a.guid));
   });
 
   // Derived: set of starred GUIDs (useful for article retention)
-  let starredGuids = $derived.by(() => {
+  let savedGuids = $derived.by(() => {
     const starred = new Set<string>();
     for (const a of allArticles) {
-      if (itemLabelsStore.isStarred(a.guid)) starred.add(a.guid);
+      if (itemLabelsStore.isSaved(a.guid)) starred.add(a.guid);
     }
     return starred;
   });
@@ -89,16 +89,16 @@ function createArticlesStore() {
    *
    * @param subscriptionId - Filter by subscription (optional)
    * @param showOnlyUnread - Filter to unread articles only
-   * @param showOnlyStarred - Filter to starred articles only
+   * @param showOnlySaved - Filter to starred articles only
    * @param count - Number of articles to return
    */
   function getPaginated(options: {
     subscriptionId?: number;
     showOnlyUnread?: boolean;
-    showOnlyStarred?: boolean;
+    showOnlySaved?: boolean;
     count?: number;
   }): Article[] {
-    const { subscriptionId, showOnlyUnread, showOnlyStarred, count = pageSize } = options;
+    const { subscriptionId, showOnlyUnread, showOnlySaved, count = pageSize } = options;
 
     let filtered: Article[];
 
@@ -110,8 +110,8 @@ function createArticlesStore() {
     }
 
     // Apply starred filter
-    if (showOnlyStarred) {
-      filtered = filtered.filter((a) => itemLabelsStore.isStarred(a.guid));
+    if (showOnlySaved) {
+      filtered = filtered.filter((a) => itemLabelsStore.isSaved(a.guid));
     }
     // Apply unread filter (mutually exclusive with starred for now)
     else if (showOnlyUnread) {
@@ -129,7 +129,7 @@ function createArticlesStore() {
   function loadMore(options: {
     subscriptionId?: number;
     showOnlyUnread?: boolean;
-    showOnlyStarred?: boolean;
+    showOnlySaved?: boolean;
   }): Article[] {
     const newCount = loadedCount + pageSize;
     loadedCount = newCount;
@@ -153,23 +153,23 @@ function createArticlesStore() {
   function hasMore(options: {
     subscriptionId?: number;
     showOnlyUnread?: boolean;
-    showOnlyStarred?: boolean;
+    showOnlySaved?: boolean;
   }): boolean {
-    const { subscriptionId, showOnlyUnread, showOnlyStarred } = options;
+    const { subscriptionId, showOnlyUnread, showOnlySaved } = options;
 
     let total: number;
 
     if (subscriptionId !== undefined) {
       const subArticles = getForSubscription(subscriptionId);
-      if (showOnlyStarred) {
-        total = subArticles.filter((a) => itemLabelsStore.isStarred(a.guid)).length;
+      if (showOnlySaved) {
+        total = subArticles.filter((a) => itemLabelsStore.isSaved(a.guid)).length;
       } else if (showOnlyUnread) {
         total = subArticles.filter((a) => !itemLabelsStore.isRead(a.guid)).length;
       } else {
         total = subArticles.length;
       }
-    } else if (showOnlyStarred) {
-      total = starredArticles.length;
+    } else if (showOnlySaved) {
+      total = savedArticles.length;
     } else if (showOnlyUnread) {
       total = unreadArticles.length;
     } else {
@@ -213,11 +213,11 @@ function createArticlesStore() {
     get unreadArticles() {
       return unreadArticles;
     },
-    get starredArticles() {
-      return starredArticles;
+    get savedArticles() {
+      return savedArticles;
     },
-    get starredGuids() {
-      return starredGuids;
+    get savedGuids() {
+      return savedGuids;
     },
     get loadedCount() {
       return loadedCount;

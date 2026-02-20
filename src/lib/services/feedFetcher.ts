@@ -45,11 +45,11 @@ export interface FetchResult {
  * - Merges new articles into liveDb
  *
  * @param subscriptions - Array of subscriptions to fetch
- * @param starredGuids - Set of starred article GUIDs (to preserve during cleanup)
+ * @param savedGuids - Set of starred article GUIDs (to preserve during cleanup)
  */
 export async function fetchAllFeeds(
   subscriptions: Subscription[],
-  starredGuids: Set<string> = new Set()
+  savedGuids: Set<string> = new Set()
 ): Promise<FetchResult> {
   const result: FetchResult = {
     totalFeeds: subscriptions.length,
@@ -129,7 +129,7 @@ export async function fetchAllFeeds(
           const newCount = await liveDb.mergeArticles(
             req.subscriptionId,
             feedResult.items,
-            starredGuids
+            savedGuids
           );
           result.newArticles += newCount;
         }
@@ -161,12 +161,12 @@ export interface FetchSingleFeedResult {
  *
  * @param subscription - Subscription to fetch
  * @param force - If true, fetch from source ignoring cache
- * @param starredGuids - Set of starred article GUIDs
+ * @param savedGuids - Set of starred article GUIDs
  */
 export async function fetchSingleFeed(
   subscription: Subscription,
   force = false,
-  starredGuids: Set<string> = new Set()
+  savedGuids: Set<string> = new Set()
 ): Promise<FetchSingleFeedResult> {
   if (!subscription.id) {
     return { success: false, newArticles: 0 };
@@ -197,7 +197,7 @@ export async function fetchSingleFeed(
     // Merge articles
     let newArticles = 0;
     if (feed.items && feed.items.length > 0) {
-      newArticles = await liveDb.mergeArticles(subscription.id, feed.items, starredGuids);
+      newArticles = await liveDb.mergeArticles(subscription.id, feed.items, savedGuids);
     }
 
     return {
@@ -218,12 +218,12 @@ export async function fetchSingleFeed(
  * These are fetched one by one since they don't have any cached content yet
  *
  * @param subscriptions - New subscriptions to fetch
- * @param starredGuids - Set of starred article GUIDs
+ * @param savedGuids - Set of starred article GUIDs
  * @param onProgress - Progress callback (current, total)
  */
 export async function fetchNewSubscriptionFeeds(
   subscriptions: Subscription[],
-  starredGuids: Set<string> = new Set(),
+  savedGuids: Set<string> = new Set(),
   onProgress?: (current: number, total: number) => void
 ): Promise<FetchResult> {
   const result: FetchResult = {
@@ -237,7 +237,7 @@ export async function fetchNewSubscriptionFeeds(
     const sub = subscriptions[i];
     onProgress?.(i, subscriptions.length);
 
-    const fetchResult = await fetchSingleFeed(sub, true, starredGuids);
+    const fetchResult = await fetchSingleFeed(sub, true, savedGuids);
     if (fetchResult.success) {
       result.successfulFeeds++;
       result.newArticles += fetchResult.newArticles;
@@ -254,13 +254,13 @@ export async function fetchNewSubscriptionFeeds(
  * Force refresh all feeds from source (bypass cache)
  *
  * @param subscriptions - Subscriptions to refresh
- * @param starredGuids - Set of starred article GUIDs
+ * @param savedGuids - Set of starred article GUIDs
  * @param concurrency - Number of concurrent requests
  * @param delayMs - Delay between batches
  */
 export async function forceRefreshAllFeeds(
   subscriptions: Subscription[],
-  starredGuids: Set<string> = new Set(),
+  savedGuids: Set<string> = new Set(),
   concurrency = 3,
   delayMs = 1000
 ): Promise<FetchResult> {
@@ -278,7 +278,7 @@ export async function forceRefreshAllFeeds(
     const batch = subscriptions.slice(i, i + concurrency);
 
     const batchResults = await Promise.allSettled(
-      batch.map((sub) => fetchSingleFeed(sub, true, starredGuids))
+      batch.map((sub) => fetchSingleFeed(sub, true, savedGuids))
     );
 
     for (const batchResult of batchResults) {

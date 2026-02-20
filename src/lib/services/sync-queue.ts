@@ -568,7 +568,7 @@ class SyncQueue {
   ): Promise<void> {
     switch (operation) {
       case 'create':
-        await api.saveBookmarkFromUrl(payload.url, payload.rkey, {
+        await api.saveFromUrl(payload.url, payload.rkey, {
           fromFeed: payload.fromFeed,
           source: payload.source as 'url' | 'feed' | 'share' | 'document' | undefined,
           itemGuid: payload.itemGuid,
@@ -582,9 +582,9 @@ class SyncQueue {
         break;
       case 'delete':
         if (payload.itemGuid) {
-          await api.deleteBookmarkByGuid(payload.itemGuid);
+          await api.deleteSavedByGuid(payload.itemGuid);
         } else {
-          await api.deleteBookmark(payload.rkey);
+          await api.deleteSaved(payload.rkey);
         }
         break;
     }

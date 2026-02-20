@@ -1,12 +1,12 @@
 <script lang="ts">
-  import BookmarkCard from './BookmarkCard.svelte';
-  import BookmarkReader from './BookmarkReader.svelte';
+  import SavedCard from './SavedCard.svelte';
+  import SavedReader from './SavedReader.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-  import { bookmarksStore } from '$lib/stores/bookmarks.svelte';
+  import { savesStore } from '$lib/stores/saves.svelte';
   import { ScopeUpgradeError } from '$lib/services/api';
   import type { ItemLabelType } from '$lib/types';
 
@@ -55,7 +55,7 @@
 
   function handleRemoveBookmark(item: FeedDisplayItem) {
     if (item.type === 'article') {
-      itemLabelsStore.toggleStar(item.key, 'article', item.item.url, item.item.title, {
+      itemLabelsStore.toggleSave(item.key, 'article', item.item.url, item.item.title, {
         type: 'article',
         guid: item.item.guid,
         url: item.item.url,
@@ -65,10 +65,10 @@
         imageUrl: item.item.imageUrl,
         publishedAt: item.item.publishedAt,
       });
-    } else if (item.type === 'bookmark') {
-      bookmarksStore.remove(item.item.rkey);
+    } else if (item.type === 'saved') {
+      savesStore.remove(item.item.rkey);
     } else if (item.type === 'share') {
-      itemLabelsStore.toggleStar(item.key, 'share', item.item.itemUrl, item.item.itemTitle, {
+      itemLabelsStore.toggleSave(item.key, 'share', item.item.itemUrl, item.item.itemTitle, {
         type: 'share',
         recordUri: item.item.recordUri,
         itemUrl: item.item.itemUrl,
@@ -79,7 +79,7 @@
         itemPublishedAt: item.item.itemPublishedAt,
       });
     } else if (item.type === 'document') {
-      itemLabelsStore.toggleStar(
+      itemLabelsStore.toggleSave(
         item.key,
         'document',
         item.item.canonicalUrl || item.item.path || '',
@@ -95,7 +95,7 @@
       );
     } else {
       // userShare — unsave by guid
-      bookmarksStore.unsaveByGuid(item.key);
+      savesStore.unsaveByGuid(item.key);
     }
     if (readerItem?.key === item.key) {
       closeReader();
@@ -129,7 +129,7 @@
 
     saveError = null;
     try {
-      await bookmarksStore.saveFromUrl(url);
+      await savesStore.saveFromUrl(url);
       urlInputValue = '';
       showUrlInput = false;
     } catch (err) {
@@ -169,7 +169,7 @@
 </script>
 
 {#if readerItem}
-  <BookmarkReader {readerItem} onClose={closeReader} onArchive={() => handleArchive(readerItem!)} />
+  <SavedReader {readerItem} onClose={closeReader} onArchive={() => handleArchive(readerItem!)} />
 {:else}
   <div class="bookmark-list">
     {#if showScopeUpgrade}
@@ -193,14 +193,14 @@
             placeholder="Paste article URL..."
             class="url-input"
             onkeydown={handleUrlKeydown}
-            disabled={bookmarksStore.saving}
+            disabled={savesStore.saving}
           />
           <button
             class="url-save-btn"
             onclick={handleSaveUrl}
-            disabled={bookmarksStore.saving || !urlInputValue.trim()}
+            disabled={savesStore.saving || !urlInputValue.trim()}
           >
-            {#if bookmarksStore.saving}
+            {#if savesStore.saving}
               Saving...
             {:else}
               Save
@@ -209,7 +209,7 @@
           <button
             class="url-cancel-btn"
             onclick={() => (showUrlInput = false)}
-            disabled={bookmarksStore.saving}
+            disabled={savesStore.saving}
           >
             <Icon name="x" size={16} />
           </button>
@@ -222,7 +222,7 @@
 
     {#each feedViewStore.currentItems as displayItem, index (displayItem.key)}
       <div bind:this={articleElements[index]}>
-        <BookmarkCard
+        <SavedCard
           {displayItem}
           selected={feedViewStore.selectedIndex === index}
           onOpen={() => openReader(displayItem)}
@@ -233,7 +233,7 @@
     {/each}
 
     {#if feedViewStore.currentItems.length === 0}
-      {#if feedViewStore.bookmarksView === 'inbox'}
+      {#if feedViewStore.savedView === 'inbox'}
         <EmptyState
           title="No saved items"
           description="Save articles, shares, or documents to save them for later"

@@ -611,7 +611,7 @@ class ApiClient {
   }
 
   // Bookmarks
-  async saveBookmarkFromUrl(
+  async saveFromUrl(
     url: string,
     rkey: string,
     options?: {
@@ -648,7 +648,7 @@ class ApiClient {
     });
   }
 
-  async getBookmarks(): Promise<{
+  async getSaved(): Promise<{
     articles: Array<{
       rkey: string;
       uri: string;
@@ -670,13 +670,13 @@ class ApiClient {
     return this.fetch('/api/saved');
   }
 
-  async deleteBookmark(rkey: string): Promise<{ success: boolean }> {
+  async deleteSaved(rkey: string): Promise<{ success: boolean }> {
     return this.fetch(`/api/saved/${rkey}`, {
       method: 'DELETE',
     });
   }
 
-  async deleteBookmarkByGuid(guid: string): Promise<{ success: boolean }> {
+  async deleteSavedByGuid(guid: string): Promise<{ success: boolean }> {
     return this.fetch(`/api/saved/by-guid/${encodeURIComponent(guid)}`, {
       method: 'DELETE',
     });

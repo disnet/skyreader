@@ -112,7 +112,7 @@
       key: '2',
       description: 'Saved',
       category: 'Views',
-      action: () => goto('/?starred=true'),
+      action: () => goto('/?saved=true'),
       condition: () => auth.isAuthenticated,
     });
 

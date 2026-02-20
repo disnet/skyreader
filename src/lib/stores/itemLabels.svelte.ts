@@ -7,13 +7,13 @@ import {
   type LabelPayload,
 } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
-import { bookmarksStore } from './bookmarks.svelte';
+import { savesStore } from './saves.svelte';
 import type { ItemLabel, ItemLabelType, SocialItemType, SocialReadPosition } from '$lib/types';
 
 const BULK_BATCH_SIZE = 500;
 
 // Re-export for consumers that used this type from reading store
-export interface StarredArticle {
+export interface SavedArticle {
   articleGuid: string;
   articleUrl?: string;
   articleTitle?: string;
@@ -466,8 +466,8 @@ function createItemLabelsStore() {
     return hasLabel(itemKey, 'read');
   }
 
-  function isStarred(itemKey: string): boolean {
-    return bookmarksStore.isSaved(itemKey);
+  function isSaved(itemKey: string): boolean {
+    return savesStore.isSaved(itemKey);
   }
 
   function isArchived(itemKey: string): boolean {
@@ -527,14 +527,16 @@ function createItemLabelsStore() {
     return map;
   });
 
-  // Starred count: purely from bookmarks
-  let starredCount = $derived(bookmarksStore.articles.length);
+  // Saved count: purely from saves
+  let savedCount = $derived(savesStore.articles.length);
 
-  // Archived count (starred + archived)
+  // Archived count (saved + archived)
   let archivedCount = $derived.by(() => {
     let count = 0;
     for (const [itemKey, labels] of labelsByItem) {
-      if (labels.has('starred') && labels.has('archived')) count++;
+      if (labels.has('archived')) {
+        if (savesStore.isSaved(itemKey)) count++;
+      }
     }
     return count;
   });
@@ -660,8 +662,8 @@ function createItemLabelsStore() {
     }
   }
 
-  // --- Star mutations (decoupled from read state) ---
-  // All star operations now delegate to bookmarksStore (saved_articles is the sole source of truth)
+  // --- Save mutations (decoupled from read state) ---
+  // All save operations now delegate to savesStore (saved_articles is the sole source of truth)
 
   type SaveMeta =
     | {
@@ -693,40 +695,40 @@ function createItemLabelsStore() {
         publishedAt?: string;
       };
 
-  async function toggleStar(
+  async function toggleSave(
     itemKey: string,
     _itemType: ItemLabelType = 'article',
     _itemUrl?: string,
     _itemTitle?: string,
     saveMeta?: SaveMeta
   ) {
-    const wasStarred = isStarred(itemKey);
+    const wasSaved = isSaved(itemKey);
 
     if (!saveMeta) {
       // No metadata — can only unsave
-      if (wasStarred) {
-        await bookmarksStore.unsaveByGuid(itemKey);
+      if (wasSaved) {
+        await savesStore.unsaveByGuid(itemKey);
       }
       return;
     }
 
     if (saveMeta.type === 'article') {
-      if (!wasStarred) {
-        await bookmarksStore.saveArticle(saveMeta);
+      if (!wasSaved) {
+        await savesStore.saveArticle(saveMeta);
       } else {
-        await bookmarksStore.unsaveByGuid(saveMeta.guid);
+        await savesStore.unsaveByGuid(saveMeta.guid);
       }
     } else if (saveMeta.type === 'share') {
-      if (!wasStarred) {
-        await bookmarksStore.saveShare(saveMeta);
+      if (!wasSaved) {
+        await savesStore.saveShare(saveMeta);
       } else {
-        await bookmarksStore.unsaveByGuid(saveMeta.recordUri);
+        await savesStore.unsaveByGuid(saveMeta.recordUri);
       }
     } else if (saveMeta.type === 'document') {
-      if (!wasStarred) {
-        await bookmarksStore.saveDocument(saveMeta);
+      if (!wasSaved) {
+        await savesStore.saveDocument(saveMeta);
       } else {
-        await bookmarksStore.unsaveByGuid(saveMeta.recordUri);
+        await savesStore.unsaveByGuid(saveMeta.recordUri);
       }
     }
   }
@@ -1264,8 +1266,8 @@ function createItemLabelsStore() {
 
   // --- Derived helpers ---
 
-  function getStarredArticles(): StarredArticle[] {
-    return bookmarksStore.articles
+  function getSavedArticles(): SavedArticle[] {
+    return savesStore.articles
       .filter((bm) => bm.source === 'feed' && bm.itemGuid)
       .map((bm) => ({
         articleGuid: bm.itemGuid!,
@@ -1275,10 +1277,10 @@ function createItemLabelsStore() {
       }));
   }
 
-  /** Get all starred item keys grouped by source type */
-  function getStarredItemKeys(): Map<ItemLabelType, Set<string>> {
+  /** Get all saved item keys grouped by source type */
+  function getSavedItemKeys(): Map<ItemLabelType, Set<string>> {
     const result = new Map<ItemLabelType, Set<string>>();
-    for (const bm of bookmarksStore.articles) {
+    for (const bm of savesStore.articles) {
       const type: ItemLabelType =
         bm.source === 'share'
           ? 'share'
@@ -1286,7 +1288,7 @@ function createItemLabelsStore() {
             ? 'document'
             : bm.source === 'feed'
               ? 'article'
-              : 'bookmark';
+              : 'saved';
       let set = result.get(type);
       if (!set) {
         set = new Set();
@@ -1314,8 +1316,8 @@ function createItemLabelsStore() {
     get isLoading() {
       return isLoading;
     },
-    get starredCount() {
-      return starredCount;
+    get savedCount() {
+      return savedCount;
     },
     get archivedCount() {
       return archivedCount;
@@ -1338,9 +1340,9 @@ function createItemLabelsStore() {
     markAsRead,
     markAllAsRead,
     markAsUnread,
-    // Article star (decoupled from read)
-    isStarred,
-    toggleStar,
+    // Article save (decoupled from read)
+    isSaved,
+    toggleSave,
     // Archive
     isArchived,
     toggleArchive,
@@ -1363,8 +1365,8 @@ function createItemLabelsStore() {
     getReadProgress,
     setReadProgress,
     // Derived helpers
-    getStarredArticles,
-    getStarredItemKeys,
+    getSavedArticles,
+    getSavedItemKeys,
     getUnreadCount,
   };
 }

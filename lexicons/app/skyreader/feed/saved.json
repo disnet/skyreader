@@ -34,7 +34,7 @@
           "contentType": {
             "type": "string",
             "maxLength": 64,
-            "description": "Content type of the bookmarked item (e.g. webpage, pdf, epub)"
+            "description": "Content type of the saved item (e.g. webpage, pdf, epub)"
           },
           "author": {
             "type": "string",

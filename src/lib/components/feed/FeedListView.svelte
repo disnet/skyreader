@@ -10,12 +10,12 @@
   import type { Article, SocialDocument } from '$lib/types';
 
   interface Props {
-    onToggleStar: (article: Article) => void;
+    onToggleSave: (article: Article) => void;
     onShare: (article: Article, sub: (typeof subscriptionsStore.subscriptions)[0]) => void;
     onUnshare: (guid: string) => void;
   }
 
-  let { onToggleStar, onShare, onUnshare }: Props = $props();
+  let { onToggleSave, onShare, onUnshare }: Props = $props();
 
   // Element refs for scroll observation
   let articleElements = $state<HTMLElement[]>([]);
@@ -97,13 +97,13 @@
           feedTitle={sub?.customTitle || sub?.title}
           feedId={sub?.id}
           isRead={itemLabelsStore.isRead(article.guid)}
-          isStarred={itemLabelsStore.isStarred(article.guid)}
+          isSaved={itemLabelsStore.isSaved(article.guid)}
           isShared={sharesStore.isShared(article.guid)}
           shareNote={sharesStore.getShareNote(article.guid)}
           selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
           expanded={feedViewStore.expandedIndex === index}
           highlighted={feedViewStore.selectedIndex === index}
-          onToggleStar={() => onToggleStar(article)}
+          onToggleSave={() => onToggleSave(article)}
           onToggleRead={() => handleToggleRead(article)}
           onShare={() => sub && onShare(article, sub)}
           onUnshare={() => onUnshare(article.guid)}
@@ -117,12 +117,12 @@
           {share}
           {localArticle}
           isRead={itemLabelsStore.isSocialRead(share.recordUri)}
-          isStarred={itemLabelsStore.isStarred(share.recordUri)}
+          isSaved={itemLabelsStore.isSaved(share.recordUri)}
           selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
           expanded={feedViewStore.expandedIndex === index}
           highlighted={feedViewStore.selectedIndex === index}
-          onToggleStar={() =>
-            itemLabelsStore.toggleStar(share.recordUri, 'share', share.itemUrl, share.itemTitle, {
+          onToggleSave={() =>
+            itemLabelsStore.toggleSave(share.recordUri, 'share', share.itemUrl, share.itemTitle, {
               type: 'share',
               recordUri: share.recordUri,
               itemUrl: share.itemUrl,
@@ -163,14 +163,14 @@
           feedTitle={sub?.customTitle || sub?.title}
           feedId={sub?.id}
           isRead={itemLabelsStore.isRead(article.guid)}
-          isStarred={itemLabelsStore.isStarred(article.guid)}
+          isSaved={itemLabelsStore.isSaved(article.guid)}
           isShared={true}
           shareNote={share.note}
           reshareCount={share.reshareCount || 0}
           selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
           expanded={feedViewStore.expandedIndex === index}
           highlighted={feedViewStore.selectedIndex === index}
-          onToggleStar={() => onToggleStar(article)}
+          onToggleSave={() => onToggleSave(article)}
           onToggleRead={() => handleToggleRead(article)}
           onUnshare={() => onUnshare(share.articleGuid)}
           onSelect={() => handleSelect(index)}
@@ -181,12 +181,12 @@
         <ArticleCard
           document={doc}
           isRead={itemLabelsStore.isSocialRead(doc.recordUri)}
-          isStarred={itemLabelsStore.isStarred(doc.recordUri)}
+          isSaved={itemLabelsStore.isSaved(doc.recordUri)}
           selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
           expanded={feedViewStore.expandedIndex === index}
           highlighted={feedViewStore.selectedIndex === index}
-          onToggleStar={() =>
-            itemLabelsStore.toggleStar(
+          onToggleSave={() =>
+            itemLabelsStore.toggleSave(
               doc.recordUri,
               'document',
               doc.canonicalUrl || doc.path || '',

@@ -7,7 +7,7 @@ import { filteredViewsStore } from './filteredViews.svelte';
 import { feedStatusStore } from './feedStatus.svelte';
 import { articlesStore } from './articles.svelte';
 import { syncStore } from './sync.svelte';
-import { bookmarksStore } from './bookmarks.svelte';
+import { savesStore } from './saves.svelte';
 import { fetchAllFeeds } from '$lib/services/feedFetcher';
 import { api } from '$lib/services/api';
 import { getMetadata, setMetadata } from '$lib/services/db';
@@ -64,7 +64,7 @@ function createAppManager() {
         shareReadingStore.load(),
         sharesStore.load(),
         filteredViewsStore.load(),
-        bookmarksStore.load(),
+        savesStore.load(),
       ]);
 
       // Initialize feed statuses for existing subscriptions
@@ -120,7 +120,7 @@ function createAppManager() {
 
       // Fetch all feeds using batch API
       if (liveDb.subscriptions.length > 0) {
-        await fetchAllFeeds(liveDb.subscriptions, articlesStore.starredGuids);
+        await fetchAllFeeds(liveDb.subscriptions, articlesStore.savedGuids);
       }
 
       lastRefreshAt = Date.now();
@@ -240,7 +240,7 @@ function createAppManager() {
 
     try {
       const { forceRefreshAllFeeds } = await import('$lib/services/feedFetcher');
-      await forceRefreshAllFeeds(liveDb.subscriptions, articlesStore.starredGuids);
+      await forceRefreshAllFeeds(liveDb.subscriptions, articlesStore.savedGuids);
       lastRefreshAt = Date.now();
       // Persist to IndexedDB for service worker and cross-session access
       setMetadata(LAST_REFRESH_KEY, lastRefreshAt);

@@ -18,7 +18,7 @@
   import WelcomePage from '$lib/components/feed/WelcomePage.svelte';
   import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
   import FeedListView from '$lib/components/feed/FeedListView.svelte';
-  import BookmarkListView from '$lib/components/feed/BookmarkListView.svelte';
+  import SavedListView from '$lib/components/feed/SavedListView.svelte';
   import EditFeedModal from '$lib/components/EditFeedModal.svelte';
   import type { Subscription, BlueskyProfile } from '$lib/types';
   import { useScrollMarkAsRead } from '$lib/hooks/useScrollMarkAsRead.svelte';
@@ -50,7 +50,7 @@
       typeParam === 'shares' || typeParam === 'documents' ? typeParam : null;
     const filters = {
       feed: url.searchParams.get('feed'),
-      starred: url.searchParams.get('starred'),
+      saved: url.searchParams.get('saved'),
       shared: url.searchParams.get('shared'),
       sharer: url.searchParams.get('sharer'),
       following: url.searchParams.get('following'),
@@ -65,22 +65,22 @@
   let lastVisibleTime = $state(Date.now());
   const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 
-  // Reference to FeedListView or BookmarkListView component for accessing article elements
+  // Reference to FeedListView or SavedListView component for accessing article elements
   let feedListView = $state<ReturnType<typeof FeedListView> | null>(null);
-  let bookmarkListView = $state<ReturnType<typeof BookmarkListView> | null>(null);
+  let savedListView = $state<ReturnType<typeof SavedListView> | null>(null);
 
-  let isBookmarksView = $derived(Boolean(feedViewStore.starredFilter));
+  let isSavedView = $derived(Boolean(feedViewStore.savedFilter));
 
   function getArticleElements(): HTMLElement[] {
-    if (isBookmarksView) {
-      return bookmarkListView?.getArticleElements() ?? [];
+    if (isSavedView) {
+      return savedListView?.getArticleElements() ?? [];
     }
     return feedListView?.getArticleElements() ?? [];
   }
 
   function scrollToCenter() {
-    if (isBookmarksView) {
-      bookmarkListView?.scrollToCenter();
+    if (isSavedView) {
+      savedListView?.scrollToCenter();
     } else {
       feedListView?.scrollToCenter();
     }
@@ -117,7 +117,7 @@
       );
       return sub?.customTitle || sub?.title || 'Feed';
     }
-    if (feedViewStore.starredFilter) return 'Saved';
+    if (feedViewStore.savedFilter) return 'Saved';
     if (feedViewStore.sharedFilter) return 'Shared';
     if (feedViewStore.followingFilter) return 'Following';
     if (feedViewStore.sharerFilter) {
@@ -139,7 +139,7 @@
     if (feedViewStore.feedFilter) {
       return unreadCounts.feedCounts.get(parseInt(feedViewStore.feedFilter)) || 0;
     }
-    if (feedViewStore.starredFilter || feedViewStore.sharedFilter || feedViewStore.feedsFilter) {
+    if (feedViewStore.savedFilter || feedViewStore.sharedFilter || feedViewStore.feedsFilter) {
       return 0;
     }
     if (feedViewStore.sharerFilter) {
@@ -348,8 +348,8 @@
   const keyboardShortcuts = useFeedKeyboardShortcuts({
     scrollToCenter,
     markAllAsReadInCurrentFeed,
-    openBookmarkReader: () => bookmarkListView?.openSelectedReader(),
-    toggleAddFromUrl: () => bookmarkListView?.toggleUrlInput(),
+    openSavedReader: () => savedListView?.openSelectedReader(),
+    toggleAddFromUrl: () => savedListView?.toggleUrlInput(),
   });
 
   async function removeFeed(id: number) {
@@ -387,7 +387,7 @@
   $effect(() => {
     const _ = [
       feedViewStore.feedFilter,
-      feedViewStore.starredFilter,
+      feedViewStore.savedFilter,
       feedViewStore.sharedFilter,
       feedViewStore.sharerFilter,
       feedViewStore.followingFilter,
@@ -422,7 +422,7 @@
         }
       }}
       onRefresh={() => appManager.refreshFromBackend()}
-      onMarkAllAsRead={!feedViewStore.starredFilter && !feedViewStore.sharedFilter
+      onMarkAllAsRead={!feedViewStore.savedFilter && !feedViewStore.sharedFilter
         ? markAllAsReadInCurrentView
         : undefined}
       onEdit={feedViewStore.feedFilter ? handleEditFeed : undefined}
@@ -430,17 +430,17 @@
         ? () => removeFeed(parseInt(feedViewStore.feedFilter!))
         : undefined}
       showSourceFilter={!feedViewStore.feedFilter &&
-        !feedViewStore.starredFilter &&
+        !feedViewStore.savedFilter &&
         !feedViewStore.sharedFilter &&
         !feedViewStore.sharerFilter &&
         !feedViewStore.followingFilter &&
         !feedViewStore.feedsFilter}
-      onAddFromUrl={isBookmarksView ? () => bookmarkListView?.toggleUrlInput() : undefined}
+      onAddFromUrl={isSavedView ? () => savedListView?.toggleUrlInput() : undefined}
     />
 
     {#if (appManager.isHydrating || appManager.isRefreshing) && feedViewStore.currentItems.length === 0}
       <LoadingState />
-    {:else if !isBookmarksView && feedViewStore.currentItems.length === 0}
+    {:else if !isSavedView && feedViewStore.currentItems.length === 0}
       {#if feedViewStore.viewFilter}
         <EmptyState
           title="No matching items"
@@ -488,13 +488,13 @@
           description="Add some subscriptions using the + button in the sidebar"
         />
       {/if}
-    {:else if isBookmarksView}
-      <BookmarkListView bind:this={bookmarkListView} />
+    {:else if isSavedView}
+      <SavedListView bind:this={savedListView} />
     {:else}
       <FeedListView
         bind:this={feedListView}
-        onToggleStar={(article) =>
-          itemLabelsStore.toggleStar(article.guid, 'article', article.url, article.title, {
+        onToggleSave={(article) =>
+          itemLabelsStore.toggleSave(article.guid, 'article', article.url, article.title, {
             type: 'article',
             guid: article.guid,
             url: article.url,
