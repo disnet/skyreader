@@ -65,7 +65,7 @@
           "wordCount": {
             "type": "integer",
             "minimum": 0,
-            "description": "Word count from defuddle extraction"
+            "description": "Word count"
           }
         }
       }
