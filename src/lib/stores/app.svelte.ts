@@ -7,6 +7,7 @@ import { filteredViewsStore } from './filteredViews.svelte';
 import { feedStatusStore } from './feedStatus.svelte';
 import { articlesStore } from './articles.svelte';
 import { syncStore } from './sync.svelte';
+import { savedArticlesStore } from './savedArticles.svelte';
 import { fetchAllFeeds } from '$lib/services/feedFetcher';
 import { api } from '$lib/services/api';
 import { getMetadata, setMetadata } from '$lib/services/db';
@@ -63,6 +64,7 @@ function createAppManager() {
         shareReadingStore.load(),
         sharesStore.load(),
         filteredViewsStore.load(),
+        savedArticlesStore.load(),
       ]);
 
       // Initialize feed statuses for existing subscriptions

@@ -12,6 +12,7 @@ interface KeyboardShortcutsParams {
   scrollToCenter: () => void;
   markAllAsReadInCurrentFeed: () => Promise<void>;
   openBookmarkReader?: () => void;
+  toggleAddFromUrl?: () => void;
 }
 
 /**
@@ -88,6 +89,8 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       url = item.item.itemUrl;
     } else if (item.type === 'document') {
       url = item.item.canonicalUrl || item.item.path || '';
+    } else if (item.type === 'savedArticle') {
+      url = item.item.url;
     } else {
       url = item.item.articleUrl;
     }
@@ -358,6 +361,15 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       condition: () => auth.isAuthenticated && !!feedViewStore.feedFilter,
     });
 
+    // Bookmarks-specific: add article from URL
+    keyboardStore.register({
+      key: 'a',
+      description: 'Add from URL',
+      category: 'Article',
+      action: () => params.toggleAddFromUrl?.(),
+      condition: () => auth.isAuthenticated && !!feedViewStore.starredFilter,
+    });
+
     // Bookmarks-specific: archive item (works for all item types)
     keyboardStore.register({
       key: 'e',
@@ -389,6 +401,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     keyboardStore.unregister('t');
     keyboardStore.unregister('u');
     keyboardStore.unregister('A', true);
+    keyboardStore.unregister('a');
     keyboardStore.unregister('e');
   }
 

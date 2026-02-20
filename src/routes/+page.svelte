@@ -349,6 +349,7 @@
     scrollToCenter,
     markAllAsReadInCurrentFeed,
     openBookmarkReader: () => bookmarkListView?.openSelectedReader(),
+    toggleAddFromUrl: () => bookmarkListView?.toggleUrlInput(),
   });
 
   async function removeFeed(id: number) {

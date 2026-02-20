@@ -671,10 +671,25 @@ export interface FilteredView {
 export interface ItemTags {
   itemKey: string;
   tags: string[];
-  itemType: 'article' | 'share' | 'document' | 'userShare';
+  itemType: ItemLabelType;
 }
 
-export type ItemLabelType = 'article' | 'share' | 'document' | 'userShare';
+export type ItemLabelType = 'article' | 'share' | 'document' | 'userShare' | 'savedArticle';
+
+export interface SavedArticle {
+  rkey: string;
+  uri: string;
+  url: string;
+  title: string | null;
+  author: string | null;
+  description: string | null;
+  content: string | null;
+  domain: string | null;
+  image: string | null;
+  wordCount: number | null;
+  publishedAt: string | null;
+  savedAt: string;
+}
 
 export interface ItemLabel {
   itemKey: string;

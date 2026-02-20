@@ -3,9 +3,17 @@ import { subscriptionsStore } from './subscriptions.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
 import { sharesStore } from './shares.svelte';
 import { socialStore } from './social.svelte';
+import { savedArticlesStore } from './savedArticles.svelte';
 import { preferences } from './preferences.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
-import type { Article, SocialShare, SocialDocument, CombinedFeedItem, UserShare } from '$lib/types';
+import type {
+  Article,
+  SocialShare,
+  SocialDocument,
+  CombinedFeedItem,
+  UserShare,
+  SavedArticle,
+} from '$lib/types';
 import {
   isRssSource,
   isSharesSource,
@@ -24,7 +32,8 @@ export type FeedDisplayItem =
   | { type: 'article'; item: Article; key: string }
   | { type: 'share'; item: SocialShare; key: string }
   | { type: 'userShare'; item: UserShare; article: Article; key: string }
-  | { type: 'document'; item: SocialDocument; key: string };
+  | { type: 'document'; item: SocialDocument; key: string }
+  | { type: 'savedArticle'; item: SavedArticle; key: string };
 
 const DEFAULT_PAGE_SIZE = 50;
 
@@ -79,6 +88,8 @@ function getItemDate(item: FeedDisplayItem): number {
     return new Date(item.item.itemPublishedAt || item.item.createdAt).getTime();
   } else if (item.type === 'document') {
     return new Date(item.item.publishedAt).getTime();
+  } else if (item.type === 'savedArticle') {
+    return new Date(item.item.savedAt).getTime();
   } else {
     return new Date(item.item.createdAt).getTime();
   }
@@ -485,7 +496,24 @@ function createFeedViewStore() {
           key: d.recordUri,
         }));
 
-      items = [...articleItems, ...starredShareItems, ...starredDocumentItems];
+      // Add saved articles (auto-starred)
+      const savedArticleItems: FeedDisplayItem[] = savedArticlesStore.articles
+        .filter((sa) => {
+          if (isArchiveView) return itemLabelsStore.isArchived(sa.uri);
+          return !itemLabelsStore.isArchived(sa.uri);
+        })
+        .map((sa) => ({
+          type: 'savedArticle' as const,
+          item: sa,
+          key: sa.uri,
+        }));
+
+      items = [
+        ...articleItems,
+        ...starredShareItems,
+        ...starredDocumentItems,
+        ...savedArticleItems,
+      ];
 
       // Sort by date
       items.sort((a, b) => {

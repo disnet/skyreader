@@ -24,6 +24,13 @@ export class RateLimitError extends Error {
   }
 }
 
+export class ScopeUpgradeError extends Error {
+  constructor(message?: string) {
+    super(message || 'Your session was created with outdated permissions. Please log in again.');
+    this.name = 'ScopeUpgradeError';
+  }
+}
+
 class ApiClient {
   private onUnauthorized: (() => void) | null = null;
 
@@ -53,6 +60,15 @@ class ApiClient {
           this.onUnauthorized();
         }
         throw new Error('Session expired');
+      }
+
+      // Handle 403 - scope upgrade required
+      if (response.status === 403) {
+        const body = await response.json().catch(() => ({ error: 'Forbidden' }));
+        if ((body as { error: string }).error === 'scope_upgrade_required') {
+          throw new ScopeUpgradeError((body as { message?: string }).message);
+        }
+        throw new Error((body as { error: string }).error || `HTTP ${response.status}`);
       }
 
       // Handle 429 - rate limit exceeded
@@ -591,6 +607,55 @@ class ApiClient {
     return this.fetch('/api/settings', {
       method: 'PUT',
       body: JSON.stringify(settings),
+    });
+  }
+
+  // Saved Articles
+  async saveArticleFromUrl(
+    url: string,
+    rkey: string
+  ): Promise<{
+    rkey: string;
+    uri: string;
+    url: string;
+    title: string | null;
+    author: string | null;
+    description: string | null;
+    content: string | null;
+    domain: string | null;
+    image: string | null;
+    wordCount: number;
+    publishedAt: string | null;
+    savedAt: string;
+  }> {
+    return this.fetch('/api/saved-articles', {
+      method: 'POST',
+      body: JSON.stringify({ url, rkey }),
+    });
+  }
+
+  async getSavedArticles(): Promise<{
+    articles: Array<{
+      rkey: string;
+      uri: string;
+      url: string;
+      title: string | null;
+      author: string | null;
+      description: string | null;
+      content: string | null;
+      domain: string | null;
+      image: string | null;
+      wordCount: number | null;
+      publishedAt: string | null;
+      savedAt: string;
+    }>;
+  }> {
+    return this.fetch('/api/saved-articles');
+  }
+
+  async deleteSavedArticle(rkey: string): Promise<{ success: boolean }> {
+    return this.fetch(`/api/saved-articles/${rkey}`, {
+      method: 'DELETE',
     });
   }
 
