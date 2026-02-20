@@ -294,8 +294,8 @@
   <section class="card">
     <h2>Data Portability</h2>
     <p class="setting-description" style="margin-top: 0;">
-      Your <strong>shares are always stored</strong> in your Personal Data Server (PDS). This makes
-      them publicly visible and portable to any AT Protocol compatible service.
+      Your <strong>shares and saves are always stored</strong> in your Personal Data Server (PDS).
+      This makes them publicly visible and portable to any AT Protocol compatible service.
       {#if auth.user}
         <a
           href="https://pdsls.dev/at://{auth.user.did}"
