@@ -108,7 +108,7 @@
 
     const views: NavItem[] = [
       { type: 'view', id: 'all', label: 'All', count: totalUnread, icon: 'inbox' },
-      { type: 'view', id: 'starred', label: 'Bookmarks', count: starredCount, icon: 'bookmark' },
+      { type: 'view', id: 'starred', label: 'Saved', count: starredCount, icon: 'bookmark' },
       { type: 'view', id: 'shared', label: 'Shared', count: sharedCount, icon: 'share' },
       { type: 'utility', id: 'discover', label: 'Discover', icon: 'share-2' },
       { type: 'utility', id: 'activity', label: 'Activity', count: activityCount, icon: 'bell' },

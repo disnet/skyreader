@@ -149,7 +149,7 @@
 
     <div class="control-right">
       {#if isBookmarksView}
-        <div class="view-toggle" role="group" aria-label="Bookmarks view">
+        <div class="view-toggle" role="group" aria-label="Saved view">
           <button
             class:active={feedViewStore.bookmarksView === 'inbox'}
             onclick={() => feedViewStore.setBookmarksView('inbox')}

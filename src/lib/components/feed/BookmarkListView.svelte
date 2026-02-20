@@ -193,14 +193,11 @@
     {#if feedViewStore.currentItems.length === 0}
       {#if feedViewStore.bookmarksView === 'inbox'}
         <EmptyState
-          title="No bookmarked items"
-          description="Bookmark articles, shares, or documents to save them for later"
+          title="No saved items"
+          description="Save articles, shares, or documents to save them for later"
         />
       {:else}
-        <EmptyState
-          title="No archived bookmarks"
-          description="Archived bookmarks will appear here"
-        />
+        <EmptyState title="No archived items" description="Archived items will appear here" />
       {/if}
     {/if}
 

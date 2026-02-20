@@ -1,10 +1,10 @@
 {
   "lexicon": 1,
-  "id": "app.skyreader.feed.bookmark",
+  "id": "app.skyreader.feed.saved",
   "defs": {
     "main": {
       "type": "record",
-      "description": "A bookmarked item extracted from a URL",
+      "description": "A saved item extracted from a URL",
       "key": "tid",
       "record": {
         "type": "object",

@@ -492,7 +492,7 @@
           </button>
           <button class="action-btn" class:starred={isStarred} onclick={handleStarClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
-              class="action-label">Bookmark</span
+              class="action-label">Save</span
             >
           </button>
           {#if auth.user}
@@ -528,7 +528,7 @@
           </button>
           <button class="action-btn" class:starred={isStarred} onclick={handleStarClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
-              class="action-label">Bookmark</span
+              class="action-label">Save</span
             >
           </button>
           {#if auth.user}
@@ -566,7 +566,7 @@
           </button>
           <button class="action-btn" class:starred={isStarred} onclick={handleStarClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
-              class="action-label">Bookmark</span
+              class="action-label">Save</span
             >
           </button>
           {#if isShared}
