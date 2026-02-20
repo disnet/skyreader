@@ -188,7 +188,7 @@
     const sub = subscriptionsStore.getById(id);
     if (sub) {
       // Fetch feed in background so articles appear immediately
-      fetchSingleFeed(sub, true, articlesStore.starredGuids);
+      fetchSingleFeed(sub, true, articlesStore.savedGuids);
     }
     return id;
   }

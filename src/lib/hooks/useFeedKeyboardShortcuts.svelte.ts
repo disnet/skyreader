@@ -11,7 +11,7 @@ import type { Article, Subscription } from '$lib/types';
 interface KeyboardShortcutsParams {
   scrollToCenter: () => void;
   markAllAsReadInCurrentFeed: () => Promise<void>;
-  openBookmarkReader?: () => void;
+  openSavedReader?: () => void;
   toggleAddFromUrl?: () => void;
 }
 
@@ -89,7 +89,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       url = item.item.itemUrl;
     } else if (item.type === 'document') {
       url = item.item.canonicalUrl || item.item.path || '';
-    } else if (item.type === 'bookmark') {
+    } else if (item.type === 'saved') {
       url = item.item.url;
     } else {
       url = item.item.articleUrl;
@@ -99,8 +99,8 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     }
   }
 
-  // Toggle star on selected item (works for all item types)
-  function toggleSelectedStar() {
+  // Toggle save on selected item (works for all item types)
+  function toggleSelectedSave() {
     const selectedIndex = feedViewStore.selectedIndex;
     if (selectedIndex < 0) return;
 
@@ -109,7 +109,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     if (!item) return;
 
     if (item.type === 'article') {
-      itemLabelsStore.toggleStar(item.item.guid, 'article', item.item.url, item.item.title, {
+      itemLabelsStore.toggleSave(item.item.guid, 'article', item.item.url, item.item.title, {
         type: 'article',
         guid: item.item.guid,
         url: item.item.url,
@@ -120,7 +120,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
         publishedAt: item.item.publishedAt,
       });
     } else if (item.type === 'userShare') {
-      itemLabelsStore.toggleStar(
+      itemLabelsStore.toggleSave(
         item.article.guid,
         'article',
         item.article.url,
@@ -137,7 +137,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
         }
       );
     } else if (item.type === 'share') {
-      itemLabelsStore.toggleStar(
+      itemLabelsStore.toggleSave(
         item.item.recordUri,
         'share',
         item.item.itemUrl,
@@ -154,7 +154,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
         }
       );
     } else if (item.type === 'document') {
-      itemLabelsStore.toggleStar(
+      itemLabelsStore.toggleSave(
         item.item.recordUri,
         'document',
         item.item.canonicalUrl || item.item.path || '',
@@ -286,8 +286,8 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     const selectedIndex = feedViewStore.selectedIndex;
     if (selectedIndex < 0) return;
 
-    if (feedViewStore.starredFilter && params.openBookmarkReader) {
-      params.openBookmarkReader();
+    if (feedViewStore.savedFilter && params.openSavedReader) {
+      params.openSavedReader();
       return;
     }
 
@@ -338,9 +338,9 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     // Article action shortcuts
     keyboardStore.register({
       key: 's',
-      description: 'Toggle star',
+      description: 'Toggle save',
       category: 'Article',
-      action: toggleSelectedStar,
+      action: toggleSelectedSave,
       condition: hasSelected,
     });
 
@@ -386,7 +386,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       category: 'Other',
       action: () => feedViewStore.toggleUnreadFilter(),
       condition: () =>
-        auth.isAuthenticated && !feedViewStore.starredFilter && !feedViewStore.sharedFilter,
+        auth.isAuthenticated && !feedViewStore.savedFilter && !feedViewStore.sharedFilter,
     });
 
     keyboardStore.register({
@@ -404,13 +404,13 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       description: 'Add from URL',
       category: 'Article',
       action: () => params.toggleAddFromUrl?.(),
-      condition: () => auth.isAuthenticated && !!feedViewStore.starredFilter,
+      condition: () => auth.isAuthenticated && !!feedViewStore.savedFilter,
     });
 
     // Bookmarks-specific: archive item (works for all item types)
     keyboardStore.register({
       key: 'e',
-      description: 'Archive/unarchive bookmark',
+      description: 'Archive/unarchive saved item',
       category: 'Article',
       action: () => {
         const idx = feedViewStore.selectedIndex;
@@ -423,7 +423,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
           itemType as 'article' | 'share' | 'document' | 'userShare'
         );
       },
-      condition: () => hasSelected() && !!feedViewStore.starredFilter,
+      condition: () => hasSelected() && !!feedViewStore.savedFilter,
     });
   }
 

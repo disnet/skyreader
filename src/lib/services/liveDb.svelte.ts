@@ -145,7 +145,7 @@ class LiveDatabase {
   async mergeArticles(
     subscriptionId: number,
     items: FeedItem[],
-    starredGuids: Set<string> = new Set()
+    savedGuids: Set<string> = new Set()
   ): Promise<number> {
     if (items.length === 0) return 0;
 
@@ -182,7 +182,7 @@ class LiveDatabase {
     );
 
     // Enforce per-feed limit (preserve starred articles)
-    await this.enforceArticleLimit(subscriptionId, starredGuids);
+    await this.enforceArticleLimit(subscriptionId, savedGuids);
 
     this.articlesVersion++;
     return newArticles.length;
@@ -194,7 +194,7 @@ class LiveDatabase {
    */
   private async enforceArticleLimit(
     subscriptionId: number,
-    starredGuids: Set<string>
+    savedGuids: Set<string>
   ): Promise<void> {
     const feedArticles = this._articles
       .filter((a) => a.subscriptionId === subscriptionId)
@@ -203,8 +203,8 @@ class LiveDatabase {
     if (feedArticles.length <= MAX_ARTICLES_PER_FEED) return;
 
     // Split into starred and non-starred
-    const starred = feedArticles.filter((a) => starredGuids.has(a.guid));
-    const nonStarred = feedArticles.filter((a) => !starredGuids.has(a.guid));
+    const starred = feedArticles.filter((a) => savedGuids.has(a.guid));
+    const nonStarred = feedArticles.filter((a) => !savedGuids.has(a.guid));
 
     // Keep all starred + up to MAX non-starred (newest first)
     const keepCount = Math.max(0, MAX_ARTICLES_PER_FEED - starred.length);

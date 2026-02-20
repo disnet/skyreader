@@ -117,7 +117,7 @@
       const newSubs = liveDb.subscriptions.filter((s) => result.added.includes(s.id!));
 
       // Fetch feeds in background
-      fetchAllFeeds(newSubs, articlesStore.starredGuids);
+      fetchAllFeeds(newSubs, articlesStore.savedGuids);
     }
   }
 

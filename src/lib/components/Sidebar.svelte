@@ -213,7 +213,7 @@
     }
     const view = $page.url.searchParams.get('view');
     const feed = $page.url.searchParams.get('feed');
-    const starred = $page.url.searchParams.get('starred');
+    const starred = $page.url.searchParams.get('saved');
     const shared = $page.url.searchParams.get('shared');
     const sharer = $page.url.searchParams.get('sharer');
     const following = $page.url.searchParams.get('following');
@@ -232,7 +232,7 @@
         contentType: null as 'shares' | 'documents' | null,
       };
     if (starred)
-      return { type: 'starred' as const, contentType: null as 'shares' | 'documents' | null };
+      return { type: 'saved' as const, contentType: null as 'shares' | 'documents' | null };
     if (shared)
       return { type: 'shared' as const, contentType: null as 'shares' | 'documents' | null };
     if (following) return { type: 'following' as const, contentType: type };
@@ -355,7 +355,7 @@
     const params = new URLSearchParams();
     if (type === 'view' && id) params.set('view', String(id));
     else if (type === 'feed' && id) params.set('feed', String(id));
-    else if (type === 'starred') params.set('starred', 'true');
+    else if (type === 'saved') params.set('saved', 'true');
     else if (type === 'shared') params.set('shared', 'true');
     else if (type === 'following') {
       params.set('following', 'true');
@@ -422,8 +422,8 @@
 
     <button
       class="nav-item"
-      class:active={currentFilter().type === 'starred'}
-      onclick={() => selectFilter('starred')}
+      class:active={currentFilter().type === 'saved'}
+      onclick={() => selectFilter('saved')}
     >
       <span class="nav-icon"><Icon name="bookmark" /></span>
       <span class="nav-label">Saved</span>
@@ -618,7 +618,7 @@
           onTouchStart={(e) => sub.id && handleTouchStart(e, sub.id)}
           onTouchEnd={handleTouchEnd}
           onTouchMove={handleTouchMove}
-          onRetry={() => fetchSingleFeed(sub, true, articlesStore.starredGuids)}
+          onRetry={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
           onMoreClick={(e) => sub.id && handleContextMenu(e, sub.id)}
         />
       {:else}

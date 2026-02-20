@@ -38,7 +38,7 @@
 
       // Fetch feed in background (updates title and loads articles)
       if (sub) {
-        fetchSingleFeed(sub, true, articlesStore.starredGuids).then(async (result) => {
+        fetchSingleFeed(sub, true, articlesStore.savedGuids).then(async (result) => {
           // Update subscription with feed metadata from V2 response
           if (result.success && result.title) {
             try {

@@ -89,7 +89,7 @@
   }
 
   let dropdownOpen = $derived(sidebarStore.navigationDropdownOpen);
-  let isBookmarksView = $derived(Boolean(feedViewStore.starredFilter));
+  let isSavedView = $derived(Boolean(feedViewStore.savedFilter));
 
   let menuItems = $derived.by(() => {
     const items: Array<{ label: string; icon: string; onclick: () => void; variant?: 'danger' }> =
@@ -148,11 +148,11 @@
     </div>
 
     <div class="control-right">
-      {#if isBookmarksView}
+      {#if isSavedView}
         <div class="view-toggle" role="group" aria-label="Saved view">
           <button
-            class:active={feedViewStore.bookmarksView === 'inbox'}
-            onclick={() => feedViewStore.setBookmarksView('inbox')}
+            class:active={feedViewStore.savedView === 'inbox'}
+            onclick={() => feedViewStore.setSavedView('inbox')}
             aria-label="Inbox"
             title="Inbox"
           >
@@ -160,8 +160,8 @@
             <span class="btn-label">Inbox</span>
           </button>
           <button
-            class:active={feedViewStore.bookmarksView === 'archive'}
-            onclick={() => feedViewStore.setBookmarksView('archive')}
+            class:active={feedViewStore.savedView === 'archive'}
+            onclick={() => feedViewStore.setSavedView('archive')}
             aria-label="Archive"
             title="Archive"
           >
@@ -248,12 +248,12 @@
     </div>
   </div>
 
-  {#if !isBookmarksView && styleToolbarOpen}
+  {#if !isSavedView && styleToolbarOpen}
     <div class="filter-toolbar-row">
       <AppearanceToolbar />
     </div>
   {/if}
-  {#if !isBookmarksView && feedViewStore.filterToolbarOpen}
+  {#if !isSavedView && feedViewStore.filterToolbarOpen}
     <div class="filter-toolbar-row">
       <FilterToolbar {showSourceFilter} />
     </div>

@@ -53,6 +53,7 @@ export interface ReadPosition {
   articleTitle?: string;
   readAt: string;
   scrollPosition?: number;
+  /** @deprecated use savesStore.isSaved() instead */
   starred: boolean;
 }
 
@@ -674,9 +675,9 @@ export interface ItemTags {
   itemType: ItemLabelType;
 }
 
-export type ItemLabelType = 'article' | 'share' | 'document' | 'userShare' | 'bookmark';
+export type ItemLabelType = 'article' | 'share' | 'document' | 'userShare' | 'saved';
 
-export interface Bookmark {
+export interface SavedItem {
   rkey: string;
   uri: string;
   url: string;
@@ -697,7 +698,7 @@ export interface Bookmark {
 export interface ItemLabel {
   itemKey: string;
   itemType: ItemLabelType;
-  label: string; // 'read', 'starred', 'archived', 'tag:<name>'
+  label: string; // 'read', 'archived', 'tag:<name>'
   props: Record<string, unknown>; // label-specific metadata
   createdAt: number; // epoch ms
   updatedAt: number; // epoch ms
