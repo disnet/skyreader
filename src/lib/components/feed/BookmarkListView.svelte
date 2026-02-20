@@ -176,11 +176,6 @@
           <p class="url-error">{saveError}</p>
         {/if}
       </div>
-    {:else}
-      <button class="add-url-btn" onclick={() => toggleUrlInput()}>
-        <Icon name="plus" size={16} />
-        Add from URL
-      </button>
     {/if}
 
     {#each feedViewStore.currentItems as displayItem, index (displayItem.key)}
@@ -221,27 +216,6 @@
   .bookmark-list {
     display: flex;
     flex-direction: column;
-  }
-
-  .add-url-btn {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    margin: 0.5rem 1rem;
-    padding: 0.5rem 0.75rem;
-    background: none;
-    border: 1px dashed var(--color-border, #ddd);
-    border-radius: 8px;
-    color: var(--color-text-secondary);
-    font-size: 0.8125rem;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .add-url-btn:hover {
-    border-color: var(--color-primary, #2563eb);
-    color: var(--color-primary, #2563eb);
-    background: rgba(37, 99, 235, 0.04);
   }
 
   .url-input-bar {

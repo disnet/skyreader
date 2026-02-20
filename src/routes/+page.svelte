@@ -435,6 +435,7 @@
         !feedViewStore.sharerFilter &&
         !feedViewStore.followingFilter &&
         !feedViewStore.feedsFilter}
+      onAddFromUrl={isBookmarksView ? () => bookmarkListView?.toggleUrlInput() : undefined}
     />
 
     {#if (appManager.isHydrating || appManager.isRefreshing) && feedViewStore.currentItems.length === 0}
