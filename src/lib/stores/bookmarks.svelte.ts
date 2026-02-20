@@ -196,6 +196,190 @@ function createBookmarksStore() {
     }
   }
 
+  async function saveShare(share: {
+    recordUri: string;
+    itemUrl: string;
+    itemTitle?: string;
+    itemAuthor?: string;
+    itemDescription?: string;
+    itemImage?: string;
+    itemPublishedAt?: string;
+  }): Promise<Bookmark> {
+    saving = true;
+    error = null;
+    try {
+      const rkey = generateTid();
+      const now = new Date().toISOString();
+
+      const bookmark: Bookmark = {
+        rkey,
+        uri: '',
+        url: share.itemUrl || '',
+        title: share.itemTitle || null,
+        author: share.itemAuthor || null,
+        description: share.itemDescription || null,
+        content: null,
+        contentType: 'share',
+        domain: null,
+        image: share.itemImage || null,
+        wordCount: null,
+        publishedAt: share.itemPublishedAt || null,
+        savedAt: now,
+        source: 'share',
+        itemGuid: share.recordUri,
+      };
+
+      articles = [bookmark, ...articles];
+      rebuildMaps();
+      await db.bookmarks.put(bookmark);
+
+      if (syncStore.isOnline) {
+        try {
+          const result = await api.saveBookmarkFromUrl(share.itemUrl || '', rkey, {
+            source: 'share',
+            itemGuid: share.recordUri,
+            title: share.itemTitle,
+            author: share.itemAuthor,
+            description: share.itemDescription,
+            image: share.itemImage,
+            publishedAt: share.itemPublishedAt,
+          });
+
+          const updated: Bookmark = {
+            ...bookmark,
+            uri: result.uri,
+            rkey: result.rkey,
+          };
+          articles = articles.map((a) => (a.rkey === rkey ? updated : a));
+          rebuildMaps();
+          await db.bookmarks.put(updated);
+          return updated;
+        } catch (err) {
+          console.error('Failed to save share to backend, queueing:', err);
+          await syncQueue.enqueue('create', 'saved', share.recordUri, {
+            rkey,
+            url: share.itemUrl || '',
+            source: 'share',
+            itemGuid: share.recordUri,
+            title: share.itemTitle,
+            author: share.itemAuthor,
+            description: share.itemDescription,
+            image: share.itemImage,
+            publishedAt: share.itemPublishedAt,
+          } as SavedPayload);
+          return bookmark;
+        }
+      } else {
+        await syncQueue.enqueue('create', 'saved', share.recordUri, {
+          rkey,
+          url: share.itemUrl || '',
+          source: 'share',
+          itemGuid: share.recordUri,
+          title: share.itemTitle,
+          author: share.itemAuthor,
+          description: share.itemDescription,
+          image: share.itemImage,
+          publishedAt: share.itemPublishedAt,
+        } as SavedPayload);
+        return bookmark;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save share';
+      error = msg;
+      throw err;
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function saveDocument(doc: {
+    recordUri: string;
+    url: string;
+    title?: string;
+    description?: string;
+    publishedAt?: string;
+  }): Promise<Bookmark> {
+    saving = true;
+    error = null;
+    try {
+      const rkey = generateTid();
+      const now = new Date().toISOString();
+
+      const bookmark: Bookmark = {
+        rkey,
+        uri: '',
+        url: doc.url || '',
+        title: doc.title || null,
+        author: null,
+        description: doc.description || null,
+        content: null,
+        contentType: 'document',
+        domain: null,
+        image: null,
+        wordCount: null,
+        publishedAt: doc.publishedAt || null,
+        savedAt: now,
+        source: 'document',
+        itemGuid: doc.recordUri,
+      };
+
+      articles = [bookmark, ...articles];
+      rebuildMaps();
+      await db.bookmarks.put(bookmark);
+
+      if (syncStore.isOnline) {
+        try {
+          const result = await api.saveBookmarkFromUrl(doc.url || '', rkey, {
+            source: 'document',
+            itemGuid: doc.recordUri,
+            title: doc.title,
+            description: doc.description,
+            publishedAt: doc.publishedAt,
+          });
+
+          const updated: Bookmark = {
+            ...bookmark,
+            uri: result.uri,
+            rkey: result.rkey,
+          };
+          articles = articles.map((a) => (a.rkey === rkey ? updated : a));
+          rebuildMaps();
+          await db.bookmarks.put(updated);
+          return updated;
+        } catch (err) {
+          console.error('Failed to save document to backend, queueing:', err);
+          await syncQueue.enqueue('create', 'saved', doc.recordUri, {
+            rkey,
+            url: doc.url || '',
+            source: 'document',
+            itemGuid: doc.recordUri,
+            title: doc.title,
+            description: doc.description,
+            publishedAt: doc.publishedAt,
+          } as SavedPayload);
+          return bookmark;
+        }
+      } else {
+        await syncQueue.enqueue('create', 'saved', doc.recordUri, {
+          rkey,
+          url: doc.url || '',
+          source: 'document',
+          itemGuid: doc.recordUri,
+          title: doc.title,
+          description: doc.description,
+          publishedAt: doc.publishedAt,
+        } as SavedPayload);
+        return bookmark;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save document';
+      error = msg;
+      throw err;
+    } finally {
+      saving = false;
+    }
+  }
+
   async function unsaveByGuid(guid: string) {
     const bookmark = savedByGuid.get(guid);
     if (!bookmark) return;
@@ -269,6 +453,8 @@ function createBookmarksStore() {
     load,
     saveFromUrl,
     saveArticle,
+    saveShare,
+    saveDocument,
     unsaveByGuid,
     remove,
     isSaved,

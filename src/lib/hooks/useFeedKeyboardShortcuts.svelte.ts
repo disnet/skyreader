@@ -110,6 +110,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 
     if (item.type === 'article') {
       itemLabelsStore.toggleStar(item.item.guid, 'article', item.item.url, item.item.title, {
+        type: 'article',
         guid: item.item.guid,
         url: item.item.url,
         title: item.item.title,
@@ -125,6 +126,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
         item.article.url,
         item.article.title,
         {
+          type: 'article',
           guid: item.article.guid,
           url: item.article.url,
           title: item.article.title,
@@ -139,14 +141,32 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
         item.item.recordUri,
         'share',
         item.item.itemUrl,
-        item.item.itemTitle
+        item.item.itemTitle,
+        {
+          type: 'share',
+          recordUri: item.item.recordUri,
+          itemUrl: item.item.itemUrl,
+          itemTitle: item.item.itemTitle,
+          itemAuthor: item.item.itemAuthor,
+          itemDescription: item.item.itemDescription,
+          itemImage: item.item.itemImage,
+          itemPublishedAt: item.item.itemPublishedAt,
+        }
       );
     } else if (item.type === 'document') {
       itemLabelsStore.toggleStar(
         item.item.recordUri,
         'document',
         item.item.canonicalUrl || item.item.path || '',
-        item.item.title
+        item.item.title,
+        {
+          type: 'document',
+          recordUri: item.item.recordUri,
+          url: item.item.canonicalUrl || item.item.path || '',
+          title: item.item.title,
+          description: item.item.description,
+          publishedAt: item.item.publishedAt,
+        }
       );
     }
   }

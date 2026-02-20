@@ -71,6 +71,7 @@ export interface SavedPayload {
   rkey: string;
   url: string;
   fromFeed?: boolean;
+  source?: string;
   itemGuid?: string;
   title?: string;
   author?: string;
@@ -569,6 +570,7 @@ class SyncQueue {
       case 'create':
         await api.saveBookmarkFromUrl(payload.url, payload.rkey, {
           fromFeed: payload.fromFeed,
+          source: payload.source as 'url' | 'feed' | 'share' | 'document' | undefined,
           itemGuid: payload.itemGuid,
           title: payload.title,
           author: payload.author,

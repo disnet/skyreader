@@ -616,6 +616,7 @@ class ApiClient {
     rkey: string,
     options?: {
       fromFeed?: boolean;
+      source?: 'url' | 'feed' | 'share' | 'document';
       itemGuid?: string;
       title?: string;
       author?: string;
@@ -638,7 +639,7 @@ class ApiClient {
     wordCount: number | null;
     publishedAt: string | null;
     savedAt: string;
-    source?: 'url' | 'feed';
+    source?: 'url' | 'feed' | 'share' | 'document';
     itemGuid?: string;
   }> {
     return this.fetch('/api/saved', {
@@ -662,7 +663,7 @@ class ApiClient {
       wordCount: number | null;
       publishedAt: string | null;
       savedAt: string;
-      source?: 'url' | 'feed';
+      source?: 'url' | 'feed' | 'share' | 'document';
       itemGuid?: string;
     }>;
   }> {

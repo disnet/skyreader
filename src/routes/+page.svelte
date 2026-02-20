@@ -495,6 +495,7 @@
         bind:this={feedListView}
         onToggleStar={(article) =>
           itemLabelsStore.toggleStar(article.guid, 'article', article.url, article.title, {
+            type: 'article',
             guid: article.guid,
             url: article.url,
             title: article.title,

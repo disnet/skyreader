@@ -122,7 +122,16 @@
           expanded={feedViewStore.expandedIndex === index}
           highlighted={feedViewStore.selectedIndex === index}
           onToggleStar={() =>
-            itemLabelsStore.toggleStar(share.recordUri, 'share', share.itemUrl, share.itemTitle)}
+            itemLabelsStore.toggleStar(share.recordUri, 'share', share.itemUrl, share.itemTitle, {
+              type: 'share',
+              recordUri: share.recordUri,
+              itemUrl: share.itemUrl,
+              itemTitle: share.itemTitle,
+              itemAuthor: share.itemAuthor,
+              itemDescription: share.itemDescription,
+              itemImage: share.itemImage,
+              itemPublishedAt: share.itemPublishedAt,
+            })}
           onToggleRead={() => {
             if (itemLabelsStore.isSocialRead(share.recordUri)) {
               itemLabelsStore.markSocialAsUnread(share.recordUri);
@@ -181,7 +190,15 @@
               doc.recordUri,
               'document',
               doc.canonicalUrl || doc.path || '',
-              doc.title
+              doc.title,
+              {
+                type: 'document',
+                recordUri: doc.recordUri,
+                url: doc.canonicalUrl || doc.path || '',
+                title: doc.title,
+                description: doc.description,
+                publishedAt: doc.publishedAt,
+              }
             )}
           onToggleRead={() => handleToggleDocumentRead(doc)}
           onSelect={() => handleSelect(index)}

@@ -690,7 +690,7 @@ export interface Bookmark {
   wordCount: number | null;
   publishedAt: string | null;
   savedAt: string;
-  source?: 'url' | 'feed';
+  source?: 'url' | 'feed' | 'share' | 'document';
   itemGuid?: string;
 }
 

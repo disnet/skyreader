@@ -170,7 +170,6 @@ function createItemLabelsStore() {
         loadSocialReadPositionsFromBackend(),
         loadTagsFromBackend(),
         loadArchivedFromBackend(),
-        loadStarredFromBackend(),
         loadReadProgressFromBackend(),
       ]);
       hasLoaded = true;
@@ -408,52 +407,6 @@ function createItemLabelsStore() {
     }
   }
 
-  async function loadStarredFromBackend() {
-    const starredLabels = await api.getAllLabels({ label: 'starred' });
-    if (starredLabels.length === 0) return;
-
-    // Remove old starred labels from state
-    const toRemove: string[] = [];
-    for (const [, lbl] of labelMap) {
-      if (lbl.label === 'starred') {
-        toRemove.push(lbl.itemKey);
-      }
-    }
-    for (const itemKey of toRemove) {
-      removeFromState(itemKey, 'starred');
-    }
-
-    // Add from backend
-    const dbOps: ItemLabel[] = [];
-    for (const s of starredLabels) {
-      const lbl: ItemLabel = {
-        itemKey: s.itemKey,
-        itemType: (s.itemType as ItemLabelType) || 'article',
-        label: 'starred',
-        props: s.props || {},
-        createdAt: s.createdAt,
-        updatedAt: s.updatedAt,
-      };
-      addToState(lbl);
-      dbOps.push(lbl);
-    }
-
-    triggerReactivity();
-
-    // Sync to IndexedDB
-    try {
-      const oldStarred = await db.itemLabels.where('label').equals('starred').toArray();
-      for (const l of oldStarred) {
-        await db.itemLabels.where('[itemKey+label]').equals([l.itemKey, 'starred']).delete();
-      }
-      if (dbOps.length > 0) {
-        await db.itemLabels.bulkPut(dbOps);
-      }
-    } catch (e) {
-      console.error('Failed to sync starred labels to cache:', e);
-    }
-  }
-
   async function loadReadProgressFromBackend() {
     const progressLabels = await api.getAllLabels({ label: 'readProgress' });
 
@@ -514,7 +467,7 @@ function createItemLabelsStore() {
   }
 
   function isStarred(itemKey: string): boolean {
-    return hasLabel(itemKey, 'starred') || bookmarksStore.isSaved(itemKey);
+    return bookmarksStore.isSaved(itemKey);
   }
 
   function isArchived(itemKey: string): boolean {
@@ -574,14 +527,8 @@ function createItemLabelsStore() {
     return map;
   });
 
-  // Starred count: labels starred + bookmarks (deduplicated)
-  let starredCount = $derived.by(() => {
-    let count = bookmarksStore.articles.length;
-    for (const [itemKey, labels] of labelsByItem) {
-      if (labels.has('starred') && !bookmarksStore.isSaved(itemKey)) count++;
-    }
-    return count;
-  });
+  // Starred count: purely from bookmarks
+  let starredCount = $derived(bookmarksStore.articles.length);
 
   // Archived count (starred + archived)
   let archivedCount = $derived.by(() => {
@@ -714,83 +661,72 @@ function createItemLabelsStore() {
   }
 
   // --- Star mutations (decoupled from read state) ---
+  // All star operations now delegate to bookmarksStore (saved_articles is the sole source of truth)
+
+  type SaveMeta =
+    | {
+        type: 'article';
+        guid: string;
+        url: string;
+        title?: string;
+        author?: string;
+        summary?: string;
+        imageUrl?: string;
+        publishedAt?: string;
+      }
+    | {
+        type: 'share';
+        recordUri: string;
+        itemUrl: string;
+        itemTitle?: string;
+        itemAuthor?: string;
+        itemDescription?: string;
+        itemImage?: string;
+        itemPublishedAt?: string;
+      }
+    | {
+        type: 'document';
+        recordUri: string;
+        url: string;
+        title?: string;
+        description?: string;
+        publishedAt?: string;
+      };
 
   async function toggleStar(
     itemKey: string,
-    itemType: ItemLabelType = 'article',
-    itemUrl?: string,
-    itemTitle?: string,
-    articleMeta?: {
-      guid: string;
-      url: string;
-      title?: string;
-      author?: string;
-      summary?: string;
-      imageUrl?: string;
-      publishedAt?: string;
-    }
+    _itemType: ItemLabelType = 'article',
+    _itemUrl?: string,
+    _itemTitle?: string,
+    saveMeta?: SaveMeta
   ) {
     const wasStarred = isStarred(itemKey);
 
-    if (itemType === 'article' && articleMeta) {
-      // Delegate to bookmarksStore for article saves
-      if (!wasStarred) {
-        await bookmarksStore.saveArticle(articleMeta);
-      } else {
-        await bookmarksStore.unsaveByGuid(articleMeta.guid);
+    if (!saveMeta) {
+      // No metadata — can only unsave
+      if (wasStarred) {
+        await bookmarksStore.unsaveByGuid(itemKey);
       }
       return;
     }
 
-    // For non-article types (shares, documents, etc.), use the labels API
-    const newStarred = !wasStarred;
-    const now = Date.now();
-
-    if (newStarred) {
-      const starLabel: ItemLabel = {
-        itemKey,
-        itemType,
-        label: 'starred',
-        props: { starredAt: now, itemUrl, itemTitle },
-        createdAt: now,
-        updatedAt: now,
-      };
-      addToState(starLabel);
-      await db.itemLabels.put(starLabel);
-    } else {
-      removeFromState(itemKey, 'starred');
-      await deleteLabel(itemKey, 'starred');
-    }
-    triggerReactivity();
-
-    // Use the labels API for non-article item types
-    const payload: LabelPayload = {
-      itemKey,
-      itemType,
-      label: 'starred',
-      props: { starredAt: now, itemUrl, itemTitle },
-    };
-    if (newStarred) {
-      if (syncStore.isOnline) {
-        try {
-          await api.addLabel({ itemKey, itemType, label: 'starred', props: payload.props });
-        } catch (e) {
-          console.error('Failed to add starred label, queueing for retry:', e);
-          await syncQueue.enqueue('create', 'label', `${itemKey}\0starred`, payload);
-        }
+    if (saveMeta.type === 'article') {
+      if (!wasStarred) {
+        await bookmarksStore.saveArticle(saveMeta);
       } else {
-        await syncQueue.enqueue('create', 'label', `${itemKey}\0starred`, payload);
+        await bookmarksStore.unsaveByGuid(saveMeta.guid);
       }
-    } else {
-      if (syncStore.isOnline) {
-        try {
-          await api.deleteLabel(itemKey, 'starred');
-        } catch (e) {
-          console.error('Failed to delete starred label, queueing for retry:', e);
-          await syncQueue.enqueue('delete', 'label', `${itemKey}\0starred`, payload);
-        }
+    } else if (saveMeta.type === 'share') {
+      if (!wasStarred) {
+        await bookmarksStore.saveShare(saveMeta);
       } else {
-        await syncQueue.enqueue('delete', 'label', `${itemKey}\0starred`, payload);
+        await bookmarksStore.unsaveByGuid(saveMeta.recordUri);
+      }
+    } else if (saveMeta.type === 'document') {
+      if (!wasStarred) {
+        await bookmarksStore.saveDocument(saveMeta);
+      } else {
+        await bookmarksStore.unsaveByGuid(saveMeta.recordUri);
       }
     }
   }
@@ -1329,32 +1265,34 @@ function createItemLabelsStore() {
   // --- Derived helpers ---
 
   function getStarredArticles(): StarredArticle[] {
-    const result: StarredArticle[] = [];
-    for (const [, lbl] of labelMap) {
-      if (lbl.label === 'starred' && lbl.itemType === 'article') {
-        result.push({
-          articleGuid: lbl.itemKey,
-          articleUrl: lbl.props.itemUrl as string | undefined,
-          articleTitle: lbl.props.itemTitle as string | undefined,
-          readAt: (lbl.props.starredAt as number) || 0,
-        });
-      }
-    }
-    return result;
+    return bookmarksStore.articles
+      .filter((bm) => bm.source === 'feed' && bm.itemGuid)
+      .map((bm) => ({
+        articleGuid: bm.itemGuid!,
+        articleUrl: bm.url || undefined,
+        articleTitle: bm.title || undefined,
+        readAt: new Date(bm.savedAt).getTime(),
+      }));
   }
 
-  /** Get all starred item keys grouped by type */
+  /** Get all starred item keys grouped by source type */
   function getStarredItemKeys(): Map<ItemLabelType, Set<string>> {
     const result = new Map<ItemLabelType, Set<string>>();
-    for (const [, lbl] of labelMap) {
-      if (lbl.label === 'starred') {
-        let set = result.get(lbl.itemType as ItemLabelType);
-        if (!set) {
-          set = new Set();
-          result.set(lbl.itemType as ItemLabelType, set);
-        }
-        set.add(lbl.itemKey);
+    for (const bm of bookmarksStore.articles) {
+      const type: ItemLabelType =
+        bm.source === 'share'
+          ? 'share'
+          : bm.source === 'document'
+            ? 'document'
+            : bm.source === 'feed'
+              ? 'article'
+              : 'bookmark';
+      let set = result.get(type);
+      if (!set) {
+        set = new Set();
+        result.set(type, set);
       }
+      set.add(bm.itemGuid || bm.uri || bm.rkey);
     }
     return result;
   }
