@@ -19,6 +19,8 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
   let currentParagraphIndex = $state(0);
   let furthestParagraphIndex = $state(0);
   let totalParagraphs = $state(0);
+  let markerTopPercent = $state(0);
+  let markerHeightPercent = $state(0);
   let hasRestored = false;
   let scrollHandler: (() => void) | null = null;
   let scrollTarget: EventTarget | null = null;
@@ -108,11 +110,40 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
       currentParagraphIndex = newIndex;
     }
 
+    updateMarkerPosition();
+
     // Update furthest-read
     if (currentParagraphIndex > furthestParagraphIndex) {
       furthestParagraphIndex = currentParagraphIndex;
       debouncedSave();
     }
+  }
+
+  function getOffsetRelativeTo(el: HTMLElement, ancestor: HTMLElement): number {
+    let top = 0;
+    let current: HTMLElement | null = el;
+    while (current && current !== ancestor) {
+      top += current.offsetTop;
+      current = current.offsetParent as HTMLElement | null;
+    }
+    return top;
+  }
+
+  function updateMarkerPosition() {
+    const contentEl = params.contentEl();
+    if (!contentEl || paragraphs.length === 0) return;
+
+    const containerHeight = contentEl.scrollHeight;
+    if (containerHeight === 0) return;
+
+    const para = paragraphs[currentParagraphIndex];
+    if (!para) return;
+
+    const paraTop = getOffsetRelativeTo(para, contentEl);
+    const paraHeight = para.offsetHeight;
+
+    markerTopPercent = (paraTop / containerHeight) * 100;
+    markerHeightPercent = (paraHeight / containerHeight) * 100;
   }
 
   function debouncedSave() {
@@ -157,6 +188,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
 
     // Initial position check
     updateCurrentParagraph();
+    updateMarkerPosition();
   }
 
   function scrollToParagraph(index: number) {
@@ -165,6 +197,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     if (!el) return;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     currentParagraphIndex = index;
+    updateMarkerPosition();
   }
 
   function nextParagraph() {
@@ -212,6 +245,12 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     },
     get totalParagraphs() {
       return totalParagraphs;
+    },
+    get markerTopPercent() {
+      return markerTopPercent;
+    },
+    get markerHeightPercent() {
+      return markerHeightPercent;
     },
     setupObserver,
     scrollToParagraph,

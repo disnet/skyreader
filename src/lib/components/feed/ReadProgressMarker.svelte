@@ -1,27 +1,21 @@
 <script lang="ts">
   let {
-    currentParagraphIndex,
-    totalParagraphs,
+    topPercent,
+    heightPercent,
+    visible,
   }: {
-    currentParagraphIndex: number;
-    totalParagraphs: number;
+    topPercent: number;
+    heightPercent: number;
+    visible: boolean;
   } = $props();
-
-  let segmentTop = $derived(
-    totalParagraphs > 0 ? (currentParagraphIndex / totalParagraphs) * 100 : 0
-  );
-
-  let segmentHeight = $derived(
-    totalParagraphs > 0 ? (1 / totalParagraphs) * 100 : 0
-  );
 </script>
 
-{#if totalParagraphs > 1}
+{#if visible}
   <div class="read-progress-marker">
     <div class="progress-track">
       <div
         class="current-line"
-        style="top: {segmentTop}%; height: {segmentHeight}%"
+        style="top: {topPercent}%; height: {heightPercent}%"
       ></div>
     </div>
   </div>

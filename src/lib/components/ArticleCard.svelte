@@ -468,8 +468,9 @@
         <div class="article-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
           {#if expanded && paragraphTracking.totalParagraphs > 1}
             <ReadProgressMarker
-              currentParagraphIndex={paragraphTracking.currentParagraphIndex}
-              totalParagraphs={paragraphTracking.totalParagraphs}
+              topPercent={paragraphTracking.markerTopPercent}
+              heightPercent={paragraphTracking.markerHeightPercent}
+              visible={true}
             />
           {/if}
           <div

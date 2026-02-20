@@ -379,8 +379,9 @@
       <div class="reader-body-wrapper">
         {#if paragraphTracking.totalParagraphs > 1}
           <ReadProgressMarker
-            currentParagraphIndex={paragraphTracking.currentParagraphIndex}
-            totalParagraphs={paragraphTracking.totalParagraphs}
+            topPercent={paragraphTracking.markerTopPercent}
+            heightPercent={paragraphTracking.markerHeightPercent}
+            visible={true}
           />
         {/if}
         <div class="reader-body" bind:this={readerBodyEl} use:bskyEmbed>
