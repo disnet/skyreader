@@ -1,10 +1,20 @@
 <script lang="ts">
-  import type { Article } from '$lib/types';
+  import type {
+    Article,
+    SocialShare,
+    SocialDocument,
+    LeafletContent,
+    PcktBlogContent,
+    OffprintContent,
+    GreengaleContent,
+  } from '$lib/types';
+  import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import { sanitizeHtml } from '$lib/utils/sanitize';
   import { formatRelativeDate } from '$lib/utils/date';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { profileService } from '$lib/services/profiles';
   import { isLeafletContent, renderLeafletContent } from '$lib/utils/leaflet-renderer';
   import { isPcktBlogContent, renderPcktBlogContent } from '$lib/utils/pckt-blog-renderer';
   import { isOffprintContent, renderOffprintContent } from '$lib/utils/offprint-renderer';
@@ -15,11 +25,11 @@
   import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
 
   let {
-    article,
+    readerItem,
     onClose,
     onArchive,
   }: {
-    article: Article;
+    readerItem: FeedDisplayItem;
     onClose: () => void;
     onArchive?: () => void;
   } = $props();
@@ -31,7 +41,13 @@
   let lastScrollY = $state(0);
   let overlayEl: HTMLElement | undefined = $state();
 
-  let itemTags = $derived(itemLabelsStore.getTagsForItem(article.guid));
+  let itemKey = $derived(readerItem.key);
+  let itemTags = $derived(itemLabelsStore.getTagsForItem(itemKey));
+
+  let labelItemType = $derived.by((): 'article' | 'share' | 'document' | 'userShare' => {
+    if (readerItem.type === 'userShare') return 'userShare';
+    return readerItem.type;
+  });
 
   const fontOptions: { value: ArticleFont; label: string; family: string }[] = [
     { value: 'sans-serif', label: 'Sans', family: 'sans-serif' },
@@ -51,25 +67,116 @@
     if (!overlayEl) return;
     const currentY = overlayEl.scrollTop;
     if (currentY > lastScrollY && currentY > 60) {
-      // Scrolling down
       controlsVisible = false;
       styleMenuOpen = false;
     } else {
-      // Scrolling up
       controlsVisible = true;
     }
     lastScrollY = currentY;
   }
 
-  let sub = $derived(subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId));
+  // Normalize data from different item types
+  let title = $derived.by(() => {
+    if (readerItem.type === 'article') return readerItem.item.title || readerItem.item.url;
+    if (readerItem.type === 'share') return readerItem.item.itemTitle || readerItem.item.itemUrl;
+    if (readerItem.type === 'document') return readerItem.item.title || readerItem.item.recordUri;
+    return '';
+  });
+
+  let itemUrl = $derived.by(() => {
+    if (readerItem.type === 'article') return readerItem.item.url;
+    if (readerItem.type === 'share') return readerItem.item.itemUrl;
+    if (readerItem.type === 'document')
+      return readerItem.item.canonicalUrl || readerItem.item.path || '';
+    return '';
+  });
+
+  let publishedAt = $derived.by(() => {
+    if (readerItem.type === 'article') return readerItem.item.publishedAt;
+    if (readerItem.type === 'share')
+      return readerItem.item.itemPublishedAt || readerItem.item.createdAt;
+    if (readerItem.type === 'document') return readerItem.item.publishedAt;
+    return '';
+  });
+
+  // Feed info (articles only)
+  let sub = $derived(
+    readerItem.type === 'article'
+      ? subscriptionsStore.subscriptions.find((s) => s.id === readerItem.item.subscriptionId)
+      : undefined
+  );
   let feedTitle = $derived(sub?.customTitle || sub?.title || '');
-  let faviconUrl = $derived(getFaviconUrl(sub?.siteUrl || sub?.feedUrl || article.url));
-  let isArchived = $derived(itemLabelsStore.isArchived(article.guid));
 
-  let displayContent = $derived(article.content || article.summary || '');
-  let sanitizedContent = $derived(sanitizeHtml(displayContent, article.url));
+  // Author info (shares/documents)
+  let authorProfile = $state<{ handle?: string } | null>(null);
+  $effect(() => {
+    if (readerItem.type === 'share') {
+      profileService.getProfile(readerItem.item.authorDid).then((p) => {
+        authorProfile = p;
+      });
+    } else if (readerItem.type === 'document') {
+      profileService.getProfile(readerItem.item.authorDid).then((p) => {
+        authorProfile = p;
+      });
+    } else {
+      authorProfile = null;
+    }
+  });
+  let authorLabel = $derived.by(() => {
+    if (readerItem.type === 'article' && readerItem.item.author)
+      return `by ${readerItem.item.author}`;
+    if (readerItem.type === 'share') {
+      const handle = authorProfile?.handle || readerItem.item.authorDid;
+      return `shared by @${handle}`;
+    }
+    if (readerItem.type === 'document') {
+      const handle = authorProfile?.handle || readerItem.item.authorDid;
+      return `by @${handle}`;
+    }
+    return '';
+  });
 
-  // Read time estimate
+  let faviconUrl = $derived.by(() => {
+    if (readerItem.type === 'article') {
+      return getFaviconUrl(sub?.siteUrl || sub?.feedUrl || readerItem.item.url);
+    }
+    if (readerItem.type === 'document' && readerItem.item.siteIcon) return readerItem.item.siteIcon;
+    if (readerItem.type === 'document' && readerItem.item.canonicalUrl)
+      return getFaviconUrl(readerItem.item.canonicalUrl);
+    if (readerItem.type === 'share') return getFaviconUrl(readerItem.item.itemUrl);
+    return itemUrl ? getFaviconUrl(itemUrl) : '';
+  });
+
+  let isArchived = $derived(itemLabelsStore.isArchived(itemKey));
+
+  let displayContent = $derived.by(() => {
+    if (readerItem.type === 'article') {
+      return readerItem.item.content || readerItem.item.summary || '';
+    }
+    if (readerItem.type === 'share') {
+      return readerItem.item.content || readerItem.item.itemDescription || '';
+    }
+    if (readerItem.type === 'document') {
+      const doc = readerItem.item;
+      if (doc.content && isLeafletContent(doc.content)) {
+        return renderLeafletContent(doc.content as LeafletContent, doc.authorDid);
+      }
+      if (doc.content && isPcktBlogContent(doc.content)) {
+        return renderPcktBlogContent(doc.content as PcktBlogContent, doc.authorDid);
+      }
+      if (doc.content && isOffprintContent(doc.content)) {
+        return renderOffprintContent(doc.content as OffprintContent, doc.authorDid);
+      }
+      if (doc.content && isGreengaleContent(doc.content)) {
+        return renderGreengaleContent(doc.content as GreengaleContent, doc.authorDid);
+      }
+      return doc.textContent || doc.description || '';
+    }
+    return '';
+  });
+
+  let sanitizedContent = $derived(sanitizeHtml(displayContent, itemUrl));
+
   let readTimeMinutes = $derived.by(() => {
     const text = displayContent.replace(/<[^>]*>/g, '');
     const wordCount = text.split(/\s+/).filter(Boolean).length;
@@ -91,7 +198,7 @@
   }
 
   function handleOpenUrl() {
-    window.open(article.url, '_blank', 'noopener');
+    if (itemUrl) window.open(itemUrl, '_blank', 'noopener');
   }
 </script>
 
@@ -152,8 +259,8 @@
 
       {#if tagMenuOpen}
         <TagMenu
-          itemKey={article.guid}
-          itemType="article"
+          {itemKey}
+          itemType={labelItemType}
           anchorEl={tagBtnRef}
           onClose={() => (tagMenuOpen = false)}
         />
@@ -211,7 +318,7 @@
 
     <article class="reader-article">
       <div class="reader-article-header">
-        <h1 class="reader-title">{article.title || article.url}</h1>
+        <h1 class="reader-title">{title}</h1>
         <div class="reader-meta">
           {#if faviconUrl}
             <img src={faviconUrl} alt="" class="reader-favicon" />
@@ -219,10 +326,10 @@
           {#if feedTitle}
             <a href="/?feed={sub?.id}" class="reader-feed">{feedTitle}</a>
           {/if}
-          {#if article.author}
-            <span class="reader-author">by {article.author}</span>
+          {#if authorLabel}
+            <span class="reader-author">{authorLabel}</span>
           {/if}
-          <span class="reader-date">{formatRelativeDate(article.publishedAt)}</span>
+          <span class="reader-date">{formatRelativeDate(publishedAt)}</span>
           <span class="reader-read-time">
             <Icon name="clock" size={12} />
             {readTimeMinutes} min read

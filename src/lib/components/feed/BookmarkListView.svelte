@@ -3,11 +3,11 @@
   import BookmarkReader from './BookmarkReader.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import { feedViewStore } from '$lib/stores/feedView.svelte';
+  import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-  import type { Article } from '$lib/types';
+  import type { ItemLabelType } from '$lib/types';
 
-  let readerArticle = $state<Article | null>(null);
+  let readerItem = $state<FeedDisplayItem | null>(null);
 
   // Element refs for scroll management
   let articleElements = $state<HTMLElement[]>([]);
@@ -24,24 +24,29 @@
     window.scrollBy({ top: offset, behavior: 'instant' });
   }
 
-  function openReader(article: Article) {
-    readerArticle = article;
+  function openReader(item: FeedDisplayItem) {
+    readerItem = item;
   }
 
   function closeReader() {
-    readerArticle = null;
+    readerItem = null;
   }
 
-  function handleArchive(articleGuid: string) {
-    itemLabelsStore.toggleArchive(articleGuid);
-    if (readerArticle?.guid === articleGuid) {
+  function getItemType(item: FeedDisplayItem): ItemLabelType {
+    if (item.type === 'userShare') return 'userShare';
+    return item.type;
+  }
+
+  function handleArchive(item: FeedDisplayItem) {
+    itemLabelsStore.toggleArchive(item.key, getItemType(item));
+    if (readerItem?.key === item.key) {
       closeReader();
     }
   }
 
-  function handleRemoveBookmark(articleGuid: string) {
-    itemLabelsStore.toggleStar(articleGuid);
-    if (readerArticle?.guid === articleGuid) {
+  function handleRemoveBookmark(item: FeedDisplayItem) {
+    itemLabelsStore.toggleStar(item.key, getItemType(item));
+    if (readerItem?.key === item.key) {
       closeReader();
     }
   }
@@ -54,8 +59,8 @@
     const index = feedViewStore.selectedIndex;
     if (index < 0) return;
     const item = feedViewStore.currentItems[index];
-    if (item?.type === 'article') {
-      openReader(item.item);
+    if (item) {
+      openReader(item);
     }
   }
 
@@ -66,33 +71,27 @@
   export { scrollToCenter };
 </script>
 
-{#if readerArticle}
-  <BookmarkReader
-    article={readerArticle}
-    onClose={closeReader}
-    onArchive={() => handleArchive(readerArticle!.guid)}
-  />
+{#if readerItem}
+  <BookmarkReader {readerItem} onClose={closeReader} onArchive={() => handleArchive(readerItem!)} />
 {:else}
   <div class="bookmark-list">
     {#each feedViewStore.currentItems as displayItem, index (displayItem.key)}
-      {#if displayItem.type === 'article'}
-        <div bind:this={articleElements[index]}>
-          <BookmarkCard
-            article={displayItem.item}
-            selected={feedViewStore.selectedIndex === index}
-            onOpen={() => openReader(displayItem.item)}
-            onHover={() => handleSelect(index)}
-            onArchive={() => handleArchive(displayItem.item.guid)}
-          />
-        </div>
-      {/if}
+      <div bind:this={articleElements[index]}>
+        <BookmarkCard
+          {displayItem}
+          selected={feedViewStore.selectedIndex === index}
+          onOpen={() => openReader(displayItem)}
+          onHover={() => handleSelect(index)}
+          onArchive={() => handleArchive(displayItem)}
+        />
+      </div>
     {/each}
 
     {#if feedViewStore.currentItems.length === 0}
       {#if feedViewStore.bookmarksView === 'inbox'}
         <EmptyState
-          title="No bookmarked articles"
-          description="Bookmark articles to save them for later"
+          title="No bookmarked items"
+          description="Bookmark articles, shares, or documents to save them for later"
         />
       {:else}
         <EmptyState

@@ -96,14 +96,37 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     }
   }
 
-  // Toggle star on selected item
+  // Toggle star on selected item (works for all item types)
   function toggleSelectedStar() {
-    const selected = getSelectedArticle();
-    if (selected) {
+    const selectedIndex = feedViewStore.selectedIndex;
+    if (selectedIndex < 0) return;
+
+    const items = feedViewStore.currentItems;
+    const item = items[selectedIndex];
+    if (!item) return;
+
+    if (item.type === 'article') {
+      itemLabelsStore.toggleStar(item.item.guid, 'article', item.item.url, item.item.title);
+    } else if (item.type === 'userShare') {
       itemLabelsStore.toggleStar(
-        selected.article.guid,
-        selected.article.url,
-        selected.article.title
+        item.article.guid,
+        'article',
+        item.article.url,
+        item.article.title
+      );
+    } else if (item.type === 'share') {
+      itemLabelsStore.toggleStar(
+        item.item.recordUri,
+        'share',
+        item.item.itemUrl,
+        item.item.itemTitle
+      );
+    } else if (item.type === 'document') {
+      itemLabelsStore.toggleStar(
+        item.item.recordUri,
+        'document',
+        item.item.canonicalUrl || item.item.path || '',
+        item.item.title
       );
     }
   }
@@ -335,7 +358,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       condition: () => auth.isAuthenticated && !!feedViewStore.feedFilter,
     });
 
-    // Bookmarks-specific: archive item
+    // Bookmarks-specific: archive item (works for all item types)
     keyboardStore.register({
       key: 'e',
       description: 'Archive/unarchive bookmark',
@@ -344,8 +367,12 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
         const idx = feedViewStore.selectedIndex;
         if (idx < 0) return;
         const item = feedViewStore.currentItems[idx];
-        if (!item || item.type !== 'article') return;
-        itemLabelsStore.toggleArchive(item.item.guid);
+        if (!item) return;
+        const itemType = item.type === 'userShare' ? 'userShare' : item.type;
+        itemLabelsStore.toggleArchive(
+          item.key,
+          itemType as 'article' | 'share' | 'document' | 'userShare'
+        );
       },
       condition: () => hasSelected() && !!feedViewStore.starredFilter,
     });

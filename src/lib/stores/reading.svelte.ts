@@ -166,7 +166,7 @@ function createReadingStore() {
         positions.map((p) => [
           p.item_guid,
           {
-            starred: !!p.starred,
+            starred: oldPositions.get(p.item_guid)?.starred ?? false,
             archived: oldPositions.get(p.item_guid)?.archived,
             readAt: p.read_at,
             itemUrl: p.item_url || undefined,
@@ -337,26 +337,40 @@ function createReadingStore() {
     // Update cache
     updateCache(articleGuid, newPosition);
 
-    if (syncStore.isOnline) {
-      try {
-        await api.toggleStar(articleGuid, newStarred, articleUrl, articleTitle);
-      } catch (e) {
-        console.error('Failed to toggle star, queueing for retry:', e);
-        await syncQueue.enqueue('update', 'reading', articleGuid, {
-          articleGuid,
-          articleUrl,
-          articleTitle,
-          starred: newStarred,
-        } as ReadingPayload);
+    const now = Date.now();
+    const payload = {
+      itemKey: articleGuid,
+      itemType: 'article' as const,
+      label: 'starred',
+      props: { starredAt: now, itemUrl: articleUrl, itemTitle: articleTitle },
+    };
+    if (newStarred) {
+      if (syncStore.isOnline) {
+        try {
+          await api.addLabel({
+            itemKey: articleGuid,
+            itemType: 'article',
+            label: 'starred',
+            props: payload.props,
+          });
+        } catch (e) {
+          console.error('Failed to add starred label, queueing for retry:', e);
+          await syncQueue.enqueue('create', 'label', `${articleGuid}\0starred`, payload);
+        }
+      } else {
+        await syncQueue.enqueue('create', 'label', `${articleGuid}\0starred`, payload);
       }
     } else {
-      // Offline - queue the operation
-      await syncQueue.enqueue('update', 'reading', articleGuid, {
-        articleGuid,
-        articleUrl,
-        articleTitle,
-        starred: newStarred,
-      } as ReadingPayload);
+      if (syncStore.isOnline) {
+        try {
+          await api.deleteLabel(articleGuid, 'starred');
+        } catch (e) {
+          console.error('Failed to delete starred label, queueing for retry:', e);
+          await syncQueue.enqueue('delete', 'label', `${articleGuid}\0starred`, payload);
+        }
+      } else {
+        await syncQueue.enqueue('delete', 'label', `${articleGuid}\0starred`, payload);
+      }
     }
   }
 

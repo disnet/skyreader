@@ -117,9 +117,12 @@
           {share}
           {localArticle}
           isRead={itemLabelsStore.isSocialRead(share.recordUri)}
+          isStarred={itemLabelsStore.isStarred(share.recordUri)}
           selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
           expanded={feedViewStore.expandedIndex === index}
           highlighted={feedViewStore.selectedIndex === index}
+          onToggleStar={() =>
+            itemLabelsStore.toggleStar(share.recordUri, 'share', share.itemUrl, share.itemTitle)}
           onToggleRead={() => {
             if (itemLabelsStore.isSocialRead(share.recordUri)) {
               itemLabelsStore.markSocialAsUnread(share.recordUri);
@@ -169,9 +172,17 @@
         <ArticleCard
           document={doc}
           isRead={itemLabelsStore.isSocialRead(doc.recordUri)}
+          isStarred={itemLabelsStore.isStarred(doc.recordUri)}
           selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
           expanded={feedViewStore.expandedIndex === index}
           highlighted={feedViewStore.selectedIndex === index}
+          onToggleStar={() =>
+            itemLabelsStore.toggleStar(
+              doc.recordUri,
+              'document',
+              doc.canonicalUrl || doc.path || '',
+              doc.title
+            )}
           onToggleRead={() => handleToggleDocumentRead(doc)}
           onSelect={() => handleSelect(index)}
           onExpand={() => handleExpand(index)}
