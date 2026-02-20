@@ -4,6 +4,7 @@ import type { ItemLabelType } from '$lib/types';
 
 const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
 const MIN_TEXT_LENGTH = 20;
+const SAVE_DEBOUNCE_MS = 500;
 
 interface ParagraphTrackingParams {
   contentEl: () => HTMLElement | undefined;
@@ -18,8 +19,10 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
   let currentParagraphIndex = $state(0);
   let furthestParagraphIndex = $state(0);
   let totalParagraphs = $state(0);
-  let observer: IntersectionObserver | null = null;
   let hasRestored = false;
+  let scrollHandler: (() => void) | null = null;
+  let scrollTarget: EventTarget | null = null;
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   function detectParagraphs() {
     const el = params.contentEl();
@@ -38,6 +41,65 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     });
 
     return filtered;
+  }
+
+  function getScrollTop(): number {
+    const root = params.scrollRoot();
+    if (root) {
+      return root.scrollTop;
+    }
+    return window.scrollY;
+  }
+
+  function getViewportTop(): number {
+    const root = params.scrollRoot();
+    if (root) {
+      return root.getBoundingClientRect().top;
+    }
+    return 0;
+  }
+
+  /**
+   * Find the current paragraph: the last paragraph whose top edge is at or above
+   * the top of the scroll viewport. As a paragraph scrolls up past the top,
+   * the current position advances to the next paragraph.
+   */
+  function updateCurrentParagraph() {
+    if (paragraphs.length === 0) return;
+
+    const viewportTop = getViewportTop();
+    // Add a small offset so the transition happens shortly after the top edge passes
+    const threshold = viewportTop + 20;
+
+    let newIndex = 0;
+    for (let i = 0; i < paragraphs.length; i++) {
+      const rect = paragraphs[i].getBoundingClientRect();
+      if (rect.top <= threshold) {
+        newIndex = i;
+      } else {
+        break;
+      }
+    }
+
+    currentParagraphIndex = newIndex;
+
+    // Update furthest-read
+    if (currentParagraphIndex > furthestParagraphIndex) {
+      furthestParagraphIndex = currentParagraphIndex;
+      debouncedSave();
+    }
+  }
+
+  function debouncedSave() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      itemLabelsStore.setReadProgress(
+        params.itemKey(),
+        params.itemType(),
+        furthestParagraphIndex,
+        totalParagraphs
+      );
+    }, SAVE_DEBOUNCE_MS);
   }
 
   function setupObserver() {
@@ -59,50 +121,17 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
       hasRestored = true;
     }
 
-    const root = params.scrollRoot() ?? null;
+    const root = params.scrollRoot();
+    scrollTarget = root ?? window;
 
-    observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          const idx = parseInt((entry.target as HTMLElement).dataset.paraIndex || '0', 10);
+    scrollHandler = () => {
+      requestAnimationFrame(updateCurrentParagraph);
+    };
 
-          if (entry.isIntersecting) {
-            // Track the current paragraph in view
-            if (idx > currentParagraphIndex) {
-              currentParagraphIndex = idx;
-            }
-          } else if (!entry.isIntersecting && entry.boundingClientRect.top < 0) {
-            // Element scrolled past the top — user has read past it
-            const newIdx = idx + 1;
-            if (newIdx > currentParagraphIndex) {
-              currentParagraphIndex = newIdx;
-            }
-          }
-        }
+    scrollTarget.addEventListener('scroll', scrollHandler, { passive: true });
 
-        // Update furthest-read
-        if (currentParagraphIndex > furthestParagraphIndex) {
-          furthestParagraphIndex = currentParagraphIndex;
-          // Persist to IndexedDB (debounced inside the store)
-          itemLabelsStore.setReadProgress(
-            params.itemKey(),
-            params.itemType(),
-            furthestParagraphIndex,
-            totalParagraphs
-          );
-        }
-      },
-      {
-        root,
-        // Fire when element crosses the middle of the viewport
-        rootMargin: '-50% 0px -50% 0px',
-        threshold: 0,
-      }
-    );
-
-    for (const el of paragraphs) {
-      observer.observe(el);
-    }
+    // Initial position check
+    updateCurrentParagraph();
   }
 
   function scrollToParagraph(index: number) {
@@ -136,9 +165,14 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
   }
 
   function cleanup() {
-    if (observer) {
-      observer.disconnect();
-      observer = null;
+    if (scrollHandler && scrollTarget) {
+      scrollTarget.removeEventListener('scroll', scrollHandler);
+      scrollHandler = null;
+      scrollTarget = null;
+    }
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
     }
   }
 

@@ -1,55 +1,39 @@
 <script lang="ts">
   let {
     currentParagraphIndex,
-    furthestParagraphIndex,
     totalParagraphs,
   }: {
     currentParagraphIndex: number;
-    furthestParagraphIndex: number;
     totalParagraphs: number;
   } = $props();
 
-  let progress = $derived(
-    totalParagraphs > 0 ? Math.round((currentParagraphIndex / (totalParagraphs - 1)) * 100) : 0
+  let segmentTop = $derived(
+    totalParagraphs > 0 ? (currentParagraphIndex / totalParagraphs) * 100 : 0
   );
 
-  let furthestProgress = $derived(
-    totalParagraphs > 0 ? Math.round((furthestParagraphIndex / (totalParagraphs - 1)) * 100) : 0
-  );
-
-  let showResume = $derived(
-    furthestParagraphIndex > currentParagraphIndex && furthestParagraphIndex < totalParagraphs - 1
+  let segmentHeight = $derived(
+    totalParagraphs > 0 ? (1 / totalParagraphs) * 100 : 0
   );
 </script>
 
 {#if totalParagraphs > 1}
   <div class="read-progress-marker">
     <div class="progress-track">
-      {#if showResume}
-        <div
-          class="furthest-marker"
-          style="top: {furthestProgress}%"
-          title="Furthest read position"
-        ></div>
-      {/if}
-      <div class="current-marker" style="top: {progress}%"></div>
+      <div
+        class="current-line"
+        style="top: {segmentTop}%; height: {segmentHeight}%"
+      ></div>
     </div>
-    <span class="progress-text">
-      &para; {currentParagraphIndex + 1}/{totalParagraphs}
-    </span>
   </div>
 {/if}
 
 <style>
   .read-progress-marker {
     position: absolute;
-    left: -20px;
+    left: -12px;
     top: 0;
     bottom: 0;
-    width: 16px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+    width: 3px;
     pointer-events: none;
     z-index: 1;
   }
@@ -57,40 +41,17 @@
   .progress-track {
     position: relative;
     width: 3px;
-    flex: 1;
+    height: 100%;
     background: var(--color-border);
     border-radius: 2px;
-    min-height: 40px;
   }
 
-  .current-marker {
+  .current-line {
     position: absolute;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--color-primary);
-    transition: top 0.2s ease;
-  }
-
-  .furthest-marker {
-    position: absolute;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--color-text-secondary, #999);
-    opacity: 0.5;
-    transition: top 0.2s ease;
-  }
-
-  .progress-text {
-    font-size: 0.65rem;
-    color: var(--color-text-secondary);
-    white-space: nowrap;
-    margin-top: 4px;
-    font-variant-numeric: tabular-nums;
+    left: 0;
+    width: 100%;
+    background: var(--color-primary, #3b82f6);
+    border-radius: 2px;
+    transition: top 0.15s ease, height 0.15s ease;
   }
 </style>

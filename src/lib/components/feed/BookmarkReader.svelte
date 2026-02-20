@@ -380,7 +380,6 @@
         {#if paragraphTracking.totalParagraphs > 1}
           <ReadProgressMarker
             currentParagraphIndex={paragraphTracking.currentParagraphIndex}
-            furthestParagraphIndex={paragraphTracking.furthestParagraphIndex}
             totalParagraphs={paragraphTracking.totalParagraphs}
           />
         {/if}
