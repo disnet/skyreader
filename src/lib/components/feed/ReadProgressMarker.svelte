@@ -13,10 +13,7 @@
 {#if visible}
   <div class="read-progress-marker">
     <div class="progress-track">
-      <div
-        class="current-line"
-        style="top: {topPercent}%; height: {heightPercent}%"
-      ></div>
+      <div class="current-line" style="top: {topPercent}%; height: {heightPercent}%"></div>
     </div>
   </div>
 {/if}
@@ -45,6 +42,8 @@
     width: 100%;
     background: var(--color-primary, #3b82f6);
     border-radius: 2px;
-    transition: top 0.15s ease, height 0.15s ease;
+    transition:
+      top 0.15s ease,
+      height 0.15s ease;
   }
 </style>
