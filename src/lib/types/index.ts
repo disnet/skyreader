@@ -690,6 +690,8 @@ export interface Bookmark {
   wordCount: number | null;
   publishedAt: string | null;
   savedAt: string;
+  source?: 'url' | 'feed';
+  itemGuid?: string;
 }
 
 export interface ItemLabel {

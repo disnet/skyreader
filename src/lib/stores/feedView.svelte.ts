@@ -493,16 +493,20 @@ function createFeedViewStore() {
           key: d.recordUri,
         }));
 
-      // Add bookmarks (auto-starred)
+      // Add bookmarks — only URL-source bookmarks, since feed-source bookmarks
+      // are already included via displayedArticles (which checks bookmarksStore.isSaved)
+      const articleGuids = new Set(displayedArticles.map((a) => a.guid));
       const bookmarkItems: FeedDisplayItem[] = bookmarksStore.articles
         .filter((bm) => {
-          if (isArchiveView) return itemLabelsStore.isArchived(bm.uri);
-          return !itemLabelsStore.isArchived(bm.uri);
+          // Skip feed-source bookmarks whose guid matches a displayed article
+          if (bm.source === 'feed' && bm.itemGuid && articleGuids.has(bm.itemGuid)) return false;
+          if (isArchiveView) return itemLabelsStore.isArchived(bm.uri || bm.itemGuid || '');
+          return !itemLabelsStore.isArchived(bm.uri || bm.itemGuid || '');
         })
         .map((bm) => ({
           type: 'bookmark' as const,
           item: bm,
-          key: bm.uri,
+          key: bm.uri || bm.itemGuid || bm.rkey,
         }));
 
       items = [...articleItems, ...starredShareItems, ...starredDocumentItems, ...bookmarkItems];

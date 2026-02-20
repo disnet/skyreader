@@ -7,6 +7,7 @@ import {
   type LabelPayload,
 } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
+import { bookmarksStore } from './bookmarks.svelte';
 import type { ItemLabel, ItemLabelType, SocialItemType, SocialReadPosition } from '$lib/types';
 
 const BULK_BATCH_SIZE = 500;
@@ -513,7 +514,7 @@ function createItemLabelsStore() {
   }
 
   function isStarred(itemKey: string): boolean {
-    return hasLabel(itemKey, 'starred');
+    return hasLabel(itemKey, 'starred') || bookmarksStore.isSaved(itemKey);
   }
 
   function isArchived(itemKey: string): boolean {
@@ -573,11 +574,11 @@ function createItemLabelsStore() {
     return map;
   });
 
-  // Starred count
+  // Starred count: labels starred + bookmarks (deduplicated)
   let starredCount = $derived.by(() => {
-    let count = 0;
-    for (const labels of labelsByItem.values()) {
-      if (labels.has('starred')) count++;
+    let count = bookmarksStore.articles.length;
+    for (const [itemKey, labels] of labelsByItem) {
+      if (labels.has('starred') && !bookmarksStore.isSaved(itemKey)) count++;
     }
     return count;
   });
@@ -718,9 +719,30 @@ function createItemLabelsStore() {
     itemKey: string,
     itemType: ItemLabelType = 'article',
     itemUrl?: string,
-    itemTitle?: string
+    itemTitle?: string,
+    articleMeta?: {
+      guid: string;
+      url: string;
+      title?: string;
+      author?: string;
+      summary?: string;
+      imageUrl?: string;
+      publishedAt?: string;
+    }
   ) {
     const wasStarred = isStarred(itemKey);
+
+    if (itemType === 'article' && articleMeta) {
+      // Delegate to bookmarksStore for article saves
+      if (!wasStarred) {
+        await bookmarksStore.saveArticle(articleMeta);
+      } else {
+        await bookmarksStore.unsaveByGuid(articleMeta.guid);
+      }
+      return;
+    }
+
+    // For non-article types (shares, documents, etc.), use the labels API
     const newStarred = !wasStarred;
     const now = Date.now();
 
@@ -741,7 +763,7 @@ function createItemLabelsStore() {
     }
     triggerReactivity();
 
-    // Use the labels API for all item types
+    // Use the labels API for non-article item types
     const payload: LabelPayload = {
       itemKey,
       itemType,

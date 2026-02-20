@@ -17,7 +17,14 @@ import type {
 export interface SyncQueueEntry {
   id?: number;
   operation: 'create' | 'update' | 'delete';
-  collection: 'reading' | 'shares' | 'shareReading' | 'socialReading' | 'follows' | 'label';
+  collection:
+    | 'reading'
+    | 'shares'
+    | 'shareReading'
+    | 'socialReading'
+    | 'follows'
+    | 'label'
+    | 'saved';
   key: string; // Deduplication key (e.g., articleGuid, rkey)
   payload: string; // JSON-serialized data
   timestamp: number;
@@ -250,6 +257,11 @@ class SkyreaderDatabase extends Dexie {
     // Drop readPositionsCache table (starred/archived now in itemLabels)
     this.version(22).stores({
       readPositionsCache: null,
+    });
+
+    // Add itemGuid index to bookmarks for feed save lookups
+    this.version(23).stores({
+      bookmarks: 'rkey, url, itemGuid',
     });
   }
 }

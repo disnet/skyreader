@@ -10,7 +10,8 @@ export type SyncCollection =
   | 'shareReading'
   | 'socialReading'
   | 'follows'
-  | 'label';
+  | 'label'
+  | 'saved';
 
 // Payload types for each collection
 export interface ReadingPayload {
@@ -66,13 +67,27 @@ export interface LabelPayload {
   props?: Record<string, unknown>;
 }
 
+export interface SavedPayload {
+  rkey: string;
+  url: string;
+  fromFeed?: boolean;
+  itemGuid?: string;
+  title?: string;
+  author?: string;
+  description?: string;
+  image?: string;
+  publishedAt?: string;
+  domain?: string;
+}
+
 type SyncPayload =
   | ReadingPayload
   | SharePayload
   | ShareReadingPayload
   | SocialReadingPayload
   | FollowPayload
-  | LabelPayload;
+  | LabelPayload
+  | SavedPayload;
 
 class SyncQueue {
   private processing = false;
@@ -406,6 +421,9 @@ class SyncQueue {
       case 'label':
         await this.executeLabelOperation(entry.operation, payload as LabelPayload);
         break;
+      case 'saved':
+        await this.executeSavedOperation(entry.operation, payload as SavedPayload);
+        break;
     }
   }
 
@@ -539,6 +557,33 @@ class SyncQueue {
         break;
       case 'delete':
         await api.deleteLabel(payload.itemKey, payload.label);
+        break;
+    }
+  }
+
+  private async executeSavedOperation(
+    operation: SyncOperation,
+    payload: SavedPayload
+  ): Promise<void> {
+    switch (operation) {
+      case 'create':
+        await api.saveBookmarkFromUrl(payload.url, payload.rkey, {
+          fromFeed: payload.fromFeed,
+          itemGuid: payload.itemGuid,
+          title: payload.title,
+          author: payload.author,
+          description: payload.description,
+          image: payload.image,
+          publishedAt: payload.publishedAt,
+          domain: payload.domain,
+        });
+        break;
+      case 'delete':
+        if (payload.itemGuid) {
+          await api.deleteBookmarkByGuid(payload.itemGuid);
+        } else {
+          await api.deleteBookmark(payload.rkey);
+        }
         break;
     }
   }

@@ -109,13 +109,30 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     if (!item) return;
 
     if (item.type === 'article') {
-      itemLabelsStore.toggleStar(item.item.guid, 'article', item.item.url, item.item.title);
+      itemLabelsStore.toggleStar(item.item.guid, 'article', item.item.url, item.item.title, {
+        guid: item.item.guid,
+        url: item.item.url,
+        title: item.item.title,
+        author: item.item.author,
+        summary: item.item.summary,
+        imageUrl: item.item.imageUrl,
+        publishedAt: item.item.publishedAt,
+      });
     } else if (item.type === 'userShare') {
       itemLabelsStore.toggleStar(
         item.article.guid,
         'article',
         item.article.url,
-        item.article.title
+        item.article.title,
+        {
+          guid: item.article.guid,
+          url: item.article.url,
+          title: item.article.title,
+          author: item.article.author,
+          summary: item.article.summary,
+          imageUrl: item.article.imageUrl,
+          publishedAt: item.article.publishedAt,
+        }
       );
     } else if (item.type === 'share') {
       itemLabelsStore.toggleStar(

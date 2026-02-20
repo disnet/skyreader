@@ -54,7 +54,21 @@
   }
 
   function handleRemoveBookmark(item: FeedDisplayItem) {
-    itemLabelsStore.toggleStar(item.key, getItemType(item));
+    if (item.type === 'article') {
+      itemLabelsStore.toggleStar(item.key, 'article', item.item.url, item.item.title, {
+        guid: item.item.guid,
+        url: item.item.url,
+        title: item.item.title,
+        author: item.item.author,
+        summary: item.item.summary,
+        imageUrl: item.item.imageUrl,
+        publishedAt: item.item.publishedAt,
+      });
+    } else if (item.type === 'bookmark') {
+      bookmarksStore.remove(item.item.rkey);
+    } else {
+      itemLabelsStore.toggleStar(item.key, getItemType(item));
+    }
     if (readerItem?.key === item.key) {
       closeReader();
     }
