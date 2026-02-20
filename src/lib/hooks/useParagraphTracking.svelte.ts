@@ -19,9 +19,8 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
   let currentParagraphIndex = $state(0);
   let furthestParagraphIndex = $state(0);
   let totalParagraphs = $state(0);
-  let markerTopPercent = $state(0);
-  let markerHeightPercent = $state(0);
   let hasRestored = false;
+  let highlightEl: HTMLDivElement | null = null;
   let scrollHandler: (() => void) | null = null;
   let scrollTarget: EventTarget | null = null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -86,7 +85,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
         }
       }
     }
-    updateMarkerPosition();
+    updateHighlight();
 
     // Update furthest-read
     if (currentParagraphIndex > furthestParagraphIndex) {
@@ -107,21 +106,35 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     return top;
   }
 
-  function updateMarkerPosition() {
+  function createHighlightEl(container: HTMLElement): HTMLDivElement {
+    const el = document.createElement('div');
+    el.style.cssText =
+      'position:absolute;left:-8px;right:-8px;pointer-events:none;border-radius:4px;' +
+      'background:color-mix(in srgb, var(--color-primary,#3b82f6) 4%, transparent);' +
+      'transition:top 0.25s ease,height 0.25s ease,opacity 0.25s ease;' +
+      'opacity:0;z-index:0;';
+    container.style.position = 'relative';
+    container.insertBefore(el, container.firstChild);
+    return el;
+  }
+
+  function updateHighlight() {
     const contentEl = params.contentEl();
     if (!contentEl || paragraphs.length === 0) return;
 
-    const containerHeight = contentEl.scrollHeight;
-    if (containerHeight === 0) return;
+    if (!highlightEl) {
+      highlightEl = createHighlightEl(contentEl);
+    }
 
     const para = paragraphs[currentParagraphIndex];
     if (!para) return;
 
-    const paraTop = getOffsetRelativeTo(para, contentEl);
-    const paraHeight = para.offsetHeight;
+    const top = getOffsetRelativeTo(para, contentEl);
+    const height = para.offsetHeight;
 
-    markerTopPercent = (paraTop / containerHeight) * 100;
-    markerHeightPercent = (paraHeight / containerHeight) * 100;
+    highlightEl.style.top = `${top}px`;
+    highlightEl.style.height = `${height}px`;
+    highlightEl.style.opacity = '1';
   }
 
   function debouncedSave() {
@@ -166,7 +179,6 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
 
     // Initial position check
     updateCurrentParagraph();
-    updateMarkerPosition();
   }
 
   function scrollToParagraph(index: number) {
@@ -175,7 +187,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     if (!el) return;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     currentParagraphIndex = index;
-    updateMarkerPosition();
+    updateHighlight();
   }
 
   function nextParagraph() {
@@ -210,6 +222,10 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
       clearTimeout(saveTimer);
       saveTimer = null;
     }
+    if (highlightEl) {
+      highlightEl.remove();
+      highlightEl = null;
+    }
   }
 
   onDestroy(cleanup);
@@ -223,12 +239,6 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     },
     get totalParagraphs() {
       return totalParagraphs;
-    },
-    get markerTopPercent() {
-      return markerTopPercent;
-    },
-    get markerHeightPercent() {
-      return markerHeightPercent;
     },
     setupObserver,
     scrollToParagraph,

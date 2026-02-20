@@ -22,7 +22,6 @@
   import { auth } from '$lib/stores/auth.svelte';
   import Icon from './Icon.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
-  import ReadProgressMarker from '$lib/components/feed/ReadProgressMarker.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
@@ -466,13 +465,6 @@
         <p class="article-loading">Loading article content...</p>
       {:else if hasContent}
         <div class="article-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
-          {#if expanded && paragraphTracking.totalParagraphs > 1}
-            <ReadProgressMarker
-              topPercent={paragraphTracking.markerTopPercent}
-              heightPercent={paragraphTracking.markerHeightPercent}
-              visible={true}
-            />
-          {/if}
           <div
             bind:this={bodyEl}
             class="article-body"

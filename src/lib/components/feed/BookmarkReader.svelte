@@ -22,7 +22,6 @@
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import Icon from '$lib/components/Icon.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
-  import ReadProgressMarker from '$lib/components/feed/ReadProgressMarker.svelte';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
   import { tick } from 'svelte';
@@ -377,13 +376,6 @@
       </div>
 
       <div class="reader-body-wrapper">
-        {#if paragraphTracking.totalParagraphs > 1}
-          <ReadProgressMarker
-            topPercent={paragraphTracking.markerTopPercent}
-            heightPercent={paragraphTracking.markerHeightPercent}
-            visible={true}
-          />
-        {/if}
         <div class="reader-body" bind:this={readerBodyEl} use:bskyEmbed>
           {@html sanitizedContent}
         </div>
