@@ -36,24 +36,21 @@ function createArticlesStore() {
     return bySubId;
   });
 
-  // Derived: unread articles (excluding those in readPositions)
+  // Derived: unread articles (excluding those marked as read)
   let unreadArticles = $derived.by(() => {
-    const positions = itemLabelsStore.readPositions;
-    return allArticles.filter((a) => !positions.has(a.guid));
+    return allArticles.filter((a) => !itemLabelsStore.isRead(a.guid));
   });
 
   // Derived: starred articles
   let starredArticles = $derived.by(() => {
-    const positions = itemLabelsStore.readPositions;
-    return allArticles.filter((a) => positions.get(a.guid)?.starred === true);
+    return allArticles.filter((a) => itemLabelsStore.isStarred(a.guid));
   });
 
   // Derived: set of starred GUIDs (useful for article retention)
   let starredGuids = $derived.by(() => {
-    const positions = itemLabelsStore.readPositions;
     const starred = new Set<string>();
-    for (const [guid, pos] of positions) {
-      if (pos.starred) starred.add(guid);
+    for (const a of allArticles) {
+      if (itemLabelsStore.isStarred(a.guid)) starred.add(a.guid);
     }
     return starred;
   });
@@ -69,9 +66,8 @@ function createArticlesStore() {
    * Get unread articles for a specific subscription
    */
   function getUnreadForSubscription(subscriptionId: number): Article[] {
-    const positions = itemLabelsStore.readPositions;
     const subArticles = getForSubscription(subscriptionId);
-    return subArticles.filter((a) => !positions.has(a.guid));
+    return subArticles.filter((a) => !itemLabelsStore.isRead(a.guid));
   }
 
   /**
@@ -103,7 +99,6 @@ function createArticlesStore() {
     count?: number;
   }): Article[] {
     const { subscriptionId, showOnlyUnread, showOnlyStarred, count = pageSize } = options;
-    const positions = itemLabelsStore.readPositions;
 
     let filtered: Article[];
 
@@ -116,11 +111,11 @@ function createArticlesStore() {
 
     // Apply starred filter
     if (showOnlyStarred) {
-      filtered = filtered.filter((a) => positions.get(a.guid)?.starred === true);
+      filtered = filtered.filter((a) => itemLabelsStore.isStarred(a.guid));
     }
     // Apply unread filter (mutually exclusive with starred for now)
     else if (showOnlyUnread) {
-      filtered = filtered.filter((a) => !positions.has(a.guid));
+      filtered = filtered.filter((a) => !itemLabelsStore.isRead(a.guid));
     }
 
     // Return first N articles
@@ -161,16 +156,15 @@ function createArticlesStore() {
     showOnlyStarred?: boolean;
   }): boolean {
     const { subscriptionId, showOnlyUnread, showOnlyStarred } = options;
-    const positions = itemLabelsStore.readPositions;
 
     let total: number;
 
     if (subscriptionId !== undefined) {
       const subArticles = getForSubscription(subscriptionId);
       if (showOnlyStarred) {
-        total = subArticles.filter((a) => positions.get(a.guid)?.starred === true).length;
+        total = subArticles.filter((a) => itemLabelsStore.isStarred(a.guid)).length;
       } else if (showOnlyUnread) {
-        total = subArticles.filter((a) => !positions.has(a.guid)).length;
+        total = subArticles.filter((a) => !itemLabelsStore.isRead(a.guid)).length;
       } else {
         total = subArticles.length;
       }
