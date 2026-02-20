@@ -31,6 +31,20 @@ export class ScopeUpgradeError extends Error {
   }
 }
 
+export class UrlSaveLimitError extends Error {
+  limit: number;
+  current: number;
+  resetsAt: string;
+
+  constructor(message: string, limit: number, current: number, resetsAt: string) {
+    super(message);
+    this.name = 'UrlSaveLimitError';
+    this.limit = limit;
+    this.current = current;
+    this.resetsAt = resetsAt;
+  }
+}
+
 class ApiClient {
   private onUnauthorized: (() => void) | null = null;
 
@@ -62,11 +76,15 @@ class ApiClient {
         throw new Error('Session expired');
       }
 
-      // Handle 403 - scope upgrade required
+      // Handle 403 - scope upgrade required or limit reached
       if (response.status === 403) {
         const body = await response.json().catch(() => ({ error: 'Forbidden' }));
         if ((body as { error: string }).error === 'scope_upgrade_required') {
           throw new ScopeUpgradeError((body as { message?: string }).message);
+        }
+        if ((body as { error: string }).error === 'url_save_limit_reached') {
+          const b = body as { message: string; limit: number; current: number; resetsAt: string };
+          throw new UrlSaveLimitError(b.message, b.limit, b.current, b.resetsAt);
         }
         throw new Error((body as { error: string }).error || `HTTP ${response.status}`);
       }

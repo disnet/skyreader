@@ -1,5 +1,5 @@
 import { db } from '$lib/services/db';
-import { api } from '$lib/services/api';
+import { api, UrlSaveLimitError } from '$lib/services/api';
 import { generateTid } from '$lib/utils/tid';
 import { syncQueue, type SavedPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';

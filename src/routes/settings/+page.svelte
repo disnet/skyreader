@@ -4,6 +4,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
+  import { savesStore } from '$lib/stores/saves.svelte';
   import {
     preferences,
     type ArticleFont,
@@ -246,6 +247,13 @@
         {@const subLimit = auth.user.limits.maxSubscriptions}
         {@const followCount = socialStore.inAppFollowCount}
         {@const followLimit = auth.user.limits.maxFollows}
+        {@const urlSaveLimit = auth.user.limits.maxUrlSavesPerMonth}
+        {@const monthStart = new Date(
+          Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)
+        ).toISOString()}
+        {@const urlSaveCount = savesStore.articles.filter(
+          (a) => a.source === 'url' && a.savedAt >= monthStart
+        ).length}
         <div class="plan-limits">
           <div class="limit-row">
             <div class="limit-label">
@@ -273,6 +281,21 @@
                 class:limit-bar-warning={followCount / followLimit > 0.8}
                 class:limit-bar-full={followCount >= followLimit}
                 style:width="{Math.min((followCount / followLimit) * 100, 100)}%"
+              ></div>
+            </div>
+          </div>
+
+          <div class="limit-row">
+            <div class="limit-label">
+              <span>URL saves this month</span>
+              <span class="limit-numbers">{urlSaveCount} / {urlSaveLimit}</span>
+            </div>
+            <div class="limit-bar">
+              <div
+                class="limit-bar-fill"
+                class:limit-bar-warning={urlSaveCount / urlSaveLimit > 0.8}
+                class:limit-bar-full={urlSaveCount >= urlSaveLimit}
+                style:width="{Math.min((urlSaveCount / urlSaveLimit) * 100, 100)}%"
               ></div>
             </div>
           </div>
