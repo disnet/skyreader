@@ -629,7 +629,7 @@ class ApiClient {
     publishedAt: string | null;
     savedAt: string;
   }> {
-    return this.fetch('/api/bookmarks', {
+    return this.fetch('/api/saved', {
       method: 'POST',
       body: JSON.stringify({ url, rkey }),
     });
@@ -652,11 +652,11 @@ class ApiClient {
       savedAt: string;
     }>;
   }> {
-    return this.fetch('/api/bookmarks');
+    return this.fetch('/api/saved');
   }
 
   async deleteBookmark(rkey: string): Promise<{ success: boolean }> {
-    return this.fetch(`/api/bookmarks/${rkey}`, {
+    return this.fetch(`/api/saved/${rkey}`, {
       method: 'DELETE',
     });
   }
