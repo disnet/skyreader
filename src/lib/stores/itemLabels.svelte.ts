@@ -1199,6 +1199,51 @@ function createItemLabelsStore() {
     }
   }
 
+  // --- Read progress tracking ---
+
+  let readProgressDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  const READ_PROGRESS_DEBOUNCE_MS = 500;
+
+  function getReadProgress(
+    itemKey: string
+  ): { paragraphIndex: number; totalParagraphs: number } | null {
+    const lbl = labelMap.get(makeKey(itemKey, 'readProgress'));
+    if (!lbl) return null;
+    return {
+      paragraphIndex: lbl.props.paragraphIndex as number,
+      totalParagraphs: lbl.props.totalParagraphs as number,
+    };
+  }
+
+  function setReadProgress(
+    itemKey: string,
+    itemType: ItemLabelType,
+    paragraphIndex: number,
+    totalParagraphs: number
+  ) {
+    // Only save if paragraphIndex >= current saved index (furthest-read semantics)
+    const current = getReadProgress(itemKey);
+    if (current && paragraphIndex <= current.paragraphIndex) return;
+
+    // Debounce the actual persist
+    if (readProgressDebounceTimer) clearTimeout(readProgressDebounceTimer);
+    readProgressDebounceTimer = setTimeout(async () => {
+      const now = Date.now();
+      const lbl: ItemLabel = {
+        itemKey,
+        itemType,
+        label: 'readProgress',
+        props: { paragraphIndex, totalParagraphs, lastReadAt: now },
+        createdAt: current
+          ? (labelMap.get(makeKey(itemKey, 'readProgress'))?.createdAt ?? now)
+          : now,
+        updatedAt: now,
+      };
+      await putLabel(lbl);
+      triggerReactivity();
+    }, READ_PROGRESS_DEBOUNCE_MS);
+  }
+
   // --- Derived helpers ---
 
   function getStarredArticles(): StarredArticle[] {
@@ -1294,6 +1339,9 @@ function createItemLabelsStore() {
     markSocialAsRead,
     markAllSocialAsRead,
     markSocialAsUnread,
+    // Read progress
+    getReadProgress,
+    setReadProgress,
     // Derived helpers
     getStarredArticles,
     getStarredItemKeys,

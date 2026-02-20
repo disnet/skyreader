@@ -22,9 +22,12 @@
   import { auth } from '$lib/stores/auth.svelte';
   import Icon from './Icon.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
+  import ReadProgressMarker from '$lib/components/feed/ReadProgressMarker.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
-  import type { ItemTags } from '$lib/types';
+  import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
+  import type { ItemTags, ItemLabelType } from '$lib/types';
+  import { tick } from 'svelte';
   import logo from '$lib/assets/logo.svg';
 
   let {
@@ -345,6 +348,44 @@
 
   let itemTagCount = $derived(itemLabelsStore.getTagsForItem(itemGuid).length);
 
+  // Paragraph tracking for read progress
+  const paragraphTracking = useParagraphTracking({
+    contentEl: () => bodyEl,
+    scrollRoot: () => null, // ArticleCard scrolls on window (null = viewport)
+    itemKey: () => itemGuid,
+    itemType: () => itemTagType as ItemLabelType,
+    enabled: () => expanded && hasContent,
+  });
+
+  // Set up observer when article is expanded
+  $effect(() => {
+    if (expanded && bodyEl && hasContent) {
+      // Wait for content to render
+      tick().then(() => {
+        paragraphTracking.setupObserver();
+        // Restore reading position after a brief delay for layout
+        setTimeout(() => paragraphTracking.restorePosition(), 100);
+      });
+    }
+    return () => {
+      paragraphTracking.cleanup();
+    };
+  });
+
+  // Handle paragraph navigation keys when expanded
+  function handleParagraphKeydown(e: KeyboardEvent) {
+    if (!expanded || paragraphTracking.totalParagraphs <= 1) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      paragraphTracking.nextParagraph();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      paragraphTracking.prevParagraph();
+    }
+  }
+
   function handleTagClick(e: MouseEvent) {
     e.stopPropagation();
     tagMenuOpenLocal = !tagMenuOpenLocal;
@@ -354,6 +395,8 @@
     }
   }
 </script>
+
+<svelte:window onkeydown={handleParagraphKeydown} />
 
 <article
   class="article-item"
@@ -423,6 +466,13 @@
         <p class="article-loading">Loading article content...</p>
       {:else if hasContent}
         <div class="article-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
+          {#if expanded && paragraphTracking.totalParagraphs > 1}
+            <ReadProgressMarker
+              currentParagraphIndex={paragraphTracking.currentParagraphIndex}
+              furthestParagraphIndex={paragraphTracking.furthestParagraphIndex}
+              totalParagraphs={paragraphTracking.totalParagraphs}
+            />
+          {/if}
           <div
             bind:this={bodyEl}
             class="article-body"
