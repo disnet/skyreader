@@ -493,16 +493,27 @@ function createFeedViewStore() {
           key: d.recordUri,
         }));
 
-      // Add bookmarks (auto-starred)
+      // Add bookmarks — exclude bookmarks already shown via articles/shares/documents
+      const articleGuids = new Set(displayedArticles.map((a) => a.guid));
+      const shareRecordUris = new Set(starredShareItems.map((s) => s.key));
+      const documentRecordUris = new Set(starredDocumentItems.map((d) => d.key));
       const bookmarkItems: FeedDisplayItem[] = bookmarksStore.articles
         .filter((bm) => {
-          if (isArchiveView) return itemLabelsStore.isArchived(bm.uri);
-          return !itemLabelsStore.isArchived(bm.uri);
+          // Skip feed-source bookmarks whose guid matches a displayed article
+          if (bm.source === 'feed' && bm.itemGuid && articleGuids.has(bm.itemGuid)) return false;
+          // Skip share-source bookmarks whose itemGuid matches a displayed share
+          if (bm.source === 'share' && bm.itemGuid && shareRecordUris.has(bm.itemGuid))
+            return false;
+          // Skip document-source bookmarks whose itemGuid matches a displayed document
+          if (bm.source === 'document' && bm.itemGuid && documentRecordUris.has(bm.itemGuid))
+            return false;
+          if (isArchiveView) return itemLabelsStore.isArchived(bm.uri || bm.itemGuid || '');
+          return !itemLabelsStore.isArchived(bm.uri || bm.itemGuid || '');
         })
         .map((bm) => ({
           type: 'bookmark' as const,
           item: bm,
-          key: bm.uri,
+          key: bm.uri || bm.itemGuid || bm.rkey,
         }));
 
       items = [...articleItems, ...starredShareItems, ...starredDocumentItems, ...bookmarkItems];

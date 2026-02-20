@@ -613,7 +613,18 @@ class ApiClient {
   // Bookmarks
   async saveBookmarkFromUrl(
     url: string,
-    rkey: string
+    rkey: string,
+    options?: {
+      fromFeed?: boolean;
+      source?: 'url' | 'feed' | 'share' | 'document';
+      itemGuid?: string;
+      title?: string;
+      author?: string;
+      description?: string;
+      image?: string;
+      publishedAt?: string;
+      domain?: string;
+    }
   ): Promise<{
     rkey: string;
     uri: string;
@@ -625,13 +636,15 @@ class ApiClient {
     contentType: string | null;
     domain: string | null;
     image: string | null;
-    wordCount: number;
+    wordCount: number | null;
     publishedAt: string | null;
     savedAt: string;
+    source?: 'url' | 'feed' | 'share' | 'document';
+    itemGuid?: string;
   }> {
     return this.fetch('/api/saved', {
       method: 'POST',
-      body: JSON.stringify({ url, rkey }),
+      body: JSON.stringify({ url, rkey, ...options }),
     });
   }
 
@@ -650,6 +663,8 @@ class ApiClient {
       wordCount: number | null;
       publishedAt: string | null;
       savedAt: string;
+      source?: 'url' | 'feed' | 'share' | 'document';
+      itemGuid?: string;
     }>;
   }> {
     return this.fetch('/api/saved');
@@ -657,6 +672,12 @@ class ApiClient {
 
   async deleteBookmark(rkey: string): Promise<{ success: boolean }> {
     return this.fetch(`/api/saved/${rkey}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async deleteBookmarkByGuid(guid: string): Promise<{ success: boolean }> {
+    return this.fetch(`/api/saved/by-guid/${encodeURIComponent(guid)}`, {
       method: 'DELETE',
     });
   }

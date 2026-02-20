@@ -1,6 +1,8 @@
 import { db } from '$lib/services/db';
 import { api } from '$lib/services/api';
 import { generateTid } from '$lib/utils/tid';
+import { syncQueue, type SavedPayload } from '$lib/services/sync-queue';
+import { syncStore } from './sync.svelte';
 import type { Bookmark } from '$lib/types';
 
 function createBookmarksStore() {
@@ -8,6 +10,21 @@ function createBookmarksStore() {
   let loading = $state(false);
   let saving = $state(false);
   let error = $state<string | null>(null);
+
+  // O(1) lookup maps
+  let savedByGuid = $state<Map<string, Bookmark>>(new Map());
+  let savedByUrl = $state<Map<string, Bookmark>>(new Map());
+
+  function rebuildMaps() {
+    const byGuid = new Map<string, Bookmark>();
+    const byUrl = new Map<string, Bookmark>();
+    for (const bm of articles) {
+      if (bm.itemGuid) byGuid.set(bm.itemGuid, bm);
+      if (bm.url) byUrl.set(bm.url, bm);
+    }
+    savedByGuid = byGuid;
+    savedByUrl = byUrl;
+  }
 
   async function load() {
     loading = true;
@@ -17,11 +34,13 @@ function createBookmarksStore() {
       const cached = await db.bookmarks.orderBy('rkey').reverse().toArray();
       if (cached.length > 0) {
         articles = cached;
+        rebuildMaps();
       }
 
       // Then fetch from backend
       const response = await api.getBookmarks();
       articles = response.articles;
+      rebuildMaps();
 
       // Update local cache
       await db.bookmarks.clear();
@@ -57,10 +76,13 @@ function createBookmarksStore() {
         wordCount: result.wordCount,
         publishedAt: result.publishedAt,
         savedAt: result.savedAt,
+        source: result.source || 'url',
+        itemGuid: result.itemGuid || undefined,
       };
 
       // Add to local state and cache
       articles = [bookmark, ...articles];
+      rebuildMaps();
       await db.bookmarks.put(bookmark);
 
       return bookmark;
@@ -73,10 +95,325 @@ function createBookmarksStore() {
     }
   }
 
+  async function saveArticle(article: {
+    url: string;
+    guid: string;
+    title?: string;
+    author?: string;
+    summary?: string;
+    imageUrl?: string;
+    publishedAt?: string;
+  }): Promise<Bookmark> {
+    saving = true;
+    error = null;
+    try {
+      const rkey = generateTid();
+      const now = new Date().toISOString();
+
+      // Optimistically add to local state
+      const bookmark: Bookmark = {
+        rkey,
+        uri: '', // Will be set by backend
+        url: article.url,
+        title: article.title || null,
+        author: article.author || null,
+        description: article.summary || null,
+        content: null,
+        contentType: 'article',
+        domain: null,
+        image: article.imageUrl || null,
+        wordCount: null,
+        publishedAt: article.publishedAt || null,
+        savedAt: now,
+        source: 'feed',
+        itemGuid: article.guid,
+      };
+
+      articles = [bookmark, ...articles];
+      rebuildMaps();
+      await db.bookmarks.put(bookmark);
+
+      if (syncStore.isOnline) {
+        try {
+          const result = await api.saveBookmarkFromUrl(article.url, rkey, {
+            fromFeed: true,
+            itemGuid: article.guid,
+            title: article.title,
+            author: article.author,
+            description: article.summary,
+            image: article.imageUrl,
+            publishedAt: article.publishedAt,
+          });
+
+          // Update with server response
+          const updated: Bookmark = {
+            ...bookmark,
+            uri: result.uri,
+            rkey: result.rkey,
+          };
+          articles = articles.map((a) => (a.rkey === rkey ? updated : a));
+          rebuildMaps();
+          await db.bookmarks.put(updated);
+
+          return updated;
+        } catch (err) {
+          // API failed but local state is already updated, queue for retry
+          console.error('Failed to save article to backend, queueing:', err);
+          await syncQueue.enqueue('create', 'saved', article.guid, {
+            rkey,
+            url: article.url,
+            fromFeed: true,
+            itemGuid: article.guid,
+            title: article.title,
+            author: article.author,
+            description: article.summary,
+            image: article.imageUrl,
+            publishedAt: article.publishedAt,
+          } as SavedPayload);
+          return bookmark;
+        }
+      } else {
+        // Offline: queue the API call
+        await syncQueue.enqueue('create', 'saved', article.guid, {
+          rkey,
+          url: article.url,
+          fromFeed: true,
+          itemGuid: article.guid,
+          title: article.title,
+          author: article.author,
+          description: article.summary,
+          image: article.imageUrl,
+          publishedAt: article.publishedAt,
+        } as SavedPayload);
+        return bookmark;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save article';
+      error = msg;
+      throw err;
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function saveShare(share: {
+    recordUri: string;
+    itemUrl: string;
+    itemTitle?: string;
+    itemAuthor?: string;
+    itemDescription?: string;
+    itemImage?: string;
+    itemPublishedAt?: string;
+  }): Promise<Bookmark> {
+    saving = true;
+    error = null;
+    try {
+      const rkey = generateTid();
+      const now = new Date().toISOString();
+
+      const bookmark: Bookmark = {
+        rkey,
+        uri: '',
+        url: share.itemUrl || '',
+        title: share.itemTitle || null,
+        author: share.itemAuthor || null,
+        description: share.itemDescription || null,
+        content: null,
+        contentType: 'share',
+        domain: null,
+        image: share.itemImage || null,
+        wordCount: null,
+        publishedAt: share.itemPublishedAt || null,
+        savedAt: now,
+        source: 'share',
+        itemGuid: share.recordUri,
+      };
+
+      articles = [bookmark, ...articles];
+      rebuildMaps();
+      await db.bookmarks.put(bookmark);
+
+      if (syncStore.isOnline) {
+        try {
+          const result = await api.saveBookmarkFromUrl(share.itemUrl || '', rkey, {
+            source: 'share',
+            itemGuid: share.recordUri,
+            title: share.itemTitle,
+            author: share.itemAuthor,
+            description: share.itemDescription,
+            image: share.itemImage,
+            publishedAt: share.itemPublishedAt,
+          });
+
+          const updated: Bookmark = {
+            ...bookmark,
+            uri: result.uri,
+            rkey: result.rkey,
+          };
+          articles = articles.map((a) => (a.rkey === rkey ? updated : a));
+          rebuildMaps();
+          await db.bookmarks.put(updated);
+          return updated;
+        } catch (err) {
+          console.error('Failed to save share to backend, queueing:', err);
+          await syncQueue.enqueue('create', 'saved', share.recordUri, {
+            rkey,
+            url: share.itemUrl || '',
+            source: 'share',
+            itemGuid: share.recordUri,
+            title: share.itemTitle,
+            author: share.itemAuthor,
+            description: share.itemDescription,
+            image: share.itemImage,
+            publishedAt: share.itemPublishedAt,
+          } as SavedPayload);
+          return bookmark;
+        }
+      } else {
+        await syncQueue.enqueue('create', 'saved', share.recordUri, {
+          rkey,
+          url: share.itemUrl || '',
+          source: 'share',
+          itemGuid: share.recordUri,
+          title: share.itemTitle,
+          author: share.itemAuthor,
+          description: share.itemDescription,
+          image: share.itemImage,
+          publishedAt: share.itemPublishedAt,
+        } as SavedPayload);
+        return bookmark;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save share';
+      error = msg;
+      throw err;
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function saveDocument(doc: {
+    recordUri: string;
+    url: string;
+    title?: string;
+    description?: string;
+    publishedAt?: string;
+  }): Promise<Bookmark> {
+    saving = true;
+    error = null;
+    try {
+      const rkey = generateTid();
+      const now = new Date().toISOString();
+
+      const bookmark: Bookmark = {
+        rkey,
+        uri: '',
+        url: doc.url || '',
+        title: doc.title || null,
+        author: null,
+        description: doc.description || null,
+        content: null,
+        contentType: 'document',
+        domain: null,
+        image: null,
+        wordCount: null,
+        publishedAt: doc.publishedAt || null,
+        savedAt: now,
+        source: 'document',
+        itemGuid: doc.recordUri,
+      };
+
+      articles = [bookmark, ...articles];
+      rebuildMaps();
+      await db.bookmarks.put(bookmark);
+
+      if (syncStore.isOnline) {
+        try {
+          const result = await api.saveBookmarkFromUrl(doc.url || '', rkey, {
+            source: 'document',
+            itemGuid: doc.recordUri,
+            title: doc.title,
+            description: doc.description,
+            publishedAt: doc.publishedAt,
+          });
+
+          const updated: Bookmark = {
+            ...bookmark,
+            uri: result.uri,
+            rkey: result.rkey,
+          };
+          articles = articles.map((a) => (a.rkey === rkey ? updated : a));
+          rebuildMaps();
+          await db.bookmarks.put(updated);
+          return updated;
+        } catch (err) {
+          console.error('Failed to save document to backend, queueing:', err);
+          await syncQueue.enqueue('create', 'saved', doc.recordUri, {
+            rkey,
+            url: doc.url || '',
+            source: 'document',
+            itemGuid: doc.recordUri,
+            title: doc.title,
+            description: doc.description,
+            publishedAt: doc.publishedAt,
+          } as SavedPayload);
+          return bookmark;
+        }
+      } else {
+        await syncQueue.enqueue('create', 'saved', doc.recordUri, {
+          rkey,
+          url: doc.url || '',
+          source: 'document',
+          itemGuid: doc.recordUri,
+          title: doc.title,
+          description: doc.description,
+          publishedAt: doc.publishedAt,
+        } as SavedPayload);
+        return bookmark;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save document';
+      error = msg;
+      throw err;
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function unsaveByGuid(guid: string) {
+    const bookmark = savedByGuid.get(guid);
+    if (!bookmark) return;
+
+    // Optimistically remove from local state
+    articles = articles.filter((a) => a.itemGuid !== guid);
+    rebuildMaps();
+    await db.bookmarks.where('itemGuid').equals(guid).delete();
+
+    if (syncStore.isOnline) {
+      try {
+        await api.deleteBookmarkByGuid(guid);
+      } catch (err) {
+        console.error('Failed to unsave by guid, queueing:', err);
+        await syncQueue.enqueue('delete', 'saved', guid, {
+          rkey: bookmark.rkey,
+          url: bookmark.url,
+          itemGuid: guid,
+        } as SavedPayload);
+      }
+    } else {
+      await syncQueue.enqueue('delete', 'saved', guid, {
+        rkey: bookmark.rkey,
+        url: bookmark.url,
+        itemGuid: guid,
+      } as SavedPayload);
+    }
+  }
+
   async function remove(rkey: string) {
     try {
       await api.deleteBookmark(rkey);
       articles = articles.filter((a) => a.rkey !== rkey);
+      rebuildMaps();
       await db.bookmarks.delete(rkey);
     } catch (err) {
       console.error('Failed to delete bookmark:', err);
@@ -84,12 +421,20 @@ function createBookmarksStore() {
     }
   }
 
+  function isSaved(guidOrUrl: string): boolean {
+    return savedByGuid.has(guidOrUrl) || savedByUrl.has(guidOrUrl);
+  }
+
   function getByUri(uri: string): Bookmark | undefined {
     return articles.find((a) => a.uri === uri);
   }
 
   function getByUrl(url: string): Bookmark | undefined {
-    return articles.find((a) => a.url === url);
+    return savedByUrl.get(url);
+  }
+
+  function getByGuid(guid: string): Bookmark | undefined {
+    return savedByGuid.get(guid);
   }
 
   return {
@@ -107,9 +452,15 @@ function createBookmarksStore() {
     },
     load,
     saveFromUrl,
+    saveArticle,
+    saveShare,
+    saveDocument,
+    unsaveByGuid,
     remove,
+    isSaved,
     getByUri,
     getByUrl,
+    getByGuid,
   };
 }
 

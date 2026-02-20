@@ -54,7 +54,49 @@
   }
 
   function handleRemoveBookmark(item: FeedDisplayItem) {
-    itemLabelsStore.toggleStar(item.key, getItemType(item));
+    if (item.type === 'article') {
+      itemLabelsStore.toggleStar(item.key, 'article', item.item.url, item.item.title, {
+        type: 'article',
+        guid: item.item.guid,
+        url: item.item.url,
+        title: item.item.title,
+        author: item.item.author,
+        summary: item.item.summary,
+        imageUrl: item.item.imageUrl,
+        publishedAt: item.item.publishedAt,
+      });
+    } else if (item.type === 'bookmark') {
+      bookmarksStore.remove(item.item.rkey);
+    } else if (item.type === 'share') {
+      itemLabelsStore.toggleStar(item.key, 'share', item.item.itemUrl, item.item.itemTitle, {
+        type: 'share',
+        recordUri: item.item.recordUri,
+        itemUrl: item.item.itemUrl,
+        itemTitle: item.item.itemTitle,
+        itemAuthor: item.item.itemAuthor,
+        itemDescription: item.item.itemDescription,
+        itemImage: item.item.itemImage,
+        itemPublishedAt: item.item.itemPublishedAt,
+      });
+    } else if (item.type === 'document') {
+      itemLabelsStore.toggleStar(
+        item.key,
+        'document',
+        item.item.canonicalUrl || item.item.path || '',
+        item.item.title,
+        {
+          type: 'document',
+          recordUri: item.item.recordUri,
+          url: item.item.canonicalUrl || item.item.path || '',
+          title: item.item.title,
+          description: item.item.description,
+          publishedAt: item.item.publishedAt,
+        }
+      );
+    } else {
+      // userShare — unsave by guid
+      bookmarksStore.unsaveByGuid(item.key);
+    }
     if (readerItem?.key === item.key) {
       closeReader();
     }
