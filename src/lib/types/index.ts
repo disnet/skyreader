@@ -8,6 +8,7 @@ export interface User {
   limits?: {
     maxSubscriptions: number;
     maxFollows: number;
+    maxUrlSavesPerMonth: number;
   };
 }
 
