@@ -25,11 +25,11 @@ function createUnreadCountsStore() {
   // Total unread articles (deduplicated by GUID across feeds to match combined view)
   let totalArticles = $derived.by(() => {
     liveDb.articlesVersion;
-    const positions = itemLabelsStore.readPositions;
+    itemLabelsStore.readPositions; // Access for reactivity
     const seen = new Set<string>();
     let count = 0;
     for (const article of articlesStore.allArticles) {
-      if (!seen.has(article.guid) && !positions.has(article.guid)) {
+      if (!seen.has(article.guid) && !itemLabelsStore.isRead(article.guid)) {
         seen.add(article.guid);
         count++;
       }

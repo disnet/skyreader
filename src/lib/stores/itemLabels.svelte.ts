@@ -554,25 +554,16 @@ function createItemLabelsStore() {
     return [...tagSet].sort();
   });
 
-  // --- Read positions map (backward compat for feedViewStore/articlesStore) ---
-  // Returns a Map<articleGuid, { starred, archived, readAt, itemUrl, itemTitle }>
+  // --- Read positions map (for reactivity tracking in unreadCounts) ---
+  // Returns a Map<articleGuid, { readAt }> — only read state, no starred/archived
   let readPositions = $derived.by(() => {
-    const map = new Map<
-      string,
-      { starred: boolean; archived?: boolean; readAt: number; itemUrl?: string; itemTitle?: string }
-    >();
+    const map = new Map<string, { readAt: number; itemUrl?: string; itemTitle?: string }>();
 
-    // Iterate all labels and build the read positions map
     for (const [, lbl] of labelMap) {
       if (lbl.itemType !== 'article') continue;
       if (lbl.label !== 'read') continue;
 
-      const starred = hasLabel(lbl.itemKey, 'starred');
-      const archived = hasLabel(lbl.itemKey, 'archived');
-
       map.set(lbl.itemKey, {
-        starred,
-        archived: archived || undefined,
         readAt: (lbl.props.readAt as number) || 0,
         itemUrl: lbl.props.itemUrl as string | undefined,
         itemTitle: lbl.props.itemTitle as string | undefined,

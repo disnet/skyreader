@@ -13,16 +13,6 @@ import type {
   Bookmark,
 } from '$lib/types';
 
-// Local cache for read positions (backend is source of truth)
-export interface ReadPositionCache {
-  articleGuid: string; // primary key
-  starred: boolean;
-  archived?: boolean; // for read-it-later inbox/archive
-  readAt: number;
-  itemUrl?: string;
-  itemTitle?: string;
-}
-
 // Sync queue for offline operations
 export interface SyncQueueEntry {
   id?: number;
@@ -44,7 +34,6 @@ export interface MetadataEntry {
 class SkyreaderDatabase extends Dexie {
   subscriptions!: Table<Subscription>;
   articles!: Table<Article>;
-  readPositionsCache!: Table<ReadPositionCache>;
   shareReadPositions!: Table<ShareReadPosition>;
   socialReadPositions!: Table<SocialReadPosition>;
   socialShares!: Table<SocialShare>;
@@ -257,6 +246,11 @@ class SkyreaderDatabase extends Dexie {
       bookmarks: 'rkey, url',
       savedArticles: null,
     });
+
+    // Drop readPositionsCache table (starred/archived now in itemLabels)
+    this.version(22).stores({
+      readPositionsCache: null,
+    });
   }
 }
 
@@ -267,7 +261,6 @@ export async function clearAllData(): Promise<void> {
   await Promise.all([
     db.subscriptions.clear(),
     db.articles.clear(),
-    db.readPositionsCache.clear(),
     db.shareReadPositions.clear(),
     db.socialReadPositions.clear(),
     db.socialShares.clear(),

@@ -225,7 +225,6 @@ function createFeedViewStore() {
 
     // Access articlesStore version for reactivity
     const allArticles = articlesStore.allArticles;
-    const positions = itemLabelsStore.readPositions;
     const sortOrder = fv.sortOrder;
 
     let articles: Article[];
@@ -234,13 +233,11 @@ function createFeedViewStore() {
       // Starred view with inbox/archive sub-filter
       if (bookmarksView === 'inbox') {
         articles = allArticles.filter((a) => {
-          const pos = positions.get(a.guid);
-          return pos?.starred === true && pos.archived !== true;
+          return itemLabelsStore.isStarred(a.guid) && !itemLabelsStore.isArchived(a.guid);
         });
       } else {
         articles = allArticles.filter((a) => {
-          const pos = positions.get(a.guid);
-          return pos?.starred === true && pos.archived === true;
+          return itemLabelsStore.isStarred(a.guid) && itemLabelsStore.isArchived(a.guid);
         });
       }
     } else {
@@ -261,10 +258,10 @@ function createFeedViewStore() {
       // Apply read filter
       if (fv.readFilter === 'unread') {
         articles = articles.filter(
-          (a) => !positions.has(a.guid) || readArticleGuidsThisSession.has(a.guid)
+          (a) => !itemLabelsStore.isRead(a.guid) || readArticleGuidsThisSession.has(a.guid)
         );
       } else if (fv.readFilter === 'read') {
-        articles = articles.filter((a) => positions.has(a.guid));
+        articles = articles.filter((a) => itemLabelsStore.isRead(a.guid));
       }
     }
 
