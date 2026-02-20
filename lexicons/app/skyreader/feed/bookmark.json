@@ -1,10 +1,10 @@
 {
   "lexicon": 1,
-  "id": "app.skyreader.feed.savedArticle",
+  "id": "app.skyreader.feed.bookmark",
   "defs": {
     "main": {
       "type": "record",
-      "description": "A saved article extracted from a URL",
+      "description": "A bookmarked item extracted from a URL",
       "key": "tid",
       "record": {
         "type": "object",
@@ -26,10 +26,15 @@
             "maxLength": 5000,
             "description": "Extracted article description"
           },
-          "content": {
+          "fullContent": {
             "type": "string",
             "maxLength": 100000,
-            "description": "Extracted HTML content"
+            "description": "Extracted HTML content (reserved for future selective backup)"
+          },
+          "contentType": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Content type of the bookmarked item (e.g. webpage, pdf, epub)"
           },
           "author": {
             "type": "string",
@@ -55,7 +60,7 @@
           "savedAt": {
             "type": "string",
             "format": "datetime",
-            "description": "When the user saved this article"
+            "description": "When the user saved this item"
           },
           "wordCount": {
             "type": "integer",

@@ -33,7 +33,7 @@
     if (displayItem.type === 'share') return displayItem.item.itemTitle || displayItem.item.itemUrl;
     if (displayItem.type === 'document')
       return displayItem.item.title || displayItem.item.recordUri;
-    if (displayItem.type === 'savedArticle') return displayItem.item.title || displayItem.item.url;
+    if (displayItem.type === 'bookmark') return displayItem.item.title || displayItem.item.url;
     return '';
   });
 
@@ -42,7 +42,7 @@
     if (displayItem.type === 'share') return displayItem.item.itemUrl;
     if (displayItem.type === 'document')
       return displayItem.item.canonicalUrl || displayItem.item.path || '';
-    if (displayItem.type === 'savedArticle') return displayItem.item.url;
+    if (displayItem.type === 'bookmark') return displayItem.item.url;
     return '';
   });
 
@@ -51,7 +51,7 @@
     if (displayItem.type === 'share')
       return displayItem.item.itemPublishedAt || displayItem.item.createdAt;
     if (displayItem.type === 'document') return displayItem.item.publishedAt;
-    if (displayItem.type === 'savedArticle') return displayItem.item.savedAt;
+    if (displayItem.type === 'bookmark') return displayItem.item.savedAt;
     return '';
   });
 
@@ -97,7 +97,7 @@
     if (displayItem.type === 'share') {
       return getFaviconUrl(displayItem.item.itemUrl);
     }
-    if (displayItem.type === 'savedArticle') {
+    if (displayItem.type === 'bookmark') {
       return getFaviconUrl(displayItem.item.url);
     }
     return url ? getFaviconUrl(url) : '';
@@ -115,7 +115,7 @@
       content = displayItem.item.content || displayItem.item.itemDescription || '';
     } else if (displayItem.type === 'document') {
       content = displayItem.item.textContent || displayItem.item.description || '';
-    } else if (displayItem.type === 'savedArticle') {
+    } else if (displayItem.type === 'bookmark') {
       if (displayItem.item.wordCount)
         return Math.max(1, Math.round(displayItem.item.wordCount / 200));
       content = displayItem.item.content || displayItem.item.description || '';
@@ -134,7 +134,7 @@
       raw = displayItem.item.itemDescription || displayItem.item.content || '';
     } else if (displayItem.type === 'document') {
       raw = displayItem.item.description || displayItem.item.textContent || '';
-    } else if (displayItem.type === 'savedArticle') {
+    } else if (displayItem.type === 'bookmark') {
       raw = displayItem.item.description || displayItem.item.content || '';
     }
     const text = raw.replace(/<[^>]*>/g, '').trim();
@@ -145,7 +145,7 @@
   let typeBadge = $derived.by(() => {
     if (displayItem.type === 'share') return `Shared by @${authorHandle}`;
     if (displayItem.type === 'document') return `By @${authorHandle}`;
-    if (displayItem.type === 'savedArticle') return displayItem.item.domain || 'Saved';
+    if (displayItem.type === 'bookmark') return displayItem.item.domain || 'Saved';
     return '';
   });
 
@@ -154,7 +154,7 @@
   let tagMenuOpen = $derived(tagMenuOpenLocal || feedViewStore.tagMenuItemKey === itemKey);
 
   let labelItemType = $derived.by(
-    (): 'article' | 'share' | 'document' | 'userShare' | 'savedArticle' => {
+    (): 'article' | 'share' | 'document' | 'userShare' | 'bookmark' => {
       if (displayItem.type === 'userShare') return 'userShare';
       return displayItem.type;
     }

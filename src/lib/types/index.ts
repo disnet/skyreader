@@ -674,9 +674,9 @@ export interface ItemTags {
   itemType: ItemLabelType;
 }
 
-export type ItemLabelType = 'article' | 'share' | 'document' | 'userShare' | 'savedArticle';
+export type ItemLabelType = 'article' | 'share' | 'document' | 'userShare' | 'bookmark';
 
-export interface SavedArticle {
+export interface Bookmark {
   rkey: string;
   uri: string;
   url: string;
@@ -684,6 +684,7 @@ export interface SavedArticle {
   author: string | null;
   description: string | null;
   content: string | null;
+  contentType: string | null;
   domain: string | null;
   image: string | null;
   wordCount: number | null;

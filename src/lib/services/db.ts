@@ -10,7 +10,7 @@ import type {
   FilteredView,
   ItemTags,
   ItemLabel,
-  SavedArticle,
+  Bookmark,
 } from '$lib/types';
 
 // Local cache for read positions (backend is source of truth)
@@ -55,7 +55,7 @@ class SkyreaderDatabase extends Dexie {
   filteredViews!: Table<FilteredView>;
   itemTags!: Table<ItemTags>;
   itemLabels!: Table<ItemLabel>;
-  savedArticles!: Table<SavedArticle>;
+  bookmarks!: Table<Bookmark>;
 
   constructor() {
     super('skyreader');
@@ -251,6 +251,12 @@ class SkyreaderDatabase extends Dexie {
     this.version(20).stores({
       savedArticles: 'rkey, url',
     });
+
+    // Rename savedArticles to bookmarks
+    this.version(21).stores({
+      bookmarks: 'rkey, url',
+      savedArticles: null,
+    });
   }
 }
 
@@ -272,7 +278,7 @@ export async function clearAllData(): Promise<void> {
     db.filteredViews.clear(),
     db.itemTags.clear(),
     db.itemLabels.clear(),
-    db.savedArticles.clear(),
+    db.bookmarks.clear(),
   ]);
 }
 

@@ -3,7 +3,7 @@ import { subscriptionsStore } from './subscriptions.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
 import { sharesStore } from './shares.svelte';
 import { socialStore } from './social.svelte';
-import { savedArticlesStore } from './savedArticles.svelte';
+import { bookmarksStore } from './bookmarks.svelte';
 import { preferences } from './preferences.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
 import type {
@@ -12,7 +12,7 @@ import type {
   SocialDocument,
   CombinedFeedItem,
   UserShare,
-  SavedArticle,
+  Bookmark,
 } from '$lib/types';
 import {
   isRssSource,
@@ -33,7 +33,7 @@ export type FeedDisplayItem =
   | { type: 'share'; item: SocialShare; key: string }
   | { type: 'userShare'; item: UserShare; article: Article; key: string }
   | { type: 'document'; item: SocialDocument; key: string }
-  | { type: 'savedArticle'; item: SavedArticle; key: string };
+  | { type: 'bookmark'; item: Bookmark; key: string };
 
 const DEFAULT_PAGE_SIZE = 50;
 
@@ -88,7 +88,7 @@ function getItemDate(item: FeedDisplayItem): number {
     return new Date(item.item.itemPublishedAt || item.item.createdAt).getTime();
   } else if (item.type === 'document') {
     return new Date(item.item.publishedAt).getTime();
-  } else if (item.type === 'savedArticle') {
+  } else if (item.type === 'bookmark') {
     return new Date(item.item.savedAt).getTime();
   } else {
     return new Date(item.item.createdAt).getTime();
@@ -496,24 +496,19 @@ function createFeedViewStore() {
           key: d.recordUri,
         }));
 
-      // Add saved articles (auto-starred)
-      const savedArticleItems: FeedDisplayItem[] = savedArticlesStore.articles
-        .filter((sa) => {
-          if (isArchiveView) return itemLabelsStore.isArchived(sa.uri);
-          return !itemLabelsStore.isArchived(sa.uri);
+      // Add bookmarks (auto-starred)
+      const bookmarkItems: FeedDisplayItem[] = bookmarksStore.articles
+        .filter((bm) => {
+          if (isArchiveView) return itemLabelsStore.isArchived(bm.uri);
+          return !itemLabelsStore.isArchived(bm.uri);
         })
-        .map((sa) => ({
-          type: 'savedArticle' as const,
-          item: sa,
-          key: sa.uri,
+        .map((bm) => ({
+          type: 'bookmark' as const,
+          item: bm,
+          key: bm.uri,
         }));
 
-      items = [
-        ...articleItems,
-        ...starredShareItems,
-        ...starredDocumentItems,
-        ...savedArticleItems,
-      ];
+      items = [...articleItems, ...starredShareItems, ...starredDocumentItems, ...bookmarkItems];
 
       // Sort by date
       items.sort((a, b) => {

@@ -89,7 +89,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       url = item.item.itemUrl;
     } else if (item.type === 'document') {
       url = item.item.canonicalUrl || item.item.path || '';
-    } else if (item.type === 'savedArticle') {
+    } else if (item.type === 'bookmark') {
       url = item.item.url;
     } else {
       url = item.item.articleUrl;

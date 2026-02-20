@@ -6,7 +6,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-  import { savedArticlesStore } from '$lib/stores/savedArticles.svelte';
+  import { bookmarksStore } from '$lib/stores/bookmarks.svelte';
   import { ScopeUpgradeError } from '$lib/services/api';
   import type { ItemLabelType } from '$lib/types';
 
@@ -87,7 +87,7 @@
 
     saveError = null;
     try {
-      await savedArticlesStore.saveFromUrl(url);
+      await bookmarksStore.saveFromUrl(url);
       urlInputValue = '';
       showUrlInput = false;
     } catch (err) {
@@ -151,14 +151,14 @@
             placeholder="Paste article URL..."
             class="url-input"
             onkeydown={handleUrlKeydown}
-            disabled={savedArticlesStore.saving}
+            disabled={bookmarksStore.saving}
           />
           <button
             class="url-save-btn"
             onclick={handleSaveUrl}
-            disabled={savedArticlesStore.saving || !urlInputValue.trim()}
+            disabled={bookmarksStore.saving || !urlInputValue.trim()}
           >
-            {#if savedArticlesStore.saving}
+            {#if bookmarksStore.saving}
               Saving...
             {:else}
               Save
@@ -167,7 +167,7 @@
           <button
             class="url-cancel-btn"
             onclick={() => (showUrlInput = false)}
-            disabled={savedArticlesStore.saving}
+            disabled={bookmarksStore.saving}
           >
             <Icon name="x" size={16} />
           </button>

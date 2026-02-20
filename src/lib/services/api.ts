@@ -610,8 +610,8 @@ class ApiClient {
     });
   }
 
-  // Saved Articles
-  async saveArticleFromUrl(
+  // Bookmarks
+  async saveBookmarkFromUrl(
     url: string,
     rkey: string
   ): Promise<{
@@ -622,19 +622,20 @@ class ApiClient {
     author: string | null;
     description: string | null;
     content: string | null;
+    contentType: string | null;
     domain: string | null;
     image: string | null;
     wordCount: number;
     publishedAt: string | null;
     savedAt: string;
   }> {
-    return this.fetch('/api/saved-articles', {
+    return this.fetch('/api/bookmarks', {
       method: 'POST',
       body: JSON.stringify({ url, rkey }),
     });
   }
 
-  async getSavedArticles(): Promise<{
+  async getBookmarks(): Promise<{
     articles: Array<{
       rkey: string;
       uri: string;
@@ -643,6 +644,7 @@ class ApiClient {
       author: string | null;
       description: string | null;
       content: string | null;
+      contentType: string | null;
       domain: string | null;
       image: string | null;
       wordCount: number | null;
@@ -650,11 +652,11 @@ class ApiClient {
       savedAt: string;
     }>;
   }> {
-    return this.fetch('/api/saved-articles');
+    return this.fetch('/api/bookmarks');
   }
 
-  async deleteSavedArticle(rkey: string): Promise<{ success: boolean }> {
-    return this.fetch(`/api/saved-articles/${rkey}`, {
+  async deleteBookmark(rkey: string): Promise<{ success: boolean }> {
+    return this.fetch(`/api/bookmarks/${rkey}`, {
       method: 'DELETE',
     });
   }
