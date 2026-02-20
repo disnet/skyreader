@@ -42,7 +42,6 @@
     position: relative;
     width: 3px;
     height: 100%;
-    background: var(--color-border);
     border-radius: 2px;
   }
 

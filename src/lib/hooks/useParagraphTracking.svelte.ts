@@ -23,6 +23,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
   let scrollHandler: (() => void) | null = null;
   let scrollTarget: EventTarget | null = null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastScrollTop = 0;
 
   function detectParagraphs() {
     const el = params.contentEl();
@@ -60,28 +61,52 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
   }
 
   /**
-   * Find the current paragraph: the last paragraph whose top edge is at or above
-   * the top of the scroll viewport. As a paragraph scrolls up past the top,
-   * the current position advances to the next paragraph.
+   * Update current paragraph based on scroll direction:
+   * - Scrolling down: advance when the next paragraph's top edge gets close to
+   *   the top of the viewport (early trigger so it feels responsive)
+   * - Scrolling up: go back when the current paragraph's bottom goes past the
+   *   bottom of the viewport (only change once it's fully scrolled off-screen below)
    */
   function updateCurrentParagraph() {
     if (paragraphs.length === 0) return;
 
-    const viewportTop = getViewportTop();
-    // Add a small offset so the transition happens shortly after the top edge passes
-    const threshold = viewportTop + 20;
+    const scrollTop = getScrollTop();
+    const scrollingDown = scrollTop >= lastScrollTop;
+    lastScrollTop = scrollTop;
 
-    let newIndex = 0;
-    for (let i = 0; i < paragraphs.length; i++) {
-      const rect = paragraphs[i].getBoundingClientRect();
-      if (rect.top <= threshold) {
-        newIndex = i;
-      } else {
-        break;
+    const root = params.scrollRoot();
+    const viewportTop = root ? root.getBoundingClientRect().top : 0;
+    const viewportHeight = root ? root.clientHeight : window.innerHeight;
+    const viewportBottom = viewportTop + viewportHeight;
+
+    // Offset from edges for triggering transitions
+    const topOffset = 60;
+
+    if (scrollingDown) {
+      // Scrolling down: advance when the next paragraph's top gets close to the top edge
+      let newIndex = currentParagraphIndex;
+      for (let i = currentParagraphIndex + 1; i < paragraphs.length; i++) {
+        const rect = paragraphs[i].getBoundingClientRect();
+        if (rect.top <= viewportTop + topOffset) {
+          newIndex = i;
+        } else {
+          break;
+        }
       }
+      currentParagraphIndex = newIndex;
+    } else {
+      // Scrolling up: go back when the current paragraph's bottom goes past the viewport bottom
+      let newIndex = currentParagraphIndex;
+      while (newIndex > 0) {
+        const rect = paragraphs[newIndex].getBoundingClientRect();
+        if (rect.bottom >= viewportBottom) {
+          newIndex--;
+        } else {
+          break;
+        }
+      }
+      currentParagraphIndex = newIndex;
     }
-
-    currentParagraphIndex = newIndex;
 
     // Update furthest-read
     if (currentParagraphIndex > furthestParagraphIndex) {
