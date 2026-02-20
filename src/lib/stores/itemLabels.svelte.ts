@@ -170,6 +170,7 @@ function createItemLabelsStore() {
         loadTagsFromBackend(),
         loadArchivedFromBackend(),
         loadStarredFromBackend(),
+        loadReadProgressFromBackend(),
       ]);
       hasLoaded = true;
     } catch (e) {
@@ -449,6 +450,51 @@ function createItemLabelsStore() {
       }
     } catch (e) {
       console.error('Failed to sync starred labels to cache:', e);
+    }
+  }
+
+  async function loadReadProgressFromBackend() {
+    const progressLabels = await api.getAllLabels({ label: 'readProgress' });
+
+    // Remove old readProgress labels from state
+    const toRemove: string[] = [];
+    for (const [, lbl] of labelMap) {
+      if (lbl.label === 'readProgress') {
+        toRemove.push(lbl.itemKey);
+      }
+    }
+    for (const itemKey of toRemove) {
+      removeFromState(itemKey, 'readProgress');
+    }
+
+    // Add from backend
+    const dbOps: ItemLabel[] = [];
+    for (const p of progressLabels) {
+      const lbl: ItemLabel = {
+        itemKey: p.itemKey,
+        itemType: (p.itemType as ItemLabelType) || 'article',
+        label: 'readProgress',
+        props: p.props || {},
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
+      };
+      addToState(lbl);
+      dbOps.push(lbl);
+    }
+
+    triggerReactivity();
+
+    // Sync to IndexedDB
+    try {
+      const oldProgress = await db.itemLabels.where('label').equals('readProgress').toArray();
+      for (const l of oldProgress) {
+        await db.itemLabels.where('[itemKey+label]').equals([l.itemKey, 'readProgress']).delete();
+      }
+      if (dbOps.length > 0) {
+        await db.itemLabels.bulkPut(dbOps);
+      }
+    } catch (e) {
+      console.error('Failed to sync read progress to cache:', e);
     }
   }
 
@@ -1199,6 +1245,74 @@ function createItemLabelsStore() {
     }
   }
 
+  // --- Read progress tracking ---
+
+  let readProgressDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  const READ_PROGRESS_DEBOUNCE_MS = 500;
+
+  function getReadProgress(
+    itemKey: string
+  ): { paragraphIndex: number; totalParagraphs: number } | null {
+    const lbl = labelMap.get(makeKey(itemKey, 'readProgress'));
+    if (!lbl) return null;
+    return {
+      paragraphIndex: lbl.props.paragraphIndex as number,
+      totalParagraphs: lbl.props.totalParagraphs as number,
+    };
+  }
+
+  function setReadProgress(
+    itemKey: string,
+    itemType: ItemLabelType,
+    paragraphIndex: number,
+    totalParagraphs: number
+  ) {
+    // Skip if position hasn't changed
+    const current = getReadProgress(itemKey);
+    if (current && paragraphIndex === current.paragraphIndex) return;
+
+    // Debounce the actual persist
+    if (readProgressDebounceTimer) clearTimeout(readProgressDebounceTimer);
+    readProgressDebounceTimer = setTimeout(async () => {
+      const now = Date.now();
+      const lbl: ItemLabel = {
+        itemKey,
+        itemType,
+        label: 'readProgress',
+        props: { paragraphIndex, totalParagraphs, lastReadAt: now },
+        createdAt: current
+          ? (labelMap.get(makeKey(itemKey, 'readProgress'))?.createdAt ?? now)
+          : now,
+        updatedAt: now,
+      };
+      await putLabel(lbl);
+      triggerReactivity();
+
+      // Sync to backend
+      const props = { paragraphIndex, totalParagraphs, lastReadAt: now };
+      if (syncStore.isOnline) {
+        try {
+          await api.addLabel({ itemKey, itemType, label: 'readProgress', props });
+        } catch (e) {
+          console.error('Failed to sync read progress, queueing for retry:', e);
+          await syncQueue.enqueue('create', 'label', `${itemKey}\0readProgress`, {
+            itemKey,
+            itemType,
+            label: 'readProgress',
+            props,
+          } as LabelPayload);
+        }
+      } else {
+        await syncQueue.enqueue('create', 'label', `${itemKey}\0readProgress`, {
+          itemKey,
+          itemType,
+          label: 'readProgress',
+          props,
+        } as LabelPayload);
+      }
+    }, READ_PROGRESS_DEBOUNCE_MS);
+  }
+
   // --- Derived helpers ---
 
   function getStarredArticles(): StarredArticle[] {
@@ -1294,6 +1408,9 @@ function createItemLabelsStore() {
     markSocialAsRead,
     markAllSocialAsRead,
     markSocialAsUnread,
+    // Read progress
+    getReadProgress,
+    setReadProgress,
     // Derived helpers
     getStarredArticles,
     getStarredItemKeys,

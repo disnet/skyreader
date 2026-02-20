@@ -22,7 +22,9 @@
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import Icon from '$lib/components/Icon.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
+  import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
+  import { tick } from 'svelte';
 
   let {
     readerItem,
@@ -40,6 +42,7 @@
   let controlsVisible = $state(true);
   let lastScrollY = $state(0);
   let overlayEl: HTMLElement | undefined = $state();
+  let readerBodyEl: HTMLElement | undefined = $state();
 
   let itemKey = $derived(readerItem.key);
   let itemTags = $derived(itemLabelsStore.getTagsForItem(itemKey));
@@ -194,8 +197,36 @@
     } else if (e.key === 't' && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
       tagMenuOpen = !tagMenuOpen;
+    } else if (e.key === 'ArrowDown' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      paragraphTracking.nextParagraph();
+    } else if (e.key === 'ArrowUp' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      paragraphTracking.prevParagraph();
     }
   }
+
+  // Paragraph tracking for read progress
+  const paragraphTracking = useParagraphTracking({
+    contentEl: () => readerBodyEl,
+    scrollRoot: () => overlayEl,
+    itemKey: () => itemKey,
+    itemType: () => labelItemType,
+    enabled: () => true,
+  });
+
+  // Set up observer when reader body is mounted
+  $effect(() => {
+    if (readerBodyEl && overlayEl) {
+      tick().then(() => {
+        paragraphTracking.setupObserver();
+        setTimeout(() => paragraphTracking.restorePosition(), 100);
+      });
+    }
+    return () => {
+      paragraphTracking.cleanup();
+    };
+  });
 
   function handleOpenUrl() {
     if (itemUrl) window.open(itemUrl, '_blank', 'noopener');
@@ -344,8 +375,10 @@
         {/if}
       </div>
 
-      <div class="reader-body" use:bskyEmbed>
-        {@html sanitizedContent}
+      <div class="reader-body-wrapper">
+        <div class="reader-body" bind:this={readerBodyEl} use:bskyEmbed>
+          {@html sanitizedContent}
+        </div>
       </div>
     </article>
   </div>
@@ -629,7 +662,12 @@
     border-radius: 999px;
   }
 
+  .reader-body-wrapper {
+    position: relative;
+  }
+
   .reader-body {
+    position: relative;
     font-family: var(--article-font, Georgia, 'Times New Roman', serif);
     font-size: var(--article-font-size, 1.0625rem);
     line-height: 1.8;
