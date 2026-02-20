@@ -117,7 +117,7 @@
       );
       return sub?.customTitle || sub?.title || 'Feed';
     }
-    if (feedViewStore.starredFilter) return 'Bookmarks';
+    if (feedViewStore.starredFilter) return 'Saved';
     if (feedViewStore.sharedFilter) return 'Shared';
     if (feedViewStore.followingFilter) return 'Following';
     if (feedViewStore.sharerFilter) {
@@ -349,6 +349,7 @@
     scrollToCenter,
     markAllAsReadInCurrentFeed,
     openBookmarkReader: () => bookmarkListView?.openSelectedReader(),
+    toggleAddFromUrl: () => bookmarkListView?.toggleUrlInput(),
   });
 
   async function removeFeed(id: number) {
@@ -434,6 +435,7 @@
         !feedViewStore.sharerFilter &&
         !feedViewStore.followingFilter &&
         !feedViewStore.feedsFilter}
+      onAddFromUrl={isBookmarksView ? () => bookmarkListView?.toggleUrlInput() : undefined}
     />
 
     {#if (appManager.isHydrating || appManager.isRefreshing) && feedViewStore.currentItems.length === 0}

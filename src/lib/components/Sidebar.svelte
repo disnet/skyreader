@@ -426,7 +426,7 @@
       onclick={() => selectFilter('starred')}
     >
       <span class="nav-icon"><Icon name="bookmark" /></span>
-      <span class="nav-label">Bookmarks</span>
+      <span class="nav-label">Saved</span>
     </button>
 
     <button

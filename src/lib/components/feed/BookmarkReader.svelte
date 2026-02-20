@@ -47,10 +47,12 @@
   let itemKey = $derived(readerItem.key);
   let itemTags = $derived(itemLabelsStore.getTagsForItem(itemKey));
 
-  let labelItemType = $derived.by((): 'article' | 'share' | 'document' | 'userShare' => {
-    if (readerItem.type === 'userShare') return 'userShare';
-    return readerItem.type;
-  });
+  let labelItemType = $derived.by(
+    (): 'article' | 'share' | 'document' | 'userShare' | 'bookmark' => {
+      if (readerItem.type === 'userShare') return 'userShare';
+      return readerItem.type;
+    }
+  );
 
   const fontOptions: { value: ArticleFont; label: string; family: string }[] = [
     { value: 'sans-serif', label: 'Sans', family: 'sans-serif' },
@@ -83,6 +85,7 @@
     if (readerItem.type === 'article') return readerItem.item.title || readerItem.item.url;
     if (readerItem.type === 'share') return readerItem.item.itemTitle || readerItem.item.itemUrl;
     if (readerItem.type === 'document') return readerItem.item.title || readerItem.item.recordUri;
+    if (readerItem.type === 'bookmark') return readerItem.item.title || readerItem.item.url;
     return '';
   });
 
@@ -91,6 +94,7 @@
     if (readerItem.type === 'share') return readerItem.item.itemUrl;
     if (readerItem.type === 'document')
       return readerItem.item.canonicalUrl || readerItem.item.path || '';
+    if (readerItem.type === 'bookmark') return readerItem.item.url;
     return '';
   });
 
@@ -99,6 +103,8 @@
     if (readerItem.type === 'share')
       return readerItem.item.itemPublishedAt || readerItem.item.createdAt;
     if (readerItem.type === 'document') return readerItem.item.publishedAt;
+    if (readerItem.type === 'bookmark')
+      return readerItem.item.publishedAt || readerItem.item.savedAt;
     return '';
   });
 
@@ -136,6 +142,8 @@
       const handle = authorProfile?.handle || readerItem.item.authorDid;
       return `by @${handle}`;
     }
+    if (readerItem.type === 'bookmark' && readerItem.item.author)
+      return `by ${readerItem.item.author}`;
     return '';
   });
 
@@ -147,6 +155,7 @@
     if (readerItem.type === 'document' && readerItem.item.canonicalUrl)
       return getFaviconUrl(readerItem.item.canonicalUrl);
     if (readerItem.type === 'share') return getFaviconUrl(readerItem.item.itemUrl);
+    if (readerItem.type === 'bookmark') return getFaviconUrl(readerItem.item.url);
     return itemUrl ? getFaviconUrl(itemUrl) : '';
   });
 
@@ -174,6 +183,9 @@
         return renderGreengaleContent(doc.content as GreengaleContent, doc.authorDid);
       }
       return doc.textContent || doc.description || '';
+    }
+    if (readerItem.type === 'bookmark') {
+      return readerItem.item.content || readerItem.item.description || '';
     }
     return '';
   });
