@@ -1267,9 +1267,9 @@ function createItemLabelsStore() {
     paragraphIndex: number,
     totalParagraphs: number
   ) {
-    // Only save if paragraphIndex >= current saved index (furthest-read semantics)
+    // Skip if position hasn't changed
     const current = getReadProgress(itemKey);
-    if (current && paragraphIndex <= current.paragraphIndex) return;
+    if (current && paragraphIndex === current.paragraphIndex) return;
 
     // Debounce the actual persist
     if (readProgressDebounceTimer) clearTimeout(readProgressDebounceTimer);

@@ -46,33 +46,17 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     return filtered;
   }
 
-  function getScrollTop(): number {
-    const root = params.scrollRoot();
-    if (root) {
-      return root.scrollTop;
-    }
-    return window.scrollY;
-  }
-
-  function getViewportTop(): number {
-    const root = params.scrollRoot();
-    if (root) {
-      return root.getBoundingClientRect().top;
-    }
-    return 0;
-  }
-
   /**
    * Update current paragraph based on scroll direction:
-   * - Scrolling down: advance when the next paragraph's top edge gets close to
-   *   the top of the viewport (early trigger so it feels responsive)
-   * - Scrolling up: go back when the current paragraph's bottom goes past the
-   *   bottom of the viewport (only change once it's fully scrolled off-screen below)
+   * - Scrolling down: advance as soon as the current paragraph's top edge
+   *   goes above the viewport top (it's leaving the screen)
+   * - Scrolling up: go back when the current paragraph's bottom goes past
+   *   the viewport bottom (it's fully off-screen below)
    */
   function updateCurrentParagraph() {
     if (paragraphs.length === 0) return;
 
-    const scrollTop = getScrollTop();
+    const scrollTop = params.scrollRoot()?.scrollTop ?? window.scrollY;
     const scrollingDown = scrollTop >= lastScrollTop;
     lastScrollTop = scrollTop;
 
@@ -81,42 +65,36 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     const viewportHeight = root ? root.clientHeight : window.innerHeight;
     const viewportBottom = viewportTop + viewportHeight;
 
-    // Offset from edges for triggering transitions
-    const topOffset = 60;
-
     if (scrollingDown) {
-      // Scrolling down: advance when the next paragraph's top gets close to the top edge
-      let newIndex = currentParagraphIndex;
-      for (let i = currentParagraphIndex + 1; i < paragraphs.length; i++) {
-        const rect = paragraphs[i].getBoundingClientRect();
-        if (rect.top <= viewportTop + topOffset) {
-          newIndex = i;
+      // Advance when the current paragraph's top goes above the viewport top
+      while (currentParagraphIndex < paragraphs.length - 1) {
+        const rect = paragraphs[currentParagraphIndex].getBoundingClientRect();
+        if (rect.top < viewportTop) {
+          currentParagraphIndex++;
         } else {
           break;
         }
       }
-      currentParagraphIndex = newIndex;
     } else {
-      // Scrolling up: go back when the current paragraph's bottom goes past the viewport bottom
-      let newIndex = currentParagraphIndex;
-      while (newIndex > 0) {
-        const rect = paragraphs[newIndex].getBoundingClientRect();
-        if (rect.bottom >= viewportBottom) {
-          newIndex--;
+      // Go back when the current paragraph's bottom is past the viewport bottom
+      while (currentParagraphIndex > 0) {
+        const rect = paragraphs[currentParagraphIndex].getBoundingClientRect();
+        if (rect.bottom > viewportBottom) {
+          currentParagraphIndex--;
         } else {
           break;
         }
       }
-      currentParagraphIndex = newIndex;
     }
-
     updateMarkerPosition();
 
     // Update furthest-read
     if (currentParagraphIndex > furthestParagraphIndex) {
       furthestParagraphIndex = currentParagraphIndex;
-      debouncedSave();
     }
+
+    // Save on every position change (up or down)
+    debouncedSave();
   }
 
   function getOffsetRelativeTo(el: HTMLElement, ancestor: HTMLElement): number {
@@ -152,7 +130,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
       itemLabelsStore.setReadProgress(
         params.itemKey(),
         params.itemType(),
-        furthestParagraphIndex,
+        currentParagraphIndex,
         totalParagraphs
       );
     }, SAVE_DEBOUNCE_MS);
