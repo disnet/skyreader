@@ -441,7 +441,6 @@ class ApiClient {
       item_guid: string;
       item_url: string | null;
       item_title: string | null;
-      starred: number;
       read_at: number;
       rkey: string;
     }>;
@@ -453,7 +452,6 @@ class ApiClient {
     itemGuid: string;
     itemUrl?: string;
     itemTitle?: string;
-    starred?: boolean;
   }): Promise<{ success: boolean; rkey?: string; alreadyRead?: boolean }> {
     return this.fetch('/api/reading/mark-read', {
       method: 'POST',
@@ -465,18 +463,6 @@ class ApiClient {
     return this.fetch('/api/reading/mark-unread', {
       method: 'POST',
       body: JSON.stringify({ itemGuid }),
-    });
-  }
-
-  async toggleStar(
-    itemGuid: string,
-    starred: boolean,
-    itemUrl?: string,
-    itemTitle?: string
-  ): Promise<{ success: boolean; starred: boolean }> {
-    return this.fetch('/api/reading/toggle-star', {
-      method: 'POST',
-      body: JSON.stringify({ itemGuid, starred, itemUrl, itemTitle }),
     });
   }
 

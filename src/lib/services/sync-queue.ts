@@ -17,7 +17,6 @@ export interface ReadingPayload {
   articleGuid: string;
   articleUrl?: string;
   articleTitle?: string;
-  starred?: boolean;
 }
 
 export interface SharePayload {
@@ -184,13 +183,7 @@ class SyncQueue {
 
       for (const item of pendingItems) {
         if (item.collection === 'reading' && item.operation === 'create') {
-          const payload = JSON.parse(item.payload) as ReadingPayload;
-          // Star toggles can't be batched — the bulk endpoint doesn't support starred
-          if (payload.starred !== undefined) {
-            individualItems.push(item);
-          } else {
-            readingCreateBatch.push(item);
-          }
+          readingCreateBatch.push(item);
         } else if (item.collection === 'socialReading' && item.operation === 'create') {
           socialReadingCreateBatch.push(item);
         } else {
@@ -423,20 +416,11 @@ class SyncQueue {
     switch (operation) {
       case 'create':
       case 'update':
-        if (payload.starred !== undefined) {
-          await api.toggleStar(
-            payload.articleGuid,
-            payload.starred,
-            payload.articleUrl,
-            payload.articleTitle
-          );
-        } else {
-          await api.markAsRead({
-            itemGuid: payload.articleGuid,
-            itemUrl: payload.articleUrl,
-            itemTitle: payload.articleTitle,
-          });
-        }
+        await api.markAsRead({
+          itemGuid: payload.articleGuid,
+          itemUrl: payload.articleUrl,
+          itemTitle: payload.articleTitle,
+        });
         break;
       case 'delete':
         await api.markAsUnread(payload.articleGuid);

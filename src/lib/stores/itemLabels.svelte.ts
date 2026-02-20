@@ -169,7 +169,7 @@ function createItemLabelsStore() {
         loadSocialReadPositionsFromBackend(),
         loadTagsFromBackend(),
         loadArchivedFromBackend(),
-        loadStarredNonArticlesFromBackend(),
+        loadStarredFromBackend(),
       ]);
       hasLoaded = true;
     } catch (e) {
@@ -187,10 +187,10 @@ function createItemLabelsStore() {
     const now = Date.now();
 
     // Preserve local-only labels (archived, tags) that aren't in backend
-    // Remove old read/starred labels for articles, then re-add from backend
+    // Remove old read labels for articles, then re-add from backend
     const toRemove: Array<[string, string]> = [];
     for (const [compKey, lbl] of labelMap) {
-      if (lbl.itemType === 'article' && (lbl.label === 'read' || lbl.label === 'starred')) {
+      if (lbl.itemType === 'article' && lbl.label === 'read') {
         toRemove.push([lbl.itemKey, lbl.label]);
       }
     }
@@ -215,33 +215,16 @@ function createItemLabelsStore() {
       };
       addToState(readLabel);
       dbOps.push(readLabel);
-
-      if (p.starred) {
-        const starLabel: ItemLabel = {
-          itemKey: p.item_guid,
-          itemType: 'article',
-          label: 'starred',
-          props: {
-            starredAt: p.read_at || now,
-            itemUrl: p.item_url || undefined,
-            itemTitle: p.item_title || undefined,
-          },
-          createdAt: p.read_at || now,
-          updatedAt: now,
-        };
-        addToState(starLabel);
-        dbOps.push(starLabel);
-      }
     }
 
     triggerReactivity();
 
-    // Sync to IndexedDB: clear old read/starred for articles and re-add
+    // Sync to IndexedDB: clear old read labels for articles and re-add
     try {
-      // Delete old article read/starred labels
+      // Delete old article read labels
       const oldLabels = await db.itemLabels
         .where('label')
-        .anyOf(['read', 'starred'])
+        .equals('read')
         .filter((l) => l.itemType === 'article')
         .toArray();
       const deleteKeys = oldLabels.map((l) => [l.itemKey, l.label] as [string, string]);
@@ -423,17 +406,14 @@ function createItemLabelsStore() {
     }
   }
 
-  async function loadStarredNonArticlesFromBackend() {
+  async function loadStarredFromBackend() {
     const starredLabels = await api.getAllLabels({ label: 'starred' });
+    if (starredLabels.length === 0) return;
 
-    // Only process non-article starred labels (articles are handled by loadReadPositionsFromBackend)
-    const nonArticleStarred = starredLabels.filter((l) => l.itemType !== 'article');
-    if (nonArticleStarred.length === 0) return;
-
-    // Remove old non-article starred labels from state
+    // Remove old starred labels from state
     const toRemove: string[] = [];
     for (const [, lbl] of labelMap) {
-      if (lbl.label === 'starred' && lbl.itemType !== 'article') {
+      if (lbl.label === 'starred') {
         toRemove.push(lbl.itemKey);
       }
     }
@@ -443,10 +423,10 @@ function createItemLabelsStore() {
 
     // Add from backend
     const dbOps: ItemLabel[] = [];
-    for (const s of nonArticleStarred) {
+    for (const s of starredLabels) {
       const lbl: ItemLabel = {
         itemKey: s.itemKey,
-        itemType: (s.itemType as ItemLabelType) || 'share',
+        itemType: (s.itemType as ItemLabelType) || 'article',
         label: 'starred',
         props: s.props || {},
         createdAt: s.createdAt,
@@ -460,11 +440,7 @@ function createItemLabelsStore() {
 
     // Sync to IndexedDB
     try {
-      const oldStarred = await db.itemLabels
-        .where('label')
-        .equals('starred')
-        .filter((l) => l.itemType !== 'article')
-        .toArray();
+      const oldStarred = await db.itemLabels.where('label').equals('starred').toArray();
       for (const l of oldStarred) {
         await db.itemLabels.where('[itemKey+label]').equals([l.itemKey, 'starred']).delete();
       }
@@ -472,7 +448,7 @@ function createItemLabelsStore() {
         await db.itemLabels.bulkPut(dbOps);
       }
     } catch (e) {
-      console.error('Failed to sync starred non-article labels to cache:', e);
+      console.error('Failed to sync starred labels to cache:', e);
     }
   }
 
@@ -728,58 +704,34 @@ function createItemLabelsStore() {
     }
     triggerReactivity();
 
-    // For articles, use the old toggle-star API (backward compat with read positions)
-    if (itemType === 'article') {
+    // Use the labels API for all item types
+    const payload: LabelPayload = {
+      itemKey,
+      itemType,
+      label: 'starred',
+      props: { starredAt: now, itemUrl, itemTitle },
+    };
+    if (newStarred) {
       if (syncStore.isOnline) {
         try {
-          await api.toggleStar(itemKey, newStarred, itemUrl, itemTitle);
+          await api.addLabel({ itemKey, itemType, label: 'starred', props: payload.props });
         } catch (e) {
-          console.error('Failed to toggle star, queueing for retry:', e);
-          await syncQueue.enqueue('update', 'reading', itemKey, {
-            articleGuid: itemKey,
-            articleUrl: itemUrl,
-            articleTitle: itemTitle,
-            starred: newStarred,
-          } as ReadingPayload);
-        }
-      } else {
-        await syncQueue.enqueue('update', 'reading', itemKey, {
-          articleGuid: itemKey,
-          articleUrl: itemUrl,
-          articleTitle: itemTitle,
-          starred: newStarred,
-        } as ReadingPayload);
-      }
-    } else {
-      // For non-article types, use the labels API
-      const payload: LabelPayload = {
-        itemKey,
-        itemType,
-        label: 'starred',
-        props: { starredAt: now, itemUrl, itemTitle },
-      };
-      if (newStarred) {
-        if (syncStore.isOnline) {
-          try {
-            await api.addLabel({ itemKey, itemType, label: 'starred', props: payload.props });
-          } catch (e) {
-            console.error('Failed to add starred label, queueing for retry:', e);
-            await syncQueue.enqueue('create', 'label', `${itemKey}\0starred`, payload);
-          }
-        } else {
+          console.error('Failed to add starred label, queueing for retry:', e);
           await syncQueue.enqueue('create', 'label', `${itemKey}\0starred`, payload);
         }
       } else {
-        if (syncStore.isOnline) {
-          try {
-            await api.deleteLabel(itemKey, 'starred');
-          } catch (e) {
-            console.error('Failed to delete starred label, queueing for retry:', e);
-            await syncQueue.enqueue('delete', 'label', `${itemKey}\0starred`, payload);
-          }
-        } else {
+        await syncQueue.enqueue('create', 'label', `${itemKey}\0starred`, payload);
+      }
+    } else {
+      if (syncStore.isOnline) {
+        try {
+          await api.deleteLabel(itemKey, 'starred');
+        } catch (e) {
+          console.error('Failed to delete starred label, queueing for retry:', e);
           await syncQueue.enqueue('delete', 'label', `${itemKey}\0starred`, payload);
         }
+      } else {
+        await syncQueue.enqueue('delete', 'label', `${itemKey}\0starred`, payload);
       }
     }
   }
