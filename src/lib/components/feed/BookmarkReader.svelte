@@ -675,6 +675,7 @@
   }
 
   .reader-body {
+    position: relative;
     font-family: var(--article-font, Georgia, 'Times New Roman', serif);
     font-size: var(--article-font-size, 1.0625rem);
     line-height: 1.8;

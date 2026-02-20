@@ -826,6 +826,7 @@
   }
 
   .article-body {
+    position: relative;
     font-family: var(--article-font);
     font-size: var(--article-font-size);
     line-height: 1.7;
