@@ -303,11 +303,7 @@
         {/if}
 
         {#if onShare}
-          <button
-            class="action-btn"
-            onclick={() => onShare?.()}
-            title="Share"
-          >
+          <button class="action-btn" onclick={() => onShare?.()} title="Share">
             <Icon name="share" size={18} />
             <span class="action-label">Share</span>
           </button>

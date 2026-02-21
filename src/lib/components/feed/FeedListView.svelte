@@ -160,7 +160,9 @@
     {readerItem}
     onClose={closeReader}
     onToggleSave={handleReaderSave}
-    onShare={readerItem.type === 'article' || readerItem.type === 'userShare' ? handleReaderShare : undefined}
+    onShare={readerItem.type === 'article' || readerItem.type === 'userShare'
+      ? handleReaderShare
+      : undefined}
   />
 {:else}
   <div class="article-list">
