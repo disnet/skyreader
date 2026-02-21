@@ -15,12 +15,14 @@
     selected = false,
     onOpen,
     onArchive,
+    onRemove,
     onHover,
   }: {
     displayItem: FeedDisplayItem;
     selected?: boolean;
     onOpen?: () => void;
     onArchive?: () => void;
+    onRemove?: () => void;
     onHover?: () => void;
   } = $props();
 
@@ -158,6 +160,23 @@
     return displayItem.type;
   });
 
+  let deleteConfirming = $state(false);
+  let deleteTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function handleDeleteClick(e: MouseEvent) {
+    e.stopPropagation();
+    if (deleteConfirming) {
+      clearTimeout(deleteTimer);
+      deleteConfirming = false;
+      onRemove?.();
+    } else {
+      deleteConfirming = true;
+      deleteTimer = setTimeout(() => {
+        deleteConfirming = false;
+      }, 3000);
+    }
+  }
+
   function handleArchiveClick(e: MouseEvent) {
     e.stopPropagation();
     onArchive?.();
@@ -235,6 +254,20 @@
     >
       <Icon name={isArchived ? 'inbox' : 'archive'} size={18} />
     </button>
+    {#if onRemove}
+      <button
+        class="card-action-btn"
+        class:confirming={deleteConfirming}
+        onclick={handleDeleteClick}
+        title={deleteConfirming ? 'Click again to confirm' : 'Delete'}
+      >
+        {#if deleteConfirming}
+          <span class="confirm-text">Delete?</span>
+        {:else}
+          <Icon name="trash" size={18} />
+        {/if}
+      </button>
+    {/if}
   </div>
 
   {#if tagMenuOpen}
@@ -396,6 +429,16 @@
 
   .card-action-btn.tagged {
     color: var(--color-primary, #2563eb);
+  }
+
+  .card-action-btn.confirming {
+    color: var(--color-error, #dc2626);
+  }
+
+  .confirm-text {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    white-space: nowrap;
   }
 
   @media (prefers-color-scheme: dark) {

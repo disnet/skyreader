@@ -14,6 +14,7 @@ interface KeyboardShortcutsParams {
   openSavedReader?: () => void;
   toggleAddFromUrl?: () => void;
   openFullscreenReader?: () => void;
+  removeSelectedSavedItem?: () => void;
 }
 
 /**
@@ -427,6 +428,15 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       condition: () => hasSelected() && !!feedViewStore.savedFilter,
     });
 
+    // Bookmarks-specific: delete saved item
+    keyboardStore.register({
+      key: 'x',
+      description: 'Delete saved item',
+      category: 'Article',
+      action: () => params.removeSelectedSavedItem?.(),
+      condition: () => hasSelected() && !!feedViewStore.savedFilter,
+    });
+
     // Full-screen reader for feed items (not in bookmarks view, which uses Enter)
     keyboardStore.register({
       key: 'f',
@@ -450,6 +460,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     keyboardStore.unregister('A', true);
     keyboardStore.unregister('a');
     keyboardStore.unregister('e');
+    keyboardStore.unregister('x');
     keyboardStore.unregister('f');
   }
 

@@ -152,6 +152,15 @@
     }
   }
 
+  export function removeSelectedItem() {
+    const index = feedViewStore.selectedIndex;
+    if (index < 0) return;
+    const item = feedViewStore.currentItems[index];
+    if (item) {
+      handleRemoveBookmark(item);
+    }
+  }
+
   export function openSelectedReader() {
     const index = feedViewStore.selectedIndex;
     if (index < 0) return;
@@ -169,7 +178,15 @@
 </script>
 
 {#if readerItem}
-  <SavedReader {readerItem} onClose={closeReader} onArchive={() => handleArchive(readerItem!)} />
+  <SavedReader
+    {readerItem}
+    onClose={closeReader}
+    onArchive={() => handleArchive(readerItem!)}
+    onRemove={() => {
+      handleRemoveBookmark(readerItem!);
+      closeReader();
+    }}
+  />
 {:else}
   <div class="bookmark-list">
     {#if showScopeUpgrade}
@@ -228,6 +245,7 @@
           onOpen={() => openReader(displayItem)}
           onHover={() => handleSelect(index)}
           onArchive={() => handleArchive(displayItem)}
+          onRemove={() => handleRemoveBookmark(displayItem)}
         />
       </div>
     {/each}

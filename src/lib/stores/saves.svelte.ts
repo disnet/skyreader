@@ -410,14 +410,28 @@ function createSavesStore() {
   }
 
   async function remove(rkey: string) {
-    try {
-      await api.deleteSaved(rkey);
-      articles = articles.filter((a) => a.rkey !== rkey);
-      rebuildMaps();
-      await db.saved.delete(rkey);
-    } catch (err) {
-      console.error('Failed to delete saved item:', err);
-      throw err;
+    const item = articles.find((a) => a.rkey === rkey);
+
+    // Optimistically remove from local state
+    articles = articles.filter((a) => a.rkey !== rkey);
+    rebuildMaps();
+    await db.saved.delete(rkey);
+
+    if (syncStore.isOnline) {
+      try {
+        await api.deleteSaved(rkey);
+      } catch (err) {
+        console.error('Failed to delete saved item, queueing:', err);
+        await syncQueue.enqueue('delete', 'saved', rkey, {
+          rkey,
+          url: item?.url || '',
+        } as SavedPayload);
+      }
+    } else {
+      await syncQueue.enqueue('delete', 'saved', rkey, {
+        rkey,
+        url: item?.url || '',
+      } as SavedPayload);
     }
   }
 
