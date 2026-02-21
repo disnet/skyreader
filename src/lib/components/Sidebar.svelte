@@ -826,16 +826,14 @@
   }
 
   .empty-section {
-    padding: 0.5rem 0.75rem;
-    padding-left: 2.75rem;
+    padding: 0.5rem 1.5rem;
     font-size: 0.8125rem;
     color: var(--color-text-secondary);
     font-style: italic;
   }
 
   .more-indicator {
-    padding: 0.25rem 0.75rem;
-    padding-left: 2.75rem;
+    padding: 0.25rem 1.5rem;
     font-size: 0.8125rem;
     color: var(--color-text-secondary);
   }
@@ -845,8 +843,7 @@
     align-items: center;
     gap: 0.5rem;
     width: 100%;
-    padding: 0.375rem 0.75rem;
-    padding-left: 2.75rem;
+    padding: 0.375rem 1.5rem;
     background: none;
     border: none;
     cursor: pointer;

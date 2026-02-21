@@ -231,7 +231,7 @@
   }
 
   .nav-item.sub-item {
-    padding-left: 2.75rem;
+    padding-left: 1.5rem;
   }
 
   .nav-item.has-error {
