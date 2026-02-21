@@ -403,6 +403,7 @@
     z-index: 100;
     background: var(--color-bg, #ffffff);
     overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .reader-container {
