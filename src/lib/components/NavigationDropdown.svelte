@@ -92,6 +92,7 @@
     | 'newspaper'
     | 'plus'
     | 'filter'
+    | 'layers'
     | 'share-2';
 
   // Navigation item type
@@ -103,8 +104,16 @@
     | { type: 'action'; id: string; label: string; icon: IconName }
     | { type: 'filteredView'; id: number; label: string; icon: IconName };
 
+  // Section type with optional icon and click handler for styled section headers
+  type SectionData = {
+    section: string;
+    icon?: IconName;
+    onSectionClick?: () => void;
+    items: NavItem[];
+  };
+
   // Build filtered items list
-  let filteredItems = $derived.by((): { section: string; items: NavItem[] }[] => {
+  let filteredItems = $derived.by((): SectionData[] => {
     const query = searchQuery.toLowerCase().trim();
 
     const views: NavItem[] = [
@@ -116,35 +125,29 @@
       { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' },
     ];
 
-    const users: NavItem[] = [
-      { type: 'utility', id: 'following', label: 'Following', icon: 'users' },
-      ...followedUsers.map((u) => {
-        const profile = userProfiles.get(u.did);
-        return {
-          type: 'user' as const,
-          did: u.did,
-          label:
-            profile?.displayName ||
-            u.displayName ||
-            profile?.handle ||
-            u.handle ||
-            u.did.slice(0, 20) + '...',
-          count: sharerCounts.get(u.did) || 0,
-          avatarUrl: profile?.avatar || u.avatarUrl || null,
-        };
-      }),
-    ];
+    const userItems: NavItem[] = followedUsers.map((u) => {
+      const profile = userProfiles.get(u.did);
+      return {
+        type: 'user' as const,
+        did: u.did,
+        label:
+          profile?.displayName ||
+          u.displayName ||
+          profile?.handle ||
+          u.handle ||
+          u.did.slice(0, 20) + '...',
+        count: sharerCounts.get(u.did) || 0,
+        avatarUrl: profile?.avatar || u.avatarUrl || null,
+      };
+    });
 
-    const feeds: NavItem[] = [
-      { type: 'view', id: 'feeds', label: 'Feeds', count: totalUnread, icon: 'rss' },
-      ...subscriptions.map((s) => ({
-        type: 'feed' as const,
-        id: s.id!,
-        label: s.customTitle || s.title,
-        count: feedUnreadCounts.get(s.id!) || 0,
-        iconUrl: s.customIconUrl || getFaviconUrl(s.siteUrl || s.feedUrl),
-      })),
-    ];
+    const feedItems: NavItem[] = subscriptions.map((s) => ({
+      type: 'feed' as const,
+      id: s.id!,
+      label: s.customTitle || s.title,
+      count: feedUnreadCounts.get(s.id!) || 0,
+      iconUrl: s.customIconUrl || getFaviconUrl(s.siteUrl || s.feedUrl),
+    }));
 
     // Filter by search query
     const filterItem = (item: NavItem) => {
@@ -152,11 +155,16 @@
       return item.label.toLowerCase().includes(query);
     };
 
-    const sections: { section: string; items: NavItem[] }[] = [];
+    const filterSection = (sectionName: string) => {
+      if (!query) return true;
+      return sectionName.toLowerCase().includes(query);
+    };
+
+    const sections: SectionData[] = [];
 
     const filteredViews = views.filter(filterItem);
     if (filteredViews.length > 0) {
-      sections.push({ section: 'Views', items: filteredViews });
+      sections.push({ section: '', items: filteredViews });
     }
 
     const customViews: NavItem[] = [
@@ -166,21 +174,36 @@
         label: v.name,
         icon: 'filter' as const,
       })),
-      { type: 'action' as const, id: 'add-view', label: 'New View', icon: 'plus' as const },
     ];
     const filteredCustomViews = customViews.filter(filterItem);
-    if (filteredCustomViews.length > 0) {
-      sections.push({ section: 'Custom Views', items: filteredCustomViews });
+    if (filteredCustomViews.length > 0 || filterSection('Views')) {
+      sections.push({ section: 'Views', icon: 'layers', items: filteredCustomViews });
     }
 
-    const filteredUsers = users.filter(filterItem);
-    if (filteredUsers.length > 0) {
-      sections.push({ section: '', items: filteredUsers });
+    const filteredUsers = userItems.filter(filterItem);
+    if (filteredUsers.length > 0 || filterSection('Following')) {
+      sections.push({
+        section: 'Following',
+        icon: 'users',
+        onSectionClick: () => {
+          goto('/following');
+          close();
+        },
+        items: filteredUsers,
+      });
     }
 
-    const filteredFeeds = feeds.filter(filterItem);
-    if (filteredFeeds.length > 0) {
-      sections.push({ section: '', items: filteredFeeds });
+    const filteredFeeds = feedItems.filter(filterItem);
+    if (filteredFeeds.length > 0 || filterSection('Feeds')) {
+      sections.push({
+        section: 'Feeds',
+        icon: 'rss',
+        onSectionClick: () => {
+          goto('/?feeds=true');
+          close();
+        },
+        items: filteredFeeds,
+      });
     }
 
     return sections;
@@ -504,9 +527,18 @@
         <AddDropdownMenu />
       </div>
       <div class="items-container">
-        {#each filteredItems as { section, items }, sectionIndex}
+        {#each filteredItems as { section, icon, onSectionClick, items }, sectionIndex}
           {#if section}
-            <div class="section-header">{section}</div>
+            <button
+              class="section-header"
+              onclick={() => onSectionClick?.()}
+              class:clickable={!!onSectionClick}
+            >
+              {#if icon}
+                <span class="section-icon"><Icon name={icon} size={16} /></span>
+              {/if}
+              <span class="section-label">{section}</span>
+            </button>
           {/if}
           {#each items as item, itemIndex}
             {@const flatIndex =
@@ -516,10 +548,6 @@
               class="nav-item"
               class:active={isItemActive(item)}
               class:highlighted={flatIndex === highlightedIndex}
-              class:child={item.type === 'user' ||
-                item.type === 'feed' ||
-                item.type === 'filteredView' ||
-                (item.type === 'action' && item.id === 'add-view')}
               role="option"
               aria-selected={isItemActive(item)}
               onclick={() => selectItem(item)}
@@ -587,9 +615,18 @@
         </button>
       </div>
       <div class="items-container">
-        {#each filteredItems as { section, items }, sectionIndex}
+        {#each filteredItems as { section, icon, onSectionClick, items }, sectionIndex}
           {#if section}
-            <div class="section-header">{section}</div>
+            <button
+              class="section-header"
+              onclick={() => onSectionClick?.()}
+              class:clickable={!!onSectionClick}
+            >
+              {#if icon}
+                <span class="section-icon"><Icon name={icon} size={16} /></span>
+              {/if}
+              <span class="section-label">{section}</span>
+            </button>
           {/if}
           {#each items as item, itemIndex}
             {@const flatIndex =
@@ -599,10 +636,6 @@
               class="nav-item"
               class:active={isItemActive(item)}
               class:highlighted={flatIndex === highlightedIndex}
-              class:child={item.type === 'user' ||
-                item.type === 'feed' ||
-                item.type === 'filteredView' ||
-                (item.type === 'action' && item.id === 'add-view')}
               role="option"
               aria-selected={isItemActive(item)}
               onclick={() => selectItem(item)}
@@ -869,12 +902,44 @@
   }
 
   .section-header {
-    padding: 0.5rem 0.75rem 0.25rem;
-    font-size: 0.6875rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    margin-top: 0.25rem;
+    background: none;
+    border: none;
+    text-align: left;
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 500;
     color: var(--color-text-secondary);
+    cursor: default;
+  }
+
+  .section-header.clickable {
+    cursor: pointer;
+  }
+
+  .section-header.clickable:hover {
+    color: var(--color-text);
+    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+  }
+
+  .section-icon {
+    width: 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .section-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .nav-item {
@@ -901,10 +966,6 @@
   .nav-item.active {
     background-color: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
     color: var(--color-primary);
-  }
-
-  .nav-item.child {
-    padding-left: 1.75rem;
   }
 
   .item-icon {
@@ -981,6 +1042,10 @@
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
     }
 
+    .section-header.clickable:hover {
+      background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
+    }
+
     .dropdown-panel {
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     }
@@ -1041,12 +1106,45 @@
   }
 
   :global(.mobile-portal .section-header) {
-    padding: 0.5rem 0.75rem 0.25rem;
-    font-size: 0.6875rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    margin-top: 0.25rem;
+    background: none;
+    border: none;
+    text-align: left;
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 500;
     color: var(--color-text-secondary);
+    cursor: default;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  :global(.mobile-portal .section-header.clickable) {
+    cursor: pointer;
+  }
+
+  :global(.mobile-portal .section-header.clickable:hover) {
+    color: var(--color-text);
+    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+  }
+
+  :global(.mobile-portal .section-icon) {
+    width: 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  :global(.mobile-portal .section-label) {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   :global(.mobile-portal .nav-item) {
@@ -1073,10 +1171,6 @@
 
   :global(.mobile-portal .nav-item.highlighted) {
     background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
-  }
-
-  :global(.mobile-portal .nav-item.child) {
-    padding-left: 1.75rem;
   }
 
   :global(.mobile-portal .item-icon) {
