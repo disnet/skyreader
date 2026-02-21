@@ -13,6 +13,7 @@ interface KeyboardShortcutsParams {
   markAllAsReadInCurrentFeed: () => Promise<void>;
   openSavedReader?: () => void;
   toggleAddFromUrl?: () => void;
+  openFullscreenReader?: () => void;
 }
 
 /**
@@ -425,6 +426,15 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       },
       condition: () => hasSelected() && !!feedViewStore.savedFilter,
     });
+
+    // Full-screen reader for feed items (not in bookmarks view, which uses Enter)
+    keyboardStore.register({
+      key: 'f',
+      description: 'Read in full screen',
+      category: 'Navigation',
+      action: () => params.openFullscreenReader?.(),
+      condition: () => hasSelected() && !feedViewStore.savedFilter,
+    });
   }
 
   function unregister() {
@@ -440,6 +450,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     keyboardStore.unregister('A', true);
     keyboardStore.unregister('a');
     keyboardStore.unregister('e');
+    keyboardStore.unregister('f');
   }
 
   // Auto-cleanup on component destroy

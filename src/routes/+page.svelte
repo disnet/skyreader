@@ -350,6 +350,7 @@
     markAllAsReadInCurrentFeed,
     openSavedReader: () => savedListView?.openSelectedReader(),
     toggleAddFromUrl: () => savedListView?.toggleUrlInput(),
+    openFullscreenReader: () => feedListView?.openSelectedReader(),
   });
 
   async function removeFeed(id: number) {

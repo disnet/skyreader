@@ -30,10 +30,14 @@
     readerItem,
     onClose,
     onArchive,
+    onToggleSave,
+    onShare,
   }: {
     readerItem: FeedDisplayItem;
     onClose: () => void;
     onArchive?: () => void;
+    onToggleSave?: () => void;
+    onShare?: () => void;
   } = $props();
 
   let styleMenuOpen = $state(false);
@@ -157,6 +161,7 @@
   });
 
   let isArchived = $derived(itemLabelsStore.isArchived(itemKey));
+  let isSaved = $derived(itemLabelsStore.isSaved(itemKey));
 
   let displayContent = $derived.by(() => {
     if (readerItem.type === 'article') {
@@ -200,9 +205,12 @@
     if (e.key === 'Escape') {
       e.preventDefault();
       onClose();
-    } else if (e.key === 'e' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    } else if (e.key === 'e' && !e.metaKey && !e.ctrlKey && !e.altKey && onArchive) {
       e.preventDefault();
-      onArchive?.();
+      onArchive();
+    } else if (e.key === 's' && !e.metaKey && !e.ctrlKey && !e.altKey && onToggleSave) {
+      e.preventDefault();
+      onToggleSave();
     } else if (e.key === 't' && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
       tagMenuOpen = !tagMenuOpen;
@@ -282,14 +290,35 @@
 
         <span class="action-separator"></span>
 
-        <button
-          class="action-btn"
-          onclick={() => onArchive?.()}
-          title={isArchived ? 'Move to inbox' : 'Archive (e)'}
-        >
-          <Icon name={isArchived ? 'inbox' : 'archive'} size={18} />
-          <span class="action-label">{isArchived ? 'Inbox' : 'Archive'}</span>
-        </button>
+        {#if onToggleSave}
+          <button
+            class="action-btn"
+            class:saved={isSaved}
+            onclick={() => onToggleSave?.()}
+            title="Save (s)"
+          >
+            <Icon name="bookmark" size={18} />
+            <span class="action-label">Save</span>
+          </button>
+        {/if}
+
+        {#if onShare}
+          <button class="action-btn" onclick={() => onShare?.()} title="Share">
+            <Icon name="share" size={18} />
+            <span class="action-label">Share</span>
+          </button>
+        {/if}
+
+        {#if onArchive}
+          <button
+            class="action-btn"
+            onclick={() => onArchive()}
+            title={isArchived ? 'Move to inbox' : 'Archive (e)'}
+          >
+            <Icon name={isArchived ? 'inbox' : 'archive'} size={18} />
+            <span class="action-label">{isArchived ? 'Inbox' : 'Archive'}</span>
+          </button>
+        {/if}
 
         <button class="action-btn" onclick={handleOpenUrl} title="Open in new tab">
           <Icon name="external-link" size={18} />
@@ -466,6 +495,10 @@
   .action-btn:hover,
   .action-btn.active {
     color: var(--color-primary, #0066cc);
+  }
+
+  .action-btn.saved {
+    color: var(--color-primary, #2563eb);
   }
 
   .action-btn.tagged {

@@ -39,7 +39,8 @@
     | 'x'
     | 'archive'
     | 'arrow-left'
-    | 'clock';
+    | 'clock'
+    | 'maximize';
 
   interface Props {
     name: IconName;
@@ -216,6 +217,11 @@
   {:else if name === 'clock'}
     <circle cx="12" cy="12" r="10" />
     <polyline points="12 6 12 12 16 14" />
+  {:else if name === 'maximize'}
+    <polyline points="15 3 21 3 21 9" />
+    <polyline points="9 21 3 21 3 15" />
+    <line x1="21" x2="14" y1="3" y2="10" />
+    <line x1="3" x2="10" y1="21" y2="14" />
   {/if}
 </svg>
 
