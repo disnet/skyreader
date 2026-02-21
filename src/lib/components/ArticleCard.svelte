@@ -376,18 +376,27 @@
     enabled: () => expanded && hasContent,
   });
 
-  // Attach link interception and highlights when content is visible
+  // Attach link interception when content is visible
   $effect(() => {
     if (isOpen && bodyEl && hasContent) {
       tick().then(() => {
         linkInterception.attach();
-        if (expanded) {
-          highlights.attach();
-        }
       });
     }
     return () => {
       linkInterception.detach();
+    };
+  });
+
+  // Attach highlights when article is expanded (must read `expanded` synchronously
+  // so Svelte's $effect tracks it — reads inside tick().then() are not tracked)
+  $effect(() => {
+    if (expanded && bodyEl && hasContent) {
+      tick().then(() => {
+        highlights.attach();
+      });
+    }
+    return () => {
       highlights.detach();
     };
   });
