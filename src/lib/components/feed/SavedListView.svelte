@@ -13,6 +13,7 @@
   let showScopeUpgrade = $state(false);
 
   let readerItem = $state<FeedDisplayItem | null>(null);
+  let savedScrollY = 0;
   let showUrlInput = $state(false);
   let urlInputValue = $state('');
   let urlInputEl = $state<HTMLInputElement | null>(null);
@@ -34,11 +35,15 @@
   }
 
   function openReader(item: FeedDisplayItem) {
+    savedScrollY = window.scrollY;
     readerItem = item;
   }
 
   function closeReader() {
     readerItem = null;
+    requestAnimationFrame(() => {
+      window.scrollTo(0, savedScrollY);
+    });
   }
 
   function getItemType(item: FeedDisplayItem): ItemLabelType {

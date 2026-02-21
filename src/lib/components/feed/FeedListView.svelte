@@ -20,13 +20,18 @@
 
   // Reader overlay state
   let readerItem = $state<FeedDisplayItem | null>(null);
+  let savedScrollY = 0;
 
   function openReader(item: FeedDisplayItem) {
+    savedScrollY = window.scrollY;
     readerItem = item;
   }
 
   function closeReader() {
     readerItem = null;
+    requestAnimationFrame(() => {
+      window.scrollTo(0, savedScrollY);
+    });
   }
 
   export function openSelectedReader() {
