@@ -1,4 +1,5 @@
 import { db } from '$lib/services/db';
+import { safeAdd } from '$lib/services/safeDb.svelte';
 import { api } from '$lib/services/api';
 import { syncQueue, type ShareReadingPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
@@ -46,7 +47,7 @@ function createShareReadingStore() {
           itemTitle: p.itemTitle || undefined,
           readAt: p.readAt,
         };
-        const id = await db.shareReadPositions.add(position);
+        const id = await safeAdd(db.shareReadPositions, position);
         newPositions.set(p.shareUri, { ...position, id });
       }
 
@@ -88,7 +89,7 @@ function createShareReadingStore() {
     shareReadPositions.set(shareUri, { ...position });
     shareReadPositions = new Map(shareReadPositions);
 
-    const id = await db.shareReadPositions.add(position);
+    const id = await safeAdd(db.shareReadPositions, position);
     shareReadPositions.set(shareUri, { ...position, id });
     shareReadPositions = new Map(shareReadPositions);
 

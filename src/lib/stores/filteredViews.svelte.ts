@@ -1,4 +1,5 @@
 import { db } from '$lib/services/db';
+import { safeAdd, safeUpdate } from '$lib/services/safeDb.svelte';
 import type { FilteredView } from '$lib/types';
 
 function createFilteredViewsStore() {
@@ -20,7 +21,7 @@ function createFilteredViewsStore() {
       updatedAt: now,
       position: maxPosition + 1,
     };
-    const id = await db.filteredViews.add(newView);
+    const id = await safeAdd(db.filteredViews, newView);
     newView.id = id as number;
     views = [...views, newView];
     return id as number;
@@ -30,7 +31,7 @@ function createFilteredViewsStore() {
     const updated = { ...changes, updatedAt: Date.now() };
     // Update in-memory first for immediate reactivity, then persist
     views = views.map((v) => (v.id === id ? { ...v, ...updated } : v));
-    await db.filteredViews.update(id, updated);
+    await safeUpdate(db.filteredViews, id, updated);
   }
 
   async function remove(id: number) {

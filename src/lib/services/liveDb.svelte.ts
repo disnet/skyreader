@@ -1,4 +1,5 @@
 import { db } from './db';
+import { safeAdd, safeUpdate, safeBulkAdd } from './safeDb.svelte';
 import type { Subscription, Article, FeedItem } from '$lib/types';
 
 const MAX_ARTICLES_PER_FEED = 100;
@@ -69,7 +70,7 @@ class LiveDatabase {
    * Add a new subscription to both IndexedDB and memory
    */
   async addSubscription(subscription: Omit<Subscription, 'id'>): Promise<number> {
-    const id = await db.subscriptions.add(subscription);
+    const id = await safeAdd(db.subscriptions, subscription);
     this._subscriptions = [...this._subscriptions, { ...subscription, id }];
     this.subscriptionsVersion++;
     return id;
@@ -79,7 +80,7 @@ class LiveDatabase {
    * Update an existing subscription
    */
   async updateSubscription(id: number, updates: Partial<Subscription>): Promise<void> {
-    await db.subscriptions.update(id, updates);
+    await safeUpdate(db.subscriptions, id, updates);
     this._subscriptions = this._subscriptions.map((s) => (s.id === id ? { ...s, ...updates } : s));
     this.subscriptionsVersion++;
   }
@@ -92,7 +93,7 @@ class LiveDatabase {
     id: number,
     updates: { customTitle?: string; customIconUrl?: string }
   ): Promise<void> {
-    await db.subscriptions.update(id, updates);
+    await safeUpdate(db.subscriptions, id, updates);
     this._subscriptions = this._subscriptions.map((s) => (s.id === id ? { ...s, ...updates } : s));
     this.subscriptionsVersion++;
   }
@@ -127,7 +128,7 @@ class LiveDatabase {
   async replaceSubscriptions(subscriptions: Subscription[]): Promise<void> {
     await db.subscriptions.clear();
     if (subscriptions.length > 0) {
-      await db.subscriptions.bulkAdd(subscriptions);
+      await safeBulkAdd(db.subscriptions, subscriptions);
     }
     this._subscriptions = subscriptions;
     this._subscriptionsLoaded = true;
@@ -174,7 +175,7 @@ class LiveDatabase {
     }));
 
     // Add to IndexedDB
-    await db.articles.bulkAdd(newArticles);
+    await safeBulkAdd(db.articles, newArticles);
 
     // Update in-memory state
     this._articles = [...this._articles, ...newArticles].sort(

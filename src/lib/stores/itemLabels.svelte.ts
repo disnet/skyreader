@@ -1,5 +1,6 @@
 import { api } from '$lib/services/api';
 import { db } from '$lib/services/db';
+import { safePut, safeAdd, safeBulkPut } from '$lib/services/safeDb.svelte';
 import {
   syncQueue,
   type ReadingPayload,
@@ -89,7 +90,7 @@ function createItemLabelsStore() {
 
   async function putLabel(lbl: ItemLabel) {
     addToState(lbl);
-    await db.itemLabels.put($state.snapshot(lbl));
+    await safePut(db.itemLabels, lbl);
   }
 
   async function deleteLabel(itemKey: string, label: string) {
@@ -239,7 +240,7 @@ function createItemLabelsStore() {
         await db.itemLabels.where('[itemKey+label]').equals([itemKey, label]).delete();
       }
       if (dbOps.length > 0) {
-        await db.itemLabels.bulkPut(dbOps);
+        await safeBulkPut(db.itemLabels, dbOps);
       }
     } catch (e) {
       console.error('Failed to sync read positions to cache:', e);
@@ -309,12 +310,12 @@ function createItemLabelsStore() {
         await db.itemLabels.where('[itemKey+label]').equals([l.itemKey, l.label]).delete();
       }
       if (dbOps.length > 0) {
-        await db.itemLabels.bulkPut(dbOps);
+        await safeBulkPut(db.itemLabels, dbOps);
       }
       // Also sync socialReadPositions table for backward compat
       await db.socialReadPositions.clear();
       for (const p of newSocialPositions.values()) {
-        await db.socialReadPositions.add(p);
+        await safeAdd(db.socialReadPositions, p);
       }
     } catch (e) {
       console.error('Failed to sync social read positions to cache:', e);
@@ -361,7 +362,7 @@ function createItemLabelsStore() {
         await db.itemLabels.where('[itemKey+label]').equals([l.itemKey, 'tagged']).delete();
       }
       if (dbOps.length > 0) {
-        await db.itemLabels.bulkPut(dbOps);
+        await safeBulkPut(db.itemLabels, dbOps);
       }
     } catch (e) {
       console.error('Failed to sync tags to cache:', e);
@@ -406,7 +407,7 @@ function createItemLabelsStore() {
         await db.itemLabels.where('[itemKey+label]').equals([l.itemKey, 'archived']).delete();
       }
       if (dbOps.length > 0) {
-        await db.itemLabels.bulkPut(dbOps);
+        await safeBulkPut(db.itemLabels, dbOps);
       }
     } catch (e) {
       console.error('Failed to sync archived labels to cache:', e);
@@ -451,7 +452,7 @@ function createItemLabelsStore() {
         await db.itemLabels.where('[itemKey+label]').equals([l.itemKey, 'readProgress']).delete();
       }
       if (dbOps.length > 0) {
-        await db.itemLabels.bulkPut(dbOps);
+        await safeBulkPut(db.itemLabels, dbOps);
       }
     } catch (e) {
       console.error('Failed to sync read progress to cache:', e);
@@ -580,7 +581,7 @@ function createItemLabelsStore() {
 
     addToState(readLabel);
     triggerReactivity();
-    db.itemLabels.put($state.snapshot(readLabel));
+    safePut(db.itemLabels, readLabel);
 
     pendingMarkRead.push({ articleGuid, articleUrl, articleTitle });
     if (debounceTimer) clearTimeout(debounceTimer);
@@ -616,7 +617,7 @@ function createItemLabelsStore() {
     triggerReactivity();
 
     if (dbOps.length > 0) {
-      await db.itemLabels.bulkPut(dbOps);
+      await safeBulkPut(db.itemLabels, dbOps);
     }
 
     if (syncStore.isOnline) {
@@ -809,7 +810,7 @@ function createItemLabelsStore() {
         updatedAt: now,
       };
       addToState(label);
-      await db.itemLabels.put($state.snapshot(label));
+      await safePut(db.itemLabels, label);
     }
     triggerReactivity();
 
@@ -829,7 +830,7 @@ function createItemLabelsStore() {
     };
     addToState(label);
     triggerReactivity();
-    await db.itemLabels.put($state.snapshot(label));
+    await safePut(db.itemLabels, label);
 
     await syncArchiveToBackend(itemKey, true, itemType);
   }
@@ -902,7 +903,7 @@ function createItemLabelsStore() {
     };
     addToState(label);
     triggerReactivity();
-    await db.itemLabels.put($state.snapshot(label));
+    await safePut(db.itemLabels, label);
 
     await syncTaggedLabel(itemKey, label.itemType as ItemLabelType, newTags);
   }
@@ -931,7 +932,7 @@ function createItemLabelsStore() {
       };
       addToState(label);
       triggerReactivity();
-      await db.itemLabels.put($state.snapshot(label));
+      await safePut(db.itemLabels, label);
     }
 
     await syncTaggedLabel(itemKey, existing.itemType as ItemLabelType, newTags);
@@ -972,7 +973,7 @@ function createItemLabelsStore() {
       } else {
         const updated: ItemLabel = { ...lbl, props: { tags: newTags }, updatedAt: now };
         addToState(updated);
-        await db.itemLabels.put($state.snapshot(updated));
+        await safePut(db.itemLabels, updated);
       }
 
       await syncTaggedLabel(itemKey, lbl.itemType as ItemLabelType, newTags);
@@ -1018,7 +1019,7 @@ function createItemLabelsStore() {
 
     addToState(readLabel);
     triggerReactivity();
-    await db.itemLabels.put($state.snapshot(readLabel));
+    await safePut(db.itemLabels, readLabel);
 
     // Also update socialPositions for backward compat
     const position: SocialReadPosition = {
@@ -1032,7 +1033,7 @@ function createItemLabelsStore() {
     };
     socialPositions.set(itemUri, position);
     socialPositions = new Map(socialPositions);
-    await db.socialReadPositions.add(position);
+    await safeAdd(db.socialReadPositions, position);
 
     const payload: SocialReadingPayload = {
       type,
@@ -1121,7 +1122,7 @@ function createItemLabelsStore() {
     socialPositions = new Map(socialPositions);
 
     if (dbOps.length > 0) {
-      await db.itemLabels.bulkPut(dbOps);
+      await safeBulkPut(db.itemLabels, dbOps);
     }
 
     // Build API payloads
@@ -1311,7 +1312,7 @@ function createItemLabelsStore() {
     };
     addToState(label);
     triggerReactivity();
-    await db.itemLabels.put($state.snapshot(label));
+    await safePut(db.itemLabels, label);
   }
 
   async function removeHighlight(itemKey: string, highlightId: string) {
@@ -1338,7 +1339,7 @@ function createItemLabelsStore() {
       };
       addToState(label);
       triggerReactivity();
-      await db.itemLabels.put($state.snapshot(label));
+      await safePut(db.itemLabels, label);
     }
   }
 

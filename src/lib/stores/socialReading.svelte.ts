@@ -1,4 +1,5 @@
 import { db } from '$lib/services/db';
+import { safeAdd } from '$lib/services/safeDb.svelte';
 import { api } from '$lib/services/api';
 import { syncQueue, type SocialReadingPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
@@ -49,7 +50,7 @@ function createSocialReadingStore() {
           itemTitle: p.itemTitle || undefined,
           readAt: p.readAt,
         };
-        const id = await db.socialReadPositions.add(position);
+        const id = await safeAdd(db.socialReadPositions, position);
         newPositions.set(p.itemUri, { ...position, id });
       }
 
@@ -93,7 +94,7 @@ function createSocialReadingStore() {
     positions.set(itemUri, { ...position });
     positions = new Map(positions);
 
-    const id = await db.socialReadPositions.add(position);
+    const id = await safeAdd(db.socialReadPositions, position);
     positions.set(itemUri, { ...position, id });
     positions = new Map(positions);
 
@@ -174,7 +175,7 @@ function createSocialReadingStore() {
         itemTitle: item.itemTitle,
         readAt: now,
       };
-      const id = await db.socialReadPositions.add(position);
+      const id = await safeAdd(db.socialReadPositions, position);
       positions.set(item.itemUri, { ...position, id });
     }
     positions = new Map(positions);
