@@ -17,6 +17,9 @@ export function useLinkInterception(params: LinkInterceptionParams) {
   let currentEl: HTMLElement | null = null;
 
   function handleClick(e: MouseEvent) {
+    // Let modifier clicks (cmd/ctrl/shift/middle-click) use default browser behavior
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+
     const link = (e.target as HTMLElement).closest('a[href]') as HTMLAnchorElement | null;
     if (!link) return;
     if (!params.enabled()) return;
