@@ -193,6 +193,9 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     // Click handler for paragraph navigation
     clickTarget = contentEl;
     clickHandler = (e: Event) => {
+      // Don't interfere with text selections (would cause scroll that dismisses highlight popover)
+      const selection = window.getSelection();
+      if (selection && !selection.isCollapsed) return;
       const target = (e.target as HTMLElement).closest('[data-para-index]');
       if (!target) return;
       // Don't interfere with link clicks
