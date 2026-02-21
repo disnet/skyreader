@@ -22,7 +22,9 @@
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import Icon from '$lib/components/Icon.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
+  import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
+  import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
   import { tick } from 'svelte';
 
@@ -232,16 +234,24 @@
     enabled: () => true,
   });
 
+  // Link interception for showing context menu on link clicks
+  const linkInterception = useLinkInterception({
+    contentEl: () => readerBodyEl,
+    enabled: () => true,
+  });
+
   // Set up observer when reader body is mounted
   $effect(() => {
     if (readerBodyEl && overlayEl) {
       tick().then(() => {
         paragraphTracking.setupObserver();
+        linkInterception.attach();
         setTimeout(() => paragraphTracking.restorePosition(), 100);
       });
     }
     return () => {
       paragraphTracking.cleanup();
+      linkInterception.detach();
     };
   });
 
@@ -332,6 +342,15 @@
           itemType={labelItemType}
           anchorEl={tagBtnRef}
           onClose={() => (tagMenuOpen = false)}
+        />
+      {/if}
+
+      {#if linkInterception.menuState}
+        <LinkContextMenu
+          url={linkInterception.menuState.url}
+          linkText={linkInterception.menuState.linkText}
+          anchorRect={linkInterception.menuState.anchorRect}
+          onClose={linkInterception.closeMenu}
         />
       {/if}
     </header>

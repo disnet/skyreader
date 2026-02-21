@@ -22,9 +22,11 @@
   import { auth } from '$lib/stores/auth.svelte';
   import Icon from './Icon.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
+  import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
+  import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import type { ItemTags, ItemLabelType } from '$lib/types';
   import { tick } from 'svelte';
   import logo from '$lib/assets/logo.svg';
@@ -263,7 +265,7 @@
   }
 
   function handleContentClick(e: MouseEvent) {
-    // Don't interfere with link clicks
+    // Link clicks are handled by useLinkInterception when expanded
     if ((e.target as HTMLElement).closest('a')) return;
     e.stopPropagation();
 
@@ -356,6 +358,24 @@
     itemKey: () => itemGuid,
     itemType: () => itemTagType as ItemLabelType,
     enabled: () => expanded && hasContent,
+  });
+
+  // Link interception for showing context menu on link clicks
+  const linkInterception = useLinkInterception({
+    contentEl: () => bodyEl,
+    enabled: () => true,
+  });
+
+  // Attach link interception when content is visible (selected or expanded)
+  $effect(() => {
+    if (isOpen && bodyEl && hasContent) {
+      tick().then(() => {
+        linkInterception.attach();
+      });
+    }
+    return () => {
+      linkInterception.detach();
+    };
   });
 
   // Set up observer when article is expanded
@@ -644,6 +664,15 @@
           tagMenuOpenLocal = false;
           feedViewStore.closeTagMenu();
         }}
+      />
+    {/if}
+
+    {#if linkInterception.menuState}
+      <LinkContextMenu
+        url={linkInterception.menuState.url}
+        linkText={linkInterception.menuState.linkText}
+        anchorRect={linkInterception.menuState.anchorRect}
+        onClose={linkInterception.closeMenu}
       />
     {/if}
 
