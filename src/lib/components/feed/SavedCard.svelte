@@ -8,6 +8,7 @@
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { profileService } from '$lib/services/profiles';
   import Icon from '$lib/components/Icon.svelte';
+  import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
 
   let {
@@ -15,12 +16,14 @@
     selected = false,
     onOpen,
     onArchive,
+    onRemove,
     onHover,
   }: {
     displayItem: FeedDisplayItem;
     selected?: boolean;
     onOpen?: () => void;
     onArchive?: () => void;
+    onRemove?: () => void;
     onHover?: () => void;
   } = $props();
 
@@ -150,7 +153,7 @@
   });
 
   let tagMenuOpenLocal = $state(false);
-  let tagBtnRef = $state<HTMLButtonElement | null>(null);
+  let tagMenuAnchorRef = $state<HTMLElement | null>(null);
   let tagMenuOpen = $derived(tagMenuOpenLocal || feedViewStore.tagMenuItemKey === itemKey);
 
   let labelItemType = $derived.by((): 'article' | 'share' | 'document' | 'userShare' | 'saved' => {
@@ -163,13 +166,33 @@
     onArchive?.();
   }
 
-  function handleTagClick(e: MouseEvent) {
-    e.stopPropagation();
-    tagMenuOpenLocal = !tagMenuOpenLocal;
-    if (feedViewStore.tagMenuItemKey === itemKey) {
-      feedViewStore.closeTagMenu();
+  let popoverMenuItems = $derived.by(() => {
+    const items: {
+      label: string;
+      icon?: string;
+      variant?: 'default' | 'danger';
+      onclick: () => void;
+    }[] = [
+      {
+        label: 'Tag',
+        icon: 'tag',
+        onclick: () => {
+          tagMenuOpenLocal = true;
+        },
+      },
+    ];
+    if (onRemove) {
+      items.push({
+        label: 'Delete',
+        icon: 'trash',
+        variant: 'danger',
+        onclick: () => {
+          onRemove();
+        },
+      });
     }
-  }
+    return items;
+  });
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
@@ -218,16 +241,8 @@
     </div>
   </div>
 
-  <div class="card-actions">
-    <button
-      class="card-action-btn"
-      class:tagged={tags.length > 0}
-      onclick={handleTagClick}
-      bind:this={tagBtnRef}
-      title="Tag"
-    >
-      <Icon name="tag" size={18} />
-    </button>
+  <div class="card-actions" bind:this={tagMenuAnchorRef}>
+    <PopoverMenu items={popoverMenuItems} />
     <button
       class="card-action-btn"
       onclick={handleArchiveClick}
@@ -241,7 +256,7 @@
     <TagMenu
       {itemKey}
       itemType={labelItemType}
-      anchorEl={tagBtnRef}
+      anchorEl={tagMenuAnchorRef}
       onClose={() => {
         tagMenuOpenLocal = false;
         feedViewStore.closeTagMenu();
@@ -392,10 +407,6 @@
   .card-action-btn:hover {
     color: var(--color-primary, #0066cc);
     background: rgba(0, 0, 0, 0.05);
-  }
-
-  .card-action-btn.tagged {
-    color: var(--color-primary, #2563eb);
   }
 
   @media (prefers-color-scheme: dark) {

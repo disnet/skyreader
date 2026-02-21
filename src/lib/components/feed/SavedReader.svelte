@@ -32,12 +32,14 @@
     readerItem,
     onClose,
     onArchive,
+    onRemove,
     onToggleSave,
     onShare,
   }: {
     readerItem: FeedDisplayItem;
     onClose: () => void;
     onArchive?: () => void;
+    onRemove?: () => void;
     onToggleSave?: () => void;
     onShare?: () => void;
   } = $props();
@@ -255,6 +257,22 @@
     };
   });
 
+  let deleteConfirming = $state(false);
+  let deleteTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function handleDeleteClick() {
+    if (deleteConfirming) {
+      clearTimeout(deleteTimer);
+      deleteConfirming = false;
+      onRemove?.();
+    } else {
+      deleteConfirming = true;
+      deleteTimer = setTimeout(() => {
+        deleteConfirming = false;
+      }, 3000);
+    }
+  }
+
   function handleOpenUrl() {
     if (itemUrl) window.open(itemUrl, '_blank', 'noopener');
   }
@@ -327,6 +345,18 @@
           >
             <Icon name={isArchived ? 'inbox' : 'archive'} size={18} />
             <span class="action-label">{isArchived ? 'Inbox' : 'Archive'}</span>
+          </button>
+        {/if}
+
+        {#if onRemove}
+          <button
+            class="action-btn"
+            class:confirming={deleteConfirming}
+            onclick={handleDeleteClick}
+            title={deleteConfirming ? 'Click again to confirm' : 'Delete'}
+          >
+            <Icon name="trash" size={18} />
+            <span class="action-label">{deleteConfirming ? 'Delete?' : 'Delete'}</span>
           </button>
         {/if}
 
@@ -518,6 +548,10 @@
 
   .action-btn.saved {
     color: var(--color-primary, #2563eb);
+  }
+
+  .action-btn.confirming {
+    color: var(--color-error, #dc2626);
   }
 
   .action-btn.tagged {

@@ -450,6 +450,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     keyboardStore.unregister('A', true);
     keyboardStore.unregister('a');
     keyboardStore.unregister('e');
+    keyboardStore.unregister('x');
     keyboardStore.unregister('f');
   }
 
