@@ -6,13 +6,13 @@ import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte
 import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { sharesStore } from '$lib/stores/shares.svelte';
+import { sidebarStore } from '$lib/stores/sidebar.svelte';
 import type { Article, Subscription } from '$lib/types';
 
 interface KeyboardShortcutsParams {
   scrollToCenter: () => void;
   markAllAsReadInCurrentFeed: () => Promise<void>;
   openSavedReader?: () => void;
-  toggleAddFromUrl?: () => void;
   openFullscreenReader?: () => void;
   toggleHighlight?: () => void;
 }
@@ -400,13 +400,13 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       condition: () => auth.isAuthenticated && !!feedViewStore.feedFilter,
     });
 
-    // Bookmarks-specific: add article from URL
+    // Save article from URL (works from any view)
     keyboardStore.register({
       key: 'a',
-      description: 'Add from URL',
+      description: 'Save article by URL',
       category: 'Article',
-      action: () => params.toggleAddFromUrl?.(),
-      condition: () => auth.isAuthenticated && !!feedViewStore.savedFilter,
+      action: () => sidebarStore.openSaveArticleModal(),
+      condition: () => auth.isAuthenticated,
     });
 
     // Bookmarks-specific: archive item (works for all item types)

@@ -14,6 +14,7 @@
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import Icon from './Icon.svelte';
+  import AddDropdownMenu from './AddDropdownMenu.svelte';
   import type { BlueskyProfile } from '$lib/types';
 
   interface Props {
@@ -117,7 +118,6 @@
 
     const users: NavItem[] = [
       { type: 'utility', id: 'following', label: 'Following', icon: 'users' },
-      { type: 'action', id: 'follow-user', label: 'Follow user', icon: 'plus' },
       ...followedUsers.map((u) => {
         const profile = userProfiles.get(u.did);
         return {
@@ -144,7 +144,6 @@
         count: feedUnreadCounts.get(s.id!) || 0,
         iconUrl: s.customIconUrl || getFaviconUrl(s.siteUrl || s.feedUrl),
       })),
-      { type: 'action', id: 'add-feed', label: 'Add Feed', icon: 'plus' },
     ];
 
     // Filter by search query
@@ -317,11 +316,7 @@
   function selectItem(item: NavItem) {
     if (item.type === 'action') {
       close();
-      if (item.id === 'add-feed') {
-        sidebarStore.openAddFeedModal();
-      } else if (item.id === 'follow-user') {
-        sidebarStore.openFollowUserModal();
-      } else if (item.id === 'add-view') {
+      if (item.id === 'add-view') {
         filteredViewsStore
           .create({
             name: 'new view',
@@ -506,6 +501,7 @@
           placeholder="Quick switch..."
           bind:value={searchQuery}
         />
+        <AddDropdownMenu />
       </div>
       <div class="items-container">
         {#each filteredItems as { section, items }, sectionIndex}
@@ -523,7 +519,7 @@
               class:child={item.type === 'user' ||
                 item.type === 'feed' ||
                 item.type === 'filteredView' ||
-                (item.type === 'action' && (item.id === 'follow-user' || item.id === 'add-view'))}
+                (item.type === 'action' && item.id === 'add-view')}
               role="option"
               aria-selected={isItemActive(item)}
               onclick={() => selectItem(item)}
@@ -578,6 +574,7 @@
           placeholder="Quick switch..."
           bind:value={searchQuery}
         />
+        <AddDropdownMenu />
         <button class="mobile-close-btn" onclick={close} aria-label="Close">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
             <path
@@ -605,7 +602,7 @@
               class:child={item.type === 'user' ||
                 item.type === 'feed' ||
                 item.type === 'filteredView' ||
-                (item.type === 'action' && (item.id === 'follow-user' || item.id === 'add-view'))}
+                (item.type === 'action' && item.id === 'add-view')}
               role="option"
               aria-selected={isItemActive(item)}
               onclick={() => selectItem(item)}
@@ -821,6 +818,20 @@
   .search-container {
     padding: 0.75rem;
     border-bottom: 1px solid var(--color-border);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .search-container .search-input {
+    flex: 1;
+  }
+
+  /* Match add button to other header buttons in desktop panel */
+  .search-container :global(.add-trigger) {
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
   }
 
   .search-container.mobile {
@@ -1130,6 +1141,18 @@
     text-align: center;
     color: var(--color-text-secondary);
     font-size: 0.875rem;
+  }
+
+  /* Match add button size to close button in mobile */
+  :global(.mobile-portal .add-trigger) {
+    width: 2.5rem;
+    height: 2.5rem;
+    padding: 0 !important;
+  }
+
+  :global(.mobile-portal .add-trigger :is(.icon, svg:first-child)) {
+    width: 24px !important;
+    height: 24px !important;
   }
 
   @media (prefers-color-scheme: dark) {

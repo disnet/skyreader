@@ -16,6 +16,8 @@
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import { onMount, onDestroy } from 'svelte';
   import AddFeedModal from './AddFeedModal.svelte';
+  import SaveArticleModal from './SaveArticleModal.svelte';
+  import AddDropdownMenu from './AddDropdownMenu.svelte';
   import EditFeedModal from './EditFeedModal.svelte';
   import ContextMenu from './sidebar/ContextMenu.svelte';
   import UserContextMenu from './sidebar/UserContextMenu.svelte';
@@ -373,12 +375,6 @@
     sidebarStore.closeMobile();
   }
 
-  function handleAddFeed(e: MouseEvent) {
-    e.stopPropagation();
-    sidebarStore.openAddFeedModal();
-    sidebarStore.closeMobile();
-  }
-
   function handleBackdropClick() {
     sidebarStore.closeMobile();
   }
@@ -404,7 +400,7 @@
         <span class="tier-badge">{auth.user.tier}</span>
       {/if}
     </a>
-    <button class="add-feed-btn" onclick={handleAddFeed} aria-label="Add feed"> + </button>
+    <AddDropdownMenu />
   </div>
 
   <!-- Navigation items -->
@@ -637,6 +633,11 @@
   onclose={() => sidebarStore.closeAddFeedModal()}
 />
 
+<SaveArticleModal
+  open={sidebarStore.saveArticleModalOpen}
+  onclose={() => sidebarStore.closeSaveArticleModal()}
+/>
+
 {#if contextMenu}
   {@const feedId = contextMenu.feedId}
   <ContextMenu
@@ -756,24 +757,6 @@
     color: #fff;
     flex-shrink: 0;
     line-height: 1.2;
-  }
-
-  .add-feed-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 0.5rem 0.75rem;
-    color: var(--color-text-secondary);
-    font-size: 1.25rem;
-    line-height: 1;
-    flex-shrink: 0;
-    border-radius: 12px;
-    transition: background-color 0.15s;
-  }
-
-  .add-feed-btn:hover {
-    color: var(--color-primary);
-    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
   }
 
   .sidebar-nav {
