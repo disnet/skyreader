@@ -48,6 +48,11 @@
 
   function handleArchive(item: FeedDisplayItem) {
     itemLabelsStore.toggleArchive(item.key, getItemType(item));
+    // For saved items where itemGuid differs from key, also toggle archive by itemGuid
+    // to ensure consistent archive state regardless of which key is used for lookup
+    if (item.type === 'saved' && item.item.itemGuid && item.item.itemGuid !== item.key) {
+      itemLabelsStore.toggleArchive(item.item.itemGuid, 'saved');
+    }
     if (readerItem?.key === item.key) {
       closeReader();
     }

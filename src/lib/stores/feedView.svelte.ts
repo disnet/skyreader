@@ -494,21 +494,29 @@ function createFeedViewStore() {
         }));
 
       // Add bookmarks — exclude bookmarks already shown via articles/shares/documents
-      const articleGuids = new Set(displayedArticles.map((a) => a.guid));
+      // Use ALL saved article guids for dedup (not just displayed ones) to prevent
+      // archived feed-source bookmarks from reappearing as 'saved' type items
+      const allSavedArticleGuids = new Set(
+        articlesStore.allArticles.filter((a) => itemLabelsStore.isSaved(a.guid)).map((a) => a.guid)
+      );
       const shareRecordUris = new Set(starredShareItems.map((s) => s.key));
       const documentRecordUris = new Set(starredDocumentItems.map((d) => d.key));
       const bookmarkItems: FeedDisplayItem[] = savesStore.articles
         .filter((bm) => {
-          // Skip feed-source bookmarks whose guid matches a displayed article
-          if (bm.source === 'feed' && bm.itemGuid && articleGuids.has(bm.itemGuid)) return false;
+          // Skip feed-source bookmarks whose guid matches a saved article in the articles store
+          if (bm.source === 'feed' && bm.itemGuid && allSavedArticleGuids.has(bm.itemGuid))
+            return false;
           // Skip share-source bookmarks whose itemGuid matches a displayed share
           if (bm.source === 'share' && bm.itemGuid && shareRecordUris.has(bm.itemGuid))
             return false;
           // Skip document-source bookmarks whose itemGuid matches a displayed document
           if (bm.source === 'document' && bm.itemGuid && documentRecordUris.has(bm.itemGuid))
             return false;
-          if (isArchiveView) return itemLabelsStore.isArchived(bm.uri || bm.itemGuid || '');
-          return !itemLabelsStore.isArchived(bm.uri || bm.itemGuid || '');
+          // Use itemGuid (article guid) for archive checks when available, since archive
+          // labels are stored against the article guid, not the AT Protocol URI
+          const archiveKey = bm.itemGuid || bm.uri || '';
+          if (isArchiveView) return itemLabelsStore.isArchived(archiveKey);
+          return !itemLabelsStore.isArchived(archiveKey);
         })
         .map((bm) => ({
           type: 'saved' as const,
