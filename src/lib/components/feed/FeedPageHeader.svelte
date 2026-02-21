@@ -43,6 +43,22 @@
   let tick = $state(0);
   let intervalId: ReturnType<typeof setInterval> | null = null;
 
+  // Scroll-hide state
+  let controlsVisible = $state(true);
+  let lastScrollY = $state(0);
+
+  function handleScroll() {
+    const currentY = window.scrollY;
+    if (currentY > lastScrollY && currentY > 60) {
+      controlsVisible = false;
+      styleToolbarOpen = false;
+      feedViewStore.setFilterToolbarOpen(false);
+    } else {
+      controlsVisible = true;
+    }
+    lastScrollY = currentY;
+  }
+
   // Debounce refresh button
   let lastRefreshClick = 0;
   const DEBOUNCE_MS = 2000;
@@ -60,11 +76,13 @@
       tick++;
     }, 60000);
     document.addEventListener('click', handleClickOutside);
+    window.addEventListener('scroll', handleScroll, { passive: true });
   });
 
   onDestroy(() => {
     if (intervalId) clearInterval(intervalId);
     document.removeEventListener('click', handleClickOutside);
+    window.removeEventListener('scroll', handleScroll);
   });
 
   // Use tick to force re-evaluation (void to suppress unused warning)
@@ -120,7 +138,7 @@
   });
 </script>
 
-<div class="feed-header-fixed" bind:this={headerRef}>
+<div class="feed-header-fixed" class:hidden={!controlsVisible} bind:this={headerRef}>
   <div class="feed-header-controls">
     <div class="control-left feed-title-group" class:dropdown-open={dropdownOpen}>
       <NavigationDropdown currentTitle={title} />
@@ -269,6 +287,15 @@
     pointer-events: none;
     z-index: 10;
     padding: 0 1rem;
+    transition:
+      transform 0.3s ease,
+      opacity 0.3s ease;
+  }
+
+  .feed-header-fixed.hidden {
+    transform: translateY(-100%);
+    opacity: 0;
+    pointer-events: none !important;
   }
 
   .feed-header-controls {
