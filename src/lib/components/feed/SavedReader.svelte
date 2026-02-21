@@ -582,6 +582,20 @@
     align-items: center;
   }
 
+  .overflow-menu-wrapper :global(.menu-trigger) {
+    width: auto;
+    height: auto;
+    padding: 0;
+    border-radius: 0;
+    background: none;
+    color: var(--color-text-secondary);
+  }
+
+  .overflow-menu-wrapper :global(.menu-trigger:hover) {
+    background: none;
+    color: var(--color-primary, #0066cc);
+  }
+
   .action-separator {
     width: 1px;
     background: var(--color-border, #e5e7eb);
