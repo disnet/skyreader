@@ -13,6 +13,12 @@
   let { mode, anchorRect, onHighlight, onRemove, onClose }: Props = $props();
 
   let menuEl = $state<HTMLDivElement | null>(null);
+  let scrollArmed = false;
+  let scrollArmTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function handleScroll() {
+    if (scrollArmed) onClose();
+  }
 
   function positionMenu() {
     if (!menuEl) return;
@@ -53,14 +59,20 @@
   onMount(() => {
     document.addEventListener('keydown', handleKeydown, true);
     document.addEventListener('mousedown', handleClickOutside, true);
-    document.addEventListener('scroll', onClose, true);
+    document.addEventListener('scroll', handleScroll, true);
     requestAnimationFrame(positionMenu);
+    // Delay arming the scroll-to-close so residual scroll momentum
+    // (e.g. from trackpad inertia) doesn't immediately dismiss the popover
+    scrollArmTimer = setTimeout(() => {
+      scrollArmed = true;
+    }, 300);
   });
 
   onDestroy(() => {
+    clearTimeout(scrollArmTimer);
     document.removeEventListener('keydown', handleKeydown, true);
     document.removeEventListener('mousedown', handleClickOutside, true);
-    document.removeEventListener('scroll', onClose, true);
+    document.removeEventListener('scroll', handleScroll, true);
   });
 </script>
 

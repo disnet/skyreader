@@ -89,7 +89,7 @@ function createItemLabelsStore() {
 
   async function putLabel(lbl: ItemLabel) {
     addToState(lbl);
-    await db.itemLabels.put(lbl);
+    await db.itemLabels.put($state.snapshot(lbl));
   }
 
   async function deleteLabel(itemKey: string, label: string) {
@@ -580,7 +580,7 @@ function createItemLabelsStore() {
 
     addToState(readLabel);
     triggerReactivity();
-    db.itemLabels.put(readLabel);
+    db.itemLabels.put($state.snapshot(readLabel));
 
     pendingMarkRead.push({ articleGuid, articleUrl, articleTitle });
     if (debounceTimer) clearTimeout(debounceTimer);
@@ -809,7 +809,7 @@ function createItemLabelsStore() {
         updatedAt: now,
       };
       addToState(label);
-      await db.itemLabels.put(label);
+      await db.itemLabels.put($state.snapshot(label));
     }
     triggerReactivity();
 
@@ -829,7 +829,7 @@ function createItemLabelsStore() {
     };
     addToState(label);
     triggerReactivity();
-    await db.itemLabels.put(label);
+    await db.itemLabels.put($state.snapshot(label));
 
     await syncArchiveToBackend(itemKey, true, itemType);
   }
@@ -902,7 +902,7 @@ function createItemLabelsStore() {
     };
     addToState(label);
     triggerReactivity();
-    await db.itemLabels.put(label);
+    await db.itemLabels.put($state.snapshot(label));
 
     await syncTaggedLabel(itemKey, label.itemType as ItemLabelType, newTags);
   }
@@ -931,7 +931,7 @@ function createItemLabelsStore() {
       };
       addToState(label);
       triggerReactivity();
-      await db.itemLabels.put(label);
+      await db.itemLabels.put($state.snapshot(label));
     }
 
     await syncTaggedLabel(itemKey, existing.itemType as ItemLabelType, newTags);
@@ -972,7 +972,7 @@ function createItemLabelsStore() {
       } else {
         const updated: ItemLabel = { ...lbl, props: { tags: newTags }, updatedAt: now };
         addToState(updated);
-        await db.itemLabels.put(updated);
+        await db.itemLabels.put($state.snapshot(updated));
       }
 
       await syncTaggedLabel(itemKey, lbl.itemType as ItemLabelType, newTags);
@@ -1018,7 +1018,7 @@ function createItemLabelsStore() {
 
     addToState(readLabel);
     triggerReactivity();
-    await db.itemLabels.put(readLabel);
+    await db.itemLabels.put($state.snapshot(readLabel));
 
     // Also update socialPositions for backward compat
     const position: SocialReadPosition = {
@@ -1311,7 +1311,7 @@ function createItemLabelsStore() {
     };
     addToState(label);
     triggerReactivity();
-    await db.itemLabels.put(label);
+    await db.itemLabels.put($state.snapshot(label));
   }
 
   async function removeHighlight(itemKey: string, highlightId: string) {
@@ -1338,7 +1338,7 @@ function createItemLabelsStore() {
       };
       addToState(label);
       triggerReactivity();
-      await db.itemLabels.put(label);
+      await db.itemLabels.put($state.snapshot(label));
     }
   }
 

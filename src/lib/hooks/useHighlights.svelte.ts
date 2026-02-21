@@ -268,7 +268,9 @@ export function useHighlights(params: HighlightParams) {
     clickHandler = handleClick;
 
     el.addEventListener('dblclick', dblclickHandler);
-    el.addEventListener('mouseup', mouseupHandler);
+    // Listen on document so we catch mouseup even when the user
+    // drag-selects past the edge of the content element
+    document.addEventListener('mouseup', mouseupHandler);
     el.addEventListener('click', clickHandler);
 
     // Apply existing highlights
@@ -278,7 +280,7 @@ export function useHighlights(params: HighlightParams) {
   function detach() {
     if (currentEl) {
       if (dblclickHandler) currentEl.removeEventListener('dblclick', dblclickHandler);
-      if (mouseupHandler) currentEl.removeEventListener('mouseup', mouseupHandler);
+      if (mouseupHandler) document.removeEventListener('mouseup', mouseupHandler);
       if (clickHandler) currentEl.removeEventListener('click', clickHandler);
     }
     clearMarks();

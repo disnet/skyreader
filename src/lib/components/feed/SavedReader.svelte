@@ -398,16 +398,6 @@
           onClose={linkInterception.closeMenu}
         />
       {/if}
-
-      {#if highlightsHook.popoverState}
-        <HighlightPopover
-          mode={highlightsHook.popoverState.mode}
-          anchorRect={highlightsHook.popoverState.anchorRect}
-          onHighlight={highlightsHook.createHighlightFromPopover}
-          onRemove={highlightsHook.removeHighlightFromPopover}
-          onClose={highlightsHook.closePopover}
-        />
-      {/if}
     </header>
 
     {#if styleMenuOpen}
@@ -495,6 +485,16 @@
     </article>
   </div>
 </div>
+
+{#if highlightsHook.popoverState}
+  <HighlightPopover
+    mode={highlightsHook.popoverState.mode}
+    anchorRect={highlightsHook.popoverState.anchorRect}
+    onHighlight={highlightsHook.createHighlightFromPopover}
+    onRemove={highlightsHook.removeHighlightFromPopover}
+    onClose={highlightsHook.closePopover}
+  />
+{/if}
 
 <style>
   .reader-overlay {
