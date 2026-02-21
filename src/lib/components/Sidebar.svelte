@@ -12,6 +12,7 @@
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import { onMount, onDestroy } from 'svelte';
   import AddFeedModal from './AddFeedModal.svelte';
@@ -427,6 +428,9 @@
     >
       <span class="nav-icon"><Icon name="bookmark" /></span>
       <span class="nav-label">Saved</span>
+      {#if itemLabelsStore.inboxCount > 0}
+        <span class="nav-count">{itemLabelsStore.inboxCount}</span>
+      {/if}
     </button>
 
     <button
