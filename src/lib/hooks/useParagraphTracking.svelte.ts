@@ -22,6 +22,8 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
   let hasRestored = false;
   let highlightEl: HTMLDivElement | null = null;
   let scrollHandler: (() => void) | null = null;
+  let clickHandler: ((e: Event) => void) | null = null;
+  let clickTarget: HTMLElement | null = null;
   let scrollTarget: EventTarget | null = null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let lastScrollTop = 0;
@@ -149,6 +151,17 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     }, SAVE_DEBOUNCE_MS);
   }
 
+  function goToParagraph(index: number) {
+    if (index < 0 || index >= paragraphs.length) return;
+    currentParagraphIndex = index;
+    if (index > furthestParagraphIndex) {
+      furthestParagraphIndex = index;
+    }
+    updateHighlight();
+    debouncedSave();
+    scrollToParagraph(index);
+  }
+
   function setupObserver() {
     cleanup();
     if (!params.enabled()) return;
@@ -176,6 +189,20 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     };
 
     scrollTarget.addEventListener('scroll', scrollHandler, { passive: true });
+
+    // Click handler for paragraph navigation
+    clickTarget = contentEl;
+    clickHandler = (e: Event) => {
+      const target = (e.target as HTMLElement).closest('[data-para-index]');
+      if (!target) return;
+      // Don't interfere with link clicks
+      if ((e.target as HTMLElement).closest('a')) return;
+      const index = parseInt((target as HTMLElement).dataset.paraIndex!, 10);
+      if (!isNaN(index)) {
+        goToParagraph(index);
+      }
+    };
+    clickTarget.addEventListener('click', clickHandler);
 
     // Initial position check
     updateCurrentParagraph();
@@ -218,6 +245,11 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
       scrollHandler = null;
       scrollTarget = null;
     }
+    if (clickHandler && clickTarget) {
+      clickTarget.removeEventListener('click', clickHandler);
+      clickHandler = null;
+      clickTarget = null;
+    }
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
@@ -241,6 +273,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
       return totalParagraphs;
     },
     setupObserver,
+    goToParagraph,
     scrollToParagraph,
     nextParagraph,
     prevParagraph,
