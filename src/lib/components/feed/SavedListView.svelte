@@ -152,15 +152,6 @@
     }
   }
 
-  export function removeSelectedItem() {
-    const index = feedViewStore.selectedIndex;
-    if (index < 0) return;
-    const item = feedViewStore.currentItems[index];
-    if (item) {
-      handleRemoveBookmark(item);
-    }
-  }
-
   export function openSelectedReader() {
     const index = feedViewStore.selectedIndex;
     if (index < 0) return;

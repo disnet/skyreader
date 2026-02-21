@@ -351,7 +351,6 @@
     openSavedReader: () => savedListView?.openSelectedReader(),
     toggleAddFromUrl: () => savedListView?.toggleUrlInput(),
     openFullscreenReader: () => feedListView?.openSelectedReader(),
-    removeSelectedSavedItem: () => savedListView?.removeSelectedItem(),
   });
 
   async function removeFeed(id: number) {

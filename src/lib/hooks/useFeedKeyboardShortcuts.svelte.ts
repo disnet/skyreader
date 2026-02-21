@@ -14,7 +14,6 @@ interface KeyboardShortcutsParams {
   openSavedReader?: () => void;
   toggleAddFromUrl?: () => void;
   openFullscreenReader?: () => void;
-  removeSelectedSavedItem?: () => void;
 }
 
 /**
@@ -425,15 +424,6 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
           itemType as 'article' | 'share' | 'document' | 'userShare'
         );
       },
-      condition: () => hasSelected() && !!feedViewStore.savedFilter,
-    });
-
-    // Bookmarks-specific: delete saved item
-    keyboardStore.register({
-      key: 'x',
-      description: 'Delete saved item',
-      category: 'Article',
-      action: () => params.removeSelectedSavedItem?.(),
       condition: () => hasSelected() && !!feedViewStore.savedFilter,
     });
 
