@@ -6,34 +6,27 @@
   let isOpen = $state(false);
   let menuRef: HTMLDivElement | null = $state(null);
   let buttonRef: HTMLButtonElement | null = $state(null);
-  let menuPosition = $state<{
-    top?: number;
-    bottom?: number;
-    left?: number;
-    right?: number;
-  }>({});
+  let menuPosition = $state<{ top: number; left: number }>({ top: 0, left: 0 });
 
   function updateMenuPosition() {
-    if (!buttonRef || !menuRef) return;
+    if (!buttonRef) return;
 
     const buttonRect = buttonRef.getBoundingClientRect();
-    const menuRect = menuRef.getBoundingClientRect();
     const viewportWidth = window.innerWidth;
+    const menuWidth = 200; // min-width of menu
 
-    const position: typeof menuPosition = {};
+    let top = buttonRect.bottom + 4;
+    let left = buttonRect.left;
 
-    // Vertical positioning: below the button
-    position.top = buttonRef.offsetHeight + 4;
-
-    // Horizontal positioning: check if menu would overflow right edge
-    const menuWidth = menuRect.width;
-    if (buttonRect.left + menuWidth > viewportWidth - 8) {
-      position.right = 0;
-    } else {
-      position.left = 0;
+    // If menu would overflow right edge, align to right edge of button
+    if (left + menuWidth > viewportWidth - 8) {
+      left = buttonRect.right - menuWidth;
     }
 
-    menuPosition = position;
+    // Clamp left to avoid going off screen
+    if (left < 8) left = 8;
+
+    menuPosition = { top, left };
   }
 
   function toggle(e: MouseEvent) {
@@ -108,13 +101,7 @@
       bind:this={menuRef}
       class="add-menu"
       role="menu"
-      style="{menuPosition.top !== undefined
-        ? `top: ${menuPosition.top}px;`
-        : ''} {menuPosition.bottom !== undefined
-        ? `bottom: ${menuPosition.bottom}px;`
-        : ''} {menuPosition.left !== undefined
-        ? `left: ${menuPosition.left}px;`
-        : ''} {menuPosition.right !== undefined ? `right: ${menuPosition.right}px;` : ''}"
+      style="top: {menuPosition.top}px; left: {menuPosition.left}px;"
     >
       <button
         class="add-menu-item"
@@ -147,7 +134,7 @@
 <style>
   .add-dropdown {
     position: relative;
-    display: inline-block;
+    display: inline-flex;
   }
 
   .add-trigger {
@@ -176,7 +163,7 @@
   }
 
   .add-menu {
-    position: absolute;
+    position: fixed;
     min-width: 200px;
     background: var(--color-bg);
     border: 1px solid var(--color-border);

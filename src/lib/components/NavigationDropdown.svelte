@@ -827,6 +827,13 @@
     flex: 1;
   }
 
+  /* Match add button to other header buttons in desktop panel */
+  .search-container :global(.add-trigger) {
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+  }
+
   .search-container.mobile {
     display: flex;
     align-items: center;
@@ -1134,6 +1141,18 @@
     text-align: center;
     color: var(--color-text-secondary);
     font-size: 0.875rem;
+  }
+
+  /* Match add button size to close button in mobile */
+  :global(.mobile-portal .add-trigger) {
+    width: 2.5rem;
+    height: 2.5rem;
+    padding: 0 !important;
+  }
+
+  :global(.mobile-portal .add-trigger :is(.icon, svg:first-child)) {
+    width: 24px !important;
+    height: 24px !important;
   }
 
   @media (prefers-color-scheme: dark) {

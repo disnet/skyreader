@@ -2,7 +2,6 @@
   import { onMount, onDestroy } from 'svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
-  import AddDropdownMenu from '$lib/components/AddDropdownMenu.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import FilterToolbar from './FilterToolbar.svelte';
   import AppearanceToolbar from './AppearanceToolbar.svelte';
@@ -199,7 +198,14 @@
             >
           </button>
           <span class="toggle-divider"></span>
-          <AddDropdownMenu />
+          <button
+            onclick={() => sidebarStore.openSaveArticleModal()}
+            aria-label="Save article by URL"
+            title="Save article by URL"
+          >
+            <Icon name="plus" size={16} />
+            <span class="btn-label">Add</span>
+          </button>
         </div>
       {:else}
         <div class="view-toggle" role="group" aria-label="View controls">
