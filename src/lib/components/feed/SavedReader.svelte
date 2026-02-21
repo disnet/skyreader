@@ -29,7 +29,7 @@
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
-  import { tick } from 'svelte';
+  import { tick, onMount, onDestroy } from 'svelte';
 
   let {
     readerItem,
@@ -260,30 +260,51 @@
   });
 
   function handleKeydown(e: KeyboardEvent) {
-    if (tagMenuOpen) return;
+    if (tagMenuOpen) {
+      e.stopPropagation();
+      return;
+    }
+    const noMod = !e.metaKey && !e.ctrlKey && !e.altKey;
     if (e.key === 'Escape') {
       e.preventDefault();
+      e.stopPropagation();
       onClose();
-    } else if (e.key === 'e' && !e.metaKey && !e.ctrlKey && !e.altKey && onArchive) {
+    } else if (e.key === 'e' && noMod && onArchive) {
       e.preventDefault();
+      e.stopPropagation();
       onArchive();
-    } else if (e.key === 's' && !e.metaKey && !e.ctrlKey && !e.altKey && onToggleSave) {
+    } else if (e.key === 's' && noMod && onToggleSave) {
       e.preventDefault();
+      e.stopPropagation();
       onToggleSave();
-    } else if (e.key === 't' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    } else if (e.key === 't' && noMod) {
       e.preventDefault();
+      e.stopPropagation();
       tagMenuOpen = !tagMenuOpen;
-    } else if (e.key === 'ArrowDown' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    } else if (e.key === 'ArrowDown' && noMod) {
       e.preventDefault();
+      e.stopPropagation();
       paragraphTracking.nextParagraph();
-    } else if (e.key === 'ArrowUp' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    } else if (e.key === 'ArrowUp' && noMod) {
       e.preventDefault();
+      e.stopPropagation();
       paragraphTracking.prevParagraph();
-    } else if (e.key === 'h' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    } else if (e.key === 'h' && noMod) {
       e.preventDefault();
+      e.stopPropagation();
       highlightsHook.toggleParagraphHighlight(paragraphTracking.currentParagraphIndex);
     }
   }
+
+  // Register keydown on document capture phase so the reader intercepts keys
+  // before the global keyboard store (which listens on window bubble phase).
+  // This prevents duplicate tag menus and other shortcut conflicts.
+  onMount(() => {
+    document.addEventListener('keydown', handleKeydown, true);
+  });
+  onDestroy(() => {
+    document.removeEventListener('keydown', handleKeydown, true);
+  });
 
   // Paragraph tracking for read progress
   const paragraphTracking = useParagraphTracking({
@@ -345,8 +366,6 @@
     if (itemUrl) window.open(itemUrl, '_blank', 'noopener');
   }
 </script>
-
-<svelte:window onkeydown={handleKeydown} />
 
 <div class="reader-overlay" bind:this={overlayEl} onscroll={handleScroll}>
   <div class="reader-container">
