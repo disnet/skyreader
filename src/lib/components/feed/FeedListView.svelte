@@ -99,6 +99,55 @@
     }
   }
 
+  function handleReaderSave() {
+    if (!readerItem) return;
+    if (readerItem.type === 'article' || readerItem.type === 'userShare') {
+      const article = readerItem.type === 'article' ? readerItem.item : readerItem.article;
+      onToggleSave(article);
+    } else if (readerItem.type === 'share') {
+      const share = readerItem.item;
+      itemLabelsStore.toggleSave(share.recordUri, 'share', share.itemUrl, share.itemTitle, {
+        type: 'share',
+        recordUri: share.recordUri,
+        itemUrl: share.itemUrl,
+        itemTitle: share.itemTitle,
+        itemAuthor: share.itemAuthor,
+        itemDescription: share.itemDescription,
+        itemImage: share.itemImage,
+        itemPublishedAt: share.itemPublishedAt,
+      });
+    } else if (readerItem.type === 'document') {
+      const doc = readerItem.item;
+      itemLabelsStore.toggleSave(
+        doc.recordUri,
+        'document',
+        doc.canonicalUrl || doc.path || '',
+        doc.title,
+        {
+          type: 'document',
+          recordUri: doc.recordUri,
+          url: doc.canonicalUrl || doc.path || '',
+          title: doc.title,
+          description: doc.description,
+          publishedAt: doc.publishedAt,
+        }
+      );
+    }
+  }
+
+  function handleReaderShare() {
+    if (!readerItem) return;
+    if (readerItem.type === 'article') {
+      const article = readerItem.item;
+      const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
+      if (sub) onShare(article, sub);
+    } else if (readerItem.type === 'userShare') {
+      const article = readerItem.article;
+      const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
+      if (sub) onShare(article, sub);
+    }
+  }
+
   export function getArticleElements(): HTMLElement[] {
     return articleElements;
   }
@@ -107,7 +156,12 @@
 </script>
 
 {#if readerItem}
-  <SavedReader {readerItem} onClose={closeReader} />
+  <SavedReader
+    {readerItem}
+    onClose={closeReader}
+    onToggleSave={handleReaderSave}
+    onShare={readerItem.type === 'article' || readerItem.type === 'userShare' ? handleReaderShare : undefined}
+  />
 {:else}
   <div class="article-list">
     {#each feedViewStore.currentItems as displayItem, index (displayItem.key)}
