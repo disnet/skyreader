@@ -183,92 +183,98 @@
       closeReader();
     }}
   />
-{:else}
-  <div class="bookmark-list">
-    {#if showScopeUpgrade}
-      <div class="scope-upgrade-banner">
-        <p>Saving articles requires updated permissions. Please log in again to grant access.</p>
-        <div class="scope-upgrade-actions">
-          <a href="/auth/login" class="scope-upgrade-btn">Log in again</a>
-          <button class="scope-upgrade-dismiss" onclick={() => (showScopeUpgrade = false)}
-            >Dismiss</button
-          >
-        </div>
-      </div>
-    {/if}
-    {#if showUrlInput}
-      <div class="url-input-bar">
-        <div class="url-input-wrapper">
-          <input
-            bind:this={urlInputEl}
-            bind:value={urlInputValue}
-            type="url"
-            placeholder="Paste article URL..."
-            class="url-input"
-            onkeydown={handleUrlKeydown}
-            disabled={savesStore.saving}
-          />
-          <button
-            class="url-save-btn"
-            onclick={handleSaveUrl}
-            disabled={savesStore.saving || !urlInputValue.trim()}
-          >
-            {#if savesStore.saving}
-              Saving...
-            {:else}
-              Save
-            {/if}
-          </button>
-          <button
-            class="url-cancel-btn"
-            onclick={() => (showUrlInput = false)}
-            disabled={savesStore.saving}
-          >
-            <Icon name="x" size={16} />
-          </button>
-        </div>
-        {#if saveError}
-          <p class="url-error">{saveError}</p>
-        {/if}
-      </div>
-    {/if}
-
-    {#each feedViewStore.currentItems as displayItem, index (displayItem.key)}
-      <div bind:this={articleElements[index]}>
-        <SavedCard
-          {displayItem}
-          selected={feedViewStore.selectedIndex === index}
-          onOpen={() => openReader(displayItem)}
-          onHover={() => handleSelect(index)}
-          onArchive={() => handleArchive(displayItem)}
-          onRemove={() => handleRemoveBookmark(displayItem)}
-        />
-      </div>
-    {/each}
-
-    {#if feedViewStore.currentItems.length === 0}
-      {#if feedViewStore.savedView === 'inbox'}
-        <EmptyState
-          title="No saved items"
-          description="Save articles, shares, or documents to save them for later"
-        />
-      {:else}
-        <EmptyState title="No archived items" description="Archived items will appear here" />
-      {/if}
-    {/if}
-
-    <InfiniteScrollSentinel
-      hasMore={feedViewStore.hasMore}
-      isLoading={feedViewStore.isLoadingMore}
-      onLoadMore={() => feedViewStore.loadMore()}
-    />
-  </div>
 {/if}
+
+<div class="bookmark-list" class:hidden-behind-reader={readerItem !== null}>
+  {#if showScopeUpgrade}
+    <div class="scope-upgrade-banner">
+      <p>Saving articles requires updated permissions. Please log in again to grant access.</p>
+      <div class="scope-upgrade-actions">
+        <a href="/auth/login" class="scope-upgrade-btn">Log in again</a>
+        <button class="scope-upgrade-dismiss" onclick={() => (showScopeUpgrade = false)}
+          >Dismiss</button
+        >
+      </div>
+    </div>
+  {/if}
+  {#if showUrlInput}
+    <div class="url-input-bar">
+      <div class="url-input-wrapper">
+        <input
+          bind:this={urlInputEl}
+          bind:value={urlInputValue}
+          type="url"
+          placeholder="Paste article URL..."
+          class="url-input"
+          onkeydown={handleUrlKeydown}
+          disabled={savesStore.saving}
+        />
+        <button
+          class="url-save-btn"
+          onclick={handleSaveUrl}
+          disabled={savesStore.saving || !urlInputValue.trim()}
+        >
+          {#if savesStore.saving}
+            Saving...
+          {:else}
+            Save
+          {/if}
+        </button>
+        <button
+          class="url-cancel-btn"
+          onclick={() => (showUrlInput = false)}
+          disabled={savesStore.saving}
+        >
+          <Icon name="x" size={16} />
+        </button>
+      </div>
+      {#if saveError}
+        <p class="url-error">{saveError}</p>
+      {/if}
+    </div>
+  {/if}
+
+  {#each feedViewStore.currentItems as displayItem, index (displayItem.key)}
+    <div bind:this={articleElements[index]}>
+      <SavedCard
+        {displayItem}
+        selected={feedViewStore.selectedIndex === index}
+        onOpen={() => openReader(displayItem)}
+        onHover={() => handleSelect(index)}
+        onArchive={() => handleArchive(displayItem)}
+        onRemove={() => handleRemoveBookmark(displayItem)}
+      />
+    </div>
+  {/each}
+
+  {#if feedViewStore.currentItems.length === 0}
+    {#if feedViewStore.savedView === 'inbox'}
+      <EmptyState
+        title="No saved items"
+        description="Save articles, shares, or documents to save them for later"
+      />
+    {:else}
+      <EmptyState title="No archived items" description="Archived items will appear here" />
+    {/if}
+  {/if}
+
+  <InfiniteScrollSentinel
+    hasMore={feedViewStore.hasMore}
+    isLoading={feedViewStore.isLoadingMore}
+    onLoadMore={() => feedViewStore.loadMore()}
+  />
+</div>
 
 <style>
   .bookmark-list {
     display: flex;
     flex-direction: column;
+  }
+
+  .hidden-behind-reader {
+    visibility: hidden;
+    position: fixed;
+    pointer-events: none;
   }
 
   .url-input-bar {
