@@ -363,7 +363,19 @@
   // Link interception for showing context menu on link clicks
   const linkInterception = useLinkInterception({
     contentEl: () => bodyEl,
-    enabled: () => expanded,
+    enabled: () => true,
+  });
+
+  // Attach link interception when content is visible (selected or expanded)
+  $effect(() => {
+    if (isOpen && bodyEl && hasContent) {
+      tick().then(() => {
+        linkInterception.attach();
+      });
+    }
+    return () => {
+      linkInterception.detach();
+    };
   });
 
   // Set up observer when article is expanded
@@ -372,14 +384,12 @@
       // Wait for content to render
       tick().then(() => {
         paragraphTracking.setupObserver();
-        linkInterception.attach();
         // Restore reading position after a brief delay for layout
         setTimeout(() => paragraphTracking.restorePosition(), 100);
       });
     }
     return () => {
       paragraphTracking.cleanup();
-      linkInterception.detach();
     };
   });
 
