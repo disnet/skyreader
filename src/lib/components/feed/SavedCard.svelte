@@ -8,6 +8,7 @@
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { profileService } from '$lib/services/profiles';
   import Icon from '$lib/components/Icon.svelte';
+  import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
 
   let {
@@ -152,7 +153,7 @@
   });
 
   let tagMenuOpenLocal = $state(false);
-  let tagBtnRef = $state<HTMLButtonElement | null>(null);
+  let tagMenuAnchorRef = $state<HTMLElement | null>(null);
   let tagMenuOpen = $derived(tagMenuOpenLocal || feedViewStore.tagMenuItemKey === itemKey);
 
   let labelItemType = $derived.by((): 'article' | 'share' | 'document' | 'userShare' | 'saved' => {
@@ -160,35 +161,38 @@
     return displayItem.type;
   });
 
-  let deleteConfirming = $state(false);
-  let deleteTimer: ReturnType<typeof setTimeout> | undefined;
-
-  function handleDeleteClick(e: MouseEvent) {
-    e.stopPropagation();
-    if (deleteConfirming) {
-      clearTimeout(deleteTimer);
-      deleteConfirming = false;
-      onRemove?.();
-    } else {
-      deleteConfirming = true;
-      deleteTimer = setTimeout(() => {
-        deleteConfirming = false;
-      }, 3000);
-    }
-  }
-
   function handleArchiveClick(e: MouseEvent) {
     e.stopPropagation();
     onArchive?.();
   }
 
-  function handleTagClick(e: MouseEvent) {
-    e.stopPropagation();
-    tagMenuOpenLocal = !tagMenuOpenLocal;
-    if (feedViewStore.tagMenuItemKey === itemKey) {
-      feedViewStore.closeTagMenu();
+  let popoverMenuItems = $derived.by(() => {
+    const items: {
+      label: string;
+      icon?: string;
+      variant?: 'default' | 'danger';
+      onclick: () => void;
+    }[] = [
+      {
+        label: 'Tag',
+        icon: '🏷️',
+        onclick: () => {
+          tagMenuOpenLocal = true;
+        },
+      },
+    ];
+    if (onRemove) {
+      items.push({
+        label: 'Delete',
+        icon: '🗑️',
+        variant: 'danger',
+        onclick: () => {
+          onRemove();
+        },
+      });
     }
-  }
+    return items;
+  });
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
@@ -237,16 +241,8 @@
     </div>
   </div>
 
-  <div class="card-actions">
-    <button
-      class="card-action-btn"
-      class:tagged={tags.length > 0}
-      onclick={handleTagClick}
-      bind:this={tagBtnRef}
-      title="Tag"
-    >
-      <Icon name="tag" size={18} />
-    </button>
+  <div class="card-actions" bind:this={tagMenuAnchorRef}>
+    <PopoverMenu items={popoverMenuItems} />
     <button
       class="card-action-btn"
       onclick={handleArchiveClick}
@@ -254,27 +250,13 @@
     >
       <Icon name={isArchived ? 'inbox' : 'archive'} size={18} />
     </button>
-    {#if onRemove}
-      <button
-        class="card-action-btn"
-        class:confirming={deleteConfirming}
-        onclick={handleDeleteClick}
-        title={deleteConfirming ? 'Click again to confirm' : 'Delete'}
-      >
-        {#if deleteConfirming}
-          <span class="confirm-text">Delete?</span>
-        {:else}
-          <Icon name="trash" size={18} />
-        {/if}
-      </button>
-    {/if}
   </div>
 
   {#if tagMenuOpen}
     <TagMenu
       {itemKey}
       itemType={labelItemType}
-      anchorEl={tagBtnRef}
+      anchorEl={tagMenuAnchorRef}
       onClose={() => {
         tagMenuOpenLocal = false;
         feedViewStore.closeTagMenu();
@@ -425,20 +407,6 @@
   .card-action-btn:hover {
     color: var(--color-primary, #0066cc);
     background: rgba(0, 0, 0, 0.05);
-  }
-
-  .card-action-btn.tagged {
-    color: var(--color-primary, #2563eb);
-  }
-
-  .card-action-btn.confirming {
-    color: var(--color-error, #dc2626);
-  }
-
-  .confirm-text {
-    font-size: 0.6875rem;
-    font-weight: 600;
-    white-space: nowrap;
   }
 
   @media (prefers-color-scheme: dark) {
