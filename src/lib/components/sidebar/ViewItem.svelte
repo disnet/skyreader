@@ -133,7 +133,7 @@
   }
 
   .nav-item.sub-item {
-    padding-left: 1.5rem;
+    padding-left: 2.75rem;
   }
 
   .view-icon {

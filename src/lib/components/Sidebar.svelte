@@ -487,6 +487,7 @@
     <!-- Views section -->
     <NavSection
       title="Views"
+      icon="layers"
       isExpanded={sidebarStore.expandedSections.views}
       showOnlyUnread={false}
       isActive={false}
@@ -539,6 +540,7 @@
     <!-- Following section -->
     <NavSection
       title="Following"
+      icon="users"
       isExpanded={sidebarStore.expandedSections.shared}
       showOnlyUnread={sidebarStore.showOnlyUnread.shared}
       isActive={$page.url.pathname === '/following'}
@@ -587,6 +589,7 @@
     <!-- Feeds section -->
     <NavSection
       title="Feeds"
+      icon="rss"
       isExpanded={sidebarStore.expandedSections.feeds}
       showOnlyUnread={sidebarStore.showOnlyUnread.feeds}
       isActive={currentFilter().type === 'feeds'}
@@ -823,14 +826,16 @@
   }
 
   .empty-section {
-    padding: 0.5rem 1.5rem;
+    padding: 0.5rem 0.75rem;
+    padding-left: 2.75rem;
     font-size: 0.8125rem;
     color: var(--color-text-secondary);
     font-style: italic;
   }
 
   .more-indicator {
-    padding: 0.25rem 1.5rem;
+    padding: 0.25rem 0.75rem;
+    padding-left: 2.75rem;
     font-size: 0.8125rem;
     color: var(--color-text-secondary);
   }
@@ -840,7 +845,8 @@
     align-items: center;
     gap: 0.5rem;
     width: 100%;
-    padding: 0.375rem 1.5rem;
+    padding: 0.375rem 0.75rem;
+    padding-left: 2.75rem;
     background: none;
     border: none;
     cursor: pointer;

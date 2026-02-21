@@ -200,7 +200,7 @@
   .user-search-compact {
     position: relative;
     padding: 0.25rem 0.75rem;
-    padding-left: 1.5rem;
+    padding-left: 2.75rem;
   }
 
   .search-input-wrapper {
