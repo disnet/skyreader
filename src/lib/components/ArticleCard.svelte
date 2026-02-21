@@ -54,6 +54,7 @@
     onSelect,
     onExpand,
     onFetchContent,
+    onOpenFullscreen,
   }: {
     article?: Article;
     share?: SocialShare;
@@ -79,6 +80,7 @@
     onSelect?: () => void;
     onExpand?: () => void;
     onFetchContent?: () => void;
+    onOpenFullscreen?: () => void;
   } = $props();
 
   // Determine if we're in share mode (showing someone else's share)
@@ -587,6 +589,19 @@
           <button class="action-btn" onclick={handleOpenUrl}>
             <span class="action-icon"><Icon name="external-link" size={16} /></span><span
               class="action-label">Open</span
+            >
+          </button>
+        {/if}
+        {#if onOpenFullscreen && hasContent}
+          <button
+            class="action-btn"
+            onclick={(e) => {
+              e.stopPropagation();
+              onOpenFullscreen();
+            }}
+          >
+            <span class="action-icon"><Icon name="maximize" size={16} /></span><span
+              class="action-label">Full</span
             >
           </button>
         {/if}
