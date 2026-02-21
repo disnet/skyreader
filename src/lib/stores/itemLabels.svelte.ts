@@ -530,6 +530,16 @@ function createItemLabelsStore() {
   // Saved count: purely from saves
   let savedCount = $derived(savesStore.articles.length);
 
+  // Inbox count: saved but not archived
+  let inboxCount = $derived.by(() => {
+    let count = 0;
+    for (const bm of savesStore.articles) {
+      const key = bm.uri || bm.itemGuid || '';
+      if (key && !hasLabel(key, 'archived')) count++;
+    }
+    return count;
+  });
+
   // Archived count (saved + archived)
   let archivedCount = $derived.by(() => {
     let count = 0;
@@ -1321,6 +1331,9 @@ function createItemLabelsStore() {
     },
     get archivedCount() {
       return archivedCount;
+    },
+    get inboxCount() {
+      return inboxCount;
     },
     // Tags
     get allTags() {
