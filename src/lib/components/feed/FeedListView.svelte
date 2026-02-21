@@ -23,6 +23,7 @@
   let readerItem = $state<FeedDisplayItem | null>(null);
   // Track whether we pushed a history entry so closeReader knows whether to go back
   let pushedHistoryEntry = false;
+  let savedScrollY = 0;
 
   function setReaderUrlParam(itemKey: string | null) {
     const url = new URL(window.location.href);
@@ -35,6 +36,7 @@
   }
 
   function openReader(item: FeedDisplayItem) {
+    savedScrollY = window.scrollY;
     readerItem = item;
     const url = setReaderUrlParam(item.key);
     history.pushState({ ...history.state, readerItemKey: item.key }, '', url);
@@ -44,6 +46,9 @@
   function closeReader() {
     if (!readerItem) return;
     readerItem = null;
+    requestAnimationFrame(() => {
+      window.scrollTo(0, savedScrollY);
+    });
     if (pushedHistoryEntry) {
       pushedHistoryEntry = false;
       history.back();
@@ -56,6 +61,9 @@
       // User pressed back — close reader without calling history.back() again
       pushedHistoryEntry = false;
       readerItem = null;
+      requestAnimationFrame(() => {
+        window.scrollTo(0, savedScrollY);
+      });
     } else if (readerKey && !readerItem) {
       // User pressed forward — reopen reader
       const item = feedViewStore.currentItems.find((i) => i.key === readerKey);
@@ -222,150 +230,152 @@
       ? handleReaderShare
       : undefined}
   />
-{:else}
-  <div class="article-list">
-    {#each feedViewStore.currentItems as displayItem, index (displayItem.key)}
-      <div bind:this={articleElements[index]}>
-        {#if displayItem.type === 'article'}
-          {@const article = displayItem.item}
-          {@const sub = subscriptionsStore.subscriptions.find(
-            (s) => s.id === article.subscriptionId
-          )}
-          <ArticleCard
-            {article}
-            siteUrl={sub?.siteUrl || sub?.feedUrl}
-            feedTitle={sub?.customTitle || sub?.title}
-            feedId={sub?.id}
-            isRead={itemLabelsStore.isRead(article.guid)}
-            isSaved={itemLabelsStore.isSaved(article.guid)}
-            isShared={sharesStore.isShared(article.guid)}
-            shareNote={sharesStore.getShareNote(article.guid)}
-            selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
-            expanded={feedViewStore.expandedIndex === index}
-            highlighted={feedViewStore.selectedIndex === index}
-            onToggleSave={() => onToggleSave(article)}
-            onToggleRead={() => handleToggleRead(article)}
-            onShare={() => sub && onShare(article, sub)}
-            onUnshare={() => onUnshare(article.guid)}
-            onSelect={() => handleSelect(index)}
-            onExpand={() => handleExpand(index)}
-            onOpenFullscreen={() => openReader(displayItem)}
-          />
-        {:else if displayItem.type === 'share'}
-          {@const share = displayItem.item}
-          {@const localArticle = feedViewStore.getArticleForShare(share)}
-          <ArticleCard
-            {share}
-            {localArticle}
-            isRead={itemLabelsStore.isSocialRead(share.recordUri)}
-            isSaved={itemLabelsStore.isSaved(share.recordUri)}
-            selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
-            expanded={feedViewStore.expandedIndex === index}
-            highlighted={feedViewStore.selectedIndex === index}
-            onToggleSave={() =>
-              itemLabelsStore.toggleSave(share.recordUri, 'share', share.itemUrl, share.itemTitle, {
-                type: 'share',
-                recordUri: share.recordUri,
-                itemUrl: share.itemUrl,
-                itemTitle: share.itemTitle,
-                itemAuthor: share.itemAuthor,
-                itemDescription: share.itemDescription,
-                itemImage: share.itemImage,
-                itemPublishedAt: share.itemPublishedAt,
-              })}
-            onToggleRead={() => {
-              if (itemLabelsStore.isSocialRead(share.recordUri)) {
-                itemLabelsStore.markSocialAsUnread(share.recordUri);
-              } else {
-                feedViewStore.trackSeenThisSession({
-                  type: 'share',
-                  item: share,
-                  key: share.recordUri,
-                });
-                itemLabelsStore.markSocialAsRead(
-                  'share',
-                  share.recordUri,
-                  share.authorDid,
-                  share.itemUrl,
-                  share.itemTitle
-                );
-              }
-            }}
-            onSelect={() => handleSelect(index)}
-            onExpand={() => handleExpand(index)}
-            onOpenFullscreen={() => openReader(displayItem)}
-          />
-        {:else if displayItem.type === 'userShare'}
-          {@const share = displayItem.item}
-          {@const article = displayItem.article}
-          {@const sub = subscriptionsStore.subscriptions.find(
-            (s) => s.id === article.subscriptionId
-          )}
-          <ArticleCard
-            {article}
-            siteUrl={sub?.siteUrl || sub?.feedUrl}
-            feedTitle={sub?.customTitle || sub?.title}
-            feedId={sub?.id}
-            isRead={itemLabelsStore.isRead(article.guid)}
-            isSaved={itemLabelsStore.isSaved(article.guid)}
-            isShared={true}
-            shareNote={share.note}
-            reshareCount={share.reshareCount || 0}
-            selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
-            expanded={feedViewStore.expandedIndex === index}
-            highlighted={feedViewStore.selectedIndex === index}
-            onToggleSave={() => onToggleSave(article)}
-            onToggleRead={() => handleToggleRead(article)}
-            onUnshare={() => onUnshare(share.articleGuid)}
-            onSelect={() => handleSelect(index)}
-            onExpand={() => handleExpand(index)}
-            onOpenFullscreen={() => openReader(displayItem)}
-          />
-        {:else if displayItem.type === 'document'}
-          {@const doc = displayItem.item}
-          <ArticleCard
-            document={doc}
-            isRead={itemLabelsStore.isSocialRead(doc.recordUri)}
-            isSaved={itemLabelsStore.isSaved(doc.recordUri)}
-            selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
-            expanded={feedViewStore.expandedIndex === index}
-            highlighted={feedViewStore.selectedIndex === index}
-            onToggleSave={() =>
-              itemLabelsStore.toggleSave(
-                doc.recordUri,
-                'document',
-                doc.canonicalUrl || doc.path || '',
-                doc.title,
-                {
-                  type: 'document',
-                  recordUri: doc.recordUri,
-                  url: doc.canonicalUrl || doc.path || '',
-                  title: doc.title,
-                  description: doc.description,
-                  publishedAt: doc.publishedAt,
-                }
-              )}
-            onToggleRead={() => handleToggleDocumentRead(doc)}
-            onSelect={() => handleSelect(index)}
-            onExpand={() => handleExpand(index)}
-            onOpenFullscreen={() => openReader(displayItem)}
-          />
-        {/if}
-      </div>
-    {/each}
-
-    <InfiniteScrollSentinel
-      hasMore={feedViewStore.hasMore}
-      isLoading={feedViewStore.isLoadingMore}
-      onLoadMore={() => feedViewStore.loadMore()}
-    />
-  </div>
 {/if}
+
+<div class="article-list" class:hidden-behind-reader={readerItem !== null}>
+  {#each feedViewStore.currentItems as displayItem, index (displayItem.key)}
+    <div bind:this={articleElements[index]}>
+      {#if displayItem.type === 'article'}
+        {@const article = displayItem.item}
+        {@const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId)}
+        <ArticleCard
+          {article}
+          siteUrl={sub?.siteUrl || sub?.feedUrl}
+          feedTitle={sub?.customTitle || sub?.title}
+          feedId={sub?.id}
+          isRead={itemLabelsStore.isRead(article.guid)}
+          isSaved={itemLabelsStore.isSaved(article.guid)}
+          isShared={sharesStore.isShared(article.guid)}
+          shareNote={sharesStore.getShareNote(article.guid)}
+          selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
+          expanded={feedViewStore.expandedIndex === index}
+          highlighted={feedViewStore.selectedIndex === index}
+          onToggleSave={() => onToggleSave(article)}
+          onToggleRead={() => handleToggleRead(article)}
+          onShare={() => sub && onShare(article, sub)}
+          onUnshare={() => onUnshare(article.guid)}
+          onSelect={() => handleSelect(index)}
+          onExpand={() => handleExpand(index)}
+          onOpenFullscreen={() => openReader(displayItem)}
+        />
+      {:else if displayItem.type === 'share'}
+        {@const share = displayItem.item}
+        {@const localArticle = feedViewStore.getArticleForShare(share)}
+        <ArticleCard
+          {share}
+          {localArticle}
+          isRead={itemLabelsStore.isSocialRead(share.recordUri)}
+          isSaved={itemLabelsStore.isSaved(share.recordUri)}
+          selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
+          expanded={feedViewStore.expandedIndex === index}
+          highlighted={feedViewStore.selectedIndex === index}
+          onToggleSave={() =>
+            itemLabelsStore.toggleSave(share.recordUri, 'share', share.itemUrl, share.itemTitle, {
+              type: 'share',
+              recordUri: share.recordUri,
+              itemUrl: share.itemUrl,
+              itemTitle: share.itemTitle,
+              itemAuthor: share.itemAuthor,
+              itemDescription: share.itemDescription,
+              itemImage: share.itemImage,
+              itemPublishedAt: share.itemPublishedAt,
+            })}
+          onToggleRead={() => {
+            if (itemLabelsStore.isSocialRead(share.recordUri)) {
+              itemLabelsStore.markSocialAsUnread(share.recordUri);
+            } else {
+              feedViewStore.trackSeenThisSession({
+                type: 'share',
+                item: share,
+                key: share.recordUri,
+              });
+              itemLabelsStore.markSocialAsRead(
+                'share',
+                share.recordUri,
+                share.authorDid,
+                share.itemUrl,
+                share.itemTitle
+              );
+            }
+          }}
+          onSelect={() => handleSelect(index)}
+          onExpand={() => handleExpand(index)}
+          onOpenFullscreen={() => openReader(displayItem)}
+        />
+      {:else if displayItem.type === 'userShare'}
+        {@const share = displayItem.item}
+        {@const article = displayItem.article}
+        {@const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId)}
+        <ArticleCard
+          {article}
+          siteUrl={sub?.siteUrl || sub?.feedUrl}
+          feedTitle={sub?.customTitle || sub?.title}
+          feedId={sub?.id}
+          isRead={itemLabelsStore.isRead(article.guid)}
+          isSaved={itemLabelsStore.isSaved(article.guid)}
+          isShared={true}
+          shareNote={share.note}
+          reshareCount={share.reshareCount || 0}
+          selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
+          expanded={feedViewStore.expandedIndex === index}
+          highlighted={feedViewStore.selectedIndex === index}
+          onToggleSave={() => onToggleSave(article)}
+          onToggleRead={() => handleToggleRead(article)}
+          onUnshare={() => onUnshare(share.articleGuid)}
+          onSelect={() => handleSelect(index)}
+          onExpand={() => handleExpand(index)}
+          onOpenFullscreen={() => openReader(displayItem)}
+        />
+      {:else if displayItem.type === 'document'}
+        {@const doc = displayItem.item}
+        <ArticleCard
+          document={doc}
+          isRead={itemLabelsStore.isSocialRead(doc.recordUri)}
+          isSaved={itemLabelsStore.isSaved(doc.recordUri)}
+          selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
+          expanded={feedViewStore.expandedIndex === index}
+          highlighted={feedViewStore.selectedIndex === index}
+          onToggleSave={() =>
+            itemLabelsStore.toggleSave(
+              doc.recordUri,
+              'document',
+              doc.canonicalUrl || doc.path || '',
+              doc.title,
+              {
+                type: 'document',
+                recordUri: doc.recordUri,
+                url: doc.canonicalUrl || doc.path || '',
+                title: doc.title,
+                description: doc.description,
+                publishedAt: doc.publishedAt,
+              }
+            )}
+          onToggleRead={() => handleToggleDocumentRead(doc)}
+          onSelect={() => handleSelect(index)}
+          onExpand={() => handleExpand(index)}
+          onOpenFullscreen={() => openReader(displayItem)}
+        />
+      {/if}
+    </div>
+  {/each}
+
+  <InfiniteScrollSentinel
+    hasMore={feedViewStore.hasMore}
+    isLoading={feedViewStore.isLoadingMore}
+    onLoadMore={() => feedViewStore.loadMore()}
+  />
+</div>
 
 <style>
   .article-list {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+  }
+
+  .hidden-behind-reader {
+    visibility: hidden;
+    position: fixed;
+    pointer-events: none;
   }
 </style>
