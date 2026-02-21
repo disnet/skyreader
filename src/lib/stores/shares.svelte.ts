@@ -1,5 +1,6 @@
 import { api } from '$lib/services/api';
 import { db } from '$lib/services/db';
+import { safeAdd, safeBulkPut } from '$lib/services/safeDb.svelte';
 import { syncQueue, type SharePayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
 import type { UserShare } from '$lib/types';
@@ -76,7 +77,7 @@ function createSharesStore() {
       try {
         await db.userShares.clear();
         if (sharesForDb.length > 0) {
-          await db.userShares.bulkPut(sharesForDb);
+          await safeBulkPut(db.userShares, sharesForDb);
         }
       } catch (cacheError) {
         console.error('Failed to sync shares cache:', cacheError);
@@ -136,7 +137,7 @@ function createSharesStore() {
     userShares.set(articleGuid, { ...shareData });
     userShares = new Map(userShares);
 
-    const id = await db.userShares.add(shareData);
+    const id = await safeAdd(db.userShares, shareData);
     userShares.set(articleGuid, { ...shareData, id });
     userShares = new Map(userShares);
 
@@ -268,7 +269,7 @@ function createSharesStore() {
     userShares.set(effectiveGuid, { ...shareData });
     userShares = new Map(userShares);
 
-    const id = await db.userShares.add(shareData);
+    const id = await safeAdd(db.userShares, shareData);
     userShares.set(effectiveGuid, { ...shareData, id });
     userShares = new Map(userShares);
 

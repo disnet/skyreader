@@ -1,4 +1,5 @@
 import { db } from '$lib/services/db';
+import { safePut, safeBulkPut } from '$lib/services/safeDb.svelte';
 import { api, UrlSaveLimitError } from '$lib/services/api';
 import { generateTid } from '$lib/utils/tid';
 import { syncQueue, type SavedPayload } from '$lib/services/sync-queue';
@@ -45,7 +46,7 @@ function createSavesStore() {
       // Update local cache
       await db.saved.clear();
       if (response.articles.length > 0) {
-        await db.saved.bulkPut(response.articles);
+        await safeBulkPut(db.saved, response.articles);
       }
     } catch (err) {
       console.error('Failed to load saved items:', err);
@@ -83,7 +84,7 @@ function createSavesStore() {
       // Add to local state and cache
       articles = [savedItem, ...articles];
       rebuildMaps();
-      await db.saved.put(savedItem);
+      await safePut(db.saved, savedItem);
 
       return savedItem;
     } catch (err) {
@@ -131,7 +132,7 @@ function createSavesStore() {
 
       articles = [savedItem, ...articles];
       rebuildMaps();
-      await db.saved.put(savedItem);
+      await safePut(db.saved, savedItem);
 
       if (syncStore.isOnline) {
         try {
@@ -153,7 +154,7 @@ function createSavesStore() {
           };
           articles = articles.map((a) => (a.rkey === rkey ? updated : a));
           rebuildMaps();
-          await db.saved.put(updated);
+          await safePut(db.saved, updated);
 
           return updated;
         } catch (err) {
@@ -231,7 +232,7 @@ function createSavesStore() {
 
       articles = [savedItem, ...articles];
       rebuildMaps();
-      await db.saved.put(savedItem);
+      await safePut(db.saved, savedItem);
 
       if (syncStore.isOnline) {
         try {
@@ -252,7 +253,7 @@ function createSavesStore() {
           };
           articles = articles.map((a) => (a.rkey === rkey ? updated : a));
           rebuildMaps();
-          await db.saved.put(updated);
+          await safePut(db.saved, updated);
           return updated;
         } catch (err) {
           console.error('Failed to save share to backend, queueing:', err);
@@ -325,7 +326,7 @@ function createSavesStore() {
 
       articles = [savedItem, ...articles];
       rebuildMaps();
-      await db.saved.put(savedItem);
+      await safePut(db.saved, savedItem);
 
       if (syncStore.isOnline) {
         try {
@@ -344,7 +345,7 @@ function createSavesStore() {
           };
           articles = articles.map((a) => (a.rkey === rkey ? updated : a));
           rebuildMaps();
-          await db.saved.put(updated);
+          await safePut(db.saved, updated);
           return updated;
         } catch (err) {
           console.error('Failed to save document to backend, queueing:', err);

@@ -1,4 +1,5 @@
 import { db } from '$lib/services/db';
+import { safePut } from '$lib/services/safeDb.svelte';
 import type { ItemTags } from '$lib/types';
 
 function createTagsStore() {
@@ -46,11 +47,11 @@ function createTagsStore() {
       const newTags = [...existing.tags, trimmed];
       const updated = { ...existing, tags: newTags };
       tagsByItem = new Map(tagsByItem).set(itemKey, updated);
-      await db.itemTags.put(updated);
+      await safePut(db.itemTags, updated);
     } else {
       const entry: ItemTags = { itemKey, itemType, tags: [trimmed] };
       tagsByItem = new Map(tagsByItem).set(itemKey, entry);
-      await db.itemTags.put(entry);
+      await safePut(db.itemTags, entry);
     }
   }
 
@@ -67,7 +68,7 @@ function createTagsStore() {
     } else {
       const updated = { ...existing, tags: newTags };
       tagsByItem = new Map(tagsByItem).set(itemKey, updated);
-      await db.itemTags.put(updated);
+      await safePut(db.itemTags, updated);
     }
   }
 
@@ -101,7 +102,7 @@ function createTagsStore() {
 
     tagsByItem = updated;
     await Promise.all([
-      ...toUpdate.map((e) => db.itemTags.put(e)),
+      ...toUpdate.map((e) => safePut(db.itemTags, e)),
       ...toDelete.map((k) => db.itemTags.delete(k)),
     ]);
   }
