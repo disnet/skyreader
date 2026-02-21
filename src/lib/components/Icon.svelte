@@ -41,7 +41,8 @@
     | 'arrow-left'
     | 'clock'
     | 'maximize'
-    | 'copy';
+    | 'copy'
+    | 'highlighter';
 
   interface Props {
     name: IconName;
@@ -226,6 +227,9 @@
   {:else if name === 'copy'}
     <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
     <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+  {:else if name === 'highlighter'}
+    <path d="m9 11-6 6v3h9l3-3" />
+    <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4" />
   {/if}
 </svg>
 

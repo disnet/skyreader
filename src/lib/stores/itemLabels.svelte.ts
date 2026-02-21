@@ -8,7 +8,13 @@ import {
 } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
 import { savesStore } from './saves.svelte';
-import type { ItemLabel, ItemLabelType, SocialItemType, SocialReadPosition } from '$lib/types';
+import type {
+  ItemLabel,
+  ItemLabelType,
+  SocialItemType,
+  SocialReadPosition,
+  Highlight,
+} from '$lib/types';
 
 const BULK_BATCH_SIZE = 500;
 
@@ -1274,6 +1280,68 @@ function createItemLabelsStore() {
     }, READ_PROGRESS_DEBOUNCE_MS);
   }
 
+  // --- Highlight mutations ---
+
+  function getHighlights(itemKey: string): Highlight[] {
+    const lbl = getLabel(itemKey, 'highlights');
+    if (!lbl) return [];
+    return (lbl.props.highlights as Highlight[]) || [];
+  }
+
+  function hasHighlights(itemKey: string): boolean {
+    const lbl = getLabel(itemKey, 'highlights');
+    if (!lbl) return false;
+    const highlights = (lbl.props.highlights as Highlight[]) || [];
+    return highlights.length > 0;
+  }
+
+  async function addHighlight(itemKey: string, itemType: ItemLabelType, highlight: Highlight) {
+    const existing = getLabel(itemKey, 'highlights');
+    const currentHighlights = existing ? (existing.props.highlights as Highlight[]) || [] : [];
+    const newHighlights = [...currentHighlights, highlight];
+    const now = Date.now();
+
+    const label: ItemLabel = {
+      itemKey,
+      itemType: existing?.itemType || itemType,
+      label: 'highlights',
+      props: { highlights: newHighlights },
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+    };
+    addToState(label);
+    triggerReactivity();
+    await db.itemLabels.put(label);
+  }
+
+  async function removeHighlight(itemKey: string, highlightId: string) {
+    const existing = getLabel(itemKey, 'highlights');
+    if (!existing) return;
+
+    const currentHighlights = (existing.props.highlights as Highlight[]) || [];
+    const newHighlights = currentHighlights.filter((h) => h.id !== highlightId);
+    const now = Date.now();
+
+    if (newHighlights.length === 0) {
+      removeFromState(itemKey, 'highlights');
+      triggerReactivity();
+      try {
+        await db.itemLabels.where('[itemKey+label]').equals([itemKey, 'highlights']).delete();
+      } catch (e) {
+        console.error('Failed to delete highlights label from DB:', e);
+      }
+    } else {
+      const label: ItemLabel = {
+        ...existing,
+        props: { highlights: newHighlights },
+        updatedAt: now,
+      };
+      addToState(label);
+      triggerReactivity();
+      await db.itemLabels.put(label);
+    }
+  }
+
   // --- Derived helpers ---
 
   function getSavedArticles(): SavedArticle[] {
@@ -1377,6 +1445,11 @@ function createItemLabelsStore() {
     // Read progress
     getReadProgress,
     setReadProgress,
+    // Highlights
+    getHighlights,
+    hasHighlights,
+    addHighlight,
+    removeHighlight,
     // Derived helpers
     getSavedArticles,
     getSavedItemKeys,

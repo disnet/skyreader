@@ -14,6 +14,7 @@ interface KeyboardShortcutsParams {
   openSavedReader?: () => void;
   toggleAddFromUrl?: () => void;
   openFullscreenReader?: () => void;
+  toggleHighlight?: () => void;
 }
 
 /**
@@ -427,6 +428,15 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       condition: () => hasSelected() && !!feedViewStore.savedFilter,
     });
 
+    // Highlight current paragraph when expanded
+    keyboardStore.register({
+      key: 'h',
+      description: 'Toggle highlight on paragraph',
+      category: 'Article',
+      action: () => params.toggleHighlight?.(),
+      condition: () => hasSelected() && feedViewStore.expandedIndex >= 0,
+    });
+
     // Full-screen reader for feed items (not in bookmarks view, which uses Enter)
     keyboardStore.register({
       key: 'f',
@@ -451,6 +461,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     keyboardStore.unregister('a');
     keyboardStore.unregister('e');
     keyboardStore.unregister('x');
+    keyboardStore.unregister('h');
     keyboardStore.unregister('f');
   }
 
