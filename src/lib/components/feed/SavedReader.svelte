@@ -21,6 +21,7 @@
   import { isGreengaleContent, renderGreengaleContent } from '$lib/utils/greengale-renderer';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import Icon from '$lib/components/Icon.svelte';
+  import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
@@ -48,7 +49,7 @@
 
   let styleMenuOpen = $state(false);
   let tagMenuOpen = $state(false);
-  let tagBtnRef = $state<HTMLButtonElement | null>(null);
+  let overflowRef = $state<HTMLDivElement | null>(null);
   let controlsVisible = $state(true);
   let lastScrollY = $state(0);
   let overlayEl: HTMLElement | undefined = $state();
@@ -206,6 +207,58 @@
     return Math.max(1, Math.round(wordCount / 200));
   });
 
+  let overflowItems = $derived.by(() => {
+    const items: {
+      label: string;
+      icon?: string;
+      variant?: 'default' | 'danger';
+      keepOpen?: boolean;
+      onclick: () => void;
+    }[] = [];
+
+    items.push({
+      label: `Tag${itemTags.length > 0 ? ` (${itemTags.length})` : ''}`,
+      icon: 'tag',
+      onclick: () => {
+        tagMenuOpen = true;
+      },
+    });
+
+    if (onToggleSave) {
+      items.push({
+        label: isSaved ? 'Unsave' : 'Save',
+        icon: 'bookmark',
+        onclick: () => onToggleSave!(),
+      });
+    }
+
+    if (onShare) {
+      items.push({
+        label: 'Share',
+        icon: 'share',
+        onclick: () => onShare!(),
+      });
+    }
+
+    if (onRemove) {
+      items.push({
+        label: deleteConfirming ? 'Confirm delete?' : 'Delete',
+        icon: 'trash',
+        variant: deleteConfirming ? 'danger' : 'default',
+        keepOpen: !deleteConfirming,
+        onclick: handleDeleteClick,
+      });
+    }
+
+    items.push({
+      label: 'Open in browser',
+      icon: 'external-link',
+      onclick: handleOpenUrl,
+    });
+
+    return items;
+  });
+
   function handleKeydown(e: KeyboardEvent) {
     if (tagMenuOpen) return;
     if (e.key === 'Escape') {
@@ -316,41 +369,7 @@
           <span class="action-label">Style</span>
         </button>
 
-        <button
-          class="action-btn"
-          class:active={tagMenuOpen}
-          class:tagged={itemTags.length > 0}
-          onclick={() => (tagMenuOpen = !tagMenuOpen)}
-          bind:this={tagBtnRef}
-          title="Tag (t)"
-        >
-          <Icon name="tag" size={18} />
-          <span class="action-label"
-            >Tag{#if itemTags.length > 0}<span class="tag-count">({itemTags.length})</span
-              >{/if}</span
-          >
-        </button>
-
         <span class="action-separator"></span>
-
-        {#if onToggleSave}
-          <button
-            class="action-btn"
-            class:saved={isSaved}
-            onclick={() => onToggleSave?.()}
-            title="Save (s)"
-          >
-            <Icon name="bookmark" size={18} />
-            <span class="action-label">Save</span>
-          </button>
-        {/if}
-
-        {#if onShare}
-          <button class="action-btn" onclick={() => onShare?.()} title="Share">
-            <Icon name="share" size={18} />
-            <span class="action-label">Share</span>
-          </button>
-        {/if}
 
         {#if onArchive}
           <button
@@ -363,29 +382,16 @@
           </button>
         {/if}
 
-        {#if onRemove}
-          <button
-            class="action-btn"
-            class:confirming={deleteConfirming}
-            onclick={handleDeleteClick}
-            title={deleteConfirming ? 'Click again to confirm' : 'Delete'}
-          >
-            <Icon name="trash" size={18} />
-            <span class="action-label">{deleteConfirming ? 'Delete?' : 'Delete'}</span>
-          </button>
-        {/if}
-
-        <button class="action-btn" onclick={handleOpenUrl} title="Open in new tab">
-          <Icon name="external-link" size={18} />
-          <span class="action-label">Open</span>
-        </button>
+        <div class="overflow-menu-wrapper" bind:this={overflowRef}>
+          <PopoverMenu items={overflowItems} />
+        </div>
       </div>
 
       {#if tagMenuOpen}
         <TagMenu
           {itemKey}
           itemType={labelItemType}
-          anchorEl={tagBtnRef}
+          anchorEl={overflowRef}
           onClose={() => (tagMenuOpen = false)}
         />
       {/if}
@@ -571,21 +577,9 @@
     color: var(--color-primary, #0066cc);
   }
 
-  .action-btn.saved {
-    color: var(--color-primary, #2563eb);
-  }
-
-  .action-btn.confirming {
-    color: var(--color-error, #dc2626);
-  }
-
-  .action-btn.tagged {
-    color: var(--color-primary, #2563eb);
-  }
-
-  .tag-count {
-    margin-left: 0.125rem;
-    font-size: 0.75rem;
+  .overflow-menu-wrapper {
+    display: flex;
+    align-items: center;
   }
 
   .action-separator {

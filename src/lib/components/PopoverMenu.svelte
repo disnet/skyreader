@@ -6,6 +6,7 @@
     label: string;
     icon?: string;
     variant?: 'default' | 'danger';
+    keepOpen?: boolean;
     onclick: () => void;
   }
 
@@ -66,7 +67,9 @@
 
   function handleItemClick(item: MenuItem, e: MouseEvent) {
     e.stopPropagation();
-    isOpen = false;
+    if (!item.keepOpen) {
+      isOpen = false;
+    }
     item.onclick();
   }
 
