@@ -27,6 +27,8 @@
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
+  import { useHighlights } from '$lib/hooks/useHighlights.svelte';
+  import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import type { ItemTags, ItemLabelType } from '$lib/types';
   import { tick } from 'svelte';
   import logo from '$lib/assets/logo.svg';
@@ -366,7 +368,15 @@
     enabled: () => true,
   });
 
-  // Attach link interception when content is visible (selected or expanded)
+  // Highlights hook
+  const highlights = useHighlights({
+    contentEl: () => bodyEl,
+    itemKey: () => itemGuid,
+    itemType: () => itemTagType as ItemLabelType,
+    enabled: () => expanded && hasContent,
+  });
+
+  // Attach link interception when content is visible
   $effect(() => {
     if (isOpen && bodyEl && hasContent) {
       tick().then(() => {
@@ -375,6 +385,19 @@
     }
     return () => {
       linkInterception.detach();
+    };
+  });
+
+  // Attach highlights when article is expanded (must read `expanded` synchronously
+  // so Svelte's $effect tracks it — reads inside tick().then() are not tracked)
+  $effect(() => {
+    if (expanded && bodyEl && hasContent) {
+      tick().then(() => {
+        highlights.attach();
+      });
+    }
+    return () => {
+      highlights.detach();
     };
   });
 
@@ -404,6 +427,9 @@
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       paragraphTracking.prevParagraph();
+    } else if (e.key === 'h') {
+      e.preventDefault();
+      highlights.toggleParagraphHighlight(paragraphTracking.currentParagraphIndex);
     }
   }
 
@@ -676,6 +702,16 @@
       />
     {/if}
 
+    {#if highlights.popoverState}
+      <HighlightPopover
+        mode={highlights.popoverState.mode}
+        anchorRect={highlights.popoverState.anchorRect}
+        onHighlight={highlights.createHighlightFromPopover}
+        onRemove={highlights.removeHighlightFromPopover}
+        onClose={highlights.closePopover}
+      />
+    {/if}
+
     {#if itemTagCount > 0}
       <div class="tag-chips">
         {#each itemLabelsStore.getTagsForItem(itemGuid) as tag}
@@ -930,6 +966,17 @@
 
   .article-body :global(li) {
     margin: 0.25rem 0;
+  }
+
+  .article-body :global(mark.highlight) {
+    background-color: color-mix(in srgb, #f5c518 25%, transparent);
+    border-radius: 1px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+  }
+
+  .article-body :global(mark.highlight:hover) {
+    background-color: color-mix(in srgb, #f5c518 40%, transparent);
   }
 
   .article-loading {

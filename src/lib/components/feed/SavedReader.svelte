@@ -25,6 +25,8 @@
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
+  import { useHighlights } from '$lib/hooks/useHighlights.svelte';
+  import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
   import { tick } from 'svelte';
 
@@ -224,6 +226,9 @@
     } else if (e.key === 'ArrowUp' && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
       paragraphTracking.prevParagraph();
+    } else if (e.key === 'h' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      highlightsHook.toggleParagraphHighlight(paragraphTracking.currentParagraphIndex);
     }
   }
 
@@ -242,18 +247,28 @@
     enabled: () => true,
   });
 
+  // Highlights hook
+  const highlightsHook = useHighlights({
+    contentEl: () => readerBodyEl,
+    itemKey: () => itemKey,
+    itemType: () => labelItemType,
+    enabled: () => true,
+  });
+
   // Set up observer when reader body is mounted
   $effect(() => {
     if (readerBodyEl && overlayEl) {
       tick().then(() => {
         paragraphTracking.setupObserver();
         linkInterception.attach();
+        highlightsHook.attach();
         setTimeout(() => paragraphTracking.restorePosition(), 100);
       });
     }
     return () => {
       paragraphTracking.cleanup();
       linkInterception.detach();
+      highlightsHook.detach();
     };
   });
 
@@ -470,6 +485,16 @@
     </article>
   </div>
 </div>
+
+{#if highlightsHook.popoverState}
+  <HighlightPopover
+    mode={highlightsHook.popoverState.mode}
+    anchorRect={highlightsHook.popoverState.anchorRect}
+    onHighlight={highlightsHook.createHighlightFromPopover}
+    onRemove={highlightsHook.removeHighlightFromPopover}
+    onClose={highlightsHook.closePopover}
+  />
+{/if}
 
 <style>
   .reader-overlay {
@@ -821,6 +846,17 @@
 
   .reader-body :global(li) {
     margin: 0.25rem 0;
+  }
+
+  .reader-body :global(mark.highlight) {
+    background-color: color-mix(in srgb, #f5c518 25%, transparent);
+    border-radius: 1px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+  }
+
+  .reader-body :global(mark.highlight:hover) {
+    background-color: color-mix(in srgb, #f5c518 40%, transparent);
   }
 
   @media (prefers-color-scheme: dark) {

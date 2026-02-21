@@ -705,6 +705,19 @@ export interface ItemLabel {
   updatedAt: number; // epoch ms
 }
 
+export interface TextQuoteSelector {
+  type: 'TextQuoteSelector';
+  exact: string;
+  prefix?: string;
+  suffix?: string;
+}
+
+export interface Highlight {
+  id: string;
+  selector: TextQuoteSelector;
+  createdAt: number; // epoch ms
+}
+
 export interface DiscoverUser {
   did: string;
   handle: string;

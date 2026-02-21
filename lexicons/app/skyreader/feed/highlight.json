@@ -1,0 +1,59 @@
+{
+  "lexicon": 1,
+  "id": "app.skyreader.feed.highlight",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["itemUrl", "highlights", "createdAt"],
+        "properties": {
+          "itemUrl": { "type": "string", "format": "uri", "maxLength": 2048 },
+          "itemTitle": { "type": "string", "maxLength": 512 },
+          "highlights": {
+            "type": "array",
+            "maxLength": 100,
+            "items": { "type": "ref", "ref": "#defs/highlight" }
+          },
+          "createdAt": { "type": "string", "format": "datetime" }
+        }
+      }
+    },
+    "highlight": {
+      "type": "object",
+      "required": ["id", "selector", "createdAt"],
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "selector": { "type": "ref", "ref": "#defs/textQuoteSelector" },
+        "createdAt": { "type": "string", "format": "datetime" }
+      }
+    },
+    "textQuoteSelector": {
+      "type": "object",
+      "description": "W3C TextQuoteSelector - select text by quoting it with context",
+      "required": ["exact"],
+      "properties": {
+        "type": { "type": "string", "const": "TextQuoteSelector" },
+        "exact": {
+          "type": "string",
+          "maxLength": 5000,
+          "maxGraphemes": 1500,
+          "description": "The exact text to match"
+        },
+        "prefix": {
+          "type": "string",
+          "maxLength": 500,
+          "maxGraphemes": 150,
+          "description": "Text immediately before the selection"
+        },
+        "suffix": {
+          "type": "string",
+          "maxLength": 500,
+          "maxGraphemes": 150,
+          "description": "Text immediately after the selection"
+        }
+      }
+    }
+  }
+}
