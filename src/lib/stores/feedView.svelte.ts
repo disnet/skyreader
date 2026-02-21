@@ -95,6 +95,17 @@ function getItemDate(item: FeedDisplayItem): number {
   }
 }
 
+function getSavedDate(item: FeedDisplayItem): number {
+  if (item.type === 'saved') {
+    return new Date(item.item.savedAt).getTime();
+  }
+  const savedItem = savesStore.getByGuid(item.key);
+  if (savedItem) {
+    return new Date(savedItem.savedAt).getTime();
+  }
+  return getItemDate(item);
+}
+
 function createFeedViewStore() {
   // UI state
   let showOnlyUnread = $state(true);
@@ -526,10 +537,10 @@ function createFeedViewStore() {
 
       items = [...articleItems, ...starredShareItems, ...starredDocumentItems, ...bookmarkItems];
 
-      // Sort by date
+      // Sort by saved date (when the item was bookmarked, not published)
       items.sort((a, b) => {
-        const dateA = getItemDate(a);
-        const dateB = getItemDate(b);
+        const dateA = getSavedDate(a);
+        const dateB = getSavedDate(b);
         return sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
       });
 
