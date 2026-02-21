@@ -179,5 +179,4 @@
     position: fixed;
     pointer-events: none;
   }
-
 </style>

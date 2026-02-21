@@ -42,6 +42,8 @@
   function handleItemClick(action: () => void, e: MouseEvent) {
     e.stopPropagation();
     isOpen = false;
+    // Close navigation dropdown first so modals render on top
+    sidebarStore.closeNavigationDropdown();
     action();
   }
 
@@ -62,6 +64,16 @@
       isOpen = false;
       buttonRef?.focus();
     }
+  }
+
+  // Portal action to move element to body (escapes overflow:hidden ancestors)
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      },
+    };
   }
 
   onMount(() => {
@@ -97,36 +109,38 @@
   </button>
 
   {#if isOpen}
-    <div
-      bind:this={menuRef}
-      class="add-menu"
-      role="menu"
-      style="top: {menuPosition.top}px; left: {menuPosition.left}px;"
-    >
-      <button
-        class="add-menu-item"
-        onclick={(e) => handleItemClick(() => sidebarStore.openAddFeedModal(), e)}
-        role="menuitem"
+    <div use:portal>
+      <div
+        bind:this={menuRef}
+        class="add-menu"
+        role="menu"
+        style="top: {menuPosition.top}px; left: {menuPosition.left}px;"
       >
-        <span class="item-icon"><Icon name="rss" size={16} /></span>
-        Add RSS Feed
-      </button>
-      <button
-        class="add-menu-item"
-        onclick={(e) => handleItemClick(() => sidebarStore.openFollowUserModal(), e)}
-        role="menuitem"
-      >
-        <span class="item-icon"><Icon name="users" size={16} /></span>
-        Add Bluesky Account
-      </button>
-      <button
-        class="add-menu-item"
-        onclick={(e) => handleItemClick(() => sidebarStore.openSaveArticleModal(), e)}
-        role="menuitem"
-      >
-        <span class="item-icon"><Icon name="bookmark" size={16} /></span>
-        Save Article by URL
-      </button>
+        <button
+          class="add-menu-item"
+          onclick={(e) => handleItemClick(() => sidebarStore.openAddFeedModal(), e)}
+          role="menuitem"
+        >
+          <span class="item-icon"><Icon name="rss" size={16} /></span>
+          Add RSS Feed
+        </button>
+        <button
+          class="add-menu-item"
+          onclick={(e) => handleItemClick(() => sidebarStore.openFollowUserModal(), e)}
+          role="menuitem"
+        >
+          <span class="item-icon"><Icon name="users" size={16} /></span>
+          Add Bluesky Account
+        </button>
+        <button
+          class="add-menu-item"
+          onclick={(e) => handleItemClick(() => sidebarStore.openSaveArticleModal(), e)}
+          role="menuitem"
+        >
+          <span class="item-icon"><Icon name="bookmark" size={16} /></span>
+          Save Article by URL
+        </button>
+      </div>
     </div>
   {/if}
 </div>
@@ -162,7 +176,8 @@
     opacity: 0.6;
   }
 
-  .add-menu {
+  /* Menu is portaled to body, so styles must be global */
+  :global(.add-menu) {
     position: fixed;
     min-width: 200px;
     background: var(--color-bg);
@@ -173,7 +188,7 @@
     overflow: hidden;
   }
 
-  .add-menu-item {
+  :global(.add-menu-item) {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -188,17 +203,17 @@
     transition: background-color 0.15s;
   }
 
-  .add-menu-item:hover {
+  :global(.add-menu-item:hover) {
     background: var(--color-bg-secondary);
   }
 
-  .item-icon {
+  :global(.add-menu .item-icon) {
     display: flex;
     align-items: center;
   }
 
   @media (prefers-color-scheme: dark) {
-    .add-menu {
+    :global(.add-menu) {
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     }
   }
