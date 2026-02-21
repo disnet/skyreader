@@ -9,6 +9,7 @@
     isExpanded: boolean;
     showOnlyUnread: boolean;
     isActive: boolean;
+    onAdd?: () => void;
     onToggle: () => void;
     onLabelClick: () => void;
     onUnreadToggle: () => void;
@@ -21,6 +22,7 @@
     isExpanded,
     showOnlyUnread,
     isActive,
+    onAdd,
     onToggle,
     onLabelClick,
     onUnreadToggle,
@@ -35,6 +37,18 @@
       <span class="nav-label">{title}</span>
     </button>
     <div class="header-actions">
+      {#if onAdd}
+        <button
+          class="add-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            onAdd();
+          }}
+          title="Add"
+        >
+          <Icon name="plus" size={14} strokeWidth={2} />
+        </button>
+      {/if}
       <button
         class="filter-toggle"
         class:active={showOnlyUnread}
@@ -118,6 +132,29 @@
     align-items: center;
     gap: 0.25rem;
     flex-shrink: 0;
+  }
+
+  .add-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.125rem;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.15s;
+    border-radius: 4px;
+  }
+
+  .section-header:hover .add-btn {
+    opacity: 0.6;
+  }
+
+  .add-btn:hover {
+    opacity: 1 !important;
+    color: var(--color-primary);
   }
 
   .disclosure-btn {

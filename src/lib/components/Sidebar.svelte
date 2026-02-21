@@ -25,20 +25,8 @@
   import FeedItem from './sidebar/FeedItem.svelte';
   import UserItem from './sidebar/UserItem.svelte';
   import ViewItem from './sidebar/ViewItem.svelte';
-  import UserSearchCompact from './sidebar/UserSearchCompact.svelte';
-  import FeedAddCompact from './sidebar/FeedAddCompact.svelte';
   import Icon from './Icon.svelte';
   import type { Subscription } from '$lib/types';
-
-  // Set of DIDs that user is already following (for search)
-  let followedDids = $derived(new Set(socialStore.followedUsers.map((u) => u.did)));
-
-  async function handleFollowUser(did: string) {
-    const success = await socialStore.followUser(did);
-    if (success) {
-      await socialStore.loadFollowedUsers();
-    }
-  }
 
   async function removeFeed(id: number) {
     if (confirm('Are you sure you want to remove this subscription?')) {
@@ -494,6 +482,18 @@
       onToggle={() => sidebarStore.toggleSection('views')}
       onLabelClick={() => sidebarStore.toggleSection('views')}
       onUnreadToggle={() => {}}
+      onAdd={async () => {
+        const id = await filteredViewsStore.create({
+          name: 'new view',
+          sourceMode: 'include',
+          sourceKeys: [],
+          readFilter: 'unread',
+          sortOrder: 'newest',
+        });
+        selectFilter('view', id);
+        feedViewStore.setFilterToolbarOpen(true);
+        feedViewStore.setSourcePopoverOpen(true);
+      }}
     >
       {@const filter = currentFilter()}
       {#each filteredViewsStore.views as view (view.id)}
@@ -516,25 +516,6 @@
           onRenameCancel={() => (renamingViewId = null)}
         />
       {/each}
-      <button
-        class="add-view-btn"
-        onclick={async (e) => {
-          e.stopPropagation();
-          const id = await filteredViewsStore.create({
-            name: 'new view',
-            sourceMode: 'include',
-            sourceKeys: [],
-            readFilter: 'unread',
-            sortOrder: 'newest',
-          });
-          selectFilter('view', id);
-          feedViewStore.setFilterToolbarOpen(true);
-          feedViewStore.setSourcePopoverOpen(true);
-        }}
-      >
-        <Icon name="plus" size={14} />
-        <span>New View</span>
-      </button>
     </NavSection>
 
     <!-- Following section -->
@@ -550,11 +531,11 @@
         sidebarStore.closeMobile();
       }}
       onUnreadToggle={() => sidebarStore.toggleShowOnlyUnread('shared')}
+      onAdd={() => sidebarStore.openFollowUserModal()}
     >
       {@const totalShareCount = Array.from(sharerCounts().values()).reduce((a, b) => a + b, 0)}
       {@const totalDocCount = Array.from(sharerDocCounts().values()).reduce((a, b) => a + b, 0)}
       {@const filter = currentFilter()}
-      <UserSearchCompact {followedDids} onFollow={handleFollowUser} />
       {@const allUsers = sortedFollowedUsers()}
       {@const displayedUsers = allUsers.slice(0, 10)}
       {#each displayedUsers as user (user.did)}
@@ -596,8 +577,8 @@
       onToggle={() => sidebarStore.toggleSection('feeds')}
       onLabelClick={() => selectFilter('feeds')}
       onUnreadToggle={() => sidebarStore.toggleShowOnlyUnread('feeds')}
+      onAdd={() => sidebarStore.openAddFeedModal()}
     >
-      <FeedAddCompact />
       {#each sortedSubscriptions() as sub (sub.id)}
         {@const count = feedUnreadCounts.get(sub.id!) || 0}
         {@const status = feedStatusStore.getStatus(sub.feedUrl)}
@@ -826,36 +807,16 @@
   }
 
   .empty-section {
-    padding: 0.5rem 1.5rem;
+    padding: 0.5rem 0.75rem;
     font-size: 0.8125rem;
     color: var(--color-text-secondary);
     font-style: italic;
   }
 
   .more-indicator {
-    padding: 0.25rem 1.5rem;
+    padding: 0.25rem 0.75rem;
     font-size: 0.8125rem;
     color: var(--color-text-secondary);
-  }
-
-  .add-view-btn {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    width: 100%;
-    padding: 0.375rem 1.5rem;
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--color-text-secondary);
-    font-size: 0.8125rem;
-    border-radius: 8px;
-    transition: background-color 0.15s;
-  }
-
-  .add-view-btn:hover {
-    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
-    color: var(--color-primary);
   }
 
   /* Mobile styles */
