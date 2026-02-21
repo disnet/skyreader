@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import Icon from '$lib/components/Icon.svelte';
 
   interface MenuItem {
     label: string;
@@ -132,7 +133,7 @@
           role="menuitem"
         >
           {#if item.icon}
-            <span class="item-icon">{item.icon}</span>
+            <span class="item-icon"><Icon name={item.icon as any} size={16} /></span>
           {/if}
           {item.label}
         </button>
@@ -213,6 +214,7 @@
   }
 
   .item-icon {
-    font-size: 1rem;
+    display: flex;
+    align-items: center;
   }
 </style>

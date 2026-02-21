@@ -175,7 +175,7 @@
     }[] = [
       {
         label: 'Tag',
-        icon: '🏷️',
+        icon: 'tag',
         onclick: () => {
           tagMenuOpenLocal = true;
         },
@@ -184,7 +184,7 @@
     if (onRemove) {
       items.push({
         label: 'Delete',
-        icon: '🗑️',
+        icon: 'trash',
         variant: 'danger',
         onclick: () => {
           onRemove();
