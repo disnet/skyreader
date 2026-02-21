@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
+  import AddDropdownMenu from '$lib/components/AddDropdownMenu.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import FilterToolbar from './FilterToolbar.svelte';
   import AppearanceToolbar from './AppearanceToolbar.svelte';
@@ -21,7 +22,6 @@
     onEdit?: () => void;
     onDelete?: () => void;
     showSourceFilter?: boolean;
-    onAddFromUrl?: () => void;
   }
 
   let {
@@ -36,7 +36,6 @@
     onEdit,
     onDelete,
     showSourceFilter = true,
-    onAddFromUrl,
   }: Props = $props();
 
   // Tick counter to force re-evaluation of relative time
@@ -199,13 +198,8 @@
               >{feedViewStore.currentSortOrder === 'newest' ? 'New' : 'Old'}</span
             >
           </button>
-          {#if onAddFromUrl}
-            <span class="toggle-divider"></span>
-            <button onclick={onAddFromUrl} aria-label="Add from URL" title="Add from URL">
-              <Icon name="plus" size={16} />
-              <span class="btn-label">Add</span>
-            </button>
-          {/if}
+          <span class="toggle-divider"></span>
+          <AddDropdownMenu />
         </div>
       {:else}
         <div class="view-toggle" role="group" aria-label="View controls">

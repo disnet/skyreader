@@ -349,7 +349,6 @@
     scrollToCenter,
     markAllAsReadInCurrentFeed,
     openSavedReader: () => savedListView?.openSelectedReader(),
-    toggleAddFromUrl: () => savedListView?.toggleUrlInput(),
     openFullscreenReader: () => feedListView?.openSelectedReader(),
   });
 
@@ -436,7 +435,6 @@
         !feedViewStore.sharerFilter &&
         !feedViewStore.followingFilter &&
         !feedViewStore.feedsFilter}
-      onAddFromUrl={isSavedView ? () => savedListView?.toggleUrlInput() : undefined}
     />
 
     {#if (appManager.isHydrating || appManager.isRefreshing) && feedViewStore.currentItems.length === 0}
