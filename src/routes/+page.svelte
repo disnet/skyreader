@@ -71,6 +71,9 @@
 
   let isSavedView = $derived(Boolean(feedViewStore.savedFilter));
 
+  // Read initial reader key from URL for restoring reader on page load
+  let initialReaderKey = $derived($page.url.searchParams.get('reader'));
+
   function getArticleElements(): HTMLElement[] {
     if (isSavedView) {
       return savedListView?.getArticleElements() ?? [];
@@ -490,10 +493,11 @@
         />
       {/if}
     {:else if isSavedView}
-      <SavedListView bind:this={savedListView} />
+      <SavedListView bind:this={savedListView} {initialReaderKey} />
     {:else}
       <FeedListView
         bind:this={feedListView}
+        {initialReaderKey}
         onToggleSave={(article) =>
           itemLabelsStore.toggleSave(article.guid, 'article', article.url, article.title, {
             type: 'article',

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, onMount, onDestroy } from 'svelte';
   import ArticleCard from '$lib/components/ArticleCard.svelte';
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
@@ -14,20 +14,78 @@
     onToggleSave: (article: Article) => void;
     onShare: (article: Article, sub: (typeof subscriptionsStore.subscriptions)[0]) => void;
     onUnshare: (guid: string) => void;
+    initialReaderKey?: string | null;
   }
 
-  let { onToggleSave, onShare, onUnshare }: Props = $props();
+  let { onToggleSave, onShare, onUnshare, initialReaderKey = null }: Props = $props();
 
   // Reader overlay state
   let readerItem = $state<FeedDisplayItem | null>(null);
+  // Track whether we pushed a history entry so closeReader knows whether to go back
+  let pushedHistoryEntry = false;
+
+  function setReaderUrlParam(itemKey: string | null) {
+    const url = new URL(window.location.href);
+    if (itemKey) {
+      url.searchParams.set('reader', itemKey);
+    } else {
+      url.searchParams.delete('reader');
+    }
+    return url.toString();
+  }
 
   function openReader(item: FeedDisplayItem) {
     readerItem = item;
+    const url = setReaderUrlParam(item.key);
+    history.pushState({ ...history.state, readerItemKey: item.key }, '', url);
+    pushedHistoryEntry = true;
   }
 
   function closeReader() {
+    if (!readerItem) return;
     readerItem = null;
+    if (pushedHistoryEntry) {
+      pushedHistoryEntry = false;
+      history.back();
+    }
   }
+
+  function handlePopstate() {
+    const readerKey = new URL(window.location.href).searchParams.get('reader');
+    if (!readerKey && readerItem) {
+      // User pressed back — close reader without calling history.back() again
+      pushedHistoryEntry = false;
+      readerItem = null;
+    } else if (readerKey && !readerItem) {
+      // User pressed forward — reopen reader
+      const item = feedViewStore.currentItems.find((i) => i.key === readerKey);
+      if (item) {
+        readerItem = item;
+        pushedHistoryEntry = true;
+      }
+    }
+  }
+
+  onMount(() => {
+    window.addEventListener('popstate', handlePopstate);
+  });
+
+  onDestroy(() => {
+    window.removeEventListener('popstate', handlePopstate);
+  });
+
+  // Restore reader from URL on initial load
+  $effect(() => {
+    if (initialReaderKey && !readerItem && feedViewStore.currentItems.length > 0) {
+      const item = feedViewStore.currentItems.find((i) => i.key === initialReaderKey);
+      if (item) {
+        readerItem = item;
+        const url = setReaderUrlParam(item.key);
+        history.replaceState({ ...history.state, readerItemKey: item.key }, '', url);
+        pushedHistoryEntry = true;
+      }
+    }
+  });
 
   export function openSelectedReader() {
     const index = feedViewStore.selectedIndex;

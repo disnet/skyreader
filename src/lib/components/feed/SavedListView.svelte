@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
   import SavedCard from './SavedCard.svelte';
   import SavedReader from './SavedReader.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
@@ -10,9 +11,17 @@
   import { ScopeUpgradeError } from '$lib/services/api';
   import type { ItemLabelType } from '$lib/types';
 
+  interface Props {
+    initialReaderKey?: string | null;
+  }
+
+  let { initialReaderKey = null }: Props = $props();
+
   let showScopeUpgrade = $state(false);
 
   let readerItem = $state<FeedDisplayItem | null>(null);
+  // Track whether we pushed a history entry so closeReader knows whether to go back
+  let pushedHistoryEntry = false;
   let showUrlInput = $state(false);
   let urlInputValue = $state('');
   let urlInputEl = $state<HTMLInputElement | null>(null);
@@ -33,13 +42,66 @@
     window.scrollBy({ top: offset, behavior: 'instant' });
   }
 
+  function setReaderUrlParam(itemKey: string | null) {
+    const url = new URL(window.location.href);
+    if (itemKey) {
+      url.searchParams.set('reader', itemKey);
+    } else {
+      url.searchParams.delete('reader');
+    }
+    return url.toString();
+  }
+
   function openReader(item: FeedDisplayItem) {
     readerItem = item;
+    const url = setReaderUrlParam(item.key);
+    history.pushState({ ...history.state, readerItemKey: item.key }, '', url);
+    pushedHistoryEntry = true;
   }
 
   function closeReader() {
+    if (!readerItem) return;
     readerItem = null;
+    if (pushedHistoryEntry) {
+      pushedHistoryEntry = false;
+      history.back();
+    }
   }
+
+  function handlePopstate() {
+    const readerKey = new URL(window.location.href).searchParams.get('reader');
+    if (!readerKey && readerItem) {
+      pushedHistoryEntry = false;
+      readerItem = null;
+    } else if (readerKey && !readerItem) {
+      const item = feedViewStore.currentItems.find((i) => i.key === readerKey);
+      if (item) {
+        readerItem = item;
+        pushedHistoryEntry = true;
+      }
+    }
+  }
+
+  onMount(() => {
+    window.addEventListener('popstate', handlePopstate);
+  });
+
+  onDestroy(() => {
+    window.removeEventListener('popstate', handlePopstate);
+  });
+
+  // Restore reader from URL on initial load
+  $effect(() => {
+    if (initialReaderKey && !readerItem && feedViewStore.currentItems.length > 0) {
+      const item = feedViewStore.currentItems.find((i) => i.key === initialReaderKey);
+      if (item) {
+        readerItem = item;
+        const url = setReaderUrlParam(item.key);
+        history.replaceState({ ...history.state, readerItemKey: item.key }, '', url);
+        pushedHistoryEntry = true;
+      }
+    }
+  });
 
   function getItemType(item: FeedDisplayItem): ItemLabelType {
     if (item.type === 'userShare') return 'userShare';
