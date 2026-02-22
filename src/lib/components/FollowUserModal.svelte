@@ -1,6 +1,7 @@
 <script lang="ts">
   import { searchBlueskyActors, type BlueskySearchResult } from '$lib/services/blueskySearch';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+  import { socialStore } from '$lib/stores/social.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { api } from '$lib/services/api';
   import Modal from '$lib/components/common/Modal.svelte';
@@ -192,6 +193,9 @@
           subjectDid: selectedUser.did,
         });
       }
+
+      // Reload social feed to pick up backfilled content
+      socialStore.loadFeed(true);
 
       // Go back to search after successful subscription
       goBackToSearch();

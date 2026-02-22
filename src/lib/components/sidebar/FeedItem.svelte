@@ -41,8 +41,13 @@
     onMoreClick,
   }: Props = $props();
 
+  let isAtProto = $derived(subscription.sourceType?.startsWith('atproto.') ?? false);
+
   let faviconUrl = $derived(
-    subscription.customIconUrl || getFaviconUrl(subscription.siteUrl || subscription.feedUrl || '')
+    subscription.customIconUrl ||
+      (isAtProto
+        ? '/icons/icon-192.svg'
+        : getFaviconUrl(subscription.siteUrl || subscription.feedUrl || ''))
   );
   let faviconLoaded = $state(false);
 

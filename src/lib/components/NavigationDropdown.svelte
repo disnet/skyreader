@@ -160,7 +160,11 @@
       id: s.id!,
       label: s.customTitle || s.title,
       count: feedUnreadCounts.get(s.id!) || 0,
-      iconUrl: s.customIconUrl || getFaviconUrl(s.siteUrl || s.feedUrl || ''),
+      iconUrl:
+        s.customIconUrl ||
+        (s.sourceType?.startsWith('atproto.')
+          ? '/icons/icon-192.svg'
+          : getFaviconUrl(s.siteUrl || s.feedUrl || '')),
     }));
 
     // Filter by search query
@@ -248,7 +252,11 @@
     if (feed) {
       const sub = subscriptions.find((s) => s.id === parseInt(feed));
       if (sub) {
-        const iconUrl = sub.customIconUrl || getFaviconUrl(sub.siteUrl || sub.feedUrl || '');
+        const iconUrl =
+          sub.customIconUrl ||
+          (sub.sourceType?.startsWith('atproto.')
+            ? '/icons/icon-192.svg'
+            : getFaviconUrl(sub.siteUrl || sub.feedUrl || ''));
         return { type: 'favicon', url: iconUrl };
       }
       return { type: 'icon', name: 'rss' };

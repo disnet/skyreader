@@ -1,5 +1,5 @@
 import { db } from '$lib/services/db';
-import { safeBulkAdd } from '$lib/services/safeDb.svelte';
+import { safeBulkPut } from '$lib/services/safeDb.svelte';
 import { api } from '$lib/services/api';
 import { profileService } from '$lib/services/profiles';
 import { syncQueue, type FollowPayload } from '$lib/services/sync-queue';
@@ -69,17 +69,17 @@ function createSocialStore() {
         documents = result.documents || [];
         // Cache in IndexedDB
         await db.socialShares.clear();
-        await safeBulkAdd(db.socialShares, result.shares);
+        await safeBulkPut(db.socialShares, result.shares);
         await db.socialDocuments.clear();
         if (result.documents && result.documents.length > 0) {
-          await safeBulkAdd(db.socialDocuments, result.documents);
+          await safeBulkPut(db.socialDocuments, result.documents);
         }
       } else {
         shares = [...shares, ...result.shares];
         documents = [...documents, ...(result.documents || [])];
-        await safeBulkAdd(db.socialShares, result.shares);
+        await safeBulkPut(db.socialShares, result.shares);
         if (result.documents && result.documents.length > 0) {
-          await safeBulkAdd(db.socialDocuments, result.documents);
+          await safeBulkPut(db.socialDocuments, result.documents);
         }
       }
 
