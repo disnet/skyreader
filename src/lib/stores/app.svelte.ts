@@ -68,7 +68,10 @@ function createAppManager() {
       ]);
 
       // Initialize feed statuses for existing subscriptions
-      const feedUrls = liveDb.subscriptions.map((s) => s.feedUrl).filter((u): u is string => !!u);
+      const feedUrls = liveDb.subscriptions
+        .filter((s) => !s.sourceType?.startsWith('atproto.'))
+        .map((s) => s.feedUrl)
+        .filter((u): u is string => !!u);
       feedStatusStore.initializeFeeds(feedUrls);
 
       // Initialize pending count and process queue if online
@@ -215,15 +218,17 @@ function createAppManager() {
         const local = localByRkey.get(rkey);
         if (local?.id) {
           // Check if anything changed
+          // Preserve local siteUrl if PDS record doesn't have it
+          const resolvedSiteUrl = record.value.siteUrl || local.siteUrl;
           const hasChanges =
             local.title !== (record.value.title || record.value.feedUrl) ||
-            local.siteUrl !== record.value.siteUrl ||
+            local.siteUrl !== resolvedSiteUrl ||
             local.category !== record.value.category;
 
           if (hasChanges) {
             await liveDb.updateSubscription(local.id, {
               title: record.value.title || record.value.feedUrl,
-              siteUrl: record.value.siteUrl,
+              siteUrl: resolvedSiteUrl,
               category: record.value.category,
               tags: record.value.tags || [],
               updatedAt: record.value.updatedAt,

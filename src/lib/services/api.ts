@@ -282,6 +282,7 @@ class ApiClient {
       name: string;
       url: string;
       description?: string;
+      iconUrl?: string;
     }>;
     hasShares: boolean;
   }> {

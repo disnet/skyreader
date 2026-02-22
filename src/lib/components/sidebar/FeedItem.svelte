@@ -46,7 +46,9 @@
   let faviconUrl = $derived(
     subscription.customIconUrl ||
       (isAtProto
-        ? '/icons/icon-192.svg'
+        ? subscription.siteUrl
+          ? getFaviconUrl(subscription.siteUrl)
+          : '/icons/icon-192.svg'
         : getFaviconUrl(subscription.siteUrl || subscription.feedUrl || ''))
   );
   let faviconLoaded = $state(false);

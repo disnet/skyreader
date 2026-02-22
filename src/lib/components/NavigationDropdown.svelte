@@ -163,7 +163,9 @@
       iconUrl:
         s.customIconUrl ||
         (s.sourceType?.startsWith('atproto.')
-          ? '/icons/icon-192.svg'
+          ? s.siteUrl
+            ? getFaviconUrl(s.siteUrl)
+            : '/icons/icon-192.svg'
           : getFaviconUrl(s.siteUrl || s.feedUrl || '')),
     }));
 
@@ -255,7 +257,9 @@
         const iconUrl =
           sub.customIconUrl ||
           (sub.sourceType?.startsWith('atproto.')
-            ? '/icons/icon-192.svg'
+            ? sub.siteUrl
+              ? getFaviconUrl(sub.siteUrl)
+              : '/icons/icon-192.svg'
             : getFaviconUrl(sub.siteUrl || sub.feedUrl || ''));
         return { type: 'favicon', url: iconUrl };
       }

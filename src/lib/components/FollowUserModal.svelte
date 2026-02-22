@@ -30,7 +30,7 @@
   let isDetecting = $state(false);
   let detectError = $state<string | null>(null);
   let publications = $state<
-    Array<{ uri: string; name: string; url: string; description?: string }>
+    Array<{ uri: string; name: string; url: string; description?: string; iconUrl?: string }>
   >([]);
   let hasShares = $state(false);
 
@@ -177,12 +177,15 @@
           break;
         }
 
-        await subscriptionsStore.add(pubUri, pub.name || pub.url, {
+        const subId = await subscriptionsStore.add(pubUri, pub.name || pub.url, {
           sourceType: 'atproto.documents',
           subjectDid: selectedUser.did,
           siteUrl: pub.url,
           feedUrl: pubUri,
         });
+        if (pub.iconUrl) {
+          await subscriptionsStore.updateLocal(subId, { customIconUrl: pub.iconUrl });
+        }
       }
 
       // Subscribe to shares
@@ -197,10 +200,8 @@
       // Reload social feed to pick up backfilled content
       socialStore.loadFeed(true);
 
-      // Go back to search after successful subscription
-      goBackToSearch();
-      userSearchQuery = '';
-      userSearchResults = [];
+      // Close modal after successful subscription
+      handleClose();
     } catch (e) {
       subscribeError = e instanceof Error ? e.message : 'Failed to subscribe';
     } finally {
