@@ -546,6 +546,7 @@
               itemIndex}
             <button
               class="nav-item"
+              class:section-child={!!section}
               class:active={isItemActive(item)}
               class:highlighted={flatIndex === highlightedIndex}
               role="option"
@@ -634,6 +635,7 @@
               itemIndex}
             <button
               class="nav-item"
+              class:section-child={!!section}
               class:active={isItemActive(item)}
               class:highlighted={flatIndex === highlightedIndex}
               role="option"
@@ -958,6 +960,10 @@
     transition: background-color 0.1s;
   }
 
+  .nav-item.section-child {
+    padding-left: 2.5rem;
+  }
+
   .nav-item:hover,
   .nav-item.highlighted {
     background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
@@ -1162,6 +1168,10 @@
     color: var(--color-text);
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
+  }
+
+  :global(.mobile-portal .nav-item.section-child) {
+    padding-left: 2.5rem;
   }
 
   :global(.mobile-portal .nav-item.active) {
