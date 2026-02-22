@@ -474,17 +474,31 @@
 
     <div class="nav-separator"></div>
 
-    <!-- Views section -->
-    <NavSection
-      title="Views"
-      icon="layers"
-      isExpanded={sidebarStore.expandedSections.views}
-      showOnlyUnread={false}
-      isActive={false}
-      onToggle={() => sidebarStore.toggleSection('views')}
-      onLabelClick={() => sidebarStore.toggleSection('views')}
-      onUnreadToggle={() => {}}
-      onAdd={async () => {
+    <!-- Custom views -->
+    {#each filteredViewsStore.views as view (view.id)}
+      <ViewItem
+        {view}
+        isActive={currentFilter().type === 'view' && currentFilter().id === view.id}
+        isRenaming={renamingViewId === view.id}
+        onSelect={() => selectFilter('view', view.id)}
+        onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+        onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
+        onTouchEnd={handleViewTouchEnd}
+        onTouchMove={handleViewTouchMove}
+        onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+        onRename={async (name) => {
+          if (view.id != null) {
+            await filteredViewsStore.update(view.id, { name });
+          }
+          renamingViewId = null;
+        }}
+        onRenameCancel={() => (renamingViewId = null)}
+      />
+    {/each}
+
+    <button
+      class="nav-item new-view-btn"
+      onclick={async () => {
         const id = await filteredViewsStore.create({
           name: 'new view',
           sourceMode: 'include',
@@ -497,28 +511,11 @@
         feedViewStore.setSourcePopoverOpen(true);
       }}
     >
-      {@const filter = currentFilter()}
-      {#each filteredViewsStore.views as view (view.id)}
-        <ViewItem
-          {view}
-          isActive={filter.type === 'view' && filter.id === view.id}
-          isRenaming={renamingViewId === view.id}
-          onSelect={() => selectFilter('view', view.id)}
-          onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-          onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
-          onTouchEnd={handleViewTouchEnd}
-          onTouchMove={handleViewTouchMove}
-          onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-          onRename={async (name) => {
-            if (view.id != null) {
-              await filteredViewsStore.update(view.id, { name });
-            }
-            renamingViewId = null;
-          }}
-          onRenameCancel={() => (renamingViewId = null)}
-        />
-      {/each}
-    </NavSection>
+      <span class="nav-icon"><Icon name="plus" size={16} /></span>
+      <span class="nav-label">New view</span>
+    </button>
+
+    <div class="nav-separator"></div>
 
     <!-- Following section -->
     <NavSection
@@ -813,6 +810,14 @@
     font-size: 0.8125rem;
     color: var(--color-text-secondary);
     font-style: italic;
+  }
+
+  .new-view-btn {
+    color: var(--color-text-secondary);
+  }
+
+  .new-view-btn:hover {
+    color: var(--color-text);
   }
 
   .nav-separator {

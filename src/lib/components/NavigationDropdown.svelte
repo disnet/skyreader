@@ -125,6 +125,20 @@
       { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' },
     ];
 
+    const customViews: NavItem[] = filteredViewsStore.views.map((v) => ({
+      type: 'filteredView' as const,
+      id: v.id!,
+      label: v.name,
+      icon: 'filter' as const,
+    }));
+
+    const addViewAction: NavItem = {
+      type: 'action',
+      id: 'add-view',
+      label: 'New view',
+      icon: 'plus',
+    };
+
     const userItems: NavItem[] = followedUsers.map((u) => {
       const profile = userProfiles.get(u.did);
       return {
@@ -162,22 +176,10 @@
 
     const sections: SectionData[] = [];
 
-    const filteredViews = views.filter(filterItem);
-    if (filteredViews.length > 0) {
-      sections.push({ section: '', items: filteredViews });
-    }
-
-    const customViews: NavItem[] = [
-      ...filteredViewsStore.views.map((v) => ({
-        type: 'filteredView' as const,
-        id: v.id!,
-        label: v.name,
-        icon: 'filter' as const,
-      })),
-    ];
-    const filteredCustomViews = customViews.filter(filterItem);
-    if (filteredCustomViews.length > 0 || filterSection('Views')) {
-      sections.push({ section: 'Views', icon: 'layers', items: filteredCustomViews });
+    // System views + custom views + add action in one flat section
+    const allViews = [...views, ...customViews, addViewAction].filter(filterItem);
+    if (allViews.length > 0) {
+      sections.push({ section: '', items: allViews });
     }
 
     const filteredUsers = userItems.filter(filterItem);

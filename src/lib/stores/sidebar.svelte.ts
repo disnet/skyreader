@@ -9,7 +9,6 @@ interface SidebarState {
   expandedSections: {
     shared: boolean;
     feeds: boolean;
-    views: boolean;
   };
   showOnlyUnread: {
     shared: boolean;
@@ -32,7 +31,6 @@ function createSidebarStore() {
     expandedSections: {
       shared: false,
       feeds: true,
-      views: true,
     },
     showOnlyUnread: {
       shared: false,
@@ -52,7 +50,6 @@ function createSidebarStore() {
         state.expandedSections = {
           shared: false,
           feeds: true,
-          views: true,
           ...parsed.expandedSections,
         };
         state.showOnlyUnread = parsed.showOnlyUnread ?? { shared: false, feeds: false };
@@ -84,7 +81,7 @@ function createSidebarStore() {
     state.isOpen = false;
   }
 
-  function toggleSection(section: 'shared' | 'feeds' | 'views') {
+  function toggleSection(section: 'shared' | 'feeds') {
     state.expandedSections[section] = !state.expandedSections[section];
     persist();
   }
