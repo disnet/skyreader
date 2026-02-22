@@ -126,7 +126,7 @@
     gap: 0.75rem;
     width: 100%;
     padding: 0.5rem 0.75rem;
-    padding-left: 1.5rem;
+    padding-left: 0.75rem;
     background: none;
     border: none;
     border-radius: 12px;
@@ -221,7 +221,7 @@
     gap: 0.75rem;
     width: 100%;
     padding: 0.4rem 0.75rem;
-    padding-left: 2rem;
+    padding-left: 1.5rem;
     background: none;
     border: none;
     border-radius: 12px;
