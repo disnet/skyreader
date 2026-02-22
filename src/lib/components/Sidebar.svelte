@@ -588,7 +588,9 @@
               ? 'error'
               : undefined}
         {@const feedError = sub.feedUrl ? feedStatusStore.getStatusMessage(sub.feedUrl) : undefined}
-        {@const errorDetails = sub.feedUrl ? feedStatusStore.getErrorDetails(sub.feedUrl) : undefined}
+        {@const errorDetails = sub.feedUrl
+          ? feedStatusStore.getErrorDetails(sub.feedUrl)
+          : undefined}
         <FeedItem
           subscription={sub}
           unreadCount={count}

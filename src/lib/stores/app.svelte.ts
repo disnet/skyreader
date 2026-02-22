@@ -178,7 +178,8 @@ function createAppManager() {
           const subscription: Subscription = {
             rkey,
             feedUrl: record.value.feedUrl,
-            title: record.value.title || record.value.feedUrl || record.value.subjectDid || 'Untitled',
+            title:
+              record.value.title || record.value.feedUrl || record.value.subjectDid || 'Untitled',
             siteUrl: record.value.siteUrl,
             category: record.value.category,
             tags: record.value.tags || [],

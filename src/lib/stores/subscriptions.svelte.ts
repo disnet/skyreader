@@ -68,9 +68,12 @@ function createSubscriptionsStore() {
 
     // Check for duplicate
     if (isAtProto && options?.subjectDid && options?.sourceType) {
-      // For AT Proto subs, check by subjectDid + sourceType
+      // For AT Proto subs, check by subjectDid + sourceType + feedUrl (publication URI)
       const existing = subscriptions.find(
-        (s) => s.sourceType === options.sourceType && s.subjectDid === options.subjectDid
+        (s) =>
+          s.sourceType === options.sourceType &&
+          s.subjectDid === options.subjectDid &&
+          (s.feedUrl || '') === (options.feedUrl || feedUrl || '')
       );
       if (existing) {
         throw new Error('You are already subscribed to this content stream');
@@ -147,7 +150,9 @@ function createSubscriptionsStore() {
     const source = options?.source || 'manual';
 
     // Get existing feed URLs for duplicate detection
-    const existingUrls = new Set(subscriptions.filter((s) => s.feedUrl).map((s) => s.feedUrl!.toLowerCase()));
+    const existingUrls = new Set(
+      subscriptions.filter((s) => s.feedUrl).map((s) => s.feedUrl!.toLowerCase())
+    );
 
     // Filter out duplicates first
     let feedsToAdd = feeds.filter((feed) => {

@@ -226,7 +226,8 @@
             {#each filteredSubscriptions as sub (sub.id)}
               {#if sub.id != null}
                 {@const key = rssSourceKey(sub.id)}
-                {@const iconUrl = sub.customIconUrl || getFaviconUrl(sub.siteUrl || sub.feedUrl || '')}
+                {@const iconUrl =
+                  sub.customIconUrl || getFaviconUrl(sub.siteUrl || sub.feedUrl || '')}
                 <label class="checklist-item">
                   <input
                     type="checkbox"

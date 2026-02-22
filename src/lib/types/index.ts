@@ -12,7 +12,11 @@ export interface User {
   };
 }
 
-export type SubscriptionSourceType = 'rss' | 'atproto.shares' | 'atproto.documents' | 'atproto.collection';
+export type SubscriptionSourceType =
+  | 'rss'
+  | 'atproto.shares'
+  | 'atproto.documents'
+  | 'atproto.collection';
 
 export interface Subscription {
   id?: number;

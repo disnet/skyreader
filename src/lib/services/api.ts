@@ -274,6 +274,20 @@ class ApiClient {
     return this.fetch('/api/shares/my');
   }
 
+  // Content detection
+  async detectContent(did: string): Promise<{
+    did: string;
+    publications: Array<{
+      uri: string;
+      name: string;
+      url: string;
+      description?: string;
+    }>;
+    hasShares: boolean;
+  }> {
+    return this.fetch(`/api/social/detect-content?did=${encodeURIComponent(did)}`);
+  }
+
   // Subscriptions
   async createSubscription(data: {
     rkey: string;

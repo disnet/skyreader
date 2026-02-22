@@ -11,7 +11,11 @@ const GUIDS_PER_FEED = 10;
  * Returns true when the current title is a fallback (URL, hostname, etc.)
  * and the feed provides a real title.
  */
-function shouldUpdateTitle(currentTitle: string, feedUrl: string | undefined, fetchedTitle: string): boolean {
+function shouldUpdateTitle(
+  currentTitle: string,
+  feedUrl: string | undefined,
+  fetchedTitle: string
+): boolean {
   if (!fetchedTitle || fetchedTitle === 'Untitled Feed') return false;
   if (currentTitle === fetchedTitle) return false;
 
