@@ -277,12 +277,15 @@ class ApiClient {
   // Subscriptions
   async createSubscription(data: {
     rkey: string;
-    feedUrl: string;
+    feedUrl?: string;
     title?: string;
     siteUrl?: string;
     category?: string;
     tags?: string[];
     source?: string;
+    sourceType?: string;
+    subjectDid?: string;
+    collectionNsid?: string;
   }): Promise<{ rkey: string; uri: string }> {
     return this.fetch('/api/subscriptions', {
       method: 'POST',

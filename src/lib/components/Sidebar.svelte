@@ -580,15 +580,15 @@
     >
       {#each sortedSubscriptions() as sub (sub.id)}
         {@const count = feedUnreadCounts.get(sub.id!) || 0}
-        {@const status = feedStatusStore.getStatus(sub.feedUrl)}
+        {@const status = sub.feedUrl ? feedStatusStore.getStatus(sub.feedUrl) : undefined}
         {@const loadingState =
           status?.status === 'pending'
             ? 'loading'
             : status?.status === 'error' || status?.status === 'circuit-open'
               ? 'error'
               : undefined}
-        {@const feedError = feedStatusStore.getStatusMessage(sub.feedUrl)}
-        {@const errorDetails = feedStatusStore.getErrorDetails(sub.feedUrl)}
+        {@const feedError = sub.feedUrl ? feedStatusStore.getStatusMessage(sub.feedUrl) : undefined}
+        {@const errorDetails = sub.feedUrl ? feedStatusStore.getErrorDetails(sub.feedUrl) : undefined}
         <FeedItem
           subscription={sub}
           unreadCount={count}

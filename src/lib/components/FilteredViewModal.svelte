@@ -66,7 +66,7 @@
           const term = feedSearch.toLowerCase();
           return (
             (sub.customTitle || sub.title).toLowerCase().includes(term) ||
-            sub.feedUrl.toLowerCase().includes(term)
+            (sub.feedUrl?.toLowerCase().includes(term) ?? false)
           );
         })
       : subscriptionsStore.subscriptions
@@ -226,7 +226,7 @@
             {#each filteredSubscriptions as sub (sub.id)}
               {#if sub.id != null}
                 {@const key = rssSourceKey(sub.id)}
-                {@const iconUrl = sub.customIconUrl || getFaviconUrl(sub.siteUrl || sub.feedUrl)}
+                {@const iconUrl = sub.customIconUrl || getFaviconUrl(sub.siteUrl || sub.feedUrl || '')}
                 <label class="checklist-item">
                   <input
                     type="checkbox"

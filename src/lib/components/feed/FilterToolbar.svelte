@@ -91,7 +91,7 @@
           const term = feedSearch.toLowerCase();
           return (
             (sub.customTitle || sub.title).toLowerCase().includes(term) ||
-            sub.feedUrl.toLowerCase().includes(term)
+            (sub.feedUrl?.toLowerCase().includes(term) ?? false)
           );
         })
       : subscriptionsStore.subscriptions
@@ -450,7 +450,7 @@
                     {#if sub.id != null}
                       {@const key = rssSourceKey(sub.id)}
                       {@const iconUrl =
-                        sub.customIconUrl || getFaviconUrl(sub.siteUrl || sub.feedUrl)}
+                        sub.customIconUrl || getFaviconUrl(sub.siteUrl || sub.feedUrl || '')}
                       <label class="check-label">
                         <input
                           type="checkbox"

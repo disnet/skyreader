@@ -2,7 +2,7 @@ import { liveDb } from '$lib/services/liveDb.svelte';
 import { feedStatusStore } from './feedStatus.svelte';
 import { api } from '$lib/services/api';
 import { auth } from './auth.svelte';
-import type { Subscription } from '$lib/types';
+import type { Subscription, SubscriptionSourceType } from '$lib/types';
 
 // Generate a TID (Timestamp Identifier) for AT Protocol records
 function generateTid(): string {
@@ -53,10 +53,10 @@ function createSubscriptionsStore() {
   }
 
   /**
-   * Add a new subscription
+   * Add a new subscription (RSS or AT Proto content stream)
    */
   async function add(
-    feedUrl: string,
+    feedUrl: string | undefined,
     title: string,
     options?: Partial<Subscription>
   ): Promise<number> {
@@ -64,9 +64,21 @@ function createSubscriptionsStore() {
       throw new Error(`Feed limit reached. You can have up to ${maxSubscriptions} feeds.`);
     }
 
+    const isAtProto = options?.sourceType && options.sourceType.startsWith('atproto.');
+
     // Check for duplicate
-    if (liveDb.getSubscriptionByUrl(feedUrl)) {
-      throw new Error('You are already subscribed to this feed');
+    if (isAtProto && options?.subjectDid && options?.sourceType) {
+      // For AT Proto subs, check by subjectDid + sourceType
+      const existing = subscriptions.find(
+        (s) => s.sourceType === options.sourceType && s.subjectDid === options.subjectDid
+      );
+      if (existing) {
+        throw new Error('You are already subscribed to this content stream');
+      }
+    } else if (feedUrl) {
+      if (liveDb.getSubscriptionByUrl(feedUrl)) {
+        throw new Error('You are already subscribed to this feed');
+      }
     }
 
     const rkey = generateTid();
@@ -75,11 +87,14 @@ function createSubscriptionsStore() {
     // Sync to backend first
     await api.createSubscription({
       rkey,
-      feedUrl,
+      feedUrl: feedUrl || undefined,
       title,
       siteUrl: options?.siteUrl,
       category: options?.category,
       tags: options?.tags,
+      sourceType: options?.sourceType,
+      subjectDid: options?.subjectDid,
+      collectionNsid: options?.collectionNsid,
     });
 
     // Store locally after successful backend sync
@@ -92,12 +107,17 @@ function createSubscriptionsStore() {
       tags: options?.tags || [],
       createdAt: now,
       localUpdatedAt: Date.now(),
-      fetchStatus: 'pending',
+      fetchStatus: isAtProto ? 'ready' : 'pending',
       source: options?.source,
+      sourceType: options?.sourceType,
+      subjectDid: options?.subjectDid,
+      collectionNsid: options?.collectionNsid,
     };
 
     const id = await liveDb.addSubscription(subscription);
-    feedStatusStore.markPending(feedUrl);
+    if (!isAtProto && feedUrl) {
+      feedStatusStore.markPending(feedUrl);
+    }
 
     return id;
   }
@@ -127,7 +147,7 @@ function createSubscriptionsStore() {
     const source = options?.source || 'manual';
 
     // Get existing feed URLs for duplicate detection
-    const existingUrls = new Set(subscriptions.map((s) => s.feedUrl.toLowerCase()));
+    const existingUrls = new Set(subscriptions.filter((s) => s.feedUrl).map((s) => s.feedUrl!.toLowerCase()));
 
     // Filter out duplicates first
     let feedsToAdd = feeds.filter((feed) => {
@@ -270,7 +290,7 @@ function createSubscriptionsStore() {
 
     // Delete locally (includes articles)
     await liveDb.deleteSubscription(id);
-    feedStatusStore.clearStatus(sub.feedUrl);
+    if (sub.feedUrl) feedStatusStore.clearStatus(sub.feedUrl);
   }
 
   /**

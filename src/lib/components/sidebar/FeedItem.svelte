@@ -42,7 +42,7 @@
   }: Props = $props();
 
   let faviconUrl = $derived(
-    subscription.customIconUrl || getFaviconUrl(subscription.siteUrl || subscription.feedUrl)
+    subscription.customIconUrl || getFaviconUrl(subscription.siteUrl || subscription.feedUrl || '')
   );
   let faviconLoaded = $state(false);
 

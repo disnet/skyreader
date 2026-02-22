@@ -12,10 +12,12 @@ export interface User {
   };
 }
 
+export type SubscriptionSourceType = 'rss' | 'atproto.shares' | 'atproto.documents' | 'atproto.collection';
+
 export interface Subscription {
   id?: number;
   rkey: string;
-  feedUrl: string;
+  feedUrl?: string; // Required for RSS, optional for AT Proto subscriptions
   title: string;
   siteUrl?: string;
   category?: string;
@@ -29,6 +31,9 @@ export interface Subscription {
   source?: 'manual' | 'opml';
   customTitle?: string; // User-set title override (local only)
   customIconUrl?: string; // User-set icon override (local only)
+  sourceType?: SubscriptionSourceType; // Content source type; omitted = RSS
+  subjectDid?: string; // AT Protocol account DID; required for atproto.* types
+  collectionNsid?: string; // Collection NSID for atproto.collection (future)
 }
 
 export interface Article {

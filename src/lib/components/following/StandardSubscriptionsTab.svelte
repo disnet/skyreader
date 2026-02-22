@@ -40,9 +40,9 @@
       // invalid URL, skip hostname matching
     }
     return subs.some((s) => {
-      if (s.feedUrl.toLowerCase() === pubLower) return true;
+      if (s.feedUrl?.toLowerCase() === pubLower) return true;
       if (s.siteUrl?.toLowerCase() === pubLower) return true;
-      if (pubHostname) {
+      if (pubHostname && s.feedUrl) {
         try {
           if (new URL(s.feedUrl).hostname === pubHostname) return true;
         } catch {
