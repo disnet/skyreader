@@ -30,7 +30,7 @@
   }: Props = $props();
 </script>
 
-<div class="nav-section">
+<div class="nav-section" class:expanded={isExpanded}>
   <div class="section-header" class:active={isActive}>
     <button class="header-btn" onclick={onLabelClick}>
       <span class="nav-icon"><Icon name={icon} /></span>
@@ -75,6 +75,13 @@
 <style>
   .nav-section {
     margin-top: 0;
+    border-radius: 12px;
+    transition: background-color 0.15s;
+  }
+
+  .nav-section.expanded {
+    background-color: rgba(0, 0, 0, 0.025);
+    padding-bottom: 0.25rem;
   }
 
   .section-header {
@@ -212,6 +219,10 @@
   @media (prefers-color-scheme: dark) {
     .section-header:hover {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
+    }
+
+    .nav-section.expanded {
+      background-color: rgba(255, 255, 255, 0.025);
     }
   }
 </style>

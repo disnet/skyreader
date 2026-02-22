@@ -472,6 +472,8 @@
       <span class="nav-label">Feedback</span>
     </a>
 
+    <div class="nav-separator"></div>
+
     <!-- Views section -->
     <NavSection
       title="Views"
@@ -811,6 +813,10 @@
     font-size: 0.8125rem;
     color: var(--color-text-secondary);
     font-style: italic;
+  }
+
+  .nav-separator {
+    height: 0.5rem;
   }
 
   .more-indicator {

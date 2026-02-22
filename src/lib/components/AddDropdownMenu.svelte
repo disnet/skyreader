@@ -121,29 +121,6 @@
       >
         <button
           class="add-menu-item"
-          onclick={(e) =>
-            handleItemClick(() => {
-              filteredViewsStore
-                .create({
-                  name: 'new view',
-                  sourceMode: 'include',
-                  sourceKeys: [],
-                  readFilter: 'unread',
-                  sortOrder: 'newest',
-                })
-                .then((id) => {
-                  goto(`/?view=${id}`);
-                  feedViewStore.setFilterToolbarOpen(true);
-                  feedViewStore.setSourcePopoverOpen(true);
-                });
-            }, e)}
-          role="menuitem"
-        >
-          <span class="item-icon"><Icon name="layers" size={16} /></span>
-          New View
-        </button>
-        <button
-          class="add-menu-item"
           onclick={(e) => handleItemClick(() => sidebarStore.openAddFeedModal(), e)}
           role="menuitem"
         >
@@ -165,6 +142,29 @@
         >
           <span class="item-icon"><Icon name="bookmark" size={16} /></span>
           Save Article by URL
+        </button>
+        <button
+          class="add-menu-item"
+          onclick={(e) =>
+            handleItemClick(() => {
+              filteredViewsStore
+                .create({
+                  name: 'new view',
+                  sourceMode: 'include',
+                  sourceKeys: [],
+                  readFilter: 'unread',
+                  sortOrder: 'newest',
+                })
+                .then((id) => {
+                  goto(`/?view=${id}`);
+                  feedViewStore.setFilterToolbarOpen(true);
+                  feedViewStore.setSourcePopoverOpen(true);
+                });
+            }, e)}
+          role="menuitem"
+        >
+          <span class="item-icon"><Icon name="layers" size={16} /></span>
+          New View
         </button>
       </div>
     </div>
