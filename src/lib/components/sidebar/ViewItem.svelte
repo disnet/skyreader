@@ -55,7 +55,7 @@
 </script>
 
 <button
-  class="nav-item sub-item view-item"
+  class="nav-item view-item"
   class:active={isActive}
   onclick={isRenaming ? undefined : onSelect}
   oncontextmenu={onContextMenu}
@@ -130,10 +130,6 @@
   .nav-item.active {
     background-color: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
     color: var(--color-primary);
-  }
-
-  .nav-item.sub-item {
-    padding-left: 0.75rem;
   }
 
   .view-icon {
