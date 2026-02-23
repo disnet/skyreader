@@ -196,7 +196,7 @@ function createAppManager() {
           const id = await liveDb.addSubscription(subscription);
           result.added.push(subscription.feedUrl || '');
           result.addedSubs.push({ ...subscription, id });
-          if (subscription.feedUrl) feedStatusStore.markPending(subscription.feedUrl);
+          if (subscription.feedUrl && !isAtProto) feedStatusStore.markPending(subscription.feedUrl);
         }
       }
 
