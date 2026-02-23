@@ -8,6 +8,7 @@
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import { searchBlueskyActors, type BlueskySearchResult } from '$lib/services/blueskySearch';
   import { api } from '$lib/services/api';
+  import { profileService } from '$lib/services/profiles';
   import Modal from '$lib/components/common/Modal.svelte';
 
   interface Publication {
@@ -449,6 +450,28 @@
   $effect(() => {
     if (open) {
       loadStandardSubscriptions();
+      // If opened with a specific DID, skip straight to content detection
+      const initialDid = sidebarStore.addFeedModalInitialDid;
+      if (initialDid) {
+        // Start content detection immediately with DID as placeholder handle
+        selectAccount({
+          did: initialDid,
+          handle: initialDid,
+          displayName: undefined,
+          avatar: undefined,
+        });
+        // Resolve profile in background to update display name/avatar
+        profileService.getProfile(initialDid).then((profile) => {
+          if (profile && selectedAccount?.did === initialDid) {
+            selectedAccount = {
+              ...selectedAccount,
+              handle: profile.handle || selectedAccount.handle,
+              displayName: profile.displayName,
+              avatar: profile.avatar,
+            };
+          }
+        });
+      }
     }
   });
 

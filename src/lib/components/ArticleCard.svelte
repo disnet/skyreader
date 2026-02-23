@@ -25,6 +25,7 @@
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
+  import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
@@ -486,10 +487,12 @@
       <div class="share-attribution">
         <img src={logo} alt="" class="attribution-icon" />
         shared by
-        <a
-          href="/?sharer={share.authorDid}"
+        <button
           class="share-author-link"
-          onclick={(e) => e.stopPropagation()}>@{authorHandle}</a
+          onclick={(e) => {
+            e.stopPropagation();
+            sidebarStore.openAddFeedModalForDid(share.authorDid);
+          }}>@{authorHandle}</button
         >
         {#if displayReshareCount > 0}
           <span class="attribution-reshare-count" title="{displayReshareCount} reshares"
@@ -501,10 +504,12 @@
       <div class="share-attribution">
         <span class="attribution-icon-wrapper"><Icon name="newspaper" size={12} /></span>
         published by
-        <a
-          href="/?author={document.authorDid}"
+        <button
           class="share-author-link"
-          onclick={(e) => e.stopPropagation()}>@{authorHandle}</a
+          onclick={(e) => {
+            e.stopPropagation();
+            sidebarStore.openAddFeedModalForDid(document.authorDid);
+          }}>@{authorHandle}</button
         >
       </div>
     {/if}
@@ -820,6 +825,12 @@
   .share-author-link {
     color: var(--color-text-secondary);
     text-decoration: none;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: inherit;
+    cursor: pointer;
   }
 
   .share-author-link:hover {

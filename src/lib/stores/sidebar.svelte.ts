@@ -82,12 +82,20 @@ function createSidebarStore() {
     persist();
   }
 
+  let addFeedModalInitialDid = $state<string | null>(null);
+
   function openAddFeedModal() {
+    state.addFeedModalOpen = true;
+  }
+
+  function openAddFeedModalForDid(did: string) {
+    addFeedModalInitialDid = did;
     state.addFeedModalOpen = true;
   }
 
   function closeAddFeedModal() {
     state.addFeedModalOpen = false;
+    addFeedModalInitialDid = null;
   }
 
   function openSaveArticleModal() {
@@ -117,6 +125,9 @@ function createSidebarStore() {
     get addFeedModalOpen() {
       return state.addFeedModalOpen;
     },
+    get addFeedModalInitialDid() {
+      return addFeedModalInitialDid;
+    },
     get saveArticleModalOpen() {
       return state.saveArticleModalOpen;
     },
@@ -137,6 +148,7 @@ function createSidebarStore() {
     toggleSection,
     toggleShowOnlyUnread,
     openAddFeedModal,
+    openAddFeedModalForDid,
     closeAddFeedModal,
     openSaveArticleModal,
     closeSaveArticleModal,
