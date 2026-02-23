@@ -107,6 +107,34 @@
   let itemGuid = $derived(article?.guid || share?.itemGuid || document?.recordUri || itemUrl);
   let displaySiteUrl = $derived(siteUrl || share?.feedUrl || document?.siteUri || itemUrl);
 
+  // Derive a publication name for shares/documents when feedTitle isn't provided
+  let displayFeedTitle = $derived.by(() => {
+    if (feedTitle) return feedTitle;
+    // For shares, extract hostname from feedUrl or itemUrl
+    if (isShareMode) {
+      const url = share?.feedUrl || share?.itemUrl;
+      if (url) {
+        try {
+          return new URL(url).hostname.replace(/^www\./, '');
+        } catch {
+          return undefined;
+        }
+      }
+    }
+    // For documents, extract hostname from canonicalUrl
+    if (isDocumentMode) {
+      const url = document?.canonicalUrl;
+      if (url) {
+        try {
+          return new URL(url).hostname.replace(/^www\./, '');
+        } catch {
+          return undefined;
+        }
+      }
+    }
+    return undefined;
+  });
+
   // Content handling - article has priority, then share content, then localArticle, then document
   let displayContent = $derived.by(() => {
     // For articles and shares, use existing logic
@@ -497,10 +525,14 @@
           {itemTitle}
         {/if}
       </span>
-      {#if feedTitle}
-        <a href="/?feed={feedId}" class="feed-title-link" onclick={(e) => e.stopPropagation()}
-          >{feedTitle}</a
-        >
+      {#if displayFeedTitle}
+        {#if feedId}
+          <a href="/?feed={feedId}" class="feed-title-link" onclick={(e) => e.stopPropagation()}
+            >{displayFeedTitle}</a
+          >
+        {:else}
+          <span class="feed-title-label">{displayFeedTitle}</span>
+        {/if}
       {/if}
       <span class="article-date">{formatRelativeDate(itemPublishedAt)}</span>
     </button>
@@ -853,7 +885,8 @@
     color: var(--color-text-secondary);
   }
 
-  .feed-title-link {
+  .feed-title-link,
+  .feed-title-label {
     flex-shrink: 0;
     max-width: 12rem;
     overflow: hidden;
