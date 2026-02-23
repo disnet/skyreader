@@ -1297,7 +1297,8 @@
       align-self: center;
     }
 
-    .feed-title-link {
+    .feed-title-link,
+    .feed-title-label {
       order: 2;
       flex: 0 1 auto;
       min-width: 0;
