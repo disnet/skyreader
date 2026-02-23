@@ -152,6 +152,75 @@
     return '';
   });
 
+  let popoverOpen = $state(false);
+
+  // Swipe-to-open menu on touch devices
+  let touchStartX = 0;
+  let touchStartY = 0;
+  let swipeOffset = $state(0);
+  let swipeActive = false;
+  let directionLocked = false;
+  let isHorizontal = false;
+  let snappingBack = $state(false);
+  let thresholdTriggered = false;
+  const SWIPE_THRESHOLD = 60;
+
+  function handleTouchStart(e: TouchEvent) {
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+    swipeActive = true;
+    directionLocked = false;
+    isHorizontal = false;
+    snappingBack = false;
+    thresholdTriggered = false;
+    swipeOffset = 0;
+  }
+
+  function handleTouchMove(e: TouchEvent) {
+    if (!swipeActive) return;
+    const dx = e.touches[0].clientX - touchStartX;
+    const dy = e.touches[0].clientY - touchStartY;
+
+    // Lock direction after 10px of movement
+    if (!directionLocked && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+      directionLocked = true;
+      isHorizontal = Math.abs(dx) > Math.abs(dy);
+    }
+
+    if (!directionLocked || !isHorizontal) return;
+
+    // Only allow left swipe (negative offset)
+    swipeOffset = Math.min(0, dx);
+
+    // Haptic feedback when crossing threshold
+    if (!thresholdTriggered && swipeOffset < -SWIPE_THRESHOLD) {
+      thresholdTriggered = true;
+      navigator.vibrate?.(10);
+    }
+  }
+
+  function handleTouchEnd() {
+    if (!swipeActive) return;
+    swipeActive = false;
+
+    if (swipeOffset < -SWIPE_THRESHOLD) {
+      // Snap back and open menu
+      snappingBack = true;
+      swipeOffset = 0;
+      setTimeout(() => {
+        snappingBack = false;
+        popoverOpen = true;
+      }, 200);
+    } else {
+      // Snap back without opening
+      snappingBack = true;
+      swipeOffset = 0;
+      setTimeout(() => {
+        snappingBack = false;
+      }, 200);
+    }
+  }
+
   let tagMenuOpenLocal = $state(false);
   let tagMenuAnchorRef = $state<HTMLElement | null>(null);
   let tagMenuOpen = $derived(tagMenuOpenLocal || feedViewStore.tagMenuItemKey === itemKey);
@@ -201,49 +270,75 @@
 <article
   class="bookmark-card"
   class:selected
+  class:menu-open={popoverOpen}
   role="button"
   tabindex="0"
-  onclick={() => onOpen?.()}
   onmouseenter={() => onHover?.()}
   onkeydown={(e) => {
     if (e.key === 'Enter') onOpen?.();
   }}
+  ontouchstart={handleTouchStart}
+  ontouchmove={handleTouchMove}
+  ontouchend={handleTouchEnd}
 >
-  <div class="bookmark-content">
-    <h3 class="bookmark-title">{title}</h3>
-    {#if summaryText}
-      <p class="bookmark-summary">{summaryText}</p>
-    {/if}
-    <div class="bookmark-meta">
-      <span class="meta-icon">
-        {#if faviconUrl}
-          <img src={faviconUrl} alt="" class="favicon" />
-        {:else}
-          <Icon name="rss" size={14} />
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="swipe-track"
+    class:snapping={snappingBack}
+    style="transform: translateX({swipeOffset}px)"
+  >
+    <div class="bookmark-inner">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="bookmark-content"
+        onclick={() => {
+          if (popoverOpen) {
+            popoverOpen = false;
+            return;
+          }
+          onOpen?.();
+        }}
+      >
+        <h3 class="bookmark-title">{title}</h3>
+        {#if summaryText}
+          <p class="bookmark-summary">{summaryText}</p>
         {/if}
-      </span>
-      {#if typeBadge}
-        <span class="meta-type-badge">{typeBadge}</span>
-      {:else if feedTitle}
-        <span class="meta-feed">{feedTitle}</span>
-      {/if}
-      {#if displayItem.type === 'article' && displayItem.item.author}
-        <span class="meta-author">{displayItem.item.author}</span>
-      {/if}
-      <span class="meta-read-time">
-        <Icon name="clock" size={12} />
-        {readTimeMinutes} min
-      </span>
-      <span class="meta-date">{formatRelativeDate(publishedAt)}</span>
-      {#each tags as tag, i}
-        {#if i === 0}<span class="meta-dot" aria-hidden="true">·</span>{/if}
-        <span class="tag-chip">{tag}</span>
-      {/each}
-    </div>
-  </div>
+        <div class="bookmark-meta">
+          <span class="meta-icon">
+            {#if faviconUrl}
+              <img src={faviconUrl} alt="" class="favicon" />
+            {:else}
+              <Icon name="rss" size={14} />
+            {/if}
+          </span>
+          {#if typeBadge}
+            <span class="meta-type-badge">{typeBadge}</span>
+          {:else if feedTitle}
+            <span class="meta-feed">{feedTitle}</span>
+          {/if}
+          {#if displayItem.type === 'article' && displayItem.item.author}
+            <span class="meta-author">{displayItem.item.author}</span>
+          {/if}
+          <span class="meta-read-time">
+            <Icon name="clock" size={12} />
+            {readTimeMinutes} min
+          </span>
+          <span class="meta-date">{formatRelativeDate(publishedAt)}</span>
+          {#each tags as tag, i}
+            {#if i === 0}<span class="meta-dot" aria-hidden="true">·</span>{/if}
+            <span class="tag-chip">{tag}</span>
+          {/each}
+        </div>
+      </div>
 
-  <div class="card-actions" bind:this={tagMenuAnchorRef}>
-    <PopoverMenu items={popoverMenuItems} />
+      <div class="card-actions" bind:this={tagMenuAnchorRef}>
+        <PopoverMenu items={popoverMenuItems} bind:open={popoverOpen} />
+      </div>
+    </div>
+    <div class="swipe-reveal">
+      <Icon name="more-horizontal" size={16} />
+      <span>Actions</span>
+    </div>
   </div>
 
   {#if tagMenuOpen}
@@ -262,10 +357,50 @@
 <style>
   .bookmark-card {
     position: relative;
-    padding: 0.75rem 1rem;
     cursor: pointer;
     border-radius: 8px;
+    overflow: hidden;
     transition: background-color 0.15s;
+  }
+
+  .swipe-track {
+    display: flex;
+    width: fit-content;
+    min-width: 100%;
+  }
+
+  .swipe-track.snapping {
+    transition: transform 0.2s ease-out;
+  }
+
+  .bookmark-inner {
+    position: relative;
+    padding: 0.75rem 1rem;
+    flex: 0 0 100%;
+    min-width: 0;
+  }
+
+  .swipe-reveal {
+    flex-shrink: 0;
+    display: none;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0 1rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  @media (max-width: 640px) {
+    .swipe-reveal {
+      display: flex;
+    }
+  }
+
+  .bookmark-card.menu-open {
+    z-index: 10;
+    overflow: visible;
   }
 
   .bookmark-card.selected {

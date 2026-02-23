@@ -12,11 +12,11 @@
 
   interface Props {
     items: MenuItem[];
+    open?: boolean;
   }
 
-  let { items }: Props = $props();
+  let { items, open = $bindable(false) }: Props = $props();
 
-  let isOpen = $state(false);
   let menuRef: HTMLDivElement | null = $state(null);
   let buttonRef: HTMLButtonElement | null = $state(null);
   let menuPosition = $state<{
@@ -56,8 +56,8 @@
 
   function toggle(e: MouseEvent) {
     e.stopPropagation();
-    isOpen = !isOpen;
-    if (isOpen) {
+    open = !open;
+    if (open) {
       // Position after the menu is rendered
       requestAnimationFrame(() => {
         updateMenuPosition();
@@ -68,26 +68,26 @@
   function handleItemClick(item: MenuItem, e: MouseEvent) {
     e.stopPropagation();
     if (!item.keepOpen) {
-      isOpen = false;
+      open = false;
     }
     item.onclick();
   }
 
   function handleClickOutside(e: MouseEvent) {
     if (
-      isOpen &&
+      open &&
       menuRef &&
       buttonRef &&
       !menuRef.contains(e.target as Node) &&
       !buttonRef.contains(e.target as Node)
     ) {
-      isOpen = false;
+      open = false;
     }
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (isOpen && e.key === 'Escape') {
-      isOpen = false;
+    if (open && e.key === 'Escape') {
+      open = false;
       buttonRef?.focus();
     }
   }
@@ -110,12 +110,12 @@
     class="menu-trigger"
     onclick={toggle}
     aria-haspopup="true"
-    aria-expanded={isOpen}
+    aria-expanded={open}
   >
     <span class="dots">⋯</span>
   </button>
 
-  {#if isOpen}
+  {#if open}
     <div
       bind:this={menuRef}
       class="menu-dropdown"
