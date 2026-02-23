@@ -125,7 +125,7 @@
           role="menuitem"
         >
           <span class="item-icon"><Icon name="rss" size={16} /></span>
-          Add RSS Feed
+          Add Feed
         </button>
         <button
           class="add-menu-item"
