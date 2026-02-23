@@ -26,6 +26,172 @@
   // Selected user state
   let selectedUser = $state<BlueskySearchResult | null>(null);
 
+  // Standard subscriptions state
+  type StandardSub = {
+    uri: string;
+    publisherDid: string;
+    publication: {
+      uri: string;
+      name: string;
+      url: string;
+      description?: string;
+    };
+  };
+
+  let standardSubs = $state<StandardSub[]>([]);
+  let isLoadingStandardSubs = $state(false);
+  let standardSubsLoaded = $state(false);
+
+  // Reactively track which standard sub publisher DIDs already have subscriptions
+  let subscribedPublisherDids = $derived.by(() => {
+    const dids = new Set<string>();
+    for (const sub of subscriptionsStore.subscriptions) {
+      if (sub.subjectDid) {
+        dids.add(sub.subjectDid);
+      }
+    }
+    return dids;
+  });
+
+  function parseAtUri(atUri: string): { did: string; collection: string; rkey: string } | null {
+    const match = atUri.match(/^at:\/\/(did:[^/]+)\/([^/]+)\/([^/]+)$/);
+    if (!match) return null;
+    return { did: match[1], collection: match[2], rkey: match[3] };
+  }
+
+  async function resolvePdsUrl(did: string): Promise<string | null> {
+    try {
+      if (did.startsWith('did:plc:')) {
+        const res = await fetch(`https://plc.directory/${did}`);
+        if (!res.ok) return null;
+        const doc = (await res.json()) as {
+          service?: Array<{ id: string; type: string; serviceEndpoint: string }>;
+        };
+        const svc = doc.service?.find(
+          (s) => s.id === '#atproto_pds' || s.type === 'AtprotoPersonalDataServer'
+        );
+        return svc?.serviceEndpoint || null;
+      } else if (did.startsWith('did:web:')) {
+        const domain = did.replace('did:web:', '');
+        const res = await fetch(`https://${domain}/.well-known/did.json`);
+        if (!res.ok) return null;
+        const doc = (await res.json()) as {
+          service?: Array<{ id: string; type: string; serviceEndpoint: string }>;
+        };
+        const svc = doc.service?.find(
+          (s) => s.id === '#atproto_pds' || s.type === 'AtprotoPersonalDataServer'
+        );
+        return svc?.serviceEndpoint || null;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function loadStandardSubscriptions() {
+    if (standardSubsLoaded || isLoadingStandardSubs) return;
+    isLoadingStandardSubs = true;
+    try {
+      const pdsUrl = auth.user?.pdsUrl;
+      const did = auth.user?.did;
+      if (!pdsUrl || !did) {
+        standardSubs = [];
+        return;
+      }
+
+      const params = new URLSearchParams({
+        repo: did,
+        collection: 'site.standard.graph.subscription',
+        limit: '100',
+      });
+      const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.listRecords?${params}`);
+      if (!res.ok) {
+        standardSubs = [];
+        return;
+      }
+      const data = (await res.json()) as {
+        records: Array<{ uri: string; value: { publication?: string } }>;
+      };
+
+      if (data.records.length === 0) {
+        standardSubs = [];
+        return;
+      }
+
+      const entries = data.records
+        .map((r) => ({ uri: r.uri, pubUri: r.value.publication }))
+        .filter((e): e is { uri: string; pubUri: string } => !!e.pubUri)
+        .map((e) => ({ ...e, parsed: parseAtUri(e.pubUri) }))
+        .filter((e): e is typeof e & { parsed: NonNullable<typeof e.parsed> } => !!e.parsed);
+
+      const uniqueDids = [...new Set(entries.map((e) => e.parsed.did))];
+      const pdsCache = new Map<string, string | null>();
+      await Promise.all(
+        uniqueDids.map(async (d) => {
+          pdsCache.set(d, await resolvePdsUrl(d));
+        })
+      );
+
+      const results = await Promise.allSettled(
+        entries.map(async (entry): Promise<StandardSub | null> => {
+          const pubPds = pdsCache.get(entry.parsed.did);
+          if (!pubPds) return null;
+
+          const pubParams = new URLSearchParams({
+            repo: entry.parsed.did,
+            collection: entry.parsed.collection,
+            rkey: entry.parsed.rkey,
+          });
+          const pubRes = await fetch(`${pubPds}/xrpc/com.atproto.repo.getRecord?${pubParams}`);
+          if (!pubRes.ok) return null;
+
+          const pubData = (await pubRes.json()) as {
+            value: { name?: string; url?: string; description?: string };
+          };
+          const pub = pubData.value;
+          if (!pub.url) return null;
+
+          return {
+            uri: entry.uri,
+            publisherDid: entry.parsed.did,
+            publication: {
+              uri: entry.pubUri,
+              name: pub.name || pub.url,
+              url: pub.url,
+              description: pub.description,
+            },
+          };
+        })
+      );
+
+      standardSubs = results
+        .filter((r): r is PromiseFulfilledResult<StandardSub | null> => r.status === 'fulfilled')
+        .map((r) => r.value)
+        .filter((s): s is StandardSub => s !== null);
+    } catch {
+      // Silently fail - these are just suggestions
+    } finally {
+      isLoadingStandardSubs = false;
+      standardSubsLoaded = true;
+    }
+  }
+
+  function handleSelectStandardSub(sub: StandardSub) {
+    let handle = sub.publisherDid;
+    try {
+      handle = new URL(sub.publication.url).hostname;
+    } catch {
+      // use DID as fallback
+    }
+    selectUser({
+      did: sub.publisherDid,
+      handle,
+      displayName: sub.publication.name,
+      avatar: undefined,
+    });
+  }
+
   // Content detection state
   let isDetecting = $state(false);
   let detectError = $state<string | null>(null);
@@ -227,12 +393,13 @@
     onclose();
   }
 
-  // Focus search input when modal opens
+  // Focus search input and load standard subscriptions when modal opens
   $effect(() => {
     if (open && step === 'search') {
       requestAnimationFrame(() => {
         searchInputEl?.focus();
       });
+      loadStandardSubscriptions();
     }
   });
 </script>
@@ -280,7 +447,37 @@
       {:else if userSearchQuery.length >= 2 && !isUserSearching}
         <p class="no-results">No users found</p>
       {:else if userSearchQuery.length === 0}
-        <p class="hint">Enter a Bluesky handle or name to search</p>
+        {#if isLoadingStandardSubs}
+          <div class="detecting">
+            <span class="search-spinner detecting-spinner"></span>
+            <span>Loading subscriptions...</span>
+          </div>
+        {:else if standardSubs.length > 0}
+          <p class="section-label">Your subscriptions</p>
+          <div class="standard-subs-list">
+            {#each standardSubs as sub (sub.uri)}
+              {@const isSubscribed = subscribedPublisherDids.has(sub.publisherDid)}
+              <button class="standard-sub-row" onclick={() => handleSelectStandardSub(sub)}>
+                <div class="standard-sub-info">
+                  <span class="standard-sub-name">{sub.publication.name}</span>
+                  <span class="standard-sub-url">{sub.publication.url}</span>
+                  {#if sub.publication.description}
+                    <span class="standard-sub-desc">{sub.publication.description}</span>
+                  {/if}
+                </div>
+                {#if isSubscribed}
+                  <span class="subscribed-badge">Subscribed</span>
+                {/if}
+                <span class="select-arrow">&rsaquo;</span>
+              </button>
+            {/each}
+          </div>
+          <div class="divider-with-label">
+            <span>or search Bluesky users</span>
+          </div>
+        {:else}
+          <p class="hint">Enter a Bluesky handle or name to search</p>
+        {/if}
       {/if}
     {:else if step === 'select' && selectedUser}
       <!-- Step 2: Select content -->
@@ -762,5 +959,98 @@
   .subscribe-button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  /* Standard subscriptions styles */
+  .section-label {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin: 0;
+  }
+
+  .standard-subs-list {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    overflow: hidden;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+
+  .standard-sub-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.625rem 0.75rem;
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--color-border);
+    text-align: left;
+    cursor: pointer;
+    color: var(--color-text);
+    font: inherit;
+    transition: background-color 0.1s;
+  }
+
+  .standard-sub-row:last-child {
+    border-bottom: none;
+  }
+
+  .standard-sub-row:hover {
+    background: var(--color-bg-secondary);
+  }
+
+  .standard-sub-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.0625rem;
+  }
+
+  .standard-sub-name {
+    font-size: 0.9375rem;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .standard-sub-url {
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .standard-sub-desc {
+    font-size: 0.8125rem;
+    color: var(--color-text-secondary);
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .divider-with-label {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    color: var(--color-text-secondary);
+    font-size: 0.8125rem;
+  }
+
+  .divider-with-label::before,
+  .divider-with-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--color-border);
   }
 </style>
