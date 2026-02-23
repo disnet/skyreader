@@ -153,7 +153,13 @@ function createFeedViewStore() {
   }
 
   function getAllFollowDids(): string[] {
-    return socialStore.inAppFollows.map((f) => f.did);
+    const dids = new Set<string>();
+    for (const sub of subscriptionsStore.subscriptions) {
+      if (sub.sourceType?.startsWith('atproto.') && sub.subjectDid) {
+        dids.add(sub.subjectDid);
+      }
+    }
+    return [...dids];
   }
 
   // Derived: effective filters (always uses toolbar state as the working copy)
@@ -191,12 +197,27 @@ function createFeedViewStore() {
     return false;
   });
 
+  // Derived: the subscription selected by feedFilter (if any)
+  let feedFilterSubscription = $derived.by(() => {
+    if (!feedFilter) return null;
+    const id = parseInt(feedFilter);
+    return subscriptionsStore.getById(id) ?? null;
+  });
+
   // Derived: view mode
   let viewMode = $derived.by((): ViewMode => {
     if (activeFilteredView) return 'combined';
     if (sharedFilter) return 'userShares';
     if (sharerFilter || followingFilter) return 'shares';
-    if (feedFilter || savedFilter || feedsFilter) return 'articles';
+    if (feedFilter) {
+      // AT Proto subscriptions show shares/documents, not articles
+      const sub = feedFilterSubscription;
+      if (sub?.sourceType === 'atproto.shares' || sub?.sourceType === 'atproto.documents') {
+        return 'shares';
+      }
+      return 'articles';
+    }
+    if (savedFilter || feedsFilter) return 'articles';
     return 'combined';
   });
 
@@ -305,11 +326,18 @@ function createFeedViewStore() {
     // Return empty if contentTypeFilter is 'documents'
     if (contentTypeFilter === 'documents') return [];
 
+    // When feedFilter points to an atproto.documents subscription, hide shares
+    const feedSub = feedFilterSubscription;
+    if (feedSub?.sourceType === 'atproto.documents') return [];
+
     const shares = socialStore.shares;
     const sortOrder = fv.sortOrder;
 
     let filtered: SocialShare[];
-    if (sharerFilter) {
+    if (feedSub?.sourceType === 'atproto.shares' && feedSub.subjectDid) {
+      // Filter to shares from this subscription's subject
+      filtered = shares.filter((s) => s.authorDid === feedSub.subjectDid);
+    } else if (sharerFilter) {
       filtered = shares.filter((s) => s.authorDid === sharerFilter);
     } else {
       filtered = [...shares];
@@ -364,13 +392,27 @@ function createFeedViewStore() {
     // Return empty if contentTypeFilter is 'shares'
     if (contentTypeFilter === 'shares') return [];
 
+    // When feedFilter points to an atproto.shares subscription, hide documents
+    const feedSub = feedFilterSubscription;
+    if (feedSub?.sourceType === 'atproto.shares') return [];
+
     const docs = socialStore.documents;
     const sortOrder = fv.sortOrder;
 
     let filtered = [...docs];
 
-    // Filter by author if sharerFilter is set
-    if (sharerFilter) {
+    if (feedSub?.sourceType === 'atproto.documents' && feedSub.subjectDid) {
+      // Filter to documents from this subscription's subject
+      filtered = filtered.filter((d) => d.authorDid === feedSub.subjectDid);
+      // If freestanding, only show documents not associated with a publication
+      if (feedSub.feedUrl === '__freestanding__') {
+        filtered = filtered.filter((d) => !d.siteUri || !d.siteUri.startsWith('at://'));
+      } else if (feedSub.feedUrl && feedSub.feedUrl.startsWith('at://')) {
+        // If publication-scoped (feedUrl is a publication AT URI), also filter by siteUri
+        filtered = filtered.filter((d) => d.siteUri === feedSub.feedUrl);
+      }
+    } else if (sharerFilter) {
+      // Filter by author if sharerFilter is set
       filtered = filtered.filter((d) => d.authorDid === sharerFilter);
     }
 

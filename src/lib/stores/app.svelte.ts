@@ -68,7 +68,10 @@ function createAppManager() {
       ]);
 
       // Initialize feed statuses for existing subscriptions
-      const feedUrls = liveDb.subscriptions.map((s) => s.feedUrl);
+      const feedUrls = liveDb.subscriptions
+        .filter((s) => !s.sourceType?.startsWith('atproto.'))
+        .map((s) => s.feedUrl)
+        .filter((u): u is string => !!u);
       feedStatusStore.initializeFeeds(feedUrls);
 
       // Initialize pending count and process queue if online
@@ -113,8 +116,6 @@ function createAppManager() {
         syncSubscriptions(),
         itemLabelsStore.load(),
         shareReadingStore.load(),
-        socialStore.loadFollowedUsers(),
-        socialStore.loadInAppFollowCount(),
         socialStore.loadFeed(true),
       ]);
 
@@ -155,13 +156,16 @@ function createAppManager() {
 
     try {
       const response = await api.listRecords<{
-        feedUrl: string;
+        feedUrl?: string;
         title?: string;
         siteUrl?: string;
         category?: string;
         tags?: string[];
         createdAt: string;
         updatedAt?: string;
+        sourceType?: string;
+        subjectDid?: string;
+        collectionNsid?: string;
       }>('app.skyreader.feed.subscription');
 
       // Build maps for comparison
@@ -171,23 +175,28 @@ function createAppManager() {
       // Find added subscriptions (in remote but not local)
       for (const [rkey, record] of remoteByRkey) {
         if (!localByRkey.has(rkey)) {
+          const isAtProto = record.value.sourceType?.startsWith('atproto.');
           const subscription: Subscription = {
             rkey,
             feedUrl: record.value.feedUrl,
-            title: record.value.title || record.value.feedUrl,
+            title:
+              record.value.title || record.value.feedUrl || record.value.subjectDid || 'Untitled',
             siteUrl: record.value.siteUrl,
             category: record.value.category,
             tags: record.value.tags || [],
             createdAt: record.value.createdAt,
             updatedAt: record.value.updatedAt,
             localUpdatedAt: Date.now(),
-            fetchStatus: 'pending',
+            fetchStatus: isAtProto ? 'ready' : 'pending',
+            sourceType: record.value.sourceType as Subscription['sourceType'],
+            subjectDid: record.value.subjectDid,
+            collectionNsid: record.value.collectionNsid,
           };
 
           const id = await liveDb.addSubscription(subscription);
-          result.added.push(subscription.feedUrl);
+          result.added.push(subscription.feedUrl || '');
           result.addedSubs.push({ ...subscription, id });
-          feedStatusStore.markPending(subscription.feedUrl);
+          if (subscription.feedUrl) feedStatusStore.markPending(subscription.feedUrl);
         }
       }
 
@@ -197,8 +206,8 @@ function createAppManager() {
           if (sub.id) {
             await liveDb.deleteSubscription(sub.id);
           }
-          result.removed.push(sub.feedUrl);
-          feedStatusStore.clearStatus(sub.feedUrl);
+          result.removed.push(sub.feedUrl || '');
+          if (sub.feedUrl) feedStatusStore.clearStatus(sub.feedUrl);
         }
       }
 
@@ -207,15 +216,17 @@ function createAppManager() {
         const local = localByRkey.get(rkey);
         if (local?.id) {
           // Check if anything changed
+          // Preserve local siteUrl if PDS record doesn't have it
+          const resolvedSiteUrl = record.value.siteUrl || local.siteUrl;
           const hasChanges =
             local.title !== (record.value.title || record.value.feedUrl) ||
-            local.siteUrl !== record.value.siteUrl ||
+            local.siteUrl !== resolvedSiteUrl ||
             local.category !== record.value.category;
 
           if (hasChanges) {
             await liveDb.updateSubscription(local.id, {
               title: record.value.title || record.value.feedUrl,
-              siteUrl: record.value.siteUrl,
+              siteUrl: resolvedSiteUrl,
               category: record.value.category,
               tags: record.value.tags || [],
               updatedAt: record.value.updatedAt,

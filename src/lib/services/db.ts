@@ -276,6 +276,12 @@ class SkyreaderDatabase extends Dexie {
           await tx.table('saved').bulkAdd(oldRows);
         }
       });
+
+    // Add sourceType and subjectDid indexes to subscriptions for AT Proto content streams
+    this.version(25).stores({
+      subscriptions:
+        '++id, rkey, feedUrl, category, fetchStatus, source, localUpdatedAt, sourceType, subjectDid',
+    });
   }
 }
 

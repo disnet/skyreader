@@ -62,7 +62,9 @@
     }
 
     // Check which feeds already exist
-    const existing = new Set(subscriptionsStore.subscriptions.map((s) => s.feedUrl.toLowerCase()));
+    const existing = new Set(
+      subscriptionsStore.subscriptions.filter((s) => s.feedUrl).map((s) => s.feedUrl!.toLowerCase())
+    );
     existingUrls = existing;
 
     // Pre-select only non-duplicate feeds

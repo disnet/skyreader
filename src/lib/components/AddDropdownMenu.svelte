@@ -125,15 +125,7 @@
           role="menuitem"
         >
           <span class="item-icon"><Icon name="rss" size={16} /></span>
-          Add RSS Feed
-        </button>
-        <button
-          class="add-menu-item"
-          onclick={(e) => handleItemClick(() => sidebarStore.openFollowUserModal(), e)}
-          role="menuitem"
-        >
-          <span class="item-icon"><Icon name="users" size={16} /></span>
-          Add Bluesky Account
+          Add Feed
         </button>
         <button
           class="add-menu-item"

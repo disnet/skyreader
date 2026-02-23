@@ -4,7 +4,6 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { socialStore } from '$lib/stores/social.svelte';
   import { sharesStore } from '$lib/stores/shares.svelte';
   import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
@@ -20,11 +19,10 @@
   import AddDropdownMenu from './AddDropdownMenu.svelte';
   import EditFeedModal from './EditFeedModal.svelte';
   import ContextMenu from './sidebar/ContextMenu.svelte';
-  import UserContextMenu from './sidebar/UserContextMenu.svelte';
   import NavSection from './sidebar/NavSection.svelte';
   import FeedItem from './sidebar/FeedItem.svelte';
-  import UserItem from './sidebar/UserItem.svelte';
   import ViewItem from './sidebar/ViewItem.svelte';
+  import SidebarAddFeed from './sidebar/SidebarAddFeed.svelte';
   import Icon from './Icon.svelte';
   import type { Subscription } from '$lib/types';
 
@@ -38,11 +36,6 @@
   let contextMenu = $state<{ x: number; y: number; feedId: number } | null>(null);
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
   let longPressTriggered = $state(false);
-
-  // User context menu state
-  let userContextMenu = $state<{ x: number; y: number; userDid: string } | null>(null);
-  let userLongPressTimer: ReturnType<typeof setTimeout> | null = null;
-  let userLongPressTriggered = $state(false);
 
   // Edit modal state
   let editingSubscription = $state<Subscription | null>(null);
@@ -96,54 +89,9 @@
     contextMenu = null;
   }
 
-  // User context menu handlers
-  function handleUserContextMenu(e: MouseEvent, userDid: string) {
-    e.preventDefault();
-    userContextMenu = { x: e.clientX, y: e.clientY, userDid };
-  }
-
-  function handleUserTouchStart(e: TouchEvent, userDid: string) {
-    userLongPressTriggered = false;
-    const touch = e.touches[0];
-    userLongPressTimer = setTimeout(() => {
-      userLongPressTriggered = true;
-      userContextMenu = { x: touch.clientX, y: touch.clientY, userDid };
-    }, 500);
-  }
-
-  function handleUserTouchEnd(e: TouchEvent) {
-    if (userLongPressTimer) {
-      clearTimeout(userLongPressTimer);
-      userLongPressTimer = null;
-    }
-    if (userLongPressTriggered) {
-      e.preventDefault();
-    }
-  }
-
-  function handleUserTouchMove() {
-    if (userLongPressTimer) {
-      clearTimeout(userLongPressTimer);
-      userLongPressTimer = null;
-    }
-  }
-
-  function closeUserContextMenu() {
-    userContextMenu = null;
-  }
-
-  async function handleUnfollowUser(userDid: string) {
-    if (confirm('Are you sure you want to unfollow this user?')) {
-      await socialStore.unfollowInApp(userDid);
-    }
-  }
-
   function handleClickOutside(e: MouseEvent) {
     if (contextMenu) {
       closeContextMenu();
-    }
-    if (userContextMenu) {
-      closeUserContextMenu();
     }
     if (viewContextMenu) {
       closeViewContextMenu();
@@ -153,9 +101,6 @@
   function handleKeydown(e: KeyboardEvent) {
     if (contextMenu && e.key === 'Escape') {
       closeContextMenu();
-    }
-    if (userContextMenu && e.key === 'Escape') {
-      closeUserContextMenu();
     }
     if (viewContextMenu && e.key === 'Escape') {
       closeViewContextMenu();
@@ -176,7 +121,6 @@
     document.removeEventListener('click', handleClickOutside);
     document.removeEventListener('keydown', handleKeydown);
     if (longPressTimer) clearTimeout(longPressTimer);
-    if (userLongPressTimer) clearTimeout(userLongPressTimer);
     if (viewLongPressTimer) clearTimeout(viewLongPressTimer);
     document.body.classList.remove('sidebar-open-mobile');
   });
@@ -193,44 +137,24 @@
 
   let feedUnreadCounts = $derived(unreadCounts.feedCounts);
   let totalUnread = $derived(unreadCounts.totalArticles);
-  let sharerCounts = $derived(() => unreadCounts.sharerShareCounts);
-  let sharerDocCounts = $derived(() => unreadCounts.sharerDocCounts);
 
   // Current filter from URL
   let currentFilter = $derived(() => {
     // Only show feed filters as active on the home page
     if ($page.url.pathname !== '/') {
-      return { type: 'none' as const, contentType: null as 'shares' | 'documents' | null };
+      return { type: 'none' as const };
     }
     const view = $page.url.searchParams.get('view');
     const feed = $page.url.searchParams.get('feed');
     const starred = $page.url.searchParams.get('saved');
     const shared = $page.url.searchParams.get('shared');
-    const sharer = $page.url.searchParams.get('sharer');
-    const following = $page.url.searchParams.get('following');
     const feeds = $page.url.searchParams.get('feeds');
-    const type = $page.url.searchParams.get('type') as 'shares' | 'documents' | null;
-    if (view)
-      return {
-        type: 'view' as const,
-        id: parseInt(view),
-        contentType: null as 'shares' | 'documents' | null,
-      };
-    if (feed)
-      return {
-        type: 'feed' as const,
-        id: parseInt(feed),
-        contentType: null as 'shares' | 'documents' | null,
-      };
-    if (starred)
-      return { type: 'saved' as const, contentType: null as 'shares' | 'documents' | null };
-    if (shared)
-      return { type: 'shared' as const, contentType: null as 'shares' | 'documents' | null };
-    if (following) return { type: 'following' as const, contentType: type };
-    if (sharer) return { type: 'sharer' as const, id: sharer, contentType: type };
-    if (feeds)
-      return { type: 'feeds' as const, contentType: null as 'shares' | 'documents' | null };
-    return { type: 'all' as const, contentType: null as 'shares' | 'documents' | null };
+    if (view) return { type: 'view' as const, id: parseInt(view) };
+    if (feed) return { type: 'feed' as const, id: parseInt(feed) };
+    if (starred) return { type: 'saved' as const };
+    if (shared) return { type: 'shared' as const };
+    if (feeds) return { type: 'feeds' as const };
+    return { type: 'all' as const };
   });
 
   // Sort and optionally filter subscriptions by unread count (descending)
@@ -246,49 +170,11 @@
     return subs;
   });
 
-  // Sort followed users: all in-app follows, sorted by unread items (shares + documents) then by DID
-  let sortedFollowedUsers = $derived(() => {
-    const shareCounts = sharerCounts();
-    const docCounts = sharerDocCounts();
-    // Use inAppFollows which includes ALL users we follow on Skyreader (not just those with shares)
-    let users = socialStore.inAppFollows
-      .map((f) => ({ did: f.did, source: 'inapp' as const }))
-      .sort((a, b) => {
-        const countA = (shareCounts.get(a.did) || 0) + (docCounts.get(a.did) || 0);
-        const countB = (shareCounts.get(b.did) || 0) + (docCounts.get(b.did) || 0);
-        const hasUnreadA = countA > 0;
-        const hasUnreadB = countB > 0;
-
-        // Tier 1: accounts with unread items (shares or documents)
-        if (hasUnreadA && !hasUnreadB) return -1;
-        if (!hasUnreadA && hasUnreadB) return 1;
-
-        // Within unread tier, sort by count descending
-        if (hasUnreadA && hasUnreadB) {
-          return countB - countA;
-        }
-
-        // Tier 2: by DID (stable sort - profiles are fetched async in UserItem)
-        return a.did.localeCompare(b.did);
-      });
-    if (sidebarStore.showOnlyUnread.shared) {
-      const totalCount = (did: string) => (shareCounts.get(did) || 0) + (docCounts.get(did) || 0);
-      users = users.filter((u) => totalCount(u.did) > 0);
-    }
-    return users;
-  });
-
   // Update sorted IDs in store for keyboard navigation
   $effect(() => {
     const sorted = sortedSubscriptions();
     const ids = sorted.map((s) => s.id!).filter((id) => id !== undefined);
     sidebarStore.setSortedFeedIds(ids);
-  });
-
-  $effect(() => {
-    const sorted = sortedFollowedUsers();
-    const dids = sorted.map((u) => u.did);
-    sidebarStore.setSortedUserDids(dids);
   });
 
   // View context menu state
@@ -342,19 +228,13 @@
     }
   }
 
-  function selectFilter(type: string, id?: string | number, contentType?: 'shares' | 'documents') {
+  function selectFilter(type: string, id?: string | number) {
     const params = new URLSearchParams();
     if (type === 'view' && id) params.set('view', String(id));
     else if (type === 'feed' && id) params.set('feed', String(id));
     else if (type === 'saved') params.set('saved', 'true');
     else if (type === 'shared') params.set('shared', 'true');
-    else if (type === 'following') {
-      params.set('following', 'true');
-      if (contentType) params.set('type', contentType);
-    } else if (type === 'sharer' && id) {
-      params.set('sharer', String(id));
-      if (contentType) params.set('type', contentType);
-    } else if (type === 'feeds') params.set('feeds', 'true');
+    else if (type === 'feeds') params.set('feeds', 'true');
 
     const query = params.toString();
     goto(query ? `/?${query}` : '/');
@@ -428,16 +308,6 @@
         <span class="nav-count">{sharesStore.userShares.size}</span>
       {/if}
     </button>
-
-    <a
-      href="/discover"
-      class="nav-item nav-link"
-      class:active={$page.url.pathname === '/discover'}
-      onclick={() => sidebarStore.closeMobile()}
-    >
-      <span class="nav-icon"><Icon name="share-2" /></span>
-      <span class="nav-label">Discover</span>
-    </a>
 
     <a
       href="/activity"
@@ -517,55 +387,6 @@
 
     <div class="nav-separator"></div>
 
-    <!-- Following section -->
-    <NavSection
-      title="Following"
-      icon="users"
-      isExpanded={sidebarStore.expandedSections.shared}
-      showOnlyUnread={sidebarStore.showOnlyUnread.shared}
-      isActive={$page.url.pathname === '/following'}
-      onToggle={() => sidebarStore.toggleSection('shared')}
-      onLabelClick={() => {
-        goto('/following');
-        sidebarStore.closeMobile();
-      }}
-      onUnreadToggle={() => sidebarStore.toggleShowOnlyUnread('shared')}
-      onAdd={() => sidebarStore.openFollowUserModal()}
-    >
-      {@const totalShareCount = Array.from(sharerCounts().values()).reduce((a, b) => a + b, 0)}
-      {@const totalDocCount = Array.from(sharerDocCounts().values()).reduce((a, b) => a + b, 0)}
-      {@const filter = currentFilter()}
-      {@const allUsers = sortedFollowedUsers()}
-      {@const displayedUsers = allUsers.slice(0, 10)}
-      {#each displayedUsers as user (user.did)}
-        {@const shareCount = sharerCounts().get(user.did) || 0}
-        {@const docCount = sharerDocCounts().get(user.did) || 0}
-        {@const filter = currentFilter()}
-        <UserItem
-          {user}
-          {shareCount}
-          documentCount={docCount}
-          isActive={filter.type === 'sharer' && filter.id === user.did}
-          contentType={filter.type === 'sharer' && filter.id === user.did
-            ? filter.contentType
-            : null}
-          onSelect={() => selectFilter('sharer', user.did)}
-          onSelectShares={() => selectFilter('sharer', user.did, 'shares')}
-          onSelectDocuments={() => selectFilter('sharer', user.did, 'documents')}
-          onContextMenu={(e) => handleUserContextMenu(e, user.did)}
-          onTouchStart={(e) => handleUserTouchStart(e, user.did)}
-          onTouchEnd={handleUserTouchEnd}
-          onTouchMove={handleUserTouchMove}
-          onMoreClick={(e) => handleUserContextMenu(e, user.did)}
-        />
-      {:else}
-        <div class="empty-section">No followed users</div>
-      {/each}
-      {#if allUsers.length > 10}
-        <div class="more-indicator">...</div>
-      {/if}
-    </NavSection>
-
     <!-- Feeds section -->
     <NavSection
       title="Feeds"
@@ -578,17 +399,20 @@
       onUnreadToggle={() => sidebarStore.toggleShowOnlyUnread('feeds')}
       onAdd={() => sidebarStore.openAddFeedModal()}
     >
+      <SidebarAddFeed />
       {#each sortedSubscriptions() as sub (sub.id)}
         {@const count = feedUnreadCounts.get(sub.id!) || 0}
-        {@const status = feedStatusStore.getStatus(sub.feedUrl)}
+        {@const status = sub.feedUrl ? feedStatusStore.getStatus(sub.feedUrl) : undefined}
         {@const loadingState =
           status?.status === 'pending'
             ? 'loading'
             : status?.status === 'error' || status?.status === 'circuit-open'
               ? 'error'
               : undefined}
-        {@const feedError = feedStatusStore.getStatusMessage(sub.feedUrl)}
-        {@const errorDetails = feedStatusStore.getErrorDetails(sub.feedUrl)}
+        {@const feedError = sub.feedUrl ? feedStatusStore.getStatusMessage(sub.feedUrl) : undefined}
+        {@const errorDetails = sub.feedUrl
+          ? feedStatusStore.getErrorDetails(sub.feedUrl)
+          : undefined}
         <FeedItem
           subscription={sub}
           unreadCount={count}
@@ -629,16 +453,6 @@
     onEdit={() => handleEditFeed(feedId)}
     onDelete={() => removeFeed(feedId)}
     onClose={closeContextMenu}
-  />
-{/if}
-
-{#if userContextMenu}
-  {@const userDid = userContextMenu.userDid}
-  <UserContextMenu
-    x={userContextMenu.x}
-    y={userContextMenu.y}
-    onUnfollow={() => handleUnfollowUser(userDid)}
-    onClose={closeUserContextMenu}
   />
 {/if}
 
@@ -822,12 +636,6 @@
 
   .nav-separator {
     height: 0.5rem;
-  }
-
-  .more-indicator {
-    padding: 0.25rem 0.75rem;
-    font-size: 0.8125rem;
-    color: var(--color-text-secondary);
   }
 
   /* Mobile styles */

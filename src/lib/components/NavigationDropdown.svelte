@@ -2,11 +2,9 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { onMount, onDestroy } from 'svelte';
-  import { profileService } from '$lib/services/profiles';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { socialStore } from '$lib/stores/social.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { sharesStore } from '$lib/stores/shares.svelte';
   import { activityStore } from '$lib/stores/activity.svelte';
@@ -15,7 +13,6 @@
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import Icon from './Icon.svelte';
   import AddDropdownMenu from './AddDropdownMenu.svelte';
-  import type { BlueskyProfile } from '$lib/types';
 
   interface Props {
     currentTitle: string;
@@ -25,13 +22,9 @@
 
   // Derive data from stores
   let subscriptions = $derived(subscriptionsStore.subscriptions);
-  // Use inAppFollows instead of followedUsers to show ALL followed accounts,
-  // not just those with shares/content
-  let followedUsers = $derived(socialStore.inAppFollows);
 
   let feedUnreadCounts = $derived(unreadCounts.feedCounts);
   let totalUnread = $derived(unreadCounts.totalArticles);
-  let sharerCounts = $derived(unreadCounts.sharerShareCounts);
 
   let savedCount = $derived(itemLabelsStore.savedCount);
   let sharedCount = $derived(sharesStore.userShares.size);
@@ -47,9 +40,6 @@
   // Use store for open state so it can be controlled externally (keyboard shortcut)
   let isOpen = $derived(sidebarStore.navigationDropdownOpen);
 
-  // Profiles cache for followed users
-  let userProfiles = $state<Map<string, BlueskyProfile>>(new Map());
-
   // Check if we're on mobile
   function checkMobile() {
     isMobile = window.matchMedia('(max-width: 1000px)').matches;
@@ -64,21 +54,6 @@
     window.removeEventListener('resize', checkMobile);
   });
 
-  // Load profiles for followed users when they change
-  $effect(() => {
-    const dids = followedUsers.map((u) => u.did);
-    for (const did of dids) {
-      if (!userProfiles.has(did)) {
-        profileService.getProfile(did).then((profile) => {
-          if (profile) {
-            userProfiles.set(did, profile);
-            userProfiles = new Map(userProfiles);
-          }
-        });
-      }
-    }
-  });
-
   // Icon names type (matches Icon.svelte)
   type IconName =
     | 'inbox'
@@ -87,19 +62,16 @@
     | 'search'
     | 'bell'
     | 'settings'
-    | 'users'
     | 'rss'
     | 'newspaper'
     | 'plus'
     | 'filter'
-    | 'layers'
-    | 'share-2';
+    | 'layers';
 
   // Navigation item type
   type NavItem =
     | { type: 'view'; id: string; label: string; count?: number; icon: IconName }
     | { type: 'feed'; id: number; label: string; count: number; iconUrl: string | null }
-    | { type: 'user'; did: string; label: string; count: number; avatarUrl: string | null }
     | { type: 'utility'; id: string; label: string; count?: number; icon: IconName }
     | { type: 'action'; id: string; label: string; icon: IconName }
     | { type: 'filteredView'; id: number; label: string; icon: IconName };
@@ -120,7 +92,6 @@
       { type: 'view', id: 'all', label: 'All', count: totalUnread, icon: 'inbox' },
       { type: 'view', id: 'saved', label: 'Saved', count: savedCount, icon: 'bookmark' },
       { type: 'view', id: 'shared', label: 'Shared', count: sharedCount, icon: 'share' },
-      { type: 'utility', id: 'discover', label: 'Discover', icon: 'share-2' },
       { type: 'utility', id: 'activity', label: 'Activity', count: activityCount, icon: 'bell' },
       { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' },
     ];
@@ -139,28 +110,18 @@
       icon: 'plus',
     };
 
-    const userItems: NavItem[] = followedUsers.map((u) => {
-      const profile = userProfiles.get(u.did);
-      return {
-        type: 'user' as const,
-        did: u.did,
-        label:
-          profile?.displayName ||
-          u.displayName ||
-          profile?.handle ||
-          u.handle ||
-          u.did.slice(0, 20) + '...',
-        count: sharerCounts.get(u.did) || 0,
-        avatarUrl: profile?.avatar || u.avatarUrl || null,
-      };
-    });
-
     const feedItems: NavItem[] = subscriptions.map((s) => ({
       type: 'feed' as const,
       id: s.id!,
       label: s.customTitle || s.title,
       count: feedUnreadCounts.get(s.id!) || 0,
-      iconUrl: s.customIconUrl || getFaviconUrl(s.siteUrl || s.feedUrl),
+      iconUrl:
+        s.customIconUrl ||
+        (s.sourceType?.startsWith('atproto.')
+          ? s.siteUrl
+            ? getFaviconUrl(s.siteUrl)
+            : '/icons/icon-192.svg'
+          : getFaviconUrl(s.siteUrl || s.feedUrl || '')),
     }));
 
     // Filter by search query
@@ -180,19 +141,6 @@
     const allViews = [...views, ...customViews, addViewAction].filter(filterItem);
     if (allViews.length > 0) {
       sections.push({ section: '', items: allViews });
-    }
-
-    const filteredUsers = userItems.filter(filterItem);
-    if (filteredUsers.length > 0 || filterSection('Following')) {
-      sections.push({
-        section: 'Following',
-        icon: 'users',
-        onSectionClick: () => {
-          goto('/following');
-          close();
-        },
-        items: filteredUsers,
-      });
     }
 
     const filteredFeeds = feedItems.filter(filterItem);
@@ -215,51 +163,41 @@
   let flatItems = $derived(filteredItems.flatMap((s) => s.items));
 
   // Derive the current view's icon for the trigger button
-  type TriggerIcon =
-    | { type: 'icon'; name: IconName }
-    | { type: 'favicon'; url: string }
-    | { type: 'avatar'; url: string };
+  type TriggerIcon = { type: 'icon'; name: IconName } | { type: 'favicon'; url: string };
 
   let currentIcon = $derived.by((): TriggerIcon => {
     const pathname = $page.url.pathname;
 
     // Utility pages (separate routes)
-    if (pathname === '/discover') return { type: 'icon', name: 'share-2' };
     if (pathname === '/activity') return { type: 'icon', name: 'bell' };
     if (pathname === '/settings') return { type: 'icon', name: 'settings' };
-    if (pathname === '/following') return { type: 'icon', name: 'users' };
 
     // Feed page filters (query params on /)
     const url = $page.url;
     const feed = url.searchParams.get('feed');
     const saved = url.searchParams.get('saved');
     const shared = url.searchParams.get('shared');
-    const sharer = url.searchParams.get('sharer');
-    const following = url.searchParams.get('following');
     const feeds = url.searchParams.get('feeds');
     const view = url.searchParams.get('view');
 
     if (view) return { type: 'icon', name: 'filter' };
     if (saved) return { type: 'icon', name: 'bookmark' };
     if (shared) return { type: 'icon', name: 'share' };
-    if (following) return { type: 'icon', name: 'users' };
     if (feeds) return { type: 'icon', name: 'rss' };
 
     if (feed) {
       const sub = subscriptions.find((s) => s.id === parseInt(feed));
       if (sub) {
-        const iconUrl = sub.customIconUrl || getFaviconUrl(sub.siteUrl || sub.feedUrl);
+        const iconUrl =
+          sub.customIconUrl ||
+          (sub.sourceType?.startsWith('atproto.')
+            ? sub.siteUrl
+              ? getFaviconUrl(sub.siteUrl)
+              : '/icons/icon-192.svg'
+            : getFaviconUrl(sub.siteUrl || sub.feedUrl || ''));
         return { type: 'favicon', url: iconUrl };
       }
       return { type: 'icon', name: 'rss' };
-    }
-
-    if (sharer) {
-      const profile = userProfiles.get(sharer);
-      const user = followedUsers.find((u) => u.did === sharer);
-      const avatarUrl = profile?.avatar || user?.avatarUrl;
-      if (avatarUrl) return { type: 'avatar', url: avatarUrl };
-      return { type: 'icon', name: 'users' };
     }
 
     return { type: 'icon', name: 'inbox' };
@@ -271,17 +209,12 @@
     const feed = url.searchParams.get('feed');
     const saved = url.searchParams.get('saved');
     const shared = url.searchParams.get('shared');
-    const sharer = url.searchParams.get('sharer');
-    const following = url.searchParams.get('following');
     const feeds = url.searchParams.get('feeds');
     const view = url.searchParams.get('view');
-    const type = url.searchParams.get('type') as 'shares' | 'documents' | null;
     if (view) return { type: 'filteredView', id: parseInt(view) };
     if (feed) return { type: 'feed', id: parseInt(feed) };
     if (saved) return { type: 'saved' };
     if (shared) return { type: 'shared' };
-    if (sharer) return { type: 'sharer', id: sharer };
-    if (following) return { type: 'following', contentType: type };
     if (feeds) return { type: 'feeds' };
     return { type: 'all' };
   });
@@ -294,10 +227,7 @@
       if (item.id === 'shared' && filter.type === 'shared') return true;
       if (item.id === 'feeds' && filter.type === 'feeds') return true;
     }
-    if (item.type === 'utility' && item.id === 'following' && $page.url.pathname === '/following')
-      return true;
     if (item.type === 'feed' && filter.type === 'feed' && filter.id === item.id) return true;
-    if (item.type === 'user' && filter.type === 'sharer' && filter.id === item.did) return true;
     if (item.type === 'filteredView' && filter.type === 'filteredView' && filter.id === item.id)
       return true;
     return false;
@@ -367,8 +297,6 @@
       url = `/?feed=${item.id}`;
     } else if (item.type === 'filteredView') {
       url = `/?view=${item.id}`;
-    } else if (item.type === 'user') {
-      url = `/?sharer=${item.did}`;
     } else if (item.type === 'utility') {
       url = `/${item.id}`;
     }
@@ -491,8 +419,6 @@
       <span class="trigger-icon"><Icon name={currentIcon.name} size={16} /></span>
     {:else if currentIcon.type === 'favicon'}
       <img src={currentIcon.url} alt="" class="trigger-favicon" />
-    {:else if currentIcon.type === 'avatar'}
-      <img src={currentIcon.url} alt="" class="trigger-avatar" />
     {/if}
     <span class="trigger-title">{currentTitle}</span>
     <svg
@@ -563,12 +489,6 @@
                   <img src={item.iconUrl} alt="" class="feed-icon" />
                 {:else}
                   <span class="feed-icon-placeholder"></span>
-                {/if}
-              {:else if item.type === 'user'}
-                {#if item.avatarUrl}
-                  <img src={item.avatarUrl} alt="" class="user-avatar" />
-                {:else}
-                  <span class="user-avatar-placeholder"></span>
                 {/if}
               {/if}
               <span class="item-label">{item.label}</span>
@@ -653,12 +573,6 @@
                 {:else}
                   <span class="feed-icon-placeholder"></span>
                 {/if}
-              {:else if item.type === 'user'}
-                {#if item.avatarUrl}
-                  <img src={item.avatarUrl} alt="" class="user-avatar" />
-                {:else}
-                  <span class="user-avatar-placeholder"></span>
-                {/if}
               {/if}
               <span class="item-label">{item.label}</span>
               {#if item.type !== 'action' && item.type !== 'filteredView' && item.count && item.count > 0}
@@ -714,15 +628,6 @@
     flex-shrink: 0;
     border-radius: 2px;
     object-fit: contain;
-    display: block;
-  }
-
-  .trigger-avatar {
-    width: 18px;
-    height: 18px;
-    flex-shrink: 0;
-    border-radius: 50%;
-    object-fit: cover;
     display: block;
   }
 
@@ -1002,24 +907,6 @@
     display: block;
   }
 
-  .user-avatar {
-    width: 18px;
-    height: 18px;
-    flex-shrink: 0;
-    border-radius: 50%;
-    object-fit: cover;
-    display: block;
-  }
-
-  .user-avatar-placeholder {
-    width: 18px;
-    height: 18px;
-    flex-shrink: 0;
-    background: var(--color-border);
-    border-radius: 50%;
-    display: block;
-  }
-
   .item-label {
     flex: 1;
     overflow: hidden;
@@ -1207,22 +1094,6 @@
     flex-shrink: 0;
     background: var(--color-border);
     border-radius: 2px;
-  }
-
-  :global(.mobile-portal .user-avatar) {
-    width: 18px;
-    height: 18px;
-    flex-shrink: 0;
-    border-radius: 50%;
-    object-fit: cover;
-  }
-
-  :global(.mobile-portal .user-avatar-placeholder) {
-    width: 18px;
-    height: 18px;
-    flex-shrink: 0;
-    background: var(--color-border);
-    border-radius: 50%;
   }
 
   :global(.mobile-portal .item-label) {

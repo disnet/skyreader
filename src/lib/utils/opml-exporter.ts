@@ -51,8 +51,8 @@ export function generateOPML(subscriptions: Subscription[]): string {
 }
 
 function buildOutline(sub: Subscription): string {
-  const title = sub.customTitle || sub.title || sub.feedUrl;
-  let outline = `<outline type="rss" text="${escapeXml(title)}" title="${escapeXml(title)}" xmlUrl="${escapeXml(sub.feedUrl)}"`;
+  const title = sub.customTitle || sub.title || sub.feedUrl || '';
+  let outline = `<outline type="rss" text="${escapeXml(title)}" title="${escapeXml(title)}" xmlUrl="${escapeXml(sub.feedUrl || '')}"`;
 
   if (sub.siteUrl) {
     outline += ` htmlUrl="${escapeXml(sub.siteUrl)}"`;

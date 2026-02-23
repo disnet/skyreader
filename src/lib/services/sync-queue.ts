@@ -9,7 +9,6 @@ export type SyncCollection =
   | 'shares'
   | 'shareReading'
   | 'socialReading'
-  | 'follows'
   | 'label'
   | 'saved';
 
@@ -55,11 +54,6 @@ export interface SocialReadingPayload {
   itemTitle?: string;
 }
 
-export interface FollowPayload {
-  rkey: string;
-  did: string;
-}
-
 export interface LabelPayload {
   itemKey: string;
   itemType: string;
@@ -86,7 +80,6 @@ type SyncPayload =
   | SharePayload
   | ShareReadingPayload
   | SocialReadingPayload
-  | FollowPayload
   | LabelPayload
   | SavedPayload;
 
@@ -416,9 +409,6 @@ class SyncQueue {
       case 'socialReading':
         await this.executeSocialReadingOperation(entry.operation, payload as SocialReadingPayload);
         break;
-      case 'follows':
-        await this.executeFollowOperation(entry.operation, payload as FollowPayload);
-        break;
       case 'label':
         await this.executeLabelOperation(entry.operation, payload as LabelPayload);
         break;
@@ -525,20 +515,6 @@ class SyncQueue {
         break;
       case 'delete':
         await api.markSocialItemAsUnread(payload.rkey);
-        break;
-    }
-  }
-
-  private async executeFollowOperation(
-    operation: SyncOperation,
-    payload: FollowPayload
-  ): Promise<void> {
-    switch (operation) {
-      case 'create':
-        await api.followUser(payload.rkey, payload.did);
-        break;
-      case 'delete':
-        await api.unfollowUser(payload.rkey);
         break;
     }
   }

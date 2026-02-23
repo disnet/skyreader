@@ -264,7 +264,7 @@ class LiveDatabase {
    * Get a subscription by feed URL
    */
   getSubscriptionByUrl(feedUrl: string): Subscription | undefined {
-    return this._subscriptions.find((s) => s.feedUrl.toLowerCase() === feedUrl.toLowerCase());
+    return this._subscriptions.find((s) => s.feedUrl?.toLowerCase() === feedUrl.toLowerCase());
   }
 
   /**

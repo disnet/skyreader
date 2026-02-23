@@ -3,7 +3,6 @@ import { browser } from '$app/environment';
 interface SidebarState {
   isOpen: boolean; // For mobile overlay
   addFeedModalOpen: boolean;
-  followUserModalOpen: boolean; // For follow user modal
   saveArticleModalOpen: boolean; // For save article by URL modal
   navigationDropdownOpen: boolean; // For navigation dropdown
   expandedSections: {
@@ -16,16 +15,12 @@ interface SidebarState {
   };
   // Sorted IDs for keyboard navigation (matches visual sidebar order)
   sortedFeedIds: number[];
-  sortedUserDids: string[];
-  // Expanded users in Following section
-  expandedUsers: Set<string>;
 }
 
 function createSidebarStore() {
   let state = $state<SidebarState>({
     isOpen: false,
     addFeedModalOpen: false,
-    followUserModalOpen: false,
     saveArticleModalOpen: false,
     navigationDropdownOpen: false,
     expandedSections: {
@@ -37,8 +32,6 @@ function createSidebarStore() {
       feeds: false,
     },
     sortedFeedIds: [],
-    sortedUserDids: [],
-    expandedUsers: new Set(),
   });
 
   // Restore from localStorage on init
@@ -53,7 +46,6 @@ function createSidebarStore() {
           ...parsed.expandedSections,
         };
         state.showOnlyUnread = parsed.showOnlyUnread ?? { shared: false, feeds: false };
-        state.expandedUsers = new Set(parsed.expandedUsers ?? []);
       } catch {
         // Ignore parse errors
       }
@@ -67,7 +59,6 @@ function createSidebarStore() {
         JSON.stringify({
           expandedSections: state.expandedSections,
           showOnlyUnread: state.showOnlyUnread,
-          expandedUsers: Array.from(state.expandedUsers),
         })
       );
     }
@@ -99,14 +90,6 @@ function createSidebarStore() {
     state.addFeedModalOpen = false;
   }
 
-  function openFollowUserModal() {
-    state.followUserModalOpen = true;
-  }
-
-  function closeFollowUserModal() {
-    state.followUserModalOpen = false;
-  }
-
   function openSaveArticleModal() {
     state.saveArticleModalOpen = true;
   }
@@ -127,33 +110,12 @@ function createSidebarStore() {
     state.sortedFeedIds = ids;
   }
 
-  function setSortedUserDids(dids: string[]) {
-    state.sortedUserDids = dids;
-  }
-
-  function toggleUserExpanded(did: string) {
-    if (state.expandedUsers.has(did)) {
-      state.expandedUsers.delete(did);
-    } else {
-      state.expandedUsers.add(did);
-    }
-    state.expandedUsers = new Set(state.expandedUsers); // Trigger reactivity
-    persist();
-  }
-
-  function isUserExpanded(did: string) {
-    return state.expandedUsers.has(did);
-  }
-
   return {
     get isOpen() {
       return state.isOpen;
     },
     get addFeedModalOpen() {
       return state.addFeedModalOpen;
-    },
-    get followUserModalOpen() {
-      return state.followUserModalOpen;
     },
     get saveArticleModalOpen() {
       return state.saveArticleModalOpen;
@@ -170,28 +132,17 @@ function createSidebarStore() {
     get sortedFeedIds() {
       return state.sortedFeedIds;
     },
-    get sortedUserDids() {
-      return state.sortedUserDids;
-    },
-    get expandedUsers() {
-      return state.expandedUsers;
-    },
     toggleMobile,
     closeMobile,
     toggleSection,
     toggleShowOnlyUnread,
     openAddFeedModal,
     closeAddFeedModal,
-    openFollowUserModal,
-    closeFollowUserModal,
     openSaveArticleModal,
     closeSaveArticleModal,
     toggleNavigationDropdown,
     closeNavigationDropdown,
     setSortedFeedIds,
-    setSortedUserDids,
-    toggleUserExpanded,
-    isUserExpanded,
   };
 }
 

@@ -506,7 +506,7 @@
         onShare={(article, sub) =>
           sharesStore.share(
             sub.rkey,
-            sub.feedUrl,
+            sub.feedUrl || '',
             article.guid,
             article.url,
             article.title,

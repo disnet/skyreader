@@ -11,16 +11,20 @@ const GUIDS_PER_FEED = 10;
  * Returns true when the current title is a fallback (URL, hostname, etc.)
  * and the feed provides a real title.
  */
-function shouldUpdateTitle(currentTitle: string, feedUrl: string, fetchedTitle: string): boolean {
+function shouldUpdateTitle(
+  currentTitle: string,
+  feedUrl: string | undefined,
+  fetchedTitle: string
+): boolean {
   if (!fetchedTitle || fetchedTitle === 'Untitled Feed') return false;
   if (currentTitle === fetchedTitle) return false;
 
   // Update if current title is the feed URL
-  if (currentTitle === feedUrl) return true;
+  if (feedUrl && currentTitle === feedUrl) return true;
 
   // Update if current title is just a hostname
   try {
-    const hostname = new URL(feedUrl).hostname;
+    const hostname = feedUrl ? new URL(feedUrl).hostname : '';
     if (currentTitle === hostname) return true;
   } catch {
     // ignore invalid URL
@@ -64,7 +68,10 @@ export async function fetchAllFeeds(
   const feedRequests: Array<{ url: string; since_guids?: string[]; subscriptionId: number }> = [];
 
   for (const sub of subscriptions) {
-    if (!sub.id) continue;
+    if (!sub.id || !sub.feedUrl) continue;
+
+    // Skip AT Proto subscriptions (they don't have RSS feeds)
+    if (sub.sourceType && sub.sourceType.startsWith('atproto.')) continue;
 
     // Skip feeds in circuit-breaker cooldown
     if (!feedStatusStore.canFetch(sub.feedUrl)) {
@@ -168,7 +175,7 @@ export async function fetchSingleFeed(
   force = false,
   savedGuids: Set<string> = new Set()
 ): Promise<FetchSingleFeedResult> {
-  if (!subscription.id) {
+  if (!subscription.id || !subscription.feedUrl) {
     return { success: false, newArticles: 0 };
   }
 
@@ -208,7 +215,7 @@ export async function fetchSingleFeed(
     };
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : 'Failed to fetch feed';
-    feedStatusStore.markError(subscription.feedUrl, errorMessage);
+    if (subscription.feedUrl) feedStatusStore.markError(subscription.feedUrl, errorMessage);
     return { success: false, newArticles: 0 };
   }
 }

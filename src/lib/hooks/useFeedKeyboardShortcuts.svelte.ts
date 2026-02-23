@@ -184,7 +184,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     } else {
       sharesStore.share(
         sub.rkey,
-        sub.feedUrl,
+        sub.feedUrl || '',
         article.guid,
         article.url,
         article.title,

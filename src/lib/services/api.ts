@@ -1,7 +1,5 @@
 import type {
-  DiscoverUser,
   FeedItem,
-  FollowedUserDetailed,
   GroupedShare,
   ItemLabel,
   ItemLabelType,
@@ -198,43 +196,6 @@ class ApiClient {
     return this.fetch(`/api/activity/reshares?${params}`);
   }
 
-  async getFollowedUsers(
-    cursor?: string,
-    limit?: number
-  ): Promise<{
-    users: Array<{
-      did: string;
-      source: 'bluesky' | 'inapp' | 'both';
-    }>;
-    cursor: string | null;
-  }> {
-    const params = new URLSearchParams();
-    if (cursor) params.set('cursor', cursor);
-    if (limit) params.set('limit', limit.toString());
-    const query = params.toString();
-    return this.fetch(`/api/social/following${query ? `?${query}` : ''}`);
-  }
-
-  async getFollowingDetailed(
-    limit = 50,
-    offset = 0
-  ): Promise<{
-    users: FollowedUserDetailed[];
-    nextOffset: number | null;
-  }> {
-    const params = new URLSearchParams({
-      source: 'skyreader',
-      limit: limit.toString(),
-      offset: offset.toString(),
-    });
-    return this.fetch(`/api/social/following-detailed?${params}`);
-  }
-
-  async getDiscoverUsers(limit = 20): Promise<{ users: DiscoverUser[] }> {
-    const params = new URLSearchParams({ limit: limit.toString() });
-    return this.fetch(`/api/discover?${params}`);
-  }
-
   async getPopularShares(
     period: 'day' | 'week' | 'month' = 'week',
     cursor?: string,
@@ -274,15 +235,34 @@ class ApiClient {
     return this.fetch('/api/shares/my');
   }
 
+  // Content detection
+  async detectContent(did: string): Promise<{
+    did: string;
+    publications: Array<{
+      uri: string;
+      name: string;
+      url: string;
+      description?: string;
+      iconUrl?: string;
+    }>;
+    shareCount: number;
+    freestandingDocumentCount: number;
+  }> {
+    return this.fetch(`/api/social/detect-content?did=${encodeURIComponent(did)}`);
+  }
+
   // Subscriptions
   async createSubscription(data: {
     rkey: string;
-    feedUrl: string;
+    feedUrl?: string;
     title?: string;
     siteUrl?: string;
     category?: string;
     tags?: string[];
     source?: string;
+    sourceType?: string;
+    subjectDid?: string;
+    collectionNsid?: string;
   }): Promise<{ rkey: string; uri: string }> {
     return this.fetch('/api/subscriptions', {
       method: 'POST',
@@ -317,33 +297,6 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify({ rkeys }),
     });
-  }
-
-  // Follows
-  async followUser(rkey: string, subject: string): Promise<{ rkey: string; uri: string }> {
-    return this.fetch('/api/social/follow', {
-      method: 'POST',
-      body: JSON.stringify({ rkey, subject }),
-    });
-  }
-
-  async unfollowUser(rkey: string): Promise<{ success: boolean }> {
-    return this.fetch(`/api/social/follow/${rkey}`, {
-      method: 'DELETE',
-    });
-  }
-
-  async listInAppFollows(): Promise<{
-    follows: Array<{
-      rkey: string;
-      did: string;
-      handle?: string;
-      displayName?: string;
-      avatarUrl?: string;
-      createdAt: number;
-    }>;
-  }> {
-    return this.fetch('/api/social/follows');
   }
 
   // Shares

@@ -129,6 +129,24 @@
         <p class="help-text">Leave empty to use the auto-detected favicon</p>
       </div>
 
+      {#if subscription.feedUrl}
+        <div class="info-item">
+          <span class="info-label">Feed URL</span>
+          <span class="info-value url">{subscription.feedUrl}</span>
+        </div>
+      {/if}
+
+      <div class="info-row">
+        <div class="info-item">
+          <span class="info-label">Source</span>
+          <span class="info-value">{subscription.source ?? 'manual'}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Type</span>
+          <span class="info-value">{subscription.sourceType ?? 'rss'}</span>
+        </div>
+      </div>
+
       <div class="icon-preview">
         <span class="preview-label">Preview:</span>
         {#if previewUrl}
@@ -239,6 +257,37 @@
     font-size: 0.75rem;
     color: var(--color-text-secondary);
     margin: 0;
+  }
+
+  .info-row {
+    display: flex;
+    gap: 1.5rem;
+    padding: 0.75rem;
+    background: var(--color-bg-secondary);
+    border-radius: 6px;
+  }
+
+  .info-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .info-label {
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    font-weight: 500;
+  }
+
+  .info-value {
+    font-size: 0.875rem;
+    color: var(--color-text);
+  }
+
+  .info-value.url {
+    word-break: break-all;
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
   }
 
   .icon-preview {

@@ -7,15 +7,20 @@ export interface User {
   tier?: string;
   limits?: {
     maxSubscriptions: number;
-    maxFollows: number;
     maxUrlSavesPerMonth: number;
   };
 }
 
+export type SubscriptionSourceType =
+  | 'rss'
+  | 'atproto.shares'
+  | 'atproto.documents'
+  | 'atproto.collection';
+
 export interface Subscription {
   id?: number;
   rkey: string;
-  feedUrl: string;
+  feedUrl?: string; // Required for RSS, optional for AT Proto subscriptions
   title: string;
   siteUrl?: string;
   category?: string;
@@ -29,6 +34,9 @@ export interface Subscription {
   source?: 'manual' | 'opml';
   customTitle?: string; // User-set title override (local only)
   customIconUrl?: string; // User-set icon override (local only)
+  sourceType?: SubscriptionSourceType; // Content source type; omitted = RSS
+  subjectDid?: string; // AT Protocol account DID; required for atproto.* types
+  collectionNsid?: string; // Collection NSID for atproto.collection (future)
 }
 
 export interface Article {
@@ -716,45 +724,4 @@ export interface Highlight {
   id: string;
   selector: TextQuoteSelector;
   createdAt: number; // epoch ms
-}
-
-export interface DiscoverUser {
-  did: string;
-  handle: string;
-  displayName?: string;
-  avatarUrl?: string;
-  shareCount: number;
-  recentShares?: Array<{
-    itemUrl: string;
-    itemTitle?: string;
-    createdAt: string;
-  }>;
-}
-
-export interface InappFollow {
-  id?: number;
-  rkey?: string;
-  subjectDid: string;
-  createdAt: string;
-}
-
-export interface FollowedUserDetailed {
-  did: string;
-  source: 'bluesky' | 'inapp' | 'both';
-  shareCount: number;
-  lastSharedAt: string | null;
-  followedAt: number;
-  rkey?: string;
-  recentShares?: Array<{
-    itemUrl: string;
-    itemTitle?: string;
-    createdAt: string;
-  }>;
-  documentCount?: number;
-  lastPublishedAt?: string | null;
-  recentDocuments?: Array<{
-    url: string;
-    title: string;
-    publishedAt: string;
-  }>;
 }
