@@ -221,7 +221,9 @@ function createAppManager() {
           const hasChanges =
             local.title !== (record.value.title || record.value.feedUrl) ||
             local.siteUrl !== resolvedSiteUrl ||
-            local.category !== record.value.category;
+            local.category !== record.value.category ||
+            local.sourceType !== record.value.sourceType ||
+            local.subjectDid !== record.value.subjectDid;
 
           if (hasChanges) {
             await liveDb.updateSubscription(local.id, {
@@ -231,6 +233,8 @@ function createAppManager() {
               tags: record.value.tags || [],
               updatedAt: record.value.updatedAt,
               localUpdatedAt: Date.now(),
+              sourceType: record.value.sourceType as Subscription['sourceType'],
+              subjectDid: record.value.subjectDid,
             });
           }
         }
