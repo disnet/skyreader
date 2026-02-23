@@ -1,16 +1,14 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
+  import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import { searchBlueskyActors, type BlueskySearchResult } from '$lib/services/blueskySearch';
   import { api } from '$lib/services/api';
-  import FeedDiscoveryForm from '$lib/components/FeedDiscoveryForm.svelte';
   import Modal from '$lib/components/common/Modal.svelte';
-
-  type Tab = 'rss' | 'account';
-  type AccountStep = 'search' | 'select';
 
   interface Publication {
     uri: string;
@@ -20,37 +18,39 @@
     iconUrl?: string;
   }
 
+  type Step = 'input' | 'select-feeds' | 'select-content';
+
   interface Props {
     open: boolean;
     onclose: () => void;
   }
 
   let { open, onclose }: Props = $props();
-  let feedFormRef: { reset: () => void } | undefined = $state();
   let error = $state<string | null>(null);
-  let activeTab = $state<Tab>('rss');
 
-  // Account tab state
-  let accountStep = $state<AccountStep>('search');
-  let searchQuery = $state('');
+  // Unified input state
+  let inputValue = $state('');
+  let step = $state<Step>('input');
+  let isDiscovering = $state(false);
+
+  // Bluesky search state
   let searchResults = $state<BlueskySearchResult[]>([]);
-  let selectedAccount = $state<BlueskySearchResult | null>(null);
   let isSearching = $state(false);
   let searchTimeout: ReturnType<typeof setTimeout> | undefined;
 
-  // Content detection state
+  // Feed discovery state
+  let discoveredFeeds = $state<string[]>([]);
+
+  // Account content state
+  let selectedAccount = $state<BlueskySearchResult | null>(null);
   let isDetecting = $state(false);
   let publications = $state<Publication[]>([]);
   let hasShares = $state(false);
-
-  // Selection state
   let selectedPublications = $state<Set<string>>(new Set());
   let sharesSelected = $state(false);
-
-  // Subscribe state
   let isSubscribing = $state(false);
 
-  // Standard subscriptions state (site.standard.graph.subscription records from user's PDS)
+  // Standard subscriptions state
   type StandardSub = {
     uri: string;
     publisherDid: string;
@@ -80,7 +80,6 @@
     subscriptionsStore.subscriptions.length >= subscriptionsStore.maxSubscriptions
   );
 
-  // Track which items are already subscribed
   let subscribedKeys = $derived.by(() => {
     if (!selectedAccount) return new Set<string>();
     const keys = new Set<string>();
@@ -98,12 +97,24 @@
 
   let selectedCount = $derived(selectedPublications.size + (sharesSelected ? 1 : 0));
 
-  function resetAccountTab() {
-    accountStep = 'search';
-    searchQuery = '';
+  function looksLikeUrl(value: string): boolean {
+    const trimmed = value.trim();
+    return (
+      trimmed.startsWith('http://') ||
+      trimmed.startsWith('https://') ||
+      (trimmed.includes('.') && !trimmed.includes(' ') && trimmed.length > 4)
+    );
+  }
+
+  function resetAll() {
+    inputValue = '';
+    step = 'input';
+    error = null;
+    isDiscovering = false;
     searchResults = [];
-    selectedAccount = null;
     isSearching = false;
+    discoveredFeeds = [];
+    selectedAccount = null;
     isDetecting = false;
     publications = [];
     hasShares = false;
@@ -114,29 +125,83 @@
   }
 
   function handleClose() {
-    feedFormRef?.reset();
-    resetAccountTab();
-    error = null;
-    activeTab = 'rss';
+    resetAll();
     onclose();
   }
 
-  async function handleFeedSelected(url: string) {
+  function handleInput() {
     error = null;
+    if (searchTimeout) clearTimeout(searchTimeout);
+
+    const trimmed = inputValue.trim();
+    if (trimmed.length < 2) {
+      searchResults = [];
+      isSearching = false;
+      return;
+    }
+
+    if (looksLikeUrl(trimmed)) {
+      searchResults = [];
+      isSearching = false;
+      return;
+    }
+
+    isSearching = true;
+    searchTimeout = setTimeout(async () => {
+      try {
+        searchResults = await searchBlueskyActors(trimmed, 5);
+      } catch {
+        searchResults = [];
+      } finally {
+        isSearching = false;
+      }
+    }, 300);
+  }
+
+  async function handleSubmit() {
+    const trimmed = inputValue.trim();
+    if (!trimmed) return;
+
+    error = null;
+    isDiscovering = true;
+    discoveredFeeds = [];
 
     try {
-      // Add subscription with URL as temporary title
+      let url = trimmed;
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'https://' + url;
+      }
+
+      const result = await api.discoverFeedsV2(url);
+      if (result.feeds.length === 0) {
+        error = 'No feeds found at this URL';
+        isDiscovering = false;
+      } else if (result.feeds.length === 1) {
+        await addFeed(result.feeds[0]);
+      } else {
+        discoveredFeeds = result.feeds;
+        step = 'select-feeds';
+        isDiscovering = false;
+      }
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to discover feeds';
+      isDiscovering = false;
+    }
+  }
+
+  async function addFeed(url: string) {
+    error = null;
+    try {
       const tempTitle = new URL(url).hostname;
       const id = await subscriptionsStore.add(url, tempTitle, {});
       const sub = subscriptionsStore.getById(id);
 
-      // Close modal immediately
       handleClose();
+      goto(`/?feed=${id}`);
+      sidebarStore.closeMobile();
 
-      // Fetch feed in background (updates title and loads articles)
       if (sub) {
         fetchSingleFeed(sub, true, articlesStore.savedGuids).then(async (result) => {
-          // Update subscription with feed metadata from V2 response
           if (result.success && result.title) {
             try {
               await subscriptionsStore.update(id, {
@@ -151,36 +216,15 @@
       }
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to add feed';
+      isDiscovering = false;
     }
-  }
-
-  function handleSearchInput() {
-    if (searchTimeout) clearTimeout(searchTimeout);
-    searchResults = [];
-    error = null;
-
-    if (searchQuery.length < 2) {
-      isSearching = false;
-      return;
-    }
-
-    isSearching = true;
-    searchTimeout = setTimeout(async () => {
-      try {
-        searchResults = await searchBlueskyActors(searchQuery, 5);
-      } catch {
-        searchResults = [];
-      } finally {
-        isSearching = false;
-      }
-    }, 300);
   }
 
   async function selectAccount(account: BlueskySearchResult) {
     selectedAccount = account;
-    accountStep = 'select';
+    inputValue = '';
     searchResults = [];
-    searchQuery = '';
+    step = 'select-content';
     isDetecting = true;
     error = null;
     publications = [];
@@ -193,7 +237,6 @@
       publications = result.publications;
       hasShares = result.hasShares;
 
-      // Pre-select all items that aren't already subscribed
       for (const pub of result.publications) {
         if (!subscribedKeys.has(pub.uri)) {
           selectedPublications.add(pub.uri);
@@ -210,13 +253,14 @@
     }
   }
 
-  function goBackToSearch() {
-    accountStep = 'search';
+  function goBackToInput() {
+    step = 'input';
     selectedAccount = null;
     publications = [];
     hasShares = false;
     selectedPublications = new Set();
     sharesSelected = false;
+    discoveredFeeds = [];
     error = null;
   }
 
@@ -367,7 +411,6 @@
     } catch {
       // use DID as fallback
     }
-    activeTab = 'account';
     selectAccount({
       did: sub.publisherDid,
       handle,
@@ -376,7 +419,6 @@
     });
   }
 
-  // Load standard subscriptions when modal opens
   $effect(() => {
     if (open) {
       loadStandardSubscriptions();
@@ -393,9 +435,9 @@
 
     error = null;
     isSubscribing = true;
+    let firstAddedId: number | null = null;
 
     try {
-      // Subscribe to each selected publication
       for (const pubUri of selectedPublications) {
         const pub = publications.find((p) => p.uri === pubUri);
         if (!pub) continue;
@@ -411,23 +453,31 @@
           siteUrl: pub.url,
           feedUrl: pubUri,
         });
+        if (!firstAddedId) firstAddedId = subId;
         if (pub.iconUrl) {
           await subscriptionsStore.updateLocal(subId, { customIconUrl: pub.iconUrl });
         }
       }
 
-      // Subscribe to shares
       if (sharesSelected && subscriptionsStore.canAddMore) {
-        await subscriptionsStore.add(undefined, `Shares from @${selectedAccount.handle}`, {
-          sourceType: 'atproto.shares',
-          subjectDid: selectedAccount.did,
-        });
+        const sharesId = await subscriptionsStore.add(
+          undefined,
+          `Shares from @${selectedAccount.handle}`,
+          {
+            sourceType: 'atproto.shares',
+            subjectDid: selectedAccount.did,
+          }
+        );
+        if (!firstAddedId) firstAddedId = sharesId;
       }
 
-      // Reload social feed to pick up backfilled content
       socialStore.loadFeed(true);
-
       handleClose();
+
+      if (firstAddedId) {
+        goto(`/?feed=${firstAddedId}`);
+        sidebarStore.closeMobile();
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to subscribe';
     } finally {
@@ -464,170 +514,165 @@
   {/if}
 {/snippet}
 
-<Modal {open} onclose={handleClose}>
-  {#snippet header()}
-    <div class="tabs">
-      <button
-        class="tab"
-        class:active={activeTab === 'rss'}
-        onclick={() => {
-          activeTab = 'rss';
-          error = null;
-        }}
-      >
-        RSS Feed
-      </button>
-      <button
-        class="tab"
-        class:active={activeTab === 'account'}
-        onclick={() => {
-          activeTab = 'account';
-          error = null;
-        }}
-      >
-        Bluesky Account
-      </button>
-    </div>
-  {/snippet}
-
+<Modal {open} onclose={handleClose} title="Add subscription">
   {#if isAtLimit}
     <p class="limit-message">
       You've reached the maximum of {subscriptionsStore.maxSubscriptions} feeds. Remove some feeds to
       add new ones.
     </p>
-  {:else if activeTab === 'rss'}
-    <div class="tab-content">
-      <FeedDiscoveryForm bind:this={feedFormRef} onFeedSelected={handleFeedSelected} />
-      {@render standardSubsList()}
-    </div>
-  {:else}
-    <div class="tab-content">
-      {#if accountStep === 'search'}
-        <input
-          type="text"
-          class="search-input"
-          placeholder="Search for a Bluesky account..."
-          bind:value={searchQuery}
-          oninput={handleSearchInput}
-        />
+  {:else if step === 'input'}
+    <div class="modal-content">
+      <form
+        onsubmit={(e) => {
+          e.preventDefault();
+          handleSubmit();
+        }}
+      >
+        <div class="input-group">
+          <input
+            type="text"
+            class="search-input"
+            placeholder="Add RSS feed, Website URL, @handle..."
+            bind:value={inputValue}
+            oninput={handleInput}
+            disabled={isDiscovering}
+          />
+          <button type="submit" class="add-btn" disabled={isDiscovering || !inputValue.trim()}>
+            {isDiscovering ? 'Adding...' : 'Add'}
+          </button>
+        </div>
+      </form>
 
-        {#if isSearching}
-          <p class="search-status">Searching...</p>
-        {:else if searchResults.length > 0}
-          <div class="search-results">
-            {#each searchResults as result (result.did)}
-              <button class="result-btn" onclick={() => selectAccount(result)}>
-                {#if result.avatar}
-                  <img src={result.avatar} alt="" class="result-avatar" />
-                {:else}
-                  <span class="result-avatar-placeholder"></span>
-                {/if}
-                <span class="result-info">
-                  <span class="result-name">{result.displayName || result.handle}</span>
-                  <span class="result-handle">@{result.handle}</span>
-                </span>
-              </button>
-            {/each}
-          </div>
-        {:else if searchQuery.length >= 2}
-          <p class="search-status">No results found</p>
-        {:else if searchQuery.length === 0}
-          {@render standardSubsList()}
-          {#if !isLoadingStandardSubs && standardSubs.length === 0}
-            <p class="search-hint">Enter a Bluesky handle or name to search</p>
-          {/if}
+      {#if isSearching}
+        <p class="search-status">Searching...</p>
+      {:else if searchResults.length > 0}
+        <div class="search-results">
+          {#each searchResults as result (result.did)}
+            <button class="result-btn" onclick={() => selectAccount(result)}>
+              {#if result.avatar}
+                <img src={result.avatar} alt="" class="result-avatar" />
+              {:else}
+                <span class="result-avatar-placeholder"></span>
+              {/if}
+              <span class="result-info">
+                <span class="result-name">{result.displayName || result.handle}</span>
+                <span class="result-handle">@{result.handle}</span>
+              </span>
+            </button>
+          {/each}
+        </div>
+      {:else if inputValue.trim().length >= 2 && !looksLikeUrl(inputValue.trim()) && !isSearching}
+        <p class="search-status">No results found</p>
+      {:else if inputValue.trim().length === 0}
+        {@render standardSubsList()}
+        {#if !isLoadingStandardSubs && standardSubs.length === 0}
+          <p class="search-hint">Enter a feed URL, website, or Bluesky handle</p>
         {/if}
-      {:else if accountStep === 'select' && selectedAccount}
-        <button class="back-btn" onclick={goBackToSearch}>&#8249; Back to search</button>
+      {/if}
+    </div>
+  {:else if step === 'select-feeds'}
+    <div class="modal-content">
+      <button class="back-btn" onclick={goBackToInput}>&#8249; Back</button>
+      <p class="section-label">Multiple feeds found — select one:</p>
+      <div class="search-results">
+        {#each discoveredFeeds as url}
+          <button class="result-btn" onclick={() => addFeed(url)}>
+            <span class="result-info">
+              <span class="result-name feed-url">{url}</span>
+            </span>
+          </button>
+        {/each}
+      </div>
+    </div>
+  {:else if step === 'select-content' && selectedAccount}
+    <div class="modal-content">
+      <button class="back-btn" onclick={goBackToInput}>&#8249; Back</button>
 
-        <div class="selected-user">
-          {#if selectedAccount.avatar}
-            <img src={selectedAccount.avatar} alt="" class="selected-avatar" />
-          {:else}
-            <span class="selected-avatar-placeholder"></span>
-          {/if}
-          <div class="selected-info">
-            <span class="selected-name"
-              >{selectedAccount.displayName || selectedAccount.handle}</span
+      <div class="selected-user">
+        {#if selectedAccount.avatar}
+          <img src={selectedAccount.avatar} alt="" class="selected-avatar" />
+        {:else}
+          <span class="selected-avatar-placeholder"></span>
+        {/if}
+        <div class="selected-info">
+          <span class="selected-name">{selectedAccount.displayName || selectedAccount.handle}</span>
+          <span class="selected-handle">@{selectedAccount.handle}</span>
+        </div>
+      </div>
+
+      {#if isDetecting}
+        <div class="detecting">
+          <span class="spinner"></span>
+          <span>Detecting available content...</span>
+        </div>
+      {:else if publications.length === 0 && !hasShares && !error}
+        <p class="no-content">This account doesn't have any Skyreader-compatible content yet.</p>
+      {:else if publications.length > 0 || hasShares}
+        <div class="content-list">
+          {#each publications as pub (pub.uri)}
+            {@const isSubscribed = subscribedKeys.has(pub.uri)}
+            <button
+              class="content-item"
+              class:selected={selectedPublications.has(pub.uri)}
+              class:is-subscribed={isSubscribed}
+              onclick={() => togglePublication(pub.uri)}
+              disabled={isSubscribed}
             >
-            <span class="selected-handle">@{selectedAccount.handle}</span>
-          </div>
+              <span
+                class="checkbox"
+                class:checked={selectedPublications.has(pub.uri) || isSubscribed}
+              >
+                {#if selectedPublications.has(pub.uri) || isSubscribed}&#10003;{/if}
+              </span>
+              <span class="content-info">
+                <span class="content-name">{pub.name || pub.url}</span>
+                {#if pub.url}
+                  <span class="content-url">{pub.url}</span>
+                {/if}
+                {#if pub.description}
+                  <span class="content-desc">{pub.description}</span>
+                {/if}
+              </span>
+              {#if isSubscribed}
+                <span class="subscribed-badge">Subscribed</span>
+              {/if}
+            </button>
+          {/each}
+
+          {#if hasShares}
+            {@const isSubscribed = subscribedKeys.has('shares')}
+            <button
+              class="content-item"
+              class:selected={sharesSelected}
+              class:is-subscribed={isSubscribed}
+              onclick={toggleShares}
+              disabled={isSubscribed}
+            >
+              <span class="checkbox" class:checked={sharesSelected || isSubscribed}>
+                {#if sharesSelected || isSubscribed}&#10003;{/if}
+              </span>
+              <span class="content-info">
+                <span class="content-name">Shared articles</span>
+                <span class="content-desc">Articles shared by @{selectedAccount.handle}</span>
+              </span>
+              {#if isSubscribed}
+                <span class="subscribed-badge">Subscribed</span>
+              {/if}
+            </button>
+          {/if}
         </div>
 
-        {#if isDetecting}
-          <div class="detecting">
-            <span class="spinner"></span>
-            <span>Detecting available content...</span>
-          </div>
-        {:else if publications.length === 0 && !hasShares && !error}
-          <p class="no-content">This account doesn't have any Skyreader-compatible content yet.</p>
-        {:else if publications.length > 0 || hasShares}
-          <div class="content-list">
-            {#each publications as pub (pub.uri)}
-              {@const isSubscribed = subscribedKeys.has(pub.uri)}
-              <button
-                class="content-item"
-                class:selected={selectedPublications.has(pub.uri)}
-                class:is-subscribed={isSubscribed}
-                onclick={() => togglePublication(pub.uri)}
-                disabled={isSubscribed}
-              >
-                <span
-                  class="checkbox"
-                  class:checked={selectedPublications.has(pub.uri) || isSubscribed}
-                >
-                  {#if selectedPublications.has(pub.uri) || isSubscribed}&#10003;{/if}
-                </span>
-                <span class="content-info">
-                  <span class="content-name">{pub.name || pub.url}</span>
-                  {#if pub.url}
-                    <span class="content-url">{pub.url}</span>
-                  {/if}
-                  {#if pub.description}
-                    <span class="content-desc">{pub.description}</span>
-                  {/if}
-                </span>
-                {#if isSubscribed}
-                  <span class="subscribed-badge">Subscribed</span>
-                {/if}
-              </button>
-            {/each}
-
-            {#if hasShares}
-              {@const isSubscribed = subscribedKeys.has('shares')}
-              <button
-                class="content-item"
-                class:selected={sharesSelected}
-                class:is-subscribed={isSubscribed}
-                onclick={toggleShares}
-                disabled={isSubscribed}
-              >
-                <span class="checkbox" class:checked={sharesSelected || isSubscribed}>
-                  {#if sharesSelected || isSubscribed}&#10003;{/if}
-                </span>
-                <span class="content-info">
-                  <span class="content-name">Shared articles</span>
-                  <span class="content-desc">Articles shared by @{selectedAccount.handle}</span>
-                </span>
-                {#if isSubscribed}
-                  <span class="subscribed-badge">Subscribed</span>
-                {/if}
-              </button>
-            {/if}
-          </div>
-
-          <button
-            class="subscribe-btn"
-            onclick={handleSubscribe}
-            disabled={selectedCount === 0 || isSubscribing}
-          >
-            {#if isSubscribing}
-              Subscribing...
-            {:else}
-              Subscribe{selectedCount > 0 ? ` (${selectedCount})` : ''}
-            {/if}
-          </button>
-        {/if}
+        <button
+          class="subscribe-btn"
+          onclick={handleSubscribe}
+          disabled={selectedCount === 0 || isSubscribing}
+        >
+          {#if isSubscribing}
+            Subscribing...
+          {:else}
+            Subscribe{selectedCount > 0 ? ` (${selectedCount})` : ''}
+          {/if}
+        </button>
       {/if}
     </div>
   {/if}
@@ -638,45 +683,20 @@
 </Modal>
 
 <style>
-  .tabs {
-    display: flex;
-    border-bottom: 1px solid var(--color-border);
-    gap: 0;
-  }
-
-  .tab {
-    flex: 1;
-    padding: 0.875rem 1rem;
-    border: none;
-    background: transparent;
-    color: var(--color-text-secondary);
-    font-size: 0.9375rem;
-    font-weight: 500;
-    cursor: pointer;
-    border-bottom: 2px solid transparent;
-    transition:
-      color 0.15s,
-      border-color 0.15s;
-  }
-
-  .tab:hover {
-    color: var(--color-text);
-  }
-
-  .tab.active {
-    color: var(--color-text);
-    border-bottom-color: var(--color-accent, #0085ff);
-  }
-
-  .tab-content {
+  .modal-content {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
     min-height: 200px;
   }
 
+  .input-group {
+    display: flex;
+    gap: 0.5rem;
+  }
+
   .search-input {
-    width: 100%;
+    flex: 1;
     padding: 0.625rem 0.75rem;
     border: 1px solid var(--color-border);
     border-radius: 8px;
@@ -689,6 +709,28 @@
 
   .search-input:focus {
     border-color: var(--color-accent, #0085ff);
+  }
+
+  .add-btn {
+    padding: 0.625rem 1rem;
+    border: none;
+    border-radius: 8px;
+    background: var(--color-accent, #0085ff);
+    color: white;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: opacity 0.15s;
+  }
+
+  .add-btn:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+
+  .add-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .search-status,
@@ -766,6 +808,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .feed-url {
+    font-weight: 400;
+    word-break: break-all;
+    white-space: normal;
   }
 
   .back-btn {

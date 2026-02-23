@@ -22,6 +22,7 @@
   import NavSection from './sidebar/NavSection.svelte';
   import FeedItem from './sidebar/FeedItem.svelte';
   import ViewItem from './sidebar/ViewItem.svelte';
+  import SidebarAddFeed from './sidebar/SidebarAddFeed.svelte';
   import Icon from './Icon.svelte';
   import type { Subscription } from '$lib/types';
 
@@ -398,6 +399,7 @@
       onUnreadToggle={() => sidebarStore.toggleShowOnlyUnread('feeds')}
       onAdd={() => sidebarStore.openAddFeedModal()}
     >
+      <SidebarAddFeed />
       {#each sortedSubscriptions() as sub (sub.id)}
         {@const count = feedUnreadCounts.get(sub.id!) || 0}
         {@const status = sub.feedUrl ? feedStatusStore.getStatus(sub.feedUrl) : undefined}
