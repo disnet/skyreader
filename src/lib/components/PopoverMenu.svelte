@@ -32,11 +32,22 @@
     const buttonRect = buttonRef.getBoundingClientRect();
     const menuRect = menuRef.getBoundingClientRect();
     const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
 
     const position: typeof menuPosition = {};
 
-    // Vertical positioning: always below the button (absolute positioning)
-    position.top = buttonRef.offsetHeight + 4;
+    // Vertical positioning: prefer below the button, but flip above if it would overflow
+    const menuHeight = menuRect.height;
+    const spaceBelow = viewportHeight - buttonRect.bottom - 4;
+    const spaceAbove = buttonRect.top - 4;
+
+    if (menuHeight > spaceBelow && spaceAbove > spaceBelow) {
+      // Position above the button
+      position.bottom = buttonRef.offsetHeight + 4;
+    } else {
+      // Position below the button (default)
+      position.top = buttonRef.offsetHeight + 4;
+    }
 
     // Horizontal positioning: left-align menu with button by default
     // The menu is absolutely positioned relative to .popover-menu
@@ -54,15 +65,18 @@
     menuPosition = position;
   }
 
-  function toggle(e: MouseEvent) {
-    e.stopPropagation();
-    open = !open;
-    if (open) {
-      // Position after the menu is rendered
+  // Reposition whenever the menu opens (handles both toggle clicks and external open)
+  $effect(() => {
+    if (open && menuRef) {
       requestAnimationFrame(() => {
         updateMenuPosition();
       });
     }
+  });
+
+  function toggle(e: MouseEvent) {
+    e.stopPropagation();
+    open = !open;
   }
 
   function handleItemClick(item: MenuItem, e: MouseEvent) {
