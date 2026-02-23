@@ -4,7 +4,6 @@
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { socialStore } from '$lib/stores/social.svelte';
   import { profileService } from '$lib/services/profiles';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -22,38 +21,39 @@
   } from '$lib/utils/sourceKeys';
   import type { BlueskyProfile } from '$lib/types';
 
+  // Derive unique account DIDs from atproto subscriptions
+  let accountDids = $derived(() => {
+    const dids = new Set<string>();
+    for (const sub of subscriptionsStore.subscriptions) {
+      if (sub.sourceType?.startsWith('atproto.') && sub.subjectDid) {
+        dids.add(sub.subjectDid);
+      }
+    }
+    return [...dids];
+  });
+
   // Resolved profiles for accounts that only have DIDs
   let resolvedProfiles = $state<Map<string, BlueskyProfile>>(new Map());
 
-  // Resolve profiles when inAppFollows changes
+  // Resolve profiles when account DIDs change
   $effect(() => {
-    const follows = socialStore.inAppFollows;
-    const needsResolving = follows.filter(
-      (f) => !f.displayName && (!f.handle || f.handle === f.did || f.handle.startsWith('did:'))
-    );
+    const dids = accountDids();
+    const needsResolving = dids.filter((did) => !resolvedProfiles.has(did));
     if (needsResolving.length > 0) {
-      profileService.getProfiles(needsResolving.map((f) => f.did)).then((profiles) => {
+      profileService.getProfiles(needsResolving).then((profiles) => {
         resolvedProfiles = profiles;
       });
     }
   });
 
-  function getAccountDisplayName(follow: {
-    did: string;
-    handle?: string;
-    displayName?: string;
-  }): string {
-    if (follow.displayName) return follow.displayName;
-    if (follow.handle && follow.handle !== follow.did && !follow.handle.startsWith('did:'))
-      return follow.handle;
-    const resolved = resolvedProfiles.get(follow.did);
+  function getAccountDisplayName(did: string): string {
+    const resolved = resolvedProfiles.get(did);
     if (resolved) return resolved.displayName || resolved.handle;
-    return follow.did;
+    return did;
   }
 
-  function getAccountAvatarUrl(follow: { did: string; avatarUrl?: string }): string | undefined {
-    if (follow.avatarUrl) return follow.avatarUrl;
-    const resolved = resolvedProfiles.get(follow.did);
+  function getAccountAvatarUrl(did: string): string | undefined {
+    const resolved = resolvedProfiles.get(did);
     return resolved?.avatar;
   }
 
@@ -97,15 +97,15 @@
       : subscriptionsStore.subscriptions
   );
 
-  // Filtered follows based on search
-  let filteredFollows = $derived(
+  // Filtered accounts based on search
+  let filteredAccounts = $derived(
     accountSearch
-      ? socialStore.inAppFollows.filter((follow) => {
+      ? accountDids().filter((did) => {
           const term = accountSearch.toLowerCase();
-          const displayName = getAccountDisplayName(follow).toLowerCase();
-          return displayName.includes(term) || follow.did.toLowerCase().includes(term);
+          const displayName = getAccountDisplayName(did).toLowerCase();
+          return displayName.includes(term) || did.toLowerCase().includes(term);
         })
-      : socialStore.inAppFollows
+      : accountDids()
   );
 
   // Tag filter state
@@ -155,7 +155,7 @@
 
   // All possible account keys
   let allAccountKeys = $derived(
-    socialStore.inAppFollows.flatMap((f) => ACCOUNT_SOURCE_KINDS.map(({ keyFn }) => keyFn(f.did)))
+    accountDids().flatMap((did) => ACCOUNT_SOURCE_KINDS.map(({ keyFn }) => keyFn(did)))
   );
 
   let allFeedsSelected = $derived(
@@ -471,7 +471,7 @@
               {/if}
 
               <!-- Account groups -->
-              {#if socialStore.inAppFollows.length > 0}
+              {#if accountDids().length > 0}
                 <div class="popover-group-header">
                   <span>Accounts</span>
                   <button
@@ -489,19 +489,19 @@
                     class="search-input"
                   />
                 </div>
-                {#each filteredFollows as follow}
-                  {@const avatarUrl = getAccountAvatarUrl(follow)}
+                {#each filteredAccounts as did}
+                  {@const avatarUrl = getAccountAvatarUrl(did)}
                   <div class="popover-group-header account-group-header">
                     {#if avatarUrl}
                       <img src={avatarUrl} alt="" class="group-avatar" />
                     {:else}
                       <div class="group-avatar-placeholder"></div>
                     {/if}
-                    {getAccountDisplayName(follow)}
+                    {getAccountDisplayName(did)}
                   </div>
                   <div class="popover-list account-kind-list">
                     {#each ACCOUNT_SOURCE_KINDS as { kind, label, keyFn }}
-                      {@const key = keyFn(follow.did)}
+                      {@const key = keyFn(did)}
                       <label class="check-label">
                         <input
                           type="checkbox"
@@ -513,7 +513,7 @@
                     {/each}
                   </div>
                 {/each}
-                {#if accountSearch && filteredFollows.length === 0}
+                {#if accountSearch && filteredAccounts.length === 0}
                   <div class="no-results">No accounts match</div>
                 {/if}
               {/if}

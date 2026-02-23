@@ -129,14 +129,6 @@
         </button>
         <button
           class="add-menu-item"
-          onclick={(e) => handleItemClick(() => sidebarStore.openFollowUserModal(), e)}
-          role="menuitem"
-        >
-          <span class="item-icon"><Icon name="users" size={16} /></span>
-          Add Bluesky Account
-        </button>
-        <button
-          class="add-menu-item"
           onclick={(e) => handleItemClick(() => sidebarStore.openSaveArticleModal(), e)}
           role="menuitem"
         >

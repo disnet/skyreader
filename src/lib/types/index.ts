@@ -7,7 +7,6 @@ export interface User {
   tier?: string;
   limits?: {
     maxSubscriptions: number;
-    maxFollows: number;
     maxUrlSavesPerMonth: number;
   };
 }
@@ -725,45 +724,4 @@ export interface Highlight {
   id: string;
   selector: TextQuoteSelector;
   createdAt: number; // epoch ms
-}
-
-export interface DiscoverUser {
-  did: string;
-  handle: string;
-  displayName?: string;
-  avatarUrl?: string;
-  shareCount: number;
-  recentShares?: Array<{
-    itemUrl: string;
-    itemTitle?: string;
-    createdAt: string;
-  }>;
-}
-
-export interface InappFollow {
-  id?: number;
-  rkey?: string;
-  subjectDid: string;
-  createdAt: string;
-}
-
-export interface FollowedUserDetailed {
-  did: string;
-  source: 'bluesky' | 'inapp' | 'both';
-  shareCount: number;
-  lastSharedAt: string | null;
-  followedAt: number;
-  rkey?: string;
-  recentShares?: Array<{
-    itemUrl: string;
-    itemTitle?: string;
-    createdAt: string;
-  }>;
-  documentCount?: number;
-  lastPublishedAt?: string | null;
-  recentDocuments?: Array<{
-    url: string;
-    title: string;
-    publishedAt: string;
-  }>;
 }

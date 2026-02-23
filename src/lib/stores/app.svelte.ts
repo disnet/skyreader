@@ -116,8 +116,6 @@ function createAppManager() {
         syncSubscriptions(),
         itemLabelsStore.load(),
         shareReadingStore.load(),
-        socialStore.loadFollowedUsers(),
-        socialStore.loadInAppFollowCount(),
         socialStore.loadFeed(true),
       ]);
 

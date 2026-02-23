@@ -153,7 +153,13 @@ function createFeedViewStore() {
   }
 
   function getAllFollowDids(): string[] {
-    return socialStore.inAppFollows.map((f) => f.did);
+    const dids = new Set<string>();
+    for (const sub of subscriptionsStore.subscriptions) {
+      if (sub.sourceType?.startsWith('atproto.') && sub.subjectDid) {
+        dids.add(sub.subjectDid);
+      }
+    }
+    return [...dids];
   }
 
   // Derived: effective filters (always uses toolbar state as the working copy)

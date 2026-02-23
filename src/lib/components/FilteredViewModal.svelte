@@ -1,7 +1,6 @@
 <script lang="ts">
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { socialStore } from '$lib/stores/social.svelte';
   import { profileService } from '$lib/services/profiles';
   import Modal from '$lib/components/common/Modal.svelte';
   import type { BlueskyProfile } from '$lib/types';
@@ -35,18 +34,29 @@
   let feedSearch = $state('');
   let accountSearch = $state('');
 
+  // Derive unique account DIDs from atproto subscriptions
+  let accountDids = $derived(() => {
+    const dids = new Set<string>();
+    for (const sub of subscriptionsStore.subscriptions) {
+      if (sub.sourceType?.startsWith('atproto.') && sub.subjectDid) {
+        dids.add(sub.subjectDid);
+      }
+    }
+    return [...dids];
+  });
+
   // Account profiles for display
   let accountProfiles = $state<Map<string, BlueskyProfile>>(new Map());
 
-  // Load profiles for followed users
+  // Load profiles for account DIDs
   $effect(() => {
     if (!open) return;
-    const follows = socialStore.inAppFollows;
-    for (const f of follows) {
-      if (!accountProfiles.has(f.did)) {
-        profileService.getProfile(f.did).then((p) => {
+    const dids = accountDids();
+    for (const did of dids) {
+      if (!accountProfiles.has(did)) {
+        profileService.getProfile(did).then((p) => {
           if (p) {
-            accountProfiles = new Map(accountProfiles).set(f.did, p);
+            accountProfiles = new Map(accountProfiles).set(did, p);
           }
         });
       }
@@ -72,15 +82,15 @@
       : subscriptionsStore.subscriptions
   );
 
-  // Filtered follows based on search
-  let filteredFollows = $derived(
+  // Filtered accounts based on search
+  let filteredAccounts = $derived(
     accountSearch
-      ? socialStore.inAppFollows.filter((follow) => {
+      ? accountDids().filter((did) => {
           const term = accountSearch.toLowerCase();
-          const displayName = getModalAccountDisplayName(follow.did).toLowerCase();
-          return displayName.includes(term) || follow.did.toLowerCase().includes(term);
+          const displayName = getModalAccountDisplayName(did).toLowerCase();
+          return displayName.includes(term) || did.toLowerCase().includes(term);
         })
-      : socialStore.inAppFollows
+      : accountDids()
   );
 
   // Reset form when modal opens or editingViewId changes
@@ -102,7 +112,7 @@
             const allSubIds = subscriptionsStore.subscriptions
               .map((s) => s.id)
               .filter((id): id is number => id != null);
-            const allDids = socialStore.inAppFollows.map((f) => f.did);
+            const allDids = accountDids();
             const migrated = migrateLegacyView(
               {
                 showArticles: view.showArticles,
@@ -248,7 +258,7 @@
         {/if}
 
         <!-- Account groups -->
-        {#if socialStore.inAppFollows.length > 0}
+        {#if accountDids().length > 0}
           <div class="source-group-header">Accounts</div>
           <input
             type="text"
@@ -256,8 +266,8 @@
             bind:value={accountSearch}
             class="search-input"
           />
-          {#each filteredFollows as follow (follow.did)}
-            {@const profile = accountProfiles.get(follow.did)}
+          {#each filteredAccounts as did (did)}
+            {@const profile = accountProfiles.get(did)}
             <div class="source-group-header account-header">
               {#if profile?.avatar}
                 <img src={profile.avatar} alt="" class="header-avatar" />
@@ -267,12 +277,12 @@
               {#if profile}
                 {profile.displayName || profile.handle}
               {:else}
-                {follow.did.slice(0, 20)}...
+                {did.slice(0, 20)}...
               {/if}
             </div>
             <div class="checklist account-kind-checklist">
               {#each ACCOUNT_SOURCE_KINDS as { kind, label, keyFn }}
-                {@const key = keyFn(follow.did)}
+                {@const key = keyFn(did)}
                 <label class="checklist-item">
                   <input
                     type="checkbox"
@@ -284,7 +294,7 @@
               {/each}
             </div>
           {/each}
-          {#if accountSearch && filteredFollows.length === 0}
+          {#if accountSearch && filteredAccounts.length === 0}
             <div class="no-results">No accounts match</div>
           {/if}
         {/if}

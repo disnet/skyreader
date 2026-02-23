@@ -3,7 +3,6 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { socialStore } from '$lib/stores/social.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import {
     preferences,
@@ -54,9 +53,6 @@
     if (subscriptionsStore.subscriptions.length === 0) {
       await subscriptionsStore.load();
     }
-
-    // Load follow count for plan usage
-    socialStore.loadInAppFollowCount();
 
     // Load PDS sync settings
     await loadSyncSettings();
@@ -245,8 +241,6 @@
       {#if auth.user.limits}
         {@const subCount = subscriptionsStore.subscriptions.length}
         {@const subLimit = auth.user.limits.maxSubscriptions}
-        {@const followCount = socialStore.inAppFollowCount}
-        {@const followLimit = auth.user.limits.maxFollows}
         {@const urlSaveLimit = auth.user.limits.maxUrlSavesPerMonth}
         {@const monthStart = new Date(
           Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)
@@ -266,21 +260,6 @@
                 class:limit-bar-warning={subCount / subLimit > 0.8}
                 class:limit-bar-full={subCount >= subLimit}
                 style:width="{Math.min((subCount / subLimit) * 100, 100)}%"
-              ></div>
-            </div>
-          </div>
-
-          <div class="limit-row">
-            <div class="limit-label">
-              <span>Follows</span>
-              <span class="limit-numbers">{followCount} / {followLimit}</span>
-            </div>
-            <div class="limit-bar">
-              <div
-                class="limit-bar-fill"
-                class:limit-bar-warning={followCount / followLimit > 0.8}
-                class:limit-bar-full={followCount >= followLimit}
-                style:width="{Math.min((followCount / followLimit) * 100, 100)}%"
               ></div>
             </div>
           </div>

@@ -10,7 +10,6 @@
   import { keyboardStore } from '$lib/stores/keyboard.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import KeyboardShortcutsModal from '$lib/components/KeyboardShortcutsModal.svelte';
-  import FollowUserModal from '$lib/components/FollowUserModal.svelte';
   import Logo from '$lib/assets/logo.svg';
   import '../app.css';
 
@@ -24,22 +23,14 @@
     return count > 0 ? `(${count}) ${suffix}` : suffix;
   });
 
-  // Helper functions for feed/user cycling
-  function getCurrentFeedId(): number | null {
-    const feedParam = $page.url.searchParams.get('feed');
-    return feedParam ? parseInt(feedParam) : null;
-  }
-
-  function getCurrentSharerId(): string | null {
-    return $page.url.searchParams.get('sharer');
-  }
-
+  // Helper function for feed cycling
   function cycleFeeds(direction: 1 | -1) {
     // Use sorted feed IDs from sidebar store (matches visual order)
     const feedIds = sidebarStore.sortedFeedIds;
     if (feedIds.length === 0) return;
 
-    const currentFeedId = getCurrentFeedId();
+    const feedParam = $page.url.searchParams.get('feed');
+    const currentFeedId = feedParam ? parseInt(feedParam) : null;
     if (currentFeedId === null) {
       // Not on a feed view, go to first/last feed
       const targetId = direction === 1 ? feedIds[0] : feedIds[feedIds.length - 1];
@@ -56,45 +47,6 @@
 
     const newIndex = (currentIndex + direction + feedIds.length) % feedIds.length;
     goto(`/?feed=${feedIds[newIndex]}`);
-  }
-
-  function cycleUsers(direction: 1 | -1) {
-    // Use sorted user DIDs from sidebar store (matches visual order)
-    const userDids = sidebarStore.sortedUserDids;
-    if (userDids.length === 0) return;
-
-    const currentSharerId = getCurrentSharerId();
-    if (currentSharerId === null) {
-      // Not on a sharer view, go to first/last user
-      const targetDid = direction === 1 ? userDids[0] : userDids[userDids.length - 1];
-      goto(`/?sharer=${targetDid}`);
-      return;
-    }
-
-    const currentIndex = userDids.indexOf(currentSharerId);
-    if (currentIndex === -1) {
-      // Current user not found in sorted list, go to first
-      goto(`/?sharer=${userDids[0]}`);
-      return;
-    }
-
-    const newIndex = (currentIndex + direction + userDids.length) % userDids.length;
-    goto(`/?sharer=${userDids[newIndex]}`);
-  }
-
-  // Determine whether to cycle feeds or users based on current view
-  function cycleSidebar(direction: 1 | -1) {
-    const feedParam = $page.url.searchParams.get('feed');
-    const sharerParam = $page.url.searchParams.get('sharer');
-    const followingParam = $page.url.searchParams.get('following');
-
-    // If on a specific sharer or following view, cycle users
-    if (sharerParam || followingParam) {
-      cycleUsers(direction);
-    } else {
-      // Otherwise cycle feeds
-      cycleFeeds(direction);
-    }
   }
 
   // Register global keyboard shortcuts on mount
@@ -133,22 +85,6 @@
     });
 
     keyboardStore.register({
-      key: '5',
-      description: 'Following',
-      category: 'Views',
-      action: () => goto('/?following=true'),
-      condition: () => auth.isAuthenticated,
-    });
-
-    keyboardStore.register({
-      key: '6',
-      description: 'Discover',
-      category: 'Views',
-      action: () => goto('/discover'),
-      condition: () => auth.isAuthenticated,
-    });
-
-    keyboardStore.register({
       key: '0',
       description: 'Settings',
       category: 'Views',
@@ -159,17 +95,17 @@
     // Feed/user cycling shortcuts
     keyboardStore.register({
       key: '[',
-      description: 'Previous feed/user',
-      category: 'Feed/User',
-      action: () => cycleSidebar(-1),
+      description: 'Previous feed',
+      category: 'Feed',
+      action: () => cycleFeeds(-1),
       condition: () => auth.isAuthenticated,
     });
 
     keyboardStore.register({
       key: ']',
-      description: 'Next feed/user',
-      category: 'Feed/User',
-      action: () => cycleSidebar(1),
+      description: 'Next feed',
+      category: 'Feed',
+      action: () => cycleFeeds(1),
       condition: () => auth.isAuthenticated,
     });
 
@@ -246,10 +182,6 @@
 </svelte:head>
 
 <KeyboardShortcutsModal />
-<FollowUserModal
-  open={sidebarStore.followUserModalOpen}
-  onclose={() => sidebarStore.closeFollowUserModal()}
-/>
 
 <div class="app">
   {#if !auth.isLoading}
