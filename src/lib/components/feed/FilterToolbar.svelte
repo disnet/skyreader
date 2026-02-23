@@ -4,58 +4,17 @@
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { profileService } from '$lib/services/profiles';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { goto } from '$app/navigation';
-  import {
-    rssSourceKey,
-    sharesSourceKey,
-    documentsSourceKey,
-    isRssSource,
-    getRssSubscriptionId,
-    getSourceDid,
-    isSharesSource,
-    isDocumentsSource,
-    ACCOUNT_SOURCE_KINDS,
-  } from '$lib/utils/sourceKeys';
-  import type { BlueskyProfile } from '$lib/types';
+  import { subscriptionSourceKey } from '$lib/utils/sourceKeys';
+  import type { SubscriptionSourceType } from '$lib/types';
 
-  // Derive unique account DIDs from atproto subscriptions
-  let accountDids = $derived(() => {
-    const dids = new Set<string>();
-    for (const sub of subscriptionsStore.subscriptions) {
-      if (sub.sourceType?.startsWith('atproto.') && sub.subjectDid) {
-        dids.add(sub.subjectDid);
-      }
-    }
-    return [...dids];
-  });
-
-  // Resolved profiles for accounts that only have DIDs
-  let resolvedProfiles = $state<Map<string, BlueskyProfile>>(new Map());
-
-  // Resolve profiles when account DIDs change
-  $effect(() => {
-    const dids = accountDids();
-    const needsResolving = dids.filter((did) => !resolvedProfiles.has(did));
-    if (needsResolving.length > 0) {
-      profileService.getProfiles(needsResolving).then((profiles) => {
-        resolvedProfiles = profiles;
-      });
-    }
-  });
-
-  function getAccountDisplayName(did: string): string {
-    const resolved = resolvedProfiles.get(did);
-    if (resolved) return resolved.displayName || resolved.handle;
-    return did;
-  }
-
-  function getAccountAvatarUrl(did: string): string | undefined {
-    const resolved = resolvedProfiles.get(did);
-    return resolved?.avatar;
-  }
+  const TYPE_OPTIONS: { value: SubscriptionSourceType; label: string }[] = [
+    { value: 'rss', label: 'Feeds' },
+    { value: 'atproto.shares', label: 'Shares' },
+    { value: 'atproto.documents', label: 'Documents' },
+  ];
 
   interface Props {
     showSourceFilter: boolean;
@@ -74,13 +33,11 @@
 
   // Search state for filtering lists
   let feedSearch = $state('');
-  let accountSearch = $state('');
 
   // Clear search when popover closes
   $effect(() => {
     if (!sourcePopoverOpen) {
       feedSearch = '';
-      accountSearch = '';
     }
   });
 
@@ -97,16 +54,33 @@
       : subscriptionsStore.subscriptions
   );
 
-  // Filtered accounts based on search
-  let filteredAccounts = $derived(
-    accountSearch
-      ? accountDids().filter((did) => {
-          const term = accountSearch.toLowerCase();
-          const displayName = getAccountDisplayName(did).toLowerCase();
-          return displayName.includes(term) || did.toLowerCase().includes(term);
-        })
-      : accountDids()
-  );
+  // Type filter state
+  let typePopoverOpen = $state(false);
+  let typePopoverRef = $state<HTMLDivElement | null>(null);
+  let activeTypeFilter = $derived(feedViewStore.toolbarTypeFilter);
+  let activeTypeSet = $derived(new Set(activeTypeFilter));
+
+  let typeFilterLabel = $derived.by(() => {
+    if (activeTypeFilter.length === 0) return 'Type';
+    return `Type (${activeTypeFilter.length})`;
+  });
+
+  function toggleTypeFilter(type: SubscriptionSourceType) {
+    const newTypes = activeTypeSet.has(type)
+      ? activeTypeFilter.filter((t) => t !== type)
+      : [...activeTypeFilter, type];
+    feedViewStore.setToolbarTypeFilter(newTypes);
+  }
+
+  function clearTypeFilter() {
+    feedViewStore.setToolbarTypeFilter([]);
+  }
+
+  function handleTypeClickOutside(e: MouseEvent) {
+    if (typePopoverOpen && typePopoverRef && !typePopoverRef.contains(e.target as Node)) {
+      typePopoverOpen = false;
+    }
+  }
 
   // Tag filter state
   let tagPopoverOpen = $state(false);
@@ -148,46 +122,30 @@
     feedViewStore.setToolbarSourceFilter(ef.sourceMode, keys);
   }
 
-  // All possible feed keys
-  let allFeedKeys = $derived(
-    subscriptionsStore.subscriptions.filter((s) => s.id != null).map((s) => rssSourceKey(s.id!))
+  // All possible source keys (deduplicated across all subscriptions)
+  let allSourceKeys = $derived(() => {
+    const keys = new Set<string>();
+    for (const sub of subscriptionsStore.subscriptions) {
+      const key = subscriptionSourceKey(sub);
+      if (key) keys.add(key);
+    }
+    return [...keys];
+  });
+
+  let allSourcesSelected = $derived(
+    allSourceKeys().length > 0 && allSourceKeys().every((k) => sourceKeySet.has(k))
   );
 
-  // All possible account keys
-  let allAccountKeys = $derived(
-    accountDids().flatMap((did) => ACCOUNT_SOURCE_KINDS.map(({ keyFn }) => keyFn(did)))
-  );
-
-  let allFeedsSelected = $derived(
-    allFeedKeys.length > 0 && allFeedKeys.every((k) => sourceKeySet.has(k))
-  );
-  let allAccountsSelected = $derived(
-    allAccountKeys.length > 0 && allAccountKeys.every((k) => sourceKeySet.has(k))
-  );
-
-  function selectAllFeeds() {
-    const newKeys = allFeedKeys.filter((k) => !sourceKeySet.has(k));
+  function selectAllSources() {
+    const newKeys = allSourceKeys().filter((k) => !sourceKeySet.has(k));
     if (newKeys.length > 0) {
       feedViewStore.setToolbarSourceFilter(ef.sourceMode, [...ef.sourceKeys, ...newKeys]);
     }
   }
 
-  function deselectAllFeeds() {
-    const feedKeySet = new Set(allFeedKeys);
-    const keys = ef.sourceKeys.filter((k) => !feedKeySet.has(k));
-    feedViewStore.setToolbarSourceFilter(ef.sourceMode, keys);
-  }
-
-  function selectAllAccounts() {
-    const newKeys = allAccountKeys.filter((k) => !sourceKeySet.has(k));
-    if (newKeys.length > 0) {
-      feedViewStore.setToolbarSourceFilter(ef.sourceMode, [...ef.sourceKeys, ...newKeys]);
-    }
-  }
-
-  function deselectAllAccounts() {
-    const accountKeySet = new Set(allAccountKeys);
-    const keys = ef.sourceKeys.filter((k) => !accountKeySet.has(k));
+  function deselectAllSources() {
+    const allKeySet = new Set(allSourceKeys());
+    const keys = ef.sourceKeys.filter((k) => !allKeySet.has(k));
     feedViewStore.setToolbarSourceFilter(ef.sourceMode, keys);
   }
 
@@ -195,12 +153,14 @@
     if (sourcePopoverOpen && sourcePopoverRef && !sourcePopoverRef.contains(e.target as Node)) {
       feedViewStore.setSourcePopoverOpen(false);
     }
+    handleTypeClickOutside(e);
     handleTagClickOutside(e);
   }
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       feedViewStore.setSourcePopoverOpen(false);
+      typePopoverOpen = false;
       tagPopoverOpen = false;
     }
   }
@@ -255,6 +215,7 @@
         readFilter: feedViewStore.showOnlyUnread ? 'unread' : 'all',
         sortOrder: feedViewStore.currentSortOrder,
         tagFilter: activeTagFilter.length > 0 ? [...activeTagFilter] : undefined,
+        typeFilter: activeTypeFilter.length > 0 ? [...activeTypeFilter] : undefined,
       });
       showNameInput = false;
       newViewName = '';
@@ -426,29 +387,29 @@
             </div>
 
             {#if ef.sourceMode === 'include'}
-              <!-- Feeds group -->
+              <!-- Subscriptions list -->
               {#if subscriptionsStore.subscriptions.length > 0}
                 <div class="popover-group-header">
-                  <span>Feeds</span>
+                  <span>Subscriptions</span>
                   <button
                     class="select-all-btn"
-                    onclick={allFeedsSelected ? deselectAllFeeds : selectAllFeeds}
+                    onclick={allSourcesSelected ? deselectAllSources : selectAllSources}
                   >
-                    {allFeedsSelected ? 'Deselect all' : 'Select all'}
+                    {allSourcesSelected ? 'Deselect all' : 'Select all'}
                   </button>
                 </div>
                 <div class="popover-search">
                   <input
                     type="text"
-                    placeholder="Search feeds..."
+                    placeholder="Search subscriptions..."
                     bind:value={feedSearch}
                     class="search-input"
                   />
                 </div>
                 <div class="popover-list">
                   {#each filteredSubscriptions as sub}
-                    {#if sub.id != null}
-                      {@const key = rssSourceKey(sub.id)}
+                    {@const key = subscriptionSourceKey(sub)}
+                    {#if key}
                       {@const iconUrl =
                         sub.customIconUrl || getFaviconUrl(sub.siteUrl || sub.feedUrl || '')}
                       <label class="check-label">
@@ -465,57 +426,9 @@
                     {/if}
                   {/each}
                   {#if feedSearch && filteredSubscriptions.length === 0}
-                    <div class="no-results">No feeds match</div>
+                    <div class="no-results">No subscriptions match</div>
                   {/if}
                 </div>
-              {/if}
-
-              <!-- Account groups -->
-              {#if accountDids().length > 0}
-                <div class="popover-group-header">
-                  <span>Accounts</span>
-                  <button
-                    class="select-all-btn"
-                    onclick={allAccountsSelected ? deselectAllAccounts : selectAllAccounts}
-                  >
-                    {allAccountsSelected ? 'Deselect all' : 'Select all'}
-                  </button>
-                </div>
-                <div class="popover-search">
-                  <input
-                    type="text"
-                    placeholder="Search accounts..."
-                    bind:value={accountSearch}
-                    class="search-input"
-                  />
-                </div>
-                {#each filteredAccounts as did}
-                  {@const avatarUrl = getAccountAvatarUrl(did)}
-                  <div class="popover-group-header account-group-header">
-                    {#if avatarUrl}
-                      <img src={avatarUrl} alt="" class="group-avatar" />
-                    {:else}
-                      <div class="group-avatar-placeholder"></div>
-                    {/if}
-                    {getAccountDisplayName(did)}
-                  </div>
-                  <div class="popover-list account-kind-list">
-                    {#each ACCOUNT_SOURCE_KINDS as { kind, label, keyFn }}
-                      {@const key = keyFn(did)}
-                      <label class="check-label">
-                        <input
-                          type="checkbox"
-                          checked={sourceKeySet.has(key)}
-                          onchange={() => toggleSourceKey(key)}
-                        />
-                        <span class="check-text">{label}</span>
-                      </label>
-                    {/each}
-                  </div>
-                {/each}
-                {#if accountSearch && filteredAccounts.length === 0}
-                  <div class="no-results">No accounts match</div>
-                {/if}
               {/if}
             {/if}
           </div>
@@ -524,10 +437,54 @@
     </div>
   {/if}
 
+  <span class="toolbar-divider group-divider"></span>
+
+  <!-- Type filter dropdown -->
+  <div class="filter-group">
+    <div class="dropdown-wrapper" bind:this={typePopoverRef}>
+      <button
+        class="filter-btn"
+        class:has-filter={activeTypeFilter.length > 0}
+        onclick={(e) => {
+          e.stopPropagation();
+          typePopoverOpen = !typePopoverOpen;
+        }}
+      >
+        <Icon name="layers" size={16} />
+        <span class="filter-label">{typeFilterLabel}</span>
+        <Icon name="chevron-down" size={12} />
+      </button>
+
+      {#if typePopoverOpen}
+        <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+        <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
+          <div class="popover-group-header">
+            <span>Types</span>
+            {#if activeTypeFilter.length > 0}
+              <button class="select-all-btn" onclick={clearTypeFilter}>Clear</button>
+            {/if}
+          </div>
+          <div class="popover-list">
+            {#each TYPE_OPTIONS as opt}
+              <label class="check-label">
+                <input
+                  type="checkbox"
+                  checked={activeTypeSet.has(opt.value)}
+                  onchange={() => toggleTypeFilter(opt.value)}
+                />
+                <span class="check-text">{opt.label}</span>
+              </label>
+            {/each}
+          </div>
+        </div>
+      {/if}
+    </div>
+  </div>
+
   {#if allTags.length > 0}
     <span class="toolbar-divider group-divider"></span>
 
-    <!-- Group 3: Tags dropdown -->
+    <!-- Tags dropdown -->
     <div class="filter-group">
       <div class="dropdown-wrapper" bind:this={tagPopoverRef}>
         <button
@@ -598,9 +555,11 @@
         class="filter-btn save-btn"
         class:has-changes={isEditingView
           ? feedViewStore.hasUnsavedChanges
-          : ef.sourceMode !== 'all'}
+          : ef.sourceMode !== 'all' || activeTypeFilter.length > 0}
         onclick={handleSave}
-        disabled={isEditingView ? !feedViewStore.hasUnsavedChanges : ef.sourceMode === 'all'}
+        disabled={isEditingView
+          ? !feedViewStore.hasUnsavedChanges
+          : ef.sourceMode === 'all' && activeTypeFilter.length === 0}
         title={isEditingView ? 'Update view' : 'Save as new view'}
       >
         <Icon name="save" size={16} />
@@ -756,32 +715,6 @@
     text-decoration: underline;
   }
 
-  .account-group-header {
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 0.375rem;
-    text-transform: none;
-    font-size: 0.75rem;
-    letter-spacing: normal;
-  }
-
-  .group-avatar {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-    border-radius: 50%;
-    object-fit: cover;
-  }
-
-  .group-avatar-placeholder {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-    border-radius: 50%;
-    background: var(--color-border, #e0e0e0);
-  }
-
   .radio-label,
   .check-label {
     display: flex;
@@ -849,11 +782,6 @@
     display: flex;
     flex-direction: column;
     gap: 0.125rem;
-  }
-
-  .account-kind-list {
-    max-height: none;
-    padding: 0.25rem 0.375rem 0.25rem 1.5rem;
   }
 
   /* Save button */
