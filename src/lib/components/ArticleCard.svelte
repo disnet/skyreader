@@ -514,10 +514,10 @@
       </div>
     {/if}
     <button class="article-header" onclick={handleHeaderClick}>
+      {#if faviconUrl}
+        <img src={faviconUrl} alt="" class="favicon" />
+      {/if}
       <span class="article-title">
-        {#if faviconUrl}
-          <img src={faviconUrl} alt="" class="favicon" />
-        {/if}
         {#if isOpen}
           <a
             href={itemUrl}
@@ -860,6 +860,7 @@
   .favicon {
     width: 16px;
     height: 16px;
+    flex-shrink: 0;
     vertical-align: baseline;
     margin-right: 0.75rem;
   }
@@ -1231,6 +1232,39 @@
   @container (max-width: 320px) {
     .action-label {
       display: none;
+    }
+  }
+
+  /* Mobile: two-line header — [icon] [feed] [date] on top, [title] below */
+  @media (max-width: 600px) {
+    .article-header {
+      flex-wrap: wrap;
+      gap: 0.25rem 0.5rem;
+    }
+
+    .favicon {
+      order: 0;
+      margin-right: 0;
+      align-self: center;
+    }
+
+    .feed-title-link {
+      order: 1;
+      flex: 0 1 auto;
+      min-width: 0;
+      font-size: 0.75rem;
+      max-width: none;
+      margin-right: auto;
+    }
+
+    .article-date {
+      order: 2;
+      font-size: 0.75rem;
+    }
+
+    .article-title {
+      order: 3;
+      flex-basis: 100%;
     }
   }
 
