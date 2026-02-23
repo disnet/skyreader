@@ -161,11 +161,6 @@
     return displayItem.type;
   });
 
-  function handleArchiveClick(e: MouseEvent) {
-    e.stopPropagation();
-    onArchive?.();
-  }
-
   let popoverMenuItems = $derived.by(() => {
     const items: {
       label: string;
@@ -173,6 +168,13 @@
       variant?: 'default' | 'danger';
       onclick: () => void;
     }[] = [
+      {
+        label: isArchived ? 'Move to inbox' : 'Archive',
+        icon: isArchived ? 'inbox' : 'archive',
+        onclick: () => {
+          onArchive?.();
+        },
+      },
       {
         label: 'Tag',
         icon: 'tag',
@@ -207,20 +209,19 @@
     if (e.key === 'Enter') onOpen?.();
   }}
 >
-  <div class="bookmark-icon">
-    {#if faviconUrl}
-      <img src={faviconUrl} alt="" class="favicon" />
-    {:else}
-      <Icon name="rss" size={28} />
-    {/if}
-  </div>
-
   <div class="bookmark-content">
     <h3 class="bookmark-title">{title}</h3>
     {#if summaryText}
       <p class="bookmark-summary">{summaryText}</p>
     {/if}
     <div class="bookmark-meta">
+      <span class="meta-icon">
+        {#if faviconUrl}
+          <img src={faviconUrl} alt="" class="favicon" />
+        {:else}
+          <Icon name="rss" size={14} />
+        {/if}
+      </span>
       {#if typeBadge}
         <span class="meta-type-badge">{typeBadge}</span>
       {:else if feedTitle}
@@ -243,13 +244,6 @@
 
   <div class="card-actions" bind:this={tagMenuAnchorRef}>
     <PopoverMenu items={popoverMenuItems} />
-    <button
-      class="card-action-btn"
-      onclick={handleArchiveClick}
-      title={isArchived ? 'Move to inbox' : 'Archive'}
-    >
-      <Icon name={isArchived ? 'inbox' : 'archive'} size={18} />
-    </button>
   </div>
 
   {#if tagMenuOpen}
@@ -267,9 +261,7 @@
 
 <style>
   .bookmark-card {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
+    position: relative;
     padding: 0.75rem 1rem;
     cursor: pointer;
     border-radius: 8px;
@@ -280,23 +272,23 @@
     background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
   }
 
-  .bookmark-icon {
-    flex-shrink: 0;
-    width: 40px;
-    height: 40px;
-    display: flex;
+  .meta-icon {
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    align-self: center;
+    flex-shrink: 0;
     color: var(--color-text-secondary);
-    background: var(--color-bg-secondary, #f5f5f5);
-    border-radius: 8px;
+  }
+
+  .meta-icon::before {
+    content: none;
+    margin-right: 0;
   }
 
   .favicon {
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
   }
 
   .bookmark-content {
@@ -309,6 +301,7 @@
     font-weight: 500;
     color: var(--color-text);
     margin: 0;
+    padding-right: 2rem;
     line-height: 1.4;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -345,6 +338,11 @@
     content: '·';
     margin-right: 0.375rem;
     opacity: 0.5;
+  }
+
+  .bookmark-meta > .meta-icon + :not(:first-child)::before {
+    content: none;
+    margin-right: 0;
   }
 
   .meta-feed {
@@ -389,33 +387,17 @@
   }
 
   .card-actions {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
     display: flex;
-    flex-shrink: 0;
     align-items: center;
     gap: 0.25rem;
-  }
-
-  .card-action-btn {
-    background: none;
-    border: none;
-    padding: 0.375rem;
-    cursor: pointer;
-    color: var(--color-text-secondary);
-    border-radius: 4px;
-  }
-
-  .card-action-btn:hover {
-    color: var(--color-primary, #0066cc);
-    background: rgba(0, 0, 0, 0.05);
   }
 
   @media (prefers-color-scheme: dark) {
     .bookmark-card:hover {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
-    }
-
-    .card-action-btn:hover {
-      background: rgba(255, 255, 255, 0.1);
     }
   }
 </style>
