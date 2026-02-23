@@ -4,6 +4,7 @@
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import { searchBlueskyActors, type BlueskySearchResult } from '$lib/services/blueskySearch';
   import { api } from '$lib/services/api';
@@ -17,11 +18,23 @@
     iconUrl?: string;
   }
 
+  type StandardSub = {
+    uri: string;
+    publisherDid: string;
+    publication: {
+      uri: string;
+      name: string;
+      url: string;
+      description?: string;
+    };
+  };
+
   type Mode = 'idle' | 'searching-actors' | 'discovering-feeds' | 'select-feeds' | 'select-content';
 
   let inputValue = $state('');
   let mode = $state<Mode>('idle');
   let error = $state<string | null>(null);
+  let inputFocused = $state(false);
 
   // Bluesky search state
   let searchResults = $state<BlueskySearchResult[]>([]);
@@ -40,6 +53,21 @@
   let sharesSelected = $state(false);
   let freestandingDocsSelected = $state(false);
   let isSubscribing = $state(false);
+
+  // Standard subscriptions state
+  let standardSubs = $state<StandardSub[]>([]);
+  let isLoadingStandardSubs = $state(false);
+  let standardSubsLoaded = $state(false);
+
+  let subscribedPublisherDids = $derived.by(() => {
+    const dids = new Set<string>();
+    for (const sub of subscriptionsStore.subscriptions) {
+      if (sub.subjectDid) {
+        dids.add(sub.subjectDid);
+      }
+    }
+    return dids;
+  });
 
   let inputEl: HTMLInputElement | undefined = $state();
   let dropdownEl: HTMLDivElement | undefined = $state();
@@ -75,6 +103,166 @@
       trimmed.startsWith('https://') ||
       (trimmed.includes('.') && !trimmed.includes(' ') && trimmed.length > 4)
     );
+  }
+
+  function parseAtUri(atUri: string): { did: string; collection: string; rkey: string } | null {
+    const match = atUri.match(/^at:\/\/(did:[^/]+)\/([^/]+)\/([^/]+)$/);
+    if (!match) return null;
+    return { did: match[1], collection: match[2], rkey: match[3] };
+  }
+
+  async function resolvePdsUrl(did: string): Promise<string | null> {
+    try {
+      if (did.startsWith('did:plc:')) {
+        const res = await fetch(`https://plc.directory/${did}`);
+        if (!res.ok) return null;
+        const doc = (await res.json()) as {
+          service?: Array<{ id: string; type: string; serviceEndpoint: string }>;
+        };
+        const svc = doc.service?.find(
+          (s) => s.id === '#atproto_pds' || s.type === 'AtprotoPersonalDataServer'
+        );
+        return svc?.serviceEndpoint || null;
+      } else if (did.startsWith('did:web:')) {
+        const domain = did.replace('did:web:', '');
+        const res = await fetch(`https://${domain}/.well-known/did.json`);
+        if (!res.ok) return null;
+        const doc = (await res.json()) as {
+          service?: Array<{ id: string; type: string; serviceEndpoint: string }>;
+        };
+        const svc = doc.service?.find(
+          (s) => s.id === '#atproto_pds' || s.type === 'AtprotoPersonalDataServer'
+        );
+        return svc?.serviceEndpoint || null;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function loadStandardSubscriptions() {
+    if (standardSubsLoaded || isLoadingStandardSubs) return;
+    isLoadingStandardSubs = true;
+    try {
+      const pdsUrl = auth.user?.pdsUrl;
+      const did = auth.user?.did;
+      if (!pdsUrl || !did) {
+        standardSubs = [];
+        return;
+      }
+
+      const params = new URLSearchParams({
+        repo: did,
+        collection: 'site.standard.graph.subscription',
+        limit: '100',
+      });
+      const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.listRecords?${params}`);
+      if (!res.ok) {
+        standardSubs = [];
+        return;
+      }
+      const data = (await res.json()) as {
+        records: Array<{ uri: string; value: { publication?: string } }>;
+      };
+
+      if (data.records.length === 0) {
+        standardSubs = [];
+        return;
+      }
+
+      const entries = data.records
+        .map((r) => ({ uri: r.uri, pubUri: r.value.publication }))
+        .filter((e): e is { uri: string; pubUri: string } => !!e.pubUri)
+        .map((e) => ({ ...e, parsed: parseAtUri(e.pubUri) }))
+        .filter((e): e is typeof e & { parsed: NonNullable<typeof e.parsed> } => !!e.parsed);
+
+      const uniqueDids = [...new Set(entries.map((e) => e.parsed.did))];
+      const pdsCache = new Map<string, string | null>();
+      await Promise.all(
+        uniqueDids.map(async (d) => {
+          pdsCache.set(d, await resolvePdsUrl(d));
+        })
+      );
+
+      const results = await Promise.allSettled(
+        entries.map(async (entry): Promise<StandardSub | null> => {
+          const pubPds = pdsCache.get(entry.parsed.did);
+          if (!pubPds) return null;
+
+          const pubParams = new URLSearchParams({
+            repo: entry.parsed.did,
+            collection: entry.parsed.collection,
+            rkey: entry.parsed.rkey,
+          });
+          const pubRes = await fetch(`${pubPds}/xrpc/com.atproto.repo.getRecord?${pubParams}`);
+          if (!pubRes.ok) return null;
+
+          const pubData = (await pubRes.json()) as {
+            value: { name?: string; url?: string; description?: string };
+          };
+          const pub = pubData.value;
+          if (!pub.url) return null;
+
+          return {
+            uri: entry.uri,
+            publisherDid: entry.parsed.did,
+            publication: {
+              uri: entry.pubUri,
+              name: pub.name || pub.url,
+              url: pub.url,
+              description: pub.description,
+            },
+          };
+        })
+      );
+
+      standardSubs = results
+        .filter((r): r is PromiseFulfilledResult<StandardSub | null> => r.status === 'fulfilled')
+        .map((r) => r.value)
+        .filter((s): s is StandardSub => s !== null);
+    } catch {
+      // Silently fail - these are just suggestions
+    } finally {
+      isLoadingStandardSubs = false;
+      standardSubsLoaded = true;
+    }
+  }
+
+  let subscribingStandardSub = $state<string | null>(null);
+
+  async function subscribeStandardSub(sub: StandardSub) {
+    if (subscribedPublisherDids.has(sub.publisherDid)) return;
+    if (!subscriptionsStore.canAddMore) {
+      error = 'Subscription limit reached';
+      return;
+    }
+
+    error = null;
+    subscribingStandardSub = sub.uri;
+
+    try {
+      const subId = await subscriptionsStore.add(sub.publication.uri, sub.publication.name, {
+        sourceType: 'atproto.documents',
+        subjectDid: sub.publisherDid,
+        siteUrl: sub.publication.url,
+        feedUrl: sub.publication.uri,
+      });
+
+      socialStore.loadFeed(true);
+      goto(`/?feed=${subId}`);
+      sidebarStore.closeMobile();
+      inputFocused = false;
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to subscribe';
+    } finally {
+      subscribingStandardSub = null;
+    }
+  }
+
+  function handleFocus() {
+    inputFocused = true;
+    loadStandardSubscriptions();
   }
 
   function reset() {
@@ -338,6 +526,7 @@
       inputEl &&
       !inputEl.contains(e.target as Node)
     ) {
+      inputFocused = false;
       if (mode === 'searching-actors') {
         searchResults = [];
         mode = 'idle';
@@ -350,11 +539,19 @@
     return () => document.removeEventListener('mousedown', handleClickOutside);
   });
 
+  let showStandardSubs = $derived(
+    inputFocused &&
+      mode === 'idle' &&
+      inputValue.trim().length === 0 &&
+      (isLoadingStandardSubs || standardSubs.length > 0)
+  );
+
   let showDropdown = $derived(
     searchResults.length > 0 ||
       discoveredFeeds.length > 0 ||
       mode === 'select-content' ||
-      mode === 'discovering-feeds'
+      mode === 'discovering-feeds' ||
+      showStandardSubs
   );
 </script>
 
@@ -374,6 +571,7 @@
       bind:value={inputValue}
       oninput={handleInput}
       onkeydown={handleKeydown}
+      onfocus={handleFocus}
       disabled={mode === 'discovering-feeds' || mode === 'select-content'}
     />
     {#if inputValue || mode !== 'idle'}
@@ -389,6 +587,37 @@
 
   {#if showDropdown}
     <div class="dropdown" bind:this={dropdownEl}>
+      {#if showStandardSubs}
+        {#if isLoadingStandardSubs}
+          <div class="dropdown-status">
+            <span class="spinner"></span>
+            <span>Loading subscriptions...</span>
+          </div>
+        {:else}
+          <div class="dropdown-label">Your standard.site subscriptions</div>
+          {#each standardSubs as sub (sub.uri)}
+            {@const isSubscribed = subscribedPublisherDids.has(sub.publisherDid)}
+            <div class="dropdown-item standard-sub-item">
+              <span class="standard-sub-info">
+                <span class="standard-sub-name">{sub.publication.name}</span>
+                <span class="standard-sub-url">{sub.publication.url}</span>
+              </span>
+              {#if isSubscribed}
+                <span class="sub-badge">Subscribed</span>
+              {:else}
+                <button
+                  class="sub-subscribe-btn"
+                  onclick={() => subscribeStandardSub(sub)}
+                  disabled={subscribingStandardSub === sub.uri}
+                >
+                  {subscribingStandardSub === sub.uri ? '...' : 'Subscribe'}
+                </button>
+              {/if}
+            </div>
+          {/each}
+        {/if}
+      {/if}
+
       {#if mode === 'discovering-feeds'}
         <div class="dropdown-status">
           <span class="spinner"></span>
@@ -696,6 +925,58 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* Standard sub items */
+  .standard-sub-item {
+    align-items: center;
+    cursor: default;
+  }
+
+  .standard-sub-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+    gap: 0.0625rem;
+  }
+
+  .standard-sub-name {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .standard-sub-url {
+    font-size: 0.6875rem;
+    color: var(--color-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sub-subscribe-btn {
+    padding: 0.125rem 0.5rem;
+    border: none;
+    border-radius: 4px;
+    background: var(--color-accent, #0085ff);
+    color: white;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: opacity 0.15s;
+  }
+
+  .sub-subscribe-btn:hover:not(:disabled) {
+    opacity: 0.85;
+  }
+
+  .sub-subscribe-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   /* Feed URL items */
