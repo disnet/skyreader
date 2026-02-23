@@ -245,7 +245,8 @@ class ApiClient {
       description?: string;
       iconUrl?: string;
     }>;
-    hasShares: boolean;
+    shareCount: number;
+    freestandingDocumentCount: number;
   }> {
     return this.fetch(`/api/social/detect-content?did=${encodeURIComponent(did)}`);
   }

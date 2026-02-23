@@ -404,8 +404,11 @@ function createFeedViewStore() {
     if (feedSub?.sourceType === 'atproto.documents' && feedSub.subjectDid) {
       // Filter to documents from this subscription's subject
       filtered = filtered.filter((d) => d.authorDid === feedSub.subjectDid);
-      // If publication-scoped (feedUrl is a publication AT URI), also filter by siteUri
-      if (feedSub.feedUrl && feedSub.feedUrl.startsWith('at://')) {
+      // If freestanding, only show documents not associated with a publication
+      if (feedSub.feedUrl === '__freestanding__') {
+        filtered = filtered.filter((d) => !d.siteUri || !d.siteUri.startsWith('at://'));
+      } else if (feedSub.feedUrl && feedSub.feedUrl.startsWith('at://')) {
+        // If publication-scoped (feedUrl is a publication AT URI), also filter by siteUri
         filtered = filtered.filter((d) => d.siteUri === feedSub.feedUrl);
       }
     } else if (sharerFilter) {
