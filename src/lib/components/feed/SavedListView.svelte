@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { pushState } from '$app/navigation';
+  import { page } from '$app/state';
   import SavedCard from './SavedCard.svelte';
   import SavedReader from './SavedReader.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
@@ -26,13 +28,25 @@
     window.scrollBy({ top: offset, behavior: 'instant' });
   }
 
+  // Close reader when back button is pressed (page.state.readerOpen becomes falsy)
+  $effect(() => {
+    if (!page.state.readerOpen && readerItem) {
+      readerItem = null;
+      requestAnimationFrame(() => {
+        window.scrollTo(0, savedScrollY);
+      });
+    }
+  });
+
   function openReader(item: FeedDisplayItem) {
     savedScrollY = window.scrollY;
     readerItem = item;
+    pushState('', { readerOpen: true });
   }
 
   function closeReader() {
     readerItem = null;
+    history.back();
     requestAnimationFrame(() => {
       window.scrollTo(0, savedScrollY);
     });
