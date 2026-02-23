@@ -1,17 +1,16 @@
 <script lang="ts">
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { profileService } from '$lib/services/profiles';
   import Modal from '$lib/components/common/Modal.svelte';
-  import type { BlueskyProfile } from '$lib/types';
-  import {
-    rssSourceKey,
-    sharesSourceKey,
-    documentsSourceKey,
-    ACCOUNT_SOURCE_KINDS,
-    migrateLegacyView,
-  } from '$lib/utils/sourceKeys';
+  import type { SubscriptionSourceType } from '$lib/types';
+  import { subscriptionSourceKey, migrateLegacyView } from '$lib/utils/sourceKeys';
   import { getFaviconUrl } from '$lib/utils/favicon';
+
+  const TYPE_OPTIONS: { value: SubscriptionSourceType; label: string }[] = [
+    { value: 'rss', label: 'RSS Feeds' },
+    { value: 'atproto.shares', label: 'Skyreader Shares' },
+    { value: 'atproto.documents', label: 'Standard.site Documents' },
+  ];
 
   interface Props {
     open: boolean;
@@ -27,47 +26,12 @@
   let sourceKeys = $state<Set<string>>(new Set());
   let readFilter = $state<'all' | 'unread' | 'read'>('all');
   let sortOrder = $state<'newest' | 'oldest'>('newest');
+  let typeFilter = $state<Set<SubscriptionSourceType>>(new Set());
   let saving = $state(false);
   let error = $state<string | null>(null);
 
   // Search state for filtering source lists
   let feedSearch = $state('');
-  let accountSearch = $state('');
-
-  // Derive unique account DIDs from atproto subscriptions
-  let accountDids = $derived(() => {
-    const dids = new Set<string>();
-    for (const sub of subscriptionsStore.subscriptions) {
-      if (sub.sourceType?.startsWith('atproto.') && sub.subjectDid) {
-        dids.add(sub.subjectDid);
-      }
-    }
-    return [...dids];
-  });
-
-  // Account profiles for display
-  let accountProfiles = $state<Map<string, BlueskyProfile>>(new Map());
-
-  // Load profiles for account DIDs
-  $effect(() => {
-    if (!open) return;
-    const dids = accountDids();
-    for (const did of dids) {
-      if (!accountProfiles.has(did)) {
-        profileService.getProfile(did).then((p) => {
-          if (p) {
-            accountProfiles = new Map(accountProfiles).set(did, p);
-          }
-        });
-      }
-    }
-  });
-
-  function getModalAccountDisplayName(did: string): string {
-    const profile = accountProfiles.get(did);
-    if (profile) return profile.displayName || profile.handle;
-    return did;
-  }
 
   // Filtered subscriptions based on search
   let filteredSubscriptions = $derived(
@@ -82,16 +46,26 @@
       : subscriptionsStore.subscriptions
   );
 
-  // Filtered accounts based on search
-  let filteredAccounts = $derived(
-    accountSearch
-      ? accountDids().filter((did) => {
-          const term = accountSearch.toLowerCase();
-          const displayName = getModalAccountDisplayName(did).toLowerCase();
-          return displayName.includes(term) || did.toLowerCase().includes(term);
-        })
-      : accountDids()
-  );
+  function toggleTypeFilter(type: SubscriptionSourceType) {
+    const next = new Set(typeFilter);
+    if (next.has(type)) {
+      next.delete(type);
+    } else {
+      next.add(type);
+    }
+    typeFilter = next;
+  }
+
+  // Helper to get all account DIDs for legacy migration
+  function getAllFollowDids(): string[] {
+    const dids = new Set<string>();
+    for (const sub of subscriptionsStore.subscriptions) {
+      if (sub.sourceType?.startsWith('atproto.') && sub.subjectDid) {
+        dids.add(sub.subjectDid);
+      }
+    }
+    return [...dids];
+  }
 
   // Reset form when modal opens or editingViewId changes
   $effect(() => {
@@ -102,6 +76,7 @@
           name = view.name;
           readFilter = view.readFilter;
           sortOrder = view.sortOrder;
+          typeFilter = new Set(view.typeFilter ?? []);
 
           if (view.sourceMode != null) {
             // New format (coerce any stale 'exclude' to 'include')
@@ -112,7 +87,7 @@
             const allSubIds = subscriptionsStore.subscriptions
               .map((s) => s.id)
               .filter((id): id is number => id != null);
-            const allDids = accountDids();
+            const allDids = getAllFollowDids();
             const migrated = migrateLegacyView(
               {
                 showArticles: view.showArticles,
@@ -130,7 +105,6 @@
             sourceKeys = new Set(migrated.sourceKeys);
           }
           feedSearch = '';
-          accountSearch = '';
           return;
         }
       }
@@ -140,8 +114,8 @@
       sourceKeys = new Set();
       readFilter = 'all';
       sortOrder = 'newest';
+      typeFilter = new Set();
       feedSearch = '';
-      accountSearch = '';
     }
   });
 
@@ -177,6 +151,7 @@
         sourceKeys: Array.from(sourceKeys),
         readFilter,
         sortOrder,
+        typeFilter: typeFilter.size > 0 ? Array.from(typeFilter) : undefined,
       };
 
       if (editingViewId != null) {
@@ -223,21 +198,27 @@
       </div>
 
       {#if sourceMode === 'include'}
-        <!-- Feeds -->
+        <!-- Subscriptions -->
         {#if subscriptionsStore.subscriptions.length > 0}
-          <div class="source-group-header">Feeds</div>
+          <div class="source-group-header">Subscriptions</div>
           <input
             type="text"
-            placeholder="Search feeds..."
+            placeholder="Search subscriptions..."
             bind:value={feedSearch}
             class="search-input"
           />
           <div class="checklist">
             {#each filteredSubscriptions as sub (sub.id)}
-              {#if sub.id != null}
-                {@const key = rssSourceKey(sub.id)}
+              {@const key = subscriptionSourceKey(sub)}
+              {#if key}
+                {@const isAtProto = sub.sourceType?.startsWith('atproto.') ?? false}
                 {@const iconUrl =
-                  sub.customIconUrl || getFaviconUrl(sub.siteUrl || sub.feedUrl || '')}
+                  sub.customIconUrl ||
+                  (isAtProto
+                    ? sub.siteUrl
+                      ? getFaviconUrl(sub.siteUrl)
+                      : '/icons/icon-192.svg'
+                    : getFaviconUrl(sub.siteUrl || sub.feedUrl || ''))}
                 <label class="checklist-item">
                   <input
                     type="checkbox"
@@ -252,53 +233,29 @@
               {/if}
             {/each}
             {#if feedSearch && filteredSubscriptions.length === 0}
-              <div class="no-results">No feeds match</div>
+              <div class="no-results">No subscriptions match</div>
             {/if}
           </div>
         {/if}
-
-        <!-- Account groups -->
-        {#if accountDids().length > 0}
-          <div class="source-group-header">Accounts</div>
-          <input
-            type="text"
-            placeholder="Search accounts..."
-            bind:value={accountSearch}
-            class="search-input"
-          />
-          {#each filteredAccounts as did (did)}
-            {@const profile = accountProfiles.get(did)}
-            <div class="source-group-header account-header">
-              {#if profile?.avatar}
-                <img src={profile.avatar} alt="" class="header-avatar" />
-              {:else}
-                <div class="header-avatar-placeholder"></div>
-              {/if}
-              {#if profile}
-                {profile.displayName || profile.handle}
-              {:else}
-                {did.slice(0, 20)}...
-              {/if}
-            </div>
-            <div class="checklist account-kind-checklist">
-              {#each ACCOUNT_SOURCE_KINDS as { kind, label, keyFn }}
-                {@const key = keyFn(did)}
-                <label class="checklist-item">
-                  <input
-                    type="checkbox"
-                    checked={sourceKeys.has(key)}
-                    onchange={() => toggleSourceKey(key)}
-                  />
-                  <span class="checklist-label">{label}</span>
-                </label>
-              {/each}
-            </div>
-          {/each}
-          {#if accountSearch && filteredAccounts.length === 0}
-            <div class="no-results">No accounts match</div>
-          {/if}
-        {/if}
       {/if}
+    </div>
+
+    <!-- Type Filter -->
+    <div class="form-group">
+      <span class="form-label">Content Types</span>
+      <div class="checklist type-checklist">
+        {#each TYPE_OPTIONS as opt}
+          <label class="checklist-item">
+            <input
+              type="checkbox"
+              checked={typeFilter.has(opt.value)}
+              onchange={() => toggleTypeFilter(opt.value)}
+            />
+            <span class="checklist-label">{opt.label}</span>
+          </label>
+        {/each}
+      </div>
+      <span class="form-hint">Leave all unchecked to show all types</span>
     </div>
 
     <!-- Read State -->
@@ -416,30 +373,6 @@
     margin-top: 0.5rem;
   }
 
-  .account-header {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    text-transform: none;
-    letter-spacing: normal;
-  }
-
-  .header-avatar {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-    border-radius: 50%;
-    object-fit: cover;
-  }
-
-  .header-avatar-placeholder {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-    border-radius: 50%;
-    background: var(--color-border, #e0e0e0);
-  }
-
   .search-input {
     width: 100%;
     padding: 0.375rem 0.5rem;
@@ -480,9 +413,13 @@
     gap: 0.25rem;
   }
 
-  .account-kind-checklist {
+  .type-checklist {
     max-height: none;
-    padding-left: 1.5rem;
+  }
+
+  .form-hint {
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
   }
 
   .checklist-item {

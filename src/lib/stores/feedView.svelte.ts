@@ -13,6 +13,7 @@ import type {
   CombinedFeedItem,
   UserShare,
   SavedItem,
+  SubscriptionSourceType,
 } from '$lib/types';
 import {
   isRssSource,
@@ -42,6 +43,7 @@ export interface EffectiveFilters {
   sourceKeys: string[];
   readFilter: 'all' | 'unread' | 'read';
   sortOrder: 'newest' | 'oldest';
+  typeFilter: SubscriptionSourceType[];
 }
 
 /**
@@ -125,6 +127,8 @@ function createFeedViewStore() {
   let toolbarSortOrder = $state<'newest' | 'oldest' | null>(null);
   // Tag filter (empty = no tag filter)
   let toolbarTagFilter = $state<string[]>([]);
+  // Type filter (empty = all types shown)
+  let toolbarTypeFilter = $state<SubscriptionSourceType[]>([]);
 
   // Bookmarks view sub-filter (inbox vs archive)
   let savedView = $state<'inbox' | 'archive'>('inbox');
@@ -169,13 +173,14 @@ function createFeedViewStore() {
       sourceKeys: toolbarSourceKeys,
       readFilter: showOnlyUnread ? 'unread' : 'all',
       sortOrder: toolbarSortOrder ?? preferences.sortOrder,
+      typeFilter: toolbarTypeFilter,
     };
   });
 
   // Derived: whether any toolbar filter differs from defaults
   let hasActiveFilters = $derived.by(() => {
     if (activeFilteredView) return true;
-    return toolbarSourceMode !== 'all';
+    return toolbarSourceMode !== 'all' || toolbarTypeFilter.length > 0;
   });
 
   // Derived: whether toolbar state differs from the persisted saved view
@@ -193,6 +198,11 @@ function createFeedViewStore() {
     if (toolbarSourceKeys.length !== savedKeys.size) return true;
     for (const key of toolbarSourceKeys) {
       if (!savedKeys.has(key)) return true;
+    }
+    const savedTypeFilter = new Set(view.typeFilter ?? []);
+    if (toolbarTypeFilter.length !== savedTypeFilter.size) return true;
+    for (const t of toolbarTypeFilter) {
+      if (!savedTypeFilter.has(t)) return true;
     }
     return false;
   });
@@ -227,23 +237,26 @@ function createFeedViewStore() {
   let readShareUrisThisSession = $state<Set<string>>(new Set());
   let readDocumentUrisThisSession = $state<Set<string>>(new Set());
 
-  // Derived: whether articles are shown (any RSS source allowed)
+  // Derived: whether articles are shown (any RSS source allowed and type filter permits)
   let showArticles = $derived.by((): boolean => {
     const fv = effectiveFilters;
+    if (fv.typeFilter.length > 0 && !fv.typeFilter.includes('rss')) return false;
     if (fv.sourceMode === 'all') return true;
     return fv.sourceKeys.some(isRssSource);
   });
 
-  // Derived: whether shares are shown (any shares source allowed)
+  // Derived: whether shares are shown (any shares source allowed and type filter permits)
   let showShares = $derived.by((): boolean => {
     const fv = effectiveFilters;
+    if (fv.typeFilter.length > 0 && !fv.typeFilter.includes('atproto.shares')) return false;
     if (fv.sourceMode === 'all') return true;
     return fv.sourceKeys.some(isSharesSource);
   });
 
-  // Derived: whether documents are shown (any documents source allowed)
+  // Derived: whether documents are shown (any documents source allowed and type filter permits)
   let showDocuments = $derived.by((): boolean => {
     const fv = effectiveFilters;
+    if (fv.typeFilter.length > 0 && !fv.typeFilter.includes('atproto.documents')) return false;
     if (fv.sourceMode === 'all') return true;
     return fv.sourceKeys.some(isDocumentsSource);
   });
@@ -820,6 +833,7 @@ function createFeedViewStore() {
       readFilter: showOnlyUnread ? 'unread' : 'all',
       sortOrder: toolbarSortOrder ?? preferences.sortOrder,
       tagFilter: toolbarTagFilter.length > 0 ? [...toolbarTagFilter] : undefined,
+      typeFilter: toolbarTypeFilter.length > 0 ? [...toolbarTypeFilter] : undefined,
     });
   }
 
@@ -828,6 +842,7 @@ function createFeedViewStore() {
     toolbarSourceKeys = [];
     toolbarSortOrder = null;
     toolbarTagFilter = [];
+    toolbarTypeFilter = [];
   }
 
   function toggleUnreadFilter() {
@@ -943,6 +958,9 @@ function createFeedViewStore() {
     get toolbarTagFilter() {
       return toolbarTagFilter;
     },
+    get toolbarTypeFilter() {
+      return toolbarTypeFilter;
+    },
     get currentSortOrder() {
       return toolbarSortOrder ?? preferences.sortOrder;
     },
@@ -989,6 +1007,9 @@ function createFeedViewStore() {
     },
     setToolbarTagFilter(tags: string[]) {
       toolbarTagFilter = tags;
+    },
+    setToolbarTypeFilter(types: SubscriptionSourceType[]) {
+      toolbarTypeFilter = types;
     },
     setToolbarSourceFilter(mode: 'all' | 'include', keys: string[]) {
       toolbarSourceMode = mode;
@@ -1062,6 +1083,7 @@ function createFeedViewStore() {
           showOnlyUnread = fv.readFilter === 'unread';
           toolbarSortOrder = fv.sortOrder;
           toolbarTagFilter = fv.tagFilter ? [...fv.tagFilter] : [];
+          toolbarTypeFilter = fv.typeFilter ? [...fv.typeFilter] : [];
           // Fire-and-forget legacy migration write-back
           if (fv.sourceMode == null && fv.id != null) {
             filteredViewsStore.update(fv.id, {

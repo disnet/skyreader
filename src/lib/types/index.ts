@@ -673,6 +673,7 @@ export interface FilteredView {
   readFilter: 'all' | 'unread' | 'read';
   sortOrder: 'newest' | 'oldest';
   tagFilter?: string[];
+  typeFilter?: SubscriptionSourceType[];
   createdAt: number;
   updatedAt: number;
   position: number;

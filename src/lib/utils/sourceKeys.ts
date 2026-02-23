@@ -63,6 +63,24 @@ export function getSourceDid(key: string): string {
   return parseSourceKey(key).id;
 }
 
+// --- Subscription source key (derive from subscription type) ---
+
+import type { Subscription } from '$lib/types';
+
+export function subscriptionSourceKey(sub: Subscription): string | null {
+  if (sub.id == null) return null;
+  if (!sub.sourceType || sub.sourceType === 'rss') {
+    return rssSourceKey(sub.id);
+  }
+  if (sub.sourceType === 'atproto.shares' && sub.subjectDid) {
+    return sharesSourceKey(sub.subjectDid);
+  }
+  if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
+    return documentsSourceKey(sub.subjectDid);
+  }
+  return null;
+}
+
 // --- Account source kinds (for UI iteration) ---
 
 export const ACCOUNT_SOURCE_KINDS = [
