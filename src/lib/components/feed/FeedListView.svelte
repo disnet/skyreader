@@ -1,5 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import { pushState } from '$app/navigation';
+  import { page } from '$app/state';
   import ArticleCard from '$lib/components/ArticleCard.svelte';
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
@@ -18,17 +20,29 @@
 
   let { onToggleSave, onShare, onUnshare }: Props = $props();
 
-  // Reader overlay state
+  // Reader overlay state — readerItem holds the data, page.state.readerOpen drives history
   let readerItem = $state<FeedDisplayItem | null>(null);
   let savedScrollY = 0;
+
+  // Close reader when back button is pressed (page.state.readerOpen becomes falsy)
+  $effect(() => {
+    if (!page.state.readerOpen && readerItem) {
+      readerItem = null;
+      requestAnimationFrame(() => {
+        window.scrollTo(0, savedScrollY);
+      });
+    }
+  });
 
   function openReader(item: FeedDisplayItem) {
     savedScrollY = window.scrollY;
     readerItem = item;
+    pushState('', { readerOpen: true });
   }
 
   function closeReader() {
     readerItem = null;
+    history.back();
     requestAnimationFrame(() => {
       window.scrollTo(0, savedScrollY);
     });
