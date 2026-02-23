@@ -12,11 +12,11 @@
 
   interface Props {
     items: MenuItem[];
+    open?: boolean;
   }
 
-  let { items }: Props = $props();
+  let { items, open = $bindable(false) }: Props = $props();
 
-  let isOpen = $state(false);
   let menuRef: HTMLDivElement | null = $state(null);
   let buttonRef: HTMLButtonElement | null = $state(null);
   let menuPosition = $state<{
@@ -32,11 +32,22 @@
     const buttonRect = buttonRef.getBoundingClientRect();
     const menuRect = menuRef.getBoundingClientRect();
     const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
 
     const position: typeof menuPosition = {};
 
-    // Vertical positioning: always below the button (absolute positioning)
-    position.top = buttonRef.offsetHeight + 4;
+    // Vertical positioning: prefer below the button, but flip above if it would overflow
+    const menuHeight = menuRect.height;
+    const spaceBelow = viewportHeight - buttonRect.bottom - 4;
+    const spaceAbove = buttonRect.top - 4;
+
+    if (menuHeight > spaceBelow && spaceAbove > spaceBelow) {
+      // Position above the button
+      position.bottom = buttonRef.offsetHeight + 4;
+    } else {
+      // Position below the button (default)
+      position.top = buttonRef.offsetHeight + 4;
+    }
 
     // Horizontal positioning: left-align menu with button by default
     // The menu is absolutely positioned relative to .popover-menu
@@ -54,40 +65,43 @@
     menuPosition = position;
   }
 
-  function toggle(e: MouseEvent) {
-    e.stopPropagation();
-    isOpen = !isOpen;
-    if (isOpen) {
-      // Position after the menu is rendered
+  // Reposition whenever the menu opens (handles both toggle clicks and external open)
+  $effect(() => {
+    if (open && menuRef) {
       requestAnimationFrame(() => {
         updateMenuPosition();
       });
     }
+  });
+
+  function toggle(e: MouseEvent) {
+    e.stopPropagation();
+    open = !open;
   }
 
   function handleItemClick(item: MenuItem, e: MouseEvent) {
     e.stopPropagation();
     if (!item.keepOpen) {
-      isOpen = false;
+      open = false;
     }
     item.onclick();
   }
 
   function handleClickOutside(e: MouseEvent) {
     if (
-      isOpen &&
+      open &&
       menuRef &&
       buttonRef &&
       !menuRef.contains(e.target as Node) &&
       !buttonRef.contains(e.target as Node)
     ) {
-      isOpen = false;
+      open = false;
     }
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (isOpen && e.key === 'Escape') {
-      isOpen = false;
+    if (open && e.key === 'Escape') {
+      open = false;
       buttonRef?.focus();
     }
   }
@@ -110,12 +124,12 @@
     class="menu-trigger"
     onclick={toggle}
     aria-haspopup="true"
-    aria-expanded={isOpen}
+    aria-expanded={open}
   >
     <span class="dots">⋯</span>
   </button>
 
-  {#if isOpen}
+  {#if open}
     <div
       bind:this={menuRef}
       class="menu-dropdown"

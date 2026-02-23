@@ -343,6 +343,15 @@
   let hasContent = $derived(Boolean(displayContent));
   let sanitizedContent = $derived(sanitizeHtml(displayContent, itemUrl));
 
+  // Estimate read time from content (~200 words/min)
+  let readTimeMinutes = $derived.by(() => {
+    const content = displayContent;
+    if (!content) return 0;
+    const text = content.replace(/<[^>]*>/g, '');
+    const wordCount = text.split(/\s+/).filter(Boolean).length;
+    return Math.max(1, Math.round(wordCount / 200));
+  });
+
   // Compute favicon URL - for shares of documents, feedUrl may be an AT Protocol URI
   // which getFaviconUrl can't handle, so fall back to itemUrl
   let faviconUrl = $derived.by(() => {
@@ -514,10 +523,10 @@
       </div>
     {/if}
     <button class="article-header" onclick={handleHeaderClick}>
+      {#if faviconUrl}
+        <img src={faviconUrl} alt="" class="favicon" />
+      {/if}
       <span class="article-title">
-        {#if faviconUrl}
-          <img src={faviconUrl} alt="" class="favicon" />
-        {/if}
         {#if isOpen}
           <a
             href={itemUrl}
@@ -538,6 +547,9 @@
         {:else}
           <span class="feed-title-label">{displayFeedTitle}</span>
         {/if}
+      {/if}
+      {#if readTimeMinutes > 0}
+        <span class="article-read-time"><Icon name="clock" size={12} /> {readTimeMinutes} min</span>
       {/if}
       <span class="article-date">{formatRelativeDate(itemPublishedAt)}</span>
     </button>
@@ -560,6 +572,22 @@
           </div>
         </div>
       {/if}
+    </div>
+
+    <!-- Mobile: meta line below content -->
+    <div class="article-meta-mobile">
+      {#if faviconUrl}
+        <img src={faviconUrl} alt="" class="favicon" />
+      {/if}
+      {#if feedTitle}
+        <a href="/?feed={feedId}" class="feed-title-link" onclick={(e) => e.stopPropagation()}
+          >{feedTitle}</a
+        >
+      {/if}
+      {#if readTimeMinutes > 0}
+        <span class="article-read-time"><Icon name="clock" size={12} /> {readTimeMinutes} min</span>
+      {/if}
+      <span class="article-date">{formatRelativeDate(itemPublishedAt)}</span>
     </div>
 
     <div class="article-actions-container">
@@ -860,6 +888,7 @@
   .favicon {
     width: 16px;
     height: 16px;
+    flex-shrink: 0;
     vertical-align: baseline;
     margin-right: 0.75rem;
   }
@@ -894,6 +923,17 @@
     flex-shrink: 0;
     font-size: 0.875rem;
     color: var(--color-text-secondary);
+  }
+
+  .article-read-time {
+    flex-shrink: 0;
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
+  }
+
+  .article-read-time :global(.icon) {
+    vertical-align: -2px;
+    margin-right: 0.15rem;
   }
 
   .feed-title-link,
@@ -1231,6 +1271,101 @@
   @container (max-width: 320px) {
     .action-label {
       display: none;
+    }
+  }
+
+  /* Mobile meta bar — hidden by default, shown on mobile when article is open */
+  .article-meta-mobile {
+    display: none;
+  }
+
+  /* Mobile: two-line header — [title] on top, [icon] [feed] [date] below */
+  @media (max-width: 600px) {
+    .article-header {
+      flex-wrap: wrap;
+      gap: 0.25rem 0.5rem;
+    }
+
+    .article-title {
+      order: 0;
+      flex-basis: 100%;
+    }
+
+    .favicon {
+      order: 1;
+      margin-right: 0;
+      align-self: center;
+    }
+
+    .feed-title-link {
+      order: 2;
+      flex: 0 1 auto;
+      min-width: 0;
+      font-size: 0.75rem;
+      max-width: none;
+    }
+
+    .article-read-time {
+      order: 3;
+      display: inline;
+      font-size: 0.75rem;
+    }
+
+    .article-read-time::before,
+    .article-date::before {
+      content: '·';
+      margin-right: 0.35rem;
+      color: var(--color-text-secondary);
+    }
+
+    .article-date {
+      order: 4;
+      font-size: 0.75rem;
+    }
+
+    /* When article is open, hide header meta and show mobile meta bar below content */
+    .article-item.open .article-header .favicon,
+    .article-item.open .article-header .feed-title-link,
+    .article-item.open .article-header .article-date,
+    .article-item.open .article-header .article-read-time {
+      display: none;
+    }
+
+    .article-item.open .article-meta-mobile {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0;
+      font-size: 0.75rem;
+      color: var(--color-text-secondary);
+    }
+
+    .article-meta-mobile .favicon {
+      order: unset;
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+    }
+
+    .article-meta-mobile .feed-title-link {
+      order: unset;
+      flex: 0 1 auto;
+      min-width: 0;
+      font-size: 0.75rem;
+      max-width: none;
+      color: var(--color-text-secondary);
+      text-decoration: none;
+    }
+
+    .article-meta-mobile .article-date {
+      order: unset;
+      font-size: 0.75rem;
+    }
+
+    .article-meta-mobile .article-read-time {
+      order: unset;
+      display: inline;
+      font-size: 0.75rem;
     }
   }
 
