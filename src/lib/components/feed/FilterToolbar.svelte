@@ -11,9 +11,9 @@
   import type { SubscriptionSourceType } from '$lib/types';
 
   const TYPE_OPTIONS: { value: SubscriptionSourceType; label: string }[] = [
-    { value: 'rss', label: 'Feeds' },
-    { value: 'atproto.shares', label: 'Shares' },
-    { value: 'atproto.documents', label: 'Documents' },
+    { value: 'rss', label: 'RSS Feeds' },
+    { value: 'atproto.shares', label: 'Skyreader Shares' },
+    { value: 'atproto.documents', label: 'Standard.site Documents' },
   ];
 
   interface Props {
@@ -410,8 +410,14 @@
                   {#each filteredSubscriptions as sub}
                     {@const key = subscriptionSourceKey(sub)}
                     {#if key}
+                      {@const isAtProto = sub.sourceType?.startsWith('atproto.') ?? false}
                       {@const iconUrl =
-                        sub.customIconUrl || getFaviconUrl(sub.siteUrl || sub.feedUrl || '')}
+                        sub.customIconUrl ||
+                        (isAtProto
+                          ? sub.siteUrl
+                            ? getFaviconUrl(sub.siteUrl)
+                            : '/icons/icon-192.svg'
+                          : getFaviconUrl(sub.siteUrl || sub.feedUrl || ''))}
                       <label class="check-label">
                         <input
                           type="checkbox"
