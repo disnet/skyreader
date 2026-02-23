@@ -52,7 +52,6 @@
   let sharesSelected = $state(false);
   let freestandingDocsSelected = $state(false);
   let isSubscribing = $state(false);
-  let isStandardSub = $state(false);
 
   // Standard subscriptions state
   type StandardSub = {
@@ -133,7 +132,6 @@
     sharesSelected = false;
     freestandingDocsSelected = false;
     isSubscribing = false;
-    isStandardSub = false;
     if (searchTimeout) clearTimeout(searchTimeout);
   }
 
@@ -283,7 +281,6 @@
     freestandingDocsSelected = false;
     discoveredFeeds = [];
     error = null;
-    isStandardSub = false;
   }
 
   function togglePublication(uri: string) {
@@ -431,20 +428,35 @@
     }
   }
 
-  function handleSelectStandardSub(sub: StandardSub) {
-    let handle = sub.publisherDid;
-    try {
-      handle = new URL(sub.publication.url).hostname;
-    } catch {
-      // use DID as fallback
+  let subscribingStandardSub = $state<string | null>(null);
+
+  async function subscribeStandardSub(sub: StandardSub) {
+    if (subscribedPublisherDids.has(sub.publisherDid)) return;
+    if (!subscriptionsStore.canAddMore) {
+      error = 'Subscription limit reached';
+      return;
     }
-    isStandardSub = true;
-    selectAccount({
-      did: sub.publisherDid,
-      handle,
-      displayName: sub.publication.name,
-      avatar: undefined,
-    });
+
+    error = null;
+    subscribingStandardSub = sub.uri;
+
+    try {
+      const subId = await subscriptionsStore.add(sub.publication.uri, sub.publication.name, {
+        sourceType: 'atproto.documents',
+        subjectDid: sub.publisherDid,
+        siteUrl: sub.publication.url,
+        feedUrl: sub.publication.uri,
+      });
+
+      socialStore.loadFeed(true);
+      handleClose();
+      goto(`/?feed=${subId}`);
+      sidebarStore.closeMobile();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to subscribe';
+    } finally {
+      subscribingStandardSub = null;
+    }
   }
 
   $effect(() => {
@@ -560,7 +572,7 @@
     <div class="standard-subs-list">
       {#each standardSubs as sub (sub.uri)}
         {@const isSubscribed = subscribedPublisherDids.has(sub.publisherDid)}
-        <button class="standard-sub-row" onclick={() => handleSelectStandardSub(sub)}>
+        <div class="standard-sub-row">
           <div class="standard-sub-info">
             <span class="standard-sub-name">{sub.publication.name}</span>
             <span class="standard-sub-url">{sub.publication.url}</span>
@@ -570,8 +582,16 @@
           </div>
           {#if isSubscribed}
             <span class="subscribed-badge">Subscribed</span>
+          {:else}
+            <button
+              class="standard-sub-subscribe-btn"
+              onclick={() => subscribeStandardSub(sub)}
+              disabled={subscribingStandardSub === sub.uri}
+            >
+              {subscribingStandardSub === sub.uri ? 'Adding...' : 'Subscribe'}
+            </button>
           {/if}
-        </button>
+        </div>
       {/each}
     </div>
   {/if}
@@ -669,56 +689,52 @@
           <span>Detecting available content...</span>
         </div>
       {:else}
-        {#if !isStandardSub}
-          <div class="content-list">
-            <button
-              class="content-item"
-              class:selected={freestandingDocsSelected}
-              class:is-subscribed={subscribedKeys.has('__freestanding__')}
-              onclick={toggleFreestandingDocs}
-              disabled={subscribedKeys.has('__freestanding__')}
+        <div class="content-list">
+          <button
+            class="content-item"
+            class:selected={freestandingDocsSelected}
+            class:is-subscribed={subscribedKeys.has('__freestanding__')}
+            onclick={toggleFreestandingDocs}
+            disabled={subscribedKeys.has('__freestanding__')}
+          >
+            <span
+              class="checkbox"
+              class:checked={freestandingDocsSelected || subscribedKeys.has('__freestanding__')}
             >
-              <span
-                class="checkbox"
-                class:checked={freestandingDocsSelected || subscribedKeys.has('__freestanding__')}
+              {#if freestandingDocsSelected || subscribedKeys.has('__freestanding__')}&#10003;{/if}
+            </span>
+            <span class="content-info">
+              <span class="content-name"
+                >Documents <span class="content-count">({freestandingDocumentCount})</span></span
               >
-                {#if freestandingDocsSelected || subscribedKeys.has('__freestanding__')}&#10003;{/if}
-              </span>
-              <span class="content-info">
-                <span class="content-name"
-                  >Documents <span class="content-count">({freestandingDocumentCount})</span></span
-                >
-                <span class="content-desc"
-                  >Free-standing documents by @{selectedAccount.handle}</span
-                >
-              </span>
-              {#if subscribedKeys.has('__freestanding__')}
-                <span class="subscribed-badge">Subscribed</span>
-              {/if}
-            </button>
+              <span class="content-desc">Free-standing documents by @{selectedAccount.handle}</span>
+            </span>
+            {#if subscribedKeys.has('__freestanding__')}
+              <span class="subscribed-badge">Subscribed</span>
+            {/if}
+          </button>
 
-            <button
-              class="content-item"
-              class:selected={sharesSelected}
-              class:is-subscribed={subscribedKeys.has('shares')}
-              onclick={toggleShares}
-              disabled={subscribedKeys.has('shares')}
-            >
-              <span class="checkbox" class:checked={sharesSelected || subscribedKeys.has('shares')}>
-                {#if sharesSelected || subscribedKeys.has('shares')}&#10003;{/if}
-              </span>
-              <span class="content-info">
-                <span class="content-name"
-                  >Shared articles <span class="content-count">({shareCount})</span></span
-                >
-                <span class="content-desc">Articles shared by @{selectedAccount.handle}</span>
-              </span>
-              {#if subscribedKeys.has('shares')}
-                <span class="subscribed-badge">Subscribed</span>
-              {/if}
-            </button>
-          </div>
-        {/if}
+          <button
+            class="content-item"
+            class:selected={sharesSelected}
+            class:is-subscribed={subscribedKeys.has('shares')}
+            onclick={toggleShares}
+            disabled={subscribedKeys.has('shares')}
+          >
+            <span class="checkbox" class:checked={sharesSelected || subscribedKeys.has('shares')}>
+              {#if sharesSelected || subscribedKeys.has('shares')}&#10003;{/if}
+            </span>
+            <span class="content-info">
+              <span class="content-name"
+                >Shared articles <span class="content-count">({shareCount})</span></span
+              >
+              <span class="content-desc">Articles shared by @{selectedAccount.handle}</span>
+            </span>
+            {#if subscribedKeys.has('shares')}
+              <span class="subscribed-badge">Subscribed</span>
+            {/if}
+          </button>
+        </div>
 
         {#if publications.length > 0}
           <div class="content-list">
@@ -1159,18 +1175,34 @@
     border: none;
     border-bottom: 1px solid var(--color-border);
     text-align: left;
-    cursor: pointer;
     color: var(--color-text);
     font: inherit;
-    transition: background-color 0.1s;
   }
 
   .standard-sub-row:last-child {
     border-bottom: none;
   }
 
-  .standard-sub-row:hover {
-    background: var(--color-bg-secondary);
+  .standard-sub-subscribe-btn {
+    padding: 0.25rem 0.75rem;
+    border: none;
+    border-radius: 6px;
+    background: var(--color-accent, #0085ff);
+    color: white;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: opacity 0.15s;
+  }
+
+  .standard-sub-subscribe-btn:hover:not(:disabled) {
+    opacity: 0.85;
+  }
+
+  .standard-sub-subscribe-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .standard-sub-info {
