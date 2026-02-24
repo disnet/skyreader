@@ -149,7 +149,7 @@
         section: 'Feeds',
         icon: 'rss',
         onSectionClick: () => {
-          goto('/?feeds=true');
+          sidebarStore.toggleSection('feeds');
           close();
         },
         items: filteredFeeds,
@@ -177,13 +177,11 @@
     const feed = url.searchParams.get('feed');
     const saved = url.searchParams.get('saved');
     const shared = url.searchParams.get('shared');
-    const feeds = url.searchParams.get('feeds');
     const view = url.searchParams.get('view');
 
     if (view) return { type: 'icon', name: 'filter' };
     if (saved) return { type: 'icon', name: 'bookmark' };
     if (shared) return { type: 'icon', name: 'share' };
-    if (feeds) return { type: 'icon', name: 'rss' };
 
     if (feed) {
       const sub = subscriptions.find((s) => s.id === parseInt(feed));
@@ -209,13 +207,11 @@
     const feed = url.searchParams.get('feed');
     const saved = url.searchParams.get('saved');
     const shared = url.searchParams.get('shared');
-    const feeds = url.searchParams.get('feeds');
     const view = url.searchParams.get('view');
     if (view) return { type: 'filteredView', id: parseInt(view) };
     if (feed) return { type: 'feed', id: parseInt(feed) };
     if (saved) return { type: 'saved' };
     if (shared) return { type: 'shared' };
-    if (feeds) return { type: 'feeds' };
     return { type: 'all' };
   });
 
@@ -225,7 +221,6 @@
       if (item.id === 'all' && filter.type === 'all') return true;
       if (item.id === 'saved' && filter.type === 'saved') return true;
       if (item.id === 'shared' && filter.type === 'shared') return true;
-      if (item.id === 'feeds' && filter.type === 'feeds') return true;
     }
     if (item.type === 'feed' && filter.type === 'feed' && filter.id === item.id) return true;
     if (item.type === 'filteredView' && filter.type === 'filteredView' && filter.id === item.id)
@@ -292,7 +287,6 @@
     if (item.type === 'view') {
       if (item.id === 'saved') url = '/?saved=true';
       else if (item.id === 'shared') url = '/?shared=true';
-      else if (item.id === 'feeds') url = '/?feeds=true';
     } else if (item.type === 'feed') {
       url = `/?feed=${item.id}`;
     } else if (item.type === 'filteredView') {
