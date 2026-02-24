@@ -78,9 +78,9 @@
 
     keyboardStore.register({
       key: '4',
-      description: 'Feeds',
+      description: 'Toggle Feeds section',
       category: 'Views',
-      action: () => goto('/?feeds=true'),
+      action: () => sidebarStore.toggleSection('feeds'),
       condition: () => auth.isAuthenticated,
     });
 

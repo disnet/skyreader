@@ -54,7 +54,7 @@
       shared: url.searchParams.get('shared'),
       sharer: url.searchParams.get('sharer'),
       following: url.searchParams.get('following'),
-      feeds: url.searchParams.get('feeds'),
+      feeds: null,
       contentType,
       view: url.searchParams.get('view'),
     };
@@ -130,7 +130,6 @@
       }
       return baseName;
     }
-    if (feedViewStore.feedsFilter) return 'Feeds';
     return 'All';
   });
 
@@ -139,7 +138,7 @@
     if (feedViewStore.feedFilter) {
       return unreadCounts.feedCounts.get(parseInt(feedViewStore.feedFilter)) || 0;
     }
-    if (feedViewStore.savedFilter || feedViewStore.sharedFilter || feedViewStore.feedsFilter) {
+    if (feedViewStore.savedFilter || feedViewStore.sharedFilter) {
       return 0;
     }
     if (feedViewStore.sharerFilter) {
@@ -391,7 +390,6 @@
       feedViewStore.sharedFilter,
       feedViewStore.sharerFilter,
       feedViewStore.followingFilter,
-      feedViewStore.feedsFilter,
       feedViewStore.contentTypeFilter,
       feedViewStore.viewFilter,
     ];
@@ -433,8 +431,7 @@
         !feedViewStore.savedFilter &&
         !feedViewStore.sharedFilter &&
         !feedViewStore.sharerFilter &&
-        !feedViewStore.followingFilter &&
-        !feedViewStore.feedsFilter}
+        !feedViewStore.followingFilter}
     />
 
     {#if (appManager.isHydrating || appManager.isRefreshing) && feedViewStore.currentItems.length === 0}
@@ -477,8 +474,6 @@
         {:else}
           <EmptyState title="No articles" description="This feed has no articles" />
         {/if}
-      {:else if feedViewStore.feedsFilter}
-        <EmptyState title="No unread articles" description="You're all caught up on your feeds" />
       {:else if feedViewStore.showOnlyUnread}
         <EmptyState title="No unread articles" description="You're all caught up!" />
       {:else}

@@ -148,12 +148,10 @@
     const feed = $page.url.searchParams.get('feed');
     const starred = $page.url.searchParams.get('saved');
     const shared = $page.url.searchParams.get('shared');
-    const feeds = $page.url.searchParams.get('feeds');
     if (view) return { type: 'view' as const, id: parseInt(view) };
     if (feed) return { type: 'feed' as const, id: parseInt(feed) };
     if (starred) return { type: 'saved' as const };
     if (shared) return { type: 'shared' as const };
-    if (feeds) return { type: 'feeds' as const };
     return { type: 'all' as const };
   });
 
@@ -234,7 +232,6 @@
     else if (type === 'feed' && id) params.set('feed', String(id));
     else if (type === 'saved') params.set('saved', 'true');
     else if (type === 'shared') params.set('shared', 'true');
-    else if (type === 'feeds') params.set('feeds', 'true');
 
     const query = params.toString();
     goto(query ? `/?${query}` : '/');
@@ -393,9 +390,9 @@
       icon="rss"
       isExpanded={sidebarStore.expandedSections.feeds}
       showOnlyUnread={sidebarStore.showOnlyUnread.feeds}
-      isActive={currentFilter().type === 'feeds'}
+      isActive={false}
       onToggle={() => sidebarStore.toggleSection('feeds')}
-      onLabelClick={() => selectFilter('feeds')}
+      onLabelClick={() => sidebarStore.toggleSection('feeds')}
       onUnreadToggle={() => sidebarStore.toggleShowOnlyUnread('feeds')}
       onAdd={() => sidebarStore.openAddFeedModal()}
     >

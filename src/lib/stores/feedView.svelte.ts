@@ -139,7 +139,7 @@ function createFeedViewStore() {
   let sharedFilter = $state<string | null>(null);
   let sharerFilter = $state<string | null>(null);
   let followingFilter = $state<string | null>(null);
-  let feedsFilter = $state<string | null>(null);
+  let feedsFilter = $state<string | null>(null); // deprecated, kept for setFilters compat
   let contentTypeFilter = $state<'shares' | 'documents' | null>(null);
   let viewFilter = $state<string | null>(null);
 
@@ -227,7 +227,7 @@ function createFeedViewStore() {
       }
       return 'articles';
     }
-    if (savedFilter || feedsFilter) return 'articles';
+    if (savedFilter) return 'articles';
     return 'combined';
   });
 
