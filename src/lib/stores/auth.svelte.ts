@@ -8,6 +8,7 @@ interface AuthState {
   user: User | null;
   isLoading: boolean;
   error: string | null;
+  scopeUpgradeRequired: boolean;
 }
 
 function createAuthStore() {
@@ -15,6 +16,7 @@ function createAuthStore() {
     user: null,
     isLoading: true,
     error: null,
+    scopeUpgradeRequired: false,
   });
 
   // Handle 401 - session expired/invalid on the backend
@@ -46,6 +48,11 @@ function createAuthStore() {
 
     // Set up 401 handler
     api.setOnUnauthorized(handleUnauthorized);
+
+    // Set up scope upgrade handler
+    api.setOnScopeUpgradeRequired(() => {
+      state.scopeUpgradeRequired = true;
+    });
   }
 
   // Set user after successful authentication
@@ -113,6 +120,12 @@ function createAuthStore() {
     },
     get error() {
       return state.error;
+    },
+    get scopeUpgradeRequired() {
+      return state.scopeUpgradeRequired;
+    },
+    dismissScopeUpgrade() {
+      state.scopeUpgradeRequired = false;
     },
     setUser,
     verifySession,
