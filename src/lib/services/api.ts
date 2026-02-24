@@ -45,10 +45,16 @@ export class UrlSaveLimitError extends Error {
 
 class ApiClient {
   private onUnauthorized: (() => void) | null = null;
+  private onScopeUpgradeRequired: (() => void) | null = null;
 
   // Set callback for when 401 is received (session invalid)
   setOnUnauthorized(callback: () => void) {
     this.onUnauthorized = callback;
+  }
+
+  // Set callback for when 403 scope_upgrade_required is received
+  setOnScopeUpgradeRequired(callback: () => void) {
+    this.onScopeUpgradeRequired = callback;
   }
 
   private async fetch<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -78,6 +84,9 @@ class ApiClient {
       if (response.status === 403) {
         const body = await response.json().catch(() => ({ error: 'Forbidden' }));
         if ((body as { error: string }).error === 'scope_upgrade_required') {
+          if (this.onScopeUpgradeRequired) {
+            this.onScopeUpgradeRequired();
+          }
           throw new ScopeUpgradeError((body as { message?: string }).message);
         }
         if ((body as { error: string }).error === 'url_save_limit_reached') {

@@ -186,6 +186,16 @@
 <div class="app">
   {#if !auth.isLoading}
     {#if auth.isAuthenticated}
+      {#if auth.scopeUpgradeRequired}
+        <div class="scope-upgrade-banner">
+          <span
+            >Your session was created with outdated permissions. Please <a href="/auth/login"
+              >log in again</a
+            > to restore full functionality.</span
+          >
+          <button class="dismiss-btn" onclick={() => auth.dismissScopeUpgrade()}>Dismiss</button>
+        </div>
+      {/if}
       <div class="app-container">
         <Sidebar />
         <button
@@ -381,6 +391,40 @@
 
   .app-footer .separator {
     margin: 0 0.5rem;
+  }
+
+  .scope-upgrade-banner {
+    background: var(--color-warning-bg, #fff3cd);
+    color: var(--color-warning-text, #856404);
+    border-bottom: 1px solid var(--color-warning-border, #ffc107);
+    padding: 0.625rem 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    font-size: 0.875rem;
+    text-align: center;
+  }
+
+  .scope-upgrade-banner a {
+    color: inherit;
+    font-weight: 600;
+    text-decoration: underline;
+  }
+
+  .scope-upgrade-banner .dismiss-btn {
+    background: none;
+    border: 1px solid var(--color-warning-text, #856404);
+    color: inherit;
+    border-radius: 4px;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    font-size: 0.75rem;
+    white-space: nowrap;
+  }
+
+  .scope-upgrade-banner .dismiss-btn:hover {
+    background: rgba(0, 0, 0, 0.05);
   }
 
   @media (max-width: 1000px) {
