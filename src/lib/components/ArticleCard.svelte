@@ -759,12 +759,14 @@
     {/if}
 
     {#if linkInterception.menuState}
-      <LinkContextMenu
-        url={linkInterception.menuState.url}
-        linkText={linkInterception.menuState.linkText}
-        anchorRect={linkInterception.menuState.anchorRect}
-        onClose={linkInterception.closeMenu}
-      />
+      {#key linkInterception.menuState.url + linkInterception.menuState.anchorRect.top}
+        <LinkContextMenu
+          url={linkInterception.menuState.url}
+          linkText={linkInterception.menuState.linkText}
+          anchorRect={linkInterception.menuState.anchorRect}
+          onClose={linkInterception.closeMenu}
+        />
+      {/key}
     {/if}
 
     {#if highlights.popoverState}
