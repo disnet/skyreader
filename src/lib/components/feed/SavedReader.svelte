@@ -414,16 +414,18 @@
           onClose={() => (tagMenuOpen = false)}
         />
       {/if}
+    </header>
 
-      {#if linkInterception.menuState}
+    {#if linkInterception.menuState}
+      {#key linkInterception.menuState.url + linkInterception.menuState.anchorRect.top}
         <LinkContextMenu
           url={linkInterception.menuState.url}
           linkText={linkInterception.menuState.linkText}
           anchorRect={linkInterception.menuState.anchorRect}
           onClose={linkInterception.closeMenu}
         />
-      {/if}
-    </header>
+      {/key}
+    {/if}
 
     {#if styleMenuOpen}
       <div class="style-toolbar-fixed">
