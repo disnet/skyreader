@@ -119,6 +119,9 @@ function createAppManager() {
         socialStore.loadFeed(true),
       ]);
 
+      // One-time migration: push existing local custom fields to backend
+      await migrateCustomFieldsToBackend();
+
       // Fetch all feeds using batch API
       if (liveDb.subscriptions.length > 0) {
         await fetchAllFeeds(liveDb.subscriptions, articlesStore.savedGuids);
@@ -166,6 +169,8 @@ function createAppManager() {
         sourceType?: string;
         subjectDid?: string;
         collectionNsid?: string;
+        customTitle?: string;
+        customIconUrl?: string;
       }>('app.skyreader.feed.subscription');
 
       // Build maps for comparison
@@ -191,6 +196,8 @@ function createAppManager() {
             sourceType: record.value.sourceType as Subscription['sourceType'],
             subjectDid: record.value.subjectDid,
             collectionNsid: record.value.collectionNsid,
+            customTitle: record.value.customTitle,
+            customIconUrl: record.value.customIconUrl,
           };
 
           const id = await liveDb.addSubscription(subscription);
@@ -223,7 +230,9 @@ function createAppManager() {
             local.siteUrl !== resolvedSiteUrl ||
             local.category !== record.value.category ||
             local.sourceType !== record.value.sourceType ||
-            local.subjectDid !== record.value.subjectDid;
+            local.subjectDid !== record.value.subjectDid ||
+            local.customTitle !== record.value.customTitle ||
+            local.customIconUrl !== record.value.customIconUrl;
 
           if (hasChanges) {
             await liveDb.updateSubscription(local.id, {
@@ -235,6 +244,8 @@ function createAppManager() {
               localUpdatedAt: Date.now(),
               sourceType: record.value.sourceType as Subscription['sourceType'],
               subjectDid: record.value.subjectDid,
+              customTitle: record.value.customTitle,
+              customIconUrl: record.value.customIconUrl,
             });
           }
         }
@@ -283,6 +294,42 @@ function createAppManager() {
   function isStale(thresholdMs: number = 5 * 60 * 1000): boolean {
     if (!lastRefreshAt) return true;
     return Date.now() - lastRefreshAt > thresholdMs;
+  }
+
+  /**
+   * One-time migration: push existing local customTitle/customIconUrl to backend
+   */
+  async function migrateCustomFieldsToBackend(): Promise<void> {
+    try {
+      const migrated = await getMetadata<boolean>('customFieldsMigrated');
+      if (migrated) return;
+
+      const subsWithCustomFields = liveDb.subscriptions.filter(
+        (s) => s.customTitle || s.customIconUrl
+      );
+
+      if (subsWithCustomFields.length > 0) {
+        console.log(
+          `[Migration] Pushing ${subsWithCustomFields.length} custom field(s) to backend...`
+        );
+        await Promise.all(
+          subsWithCustomFields.map((sub) =>
+            api
+              .updateSubscription(sub.rkey, {
+                customTitle: sub.customTitle ?? null,
+                customIconUrl: sub.customIconUrl ?? null,
+              })
+              .catch((err) => {
+                console.error(`[Migration] Failed to push custom fields for ${sub.rkey}:`, err);
+              })
+          )
+        );
+      }
+
+      await setMetadata('customFieldsMigrated', true);
+    } catch (err) {
+      console.error('[Migration] Custom fields migration failed:', err);
+    }
   }
 
   return {
