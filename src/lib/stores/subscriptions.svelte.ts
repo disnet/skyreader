@@ -273,14 +273,27 @@ function createSubscriptionsStore() {
   }
 
   /**
-   * Update subscription locally only (no backend sync)
-   * Used for local-only fields like customTitle and customIconUrl
+   * Update subscription custom fields (instant local + background sync to PDS)
    */
   async function updateLocal(
     id: number,
     updates: { customTitle?: string; customIconUrl?: string }
   ): Promise<void> {
+    // Update IndexedDB immediately for instant UI
     await liveDb.updateSubscriptionLocal(id, updates);
+
+    // Sync to backend in background
+    const sub = liveDb.getSubscriptionById(id);
+    if (sub) {
+      api
+        .updateSubscription(sub.rkey, {
+          customTitle: updates.customTitle ?? null,
+          customIconUrl: updates.customIconUrl ?? null,
+        })
+        .catch((err) => {
+          console.error('[Subscriptions] Failed to sync custom fields to backend:', err);
+        });
+    }
   }
 
   /**

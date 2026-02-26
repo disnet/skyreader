@@ -32,8 +32,8 @@ export interface Subscription {
   lastFetchedAt?: number;
   fetchError?: string;
   source?: 'manual' | 'opml';
-  customTitle?: string; // User-set title override (local only)
-  customIconUrl?: string; // User-set icon override (local only)
+  customTitle?: string; // User-set title override (synced to PDS)
+  customIconUrl?: string; // User-set icon override (synced to PDS)
   sourceType?: SubscriptionSourceType; // Content source type; omitted = RSS
   subjectDid?: string; // AT Protocol account DID; required for atproto.* types
   collectionNsid?: string; // Collection NSID for atproto.collection (future)

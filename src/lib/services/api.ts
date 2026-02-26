@@ -279,6 +279,16 @@ class ApiClient {
     });
   }
 
+  async updateSubscription(
+    rkey: string,
+    updates: { customTitle?: string | null; customIconUrl?: string | null }
+  ): Promise<{ success: boolean }> {
+    return this.fetch(`/api/subscriptions/${rkey}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    });
+  }
+
   async deleteSubscription(rkey: string): Promise<{ success: boolean }> {
     return this.fetch(`/api/subscriptions/${rkey}`, {
       method: 'DELETE',
