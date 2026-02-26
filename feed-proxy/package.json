@@ -1,0 +1,23 @@
+{
+  "name": "skyreader-feed-proxy",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "test:watch": "bun test --watch"
+  },
+  "dependencies": {
+    "hono": "^4.4.0",
+    "fast-xml-parser": "^4.3.0",
+    "defuddle": "^0.6.6",
+    "jsdom": "^26.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/jsdom": "^21.1.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,455 @@
+import type { Env } from './types';
+import {
+  handleAuthLogin,
+  handleAuthCallback,
+  handleAuthLogout,
+  handleAuthMe,
+  handleClientMetadata,
+} from './routes/auth';
+import { handleV2FeedFetch, handleV2BatchFeedFetch, handleV2FeedDiscover } from './routes/feeds-v2';
+import {
+  handleSocialFeed,
+  handleGroupedSocialFeed,
+  handlePopularShares,
+  handleReshareActivity,
+  handleDetectContent,
+} from './routes/social';
+import { handleGetMyShares, handleCreateShare, handleDeleteShare } from './routes/shares';
+import {
+  handleCreateSubscription,
+  handleDeleteSubscription,
+  handleUpdateSubscription,
+  handleBulkCreateSubscriptions,
+  handleBulkDeleteSubscriptions,
+} from './routes/subscriptions';
+import {
+  handleGetSocialReadPositions,
+  handleMarkSocialItemAsRead,
+  handleMarkSocialItemAsUnread,
+  handleBulkMarkSocialItemsAsRead,
+  handleGetShareReadPositions,
+  handleMarkShareAsRead,
+  handleMarkShareAsUnread,
+} from './routes/social-reading';
+
+import { handleRecordsList } from './routes/records';
+import {
+  handleGetReadPositions,
+  handleMarkAsRead,
+  handleMarkAsUnread,
+  handleBulkMarkAsRead,
+} from './routes/reading';
+import { handleLexicon, handleLexiconIndex } from './routes/lexicons';
+import {
+  handleGetLabels,
+  handleAddLabel,
+  handleDeleteLabel,
+  handleBulkAddLabels,
+} from './routes/labels';
+import {
+  handleCreateSaved,
+  handleGetSaved,
+  handleDeleteSaved,
+  handleDeleteSavedByGuid,
+} from './routes/saved';
+import { handleGetSettings, handleUpdateSettings } from './routes/settings';
+import { handleFullSync, handleSyncSubscriptions, handleSyncStatus } from './routes/sync';
+import { getSessionFromRequest, updateUserActivity } from './services/oauth';
+import { checkRateLimit, cleanupRateLimits, getRateLimitConfig } from './services/rate-limit';
+
+export { JetstreamPoller } from './durable-objects/jetstream-poller';
+
+function corsHeaders(origin: string | null, env: Env): HeadersInit {
+  const allowedOrigins = env.ALLOWED_ORIGINS
+    ? env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+    : [env.FRONTEND_URL];
+
+  const isAllowed =
+    origin && allowedOrigins.some((allowed) => allowed === origin || allowed === '*');
+
+  return {
+    'Access-Control-Allow-Origin': isAllowed ? origin : allowedOrigins[0],
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Credentials': 'true',
+  };
+}
+
+function unauthorizedResponse(headers: HeadersInit): Response {
+  return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+    status: 401,
+    headers: { ...headers, 'Content-Type': 'application/json' },
+  });
+}
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(request.url);
+    const origin = request.headers.get('Origin');
+    const headers = corsHeaders(origin, env);
+
+    // Handle CORS preflight
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { headers });
+    }
+
+    // Track user activity for authenticated requests (non-blocking)
+    const session = await getSessionFromRequest(request, env);
+    if (session) {
+      ctx.waitUntil(updateUserActivity(env, session.did));
+
+      // Check rate limit for authenticated requests
+      const rateLimit = await checkRateLimit(env, session.did, url.pathname);
+      if (!rateLimit.allowed) {
+        const config = getRateLimitConfig(url.pathname);
+        return new Response(JSON.stringify({ error: 'Rate limit exceeded' }), {
+          status: 429,
+          headers: {
+            ...headers,
+            'Content-Type': 'application/json',
+            'Retry-After': String(rateLimit.retryAfter || 60),
+            'X-RateLimit-Limit': String(config.limit),
+            'X-RateLimit-Remaining': '0',
+          },
+        });
+      }
+    }
+
+    try {
+      let response: Response;
+
+      // Route matching
+      switch (true) {
+        // OAuth client metadata
+        case url.pathname === '/.well-known/client-metadata':
+          response = await handleClientMetadata(request, env);
+          break;
+
+        // Lexicon schemas
+        case url.pathname === '/.well-known/lexicons':
+          response = handleLexiconIndex();
+          break;
+        case url.pathname.startsWith('/.well-known/lexicons/'):
+          response = handleLexicon(request);
+          break;
+
+        // Auth routes
+        case url.pathname === '/api/auth/login':
+          response = await handleAuthLogin(request, env);
+          break;
+        case url.pathname === '/api/auth/callback':
+          response = await handleAuthCallback(request, env, ctx);
+          break;
+        case url.pathname === '/api/auth/logout':
+          response = await handleAuthLogout(request, env);
+          break;
+        case url.pathname === '/api/auth/me':
+          response = await handleAuthMe(request, env);
+          break;
+
+        // Feed routes (v2 via Fly.io proxy)
+        case url.pathname === '/api/v2/feeds/fetch':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleV2FeedFetch(request, env);
+          break;
+        case url.pathname === '/api/v2/feeds/batch':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleV2BatchFeedFetch(request, env);
+          break;
+        case url.pathname === '/api/v2/feeds/discover':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleV2FeedDiscover(request, env);
+          break;
+
+        // Social routes
+        case url.pathname === '/api/social/feed':
+          response = await handleSocialFeed(request, env);
+          break;
+        case url.pathname === '/api/social/feed/grouped':
+          response = await handleGroupedSocialFeed(request, env);
+          break;
+        case url.pathname === '/api/social/popular':
+          response = await handlePopularShares(request, env);
+          break;
+        case url.pathname === '/api/social/detect-content':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleDetectContent(request, env);
+          break;
+        case url.pathname === '/api/activity/reshares':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleReshareActivity(request, env);
+          break;
+        // Unified social reading routes (new)
+        case url.pathname === '/api/social/read-positions':
+          if (!session) return unauthorizedResponse(headers);
+          if (request.method === 'GET') {
+            response = await handleGetSocialReadPositions(request, env);
+          } else {
+            response = await handleMarkSocialItemAsRead(request, env);
+          }
+          break;
+        case url.pathname === '/api/social/read-positions/bulk':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleBulkMarkSocialItemsAsRead(request, env);
+          break;
+        case url.pathname.startsWith('/api/social/read-positions/'):
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleMarkSocialItemAsUnread(request, env);
+          break;
+        // Legacy share reading routes (backwards compatibility)
+        case url.pathname === '/api/social/share-read':
+          if (!session) return unauthorizedResponse(headers);
+          if (request.method === 'GET') {
+            response = await handleGetShareReadPositions(request, env);
+          } else {
+            response = await handleMarkShareAsRead(request, env);
+          }
+          break;
+        case url.pathname.startsWith('/api/social/share-read/'):
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleMarkShareAsUnread(request, env);
+          break;
+
+        // User's own shares route
+        case url.pathname === '/api/shares/my':
+          response = await handleGetMyShares(request, env);
+          break;
+
+        // Shares endpoints (new)
+        case url.pathname === '/api/shares':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleCreateShare(request, env, ctx);
+          break;
+        case url.pathname.startsWith('/api/shares/') && url.pathname !== '/api/shares/my':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleDeleteShare(request, env, ctx);
+          break;
+
+        // Subscriptions endpoints (new)
+        case url.pathname === '/api/subscriptions':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleCreateSubscription(request, env, ctx);
+          break;
+        case url.pathname === '/api/subscriptions/bulk':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleBulkCreateSubscriptions(request, env, ctx);
+          break;
+        case url.pathname === '/api/subscriptions/bulk-delete':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleBulkDeleteSubscriptions(request, env, ctx);
+          break;
+        case url.pathname.startsWith('/api/subscriptions/'):
+          if (!session) return unauthorizedResponse(headers);
+          if (request.method === 'DELETE') {
+            response = await handleDeleteSubscription(request, env, ctx);
+          } else if (request.method === 'PATCH') {
+            response = await handleUpdateSubscription(request, env, ctx);
+          } else {
+            response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+              status: 405,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          break;
+
+        // Record list route (sync routes removed - use dedicated endpoints)
+        case url.pathname === '/api/records/list':
+          response = await handleRecordsList(request, env);
+          break;
+
+        // Reading routes (read positions)
+        case url.pathname === '/api/reading/positions':
+          response = await handleGetReadPositions(request, env);
+          break;
+        case url.pathname === '/api/reading/mark-read':
+          response = await handleMarkAsRead(request, env);
+          break;
+        case url.pathname === '/api/reading/mark-unread':
+          response = await handleMarkAsUnread(request, env);
+          break;
+        case url.pathname === '/api/reading/mark-read-bulk':
+          response = await handleBulkMarkAsRead(request, env);
+          break;
+
+        // Labels routes (unified item labels)
+        case url.pathname === '/api/labels':
+          if (!session) return unauthorizedResponse(headers);
+          if (request.method === 'GET') {
+            response = await handleGetLabels(request, env);
+          } else if (request.method === 'POST') {
+            response = await handleAddLabel(request, env);
+          } else if (request.method === 'DELETE') {
+            response = await handleDeleteLabel(request, env);
+          } else {
+            response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+              status: 405,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          break;
+        case url.pathname === '/api/labels/bulk':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleBulkAddLabels(request, env);
+          break;
+
+        // Saved routes
+        case url.pathname === '/api/saved':
+          if (!session) return unauthorizedResponse(headers);
+          if (request.method === 'GET') {
+            response = await handleGetSaved(request, env);
+          } else if (request.method === 'POST') {
+            response = await handleCreateSaved(request, env, ctx);
+          } else {
+            response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+              status: 405,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          break;
+        case url.pathname.startsWith('/api/saved/by-guid/'):
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleDeleteSavedByGuid(request, env, ctx);
+          break;
+        case url.pathname.startsWith('/api/saved/'):
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleDeleteSaved(request, env, ctx);
+          break;
+
+        // Settings routes
+        case url.pathname === '/api/settings':
+          if (!session) return unauthorizedResponse(headers);
+          if (request.method === 'PUT') {
+            response = await handleUpdateSettings(request, env);
+          } else {
+            response = await handleGetSettings(request, env);
+          }
+          break;
+
+        // Sync routes
+        case url.pathname === '/api/sync/full':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleFullSync(request, env);
+          break;
+        case url.pathname === '/api/sync/subscriptions':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleSyncSubscriptions(request, env);
+          break;
+        case url.pathname === '/api/sync/status':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleSyncStatus(request, env);
+          break;
+
+        default:
+          response = new Response(JSON.stringify({ error: 'Not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          });
+      }
+
+      // Add CORS headers to response
+      const newHeaders = new Headers(response.headers);
+      Object.entries(headers).forEach(([key, value]) => {
+        newHeaders.set(key, value);
+      });
+
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: newHeaders,
+      });
+    } catch (error) {
+      console.error('Request error:', error);
+      return new Response(JSON.stringify({ error: 'Internal server error' }), {
+        status: 500,
+        headers: { ...headers, 'Content-Type': 'application/json' },
+      });
+    }
+  },
+
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    const cronStart = Date.now();
+    const minute = new Date().getMinutes();
+    const isEveryMinuteCron = controller.cron === '* * * * *';
+
+    console.log(`[Cron] Started: ${controller.cron}, minute=${minute}`);
+
+    // Every minute: Cleanup tasks and ensure JetstreamPoller is running
+    if (isEveryMinuteCron) {
+      // Phase 1: Ensure JetstreamPoller DO is running
+      try {
+        const pollerId = env.JETSTREAM_POLLER.idFromName('main-v2');
+        const poller = env.JETSTREAM_POLLER.get(pollerId);
+        const response = await poller.fetch('http://internal/start');
+        const result = (await response.json()) as { status: string };
+        console.log(`[Cron] JetstreamPoller: ${result.status}`);
+      } catch (error) {
+        console.error('[Cron] Failed to start JetstreamPoller:', error);
+      }
+
+      // Phase 2: Clean up rate limit records
+      let rateLimitDuration = 0;
+      let rateLimitDeleted = 0;
+      try {
+        const result = await cleanupRateLimits(env);
+        rateLimitDeleted = result.deleted;
+        rateLimitDuration = result.duration;
+        if (rateLimitDeleted > 0) {
+          console.log(
+            `[Cron] Rate limit cleanup: deleted ${rateLimitDeleted} records, ${rateLimitDuration}ms`
+          );
+        }
+      } catch (error) {
+        console.error('[Cron] Rate limit cleanup error:', error);
+      }
+
+      // Phase 3: Clean up expired D1 data (once per hour)
+      let d1CleanupDuration = 0;
+      if (minute === 0) {
+        console.log('[Cron] Starting D1 cleanup');
+        const cleanupStart = Date.now();
+        const now = Date.now();
+        const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
+
+        let oauthDeleted = 0;
+        let sessionsDeleted = 0;
+
+        // Clean up expired OAuth states
+        try {
+          const oauthResult = await env.DB.prepare('DELETE FROM oauth_state WHERE expires_at < ?')
+            .bind(now)
+            .run();
+          oauthDeleted = oauthResult.meta?.changes || 0;
+        } catch (error) {
+          console.error('[Cron] D1 WRITE ERROR deleting expired oauth_state:', error);
+        }
+
+        // Clean up failed/expired sessions
+        try {
+          const sessionsResult = await env.DB.prepare(
+            `
+              DELETE FROM sessions
+              WHERE (
+                refresh_failures >= 5
+                AND (refresh_locked_until IS NULL OR refresh_locked_until < ?)
+              )
+              OR expires_at < ?
+            `
+          )
+            .bind(now, thirtyDaysAgo)
+            .run();
+          sessionsDeleted = sessionsResult.meta?.changes || 0;
+        } catch (error) {
+          console.error('[Cron] D1 WRITE ERROR deleting expired sessions:', error);
+        }
+
+        d1CleanupDuration = Date.now() - cleanupStart;
+        console.log(
+          `[Cron] D1 cleanup: deleted ${oauthDeleted} OAuth states, ${sessionsDeleted} sessions, ${d1CleanupDuration}ms`
+        );
+      }
+
+      const totalDuration = Date.now() - cronStart;
+      console.log(`[Cron] Every-minute complete: total=${totalDuration}ms`);
+    }
+  },
+};

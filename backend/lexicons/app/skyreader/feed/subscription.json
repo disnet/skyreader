@@ -1,0 +1,93 @@
+{
+  "lexicon": 1,
+  "id": "app.skyreader.feed.subscription",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A subscription to an RSS/Atom feed or AT Protocol content stream",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["createdAt"],
+        "properties": {
+          "feedUrl": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "description": "The URL of the RSS/Atom feed. Required for RSS subscriptions."
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 512,
+            "description": "User-provided or auto-detected feed title"
+          },
+          "siteUrl": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "description": "The main website URL associated with the feed"
+          },
+          "category": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "User-defined category/folder for organization"
+          },
+          "tags": {
+            "type": "array",
+            "maxLength": 10,
+            "items": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "description": "User-defined tags for the subscription"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "source": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Origin of this subscription (e.g., 'leaflet', 'opml', 'manual')"
+          },
+          "externalRef": {
+            "type": "string",
+            "format": "at-uri",
+            "maxLength": 2048,
+            "description": "Reference to the external source record (e.g., Leaflet subscription at-uri)"
+          },
+          "sourceType": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Content source type: 'rss', 'atproto.shares', 'atproto.documents', 'atproto.collection'. Omitted means RSS."
+          },
+          "subjectDid": {
+            "type": "string",
+            "maxLength": 2048,
+            "description": "The AT Protocol account DID. Required for atproto.* source types."
+          },
+          "collectionNsid": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Collection NSID for atproto.collection source type (future extensibility)."
+          },
+          "customTitle": {
+            "type": "string",
+            "maxLength": 512,
+            "description": "User-set custom display title override"
+          },
+          "customIconUrl": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "description": "User-set custom icon URL override"
+          }
+        }
+      }
+    }
+  }
+}

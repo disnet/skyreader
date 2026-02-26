@@ -1,16 +1,21 @@
-name: PR Checks
+name: Backend CI
 
 on:
   pull_request:
     branches: [main]
+    paths: ['backend/**']
 
 concurrency:
-  group: pr-checks-${{ github.head_ref }}
+  group: backend-ci-${{ github.head_ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    working-directory: backend
+
 jobs:
-  typecheck:
-    name: Typecheck & Format
+  test:
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -21,28 +26,33 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run type check
+      - name: Run tests
+        run: npm test
+
+  check:
+    name: Type Check & Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate worker types
+        run: npm run cf-typegen
+
+      - name: Type check and format check
         run: npm run check
-
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build

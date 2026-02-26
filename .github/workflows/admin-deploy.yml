@@ -1,0 +1,109 @@
+name: Deploy Admin
+
+on:
+  push:
+    branches: [main]
+    paths: ['admin/**']
+  release:
+    types: [published]
+
+concurrency:
+  group: admin-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: admin
+
+jobs:
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: admin/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run type check
+        run: npm run check
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: typecheck
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: admin/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Update wrangler.toml with database ID
+        env:
+          D1_DB_ID: ${{ secrets.D1_DATABASE_ID }}
+        run: sed -i "s/YOUR_D1_DATABASE_ID/$D1_DB_ID/g" wrangler.toml
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages (staging)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy .svelte-kit/cloudflare --project-name=skyreader-admin-staging --commit-dirty=true
+          workingDirectory: admin
+
+  deploy-production:
+    name: Deploy to Production
+    needs: typecheck
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: admin/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Update wrangler.toml with database ID
+        env:
+          D1_DB_ID: ${{ secrets.D1_DATABASE_ID }}
+        run: sed -i "s/YOUR_D1_DATABASE_ID/$D1_DB_ID/g" wrangler.toml
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages (production)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy .svelte-kit/cloudflare --project-name=skyreader-admin --branch=main --commit-dirty=true
+          workingDirectory: admin

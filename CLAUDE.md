@@ -1,172 +1,140 @@
-# Skyreader Frontend Development Guide
+# CLAUDE.md
 
-**Important:** Always run `npm run check` before finishing work to verify types and formatting.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+## Repository Structure
 
-Skyreader frontend is a SvelteKit PWA that provides an RSS reading experience with AT Protocol integration. User data is stored in their Personal Data Server (PDS), giving them full ownership and portability.
+This is a monorepo with 4 packages:
+- `backend/` - Cloudflare Workers API
+- `frontend/` - SvelteKit PWA
+- `admin/` - SvelteKit admin dashboard (Cloudflare Pages)
+- `feed-proxy/` - Feed caching proxy (Fly.io)
 
-## Key Concepts
+Each package has its own CLAUDE.md with detailed guidance.
 
-### AT Protocol Basics
+## What is Skyreader?
 
-- **DID**: Decentralized Identifier (e.g., `did:plc:abc123`) - permanent user ID
-- **Handle**: Human-readable username (e.g., `user.bsky.social`)
-- **PDS**: Personal Data Server - where user data is stored
-- **Lexicon**: Schema definition language for record types (like JSON Schema)
-- **NSID**: Namespaced identifier for schemas (e.g., `app.skyreader.feed.subscription`)
+A decentralized RSS reader built on AT Protocol (Bluesky). User data (subscriptions, read state, shares) is stored in their Personal Data Server (PDS), making it portable. Features offline support, real-time updates, and social sharing of articles.
 
-### OAuth Notes
+## Development Commands
 
-- Use `127.0.0.1` not `localhost` for local dev (RFC 8252 requirement)
-- OAuth flow is handled by the backend; frontend just receives session ID
-
-## Architecture
-
-### Stores (Svelte 5 Runes)
-
-All stores use Svelte 5 runes (`.svelte.ts` files):
-
-| Store                     | Purpose                              |
-| ------------------------- | ------------------------------------ |
-| `auth.svelte.ts`          | User session state                   |
-| `subscriptions.svelte.ts` | Feed subscriptions CRUD              |
-| `reading.svelte.ts`       | Read/starred state for articles      |
-| `social.svelte.ts`        | Social feed from followed users      |
-| `sync.svelte.ts`          | Online status and pending sync count |
-| `preferences.svelte.ts`   | User preferences                     |
-| `realtime.svelte.ts`      | WebSocket connection state           |
-
-### Services
-
-| Service         | Purpose                                            |
-| --------------- | -------------------------------------------------- |
-| `api.ts`        | HTTP client for backend API                        |
-| `db.ts`         | Dexie (IndexedDB) schema for offline storage       |
-| `sync-queue.ts` | Queue operations when offline, process when online |
-| `realtime.ts`   | WebSocket connection management                    |
-
-### Key Routes
-
-| Route            | Purpose                                        |
-| ---------------- | ---------------------------------------------- |
-| `/`              | Main feed (all articles from subscribed feeds) |
-| `/social`        | Shares from followed users                     |
-| `/starred`       | Starred articles                               |
-| `/feeds`         | Manage feed subscriptions                      |
-| `/discover`      | Discover new feeds                             |
-| `/settings`      | Account and sync status                        |
-| `/auth/login`    | Bluesky handle input                           |
-| `/auth/callback` | OAuth callback handler                         |
-
-## Common Tasks
-
-### Adding a New Lexicon Field
-
-1. Update schema in `lexicons/app/skyreader/...`
-2. Update TypeScript types in `src/lib/types/index.ts`
-3. Update Dexie schema version in `src/lib/services/db.ts`
-4. Update relevant store and components
-
-### Adding a New Route
-
-1. Create directory in `src/routes/`
-2. Add `+page.svelte` (and `+page.ts` if needed)
-3. Update navigation in `src/lib/components/Sidebar.svelte`
-
-### Adding a New Store
-
-1. Create `src/lib/stores/name.svelte.ts`
-2. Use Svelte 5 runes pattern:
-
-   ```typescript
-   class NameStore {
-     data = $state<DataType | null>(null);
-     loading = $state(false);
-
-     async fetch() {
-       this.loading = true;
-       try {
-         this.data = await api.getData();
-       } finally {
-         this.loading = false;
-       }
-     }
-   }
-
-   export const nameStore = new NameStore();
-   ```
-
-### Working with IndexedDB
-
-The app uses Dexie.js for offline storage. Schema is defined in `src/lib/services/db.ts`.
-
-```typescript
-// Reading from cache
-const cached = await db.subscriptions.toArray();
-
-// Writing to cache
-await db.subscriptions.put(subscription);
-
-// Clearing cache
-await db.subscriptions.clear();
+### Full Local Development (with OAuth)
+```bash
+./scripts/dev-local.sh   # Starts backend and frontend
 ```
 
-## Environment Variables
+This script starts the backend Wrangler dev server and frontend Vite dev server with proper configuration for OAuth.
 
-### .env
+**Prerequisites:**
+- Create `backend/.dev.vars` with:
+  ```
+  FRONTEND_URL=http://127.0.0.1:5173
+  ```
 
-```
-VITE_API_URL=http://127.0.0.1:8787
-```
+Local development uses AT Protocol's [localhost client exception](https://atproto.com/specs/oauth#localhost-client-development), which allows OAuth without hosting client metadata or using tunnels.
 
-For production:
+### Backend (`backend/`)
+```bash
+npm run dev              # Start Wrangler dev server (port 8787)
+npm run test             # Run vitest tests
+npm run deploy           # Deploy to Cloudflare Workers
+npm run cf-typegen       # Generate types from wrangler.toml
 
-```
-VITE_API_URL=https://your-backend.workers.dev
-```
-
-## Local Development
-
-1. Ensure backend is running at `http://127.0.0.1:8787`
-2. Create `.env` with `VITE_API_URL=http://127.0.0.1:8787`
-3. Run `npm run dev`
-4. Access via `http://127.0.0.1:5173` (not `localhost`)
-
-## Deployment
-
-1. Set `VITE_API_URL` to your production backend URL
-2. Run `npm run build`
-3. Deploy `build/` directory to Cloudflare Pages or static host
-
-## Lexicon Schemas
-
-Located in `lexicons/app/skyreader/`:
-
-```
-feed/subscription.json  - RSS feed subscription
-  - feedUrl (required)
-  - title
-  - category
-  - tags[]
-  - createdAt (required)
-
-feed/readPosition.json  - Reading progress
-  - itemGuid (required)
-  - itemUrl
-  - readAt (required)
-  - starred
-
-social/share.json       - Shared article
-  - itemUrl (required)
-  - itemTitle
-  - note (user commentary)
-  - createdAt (required)
+# Database
+npx wrangler d1 execute skyreader --local --command "SQL"
+npx wrangler d1 execute skyreader --local --file=migrations/FILE.sql
 ```
 
-## PWA Features
+### Frontend (`frontend/`)
+```bash
+npm run dev              # Start Vite dev server (port 5173)
+npm run build            # Production build → build/
+npm run check            # Type checking (svelte-check)
+```
 
-- **Service Worker**: `src/service-worker.ts` handles caching and offline support
-- **Manifest**: `static/manifest.json` defines PWA metadata
-- **IndexedDB**: Dexie.js provides offline data storage
-- **Sync Queue**: Operations made offline are queued and synced when back online
+**Note:** Access the frontend at `http://127.0.0.1:5173` for local development.
+
+### Admin (`admin/`)
+```bash
+npm run dev              # Start Vite dev server (port 5174)
+npm run build            # Production build → .svelte-kit/cloudflare/
+npm run preview          # Preview build locally with wrangler
+npm run check            # Type checking (svelte-check)
+npm run deploy           # Build and deploy to Cloudflare Pages
+```
+
+### E2E Tests (root)
+```bash
+npm run test:e2e             # Run Playwright tests (starts servers automatically)
+npm run test:e2e:ui          # Interactive Playwright UI
+npm run test:e2e:headed      # Run with visible browser
+```
+
+Playwright spins up the backend (port 8787) and frontend (port 5173) via `webServer` config, or reuses already-running servers from `./scripts/dev-local.sh`.
+
+**Prerequisites:**
+- `backend/.dev.vars` must include `ALLOWED_ORIGINS=http://127.0.0.1:5173`
+- Install: `npm install && npx playwright install chromium` (from root)
+
+**Test structure:**
+```
+e2e/
+├── global-setup.ts          # Applies D1 migrations before test run
+├── seed.ts                  # Seeds test data into D1 via wrangler CLI
+├── fixtures.ts              # Custom Playwright fixtures (testUser, authedPage)
+└── custom-fields.spec.ts    # Test specs
+```
+
+**Key patterns:**
+- **Auth bypass:** `seed.ts` inserts users/sessions/settings directly into D1. The `authedPage` fixture sets the `session_id` cookie and `skyreader-auth` localStorage.
+- **PDS disabled:** Seeded `user_settings` has `pds_sync_enabled=0` so tests don't need a real PDS.
+- **Valid TIDs:** Seeded subscription rkeys must match `/^[a-z0-9]{13,}$/` (AT Protocol TID format).
+- **Async PATCH:** The frontend fires subscription PATCH requests in the background. Use `page.waitForResponse()` to ensure D1 is updated before reloading.
+- **Cleanup:** Each test's `testUser` fixture automatically deletes its seeded data after the test.
+
+## Architecture Overview
+
+```
+Frontend (SvelteKit + Svelte 5)        Admin (SvelteKit + Svelte 5)
+    ↓↑ HTTP/REST                           ↓↑ D1 (read-only)
+Backend (Cloudflare Workers)           Cloudflare Pages
+    ↓↑
+AT Protocol (Bluesky PDS) + Fly.io Feed Proxy + Jetstream Firehose
+```
+
+### Backend Stack
+- **Runtime:** Cloudflare Workers
+- **Database:** D1 (SQLite) for all storage (sessions, feeds, shares, labels, etc.)
+- **Durable Objects:** JetstreamPoller (long-running firehose connection via alarms)
+- **Auth:** PKCE + DPoP OAuth flow
+- **Cron:** Every 1 min (ping JetstreamPoller DO, cleanup rate limits), hourly (cleanup expired sessions/OAuth states)
+
+### Frontend Stack
+- **Framework:** SvelteKit 2.x with Svelte 5 runes
+- **State:** Rune stores in `.svelte.ts` files (not writable stores)
+- **Offline:** IndexedDB via Dexie.js + sync queue
+- **PWA:** Service worker for offline support
+
+### Admin Stack
+- **Framework:** SvelteKit 2.x with Svelte 5 runes
+- **Runtime:** Cloudflare Pages
+- **Database:** D1 (SQLite) - reads the same database as the backend
+- **Features:** System metrics dashboard, user management, feed health monitoring, search/sort/pagination
+- **Pages:** Dashboard (metrics overview), Users (list + detail), Feeds (health + error tracking)
+- **Deploy:** Cloudflare Pages via GitHub Actions (staging on push to main, production on release)
+
+### Key Data Flow
+1. **Auth:** Handle → DID resolution → OAuth PKCE/DPoP → session token
+2. **Subscriptions:** Stored in user's PDS, cached locally in IndexedDB
+3. **Feed Updates:** Frontend requests feeds → backend proxies via Fly.io feed cache
+4. **Social:** Jetstream firehose → D1 shares table → frontend polls for updates
+
+## AT Protocol Integration
+
+Custom lexicons in `lexicons/app/skyreader/`:
+- `feed/subscription.json` - RSS subscription record
+- `feed/saved.json` - Saved article record
+- `social/share.json` - Shared article record
+- `social/shareReadPosition.json` - Share read position
+
+Records are synced bidirectionally between the app and user's PDS.
