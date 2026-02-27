@@ -5,6 +5,7 @@ import { createPDSClient } from '../services/pds-client';
 import { FeedProxyClient } from '../services/feed-proxy-client';
 import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
 import { getUserTierLimits } from '../services/user-tier';
+import { getUserSettings } from './settings';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -206,7 +207,8 @@ async function handleMetadataSave(
 
   // Build PDS record (only for feed saves with valid URLs)
   let recordUri = `at://${session.did}/${COLLECTION}/${body.rkey}`;
-  if (source === 'feed' && body.url) {
+  const settings = await getUserSettings(env, session.did);
+  if (settings.pdsSyncEnabled && source === 'feed' && body.url) {
     const record: Record<string, unknown> = {
       $type: COLLECTION,
       url: body.url,
@@ -305,13 +307,17 @@ async function handleUrlSave(
   if (publishedAt) record.publishedAt = publishedAt;
   if (extracted.wordCount) record.wordCount = extracted.wordCount;
 
-  // Write to PDS
-  const pdsClient = createPDSClient(session);
-  const pdsResult = await pdsClient.putRecord(COLLECTION, body.rkey, record);
+  // Write to PDS (if sync enabled)
+  const settings = await getUserSettings(env, session.did);
+  let recordUri = `at://${session.did}/${COLLECTION}/${body.rkey}`;
+  if (settings.pdsSyncEnabled) {
+    const pdsClient = createPDSClient(session);
+    const pdsResult = await pdsClient.putRecord(COLLECTION, body.rkey, record);
 
-  const recordUri = pdsResult.success
-    ? pdsResult.data.uri
-    : `at://${session.did}/${COLLECTION}/${body.rkey}`;
+    if (pdsResult.success) {
+      recordUri = pdsResult.data.uri;
+    }
+  }
 
   // Cache in D1 (content is stored here, not in PDS)
   await env.DB.prepare(
@@ -464,12 +470,15 @@ export async function handleDeleteSaved(
       .run();
 
     // Delete from PDS (fire and forget)
-    const pdsClient = createPDSClient(session);
-    ctx.waitUntil(
-      pdsClient.deleteRecord(COLLECTION, rkey).catch((err) => {
-        console.error('Failed to delete from PDS:', err);
-      })
-    );
+    const settings = await getUserSettings(env, session.did);
+    if (settings.pdsSyncEnabled) {
+      const pdsClient = createPDSClient(session);
+      ctx.waitUntil(
+        pdsClient.deleteRecord(COLLECTION, rkey).catch((err) => {
+          console.error('Failed to delete from PDS:', err);
+        })
+      );
+    }
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json' },
@@ -535,12 +544,15 @@ export async function handleDeleteSavedByGuid(
       .run();
 
     // Delete from PDS (fire and forget)
-    const pdsClient = createPDSClient(session);
-    ctx.waitUntil(
-      pdsClient.deleteRecord(COLLECTION, row.rkey).catch((err) => {
-        console.error('Failed to delete from PDS:', err);
-      })
-    );
+    const settings = await getUserSettings(env, session.did);
+    if (settings.pdsSyncEnabled) {
+      const pdsClient = createPDSClient(session);
+      ctx.waitUntil(
+        pdsClient.deleteRecord(COLLECTION, row.rkey).catch((err) => {
+          console.error('Failed to delete from PDS:', err);
+        })
+      );
+    }
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json' },
