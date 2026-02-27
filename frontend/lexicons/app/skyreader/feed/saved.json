@@ -1,0 +1,74 @@
+{
+  "lexicon": 1,
+  "id": "app.skyreader.feed.saved",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A saved item extracted from a URL",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["url", "savedAt"],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "description": "The original article URL"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 1000,
+            "description": "Extracted article title"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 5000,
+            "description": "Extracted article description"
+          },
+          "fullContent": {
+            "type": "string",
+            "maxLength": 100000,
+            "description": "Extracted HTML content (reserved for future selective backup)"
+          },
+          "contentType": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Content type of the saved item (e.g. webpage, pdf, epub)"
+          },
+          "author": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Extracted author name"
+          },
+          "domain": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Source domain"
+          },
+          "image": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "description": "Hero image URL"
+          },
+          "publishedAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Original publish date"
+          },
+          "savedAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "When the user saved this item"
+          },
+          "wordCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Word count"
+          }
+        }
+      }
+    }
+  }
+}

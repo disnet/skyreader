@@ -1,0 +1,25 @@
+app = "skyreader-feed-proxy"
+primary_region = "sjc"
+
+[build]
+
+[mounts]
+  source = "proxy_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+[vm]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
+
+[env]
+  DATA_DIR = "/data"
+  CACHE_TTL_SECONDS = "900"
+  STALE_TTL_SECONDS = "3600"
