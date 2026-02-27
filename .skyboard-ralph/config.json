@@ -1,0 +1,12 @@
+{
+  "board": {
+    "did": "did:plc:4vjd3fe2cgzq5d24j4f3zvar",
+    "rkey": "3mf675jp2ak2l"
+  },
+  "maxIterations": 5,
+  "workflow": "standard",
+  "branching": "per-card",
+  "statusFile": ".skyboard-ralph/loop-status",
+  "logFile": ".skyboard-ralph/loop.log",
+  "protocolFile": ".skyboard-ralph/protocol.md"
+}
