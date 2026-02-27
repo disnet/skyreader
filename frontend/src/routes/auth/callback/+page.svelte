@@ -4,7 +4,6 @@
   import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth.svelte';
   import { api } from '$lib/services/api';
-  import { appManager } from '$lib/stores/app.svelte';
   import { registerPeriodicSync } from '$lib/services/backgroundRefresh';
 
   onMount(async () => {
@@ -18,12 +17,15 @@
       // Store the user data for display caching
       auth.setUser(user);
 
-      // Initialize the app (loads subscriptions, articles, read state, etc.)
-      await appManager.initialize();
-
       // Register for periodic background sync (Chromium only, fails gracefully on other browsers)
       registerPeriodicSync();
 
+      // Navigate immediately — don't block on initialization.
+      // +page.svelte's onMount will call appManager.initialize() which handles
+      // hydration and background refresh. Previously, awaiting initialize() here
+      // meant goto(returnUrl) could fire after the user had already navigated
+      // away from the callback page (since the sidebar becomes visible once
+      // auth is set), overriding their current location.
       goto(returnUrl);
     } catch (error) {
       console.error('Failed to complete login:', error);
