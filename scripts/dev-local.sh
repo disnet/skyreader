@@ -3,12 +3,11 @@
 # Local development script
 # Uses Vite proxy so frontend and API are same-origin (cookies work without tunnel)
 
-set -e
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 BACKEND_DIR="$ROOT_DIR/backend"
 FRONTEND_DIR="$ROOT_DIR/frontend"
+FEED_PROXY_DIR="$ROOT_DIR/feed-proxy"
 
 # Colors for output
 RED='\033[0;31m'
@@ -19,6 +18,7 @@ NC='\033[0m' # No Color
 # Cleanup function
 cleanup() {
     echo -e "\n${YELLOW}Shutting down...${NC}"
+    kill $FEED_PROXY_PID 2>/dev/null || true
     kill $BACKEND_PID 2>/dev/null || true
     kill $FRONTEND_PID 2>/dev/null || true
     exit 0
@@ -36,15 +36,32 @@ fi
 
 echo -e "${GREEN}Starting local development environment...${NC}\n"
 
+# Run D1 migrations
+echo -e "${YELLOW}[0/3] Running D1 migrations...${NC}"
+cd "$BACKEND_DIR"
+if ! echo "y" | npx wrangler d1 migrations apply skyreader --local; then
+    echo -e "${RED}Failed to apply migrations${NC}"
+    exit 1
+fi
+echo -e "${GREEN}Migrations applied.${NC}\n"
+
+# Start feed proxy (no auth needed locally)
+echo -e "${YELLOW}[1/3] Starting feed proxy...${NC}"
+cd "$FEED_PROXY_DIR"
+bun install --frozen-lockfile 2>/dev/null || bun install
+bun run dev &
+FEED_PROXY_PID=$!
+sleep 2
+
 # Start backend
-echo -e "${YELLOW}[1/2] Starting backend...${NC}"
+echo -e "${YELLOW}[2/3] Starting backend...${NC}"
 cd "$BACKEND_DIR"
 npm run dev &
 BACKEND_PID=$!
 sleep 2
 
 # Start frontend (Vite proxies /api to backend)
-echo -e "${YELLOW}[2/2] Starting frontend...${NC}"
+echo -e "${YELLOW}[3/3] Starting frontend...${NC}"
 cd "$FRONTEND_DIR"
 
 # Ensure no VITE_API_URL is set (use Vite proxy for same-origin)
@@ -59,7 +76,8 @@ FRONTEND_PID=$!
 echo -e "\n${GREEN}========================================${NC}"
 echo -e "${GREEN}Development environment ready!${NC}"
 echo -e "${GREEN}========================================${NC}"
-echo -e "Backend:  http://127.0.0.1:8787"
+echo -e "Feed proxy: http://127.0.0.1:3000"
+echo -e "Backend:    http://127.0.0.1:8787"
 echo -e ""
 echo -e "${GREEN}Open in your browser:${NC}"
 echo -e "${GREEN}  http://127.0.0.1:5173${NC}"

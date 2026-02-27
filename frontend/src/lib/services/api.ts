@@ -10,7 +10,7 @@ import type {
   User,
 } from '$lib/types';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8787';
+const API_BASE = import.meta.env.VITE_API_URL || '';
 
 export class RateLimitError extends Error {
   retryAfter: number;

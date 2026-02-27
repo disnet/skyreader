@@ -20,16 +20,26 @@ A decentralized RSS reader built on AT Protocol (Bluesky). User data (subscripti
 
 ### Full Local Development (with OAuth)
 ```bash
-./scripts/dev-local.sh   # Starts backend and frontend
+./scripts/dev-local.sh   # Starts feed proxy, backend, and frontend
 ```
 
-This script starts the backend Wrangler dev server and frontend Vite dev server with proper configuration for OAuth.
+This script runs D1 migrations, then starts the feed proxy (port 3000), backend Wrangler dev server (port 8787), and frontend Vite dev server (port 5173). The frontend proxies `/api` requests to the backend via Vite, avoiding CORS issues.
 
 **Prerequisites:**
+- [Bun](https://bun.sh) installed (for the feed proxy)
+- Install dependencies: `cd feed-proxy && bun install`
 - Create `backend/.dev.vars` with:
   ```
   FRONTEND_URL=http://127.0.0.1:5173
+  FEED_PROXY_URL=http://127.0.0.1:3000
   ```
+
+**Resetting the local database:**
+```bash
+rm -rf backend/.wrangler/state/v3/d1/
+```
+
+**Note:** Always access the frontend at `http://127.0.0.1:5173` (not `localhost`) — OAuth requires `127.0.0.1`.
 
 Local development uses AT Protocol's [localhost client exception](https://atproto.com/specs/oauth#localhost-client-development), which allows OAuth without hosting client metadata or using tunnels.
 
