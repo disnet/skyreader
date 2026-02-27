@@ -1,0 +1,62 @@
+name: E2E Tests
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: e2e-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Playwright E2E
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install backend dependencies
+        run: npm ci
+        working-directory: backend
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Install feed-proxy dependencies
+        run: bun install
+        working-directory: feed-proxy
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+
+      - name: Create backend .dev.vars
+        run: |
+          cat > .dev.vars <<'EOF'
+          FRONTEND_URL=http://127.0.0.1:5173
+          ALLOWED_ORIGINS=http://127.0.0.1:5173
+          EOF
+        working-directory: backend
+
+      - name: Run E2E tests
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
