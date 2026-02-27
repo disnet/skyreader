@@ -7,6 +7,8 @@ on:
   pull_request:
     branches: [main]
     paths: ['feed-proxy/**']
+  release:
+    types: [published]
 
 concurrency:
   group: feed-proxy-${{ github.ref }}
@@ -52,7 +54,7 @@ jobs:
   deploy:
     name: Deploy to Production
     needs: [typecheck, test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     environment: production
     steps:
