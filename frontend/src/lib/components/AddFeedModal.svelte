@@ -1237,4 +1237,10 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
+
+  @media (max-width: 600px) {
+    .search-input {
+      font-size: 16px; /* Prevents iOS zoom on focus */
+    }
+  }
 </style>
