@@ -23,24 +23,40 @@ cd skyreader
 
 ### Prerequisites
 
-Create `backend/.dev.vars`:
-```
-FRONTEND_URL=http://127.0.0.1:5173
-```
+- [Node.js](https://nodejs.org/)
+- [Bun](https://bun.sh) (for the feed proxy)
+- Install dependencies:
+  ```bash
+  cd backend && npm install
+  cd frontend && npm install
+  cd feed-proxy && bun install
+  ```
+- Create `backend/.dev.vars`:
+  ```
+  FRONTEND_URL=http://127.0.0.1:5173
+  FEED_PROXY_URL=http://127.0.0.1:3000
+  ```
 
 ### Local Development
 
 ```bash
-# Start backend + frontend together
+# Start feed proxy + backend + frontend together
 ./scripts/dev-local.sh
+```
 
-# Or start individually:
-cd backend && npm install && npm run dev    # port 8787
-cd frontend && npm install && npm run dev   # port 5173
+This runs D1 migrations, starts the feed proxy (port 3000), backend (port 8787), and frontend (port 5173).
+
+To start services individually:
+```bash
+cd feed-proxy && bun run dev                # port 3000
+cd backend && npm run dev                   # port 8787
+cd frontend && npm run dev                  # port 5173
 cd admin && npm install && npm run dev      # port 5174
 ```
 
-Use `127.0.0.1` not `localhost` for local development (OAuth requirement).
+To reset the local database: `rm -rf backend/.wrangler/state/v3/d1/`
+
+Use `http://127.0.0.1:5173` not `localhost` for local development (OAuth requirement).
 
 ### E2E Tests
 
