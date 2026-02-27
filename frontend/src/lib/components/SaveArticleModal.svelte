@@ -186,4 +186,10 @@
     color: var(--color-text-secondary);
     cursor: pointer;
   }
+
+  @media (max-width: 600px) {
+    .url-input {
+      font-size: 16px; /* Prevents iOS zoom on focus */
+    }
+  }
 </style>
