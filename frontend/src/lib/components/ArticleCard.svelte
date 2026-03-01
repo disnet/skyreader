@@ -526,7 +526,8 @@
       {#if faviconUrl}
         <img src={faviconUrl} alt="" class="favicon" />
       {/if}
-      <span class="article-title">
+      <span class="article-title" class:unread={!isRead}>
+        {#if !isRead}<span class="unread-dot"></span>{/if}
         {#if isOpen}
           <a
             href={itemUrl}
@@ -599,9 +600,9 @@
               {#if isRead}
                 <Icon name="circle" size={16} />
               {:else}
-                <Icon name="circle-dot" size={16} />
+                <Icon name="check" size={16} />
               {/if}
-            </span><span class="action-label">Read</span>
+            </span><span class="action-label">{isRead ? 'Mark unread' : 'Mark read'}</span>
           </button>
           <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
@@ -635,9 +636,9 @@
               {#if isRead}
                 <Icon name="circle" size={16} />
               {:else}
-                <Icon name="circle-dot" size={16} />
+                <Icon name="check" size={16} />
               {/if}
-            </span><span class="action-label">Read</span>
+            </span><span class="action-label">{isRead ? 'Mark unread' : 'Mark read'}</span>
           </button>
           <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
@@ -673,9 +674,9 @@
               {#if isRead}
                 <Icon name="circle" size={16} />
               {:else}
-                <Icon name="circle-dot" size={16} />
+                <Icon name="check" size={16} />
               {/if}
-            </span><span class="action-label">Read</span>
+            </span><span class="action-label">{isRead ? 'Mark unread' : 'Mark read'}</span>
           </button>
           <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
@@ -899,11 +900,26 @@
     flex: 1;
     font-family: var(--article-font);
     font-size: var(--article-font-size);
-    font-weight: 500;
+    font-weight: 400;
     color: var(--color-text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .article-title.unread {
+    font-weight: 600;
+  }
+
+  .unread-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--color-primary, #0066cc);
+    margin-right: 6px;
+    flex-shrink: 0;
+    vertical-align: middle;
   }
 
   .article-title-link {
