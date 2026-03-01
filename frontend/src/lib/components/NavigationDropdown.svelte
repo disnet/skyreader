@@ -41,6 +41,9 @@
   let viewMenuId = $state<number | null>(null);
   let viewMenuX = $state(0);
   let viewMenuY = $state(0);
+  let viewMenuRef = $state<HTMLDivElement | null>(null);
+  let adjustedMenuX = $state(0);
+  let adjustedMenuY = $state(0);
   let renamingViewId = $state<number | null>(null);
   let renameValue = $state('');
   let renameInputRef = $state<HTMLInputElement | null>(null);
@@ -52,6 +55,28 @@
     viewMenuY = e.clientY;
     viewMenuId = viewId;
   }
+
+  $effect(() => {
+    const targetX = viewMenuX;
+    const targetY = viewMenuY;
+
+    tick().then(() => {
+      if (viewMenuRef) {
+        const rect = viewMenuRef.getBoundingClientRect();
+        const padding = 8;
+
+        adjustedMenuX =
+          targetX + rect.width > window.innerWidth - padding
+            ? Math.max(padding, window.innerWidth - rect.width - padding)
+            : targetX;
+
+        adjustedMenuY =
+          targetY + rect.height > window.innerHeight - padding
+            ? Math.max(padding, window.innerHeight - rect.height - padding)
+            : targetY;
+      }
+    });
+  });
 
   function closeViewMenu() {
     viewMenuId = null;
@@ -608,7 +633,12 @@
   <div class="view-menu-portal" use:portal>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="view-menu-backdrop" onclick={closeViewMenu} onkeydown={() => {}}></div>
-    <div class="view-context-menu" style="left: {viewMenuX}px; top: {viewMenuY}px;" role="menu">
+    <div
+      class="view-context-menu"
+      bind:this={viewMenuRef}
+      style="left: {adjustedMenuX}px; top: {adjustedMenuY}px;"
+      role="menu"
+    >
       <button class="view-menu-item" onclick={() => startRenameView(viewMenuId!)} role="menuitem">
         <span class="view-menu-icon"><Icon name="edit" size={16} /></span>
         Rename
