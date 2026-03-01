@@ -185,6 +185,12 @@
     opacity: 1;
   }
 
+  @media (max-width: 1000px) {
+    .more-btn {
+      opacity: 1;
+    }
+  }
+
   .more-btn:hover {
     color: var(--color-text);
     background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.1));
