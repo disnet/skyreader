@@ -870,11 +870,13 @@
   .reader-body :global(ul),
   .reader-body :global(ol) {
     margin: 1rem 0;
-    padding-left: 1.5rem;
+    padding-left: 2rem;
   }
 
   .reader-body :global(li) {
     margin: 0.25rem 0;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
   }
 
   .reader-body :global(mark.highlight) {
