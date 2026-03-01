@@ -189,6 +189,48 @@
   // Whether we're editing an existing saved view
   let isEditingView = $derived(!!feedViewStore.viewFilter);
 
+  // Rename view state
+  let showRenameInput = $state(false);
+  let renameViewName = $state('');
+  let renameInputRef = $state<HTMLInputElement | null>(null);
+
+  function startRenameView() {
+    if (!feedViewStore.viewFilter) return;
+    const id = parseInt(feedViewStore.viewFilter);
+    const view = filteredViewsStore.getById(id);
+    if (!view) return;
+    renameViewName = view.name;
+    showRenameInput = true;
+    requestAnimationFrame(() => {
+      renameInputRef?.focus();
+      renameInputRef?.select();
+    });
+  }
+
+  async function commitRenameView() {
+    if (!feedViewStore.viewFilter) return;
+    const trimmed = renameViewName.trim();
+    if (!trimmed) {
+      showRenameInput = false;
+      return;
+    }
+    const id = parseInt(feedViewStore.viewFilter);
+    const view = filteredViewsStore.getById(id);
+    if (view && trimmed !== view.name) {
+      await filteredViewsStore.update(id, { name: trimmed });
+    }
+    showRenameInput = false;
+  }
+
+  function handleRenameKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commitRenameView();
+    } else if (e.key === 'Escape') {
+      showRenameInput = false;
+    }
+  }
+
   async function handleDeleteView() {
     if (!feedViewStore.viewFilter) return;
     if (!confirm('Are you sure you want to delete this view?')) return;
@@ -564,6 +606,25 @@
           <Icon name="check" size={16} />
         </button>
       </div>
+    {:else if showRenameInput}
+      <div class="save-name-input">
+        <input
+          bind:this={renameInputRef}
+          bind:value={renameViewName}
+          class="name-input"
+          placeholder="View name"
+          onkeydown={handleRenameKeydown}
+          onblur={commitRenameView}
+        />
+        <button
+          class="filter-btn save-confirm-btn"
+          onclick={commitRenameView}
+          disabled={!renameViewName.trim()}
+          title="Confirm rename"
+        >
+          <Icon name="check" size={16} />
+        </button>
+      </div>
     {:else}
       <button
         class="filter-btn save-btn"
@@ -580,6 +641,9 @@
         <span class="filter-label">{isEditingView ? 'Update' : 'Save'}</span>
       </button>
       {#if isEditingView}
+        <button class="filter-btn rename-btn" onclick={startRenameView} title="Rename view">
+          <Icon name="edit" size={16} />
+        </button>
         <button class="filter-btn delete-btn" onclick={handleDeleteView} title="Delete view">
           <Icon name="trash" size={16} />
         </button>
@@ -830,6 +894,15 @@
   .save-btn:not(:disabled):not(.has-changes):hover {
     color: var(--color-text);
     background: var(--color-bg-secondary, #f5f5f5);
+  }
+
+  .rename-btn {
+    color: var(--color-text-secondary);
+  }
+
+  .rename-btn:hover {
+    color: var(--color-primary, #2563eb);
+    background: rgba(37, 99, 235, 0.08);
   }
 
   .delete-btn {
