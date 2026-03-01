@@ -522,12 +522,20 @@
         >
       </div>
     {/if}
+    <div class="article-header-row">
+      <button
+        class="read-toggle"
+        class:unread={!isRead}
+        title={isRead ? 'Mark unread' : 'Mark read'}
+        onclick={handleToggleRead}
+      >
+        <Icon name={isRead ? 'circle' : 'circle-dot'} size={10} />
+      </button>
     <button class="article-header" onclick={handleHeaderClick}>
       {#if faviconUrl}
         <img src={faviconUrl} alt="" class="favicon" />
       {/if}
       <span class="article-title" class:unread={!isRead}>
-        {#if !isRead}<span class="unread-dot"></span>{/if}
         {#if isOpen}
           <a
             href={itemUrl}
@@ -554,6 +562,7 @@
       {/if}
       <span class="article-date">{formatRelativeDate(itemPublishedAt)}</span>
     </button>
+    </div>
   </div>
 
   {#if isOpen}
@@ -594,16 +603,7 @@
     <div class="article-actions-container">
       <div class="article-actions">
         {#if isShareMode}
-          <!-- Share mode: read, bookmark, reshare, and open -->
-          <button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
-            <span class="action-icon">
-              {#if isRead}
-                <Icon name="circle" size={16} />
-              {:else}
-                <Icon name="check" size={16} />
-              {/if}
-            </span><span class="action-label">{isRead ? 'Mark unread' : 'Mark read'}</span>
-          </button>
+          <!-- Share mode: bookmark, reshare, and open -->
           <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
               class="action-label">Save</span
@@ -630,16 +630,7 @@
             >
           </button>
         {:else if isDocumentMode}
-          <!-- Document mode: read, bookmark, share, and open -->
-          <button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
-            <span class="action-icon">
-              {#if isRead}
-                <Icon name="circle" size={16} />
-              {:else}
-                <Icon name="check" size={16} />
-              {/if}
-            </span><span class="action-label">{isRead ? 'Mark unread' : 'Mark read'}</span>
-          </button>
+          <!-- Document mode: bookmark, share, and open -->
           <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
               class="action-label">Save</span
@@ -669,15 +660,6 @@
           </button>
         {:else}
           <!-- Article mode: full controls -->
-          <button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
-            <span class="action-icon">
-              {#if isRead}
-                <Icon name="circle" size={16} />
-              {:else}
-                <Icon name="check" size={16} />
-              {/if}
-            </span><span class="action-label">{isRead ? 'Mark unread' : 'Mark read'}</span>
-          </button>
           <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
               class="action-label">Save</span
@@ -875,11 +857,18 @@
     margin-left: 0.25rem;
   }
 
+  .article-header-row {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+  }
+
   .article-header {
     display: flex;
     align-items: baseline;
     gap: 0.75rem;
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     padding: 0.5rem 0;
     background: none;
     border: none;
@@ -911,15 +900,26 @@
     font-weight: 600;
   }
 
-  .unread-dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background-color: var(--color-primary, #0066cc);
-    margin-right: 6px;
+  .read-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    padding: 2px;
+    cursor: pointer;
+    color: var(--color-text-secondary);
     flex-shrink: 0;
-    vertical-align: middle;
+    border-radius: 50%;
+    line-height: 0;
+  }
+
+  .read-toggle:hover {
+    color: var(--color-primary, #0066cc);
+  }
+
+  .read-toggle.unread {
+    color: var(--color-primary, #0066cc);
   }
 
   .article-title-link {
@@ -1155,14 +1155,6 @@
 
   .action-btn.saved:hover {
     color: #ffc107;
-  }
-
-  .action-btn.unread {
-    color: var(--color-primary, #0066cc);
-  }
-
-  .action-btn.unread:hover {
-    color: var(--color-primary, #0066cc);
   }
 
   .action-btn.shared {
