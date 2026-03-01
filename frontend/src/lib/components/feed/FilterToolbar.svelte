@@ -189,6 +189,14 @@
   // Whether we're editing an existing saved view
   let isEditingView = $derived(!!feedViewStore.viewFilter);
 
+  async function handleDeleteView() {
+    if (!feedViewStore.viewFilter) return;
+    if (!confirm('Are you sure you want to delete this view?')) return;
+    const id = parseInt(feedViewStore.viewFilter);
+    await filteredViewsStore.remove(id);
+    goto('/');
+  }
+
   async function handleSave() {
     if (isEditingView) {
       // Update existing view
@@ -571,6 +579,11 @@
         <Icon name="save" size={16} />
         <span class="filter-label">{isEditingView ? 'Update' : 'Save'}</span>
       </button>
+      {#if isEditingView}
+        <button class="filter-btn delete-btn" onclick={handleDeleteView} title="Delete view">
+          <Icon name="trash" size={16} />
+        </button>
+      {/if}
     {/if}
   </div>
 </div>
@@ -817,6 +830,15 @@
   .save-btn:not(:disabled):not(.has-changes):hover {
     color: var(--color-text);
     background: var(--color-bg-secondary, #f5f5f5);
+  }
+
+  .delete-btn {
+    color: var(--color-text-secondary);
+  }
+
+  .delete-btn:hover {
+    color: #dc2626;
+    background: rgba(220, 38, 38, 0.08);
   }
 
   .save-name-input {
