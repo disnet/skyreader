@@ -522,37 +522,52 @@
         >
       </div>
     {/if}
-    <button class="article-header" onclick={handleHeaderClick}>
-      {#if faviconUrl}
-        <img src={faviconUrl} alt="" class="favicon" />
-      {/if}
-      <span class="article-title">
-        {#if isOpen}
-          <a
-            href={itemUrl}
-            target="_blank"
-            rel="noopener"
-            class="article-title-link"
-            onclick={(e) => e.stopPropagation()}>{itemTitle}</a
-          >
-        {:else}
-          {itemTitle}
-        {/if}
+    <div class="article-header-row">
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <span
+        class="read-toggle"
+        class:unread={!isRead}
+        title={isRead ? 'Mark unread' : 'Mark read'}
+        onclick={handleToggleRead}
+        role="button"
+        tabindex="-1"
+      >
+        <span class="read-dot"></span>
       </span>
-      {#if displayFeedTitle}
-        {#if feedId}
-          <a href="/?feed={feedId}" class="feed-title-link" onclick={(e) => e.stopPropagation()}
-            >{displayFeedTitle}</a
-          >
-        {:else}
-          <span class="feed-title-label">{displayFeedTitle}</span>
+      <button class="article-header" onclick={handleHeaderClick}>
+        {#if faviconUrl}
+          <img src={faviconUrl} alt="" class="favicon" />
         {/if}
-      {/if}
-      {#if readTimeMinutes > 0}
-        <span class="article-read-time"><Icon name="clock" size={12} /> {readTimeMinutes} min</span>
-      {/if}
-      <span class="article-date">{formatRelativeDate(itemPublishedAt)}</span>
-    </button>
+        <span class="article-title">
+          {#if isOpen}
+            <a
+              href={itemUrl}
+              target="_blank"
+              rel="noopener"
+              class="article-title-link"
+              onclick={(e) => e.stopPropagation()}>{itemTitle}</a
+            >
+          {:else}
+            {itemTitle}
+          {/if}
+        </span>
+        {#if displayFeedTitle}
+          {#if feedId}
+            <a href="/?feed={feedId}" class="feed-title-link" onclick={(e) => e.stopPropagation()}
+              >{displayFeedTitle}</a
+            >
+          {:else}
+            <span class="feed-title-label">{displayFeedTitle}</span>
+          {/if}
+        {/if}
+        {#if readTimeMinutes > 0}
+          <span class="article-read-time"
+            ><Icon name="clock" size={12} /> {readTimeMinutes} min</span
+          >
+        {/if}
+        <span class="article-date">{formatRelativeDate(itemPublishedAt)}</span>
+      </button>
+    </div>
   </div>
 
   {#if isOpen}
@@ -593,16 +608,7 @@
     <div class="article-actions-container">
       <div class="article-actions">
         {#if isShareMode}
-          <!-- Share mode: read, bookmark, reshare, and open -->
-          <button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
-            <span class="action-icon">
-              {#if isRead}
-                <Icon name="circle" size={16} />
-              {:else}
-                <Icon name="circle-dot" size={16} />
-              {/if}
-            </span><span class="action-label">Read</span>
-          </button>
+          <!-- Share mode: bookmark, reshare, and open -->
           <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
               class="action-label">Save</span
@@ -629,16 +635,7 @@
             >
           </button>
         {:else if isDocumentMode}
-          <!-- Document mode: read, bookmark, share, and open -->
-          <button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
-            <span class="action-icon">
-              {#if isRead}
-                <Icon name="circle" size={16} />
-              {:else}
-                <Icon name="circle-dot" size={16} />
-              {/if}
-            </span><span class="action-label">Read</span>
-          </button>
+          <!-- Document mode: bookmark, share, and open -->
           <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
               class="action-label">Save</span
@@ -668,15 +665,6 @@
           </button>
         {:else}
           <!-- Article mode: full controls -->
-          <button class="action-btn" class:unread={!isRead} onclick={handleToggleRead}>
-            <span class="action-icon">
-              {#if isRead}
-                <Icon name="circle" size={16} />
-              {:else}
-                <Icon name="circle-dot" size={16} />
-              {/if}
-            </span><span class="action-label">Read</span>
-          </button>
           <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
               class="action-label">Save</span
@@ -874,11 +862,18 @@
     margin-left: 0.25rem;
   }
 
+  .article-header-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 2px;
+  }
+
   .article-header {
     display: flex;
-    align-items: baseline;
-    gap: 0.75rem;
-    width: 100%;
+    align-items: flex-start;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
     padding: 0.5rem 0;
     background: none;
     border: none;
@@ -891,19 +886,61 @@
     width: 16px;
     height: 16px;
     flex-shrink: 0;
-    vertical-align: baseline;
-    margin-right: 0.75rem;
+    margin-top: 3px;
   }
 
   .article-title {
     flex: 1;
     font-family: var(--article-font);
     font-size: var(--article-font-size);
-    font-weight: 500;
+    font-weight: 400;
     color: var(--color-text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .article-item.read .article-title {
+    color: var(--color-text-secondary);
+  }
+
+  .read-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    padding: 2px 10px 2px 4px;
+    cursor: pointer;
+    flex-shrink: 0;
+    line-height: 0;
+    margin-top: calc(0.5rem + 3px);
+  }
+
+  .read-dot {
+    display: block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: transparent;
+    border: 1.5px solid var(--color-text-secondary);
+    transition:
+      background 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .read-toggle:hover .read-dot {
+    border-color: var(--color-primary, #0066cc);
+    opacity: 0.7;
+  }
+
+  .read-toggle.unread .read-dot {
+    background: #5b9bd5;
+    border-color: #5b9bd5;
+  }
+
+  .read-toggle.unread:hover .read-dot {
+    opacity: 0.7;
   }
 
   .article-title-link {
@@ -1141,14 +1178,6 @@
     color: #ffc107;
   }
 
-  .action-btn.unread {
-    color: var(--color-primary, #0066cc);
-  }
-
-  .action-btn.unread:hover {
-    color: var(--color-primary, #0066cc);
-  }
-
   .action-btn.shared {
     color: var(--color-primary, #0066cc);
   }
@@ -1283,6 +1312,10 @@
 
   /* Mobile: two-line header — [title] on top, [icon] [feed] [date] below */
   @media (max-width: 600px) {
+    .read-toggle {
+      margin-top: calc(0.5rem + 5px);
+    }
+
     .article-header {
       flex-wrap: wrap;
       gap: 0.25rem 0.5rem;
