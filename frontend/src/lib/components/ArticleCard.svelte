@@ -523,19 +523,22 @@
       </div>
     {/if}
     <div class="article-header-row">
-      <button
-        class="read-toggle"
-        class:unread={!isRead}
-        title={isRead ? 'Mark unread' : 'Mark read'}
-        onclick={handleToggleRead}
-      >
-        <Icon name={isRead ? 'circle' : 'circle-dot'} size={10} />
-      </button>
     <button class="article-header" onclick={handleHeaderClick}>
       {#if faviconUrl}
         <img src={faviconUrl} alt="" class="favicon" />
       {/if}
-      <span class="article-title" class:unread={!isRead}>
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <span
+        class="read-toggle"
+        class:unread={!isRead}
+        title={isRead ? 'Mark unread' : 'Mark read'}
+        onclick={handleToggleRead}
+        role="button"
+        tabindex="-1"
+      >
+        <Icon name={isRead ? 'circle' : 'circle-dot'} size={10} />
+      </span>
+      <span class="article-title">
         {#if isOpen}
           <a
             href={itemUrl}
@@ -896,8 +899,8 @@
     white-space: nowrap;
   }
 
-  .article-title.unread {
-    font-weight: 600;
+  .article-item.read .article-title {
+    color: var(--color-text-secondary);
   }
 
   .read-toggle {
@@ -912,6 +915,7 @@
     flex-shrink: 0;
     border-radius: 50%;
     line-height: 0;
+    align-self: center;
   }
 
   .read-toggle:hover {
