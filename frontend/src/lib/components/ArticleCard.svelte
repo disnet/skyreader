@@ -1078,8 +1078,8 @@
   .article-body :global(ul),
   .article-body :global(ol) {
     margin: 0.75rem 0;
-    padding-left: 0.5rem;
-    list-style-position: inside;
+    padding-left: 1.5rem;
+    list-style-position: outside;
   }
 
   .article-body :global(li ul),
