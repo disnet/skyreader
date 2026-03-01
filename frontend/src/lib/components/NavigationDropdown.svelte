@@ -604,18 +604,20 @@
 </div>
 
 {#if viewMenuId !== null}
-  <!-- View context menu backdrop -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="view-menu-backdrop" onclick={closeViewMenu} onkeydown={() => {}}></div>
-  <div class="view-context-menu" style="left: {viewMenuX}px; top: {viewMenuY}px;" role="menu">
-    <button class="view-menu-item" onclick={() => startRenameView(viewMenuId!)} role="menuitem">
-      <span class="view-menu-icon"><Icon name="edit" size={16} /></span>
-      Rename
-    </button>
-    <button class="view-menu-item danger" onclick={() => deleteView(viewMenuId!)} role="menuitem">
-      <span class="view-menu-icon"><Icon name="trash" size={16} /></span>
-      Delete
-    </button>
+  <!-- View context menu (portaled to body to escape backdrop-filter containing block) -->
+  <div class="view-menu-portal" use:portal>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="view-menu-backdrop" onclick={closeViewMenu} onkeydown={() => {}}></div>
+    <div class="view-context-menu" style="left: {viewMenuX}px; top: {viewMenuY}px;" role="menu">
+      <button class="view-menu-item" onclick={() => startRenameView(viewMenuId!)} role="menuitem">
+        <span class="view-menu-icon"><Icon name="edit" size={16} /></span>
+        Rename
+      </button>
+      <button class="view-menu-item danger" onclick={() => deleteView(viewMenuId!)} role="menuitem">
+        <span class="view-menu-icon"><Icon name="trash" size={16} /></span>
+        Delete
+      </button>
+    </div>
   </div>
 {/if}
 
@@ -1370,14 +1372,18 @@
     outline: none;
   }
 
-  /* View context menu */
-  .view-menu-backdrop {
+  /* View context menu (portaled to body, needs :global) */
+  :global(.view-menu-portal) {
+    display: contents;
+  }
+
+  :global(.view-menu-portal .view-menu-backdrop) {
     position: fixed;
     inset: 0;
     z-index: 1100;
   }
 
-  .view-context-menu {
+  :global(.view-menu-portal .view-context-menu) {
     position: fixed;
     background: var(--color-bg);
     border: 1px solid var(--color-border);
@@ -1388,7 +1394,7 @@
     min-width: 120px;
   }
 
-  .view-menu-item {
+  :global(.view-menu-portal .view-menu-item) {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -1403,19 +1409,19 @@
     color: var(--color-text);
   }
 
-  .view-menu-item:hover {
+  :global(.view-menu-portal .view-menu-item:hover) {
     background: var(--color-bg-secondary);
   }
 
-  .view-menu-item.danger {
+  :global(.view-menu-portal .view-menu-item.danger) {
     color: var(--color-error, #dc2626);
   }
 
-  .view-menu-item.danger:hover {
+  :global(.view-menu-portal .view-menu-item.danger:hover) {
     background: rgba(220, 38, 38, 0.1);
   }
 
-  .view-menu-icon {
+  :global(.view-menu-portal .view-menu-icon) {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1435,7 +1441,7 @@
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
     }
 
-    .view-context-menu {
+    :global(.view-menu-portal .view-context-menu) {
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     }
   }
