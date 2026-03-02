@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { onMount, onDestroy } from 'svelte';
+  import { tick, onMount, onDestroy } from 'svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
@@ -36,6 +36,91 @@
   let searchInputEl = $state<HTMLInputElement | null>(null);
   let mobilePanelEl = $state<HTMLDivElement | null>(null);
   let isMobile = $state(false);
+
+  // View context menu state
+  let viewMenuId = $state<number | null>(null);
+  let viewMenuX = $state(0);
+  let viewMenuY = $state(0);
+  let viewMenuRef = $state<HTMLDivElement | null>(null);
+  let adjustedMenuX = $state(0);
+  let adjustedMenuY = $state(0);
+  let renamingViewId = $state<number | null>(null);
+  let renameValue = $state('');
+  let renameInputRef = $state<HTMLInputElement | null>(null);
+
+  function openViewMenu(e: MouseEvent, viewId: number) {
+    e.stopPropagation();
+    e.preventDefault();
+    viewMenuX = e.clientX;
+    viewMenuY = e.clientY;
+    viewMenuId = viewId;
+  }
+
+  $effect(() => {
+    const targetX = viewMenuX;
+    const targetY = viewMenuY;
+
+    tick().then(() => {
+      if (viewMenuRef) {
+        const rect = viewMenuRef.getBoundingClientRect();
+        const padding = 8;
+
+        adjustedMenuX =
+          targetX + rect.width > window.innerWidth - padding
+            ? Math.max(padding, window.innerWidth - rect.width - padding)
+            : targetX;
+
+        adjustedMenuY =
+          targetY + rect.height > window.innerHeight - padding
+            ? Math.max(padding, window.innerHeight - rect.height - padding)
+            : targetY;
+      }
+    });
+  });
+
+  function closeViewMenu() {
+    viewMenuId = null;
+  }
+
+  function startRenameView(viewId: number) {
+    const view = filteredViewsStore.getById(viewId);
+    if (!view) return;
+    closeViewMenu();
+    renamingViewId = viewId;
+    renameValue = view.name;
+    tick().then(() => {
+      renameInputRef?.focus();
+      renameInputRef?.select();
+    });
+  }
+
+  function commitRenameView() {
+    const trimmed = renameValue.trim();
+    if (renamingViewId !== null && trimmed) {
+      const view = filteredViewsStore.getById(renamingViewId);
+      if (view && trimmed !== view.name) {
+        filteredViewsStore.update(renamingViewId, { name: trimmed });
+      }
+    }
+    renamingViewId = null;
+    renameValue = '';
+  }
+
+  function cancelRenameView() {
+    renamingViewId = null;
+    renameValue = '';
+  }
+
+  async function deleteView(viewId: number) {
+    closeViewMenu();
+    if (!confirm('Are you sure you want to delete this view?')) return;
+    await filteredViewsStore.remove(viewId);
+    // If we're currently viewing the deleted view, navigate away
+    const currentView = $page.url.searchParams.get('view');
+    if (currentView && parseInt(currentView) === viewId) {
+      goto('/');
+    }
+  }
 
   // Use store for open state so it can be controlled externally (keyboard shortcut)
   let isOpen = $derived(sidebarStore.navigationDropdownOpen);
@@ -250,6 +335,8 @@
     sidebarStore.closeNavigationDropdown();
     searchQuery = '';
     highlightedIndex = -1;
+    closeViewMenu();
+    cancelRenameView();
   }
 
   // When opened externally (keyboard shortcut), set up focus
@@ -466,30 +553,71 @@
             {@const flatIndex =
               filteredItems.slice(0, sectionIndex).reduce((acc, s) => acc + s.items.length, 0) +
               itemIndex}
-            <button
-              class="nav-item"
-              class:section-child={!!section}
-              class:active={isItemActive(item)}
-              class:highlighted={flatIndex === highlightedIndex}
-              role="option"
-              aria-selected={isItemActive(item)}
-              onclick={() => selectItem(item)}
-              onmouseenter={() => (highlightedIndex = flatIndex)}
-            >
-              {#if item.type === 'view' || item.type === 'utility' || item.type === 'action' || item.type === 'filteredView'}
+            {#if item.type === 'filteredView' && renamingViewId === item.id}
+              <div class="nav-item rename-row" class:section-child={!!section}>
                 <span class="item-icon"><Icon name={item.icon} size={16} /></span>
-              {:else if item.type === 'feed'}
-                {#if item.iconUrl}
-                  <img src={item.iconUrl} alt="" class="feed-icon" />
-                {:else}
-                  <span class="feed-icon-placeholder"></span>
+                <!-- svelte-ignore a11y_autofocus -->
+                <input
+                  bind:this={renameInputRef}
+                  bind:value={renameValue}
+                  class="view-rename-input"
+                  onclick={(e) => e.stopPropagation()}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      commitRenameView();
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      cancelRenameView();
+                    }
+                  }}
+                  onblur={commitRenameView}
+                />
+              </div>
+            {:else}
+              <button
+                class="nav-item"
+                class:section-child={!!section}
+                class:active={isItemActive(item)}
+                class:highlighted={flatIndex === highlightedIndex}
+                role="option"
+                aria-selected={isItemActive(item)}
+                onclick={() => selectItem(item)}
+                onmouseenter={() => (highlightedIndex = flatIndex)}
+              >
+                {#if item.type === 'view' || item.type === 'utility' || item.type === 'action' || item.type === 'filteredView'}
+                  <span class="item-icon"><Icon name={item.icon} size={16} /></span>
+                {:else if item.type === 'feed'}
+                  {#if item.iconUrl}
+                    <img src={item.iconUrl} alt="" class="feed-icon" />
+                  {:else}
+                    <span class="feed-icon-placeholder"></span>
+                  {/if}
                 {/if}
-              {/if}
-              <span class="item-label">{item.label}</span>
-              {#if item.type !== 'action' && item.type !== 'filteredView' && item.count && item.count > 0}
-                <span class="item-count">{item.count}</span>
-              {/if}
-            </button>
+                <span class="item-label">{item.label}</span>
+                {#if item.type !== 'action' && item.type !== 'filteredView' && item.count && item.count > 0}
+                  <span class="item-count">{item.count}</span>
+                {/if}
+                {#if item.type === 'filteredView'}
+                  <span
+                    class="view-more-btn"
+                    role="button"
+                    tabindex="0"
+                    onclick={(e) => openViewMenu(e, item.id)}
+                    onkeydown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openViewMenu(e as unknown as MouseEvent, item.id);
+                      }
+                    }}
+                    title="More options"
+                  >
+                    <Icon name="more-horizontal" size={14} />
+                  </span>
+                {/if}
+              </button>
+            {/if}
           {/each}
         {/each}
         {#if flatItems.length === 0}
@@ -499,6 +627,29 @@
     </div>
   {/if}
 </div>
+
+{#if viewMenuId !== null}
+  <!-- View context menu (portaled to body to escape backdrop-filter containing block) -->
+  <div class="view-menu-portal" use:portal>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="view-menu-backdrop" onclick={closeViewMenu} onkeydown={() => {}}></div>
+    <div
+      class="view-context-menu"
+      bind:this={viewMenuRef}
+      style="left: {adjustedMenuX}px; top: {adjustedMenuY}px;"
+      role="menu"
+    >
+      <button class="view-menu-item" onclick={() => startRenameView(viewMenuId!)} role="menuitem">
+        <span class="view-menu-icon"><Icon name="edit" size={16} /></span>
+        Rename
+      </button>
+      <button class="view-menu-item danger" onclick={() => deleteView(viewMenuId!)} role="menuitem">
+        <span class="view-menu-icon"><Icon name="trash" size={16} /></span>
+        Delete
+      </button>
+    </div>
+  </div>
+{/if}
 
 {#if isOpen && isMobile}
   <!-- Mobile overlay (portaled to body to escape backdrop-filter containing block) -->
@@ -549,30 +700,71 @@
             {@const flatIndex =
               filteredItems.slice(0, sectionIndex).reduce((acc, s) => acc + s.items.length, 0) +
               itemIndex}
-            <button
-              class="nav-item"
-              class:section-child={!!section}
-              class:active={isItemActive(item)}
-              class:highlighted={flatIndex === highlightedIndex}
-              role="option"
-              aria-selected={isItemActive(item)}
-              onclick={() => selectItem(item)}
-              onmouseenter={() => (highlightedIndex = flatIndex)}
-            >
-              {#if item.type === 'view' || item.type === 'utility' || item.type === 'action' || item.type === 'filteredView'}
+            {#if item.type === 'filteredView' && renamingViewId === item.id}
+              <div class="nav-item rename-row" class:section-child={!!section}>
                 <span class="item-icon"><Icon name={item.icon} size={16} /></span>
-              {:else if item.type === 'feed'}
-                {#if item.iconUrl}
-                  <img src={item.iconUrl} alt="" class="feed-icon" />
-                {:else}
-                  <span class="feed-icon-placeholder"></span>
+                <!-- svelte-ignore a11y_autofocus -->
+                <input
+                  bind:this={renameInputRef}
+                  bind:value={renameValue}
+                  class="view-rename-input"
+                  onclick={(e) => e.stopPropagation()}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      commitRenameView();
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      cancelRenameView();
+                    }
+                  }}
+                  onblur={commitRenameView}
+                />
+              </div>
+            {:else}
+              <button
+                class="nav-item"
+                class:section-child={!!section}
+                class:active={isItemActive(item)}
+                class:highlighted={flatIndex === highlightedIndex}
+                role="option"
+                aria-selected={isItemActive(item)}
+                onclick={() => selectItem(item)}
+                onmouseenter={() => (highlightedIndex = flatIndex)}
+              >
+                {#if item.type === 'view' || item.type === 'utility' || item.type === 'action' || item.type === 'filteredView'}
+                  <span class="item-icon"><Icon name={item.icon} size={16} /></span>
+                {:else if item.type === 'feed'}
+                  {#if item.iconUrl}
+                    <img src={item.iconUrl} alt="" class="feed-icon" />
+                  {:else}
+                    <span class="feed-icon-placeholder"></span>
+                  {/if}
                 {/if}
-              {/if}
-              <span class="item-label">{item.label}</span>
-              {#if item.type !== 'action' && item.type !== 'filteredView' && item.count && item.count > 0}
-                <span class="item-count">{item.count}</span>
-              {/if}
-            </button>
+                <span class="item-label">{item.label}</span>
+                {#if item.type !== 'action' && item.type !== 'filteredView' && item.count && item.count > 0}
+                  <span class="item-count">{item.count}</span>
+                {/if}
+                {#if item.type === 'filteredView'}
+                  <span
+                    class="view-more-btn"
+                    role="button"
+                    tabindex="0"
+                    onclick={(e) => openViewMenu(e, item.id)}
+                    onkeydown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openViewMenu(e as unknown as MouseEvent, item.id);
+                      }
+                    }}
+                    title="More options"
+                  >
+                    <Icon name="more-horizontal" size={14} />
+                  </span>
+                {/if}
+              </button>
+            {/if}
           {/each}
         {/each}
         {#if flatItems.length === 0}
@@ -1126,6 +1318,146 @@
     height: 24px !important;
   }
 
+  /* View more button */
+  .view-more-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    padding: 0;
+    line-height: 1;
+    opacity: 0;
+    transition: opacity 0.15s;
+    flex-shrink: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .nav-item:hover .view-more-btn,
+  .view-more-btn:focus {
+    opacity: 1;
+  }
+
+  .view-more-btn:hover {
+    color: var(--color-text);
+    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.1));
+    border-radius: 4px;
+  }
+
+  @media (max-width: 1000px) {
+    .view-more-btn {
+      opacity: 1;
+    }
+  }
+
+  :global(.mobile-portal .view-more-btn) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    padding: 0;
+    line-height: 1;
+    opacity: 1;
+    flex-shrink: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* View rename input */
+  .rename-row {
+    cursor: default;
+  }
+
+  .view-rename-input {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    font-size: 0.875rem;
+    padding: 0.125rem 0.25rem;
+    border: 1px solid var(--color-primary);
+    border-radius: 4px;
+    background: var(--color-bg);
+    color: var(--color-text);
+    outline: none;
+  }
+
+  :global(.mobile-portal .view-rename-input) {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    font-size: 1rem;
+    padding: 0.125rem 0.25rem;
+    border: 1px solid var(--color-primary);
+    border-radius: 4px;
+    background: var(--color-bg);
+    color: var(--color-text);
+    outline: none;
+  }
+
+  /* View context menu (portaled to body, needs :global) */
+  :global(.view-menu-portal) {
+    display: contents;
+  }
+
+  :global(.view-menu-portal .view-menu-backdrop) {
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+  }
+
+  :global(.view-menu-portal .view-context-menu) {
+    position: fixed;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 0.25rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1101;
+    min-width: 120px;
+  }
+
+  :global(.view-menu-portal .view-menu-item) {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    color: var(--color-text);
+  }
+
+  :global(.view-menu-portal .view-menu-item:hover) {
+    background: var(--color-bg-secondary);
+  }
+
+  :global(.view-menu-portal .view-menu-item.danger) {
+    color: var(--color-error, #dc2626);
+  }
+
+  :global(.view-menu-portal .view-menu-item.danger:hover) {
+    background: rgba(220, 38, 38, 0.1);
+  }
+
+  :global(.view-menu-portal .view-menu-icon) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1rem;
+  }
+
   @media (prefers-color-scheme: dark) {
     :global(.mobile-portal .nav-item.highlighted) {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
@@ -1137,6 +1469,10 @@
 
     :global(.mobile-portal .dropdown-panel.mobile) {
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+
+    :global(.view-menu-portal .view-context-menu) {
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     }
   }
 </style>
