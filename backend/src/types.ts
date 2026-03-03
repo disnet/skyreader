@@ -31,6 +31,7 @@ export interface OAuthState {
   authServer: string;
   returnUrl?: string;
   frontendUrl: string;
+  cliPort?: number;
 }
 
 export interface FeedItem {
