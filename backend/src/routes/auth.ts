@@ -195,6 +195,10 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
   // Capture the frontend URL from the request origin for redirect after OAuth
   const frontendUrl = getValidatedFrontendUrl(request, env);
 
+  // CLI mode: capture the local callback port
+  const cliPortParam = url.searchParams.get('cli_port');
+  const cliPort = cliPortParam ? parseInt(cliPortParam, 10) : undefined;
+
   if (!handle) {
     return new Response(JSON.stringify({ error: 'Missing handle parameter' }), {
       status: 400,
@@ -230,6 +234,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
       authServer: authMeta.issuer,
       returnUrl,
       frontendUrl,
+      cliPort,
     });
 
     const baseUrl = getBaseUrl(url);
@@ -636,6 +641,17 @@ export async function handleAuthCallback(
       domain: cookieDomain,
       path: '/',
     });
+
+    // CLI mode: redirect to local CLI server instead of frontend
+    if (oauthState.cliPort) {
+      const cliRedirectUrl = `http://127.0.0.1:${oauthState.cliPort}/callback?session_id=${encodeURIComponent(sessionId)}`;
+      return new Response(null, {
+        status: 302,
+        headers: {
+          Location: cliRedirectUrl,
+        },
+      });
+    }
 
     // Redirect to frontend with cookie set (no exchange code needed)
     // Validate returnUrl again in case stored state was tampered with

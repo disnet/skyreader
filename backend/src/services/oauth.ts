@@ -294,8 +294,8 @@ export async function storeOAuthState(env: Env, state: string, data: OAuthState)
   const expiresAt = Date.now() + 600 * 1000; // 10 minutes
   await env.DB.prepare(
     `
-    INSERT INTO oauth_state (state, code_verifier, did, handle, pds_url, auth_server, return_url, frontend_url, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO oauth_state (state, code_verifier, did, handle, pds_url, auth_server, return_url, frontend_url, cli_port, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `
   )
     .bind(
@@ -307,6 +307,7 @@ export async function storeOAuthState(env: Env, state: string, data: OAuthState)
       data.authServer,
       data.returnUrl || null,
       data.frontendUrl,
+      data.cliPort || null,
       expiresAt
     )
     .run();
@@ -324,6 +325,7 @@ export async function getOAuthState(env: Env, state: string): Promise<OAuthState
       auth_server: string;
       return_url: string | null;
       frontend_url: string | null;
+      cli_port: number | null;
     }>();
 
   if (!row) return null;
@@ -336,6 +338,7 @@ export async function getOAuthState(env: Env, state: string): Promise<OAuthState
     authServer: row.auth_server,
     returnUrl: row.return_url || undefined,
     frontendUrl: row.frontend_url || '',
+    cliPort: row.cli_port || undefined,
   };
 }
 

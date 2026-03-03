@@ -1,0 +1,45 @@
+{
+  "name": "skyreader",
+  "version": "0.1.0",
+  "description": "Skyreader CLI - Read and manage RSS feeds from the terminal",
+  "type": "module",
+  "bin": {
+    "skyreader": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "check": "tsc --noEmit && prettier --check .",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "rss",
+    "reader",
+    "cli",
+    "atproto",
+    "bluesky",
+    "feeds"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/disnet/skyreader.git",
+    "directory": "cli"
+  },
+  "homepage": "https://skyreader.app",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "commander": "^13.1.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  }
+}
