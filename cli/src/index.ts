@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
+import { createRequire } from 'module';
 import { loginCommand } from './commands/login.js';
 import { whoamiCommand } from './commands/whoami.js';
 import { subscriptionsCommand } from './commands/subscriptions.js';
 import { feedsCommand } from './commands/feeds.js';
 import { savedCommand } from './commands/saved.js';
 
+const require = createRequire(import.meta.url);
+const { version } = require('../package.json');
+
 const program = new Command()
   .name('skyreader')
   .description('Skyreader CLI - Read and manage RSS feeds from the terminal')
-  .version('0.1.0');
+  .version(version);
 
 program.addCommand(loginCommand);
 program.addCommand(whoamiCommand);
