@@ -1,6 +1,6 @@
 {
   "name": "skyreader",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Skyreader CLI - Read and manage RSS feeds from the terminal",
   "type": "module",
   "bin": {
@@ -34,12 +34,13 @@
     "node": ">=18"
   },
   "dependencies": {
-    "commander": "^13.1.0"
+    "commander": "^13.1.0",
+    "defuddle": "^0.8.0"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "prettier": "^3.4.2",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "typescript": "^5.7.0"
   }
 }

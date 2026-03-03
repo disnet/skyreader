@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { getClient } from '../client.js';
 import { outputJson } from '../output.js';
-import { htmlToText } from '../html-to-text.js';
+import { Defuddle } from 'defuddle/node';
 
 interface FeedItem {
   guid: string;
@@ -96,7 +96,7 @@ export const feedsCommand = new Command('feeds')
           outputJson({ ...data, items: filtered });
         } else {
           process.stdout.write(`${data.title || url}\n\n`);
-          outputArticles(filtered, opts.content);
+          await outputArticles(filtered, opts.content);
         }
       } else if (opts.all) {
         // All subscribed feeds
@@ -113,9 +113,16 @@ export const feedsCommand = new Command('feeds')
           process.exit(0);
         }
 
-        const data = await client.post<BatchResponse>('/api/v2/feeds/batch', {
-          feeds: feedUrls,
-        });
+        // Batch in chunks of 50 (API limit)
+        const BATCH_SIZE = 50;
+        const data: BatchResponse = { feeds: {} };
+        for (let i = 0; i < feedUrls.length; i += BATCH_SIZE) {
+          const chunk = feedUrls.slice(i, i + BATCH_SIZE);
+          const batch = await client.post<BatchResponse>('/api/v2/feeds/batch', {
+            feeds: chunk,
+          });
+          Object.assign(data.feeds, batch.feeds);
+        }
 
         if (opts.json) {
           // Apply filters to JSON output too
@@ -136,7 +143,7 @@ export const feedsCommand = new Command('feeds')
             }
             const filtered = filterItems(feed.items, readGuids, sinceDate);
             process.stdout.write(`\n## ${feed.title || feedUrl}\n\n`);
-            outputArticles(filtered, opts.content);
+            await outputArticles(filtered, opts.content);
           }
         }
       } else {
@@ -217,7 +224,7 @@ function parseSinceDate(input: string): Date {
   return new Date('invalid');
 }
 
-function outputArticles(items: FeedItem[], showContent?: boolean): void {
+async function outputArticles(items: FeedItem[], showContent?: boolean): Promise<void> {
   if (!items || items.length === 0) {
     process.stdout.write('  (no articles)\n');
     return;
@@ -235,7 +242,13 @@ function outputArticles(items: FeedItem[], showContent?: boolean): void {
     if (showContent) {
       const raw = item.content || item.summary || item.description;
       if (raw) {
-        const text = htmlToText(raw);
+        let text: string;
+        try {
+          const result = await Defuddle(raw, undefined, { markdown: true });
+          text = result.content || raw;
+        } catch {
+          text = raw;
+        }
         process.stdout.write('\n');
         process.stdout.write(
           text
