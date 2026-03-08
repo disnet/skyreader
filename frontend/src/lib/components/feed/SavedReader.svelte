@@ -52,6 +52,7 @@
   let overflowRef = $state<HTMLDivElement | null>(null);
   let controlsVisible = $state(true);
   let lastScrollY = $state(0);
+  let suppressScrollHide = $state(false);
   let overlayEl: HTMLElement | undefined = $state();
   let readerBodyEl: HTMLElement | undefined = $state();
 
@@ -79,11 +80,16 @@
 
   function handleScroll() {
     if (!overlayEl) return;
+    if (suppressScrollHide) return;
     const currentY = overlayEl.scrollTop;
-    if (currentY > lastScrollY && currentY > 60) {
+    const delta = currentY - lastScrollY;
+    // Ignore tiny fluctuations (momentum settling on mobile)
+    if (Math.abs(delta) < 3) return;
+    if (delta > 0 && currentY > 60) {
       controlsVisible = false;
       styleMenuOpen = false;
-    } else {
+    } else if (delta < -10) {
+      // Require meaningful upward scroll to show controls
       controlsVisible = true;
     }
     lastScrollY = currentY;
@@ -336,7 +342,19 @@
         paragraphTracking.setupObserver();
         linkInterception.attach();
         highlightsHook.attach();
-        setTimeout(() => paragraphTracking.restorePosition(), 100);
+        setTimeout(() => {
+          suppressScrollHide = true;
+          const restored = paragraphTracking.restorePosition();
+          if (restored) {
+            // Wait for smooth scroll to finish before re-enabling header hide
+            setTimeout(() => {
+              if (overlayEl) lastScrollY = overlayEl.scrollTop;
+              suppressScrollHide = false;
+            }, 600);
+          } else {
+            suppressScrollHide = false;
+          }
+        }, 100);
       });
     }
     return () => {
