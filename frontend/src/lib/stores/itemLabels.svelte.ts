@@ -1396,7 +1396,7 @@ function createItemLabelsStore() {
       return isLoading;
     },
     get savedCount() {
-      return savedCount;
+      return inboxCount;
     },
     get archivedCount() {
       return archivedCount;
