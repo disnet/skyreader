@@ -81,10 +81,11 @@ function createAppManager() {
         syncStore.triggerSync();
       }
 
-      // Phase 2: Refresh from backend (background)
-      phase = 'refreshing';
-
-      await refreshFromBackend();
+      // Phase 2: Refresh from backend (background, skip when offline)
+      if (syncStore.isOnline) {
+        phase = 'refreshing';
+        await refreshFromBackend();
+      }
 
       phase = 'ready';
       lastRefreshAt = Date.now();
@@ -105,6 +106,9 @@ function createAppManager() {
    * - Loads social feed
    */
   async function refreshFromBackend(): Promise<void> {
+    // Skip entirely when offline - cached data is already loaded
+    if (!syncStore.isOnline) return;
+
     const wasPhase = phase;
     if (phase === 'idle' || phase === 'ready') {
       phase = 'refreshing';

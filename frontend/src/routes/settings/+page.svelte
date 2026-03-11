@@ -13,6 +13,7 @@
   import PageHeader from '$lib/components/common/PageHeader.svelte';
   import { downloadOPML } from '$lib/utils/opml-exporter';
   import { api, RateLimitError } from '$lib/services/api';
+  import { syncStore } from '$lib/stores/sync.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
 
   $effect(() => {
@@ -59,6 +60,7 @@
   });
 
   async function loadSyncSettings() {
+    if (!syncStore.isOnline) return;
     isSyncLoading = true;
     try {
       const settings = await api.getSettings();
@@ -77,6 +79,12 @@
 
     syncError = null;
     syncSuccess = null;
+
+    if (!syncStore.isOnline) {
+      syncError = 'You are offline. Connect to the internet to change sync settings.';
+      pdsSyncEnabled = !newValue;
+      return;
+    }
 
     try {
       const settings = await api.updateSettings({ pdsSyncEnabled: newValue });
@@ -100,6 +108,11 @@
 
   async function handleSync() {
     if (isSyncing) return;
+
+    if (!syncStore.isOnline) {
+      syncError = 'You are offline. Connect to the internet to sync.';
+      return;
+    }
 
     isSyncing = true;
     syncError = null;

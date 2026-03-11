@@ -30,34 +30,36 @@ function createShareReadingStore() {
       console.error('Failed to load share read positions from cache:', e);
     }
 
-    // 2. Then fetch from backend and update
-    try {
-      const { positions } = await api.getShareReadPositions();
+    // 2. Then fetch from backend and update (skip when offline)
+    if (syncStore.isOnline) {
+      try {
+        const { positions } = await api.getShareReadPositions();
 
-      // Clear and rebuild the cache
-      await db.shareReadPositions.clear();
+        // Clear and rebuild the cache
+        await db.shareReadPositions.clear();
 
-      const newPositions = new Map<string, ShareReadPosition>();
-      for (const p of positions) {
-        const position: Omit<ShareReadPosition, 'id'> = {
-          rkey: p.rkey,
-          shareUri: p.shareUri,
-          shareAuthorDid: p.shareAuthorDid,
-          itemUrl: p.itemUrl || '',
-          itemTitle: p.itemTitle || undefined,
-          readAt: p.readAt,
-        };
-        const id = await safeAdd(db.shareReadPositions, position);
-        newPositions.set(p.shareUri, { ...position, id });
+        const newPositions = new Map<string, ShareReadPosition>();
+        for (const p of positions) {
+          const position: Omit<ShareReadPosition, 'id'> = {
+            rkey: p.rkey,
+            shareUri: p.shareUri,
+            shareAuthorDid: p.shareAuthorDid,
+            itemUrl: p.itemUrl || '',
+            itemTitle: p.itemTitle || undefined,
+            readAt: p.readAt,
+          };
+          const id = await safeAdd(db.shareReadPositions, position);
+          newPositions.set(p.shareUri, { ...position, id });
+        }
+
+        shareReadPositions = newPositions;
+      } catch (e) {
+        console.error('Failed to load share read positions from backend:', e);
+        // If backend fails but we have cached data, that's ok
       }
-
-      shareReadPositions = newPositions;
-    } catch (e) {
-      console.error('Failed to load share read positions from backend:', e);
-      // If backend fails but we have cached data, that's ok
-    } finally {
-      isLoading = false;
     }
+
+    isLoading = false;
   }
 
   function isRead(shareUri: string): boolean {

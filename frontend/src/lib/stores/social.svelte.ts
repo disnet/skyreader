@@ -3,6 +3,7 @@ import { safeBulkPut } from '$lib/services/safeDb.svelte';
 import { api } from '$lib/services/api';
 import { profileService } from '$lib/services/profiles';
 import { itemLabelsStore } from './itemLabels.svelte';
+import { syncStore } from './sync.svelte';
 import type { SocialDocument, SocialShare } from '$lib/types';
 
 function createSocialStore() {
@@ -21,6 +22,16 @@ function createSocialStore() {
 
     isLoadingFeed = true;
     error = null;
+
+    // When offline, load from cache immediately
+    if (!syncStore.isOnline) {
+      if (reset) {
+        shares = await db.socialShares.orderBy('createdAt').reverse().toArray();
+        documents = await db.socialDocuments.orderBy('publishedAt').reverse().toArray();
+      }
+      isLoadingFeed = false;
+      return;
+    }
 
     try {
       const result = await api.getSocialFeed(reset ? undefined : (cursor ?? undefined));
@@ -66,6 +77,8 @@ function createSocialStore() {
   }
 
   async function loadPopular(period: 'day' | 'week' | 'month' = 'week') {
+    if (!syncStore.isOnline) return;
+
     isLoadingFeed = true;
     error = null;
 

@@ -64,6 +64,9 @@ export async function fetchAllFeeds(
 
   if (subscriptions.length === 0) return result;
 
+  // Skip network requests when offline - cached articles are already loaded
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return result;
+
   // Build feed requests with since_guids
   const feedRequests: Array<{ url: string; since_guids?: string[]; subscriptionId: number }> = [];
 
