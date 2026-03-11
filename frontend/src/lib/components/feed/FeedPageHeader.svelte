@@ -6,6 +6,7 @@
   import FilterToolbar from './FilterToolbar.svelte';
   import AppearanceToolbar from './AppearanceToolbar.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
+  import { syncStore } from '$lib/stores/sync.svelte';
   import { formatRelativeTime } from '$lib/utils/date';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
 
@@ -153,12 +154,20 @@
             <button
               class="refresh-btn"
               onclick={handleRefresh}
-              disabled={isRefreshing}
+              disabled={isRefreshing || !syncStore.isOnline}
               aria-label="Refresh feeds"
             >
               <span class:spinning={isRefreshing}>↻</span>
             </button>
           {/if}
+          {#if !syncStore.isOnline}
+            <span class="offline-badge">Offline</span>
+          {/if}
+        </div>
+      {/if}
+      {#if !relativeTime && !syncStore.isOnline}
+        <div class="last-updated">
+          <span class="offline-badge">Offline</span>
         </div>
       {/if}
     </div>
@@ -376,6 +385,18 @@
     white-space: nowrap;
   }
 
+  .offline-badge {
+    font-size: 0.625rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--color-warning-text, #92400e);
+    background: var(--color-warning-bg, #fef3c7);
+    padding: 0.125rem 0.375rem;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+
   .refresh-btn {
     background: none;
     border: none;
@@ -513,6 +534,11 @@
 
     .view-toggle button.active {
       background: rgba(255, 255, 255, 0.15);
+    }
+
+    .offline-badge {
+      color: #fbbf24;
+      background: rgba(251, 191, 36, 0.15);
     }
   }
 </style>
