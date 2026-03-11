@@ -538,10 +538,12 @@ function createItemLabelsStore() {
   let savedCount = $derived(savesStore.articles.length);
 
   // Inbox count: saved but not archived
+  // Use itemGuid first for archive key, matching feedView.svelte.ts which stores
+  // archive labels against the article guid, not the AT Protocol URI
   let inboxCount = $derived.by(() => {
     let count = 0;
     for (const bm of savesStore.articles) {
-      const key = bm.uri || bm.itemGuid || '';
+      const key = bm.itemGuid || bm.uri || '';
       if (key && !hasLabel(key, 'archived')) count++;
     }
     return count;
