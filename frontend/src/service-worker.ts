@@ -18,8 +18,12 @@ const API_CACHE_ROUTES = ['/api/v2/feeds/fetch', '/api/social/feed', '/api/socia
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
+    caches.open(CACHE_NAME).then(async (cache) => {
+      await cache.addAll(STATIC_ASSETS);
+      // Cache the SPA fallback page so the app shell works offline.
+      // adapter-static generates index.html but it's not included in
+      // $service-worker's build/files arrays.
+      await cache.add('/');
     })
   );
   self.skipWaiting();
