@@ -9,6 +9,7 @@
   import { searchBlueskyActors, type BlueskySearchResult } from '$lib/services/blueskySearch';
   import { api } from '$lib/services/api';
   import { profileService } from '$lib/services/profiles';
+  import { syncStore } from '$lib/stores/sync.svelte';
   import Modal from '$lib/components/common/Modal.svelte';
 
   interface Publication {
@@ -157,6 +158,12 @@
       return;
     }
 
+    if (!syncStore.isOnline) {
+      searchResults = [];
+      isSearching = false;
+      return;
+    }
+
     isSearching = true;
     searchTimeout = setTimeout(async () => {
       try {
@@ -172,6 +179,11 @@
   async function handleSubmit() {
     const trimmed = inputValue.trim();
     if (!trimmed) return;
+
+    if (!syncStore.isOnline) {
+      error = 'You are offline. Connect to the internet to add feeds.';
+      return;
+    }
 
     error = null;
     isDiscovering = true;

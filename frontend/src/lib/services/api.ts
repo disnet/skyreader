@@ -43,6 +43,13 @@ export class UrlSaveLimitError extends Error {
   }
 }
 
+export class OfflineError extends Error {
+  constructor() {
+    super('You are offline');
+    this.name = 'OfflineError';
+  }
+}
+
 class ApiClient {
   private onUnauthorized: (() => void) | null = null;
   private onScopeUpgradeRequired: (() => void) | null = null;
@@ -58,6 +65,11 @@ class ApiClient {
   }
 
   private async fetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+    // Fail fast when offline instead of waiting for network timeout
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      throw new OfflineError();
+    }
+
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
       ...options.headers,

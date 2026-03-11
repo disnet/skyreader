@@ -1,4 +1,5 @@
 import { api } from '$lib/services/api';
+import { syncStore } from './sync.svelte';
 import type { ReshareActivity } from '$lib/types';
 
 function createActivityStore() {
@@ -12,6 +13,7 @@ function createActivityStore() {
   async function loadReshareActivity(loadMore = false) {
     if (isLoading) return;
     if (loadMore && !hasMore) return;
+    if (!syncStore.isOnline) return;
 
     isLoading = true;
 

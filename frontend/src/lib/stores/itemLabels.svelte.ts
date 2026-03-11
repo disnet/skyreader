@@ -170,24 +170,29 @@ function createItemLabelsStore() {
       console.error('Failed to load item labels from cache:', e);
     }
 
-    // 2. Fetch from backend and reconcile
-    try {
-      await Promise.all([
-        loadReadPositionsFromBackend(),
-        loadSocialReadPositionsFromBackend(),
-        loadTagsFromBackend(),
-        loadArchivedFromBackend(),
-        loadReadProgressFromBackend(),
-      ]);
-      hasLoaded = true;
-    } catch (e) {
-      console.error('Failed to load labels from backend:', e);
-      if (labelMap.size > 0) {
+    // 2. Fetch from backend and reconcile (skip when offline)
+    if (syncStore.isOnline) {
+      try {
+        await Promise.all([
+          loadReadPositionsFromBackend(),
+          loadSocialReadPositionsFromBackend(),
+          loadTagsFromBackend(),
+          loadArchivedFromBackend(),
+          loadReadProgressFromBackend(),
+        ]);
         hasLoaded = true;
+      } catch (e) {
+        console.error('Failed to load labels from backend:', e);
+        if (labelMap.size > 0) {
+          hasLoaded = true;
+        }
       }
-    } finally {
-      isLoading = false;
+    } else {
+      // Offline: use cached data
+      hasLoaded = labelMap.size > 0;
     }
+
+    isLoading = false;
   }
 
   async function loadReadPositionsFromBackend() {
