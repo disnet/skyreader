@@ -10,9 +10,8 @@
     "test:watch": "bun test --watch"
   },
   "dependencies": {
-    "hono": "^4.4.0",
     "fast-xml-parser": "^4.3.0",
-    "defuddle": "^0.6.6",
+    "hono": "^4.4.0",
     "jsdom": "^26.0.0"
   },
   "devDependencies": {

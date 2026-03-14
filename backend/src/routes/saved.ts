@@ -2,7 +2,6 @@ import type { Env, Session } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
 import { hasRequiredScopes, insufficientScopesResponse } from './auth';
 import { createPDSClient } from '../services/pds-client';
-import { FeedProxyClient } from '../services/feed-proxy-client';
 import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
 import { getUserTierLimits } from '../services/user-tier';
 import { getUserSettings } from './settings';
@@ -39,9 +38,11 @@ interface CreateSavedBody {
   title?: string;
   author?: string;
   description?: string;
+  content?: string;
   image?: string;
   publishedAt?: string;
   domain?: string;
+  wordCount?: number;
 }
 
 // POST /api/saved — save an item from a URL or feed article
@@ -284,13 +285,9 @@ async function handleUrlSave(
   session: Session,
   body: CreateSavedBody
 ): Promise<Response> {
-  // Extract article content via feed proxy
-  const proxyClient = new FeedProxyClient(env);
-  const extracted = await proxyClient.extractArticle(body.url);
-
   const now = Date.now();
   const savedAt = new Date().toISOString();
-  const publishedAt = extracted.published || null;
+  const publishedAt = body.publishedAt || null;
 
   // Build PDS record (no content written to PDS)
   const record: Record<string, unknown> = {
@@ -299,13 +296,13 @@ async function handleUrlSave(
     savedAt,
     contentType: 'webpage',
   };
-  if (extracted.title) record.title = extracted.title;
-  if (extracted.description) record.description = extracted.description;
-  if (extracted.author) record.author = extracted.author;
-  if (extracted.domain) record.domain = extracted.domain;
-  if (extracted.image) record.image = extracted.image;
+  if (body.title) record.title = body.title;
+  if (body.description) record.description = body.description;
+  if (body.author) record.author = body.author;
+  if (body.domain) record.domain = body.domain;
+  if (body.image) record.image = body.image;
   if (publishedAt) record.publishedAt = publishedAt;
-  if (extracted.wordCount) record.wordCount = extracted.wordCount;
+  if (body.wordCount) record.wordCount = body.wordCount;
 
   // Write to PDS (if sync enabled)
   const settings = await getUserSettings(env, session.did);
@@ -329,14 +326,14 @@ async function handleUrlSave(
       body.rkey,
       recordUri,
       body.url,
-      extracted.title,
-      extracted.author,
-      extracted.description,
-      extracted.content,
+      body.title || null,
+      body.author || null,
+      body.description || null,
+      body.content || null,
       'webpage',
-      extracted.domain,
-      extracted.image,
-      extracted.wordCount || null,
+      body.domain || null,
+      body.image || null,
+      body.wordCount || null,
       publishedAt ? new Date(publishedAt).getTime() : null,
       now,
       now,
@@ -346,21 +343,8 @@ async function handleUrlSave(
 
   return new Response(
     JSON.stringify({
-      rkey: body.rkey,
       uri: recordUri,
-      url: body.url,
-      title: extracted.title,
-      author: extracted.author,
-      description: extracted.description,
-      content: extracted.content,
-      contentType: 'webpage',
-      domain: extracted.domain,
-      image: extracted.image,
-      wordCount: extracted.wordCount,
-      publishedAt: publishedAt,
       savedAt,
-      source: 'url',
-      itemGuid: null,
     }),
     { headers: { 'Content-Type': 'application/json' } }
   );

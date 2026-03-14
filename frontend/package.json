@@ -30,6 +30,7 @@
   "dependencies": {
     "@atproto/api": "^0.18.13",
     "@sveltejs/adapter-static": "^3.0.10",
+    "defuddle": "^0.13.0",
     "dexie": "^4.2.1",
     "dompurify": "^3.3.1",
     "marked": "^17.0.1"
