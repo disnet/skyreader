@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { toastStore } from '$lib/stores/toast.svelte';
 
   interface Props {
     url: string;
@@ -13,7 +14,6 @@
   let { url, linkText, anchorRect, onClose }: Props = $props();
 
   let menuEl = $state<HTMLDivElement | null>(null);
-  let saveState = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
   let copyState = $state<'idle' | 'copied'>('idle');
 
   function handleOpenInNewTab() {
@@ -21,17 +21,14 @@
     onClose();
   }
 
-  async function handleSave() {
-    if (saveState === 'saving' || saveState === 'saved') return;
-    saveState = 'saving';
-    try {
-      await savesStore.saveFromUrl(url);
-      saveState = 'saved';
-      setTimeout(onClose, 600);
-    } catch {
-      saveState = 'error';
-      setTimeout(() => (saveState = 'idle'), 1500);
-    }
+  function handleSave() {
+    const saveUrl = url;
+    const toastId = toastStore.add('Saving article...');
+    onClose();
+    savesStore
+      .saveFromUrl(saveUrl)
+      .then(() => toastStore.update(toastId, 'success', 'Article saved'))
+      .catch(() => toastStore.update(toastId, 'error', 'Failed to save article'));
   }
 
   async function handleCopy() {
@@ -104,16 +101,9 @@
     <Icon name="external-link" size={15} />
     <span>Open in new tab</span>
   </button>
-  <button
-    class="menu-item"
-    onclick={handleSave}
-    disabled={saveState === 'saving' || saveState === 'saved'}
-  >
+  <button class="menu-item" onclick={handleSave}>
     <Icon name="bookmark" size={15} />
-    <span>
-      {#if saveState === 'saving'}Saving...{:else if saveState === 'saved'}Saved!{:else if saveState === 'error'}Failed{:else}Save
-        to bookmarks{/if}
-    </span>
+    <span>Add to saved</span>
   </button>
   <button class="menu-item" onclick={handleCopy}>
     <Icon name="copy" size={15} />
