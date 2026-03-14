@@ -10,6 +10,7 @@
   import { keyboardStore } from '$lib/stores/keyboard.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import KeyboardShortcutsModal from '$lib/components/KeyboardShortcutsModal.svelte';
+  import Toast from '$lib/components/Toast.svelte';
   import Logo from '$lib/assets/logo.svg';
   import '../app.css';
 
@@ -182,6 +183,7 @@
 </svelte:head>
 
 <KeyboardShortcutsModal />
+<Toast />
 
 <div class="app">
   {#if !auth.isLoading}
