@@ -52,6 +52,7 @@ import {
   handleDeleteSaved,
   handleDeleteSavedByGuid,
 } from './routes/saved';
+import { handleFetchHtml } from './routes/fetch-html';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
 import { handleFullSync, handleSyncSubscriptions, handleSyncStatus } from './routes/sync';
 import { getSessionFromRequest, updateUserActivity } from './services/oauth';
@@ -290,6 +291,12 @@ export default {
         case url.pathname === '/api/labels/bulk':
           if (!session) return unauthorizedResponse(headers);
           response = await handleBulkAddLabels(request, env);
+          break;
+
+        // Fetch HTML route (for client-side extraction)
+        case url.pathname === '/api/fetch-html':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleFetchHtml(request, env);
           break;
 
         // Saved routes

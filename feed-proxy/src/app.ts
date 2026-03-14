@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import { Database } from 'bun:sqlite';
 import { parseFeed } from './feed-parser';
-import { Defuddle } from 'defuddle/node';
 import type { ParsedFeed, FeedItem } from './types';
 
 export interface AppConfig {
@@ -624,8 +623,8 @@ export function createApp(db: Database, config: AppConfig) {
 		}
 	});
 
-	// Extract article content from a URL
-	app.post('/extract', async (c) => {
+	// Fetch raw HTML from a URL (extraction done client-side)
+	app.post('/fetch-html', async (c) => {
 		if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret) {
 			return c.json({ error: 'Unauthorized' }, 401);
 		}
@@ -663,19 +662,7 @@ export function createApp(db: Database, config: AppConfig) {
 
 			const html = await readResponseWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
 
-			const result = await Defuddle(html, body.url);
-
-			return c.json({
-				title: result.title || null,
-				author: result.author || null,
-				description: result.description || null,
-				content: result.content || null,
-				domain: result.domain || null,
-				image: result.image || null,
-				published: result.published || null,
-				wordCount: result.wordCount || 0,
-				favicon: result.favicon || null,
-			});
+			return c.html(html);
 		} catch (error) {
 			const isTimeout = error instanceof Error && error.name === 'TimeoutError';
 			const isTooLarge = error instanceof ResponseTooLargeError;

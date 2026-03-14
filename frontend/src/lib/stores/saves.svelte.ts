@@ -4,6 +4,7 @@ import { api, UrlSaveLimitError } from '$lib/services/api';
 import { generateTid } from '$lib/utils/tid';
 import { syncQueue, type SavedPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
+import { extractArticle } from '$lib/services/extract';
 import type { SavedItem } from '$lib/types';
 
 function createSavesStore() {
@@ -61,24 +62,36 @@ function createSavesStore() {
     error = null;
     try {
       const rkey = generateTid();
-      const result = await api.saveFromUrl(url, rkey);
+
+      // Fetch HTML via proxy and extract content client-side
+      const extracted = await extractArticle(url);
+
+      const result = await api.saveFromUrl(url, rkey, {
+        title: extracted.title || undefined,
+        author: extracted.author || undefined,
+        description: extracted.description || undefined,
+        content: extracted.content || undefined,
+        domain: extracted.domain || undefined,
+        image: extracted.image || undefined,
+        publishedAt: extracted.published || undefined,
+        wordCount: extracted.wordCount || undefined,
+      });
 
       const savedItem: SavedItem = {
-        rkey: result.rkey,
+        rkey,
         uri: result.uri,
-        url: result.url,
-        title: result.title,
-        author: result.author,
-        description: result.description,
-        content: result.content,
-        contentType: result.contentType || 'webpage',
-        domain: result.domain,
-        image: result.image,
-        wordCount: result.wordCount,
-        publishedAt: result.publishedAt,
+        url,
+        title: extracted.title,
+        author: extracted.author,
+        description: extracted.description,
+        content: extracted.content,
+        contentType: 'webpage',
+        domain: extracted.domain,
+        image: extracted.image,
+        wordCount: extracted.wordCount,
+        publishedAt: extracted.published,
         savedAt: result.savedAt,
-        source: result.source || 'url',
-        itemGuid: result.itemGuid || undefined,
+        source: 'url',
       };
 
       // Add to local state and cache

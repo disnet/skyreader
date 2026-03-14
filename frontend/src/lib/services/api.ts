@@ -612,6 +612,32 @@ class ApiClient {
     });
   }
 
+  // Fetch raw HTML via proxy (for client-side extraction)
+  async fetchHtml(url: string): Promise<string> {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      throw new OfflineError();
+    }
+
+    const response = await fetch(`${API_BASE}/api/fetch-html`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ url }),
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        if (this.onUnauthorized) {
+          this.onUnauthorized();
+        }
+        throw new Error('Session expired');
+      }
+      throw new Error(`Failed to fetch HTML: ${response.status}`);
+    }
+
+    return response.text();
+  }
+
   // Bookmarks
   async saveFromUrl(
     url: string,
@@ -623,9 +649,11 @@ class ApiClient {
       title?: string;
       author?: string;
       description?: string;
+      content?: string;
       image?: string;
       publishedAt?: string;
       domain?: string;
+      wordCount?: number;
     }
   ): Promise<{
     rkey: string;

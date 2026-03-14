@@ -73,18 +73,6 @@ interface RawBatchResponse {
   >;
 }
 
-export interface ExtractedArticle {
-  title: string | null;
-  author: string | null;
-  description: string | null;
-  content: string | null;
-  domain: string | null;
-  image: string | null;
-  published: string | null;
-  wordCount: number;
-  favicon: string | null;
-}
-
 export class FeedProxyClient {
   private proxyUrl: string;
   private proxySecret: string;
@@ -215,28 +203,26 @@ export class FeedProxyClient {
   }
 
   /**
-   * Extract article content from a URL via defuddle
+   * Fetch raw HTML from a URL (extraction done client-side)
    */
-  async extractArticle(url: string): Promise<ExtractedArticle> {
-    const raw = await this.fetch<ExtractedArticle & { error?: string }>('/extract', {
+  async fetchHtml(url: string): Promise<string> {
+    const proxyUrl = `${this.proxyUrl}/fetch-html`;
+
+    const headers = new Headers();
+    headers.set('X-Proxy-Secret', this.proxySecret);
+    headers.set('Content-Type', 'application/json');
+
+    const response = await fetch(proxyUrl, {
       method: 'POST',
+      headers,
       body: JSON.stringify({ url }),
     });
 
-    if (raw.error) {
-      throw new FeedProxyError(raw.error);
+    if (!response.ok) {
+      const text = await response.text();
+      throw new FeedProxyError(text || `Failed to fetch HTML: HTTP ${response.status}`);
     }
 
-    return {
-      title: raw.title,
-      author: raw.author,
-      description: raw.description,
-      content: raw.content,
-      domain: raw.domain,
-      image: raw.image,
-      published: raw.published,
-      wordCount: raw.wordCount || 0,
-      favicon: raw.favicon,
-    };
+    return response.text();
   }
 }
