@@ -1,34 +1,25 @@
 <script lang="ts">
-  import type {
-    Article,
-    SocialShare,
-    SocialDocument,
-    LeafletContent,
-    PcktBlogContent,
-    OffprintContent,
-    GreengaleContent,
-  } from '$lib/types';
+  import type { Article, SocialShare, SocialDocument } from '$lib/types';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
+  import { normalizeDisplayItem, getAuthorLabel } from '$lib/utils/displayItem';
   import { sanitizeHtml } from '$lib/utils/sanitize';
   import { formatRelativeDate } from '$lib/utils/date';
-  import { getFaviconUrl } from '$lib/utils/favicon';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { profileService } from '$lib/services/profiles';
-  import { isLeafletContent, renderLeafletContent } from '$lib/utils/leaflet-renderer';
-  import { isPcktBlogContent, renderPcktBlogContent } from '$lib/utils/pckt-blog-renderer';
-  import { isOffprintContent, renderOffprintContent } from '$lib/utils/offprint-renderer';
-  import { isGreengaleContent, renderGreengaleContent } from '$lib/utils/greengale-renderer';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import Icon from '$lib/components/Icon.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
+  import BottomSheet from '$lib/components/common/BottomSheet.svelte';
+  import AppearanceToolbar from '$lib/components/feed/AppearanceToolbar.svelte';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
+  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { tick, onMount, onDestroy } from 'svelte';
 
   let {
@@ -48,8 +39,10 @@
   } = $props();
 
   let styleMenuOpen = $state(false);
+  let styleSheetOpen = $state(false);
   let tagMenuOpen = $state(false);
   let overflowRef = $state<HTMLDivElement | null>(null);
+  let tagBtnRef = $state<HTMLButtonElement | null>(null);
   let controlsVisible = $state(true);
   let lastScrollY = $state(0);
   let suppressScrollHide = $state(false);
@@ -95,33 +88,6 @@
     lastScrollY = currentY;
   }
 
-  // Normalize data from different item types
-  let title = $derived.by(() => {
-    if (readerItem.type === 'article') return readerItem.item.title || readerItem.item.url;
-    if (readerItem.type === 'share') return readerItem.item.itemTitle || readerItem.item.itemUrl;
-    if (readerItem.type === 'document') return readerItem.item.title || readerItem.item.recordUri;
-    if (readerItem.type === 'saved') return readerItem.item.title || readerItem.item.url;
-    return '';
-  });
-
-  let itemUrl = $derived.by(() => {
-    if (readerItem.type === 'article') return readerItem.item.url;
-    if (readerItem.type === 'share') return readerItem.item.itemUrl;
-    if (readerItem.type === 'document')
-      return readerItem.item.canonicalUrl || readerItem.item.path || '';
-    if (readerItem.type === 'saved') return readerItem.item.url;
-    return '';
-  });
-
-  let publishedAt = $derived.by(() => {
-    if (readerItem.type === 'article') return readerItem.item.publishedAt;
-    if (readerItem.type === 'share')
-      return readerItem.item.itemPublishedAt || readerItem.item.createdAt;
-    if (readerItem.type === 'document') return readerItem.item.publishedAt;
-    if (readerItem.type === 'saved') return readerItem.item.publishedAt || readerItem.item.savedAt;
-    return '';
-  });
-
   // Feed info (articles only)
   let sub = $derived(
     readerItem.type === 'article'
@@ -130,80 +96,30 @@
   );
   let feedTitle = $derived(sub?.customTitle || sub?.title || '');
 
+  // Normalize data from different item types using shared utility
+  let normalized = $derived(normalizeDisplayItem(readerItem, sub));
+  let title = $derived(normalized.title);
+  let itemUrl = $derived(normalized.url);
+  let publishedAt = $derived(normalized.publishedAt);
+  let displayContent = $derived(normalized.displayContent);
+  let faviconUrl = $derived(normalized.faviconUrl);
+
   // Author info (shares/documents)
   let authorProfile = $state<{ handle?: string } | null>(null);
   $effect(() => {
-    if (readerItem.type === 'share') {
-      profileService.getProfile(readerItem.item.authorDid).then((p) => {
-        authorProfile = p;
-      });
-    } else if (readerItem.type === 'document') {
-      profileService.getProfile(readerItem.item.authorDid).then((p) => {
+    const did = normalized.authorDid;
+    if (did) {
+      profileService.getProfile(did).then((p) => {
         authorProfile = p;
       });
     } else {
       authorProfile = null;
     }
   });
-  let authorLabel = $derived.by(() => {
-    if (readerItem.type === 'article' && readerItem.item.author)
-      return `by ${readerItem.item.author}`;
-    if (readerItem.type === 'share') {
-      const handle = authorProfile?.handle || readerItem.item.authorDid;
-      return `shared by @${handle}`;
-    }
-    if (readerItem.type === 'document') {
-      const handle = authorProfile?.handle || readerItem.item.authorDid;
-      return `by @${handle}`;
-    }
-    if (readerItem.type === 'saved' && readerItem.item.author)
-      return `by ${readerItem.item.author}`;
-    return '';
-  });
-
-  let faviconUrl = $derived.by(() => {
-    if (readerItem.type === 'article') {
-      return getFaviconUrl(sub?.siteUrl || sub?.feedUrl || readerItem.item.url);
-    }
-    if (readerItem.type === 'document' && readerItem.item.siteIcon) return readerItem.item.siteIcon;
-    if (readerItem.type === 'document' && readerItem.item.canonicalUrl)
-      return getFaviconUrl(readerItem.item.canonicalUrl);
-    if (readerItem.type === 'share') return getFaviconUrl(readerItem.item.itemUrl);
-    if (readerItem.type === 'saved') return getFaviconUrl(readerItem.item.url);
-    return itemUrl ? getFaviconUrl(itemUrl) : '';
-  });
+  let authorLabel = $derived(getAuthorLabel(readerItem, authorProfile));
 
   let isArchived = $derived(itemLabelsStore.isArchived(itemKey));
   let isSaved = $derived(itemLabelsStore.isSaved(itemKey));
-
-  let displayContent = $derived.by(() => {
-    if (readerItem.type === 'article') {
-      return readerItem.item.content || readerItem.item.summary || '';
-    }
-    if (readerItem.type === 'share') {
-      return readerItem.item.content || readerItem.item.itemDescription || '';
-    }
-    if (readerItem.type === 'document') {
-      const doc = readerItem.item;
-      if (doc.content && isLeafletContent(doc.content)) {
-        return renderLeafletContent(doc.content as LeafletContent, doc.authorDid);
-      }
-      if (doc.content && isPcktBlogContent(doc.content)) {
-        return renderPcktBlogContent(doc.content as PcktBlogContent, doc.authorDid);
-      }
-      if (doc.content && isOffprintContent(doc.content)) {
-        return renderOffprintContent(doc.content as OffprintContent, doc.authorDid);
-      }
-      if (doc.content && isGreengaleContent(doc.content)) {
-        return renderGreengaleContent(doc.content as GreengaleContent, doc.authorDid);
-      }
-      return doc.textContent || doc.description || '';
-    }
-    if (readerItem.type === 'saved') {
-      return readerItem.item.content || readerItem.item.description || '';
-    }
-    return '';
-  });
 
   let sanitizedContent = $derived(sanitizeHtml(displayContent, itemUrl));
 
@@ -387,7 +303,8 @@
 
 <div class="reader-overlay" bind:this={overlayEl} onscroll={handleScroll}>
   <div class="reader-container">
-    <header class="reader-header" class:hidden={!controlsVisible}>
+    <!-- Desktop: top header -->
+    <header class="reader-header desktop-only" class:hidden={!controlsVisible}>
       <div class="reader-actions-left">
         <button class="action-btn" onclick={onClose} title="Back (Escape)">
           <Icon name="arrow-left" size={18} />
@@ -419,6 +336,36 @@
           </button>
         {/if}
 
+        {#if onToggleSave}
+          <button
+            class="action-btn"
+            class:active={isSaved}
+            onclick={() => onToggleSave!()}
+            title={isSaved ? 'Unsave' : 'Save (s)'}
+          >
+            <Icon name="bookmark" size={18} />
+            <span class="action-label">{isSaved ? 'Unsave' : 'Save'}</span>
+          </button>
+        {/if}
+
+        {#if onShare}
+          <button class="action-btn" onclick={() => onShare!()} title="Share">
+            <Icon name="share" size={18} />
+            <span class="action-label">Share</span>
+          </button>
+        {/if}
+
+        <button
+          class="action-btn"
+          class:active={tagMenuOpen}
+          bind:this={tagBtnRef}
+          onclick={() => (tagMenuOpen = !tagMenuOpen)}
+          title="Tag (t)"
+        >
+          <Icon name="tag" size={18} />
+          <span class="action-label">Tag{itemTags.length > 0 ? ` (${itemTags.length})` : ''}</span>
+        </button>
+
         <div class="overflow-menu-wrapper" bind:this={overflowRef}>
           <PopoverMenu items={overflowItems} />
         </div>
@@ -428,11 +375,160 @@
         <TagMenu
           {itemKey}
           itemType={labelItemType}
-          anchorEl={overflowRef}
+          anchorEl={tagBtnRef}
           onClose={() => (tagMenuOpen = false)}
         />
       {/if}
     </header>
+
+    <!-- Mobile: bottom bar -->
+    <div class="reader-bottom-bar mobile-only" class:hidden={!controlsVisible}>
+      <button class="bottom-btn" onclick={onClose} title="Back (Escape)">
+        <Icon name="arrow-left" size={20} />
+      </button>
+
+      <div class="bottom-bar-right">
+        {#if onArchive}
+          <button
+            class="bottom-btn"
+            onclick={() => onArchive()}
+            title={isArchived ? 'Move to inbox' : 'Archive (e)'}
+          >
+            <Icon name={isArchived ? 'inbox' : 'archive'} size={20} />
+          </button>
+          <span class="bottom-separator"></span>
+        {/if}
+        {#if onToggleSave}
+          <button
+            class="bottom-btn"
+            class:active={isSaved}
+            onclick={() => onToggleSave!()}
+            title={isSaved ? 'Unsave' : 'Save (s)'}
+          >
+            <Icon name="bookmark" size={20} />
+          </button>
+        {/if}
+        {#if onShare}
+          <button class="bottom-btn" onclick={() => onShare!()} title="Share">
+            <Icon name="share" size={20} />
+          </button>
+        {/if}
+        <button
+          class="bottom-btn"
+          class:active={tagMenuOpen}
+          bind:this={tagBtnRef}
+          onclick={() => (tagMenuOpen = !tagMenuOpen)}
+          title="Tag (t)"
+        >
+          <Icon name="tag" size={20} />
+        </button>
+        <span class="bottom-separator"></span>
+        <button
+          class="bottom-btn"
+          class:active={styleSheetOpen}
+          onclick={() => (styleSheetOpen = true)}
+          title="Style & Actions"
+        >
+          <Icon name="sliders" size={20} />
+        </button>
+      </div>
+    </div>
+
+    <!-- Mobile: style & actions bottom sheet -->
+    {#if mobileStore.isMobile}
+      <BottomSheet
+        open={styleSheetOpen}
+        onclose={() => (styleSheetOpen = false)}
+        title="Style & Actions"
+      >
+        <div class="style-sheet-content">
+          <div class="style-sheet-section">
+            <div class="style-sheet-label">Appearance</div>
+            <div class="toolbar-wrapper">
+              <AppearanceToolbar />
+            </div>
+          </div>
+
+          <div class="style-sheet-section">
+            <div class="style-sheet-label">Actions</div>
+            <div class="style-sheet-actions">
+              <button
+                class="sheet-action-btn"
+                onclick={() => {
+                  styleSheetOpen = false;
+                  tagMenuOpen = true;
+                }}
+              >
+                <Icon name="tag" size={18} />
+                <span>Tag{itemTags.length > 0 ? ` (${itemTags.length})` : ''}</span>
+              </button>
+              {#if onToggleSave}
+                <button
+                  class="sheet-action-btn"
+                  onclick={() => {
+                    onToggleSave!();
+                    styleSheetOpen = false;
+                  }}
+                >
+                  <Icon name="bookmark" size={18} />
+                  <span>{isSaved ? 'Unsave' : 'Save'}</span>
+                </button>
+              {/if}
+              {#if onShare}
+                <button
+                  class="sheet-action-btn"
+                  onclick={() => {
+                    onShare!();
+                    styleSheetOpen = false;
+                  }}
+                >
+                  <Icon name="share" size={18} />
+                  <span>Share</span>
+                </button>
+              {/if}
+              <button
+                class="sheet-action-btn"
+                onclick={() => {
+                  handleOpenUrl();
+                  styleSheetOpen = false;
+                }}
+              >
+                <Icon name="external-link" size={18} />
+                <span>Open in browser</span>
+              </button>
+              {#if onRemove}
+                <button
+                  class="sheet-action-btn danger"
+                  onclick={() => {
+                    if (deleteConfirming) {
+                      clearTimeout(deleteTimer);
+                      deleteConfirming = false;
+                      onRemove!();
+                      styleSheetOpen = false;
+                    } else {
+                      deleteConfirming = true;
+                      deleteTimer = setTimeout(() => (deleteConfirming = false), 3000);
+                    }
+                  }}
+                >
+                  <Icon name="trash" size={18} />
+                  <span>{deleteConfirming ? 'Confirm delete?' : 'Delete'}</span>
+                </button>
+              {/if}
+            </div>
+          </div>
+        </div>
+      </BottomSheet>
+
+      {#if tagMenuOpen}
+        <TagMenu
+          {itemKey}
+          itemType={labelItemType}
+          anchorEl={tagBtnRef}
+          onClose={() => (tagMenuOpen = false)}
+        />
+      {/if}
+    {/if}
 
     {#if linkInterception.menuState}
       {#key linkInterception.menuState.url + linkInterception.menuState.anchorRect.top}
@@ -640,6 +736,101 @@
     background: var(--color-border, #e5e7eb);
     align-self: stretch;
     margin: -0.25rem 0;
+  }
+
+  /* Mobile bottom bar */
+  .reader-bottom-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    z-index: 10;
+    pointer-events: none;
+    transition:
+      transform 0.25s ease,
+      opacity 0.25s ease;
+  }
+
+  .reader-bottom-bar.hidden {
+    transform: translateY(100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .bottom-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(8px);
+    border: none;
+    padding: 0.7rem;
+    border-radius: 999px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+    color: var(--color-text-secondary);
+    pointer-events: auto;
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+
+  .bottom-btn:active,
+  .bottom-btn.active {
+    color: var(--color-primary, #0066cc);
+  }
+
+  .bottom-bar-right {
+    display: flex;
+    align-items: center;
+    gap: 0.125rem;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(8px);
+    border-radius: 999px;
+    padding: 0.25rem 0.5rem;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+    pointer-events: auto;
+  }
+
+  .bottom-bar-right .bottom-btn {
+    background: none;
+    backdrop-filter: none;
+    box-shadow: none;
+    padding: 0.6rem;
+  }
+
+  .bottom-separator {
+    width: 1px;
+    height: 1.25rem;
+    background: var(--color-border, #e0e0e0);
+    opacity: 0.5;
+  }
+
+  /* Desktop/mobile visibility */
+  .mobile-only {
+    display: none;
+  }
+
+  .desktop-only {
+    display: flex;
+  }
+
+  @media (max-width: 1000px) {
+    .mobile-only {
+      display: flex;
+    }
+
+    .desktop-only {
+      display: none !important;
+    }
+
+    /* Hide floating style toolbar on mobile (uses BottomSheet instead) */
+    .style-toolbar-fixed {
+      display: none;
+    }
   }
 
   .style-toolbar-fixed {
@@ -938,17 +1129,147 @@
     }
   }
 
+  /* Style bottom sheet content */
+  .style-sheet-content {
+    padding: 0.5rem 1.25rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .style-sheet-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+  }
+
+  .style-sheet-label {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding-left: 0.25rem;
+  }
+
+  .style-sheet-content .toolbar-wrapper {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .style-sheet-content .toolbar-wrapper :global(.appearance-toolbar) {
+    background: none;
+    box-shadow: none;
+    backdrop-filter: none;
+    padding: 0;
+    border-radius: 0;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+  }
+
+  .style-sheet-content .toolbar-wrapper :global(.segment-btn) {
+    padding: 0.6rem 0.75rem;
+  }
+
+  .style-sheet-content .toolbar-wrapper :global(.font-preview) {
+    font-size: 1.125rem;
+  }
+
+  .style-sheet-content .toolbar-wrapper :global(.size-btn) {
+    padding: 0.6rem;
+  }
+
+  .style-sheet-content .toolbar-wrapper :global(.size-btn .icon) {
+    width: 18px;
+    height: 18px;
+  }
+
+  .style-sheet-content .toolbar-wrapper :global(.size-label) {
+    font-size: 0.9375rem;
+    min-width: 1.75rem;
+  }
+
+  .style-sheet-content .toolbar-wrapper :global(.group-label) {
+    display: block;
+    font-size: 0.75rem;
+  }
+
+  .style-sheet-actions {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .sheet-action-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--color-border);
+    color: var(--color-text);
+    font-size: 0.9375rem;
+    text-align: left;
+    width: 100%;
+    transition: background 0.1s;
+  }
+
+  .sheet-action-btn:last-child {
+    border-bottom: none;
+  }
+
+  .sheet-action-btn:active {
+    background: var(--color-bg-secondary, #f5f5f5);
+  }
+
+  .sheet-action-btn :global(.icon) {
+    color: var(--color-text-secondary);
+    flex-shrink: 0;
+  }
+
+  .sheet-action-btn.danger {
+    color: var(--color-error, #dc2626);
+  }
+
+  .sheet-action-btn.danger :global(.icon) {
+    color: var(--color-error, #dc2626);
+  }
+
+  @media (max-width: 1000px) {
+    .reader-container {
+      padding: 1rem 1rem calc(5rem + env(safe-area-inset-bottom, 0px));
+    }
+  }
+
   @media (max-width: 640px) {
     .reader-container {
-      padding: 0 1rem 3rem;
-    }
-
-    .style-toolbar-inner {
-      padding: 0 1rem;
+      padding: 1rem 1rem calc(5rem + env(safe-area-inset-bottom, 0px));
     }
 
     .reader-title {
       font-size: 1.375rem;
+    }
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .bottom-btn {
+      background: rgba(40, 40, 40, 0.95);
+    }
+
+    .bottom-bar-right {
+      background: rgba(40, 40, 40, 0.95);
+    }
+
+    .bottom-bar-right .bottom-btn {
+      background: none;
+    }
+
+    .sheet-action-btn:active {
+      background: rgba(255, 255, 255, 0.1);
     }
   }
 </style>

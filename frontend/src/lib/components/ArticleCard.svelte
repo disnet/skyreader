@@ -380,6 +380,33 @@
   let tagMenuOpenLocal = $state(false);
   let tagBtnRef = $state<HTMLButtonElement | null>(null);
 
+  // Overflow menu state
+  let overflowMenuOpen = $state(false);
+
+  function handleOverflowClick(e: MouseEvent) {
+    e.stopPropagation();
+    overflowMenuOpen = !overflowMenuOpen;
+  }
+
+  function handleOverflowOpenUrl(e: MouseEvent) {
+    e.stopPropagation();
+    overflowMenuOpen = false;
+    window.open(itemUrl, '_blank', 'noopener');
+  }
+
+  let overflowTriggerRef = $state<HTMLButtonElement | null>(null);
+
+  function handleOverflowTag(e: MouseEvent) {
+    e.stopPropagation();
+    overflowMenuOpen = false;
+    // Use overflow trigger as anchor since inline tag button may be hidden
+    tagBtnRef = overflowTriggerRef;
+    tagMenuOpenLocal = !tagMenuOpenLocal;
+    if (feedViewStore.tagMenuItemKey === itemGuid) {
+      feedViewStore.closeTagMenu();
+    }
+  }
+
   // Tag menu can be opened via button click or keyboard shortcut (via feedViewStore)
   let tagMenuOpen = $derived(tagMenuOpenLocal || feedViewStore.tagMenuItemKey === itemGuid);
 
@@ -605,10 +632,13 @@
       <span class="article-date">{formatRelativeDate(itemPublishedAt)}</span>
     </div>
 
-    <div class="article-actions-container">
+    <div
+      class="article-actions-container"
+      class:scroll-hidden={expanded && !feedViewStore.mobileControlsVisible}
+    >
       <div class="article-actions">
         {#if isShareMode}
-          <!-- Share mode: bookmark, reshare, and open -->
+          <!-- Share mode: bookmark, reshare -->
           <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
               class="action-label">Save</span
@@ -629,13 +659,8 @@
               </button>
             {/if}
           {/if}
-          <button class="action-btn" onclick={handleOpenUrl}>
-            <span class="action-icon"><Icon name="external-link" size={16} /></span><span
-              class="action-label">Open</span
-            >
-          </button>
         {:else if isDocumentMode}
-          <!-- Document mode: bookmark, share, and open -->
+          <!-- Document mode: bookmark, share -->
           <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
               class="action-label">Save</span
@@ -658,13 +683,8 @@
               </button>
             {/if}
           {/if}
-          <button class="action-btn" onclick={handleOpenUrl}>
-            <span class="action-icon"><Icon name="external-link" size={16} /></span><span
-              class="action-label">Open</span
-            >
-          </button>
         {:else}
-          <!-- Article mode: full controls -->
+          <!-- Article mode: save, share -->
           <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
             <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
               class="action-label">Save</span
@@ -685,11 +705,6 @@
               ></button
             >
           {/if}
-          <button class="action-btn" onclick={handleOpenUrl}>
-            <span class="action-icon"><Icon name="external-link" size={16} /></span><span
-              class="action-label">Open</span
-            >
-          </button>
         {/if}
         {#if onOpenFullscreen && hasContent}
           <button
@@ -704,8 +719,14 @@
             >
           </button>
         {/if}
+        <!-- Inline open & tag — visible when there's space, hidden when narrow -->
+        <button class="action-btn collapsible" onclick={handleOpenUrl}>
+          <span class="action-icon"><Icon name="external-link" size={16} /></span><span
+            class="action-label">Open</span
+          >
+        </button>
         <button
-          class="action-btn"
+          class="action-btn collapsible"
           class:tagged={itemTagCount > 0}
           onclick={handleTagClick}
           bind:this={tagBtnRef}
@@ -714,7 +735,38 @@
             >Tag{#if itemTagCount > 0}<span class="tag-count">({itemTagCount})</span>{/if}</span
           >
         </button>
-        <span class="action-separator"></span>
+        <!-- Overflow menu: shown when inline buttons are collapsed -->
+        <div class="overflow-menu-wrapper">
+          <button
+            class="action-btn overflow-trigger"
+            class:tagged={itemTagCount > 0}
+            onclick={handleOverflowClick}
+            bind:this={overflowTriggerRef}
+          >
+            <span class="action-icon"><Icon name="more-horizontal" size={16} /></span>
+          </button>
+          {#if overflowMenuOpen}
+            <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+            <div class="overflow-backdrop" onclick={() => (overflowMenuOpen = false)}></div>
+            <div class="overflow-menu">
+              <button class="overflow-menu-item" onclick={handleOverflowOpenUrl}>
+                <Icon name="external-link" size={16} />
+                <span>Open in browser</span>
+              </button>
+              <button
+                class="overflow-menu-item"
+                class:tagged={itemTagCount > 0}
+                onclick={handleOverflowTag}
+              >
+                <Icon name="tag" size={16} />
+                <span
+                  >Tag{#if itemTagCount > 0}
+                    ({itemTagCount}){/if}</span
+                >
+              </button>
+            </div>
+          {/if}
+        </div>
         {#if expanded}
           <button class="action-btn show-less-btn" onclick={handleExpandClick}
             ><span class="action-icon"><Icon name="chevron-up" size={16} /></span><span
@@ -1111,21 +1163,60 @@
 
   .article-actions-container {
     display: flex;
-    justify-content: center;
     container-type: inline-size;
-    padding: 1rem 0;
+    padding: 0.25rem 0 0.5rem;
   }
 
-  /* Only make controls sticky when article is fully expanded */
-  .article-item.expanded .article-actions-container {
-    position: sticky;
-    bottom: 0;
-  }
-
+  /* Inline style: flat row integrated into card bottom */
   .article-actions {
     display: flex;
     flex-wrap: nowrap;
     align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: 0.75rem;
+    padding: 0.375rem 0;
+  }
+
+  /* Mute controls for non-highlighted articles in expanded view (desktop only) */
+  @media (min-width: 1000px) {
+    .article-item.open:not(.expanded) .article-actions {
+      opacity: 0.3;
+    }
+
+    .article-item.open:not(.expanded).highlighted .article-actions,
+    .article-item.open:not(.expanded):hover .article-actions {
+      opacity: 1;
+    }
+  }
+
+  /* Expanded: pop out into floating pill, sticky at bottom */
+  .article-item.expanded .article-actions-container {
+    justify-content: center;
+    position: sticky;
+    bottom: 0;
+    padding: 1rem 0;
+  }
+
+  /* On mobile, position above the MobileBottomBar and hide on scroll */
+  @media (max-width: 1000px) {
+    .article-item.expanded .article-actions-container {
+      bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px));
+      transition:
+        transform 0.3s ease,
+        opacity 0.3s ease;
+    }
+
+    .article-item.expanded .article-actions-container.scroll-hidden {
+      transform: translateY(100%);
+      opacity: 0;
+      pointer-events: none;
+    }
+  }
+
+  .article-item.expanded .article-actions {
+    justify-content: space-between;
+    width: auto;
     gap: 0.875rem;
     padding: 0.5rem 1rem;
     background: rgba(255, 255, 255, 0.85);
@@ -1134,20 +1225,8 @@
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   }
 
-  /* Mute controls for non-highlighted articles in expanded view (desktop only) */
-  @media (min-width: 1000px) {
-    .article-item.open .article-actions {
-      opacity: 0.3;
-    }
-
-    .article-item.open.highlighted .article-actions,
-    .article-item.open:hover .article-actions {
-      opacity: 1;
-    }
-  }
-
   @media (prefers-color-scheme: dark) {
-    .article-actions {
+    .article-item.expanded .article-actions {
       background: rgba(40, 40, 40, 0.95);
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
     }
@@ -1159,9 +1238,9 @@
     white-space: nowrap;
     background: none;
     border: none;
-    font-size: 1rem;
+    font-size: 0.875rem;
     color: var(--color-text-secondary);
-    padding: 0;
+    padding: 0.25rem 0;
     cursor: pointer;
     text-decoration: none;
   }
@@ -1194,13 +1273,6 @@
   .reshare-count {
     font-size: 0.75rem;
     margin-left: 0.25rem;
-  }
-
-  .action-separator {
-    width: 1px;
-    background: var(--color-border, #e5e7eb);
-    align-self: stretch;
-    margin: -0.25rem 0;
   }
 
   .action-btn.show-more-btn,
@@ -1241,9 +1313,65 @@
     cursor: default;
   }
 
+  /* Overflow menu */
+  .overflow-menu-wrapper {
+    position: relative;
+  }
+
+  .overflow-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+  }
+
+  .overflow-menu {
+    position: absolute;
+    bottom: calc(100% + 0.5rem);
+    right: 0;
+    z-index: 100;
+    min-width: 10rem;
+    background: var(--color-bg, #fff);
+    border: 1px solid var(--color-border, #e5e7eb);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    padding: 0.25rem;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .overflow-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: none;
+    border: none;
+    font: inherit;
+    font-size: 0.875rem;
+    color: var(--color-text);
+    cursor: pointer;
+    border-radius: 6px;
+    white-space: nowrap;
+    text-align: left;
+  }
+
+  .overflow-menu-item:hover {
+    background: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+  }
+
+  .overflow-menu-item.tagged {
+    color: var(--color-primary, #0066cc);
+  }
+
   @media (prefers-color-scheme: dark) {
-    .action-separator {
-      background: var(--color-border, #404040);
+    .overflow-menu {
+      background: var(--color-bg, #1a1a1a);
+      border-color: var(--color-border, #404040);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    }
+
+    .overflow-menu-item:hover {
+      background: var(--color-bg-hover, rgba(255, 255, 255, 0.08));
     }
   }
 
@@ -1280,26 +1408,24 @@
     font-size: 0.875rem;
   }
 
-  /* Stage 2: Stack icon above text */
-  @container (max-width: 420px) {
-    .article-actions {
-      padding: 0.375rem 1rem;
+  /* Default: show inline buttons, hide overflow wrapper */
+  .overflow-menu-wrapper {
+    display: none;
+  }
+
+  /* Narrow: collapse Open & Tag into overflow, keep labels */
+  @container (max-width: 520px) {
+    .action-btn.collapsible {
+      display: none;
     }
-    .action-btn {
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 0.125rem;
-      text-align: center;
-    }
-    .action-label {
-      margin-left: 0;
-      font-size: 0.75rem;
+    .overflow-menu-wrapper {
+      display: block;
+      position: relative;
     }
   }
 
-  /* Stage 3: Icons only */
-  @container (max-width: 320px) {
+  /* Very narrow: hide labels too */
+  @container (max-width: 360px) {
     .action-label {
       display: none;
     }
@@ -1405,23 +1531,24 @@
     }
   }
 
-  /* Mobile: bigger touch targets */
+  /* Mobile: bigger touch targets for expanded pill */
   @media (max-width: 480px) {
-    .article-actions {
+    .article-item.expanded .article-actions {
+      width: 100%;
       gap: 1rem;
       padding: 0.5rem 1rem;
     }
 
-    .action-btn {
+    .article-item.expanded .action-btn {
       font-size: 1.125rem;
     }
 
-    .action-icon :global(.icon) {
+    .article-item.expanded .action-icon :global(.icon) {
       width: 20px;
       height: 20px;
     }
 
-    .action-label {
+    .article-item.expanded .action-label {
       font-size: 0.9375rem;
     }
   }

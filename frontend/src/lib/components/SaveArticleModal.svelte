@@ -58,7 +58,7 @@
   }
 </script>
 
-<Modal {open} {onclose} title="Save Article by URL">
+<Modal {open} {onclose} title="Save URL">
   {#if showScopeUpgrade}
     <div class="scope-upgrade">
       <p>Saving articles requires updated permissions. Please log in again to grant access.</p>

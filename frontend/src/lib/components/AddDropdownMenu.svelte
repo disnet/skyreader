@@ -1,10 +1,7 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
   import { onMount, onDestroy } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
-  import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
-  import { feedViewStore } from '$lib/stores/feedView.svelte';
 
   let isOpen = $state(false);
   let menuRef: HTMLDivElement | null = $state(null);
@@ -125,7 +122,15 @@
           role="menuitem"
         >
           <span class="item-icon"><Icon name="rss" size={16} /></span>
-          Add Feed
+          Add RSS Feed
+        </button>
+        <button
+          class="add-menu-item"
+          onclick={(e) => handleItemClick(() => sidebarStore.openAddHandleModal(), e)}
+          role="menuitem"
+        >
+          <span class="item-icon"><Icon name="users" size={16} /></span>
+          Add @handle
         </button>
         <button
           class="add-menu-item"
@@ -133,30 +138,7 @@
           role="menuitem"
         >
           <span class="item-icon"><Icon name="bookmark" size={16} /></span>
-          Save Article by URL
-        </button>
-        <button
-          class="add-menu-item"
-          onclick={(e) =>
-            handleItemClick(() => {
-              filteredViewsStore
-                .create({
-                  name: 'new view',
-                  sourceMode: 'include',
-                  sourceKeys: [],
-                  readFilter: 'unread',
-                  sortOrder: 'newest',
-                })
-                .then((id) => {
-                  goto(`/?view=${id}`);
-                  feedViewStore.setFilterToolbarOpen(true);
-                  feedViewStore.setSourcePopoverOpen(true);
-                });
-            }, e)}
-          role="menuitem"
-        >
-          <span class="item-icon"><Icon name="layers" size={16} /></span>
-          New View
+          Save URL
         </button>
       </div>
     </div>

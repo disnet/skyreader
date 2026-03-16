@@ -16,6 +16,7 @@
     expandAllItems?: boolean;
     lastRefreshAt?: number | null;
     isRefreshing?: boolean;
+    controlsVisible?: boolean;
     onToggleExpandAll?: (value: boolean) => void;
     onRefresh?: () => void;
     onMarkAllAsRead?: () => void;
@@ -30,6 +31,7 @@
     expandAllItems = false,
     lastRefreshAt,
     isRefreshing = false,
+    controlsVisible = true,
     onToggleExpandAll,
     onRefresh,
     onMarkAllAsRead,
@@ -42,21 +44,12 @@
   let tick = $state(0);
   let intervalId: ReturnType<typeof setInterval> | null = null;
 
-  // Scroll-hide state
-  let controlsVisible = $state(true);
-  let lastScrollY = $state(0);
-
-  function handleScroll() {
-    const currentY = window.scrollY;
-    if (currentY > lastScrollY && currentY > 60) {
-      controlsVisible = false;
+  // Close toolbars when controls hide
+  $effect(() => {
+    if (!controlsVisible) {
       styleToolbarOpen = false;
-      feedViewStore.setFilterToolbarOpen(false);
-    } else {
-      controlsVisible = true;
     }
-    lastScrollY = currentY;
-  }
+  });
 
   // Debounce refresh button
   let lastRefreshClick = 0;
@@ -75,13 +68,11 @@
       tick++;
     }, 60000);
     document.addEventListener('click', handleClickOutside);
-    window.addEventListener('scroll', handleScroll, { passive: true });
   });
 
   onDestroy(() => {
     if (intervalId) clearInterval(intervalId);
     document.removeEventListener('click', handleClickOutside);
-    window.removeEventListener('scroll', handleScroll);
   });
 
   // Use tick to force re-evaluation (void to suppress unused warning)
@@ -362,6 +353,7 @@
   @media (max-width: 1000px) {
     .feed-header-fixed {
       left: 0;
+      display: none;
     }
   }
 

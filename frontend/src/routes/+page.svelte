@@ -20,10 +20,37 @@
   import FeedListView from '$lib/components/feed/FeedListView.svelte';
   import SavedListView from '$lib/components/feed/SavedListView.svelte';
   import EditFeedModal from '$lib/components/EditFeedModal.svelte';
+  import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
+  import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
+  import MobileFilterSheet from '$lib/components/feed/MobileFilterSheet.svelte';
+
+  import BottomSheet from '$lib/components/common/BottomSheet.svelte';
+  import { useScrollDirection } from '$lib/hooks/useScrollDirection.svelte';
+  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import type { Subscription, BlueskyProfile } from '$lib/types';
   import { useScrollMarkAsRead } from '$lib/hooks/useScrollMarkAsRead.svelte';
   import { useFeedKeyboardShortcuts } from '$lib/hooks/useFeedKeyboardShortcuts.svelte';
   import { goto } from '$app/navigation';
+
+  // Scroll-hide state (shared by desktop header + mobile bottom bar)
+  const scrollDirection = useScrollDirection({
+    onHide: () => feedViewStore.setFilterToolbarOpen(false),
+  });
+  $effect(() => {
+    feedViewStore.setMobileControlsVisible(scrollDirection.controlsVisible);
+  });
+  let feedSwitcherOpen = $state(false);
+  let filterSheetOpen = $state(false);
+
+  function scrollToTop() {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  let hasActiveFilters = $derived(
+    feedViewStore.toolbarTypeFilter.length > 0 ||
+      feedViewStore.toolbarTagFilter.length > 0 ||
+      feedViewStore.effectiveFilters.sourceMode !== 'all'
+  );
 
   // Profile for sharer filter title
   let sharerProfile = $state<BlueskyProfile | null>(null);
@@ -413,6 +440,7 @@
       expandAllItems={preferences.expandAllItems}
       lastRefreshAt={appManager.lastRefreshAt}
       isRefreshing={appManager.isRefreshing}
+      controlsVisible={scrollDirection.controlsVisible}
       onToggleExpandAll={(value) => {
         preferences.setExpandAllItems(value);
         if (!value) {
@@ -514,6 +542,51 @@
         onUnshare={(guid) => sharesStore.unshare(guid)}
       />
     {/if}
+
+    {#if mobileStore.isMobile}
+      <MobileBottomBar
+        controlsVisible={scrollDirection.controlsVisible}
+        currentTitle={pageTitle}
+        onScrollToTop={scrollToTop}
+        onOpenFeedSwitcher={() => (feedSwitcherOpen = true)}
+        onOpenFilterSheet={() => (filterSheetOpen = true)}
+        {hasActiveFilters}
+      />
+
+      <BottomSheet
+        open={feedSwitcherOpen}
+        onclose={() => (feedSwitcherOpen = false)}
+        title="Switch Feed"
+      >
+        <MobileFeedSwitcher onclose={() => (feedSwitcherOpen = false)} currentTitle={pageTitle} />
+      </BottomSheet>
+
+      <BottomSheet
+        open={filterSheetOpen}
+        onclose={() => (filterSheetOpen = false)}
+        title="Filters & Style"
+      >
+        <MobileFilterSheet
+          showSourceFilter={!feedViewStore.feedFilter &&
+            !feedViewStore.savedFilter &&
+            !feedViewStore.sharedFilter &&
+            !feedViewStore.sharerFilter &&
+            !feedViewStore.followingFilter}
+          expandAllItems={preferences.expandAllItems}
+          onToggleExpandAll={(value) => {
+            preferences.setExpandAllItems(value);
+            if (!value) {
+              feedViewStore.resetSelection();
+            }
+          }}
+          {isSavedView}
+          onMarkAllAsRead={!feedViewStore.savedFilter && !feedViewStore.sharedFilter
+            ? markAllAsReadInCurrentView
+            : undefined}
+          onclose={() => (filterSheetOpen = false)}
+        />
+      </BottomSheet>
+    {/if}
   </div>
 {/if}
 
@@ -522,5 +595,12 @@
     max-width: 800px;
     margin: 0 auto;
     padding-top: 3.5rem;
+  }
+
+  @media (max-width: 1000px) {
+    .feed-page {
+      padding-top: 0.5rem;
+      padding-bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 1rem);
+    }
   }
 </style>

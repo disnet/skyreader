@@ -118,6 +118,9 @@ function createFeedViewStore() {
   // Tag menu state (which item key should show the tag menu, null = closed)
   let tagMenuItemKey = $state<string | null>(null);
 
+  // Mobile scroll-hide state for floating controls
+  let mobileControlsVisible = $state(true);
+
   // Toolbar filter state (unified source model)
   let filterToolbarOpen = $state(false);
   let sourcePopoverOpen = $state(false);
@@ -1001,6 +1004,12 @@ function createFeedViewStore() {
     },
     setFilterToolbarOpen(open: boolean) {
       filterToolbarOpen = open;
+    },
+    get mobileControlsVisible() {
+      return mobileControlsVisible;
+    },
+    setMobileControlsVisible(visible: boolean) {
+      mobileControlsVisible = visible;
     },
     setSourcePopoverOpen(open: boolean) {
       sourcePopoverOpen = open;

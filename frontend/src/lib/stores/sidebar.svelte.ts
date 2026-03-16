@@ -3,6 +3,7 @@ import { browser } from '$app/environment';
 interface SidebarState {
   isOpen: boolean; // For mobile overlay
   addFeedModalOpen: boolean;
+  addHandleModalOpen: boolean; // For add @handle modal
   saveArticleModalOpen: boolean; // For save article by URL modal
   navigationDropdownOpen: boolean; // For navigation dropdown
   expandedSections: {
@@ -21,6 +22,7 @@ function createSidebarStore() {
   let state = $state<SidebarState>({
     isOpen: false,
     addFeedModalOpen: false,
+    addHandleModalOpen: false,
     saveArticleModalOpen: false,
     navigationDropdownOpen: false,
     expandedSections: {
@@ -90,11 +92,19 @@ function createSidebarStore() {
 
   function openAddFeedModalForDid(did: string) {
     addFeedModalInitialDid = did;
-    state.addFeedModalOpen = true;
+    state.addHandleModalOpen = true;
   }
 
   function closeAddFeedModal() {
     state.addFeedModalOpen = false;
+  }
+
+  function openAddHandleModal() {
+    state.addHandleModalOpen = true;
+  }
+
+  function closeAddHandleModal() {
+    state.addHandleModalOpen = false;
     addFeedModalInitialDid = null;
   }
 
@@ -125,6 +135,9 @@ function createSidebarStore() {
     get addFeedModalOpen() {
       return state.addFeedModalOpen;
     },
+    get addHandleModalOpen() {
+      return state.addHandleModalOpen;
+    },
     get addFeedModalInitialDid() {
       return addFeedModalInitialDid;
     },
@@ -150,6 +163,8 @@ function createSidebarStore() {
     openAddFeedModal,
     openAddFeedModalForDid,
     closeAddFeedModal,
+    openAddHandleModal,
+    closeAddHandleModal,
     openSaveArticleModal,
     closeSaveArticleModal,
     toggleNavigationDropdown,
