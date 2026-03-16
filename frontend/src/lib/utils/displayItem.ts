@@ -1,0 +1,140 @@
+import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
+import type { Subscription } from '$lib/types';
+import { getFaviconUrl } from '$lib/utils/favicon';
+import { isLeafletContent, renderLeafletContent } from '$lib/utils/leaflet-renderer';
+import { isPcktBlogContent, renderPcktBlogContent } from '$lib/utils/pckt-blog-renderer';
+import { isOffprintContent, renderOffprintContent } from '$lib/utils/offprint-renderer';
+import { isGreengaleContent, renderGreengaleContent } from '$lib/utils/greengale-renderer';
+import type {
+  LeafletContent,
+  PcktBlogContent,
+  OffprintContent,
+  GreengaleContent,
+} from '$lib/types';
+
+export interface NormalizedDisplayItem {
+  title: string;
+  url: string;
+  publishedAt: string;
+  displayContent: string;
+  faviconUrl: string;
+  /** DID of the author for shares/documents, undefined for articles */
+  authorDid: string | undefined;
+  /** Label type for itemLabels operations */
+  labelItemType: 'article' | 'share' | 'document' | 'userShare' | 'saved';
+}
+
+/**
+ * Normalize a FeedDisplayItem into a flat object with common display fields.
+ * Eliminates the repeated type-switching pattern across components.
+ *
+ * @param item - The feed display item to normalize
+ * @param sub - The subscription for article items (optional)
+ */
+export function normalizeDisplayItem(
+  item: FeedDisplayItem,
+  sub?: Subscription
+): NormalizedDisplayItem {
+  return {
+    title: getTitle(item),
+    url: getUrl(item),
+    publishedAt: getPublishedAt(item),
+    displayContent: getDisplayContent(item),
+    faviconUrl: getFavicon(item, sub),
+    authorDid: getAuthorDid(item),
+    labelItemType: item.type === 'userShare' ? 'userShare' : item.type,
+  };
+}
+
+function getTitle(item: FeedDisplayItem): string {
+  if (item.type === 'article') return item.item.title || item.item.url;
+  if (item.type === 'share') return item.item.itemTitle || item.item.itemUrl;
+  if (item.type === 'document') return item.item.title || item.item.recordUri;
+  if (item.type === 'saved') return item.item.title || item.item.url;
+  return '';
+}
+
+function getUrl(item: FeedDisplayItem): string {
+  if (item.type === 'article') return item.item.url;
+  if (item.type === 'share') return item.item.itemUrl;
+  if (item.type === 'document') return item.item.canonicalUrl || item.item.path || '';
+  if (item.type === 'saved') return item.item.url;
+  return '';
+}
+
+function getPublishedAt(item: FeedDisplayItem): string {
+  if (item.type === 'article') return item.item.publishedAt;
+  if (item.type === 'share') return item.item.itemPublishedAt || item.item.createdAt;
+  if (item.type === 'document') return item.item.publishedAt;
+  if (item.type === 'saved') return item.item.publishedAt || item.item.savedAt;
+  return '';
+}
+
+function getDisplayContent(item: FeedDisplayItem): string {
+  if (item.type === 'article') {
+    return item.item.content || item.item.summary || '';
+  }
+  if (item.type === 'share') {
+    return item.item.content || item.item.itemDescription || '';
+  }
+  if (item.type === 'document') {
+    const doc = item.item;
+    if (doc.content && isLeafletContent(doc.content)) {
+      return renderLeafletContent(doc.content as LeafletContent, doc.authorDid);
+    }
+    if (doc.content && isPcktBlogContent(doc.content)) {
+      return renderPcktBlogContent(doc.content as PcktBlogContent, doc.authorDid);
+    }
+    if (doc.content && isOffprintContent(doc.content)) {
+      return renderOffprintContent(doc.content as OffprintContent, doc.authorDid);
+    }
+    if (doc.content && isGreengaleContent(doc.content)) {
+      return renderGreengaleContent(doc.content as GreengaleContent, doc.authorDid);
+    }
+    return doc.textContent || doc.description || '';
+  }
+  if (item.type === 'saved') {
+    return item.item.content || item.item.description || '';
+  }
+  return '';
+}
+
+function getFavicon(item: FeedDisplayItem, sub?: Subscription): string {
+  if (item.type === 'article') {
+    return getFaviconUrl(sub?.siteUrl || sub?.feedUrl || item.item.url);
+  }
+  if (item.type === 'document' && item.item.siteIcon) return item.item.siteIcon;
+  if (item.type === 'document' && item.item.canonicalUrl)
+    return getFaviconUrl(item.item.canonicalUrl);
+  if (item.type === 'share') return getFaviconUrl(item.item.itemUrl);
+  if (item.type === 'saved') return getFaviconUrl(item.item.url);
+  const url = getUrl(item);
+  return url ? getFaviconUrl(url) : '';
+}
+
+function getAuthorDid(item: FeedDisplayItem): string | undefined {
+  if (item.type === 'share') return item.item.authorDid;
+  if (item.type === 'document') return item.item.authorDid;
+  return undefined;
+}
+
+/**
+ * Build the author label string given the normalized item and an optional profile.
+ * This is kept separate since it depends on async profile data.
+ */
+export function getAuthorLabel(
+  item: FeedDisplayItem,
+  authorProfile: { handle?: string } | null
+): string {
+  if (item.type === 'article' && item.item.author) return `by ${item.item.author}`;
+  if (item.type === 'share') {
+    const handle = authorProfile?.handle || item.item.authorDid;
+    return `shared by @${handle}`;
+  }
+  if (item.type === 'document') {
+    const handle = authorProfile?.handle || item.item.authorDid;
+    return `by @${handle}`;
+  }
+  if (item.type === 'saved' && item.item.author) return `by ${item.item.author}`;
+  return '';
+}

@@ -15,6 +15,7 @@
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import { onMount, onDestroy } from 'svelte';
   import AddFeedModal from './AddFeedModal.svelte';
+  import AddHandleModal from './AddHandleModal.svelte';
   import SaveArticleModal from './SaveArticleModal.svelte';
   import AddDropdownMenu from './AddDropdownMenu.svelte';
   import EditFeedModal from './EditFeedModal.svelte';
@@ -435,6 +436,11 @@
 <AddFeedModal
   open={sidebarStore.addFeedModalOpen}
   onclose={() => sidebarStore.closeAddFeedModal()}
+/>
+
+<AddHandleModal
+  open={sidebarStore.addHandleModalOpen}
+  onclose={() => sidebarStore.closeAddHandleModal()}
 />
 
 <SaveArticleModal

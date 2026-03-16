@@ -14,6 +14,11 @@
   --sidebar-width: 320px;
   --color-sidebar-active: rgba(0, 102, 204, 0.1);
 
+  /* Safe area and bottom bar */
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --bottom-bar-height: 3.5rem;
+
   /* Article font families */
   --font-sans-serif:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
