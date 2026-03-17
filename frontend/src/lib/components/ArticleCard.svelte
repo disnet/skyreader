@@ -1425,7 +1425,7 @@
   }
 
   /* Very narrow: hide labels too */
-  @container (max-width: 360px) {
+  @container (max-width: 300px) {
     .action-label {
       display: none;
     }
