@@ -654,7 +654,7 @@
 
     <div
       class="article-actions-container"
-      class:scroll-hidden={expanded && !feedViewStore.mobileControlsVisible}
+      class:scroll-hidden={expanded && isActionBarFloating && !feedViewStore.mobileControlsVisible}
       class:floating={isActionBarFloating}
     >
       <div class="article-actions">
@@ -1212,11 +1212,16 @@
     }
   }
 
-  /* Expanded: sticky at bottom, ready to float */
+  /* Expanded: sticky at bottom */
   .article-item.expanded .article-actions-container {
-    justify-content: center;
     position: sticky;
     bottom: 0;
+    padding: 0.5rem 0;
+  }
+
+  /* Floating state: centered pill */
+  .article-item.expanded .article-actions-container.floating {
+    justify-content: center;
     padding: 1rem 0;
   }
 
@@ -1226,9 +1231,9 @@
     margin-top: -1px;
   }
 
-  /* On mobile, position above the MobileBottomBar and hide on scroll */
+  /* On mobile, float above the MobileBottomBar and hide on scroll */
   @media (max-width: 1000px) {
-    .article-item.expanded .article-actions-container {
+    .article-item.expanded .article-actions-container.floating {
       bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px));
       transition:
         transform 0.3s ease,
@@ -1252,11 +1257,6 @@
     backdrop-filter: blur(8px);
     border-radius: 9999px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-    transition:
-      background 0.2s ease,
-      box-shadow 0.2s ease,
-      border-radius 0.2s ease,
-      padding 0.2s ease;
   }
 
   @media (prefers-color-scheme: dark) {
@@ -1266,16 +1266,11 @@
     }
   }
 
-  /* Non-floating expanded state: normal inline look */
+  /* Non-floating expanded state: full-width normal bar */
   .article-item.expanded .article-actions-container:not(.floating) .article-actions {
     justify-content: space-between;
-    width: auto;
-    gap: 0.875rem;
-    transition:
-      background 0.2s ease,
-      box-shadow 0.2s ease,
-      border-radius 0.2s ease,
-      padding 0.2s ease;
+    width: 100%;
+    gap: 0.75rem;
   }
 
   .action-btn {
