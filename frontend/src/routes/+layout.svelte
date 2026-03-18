@@ -56,6 +56,23 @@
 
   function applyUpdate() {
     updateLoading = true;
+
+    // Fallback: if controllerchange doesn't fire within 3s, reload anyway.
+    // The new SW may have activated but the event didn't reach us.
+    const fallbackTimer = setTimeout(() => {
+      window.location.reload();
+    }, 3000);
+
+    // Also watch the waiting worker directly for activation
+    if (waitingWorker) {
+      waitingWorker.addEventListener('statechange', () => {
+        if (waitingWorker!.state === 'activated') {
+          clearTimeout(fallbackTimer);
+          window.location.reload();
+        }
+      });
+    }
+
     waitingWorker?.postMessage({ type: 'SKIP_WAITING' });
   }
 
