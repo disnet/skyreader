@@ -54,7 +54,8 @@
 
   function applyUpdate() {
     waitingWorker?.postMessage({ type: 'SKIP_WAITING' });
-    // The controllerchange listener below will reload the page
+    // controllerchange listener will reload, but fallback in case it doesn't fire
+    setTimeout(() => window.location.reload(), 1000);
   }
 
   // Detect new service worker versions
@@ -440,6 +441,10 @@
   }
 
   .update-banner {
+    position: fixed;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
     background: var(--color-primary, #0066cc);
     color: white;
     padding: 0.625rem 1rem;
@@ -449,13 +454,17 @@
     gap: 1rem;
     font-size: 0.875rem;
     text-align: center;
+    border-radius: 999px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    z-index: 200;
+    white-space: nowrap;
   }
 
   .update-btn {
     background: white;
     color: var(--color-primary, #0066cc);
     border: none;
-    border-radius: 4px;
+    border-radius: 999px;
     padding: 0.25rem 0.75rem;
     cursor: pointer;
     font-size: 0.8125rem;
