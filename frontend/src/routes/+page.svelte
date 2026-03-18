@@ -23,10 +23,13 @@
   import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
   import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
   import MobileFilterSheet from '$lib/components/feed/MobileFilterSheet.svelte';
+  import PullToRefresh from '$lib/components/PullToRefresh.svelte';
 
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import { useScrollDirection } from '$lib/hooks/useScrollDirection.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
+  import { toastStore } from '$lib/stores/toast.svelte';
+  import { syncStore } from '$lib/stores/sync.svelte';
   import type { Subscription, BlueskyProfile } from '$lib/types';
   import { useScrollMarkAsRead } from '$lib/hooks/useScrollMarkAsRead.svelte';
   import { useFeedKeyboardShortcuts } from '$lib/hooks/useFeedKeyboardShortcuts.svelte';
@@ -396,6 +399,17 @@
     lastVisibleTime = Date.now();
   }
 
+  async function handleRefreshWithToast() {
+    const newArticles = await appManager.refreshFromBackend();
+    if (newArticles > 0) {
+      const id = toastStore.add(`${newArticles} new article${newArticles === 1 ? '' : 's'}`);
+      toastStore.update(id, 'success');
+    } else {
+      const id = toastStore.add('All caught up!');
+      toastStore.update(id, 'success');
+    }
+  }
+
   onMount(async () => {
     if (auth.isAuthenticated) {
       // Use the new centralized app initialization
@@ -447,7 +461,7 @@
           feedViewStore.resetSelection();
         }
       }}
-      onRefresh={() => appManager.refreshFromBackend()}
+      onRefresh={handleRefreshWithToast}
       onMarkAllAsRead={!feedViewStore.savedFilter && !feedViewStore.sharedFilter
         ? markAllAsReadInCurrentView
         : undefined}
@@ -462,86 +476,94 @@
         !feedViewStore.followingFilter}
     />
 
-    {#if (appManager.isHydrating || appManager.isRefreshing) && feedViewStore.currentItems.length === 0}
-      <LoadingState />
-    {:else if !isSavedView && feedViewStore.currentItems.length === 0}
-      {#if feedViewStore.viewFilter}
-        <EmptyState
-          title="No matching items"
-          description="This filtered view has no items matching its criteria"
-        />
-      {:else if feedViewStore.sharedFilter}
-        <EmptyState title="No shared articles" description="Share articles to see them here" />
-      {:else if feedViewStore.followingFilter}
-        {#if feedViewStore.showOnlyUnread}
+    <PullToRefresh
+      onRefresh={handleRefreshWithToast}
+      disabled={!syncStore.isOnline || appManager.isRefreshing}
+    >
+      {#if (appManager.isHydrating || appManager.isRefreshing) && feedViewStore.currentItems.length === 0}
+        <LoadingState />
+      {:else if !isSavedView && feedViewStore.currentItems.length === 0}
+        {#if feedViewStore.viewFilter}
           <EmptyState
-            title="No unread shares"
-            description="You're all caught up on shares from people you follow"
+            title="No matching items"
+            description="This filtered view has no items matching its criteria"
           />
+        {:else if feedViewStore.sharedFilter}
+          <EmptyState title="No shared articles" description="Share articles to see them here" />
+        {:else if feedViewStore.followingFilter}
+          {#if feedViewStore.showOnlyUnread}
+            <EmptyState
+              title="No unread shares"
+              description="You're all caught up on shares from people you follow"
+            />
+          {:else}
+            <EmptyState
+              title="No shared articles"
+              description="People you follow haven't shared any articles yet"
+            />
+          {/if}
+        {:else if feedViewStore.sharerFilter}
+          {#if feedViewStore.showOnlyUnread}
+            <EmptyState
+              title="No unread shares"
+              description="You're all caught up on shares from this user"
+            />
+          {:else}
+            <EmptyState
+              title="No shares from this user"
+              description="This user hasn't shared any articles yet"
+            />
+          {/if}
+        {:else if feedViewStore.feedFilter}
+          {#if feedViewStore.showOnlyUnread}
+            <EmptyState
+              title="No unread articles"
+              description="You're all caught up on this feed"
+            />
+          {:else}
+            <EmptyState title="No articles" description="This feed has no articles" />
+          {/if}
+        {:else if feedViewStore.showOnlyUnread}
+          <EmptyState title="No unread articles" description="You're all caught up!" />
         {:else}
           <EmptyState
-            title="No shared articles"
-            description="People you follow haven't shared any articles yet"
+            title="No articles"
+            description="Add some subscriptions using the + button in the sidebar"
           />
         {/if}
-      {:else if feedViewStore.sharerFilter}
-        {#if feedViewStore.showOnlyUnread}
-          <EmptyState
-            title="No unread shares"
-            description="You're all caught up on shares from this user"
-          />
-        {:else}
-          <EmptyState
-            title="No shares from this user"
-            description="This user hasn't shared any articles yet"
-          />
-        {/if}
-      {:else if feedViewStore.feedFilter}
-        {#if feedViewStore.showOnlyUnread}
-          <EmptyState title="No unread articles" description="You're all caught up on this feed" />
-        {:else}
-          <EmptyState title="No articles" description="This feed has no articles" />
-        {/if}
-      {:else if feedViewStore.showOnlyUnread}
-        <EmptyState title="No unread articles" description="You're all caught up!" />
+      {:else if isSavedView}
+        <SavedListView bind:this={savedListView} />
       {:else}
-        <EmptyState
-          title="No articles"
-          description="Add some subscriptions using the + button in the sidebar"
+        <FeedListView
+          bind:this={feedListView}
+          onToggleSave={(article) =>
+            itemLabelsStore.toggleSave(article.guid, 'article', article.url, article.title, {
+              type: 'article',
+              guid: article.guid,
+              url: article.url,
+              title: article.title,
+              author: article.author,
+              summary: article.summary,
+              imageUrl: article.imageUrl,
+              publishedAt: article.publishedAt,
+            })}
+          onShare={(article, sub) =>
+            sharesStore.share(
+              sub.rkey,
+              sub.feedUrl || '',
+              article.guid,
+              article.url,
+              article.title,
+              article.author,
+              article.content,
+              article.summary,
+              article.imageUrl,
+              article.publishedAt
+            )}
+          onUnshare={(guid) => sharesStore.unshare(guid)}
         />
       {/if}
-    {:else if isSavedView}
-      <SavedListView bind:this={savedListView} />
-    {:else}
-      <FeedListView
-        bind:this={feedListView}
-        onToggleSave={(article) =>
-          itemLabelsStore.toggleSave(article.guid, 'article', article.url, article.title, {
-            type: 'article',
-            guid: article.guid,
-            url: article.url,
-            title: article.title,
-            author: article.author,
-            summary: article.summary,
-            imageUrl: article.imageUrl,
-            publishedAt: article.publishedAt,
-          })}
-        onShare={(article, sub) =>
-          sharesStore.share(
-            sub.rkey,
-            sub.feedUrl || '',
-            article.guid,
-            article.url,
-            article.title,
-            article.author,
-            article.content,
-            article.summary,
-            article.imageUrl,
-            article.publishedAt
-          )}
-        onUnshare={(guid) => sharesStore.unshare(guid)}
-      />
-    {/if}
+    </PullToRefresh>
 
     {#if mobileStore.isMobile}
       <MobileBottomBar

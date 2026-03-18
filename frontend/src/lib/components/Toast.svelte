@@ -92,6 +92,14 @@
     }
   }
 
+  @media (max-width: 1000px) {
+    .toast-container {
+      bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 1rem);
+      right: 50%;
+      transform: translateX(50%);
+    }
+  }
+
   @media (prefers-color-scheme: dark) {
     .toast {
       background: var(--color-bg, #1a1a1a);

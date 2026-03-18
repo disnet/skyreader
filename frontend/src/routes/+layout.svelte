@@ -11,6 +11,7 @@
   import Sidebar from '$lib/components/Sidebar.svelte';
   import KeyboardShortcutsModal from '$lib/components/KeyboardShortcutsModal.svelte';
   import Toast from '$lib/components/Toast.svelte';
+  import RefreshProgressBar from '$lib/components/RefreshProgressBar.svelte';
   import Logo from '$lib/assets/logo.svg';
   import '../app.css';
 
@@ -222,6 +223,7 @@
 
 <KeyboardShortcutsModal />
 <Toast />
+<RefreshProgressBar />
 
 {#if updateAvailable}
   <div class="update-banner">
