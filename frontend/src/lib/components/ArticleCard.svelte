@@ -396,6 +396,26 @@
 
   let overflowTriggerRef = $state<HTMLButtonElement | null>(null);
 
+  // Sticky detection: track whether the action bar is floating (stuck) vs at its natural position
+  let actionBarSentinelRef = $state<HTMLDivElement | null>(null);
+  let isActionBarFloating = $state(false);
+
+  $effect(() => {
+    if (!expanded || !actionBarSentinelRef) {
+      isActionBarFloating = false;
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        // When the sentinel is visible, the action bar is at its natural position (not floating)
+        isActionBarFloating = !entry.isIntersecting;
+      },
+      { threshold: 0 }
+    );
+    observer.observe(actionBarSentinelRef);
+    return () => observer.disconnect();
+  });
+
   function handleOverflowTag(e: MouseEvent) {
     e.stopPropagation();
     overflowMenuOpen = false;
@@ -635,6 +655,7 @@
     <div
       class="article-actions-container"
       class:scroll-hidden={expanded && !feedViewStore.mobileControlsVisible}
+      class:floating={isActionBarFloating}
     >
       <div class="article-actions">
         {#if isShareMode}
@@ -785,6 +806,7 @@
         {/if}
       </div>
     </div>
+    {#if expanded}<div class="action-bar-sentinel" bind:this={actionBarSentinelRef}></div>{/if}
 
     {#if tagMenuOpen}
       <TagMenu
@@ -1190,12 +1212,18 @@
     }
   }
 
-  /* Expanded: pop out into floating pill, sticky at bottom */
+  /* Expanded: sticky at bottom, ready to float */
   .article-item.expanded .article-actions-container {
     justify-content: center;
     position: sticky;
     bottom: 0;
     padding: 1rem 0;
+  }
+
+  /* Sentinel element for sticky detection */
+  .action-bar-sentinel {
+    height: 1px;
+    margin-top: -1px;
   }
 
   /* On mobile, position above the MobileBottomBar and hide on scroll */
@@ -1214,7 +1242,8 @@
     }
   }
 
-  .article-item.expanded .article-actions {
+  /* Floating pill styles only when action bar is stuck */
+  .article-item.expanded .article-actions-container.floating .article-actions {
     justify-content: space-between;
     width: auto;
     gap: 0.875rem;
@@ -1223,13 +1252,30 @@
     backdrop-filter: blur(8px);
     border-radius: 9999px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    transition:
+      background 0.2s ease,
+      box-shadow 0.2s ease,
+      border-radius 0.2s ease,
+      padding 0.2s ease;
   }
 
   @media (prefers-color-scheme: dark) {
-    .article-item.expanded .article-actions {
+    .article-item.expanded .article-actions-container.floating .article-actions {
       background: rgba(40, 40, 40, 0.95);
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
     }
+  }
+
+  /* Non-floating expanded state: normal inline look */
+  .article-item.expanded .article-actions-container:not(.floating) .article-actions {
+    justify-content: space-between;
+    width: auto;
+    gap: 0.875rem;
+    transition:
+      background 0.2s ease,
+      box-shadow 0.2s ease,
+      border-radius 0.2s ease,
+      padding 0.2s ease;
   }
 
   .action-btn {
