@@ -15,6 +15,8 @@
   import '../app.css';
 
   let { children } = $props();
+  let updateAvailable = $state(false);
+  let waitingWorker: ServiceWorker | null = null;
 
   let pageTitle = $derived.by(() => {
     if (!auth.isAuthenticated) return 'Skyreader';
@@ -49,6 +51,41 @@
     const newIndex = (currentIndex + direction + feedIds.length) % feedIds.length;
     goto(`/?feed=${feedIds[newIndex]}`);
   }
+
+  function applyUpdate() {
+    waitingWorker?.postMessage({ type: 'SKIP_WAITING' });
+    // The controllerchange listener below will reload the page
+  }
+
+  // Detect new service worker versions
+  onMount(() => {
+    if (!browser || !('serviceWorker' in navigator)) return;
+
+    // Reload when a new SW takes control (after SKIP_WAITING)
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      window.location.reload();
+    });
+
+    navigator.serviceWorker.ready.then((registration) => {
+      // Check if there's already a waiting worker
+      if (registration.waiting) {
+        waitingWorker = registration.waiting;
+        updateAvailable = true;
+      }
+
+      // Listen for new workers that finish installing
+      registration.addEventListener('updatefound', () => {
+        const newWorker = registration.installing;
+        if (!newWorker) return;
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            waitingWorker = newWorker;
+            updateAvailable = true;
+          }
+        });
+      });
+    });
+  });
 
   // Register global keyboard shortcuts on mount
   onMount(() => {
@@ -184,6 +221,13 @@
 
 <KeyboardShortcutsModal />
 <Toast />
+
+{#if updateAvailable}
+  <div class="update-banner">
+    <span>A new version of Skyreader is available.</span>
+    <button class="update-btn" onclick={applyUpdate}>Update</button>
+  </div>
+{/if}
 
 <div class="app">
   {#if !auth.isLoading}
@@ -393,6 +437,34 @@
 
   .app-footer .separator {
     margin: 0 0.5rem;
+  }
+
+  .update-banner {
+    background: var(--color-primary, #0066cc);
+    color: white;
+    padding: 0.625rem 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    font-size: 0.875rem;
+    text-align: center;
+  }
+
+  .update-btn {
+    background: white;
+    color: var(--color-primary, #0066cc);
+    border: none;
+    border-radius: 4px;
+    padding: 0.25rem 0.75rem;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .update-btn:hover {
+    background: rgba(255, 255, 255, 0.9);
   }
 
   .scope-upgrade-banner {
