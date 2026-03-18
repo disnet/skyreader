@@ -105,14 +105,16 @@ function createAppManager() {
    * - Fetches feed content via V2 batch API
    * - Loads social feed
    */
-  async function refreshFromBackend(): Promise<void> {
+  async function refreshFromBackend(): Promise<number> {
     // Skip entirely when offline - cached data is already loaded
-    if (!syncStore.isOnline) return;
+    if (!syncStore.isOnline) return 0;
 
     const wasPhase = phase;
     if (phase === 'idle' || phase === 'ready') {
       phase = 'refreshing';
     }
+
+    let newArticles = 0;
 
     try {
       // Sync subscriptions, read positions, and social data in parallel
@@ -128,7 +130,8 @@ function createAppManager() {
 
       // Fetch all feeds using batch API
       if (liveDb.subscriptions.length > 0) {
-        await fetchAllFeeds(liveDb.subscriptions, articlesStore.savedGuids);
+        const result = await fetchAllFeeds(liveDb.subscriptions, articlesStore.savedGuids);
+        newArticles = result.newArticles;
       }
 
       lastRefreshAt = Date.now();
@@ -143,6 +146,8 @@ function createAppManager() {
         phase = 'ready';
       }
     }
+
+    return newArticles;
   }
 
   /**
