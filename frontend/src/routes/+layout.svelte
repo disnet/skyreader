@@ -16,6 +16,7 @@
 
   let { children } = $props();
   let updateAvailable = $state(false);
+  let updateLoading = $state(false);
   let waitingWorker: ServiceWorker | null = null;
 
   let pageTitle = $derived.by(() => {
@@ -53,9 +54,8 @@
   }
 
   function applyUpdate() {
+    updateLoading = true;
     waitingWorker?.postMessage({ type: 'SKIP_WAITING' });
-    // controllerchange listener will reload, but fallback in case it doesn't fire
-    setTimeout(() => window.location.reload(), 1000);
   }
 
   // Detect new service worker versions
@@ -226,7 +226,14 @@
 {#if updateAvailable}
   <div class="update-banner">
     <span>A new version of Skyreader is available.</span>
-    <button class="update-btn" onclick={applyUpdate}>Update</button>
+    <button class="update-btn" onclick={applyUpdate} disabled={updateLoading}>
+      {#if updateLoading}
+        <span class="update-spinner"></span>
+        Updating…
+      {:else}
+        Update
+      {/if}
+    </button>
   </div>
 {/if}
 
@@ -472,8 +479,30 @@
     white-space: nowrap;
   }
 
-  .update-btn:hover {
+  .update-btn:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.9);
+  }
+
+  .update-btn:disabled {
+    opacity: 0.8;
+    cursor: wait;
+  }
+
+  .update-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(0, 102, 204, 0.3);
+    border-top-color: var(--color-primary, #0066cc);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    vertical-align: middle;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .scope-upgrade-banner {
@@ -518,6 +547,16 @@
     /* Hide floating hamburger - mobile header in page handles this now */
     .mobile-menu-btn {
       display: none;
+    }
+
+    .update-banner {
+      bottom: auto;
+      top: 0;
+      left: 0;
+      transform: none;
+      width: 100%;
+      border-radius: 0;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
     }
   }
 </style>
