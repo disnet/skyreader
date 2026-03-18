@@ -26,7 +26,10 @@ self.addEventListener('install', (event) => {
       await cache.add('/');
     })
   );
-  self.skipWaiting();
+  // Do NOT call skipWaiting() here. Activating a new SW while old pages are
+  // still running deletes their cached assets (via the activate handler) and
+  // breaks the page. Instead, the app sends a SKIP_WAITING message when the
+  // user explicitly accepts the update.
 });
 
 self.addEventListener('activate', (event) => {
