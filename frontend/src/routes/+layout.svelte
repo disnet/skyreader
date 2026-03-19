@@ -17,7 +17,6 @@
 
   let { children } = $props();
   let updateAvailable = $state(false);
-  let updateLoading = $state(false);
   let waitingWorker: ServiceWorker | null = null;
 
   let pageTitle = $derived.by(() => {
@@ -55,24 +54,6 @@
   }
 
   function applyUpdate() {
-    updateLoading = true;
-
-    // Fallback: if controllerchange doesn't fire within 3s, reload anyway.
-    // The new SW may have activated but the event didn't reach us.
-    const fallbackTimer = setTimeout(() => {
-      window.location.reload();
-    }, 3000);
-
-    // Also watch the waiting worker directly for activation
-    if (waitingWorker) {
-      waitingWorker.addEventListener('statechange', () => {
-        if (waitingWorker!.state === 'activated') {
-          clearTimeout(fallbackTimer);
-          window.location.reload();
-        }
-      });
-    }
-
     waitingWorker?.postMessage({ type: 'SKIP_WAITING' });
   }
 
@@ -80,19 +61,17 @@
   onMount(() => {
     if (!browser || !('serviceWorker' in navigator)) return;
 
-    // Reload when a new SW takes control (after SKIP_WAITING)
+    // Reload when the new SW takes control (after SKIP_WAITING → skipWaiting → activate → clients.claim)
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       window.location.reload();
     });
 
     navigator.serviceWorker.ready.then((registration) => {
-      // Check if there's already a waiting worker
       if (registration.waiting) {
         waitingWorker = registration.waiting;
         updateAvailable = true;
       }
 
-      // Listen for new workers that finish installing
       registration.addEventListener('updatefound', () => {
         const newWorker = registration.installing;
         if (!newWorker) return;
@@ -245,14 +224,7 @@
 {#if updateAvailable}
   <div class="update-banner">
     <span>A new version of Skyreader is available.</span>
-    <button class="update-btn" onclick={applyUpdate} disabled={updateLoading}>
-      {#if updateLoading}
-        <span class="update-spinner"></span>
-        Updating…
-      {:else}
-        Update
-      {/if}
-    </button>
+    <button class="update-btn" onclick={applyUpdate}> Update </button>
   </div>
 {/if}
 
@@ -498,30 +470,8 @@
     white-space: nowrap;
   }
 
-  .update-btn:hover:not(:disabled) {
+  .update-btn:hover {
     background: rgba(255, 255, 255, 0.9);
-  }
-
-  .update-btn:disabled {
-    opacity: 0.8;
-    cursor: wait;
-  }
-
-  .update-spinner {
-    display: inline-block;
-    width: 12px;
-    height: 12px;
-    border: 2px solid rgba(0, 102, 204, 0.3);
-    border-top-color: var(--color-primary, #0066cc);
-    border-radius: 50%;
-    animation: spin 0.6s linear infinite;
-    vertical-align: middle;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
 
   .scope-upgrade-banner {

@@ -27,18 +27,29 @@ self.addEventListener('install', (event) => {
     })
   );
   // Do NOT call skipWaiting() here. Activating a new SW while old pages are
-  // still running deletes their cached assets (via the activate handler) and
-  // breaks the page. Instead, the app sends a SKIP_WAITING message when the
-  // user explicitly accepts the update.
+  // still running can break lazily-loaded code-split chunks whose filenames
+  // changed between builds. Instead, the app sends a SKIP_WAITING message
+  // when the user explicitly accepts the update.
+});
+
+// Listen for messages from the app
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => {
-      return Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)));
-    })
+    caches
+      .keys()
+      .then((keys) => {
+        return Promise.all(
+          keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
+        );
+      })
+      .then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
 self.addEventListener('fetch', (event) => {
@@ -127,13 +138,6 @@ if (typeof self.registration !== 'undefined' && 'sync' in self.registration) {
     }
   });
 }
-
-// Listen for messages from the app
-self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'SKIP_WAITING') {
-    self.skipWaiting();
-  }
-});
 
 // Periodic background sync handler (Chromium only)
 self.addEventListener('periodicsync', (event: Event) => {
