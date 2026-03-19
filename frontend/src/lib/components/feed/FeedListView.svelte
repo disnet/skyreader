@@ -16,9 +16,10 @@
     onToggleSave: (article: Article) => void;
     onShare: (article: Article, sub: (typeof subscriptionsStore.subscriptions)[0]) => void;
     onUnshare: (guid: string) => void;
+    onReaderChange?: (open: boolean) => void;
   }
 
-  let { onToggleSave, onShare, onUnshare }: Props = $props();
+  let { onToggleSave, onShare, onUnshare, onReaderChange }: Props = $props();
 
   // Reader overlay state — readerItem holds the data, page.state.readerOpen drives history
   let readerItem = $state<FeedDisplayItem | null>(null);
@@ -28,6 +29,7 @@
   $effect(() => {
     if (!page.state.readerOpen && readerItem) {
       readerItem = null;
+      onReaderChange?.(false);
       requestAnimationFrame(() => {
         window.scrollTo(0, savedScrollY);
       });
@@ -38,10 +40,12 @@
     savedScrollY = window.scrollY;
     readerItem = item;
     pushState('', { readerOpen: true });
+    onReaderChange?.(true);
   }
 
   function closeReader() {
     readerItem = null;
+    onReaderChange?.(false);
     history.back();
     requestAnimationFrame(() => {
       window.scrollTo(0, savedScrollY);
