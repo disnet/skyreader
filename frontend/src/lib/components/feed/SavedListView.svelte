@@ -10,6 +10,12 @@
   import { savesStore } from '$lib/stores/saves.svelte';
   import type { ItemLabelType } from '$lib/types';
 
+  interface Props {
+    onReaderChange?: (open: boolean) => void;
+  }
+
+  let { onReaderChange }: Props = $props();
+
   let readerItem = $state<FeedDisplayItem | null>(null);
   let savedScrollY = 0;
 
@@ -32,6 +38,7 @@
   $effect(() => {
     if (!page.state.readerOpen && readerItem) {
       readerItem = null;
+      onReaderChange?.(false);
       requestAnimationFrame(() => {
         window.scrollTo(0, savedScrollY);
       });
@@ -42,10 +49,12 @@
     savedScrollY = window.scrollY;
     readerItem = item;
     pushState('', { readerOpen: true });
+    onReaderChange?.(true);
   }
 
   function closeReader() {
     readerItem = null;
+    onReaderChange?.(false);
     history.back();
     requestAnimationFrame(() => {
       window.scrollTo(0, savedScrollY);

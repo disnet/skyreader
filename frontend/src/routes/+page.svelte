@@ -44,6 +44,7 @@
   });
   let feedSwitcherOpen = $state(false);
   let filterSheetOpen = $state(false);
+  let readerOpen = $state(false);
 
   function scrollToTop() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -448,33 +449,35 @@
   <WelcomePage />
 {:else}
   <div class="feed-page">
-    <FeedPageHeader
-      title={pageTitle}
-      feedId={feedViewStore.feedFilter ? parseInt(feedViewStore.feedFilter) : undefined}
-      expandAllItems={preferences.expandAllItems}
-      lastRefreshAt={appManager.lastRefreshAt}
-      isRefreshing={appManager.isRefreshing}
-      controlsVisible={scrollDirection.controlsVisible}
-      onToggleExpandAll={(value) => {
-        preferences.setExpandAllItems(value);
-        if (!value) {
-          feedViewStore.resetSelection();
-        }
-      }}
-      onRefresh={handleRefreshWithToast}
-      onMarkAllAsRead={!feedViewStore.savedFilter && !feedViewStore.sharedFilter
-        ? markAllAsReadInCurrentView
-        : undefined}
-      onEdit={feedViewStore.feedFilter ? handleEditFeed : undefined}
-      onDelete={feedViewStore.feedFilter
-        ? () => removeFeed(parseInt(feedViewStore.feedFilter!))
-        : undefined}
-      showSourceFilter={!feedViewStore.feedFilter &&
-        !feedViewStore.savedFilter &&
-        !feedViewStore.sharedFilter &&
-        !feedViewStore.sharerFilter &&
-        !feedViewStore.followingFilter}
-    />
+    {#if !readerOpen}
+      <FeedPageHeader
+        title={pageTitle}
+        feedId={feedViewStore.feedFilter ? parseInt(feedViewStore.feedFilter) : undefined}
+        expandAllItems={preferences.expandAllItems}
+        lastRefreshAt={appManager.lastRefreshAt}
+        isRefreshing={appManager.isRefreshing}
+        controlsVisible={scrollDirection.controlsVisible}
+        onToggleExpandAll={(value) => {
+          preferences.setExpandAllItems(value);
+          if (!value) {
+            feedViewStore.resetSelection();
+          }
+        }}
+        onRefresh={handleRefreshWithToast}
+        onMarkAllAsRead={!feedViewStore.savedFilter && !feedViewStore.sharedFilter
+          ? markAllAsReadInCurrentView
+          : undefined}
+        onEdit={feedViewStore.feedFilter ? handleEditFeed : undefined}
+        onDelete={feedViewStore.feedFilter
+          ? () => removeFeed(parseInt(feedViewStore.feedFilter!))
+          : undefined}
+        showSourceFilter={!feedViewStore.feedFilter &&
+          !feedViewStore.savedFilter &&
+          !feedViewStore.sharedFilter &&
+          !feedViewStore.sharerFilter &&
+          !feedViewStore.followingFilter}
+      />
+    {/if}
 
     <PullToRefresh
       onRefresh={handleRefreshWithToast}
@@ -532,7 +535,7 @@
           />
         {/if}
       {:else if isSavedView}
-        <SavedListView bind:this={savedListView} />
+        <SavedListView bind:this={savedListView} onReaderChange={(open) => (readerOpen = open)} />
       {:else}
         <FeedListView
           bind:this={feedListView}
@@ -561,11 +564,12 @@
               article.publishedAt
             )}
           onUnshare={(guid) => sharesStore.unshare(guid)}
+          onReaderChange={(open) => (readerOpen = open)}
         />
       {/if}
     </PullToRefresh>
 
-    {#if mobileStore.isMobile}
+    {#if mobileStore.isMobile && !readerOpen}
       <MobileBottomBar
         controlsVisible={scrollDirection.controlsVisible}
         currentTitle={pageTitle}
