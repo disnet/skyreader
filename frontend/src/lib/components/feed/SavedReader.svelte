@@ -218,14 +218,27 @@
     }
   }
 
-  // Register keydown on document capture phase so the reader intercepts keys
-  // before the global keyboard store (which listens on window bubble phase).
-  // This prevents duplicate tag menus and other shortcut conflicts.
+  // Lock body scroll and prevent touch events from bubbling to PullToRefresh
+  // while the reader overlay is open.
+  function stopTouchPropagation(e: TouchEvent) {
+    e.stopPropagation();
+  }
+
   onMount(() => {
+    document.body.style.overflow = 'hidden';
     document.addEventListener('keydown', handleKeydown, true);
+    // The reader is a DOM child of PullToRefresh, so touch events bubble up
+    // and trigger pull-to-refresh even though the reader is a fixed overlay.
+    overlayEl?.addEventListener('touchstart', stopTouchPropagation, { passive: true });
+    overlayEl?.addEventListener('touchmove', stopTouchPropagation, { passive: true });
+    overlayEl?.addEventListener('touchend', stopTouchPropagation, { passive: true });
   });
   onDestroy(() => {
+    document.body.style.overflow = '';
     document.removeEventListener('keydown', handleKeydown, true);
+    overlayEl?.removeEventListener('touchstart', stopTouchPropagation);
+    overlayEl?.removeEventListener('touchmove', stopTouchPropagation);
+    overlayEl?.removeEventListener('touchend', stopTouchPropagation);
   });
 
   // Paragraph tracking for read progress
