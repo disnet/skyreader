@@ -11,15 +11,24 @@
   import { sharesStore } from '$lib/stores/shares.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import type { Article, SocialDocument } from '$lib/types';
+  import {
+    extractSembleMetadata,
+    extractMarginMetadata,
+    type SembleMetadata,
+    type MarginMetadata,
+  } from '$lib/utils/displayItem';
 
   interface Props {
     onToggleSave: (article: Article) => void;
     onShare: (article: Article, sub: (typeof subscriptionsStore.subscriptions)[0]) => void;
     onUnshare: (guid: string) => void;
     onReaderChange?: (open: boolean) => void;
+    onSaveToSemble?: (data: SembleMetadata) => void;
+    onSaveToMargin?: (data: MarginMetadata) => void;
   }
 
-  let { onToggleSave, onShare, onUnshare, onReaderChange }: Props = $props();
+  let { onToggleSave, onShare, onUnshare, onReaderChange, onSaveToSemble, onSaveToMargin }: Props =
+    $props();
 
   // Reader overlay state — readerItem holds the data, page.state.readerOpen drives history
   let readerItem = $state<FeedDisplayItem | null>(null);
@@ -175,6 +184,16 @@
     return articleElements;
   }
 
+  function handleReaderSemble() {
+    if (!readerItem || !onSaveToSemble) return;
+    onSaveToSemble(extractSembleMetadata(readerItem));
+  }
+
+  function handleReaderMargin() {
+    if (!readerItem || !onSaveToMargin) return;
+    onSaveToMargin(extractMarginMetadata(readerItem));
+  }
+
   export { scrollToCenter };
 </script>
 
@@ -186,6 +205,8 @@
     onShare={readerItem.type === 'article' || readerItem.type === 'userShare'
       ? handleReaderShare
       : undefined}
+    onSaveToSemble={onSaveToSemble ? handleReaderSemble : undefined}
+    onSaveToMargin={onSaveToMargin ? handleReaderMargin : undefined}
   />
 {/if}
 
@@ -214,6 +235,12 @@
           onSelect={() => handleSelect(index)}
           onExpand={() => handleExpand(index)}
           onOpenFullscreen={() => openReader(displayItem)}
+          onSaveToSemble={onSaveToSemble
+            ? () => onSaveToSemble(extractSembleMetadata(displayItem))
+            : undefined}
+          onSaveToMargin={onSaveToMargin
+            ? () => onSaveToMargin(extractMarginMetadata(displayItem))
+            : undefined}
         />
       {:else if displayItem.type === 'share'}
         {@const share = displayItem.item}
@@ -258,6 +285,12 @@
           onSelect={() => handleSelect(index)}
           onExpand={() => handleExpand(index)}
           onOpenFullscreen={() => openReader(displayItem)}
+          onSaveToSemble={onSaveToSemble
+            ? () => onSaveToSemble(extractSembleMetadata(displayItem))
+            : undefined}
+          onSaveToMargin={onSaveToMargin
+            ? () => onSaveToMargin(extractMarginMetadata(displayItem))
+            : undefined}
         />
       {:else if displayItem.type === 'userShare'}
         {@const share = displayItem.item}
@@ -282,6 +315,12 @@
           onSelect={() => handleSelect(index)}
           onExpand={() => handleExpand(index)}
           onOpenFullscreen={() => openReader(displayItem)}
+          onSaveToSemble={onSaveToSemble
+            ? () => onSaveToSemble(extractSembleMetadata(displayItem))
+            : undefined}
+          onSaveToMargin={onSaveToMargin
+            ? () => onSaveToMargin(extractMarginMetadata(displayItem))
+            : undefined}
         />
       {:else if displayItem.type === 'document'}
         {@const doc = displayItem.item}
@@ -311,6 +350,12 @@
           onSelect={() => handleSelect(index)}
           onExpand={() => handleExpand(index)}
           onOpenFullscreen={() => openReader(displayItem)}
+          onSaveToSemble={onSaveToSemble
+            ? () => onSaveToSemble(extractSembleMetadata(displayItem))
+            : undefined}
+          onSaveToMargin={onSaveToMargin
+            ? () => onSaveToMargin(extractMarginMetadata(displayItem))
+            : undefined}
         />
       {/if}
     </div>

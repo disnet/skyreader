@@ -13,6 +13,8 @@
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
   import { profileService } from '$lib/services/profiles';
+  import { api, ScopeUpgradeError } from '$lib/services/api';
+  import { syncQueue, type IntegrationPayload } from '$lib/services/sync-queue';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import LoadingState from '$lib/components/LoadingState.svelte';
   import WelcomePage from '$lib/components/feed/WelcomePage.svelte';
@@ -24,6 +26,9 @@
   import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
   import MobileFilterSheet from '$lib/components/feed/MobileFilterSheet.svelte';
   import PullToRefresh from '$lib/components/PullToRefresh.svelte';
+  import CollectionPicker, {
+    type CollectionSelection,
+  } from '$lib/components/CollectionPicker.svelte';
 
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import { useScrollDirection } from '$lib/hooks/useScrollDirection.svelte';
@@ -45,6 +50,95 @@
   let feedSwitcherOpen = $state(false);
   let filterSheetOpen = $state(false);
   let readerOpen = $state(false);
+
+  // Integration collection picker state
+  let collectionPickerOpen = $state(false);
+  let collectionPickerIntegration = $state<'semble' | 'margin'>('semble');
+  let pendingIntegrationData = $state<{
+    url: string;
+    title?: string;
+    description?: string;
+    author?: string;
+    publishedAt?: string;
+  } | null>(null);
+
+  function handleSaveToSemble(data: {
+    url: string;
+    title?: string;
+    description?: string;
+    author?: string;
+    publishedAt?: string;
+  }) {
+    pendingIntegrationData = data;
+    collectionPickerIntegration = 'semble';
+    collectionPickerOpen = true;
+  }
+
+  function handleSaveToMargin(data: { url: string; title?: string; description?: string }) {
+    pendingIntegrationData = data;
+    collectionPickerIntegration = 'margin';
+    collectionPickerOpen = true;
+  }
+
+  async function handleCollectionSelected(collection: CollectionSelection | null) {
+    collectionPickerOpen = false;
+    const data = pendingIntegrationData;
+    if (!data) return;
+    pendingIntegrationData = null;
+
+    const integrationType = collectionPickerIntegration;
+    const isMargin = integrationType === 'margin';
+    const label = isMargin ? 'Margin' : 'Semble';
+
+    const payload: IntegrationPayload = {
+      type: integrationType,
+      url: data.url,
+      title: data.title,
+      description: data.description,
+      author: data.author,
+      publishedAt: data.publishedAt,
+      collectionUri: collection?.uri,
+      collectionCid: collection?.cid,
+    };
+
+    if (syncStore.isOnline) {
+      const id = toastStore.add(`Saving to ${label}...`);
+      try {
+        if (isMargin) {
+          await api.createMarginBookmark({
+            url: data.url,
+            title: data.title,
+            description: data.description,
+            collectionUri: collection?.uri,
+          });
+        } else {
+          await api.createSembleCard({
+            ...data,
+            collectionUri: collection?.uri,
+            collectionCid: collection?.cid,
+          });
+        }
+        toastStore.update(id, 'success', `Saved to ${label}`);
+      } catch (err) {
+        if (err instanceof ScopeUpgradeError) {
+          toastStore.update(id, 'error', 'Please log in again to grant integration permissions');
+          return;
+        }
+        console.error(`Failed to save to ${label}, queueing:`, err);
+        await syncQueue.enqueue('create', 'integration', data.url, payload);
+        toastStore.update(id, 'success', `Queued save to ${label}`);
+      }
+    } else {
+      await syncQueue.enqueue('create', 'integration', data.url, payload);
+      const id = toastStore.add(`Queued save to ${label}`);
+      toastStore.update(id, 'success');
+    }
+  }
+
+  function handleCollectionPickerClose() {
+    collectionPickerOpen = false;
+    pendingIntegrationData = null;
+  }
 
   function scrollToTop() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -444,6 +538,12 @@
 </script>
 
 <EditFeedModal open={editModalOpen} subscription={editingSubscription} onclose={closeEditModal} />
+<CollectionPicker
+  open={collectionPickerOpen}
+  integration={collectionPickerIntegration}
+  onselect={handleCollectionSelected}
+  onclose={handleCollectionPickerClose}
+/>
 
 {#if !auth.isAuthenticated}
   <WelcomePage />
@@ -535,7 +635,12 @@
           />
         {/if}
       {:else if isSavedView}
-        <SavedListView bind:this={savedListView} onReaderChange={(open) => (readerOpen = open)} />
+        <SavedListView
+          bind:this={savedListView}
+          onReaderChange={(open) => (readerOpen = open)}
+          onSaveToSemble={handleSaveToSemble}
+          onSaveToMargin={handleSaveToMargin}
+        />
       {:else}
         <FeedListView
           bind:this={feedListView}
@@ -565,6 +670,8 @@
             )}
           onUnshare={(guid) => sharesStore.unshare(guid)}
           onReaderChange={(open) => (readerOpen = open)}
+          onSaveToSemble={handleSaveToSemble}
+          onSaveToMargin={handleSaveToMargin}
         />
       {/if}
     </PullToRefresh>

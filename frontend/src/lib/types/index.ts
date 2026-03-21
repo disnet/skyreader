@@ -714,6 +714,30 @@ export interface ItemLabel {
   updatedAt: number; // epoch ms
 }
 
+// Integration types
+export interface IntegrationStatus {
+  scopeStatus: {
+    margin: boolean;
+    semble: boolean;
+  };
+}
+
+export interface SembleCollection {
+  uri: string;
+  cid: string;
+  name?: string;
+  description?: string;
+  createdAt?: string;
+}
+
+export interface MarginCollection {
+  uri: string;
+  cid: string;
+  name?: string;
+  description?: string;
+  createdAt?: string;
+}
+
 export interface TextQuoteSelector {
   type: 'TextQuoteSelector';
   exact: string;

@@ -138,3 +138,69 @@ export function getAuthorLabel(
   if (item.type === 'saved' && item.item.author) return `by ${item.item.author}`;
   return '';
 }
+
+/** Metadata shape for saving to Semble */
+export interface SembleMetadata {
+  url: string;
+  title?: string;
+  description?: string;
+  author?: string;
+  publishedAt?: string;
+}
+
+/** Metadata shape for saving to Margin */
+export interface MarginMetadata {
+  url: string;
+  title?: string;
+  description?: string;
+}
+
+/** Extract metadata for saving a display item to Semble */
+export function extractSembleMetadata(item: FeedDisplayItem): SembleMetadata {
+  switch (item.type) {
+    case 'article':
+      return {
+        url: item.item.url,
+        title: item.item.title,
+        description: item.item.summary,
+        author: item.item.author,
+        publishedAt: item.item.publishedAt,
+      };
+    case 'share':
+      return {
+        url: item.item.itemUrl,
+        title: item.item.itemTitle,
+        description: item.item.itemDescription,
+        publishedAt: item.item.itemPublishedAt,
+      };
+    case 'document':
+      return {
+        url: item.item.canonicalUrl || item.item.path || '',
+        title: item.item.title,
+        description: item.item.description,
+        publishedAt: item.item.publishedAt,
+      };
+    case 'saved':
+      return {
+        url: item.item.url,
+        title: item.item.title ?? undefined,
+        description: item.item.description ?? undefined,
+        author: item.item.author ?? undefined,
+        publishedAt: item.item.publishedAt ?? undefined,
+      };
+    case 'userShare':
+      return {
+        url: item.article.url,
+        title: item.article.title,
+        description: item.article.summary,
+        author: item.article.author,
+        publishedAt: item.article.publishedAt,
+      };
+  }
+}
+
+/** Extract metadata for saving a display item to Margin */
+export function extractMarginMetadata(item: FeedDisplayItem): MarginMetadata {
+  const data = extractSembleMetadata(item);
+  return { url: data.url, title: data.title, description: data.description };
+}

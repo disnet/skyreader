@@ -1,10 +1,13 @@
 import type {
   FeedItem,
   GroupedShare,
+  IntegrationStatus,
   ItemLabel,
   ItemLabelType,
+  MarginCollection,
   ParsedFeed,
   ReshareActivity,
+  SembleCollection,
   SocialDocument,
   SocialShare,
   User,
@@ -610,6 +613,46 @@ class ApiClient {
       method: 'PUT',
       body: JSON.stringify(settings),
     });
+  }
+
+  // Integrations
+  async getIntegrationStatus(): Promise<IntegrationStatus> {
+    return this.fetch('/api/integrations/status');
+  }
+
+  async createSembleCard(data: {
+    url: string;
+    title?: string;
+    description?: string;
+    author?: string;
+    publishedAt?: string;
+    collectionUri?: string;
+    collectionCid?: string;
+  }): Promise<{ uri: string; cid: string }> {
+    return this.fetch('/api/integrations/semble/cards', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async listSembleCollections(): Promise<{ collections: SembleCollection[] }> {
+    return this.fetch('/api/integrations/semble/collections');
+  }
+
+  async createMarginBookmark(data: {
+    url: string;
+    title?: string;
+    description?: string;
+    collectionUri?: string;
+  }): Promise<{ uri: string; cid: string }> {
+    return this.fetch('/api/integrations/margin/bookmarks', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async listMarginCollections(): Promise<{ collections: MarginCollection[] }> {
+    return this.fetch('/api/integrations/margin/collections');
   }
 
   // Fetch raw HTML via proxy (for client-side extraction)

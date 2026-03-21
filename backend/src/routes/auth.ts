@@ -45,8 +45,26 @@ export const GRANULAR_SCOPES = [
   'repo:app.skyreader.feed.saved',
 ].join(' ');
 
+// Integration-specific scopes (written to external app lexicons on user's PDS)
+export const SEMBLE_SCOPES = [
+  'repo:network.cosmik.card',
+  'repo:network.cosmik.collection',
+  'repo:network.cosmik.collectionLink',
+];
+export const MARGIN_SCOPES = [
+  'repo:at.margin.bookmark',
+  'repo:at.margin.collection',
+  'repo:at.margin.collectionItem',
+];
+
+// All possible scopes (base + all integrations) — used in client metadata
+export const ALL_POSSIBLE_SCOPES = [GRANULAR_SCOPES, ...SEMBLE_SCOPES, ...MARGIN_SCOPES].join(' ');
+
 // Check if granted scopes satisfy the required scopes
-export function hasRequiredScopes(grantedScopes: string | undefined): boolean {
+export function hasRequiredScopes(
+  grantedScopes: string | undefined,
+  additionalScopes?: string[]
+): boolean {
   if (!grantedScopes) {
     // Session without scope tracking - require re-auth
     return false;
@@ -56,6 +74,9 @@ export function hasRequiredScopes(grantedScopes: string | undefined): boolean {
 
   // Check if all required granular scopes are present
   const required = GRANULAR_SCOPES.split(' ');
+  if (additionalScopes) {
+    required.push(...additionalScopes);
+  }
   return required.every((scope) => granted.has(scope));
 }
 
@@ -169,7 +190,7 @@ export async function handleClientMetadata(request: Request, env: Env): Promise<
     redirect_uris: [`${baseUrl}/api/auth/callback`],
     grant_types: ['authorization_code', 'refresh_token'],
     response_types: ['code'],
-    scope: GRANULAR_SCOPES,
+    scope: ALL_POSSIBLE_SCOPES,
     token_endpoint_auth_method: 'private_key_jwt',
     token_endpoint_auth_signing_alg: 'ES256',
     jwks: await getClientJWKS(env),
@@ -216,6 +237,9 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
     // Get PDS URL from DID
     const pdsUrl = await getPdsFromDid(did);
 
+    // Always request all scopes (base + integrations)
+    const requestedScopes = ALL_POSSIBLE_SCOPES;
+
     // Fetch authorization server metadata
     const authMeta = await fetchAuthServerMetadata(pdsUrl);
 
@@ -245,7 +269,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
     // For public client (localhost): use AT Protocol's localhost exception
     // For confidential client (production): use metadata URL
     const clientId = isPublicClient
-      ? buildLocalhostClientId(redirectUri, GRANULAR_SCOPES)
+      ? buildLocalhostClientId(redirectUri, requestedScopes)
       : `${baseUrl}/.well-known/client-metadata`;
 
     // Build authorization URL
@@ -263,7 +287,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
           client_id: clientId,
           redirect_uri: redirectUri,
           response_type: 'code',
-          scope: GRANULAR_SCOPES,
+          scope: requestedScopes,
           state,
           code_challenge: codeChallenge,
           code_challenge_method: 'S256',
@@ -290,7 +314,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
               client_id: clientId,
               redirect_uri: redirectUri,
               response_type: 'code',
-              scope: GRANULAR_SCOPES,
+              scope: requestedScopes,
               state,
               code_challenge: codeChallenge,
               code_challenge_method: 'S256',
@@ -320,7 +344,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
         client_id: clientId,
         redirect_uri: redirectUri,
         response_type: 'code',
-        scope: GRANULAR_SCOPES,
+        scope: requestedScopes,
         state,
         code_challenge: codeChallenge,
         code_challenge_method: 'S256',
@@ -390,8 +414,10 @@ export async function handleAuthCallback(
 
     // For public client (localhost): use AT Protocol's localhost exception
     // For confidential client (production): use metadata URL
+    // Use the same scopes that were requested during login so the client_id matches
+    const callbackScopes = ALL_POSSIBLE_SCOPES;
     const clientId = isPublicClient
-      ? buildLocalhostClientId(redirectUri, GRANULAR_SCOPES)
+      ? buildLocalhostClientId(redirectUri, callbackScopes)
       : `${baseUrl}/.well-known/client-metadata`;
 
     // Build token request body - only include client assertion for confidential clients
@@ -575,7 +601,7 @@ export async function handleAuthCallback(
 
     // Create session
     // Use scope from token response if provided, otherwise use what we requested
-    const grantedScopes = tokenData.scope || GRANULAR_SCOPES;
+    const grantedScopes = tokenData.scope || callbackScopes;
 
     const sessionId = generateRandomString(32);
     const session: Session = {
@@ -759,8 +785,10 @@ export async function handleAuthLogout(request: Request, env: Env): Promise<Resp
 
         // For public client (localhost): use AT Protocol's localhost exception
         // For confidential client (production): use metadata URL
+        // Use the session's granted scopes so the client_id matches what was used during auth
+        const logoutScopes = session.grantedScopes || GRANULAR_SCOPES;
         const clientId = isPublicClient
-          ? buildLocalhostClientId(redirectUri, GRANULAR_SCOPES)
+          ? buildLocalhostClientId(redirectUri, logoutScopes)
           : `${baseUrl}/.well-known/client-metadata`;
 
         let dpopProof = await createDPoPProof(

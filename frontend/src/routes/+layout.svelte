@@ -254,16 +254,6 @@
 <div class="app">
   {#if !auth.isLoading}
     {#if auth.isAuthenticated}
-      {#if auth.scopeUpgradeRequired}
-        <div class="scope-upgrade-banner">
-          <span
-            >Your session was created with outdated permissions. Please <a href="/auth/login"
-              >log in again</a
-            > to restore full functionality.</span
-          >
-          <button class="dismiss-btn" onclick={() => auth.dismissScopeUpgrade()}>Dismiss</button>
-        </div>
-      {/if}
       <div class="app-container">
         <Sidebar />
         <button
@@ -274,6 +264,22 @@
           &#x2630;
         </button>
         <div class="main-wrapper">
+          {#if auth.scopeUpgradeRequired}
+            <div class="scope-upgrade-banner">
+              <span
+                >Your session was created with outdated permissions. Please
+                <button
+                  class="reauth-link"
+                  onclick={async () => {
+                    await auth.logout();
+                    goto('/auth/login');
+                  }}>log in again</button
+                > to restore full functionality.</span
+              >
+              <button class="dismiss-btn" onclick={() => auth.dismissScopeUpgrade()}>Dismiss</button
+              >
+            </div>
+          {/if}
           <main>
             {@render children()}
           </main>
@@ -332,13 +338,16 @@
     min-height: 100vh;
   }
 
-  /* Main wrapper next to sidebar */
+  /* Main wrapper next to sidebar — z-index ensures fixed overlays
+     (e.g. fullscreen reader at z-index:100) stack above the sticky sidebar (z-index:50) */
   .main-wrapper {
     flex: 1;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
     min-width: 0;
+    position: relative;
+    z-index: 51;
   }
 
   .header-full {
@@ -508,12 +517,21 @@
     gap: 1rem;
     font-size: 0.875rem;
     text-align: center;
+    position: sticky;
+    top: 0;
+    z-index: 11;
   }
 
-  .scope-upgrade-banner a {
+  .scope-upgrade-banner .reauth-link {
     color: inherit;
     font-weight: 600;
     text-decoration: underline;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: inherit;
+    cursor: pointer;
   }
 
   .scope-upgrade-banner .dismiss-btn {
