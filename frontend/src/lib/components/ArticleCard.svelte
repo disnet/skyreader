@@ -60,6 +60,8 @@
     onExpand,
     onFetchContent,
     onOpenFullscreen,
+    onSaveToSemble,
+    onSaveToMargin,
   }: {
     article?: Article;
     share?: SocialShare;
@@ -86,6 +88,8 @@
     onExpand?: () => void;
     onFetchContent?: () => void;
     onOpenFullscreen?: () => void;
+    onSaveToSemble?: () => void;
+    onSaveToMargin?: () => void;
   } = $props();
 
   // Determine if we're in share mode (showing someone else's share)
@@ -526,6 +530,28 @@
       feedViewStore.closeTagMenu();
     }
   }
+
+  function handleSaveToSemble(e: MouseEvent) {
+    e.stopPropagation();
+    onSaveToSemble?.();
+  }
+
+  function handleSaveToMargin(e: MouseEvent) {
+    e.stopPropagation();
+    onSaveToMargin?.();
+  }
+
+  function handleOverflowSemble(e: MouseEvent) {
+    e.stopPropagation();
+    overflowMenuOpen = false;
+    onSaveToSemble?.();
+  }
+
+  function handleOverflowMargin(e: MouseEvent) {
+    e.stopPropagation();
+    overflowMenuOpen = false;
+    onSaveToMargin?.();
+  }
 </script>
 
 <svelte:window onkeydown={handleParagraphKeydown} />
@@ -658,13 +684,14 @@
       class:floating={isActionBarFloating}
     >
       <div class="article-actions">
+        <!-- Save button -->
+        <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
+          <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
+            class="action-label">Save</span
+          >
+        </button>
+        <!-- Share button (restored to direct action) -->
         {#if isShareMode}
-          <!-- Share mode: bookmark, reshare -->
-          <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
-            <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
-              class="action-label">Save</span
-            >
-          </button>
           {#if auth.user}
             {#if hasReshared}
               <button class="action-btn reshared" onclick={handleUnreshare} disabled={isResharing}>
@@ -681,12 +708,6 @@
             {/if}
           {/if}
         {:else if isDocumentMode}
-          <!-- Document mode: bookmark, share -->
-          <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
-            <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
-              class="action-label">Save</span
-            >
-          </button>
           {#if auth.user}
             {#if hasSharedDocument}
               <button
@@ -704,28 +725,19 @@
               </button>
             {/if}
           {/if}
-        {:else}
-          <!-- Article mode: save, share -->
-          <button class="action-btn" class:saved={isSaved} onclick={handleSaveClick}>
-            <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
-              class="action-label">Save</span
-            >
+        {:else if isShared}
+          <button class="action-btn shared" onclick={handleUnshare}>
+            <span class="action-icon"><Icon name="share" size={16} /></span><span
+              class="action-label">Share</span
+            >{#if displayReshareCount > 0}<span class="reshare-count">({displayReshareCount})</span
+              >{/if}
           </button>
-          {#if isShared}
-            <button class="action-btn shared" onclick={handleUnshare}>
-              <span class="action-icon"><Icon name="share" size={16} /></span><span
-                class="action-label">Share</span
-              >{#if displayReshareCount > 0}<span class="reshare-count"
-                  >({displayReshareCount})</span
-                >{/if}
-            </button>
-          {:else}
-            <button class="action-btn" onclick={handleShare}
-              ><span class="action-icon"><Icon name="share" size={16} /></span><span
-                class="action-label">Share</span
-              ></button
-            >
-          {/if}
+        {:else}
+          <button class="action-btn" onclick={handleShare}
+            ><span class="action-icon"><Icon name="share" size={16} /></span><span
+              class="action-label">Share</span
+            ></button
+          >
         {/if}
         {#if onOpenFullscreen && hasContent}
           <button
@@ -756,8 +768,25 @@
             >Tag{#if itemTagCount > 0}<span class="tag-count">({itemTagCount})</span>{/if}</span
           >
         </button>
+        {#if onSaveToSemble}
+          <button class="action-btn collapsible-always" onclick={handleSaveToSemble}>
+            <span class="action-icon"><Icon name="semble" size={16} /></span><span
+              class="action-label">Semble</span
+            >
+          </button>
+        {/if}
+        {#if onSaveToMargin}
+          <button class="action-btn collapsible-always" onclick={handleSaveToMargin}>
+            <span class="action-icon"><Icon name="margin" size={16} /></span><span
+              class="action-label">Margin</span
+            >
+          </button>
+        {/if}
         <!-- Overflow menu: shown when inline buttons are collapsed -->
-        <div class="overflow-menu-wrapper">
+        <div
+          class="overflow-menu-wrapper"
+          class:has-integrations={onSaveToSemble || onSaveToMargin}
+        >
           <button
             class="action-btn overflow-trigger"
             class:tagged={itemTagCount > 0}
@@ -770,12 +799,12 @@
             <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
             <div class="overflow-backdrop" onclick={() => (overflowMenuOpen = false)}></div>
             <div class="overflow-menu">
-              <button class="overflow-menu-item" onclick={handleOverflowOpenUrl}>
+              <button class="overflow-menu-item narrow-only" onclick={handleOverflowOpenUrl}>
                 <Icon name="external-link" size={16} />
                 <span>Open in browser</span>
               </button>
               <button
-                class="overflow-menu-item"
+                class="overflow-menu-item narrow-only"
                 class:tagged={itemTagCount > 0}
                 onclick={handleOverflowTag}
               >
@@ -785,6 +814,18 @@
                     ({itemTagCount}){/if}</span
                 >
               </button>
+              {#if onSaveToSemble}
+                <button class="overflow-menu-item" onclick={handleOverflowSemble}>
+                  <Icon name="semble" size={16} />
+                  <span>Save to Semble</span>
+                </button>
+              {/if}
+              {#if onSaveToMargin}
+                <button class="overflow-menu-item" onclick={handleOverflowMargin}>
+                  <Icon name="margin" size={16} />
+                  <span>Save to Margin</span>
+                </button>
+              {/if}
             </div>
           {/if}
         </div>
@@ -1449,12 +1490,27 @@
     font-size: 0.875rem;
   }
 
-  /* Default: show inline buttons, hide overflow wrapper */
+  /* Always-collapsed items (integrations) — hidden inline, shown in overflow */
+  .action-btn.collapsible-always {
+    display: none;
+  }
+
+  /* Default: hide overflow wrapper unless integrations present */
   .overflow-menu-wrapper {
     display: none;
   }
 
-  /* Narrow: collapse Open & Tag into overflow, keep labels */
+  .overflow-menu-wrapper.has-integrations {
+    display: block;
+    position: relative;
+  }
+
+  /* Hide Open/Tag overflow items when their inline buttons are visible */
+  .overflow-menu-item.narrow-only {
+    display: none;
+  }
+
+  /* Narrow: collapse Open & Tag into overflow too */
   @container (max-width: 520px) {
     .action-btn.collapsible {
       display: none;
@@ -1462,6 +1518,9 @@
     .overflow-menu-wrapper {
       display: block;
       position: relative;
+    }
+    .overflow-menu-item.narrow-only {
+      display: flex;
     }
   }
 

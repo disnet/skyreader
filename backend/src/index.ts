@@ -54,6 +54,13 @@ import {
 } from './routes/saved';
 import { handleFetchHtml } from './routes/fetch-html';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
+import {
+  handleIntegrationStatus,
+  handleCreateSembleCard,
+  handleListSembleCollections,
+  handleCreateMarginBookmark,
+  handleListMarginCollections,
+} from './routes/integrations';
 import { handleFullSync, handleSyncSubscriptions, handleSyncStatus } from './routes/sync';
 import { getSessionFromRequest, updateUserActivity } from './services/oauth';
 import { checkRateLimit, cleanupRateLimits, getRateLimitConfig } from './services/rate-limit';
@@ -330,6 +337,42 @@ export default {
           } else {
             response = await handleGetSettings(request, env);
           }
+          break;
+
+        // Integration routes
+        case url.pathname === '/api/integrations/status':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleIntegrationStatus(request, env);
+          break;
+        case url.pathname === '/api/integrations/semble/cards':
+          if (!session) return unauthorizedResponse(headers);
+          if (request.method !== 'POST') {
+            response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+              status: 405,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          } else {
+            response = await handleCreateSembleCard(request, env);
+          }
+          break;
+        case url.pathname === '/api/integrations/semble/collections':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleListSembleCollections(request, env);
+          break;
+        case url.pathname === '/api/integrations/margin/bookmarks':
+          if (!session) return unauthorizedResponse(headers);
+          if (request.method !== 'POST') {
+            response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+              status: 405,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          } else {
+            response = await handleCreateMarginBookmark(request, env);
+          }
+          break;
+        case url.pathname === '/api/integrations/margin/collections':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleListMarginCollections(request, env);
           break;
 
         // Sync routes

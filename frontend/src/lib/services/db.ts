@@ -24,7 +24,8 @@ export interface SyncQueueEntry {
     | 'socialReading'
     | 'follows'
     | 'label'
-    | 'saved';
+    | 'saved'
+    | 'integration';
   key: string; // Deduplication key (e.g., articleGuid, rkey)
   payload: string; // JSON-serialized data
   timestamp: number;

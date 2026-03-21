@@ -29,6 +29,8 @@
     onRemove,
     onToggleSave,
     onShare,
+    onSaveToSemble,
+    onSaveToMargin,
   }: {
     readerItem: FeedDisplayItem;
     onClose: () => void;
@@ -36,6 +38,8 @@
     onRemove?: () => void;
     onToggleSave?: () => void;
     onShare?: () => void;
+    onSaveToSemble?: () => void;
+    onSaveToMargin?: () => void;
   } = $props();
 
   let styleMenuOpen = $state(false);
@@ -159,6 +163,22 @@
         label: 'Share',
         icon: 'share',
         onclick: () => onShare!(),
+      });
+    }
+
+    if (onSaveToSemble) {
+      items.push({
+        label: 'Save to Semble',
+        icon: 'semble',
+        onclick: () => onSaveToSemble!(),
+      });
+    }
+
+    if (onSaveToMargin) {
+      items.push({
+        label: 'Save to Margin',
+        icon: 'margin',
+        onclick: () => onSaveToMargin!(),
       });
     }
 
@@ -497,6 +517,30 @@
                 >
                   <Icon name="share" size={18} />
                   <span>Share</span>
+                </button>
+              {/if}
+              {#if onSaveToSemble}
+                <button
+                  class="sheet-action-btn"
+                  onclick={() => {
+                    onSaveToSemble!();
+                    styleSheetOpen = false;
+                  }}
+                >
+                  <Icon name="semble" size={18} />
+                  <span>Save to Semble</span>
+                </button>
+              {/if}
+              {#if onSaveToMargin}
+                <button
+                  class="sheet-action-btn"
+                  onclick={() => {
+                    onSaveToMargin!();
+                    styleSheetOpen = false;
+                  }}
+                >
+                  <Icon name="margin" size={18} />
+                  <span>Save to Margin</span>
                 </button>
               {/if}
               <button

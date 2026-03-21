@@ -9,12 +9,20 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import type { ItemLabelType } from '$lib/types';
+  import {
+    extractSembleMetadata,
+    extractMarginMetadata,
+    type SembleMetadata,
+    type MarginMetadata,
+  } from '$lib/utils/displayItem';
 
   interface Props {
     onReaderChange?: (open: boolean) => void;
+    onSaveToSemble?: (data: SembleMetadata) => void;
+    onSaveToMargin?: (data: MarginMetadata) => void;
   }
 
-  let { onReaderChange }: Props = $props();
+  let { onReaderChange, onSaveToSemble, onSaveToMargin }: Props = $props();
 
   let readerItem = $state<FeedDisplayItem | null>(null);
   let savedScrollY = 0;
@@ -156,6 +164,12 @@
       handleRemoveBookmark(readerItem!);
       closeReader();
     }}
+    onSaveToSemble={onSaveToSemble
+      ? () => onSaveToSemble(extractSembleMetadata(readerItem!))
+      : undefined}
+    onSaveToMargin={onSaveToMargin
+      ? () => onSaveToMargin(extractMarginMetadata(readerItem!))
+      : undefined}
   />
 {/if}
 
@@ -169,6 +183,12 @@
         onHover={() => handleSelect(index)}
         onArchive={() => handleArchive(displayItem)}
         onRemove={() => handleRemoveBookmark(displayItem)}
+        onSaveToSemble={onSaveToSemble
+          ? () => onSaveToSemble(extractSembleMetadata(displayItem))
+          : undefined}
+        onSaveToMargin={onSaveToMargin
+          ? () => onSaveToMargin(extractMarginMetadata(displayItem))
+          : undefined}
       />
     </div>
   {/each}

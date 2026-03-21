@@ -10,7 +10,8 @@ export type SyncCollection =
   | 'shareReading'
   | 'socialReading'
   | 'label'
-  | 'saved';
+  | 'saved'
+  | 'integration';
 
 // Payload types for each collection
 export interface ReadingPayload {
@@ -75,13 +76,25 @@ export interface SavedPayload {
   domain?: string;
 }
 
+export interface IntegrationPayload {
+  type: 'semble' | 'margin';
+  url: string;
+  title?: string;
+  description?: string;
+  author?: string;
+  publishedAt?: string;
+  collectionUri?: string;
+  collectionCid?: string;
+}
+
 type SyncPayload =
   | ReadingPayload
   | SharePayload
   | ShareReadingPayload
   | SocialReadingPayload
   | LabelPayload
-  | SavedPayload;
+  | SavedPayload
+  | IntegrationPayload;
 
 class SyncQueue {
   private processing = false;
@@ -415,6 +428,9 @@ class SyncQueue {
       case 'saved':
         await this.executeSavedOperation(entry.operation, payload as SavedPayload);
         break;
+      case 'integration':
+        await this.executeIntegrationOperation(entry.operation, payload as IntegrationPayload);
+        break;
     }
   }
 
@@ -563,6 +579,32 @@ class SyncQueue {
           await api.deleteSaved(payload.rkey);
         }
         break;
+    }
+  }
+
+  private async executeIntegrationOperation(
+    operation: SyncOperation,
+    payload: IntegrationPayload
+  ): Promise<void> {
+    if (operation !== 'create') return;
+
+    if (payload.type === 'margin') {
+      await api.createMarginBookmark({
+        url: payload.url,
+        title: payload.title,
+        description: payload.description,
+        collectionUri: payload.collectionUri,
+      });
+    } else {
+      await api.createSembleCard({
+        url: payload.url,
+        title: payload.title,
+        description: payload.description,
+        author: payload.author,
+        publishedAt: payload.publishedAt,
+        collectionUri: payload.collectionUri,
+        collectionCid: payload.collectionCid,
+      });
     }
   }
 

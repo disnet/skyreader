@@ -18,6 +18,8 @@
     onArchive,
     onRemove,
     onHover,
+    onSaveToSemble,
+    onSaveToMargin,
   }: {
     displayItem: FeedDisplayItem;
     selected?: boolean;
@@ -25,6 +27,8 @@
     onArchive?: () => void;
     onRemove?: () => void;
     onHover?: () => void;
+    onSaveToSemble?: () => void;
+    onSaveToMargin?: () => void;
   } = $props();
 
   // Normalize data across item types
@@ -252,6 +256,20 @@
         },
       },
     ];
+    if (onSaveToSemble) {
+      items.push({
+        label: 'Save to Semble',
+        icon: 'semble',
+        onclick: () => onSaveToSemble!(),
+      });
+    }
+    if (onSaveToMargin) {
+      items.push({
+        label: 'Save to Margin',
+        icon: 'margin',
+        onclick: () => onSaveToMargin!(),
+      });
+    }
     if (onRemove) {
       items.push({
         label: 'Delete',
