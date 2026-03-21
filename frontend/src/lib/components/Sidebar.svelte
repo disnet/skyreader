@@ -257,7 +257,17 @@
   <div class="sidebar-header">
     <a href="/settings" class="user-info" onclick={() => sidebarStore.closeMobile()}>
       {#if auth.user?.avatarUrl}
-        <img src={auth.user.avatarUrl} alt="" class="avatar" />
+        <img
+          src={auth.user.avatarUrl}
+          alt=""
+          class="avatar"
+          onerror={(e) => {
+            const img = e.currentTarget as HTMLImageElement;
+            img.style.display = 'none';
+            img.nextElementSibling?.classList.remove('hidden');
+          }}
+        />
+        <div class="avatar-placeholder hidden"></div>
       {:else}
         <div class="avatar-placeholder"></div>
       {/if}
@@ -536,6 +546,10 @@
     border-radius: 50%;
     background: var(--color-border);
     flex-shrink: 0;
+  }
+
+  .avatar-placeholder.hidden {
+    display: none;
   }
 
   .username {

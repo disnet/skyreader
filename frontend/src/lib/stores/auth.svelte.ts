@@ -2,6 +2,7 @@ import { browser } from '$app/environment';
 import { api } from '$lib/services/api';
 import { clearAllData } from '$lib/services/db';
 import { unregisterPeriodicSync } from '$lib/services/backgroundRefresh';
+import { profileService } from '$lib/services/profiles';
 import type { User } from '$lib/types';
 
 interface AuthState {
@@ -31,6 +32,33 @@ function createAuthStore() {
     }
   }
 
+  // Refresh profile data from Bluesky public API (non-blocking)
+  async function refreshProfile() {
+    const user = state.user;
+    if (!user?.did) return;
+
+    try {
+      const profile = await profileService.getProfile(user.did);
+      if (!profile) return;
+
+      // Check if anything changed
+      const avatarChanged = profile.avatar !== user.avatarUrl;
+      const handleChanged = profile.handle !== user.handle;
+      const displayNameChanged = (profile.displayName || undefined) !== user.displayName;
+
+      if (avatarChanged || handleChanged || displayNameChanged) {
+        setUser({
+          ...user,
+          avatarUrl: profile.avatar,
+          handle: profile.handle,
+          displayName: profile.displayName,
+        });
+      }
+    } catch {
+      // Non-critical, fail silently
+    }
+  }
+
   // Restore session from localStorage on init
   // User data is cached for display, but session is verified via cookie
   if (browser) {
@@ -52,6 +80,18 @@ function createAuthStore() {
     // Set up scope upgrade handler
     api.setOnScopeUpgradeRequired(() => {
       state.scopeUpgradeRequired = true;
+    });
+
+    // Refresh profile on init (non-blocking)
+    if (state.user) {
+      refreshProfile();
+    }
+
+    // Refresh profile when tab becomes visible again
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && state.user) {
+        refreshProfile();
+      }
     });
   }
 

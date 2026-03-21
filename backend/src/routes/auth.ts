@@ -638,14 +638,15 @@ export async function handleAuthCallback(
     // Store/update user in D1 BEFORE storing session (sessions table has FK to users)
     await env.DB.prepare(
       `
-      INSERT INTO users (did, handle, display_name, avatar_url, pds_url, updated_at, registered_at)
-      VALUES (?, ?, ?, ?, ?, unixepoch(), unixepoch())
+      INSERT INTO users (did, handle, display_name, avatar_url, pds_url, updated_at, registered_at, profile_updated_at)
+      VALUES (?, ?, ?, ?, ?, unixepoch(), unixepoch(), unixepoch())
       ON CONFLICT(did) DO UPDATE SET
         handle = excluded.handle,
         display_name = excluded.display_name,
         avatar_url = excluded.avatar_url,
         pds_url = excluded.pds_url,
         updated_at = unixepoch(),
+        profile_updated_at = unixepoch(),
         registered_at = COALESCE(users.registered_at, unixepoch())
     `
     )
@@ -700,6 +701,8 @@ export async function handleAuthCallback(
   }
 }
 
+const PROFILE_REFRESH_INTERVAL = 24 * 60 * 60; // 24 hours in seconds
+
 export async function handleAuthMe(request: Request, env: Env): Promise<Response> {
   const session = await getSessionFromRequest(request, env);
 
@@ -713,12 +716,56 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
   const tier = await getUserTier(env, session.did);
   const limits = getLimitsForTier(tier);
 
+  // Check if profile data is stale and refresh in the background
+  let { handle, displayName, avatarUrl } = session;
+  try {
+    const user = await env.DB.prepare('SELECT profile_updated_at FROM users WHERE did = ?')
+      .bind(session.did)
+      .first<{ profile_updated_at: number | null }>();
+
+    const now = Math.floor(Date.now() / 1000);
+    const profileAge = user?.profile_updated_at ? now - user.profile_updated_at : Infinity;
+
+    if (profileAge > PROFILE_REFRESH_INTERVAL) {
+      const profileUrl = `https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(session.did)}`;
+      const profileResponse = await fetch(profileUrl);
+
+      if (profileResponse.ok) {
+        const profile = (await profileResponse.json()) as {
+          handle: string;
+          displayName?: string;
+          avatar?: string;
+        };
+
+        handle = profile.handle;
+        displayName = profile.displayName;
+        avatarUrl = profile.avatar;
+
+        // Update users table and session
+        await env.DB.prepare(
+          `UPDATE users SET handle = ?, display_name = ?, avatar_url = ?, profile_updated_at = unixepoch(), updated_at = unixepoch() WHERE did = ?`
+        )
+          .bind(handle, displayName || null, avatarUrl || null, session.did)
+          .run();
+
+        await env.DB.prepare(
+          `UPDATE sessions SET handle = ?, display_name = ?, avatar_url = ? WHERE did = ?`
+        )
+          .bind(handle, displayName || null, avatarUrl || null, session.did)
+          .run();
+      }
+    }
+  } catch (error) {
+    // Non-critical: if profile refresh fails, return cached data
+    console.error('Profile refresh error:', error);
+  }
+
   return new Response(
     JSON.stringify({
       did: session.did,
-      handle: session.handle,
-      displayName: session.displayName,
-      avatarUrl: session.avatarUrl,
+      handle,
+      displayName,
+      avatarUrl,
       pdsUrl: session.pdsUrl,
       tier,
       limits,
