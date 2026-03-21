@@ -17,6 +17,7 @@
 
   let { children } = $props();
   let updateAvailable = $state(false);
+  let updating = $state(false);
   let waitingWorker: ServiceWorker | null = null;
 
   let pageTitle = $derived.by(() => {
@@ -54,12 +55,23 @@
   }
 
   function applyUpdate() {
+    updating = true;
     waitingWorker?.postMessage({ type: 'SKIP_WAITING' });
   }
 
   // Detect new service worker versions
   onMount(() => {
     if (!browser || !('serviceWorker' in navigator)) return;
+
+    // In dev mode, clean up any stale SW registrations and bail out.
+    // Vite serves a new SW on every load, which causes an infinite
+    // controllerchange → reload loop if a registration persists.
+    if (import.meta.env.DEV) {
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        registrations.forEach((reg) => reg.unregister());
+      });
+      return;
+    }
 
     // Reload when the new SW takes control (after SKIP_WAITING → skipWaiting → activate → clients.claim)
     navigator.serviceWorker.addEventListener('controllerchange', () => {
@@ -81,6 +93,13 @@
             updateAvailable = true;
           }
         });
+      });
+
+      // Check for updates when the tab regains focus
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          registration.update();
+        }
       });
     });
   });
@@ -223,8 +242,12 @@
 
 {#if updateAvailable}
   <div class="update-banner">
-    <span>A new version of Skyreader is available.</span>
-    <button class="update-btn" onclick={applyUpdate}> Update </button>
+    {#if updating}
+      <span>Updating...</span>
+    {:else}
+      <span>A new version of Skyreader is available.</span>
+      <button class="update-btn" onclick={applyUpdate}> Update </button>
+    {/if}
   </div>
 {/if}
 

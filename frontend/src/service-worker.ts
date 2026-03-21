@@ -17,15 +17,9 @@ const LAST_REFRESH_KEY = 'lastRefreshAt';
 const API_CACHE_ROUTES = ['/api/v2/feeds/fetch', '/api/social/feed', '/api/social/popular'];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(async (cache) => {
-      await cache.addAll(STATIC_ASSETS);
-      // Cache the SPA fallback page so the app shell works offline.
-      // adapter-static generates index.html but it's not included in
-      // $service-worker's build/files arrays.
-      await cache.add('/');
-    })
-  );
+  // Only cache the SPA fallback — static assets are cached lazily on fetch.
+  // This keeps install fast so the update banner appears quickly.
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.add('/')));
   // Do NOT call skipWaiting() here. Activating a new SW while old pages are
   // still running can break lazily-loaded code-split chunks whose filenames
   // changed between builds. Instead, the app sends a SKIP_WAITING message
@@ -61,11 +55,18 @@ self.addEventListener('fetch', (event) => {
   // Skip chrome-extension and other non-http schemes
   if (!url.protocol.startsWith('http')) return;
 
-  // Static assets: cache-first
+  // Static assets: cache-first, cache on miss (lazy population)
   if (STATIC_ASSETS.includes(url.pathname)) {
     event.respondWith(
       caches.match(event.request).then((cached) => {
-        return cached || fetch(event.request);
+        if (cached) return cached;
+        return fetch(event.request).then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        });
       })
     );
     return;
