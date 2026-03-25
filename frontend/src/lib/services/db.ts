@@ -307,6 +307,34 @@ export async function clearAllData(): Promise<void> {
   ]);
 }
 
+/**
+ * Verify IndexedDB is accessible and the Dexie schema is intact.
+ * If the database is corrupted or unavailable (common on iOS after long idle
+ * or under storage pressure), delete and recreate it so the app can start
+ * with an empty cache instead of white-screening.
+ *
+ * Returns true if healthy, false if the DB had to be reset.
+ */
+export async function checkDbHealth(): Promise<boolean> {
+  try {
+    // Attempt a lightweight read — this forces Dexie to open the DB and
+    // run any pending version upgrades.
+    await db.metadata.get('__health_check__');
+    return true;
+  } catch (e) {
+    console.error('IndexedDB health check failed, resetting database:', e);
+    try {
+      db.close();
+      await Dexie.delete('skyreader');
+      // Re-open so subsequent code can use db normally
+      await db.open();
+    } catch (resetError) {
+      console.error('Failed to reset IndexedDB:', resetError);
+    }
+    return false;
+  }
+}
+
 // Metadata helpers for persisting app state
 export async function getMetadata<T>(key: string): Promise<T | null> {
   const entry = await db.metadata.get(key);
