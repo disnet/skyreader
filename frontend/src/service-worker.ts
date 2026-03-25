@@ -100,18 +100,43 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Navigation requests: network with offline fallback
+  // Navigation requests: network-first with timeout, cache fallback.
+  // iOS PWAs can hang on fetch after long idle — the timeout ensures
+  // we fall back to the cached shell instead of showing a white screen.
   if (event.request.mode === 'navigate') {
+    const NAVIGATION_TIMEOUT_MS = 3000;
+
     event.respondWith(
-      fetch(event.request).catch(async () => {
-        const cached = await caches.match(event.request);
-        if (cached) return cached;
+      new Promise<Response>((resolve) => {
+        let settled = false;
 
-        // Return cached index for SPA navigation
-        const index = await caches.match('/');
-        if (index) return index;
+        const timer = setTimeout(async () => {
+          if (settled) return;
+          settled = true;
+          // Timeout — serve from cache
+          const cached = (await caches.match(event.request)) || (await caches.match('/'));
+          resolve(cached || new Response('Offline', { status: 503 }));
+        }, NAVIGATION_TIMEOUT_MS);
 
-        return new Response('Offline', { status: 503 });
+        fetch(event.request)
+          .then(async (response) => {
+            clearTimeout(timer);
+            if (settled) return;
+            settled = true;
+            // Cache the fresh HTML so next offline load is up-to-date
+            if (response.ok) {
+              const clone = response.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put('/', clone));
+            }
+            resolve(response);
+          })
+          .catch(async () => {
+            clearTimeout(timer);
+            if (settled) return;
+            settled = true;
+            const cached = (await caches.match(event.request)) || (await caches.match('/'));
+            resolve(cached || new Response('Offline', { status: 503 }));
+          });
       })
     );
     return;
