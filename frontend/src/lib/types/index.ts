@@ -656,12 +656,27 @@ export type CombinedFeedItem =
   | { type: 'share'; item: SocialShare; date: string }
   | { type: 'document'; item: SocialDocument; date: string };
 
+/**
+ * Auto-update rule for a channel. When set, sourceKeys are automatically
+ * recomputed when subscriptions change.
+ */
+export type ChannelAutoRule =
+  | { type: 'category'; value: string }
+  | { type: 'subscriptionTag'; value: string }
+  | { type: 'domain'; patterns: string[] }
+  | { type: 'people' }
+  | { type: 'frequency'; threshold: 'high' | 'low' }
+  | { type: 'longReads'; minLength: number }
+  | { type: 'recent'; withinDays: number };
+
 export interface FilteredView {
   id?: number;
   name: string;
   // Unified source filter (new format)
   sourceMode?: 'all' | 'include';
   sourceKeys?: string[];
+  // Auto-update rule: when set, sourceKeys are kept in sync with subscriptions
+  autoRule?: ChannelAutoRule;
   // Legacy fields (kept for backward compat with existing IndexedDB records)
   showArticles?: boolean;
   showShares?: boolean;

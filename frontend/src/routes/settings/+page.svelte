@@ -10,7 +10,11 @@
     type ArticleFontSize,
   } from '$lib/stores/preferences.svelte';
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
-  import PageHeader from '$lib/components/common/PageHeader.svelte';
+  import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
+  import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
+  import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
+  import BottomSheet from '$lib/components/common/BottomSheet.svelte';
+  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { downloadOPML } from '$lib/utils/opml-exporter';
   import { api, RateLimitError } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
@@ -36,6 +40,7 @@
   ];
 
   let showImportModal = $state(false);
+  let feedSwitcherOpen = $state(false);
 
   // PDS Sync state
   let pdsSyncEnabled = $state(false);
@@ -226,9 +231,9 @@
   }
 </script>
 
-<div class="settings-page">
-  <PageHeader title="Settings" />
+<FeedPageHeader title="Settings" hideControls />
 
+<div class="settings-page">
   {#if auth.user}
     <section class="card">
       <h2>Account</h2>
@@ -464,6 +469,26 @@
       {/if}
     </button>
   </section>
+
+  {#if mobileStore.isMobile}
+    <MobileBottomBar
+      controlsVisible={true}
+      currentTitle="Settings"
+      onScrollToTop={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+      onOpenFeedSwitcher={() => (feedSwitcherOpen = true)}
+      onOpenFilterSheet={() => {}}
+      hasActiveFilters={false}
+      hideFilterButton
+    />
+
+    <BottomSheet
+      open={feedSwitcherOpen}
+      onclose={() => (feedSwitcherOpen = false)}
+      title="Switch Feed"
+    >
+      <MobileFeedSwitcher onclose={() => (feedSwitcherOpen = false)} currentTitle="Settings" />
+    </BottomSheet>
+  {/if}
 </div>
 
 <ImportOPMLModal open={showImportModal} onclose={() => (showImportModal = false)} />
@@ -472,6 +497,14 @@
   .settings-page {
     max-width: 600px;
     margin: 0 auto;
+    padding-top: 3.5rem;
+  }
+
+  @media (max-width: 1000px) {
+    .settings-page {
+      padding-top: 0.5rem;
+      padding-bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 1rem);
+    }
   }
 
   section {

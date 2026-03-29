@@ -283,6 +283,10 @@ class SkyreaderDatabase extends Dexie {
       subscriptions:
         '++id, rkey, feedUrl, category, fetchStatus, source, localUpdatedAt, sourceType, subjectDid',
     });
+
+    // Channels redesign: sourceMode/sourceKeys/autoRule/typeFilter stored as non-indexed fields.
+    // Version bump ensures any pending upgrades run before we access the new fields.
+    this.version(26).stores({});
   }
 }
 

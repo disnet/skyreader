@@ -18,9 +18,10 @@
 
   interface Props {
     showSourceFilter: boolean;
+    onEditChannel?: (id: number) => void;
   }
 
-  let { showSourceFilter }: Props = $props();
+  let { showSourceFilter, onEditChannel }: Props = $props();
 
   let ef = $derived(feedViewStore.effectiveFilters);
 
@@ -233,7 +234,7 @@
 
   async function handleDeleteView() {
     if (!feedViewStore.viewFilter) return;
-    if (!confirm('Are you sure you want to delete this view?')) return;
+    if (!confirm('Are you sure you want to delete this channel?')) return;
     const id = parseInt(feedViewStore.viewFilter);
     await filteredViewsStore.remove(id);
     goto('/');
@@ -244,7 +245,7 @@
       // Update existing view
       feedViewStore.syncToolbarToSavedView();
     } else {
-      // Show name input for new view
+      // Show name input for new channel
       showNameInput = true;
       newViewName = '';
       // Focus the input after it renders
@@ -391,189 +392,158 @@
     </div>
   </div>
 
-  {#if showSourceFilter}
+  {#if isEditingView && onEditChannel}
     <span class="toolbar-divider group-divider"></span>
 
-    <!-- Group 2: Sources dropdown -->
     <div class="filter-group">
-      <div class="dropdown-wrapper" bind:this={sourcePopoverRef}>
-        <button
-          class="filter-btn source-btn"
-          class:has-filter={ef.sourceMode !== 'all'}
-          onclick={(e) => {
-            e.stopPropagation();
-            feedViewStore.setSourcePopoverOpen(!sourcePopoverOpen);
-          }}
-        >
-          <Icon name="filter" size={16} />
-          <span class="filter-label">{sourceFilterLabel}</span>
-          <Icon name="chevron-down" size={12} />
-        </button>
-
-        {#if sourcePopoverOpen}
-          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-          <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
-            <div class="popover-section">
-              <label class="radio-label">
-                <input
-                  type="radio"
-                  name="sourceMode"
-                  value="all"
-                  checked={ef.sourceMode === 'all'}
-                  onchange={() => setSourceMode('all')}
-                />
-                All sources
-              </label>
-              <label class="radio-label">
-                <input
-                  type="radio"
-                  name="sourceMode"
-                  value="include"
-                  checked={ef.sourceMode === 'include'}
-                  onchange={() => setSourceMode('include')}
-                />
-                Include only
-              </label>
-            </div>
-
-            {#if ef.sourceMode === 'include'}
-              <!-- Subscriptions list -->
-              {#if subscriptionsStore.subscriptions.length > 0}
-                <div class="popover-group-header">
-                  <span>Subscriptions</span>
-                  <button
-                    class="select-all-btn"
-                    onclick={allSourcesSelected ? deselectAllSources : selectAllSources}
-                  >
-                    {allSourcesSelected ? 'Deselect all' : 'Select all'}
-                  </button>
-                </div>
-                <div class="popover-search">
-                  <input
-                    type="text"
-                    placeholder="Search subscriptions..."
-                    bind:value={feedSearch}
-                    class="search-input"
-                  />
-                </div>
-                <div class="popover-list">
-                  {#each filteredSubscriptions as sub}
-                    {@const key = subscriptionSourceKey(sub)}
-                    {#if key}
-                      {@const isAtProto = sub.sourceType?.startsWith('atproto.') ?? false}
-                      {@const iconUrl =
-                        sub.customIconUrl ||
-                        (isAtProto
-                          ? sub.siteUrl
-                            ? getFaviconUrl(sub.siteUrl)
-                            : '/icons/icon-192.svg'
-                          : getFaviconUrl(sub.siteUrl || sub.feedUrl || ''))}
-                      <label class="check-label">
-                        <input
-                          type="checkbox"
-                          checked={sourceKeySet.has(key)}
-                          onchange={() => toggleSourceKey(key)}
-                        />
-                        {#if iconUrl}
-                          <img src={iconUrl} alt="" class="check-icon" />
-                        {/if}
-                        <span class="check-text">{sub.customTitle || sub.title}</span>
-                      </label>
-                    {/if}
-                  {/each}
-                  {#if feedSearch && filteredSubscriptions.length === 0}
-                    <div class="no-results">No subscriptions match</div>
-                  {/if}
-                </div>
-              {/if}
-            {/if}
-          </div>
-        {/if}
-      </div>
-    </div>
-  {/if}
-
-  <span class="toolbar-divider group-divider"></span>
-
-  <!-- Type filter dropdown -->
-  <div class="filter-group">
-    <div class="dropdown-wrapper" bind:this={typePopoverRef}>
       <button
-        class="filter-btn"
-        class:has-filter={activeTypeFilter.length > 0}
-        onclick={(e) => {
-          e.stopPropagation();
-          typePopoverOpen = !typePopoverOpen;
-        }}
+        class="filter-btn edit-channel-btn"
+        onclick={() => onEditChannel(parseInt(feedViewStore.viewFilter!))}
+        title="Edit channel"
       >
-        <Icon name="layers" size={16} />
-        <span class="filter-label">{typeFilterLabel}</span>
-        <Icon name="chevron-down" size={12} />
+        <Icon name="edit" size={16} />
+        <span class="filter-label">Edit Channel</span>
       </button>
-
-      {#if typePopoverOpen}
-        <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-        <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
-          <div class="popover-group-header">
-            <span>Types</span>
-            {#if activeTypeFilter.length > 0}
-              <button class="select-all-btn" onclick={clearTypeFilter}>Clear</button>
-            {/if}
-          </div>
-          <div class="popover-list">
-            {#each TYPE_OPTIONS as opt}
-              <label class="check-label">
-                <input
-                  type="checkbox"
-                  checked={activeTypeSet.has(opt.value)}
-                  onchange={() => toggleTypeFilter(opt.value)}
-                />
-                <span class="check-text">{opt.label}</span>
-              </label>
-            {/each}
-          </div>
-        </div>
-      {/if}
     </div>
-  </div>
+  {:else}
+    {#if showSourceFilter}
+      <span class="toolbar-divider group-divider"></span>
 
-  {#if allTags.length > 0}
+      <!-- Group 2: Sources dropdown -->
+      <div class="filter-group">
+        <div class="dropdown-wrapper" bind:this={sourcePopoverRef}>
+          <button
+            class="filter-btn source-btn"
+            class:has-filter={ef.sourceMode !== 'all'}
+            onclick={(e) => {
+              e.stopPropagation();
+              feedViewStore.setSourcePopoverOpen(!sourcePopoverOpen);
+            }}
+          >
+            <Icon name="filter" size={16} />
+            <span class="filter-label">{sourceFilterLabel}</span>
+            <Icon name="chevron-down" size={12} />
+          </button>
+
+          {#if sourcePopoverOpen}
+            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+            <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
+              <div class="popover-section">
+                <label class="radio-label">
+                  <input
+                    type="radio"
+                    name="sourceMode"
+                    value="all"
+                    checked={ef.sourceMode === 'all'}
+                    onchange={() => setSourceMode('all')}
+                  />
+                  All sources
+                </label>
+                <label class="radio-label">
+                  <input
+                    type="radio"
+                    name="sourceMode"
+                    value="include"
+                    checked={ef.sourceMode === 'include'}
+                    onchange={() => setSourceMode('include')}
+                  />
+                  Include only
+                </label>
+              </div>
+
+              {#if ef.sourceMode === 'include'}
+                <!-- Subscriptions list -->
+                {#if subscriptionsStore.subscriptions.length > 0}
+                  <div class="popover-group-header">
+                    <span>Subscriptions</span>
+                    <button
+                      class="select-all-btn"
+                      onclick={allSourcesSelected ? deselectAllSources : selectAllSources}
+                    >
+                      {allSourcesSelected ? 'Deselect all' : 'Select all'}
+                    </button>
+                  </div>
+                  <div class="popover-search">
+                    <input
+                      type="text"
+                      placeholder="Search subscriptions..."
+                      bind:value={feedSearch}
+                      class="search-input"
+                    />
+                  </div>
+                  <div class="popover-list">
+                    {#each filteredSubscriptions as sub}
+                      {@const key = subscriptionSourceKey(sub)}
+                      {#if key}
+                        {@const isAtProto = sub.sourceType?.startsWith('atproto.') ?? false}
+                        {@const iconUrl =
+                          sub.customIconUrl ||
+                          (isAtProto
+                            ? sub.siteUrl
+                              ? getFaviconUrl(sub.siteUrl)
+                              : '/icons/icon-192.svg'
+                            : getFaviconUrl(sub.siteUrl || sub.feedUrl || ''))}
+                        <label class="check-label">
+                          <input
+                            type="checkbox"
+                            checked={sourceKeySet.has(key)}
+                            onchange={() => toggleSourceKey(key)}
+                          />
+                          {#if iconUrl}
+                            <img src={iconUrl} alt="" class="check-icon" />
+                          {/if}
+                          <span class="check-text">{sub.customTitle || sub.title}</span>
+                        </label>
+                      {/if}
+                    {/each}
+                    {#if feedSearch && filteredSubscriptions.length === 0}
+                      <div class="no-results">No subscriptions match</div>
+                    {/if}
+                  </div>
+                {/if}
+              {/if}
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
     <span class="toolbar-divider group-divider"></span>
 
-    <!-- Tags dropdown -->
+    <!-- Type filter dropdown -->
     <div class="filter-group">
-      <div class="dropdown-wrapper" bind:this={tagPopoverRef}>
+      <div class="dropdown-wrapper" bind:this={typePopoverRef}>
         <button
           class="filter-btn"
-          class:has-filter={activeTagFilter.length > 0}
+          class:has-filter={activeTypeFilter.length > 0}
           onclick={(e) => {
             e.stopPropagation();
-            tagPopoverOpen = !tagPopoverOpen;
+            typePopoverOpen = !typePopoverOpen;
           }}
         >
-          <Icon name="tag" size={16} />
-          <span class="filter-label">{tagFilterLabel}</span>
+          <Icon name="layers" size={16} />
+          <span class="filter-label">{typeFilterLabel}</span>
           <Icon name="chevron-down" size={12} />
         </button>
 
-        {#if tagPopoverOpen}
+        {#if typePopoverOpen}
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
             <div class="popover-group-header">
-              <span>Tags</span>
-              {#if activeTagFilter.length > 0}
-                <button class="select-all-btn" onclick={clearTagFilter}>Clear</button>
+              <span>Types</span>
+              {#if activeTypeFilter.length > 0}
+                <button class="select-all-btn" onclick={clearTypeFilter}>Clear</button>
               {/if}
             </div>
             <div class="popover-list">
-              {#each allTags as tag}
+              {#each TYPE_OPTIONS as opt}
                 <label class="check-label">
                   <input
                     type="checkbox"
-                    checked={activeTagSet.has(tag)}
-                    onchange={() => toggleTagFilter(tag)}
+                    checked={activeTypeSet.has(opt.value)}
+                    onchange={() => toggleTypeFilter(opt.value)}
                   />
-                  <span class="check-text">{tag}</span>
+                  <span class="check-text">{opt.label}</span>
                 </label>
               {/each}
             </div>
@@ -581,75 +551,121 @@
         {/if}
       </div>
     </div>
-  {/if}
 
-  <span class="toolbar-divider group-divider"></span>
+    {#if allTags.length > 0}
+      <span class="toolbar-divider group-divider"></span>
 
-  <!-- Save button -->
-  <div class="filter-group">
-    {#if showNameInput}
-      <div class="save-name-input">
-        <input
-          type="text"
-          bind:this={nameInputRef}
-          bind:value={newViewName}
-          placeholder="View name..."
-          onkeydown={handleNameKeydown}
-          class="name-input"
-        />
-        <button
-          class="filter-btn save-confirm-btn"
-          onclick={handleCreateView}
-          disabled={!newViewName.trim() || saving}
-          title="Create view"
-        >
-          <Icon name="check" size={16} />
-        </button>
+      <!-- Tags dropdown -->
+      <div class="filter-group">
+        <div class="dropdown-wrapper" bind:this={tagPopoverRef}>
+          <button
+            class="filter-btn"
+            class:has-filter={activeTagFilter.length > 0}
+            onclick={(e) => {
+              e.stopPropagation();
+              tagPopoverOpen = !tagPopoverOpen;
+            }}
+          >
+            <Icon name="tag" size={16} />
+            <span class="filter-label">{tagFilterLabel}</span>
+            <Icon name="chevron-down" size={12} />
+          </button>
+
+          {#if tagPopoverOpen}
+            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+            <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
+              <div class="popover-group-header">
+                <span>Tags</span>
+                {#if activeTagFilter.length > 0}
+                  <button class="select-all-btn" onclick={clearTagFilter}>Clear</button>
+                {/if}
+              </div>
+              <div class="popover-list">
+                {#each allTags as tag}
+                  <label class="check-label">
+                    <input
+                      type="checkbox"
+                      checked={activeTagSet.has(tag)}
+                      onchange={() => toggleTagFilter(tag)}
+                    />
+                    <span class="check-text">{tag}</span>
+                  </label>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
       </div>
-    {:else if showRenameInput}
-      <div class="save-name-input">
-        <input
-          bind:this={renameInputRef}
-          bind:value={renameViewName}
-          class="name-input"
-          placeholder="View name"
-          onkeydown={handleRenameKeydown}
-          onblur={commitRenameView}
-        />
-        <button
-          class="filter-btn save-confirm-btn"
-          onclick={commitRenameView}
-          disabled={!renameViewName.trim()}
-          title="Confirm rename"
-        >
-          <Icon name="check" size={16} />
-        </button>
-      </div>
-    {:else}
-      <button
-        class="filter-btn save-btn"
-        class:has-changes={isEditingView
-          ? feedViewStore.hasUnsavedChanges
-          : ef.sourceMode !== 'all' || activeTypeFilter.length > 0}
-        onclick={handleSave}
-        disabled={isEditingView
-          ? !feedViewStore.hasUnsavedChanges
-          : ef.sourceMode === 'all' && activeTypeFilter.length === 0}
-        title={isEditingView ? 'Update view' : 'Save as new view'}
-      >
-        <Icon name="save" size={16} />
-        <span class="filter-label">{isEditingView ? 'Update' : 'Save'}</span>
-      </button>
-      {#if isEditingView}
-        <button class="filter-btn rename-btn" onclick={startRenameView} title="Rename view">
-          <Icon name="edit" size={16} />
-        </button>
-        <button class="filter-btn delete-btn" onclick={handleDeleteView} title="Delete view">
-          <Icon name="trash" size={16} />
-        </button>
-      {/if}
     {/if}
-  </div>
+
+    <span class="toolbar-divider group-divider"></span>
+
+    <!-- Save button -->
+    <div class="filter-group">
+      {#if showNameInput}
+        <div class="save-name-input">
+          <input
+            type="text"
+            bind:this={nameInputRef}
+            bind:value={newViewName}
+            placeholder="View name..."
+            onkeydown={handleNameKeydown}
+            class="name-input"
+          />
+          <button
+            class="filter-btn save-confirm-btn"
+            onclick={handleCreateView}
+            disabled={!newViewName.trim() || saving}
+            title="Create view"
+          >
+            <Icon name="check" size={16} />
+          </button>
+        </div>
+      {:else if showRenameInput}
+        <div class="save-name-input">
+          <input
+            bind:this={renameInputRef}
+            bind:value={renameViewName}
+            class="name-input"
+            placeholder="View name"
+            onkeydown={handleRenameKeydown}
+            onblur={commitRenameView}
+          />
+          <button
+            class="filter-btn save-confirm-btn"
+            onclick={commitRenameView}
+            disabled={!renameViewName.trim()}
+            title="Confirm rename"
+          >
+            <Icon name="check" size={16} />
+          </button>
+        </div>
+      {:else}
+        <button
+          class="filter-btn save-btn"
+          class:has-changes={isEditingView
+            ? feedViewStore.hasUnsavedChanges
+            : ef.sourceMode !== 'all' || activeTypeFilter.length > 0}
+          onclick={handleSave}
+          disabled={isEditingView
+            ? !feedViewStore.hasUnsavedChanges
+            : ef.sourceMode === 'all' && activeTypeFilter.length === 0}
+          title={isEditingView ? 'Update channel' : 'Save as new channel'}
+        >
+          <Icon name="save" size={16} />
+          <span class="filter-label">{isEditingView ? 'Update' : 'Save'}</span>
+        </button>
+        {#if isEditingView}
+          <button class="filter-btn rename-btn" onclick={startRenameView} title="Rename channel">
+            <Icon name="edit" size={16} />
+          </button>
+          <button class="filter-btn delete-btn" onclick={handleDeleteView} title="Delete channel">
+            <Icon name="trash" size={16} />
+          </button>
+        {/if}
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>

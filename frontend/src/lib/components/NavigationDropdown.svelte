@@ -113,7 +113,7 @@
 
   async function deleteView(viewId: number) {
     closeViewMenu();
-    if (!confirm('Are you sure you want to delete this view?')) return;
+    if (!confirm('Are you sure you want to delete this channel?')) return;
     await filteredViewsStore.remove(viewId);
     // If we're currently viewing the deleted view, navigate away
     const currentView = $page.url.searchParams.get('view');
@@ -178,6 +178,7 @@
       { type: 'view', id: 'saved', label: 'Saved', count: savedCount, icon: 'bookmark' },
       { type: 'view', id: 'shared', label: 'Shared', count: sharedCount, icon: 'share' },
       { type: 'utility', id: 'activity', label: 'Activity', count: activityCount, icon: 'bell' },
+      { type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' },
       { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' },
     ];
 
@@ -190,8 +191,8 @@
 
     const addViewAction: NavItem = {
       type: 'action',
-      id: 'add-view',
-      label: 'New view',
+      id: 'add-channel',
+      label: 'New channel',
       icon: 'plus',
     };
 
@@ -255,6 +256,7 @@
 
     // Utility pages (separate routes)
     if (pathname === '/activity') return { type: 'icon', name: 'bell' };
+    if (pathname === '/sources') return { type: 'icon', name: 'rss' };
     if (pathname === '/settings') return { type: 'icon', name: 'settings' };
 
     // Feed page filters (query params on /)
@@ -353,10 +355,10 @@
   function selectItem(item: NavItem) {
     if (item.type === 'action') {
       close();
-      if (item.id === 'add-view') {
+      if (item.id === 'add-channel') {
         filteredViewsStore
           .create({
-            name: 'new view',
+            name: 'new channel',
             sourceMode: 'include',
             sourceKeys: [],
             readFilter: 'unread',

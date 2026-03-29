@@ -12,7 +12,7 @@
     onAdd?: () => void;
     onToggle: () => void;
     onLabelClick: () => void;
-    onUnreadToggle: () => void;
+    onUnreadToggle?: () => void;
     children: Snippet;
   }
 
@@ -49,17 +49,19 @@
           <Icon name="plus" size={14} strokeWidth={2} />
         </button>
       {/if}
-      <button
-        class="filter-toggle"
-        class:active={showOnlyUnread}
-        onclick={(e) => {
-          e.stopPropagation();
-          onUnreadToggle();
-        }}
-        title={showOnlyUnread ? 'Show all' : 'Show only unread'}
-      >
-        <Icon name={showOnlyUnread ? 'circle-dot' : 'circle'} size={12} strokeWidth={2} />
-      </button>
+      {#if onUnreadToggle}
+        <button
+          class="filter-toggle"
+          class:active={showOnlyUnread}
+          onclick={(e) => {
+            e.stopPropagation();
+            onUnreadToggle();
+          }}
+          title={showOnlyUnread ? 'Show all' : 'Show only unread'}
+        >
+          <Icon name={showOnlyUnread ? 'circle-dot' : 'circle'} size={12} strokeWidth={2} />
+        </button>
+      {/if}
       <button class="disclosure-btn" onclick={onToggle} aria-label="Toggle section">
         <Icon name={isExpanded ? 'chevron-down' : 'chevron-right'} size={14} strokeWidth={2.5} />
       </button>

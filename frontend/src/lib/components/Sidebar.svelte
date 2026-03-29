@@ -5,104 +5,33 @@
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { sharesStore } from '$lib/stores/shares.svelte';
-  import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { activityStore } from '$lib/stores/activity.svelte';
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-  import { fetchSingleFeed } from '$lib/services/feedFetcher';
+  import { channelSuggestions } from '$lib/stores/channelSuggestions.svelte';
+  import { syncAutoRuleChannels } from '$lib/stores/channelAutoUpdate.svelte';
   import { onMount, onDestroy } from 'svelte';
   import AddFeedModal from './AddFeedModal.svelte';
   import AddHandleModal from './AddHandleModal.svelte';
   import SaveArticleModal from './SaveArticleModal.svelte';
-  import AddDropdownMenu from './AddDropdownMenu.svelte';
-  import EditFeedModal from './EditFeedModal.svelte';
-  import ContextMenu from './sidebar/ContextMenu.svelte';
+  import FilteredViewModal from './FilteredViewModal.svelte';
+  import AddSourceInput from './AddSourceInput.svelte';
   import NavSection from './sidebar/NavSection.svelte';
-  import FeedItem from './sidebar/FeedItem.svelte';
   import ViewItem from './sidebar/ViewItem.svelte';
-  import SidebarAddFeed from './sidebar/SidebarAddFeed.svelte';
+  import ContextMenu from './sidebar/ContextMenu.svelte';
   import Icon from './Icon.svelte';
-  import type { Subscription } from '$lib/types';
-
-  async function removeFeed(id: number) {
-    if (confirm('Are you sure you want to remove this subscription?')) {
-      await subscriptionsStore.remove(id);
-    }
-  }
-
-  // Context menu state (feeds)
-  let contextMenu = $state<{ x: number; y: number; feedId: number } | null>(null);
-  let longPressTimer: ReturnType<typeof setTimeout> | null = null;
-  let longPressTriggered = $state(false);
-
-  // Edit modal state
-  let editingSubscription = $state<Subscription | null>(null);
-  let editModalOpen = $state(false);
-
-  function handleEditFeed(feedId: number) {
-    const sub = subscriptionsStore.getById(feedId);
-    if (sub) {
-      editingSubscription = sub;
-      editModalOpen = true;
-    }
-  }
-
-  function closeEditModal() {
-    editModalOpen = false;
-    editingSubscription = null;
-  }
-
-  function handleContextMenu(e: MouseEvent, feedId: number) {
-    e.preventDefault();
-    contextMenu = { x: e.clientX, y: e.clientY, feedId };
-  }
-
-  function handleTouchStart(e: TouchEvent, feedId: number) {
-    longPressTriggered = false;
-    const touch = e.touches[0];
-    longPressTimer = setTimeout(() => {
-      longPressTriggered = true;
-      contextMenu = { x: touch.clientX, y: touch.clientY, feedId };
-    }, 500);
-  }
-
-  function handleTouchEnd(e: TouchEvent) {
-    if (longPressTimer) {
-      clearTimeout(longPressTimer);
-      longPressTimer = null;
-    }
-    if (longPressTriggered) {
-      e.preventDefault();
-    }
-  }
-
-  function handleTouchMove() {
-    if (longPressTimer) {
-      clearTimeout(longPressTimer);
-      longPressTimer = null;
-    }
-  }
-
-  function closeContextMenu() {
-    contextMenu = null;
-  }
+  import Tooltip from './Tooltip.svelte';
 
   function handleClickOutside(e: MouseEvent) {
-    if (contextMenu) {
-      closeContextMenu();
-    }
     if (viewContextMenu) {
       closeViewContextMenu();
     }
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (contextMenu && e.key === 'Escape') {
-      closeContextMenu();
-    }
     if (viewContextMenu && e.key === 'Escape') {
       closeViewContextMenu();
     }
@@ -121,7 +50,6 @@
   onDestroy(() => {
     document.removeEventListener('click', handleClickOutside);
     document.removeEventListener('keydown', handleKeydown);
-    if (longPressTimer) clearTimeout(longPressTimer);
     if (viewLongPressTimer) clearTimeout(viewLongPressTimer);
     document.body.classList.remove('sidebar-open-mobile');
   });
@@ -136,8 +64,14 @@
     }
   });
 
-  let feedUnreadCounts = $derived(unreadCounts.feedCounts);
-  let totalUnread = $derived(unreadCounts.totalArticles);
+  // Auto-update channels with autoRules when subscriptions change
+  $effect(() => {
+    // Access subscriptions to trigger reactivity
+    subscriptionsStore.subscriptions;
+    syncAutoRuleChannels();
+  });
+
+  let totalUnread = $derived(unreadCounts.totalArticles + unreadCounts.totalSocial);
 
   // Current filter from URL
   let currentFilter = $derived(() => {
@@ -156,31 +90,19 @@
     return { type: 'all' as const };
   });
 
-  // Sort and optionally filter subscriptions by unread count (descending)
-  let sortedSubscriptions = $derived(() => {
-    let subs = [...subscriptionsStore.subscriptions].sort((a, b) => {
-      const countA = feedUnreadCounts.get(a.id!) || 0;
-      const countB = feedUnreadCounts.get(b.id!) || 0;
-      return countB - countA;
-    });
-    if (sidebarStore.showOnlyUnread.feeds) {
-      subs = subs.filter((s) => (feedUnreadCounts.get(s.id!) || 0) > 0);
-    }
-    return subs;
-  });
-
-  // Update sorted IDs in store for keyboard navigation
-  $effect(() => {
-    const sorted = sortedSubscriptions();
-    const ids = sorted.map((s) => s.id!).filter((id) => id !== undefined);
-    sidebarStore.setSortedFeedIds(ids);
-  });
-
   // View context menu state
   let viewContextMenu = $state<{ x: number; y: number; viewId: number } | null>(null);
   let viewLongPressTimer: ReturnType<typeof setTimeout> | null = null;
   let viewLongPressTriggered = $state(false);
   let renamingViewId = $state<number | null>(null);
+
+  // Channel create/edit modal (via sidebarStore)
+  let channelModalOpen = $derived(sidebarStore.channelModalOpen);
+  let editingChannelId = $derived(sidebarStore.editingChannelId);
+
+  function openChannelModal(viewId: number | null = null) {
+    sidebarStore.openChannelModal(viewId);
+  }
 
   function handleViewContextMenu(e: MouseEvent, viewId: number) {
     e.preventDefault();
@@ -222,9 +144,22 @@
   }
 
   async function handleDeleteView(viewId: number) {
-    if (confirm('Are you sure you want to delete this view?')) {
+    if (confirm('Are you sure you want to delete this channel?')) {
       await filteredViewsStore.remove(viewId);
     }
+  }
+
+  async function acceptSuggestion(suggestion: (typeof channelSuggestions.suggestions)[0]) {
+    const id = await filteredViewsStore.create({
+      name: suggestion.name,
+      sourceMode: suggestion.sourceMode,
+      sourceKeys: suggestion.sourceKeys,
+      typeFilter: suggestion.typeFilter.length > 0 ? suggestion.typeFilter : undefined,
+      autoRule: suggestion.autoRule,
+      readFilter: 'unread',
+      sortOrder: 'newest',
+    });
+    selectFilter('view', id);
   }
 
   function selectFilter(type: string, id?: string | number) {
@@ -266,7 +201,7 @@
         <span class="tier-badge">{auth.user.tier}</span>
       {/if}
     </a>
-    <AddDropdownMenu />
+    <AddSourceInput />
   </div>
 
   <!-- Navigation items -->
@@ -277,7 +212,7 @@
       onclick={() => selectFilter('all')}
     >
       <span class="nav-icon"><Icon name="inbox" /></span>
-      <span class="nav-label">All</span>
+      <span class="nav-label">Everything</span>
       {#if totalUnread > 0}
         <span class="nav-count">{totalUnread}</span>
       {/if}
@@ -295,6 +230,73 @@
       {/if}
     </button>
 
+    <!-- Channels section (formerly Views) -->
+    <NavSection
+      title="Channels"
+      icon="layers"
+      isExpanded={sidebarStore.expandedSections.channels}
+      showOnlyUnread={false}
+      isActive={false}
+      onToggle={() => sidebarStore.toggleSection('channels')}
+      onLabelClick={() => sidebarStore.toggleSection('channels')}
+      onAdd={() => openChannelModal()}
+    >
+      {#each filteredViewsStore.views as view (view.id)}
+        <ViewItem
+          {view}
+          isActive={currentFilter().type === 'view' && currentFilter().id === view.id}
+          isRenaming={renamingViewId === view.id}
+          unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
+          onSelect={() => selectFilter('view', view.id)}
+          onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+          onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
+          onTouchEnd={handleViewTouchEnd}
+          onTouchMove={handleViewTouchMove}
+          onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+          onRename={async (name) => {
+            if (view.id != null) {
+              await filteredViewsStore.update(view.id, { name });
+            }
+            renamingViewId = null;
+          }}
+          onRenameCancel={() => (renamingViewId = null)}
+        />
+      {:else}
+        {#if channelSuggestions.suggestions.length === 0}
+          <div class="empty-section">No channels yet</div>
+        {/if}
+      {/each}
+      {#each channelSuggestions.suggestions as suggestion (suggestion.id)}
+        <div class="suggestion-item">
+          <button class="suggestion-accept" onclick={() => acceptSuggestion(suggestion)}>
+            <span class="suggestion-icon"><Icon name="plus" size={12} /></span>
+            <span class="suggestion-name">{suggestion.name}</span>
+          </button>
+          <Tooltip text={suggestion.description} />
+          <button
+            class="suggestion-dismiss"
+            onclick={(e) => {
+              e.stopPropagation();
+              channelSuggestions.dismiss(suggestion.id);
+            }}
+            title="Dismiss"
+          >
+            <Icon name="x" size={12} />
+          </button>
+        </div>
+      {/each}
+      {#if channelSuggestions.hasMore || channelSuggestions.suggestions.length > 0}
+        <a
+          href="/channels/discover"
+          class="more-suggestions-link"
+          onclick={() => sidebarStore.closeMobile()}
+        >
+          More channel ideas
+          <Icon name="arrow-right" size={12} />
+        </a>
+      {/if}
+    </NavSection>
+
     <button
       class="nav-item"
       class:active={currentFilter().type === 'shared'}
@@ -307,6 +309,16 @@
       {/if}
     </button>
 
+    <!-- Bottom nav -->
+    <a
+      href="/sources"
+      class="nav-item nav-link"
+      class:active={$page.url.pathname === '/sources'}
+      onclick={() => sidebarStore.closeMobile()}
+    >
+      <span class="nav-icon"><Icon name="rss" /></span>
+      <span class="nav-label">Manage Sources</span>
+    </a>
     <a
       href="/activity"
       class="nav-item nav-link"
@@ -329,118 +341,19 @@
       <span class="nav-icon"><Icon name="settings" /></span>
       <span class="nav-label">Settings</span>
     </a>
-
-    <a
-      href="https://github.com/disnet/skyreader/issues"
-      class="nav-item nav-link"
-      target="_blank"
-      rel="noopener noreferrer"
-    >
-      <span class="nav-icon"><Icon name="message-circle" /></span>
-      <span class="nav-label">Feedback</span>
-    </a>
-
-    <div class="nav-separator"></div>
-
-    <!-- Custom views -->
-    {#each filteredViewsStore.views as view (view.id)}
-      <ViewItem
-        {view}
-        isActive={currentFilter().type === 'view' && currentFilter().id === view.id}
-        isRenaming={renamingViewId === view.id}
-        onSelect={() => selectFilter('view', view.id)}
-        onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-        onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
-        onTouchEnd={handleViewTouchEnd}
-        onTouchMove={handleViewTouchMove}
-        onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-        onRename={async (name) => {
-          if (view.id != null) {
-            await filteredViewsStore.update(view.id, { name });
-          }
-          renamingViewId = null;
-        }}
-        onRenameCancel={() => (renamingViewId = null)}
-      />
-    {/each}
-
-    <button
-      class="nav-item new-view-btn"
-      onclick={async () => {
-        const id = await filteredViewsStore.create({
-          name: 'new view',
-          sourceMode: 'include',
-          sourceKeys: [],
-          readFilter: 'unread',
-          sortOrder: 'newest',
-        });
-        selectFilter('view', id);
-        feedViewStore.setFilterToolbarOpen(true);
-        feedViewStore.setSourcePopoverOpen(true);
-      }}
-    >
-      <span class="nav-icon"><Icon name="plus" size={16} /></span>
-      <span class="nav-label">New view</span>
-    </button>
-
-    <div class="nav-separator"></div>
-
-    <!-- Feeds section -->
-    <NavSection
-      title="Feeds"
-      icon="rss"
-      isExpanded={sidebarStore.expandedSections.feeds}
-      showOnlyUnread={sidebarStore.showOnlyUnread.feeds}
-      isActive={false}
-      onToggle={() => sidebarStore.toggleSection('feeds')}
-      onLabelClick={() => sidebarStore.toggleSection('feeds')}
-      onUnreadToggle={() => sidebarStore.toggleShowOnlyUnread('feeds')}
-      onAdd={() => sidebarStore.openAddFeedModal()}
-    >
-      <SidebarAddFeed />
-      {#each sortedSubscriptions() as sub (sub.id)}
-        {@const count = feedUnreadCounts.get(sub.id!) || 0}
-        {@const status = sub.feedUrl ? feedStatusStore.getStatus(sub.feedUrl) : undefined}
-        {@const loadingState =
-          status?.status === 'pending'
-            ? 'loading'
-            : status?.status === 'error' || status?.status === 'circuit-open'
-              ? 'error'
-              : undefined}
-        {@const feedError = sub.feedUrl ? feedStatusStore.getStatusMessage(sub.feedUrl) : undefined}
-        {@const errorDetails = sub.feedUrl
-          ? feedStatusStore.getErrorDetails(sub.feedUrl)
-          : undefined}
-        <FeedItem
-          subscription={sub}
-          unreadCount={count}
-          isActive={currentFilter().type === 'feed' && currentFilter().id === sub.id}
-          {loadingState}
-          errorMessage={feedError || undefined}
-          {errorDetails}
-          onSelect={() => selectFilter('feed', sub.id)}
-          onContextMenu={(e) => sub.id && handleContextMenu(e, sub.id)}
-          onTouchStart={(e) => sub.id && handleTouchStart(e, sub.id)}
-          onTouchEnd={handleTouchEnd}
-          onTouchMove={handleTouchMove}
-          onRetry={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
-          onMoreClick={(e) => sub.id && handleContextMenu(e, sub.id)}
-        />
-      {:else}
-        <div class="empty-section">No subscriptions</div>
-      {/each}
-    </NavSection>
   </nav>
 </aside>
 
 <AddFeedModal
   open={sidebarStore.addFeedModalOpen}
   onclose={() => sidebarStore.closeAddFeedModal()}
+  initialValue={sidebarStore.addSourceInitialValue}
 />
 
 <AddHandleModal
   open={sidebarStore.addHandleModalOpen}
   onclose={() => sidebarStore.closeAddHandleModal()}
+  initialValue={sidebarStore.addSourceInitialValue}
 />
 
 <SaveArticleModal
@@ -448,24 +361,20 @@
   onclose={() => sidebarStore.closeSaveArticleModal()}
 />
 
-{#if contextMenu}
-  {@const feedId = contextMenu.feedId}
-  <ContextMenu
-    x={contextMenu.x}
-    y={contextMenu.y}
-    onEdit={() => handleEditFeed(feedId)}
-    onDelete={() => removeFeed(feedId)}
-    onClose={closeContextMenu}
-  />
-{/if}
-
-<EditFeedModal open={editModalOpen} subscription={editingSubscription} onclose={closeEditModal} />
+<FilteredViewModal
+  open={channelModalOpen}
+  editingViewId={editingChannelId}
+  onclose={() => sidebarStore.closeChannelModal()}
+  oncreated={(id) => selectFilter('view', id)}
+  ondeleted={() => selectFilter('all')}
+/>
 
 {#if viewContextMenu}
   {@const viewId = viewContextMenu.viewId}
   <ContextMenu
     x={viewContextMenu.x}
     y={viewContextMenu.y}
+    onEdit={() => openChannelModal(viewId)}
     onRename={() => handleRenameView(viewId)}
     onDelete={() => handleDeleteView(viewId)}
     onClose={closeViewContextMenu}
@@ -629,11 +538,92 @@
     font-style: italic;
   }
 
-  .new-view-btn {
-    color: var(--color-text-secondary);
+  .suggestion-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
   }
 
-  .new-view-btn:hover {
+  .suggestion-accept {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    color: var(--color-text-secondary);
+    font: inherit;
+    font-size: 0.875rem;
+    text-align: left;
+    transition: color 0.15s;
+  }
+
+  .suggestion-accept:hover {
+    color: var(--color-primary);
+  }
+
+  .suggestion-icon {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1px dashed currentColor;
+  }
+
+  .suggestion-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+
+  .more-suggestions-link {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    transition: color 0.15s;
+  }
+
+  .more-suggestions-link:hover {
+    color: var(--color-primary);
+  }
+
+  .suggestion-dismiss {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    padding: 0;
+    opacity: 0;
+    transition: opacity 0.15s;
+    border-radius: 4px;
+  }
+
+  .suggestion-item:hover .suggestion-dismiss {
+    opacity: 0.6;
+  }
+
+  .suggestion-dismiss:hover {
+    opacity: 1 !important;
     color: var(--color-text);
   }
 

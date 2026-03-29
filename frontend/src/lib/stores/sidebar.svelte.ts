@@ -9,6 +9,7 @@ interface SidebarState {
   expandedSections: {
     shared: boolean;
     feeds: boolean;
+    channels: boolean;
   };
   showOnlyUnread: {
     shared: boolean;
@@ -27,7 +28,8 @@ function createSidebarStore() {
     navigationDropdownOpen: false,
     expandedSections: {
       shared: false,
-      feeds: true,
+      feeds: false,
+      channels: true,
     },
     showOnlyUnread: {
       shared: false,
@@ -44,7 +46,8 @@ function createSidebarStore() {
         const parsed = JSON.parse(stored);
         state.expandedSections = {
           shared: false,
-          feeds: true,
+          feeds: false,
+          channels: true,
           ...parsed.expandedSections,
         };
         state.showOnlyUnread = parsed.showOnlyUnread ?? { shared: false, feeds: false };
@@ -74,7 +77,7 @@ function createSidebarStore() {
     state.isOpen = false;
   }
 
-  function toggleSection(section: 'shared' | 'feeds') {
+  function toggleSection(section: 'shared' | 'feeds' | 'channels') {
     state.expandedSections[section] = !state.expandedSections[section];
     persist();
   }
@@ -85,6 +88,9 @@ function createSidebarStore() {
   }
 
   let addFeedModalInitialDid = $state<string | null>(null);
+  let addSourceInitialValue = $state<string>('');
+  let channelModalOpen = $state(false);
+  let editingChannelId = $state<number | null>(null);
 
   function openAddFeedModal() {
     state.addFeedModalOpen = true;
@@ -97,6 +103,7 @@ function createSidebarStore() {
 
   function closeAddFeedModal() {
     state.addFeedModalOpen = false;
+    addSourceInitialValue = '';
   }
 
   function openAddHandleModal() {
@@ -106,6 +113,11 @@ function createSidebarStore() {
   function closeAddHandleModal() {
     state.addHandleModalOpen = false;
     addFeedModalInitialDid = null;
+    addSourceInitialValue = '';
+  }
+
+  function setAddSourceInitialValue(value: string) {
+    addSourceInitialValue = value;
   }
 
   function openSaveArticleModal() {
@@ -114,6 +126,15 @@ function createSidebarStore() {
 
   function closeSaveArticleModal() {
     state.saveArticleModalOpen = false;
+  }
+
+  function openChannelModal(viewId: number | null = null) {
+    editingChannelId = viewId;
+    channelModalOpen = true;
+  }
+
+  function closeChannelModal() {
+    channelModalOpen = false;
   }
 
   function toggleNavigationDropdown() {
@@ -141,6 +162,9 @@ function createSidebarStore() {
     get addFeedModalInitialDid() {
       return addFeedModalInitialDid;
     },
+    get addSourceInitialValue() {
+      return addSourceInitialValue;
+    },
     get saveArticleModalOpen() {
       return state.saveArticleModalOpen;
     },
@@ -156,11 +180,18 @@ function createSidebarStore() {
     get sortedFeedIds() {
       return state.sortedFeedIds;
     },
+    get channelModalOpen() {
+      return channelModalOpen;
+    },
+    get editingChannelId() {
+      return editingChannelId;
+    },
     toggleMobile,
     closeMobile,
     toggleSection,
     toggleShowOnlyUnread,
     openAddFeedModal,
+    setAddSourceInitialValue,
     openAddFeedModalForDid,
     closeAddFeedModal,
     openAddHandleModal,
@@ -170,6 +201,8 @@ function createSidebarStore() {
     toggleNavigationDropdown,
     closeNavigationDropdown,
     setSortedFeedIds,
+    openChannelModal,
+    closeChannelModal,
   };
 }
 

@@ -13,7 +13,9 @@
     "check:types": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
     "@sveltejs/adapter-auto": "^7.0.0",
@@ -25,7 +27,8 @@
     "svelte": "^5.45.6",
     "svelte-check": "^4.3.4",
     "typescript": "^5.9.3",
-    "vite": "^7.2.6"
+    "vite": "^7.2.6",
+    "vitest": "^4.1.2"
   },
   "dependencies": {
     "@atproto/api": "^0.18.13",

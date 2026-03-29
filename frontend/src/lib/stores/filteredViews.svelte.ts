@@ -1,12 +1,54 @@
 import { db } from '$lib/services/db';
 import { safeAdd, safeUpdate } from '$lib/services/safeDb.svelte';
 import type { FilteredView } from '$lib/types';
+import { migrateLegacyView } from '$lib/utils/sourceKeys';
 
 function createFilteredViewsStore() {
   let views = $state<FilteredView[]>([]);
 
   async function load() {
     const all = await db.filteredViews.orderBy('position').toArray();
+
+    // One-time migration: convert legacy views (sourceMode undefined) to new format
+    const needsMigration = all.some((v) => v.sourceMode == null);
+    if (needsMigration) {
+      const subscriptions = await db.subscriptions.toArray();
+      const allSubIds = subscriptions.map((s) => s.id).filter((id): id is number => id != null);
+      const allDids = [
+        ...new Set(
+          subscriptions
+            .filter((s) => s.sourceType?.startsWith('atproto.') && s.subjectDid)
+            .map((s) => s.subjectDid!)
+        ),
+      ];
+
+      for (const view of all) {
+        if (view.sourceMode != null) continue;
+        const migrated = migrateLegacyView(
+          {
+            showArticles: view.showArticles,
+            showShares: view.showShares,
+            showDocuments: view.showDocuments,
+            feedMode: view.feedMode,
+            feedIds: view.feedIds,
+            accountMode: view.accountMode,
+            accountDids: view.accountDids,
+          },
+          allSubIds,
+          allDids
+        );
+        const updates: Partial<FilteredView> = {
+          sourceMode: migrated.sourceMode,
+          sourceKeys: migrated.sourceKeys,
+          updatedAt: Date.now(),
+        };
+        Object.assign(view, updates);
+        if (view.id != null) {
+          await safeUpdate(db.filteredViews, view.id, updates);
+        }
+      }
+    }
+
     views = all;
   }
 
