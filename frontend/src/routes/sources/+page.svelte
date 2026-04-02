@@ -9,6 +9,7 @@
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { profileService } from '$lib/services/profiles';
+  import { api } from '$lib/services/api';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { rssSourceKey, sharesSourceKey, documentsSourceKey } from '$lib/utils/sourceKeys';
   import Icon from '$lib/components/Icon.svelte';
@@ -21,6 +22,21 @@
   import AddHandleModal from '$lib/components/AddHandleModal.svelte';
   import type { Subscription, BlueskyProfile } from '$lib/types';
 
+  interface DetectedPublication {
+    uri: string;
+    name: string;
+    url: string;
+    description?: string;
+    iconUrl?: string;
+  }
+
+  interface DetectedContent {
+    publications: DetectedPublication[];
+    shareCount: number;
+    freestandingDocumentCount: number;
+    loading: boolean;
+  }
+
   let feedSwitcherOpen = $state(false);
 
   let searchQuery = $state('');
@@ -29,6 +45,36 @@
   let selectedIds = $state<Set<number>>(new Set());
   let profiles = $state<Map<string, BlueskyProfile>>(new Map());
   let assignChannelOpen = $state(false);
+  let detectedContent = $state<Map<string, DetectedContent>>(new Map());
+
+  const CONTENT_CACHE_KEY = 'skyreader:detected-content';
+
+  type CachedContent = Omit<DetectedContent, 'loading'>;
+
+  function loadContentCache(): Map<string, CachedContent> {
+    try {
+      const raw = localStorage.getItem(CONTENT_CACHE_KEY);
+      if (!raw) return new Map();
+      const obj = JSON.parse(raw) as Record<string, CachedContent>;
+      return new Map(Object.entries(obj));
+    } catch {
+      return new Map();
+    }
+  }
+
+  function saveContentCache(did: string, content: CachedContent) {
+    try {
+      const existing = loadContentCache();
+      existing.set(did, content);
+      const obj: Record<string, CachedContent> = {};
+      for (const [k, v] of existing) {
+        obj[k] = v;
+      }
+      localStorage.setItem(CONTENT_CACHE_KEY, JSON.stringify(obj));
+    } catch {
+      // localStorage full or unavailable
+    }
+  }
 
   // Group AT Protocol subscriptions by person (DID)
   interface PersonGroup {
@@ -163,20 +209,64 @@
     selectedIds = next;
   }
 
-  // Content type toggle for a person
-  async function toggleContentType(
-    group: PersonGroup,
-    type: 'atproto.shares' | 'atproto.documents'
-  ) {
-    const existing = group.subscriptions.find((s) => s.sourceType === type);
-    if (existing && existing.id) {
-      // Remove this content type
+  // Toggle subscription for a specific content stream
+  async function toggleShares(group: PersonGroup) {
+    const existing = group.subscriptions.find((s) => s.sourceType === 'atproto.shares');
+    if (existing?.id) {
       await subscriptionsStore.remove(existing.id);
     } else {
-      // Add this content type - use the AddHandle flow
-      sidebarStore.setAddSourceInitialValue(group.profile?.handle || group.did);
-      sidebarStore.openAddHandleModal();
+      await subscriptionsStore.add(undefined, `Shares from @${getPersonHandle(group)}`, {
+        sourceType: 'atproto.shares',
+        subjectDid: group.did,
+      });
     }
+  }
+
+  async function toggleFreestandingDocs(group: PersonGroup) {
+    const existing = group.subscriptions.find(
+      (s) => s.sourceType === 'atproto.documents' && s.feedUrl === '__freestanding__'
+    );
+    if (existing?.id) {
+      await subscriptionsStore.remove(existing.id);
+    } else {
+      await subscriptionsStore.add(
+        '__freestanding__',
+        `Documents from @${getPersonHandle(group)}`,
+        {
+          sourceType: 'atproto.documents',
+          subjectDid: group.did,
+          feedUrl: '__freestanding__',
+        }
+      );
+    }
+  }
+
+  async function togglePublication(group: PersonGroup, pub: DetectedPublication) {
+    const existing = group.subscriptions.find(
+      (s) => s.sourceType === 'atproto.documents' && s.feedUrl === pub.uri
+    );
+    if (existing?.id) {
+      await subscriptionsStore.remove(existing.id);
+    } else {
+      const subId = await subscriptionsStore.add(pub.uri, pub.name || pub.url, {
+        sourceType: 'atproto.documents',
+        subjectDid: group.did,
+        siteUrl: pub.url,
+        feedUrl: pub.uri,
+      });
+      if (pub.iconUrl) {
+        await subscriptionsStore.updateLocal(subId, { customIconUrl: pub.iconUrl });
+      }
+    }
+  }
+
+  function getSubscriptionForFeedUrl(
+    group: PersonGroup,
+    feedUrl: string
+  ): Subscription | undefined {
+    return group.subscriptions.find(
+      (s) => s.sourceType === 'atproto.documents' && s.feedUrl === feedUrl
+    );
   }
 
   // Bulk operations
@@ -255,16 +345,70 @@
     return group.profile?.handle || group.did;
   }
 
-  // Fetch profiles on mount
+  // Fetch profiles and detected content on mount
   onMount(async () => {
     const dids = [
       ...new Set(
         subscriptionsStore.subscriptions.filter((s) => s.subjectDid).map((s) => s.subjectDid!)
       ),
     ];
-    if (dids.length > 0) {
-      const fetched = await profileService.getProfiles(dids);
-      profiles = fetched;
+    if (dids.length === 0) return;
+
+    // 1. Immediately populate from cache
+    const cache = loadContentCache();
+    const initial = new Map<string, DetectedContent>();
+    for (const did of dids) {
+      const cached = cache.get(did);
+      if (cached) {
+        initial.set(did, { ...cached, loading: false });
+      }
+    }
+    detectedContent = initial;
+
+    // Fetch profiles
+    const fetched = await profileService.getProfiles(dids);
+    profiles = fetched;
+
+    // 2. Refresh from API in background
+    for (const did of dids) {
+      // Mark as loading only if we don't already have cached data
+      if (!detectedContent.has(did)) {
+        const next = new Map(detectedContent);
+        next.set(did, {
+          publications: [],
+          shareCount: 0,
+          freestandingDocumentCount: 0,
+          loading: true,
+        });
+        detectedContent = next;
+      }
+
+      api
+        .detectContent(did)
+        .then((result) => {
+          const content = {
+            publications: result.publications,
+            shareCount: result.shareCount,
+            freestandingDocumentCount: result.freestandingDocumentCount,
+          };
+          saveContentCache(did, content);
+          const updated = new Map(detectedContent);
+          updated.set(did, { ...content, loading: false });
+          detectedContent = updated;
+        })
+        .catch(() => {
+          // On failure, keep cached data if we have it
+          if (!detectedContent.has(did)) {
+            const updated = new Map(detectedContent);
+            updated.set(did, {
+              publications: [],
+              shareCount: 0,
+              freestandingDocumentCount: 0,
+              loading: false,
+            });
+            detectedContent = updated;
+          }
+        });
     }
   });
 </script>
@@ -350,68 +494,186 @@
       </h2>
       <div class="source-list">
         {#each filteredPeople as group (group.did)}
-          {@const personSelected = group.subscriptions.every(
-            (s) => s.id != null && selectedIds.has(s.id)
+          {@const detected = detectedContent.get(group.did)}
+          {@const sharesSub = group.subscriptions.find((s) => s.sourceType === 'atproto.shares')}
+          {@const freestandingSub = group.subscriptions.find(
+            (s) => s.sourceType === 'atproto.documents' && s.feedUrl === '__freestanding__'
           )}
-          <div class="source-row person-row">
-            <label class="row-checkbox">
-              <input
-                type="checkbox"
-                checked={personSelected}
-                onchange={() => togglePersonSelect(group)}
-              />
-            </label>
-            <div class="source-icon">
-              {#if group.profile?.avatar}
-                <img src={group.profile.avatar} alt="" class="avatar" />
+          {@const sharesUnread = sharesSub?.id
+            ? (unreadCounts.feedCounts.get(sharesSub.id) ?? 0)
+            : 0}
+          {@const freestandingUnread = freestandingSub?.id
+            ? (unreadCounts.feedCounts.get(freestandingSub.id) ?? 0)
+            : 0}
+          <div class="person-card">
+            <div class="person-header">
+              <div class="source-icon">
+                {#if group.profile?.avatar}
+                  <img src={group.profile.avatar} alt="" class="avatar" />
+                {:else}
+                  <Icon name="user" size={16} />
+                {/if}
+              </div>
+              <div class="source-info">
+                <span class="source-title">{getPersonName(group)}</span>
+                <span class="source-meta">@{getPersonHandle(group)}</span>
+              </div>
+              <div class="source-actions">
+                <button
+                  class="action-btn danger"
+                  onclick={async () => {
+                    if (confirm(`Remove all subscriptions for ${getPersonName(group)}?`)) {
+                      await Promise.all(
+                        group.subscriptions
+                          .filter((s) => s.id != null)
+                          .map((s) => subscriptionsStore.remove(s.id!))
+                      );
+                    }
+                  }}
+                  title="Remove all"
+                >
+                  <Icon name="trash" size={14} />
+                </button>
+              </div>
+            </div>
+            <div class="person-content-types">
+              {#if detected?.loading}
+                <div class="content-type-loading">
+                  <span class="spinner-small"></span>
+                  <span>Detecting content...</span>
+                </div>
               {:else}
-                <Icon name="user" size={16} />
+                <!-- Shares -->
+                <div class="content-type-row">
+                  <label class="row-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={sharesSub?.id != null && selectedIds.has(sharesSub.id)}
+                      disabled={!sharesSub?.id}
+                      onchange={() => sharesSub?.id && toggleSelect(sharesSub.id)}
+                    />
+                  </label>
+                  <div class="content-type-info">
+                    <div class="content-type-label">
+                      <Icon name="share" size={14} />
+                      <span class="content-type-name">Skyreader Shares</span>
+                      {#if detected && detected.shareCount > 0}
+                        <span class="content-count">({detected.shareCount})</span>
+                      {/if}
+                      {#if sharesUnread > 0}
+                        <span class="unread-badge">{sharesUnread}</span>
+                      {/if}
+                    </div>
+                    <span class="content-type-desc"
+                      >Articles they share and recommend on Skyreader</span
+                    >
+                  </div>
+                  <button
+                    class="subscribed-toggle"
+                    class:active={group.hasShares}
+                    onclick={() => toggleShares(group)}
+                    title={group.hasShares ? 'Unsubscribe from shares' : 'Subscribe to shares'}
+                  >
+                    <span class="toggle-track">
+                      <span class="toggle-thumb"></span>
+                    </span>
+                    <span class="toggle-label">{group.hasShares ? 'Subscribed' : 'Subscribe'}</span>
+                  </button>
+                </div>
+
+                <!-- Freestanding documents -->
+                {#if freestandingSub || (detected && detected.freestandingDocumentCount > 0)}
+                  <div class="content-type-row">
+                    <label class="row-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={freestandingSub?.id != null && selectedIds.has(freestandingSub.id)}
+                        disabled={!freestandingSub?.id}
+                        onchange={() => freestandingSub?.id && toggleSelect(freestandingSub.id)}
+                      />
+                    </label>
+                    <div class="content-type-info">
+                      <div class="content-type-label">
+                        <Icon name="file-text" size={14} />
+                        <span class="content-type-name">Documents</span>
+                        {#if detected && detected.freestandingDocumentCount > 0}
+                          <span class="content-count">({detected.freestandingDocumentCount})</span>
+                        {/if}
+                        {#if freestandingUnread > 0}
+                          <span class="unread-badge">{freestandingUnread}</span>
+                        {/if}
+                      </div>
+                      <span class="content-type-desc"
+                        >Free-standing documents by @{getPersonHandle(group)}</span
+                      >
+                    </div>
+                    <button
+                      class="subscribed-toggle"
+                      class:active={!!freestandingSub}
+                      onclick={() => toggleFreestandingDocs(group)}
+                      title={freestandingSub
+                        ? 'Unsubscribe from documents'
+                        : 'Subscribe to documents'}
+                    >
+                      <span class="toggle-track">
+                        <span class="toggle-thumb"></span>
+                      </span>
+                      <span class="toggle-label"
+                        >{freestandingSub ? 'Subscribed' : 'Subscribe'}</span
+                      >
+                    </button>
+                  </div>
+                {/if}
+
+                <!-- Publications -->
+                {#if detected && detected.publications.length > 0}
+                  {#each detected.publications as pub (pub.uri)}
+                    {@const pubSub = getSubscriptionForFeedUrl(group, pub.uri)}
+                    {@const pubUnread = pubSub?.id
+                      ? (unreadCounts.feedCounts.get(pubSub.id) ?? 0)
+                      : 0}
+                    <div class="content-type-row">
+                      <label class="row-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={pubSub?.id != null && selectedIds.has(pubSub.id)}
+                          disabled={!pubSub?.id}
+                          onchange={() => pubSub?.id && toggleSelect(pubSub.id)}
+                        />
+                      </label>
+                      <div class="content-type-info">
+                        <div class="content-type-label">
+                          {#if pub.iconUrl}
+                            <img src={pub.iconUrl} alt="" class="pub-icon" />
+                          {:else}
+                            <Icon name="newspaper" size={14} />
+                          {/if}
+                          <span class="content-type-name">{pub.name || pub.url}</span>
+                          {#if pubUnread > 0}
+                            <span class="unread-badge">{pubUnread}</span>
+                          {/if}
+                        </div>
+                        {#if pub.description}
+                          <span class="content-type-desc">{pub.description}</span>
+                        {:else if pub.url}
+                          <span class="content-type-desc">{pub.url}</span>
+                        {/if}
+                      </div>
+                      <button
+                        class="subscribed-toggle"
+                        class:active={!!pubSub}
+                        onclick={() => togglePublication(group, pub)}
+                        title={pubSub ? `Unsubscribe from ${pub.name}` : `Subscribe to ${pub.name}`}
+                      >
+                        <span class="toggle-track">
+                          <span class="toggle-thumb"></span>
+                        </span>
+                        <span class="toggle-label">{pubSub ? 'Subscribed' : 'Subscribe'}</span>
+                      </button>
+                    </div>
+                  {/each}
+                {/if}
               {/if}
-            </div>
-            <div class="source-info">
-              <span class="source-title">{getPersonName(group)}</span>
-              <span class="source-meta">@{getPersonHandle(group)}</span>
-            </div>
-            <div class="content-toggles">
-              <button
-                class="type-toggle"
-                class:active={group.hasShares}
-                onclick={() => toggleContentType(group, 'atproto.shares')}
-                title={group.hasShares ? 'Unsubscribe from shares' : 'Subscribe to shares'}
-              >
-                <Icon name="share" size={12} />
-                <span>Shares</span>
-              </button>
-              <button
-                class="type-toggle"
-                class:active={group.hasDocuments}
-                onclick={() => toggleContentType(group, 'atproto.documents')}
-                title={group.hasDocuments ? 'Unsubscribe from articles' : 'Subscribe to articles'}
-              >
-                <Icon name="file-text" size={12} />
-                <span>Articles</span>
-              </button>
-            </div>
-            {#if group.totalUnread > 0}
-              <span class="unread-badge">{group.totalUnread}</span>
-            {/if}
-            <div class="source-actions">
-              <button
-                class="action-btn danger"
-                onclick={async () => {
-                  const names = group.subscriptions.map((s) => s.customTitle || s.title).join(', ');
-                  if (confirm(`Remove all subscriptions for ${getPersonName(group)}?`)) {
-                    await Promise.all(
-                      group.subscriptions
-                        .filter((s) => s.id != null)
-                        .map((s) => subscriptionsStore.remove(s.id!))
-                    );
-                  }
-                }}
-                title="Remove all"
-              >
-                <Icon name="trash" size={14} />
-              </button>
             </div>
           </div>
         {/each}
@@ -808,38 +1070,151 @@
     white-space: nowrap;
   }
 
-  /* Content type toggles for people */
-  .content-toggles {
+  /* Person card layout */
+  .person-card {
+    background: var(--color-bg);
+    padding: 0.75rem;
+  }
+
+  .person-header {
     display: flex;
-    gap: 0.25rem;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.625rem;
+  }
+
+  .person-content-types {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    padding-left: 2.25rem;
+  }
+
+  .content-type-row {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.375rem 0.5rem;
+    border-radius: 8px;
+    background: var(--color-bg-secondary, rgba(0, 0, 0, 0.02));
+  }
+
+  .content-type-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+
+  .content-type-label {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--color-text);
+  }
+
+  .content-type-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .content-type-desc {
+    font-size: 0.6875rem;
+    color: var(--color-text-secondary);
+    line-height: 1.3;
+  }
+
+  .content-count {
+    font-weight: 400;
+    color: var(--color-text-secondary);
+    font-size: 0.75rem;
+  }
+
+  .pub-icon {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
     flex-shrink: 0;
   }
 
-  .type-toggle {
+  .content-type-loading {
     display: flex;
     align-items: center;
-    gap: 0.25rem;
-    padding: 0.125rem 0.375rem;
-    border: 1px solid var(--color-border);
-    border-radius: 12px;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+  }
+
+  .spinner-small {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--color-border);
+    border-top-color: var(--color-primary);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* Subscribe toggle switch */
+  .subscribed-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
     background: none;
+    border: none;
     cursor: pointer;
+    flex-shrink: 0;
+    padding: 0.25rem;
+  }
+
+  .toggle-track {
+    display: block;
+    width: 28px;
+    height: 16px;
+    border-radius: 8px;
+    background: var(--color-border);
+    position: relative;
+    transition: background-color 0.2s;
+  }
+
+  .subscribed-toggle.active .toggle-track {
+    background: var(--color-primary);
+  }
+
+  .toggle-thumb {
+    display: block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: white;
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transition: transform 0.2s;
+  }
+
+  .subscribed-toggle.active .toggle-thumb {
+    transform: translateX(12px);
+  }
+
+  .toggle-label {
     font-size: 0.6875rem;
     color: var(--color-text-secondary);
-    transition:
-      background-color 0.15s,
-      color 0.15s,
-      border-color 0.15s;
+    white-space: nowrap;
   }
 
-  .type-toggle.active {
-    background: rgba(0, 102, 204, 0.08);
+  .subscribed-toggle.active .toggle-label {
     color: var(--color-primary);
-    border-color: var(--color-primary);
-  }
-
-  .type-toggle:hover {
-    background: var(--color-bg-hover);
   }
 
   .unread-badge {
@@ -910,13 +1285,26 @@
       display: none;
     }
 
-    .content-toggles {
-      flex-direction: column;
+    .person-content-types {
+      padding-left: 0;
+    }
+
+    .content-type-row {
+      flex-wrap: wrap;
+    }
+
+    .toggle-label {
+      display: none;
     }
   }
 
   @media (prefers-color-scheme: dark) {
-    .source-row:hover {
+    .content-type-row {
+      background: var(--color-bg-secondary, rgba(255, 255, 255, 0.04));
+    }
+
+    .source-row:hover,
+    .person-card:hover {
       background: var(--color-bg-hover, rgba(255, 255, 255, 0.03));
     }
 
