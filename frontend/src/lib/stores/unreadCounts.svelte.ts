@@ -2,6 +2,7 @@ import { articlesStore } from './articles.svelte';
 import { subscriptionsStore } from './subscriptions.svelte';
 import { socialStore } from './social.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
+import { savesStore } from './saves.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
 import { liveDb } from '$lib/services/liveDb.svelte';
 import {
@@ -85,6 +86,79 @@ function createUnreadCountsStore() {
     const counts = new Map<number, number>();
     for (const view of filteredViewsStore.views) {
       if (view.id == null) continue;
+
+      // Saved channels: count non-archived saved items
+      if (view.mode === 'saved') {
+        const sourceFilter =
+          view.savedSourceFilter && view.savedSourceFilter.length > 0
+            ? new Set(view.savedSourceFilter)
+            : null;
+        let count = 0;
+
+        // Count non-archived saved articles (source = 'feed')
+        if (!sourceFilter || sourceFilter.has('feed')) {
+          for (const article of articlesStore.allArticles) {
+            if (
+              itemLabelsStore.isSaved(article.guid) &&
+              !itemLabelsStore.isArchived(article.guid)
+            ) {
+              count++;
+            }
+          }
+        }
+
+        // Count non-archived saved shares (source = 'share')
+        if (!sourceFilter || sourceFilter.has('share')) {
+          for (const share of socialStore.shares) {
+            if (
+              itemLabelsStore.isSaved(share.recordUri) &&
+              !itemLabelsStore.isArchived(share.recordUri)
+            ) {
+              count++;
+            }
+          }
+        }
+
+        // Count non-archived saved documents (source = 'document')
+        if (!sourceFilter || sourceFilter.has('document')) {
+          for (const doc of socialStore.documents) {
+            if (
+              itemLabelsStore.isSaved(doc.recordUri) &&
+              !itemLabelsStore.isArchived(doc.recordUri)
+            ) {
+              count++;
+            }
+          }
+        }
+
+        // Count non-archived bookmarks (deduped against above)
+        const savedArticleGuids = new Set(
+          articlesStore.allArticles
+            .filter((a) => itemLabelsStore.isSaved(a.guid))
+            .map((a) => a.guid)
+        );
+        const savedShareUris = new Set(
+          socialStore.shares
+            .filter((s) => itemLabelsStore.isSaved(s.recordUri))
+            .map((s) => s.recordUri)
+        );
+        const savedDocUris = new Set(
+          socialStore.documents
+            .filter((d) => itemLabelsStore.isSaved(d.recordUri))
+            .map((d) => d.recordUri)
+        );
+        for (const bm of savesStore.articles) {
+          if (sourceFilter && bm.source && !sourceFilter.has(bm.source)) continue;
+          if (bm.source === 'feed' && bm.itemGuid && savedArticleGuids.has(bm.itemGuid)) continue;
+          if (bm.source === 'share' && bm.itemGuid && savedShareUris.has(bm.itemGuid)) continue;
+          if (bm.source === 'document' && bm.itemGuid && savedDocUris.has(bm.itemGuid)) continue;
+          const archiveKey = bm.itemGuid || bm.uri || '';
+          if (!itemLabelsStore.isArchived(archiveKey)) count++;
+        }
+
+        counts.set(view.id, count);
+        continue;
+      }
 
       const sourceMode = view.sourceMode ?? 'all';
       const sourceKeys = view.sourceKeys ?? [];

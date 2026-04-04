@@ -214,7 +214,7 @@
   let feedListView = $state<ReturnType<typeof FeedListView> | null>(null);
   let savedListView = $state<ReturnType<typeof SavedListView> | null>(null);
 
-  let isSavedView = $derived(Boolean(feedViewStore.savedFilter));
+  let isSavedView = $derived(feedViewStore.isSavedView);
 
   function getArticleElements(): HTMLElement[] {
     if (isSavedView) {

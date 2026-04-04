@@ -8,12 +8,50 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { goto } from '$app/navigation';
   import { subscriptionSourceKey } from '$lib/utils/sourceKeys';
-  import type { SubscriptionSourceType } from '$lib/types';
+  import type {
+    SubscriptionSourceType,
+    SavedSourceType,
+    DateAddedPreset,
+    ReadingLengthFilter,
+    SortOrder,
+  } from '$lib/types';
+
+  const DATE_PRESET_OPTIONS: { value: DateAddedPreset | ''; label: string }[] = [
+    { value: '', label: 'Any time' },
+    { value: 'last-week', label: 'Last week' },
+    { value: 'last-month', label: 'Last month' },
+    { value: 'last-3-months', label: 'Last 3 months' },
+    { value: 'last-year', label: 'Last year' },
+  ];
+
+  const READING_LENGTH_OPTIONS: { value: ReadingLengthFilter; label: string }[] = [
+    { value: 'quick', label: 'Quick (< 5 min)' },
+    { value: 'medium', label: 'Medium (5–15 min)' },
+    { value: 'long', label: 'Long (15+ min)' },
+  ];
+
+  const SAVED_SORT_OPTIONS: { value: SortOrder; label: string }[] = [
+    { value: 'newest', label: 'Saved (newest)' },
+    { value: 'oldest', label: 'Saved (oldest)' },
+    { value: 'published-newest', label: 'Published (newest)' },
+    { value: 'published-oldest', label: 'Published (oldest)' },
+    { value: 'shortest', label: 'Reading time (short)' },
+    { value: 'longest', label: 'Reading time (long)' },
+    { value: 'domain-asc', label: 'Domain (A–Z)' },
+    { value: 'domain-desc', label: 'Domain (Z–A)' },
+  ];
 
   const TYPE_OPTIONS: { value: SubscriptionSourceType; label: string }[] = [
     { value: 'rss', label: 'RSS Feeds' },
     { value: 'atproto.shares', label: 'Skyreader Shares' },
     { value: 'atproto.documents', label: 'Standard.site Documents' },
+  ];
+
+  const SAVED_SOURCE_OPTIONS: { value: SavedSourceType; label: string }[] = [
+    { value: 'url', label: 'URL Saves' },
+    { value: 'feed', label: 'Feed Articles' },
+    { value: 'share', label: 'Shared Articles' },
+    { value: 'document', label: 'Documents' },
   ];
 
   interface Props {
@@ -76,6 +114,97 @@
   function clearTypeFilter() {
     feedViewStore.setToolbarTypeFilter([]);
   }
+
+  // Saved source filter state (for saved-mode channels)
+  let isSavedChannel = $derived(feedViewStore.isSavedChannel);
+  let activeSavedSourceFilter = $derived(feedViewStore.toolbarSavedSourceFilter);
+  let activeSavedSourceSet = $derived(new Set(activeSavedSourceFilter));
+
+  let savedSourceFilterLabel = $derived.by(() => {
+    if (activeSavedSourceFilter.length === 0) return 'Source';
+    return `Source (${activeSavedSourceFilter.length})`;
+  });
+
+  // Date filter state
+  let activeDateFilter = $derived(feedViewStore.toolbarDateFilter);
+  let dateFilterLabel = $derived.by(() => {
+    if (!activeDateFilter) return 'Date';
+    const opt = DATE_PRESET_OPTIONS.find((o) => o.value === activeDateFilter);
+    return opt ? opt.label : 'Date';
+  });
+
+  // Reading length filter state
+  let activeReadingLength = $derived(feedViewStore.toolbarReadingLength);
+  let activeReadingLengthSet = $derived(new Set(activeReadingLength));
+  let readingLengthLabel = $derived.by(() => {
+    if (activeReadingLength.length === 0) return 'Length';
+    return `Length (${activeReadingLength.length})`;
+  });
+
+  // Domain filter state
+  let activeDomainFilter = $derived(feedViewStore.toolbarDomainFilter);
+  let activeDomainSet = $derived(new Set(activeDomainFilter));
+  let domainFilterLabel = $derived.by(() => {
+    if (activeDomainFilter.length === 0) return 'Domain';
+    return `Domain (${activeDomainFilter.length})`;
+  });
+  let availableDomains = $derived(feedViewStore.availableSavedDomains);
+
+  // Sort label for saved channels
+  let savedSortLabel = $derived.by(() => {
+    const current = feedViewStore.currentSortOrder;
+    const opt = SAVED_SORT_OPTIONS.find((o) => o.value === current);
+    return opt ? opt.label : 'Sort';
+  });
+
+  let hasSavedChannelFilters = $derived(
+    activeSavedSourceFilter.length > 0 ||
+      !!activeDateFilter ||
+      activeReadingLength.length > 0 ||
+      activeDomainFilter.length > 0
+  );
+
+  // Popover state for new dropdowns
+  let datePopoverOpen = $state(false);
+  let lengthPopoverOpen = $state(false);
+  let domainPopoverOpen = $state(false);
+  let sortPopoverOpen = $state(false);
+  let datePopoverRef = $state<HTMLElement | null>(null);
+  let lengthPopoverRef = $state<HTMLElement | null>(null);
+  let domainPopoverRef = $state<HTMLElement | null>(null);
+  let sortPopoverRef = $state<HTMLElement | null>(null);
+  let domainSearchText = $state('');
+
+  function toggleSavedSourceFilter(source: SavedSourceType) {
+    const newSources = activeSavedSourceSet.has(source)
+      ? activeSavedSourceFilter.filter((s) => s !== source)
+      : [...activeSavedSourceFilter, source];
+    feedViewStore.setToolbarSavedSourceFilter(newSources);
+  }
+
+  function clearSavedSourceFilter() {
+    feedViewStore.setToolbarSavedSourceFilter([]);
+  }
+
+  function toggleReadingLength(bucket: ReadingLengthFilter) {
+    const newLengths = activeReadingLengthSet.has(bucket)
+      ? activeReadingLength.filter((l) => l !== bucket)
+      : [...activeReadingLength, bucket];
+    feedViewStore.setToolbarReadingLength(newLengths);
+  }
+
+  function toggleDomainFilter(domain: string) {
+    const newDomains = activeDomainSet.has(domain)
+      ? activeDomainFilter.filter((d) => d !== domain)
+      : [...activeDomainFilter, domain];
+    feedViewStore.setToolbarDomainFilter(newDomains);
+  }
+
+  let filteredDomains = $derived.by(() => {
+    if (!domainSearchText) return availableDomains;
+    const q = domainSearchText.toLowerCase();
+    return availableDomains.filter((d) => d.toLowerCase().includes(q));
+  });
 
   function handleTypeClickOutside(e: MouseEvent) {
     if (typePopoverOpen && typePopoverRef && !typePopoverRef.contains(e.target as Node)) {
@@ -156,6 +285,19 @@
     }
     handleTypeClickOutside(e);
     handleTagClickOutside(e);
+    if (datePopoverOpen && datePopoverRef && !datePopoverRef.contains(e.target as Node)) {
+      datePopoverOpen = false;
+    }
+    if (lengthPopoverOpen && lengthPopoverRef && !lengthPopoverRef.contains(e.target as Node)) {
+      lengthPopoverOpen = false;
+    }
+    if (domainPopoverOpen && domainPopoverRef && !domainPopoverRef.contains(e.target as Node)) {
+      domainPopoverOpen = false;
+      domainSearchText = '';
+    }
+    if (sortPopoverOpen && sortPopoverRef && !sortPopoverRef.contains(e.target as Node)) {
+      sortPopoverOpen = false;
+    }
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -163,6 +305,11 @@
       feedViewStore.setSourcePopoverOpen(false);
       typePopoverOpen = false;
       tagPopoverOpen = false;
+      datePopoverOpen = false;
+      lengthPopoverOpen = false;
+      domainPopoverOpen = false;
+      sortPopoverOpen = false;
+      domainSearchText = '';
     }
   }
 
@@ -355,18 +502,56 @@
 <div class="filter-toolbar" role="toolbar" aria-label="Filter controls">
   <!-- Group 1: Sort + Read state -->
   <div class="filter-group">
-    <button
-      class="filter-btn"
-      onclick={() => feedViewStore.toggleSortOrder()}
-      title={feedViewStore.currentSortOrder === 'newest' ? 'Newest first' : 'Oldest first'}
-    >
-      <Icon
-        name={feedViewStore.currentSortOrder === 'newest' ? 'arrow-down' : 'arrow-up'}
-        size={16}
-      />
-      <span class="filter-label">{feedViewStore.currentSortOrder === 'newest' ? 'New' : 'Old'}</span
+    {#if isSavedChannel}
+      <!-- Saved channel: sort dropdown -->
+      <div class="dropdown-wrapper" bind:this={sortPopoverRef}>
+        <button
+          class="filter-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            sortPopoverOpen = !sortPopoverOpen;
+          }}
+          title="Sort order"
+        >
+          <Icon name="arrow-down" size={16} />
+          <span class="filter-label">{savedSortLabel}</span>
+          <Icon name="chevron-down" size={12} />
+        </button>
+        {#if sortPopoverOpen}
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
+            <div class="popover-list">
+              {#each SAVED_SORT_OPTIONS as opt}
+                <button
+                  class="popover-option"
+                  class:active={feedViewStore.currentSortOrder === opt.value}
+                  onclick={() => {
+                    feedViewStore.setSortOrder(opt.value);
+                    sortPopoverOpen = false;
+                  }}
+                >
+                  {opt.label}
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </div>
+    {:else}
+      <button
+        class="filter-btn"
+        onclick={() => feedViewStore.toggleSortOrder()}
+        title={feedViewStore.currentSortOrder === 'newest' ? 'Newest first' : 'Oldest first'}
       >
-    </button>
+        <Icon
+          name={feedViewStore.currentSortOrder === 'newest' ? 'arrow-down' : 'arrow-up'}
+          size={16}
+        />
+        <span class="filter-label"
+          >{feedViewStore.currentSortOrder === 'newest' ? 'New' : 'Old'}</span
+        >
+      </button>
+    {/if}
 
     <span class="toolbar-divider"></span>
 
@@ -406,7 +591,189 @@
       </button>
     </div>
   {:else}
-    {#if showSourceFilter}
+    {#if isSavedChannel}
+      <span class="toolbar-divider group-divider"></span>
+
+      <!-- Saved source filter (for saved-mode channels) -->
+      <div class="filter-group">
+        <div class="dropdown-wrapper" bind:this={typePopoverRef}>
+          <button
+            class="filter-btn"
+            class:has-filter={activeSavedSourceFilter.length > 0}
+            onclick={(e) => {
+              e.stopPropagation();
+              typePopoverOpen = !typePopoverOpen;
+            }}
+          >
+            <Icon name="layers" size={16} />
+            <span class="filter-label">{savedSourceFilterLabel}</span>
+            <Icon name="chevron-down" size={12} />
+          </button>
+
+          {#if typePopoverOpen}
+            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+            <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
+              <div class="popover-group-header">
+                <span>Save Sources</span>
+                {#if activeSavedSourceFilter.length > 0}
+                  <button class="select-all-btn" onclick={clearSavedSourceFilter}>Clear</button>
+                {/if}
+              </div>
+              <div class="popover-list">
+                {#each SAVED_SOURCE_OPTIONS as opt}
+                  <label class="check-label">
+                    <input
+                      type="checkbox"
+                      checked={activeSavedSourceSet.has(opt.value)}
+                      onchange={() => toggleSavedSourceFilter(opt.value)}
+                    />
+                    <span class="check-text">{opt.label}</span>
+                  </label>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <!-- Date filter -->
+      <div class="filter-group">
+        <div class="dropdown-wrapper" bind:this={datePopoverRef}>
+          <button
+            class="filter-btn"
+            class:has-filter={!!activeDateFilter}
+            onclick={(e) => {
+              e.stopPropagation();
+              datePopoverOpen = !datePopoverOpen;
+            }}
+          >
+            <Icon name="clock" size={16} />
+            <span class="filter-label">{dateFilterLabel}</span>
+            <Icon name="chevron-down" size={12} />
+          </button>
+          {#if datePopoverOpen}
+            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+            <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
+              <div class="popover-list">
+                {#each DATE_PRESET_OPTIONS as opt}
+                  <button
+                    class="popover-option"
+                    class:active={(activeDateFilter ?? '') === opt.value}
+                    onclick={() => {
+                      feedViewStore.setToolbarDateFilter(opt.value || null);
+                      datePopoverOpen = false;
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <!-- Reading length filter -->
+      <div class="filter-group">
+        <div class="dropdown-wrapper" bind:this={lengthPopoverRef}>
+          <button
+            class="filter-btn"
+            class:has-filter={activeReadingLength.length > 0}
+            onclick={(e) => {
+              e.stopPropagation();
+              lengthPopoverOpen = !lengthPopoverOpen;
+            }}
+          >
+            <Icon name="file-text" size={16} />
+            <span class="filter-label">{readingLengthLabel}</span>
+            <Icon name="chevron-down" size={12} />
+          </button>
+          {#if lengthPopoverOpen}
+            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+            <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
+              <div class="popover-group-header">
+                <span>Reading Length</span>
+                {#if activeReadingLength.length > 0}
+                  <button
+                    class="select-all-btn"
+                    onclick={() => feedViewStore.setToolbarReadingLength([])}>Clear</button
+                  >
+                {/if}
+              </div>
+              <div class="popover-list">
+                {#each READING_LENGTH_OPTIONS as opt}
+                  <label class="check-label">
+                    <input
+                      type="checkbox"
+                      checked={activeReadingLengthSet.has(opt.value)}
+                      onchange={() => toggleReadingLength(opt.value)}
+                    />
+                    <span class="check-text">{opt.label}</span>
+                  </label>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <!-- Domain filter -->
+      {#if availableDomains.length > 0}
+        <div class="filter-group">
+          <div class="dropdown-wrapper" bind:this={domainPopoverRef}>
+            <button
+              class="filter-btn"
+              class:has-filter={activeDomainFilter.length > 0}
+              onclick={(e) => {
+                e.stopPropagation();
+                domainPopoverOpen = !domainPopoverOpen;
+              }}
+            >
+              <Icon name="globe" size={16} />
+              <span class="filter-label">{domainFilterLabel}</span>
+              <Icon name="chevron-down" size={12} />
+            </button>
+            {#if domainPopoverOpen}
+              <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+              <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
+                <div class="popover-group-header">
+                  <span>Domains</span>
+                  {#if activeDomainFilter.length > 0}
+                    <button
+                      class="select-all-btn"
+                      onclick={() => feedViewStore.setToolbarDomainFilter([])}>Clear</button
+                    >
+                  {/if}
+                </div>
+                <div class="popover-search">
+                  <input
+                    type="text"
+                    placeholder="Search domains..."
+                    bind:value={domainSearchText}
+                    class="search-input"
+                  />
+                </div>
+                <div class="popover-list">
+                  {#each filteredDomains as domain}
+                    <label class="check-label">
+                      <input
+                        type="checkbox"
+                        checked={activeDomainSet.has(domain)}
+                        onchange={() => toggleDomainFilter(domain)}
+                      />
+                      <span class="check-text">{domain}</span>
+                    </label>
+                  {/each}
+                  {#if domainSearchText && filteredDomains.length === 0}
+                    <div class="no-results">No domains match</div>
+                  {/if}
+                </div>
+              </div>
+            {/if}
+          </div>
+        </div>
+      {/if}
+    {:else if showSourceFilter}
       <span class="toolbar-divider group-divider"></span>
 
       <!-- Group 2: Sources dropdown -->
@@ -508,49 +875,51 @@
       </div>
     {/if}
 
-    <span class="toolbar-divider group-divider"></span>
+    {#if !isSavedChannel}
+      <span class="toolbar-divider group-divider"></span>
 
-    <!-- Type filter dropdown -->
-    <div class="filter-group">
-      <div class="dropdown-wrapper" bind:this={typePopoverRef}>
-        <button
-          class="filter-btn"
-          class:has-filter={activeTypeFilter.length > 0}
-          onclick={(e) => {
-            e.stopPropagation();
-            typePopoverOpen = !typePopoverOpen;
-          }}
-        >
-          <Icon name="layers" size={16} />
-          <span class="filter-label">{typeFilterLabel}</span>
-          <Icon name="chevron-down" size={12} />
-        </button>
+      <!-- Type filter dropdown -->
+      <div class="filter-group">
+        <div class="dropdown-wrapper" bind:this={typePopoverRef}>
+          <button
+            class="filter-btn"
+            class:has-filter={activeTypeFilter.length > 0}
+            onclick={(e) => {
+              e.stopPropagation();
+              typePopoverOpen = !typePopoverOpen;
+            }}
+          >
+            <Icon name="layers" size={16} />
+            <span class="filter-label">{typeFilterLabel}</span>
+            <Icon name="chevron-down" size={12} />
+          </button>
 
-        {#if typePopoverOpen}
-          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-          <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
-            <div class="popover-group-header">
-              <span>Types</span>
-              {#if activeTypeFilter.length > 0}
-                <button class="select-all-btn" onclick={clearTypeFilter}>Clear</button>
-              {/if}
+          {#if typePopoverOpen}
+            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+            <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
+              <div class="popover-group-header">
+                <span>Types</span>
+                {#if activeTypeFilter.length > 0}
+                  <button class="select-all-btn" onclick={clearTypeFilter}>Clear</button>
+                {/if}
+              </div>
+              <div class="popover-list">
+                {#each TYPE_OPTIONS as opt}
+                  <label class="check-label">
+                    <input
+                      type="checkbox"
+                      checked={activeTypeSet.has(opt.value)}
+                      onchange={() => toggleTypeFilter(opt.value)}
+                    />
+                    <span class="check-text">{opt.label}</span>
+                  </label>
+                {/each}
+              </div>
             </div>
-            <div class="popover-list">
-              {#each TYPE_OPTIONS as opt}
-                <label class="check-label">
-                  <input
-                    type="checkbox"
-                    checked={activeTypeSet.has(opt.value)}
-                    onchange={() => toggleTypeFilter(opt.value)}
-                  />
-                  <span class="check-text">{opt.label}</span>
-                </label>
-              {/each}
-            </div>
-          </div>
-        {/if}
+          {/if}
+        </div>
       </div>
-    </div>
+    {/if}
 
     {#if allTags.length > 0}
       <span class="toolbar-divider group-divider"></span>
@@ -645,11 +1014,15 @@
           class="filter-btn save-btn"
           class:has-changes={isEditingView
             ? feedViewStore.hasUnsavedChanges
-            : ef.sourceMode !== 'all' || activeTypeFilter.length > 0}
+            : isSavedChannel
+              ? hasSavedChannelFilters
+              : ef.sourceMode !== 'all' || activeTypeFilter.length > 0}
           onclick={handleSave}
           disabled={isEditingView
             ? !feedViewStore.hasUnsavedChanges
-            : ef.sourceMode === 'all' && activeTypeFilter.length === 0}
+            : isSavedChannel
+              ? !hasSavedChannelFilters
+              : ef.sourceMode === 'all' && activeTypeFilter.length === 0}
           title={isEditingView ? 'Update channel' : 'Save as new channel'}
         >
           <Icon name="save" size={16} />
@@ -1016,5 +1389,25 @@
     .name-input {
       background: var(--color-bg, #1a1a1a);
     }
+  }
+
+  .popover-option {
+    display: block;
+    width: 100%;
+    padding: 0.375rem 0.625rem;
+    border: none;
+    background: none;
+    color: var(--color-text-primary, #e0e0e0);
+    font-size: 0.8125rem;
+    text-align: left;
+    border-radius: 0.25rem;
+    cursor: pointer;
+  }
+  .popover-option:hover {
+    background: var(--color-bg-hover, rgba(255, 255, 255, 0.08));
+  }
+  .popover-option.active {
+    background: var(--color-primary, #6366f1);
+    color: #fff;
   }
 </style>

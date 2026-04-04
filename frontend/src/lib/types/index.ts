@@ -669,14 +669,35 @@ export type ChannelAutoRule =
   | { type: 'longReads'; minLength: number }
   | { type: 'recent'; withinDays: number };
 
+export type SavedSourceType = 'url' | 'feed' | 'share' | 'document';
+export type DateAddedPreset = 'last-week' | 'last-month' | 'last-3-months' | 'last-year';
+export type ReadingLengthFilter = 'quick' | 'medium' | 'long';
+export type SortOrder =
+  | 'newest'
+  | 'oldest'
+  | 'published-newest'
+  | 'published-oldest'
+  | 'shortest'
+  | 'longest'
+  | 'domain-asc'
+  | 'domain-desc';
+
 export interface FilteredView {
   id?: number;
   name: string;
-  // Unified source filter (new format)
+  // Channel mode: 'feed' (default) shows normal content, 'saved' shows only saved items
+  mode?: 'feed' | 'saved';
+  // Unified source filter (new format) — applies to feed-mode channels
   sourceMode?: 'all' | 'include';
   sourceKeys?: string[];
   // Auto-update rule: when set, sourceKeys are kept in sync with subscriptions
   autoRule?: ChannelAutoRule;
+  // Saved channel: filter by save source type (url, feed, share, document)
+  savedSourceFilter?: SavedSourceType[];
+  // Saved channel filters
+  savedDateFilter?: DateAddedPreset;
+  savedReadingLength?: ReadingLengthFilter[];
+  savedDomainFilter?: string[];
   // Legacy fields (kept for backward compat with existing IndexedDB records)
   showArticles?: boolean;
   showShares?: boolean;
@@ -686,7 +707,7 @@ export interface FilteredView {
   accountMode?: 'none' | 'all' | 'include' | 'exclude';
   accountDids?: string[];
   readFilter: 'all' | 'unread' | 'read';
-  sortOrder: 'newest' | 'oldest';
+  sortOrder: SortOrder;
   tagFilter?: string[];
   typeFilter?: SubscriptionSourceType[];
   createdAt: number;

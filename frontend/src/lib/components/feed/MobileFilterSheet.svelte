@@ -8,7 +8,46 @@
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { subscriptionSourceKey } from '$lib/utils/sourceKeys';
   import { computeSourceKeys } from '$lib/utils/channelLogic';
-  import type { ChannelAutoRule } from '$lib/types';
+  import type {
+    ChannelAutoRule,
+    SavedSourceType,
+    DateAddedPreset,
+    ReadingLengthFilter,
+    SortOrder,
+  } from '$lib/types';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+
+  const DATE_PRESET_OPTIONS: { value: DateAddedPreset | ''; label: string }[] = [
+    { value: '', label: 'Any time' },
+    { value: 'last-week', label: 'Week' },
+    { value: 'last-month', label: 'Month' },
+    { value: 'last-3-months', label: '3 months' },
+    { value: 'last-year', label: 'Year' },
+  ];
+
+  const READING_LENGTH_OPTIONS: { value: ReadingLengthFilter; label: string }[] = [
+    { value: 'quick', label: 'Quick' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'long', label: 'Long' },
+  ];
+
+  const SAVED_SORT_OPTIONS: { value: SortOrder; label: string }[] = [
+    { value: 'newest', label: 'Saved ↓' },
+    { value: 'oldest', label: 'Saved ↑' },
+    { value: 'published-newest', label: 'Published ↓' },
+    { value: 'published-oldest', label: 'Published ↑' },
+    { value: 'shortest', label: 'Short' },
+    { value: 'longest', label: 'Long' },
+    { value: 'domain-asc', label: 'Domain A–Z' },
+    { value: 'domain-desc', label: 'Domain Z–A' },
+  ];
+
+  const SAVED_SOURCE_OPTIONS: { value: SavedSourceType; label: string }[] = [
+    { value: 'url', label: 'URL Saves' },
+    { value: 'feed', label: 'Feed Articles' },
+    { value: 'share', label: 'Shared Articles' },
+    { value: 'document', label: 'Documents' },
+  ];
 
   // --- Smart rule options (shared with FilteredViewModal) ---
 
@@ -116,7 +155,14 @@
 
   // --- Channel editor state ---
   let chName = $state('');
+  let chChannelType = $state<'feed' | 'saved'>('feed');
   let chMode = $state<'manual' | 'smart'>('manual');
+  let chSavedSourceFilter = $state<Set<SavedSourceType>>(new Set());
+  let chSavedDateFilter = $state<DateAddedPreset | ''>('');
+  let chSavedReadingLength = $state<Set<ReadingLengthFilter>>(new Set());
+  let chSavedDomainFilter = $state<Set<string>>(new Set());
+  let chSavedTagFilter = $state<Set<string>>(new Set());
+  let chSortOrder = $state<SortOrder>('newest');
   let chAutoRuleType = $state<AutoRuleOption>('frequency:high');
   let chRecentWithinDays = $state(14);
   let chCategoryValue = $state('');
@@ -270,6 +316,13 @@
       if (view) {
         chName = view.name;
         chNameManuallyEdited = true;
+        chChannelType = view.mode === 'saved' ? 'saved' : 'feed';
+        chSavedSourceFilter = new Set(view.savedSourceFilter ?? []);
+        chSavedDateFilter = view.savedDateFilter ?? '';
+        chSavedReadingLength = new Set(view.savedReadingLength ?? []);
+        chSavedDomainFilter = new Set(view.savedDomainFilter ?? []);
+        chSavedTagFilter = new Set(view.tagFilter ?? []);
+        chSortOrder = view.sortOrder;
         const isSmartChannel = !!view.autoRule;
         if (isSmartChannel) {
           chMode = 'smart';
@@ -293,6 +346,7 @@
     // New channel defaults
     if (channelCreateMode) {
       chName = '';
+      chChannelType = 'feed';
       chMode = 'manual';
       chAutoRuleType = 'frequency:high';
       chRecentWithinDays = 14;
@@ -302,6 +356,12 @@
       chNameManuallyEdited = false;
       chSourceMode = 'all';
       chSourceKeys = new Set();
+      chSavedSourceFilter = new Set();
+      chSavedDateFilter = '';
+      chSavedReadingLength = new Set();
+      chSavedDomainFilter = new Set();
+      chSavedTagFilter = new Set();
+      chSortOrder = 'newest';
       chFeedSearch = '';
       chError = null;
     }
@@ -400,14 +460,31 @@
     try {
       const isSmartMode = chMode === 'smart' && chCurrentAutoRule;
 
-      const viewData = {
-        name: chName.trim(),
-        sourceMode: isSmartMode ? ('include' as const) : chSourceMode,
-        sourceKeys: isSmartMode ? chMatchedSourceKeys : Array.from(chSourceKeys),
-        autoRule: isSmartMode ? chCurrentAutoRule : undefined,
-        readFilter: 'unread' as const,
-        sortOrder: 'newest' as const,
-      };
+      const viewData =
+        chChannelType === 'saved'
+          ? {
+              name: chName.trim(),
+              mode: 'saved' as const,
+              savedSourceFilter:
+                chSavedSourceFilter.size > 0 ? Array.from(chSavedSourceFilter) : undefined,
+              savedDateFilter: chSavedDateFilter || undefined,
+              savedReadingLength:
+                chSavedReadingLength.size > 0 ? Array.from(chSavedReadingLength) : undefined,
+              savedDomainFilter:
+                chSavedDomainFilter.size > 0 ? Array.from(chSavedDomainFilter) : undefined,
+              tagFilter: chSavedTagFilter.size > 0 ? Array.from(chSavedTagFilter) : undefined,
+              readFilter: 'unread' as const,
+              sortOrder: chSortOrder,
+            }
+          : {
+              name: chName.trim(),
+              mode: 'feed' as const,
+              sourceMode: isSmartMode ? ('include' as const) : chSourceMode,
+              sourceKeys: isSmartMode ? chMatchedSourceKeys : Array.from(chSourceKeys),
+              autoRule: isSmartMode ? chCurrentAutoRule : undefined,
+              readFilter: 'unread' as const,
+              sortOrder: 'newest' as const,
+            };
 
       if (editingChannelId != null) {
         await filteredViewsStore.update(editingChannelId, viewData);
@@ -472,15 +549,109 @@
             <Icon name="archive" size={16} />
             Archive
           </button>
-          <button class="toggle-btn" onclick={() => feedViewStore.toggleSortOrder()}>
-            <Icon
-              name={feedViewStore.currentSortOrder === 'newest' ? 'arrow-down' : 'arrow-up'}
-              size={16}
-            />
-            {feedViewStore.currentSortOrder === 'newest' ? 'Newest' : 'Oldest'}
-          </button>
+          {#if !feedViewStore.isSavedChannel}
+            <button class="toggle-btn" onclick={() => feedViewStore.toggleSortOrder()}>
+              <Icon
+                name={feedViewStore.currentSortOrder === 'newest' ? 'arrow-down' : 'arrow-up'}
+                size={16}
+              />
+              {feedViewStore.currentSortOrder === 'newest' ? 'Newest' : 'Oldest'}
+            </button>
+          {/if}
         </div>
       </div>
+
+      {#if feedViewStore.isSavedChannel}
+        <!-- Sort (saved channel: expanded options) -->
+        <div class="sheet-section">
+          <div class="section-label">
+            <Icon name="arrow-down" size={12} />
+            Sort
+          </div>
+          <div class="toggle-row wrap">
+            {#each SAVED_SORT_OPTIONS as opt}
+              <button
+                class="toggle-btn"
+                class:active={feedViewStore.currentSortOrder === opt.value}
+                onclick={() => feedViewStore.setSortOrder(opt.value)}
+              >
+                {opt.label}
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        <!-- Date Added -->
+        <div class="sheet-section">
+          <div class="section-label">
+            <Icon name="clock" size={12} />
+            Date Added
+          </div>
+          <div class="toggle-row wrap">
+            {#each DATE_PRESET_OPTIONS as opt}
+              <button
+                class="toggle-btn"
+                class:active={(feedViewStore.toolbarDateFilter ?? '') === opt.value}
+                onclick={() => feedViewStore.setToolbarDateFilter(opt.value || null)}
+              >
+                {opt.label}
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        <!-- Reading Length -->
+        <div class="sheet-section">
+          <div class="section-label">
+            <Icon name="file-text" size={12} />
+            Reading Length
+          </div>
+          <div class="toggle-row">
+            {#each READING_LENGTH_OPTIONS as opt}
+              {@const isActive = feedViewStore.toolbarReadingLength.includes(opt.value)}
+              <button
+                class="toggle-btn"
+                class:active={isActive}
+                onclick={() => {
+                  const current = feedViewStore.toolbarReadingLength;
+                  feedViewStore.setToolbarReadingLength(
+                    isActive ? current.filter((l) => l !== opt.value) : [...current, opt.value]
+                  );
+                }}
+              >
+                {opt.label}
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        <!-- Domain -->
+        {#if feedViewStore.availableSavedDomains.length > 0}
+          <div class="sheet-section">
+            <div class="section-label">
+              <Icon name="globe" size={12} />
+              Domain
+            </div>
+            <div class="toggle-row wrap">
+              {#each feedViewStore.availableSavedDomains as domain}
+                {@const isActive = feedViewStore.toolbarDomainFilter.includes(domain)}
+                <button
+                  class="toggle-btn chip"
+                  class:active={isActive}
+                  onclick={() => {
+                    const current = feedViewStore.toolbarDomainFilter;
+                    feedViewStore.setToolbarDomainFilter(
+                      isActive ? current.filter((d) => d !== domain) : [...current, domain]
+                    );
+                  }}
+                >
+                  {domain}
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      {/if}
     {:else}
       <div class="sheet-section">
         <div class="section-label">View</div>
@@ -572,225 +743,379 @@
     </div>
 
     <div class="sheet-section">
-      <div class="section-label">Source Selection</div>
+      <div class="section-label">Channel Type</div>
       <div class="toggle-row">
         <button
           class="toggle-btn"
-          class:active={chMode === 'manual'}
-          onclick={() => (chMode = 'manual')}
+          class:active={chChannelType === 'feed'}
+          onclick={() => (chChannelType = 'feed')}
         >
-          Manual
+          Feed
         </button>
         <button
           class="toggle-btn"
-          class:active={chMode === 'smart'}
-          onclick={() => {
-            chMode = 'smart';
-            if (!chNameManuallyEdited) chName = DEFAULT_NAMES[chAutoRuleType];
-          }}
+          class:active={chChannelType === 'saved'}
+          onclick={() => (chChannelType = 'saved')}
         >
-          Smart
+          Saved
         </button>
       </div>
     </div>
 
-    {#if chMode === 'smart'}
+    {#if chChannelType === 'saved'}
       <div class="sheet-section">
-        <div class="section-label">Rule</div>
-        <div class="rule-cards">
-          {#each AUTO_RULE_OPTIONS as opt (opt.value)}
+        <div class="section-label">Include Sources</div>
+        <div class="source-list">
+          {#each SAVED_SOURCE_OPTIONS as opt}
+            <label class="source-item">
+              <input
+                type="checkbox"
+                checked={chSavedSourceFilter.has(opt.value)}
+                onchange={() => {
+                  const next = new Set(chSavedSourceFilter);
+                  if (next.has(opt.value)) {
+                    next.delete(opt.value);
+                  } else {
+                    next.add(opt.value);
+                  }
+                  chSavedSourceFilter = next;
+                }}
+              />
+              <span class="source-name">{opt.label}</span>
+            </label>
+          {/each}
+        </div>
+      </div>
+
+      <!-- Date Added -->
+      <div class="sheet-section">
+        <div class="section-label">Date Added</div>
+        <div class="toggle-row wrap">
+          {#each DATE_PRESET_OPTIONS as opt}
             <button
-              class="rule-card"
-              class:selected={chAutoRuleType === opt.value}
-              onclick={() => {
-                chAutoRuleType = opt.value;
-                if (!chNameManuallyEdited) chName = DEFAULT_NAMES[chAutoRuleType];
-              }}
+              class="toggle-btn"
+              class:active={chSavedDateFilter === opt.value}
+              onclick={() => (chSavedDateFilter = opt.value as DateAddedPreset | '')}
             >
-              <span class="rule-card-label">{opt.label}</span>
-              <span class="rule-card-desc">{opt.description}</span>
+              {opt.label}
             </button>
           {/each}
         </div>
       </div>
 
-      {#if chAutoRuleType === 'recent'}
-        <div class="sheet-section">
-          <div class="section-label">Within the last</div>
-          <div class="inline-input">
-            <input
-              type="number"
-              bind:value={chRecentWithinDays}
-              min="1"
-              max="90"
-              class="days-input"
-            />
-            <span class="input-suffix">days</span>
-          </div>
-        </div>
-      {:else if chAutoRuleType === 'category'}
-        <div class="sheet-section">
-          <div class="section-label">Category</div>
-          <input
-            type="text"
-            list="ch-category-options"
-            class="ch-input"
-            bind:value={chCategoryValue}
-            placeholder="e.g. Technology"
-          />
-          <datalist id="ch-category-options">
-            {#each availableCategories as cat}
-              <option value={cat}></option>
-            {/each}
-          </datalist>
-        </div>
-      {:else if chAutoRuleType === 'subscriptionTag'}
-        <div class="sheet-section">
-          <div class="section-label">Tag</div>
-          <input
-            type="text"
-            list="ch-tag-options"
-            class="ch-input"
-            bind:value={chTagValue}
-            placeholder="e.g. news"
-          />
-          <datalist id="ch-tag-options">
-            {#each availableSubTags as tag}
-              <option value={tag}></option>
-            {/each}
-          </datalist>
-        </div>
-      {:else if chAutoRuleType === 'domain'}
-        <div class="sheet-section">
-          <div class="section-label">Domain patterns</div>
-          <div class="chip-input-wrapper">
-            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-            <div
-              class="chip-input"
-              onclick={(e) => {
-                const input = (e.currentTarget as HTMLElement).querySelector('input');
-                input?.focus();
+      <!-- Reading Length -->
+      <div class="sheet-section">
+        <div class="section-label">Reading Length</div>
+        <div class="toggle-row">
+          {#each READING_LENGTH_OPTIONS as opt}
+            <button
+              class="toggle-btn"
+              class:active={chSavedReadingLength.has(opt.value)}
+              onclick={() => {
+                const next = new Set(chSavedReadingLength);
+                if (next.has(opt.value)) {
+                  next.delete(opt.value);
+                } else {
+                  next.add(opt.value);
+                }
+                chSavedReadingLength = next;
               }}
             >
-              {#each chDomainPatterns as pattern}
-                <span class="domain-chip">
-                  {pattern}
-                  <button
-                    type="button"
-                    class="chip-remove"
-                    onclick={() => removeDomainPattern(pattern)}
-                    aria-label="Remove {pattern}"
-                  >
-                    &times;
-                  </button>
-                </span>
-              {/each}
-              <input
-                type="text"
-                bind:value={chDomainInput}
-                onkeydown={handleDomainKeydown}
-                oninput={handleDomainInput}
-                onblur={handleDomainBlur}
-                onfocus={() => (chDomainSuggestionsOpen = true)}
-                placeholder={chDomainPatterns.length === 0 ? 'Type a domain and press Enter' : ''}
-                class="chip-text-input"
-                autocomplete="off"
-              />
-            </div>
-            {#if chDomainSuggestionsOpen && chDomainSuggestions.length > 0}
-              <ul class="chip-suggestions" role="listbox">
-                {#each chDomainSuggestions as suggestion, i (suggestion)}
-                  <!-- svelte-ignore a11y_click_events_have_key_events -->
-                  <li
-                    class="chip-suggestion"
-                    class:highlighted={i === chDomainHighlightIndex}
-                    role="option"
-                    aria-selected={i === chDomainHighlightIndex}
-                    onmousedown={(e) => {
-                      e.preventDefault();
-                      addDomainPattern(suggestion);
-                    }}
-                    onmouseenter={() => (chDomainHighlightIndex = i)}
-                  >
-                    {suggestion}
-                  </li>
-                {/each}
-              </ul>
-            {/if}
+              {opt.label}
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <!-- Domain -->
+      {#if feedViewStore.availableSavedDomains.length > 0}
+        <div class="sheet-section">
+          <div class="section-label">Domains</div>
+          <div class="toggle-row wrap">
+            {#each feedViewStore.availableSavedDomains as domain}
+              <button
+                class="toggle-btn chip"
+                class:active={chSavedDomainFilter.has(domain)}
+                onclick={() => {
+                  const next = new Set(chSavedDomainFilter);
+                  if (next.has(domain)) {
+                    next.delete(domain);
+                  } else {
+                    next.add(domain);
+                  }
+                  chSavedDomainFilter = next;
+                }}
+              >
+                {domain}
+              </button>
+            {/each}
           </div>
         </div>
       {/if}
 
-      <div class="match-preview" class:empty={chMatchedSourceKeys.length === 0}>
-        {#if chMatchedSourceKeys.length > 0}
-          Matches <strong>{chMatchedSourceKeys.length}</strong>
-          {chMatchedSourceKeys.length === 1 ? 'source' : 'sources'}
-        {:else}
-          No sources match this rule yet
-        {/if}
+      <!-- Tags -->
+      {#if itemLabelsStore.allTags.length > 0}
+        <div class="sheet-section">
+          <div class="section-label">Tags</div>
+          <div class="toggle-row wrap">
+            {#each itemLabelsStore.allTags as tag}
+              <button
+                class="toggle-btn chip"
+                class:active={chSavedTagFilter.has(tag)}
+                onclick={() => {
+                  const next = new Set(chSavedTagFilter);
+                  if (next.has(tag)) {
+                    next.delete(tag);
+                  } else {
+                    next.add(tag);
+                  }
+                  chSavedTagFilter = next;
+                }}
+              >
+                {tag}
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
+
+      <!-- Sort -->
+      <div class="sheet-section">
+        <div class="section-label">Sort Order</div>
+        <div class="toggle-row wrap">
+          {#each SAVED_SORT_OPTIONS as opt}
+            <button
+              class="toggle-btn"
+              class:active={chSortOrder === opt.value}
+              onclick={() => (chSortOrder = opt.value)}
+            >
+              {opt.label}
+            </button>
+          {/each}
+        </div>
       </div>
     {:else}
-      <!-- Manual source picker -->
       <div class="sheet-section">
-        <div class="section-label">Sources</div>
+        <div class="section-label">Source Selection</div>
         <div class="toggle-row">
           <button
-            class="toggle-btn small"
-            class:active={chSourceMode === 'all'}
-            onclick={() => (chSourceMode = 'all')}
+            class="toggle-btn"
+            class:active={chMode === 'manual'}
+            onclick={() => (chMode = 'manual')}
           >
-            All sources
+            Manual
           </button>
           <button
-            class="toggle-btn small"
-            class:active={chSourceMode === 'include'}
-            onclick={() => (chSourceMode = 'include')}
+            class="toggle-btn"
+            class:active={chMode === 'smart'}
+            onclick={() => {
+              chMode = 'smart';
+              if (!chNameManuallyEdited) chName = DEFAULT_NAMES[chAutoRuleType];
+            }}
           >
-            Include only
+            Smart
           </button>
         </div>
+      </div>
 
-        {#if chSourceMode === 'include' && subscriptionsStore.subscriptions.length > 0}
-          {#if subscriptionsStore.subscriptions.length > 6}
+      {#if chMode === 'smart'}
+        <div class="sheet-section">
+          <div class="section-label">Rule</div>
+          <div class="rule-cards">
+            {#each AUTO_RULE_OPTIONS as opt (opt.value)}
+              <button
+                class="rule-card"
+                class:selected={chAutoRuleType === opt.value}
+                onclick={() => {
+                  chAutoRuleType = opt.value;
+                  if (!chNameManuallyEdited) chName = DEFAULT_NAMES[chAutoRuleType];
+                }}
+              >
+                <span class="rule-card-label">{opt.label}</span>
+                <span class="rule-card-desc">{opt.description}</span>
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        {#if chAutoRuleType === 'recent'}
+          <div class="sheet-section">
+            <div class="section-label">Within the last</div>
+            <div class="inline-input">
+              <input
+                type="number"
+                bind:value={chRecentWithinDays}
+                min="1"
+                max="90"
+                class="days-input"
+              />
+              <span class="input-suffix">days</span>
+            </div>
+          </div>
+        {:else if chAutoRuleType === 'category'}
+          <div class="sheet-section">
+            <div class="section-label">Category</div>
             <input
               type="text"
-              class="source-search"
-              placeholder="Search subscriptions..."
-              aria-label="Search subscriptions"
-              bind:value={chFeedSearch}
+              list="ch-category-options"
+              class="ch-input"
+              bind:value={chCategoryValue}
+              placeholder="e.g. Technology"
             />
-          {/if}
-          <div class="source-list">
-            {#each chFilteredSubscriptions as sub}
-              {@const key = subscriptionSourceKey(sub)}
-              {#if key}
-                {@const isAtProto = sub.sourceType?.startsWith('atproto.') ?? false}
-                {@const iconUrl =
-                  sub.customIconUrl ||
-                  (isAtProto
-                    ? sub.siteUrl
-                      ? getFaviconUrl(sub.siteUrl)
-                      : '/icons/icon-192.svg'
-                    : getFaviconUrl(sub.siteUrl || sub.feedUrl || ''))}
-                <label class="source-item">
-                  <input
-                    type="checkbox"
-                    checked={chSourceKeys.has(key)}
-                    onchange={() => toggleChSourceKey(key)}
-                  />
-                  {#if iconUrl}
-                    <img src={iconUrl} alt="" class="source-icon" />
-                  {/if}
-                  <span class="source-name">{sub.customTitle || sub.title}</span>
-                </label>
+            <datalist id="ch-category-options">
+              {#each availableCategories as cat}
+                <option value={cat}></option>
+              {/each}
+            </datalist>
+          </div>
+        {:else if chAutoRuleType === 'subscriptionTag'}
+          <div class="sheet-section">
+            <div class="section-label">Tag</div>
+            <input
+              type="text"
+              list="ch-tag-options"
+              class="ch-input"
+              bind:value={chTagValue}
+              placeholder="e.g. news"
+            />
+            <datalist id="ch-tag-options">
+              {#each availableSubTags as tag}
+                <option value={tag}></option>
+              {/each}
+            </datalist>
+          </div>
+        {:else if chAutoRuleType === 'domain'}
+          <div class="sheet-section">
+            <div class="section-label">Domain patterns</div>
+            <div class="chip-input-wrapper">
+              <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+              <div
+                class="chip-input"
+                onclick={(e) => {
+                  const input = (e.currentTarget as HTMLElement).querySelector('input');
+                  input?.focus();
+                }}
+              >
+                {#each chDomainPatterns as pattern}
+                  <span class="domain-chip">
+                    {pattern}
+                    <button
+                      type="button"
+                      class="chip-remove"
+                      onclick={() => removeDomainPattern(pattern)}
+                      aria-label="Remove {pattern}"
+                    >
+                      &times;
+                    </button>
+                  </span>
+                {/each}
+                <input
+                  type="text"
+                  bind:value={chDomainInput}
+                  onkeydown={handleDomainKeydown}
+                  oninput={handleDomainInput}
+                  onblur={handleDomainBlur}
+                  onfocus={() => (chDomainSuggestionsOpen = true)}
+                  placeholder={chDomainPatterns.length === 0 ? 'Type a domain and press Enter' : ''}
+                  class="chip-text-input"
+                  autocomplete="off"
+                />
+              </div>
+              {#if chDomainSuggestionsOpen && chDomainSuggestions.length > 0}
+                <ul class="chip-suggestions" role="listbox">
+                  {#each chDomainSuggestions as suggestion, i (suggestion)}
+                    <!-- svelte-ignore a11y_click_events_have_key_events -->
+                    <li
+                      class="chip-suggestion"
+                      class:highlighted={i === chDomainHighlightIndex}
+                      role="option"
+                      aria-selected={i === chDomainHighlightIndex}
+                      onmousedown={(e) => {
+                        e.preventDefault();
+                        addDomainPattern(suggestion);
+                      }}
+                      onmouseenter={() => (chDomainHighlightIndex = i)}
+                    >
+                      {suggestion}
+                    </li>
+                  {/each}
+                </ul>
               {/if}
-            {/each}
-            {#if chFeedSearch && chFilteredSubscriptions.length === 0}
-              <div class="no-results">No subscriptions match</div>
-            {/if}
+            </div>
           </div>
         {/if}
-      </div>
+
+        <div class="match-preview" class:empty={chMatchedSourceKeys.length === 0}>
+          {#if chMatchedSourceKeys.length > 0}
+            Matches <strong>{chMatchedSourceKeys.length}</strong>
+            {chMatchedSourceKeys.length === 1 ? 'source' : 'sources'}
+          {:else}
+            No sources match this rule yet
+          {/if}
+        </div>
+      {:else}
+        <!-- Manual source picker -->
+        <div class="sheet-section">
+          <div class="section-label">Sources</div>
+          <div class="toggle-row">
+            <button
+              class="toggle-btn small"
+              class:active={chSourceMode === 'all'}
+              onclick={() => (chSourceMode = 'all')}
+            >
+              All sources
+            </button>
+            <button
+              class="toggle-btn small"
+              class:active={chSourceMode === 'include'}
+              onclick={() => (chSourceMode = 'include')}
+            >
+              Include only
+            </button>
+          </div>
+
+          {#if chSourceMode === 'include' && subscriptionsStore.subscriptions.length > 0}
+            {#if subscriptionsStore.subscriptions.length > 6}
+              <input
+                type="text"
+                class="source-search"
+                placeholder="Search subscriptions..."
+                aria-label="Search subscriptions"
+                bind:value={chFeedSearch}
+              />
+            {/if}
+            <div class="source-list">
+              {#each chFilteredSubscriptions as sub}
+                {@const key = subscriptionSourceKey(sub)}
+                {#if key}
+                  {@const isAtProto = sub.sourceType?.startsWith('atproto.') ?? false}
+                  {@const iconUrl =
+                    sub.customIconUrl ||
+                    (isAtProto
+                      ? sub.siteUrl
+                        ? getFaviconUrl(sub.siteUrl)
+                        : '/icons/icon-192.svg'
+                      : getFaviconUrl(sub.siteUrl || sub.feedUrl || ''))}
+                  <label class="source-item">
+                    <input
+                      type="checkbox"
+                      checked={chSourceKeys.has(key)}
+                      onchange={() => toggleChSourceKey(key)}
+                    />
+                    {#if iconUrl}
+                      <img src={iconUrl} alt="" class="source-icon" />
+                    {/if}
+                    <span class="source-name">{sub.customTitle || sub.title}</span>
+                  </label>
+                {/if}
+              {/each}
+              {#if chFeedSearch && chFilteredSubscriptions.length === 0}
+                <div class="no-results">No subscriptions match</div>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      {/if}
     {/if}
 
     {#if chError}
@@ -891,6 +1216,10 @@
     gap: 0.5rem;
   }
 
+  .toggle-row.wrap {
+    flex-wrap: wrap;
+  }
+
   .toggle-btn {
     flex: 1;
     display: flex;
@@ -915,6 +1244,12 @@
 
   .toggle-btn:active:not(.active) {
     background: var(--color-border);
+  }
+
+  .toggle-btn.chip {
+    flex: 0 0 auto;
+    font-size: 0.8125rem;
+    padding: 0.375rem 0.75rem;
   }
 
   .toggle-btn.small {

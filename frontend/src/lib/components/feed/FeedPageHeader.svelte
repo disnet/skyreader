@@ -101,7 +101,7 @@
   }
 
   let dropdownOpen = $derived(sidebarStore.navigationDropdownOpen);
-  let isSavedView = $derived(Boolean(feedViewStore.savedFilter));
+  let isSavedView = $derived(Boolean(feedViewStore.savedFilter) || feedViewStore.isSavedChannel);
 
   let menuItems = $derived.by(() => {
     const items: Array<{ label: string; icon: string; onclick: () => void; variant?: 'danger' }> =
@@ -189,19 +189,23 @@
               <Icon name="archive" size={16} />
               <span class="btn-label">Archive</span>
             </button>
-            <span class="toggle-divider"></span>
-            <button
-              onclick={() => feedViewStore.toggleSortOrder()}
-              title={feedViewStore.currentSortOrder === 'newest' ? 'Newest first' : 'Oldest first'}
-            >
-              <Icon
-                name={feedViewStore.currentSortOrder === 'newest' ? 'arrow-down' : 'arrow-up'}
-                size={16}
-              />
-              <span class="btn-label"
-                >{feedViewStore.currentSortOrder === 'newest' ? 'New' : 'Old'}</span
+            {#if !feedViewStore.isSavedChannel}
+              <span class="toggle-divider"></span>
+              <button
+                onclick={() => feedViewStore.toggleSortOrder()}
+                title={feedViewStore.currentSortOrder === 'newest'
+                  ? 'Newest first'
+                  : 'Oldest first'}
               >
-            </button>
+                <Icon
+                  name={feedViewStore.currentSortOrder === 'newest' ? 'arrow-down' : 'arrow-up'}
+                  size={16}
+                />
+                <span class="btn-label"
+                  >{feedViewStore.currentSortOrder === 'newest' ? 'New' : 'Old'}</span
+                >
+              </button>
+            {/if}
             <span class="toggle-divider"></span>
             <button
               onclick={() => sidebarStore.openSaveArticleModal()}
@@ -211,6 +215,17 @@
               <Icon name="plus" size={16} />
               <span class="btn-label">Add</span>
             </button>
+            {#if feedViewStore.isSavedChannel && onEditChannel}
+              <span class="toggle-divider"></span>
+              <button
+                onclick={() => onEditChannel(parseInt(feedViewStore.viewFilter!))}
+                aria-label="Edit channel"
+                title="Edit channel"
+              >
+                <Icon name="edit" size={16} />
+                <span class="btn-label">Edit</span>
+              </button>
+            {/if}
           </div>
         {:else}
           <div class="view-toggle" role="group" aria-label="View controls">
@@ -277,7 +292,7 @@
       <AppearanceToolbar />
     </div>
   {/if}
-  {#if !isSavedView && feedViewStore.filterToolbarOpen}
+  {#if !feedViewStore.isSavedChannel && feedViewStore.filterToolbarOpen}
     <div class="filter-toolbar-row">
       <FilterToolbar {showSourceFilter} {onEditChannel} />
     </div>

@@ -65,7 +65,9 @@
   ontouchend={onTouchEnd}
   ontouchmove={onTouchMove}
 >
-  <span class="view-icon"><Icon name="newspaper" size={14} /></span>
+  <span class="view-icon"
+    ><Icon name={view.mode === 'saved' ? 'bookmark' : 'newspaper'} size={14} /></span
+  >
   {#if isRenaming}
     <!-- svelte-ignore a11y_autofocus -->
     <input
