@@ -128,7 +128,6 @@
   let typeFilter = $state<Set<SubscriptionSourceType>>(new Set());
   let saving = $state(false);
   let error = $state<string | null>(null);
-  let showAdvanced = $state(false);
 
   // Search state for filtering source lists
   let feedSearch = $state('');
@@ -322,11 +321,6 @@
             sourceKeys = mode === 'all' ? new Set() : new Set(view.sourceKeys ?? []);
           }
           feedSearch = '';
-          // Auto-open advanced if non-default values (read from view, not $state, to avoid re-triggering this effect)
-          showAdvanced =
-            (view.typeFilter ?? []).length > 0 ||
-            view.readFilter !== 'unread' ||
-            view.sortOrder !== 'newest';
           return;
         }
       }
@@ -351,7 +345,6 @@
       sortOrder = 'newest';
       typeFilter = new Set();
       feedSearch = '';
-      showAdvanced = false;
     }
   });
 
@@ -889,82 +882,74 @@
       {/if}
     {/if}
 
-    <!-- Advanced options (collapsed by default) -->
-    <button type="button" class="advanced-toggle" onclick={() => (showAdvanced = !showAdvanced)}>
-      <span class="advanced-arrow" class:open={showAdvanced}>&#9656;</span>
-      More options
-    </button>
-
-    {#if showAdvanced}
-      <div class="advanced-section">
-        {#if channelType === 'feed'}
-          <!-- Type Filter (feed channels only) -->
-          <div class="form-group">
-            <span class="form-label">Content Types</span>
-            <div class="checklist type-checklist">
-              {#each TYPE_OPTIONS as opt}
-                <label class="checklist-item">
-                  <input
-                    type="checkbox"
-                    checked={typeFilter.has(opt.value)}
-                    onchange={() => toggleTypeFilter(opt.value)}
-                  />
-                  <span class="checklist-label">{opt.label}</span>
-                </label>
-              {/each}
-            </div>
-            <span class="form-hint">Leave all unchecked to show all types</span>
-          </div>
-        {/if}
-
-        <!-- Read State -->
+    <div class="advanced-section">
+      {#if channelType === 'feed'}
+        <!-- Type Filter (feed channels only) -->
         <div class="form-group">
-          <span class="form-label">{channelType === 'saved' ? 'Status' : 'Read State'}</span>
-          <div class="radio-group">
-            <label class="radio-label">
-              <input type="radio" bind:group={readFilter} value="all" />
-              All
-            </label>
-            <label class="radio-label">
-              <input type="radio" bind:group={readFilter} value="unread" />
-              {channelType === 'saved' ? 'Inbox only' : 'Unread only'}
-            </label>
-            <label class="radio-label">
-              <input type="radio" bind:group={readFilter} value="read" />
-              {channelType === 'saved' ? 'Archived only' : 'Read only'}
-            </label>
+          <span class="form-label">Content Types</span>
+          <div class="checklist type-checklist">
+            {#each TYPE_OPTIONS as opt}
+              <label class="checklist-item">
+                <input
+                  type="checkbox"
+                  checked={typeFilter.has(opt.value)}
+                  onchange={() => toggleTypeFilter(opt.value)}
+                />
+                <span class="checklist-label">{opt.label}</span>
+              </label>
+            {/each}
           </div>
+          <span class="form-hint">Leave all unchecked to show all types</span>
         </div>
+      {/if}
 
-        <!-- Sort Order -->
-        <div class="form-group">
-          <span class="form-label">Sort Order</span>
-          {#if channelType === 'saved'}
-            <select class="form-select" bind:value={sortOrder}>
-              <option value="newest">Date saved (newest)</option>
-              <option value="oldest">Date saved (oldest)</option>
-              <option value="published-newest">Published date (newest)</option>
-              <option value="published-oldest">Published date (oldest)</option>
-              <option value="shortest">Reading time (shortest)</option>
-              <option value="longest">Reading time (longest)</option>
-              <option value="domain-asc">Domain (A–Z)</option>
-              <option value="domain-desc">Domain (Z–A)</option>
-            </select>
-          {:else}
-            <div class="radio-group">
-              <label class="radio-label">
-                <input type="radio" bind:group={sortOrder} value="newest" />
-                Newest first
-              </label>
-              <label class="radio-label">
-                <input type="radio" bind:group={sortOrder} value="oldest" />
-                Oldest first
-              </label>
-            </div>
-          {/if}
+      <!-- Read State -->
+      <div class="form-group">
+        <span class="form-label">{channelType === 'saved' ? 'Status' : 'Read State'}</span>
+        <div class="radio-group">
+          <label class="radio-label">
+            <input type="radio" bind:group={readFilter} value="all" />
+            All
+          </label>
+          <label class="radio-label">
+            <input type="radio" bind:group={readFilter} value="unread" />
+            {channelType === 'saved' ? 'Inbox only' : 'Unread only'}
+          </label>
+          <label class="radio-label">
+            <input type="radio" bind:group={readFilter} value="read" />
+            {channelType === 'saved' ? 'Archived only' : 'Read only'}
+          </label>
         </div>
       </div>
-    {/if}
+
+      <!-- Sort Order -->
+      <div class="form-group">
+        <span class="form-label">Sort Order</span>
+        {#if channelType === 'saved'}
+          <select class="form-select" bind:value={sortOrder}>
+            <option value="newest">Date saved (newest)</option>
+            <option value="oldest">Date saved (oldest)</option>
+            <option value="published-newest">Published date (newest)</option>
+            <option value="published-oldest">Published date (oldest)</option>
+            <option value="shortest">Reading time (shortest)</option>
+            <option value="longest">Reading time (longest)</option>
+            <option value="domain-asc">Domain (A–Z)</option>
+            <option value="domain-desc">Domain (Z–A)</option>
+          </select>
+        {:else}
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" bind:group={sortOrder} value="newest" />
+              Newest first
+            </label>
+            <label class="radio-label">
+              <input type="radio" bind:group={sortOrder} value="oldest" />
+              Oldest first
+            </label>
+          </div>
+        {/if}
+      </div>
+    </div>
 
     {#if error}
       <p class="error-message">{error}</p>
@@ -1218,33 +1203,6 @@
     font-size: 0.6875rem;
     color: var(--color-text-secondary);
     line-height: 1.3;
-  }
-
-  .advanced-toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0;
-    border: none;
-    background: none;
-    cursor: pointer;
-    font-size: 0.8125rem;
-    color: var(--color-text-secondary);
-    transition: color 0.15s;
-  }
-
-  .advanced-toggle:hover {
-    color: var(--color-text);
-  }
-
-  .advanced-arrow {
-    display: inline-block;
-    transition: transform 0.15s;
-    font-size: 0.75rem;
-  }
-
-  .advanced-arrow.open {
-    transform: rotate(90deg);
   }
 
   .advanced-section {
