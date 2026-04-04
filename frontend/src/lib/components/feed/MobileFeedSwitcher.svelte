@@ -13,6 +13,10 @@
     channelSuggestions,
     type ChannelSuggestion,
   } from '$lib/stores/channelSuggestions.svelte';
+  import {
+    savedChannelSuggestions,
+    type SavedChannelSuggestion,
+  } from '$lib/stores/savedChannelSuggestions.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import Tooltip from '$lib/components/Tooltip.svelte';
 
@@ -103,7 +107,11 @@
     }
 
     const filteredChannels = channels.filter(filterItem);
-    if (filteredChannels.length > 0 || channelSuggestions.suggestions.length > 0) {
+    if (
+      filteredChannels.length > 0 ||
+      channelSuggestions.suggestions.length > 0 ||
+      savedChannelSuggestions.suggestions.length > 0
+    ) {
       sections.push({ section: 'Channels', items: filteredChannels });
     }
 
@@ -151,6 +159,21 @@
       autoRule: suggestion.autoRule,
       readFilter: 'unread',
       sortOrder: 'newest',
+    });
+    goto(`/?view=${id}`);
+    onclose();
+  }
+
+  async function acceptSavedSuggestion(suggestion: SavedChannelSuggestion) {
+    const id = await filteredViewsStore.create({
+      name: suggestion.name,
+      mode: 'saved',
+      savedSourceFilter: suggestion.savedSourceFilter,
+      savedDomainFilter: suggestion.savedDomainFilter,
+      savedReadingLength: suggestion.savedReadingLength,
+      savedDateFilter: suggestion.savedDateFilter,
+      readFilter: suggestion.readFilter ?? 'all',
+      sortOrder: suggestion.sortOrder ?? 'newest',
     });
     goto(`/?view=${id}`);
     onclose();
@@ -249,7 +272,7 @@
           </button>
         {/if}
       {/each}
-      {#if section === 'Channels' && channelSuggestions.suggestions.length > 0 && !searchQuery}
+      {#if section === 'Channels' && (channelSuggestions.suggestions.length > 0 || savedChannelSuggestions.suggestions.length > 0) && !searchQuery}
         {#each channelSuggestions.suggestions as suggestion (suggestion.id)}
           <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
           <div class="nav-item suggestion-accept" onclick={() => acceptSuggestion(suggestion)}>
@@ -269,7 +292,26 @@
             </span>
           </div>
         {/each}
-        {#if channelSuggestions.hasMore || channelSuggestions.suggestions.length > 0}
+        {#each savedChannelSuggestions.suggestions as suggestion (suggestion.id)}
+          <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+          <div class="nav-item suggestion-accept" onclick={() => acceptSavedSuggestion(suggestion)}>
+            <span class="item-icon suggestion-icon"><Icon name="plus" size={16} /></span>
+            <span class="item-label">{suggestion.name}</span>
+            <span class="suggestion-actions" onclick={(e) => e.stopPropagation()}>
+              <Tooltip text={suggestion.description} />
+              <button
+                class="suggestion-dismiss"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  savedChannelSuggestions.dismiss(suggestion.id);
+                }}
+              >
+                <Icon name="x" size={14} />
+              </button>
+            </span>
+          </div>
+        {/each}
+        {#if channelSuggestions.hasMore || channelSuggestions.suggestions.length > 0 || savedChannelSuggestions.hasMore || savedChannelSuggestions.suggestions.length > 0}
           <a
             href="/channels/discover"
             class="nav-item more-suggestions-link"

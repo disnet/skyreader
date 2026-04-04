@@ -12,6 +12,8 @@
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { channelSuggestions } from '$lib/stores/channelSuggestions.svelte';
+  import { savedChannelSuggestions } from '$lib/stores/savedChannelSuggestions.svelte';
+  import type { SavedChannelSuggestion } from '$lib/stores/savedChannelSuggestions.svelte';
   import { syncAutoRuleChannels } from '$lib/stores/channelAutoUpdate.svelte';
   import { onMount, onDestroy } from 'svelte';
   import AddFeedModal from './AddFeedModal.svelte';
@@ -162,6 +164,20 @@
     selectFilter('view', id);
   }
 
+  async function acceptSavedSuggestion(suggestion: SavedChannelSuggestion) {
+    const id = await filteredViewsStore.create({
+      name: suggestion.name,
+      mode: 'saved',
+      savedSourceFilter: suggestion.savedSourceFilter,
+      savedDomainFilter: suggestion.savedDomainFilter,
+      savedReadingLength: suggestion.savedReadingLength,
+      savedDateFilter: suggestion.savedDateFilter,
+      readFilter: suggestion.readFilter ?? 'all',
+      sortOrder: suggestion.sortOrder ?? 'newest',
+    });
+    selectFilter('view', id);
+  }
+
   function selectFilter(type: string, id?: string | number) {
     const params = new URLSearchParams();
     if (type === 'view' && id) params.set('view', String(id));
@@ -262,7 +278,7 @@
           onRenameCancel={() => (renamingViewId = null)}
         />
       {:else}
-        {#if channelSuggestions.suggestions.length === 0}
+        {#if channelSuggestions.suggestions.length === 0 && savedChannelSuggestions.suggestions.length === 0}
           <div class="empty-section">No channels yet</div>
         {/if}
       {/each}
@@ -285,7 +301,26 @@
           </button>
         </div>
       {/each}
-      {#if channelSuggestions.hasMore || channelSuggestions.suggestions.length > 0}
+      {#each savedChannelSuggestions.suggestions as suggestion (suggestion.id)}
+        <div class="suggestion-item">
+          <button class="suggestion-accept" onclick={() => acceptSavedSuggestion(suggestion)}>
+            <span class="suggestion-icon"><Icon name="plus" size={12} /></span>
+            <span class="suggestion-name">{suggestion.name}</span>
+          </button>
+          <Tooltip text={suggestion.description} />
+          <button
+            class="suggestion-dismiss"
+            onclick={(e) => {
+              e.stopPropagation();
+              savedChannelSuggestions.dismiss(suggestion.id);
+            }}
+            title="Dismiss"
+          >
+            <Icon name="x" size={12} />
+          </button>
+        </div>
+      {/each}
+      {#if channelSuggestions.hasMore || channelSuggestions.suggestions.length > 0 || savedChannelSuggestions.hasMore || savedChannelSuggestions.suggestions.length > 0}
         <a
           href="/channels/discover"
           class="more-suggestions-link"

@@ -3,7 +3,17 @@
  * Extracted from stores so they can be unit-tested without Svelte reactivity.
  */
 
-import type { Subscription, Article, FilteredView, SubscriptionSourceType } from '$lib/types';
+import type {
+  Subscription,
+  Article,
+  FilteredView,
+  SubscriptionSourceType,
+  SavedItem,
+  SavedSourceType,
+  ReadingLengthFilter,
+  SortOrder,
+  DateAddedPreset,
+} from '$lib/types';
 import type { ChannelAutoRule } from '$lib/types';
 import { rssSourceKey, sharesSourceKey, documentsSourceKey } from '$lib/utils/sourceKeys';
 
@@ -650,4 +660,232 @@ export function generateAllSuggestions(
   return all
     .filter((s) => !dismissedIds.has(s.id))
     .sort((a, b) => getSuggestionPriority(a.id) - getSuggestionPriority(b.id));
+}
+
+// ─── Saved channel suggestions (pure logic) ─────────────────────────
+
+export interface SavedChannelSuggestion {
+  id: string;
+  name: string;
+  description: string;
+  savedSourceFilter?: SavedSourceType[];
+  savedDateFilter?: DateAddedPreset;
+  savedReadingLength?: ReadingLengthFilter[];
+  savedDomainFilter?: string[];
+  readFilter?: 'all' | 'unread' | 'read';
+  sortOrder?: SortOrder;
+}
+
+export interface SavedSuggestionContext {
+  savedItems: SavedItem[];
+  views: FilteredView[];
+}
+
+const MIN_SAVED_FOR_SUGGESTION = 3;
+
+// Reading length thresholds (matches feedView.svelte.ts WPM=200)
+const QUICK_MAX_WORDS = 1000; // < 5 min
+const LONG_MIN_WORDS = 3000; // >= 15 min
+
+function isSavedSuggestionCovered(
+  suggestion: {
+    savedSourceFilter?: SavedSourceType[];
+    savedReadingLength?: ReadingLengthFilter[];
+    savedDomainFilter?: string[];
+  },
+  views: FilteredView[]
+): boolean {
+  const savedViews = views.filter((v) => v.mode === 'saved');
+  for (const view of savedViews) {
+    // Source filter match
+    if (suggestion.savedSourceFilter && suggestion.savedSourceFilter.length > 0) {
+      const viewSources = view.savedSourceFilter ?? [];
+      if (
+        viewSources.length > 0 &&
+        suggestion.savedSourceFilter.every((s) => viewSources.includes(s))
+      ) {
+        return true;
+      }
+    }
+    // Reading length match
+    if (suggestion.savedReadingLength && suggestion.savedReadingLength.length > 0) {
+      const viewLengths = view.savedReadingLength ?? [];
+      if (
+        viewLengths.length > 0 &&
+        suggestion.savedReadingLength.every((l) => viewLengths.includes(l))
+      ) {
+        return true;
+      }
+    }
+    // Domain match
+    if (suggestion.savedDomainFilter && suggestion.savedDomainFilter.length > 0) {
+      const viewDomains = new Set(view.savedDomainFilter ?? []);
+      if (viewDomains.size > 0) {
+        const overlap = suggestion.savedDomainFilter.filter((d) => viewDomains.has(d));
+        if (overlap.length >= suggestion.savedDomainFilter.length * 0.7) return true;
+      }
+    }
+    // A generic saved channel with no filters covers a generic suggestion
+    if (
+      !suggestion.savedSourceFilter?.length &&
+      !suggestion.savedReadingLength?.length &&
+      !suggestion.savedDomainFilter?.length
+    ) {
+      const noFilters =
+        !view.savedSourceFilter?.length &&
+        !view.savedReadingLength?.length &&
+        !view.savedDomainFilter?.length;
+      if (noFilters) return true;
+    }
+  }
+  return false;
+}
+
+export function getSavedSourceTypeSuggestions(
+  ctx: SavedSuggestionContext
+): SavedChannelSuggestion[] {
+  const suggestions: SavedChannelSuggestion[] = [];
+  const bySource = new Map<SavedSourceType, number>();
+
+  for (const item of ctx.savedItems) {
+    const src = item.source ?? 'url';
+    bySource.set(src, (bySource.get(src) ?? 0) + 1);
+  }
+
+  // Only suggest source filters if the user saves from multiple source types
+  if (bySource.size < 2) return [];
+
+  const sourceConfigs: { source: SavedSourceType; name: string; desc: string }[] = [
+    { source: 'feed', name: 'Saved from Feeds', desc: 'articles saved from your RSS feeds' },
+    { source: 'url', name: 'Saved from Web', desc: 'pages saved by URL' },
+    { source: 'share', name: 'Saved Shares', desc: 'shared articles you bookmarked' },
+    { source: 'document', name: 'Saved Documents', desc: 'published documents you bookmarked' },
+  ];
+
+  for (const cfg of sourceConfigs) {
+    const count = bySource.get(cfg.source) ?? 0;
+    if (count < MIN_SAVED_FOR_SUGGESTION) continue;
+    const filter = { savedSourceFilter: [cfg.source] };
+    if (isSavedSuggestionCovered(filter, ctx.views)) continue;
+    suggestions.push({
+      id: `saved:source-${cfg.source}`,
+      name: cfg.name,
+      description: `${count} ${cfg.desc}`,
+      savedSourceFilter: [cfg.source],
+      readFilter: 'all',
+      sortOrder: 'newest',
+    });
+  }
+  return suggestions;
+}
+
+export function getSavedReadingLengthSuggestions(
+  ctx: SavedSuggestionContext
+): SavedChannelSuggestion[] {
+  const suggestions: SavedChannelSuggestion[] = [];
+  let longCount = 0;
+  let quickCount = 0;
+
+  for (const item of ctx.savedItems) {
+    if (item.wordCount == null) continue;
+    if (item.wordCount >= LONG_MIN_WORDS) longCount++;
+    if (item.wordCount < QUICK_MAX_WORDS && item.wordCount > 0) quickCount++;
+  }
+
+  if (longCount >= MIN_SAVED_FOR_SUGGESTION) {
+    const filter = { savedReadingLength: ['long' as ReadingLengthFilter] };
+    if (!isSavedSuggestionCovered(filter, ctx.views)) {
+      suggestions.push({
+        id: 'saved:long-reads',
+        name: 'Saved Long Reads',
+        description: `${longCount} saved items with 15+ minute read time`,
+        savedReadingLength: ['long'],
+        readFilter: 'all',
+        sortOrder: 'longest',
+      });
+    }
+  }
+
+  if (quickCount >= MIN_SAVED_FOR_SUGGESTION) {
+    const filter = { savedReadingLength: ['quick' as ReadingLengthFilter] };
+    if (!isSavedSuggestionCovered(filter, ctx.views)) {
+      suggestions.push({
+        id: 'saved:quick-reads',
+        name: 'Saved Quick Reads',
+        description: `${quickCount} saved items you can finish in under 5 minutes`,
+        savedReadingLength: ['quick'],
+        readFilter: 'all',
+        sortOrder: 'shortest',
+      });
+    }
+  }
+
+  return suggestions;
+}
+
+export function getSavedDomainSuggestions(ctx: SavedSuggestionContext): SavedChannelSuggestion[] {
+  const domainCounts = new Map<string, number>();
+
+  for (const item of ctx.savedItems) {
+    if (!item.domain) continue;
+    domainCounts.set(item.domain, (domainCounts.get(item.domain) ?? 0) + 1);
+  }
+
+  const suggestions: SavedChannelSuggestion[] = [];
+  for (const [domain, count] of domainCounts) {
+    if (count < MIN_SAVED_FOR_SUGGESTION) continue;
+    const filter = { savedDomainFilter: [domain] };
+    if (isSavedSuggestionCovered(filter, ctx.views)) continue;
+    // Clean up domain for display name
+    const displayName = domain.replace(/^www\./, '');
+    suggestions.push({
+      id: `saved:domain-${domain}`,
+      name: `Saved from ${displayName}`,
+      description: `${count} saved items from ${displayName}`,
+      savedDomainFilter: [domain],
+      readFilter: 'all',
+      sortOrder: 'newest',
+    });
+  }
+
+  // Sort by count descending, take top 3
+  return suggestions
+    .sort((a, b) => {
+      const countA = domainCounts.get(a.savedDomainFilter![0]) ?? 0;
+      const countB = domainCounts.get(b.savedDomainFilter![0]) ?? 0;
+      return countB - countA;
+    })
+    .slice(0, 3);
+}
+
+const SAVED_PRIORITY: Record<string, number> = {
+  'saved:source-feed': 1,
+  'saved:source-url': 2,
+  'saved:long-reads': 3,
+  'saved:quick-reads': 4,
+  'saved:source-share': 5,
+  'saved:source-document': 6,
+};
+
+export function getSavedSuggestionPriority(id: string): number {
+  if (SAVED_PRIORITY[id] != null) return SAVED_PRIORITY[id];
+  if (id.startsWith('saved:domain-')) return 10;
+  return 20;
+}
+
+export function generateAllSavedSuggestions(
+  ctx: SavedSuggestionContext,
+  dismissedIds: Set<string>
+): SavedChannelSuggestion[] {
+  if (ctx.savedItems.length < MIN_SAVED_FOR_SUGGESTION) return [];
+
+  const all = [
+    ...getSavedSourceTypeSuggestions(ctx),
+    ...getSavedReadingLengthSuggestions(ctx),
+    ...getSavedDomainSuggestions(ctx),
+  ];
+
+  return all
+    .filter((s) => !dismissedIds.has(s.id))
+    .sort((a, b) => getSavedSuggestionPriority(a.id) - getSavedSuggestionPriority(b.id));
 }
