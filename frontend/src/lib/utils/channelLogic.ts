@@ -110,10 +110,10 @@ export function computeSourceKeys(
   switch (rule.type) {
     case 'category': {
       for (const sub of subscriptions) {
-        if (sub.id == null) continue;
+        if (!sub.rkey) continue;
         if (sub.category?.trim().toLowerCase() === rule.value.toLowerCase()) {
           if (!sub.sourceType || sub.sourceType === 'rss') {
-            keys.push(rssSourceKey(sub.id));
+            keys.push(rssSourceKey(sub.rkey));
           } else if (sub.sourceType === 'atproto.shares' && sub.subjectDid) {
             keys.push(sharesSourceKey(sub.subjectDid));
           } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
@@ -126,10 +126,10 @@ export function computeSourceKeys(
     case 'subscriptionTag': {
       const tagLower = rule.value.toLowerCase();
       for (const sub of subscriptions) {
-        if (sub.id == null) continue;
+        if (!sub.rkey) continue;
         if (sub.tags.some((t) => t.trim().toLowerCase() === tagLower)) {
           if (!sub.sourceType || sub.sourceType === 'rss') {
-            keys.push(rssSourceKey(sub.id));
+            keys.push(rssSourceKey(sub.rkey));
           } else if (sub.sourceType === 'atproto.shares' && sub.subjectDid) {
             keys.push(sharesSourceKey(sub.subjectDid));
           } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
@@ -141,14 +141,14 @@ export function computeSourceKeys(
     }
     case 'domain': {
       for (const sub of subscriptions) {
-        if (sub.id == null) continue;
+        if (!sub.rkey) continue;
         if (sub.sourceType && sub.sourceType !== 'rss') continue;
         const url = sub.feedUrl || sub.siteUrl;
         if (!url) continue;
         try {
           const hostname = new URL(url).hostname;
           if (rule.patterns.some((p) => hostname.includes(p))) {
-            keys.push(rssSourceKey(sub.id));
+            keys.push(rssSourceKey(sub.rkey));
           }
         } catch {
           continue;
@@ -170,13 +170,13 @@ export function computeSourceKeys(
     case 'frequency': {
       const stats = getArticleFrequencyByFeed(articles);
       for (const sub of subscriptions) {
-        if (sub.id == null) continue;
+        if (!sub.rkey || sub.id == null) continue;
         if (sub.sourceType && sub.sourceType !== 'rss') continue;
         const perDay = stats.get(sub.id) ?? 0;
         if (rule.threshold === 'high' && perDay >= 2) {
-          keys.push(rssSourceKey(sub.id));
+          keys.push(rssSourceKey(sub.rkey));
         } else if (rule.threshold === 'low' && perDay < 0.3 && perDay > 0) {
-          keys.push(rssSourceKey(sub.id));
+          keys.push(rssSourceKey(sub.rkey));
         }
       }
       break;
@@ -184,11 +184,11 @@ export function computeSourceKeys(
     case 'longReads': {
       const lengths = getAvgContentLengthByFeed(articles);
       for (const sub of subscriptions) {
-        if (sub.id == null) continue;
+        if (!sub.rkey || sub.id == null) continue;
         if (sub.sourceType && sub.sourceType !== 'rss') continue;
         const avgLen = lengths.get(sub.id) ?? 0;
         if (avgLen >= rule.minLength) {
-          keys.push(rssSourceKey(sub.id));
+          keys.push(rssSourceKey(sub.rkey));
         }
       }
       break;
@@ -196,11 +196,11 @@ export function computeSourceKeys(
     case 'recent': {
       const cutoff = Date.now() - rule.withinDays * 24 * 60 * 60 * 1000;
       for (const sub of subscriptions) {
-        if (sub.id == null) continue;
+        if (!sub.rkey) continue;
         const created = new Date(sub.createdAt).getTime();
         if (created >= cutoff) {
           if (!sub.sourceType || sub.sourceType === 'rss') {
-            keys.push(rssSourceKey(sub.id));
+            keys.push(rssSourceKey(sub.rkey));
           } else if (sub.sourceType === 'atproto.shares' && sub.subjectDid) {
             keys.push(sharesSourceKey(sub.subjectDid));
           } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
@@ -265,27 +265,27 @@ export interface SuggestionContext {
 }
 
 export function getCategorySuggestions(ctx: SuggestionContext): ChannelSuggestion[] {
-  const byCategory = new Map<string, number[]>();
+  const byCategory = new Map<string, string[]>();
 
   for (const sub of ctx.subscriptions) {
-    if (sub.category && sub.id != null) {
+    if (sub.category && sub.rkey) {
       const cat = sub.category.trim();
       if (!cat) continue;
       const existing = byCategory.get(cat) || [];
-      existing.push(sub.id);
+      existing.push(sub.rkey);
       byCategory.set(cat, existing);
     }
   }
 
   const suggestions: ChannelSuggestion[] = [];
-  for (const [category, ids] of byCategory) {
-    if (ids.length < MIN_SOURCES_FOR_SUGGESTION) continue;
-    const sourceKeys = ids.map(rssSourceKey);
+  for (const [category, rkeys] of byCategory) {
+    if (rkeys.length < MIN_SOURCES_FOR_SUGGESTION) continue;
+    const sourceKeys = rkeys.map(rssSourceKey);
     if (isAlreadyCovered(sourceKeys, [], ctx.views)) continue;
     suggestions.push({
       id: `category:${category.toLowerCase()}`,
       name: category,
-      description: `${ids.length} feeds from your "${category}" folder`,
+      description: `${rkeys.length} feeds from your "${category}" folder`,
       sourceMode: 'include',
       sourceKeys,
       typeFilter: [],
@@ -335,29 +335,29 @@ export function getTypeSuggestions(ctx: SuggestionContext): ChannelSuggestion[] 
 }
 
 export function getTagSuggestions(ctx: SuggestionContext): ChannelSuggestion[] {
-  const byTag = new Map<string, number[]>();
+  const byTag = new Map<string, string[]>();
 
   for (const sub of ctx.subscriptions) {
-    if (sub.id == null) continue;
+    if (!sub.rkey) continue;
     for (const tag of sub.tags) {
       const t = tag.trim().toLowerCase();
       if (!t) continue;
       const existing = byTag.get(t) || [];
-      existing.push(sub.id);
+      existing.push(sub.rkey);
       byTag.set(t, existing);
     }
   }
 
   const suggestions: ChannelSuggestion[] = [];
-  for (const [tag, ids] of byTag) {
-    if (ids.length < MIN_SOURCES_FOR_SUGGESTION) continue;
-    const sourceKeys = ids.map(rssSourceKey);
+  for (const [tag, rkeys] of byTag) {
+    if (rkeys.length < MIN_SOURCES_FOR_SUGGESTION) continue;
+    const sourceKeys = rkeys.map(rssSourceKey);
     if (isAlreadyCovered(sourceKeys, [], ctx.views)) continue;
     const displayName = tag.charAt(0).toUpperCase() + tag.slice(1);
     suggestions.push({
       id: `tag:${tag}`,
       name: displayName,
-      description: `${ids.length} sources tagged "${tag}"`,
+      description: `${rkeys.length} sources tagged "${tag}"`,
       sourceMode: 'include',
       sourceKeys,
       typeFilter: [],
@@ -448,30 +448,30 @@ export const DOMAIN_CLUSTERS = [
 export function getDomainSuggestions(ctx: SuggestionContext): ChannelSuggestion[] {
   const suggestions: ChannelSuggestion[] = [];
   const subs = ctx.subscriptions.filter(
-    (s) => (!s.sourceType || s.sourceType === 'rss') && s.id != null
+    (s) => (!s.sourceType || s.sourceType === 'rss') && s.rkey
   );
 
   for (const cluster of DOMAIN_CLUSTERS) {
-    const matchingIds: number[] = [];
+    const matchingRkeys: string[] = [];
     for (const sub of subs) {
       const url = sub.feedUrl || sub.siteUrl;
       if (!url) continue;
       try {
         const hostname = new URL(url).hostname;
         if (cluster.patterns.some((p) => hostname.includes(p))) {
-          matchingIds.push(sub.id!);
+          matchingRkeys.push(sub.rkey);
         }
       } catch {
         continue;
       }
     }
-    if (matchingIds.length < MIN_SOURCES_FOR_SUGGESTION) continue;
-    const sourceKeys = matchingIds.map(rssSourceKey);
+    if (matchingRkeys.length < MIN_SOURCES_FOR_SUGGESTION) continue;
+    const sourceKeys = matchingRkeys.map(rssSourceKey);
     if (isAlreadyCovered(sourceKeys, [], ctx.views)) continue;
     suggestions.push({
       id: cluster.id,
       name: cluster.name,
-      description: `${matchingIds.length} ${cluster.description.toLowerCase()}`,
+      description: `${matchingRkeys.length} ${cluster.description.toLowerCase()}`,
       sourceMode: 'include',
       sourceKeys,
       typeFilter: [],
@@ -484,7 +484,7 @@ export function getDomainSuggestions(ctx: SuggestionContext): ChannelSuggestion[
 export function getFrequencySuggestions(ctx: SuggestionContext): ChannelSuggestion[] {
   const suggestions: ChannelSuggestion[] = [];
   const subs = ctx.subscriptions.filter(
-    (s) => (!s.sourceType || s.sourceType === 'rss') && s.id != null
+    (s) => (!s.sourceType || s.sourceType === 'rss') && s.rkey && s.id != null
   );
   if (subs.length < 4) return [];
 
@@ -500,22 +500,22 @@ export function getFrequencySuggestions(ctx: SuggestionContext): ChannelSuggesti
     counts.set(article.subscriptionId, (counts.get(article.subscriptionId) || 0) + 1);
   }
 
-  const highFreqIds: number[] = [];
-  const lowFreqIds: number[] = [];
+  const highFreqRkeys: string[] = [];
+  const lowFreqRkeys: string[] = [];
   for (const sub of subs) {
     const count = counts.get(sub.id!) || 0;
     const perDay = count / days;
-    if (perDay >= 2) highFreqIds.push(sub.id!);
-    else if (perDay > 0 && perDay < 0.3) lowFreqIds.push(sub.id!);
+    if (perDay >= 2) highFreqRkeys.push(sub.rkey);
+    else if (perDay > 0 && perDay < 0.3) lowFreqRkeys.push(sub.rkey);
   }
 
-  if (highFreqIds.length >= MIN_SOURCES_FOR_SUGGESTION) {
-    const sourceKeys = highFreqIds.map(rssSourceKey);
+  if (highFreqRkeys.length >= MIN_SOURCES_FOR_SUGGESTION) {
+    const sourceKeys = highFreqRkeys.map(rssSourceKey);
     if (!isAlreadyCovered(sourceKeys, [], ctx.views)) {
       suggestions.push({
         id: 'frequency:high',
         name: 'Daily Digest',
-        description: `${highFreqIds.length} high-volume feeds that publish multiple times per day`,
+        description: `${highFreqRkeys.length} high-volume feeds that publish multiple times per day`,
         sourceMode: 'include',
         sourceKeys,
         typeFilter: [],
@@ -524,13 +524,13 @@ export function getFrequencySuggestions(ctx: SuggestionContext): ChannelSuggesti
     }
   }
 
-  if (lowFreqIds.length >= MIN_SOURCES_FOR_SUGGESTION) {
-    const sourceKeys = lowFreqIds.map(rssSourceKey);
+  if (lowFreqRkeys.length >= MIN_SOURCES_FOR_SUGGESTION) {
+    const sourceKeys = lowFreqRkeys.map(rssSourceKey);
     if (!isAlreadyCovered(sourceKeys, [], ctx.views)) {
       suggestions.push({
         id: 'frequency:low',
         name: "Don't Miss",
-        description: `${lowFreqIds.length} feeds that publish infrequently — every post counts`,
+        description: `${lowFreqRkeys.length} feeds that publish infrequently — every post counts`,
         sourceMode: 'include',
         sourceKeys,
         typeFilter: [],
@@ -544,7 +544,7 @@ export function getFrequencySuggestions(ctx: SuggestionContext): ChannelSuggesti
 export function getLongReadsSuggestion(ctx: SuggestionContext): ChannelSuggestion[] {
   const MIN_AVG_LENGTH = 5000;
   const subs = ctx.subscriptions.filter(
-    (s) => (!s.sourceType || s.sourceType === 'rss') && s.id != null
+    (s) => (!s.sourceType || s.sourceType === 'rss') && s.rkey && s.id != null
   );
 
   const totals = new Map<number, { sum: number; count: number }>();
@@ -557,24 +557,24 @@ export function getLongReadsSuggestion(ctx: SuggestionContext): ChannelSuggestio
     totals.set(article.subscriptionId, existing);
   }
 
-  const longReadIds: number[] = [];
+  const longReadRkeys: string[] = [];
   for (const sub of subs) {
     const stats = totals.get(sub.id!);
     if (!stats || stats.count < 2) continue;
     if (stats.sum / stats.count >= MIN_AVG_LENGTH) {
-      longReadIds.push(sub.id!);
+      longReadRkeys.push(sub.rkey);
     }
   }
 
-  if (longReadIds.length < MIN_SOURCES_FOR_SUGGESTION) return [];
-  const sourceKeys = longReadIds.map(rssSourceKey);
+  if (longReadRkeys.length < MIN_SOURCES_FOR_SUGGESTION) return [];
+  const sourceKeys = longReadRkeys.map(rssSourceKey);
   if (isAlreadyCovered(sourceKeys, [], ctx.views)) return [];
 
   return [
     {
       id: 'content:longreads',
       name: 'Long Reads',
-      description: `${longReadIds.length} feeds with in-depth, long-form articles`,
+      description: `${longReadRkeys.length} feeds with in-depth, long-form articles`,
       sourceMode: 'include',
       sourceKeys,
       typeFilter: [],
@@ -591,11 +591,11 @@ export function getRecentSuggestion(
   const recentKeys: string[] = [];
 
   for (const sub of ctx.subscriptions) {
-    if (sub.id == null) continue;
+    if (!sub.rkey) continue;
     const created = new Date(sub.createdAt).getTime();
     if (created < cutoff) continue;
     if (!sub.sourceType || sub.sourceType === 'rss') {
-      recentKeys.push(rssSourceKey(sub.id));
+      recentKeys.push(rssSourceKey(sub.rkey));
     } else if (sub.sourceType === 'atproto.shares' && sub.subjectDid) {
       recentKeys.push(sharesSourceKey(sub.subjectDid));
     } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {

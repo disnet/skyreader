@@ -1,0 +1,246 @@
+import type { Env } from '../types';
+import { getSessionFromRequest } from '../services/oauth';
+
+interface ChannelRow {
+  uuid: string;
+  name: string;
+  config: string;
+  position: number;
+  created_at: number;
+  updated_at: number;
+}
+
+interface ChannelBody {
+  name: string;
+  config: string;
+  position: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface SyncChannelsBody {
+  channels: Array<{
+    uuid: string;
+    name: string;
+    config: string;
+    position: number;
+    createdAt: number;
+    updatedAt: number;
+  }>;
+}
+
+// GET /api/channels - Get all channels for the current user
+export async function handleGetChannels(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  try {
+    const result = await env.DB.prepare(
+      `SELECT uuid, name, config, position, created_at, updated_at
+       FROM channels WHERE user_did = ? AND deleted_at IS NULL ORDER BY position`
+    )
+      .bind(session.did)
+      .all<ChannelRow>();
+
+    const channels = result.results.map((row) => ({
+      uuid: row.uuid,
+      name: row.name,
+      config: row.config,
+      position: row.position,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+
+    // Also return UUIDs of recently deleted channels so other devices can remove them
+    const deletedResult = await env.DB.prepare(
+      `SELECT uuid FROM channels WHERE user_did = ? AND deleted_at IS NOT NULL`
+    )
+      .bind(session.did)
+      .all<{ uuid: string }>();
+
+    const deletedUuids = deletedResult.results.map((row) => row.uuid);
+
+    return new Response(JSON.stringify({ channels, deletedUuids }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Failed to get channels:', error);
+    return new Response(JSON.stringify({ error: 'Failed to get channels' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// PUT /api/channels - Sync all channels (bulk upsert)
+export async function handleSyncChannels(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  let body: SyncChannelsBody;
+  try {
+    body = (await request.json()) as SyncChannelsBody;
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  if (!Array.isArray(body.channels)) {
+    return new Response(JSON.stringify({ error: 'Missing channels array' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  try {
+    const statements = body.channels.map((channel) =>
+      env.DB.prepare(
+        `INSERT INTO channels (uuid, user_did, name, config, position, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (user_did, uuid) DO UPDATE SET
+           name = excluded.name,
+           config = excluded.config,
+           position = excluded.position,
+           updated_at = excluded.updated_at
+         WHERE deleted_at IS NULL`
+      ).bind(
+        channel.uuid,
+        session.did,
+        channel.name,
+        channel.config,
+        channel.position,
+        channel.createdAt,
+        channel.updatedAt
+      )
+    );
+
+    if (statements.length > 0) {
+      await env.DB.batch(statements);
+    }
+
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Failed to sync channels:', error);
+    return new Response(JSON.stringify({ error: 'Failed to sync channels' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// PUT /api/channels/:uuid - Upsert a single channel
+export async function handleUpsertChannel(
+  request: Request,
+  env: Env,
+  uuid: string
+): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  let body: ChannelBody;
+  try {
+    body = (await request.json()) as ChannelBody;
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  try {
+    await env.DB.prepare(
+      `INSERT INTO channels (uuid, user_did, name, config, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (user_did, uuid) DO UPDATE SET
+         name = excluded.name,
+         config = excluded.config,
+         position = excluded.position,
+         updated_at = excluded.updated_at
+       WHERE deleted_at IS NULL`
+    )
+      .bind(
+        uuid,
+        session.did,
+        body.name,
+        body.config,
+        body.position,
+        body.createdAt,
+        body.updatedAt
+      )
+      .run();
+
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Failed to upsert channel:', error);
+    return new Response(JSON.stringify({ error: 'Failed to upsert channel' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// DELETE /api/channels/:uuid - Soft delete a channel
+export async function handleDeleteChannel(
+  request: Request,
+  env: Env,
+  uuid: string
+): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  try {
+    const now = Date.now();
+    // Two-step soft-delete: update if exists, insert tombstone if not.
+    const updateResult = await env.DB.prepare(
+      `UPDATE channels SET deleted_at = ? WHERE user_did = ? AND uuid = ?`
+    )
+      .bind(now, session.did, uuid)
+      .run();
+
+    if (updateResult.meta.changes === 0) {
+      // Row didn't exist — insert a tombstone so other devices see the deletion
+      await env.DB.prepare(
+        `INSERT INTO channels (uuid, user_did, name, config, position, created_at, updated_at, deleted_at)
+         VALUES (?, ?, '', '{}', 0, ?, ?, ?)`
+      )
+        .bind(uuid, session.did, now, now, now)
+        .run();
+    }
+
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Failed to delete channel:', error);
+    return new Response(JSON.stringify({ error: 'Failed to delete channel' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}

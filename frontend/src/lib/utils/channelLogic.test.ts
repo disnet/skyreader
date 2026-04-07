@@ -47,6 +47,7 @@ function makeArticle(
 
 function makeView(overrides: Partial<FilteredView> & { id: number }): FilteredView {
   return {
+    uuid: crypto.randomUUID(),
     name: `View ${overrides.id}`,
     readFilter: 'all',
     sortOrder: 'newest',
@@ -134,7 +135,7 @@ describe('computeSourceKeys', () => {
         makeSub({ id: 3, category: 'News' }),
       ];
       const keys = computeSourceKeys({ type: 'category', value: 'tech' }, subs, []);
-      expect(keys).toEqual(['rss~1', 'rss~2']);
+      expect(keys).toEqual(['rss~rkey-1', 'rss~rkey-2']);
     });
 
     it('includes atproto subscriptions with matching category', () => {
@@ -156,8 +157,8 @@ describe('computeSourceKeys', () => {
       expect(keys).toEqual(['did:plc:a~shares', 'did:plc:b~documents']);
     });
 
-    it('skips subscriptions without id', () => {
-      const subs = [{ ...makeSub({ id: 1, category: 'Tech' }), id: undefined }];
+    it('skips subscriptions without rkey', () => {
+      const subs = [{ ...makeSub({ id: 1, category: 'Tech' }), rkey: '' }];
       const keys = computeSourceKeys({ type: 'category', value: 'Tech' }, subs as any, []);
       expect(keys).toEqual([]);
     });
@@ -171,7 +172,7 @@ describe('computeSourceKeys', () => {
         makeSub({ id: 3, tags: ['sports'] }),
       ];
       const keys = computeSourceKeys({ type: 'subscriptionTag', value: 'tech' }, subs, []);
-      expect(keys).toEqual(['rss~1', 'rss~2']);
+      expect(keys).toEqual(['rss~rkey-1', 'rss~rkey-2']);
     });
   });
 
@@ -183,7 +184,7 @@ describe('computeSourceKeys', () => {
         makeSub({ id: 3, siteUrl: 'https://news.substack.com' }),
       ];
       const keys = computeSourceKeys({ type: 'domain', patterns: ['substack.com'] }, subs, []);
-      expect(keys).toEqual(['rss~1', 'rss~3']);
+      expect(keys).toEqual(['rss~rkey-1', 'rss~rkey-3']);
     });
 
     it('skips non-RSS subscriptions', () => {
@@ -239,7 +240,7 @@ describe('computeSourceKeys', () => {
       articles.push(makeArticle({ subscriptionId: 2, guid: 'b2', publishedAt: recentDate }));
 
       const keys = computeSourceKeys({ type: 'frequency', threshold: 'high' }, subs, articles);
-      expect(keys).toEqual(['rss~1']);
+      expect(keys).toEqual(['rss~rkey-1']);
     });
 
     it('selects low-frequency feeds (0 < rate < 0.3/day)', () => {
@@ -255,7 +256,7 @@ describe('computeSourceKeys', () => {
       ];
 
       const keys = computeSourceKeys({ type: 'frequency', threshold: 'low' }, subs, articles);
-      expect(keys).toEqual(['rss~1']);
+      expect(keys).toEqual(['rss~rkey-1']);
     });
 
     it('excludes feeds with zero articles from low-frequency', () => {
@@ -275,7 +276,7 @@ describe('computeSourceKeys', () => {
         makeArticle({ subscriptionId: 2, guid: 'b2', content: 'x'.repeat(200) }),
       ];
       const keys = computeSourceKeys({ type: 'longReads', minLength: 5000 }, subs, articles);
-      expect(keys).toEqual(['rss~1']);
+      expect(keys).toEqual(['rss~rkey-1']);
     });
   });
 
@@ -296,7 +297,7 @@ describe('computeSourceKeys', () => {
         }),
       ];
       const keys = computeSourceKeys({ type: 'recent', withinDays: 14 }, subs, []);
-      expect(keys).toEqual(['rss~1', 'did:plc:a~shares']);
+      expect(keys).toEqual(['rss~rkey-1', 'did:plc:a~shares']);
     });
   });
 });
@@ -368,11 +369,11 @@ describe('isAlreadyCovered', () => {
       makeView({
         id: 1,
         sourceMode: 'include',
-        sourceKeys: ['rss~1', 'rss~2', 'rss~3'],
+        sourceKeys: ['rss~rkey-1', 'rss~rkey-2', 'rss~rkey-3'],
       }),
     ];
     // 2 out of 2 overlap (100%) with the view
-    expect(isAlreadyCovered(['rss~1', 'rss~2'], [], views)).toBe(true);
+    expect(isAlreadyCovered(['rss~rkey-1', 'rss~rkey-2'], [], views)).toBe(true);
   });
 
   it('returns false when less than 70% overlap', () => {
@@ -380,15 +381,15 @@ describe('isAlreadyCovered', () => {
       makeView({
         id: 1,
         sourceMode: 'include',
-        sourceKeys: ['rss~1'],
+        sourceKeys: ['rss~rkey-1'],
       }),
     ];
     // 1 out of 4 overlap (25%)
-    expect(isAlreadyCovered(['rss~1', 'rss~2', 'rss~3', 'rss~4'], [], views)).toBe(false);
+    expect(isAlreadyCovered(['rss~rkey-1', 'rss~rkey-2', 'rss~rkey-3', 'rss~rkey-4'], [], views)).toBe(false);
   });
 
   it('returns false when no views exist', () => {
-    expect(isAlreadyCovered(['rss~1'], [], [])).toBe(false);
+    expect(isAlreadyCovered(['rss~rkey-1'], [], [])).toBe(false);
   });
 });
 
@@ -410,7 +411,7 @@ describe('getCategorySuggestions', () => {
     expect(suggestions).toHaveLength(1);
     expect(suggestions[0].name).toBe('Tech');
     expect(suggestions[0].autoRule).toEqual({ type: 'category', value: 'Tech' });
-    expect(suggestions[0].sourceKeys).toEqual(['rss~1', 'rss~2', 'rss~3']);
+    expect(suggestions[0].sourceKeys).toEqual(['rss~rkey-1', 'rss~rkey-2', 'rss~rkey-3']);
   });
 
   it('skips categories with fewer than 3 feeds', () => {
@@ -434,7 +435,7 @@ describe('getCategorySuggestions', () => {
         makeView({
           id: 1,
           sourceMode: 'include',
-          sourceKeys: ['rss~1', 'rss~2', 'rss~3'],
+          sourceKeys: ['rss~rkey-1', 'rss~rkey-2', 'rss~rkey-3'],
         }),
       ],
     };

@@ -23,7 +23,7 @@ import {
   isRssSource,
   isSharesSource,
   isDocumentsSource,
-  getRssSubscriptionId,
+  getRssSubscriptionRkey,
   getSourceDid,
   migrateLegacyView,
 } from '$lib/utils/sourceKeys';
@@ -52,6 +52,7 @@ export interface EffectiveFilters {
 
 /**
  * Derive allowed RSS subscription IDs from effective filters.
+ * Converts rkeys in sourceKeys to Dexie IDs for article filtering.
  * Returns null if all RSS sources are allowed.
  */
 function deriveAllowedRssIds(fv: EffectiveFilters): Set<number> | null {
@@ -59,7 +60,11 @@ function deriveAllowedRssIds(fv: EffectiveFilters): Set<number> | null {
 
   const ids = new Set<number>();
   for (const key of fv.sourceKeys) {
-    if (isRssSource(key)) ids.add(getRssSubscriptionId(key));
+    if (isRssSource(key)) {
+      const rkey = getRssSubscriptionRkey(key);
+      const sub = subscriptionsStore.getByRkey(rkey);
+      if (sub?.id != null) ids.add(sub.id);
+    }
   }
   return ids;
 }
@@ -230,10 +235,15 @@ function createFeedViewStore() {
   let contentTypeFilter = $state<'shares' | 'documents' | null>(null);
   let viewFilter = $state<string | null>(null);
 
-  // Derived: active filtered view (looked up from store)
+  // Derived: active filtered view (looked up by uuid, with fallback to Dexie id for old bookmarks)
   let activeFilteredView = $derived.by(() => {
     if (!viewFilter) return null;
-    return filteredViewsStore.getById(parseInt(viewFilter)) ?? null;
+    // Try uuid first, fall back to numeric Dexie id for old bookmarks
+    const byUuid = filteredViewsStore.getByUuid(viewFilter);
+    if (byUuid) return byUuid;
+    const asNum = parseInt(viewFilter, 10);
+    if (!isNaN(asNum)) return filteredViewsStore.getById(asNum) ?? null;
+    return null;
   });
 
   // Derived: whether the active channel is a saved-mode channel
@@ -242,11 +252,17 @@ function createFeedViewStore() {
   // Derived: whether we're in any saved view (URL param or saved channel)
   let isSavedView = $derived(Boolean(savedFilter) || isSavedChannel);
 
-  // Helper to get current subscription IDs and follow DIDs for migration
-  function getAllSubIds(): number[] {
-    return subscriptionsStore.subscriptions
-      .map((s) => s.id)
-      .filter((id): id is number => id != null);
+  // Helper to get current subscription rkeys, ID→rkey map, and follow DIDs for migration
+  function getAllSubRkeys(): string[] {
+    return subscriptionsStore.subscriptions.map((s) => s.rkey).filter(Boolean);
+  }
+
+  function getIdToRkeyMap(): Map<number, string> {
+    const map = new Map<number, string>();
+    for (const s of subscriptionsStore.subscriptions) {
+      if (s.id != null && s.rkey) map.set(s.id, s.rkey);
+    }
+    return map;
   }
 
   function getAllFollowDids(): string[] {
@@ -1025,9 +1041,9 @@ function createFeedViewStore() {
 
   function syncToolbarToSavedView() {
     if (!viewFilter) return;
-    const id = parseInt(viewFilter);
-    const fv = filteredViewsStore.getById(id);
-    if (!fv) return;
+    const fv = activeFilteredView;
+    if (!fv || fv.id == null) return;
+    const id = fv.id;
     const updates: Partial<import('$lib/types').FilteredView> = {
       readFilter: showOnlyUnread ? 'unread' : 'all',
       sortOrder: toolbarSortOrder ?? preferences.sortOrder,
@@ -1316,7 +1332,9 @@ function createFeedViewStore() {
       loadedArticleCount = DEFAULT_PAGE_SIZE;
       // Populate toolbar from saved view, or reset to defaults
       if (filters.view) {
-        const fv = filteredViewsStore.getById(parseInt(filters.view));
+        const fv =
+          filteredViewsStore.getByUuid(filters.view) ??
+          filteredViewsStore.getById(parseInt(filters.view, 10));
         if (fv) {
           if (fv.mode === 'saved') {
             // Saved channel — load saved-specific filters
@@ -1344,8 +1362,9 @@ function createFeedViewStore() {
                 accountMode: fv.accountMode,
                 accountDids: fv.accountDids,
               },
-              getAllSubIds(),
-              getAllFollowDids()
+              getAllSubRkeys(),
+              getAllFollowDids(),
+              getIdToRkeyMap()
             );
             toolbarSourceMode = migrated.sourceMode;
             toolbarSourceKeys = migrated.sourceKeys;

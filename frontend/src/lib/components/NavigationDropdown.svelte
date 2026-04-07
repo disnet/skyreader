@@ -37,23 +37,23 @@
   let mobilePanelEl = $state<HTMLDivElement | null>(null);
   let isMobile = $state(false);
 
-  // View context menu state
-  let viewMenuId = $state<number | null>(null);
+  // View context menu state (uses uuid for identification)
+  let viewMenuUuid = $state<string | null>(null);
   let viewMenuX = $state(0);
   let viewMenuY = $state(0);
   let viewMenuRef = $state<HTMLDivElement | null>(null);
   let adjustedMenuX = $state(0);
   let adjustedMenuY = $state(0);
-  let renamingViewId = $state<number | null>(null);
+  let renamingViewUuid = $state<string | null>(null);
   let renameValue = $state('');
   let renameInputRef = $state<HTMLInputElement | null>(null);
 
-  function openViewMenu(e: MouseEvent, viewId: number) {
+  function openViewMenu(e: MouseEvent, viewUuid: string) {
     e.stopPropagation();
     e.preventDefault();
     viewMenuX = e.clientX;
     viewMenuY = e.clientY;
-    viewMenuId = viewId;
+    viewMenuUuid = viewUuid;
   }
 
   $effect(() => {
@@ -79,14 +79,14 @@
   });
 
   function closeViewMenu() {
-    viewMenuId = null;
+    viewMenuUuid = null;
   }
 
-  function startRenameView(viewId: number) {
-    const view = filteredViewsStore.getById(viewId);
+  function startRenameView(viewUuid: string) {
+    const view = filteredViewsStore.getByUuid(viewUuid);
     if (!view) return;
     closeViewMenu();
-    renamingViewId = viewId;
+    renamingViewUuid = viewUuid;
     renameValue = view.name;
     tick().then(() => {
       renameInputRef?.focus();
@@ -96,28 +96,30 @@
 
   function commitRenameView() {
     const trimmed = renameValue.trim();
-    if (renamingViewId !== null && trimmed) {
-      const view = filteredViewsStore.getById(renamingViewId);
-      if (view && trimmed !== view.name) {
-        filteredViewsStore.update(renamingViewId, { name: trimmed });
+    if (renamingViewUuid !== null && trimmed) {
+      const view = filteredViewsStore.getByUuid(renamingViewUuid);
+      if (view && view.id != null && trimmed !== view.name) {
+        filteredViewsStore.update(view.id, { name: trimmed });
       }
     }
-    renamingViewId = null;
+    renamingViewUuid = null;
     renameValue = '';
   }
 
   function cancelRenameView() {
-    renamingViewId = null;
+    renamingViewUuid = null;
     renameValue = '';
   }
 
-  async function deleteView(viewId: number) {
+  async function deleteView(viewUuid: string) {
     closeViewMenu();
     if (!confirm('Are you sure you want to delete this channel?')) return;
-    await filteredViewsStore.remove(viewId);
+    const view = filteredViewsStore.getByUuid(viewUuid);
+    if (!view || view.id == null) return;
+    await filteredViewsStore.remove(view.id);
     // If we're currently viewing the deleted view, navigate away
     const currentView = $page.url.searchParams.get('view');
-    if (currentView && parseInt(currentView) === viewId) {
+    if (currentView === viewUuid) {
       goto('/');
     }
   }
@@ -159,7 +161,7 @@
     | { type: 'feed'; id: number; label: string; count: number; iconUrl: string | null }
     | { type: 'utility'; id: string; label: string; count?: number; icon: IconName }
     | { type: 'action'; id: string; label: string; icon: IconName }
-    | { type: 'filteredView'; id: number; label: string; icon: IconName };
+    | { type: 'filteredView'; id: string; label: string; icon: IconName };
 
   // Section type with optional icon and click handler for styled section headers
   type SectionData = {
@@ -184,7 +186,7 @@
 
     const customViews: NavItem[] = filteredViewsStore.views.map((v) => ({
       type: 'filteredView' as const,
-      id: v.id!,
+      id: v.uuid,
       label: v.name,
       icon: 'filter' as const,
     }));
@@ -295,7 +297,7 @@
     const saved = url.searchParams.get('saved');
     const shared = url.searchParams.get('shared');
     const view = url.searchParams.get('view');
-    if (view) return { type: 'filteredView', id: parseInt(view) };
+    if (view) return { type: 'filteredView', id: view };
     if (feed) return { type: 'feed', id: parseInt(feed) };
     if (saved) return { type: 'saved' };
     if (shared) return { type: 'shared' };
@@ -555,7 +557,7 @@
             {@const flatIndex =
               filteredItems.slice(0, sectionIndex).reduce((acc, s) => acc + s.items.length, 0) +
               itemIndex}
-            {#if item.type === 'filteredView' && renamingViewId === item.id}
+            {#if item.type === 'filteredView' && renamingViewUuid === item.id}
               <div class="nav-item rename-row" class:section-child={!!section}>
                 <span class="item-icon"><Icon name={item.icon} size={16} /></span>
                 <!-- svelte-ignore a11y_autofocus -->
@@ -630,7 +632,7 @@
   {/if}
 </div>
 
-{#if viewMenuId !== null}
+{#if viewMenuUuid !== null}
   <!-- View context menu (portaled to body to escape backdrop-filter containing block) -->
   <div class="view-menu-portal" use:portal>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -641,11 +643,11 @@
       style="left: {adjustedMenuX}px; top: {adjustedMenuY}px;"
       role="menu"
     >
-      <button class="view-menu-item" onclick={() => startRenameView(viewMenuId!)} role="menuitem">
+      <button class="view-menu-item" onclick={() => startRenameView(viewMenuUuid!)} role="menuitem">
         <span class="view-menu-icon"><Icon name="edit" size={16} /></span>
         Rename
       </button>
-      <button class="view-menu-item danger" onclick={() => deleteView(viewMenuId!)} role="menuitem">
+      <button class="view-menu-item danger" onclick={() => deleteView(viewMenuUuid!)} role="menuitem">
         <span class="view-menu-icon"><Icon name="trash" size={16} /></span>
         Delete
       </button>
@@ -702,7 +704,7 @@
             {@const flatIndex =
               filteredItems.slice(0, sectionIndex).reduce((acc, s) => acc + s.items.length, 0) +
               itemIndex}
-            {#if item.type === 'filteredView' && renamingViewId === item.id}
+            {#if item.type === 'filteredView' && renamingViewUuid === item.id}
               <div class="nav-item rename-row" class:section-child={!!section}>
                 <span class="item-icon"><Icon name={item.icon} size={16} /></span>
                 <!-- svelte-ignore a11y_autofocus -->

@@ -7,7 +7,7 @@ import {
   isRssSource,
   isSharesSource,
   isDocumentsSource,
-  getRssSubscriptionId,
+  getRssSubscriptionRkey,
   getSourceDid,
   subscriptionSourceKey,
   migrateLegacyView,
@@ -18,8 +18,8 @@ import type { Subscription } from '$lib/types';
 
 describe('source key construction', () => {
   it('creates RSS source keys', () => {
-    expect(rssSourceKey(42)).toBe('rss~42');
-    expect(rssSourceKey(0)).toBe('rss~0');
+    expect(rssSourceKey('3l7e5x2b7ik2c')).toBe('rss~3l7e5x2b7ik2c');
+    expect(rssSourceKey('abc')).toBe('rss~abc');
   });
 
   it('creates shares source keys', () => {
@@ -35,7 +35,7 @@ describe('source key construction', () => {
 
 describe('parseSourceKey', () => {
   it('parses RSS keys', () => {
-    expect(parseSourceKey('rss~42')).toEqual({ kind: 'rss', id: '42' });
+    expect(parseSourceKey('rss~3l7e5x2b7ik2c')).toEqual({ kind: 'rss', id: '3l7e5x2b7ik2c' });
   });
 
   it('parses shares keys', () => {
@@ -61,13 +61,13 @@ describe('parseSourceKey', () => {
 
 describe('type guards', () => {
   it('isRssSource', () => {
-    expect(isRssSource('rss~42')).toBe(true);
+    expect(isRssSource('rss~3l7e5x2b7ik2c')).toBe(true);
     expect(isRssSource('did:plc:abc~shares')).toBe(false);
   });
 
   it('isSharesSource', () => {
     expect(isSharesSource('did:plc:abc~shares')).toBe(true);
-    expect(isSharesSource('rss~42')).toBe(false);
+    expect(isSharesSource('rss~abc')).toBe(false);
   });
 
   it('isDocumentsSource', () => {
@@ -79,8 +79,8 @@ describe('type guards', () => {
 // ─── Extractors ────────────────────────────────────────────────────────
 
 describe('extractors', () => {
-  it('getRssSubscriptionId', () => {
-    expect(getRssSubscriptionId('rss~42')).toBe(42);
+  it('getRssSubscriptionRkey', () => {
+    expect(getRssSubscriptionRkey('rss~3l7e5x2b7ik2c')).toBe('3l7e5x2b7ik2c');
   });
 
   it('getSourceDid', () => {
@@ -100,8 +100,8 @@ describe('subscriptionSourceKey', () => {
   };
 
   it('returns RSS key for RSS subscriptions', () => {
-    expect(subscriptionSourceKey({ ...baseSub, id: 1 })).toBe('rss~1');
-    expect(subscriptionSourceKey({ ...baseSub, id: 1, sourceType: 'rss' })).toBe('rss~1');
+    expect(subscriptionSourceKey({ ...baseSub, id: 1 })).toBe('rss~abc');
+    expect(subscriptionSourceKey({ ...baseSub, id: 1, sourceType: 'rss' })).toBe('rss~abc');
   });
 
   it('returns shares key for atproto.shares', () => {
@@ -126,8 +126,8 @@ describe('subscriptionSourceKey', () => {
     ).toBe('did:plc:x~documents');
   });
 
-  it('returns null when id is missing', () => {
-    expect(subscriptionSourceKey(baseSub)).toBeNull();
+  it('returns null when rkey is missing', () => {
+    expect(subscriptionSourceKey({ ...baseSub, rkey: '' })).toBeNull();
   });
 
   it('returns null for atproto types without subjectDid', () => {
@@ -138,11 +138,16 @@ describe('subscriptionSourceKey', () => {
 // ─── migrateLegacyView ────────────────────────────────────────────────
 
 describe('migrateLegacyView', () => {
-  const allSubIds = [1, 2, 3];
+  const allSubRkeys = ['rk1', 'rk2', 'rk3'];
   const allDids = ['did:plc:a', 'did:plc:b'];
+  const idToRkey = new Map([
+    [1, 'rk1'],
+    [2, 'rk2'],
+    [3, 'rk3'],
+  ]);
 
   it('all feeds + all accounts + all types → sourceMode all', () => {
-    const result = migrateLegacyView({}, allSubIds, allDids);
+    const result = migrateLegacyView({}, allSubRkeys, allDids);
     expect(result.sourceMode).toBe('all');
     expect(result.sourceKeys).toEqual([]);
   });
@@ -150,7 +155,7 @@ describe('migrateLegacyView', () => {
   it('no feeds + no accounts → include with empty keys', () => {
     const result = migrateLegacyView(
       { showArticles: false, showShares: false, showDocuments: false },
-      allSubIds,
+      allSubRkeys,
       allDids
     );
     expect(result.sourceMode).toBe('include');
@@ -160,33 +165,35 @@ describe('migrateLegacyView', () => {
   it('include specific feeds', () => {
     const result = migrateLegacyView(
       { feedMode: 'include', feedIds: [1, 3], showShares: false, showDocuments: false },
-      allSubIds,
-      allDids
+      allSubRkeys,
+      allDids,
+      idToRkey
     );
     expect(result.sourceMode).toBe('include');
-    expect(result.sourceKeys).toEqual(['rss~1', 'rss~3']);
+    expect(result.sourceKeys).toEqual(['rss~rk1', 'rss~rk3']);
   });
 
   it('exclude specific feeds', () => {
     const result = migrateLegacyView(
       { feedMode: 'exclude', feedIds: [2], showShares: false, showDocuments: false },
-      allSubIds,
-      allDids
+      allSubRkeys,
+      allDids,
+      idToRkey
     );
     expect(result.sourceMode).toBe('include');
-    expect(result.sourceKeys).toEqual(['rss~1', 'rss~3']);
+    expect(result.sourceKeys).toEqual(['rss~rk1', 'rss~rk3']);
   });
 
   it('all feeds + include specific accounts with shares only', () => {
     const result = migrateLegacyView(
       { accountMode: 'include', accountDids: ['did:plc:a'], showDocuments: false },
-      allSubIds,
+      allSubRkeys,
       allDids
     );
     expect(result.sourceMode).toBe('include');
-    expect(result.sourceKeys).toContain('rss~1');
-    expect(result.sourceKeys).toContain('rss~2');
-    expect(result.sourceKeys).toContain('rss~3');
+    expect(result.sourceKeys).toContain('rss~rk1');
+    expect(result.sourceKeys).toContain('rss~rk2');
+    expect(result.sourceKeys).toContain('rss~rk3');
     expect(result.sourceKeys).toContain('did:plc:a~shares');
     expect(result.sourceKeys).not.toContain('did:plc:a~documents');
     expect(result.sourceKeys).not.toContain('did:plc:b~shares');

@@ -89,6 +89,7 @@ function createAppManager() {
       }
 
       // Phase 2: Refresh from backend (background, skip when offline)
+      // This also syncs channels bidirectionally via filteredViewsStore.syncWithBackend()
       if (syncStore.isOnline) {
         phase = 'refreshing';
         await refreshFromBackend();
@@ -124,12 +125,13 @@ function createAppManager() {
     let newArticles = 0;
 
     try {
-      // Sync subscriptions, read positions, and social data in parallel
+      // Sync subscriptions, read positions, social data, and channels in parallel
       const [syncResult] = await Promise.all([
         syncSubscriptions(),
         itemLabelsStore.load(),
         shareReadingStore.load(),
         socialStore.loadFeed(true),
+        filteredViewsStore.syncWithBackend(),
       ]);
 
       // One-time migration: push existing local custom fields to backend

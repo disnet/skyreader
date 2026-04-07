@@ -1,12 +1,12 @@
 // Source key utilities for unified source filter model
-// Format: "rss~{subscriptionId}", "{did}~shares", "{did}~documents"
+// Format: "rss~{rkey}", "{did}~shares", "{did}~documents"
 
 const SEP = '~';
 
 // --- Construction ---
 
-export function rssSourceKey(subscriptionId: number): string {
-  return `rss${SEP}${subscriptionId}`;
+export function rssSourceKey(rkey: string): string {
+  return `rss${SEP}${rkey}`;
 }
 
 export function sharesSourceKey(did: string): string {
@@ -54,9 +54,8 @@ export function isDocumentsSource(key: string): boolean {
 
 // --- Extractors ---
 
-export function getRssSubscriptionId(key: string): number {
-  const parsed = parseSourceKey(key);
-  return parseInt(parsed.id, 10);
+export function getRssSubscriptionRkey(key: string): string {
+  return parseSourceKey(key).id;
 }
 
 export function getSourceDid(key: string): string {
@@ -68,9 +67,9 @@ export function getSourceDid(key: string): string {
 import type { Subscription } from '$lib/types';
 
 export function subscriptionSourceKey(sub: Subscription): string | null {
-  if (sub.id == null) return null;
+  if (!sub.rkey) return null;
   if (!sub.sourceType || sub.sourceType === 'rss') {
-    return rssSourceKey(sub.id);
+    return rssSourceKey(sub.rkey);
   }
   if (sub.sourceType === 'atproto.shares' && sub.subjectDid) {
     return sharesSourceKey(sub.subjectDid);
@@ -110,13 +109,15 @@ export interface MigratedSourceFilter {
  * Always produces 'all' or 'include' mode (no exclude).
  *
  * @param view - Legacy view fields
- * @param allSubIds - All current subscription IDs
+ * @param allSubRkeys - All current subscription rkeys
  * @param allDids - All current followed DIDs
+ * @param idToRkey - Map from Dexie ID to rkey (for feedIds migration)
  */
 export function migrateLegacyView(
   view: LegacyViewFields,
-  allSubIds: number[],
-  allDids: string[]
+  allSubRkeys: string[],
+  allDids: string[],
+  idToRkey?: Map<number, string>
 ): MigratedSourceFilter {
   const {
     showArticles = true,
@@ -145,15 +146,21 @@ export function migrateLegacyView(
   // Otherwise, enumerate the included sources explicitly
   const keys: string[] = [];
 
+  // Helper: resolve legacy Dexie IDs to rkeys
+  const resolveIds = (ids: number[]): string[] => {
+    if (!idToRkey) return [];
+    return ids.map((id) => idToRkey.get(id)).filter((rkey): rkey is string => rkey != null);
+  };
+
   // Collect RSS sources
   if (effFeedMode === 'all') {
-    for (const id of allSubIds) keys.push(rssSourceKey(id));
+    for (const rkey of allSubRkeys) keys.push(rssSourceKey(rkey));
   } else if (effFeedMode === 'include') {
-    for (const id of feedIds) keys.push(rssSourceKey(id));
+    for (const rkey of resolveIds(feedIds)) keys.push(rssSourceKey(rkey));
   } else if (effFeedMode === 'exclude') {
-    const excludedSet = new Set(feedIds);
-    for (const id of allSubIds) {
-      if (!excludedSet.has(id)) keys.push(rssSourceKey(id));
+    const excludedRkeys = new Set(resolveIds(feedIds));
+    for (const rkey of allSubRkeys) {
+      if (!excludedRkeys.has(rkey)) keys.push(rssSourceKey(rkey));
     }
   }
   // effFeedMode === 'none' → no RSS keys

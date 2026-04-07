@@ -53,7 +53,7 @@
     | { type: 'view'; id: string; label: string; count?: number; icon: IconName }
     | { type: 'feed'; id: number; label: string; count: number; iconUrl: string | null }
     | { type: 'utility'; id: string; label: string; count?: number; icon: IconName }
-    | { type: 'filteredView'; id: number; label: string; count?: number; icon: IconName };
+    | { type: 'filteredView'; id: string; label: string; count?: number; icon: IconName };
 
   type SectionData = {
     section: string;
@@ -74,7 +74,7 @@
 
     const channels: NavItem[] = filteredViewsStore.views.map((v) => ({
       type: 'filteredView' as const,
-      id: v.id!,
+      id: v.uuid,
       label: v.name,
       count: v.id != null ? (unreadCounts.channelCounts.get(v.id) ?? 0) : 0,
       icon: 'newspaper' as const,
@@ -130,7 +130,7 @@
     const saved = url.searchParams.get('saved');
     const shared = url.searchParams.get('shared');
     const view = url.searchParams.get('view');
-    if (view) return { type: 'filteredView', id: parseInt(view) };
+    if (view) return { type: 'filteredView', id: view };
     if (feed) return { type: 'feed', id: parseInt(feed) };
     if (saved) return { type: 'saved' };
     if (shared) return { type: 'shared' };
@@ -243,7 +243,10 @@
             </button>
             <button
               class="channel-edit-btn"
-              onclick={() => onEditChannel(item.id)}
+              onclick={() => {
+                const view = filteredViewsStore.getByUuid(item.id);
+                if (view?.id != null) onEditChannel(view.id);
+              }}
               aria-label="Edit channel"
             >
               <Icon name="edit" size={14} />

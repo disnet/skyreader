@@ -85,7 +85,7 @@
     const feed = $page.url.searchParams.get('feed');
     const starred = $page.url.searchParams.get('saved');
     const shared = $page.url.searchParams.get('shared');
-    if (view) return { type: 'view' as const, id: parseInt(view) };
+    if (view) return { type: 'view' as const, id: view };
     if (feed) return { type: 'feed' as const, id: parseInt(feed) };
     if (starred) return { type: 'saved' as const };
     if (shared) return { type: 'shared' as const };
@@ -257,13 +257,13 @@
       onLabelClick={() => sidebarStore.toggleSection('channels')}
       onAdd={() => openChannelModal()}
     >
-      {#each filteredViewsStore.views as view (view.id)}
+      {#each filteredViewsStore.views as view (view.uuid)}
         <ViewItem
           {view}
-          isActive={currentFilter().type === 'view' && currentFilter().id === view.id}
+          isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
           isRenaming={renamingViewId === view.id}
           unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
-          onSelect={() => selectFilter('view', view.id)}
+          onSelect={() => selectFilter('view', view.uuid)}
           onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
           onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
           onTouchEnd={handleViewTouchEnd}

@@ -125,7 +125,7 @@
     initialTab?: 'filters' | 'channel';
     editingChannelId?: number | null;
     channelCreateMode?: boolean;
-    oncreated?: (id: number) => void;
+    oncreated?: (uuid: string) => void;
     ondeleted?: () => void;
   }
 

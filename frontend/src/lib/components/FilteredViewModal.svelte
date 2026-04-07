@@ -98,7 +98,7 @@
     open: boolean;
     editingViewId: number | null;
     onclose: () => void;
-    oncreated?: (id: number) => void;
+    oncreated?: (uuid: string) => void;
     ondeleted?: () => void;
   }
 

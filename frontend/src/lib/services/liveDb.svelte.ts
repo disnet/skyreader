@@ -261,6 +261,13 @@ class LiveDatabase {
   }
 
   /**
+   * Get a subscription by rkey
+   */
+  getSubscriptionByRkey(rkey: string): Subscription | undefined {
+    return this._subscriptions.find((s) => s.rkey === rkey);
+  }
+
+  /**
    * Get a subscription by feed URL
    */
   getSubscriptionByUrl(feedUrl: string): Subscription | undefined {

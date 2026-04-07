@@ -684,6 +684,7 @@ export type SortOrder =
 
 export interface FilteredView {
   id?: number;
+  uuid: string;
   name: string;
   // Channel mode: 'feed' (default) shows normal content, 'saved' shows only saved items
   mode?: 'feed' | 'saved';

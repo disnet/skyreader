@@ -337,6 +337,13 @@ function createSubscriptionsStore() {
   }
 
   /**
+   * Get a subscription by rkey
+   */
+  function getByRkey(rkey: string): Subscription | undefined {
+    return liveDb.getSubscriptionByRkey(rkey);
+  }
+
+  /**
    * Get a subscription by feed URL
    */
   function getByUrl(feedUrl: string): Subscription | undefined {
@@ -375,6 +382,7 @@ function createSubscriptionsStore() {
 
     // Lookups
     getById,
+    getByRkey,
     getByUrl,
   };
 }

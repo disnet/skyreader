@@ -62,6 +62,12 @@ import {
   handleListMarginCollections,
 } from './routes/integrations';
 import { handleFullSync, handleSyncSubscriptions, handleSyncStatus } from './routes/sync';
+import {
+  handleGetChannels,
+  handleSyncChannels,
+  handleUpsertChannel,
+  handleDeleteChannel,
+} from './routes/channels';
 import { getSessionFromRequest, updateUserActivity } from './services/oauth';
 import { checkRateLimit, cleanupRateLimits, getRateLimitConfig } from './services/rate-limit';
 
@@ -374,6 +380,36 @@ export default {
           if (!session) return unauthorizedResponse(headers);
           response = await handleListMarginCollections(request, env);
           break;
+
+        // Channels routes
+        case url.pathname === '/api/channels':
+          if (!session) return unauthorizedResponse(headers);
+          if (request.method === 'GET') {
+            response = await handleGetChannels(request, env);
+          } else if (request.method === 'PUT') {
+            response = await handleSyncChannels(request, env);
+          } else {
+            response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+              status: 405,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          break;
+        case url.pathname.startsWith('/api/channels/'): {
+          if (!session) return unauthorizedResponse(headers);
+          const channelUuid = url.pathname.split('/').pop()!;
+          if (request.method === 'PUT') {
+            response = await handleUpsertChannel(request, env, channelUuid);
+          } else if (request.method === 'DELETE') {
+            response = await handleDeleteChannel(request, env, channelUuid);
+          } else {
+            response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+              status: 405,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          break;
+        }
 
         // Sync routes
         case url.pathname === '/api/sync/full':

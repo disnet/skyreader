@@ -287,6 +287,22 @@ class SkyreaderDatabase extends Dexie {
     // Channels redesign: sourceMode/sourceKeys/autoRule/typeFilter stored as non-indexed fields.
     // Version bump ensures any pending upgrades run before we access the new fields.
     this.version(26).stores({});
+
+    // Add uuid to filteredViews for cross-device sync
+    this.version(27)
+      .stores({
+        filteredViews: '++id, uuid, name, position',
+      })
+      .upgrade(async (tx) => {
+        const views = await tx.table('filteredViews').toArray();
+        for (const view of views) {
+          if (!view.uuid) {
+            await tx.table('filteredViews').update(view.id, {
+              uuid: crypto.randomUUID(),
+            });
+          }
+        }
+      });
   }
 }
 

@@ -282,9 +282,9 @@
     const currentKeys = new Set(channel.sourceKeys || []);
     for (const id of selectedIds) {
       const sub = subscriptionsStore.getById(id);
-      if (!sub) continue;
+      if (!sub?.rkey) continue;
       if (!sub.sourceType || sub.sourceType === 'rss') {
-        currentKeys.add(rssSourceKey(id));
+        currentKeys.add(rssSourceKey(sub.rkey));
       } else if (sub.sourceType === 'atproto.shares' && sub.subjectDid) {
         currentKeys.add(sharesSourceKey(sub.subjectDid));
       } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {

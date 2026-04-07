@@ -9,7 +9,7 @@ import {
   isRssSource,
   isSharesSource,
   isDocumentsSource,
-  getRssSubscriptionId,
+  getRssSubscriptionRkey,
   getSourceDid,
 } from '$lib/utils/sourceKeys';
 
@@ -182,7 +182,15 @@ function createUnreadCountsStore() {
         const allowedIds =
           sourceMode === 'all'
             ? null
-            : new Set(sourceKeys.filter(isRssSource).map(getRssSubscriptionId));
+            : new Set(
+                sourceKeys
+                  .filter(isRssSource)
+                  .map((key) => {
+                    const sub = subscriptionsStore.getByRkey(getRssSubscriptionRkey(key));
+                    return sub?.id;
+                  })
+                  .filter((id): id is number => id != null)
+              );
         const seen = new Set<string>();
         for (const article of articlesStore.allArticles) {
           if (seen.has(article.guid)) continue;

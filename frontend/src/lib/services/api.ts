@@ -778,6 +778,53 @@ class ApiClient {
   }> {
     return this.fetch('/api/sync/status');
   }
+
+  // Channels
+  async getChannels(): Promise<{
+    channels: Array<{
+      uuid: string;
+      name: string;
+      config: string;
+      position: number;
+      createdAt: number;
+      updatedAt: number;
+    }>;
+    deletedUuids: string[];
+  }> {
+    return this.fetch('/api/channels');
+  }
+
+  async syncChannels(
+    channels: Array<{
+      uuid: string;
+      name: string;
+      config: string;
+      position: number;
+      createdAt: number;
+      updatedAt: number;
+    }>
+  ): Promise<{ success: boolean }> {
+    return this.fetch('/api/channels', {
+      method: 'PUT',
+      body: JSON.stringify({ channels }),
+    });
+  }
+
+  async upsertChannel(
+    uuid: string,
+    data: { name: string; config: string; position: number; createdAt: number; updatedAt: number }
+  ): Promise<{ success: boolean }> {
+    return this.fetch(`/api/channels/${uuid}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteChannel(uuid: string): Promise<{ success: boolean }> {
+    return this.fetch(`/api/channels/${uuid}`, {
+      method: 'DELETE',
+    });
+  }
 }
 
 export const api = new ApiClient();
