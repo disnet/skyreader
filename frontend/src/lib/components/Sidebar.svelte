@@ -24,8 +24,11 @@
   import NavSection from './sidebar/NavSection.svelte';
   import ViewItem from './sidebar/ViewItem.svelte';
   import ContextMenu from './sidebar/ContextMenu.svelte';
+  import FeedItem from './sidebar/FeedItem.svelte';
   import Icon from './Icon.svelte';
   import Tooltip from './Tooltip.svelte';
+  import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
+  import { fetchSingleFeed } from '$lib/services/feedFetcher';
 
   function handleClickOutside(e: MouseEvent) {
     if (viewContextMenu) {
@@ -376,6 +379,51 @@
       <span class="nav-icon"><Icon name="settings" /></span>
       <span class="nav-label">Settings</span>
     </a>
+
+    <!-- Sources section -->
+    <div class="sources-separator"></div>
+    <NavSection
+      title="Sources"
+      icon="rss"
+      isExpanded={sidebarStore.expandedSections.feeds}
+      showOnlyUnread={sidebarStore.showOnlyUnread.feeds}
+      isActive={false}
+      onToggle={() => sidebarStore.toggleSection('feeds')}
+      onLabelClick={() => sidebarStore.toggleSection('feeds')}
+      onUnreadToggle={() => sidebarStore.toggleShowOnlyUnread('feeds')}
+    >
+      {#each subscriptionsStore.subscriptions as sub (sub.rkey)}
+        {@const feedUrl = sub.feedUrl ?? ''}
+        {@const status = feedStatusStore.getStatus(feedUrl)}
+        {@const loadingState = !feedUrl
+          ? 'ready'
+          : status?.status === 'error' || status?.status === 'circuit-open'
+            ? 'error'
+            : status?.status === 'pending'
+              ? 'loading'
+              : 'ready'}
+        {@const subUnread = sub.id ? (unreadCounts.feedCounts.get(sub.id) ?? 0) : 0}
+        {#if !sidebarStore.showOnlyUnread.feeds || subUnread > 0}
+          <FeedItem
+            subscription={sub}
+            unreadCount={subUnread}
+            isActive={currentFilter().type === 'feed' && currentFilter().id === sub.id}
+            {loadingState}
+            errorMessage={status?.errorMessage ?? ''}
+            errorDetails={feedStatusStore.getErrorDetails(feedUrl)}
+            onSelect={() => sub.id && selectFilter('feed', sub.id)}
+            onContextMenu={() => {}}
+            onTouchStart={() => {}}
+            onTouchEnd={() => {}}
+            onTouchMove={() => {}}
+            onRetry={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
+            onMoreClick={() => {}}
+          />
+        {/if}
+      {:else}
+        <div class="empty-section">No sources yet</div>
+      {/each}
+    </NavSection>
   </nav>
 </aside>
 
@@ -564,6 +612,12 @@
 
   .nav-item.active .nav-count {
     color: var(--color-primary);
+  }
+
+  .sources-separator {
+    height: 1px;
+    background: var(--color-border);
+    margin: 0.75rem 0.75rem;
   }
 
   .empty-section {
