@@ -116,16 +116,19 @@ export async function handleCreateSembleCard(request: Request, env: Env): Promis
   }
 
   const rkey = generateTID();
+  const metadata: Record<string, string> = {};
+  if (body.title) metadata.title = body.title;
+  if (body.description) metadata.description = body.description;
+  if (body.author) metadata.author = body.author;
+  if (body.publishedAt) metadata.publishedDate = body.publishedAt;
   const record = {
     $type: 'network.cosmik.card',
     type: 'URL',
     content: {
       url: body.url,
-      title: body.title || undefined,
-      description: body.description || undefined,
-      author: body.author || undefined,
-      publicationDate: body.publishedAt || undefined,
+      ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
     },
+    url: body.url,
     createdAt: new Date().toISOString(),
   };
 
