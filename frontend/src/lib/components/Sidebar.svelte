@@ -17,6 +17,8 @@
   import { syncAutoRuleChannels } from '$lib/stores/channelAutoUpdate.svelte';
   import { onMount, onDestroy } from 'svelte';
   import AddFeedModal from './AddFeedModal.svelte';
+  import EditFeedModal from './EditFeedModal.svelte';
+  import type { Subscription } from '$lib/types';
   import AddHandleModal from './AddHandleModal.svelte';
   import SaveArticleModal from './SaveArticleModal.svelte';
   import FilteredViewModal from './FilteredViewModal.svelte';
@@ -30,15 +32,43 @@
   import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
 
+  function handleFeedContextMenu(e: MouseEvent, feedId: number) {
+    e.preventDefault();
+    feedContextMenu = { x: e.clientX, y: e.clientY, feedId };
+  }
+
+  function closeFeedContextMenu() {
+    feedContextMenu = null;
+  }
+
+  function handleEditFeed(feedId: number) {
+    const sub = subscriptionsStore.subscriptions.find((s) => s.id === feedId);
+    if (sub) editingSubscription = sub;
+  }
+
+  async function handleUnsubscribeFeed(feedId: number) {
+    if (confirm('Are you sure you want to unsubscribe from this feed?')) {
+      await subscriptionsStore.remove(feedId);
+      // If we're currently viewing this feed, navigate away
+      if (currentFilter().type === 'feed' && currentFilter().id === feedId) {
+        selectFilter('all');
+      }
+    }
+  }
+
   function handleClickOutside(e: MouseEvent) {
     if (viewContextMenu) {
       closeViewContextMenu();
     }
+    if (feedContextMenu) {
+      closeFeedContextMenu();
+    }
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (viewContextMenu && e.key === 'Escape') {
-      closeViewContextMenu();
+    if (e.key === 'Escape') {
+      if (viewContextMenu) closeViewContextMenu();
+      if (feedContextMenu) closeFeedContextMenu();
     }
   }
 
@@ -99,6 +129,10 @@
 
   // View context menu state
   let viewContextMenu = $state<{ x: number; y: number; viewId: number } | null>(null);
+
+  // Feed context menu state
+  let feedContextMenu = $state<{ x: number; y: number; feedId: number } | null>(null);
+  let editingSubscription = $state<Subscription | null>(null);
   let viewLongPressTimer: ReturnType<typeof setTimeout> | null = null;
   let viewLongPressTriggered = $state(false);
   let renamingViewId = $state<number | null>(null);
@@ -477,12 +511,12 @@
                       errorMessage={status?.errorMessage ?? ''}
                       errorDetails={feedStatusStore.getErrorDetails(feedUrl)}
                       onSelect={() => sub.id && selectFilter('feed', sub.id)}
-                      onContextMenu={() => {}}
+                      onContextMenu={(e) => sub.id && handleFeedContextMenu(e, sub.id)}
                       onTouchStart={() => {}}
                       onTouchEnd={() => {}}
                       onTouchMove={() => {}}
                       onRetry={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
-                      onMoreClick={() => {}}
+                      onMoreClick={(e) => sub.id && handleFeedContextMenu(e, sub.id)}
                     />
                   {/if}
                 {/each}
@@ -510,12 +544,12 @@
               errorMessage={status?.errorMessage ?? ''}
               errorDetails={feedStatusStore.getErrorDetails(feedUrl)}
               onSelect={() => sub.id && selectFilter('feed', sub.id)}
-              onContextMenu={() => {}}
+              onContextMenu={(e) => sub.id && handleFeedContextMenu(e, sub.id)}
               onTouchStart={() => {}}
               onTouchEnd={() => {}}
               onTouchMove={() => {}}
               onRetry={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
-              onMoreClick={() => {}}
+              onMoreClick={(e) => sub.id && handleFeedContextMenu(e, sub.id)}
             />
           {/if}
         {/each}
@@ -562,6 +596,23 @@
     onClose={closeViewContextMenu}
   />
 {/if}
+
+{#if feedContextMenu}
+  <ContextMenu
+    x={feedContextMenu.x}
+    y={feedContextMenu.y}
+    onEdit={() => handleEditFeed(feedContextMenu!.feedId)}
+    onDelete={() => handleUnsubscribeFeed(feedContextMenu!.feedId)}
+    onClose={closeFeedContextMenu}
+    deleteLabel="Unsubscribe"
+  />
+{/if}
+
+<EditFeedModal
+  open={editingSubscription !== null}
+  subscription={editingSubscription}
+  onclose={() => (editingSubscription = null)}
+/>
 
 <style>
   .sidebar-backdrop {
