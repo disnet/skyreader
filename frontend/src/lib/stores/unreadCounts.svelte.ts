@@ -179,48 +179,50 @@ function createUnreadCountsStore() {
 
       // Count unread articles
       if (showRss) {
-        const allowedIds =
-          sourceMode === 'all'
-            ? null
-            : new Set(
-                sourceKeys
-                  .filter(isRssSource)
-                  .map((key) => {
-                    const sub = subscriptionsStore.getByRkey(getRssSubscriptionRkey(key));
-                    return sub?.id;
-                  })
-                  .filter((id): id is number => id != null)
-              );
-        const seen = new Set<string>();
-        for (const article of articlesStore.allArticles) {
-          if (seen.has(article.guid)) continue;
-          seen.add(article.guid);
-          if (allowedIds && !allowedIds.has(article.subscriptionId)) continue;
-          if (!itemLabelsStore.isRead(article.guid)) count++;
+        if (sourceMode === 'all') {
+          // Reuse already-computed total (deduped by guid)
+          count += totalArticles;
+        } else {
+          const allowedIds = new Set(
+            sourceKeys
+              .filter(isRssSource)
+              .map((key) => {
+                const sub = subscriptionsStore.getByRkey(getRssSubscriptionRkey(key));
+                return sub?.id;
+              })
+              .filter((id): id is number => id != null)
+          );
+          const seen = new Set<string>();
+          for (const article of articlesStore.allArticles) {
+            if (seen.has(article.guid)) continue;
+            seen.add(article.guid);
+            if (!allowedIds.has(article.subscriptionId)) continue;
+            if (!itemLabelsStore.isRead(article.guid)) count++;
+          }
         }
       }
 
-      // Count unread shares
+      // Count unread shares — sum from pre-computed per-author map
       if (showShares) {
-        const allowedDids =
-          sourceMode === 'all'
-            ? null
-            : new Set(sourceKeys.filter(isSharesSource).map(getSourceDid));
-        for (const share of socialStore.shares) {
-          if (allowedDids && !allowedDids.has(share.authorDid)) continue;
-          if (!itemLabelsStore.isSocialRead(share.recordUri)) count++;
+        if (sourceMode === 'all') {
+          for (const c of sharerShareCounts.values()) count += c;
+        } else {
+          const allowedDids = new Set(sourceKeys.filter(isSharesSource).map(getSourceDid));
+          for (const did of allowedDids) {
+            count += sharerShareCounts.get(did) || 0;
+          }
         }
       }
 
-      // Count unread documents
+      // Count unread documents — sum from pre-computed per-author map
       if (showDocs) {
-        const allowedDids =
-          sourceMode === 'all'
-            ? null
-            : new Set(sourceKeys.filter(isDocumentsSource).map(getSourceDid));
-        for (const doc of socialStore.documents) {
-          if (allowedDids && !allowedDids.has(doc.authorDid)) continue;
-          if (!itemLabelsStore.isSocialRead(doc.recordUri)) count++;
+        if (sourceMode === 'all') {
+          for (const c of sharerDocCounts.values()) count += c;
+        } else {
+          const allowedDids = new Set(sourceKeys.filter(isDocumentsSource).map(getSourceDid));
+          for (const did of allowedDids) {
+            count += sharerDocCounts.get(did) || 0;
+          }
         }
       }
 

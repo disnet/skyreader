@@ -1,6 +1,10 @@
 import type { Env } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_NAME_LENGTH = 200;
+const MAX_CONFIG_LENGTH = 50_000; // 50 KB serialized config limit
+
 interface ChannelRow {
   uuid: string;
   name: string;
@@ -27,6 +31,37 @@ interface SyncChannelsBody {
     createdAt: number;
     updatedAt: number;
   }>;
+}
+
+function validateUuid(uuid: string): string | null {
+  if (typeof uuid !== 'string' || !UUID_RE.test(uuid)) return 'Invalid UUID format';
+  return null;
+}
+
+function validateChannelBody(body: ChannelBody, uuid?: string): string | null {
+  if (uuid != null) {
+    const uuidErr = validateUuid(uuid);
+    if (uuidErr) return uuidErr;
+  }
+  if (typeof body.name !== 'string' || body.name.length === 0) return 'Name is required';
+  if (body.name.length > MAX_NAME_LENGTH)
+    return `Name must be ${MAX_NAME_LENGTH} characters or less`;
+  if (typeof body.config !== 'string') return 'Config must be a string';
+  if (body.config.length > MAX_CONFIG_LENGTH) return 'Config is too large';
+  if (typeof body.position !== 'number' || !Number.isFinite(body.position) || body.position < 0)
+    return 'Position must be a non-negative number';
+  if (typeof body.createdAt !== 'number' || !Number.isFinite(body.createdAt))
+    return 'createdAt must be a number';
+  if (typeof body.updatedAt !== 'number' || !Number.isFinite(body.updatedAt))
+    return 'updatedAt must be a number';
+  return null;
+}
+
+function validationError(message: string): Response {
+  return new Response(JSON.stringify({ error: message }), {
+    status: 400,
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 // GET /api/channels - Get all channels for the current user
@@ -98,10 +133,12 @@ export async function handleSyncChannels(request: Request, env: Env): Promise<Re
   }
 
   if (!Array.isArray(body.channels)) {
-    return new Response(JSON.stringify({ error: 'Missing channels array' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return validationError('Missing channels array');
+  }
+
+  for (const channel of body.channels) {
+    const err = validateChannelBody(channel, channel.uuid);
+    if (err) return validationError(err);
   }
 
   try {
@@ -156,6 +193,9 @@ export async function handleUpsertChannel(
     });
   }
 
+  const uuidErr = validateUuid(uuid);
+  if (uuidErr) return validationError(uuidErr);
+
   let body: ChannelBody;
   try {
     body = (await request.json()) as ChannelBody;
@@ -165,6 +205,9 @@ export async function handleUpsertChannel(
       headers: { 'Content-Type': 'application/json' },
     });
   }
+
+  const bodyErr = validateChannelBody(body);
+  if (bodyErr) return validationError(bodyErr);
 
   try {
     await env.DB.prepare(
@@ -206,6 +249,9 @@ export async function handleDeleteChannel(
   env: Env,
   uuid: string
 ): Promise<Response> {
+  const uuidErr = validateUuid(uuid);
+  if (uuidErr) return validationError(uuidErr);
+
   const session = await getSessionFromRequest(request, env);
   if (!session) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {

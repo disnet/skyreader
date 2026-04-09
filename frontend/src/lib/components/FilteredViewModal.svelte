@@ -16,83 +16,15 @@
   import { subscriptionSourceKey } from '$lib/utils/sourceKeys';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { computeSourceKeys } from '$lib/utils/channelLogic';
-
-  const TYPE_OPTIONS: { value: SubscriptionSourceType; label: string }[] = [
-    { value: 'rss', label: 'RSS Feeds' },
-    { value: 'atproto.shares', label: 'Skyreader Shares' },
-    { value: 'atproto.documents', label: 'Standard.site Documents' },
-  ];
-
-  const SAVED_SOURCE_OPTIONS: { value: SavedSourceType; label: string }[] = [
-    { value: 'url', label: 'URL Saves' },
-    { value: 'feed', label: 'Feed Articles' },
-    { value: 'share', label: 'Shared Articles' },
-    { value: 'document', label: 'Documents' },
-  ];
-
-  type AutoRuleOption =
-    | 'frequency:high'
-    | 'frequency:low'
-    | 'longReads'
-    | 'recent'
-    | 'category'
-    | 'subscriptionTag'
-    | 'domain'
-    | 'people';
-
-  const AUTO_RULE_OPTIONS: { value: AutoRuleOption; label: string; description: string }[] = [
-    {
-      value: 'frequency:high',
-      label: 'Daily Digest',
-      description: 'High-volume feeds that publish 2+ times per day',
-    },
-    {
-      value: 'frequency:low',
-      label: "Don't Miss",
-      description: 'Infrequent feeds where every post counts',
-    },
-    {
-      value: 'longReads',
-      label: 'Long Reads',
-      description: 'Feeds with in-depth, long-form articles',
-    },
-    {
-      value: 'recent',
-      label: 'Recently Added',
-      description: 'Sources you added recently',
-    },
-    {
-      value: 'category',
-      label: 'Category',
-      description: 'All sources in a specific folder',
-    },
-    {
-      value: 'subscriptionTag',
-      label: 'Tag',
-      description: 'All sources with a specific tag',
-    },
-    {
-      value: 'domain',
-      label: 'Domain',
-      description: 'Sources matching URL patterns',
-    },
-    {
-      value: 'people',
-      label: 'People',
-      description: 'Everyone you follow on AT Protocol',
-    },
-  ];
-
-  const DEFAULT_NAMES: Record<AutoRuleOption, string> = {
-    'frequency:high': 'Daily Digest',
-    'frequency:low': "Don't Miss",
-    longReads: 'Long Reads',
-    recent: 'New Sources',
-    category: '',
-    subscriptionTag: '',
-    domain: '',
-    people: 'People I Follow',
-  };
+  import DomainPatternInput from '$lib/components/DomainPatternInput.svelte';
+  import {
+    TYPE_OPTIONS,
+    SAVED_SOURCE_OPTIONS,
+    AUTO_RULE_OPTIONS,
+    AUTO_RULE_DEFAULT_NAMES as DEFAULT_NAMES,
+    autoRuleToOption,
+    type AutoRuleOption,
+  } from '$lib/constants/channelOptions';
 
   interface Props {
     open: boolean;
@@ -114,9 +46,6 @@
   let categoryValue = $state('');
   let tagValue = $state('');
   let domainPatterns = $state<string[]>([]);
-  let domainInput = $state('');
-  let domainSuggestionsOpen = $state(false);
-  let domainHighlightIndex = $state(-1);
   let sourceMode = $state<'all' | 'include'>('all');
   let sourceKeys = $state<Set<string>>(new Set());
   let readFilter = $state<'all' | 'unread' | 'read'>('all');
@@ -177,12 +106,6 @@
       ),
     ].sort()
   );
-
-  let domainSuggestions = $derived.by(() => {
-    const q = domainInput.trim().toLowerCase();
-    const existing = new Set(domainPatterns);
-    return availableDomains.filter((d) => (!q || d.includes(q)) && !existing.has(d));
-  });
 
   // Build the auto-rule from current selections
   let currentAutoRule = $derived.by((): ChannelAutoRule | undefined => {
@@ -254,26 +177,6 @@
       next.add(type);
     }
     typeFilter = next;
-  }
-
-  /** Map a stored autoRule back to an AutoRuleOption. */
-  function autoRuleToOption(rule: ChannelAutoRule): AutoRuleOption {
-    switch (rule.type) {
-      case 'frequency':
-        return rule.threshold === 'high' ? 'frequency:high' : 'frequency:low';
-      case 'longReads':
-        return 'longReads';
-      case 'recent':
-        return 'recent';
-      case 'category':
-        return 'category';
-      case 'subscriptionTag':
-        return 'subscriptionTag';
-      case 'domain':
-        return 'domain';
-      case 'people':
-        return 'people';
-    }
   }
 
   // Reset form when modal opens or editingViewId changes
@@ -352,70 +255,6 @@
     error = null;
     saving = false;
     onclose();
-  }
-
-  function addDomainPattern(value?: string) {
-    const v = (value ?? domainInput).trim();
-    if (v && !domainPatterns.includes(v)) {
-      domainPatterns = [...domainPatterns, v];
-    }
-    domainInput = '';
-    domainSuggestionsOpen = false;
-    domainHighlightIndex = -1;
-  }
-
-  function removeDomainPattern(pattern: string) {
-    domainPatterns = domainPatterns.filter((p) => p !== pattern);
-  }
-
-  function handleDomainKeydown(e: KeyboardEvent) {
-    if (domainSuggestionsOpen && domainSuggestions.length > 0) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        domainHighlightIndex = (domainHighlightIndex + 1) % domainSuggestions.length;
-        return;
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        domainHighlightIndex =
-          domainHighlightIndex <= 0 ? domainSuggestions.length - 1 : domainHighlightIndex - 1;
-        return;
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        if (domainHighlightIndex >= 0 && domainHighlightIndex < domainSuggestions.length) {
-          addDomainPattern(domainSuggestions[domainHighlightIndex]);
-        } else {
-          addDomainPattern();
-        }
-        return;
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        domainSuggestionsOpen = false;
-        domainHighlightIndex = -1;
-        return;
-      }
-    }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      addDomainPattern();
-    } else if (e.key === 'Backspace' && !domainInput && domainPatterns.length > 0) {
-      domainPatterns = domainPatterns.slice(0, -1);
-    }
-  }
-
-  function handleDomainInput() {
-    domainSuggestionsOpen = true;
-    domainHighlightIndex = -1;
-  }
-
-  function handleDomainBlur() {
-    // Delay to allow click on suggestion to fire first
-    setTimeout(() => {
-      domainSuggestionsOpen = false;
-      addDomainPattern();
-    }, 150);
   }
 
   function toggleSourceKey(key: string) {
@@ -752,65 +591,11 @@
         {:else if autoRuleType === 'domain'}
           <div class="form-group">
             <span class="form-label">Domain patterns</span>
-            <div class="chip-input-wrapper">
-              <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-              <div
-                class="chip-input"
-                onclick={(e) => {
-                  const input = (e.currentTarget as HTMLElement).querySelector('input');
-                  input?.focus();
-                }}
-              >
-                {#each domainPatterns as pattern}
-                  <span class="chip">
-                    {pattern}
-                    <button
-                      type="button"
-                      class="chip-remove"
-                      onclick={() => removeDomainPattern(pattern)}
-                      aria-label="Remove {pattern}"
-                    >
-                      &times;
-                    </button>
-                  </span>
-                {/each}
-                <input
-                  type="text"
-                  bind:value={domainInput}
-                  onkeydown={handleDomainKeydown}
-                  oninput={handleDomainInput}
-                  onblur={handleDomainBlur}
-                  onfocus={() => (domainSuggestionsOpen = true)}
-                  placeholder={domainPatterns.length === 0 ? 'Type a domain and press Enter' : ''}
-                  class="chip-text-input"
-                  role="combobox"
-                  aria-expanded={domainSuggestionsOpen && domainSuggestions.length > 0}
-                  aria-autocomplete="list"
-                  autocomplete="off"
-                />
-              </div>
-              {#if domainSuggestionsOpen && domainSuggestions.length > 0}
-                <ul class="chip-suggestions" role="listbox">
-                  {#each domainSuggestions as suggestion, i (suggestion)}
-                    <!-- svelte-ignore a11y_click_events_have_key_events -->
-                    <li
-                      class="chip-suggestion"
-                      class:highlighted={i === domainHighlightIndex}
-                      role="option"
-                      aria-selected={i === domainHighlightIndex}
-                      onmousedown={(e) => {
-                        e.preventDefault();
-                        addDomainPattern(suggestion);
-                      }}
-                      onmouseenter={() => (domainHighlightIndex = i)}
-                    >
-                      {suggestion}
-                    </li>
-                  {/each}
-                </ul>
-              {/if}
-            </div>
-            <span class="form-hint">Press Enter to add. Matches against feed URL hostnames.</span>
+            <DomainPatternInput
+              patterns={domainPatterns}
+              {availableDomains}
+              onchange={(p) => (domainPatterns = p)}
+            />
           </div>
         {/if}
 
@@ -1013,105 +798,6 @@
     box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1);
   }
 
-  .chip-input {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.375rem 0.5rem;
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    background: var(--color-bg);
-    cursor: text;
-    min-height: 2.25rem;
-  }
-
-  .chip-input:focus-within {
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1);
-  }
-
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    padding: 0.125rem 0.25rem 0.125rem 0.5rem;
-    background: var(--color-bg-secondary, rgba(0, 0, 0, 0.06));
-    border-radius: 4px;
-    font-size: 0.8125rem;
-    color: var(--color-text);
-    line-height: 1.4;
-  }
-
-  .chip-remove {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.125rem;
-    height: 1.125rem;
-    padding: 0;
-    border: none;
-    background: none;
-    cursor: pointer;
-    color: var(--color-text-secondary);
-    font-size: 0.875rem;
-    line-height: 1;
-    border-radius: 3px;
-  }
-
-  .chip-remove:hover {
-    background: rgba(0, 0, 0, 0.1);
-    color: var(--color-text);
-  }
-
-  .chip-text-input {
-    flex: 1;
-    min-width: 8rem;
-    border: none;
-    background: none;
-    outline: none;
-    font: inherit;
-    font-size: 0.8125rem;
-    color: var(--color-text);
-    padding: 0.125rem 0;
-  }
-
-  .chip-text-input::placeholder {
-    color: var(--color-text-secondary);
-  }
-
-  .chip-input-wrapper {
-    position: relative;
-  }
-
-  .chip-suggestions {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    margin: 0.25rem 0 0;
-    padding: 0.25rem;
-    list-style: none;
-    background: var(--color-bg);
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-    z-index: 10;
-    max-height: 160px;
-    overflow-y: auto;
-  }
-
-  .chip-suggestion {
-    padding: 0.375rem 0.5rem;
-    font-size: 0.8125rem;
-    border-radius: 4px;
-    cursor: pointer;
-    color: var(--color-text);
-  }
-
-  .chip-suggestion.highlighted {
-    background: var(--color-bg-secondary, rgba(0, 0, 0, 0.06));
-  }
 
   .visually-hidden {
     position: absolute;

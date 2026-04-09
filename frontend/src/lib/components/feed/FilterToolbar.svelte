@@ -11,48 +11,15 @@
   import type {
     SubscriptionSourceType,
     SavedSourceType,
-    DateAddedPreset,
     ReadingLengthFilter,
-    SortOrder,
   } from '$lib/types';
-
-  const DATE_PRESET_OPTIONS: { value: DateAddedPreset | ''; label: string }[] = [
-    { value: '', label: 'Any time' },
-    { value: 'last-week', label: 'Last week' },
-    { value: 'last-month', label: 'Last month' },
-    { value: 'last-3-months', label: 'Last 3 months' },
-    { value: 'last-year', label: 'Last year' },
-  ];
-
-  const READING_LENGTH_OPTIONS: { value: ReadingLengthFilter; label: string }[] = [
-    { value: 'quick', label: 'Quick (< 5 min)' },
-    { value: 'medium', label: 'Medium (5–15 min)' },
-    { value: 'long', label: 'Long (15+ min)' },
-  ];
-
-  const SAVED_SORT_OPTIONS: { value: SortOrder; label: string }[] = [
-    { value: 'newest', label: 'Saved (newest)' },
-    { value: 'oldest', label: 'Saved (oldest)' },
-    { value: 'published-newest', label: 'Published (newest)' },
-    { value: 'published-oldest', label: 'Published (oldest)' },
-    { value: 'shortest', label: 'Reading time (short)' },
-    { value: 'longest', label: 'Reading time (long)' },
-    { value: 'domain-asc', label: 'Domain (A–Z)' },
-    { value: 'domain-desc', label: 'Domain (Z–A)' },
-  ];
-
-  const TYPE_OPTIONS: { value: SubscriptionSourceType; label: string }[] = [
-    { value: 'rss', label: 'RSS Feeds' },
-    { value: 'atproto.shares', label: 'Skyreader Shares' },
-    { value: 'atproto.documents', label: 'Standard.site Documents' },
-  ];
-
-  const SAVED_SOURCE_OPTIONS: { value: SavedSourceType; label: string }[] = [
-    { value: 'url', label: 'URL Saves' },
-    { value: 'feed', label: 'Feed Articles' },
-    { value: 'share', label: 'Shared Articles' },
-    { value: 'document', label: 'Documents' },
-  ];
+  import {
+    TYPE_OPTIONS,
+    SAVED_SOURCE_OPTIONS,
+    DATE_PRESET_OPTIONS,
+    READING_LENGTH_OPTIONS,
+    SAVED_SORT_OPTIONS,
+  } from '$lib/constants/channelOptions';
 
   interface Props {
     showSourceFilter: boolean;

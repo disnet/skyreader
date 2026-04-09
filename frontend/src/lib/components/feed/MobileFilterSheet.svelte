@@ -8,6 +8,7 @@
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { subscriptionSourceKey } from '$lib/utils/sourceKeys';
   import { computeSourceKeys } from '$lib/utils/channelLogic';
+  import DomainPatternInput from '$lib/components/DomainPatternInput.svelte';
   import type {
     ChannelAutoRule,
     SavedSourceType,
@@ -16,104 +17,16 @@
     SortOrder,
   } from '$lib/types';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-
-  const DATE_PRESET_OPTIONS: { value: DateAddedPreset | ''; label: string }[] = [
-    { value: '', label: 'Any time' },
-    { value: 'last-week', label: 'Week' },
-    { value: 'last-month', label: 'Month' },
-    { value: 'last-3-months', label: '3 months' },
-    { value: 'last-year', label: 'Year' },
-  ];
-
-  const READING_LENGTH_OPTIONS: { value: ReadingLengthFilter; label: string }[] = [
-    { value: 'quick', label: 'Quick' },
-    { value: 'medium', label: 'Medium' },
-    { value: 'long', label: 'Long' },
-  ];
-
-  const SAVED_SORT_OPTIONS: { value: SortOrder; label: string }[] = [
-    { value: 'newest', label: 'Saved ↓' },
-    { value: 'oldest', label: 'Saved ↑' },
-    { value: 'published-newest', label: 'Published ↓' },
-    { value: 'published-oldest', label: 'Published ↑' },
-    { value: 'shortest', label: 'Short' },
-    { value: 'longest', label: 'Long' },
-    { value: 'domain-asc', label: 'Domain A–Z' },
-    { value: 'domain-desc', label: 'Domain Z–A' },
-  ];
-
-  const SAVED_SOURCE_OPTIONS: { value: SavedSourceType; label: string }[] = [
-    { value: 'url', label: 'URL Saves' },
-    { value: 'feed', label: 'Feed Articles' },
-    { value: 'share', label: 'Shared Articles' },
-    { value: 'document', label: 'Documents' },
-  ];
-
-  // --- Smart rule options (shared with FilteredViewModal) ---
-
-  type AutoRuleOption =
-    | 'frequency:high'
-    | 'frequency:low'
-    | 'longReads'
-    | 'recent'
-    | 'category'
-    | 'subscriptionTag'
-    | 'domain'
-    | 'people';
-
-  const AUTO_RULE_OPTIONS: { value: AutoRuleOption; label: string; description: string }[] = [
-    {
-      value: 'frequency:high',
-      label: 'Daily Digest',
-      description: 'High-volume feeds that publish 2+ times per day',
-    },
-    {
-      value: 'frequency:low',
-      label: "Don't Miss",
-      description: 'Infrequent feeds where every post counts',
-    },
-    {
-      value: 'longReads',
-      label: 'Long Reads',
-      description: 'Feeds with in-depth, long-form articles',
-    },
-    {
-      value: 'recent',
-      label: 'Recently Added',
-      description: 'Sources you added recently',
-    },
-    {
-      value: 'category',
-      label: 'Category',
-      description: 'All sources in a specific folder',
-    },
-    {
-      value: 'subscriptionTag',
-      label: 'Tag',
-      description: 'All sources with a specific tag',
-    },
-    {
-      value: 'domain',
-      label: 'Domain',
-      description: 'Sources matching URL patterns',
-    },
-    {
-      value: 'people',
-      label: 'People',
-      description: 'Everyone you follow on AT Protocol',
-    },
-  ];
-
-  const DEFAULT_NAMES: Record<AutoRuleOption, string> = {
-    'frequency:high': 'Daily Digest',
-    'frequency:low': "Don't Miss",
-    longReads: 'Long Reads',
-    recent: 'New Sources',
-    category: '',
-    subscriptionTag: '',
-    domain: '',
-    people: 'People I Follow',
-  };
+  import {
+    SAVED_SOURCE_OPTIONS,
+    DATE_PRESET_OPTIONS_SHORT as DATE_PRESET_OPTIONS,
+    READING_LENGTH_OPTIONS_SHORT as READING_LENGTH_OPTIONS,
+    SAVED_SORT_OPTIONS_SHORT as SAVED_SORT_OPTIONS,
+    AUTO_RULE_OPTIONS,
+    AUTO_RULE_DEFAULT_NAMES as DEFAULT_NAMES,
+    autoRuleToOption,
+    type AutoRuleOption,
+  } from '$lib/constants/channelOptions';
 
   interface Props {
     expandAllItems: boolean;
@@ -168,9 +81,6 @@
   let chCategoryValue = $state('');
   let chTagValue = $state('');
   let chDomainPatterns = $state<string[]>([]);
-  let chDomainInput = $state('');
-  let chDomainSuggestionsOpen = $state(false);
-  let chDomainHighlightIndex = $state(-1);
   let chSourceMode = $state<'all' | 'include'>('all');
   let chSourceKeys = $state<Set<string>>(new Set());
   let chSaving = $state(false);
@@ -218,12 +128,6 @@
       ),
     ].sort()
   );
-
-  let chDomainSuggestions = $derived.by(() => {
-    const q = chDomainInput.trim().toLowerCase();
-    const existing = new Set(chDomainPatterns);
-    return availableDomains.filter((d) => (!q || d.includes(q)) && !existing.has(d));
-  });
 
   let chCurrentAutoRule = $derived.by((): ChannelAutoRule | undefined => {
     if (chMode !== 'smart') return undefined;
@@ -290,25 +194,6 @@
       : subscriptionsStore.subscriptions
   );
 
-  function autoRuleToOption(rule: ChannelAutoRule): AutoRuleOption {
-    switch (rule.type) {
-      case 'frequency':
-        return rule.threshold === 'high' ? 'frequency:high' : 'frequency:low';
-      case 'longReads':
-        return 'longReads';
-      case 'recent':
-        return 'recent';
-      case 'category':
-        return 'category';
-      case 'subscriptionTag':
-        return 'subscriptionTag';
-      case 'domain':
-        return 'domain';
-      case 'people':
-        return 'people';
-    }
-  }
-
   // Reset channel editor when editingChannelId changes
   $effect(() => {
     if (editingChannelId != null) {
@@ -366,69 +251,6 @@
       chError = null;
     }
   });
-
-  function addDomainPattern(value?: string) {
-    const v = (value ?? chDomainInput).trim();
-    if (v && !chDomainPatterns.includes(v)) {
-      chDomainPatterns = [...chDomainPatterns, v];
-    }
-    chDomainInput = '';
-    chDomainSuggestionsOpen = false;
-    chDomainHighlightIndex = -1;
-  }
-
-  function removeDomainPattern(pattern: string) {
-    chDomainPatterns = chDomainPatterns.filter((p) => p !== pattern);
-  }
-
-  function handleDomainKeydown(e: KeyboardEvent) {
-    if (chDomainSuggestionsOpen && chDomainSuggestions.length > 0) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        chDomainHighlightIndex = (chDomainHighlightIndex + 1) % chDomainSuggestions.length;
-        return;
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        chDomainHighlightIndex =
-          chDomainHighlightIndex <= 0 ? chDomainSuggestions.length - 1 : chDomainHighlightIndex - 1;
-        return;
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        if (chDomainHighlightIndex >= 0 && chDomainHighlightIndex < chDomainSuggestions.length) {
-          addDomainPattern(chDomainSuggestions[chDomainHighlightIndex]);
-        } else {
-          addDomainPattern();
-        }
-        return;
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        chDomainSuggestionsOpen = false;
-        chDomainHighlightIndex = -1;
-        return;
-      }
-    }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      addDomainPattern();
-    } else if (e.key === 'Backspace' && !chDomainInput && chDomainPatterns.length > 0) {
-      chDomainPatterns = chDomainPatterns.slice(0, -1);
-    }
-  }
-
-  function handleDomainInput() {
-    chDomainSuggestionsOpen = true;
-    chDomainHighlightIndex = -1;
-  }
-
-  function handleDomainBlur() {
-    setTimeout(() => {
-      chDomainSuggestionsOpen = false;
-      addDomainPattern();
-    }, 150);
-  }
 
   function toggleChSourceKey(key: string) {
     const next = new Set(chSourceKeys);
@@ -987,61 +809,12 @@
         {:else if chAutoRuleType === 'domain'}
           <div class="sheet-section">
             <div class="section-label">Domain patterns</div>
-            <div class="chip-input-wrapper">
-              <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-              <div
-                class="chip-input"
-                onclick={(e) => {
-                  const input = (e.currentTarget as HTMLElement).querySelector('input');
-                  input?.focus();
-                }}
-              >
-                {#each chDomainPatterns as pattern}
-                  <span class="domain-chip">
-                    {pattern}
-                    <button
-                      type="button"
-                      class="chip-remove"
-                      onclick={() => removeDomainPattern(pattern)}
-                      aria-label="Remove {pattern}"
-                    >
-                      &times;
-                    </button>
-                  </span>
-                {/each}
-                <input
-                  type="text"
-                  bind:value={chDomainInput}
-                  onkeydown={handleDomainKeydown}
-                  oninput={handleDomainInput}
-                  onblur={handleDomainBlur}
-                  onfocus={() => (chDomainSuggestionsOpen = true)}
-                  placeholder={chDomainPatterns.length === 0 ? 'Type a domain and press Enter' : ''}
-                  class="chip-text-input"
-                  autocomplete="off"
-                />
-              </div>
-              {#if chDomainSuggestionsOpen && chDomainSuggestions.length > 0}
-                <ul class="chip-suggestions" role="listbox">
-                  {#each chDomainSuggestions as suggestion, i (suggestion)}
-                    <!-- svelte-ignore a11y_click_events_have_key_events -->
-                    <li
-                      class="chip-suggestion"
-                      class:highlighted={i === chDomainHighlightIndex}
-                      role="option"
-                      aria-selected={i === chDomainHighlightIndex}
-                      onmousedown={(e) => {
-                        e.preventDefault();
-                        addDomainPattern(suggestion);
-                      }}
-                      onmouseenter={() => (chDomainHighlightIndex = i)}
-                    >
-                      {suggestion}
-                    </li>
-                  {/each}
-                </ul>
-              {/if}
-            </div>
+            <DomainPatternInput
+              patterns={chDomainPatterns}
+              {availableDomains}
+              onchange={(p) => (chDomainPatterns = p)}
+              hint=""
+            />
           </div>
         {/if}
 
@@ -1472,102 +1245,6 @@
     color: var(--color-text-secondary);
   }
 
-  .chip-input-wrapper {
-    position: relative;
-  }
-
-  .chip-input {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.375rem 0.5rem;
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    background: var(--color-bg);
-    cursor: text;
-    min-height: 2.5rem;
-  }
-
-  .chip-input:focus-within {
-    border-color: var(--color-primary);
-  }
-
-  .domain-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    padding: 0.125rem 0.25rem 0.125rem 0.5rem;
-    background: var(--color-bg-secondary, rgba(0, 0, 0, 0.06));
-    border-radius: 4px;
-    font-size: 0.8125rem;
-    color: var(--color-text);
-  }
-
-  .chip-remove {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.25rem;
-    height: 1.25rem;
-    padding: 0;
-    border: none;
-    background: none;
-    cursor: pointer;
-    color: var(--color-text-secondary);
-    font-size: 0.875rem;
-    border-radius: 3px;
-  }
-
-  .chip-remove:active {
-    background: rgba(0, 0, 0, 0.1);
-  }
-
-  .chip-text-input {
-    flex: 1;
-    min-width: 8rem;
-    border: none;
-    background: none;
-    outline: none;
-    font: inherit;
-    font-size: 0.875rem;
-    color: var(--color-text);
-    padding: 0.25rem 0;
-  }
-
-  .chip-text-input::placeholder {
-    color: var(--color-text-secondary);
-  }
-
-  .chip-suggestions {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    margin: 0.25rem 0 0;
-    padding: 0.25rem;
-    list-style: none;
-    background: var(--color-bg);
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-    z-index: 10;
-    max-height: 160px;
-    overflow-y: auto;
-  }
-
-  .chip-suggestion {
-    padding: 0.5rem;
-    font-size: 0.875rem;
-    border-radius: 6px;
-    cursor: pointer;
-    color: var(--color-text);
-  }
-
-  .chip-suggestion.highlighted {
-    background: var(--color-bg-secondary, rgba(0, 0, 0, 0.06));
-  }
-
   .match-preview {
     font-size: 0.8125rem;
     color: var(--color-text-secondary);
@@ -1681,20 +1358,9 @@
       background: rgba(0, 102, 204, 0.1);
     }
 
-    .chip-input {
-      background: var(--color-bg, #1a1a1a);
-    }
-
-    .chip-suggestions {
-      background: var(--color-bg, #1a1a1a);
-    }
-
     .match-preview.empty {
       background: rgba(255, 255, 255, 0.03);
     }
 
-    .domain-chip {
-      background: rgba(255, 255, 255, 0.1);
-    }
   }
 </style>

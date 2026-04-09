@@ -1,51 +1,11 @@
 import { db, getMetadata, setMetadata } from '$lib/services/db';
 import { safeAdd, safeUpdate } from '$lib/services/safeDb.svelte';
 import { api } from '$lib/services/api';
-import type { FilteredView } from '$lib/types';
+import type { FilteredView, Channel } from '$lib/types';
 import { migrateLegacyView, isRssSource } from '$lib/utils/sourceKeys';
+import { toConfig, fromRemote, computeSyncOperations } from '$lib/utils/channelSync';
 
 const PENDING_DELETES_KEY = 'channelsPendingDelete';
-
-/** Extract the JSON config blob from a FilteredView (everything except id, uuid, name, position, timestamps). */
-function toConfig(view: FilteredView): Record<string, unknown> {
-  const {
-    id: _id,
-    uuid: _uuid,
-    name: _name,
-    position: _pos,
-    createdAt: _ca,
-    updatedAt: _ua,
-    ...config
-  } = view;
-  return config;
-}
-
-/** Reconstruct a partial FilteredView from a remote channel row. */
-function fromRemote(remote: {
-  uuid: string;
-  name: string;
-  config: string;
-  position: number;
-  createdAt: number;
-  updatedAt: number;
-}): Omit<FilteredView, 'id'> {
-  let config: Record<string, unknown> = {};
-  try {
-    config = JSON.parse(remote.config);
-  } catch {
-    // invalid config, use defaults
-  }
-  return {
-    uuid: remote.uuid,
-    name: remote.name,
-    position: remote.position,
-    createdAt: remote.createdAt,
-    updatedAt: remote.updatedAt,
-    readFilter: (config.readFilter as FilteredView['readFilter']) ?? 'all',
-    sortOrder: (config.sortOrder as FilteredView['sortOrder']) ?? 'newest',
-    ...config,
-  } as Omit<FilteredView, 'id'>;
-}
 
 /** Load the set of UUIDs we've deleted locally but may not have confirmed with the backend. */
 async function loadPendingDeletes(): Promise<Set<string>> {
@@ -152,70 +112,56 @@ function createFilteredViewsStore() {
   async function syncWithBackend() {
     try {
       const { channels: remoteChannels, deletedUuids } = await api.getChannels();
-
-      const localByUuid = new Map(views.filter((v) => v.uuid).map((v) => [v.uuid, v]));
-      const remoteByUuid = new Map(remoteChannels.map((r) => [r.uuid, r]));
-      const remoteDeletedSet = new Set(deletedUuids ?? []);
-
-      // Load locally-pending deletes (channels we deleted but haven't confirmed with backend)
       const pendingDeletes = await loadPendingDeletes();
 
-      // Remove locally any channels that were deleted on another device
-      for (const uuid of remoteDeletedSet) {
-        const local = localByUuid.get(uuid);
+      const ops = computeSyncOperations(
+        views,
+        remoteChannels,
+        deletedUuids ?? [],
+        pendingDeletes
+      );
+
+      // Apply local deletions
+      for (const uuid of ops.deleteLocally) {
+        const local = views.find((v) => v.uuid === uuid);
         if (local?.id != null) {
           await db.filteredViews.delete(local.id);
-          views = views.filter((v) => v.uuid !== uuid);
-          localByUuid.delete(uuid);
         }
-        // If we also had a pending delete for this, the backend already knows — clear it
-        pendingDeletes.delete(uuid);
+        views = views.filter((v) => v.uuid !== uuid);
       }
 
-      // Retry sending any pending deletes to the backend
-      for (const uuid of pendingDeletes) {
+      // Retry pending deletes
+      const retriedOk = new Set<string>();
+      for (const uuid of ops.retryDeletes) {
         try {
           await api.deleteChannel(uuid);
-          pendingDeletes.delete(uuid);
+          retriedOk.add(uuid);
         } catch {
           // Still can't reach backend — keep in pending set for next sync
         }
       }
+      for (const uuid of retriedOk) ops.pendingDeletesAfter.delete(uuid);
+      await savePendingDeletes(ops.pendingDeletesAfter);
 
-      // Persist the (possibly reduced) pending-delete set
-      await savePendingDeletes(pendingDeletes);
-
-      // All UUIDs we consider "deleted" — both remote and locally-pending
-      const allDeletedUuids = new Set([...remoteDeletedSet, ...pendingDeletes]);
-
-      // Remote channels not in local → add from other device
-      // But skip any that we've deleted locally (pending deletes)
-      for (const [uuid, remote] of remoteByUuid) {
-        if (allDeletedUuids.has(uuid)) continue;
-        const local = localByUuid.get(uuid);
-        if (!local) {
-          const parsed = fromRemote(remote);
-          const id = await safeAdd(db.filteredViews, parsed);
-          const newView = { ...parsed, id: id as number };
-          views = [...views, newView];
-        } else if (remote.updatedAt > local.updatedAt) {
-          // Remote is newer → update local
-          const parsed = fromRemote(remote);
-          const { ...updates } = parsed;
-          if (local.id != null) {
-            await safeUpdate(db.filteredViews, local.id, updates);
-          }
-          views = views.map((v) => (v.uuid === uuid ? { ...v, ...updates } : v));
-        }
+      // Add new channels from remote
+      for (const parsed of ops.addLocally) {
+        const id = await safeAdd(db.filteredViews, parsed);
+        views = [...views, { ...parsed, id: id as number }];
       }
 
-      // Local channels not in remote (and not deleted) → push to backend
-      const toPush = views.filter(
-        (v) => v.uuid && !remoteByUuid.has(v.uuid) && !allDeletedUuids.has(v.uuid)
-      );
-      if (toPush.length > 0) {
+      // Update local channels from remote
+      for (const { uuid, data } of ops.updateLocally) {
+        const local = views.find((v) => v.uuid === uuid);
+        if (local?.id != null) {
+          await safeUpdate(db.filteredViews, local.id, data);
+        }
+        views = views.map((v) => (v.uuid === uuid ? { ...v, ...data } : v));
+      }
+
+      // Push local-only channels to remote
+      if (ops.pushToRemote.length > 0) {
         await api.syncChannels(
-          toPush.map((v) => ({
+          ops.pushToRemote.map((v) => ({
             uuid: v.uuid,
             name: v.name,
             config: JSON.stringify(toConfig(v)),
@@ -311,6 +257,10 @@ function createFilteredViewsStore() {
 
   return {
     get views() {
+      return views;
+    },
+    /** Alias for views — prefer this in new code. */
+    get channels(): Channel[] {
       return views;
     },
     load,

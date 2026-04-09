@@ -716,6 +716,9 @@ export interface FilteredView {
   position: number;
 }
 
+/** Alias for FilteredView — use Channel in new code. */
+export type Channel = FilteredView;
+
 export interface ItemTags {
   itemKey: string;
   tags: string[];
