@@ -296,7 +296,11 @@ class ApiClient {
 
   async updateSubscription(
     rkey: string,
-    updates: { customTitle?: string | null; customIconUrl?: string | null }
+    updates: {
+      customTitle?: string | null;
+      customIconUrl?: string | null;
+      category?: string | null;
+    }
   ): Promise<{ success: boolean }> {
     return this.fetch(`/api/subscriptions/${rkey}`, {
       method: 'PATCH',
@@ -323,6 +327,20 @@ class ApiClient {
     return this.fetch('/api/subscriptions/bulk', {
       method: 'POST',
       body: JSON.stringify({ subscriptions }),
+    });
+  }
+
+  async bulkUpdateSubscriptions(
+    rkeys: string[],
+    updates: {
+      customTitle?: string | null;
+      customIconUrl?: string | null;
+      category?: string | null;
+    }
+  ): Promise<{ success: boolean; updated: number }> {
+    return this.fetch('/api/subscriptions/bulk-update', {
+      method: 'POST',
+      body: JSON.stringify({ rkeys, updates }),
     });
   }
 

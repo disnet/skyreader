@@ -202,6 +202,7 @@
       feeds: null,
       contentType,
       view: url.searchParams.get('view'),
+      category: url.searchParams.get('category'),
     };
     untrack(() => feedViewStore.setFilters(filters));
   });
@@ -255,6 +256,9 @@
     if (feedViewStore.viewFilter) {
       const fv = feedViewStore.activeFilteredView;
       return fv?.name || 'Channel';
+    }
+    if (feedViewStore.categoryFilter) {
+      return feedViewStore.categoryFilter;
     }
     if (feedViewStore.feedFilter) {
       const sub = subscriptionsStore.subscriptions.find(

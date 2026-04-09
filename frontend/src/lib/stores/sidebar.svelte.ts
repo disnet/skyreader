@@ -17,6 +17,8 @@ interface SidebarState {
   };
   // Sorted IDs for keyboard navigation (matches visual sidebar order)
   sortedFeedIds: number[];
+  // Which categories are expanded in the Sources section
+  expandedCategories: Record<string, boolean>;
 }
 
 function createSidebarStore() {
@@ -36,6 +38,7 @@ function createSidebarStore() {
       feeds: false,
     },
     sortedFeedIds: [],
+    expandedCategories: {},
   });
 
   // Restore from localStorage on init
@@ -51,6 +54,7 @@ function createSidebarStore() {
           ...parsed.expandedSections,
         };
         state.showOnlyUnread = parsed.showOnlyUnread ?? { shared: false, feeds: false };
+        state.expandedCategories = parsed.expandedCategories ?? {};
       } catch {
         // Ignore parse errors
       }
@@ -64,6 +68,7 @@ function createSidebarStore() {
         JSON.stringify({
           expandedSections: state.expandedSections,
           showOnlyUnread: state.showOnlyUnread,
+          expandedCategories: state.expandedCategories,
         })
       );
     }
@@ -80,6 +85,15 @@ function createSidebarStore() {
   function toggleSection(section: 'shared' | 'feeds' | 'channels') {
     state.expandedSections[section] = !state.expandedSections[section];
     persist();
+  }
+
+  function toggleCategory(category: string) {
+    state.expandedCategories[category] = !state.expandedCategories[category];
+    persist();
+  }
+
+  function isCategoryExpanded(category: string): boolean {
+    return state.expandedCategories[category] ?? true; // default expanded
   }
 
   function toggleShowOnlyUnread(section: 'shared' | 'feeds') {
@@ -186,9 +200,14 @@ function createSidebarStore() {
     get editingChannelId() {
       return editingChannelId;
     },
+    get expandedCategories() {
+      return state.expandedCategories;
+    },
     toggleMobile,
     closeMobile,
     toggleSection,
+    toggleCategory,
+    isCategoryExpanded,
     toggleShowOnlyUnread,
     openAddFeedModal,
     setAddSourceInitialValue,

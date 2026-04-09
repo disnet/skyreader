@@ -234,6 +234,19 @@ function createFeedViewStore() {
   let feedsFilter = $state<string | null>(null); // deprecated, kept for setFilters compat
   let contentTypeFilter = $state<'shares' | 'documents' | null>(null);
   let viewFilter = $state<string | null>(null);
+  let categoryFilter = $state<string | null>(null);
+
+  // Derived: subscription IDs that belong to the selected category
+  let categorySubscriptionIds = $derived.by(() => {
+    if (!categoryFilter) return null;
+    const ids = new Set<number>();
+    for (const sub of subscriptionsStore.subscriptions) {
+      if (sub.category === categoryFilter && sub.id) {
+        ids.add(sub.id);
+      }
+    }
+    return ids;
+  });
 
   // Derived: active filtered view (looked up by uuid, with fallback to Dexie id for old bookmarks)
   let activeFilteredView = $derived.by(() => {
@@ -361,6 +374,7 @@ function createFeedViewStore() {
       }
       return 'articles';
     }
+    if (categoryFilter) return 'combined';
     if (savedFilter) return 'articles';
     return 'combined';
   });
@@ -426,6 +440,11 @@ function createFeedViewStore() {
       if (feedFilter) {
         const feedId = parseInt(feedFilter);
         articles = articles.filter((a) => a.subscriptionId === feedId);
+      }
+
+      // Filter by category
+      if (categorySubscriptionIds) {
+        articles = articles.filter((a) => categorySubscriptionIds.has(a.subscriptionId));
       }
 
       // Apply source-based RSS filtering
@@ -494,6 +513,17 @@ function createFeedViewStore() {
     const allowedDids = deriveAllowedDids(fv, isSharesSource);
     if (allowedDids !== null) {
       filtered = filtered.filter((s) => allowedDids.has(s.authorDid));
+    }
+
+    // Filter by category: only show shares from subscriptions in the category
+    if (categorySubscriptionIds) {
+      const categoryDids = new Set<string>();
+      for (const sub of subscriptionsStore.subscriptions) {
+        if (sub.category === categoryFilter && sub.subjectDid) {
+          categoryDids.add(sub.subjectDid);
+        }
+      }
+      filtered = filtered.filter((s) => categoryDids.has(s.authorDid));
     }
 
     // Apply read filter
@@ -567,6 +597,17 @@ function createFeedViewStore() {
     const allowedDids = deriveAllowedDids(fv, isDocumentsSource);
     if (allowedDids !== null) {
       filtered = filtered.filter((d) => allowedDids.has(d.authorDid));
+    }
+
+    // Filter by category: only show documents from subscriptions in the category
+    if (categorySubscriptionIds) {
+      const categoryDids = new Set<string>();
+      for (const sub of subscriptionsStore.subscriptions) {
+        if (sub.category === categoryFilter && sub.subjectDid) {
+          categoryDids.add(sub.subjectDid);
+        }
+      }
+      filtered = filtered.filter((d) => categoryDids.has(d.authorDid));
     }
 
     // Apply read filter
@@ -1169,6 +1210,9 @@ function createFeedViewStore() {
     get viewFilter() {
       return viewFilter;
     },
+    get categoryFilter() {
+      return categoryFilter;
+    },
     get activeFilteredView() {
       return activeFilteredView;
     },
@@ -1319,6 +1363,7 @@ function createFeedViewStore() {
       feeds: string | null;
       contentType?: 'shares' | 'documents' | null;
       view?: string | null;
+      category?: string | null;
     }) {
       feedFilter = filters.feed;
       savedFilter = filters.saved;
@@ -1328,6 +1373,7 @@ function createFeedViewStore() {
       feedsFilter = filters.feeds;
       contentTypeFilter = filters.contentType ?? null;
       viewFilter = filters.view ?? null;
+      categoryFilter = filters.category ?? null;
       // Reset pagination when filters change
       loadedArticleCount = DEFAULT_PAGE_SIZE;
       // Populate toolbar from saved view, or reset to defaults

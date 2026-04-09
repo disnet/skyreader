@@ -153,7 +153,8 @@
     | 'newspaper'
     | 'plus'
     | 'filter'
-    | 'layers';
+    | 'layers'
+    | 'folder';
 
   // Navigation item type
   type NavItem =
@@ -198,19 +199,34 @@
       icon: 'plus',
     };
 
-    const feedItems: NavItem[] = subscriptions.map((s) => ({
-      type: 'feed' as const,
-      id: s.id!,
-      label: s.customTitle || s.title,
-      count: feedUnreadCounts.get(s.id!) || 0,
-      iconUrl:
-        s.customIconUrl ||
-        (s.sourceType?.startsWith('atproto.')
-          ? s.siteUrl
-            ? getFaviconUrl(s.siteUrl)
-            : '/icons/icon-192.svg'
-          : getFaviconUrl(s.siteUrl || s.feedUrl || '')),
-    }));
+    function toFeedItem(s: (typeof subscriptions)[0]): NavItem & { type: 'feed' } {
+      return {
+        type: 'feed' as const,
+        id: s.id!,
+        label: s.customTitle || s.title,
+        count: feedUnreadCounts.get(s.id!) || 0,
+        iconUrl:
+          s.customIconUrl ||
+          (s.sourceType?.startsWith('atproto.')
+            ? s.siteUrl
+              ? getFaviconUrl(s.siteUrl)
+              : '/icons/icon-192.svg'
+            : getFaviconUrl(s.siteUrl || s.feedUrl || '')),
+      };
+    }
+
+    // Group subscriptions by category
+    const byCategory = new Map<string, typeof subscriptions>();
+    const uncategorized: typeof subscriptions = [];
+    for (const s of subscriptions) {
+      if (s.category) {
+        const existing = byCategory.get(s.category) || [];
+        existing.push(s);
+        byCategory.set(s.category, existing);
+      } else {
+        uncategorized.push(s);
+      }
+    }
 
     // Filter by search query
     const filterItem = (item: NavItem) => {
@@ -231,16 +247,30 @@
       sections.push({ section: '', items: allViews });
     }
 
-    const filteredFeeds = feedItems.filter(filterItem);
-    if (filteredFeeds.length > 0 || filterSection('Feeds')) {
+    // Categorized feeds - one section per folder
+    const sortedCategories = [...byCategory.entries()].sort(([a], [b]) => a.localeCompare(b));
+    for (const [category, subs] of sortedCategories) {
+      const items = subs.map(toFeedItem).filter(filterItem);
+      if (items.length > 0 || filterSection(category)) {
+        sections.push({
+          section: category,
+          icon: 'folder' as IconName,
+          items,
+        });
+      }
+    }
+
+    // Uncategorized feeds
+    const uncategorizedItems = uncategorized.map(toFeedItem).filter(filterItem);
+    if (uncategorizedItems.length > 0 || filterSection('Feeds')) {
       sections.push({
-        section: 'Feeds',
+        section: sortedCategories.length > 0 ? 'Uncategorized' : 'Feeds',
         icon: 'rss',
         onSectionClick: () => {
           sidebarStore.toggleSection('feeds');
           close();
         },
-        items: filteredFeeds,
+        items: uncategorizedItems,
       });
     }
 
@@ -647,7 +677,11 @@
         <span class="view-menu-icon"><Icon name="edit" size={16} /></span>
         Rename
       </button>
-      <button class="view-menu-item danger" onclick={() => deleteView(viewMenuUuid!)} role="menuitem">
+      <button
+        class="view-menu-item danger"
+        onclick={() => deleteView(viewMenuUuid!)}
+        role="menuitem"
+      >
         <span class="view-menu-icon"><Icon name="trash" size={16} /></span>
         Delete
       </button>

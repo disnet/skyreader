@@ -21,6 +21,7 @@ import {
   handleUpdateSubscription,
   handleBulkCreateSubscriptions,
   handleBulkDeleteSubscriptions,
+  handleBulkUpdateSubscriptions,
 } from './routes/subscriptions';
 import {
   handleGetSocialReadPositions,
@@ -247,6 +248,10 @@ export default {
         case url.pathname === '/api/subscriptions/bulk':
           if (!session) return unauthorizedResponse(headers);
           response = await handleBulkCreateSubscriptions(request, env, ctx);
+          break;
+        case url.pathname === '/api/subscriptions/bulk-update':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleBulkUpdateSubscriptions(request, env, ctx);
           break;
         case url.pathname === '/api/subscriptions/bulk-delete':
           if (!session) return unauthorizedResponse(headers);

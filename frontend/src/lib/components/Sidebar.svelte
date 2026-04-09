@@ -88,8 +88,10 @@
     const feed = $page.url.searchParams.get('feed');
     const starred = $page.url.searchParams.get('saved');
     const shared = $page.url.searchParams.get('shared');
+    const category = $page.url.searchParams.get('category');
     if (view) return { type: 'view' as const, id: view };
     if (feed) return { type: 'feed' as const, id: parseInt(feed) };
+    if (category) return { type: 'category' as const, name: category };
     if (starred) return { type: 'saved' as const };
     if (shared) return { type: 'shared' as const };
     return { type: 'all' as const };
@@ -185,6 +187,7 @@
     const params = new URLSearchParams();
     if (type === 'view' && id) params.set('view', String(id));
     else if (type === 'feed' && id) params.set('feed', String(id));
+    else if (type === 'category' && id) params.set('category', String(id));
     else if (type === 'saved') params.set('saved', 'true');
     else if (type === 'shared') params.set('shared', 'true');
 
@@ -194,6 +197,36 @@
     // Close mobile sidebar after navigation
     sidebarStore.closeMobile();
   }
+
+  // Group subscriptions by category for the Sources section
+  interface CategoryGroup {
+    name: string;
+    subscriptions: typeof subscriptionsStore.subscriptions;
+    unreadCount: number;
+  }
+
+  let sourceCategories = $derived.by((): CategoryGroup[] => {
+    const byCategory = new Map<string, typeof subscriptionsStore.subscriptions>();
+    for (const sub of subscriptionsStore.subscriptions) {
+      if (sub.category) {
+        const existing = byCategory.get(sub.category) || [];
+        existing.push(sub);
+        byCategory.set(sub.category, existing);
+      }
+    }
+    return [...byCategory.entries()]
+      .map(([name, subs]) => ({
+        name,
+        subscriptions: subs,
+        unreadCount: subs.reduce(
+          (sum, s) => sum + (s.id ? (unreadCounts.feedCounts.get(s.id) ?? 0) : 0),
+          0
+        ),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  });
+
+  let uncategorizedSources = $derived(subscriptionsStore.subscriptions.filter((s) => !s.category));
 
   function handleBackdropClick() {
     sidebarStore.closeMobile();
@@ -392,37 +425,103 @@
       onLabelClick={() => sidebarStore.toggleSection('feeds')}
       onUnreadToggle={() => sidebarStore.toggleShowOnlyUnread('feeds')}
     >
-      {#each subscriptionsStore.subscriptions as sub (sub.rkey)}
-        {@const feedUrl = sub.feedUrl ?? ''}
-        {@const status = feedStatusStore.getStatus(feedUrl)}
-        {@const loadingState = !feedUrl
-          ? 'ready'
-          : status?.status === 'error' || status?.status === 'circuit-open'
-            ? 'error'
-            : status?.status === 'pending'
-              ? 'loading'
-              : 'ready'}
-        {@const subUnread = sub.id ? (unreadCounts.feedCounts.get(sub.id) ?? 0) : 0}
-        {#if !sidebarStore.showOnlyUnread.feeds || subUnread > 0}
-          <FeedItem
-            subscription={sub}
-            unreadCount={subUnread}
-            isActive={currentFilter().type === 'feed' && currentFilter().id === sub.id}
-            {loadingState}
-            errorMessage={status?.errorMessage ?? ''}
-            errorDetails={feedStatusStore.getErrorDetails(feedUrl)}
-            onSelect={() => sub.id && selectFilter('feed', sub.id)}
-            onContextMenu={() => {}}
-            onTouchStart={() => {}}
-            onTouchEnd={() => {}}
-            onTouchMove={() => {}}
-            onRetry={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
-            onMoreClick={() => {}}
-          />
-        {/if}
+      {#if sourceCategories.length > 0 || uncategorizedSources.length > 0}
+        {#each sourceCategories as cat (cat.name)}
+          <div class="category-group">
+            <div class="category-header">
+              <button
+                class="category-expand-btn"
+                onclick={() => sidebarStore.toggleCategory(cat.name)}
+                aria-label={sidebarStore.isCategoryExpanded(cat.name) ? 'Collapse' : 'Expand'}
+              >
+                <Icon
+                  name={sidebarStore.isCategoryExpanded(cat.name)
+                    ? 'chevron-down'
+                    : 'chevron-right'}
+                  size={12}
+                  strokeWidth={2.5}
+                />
+              </button>
+              <button
+                class="category-name-btn"
+                class:active={currentFilter().type === 'category' &&
+                  currentFilter().name === cat.name}
+                onclick={() => selectFilter('category', cat.name)}
+              >
+                <Icon name="folder" size={14} />
+                <span class="category-label">{cat.name}</span>
+              </button>
+              {#if cat.unreadCount > 0}
+                <span class="category-count">{cat.unreadCount}</span>
+              {/if}
+            </div>
+            {#if sidebarStore.isCategoryExpanded(cat.name)}
+              <div class="category-items">
+                {#each cat.subscriptions as sub (sub.rkey)}
+                  {@const feedUrl = sub.feedUrl ?? ''}
+                  {@const status = feedStatusStore.getStatus(feedUrl)}
+                  {@const loadingState = !feedUrl
+                    ? 'ready'
+                    : status?.status === 'error' || status?.status === 'circuit-open'
+                      ? 'error'
+                      : status?.status === 'pending'
+                        ? 'loading'
+                        : 'ready'}
+                  {@const subUnread = sub.id ? (unreadCounts.feedCounts.get(sub.id) ?? 0) : 0}
+                  {#if !sidebarStore.showOnlyUnread.feeds || subUnread > 0}
+                    <FeedItem
+                      subscription={sub}
+                      unreadCount={subUnread}
+                      isActive={currentFilter().type === 'feed' && currentFilter().id === sub.id}
+                      {loadingState}
+                      errorMessage={status?.errorMessage ?? ''}
+                      errorDetails={feedStatusStore.getErrorDetails(feedUrl)}
+                      onSelect={() => sub.id && selectFilter('feed', sub.id)}
+                      onContextMenu={() => {}}
+                      onTouchStart={() => {}}
+                      onTouchEnd={() => {}}
+                      onTouchMove={() => {}}
+                      onRetry={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
+                      onMoreClick={() => {}}
+                    />
+                  {/if}
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/each}
+        {#each uncategorizedSources as sub (sub.rkey)}
+          {@const feedUrl = sub.feedUrl ?? ''}
+          {@const status = feedStatusStore.getStatus(feedUrl)}
+          {@const loadingState = !feedUrl
+            ? 'ready'
+            : status?.status === 'error' || status?.status === 'circuit-open'
+              ? 'error'
+              : status?.status === 'pending'
+                ? 'loading'
+                : 'ready'}
+          {@const subUnread = sub.id ? (unreadCounts.feedCounts.get(sub.id) ?? 0) : 0}
+          {#if !sidebarStore.showOnlyUnread.feeds || subUnread > 0}
+            <FeedItem
+              subscription={sub}
+              unreadCount={subUnread}
+              isActive={currentFilter().type === 'feed' && currentFilter().id === sub.id}
+              {loadingState}
+              errorMessage={status?.errorMessage ?? ''}
+              errorDetails={feedStatusStore.getErrorDetails(feedUrl)}
+              onSelect={() => sub.id && selectFilter('feed', sub.id)}
+              onContextMenu={() => {}}
+              onTouchStart={() => {}}
+              onTouchEnd={() => {}}
+              onTouchMove={() => {}}
+              onRetry={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
+              onMoreClick={() => {}}
+            />
+          {/if}
+        {/each}
       {:else}
         <div class="empty-section">No sources yet</div>
-      {/each}
+      {/if}
     </NavSection>
   </nav>
 </aside>
@@ -714,6 +813,77 @@
   .suggestion-dismiss:hover {
     opacity: 1 !important;
     color: var(--color-text);
+  }
+
+  .category-group {
+    margin-bottom: 2px;
+  }
+
+  .category-items {
+    padding-left: 1.25rem;
+  }
+
+  .category-header {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.375rem 0.5rem;
+    border-radius: 8px;
+  }
+
+  .category-expand-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.125rem;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .category-name-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex: 1;
+    min-width: 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.125rem 0.25rem;
+    border-radius: 6px;
+    font: inherit;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    transition:
+      color 0.15s,
+      background-color 0.15s;
+  }
+
+  .category-name-btn:hover {
+    color: var(--color-text);
+    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+  }
+
+  .category-name-btn.active {
+    color: var(--color-primary);
+    background-color: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
+  }
+
+  .category-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .category-count {
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    padding-right: 0.25rem;
   }
 
   .nav-separator {

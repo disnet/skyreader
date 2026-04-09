@@ -4,13 +4,11 @@
   import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
-  import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { profileService } from '$lib/services/profiles';
   import { api } from '$lib/services/api';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
-  import { rssSourceKey, sharesSourceKey, documentsSourceKey } from '$lib/utils/sourceKeys';
   import { getSourceDisplay } from '$lib/utils/sourceDisplay';
   import Icon from '$lib/components/Icon.svelte';
   import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
@@ -49,6 +47,12 @@
   let selectedIds = $state<Set<number>>(new Set());
   let profiles = $state<Map<string, BlueskyProfile>>(new Map());
   let detectedContent = $state<Map<string, DetectedContent>>(new Map());
+  let activeTab = $state<'people' | 'websites'>('people');
+
+  function switchTab(tab: 'people' | 'websites') {
+    activeTab = tab;
+    selectedIds = new Set();
+  }
 
   const CONTENT_CACHE_KEY = 'skyreader:detected-content';
   type CachedContent = Omit<DetectedContent, 'loading'>;
@@ -135,6 +139,28 @@
       .sort((a, b) => (a.customTitle || a.title).localeCompare(b.customTitle || b.title));
   });
 
+  // Group websites by category
+  interface WebsiteCategoryGroup {
+    name: string;
+    websites: Subscription[];
+  }
+
+  let websiteCategories = $derived.by((): WebsiteCategoryGroup[] => {
+    const byCategory = new Map<string, Subscription[]>();
+    for (const sub of websites) {
+      if (sub.category) {
+        const existing = byCategory.get(sub.category) || [];
+        existing.push(sub);
+        byCategory.set(sub.category, existing);
+      }
+    }
+    return [...byCategory.entries()]
+      .map(([name, subs]) => ({ name, websites: subs }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  });
+
+  let uncategorizedWebsites = $derived(websites.filter((s) => !s.category));
+
   // -- Filtering --
   let filteredPeople = $derived(
     searchQuery
@@ -159,16 +185,38 @@
       : websites
   );
 
+  function filterWebsitesBySearch(subs: Subscription[]): Subscription[] {
+    if (!searchQuery) return subs;
+    const q = searchQuery.toLowerCase();
+    return subs.filter(
+      (s) =>
+        (s.customTitle || s.title).toLowerCase().includes(q) ||
+        (s.feedUrl || '').toLowerCase().includes(q) ||
+        (s.siteUrl || '').toLowerCase().includes(q)
+    );
+  }
+
+  let filteredWebsiteCategories = $derived(
+    websiteCategories
+      .map((cat) => ({ ...cat, websites: filterWebsitesBySearch(cat.websites) }))
+      .filter((cat) => cat.websites.length > 0)
+  );
+
+  let filteredUncategorizedWebsites = $derived(filterWebsitesBySearch(uncategorizedWebsites));
+
   // -- Selection --
   let allVisibleIds = $derived.by(() => {
     const ids: number[] = [];
-    for (const g of filteredPeople) {
-      for (const s of g.subscriptions) {
+    if (activeTab === 'people') {
+      for (const g of filteredPeople) {
+        for (const s of g.subscriptions) {
+          if (s.id) ids.push(s.id);
+        }
+      }
+    } else {
+      for (const s of filteredWebsites) {
         if (s.id) ids.push(s.id);
       }
-    }
-    for (const s of filteredWebsites) {
-      if (s.id) ids.push(s.id);
     }
     return ids;
   });
@@ -275,27 +323,29 @@
     selectedIds = new Set();
   }
 
-  async function assignToChannel(channelId: number) {
-    const channel = filteredViewsStore.getById(channelId);
-    if (!channel) return;
+  let folders = $derived.by(() => {
+    const cats = new Set<string>();
+    for (const sub of subscriptionsStore.subscriptions) {
+      if (sub.category) cats.add(sub.category);
+    }
+    return [...cats].sort((a, b) => a.localeCompare(b));
+  });
 
-    const currentKeys = new Set(channel.sourceKeys || []);
+  let selectedHasCategory = $derived.by(() => {
     for (const id of selectedIds) {
       const sub = subscriptionsStore.getById(id);
-      if (!sub?.rkey) continue;
-      if (!sub.sourceType || sub.sourceType === 'rss') {
-        currentKeys.add(rssSourceKey(sub.rkey));
-      } else if (sub.sourceType === 'atproto.shares' && sub.subjectDid) {
-        currentKeys.add(sharesSourceKey(sub.subjectDid));
-      } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
-        currentKeys.add(documentsSourceKey(sub.subjectDid));
-      }
+      if (sub?.category) return true;
     }
+    return false;
+  });
 
-    await filteredViewsStore.update(channelId, {
-      sourceMode: 'include',
-      sourceKeys: [...currentKeys],
-    });
+  async function assignToFolder(folderName: string) {
+    await subscriptionsStore.bulkUpdateLocal([...selectedIds], { category: folderName });
+    selectedIds = new Set();
+  }
+
+  async function removeFromFolder() {
+    await subscriptionsStore.bulkUpdateLocal([...selectedIds], { category: null });
     selectedIds = new Set();
   }
 
@@ -379,30 +429,47 @@
   {#if selectionCount > 0}
     <BulkActionBar
       {selectionCount}
-      channels={filteredViewsStore.views}
-      onAssignToChannel={assignToChannel}
+      {folders}
+      hasCategory={selectedHasCategory}
+      onAssignToFolder={assignToFolder}
+      onRemoveFromFolder={removeFromFolder}
       onBulkDelete={bulkDelete}
       onClearSelection={() => (selectedIds = new Set())}
     />
   {/if}
 
-  {#if filteredPeople.length > 0 || filteredWebsites.length > 0}
-    <div class="select-all-row">
-      <label class="checkbox-label">
-        <input type="checkbox" checked={allSelected} onchange={toggleSelectAll} />
-        <span class="select-all-text">Select all</span>
-      </label>
-    </div>
-  {/if}
+  <!-- Tab bar -->
+  <div class="tab-bar">
+    <button class="tab" class:active={activeTab === 'people'} onclick={() => switchTab('people')}>
+      <Icon name="users" size={16} />
+      People
+      {#if peopleGroups.length > 0}
+        <span class="tab-count">{peopleGroups.length}</span>
+      {/if}
+    </button>
+    <button
+      class="tab"
+      class:active={activeTab === 'websites'}
+      onclick={() => switchTab('websites')}
+    >
+      <Icon name="globe" size={16} />
+      Websites
+      {#if websites.length > 0}
+        <span class="tab-count">{websites.length}</span>
+      {/if}
+    </button>
+  </div>
 
-  <!-- People section -->
-  {#if filteredPeople.length > 0}
-    <section class="source-group">
-      <h2 class="group-title">
-        <Icon name="users" size={16} />
-        People
-        <span class="group-count">{filteredPeople.length}</span>
-      </h2>
+  <!-- People tab -->
+  {#if activeTab === 'people'}
+    {#if filteredPeople.length > 0}
+      <div class="select-all-row">
+        <label class="checkbox-label">
+          <input type="checkbox" checked={allSelected} onchange={toggleSelectAll} />
+          <span class="select-all-text">Select all</span>
+        </label>
+      </div>
+
       <div class="source-list">
         {#each filteredPeople as group (group.did)}
           {@const detected = detectedContent.get(group.did)}
@@ -505,51 +572,100 @@
           {/if}
         {/each}
       </div>
-    </section>
-  {/if}
-
-  <!-- Websites section -->
-  {#if filteredWebsites.length > 0}
-    <section class="source-group">
-      <h2 class="group-title">
-        <Icon name="globe" size={16} />
-        Websites
-        <span class="group-count">{filteredWebsites.length}</span>
-      </h2>
-      <div class="source-list">
-        {#each filteredWebsites as sub (sub.id)}
-          {@const display = getSourceDisplay(sub.sourceType, sub.feedUrl)}
-          {@const feedCount = sub.id ? (unreadCounts.feedCounts.get(sub.id) ?? 0) : 0}
-          {@const status = sub.feedUrl ? feedStatusStore.getStatus(sub.feedUrl) : undefined}
-          <SourceRow
-            iconUrl={getFaviconUrl(sub)}
-            title={sub.customTitle || sub.title}
-            subtitle={getSubtitle(sub)}
-            sourceLabel={display.label}
-            pillClass={display.pillClass}
-            unreadCount={feedCount}
-            hasError={status?.status === 'error' || status?.status === 'circuit-open'}
-            subscribed={true}
-            selected={sub.id != null && selectedIds.has(sub.id)}
-            fallbackIcon="rss"
-            onToggleSelect={() => sub.id && toggleSelect(sub.id)}
-            onEdit={() => handleEdit(sub)}
-            onRefresh={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
-            onRemove={() => handleRemove(sub)}
-          />
-        {/each}
+    {:else}
+      <div class="empty-state">
+        {#if searchQuery}
+          <p>No people match "{searchQuery}"</p>
+        {:else}
+          <p>No people yet. Follow a @handle to get started.</p>
+        {/if}
       </div>
-    </section>
+    {/if}
   {/if}
 
-  {#if filteredPeople.length === 0 && filteredWebsites.length === 0}
-    <div class="empty-state">
-      {#if searchQuery}
-        <p>No sources match "{searchQuery}"</p>
-      {:else}
-        <p>No sources yet. Add an RSS feed or follow a @handle to get started.</p>
+  <!-- Websites tab -->
+  {#if activeTab === 'websites'}
+    {#if filteredWebsites.length > 0}
+      <div class="select-all-row">
+        <label class="checkbox-label">
+          <input type="checkbox" checked={allSelected} onchange={toggleSelectAll} />
+          <span class="select-all-text">Select all</span>
+        </label>
+      </div>
+
+      {#each filteredWebsiteCategories as cat (cat.name)}
+        <div class="category-section">
+          <h3 class="category-title">
+            <Icon name="folder" size={14} />
+            {cat.name}
+            <span class="group-count">{cat.websites.length}</span>
+          </h3>
+          <div class="source-list">
+            {#each cat.websites as sub (sub.id)}
+              {@const display = getSourceDisplay(sub.sourceType, sub.feedUrl)}
+              {@const feedCount = sub.id ? (unreadCounts.feedCounts.get(sub.id) ?? 0) : 0}
+              {@const status = sub.feedUrl ? feedStatusStore.getStatus(sub.feedUrl) : undefined}
+              <SourceRow
+                iconUrl={getFaviconUrl(sub)}
+                title={sub.customTitle || sub.title}
+                subtitle={getSubtitle(sub)}
+                sourceLabel={display.label}
+                pillClass={display.pillClass}
+                unreadCount={feedCount}
+                hasError={status?.status === 'error' || status?.status === 'circuit-open'}
+                subscribed={true}
+                selected={sub.id != null && selectedIds.has(sub.id)}
+                fallbackIcon="rss"
+                onToggleSelect={() => sub.id && toggleSelect(sub.id)}
+                onEdit={() => handleEdit(sub)}
+                onRefresh={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
+                onRemove={() => handleRemove(sub)}
+              />
+            {/each}
+          </div>
+        </div>
+      {/each}
+
+      {#if filteredUncategorizedWebsites.length > 0}
+        {#if filteredWebsiteCategories.length > 0}
+          <h3 class="category-title uncategorized-title">
+            Uncategorized
+            <span class="group-count">{filteredUncategorizedWebsites.length}</span>
+          </h3>
+        {/if}
+        <div class="source-list">
+          {#each filteredUncategorizedWebsites as sub (sub.id)}
+            {@const display = getSourceDisplay(sub.sourceType, sub.feedUrl)}
+            {@const feedCount = sub.id ? (unreadCounts.feedCounts.get(sub.id) ?? 0) : 0}
+            {@const status = sub.feedUrl ? feedStatusStore.getStatus(sub.feedUrl) : undefined}
+            <SourceRow
+              iconUrl={getFaviconUrl(sub)}
+              title={sub.customTitle || sub.title}
+              subtitle={getSubtitle(sub)}
+              sourceLabel={display.label}
+              pillClass={display.pillClass}
+              unreadCount={feedCount}
+              hasError={status?.status === 'error' || status?.status === 'circuit-open'}
+              subscribed={true}
+              selected={sub.id != null && selectedIds.has(sub.id)}
+              fallbackIcon="rss"
+              onToggleSelect={() => sub.id && toggleSelect(sub.id)}
+              onEdit={() => handleEdit(sub)}
+              onRefresh={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
+              onRemove={() => handleRemove(sub)}
+            />
+          {/each}
+        </div>
       {/if}
-    </div>
+    {:else}
+      <div class="empty-state">
+        {#if searchQuery}
+          <p>No websites match "{searchQuery}"</p>
+        {:else}
+          <p>No websites yet. Add an RSS feed to get started.</p>
+        {/if}
+      </div>
+    {/if}
   {/if}
 
   {#if mobileStore.isMobile}
@@ -592,14 +708,59 @@
   .sources-page {
     max-width: 640px;
     margin: 0 auto;
-    padding: 3.5rem 1rem 1.5rem;
+    padding: 3.5rem 1rem 5rem;
   }
 
   @media (max-width: 1000px) {
     .sources-page {
       padding-top: 0.5rem;
-      padding-bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 1rem);
+      padding-bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 5rem);
     }
+  }
+
+  .tab-bar {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--color-border);
+    margin-bottom: 1rem;
+  }
+
+  .tab {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition:
+      color 0.15s,
+      border-color 0.15s;
+  }
+
+  .tab:hover {
+    color: var(--color-text-primary);
+  }
+
+  .tab.active {
+    color: var(--color-primary);
+    border-bottom-color: var(--color-primary);
+  }
+
+  .tab-count {
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--color-text-secondary);
+  }
+
+  .tab.active .tab-count {
+    color: var(--color-primary);
   }
 
   .select-all-row {
@@ -617,23 +778,6 @@
 
   .select-all-text {
     user-select: none;
-  }
-
-  .source-group {
-    margin-bottom: 1.5rem;
-  }
-
-  .group-title {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.8125rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    color: var(--color-text-secondary);
-    margin: 0 0 0.5rem;
-    padding: 0 0.25rem;
   }
 
   .group-count {
@@ -658,6 +802,25 @@
 
   .source-list > :global(:only-child) {
     border-radius: 12px;
+  }
+
+  .category-section {
+    margin-bottom: 1rem;
+  }
+
+  .category-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    margin: 0.75rem 0 0.375rem;
+    padding: 0 0.25rem;
+  }
+
+  .uncategorized-title {
+    margin-top: 1rem;
   }
 
   .content-type-loading {
