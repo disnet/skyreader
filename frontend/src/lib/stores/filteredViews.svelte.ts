@@ -121,16 +121,37 @@ function createFilteredViewsStore() {
         pendingDeletes
       );
 
-      // Apply local deletions
+      // Build the new views state without mutating `views` until all DB ops succeed.
+      let updatedViews = [...views];
+
+      // Apply local deletions to DB
       for (const uuid of ops.deleteLocally) {
-        const local = views.find((v) => v.uuid === uuid);
+        const local = updatedViews.find((v) => v.uuid === uuid);
         if (local?.id != null) {
           await db.filteredViews.delete(local.id);
         }
-        views = views.filter((v) => v.uuid !== uuid);
+        updatedViews = updatedViews.filter((v) => v.uuid !== uuid);
       }
 
-      // Retry pending deletes
+      // Add new channels from remote to DB
+      for (const parsed of ops.addLocally) {
+        const id = await safeAdd(db.filteredViews, parsed);
+        updatedViews = [...updatedViews, { ...parsed, id: id as number }];
+      }
+
+      // Update local channels from remote in DB
+      for (const { uuid, data } of ops.updateLocally) {
+        const local = updatedViews.find((v) => v.uuid === uuid);
+        if (local?.id != null) {
+          await safeUpdate(db.filteredViews, local.id, data);
+        }
+        updatedViews = updatedViews.map((v) => (v.uuid === uuid ? { ...v, ...data } : v));
+      }
+
+      // All DB ops succeeded — commit the in-memory state atomically
+      views = updatedViews;
+
+      // Retry pending deletes (network-only, doesn't affect local state)
       const retriedOk = new Set<string>();
       for (const uuid of ops.retryDeletes) {
         try {
@@ -142,21 +163,6 @@ function createFilteredViewsStore() {
       }
       for (const uuid of retriedOk) ops.pendingDeletesAfter.delete(uuid);
       await savePendingDeletes(ops.pendingDeletesAfter);
-
-      // Add new channels from remote
-      for (const parsed of ops.addLocally) {
-        const id = await safeAdd(db.filteredViews, parsed);
-        views = [...views, { ...parsed, id: id as number }];
-      }
-
-      // Update local channels from remote
-      for (const { uuid, data } of ops.updateLocally) {
-        const local = views.find((v) => v.uuid === uuid);
-        if (local?.id != null) {
-          await safeUpdate(db.filteredViews, local.id, data);
-        }
-        views = views.map((v) => (v.uuid === uuid ? { ...v, ...data } : v));
-      }
 
       // Push local-only channels to remote
       if (ops.pushToRemote.length > 0) {

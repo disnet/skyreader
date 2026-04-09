@@ -48,6 +48,11 @@ function validateChannelBody(body: ChannelBody, uuid?: string): string | null {
     return `Name must be ${MAX_NAME_LENGTH} characters or less`;
   if (typeof body.config !== 'string') return 'Config must be a string';
   if (body.config.length > MAX_CONFIG_LENGTH) return 'Config is too large';
+  try {
+    JSON.parse(body.config);
+  } catch {
+    return 'Config must be valid JSON';
+  }
   if (typeof body.position !== 'number' || !Number.isFinite(body.position) || body.position < 0)
     return 'Position must be a non-negative number';
   if (typeof body.createdAt !== 'number' || !Number.isFinite(body.createdAt))
@@ -262,22 +267,14 @@ export async function handleDeleteChannel(
 
   try {
     const now = Date.now();
-    // Two-step soft-delete: update if exists, insert tombstone if not.
-    const updateResult = await env.DB.prepare(
-      `UPDATE channels SET deleted_at = ? WHERE user_did = ? AND uuid = ?`
+    // Atomic soft-delete: upsert a tombstone whether the row exists or not.
+    await env.DB.prepare(
+      `INSERT INTO channels (uuid, user_did, name, config, position, created_at, updated_at, deleted_at)
+       VALUES (?, ?, '', '{}', 0, ?, ?, ?)
+       ON CONFLICT (user_did, uuid) DO UPDATE SET deleted_at = excluded.deleted_at, updated_at = excluded.updated_at`
     )
-      .bind(now, session.did, uuid)
+      .bind(uuid, session.did, now, now, now)
       .run();
-
-    if (updateResult.meta.changes === 0) {
-      // Row didn't exist — insert a tombstone so other devices see the deletion
-      await env.DB.prepare(
-        `INSERT INTO channels (uuid, user_did, name, config, position, created_at, updated_at, deleted_at)
-         VALUES (?, ?, '', '{}', 0, ?, ?, ?)`
-      )
-        .bind(uuid, session.did, now, now, now)
-        .run();
-    }
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json' },
