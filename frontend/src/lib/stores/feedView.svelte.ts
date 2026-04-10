@@ -14,12 +14,16 @@ import type {
   UserShare,
   SavedItem,
   SubscriptionSourceType,
+  SavedSourceType,
+  DateAddedPreset,
+  ReadingLengthFilter,
+  SortOrder,
 } from '$lib/types';
 import {
   isRssSource,
   isSharesSource,
   isDocumentsSource,
-  getRssSubscriptionId,
+  getRssSubscriptionRkey,
   getSourceDid,
   migrateLegacyView,
 } from '$lib/utils/sourceKeys';
@@ -42,12 +46,13 @@ export interface EffectiveFilters {
   sourceMode: 'all' | 'include';
   sourceKeys: string[];
   readFilter: 'all' | 'unread' | 'read';
-  sortOrder: 'newest' | 'oldest';
+  sortOrder: SortOrder;
   typeFilter: SubscriptionSourceType[];
 }
 
 /**
  * Derive allowed RSS subscription IDs from effective filters.
+ * Converts rkeys in sourceKeys to Dexie IDs for article filtering.
  * Returns null if all RSS sources are allowed.
  */
 function deriveAllowedRssIds(fv: EffectiveFilters): Set<number> | null {
@@ -55,7 +60,11 @@ function deriveAllowedRssIds(fv: EffectiveFilters): Set<number> | null {
 
   const ids = new Set<number>();
   for (const key of fv.sourceKeys) {
-    if (isRssSource(key)) ids.add(getRssSubscriptionId(key));
+    if (isRssSource(key)) {
+      const rkey = getRssSubscriptionRkey(key);
+      const sub = subscriptionsStore.getByRkey(rkey);
+      if (sub?.id != null) ids.add(sub.id);
+    }
   }
   return ids;
 }
@@ -108,6 +117,78 @@ function getSavedDate(item: FeedDisplayItem): number {
   return getItemDate(item);
 }
 
+function getItemPublishedDate(item: FeedDisplayItem): number {
+  if (item.type === 'saved') {
+    return item.item.publishedAt
+      ? new Date(item.item.publishedAt).getTime()
+      : new Date(item.item.savedAt).getTime();
+  }
+  return getItemDate(item);
+}
+
+function getItemWordCount(item: FeedDisplayItem): number | null {
+  if (item.type === 'saved') return item.item.wordCount;
+  if (item.type === 'article') {
+    const text = item.item.content || item.item.summary || '';
+    return text ? text.split(/\s+/).length : null;
+  }
+  if (item.type === 'share') {
+    const text = item.item.content || item.item.itemDescription || '';
+    return text ? text.split(/\s+/).length : null;
+  }
+  if (item.type === 'document') {
+    const text = item.item.textContent || item.item.description || '';
+    return text ? text.split(/\s+/).length : null;
+  }
+  return null;
+}
+
+function getItemDomain(item: FeedDisplayItem): string | null {
+  if (item.type === 'saved') return item.item.domain;
+  const url =
+    item.type === 'article'
+      ? item.item.url
+      : item.type === 'share'
+        ? item.item.itemUrl
+        : item.type === 'document'
+          ? item.item.canonicalUrl || item.item.path
+          : null;
+  if (!url) return null;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function datePresetToMs(preset: DateAddedPreset): number {
+  const DAY = 86400000;
+  switch (preset) {
+    case 'last-week':
+      return Date.now() - 7 * DAY;
+    case 'last-month':
+      return Date.now() - 30 * DAY;
+    case 'last-3-months':
+      return Date.now() - 90 * DAY;
+    case 'last-year':
+      return Date.now() - 365 * DAY;
+  }
+}
+
+const WPM = 200;
+function matchesReadingLength(wc: number | null, bucket: ReadingLengthFilter): boolean {
+  if (wc === null) return false;
+  const minutes = wc / WPM;
+  switch (bucket) {
+    case 'quick':
+      return minutes < 5;
+    case 'medium':
+      return minutes >= 5 && minutes < 15;
+    case 'long':
+      return minutes >= 15;
+  }
+}
+
 function createFeedViewStore() {
   // UI state
   let showOnlyUnread = $state(true);
@@ -127,11 +208,19 @@ function createFeedViewStore() {
   let toolbarSourceMode = $state<'all' | 'include'>('all');
   let toolbarSourceKeys = $state<string[]>([]);
   // View-local sort order override (null = use global preferences.sortOrder)
-  let toolbarSortOrder = $state<'newest' | 'oldest' | null>(null);
+  let toolbarSortOrder = $state<SortOrder | null>(null);
   // Tag filter (empty = no tag filter)
   let toolbarTagFilter = $state<string[]>([]);
   // Type filter (empty = all types shown)
   let toolbarTypeFilter = $state<SubscriptionSourceType[]>([]);
+  // Saved source filter (for saved-mode channels: url, feed, share, document)
+  let toolbarSavedSourceFilter = $state<SavedSourceType[]>([]);
+  // Saved channel: date added filter
+  let toolbarDateFilter = $state<DateAddedPreset | null>(null);
+  // Saved channel: reading length filter (multi-select)
+  let toolbarReadingLength = $state<ReadingLengthFilter[]>([]);
+  // Saved channel: domain filter (list of domains to include)
+  let toolbarDomainFilter = $state<string[]>([]);
 
   // Bookmarks view sub-filter (inbox vs archive)
   let savedView = $state<'inbox' | 'archive'>('inbox');
@@ -145,18 +234,48 @@ function createFeedViewStore() {
   let feedsFilter = $state<string | null>(null); // deprecated, kept for setFilters compat
   let contentTypeFilter = $state<'shares' | 'documents' | null>(null);
   let viewFilter = $state<string | null>(null);
+  let categoryFilter = $state<string | null>(null);
 
-  // Derived: active filtered view (looked up from store)
-  let activeFilteredView = $derived.by(() => {
-    if (!viewFilter) return null;
-    return filteredViewsStore.getById(parseInt(viewFilter)) ?? null;
+  // Derived: subscription IDs that belong to the selected category
+  let categorySubscriptionIds = $derived.by(() => {
+    if (!categoryFilter) return null;
+    const ids = new Set<number>();
+    for (const sub of subscriptionsStore.subscriptions) {
+      if (sub.category === categoryFilter && sub.id) {
+        ids.add(sub.id);
+      }
+    }
+    return ids;
   });
 
-  // Helper to get current subscription IDs and follow DIDs for migration
-  function getAllSubIds(): number[] {
-    return subscriptionsStore.subscriptions
-      .map((s) => s.id)
-      .filter((id): id is number => id != null);
+  // Derived: active filtered view (looked up by uuid, with fallback to Dexie id for old bookmarks)
+  let activeFilteredView = $derived.by(() => {
+    if (!viewFilter) return null;
+    // Try uuid first, fall back to numeric Dexie id for old bookmarks
+    const byUuid = filteredViewsStore.getByUuid(viewFilter);
+    if (byUuid) return byUuid;
+    const asNum = parseInt(viewFilter, 10);
+    if (!isNaN(asNum)) return filteredViewsStore.getById(asNum) ?? null;
+    return null;
+  });
+
+  // Derived: whether the active channel is a saved-mode channel
+  let isSavedChannel = $derived(activeFilteredView?.mode === 'saved');
+
+  // Derived: whether we're in any saved view (URL param or saved channel)
+  let isSavedView = $derived(Boolean(savedFilter) || isSavedChannel);
+
+  // Helper to get current subscription rkeys, ID→rkey map, and follow DIDs for migration
+  function getAllSubRkeys(): string[] {
+    return subscriptionsStore.subscriptions.map((s) => s.rkey).filter(Boolean);
+  }
+
+  function getIdToRkeyMap(): Map<number, string> {
+    const map = new Map<number, string>();
+    for (const s of subscriptionsStore.subscriptions) {
+      if (s.id != null && s.rkey) map.set(s.id, s.rkey);
+    }
+    return map;
   }
 
   function getAllFollowDids(): string[] {
@@ -190,22 +309,46 @@ function createFeedViewStore() {
   let hasUnsavedChanges = $derived.by(() => {
     if (!activeFilteredView) return false;
     const view = activeFilteredView;
-    const savedMode = view.sourceMode === 'all' ? 'all' : 'include';
-    const savedKeys = new Set(view.sourceKeys ?? []);
     const currentReadFilter = showOnlyUnread ? 'unread' : 'all';
     const currentSortOrder = toolbarSortOrder ?? preferences.sortOrder;
 
-    if (toolbarSourceMode !== savedMode) return true;
     if (currentReadFilter !== view.readFilter) return true;
     if (currentSortOrder !== view.sortOrder) return true;
-    if (toolbarSourceKeys.length !== savedKeys.size) return true;
-    for (const key of toolbarSourceKeys) {
-      if (!savedKeys.has(key)) return true;
-    }
-    const savedTypeFilter = new Set(view.typeFilter ?? []);
-    if (toolbarTypeFilter.length !== savedTypeFilter.size) return true;
-    for (const t of toolbarTypeFilter) {
-      if (!savedTypeFilter.has(t)) return true;
+
+    if (view.mode === 'saved') {
+      // Compare saved source filter
+      const savedSources = new Set(view.savedSourceFilter ?? []);
+      if (toolbarSavedSourceFilter.length !== savedSources.size) return true;
+      for (const s of toolbarSavedSourceFilter) {
+        if (!savedSources.has(s)) return true;
+      }
+      // Compare date filter
+      if ((toolbarDateFilter ?? null) !== (view.savedDateFilter ?? null)) return true;
+      // Compare reading length filter
+      const savedRL = new Set(view.savedReadingLength ?? []);
+      if (toolbarReadingLength.length !== savedRL.size) return true;
+      for (const r of toolbarReadingLength) {
+        if (!savedRL.has(r)) return true;
+      }
+      // Compare domain filter
+      const savedDomains = new Set(view.savedDomainFilter ?? []);
+      if (toolbarDomainFilter.length !== savedDomains.size) return true;
+      for (const d of toolbarDomainFilter) {
+        if (!savedDomains.has(d)) return true;
+      }
+    } else {
+      const savedMode = view.sourceMode === 'all' ? 'all' : 'include';
+      const savedKeys = new Set(view.sourceKeys ?? []);
+      if (toolbarSourceMode !== savedMode) return true;
+      if (toolbarSourceKeys.length !== savedKeys.size) return true;
+      for (const key of toolbarSourceKeys) {
+        if (!savedKeys.has(key)) return true;
+      }
+      const savedTypeFilter = new Set(view.typeFilter ?? []);
+      if (toolbarTypeFilter.length !== savedTypeFilter.size) return true;
+      for (const t of toolbarTypeFilter) {
+        if (!savedTypeFilter.has(t)) return true;
+      }
     }
     return false;
   });
@@ -219,6 +362,7 @@ function createFeedViewStore() {
 
   // Derived: view mode
   let viewMode = $derived.by((): ViewMode => {
+    if (isSavedChannel) return 'articles'; // saved channels use their own rendering path
     if (activeFilteredView) return 'combined';
     if (sharedFilter) return 'userShares';
     if (sharerFilter || followingFilter) return 'shares';
@@ -230,6 +374,7 @@ function createFeedViewStore() {
       }
       return 'articles';
     }
+    if (categoryFilter) return 'combined';
     if (savedFilter) return 'articles';
     return 'combined';
   });
@@ -277,7 +422,7 @@ function createFeedViewStore() {
 
     let articles: Article[];
 
-    if (savedFilter) {
+    if (isSavedView) {
       // Starred view with inbox/archive sub-filter
       if (savedView === 'inbox') {
         articles = allArticles.filter((a) => {
@@ -295,6 +440,11 @@ function createFeedViewStore() {
       if (feedFilter) {
         const feedId = parseInt(feedFilter);
         articles = articles.filter((a) => a.subscriptionId === feedId);
+      }
+
+      // Filter by category
+      if (categorySubscriptionIds) {
+        articles = articles.filter((a) => categorySubscriptionIds.has(a.subscriptionId));
       }
 
       // Apply source-based RSS filtering
@@ -363,6 +513,17 @@ function createFeedViewStore() {
     const allowedDids = deriveAllowedDids(fv, isSharesSource);
     if (allowedDids !== null) {
       filtered = filtered.filter((s) => allowedDids.has(s.authorDid));
+    }
+
+    // Filter by category: only show shares from subscriptions in the category
+    if (categorySubscriptionIds) {
+      const categoryDids = new Set<string>();
+      for (const sub of subscriptionsStore.subscriptions) {
+        if (sub.category === categoryFilter && sub.subjectDid) {
+          categoryDids.add(sub.subjectDid);
+        }
+      }
+      filtered = filtered.filter((s) => categoryDids.has(s.authorDid));
     }
 
     // Apply read filter
@@ -436,6 +597,17 @@ function createFeedViewStore() {
     const allowedDids = deriveAllowedDids(fv, isDocumentsSource);
     if (allowedDids !== null) {
       filtered = filtered.filter((d) => allowedDids.has(d.authorDid));
+    }
+
+    // Filter by category: only show documents from subscriptions in the category
+    if (categorySubscriptionIds) {
+      const categoryDids = new Set<string>();
+      for (const sub of subscriptionsStore.subscriptions) {
+        if (sub.category === categoryFilter && sub.subjectDid) {
+          categoryDids.add(sub.subjectDid);
+        }
+      }
+      filtered = filtered.filter((d) => categoryDids.has(d.authorDid));
     }
 
     // Apply read filter
@@ -525,42 +697,56 @@ function createFeedViewStore() {
     let items: FeedDisplayItem[];
 
     // Special handling for bookmarks view: include starred items of all types
-    if (savedFilter) {
+    if (isSavedView) {
       const sortOrder = effectiveFilters.sortOrder;
       const isArchiveView = savedView === 'archive';
+      const sourceFilter =
+        isSavedChannel && toolbarSavedSourceFilter.length > 0
+          ? new Set(toolbarSavedSourceFilter)
+          : null;
 
       // Start with starred articles from filteredArticles (already filtered by savedView)
-      const articleItems: FeedDisplayItem[] = displayedArticles.map((item) => ({
-        type: 'article' as const,
-        item,
-        key: item.guid,
-      }));
+      // For saved channels with source filter, only include if 'feed' source is allowed
+      const articleItems: FeedDisplayItem[] =
+        sourceFilter && !sourceFilter.has('feed')
+          ? []
+          : displayedArticles.map((item) => ({
+              type: 'article' as const,
+              item,
+              key: item.guid,
+            }));
 
-      // Add starred shares
-      const starredShareItems: FeedDisplayItem[] = socialStore.shares
-        .filter((s) => {
-          if (!itemLabelsStore.isSaved(s.recordUri)) return false;
-          if (isArchiveView) return itemLabelsStore.isArchived(s.recordUri);
-          return !itemLabelsStore.isArchived(s.recordUri);
-        })
-        .map((s) => ({
-          type: 'share' as const,
-          item: s,
-          key: s.recordUri,
-        }));
+      // Add starred shares (source type 'share')
+      const starredShareItems: FeedDisplayItem[] =
+        sourceFilter && !sourceFilter.has('share')
+          ? []
+          : socialStore.shares
+              .filter((s) => {
+                if (!itemLabelsStore.isSaved(s.recordUri)) return false;
+                if (isArchiveView) return itemLabelsStore.isArchived(s.recordUri);
+                return !itemLabelsStore.isArchived(s.recordUri);
+              })
+              .map((s) => ({
+                type: 'share' as const,
+                item: s,
+                key: s.recordUri,
+              }));
 
-      // Add starred documents
-      const starredDocumentItems: FeedDisplayItem[] = socialStore.documents
-        .filter((d) => {
-          if (!itemLabelsStore.isSaved(d.recordUri)) return false;
-          if (isArchiveView) return itemLabelsStore.isArchived(d.recordUri);
-          return !itemLabelsStore.isArchived(d.recordUri);
-        })
-        .map((d) => ({
-          type: 'document' as const,
-          item: d,
-          key: d.recordUri,
-        }));
+      // Add starred documents (source type 'document')
+      const starredDocumentItems: FeedDisplayItem[] =
+        sourceFilter && !sourceFilter.has('document')
+          ? []
+          : socialStore.documents
+              .filter((d) => {
+                if (!itemLabelsStore.isSaved(d.recordUri)) return false;
+                if (isArchiveView) return itemLabelsStore.isArchived(d.recordUri);
+                return !itemLabelsStore.isArchived(d.recordUri);
+              })
+              .map((d) => ({
+                type: 'document' as const,
+                item: d,
+                key: d.recordUri,
+              }));
 
       // Add bookmarks — exclude bookmarks already shown via articles/shares/documents
       // Use ALL saved article guids for dedup (not just displayed ones) to prevent
@@ -572,15 +758,19 @@ function createFeedViewStore() {
       const documentRecordUris = new Set(starredDocumentItems.map((d) => d.key));
       const bookmarkItems: FeedDisplayItem[] = savesStore.articles
         .filter((bm) => {
-          // Skip feed-source bookmarks whose guid matches a saved article in the articles store
-          if (bm.source === 'feed' && bm.itemGuid && allSavedArticleGuids.has(bm.itemGuid))
-            return false;
-          // Skip share-source bookmarks whose itemGuid matches a displayed share
-          if (bm.source === 'share' && bm.itemGuid && shareRecordUris.has(bm.itemGuid))
-            return false;
-          // Skip document-source bookmarks whose itemGuid matches a displayed document
-          if (bm.source === 'document' && bm.itemGuid && documentRecordUris.has(bm.itemGuid))
-            return false;
+          // Apply saved source filter for saved channels. Treat a missing
+          // source as 'url' (the default for legacy rows) so the filter still
+          // applies instead of silently letting the bookmark through.
+          const src = bm.source ?? 'url';
+          if (sourceFilter && !sourceFilter.has(src)) return false;
+          // Dedup against items already displayed via the primary stores.
+          // Checked regardless of bm.source so legacy rows with undefined
+          // source can't slip through and show up twice.
+          if (bm.itemGuid) {
+            if (allSavedArticleGuids.has(bm.itemGuid)) return false;
+            if (shareRecordUris.has(bm.itemGuid)) return false;
+            if (documentRecordUris.has(bm.itemGuid)) return false;
+          }
           // Use itemGuid (article guid) for archive checks when available, since archive
           // labels are stored against the article guid, not the AT Protocol URI
           const archiveKey = bm.itemGuid || bm.uri || '';
@@ -595,17 +785,66 @@ function createFeedViewStore() {
 
       items = [...articleItems, ...starredShareItems, ...starredDocumentItems, ...bookmarkItems];
 
-      // Sort by saved date (when the item was bookmarked, not published)
+      // Sort saved items
+      const sort = isSavedChannel ? (toolbarSortOrder ?? 'newest') : sortOrder;
       items.sort((a, b) => {
-        const dateA = getSavedDate(a);
-        const dateB = getSavedDate(b);
-        return sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
+        switch (sort) {
+          case 'published-newest':
+          case 'published-oldest': {
+            const dateA = getItemPublishedDate(a);
+            const dateB = getItemPublishedDate(b);
+            return sort === 'published-newest' ? dateB - dateA : dateA - dateB;
+          }
+          case 'shortest':
+          case 'longest': {
+            const wcA = getItemWordCount(a) ?? 0;
+            const wcB = getItemWordCount(b) ?? 0;
+            return sort === 'shortest' ? wcA - wcB : wcB - wcA;
+          }
+          case 'domain-asc':
+          case 'domain-desc': {
+            const domA = (getItemDomain(a) ?? '').toLowerCase();
+            const domB = (getItemDomain(b) ?? '').toLowerCase();
+            const cmp = domA.localeCompare(domB);
+            return sort === 'domain-asc' ? cmp : -cmp;
+          }
+          default: {
+            // newest / oldest — sort by savedAt
+            const dateA = getSavedDate(a);
+            const dateB = getSavedDate(b);
+            return sort === 'oldest' ? dateA - dateB : dateB - dateA;
+          }
+        }
       });
 
       // Apply tag filter
       if (toolbarTagFilter.length > 0) {
         const _tags = itemLabelsStore.tagsByItem;
         items = items.filter((item) => itemLabelsStore.itemHasAnyTag(item.key, toolbarTagFilter));
+      }
+
+      // Apply date added filter
+      if (toolbarDateFilter) {
+        const cutoff = datePresetToMs(toolbarDateFilter);
+        items = items.filter((item) => getSavedDate(item) >= cutoff);
+      }
+
+      // Apply reading length filter
+      if (toolbarReadingLength.length > 0) {
+        items = items.filter((item) => {
+          const wc = getItemWordCount(item);
+          if (wc === null) return true; // include items with unknown word count
+          return toolbarReadingLength.some((bucket) => matchesReadingLength(wc, bucket));
+        });
+      }
+
+      // Apply domain filter
+      if (toolbarDomainFilter.length > 0) {
+        const domainSet = new Set(toolbarDomainFilter.map((d) => d.toLowerCase()));
+        items = items.filter((item) => {
+          const domain = getItemDomain(item);
+          return domain !== null && domainSet.has(domain.toLowerCase());
+        });
       }
 
       return items;
@@ -711,7 +950,7 @@ function createFeedViewStore() {
     loadedArticleCount = DEFAULT_PAGE_SIZE;
 
     // For unread view, load more articles until we have enough unread ones
-    if (showOnlyUnread && !savedFilter) {
+    if (showOnlyUnread && !isSavedView) {
       const targetCount = DEFAULT_PAGE_SIZE;
       const maxCount = DEFAULT_PAGE_SIZE * 10;
 
@@ -825,19 +1064,48 @@ function createFeedViewStore() {
     readDocumentUrisThisSession = new Set();
   }
 
+  // Derived: all unique domains from saved items (for domain filter picker)
+  let availableSavedDomains = $derived.by((): string[] => {
+    if (!isSavedView) return [];
+    const domains = new Set<string>();
+    for (const bm of savesStore.articles) {
+      if (bm.domain) {
+        domains.add(bm.domain);
+      } else if (bm.url) {
+        try {
+          domains.add(new URL(bm.url).hostname);
+        } catch {
+          // ignore invalid URLs
+        }
+      }
+    }
+    return [...domains].sort();
+  });
+
   function syncToolbarToSavedView() {
     if (!viewFilter) return;
-    const id = parseInt(viewFilter);
-    const fv = filteredViewsStore.getById(id);
-    if (!fv) return;
-    filteredViewsStore.update(id, {
-      sourceMode: toolbarSourceMode,
-      sourceKeys: [...toolbarSourceKeys],
+    const fv = activeFilteredView;
+    if (!fv || fv.id == null) return;
+    const id = fv.id;
+    const updates: Partial<import('$lib/types').FilteredView> = {
       readFilter: showOnlyUnread ? 'unread' : 'all',
       sortOrder: toolbarSortOrder ?? preferences.sortOrder,
       tagFilter: toolbarTagFilter.length > 0 ? [...toolbarTagFilter] : undefined,
-      typeFilter: toolbarTypeFilter.length > 0 ? [...toolbarTypeFilter] : undefined,
-    });
+    };
+    if (fv.mode === 'saved') {
+      updates.savedSourceFilter =
+        toolbarSavedSourceFilter.length > 0 ? [...toolbarSavedSourceFilter] : undefined;
+      updates.savedDateFilter = toolbarDateFilter ?? undefined;
+      updates.savedReadingLength =
+        toolbarReadingLength.length > 0 ? [...toolbarReadingLength] : undefined;
+      updates.savedDomainFilter =
+        toolbarDomainFilter.length > 0 ? [...toolbarDomainFilter] : undefined;
+    } else {
+      updates.sourceMode = toolbarSourceMode;
+      updates.sourceKeys = [...toolbarSourceKeys];
+      updates.typeFilter = toolbarTypeFilter.length > 0 ? [...toolbarTypeFilter] : undefined;
+    }
+    filteredViewsStore.update(id, updates);
   }
 
   function resetToolbarFilters() {
@@ -846,6 +1114,10 @@ function createFeedViewStore() {
     toolbarSortOrder = null;
     toolbarTagFilter = [];
     toolbarTypeFilter = [];
+    toolbarSavedSourceFilter = [];
+    toolbarDateFilter = null;
+    toolbarReadingLength = [];
+    toolbarDomainFilter = [];
   }
 
   function toggleUnreadFilter() {
@@ -940,6 +1212,9 @@ function createFeedViewStore() {
     get viewFilter() {
       return viewFilter;
     },
+    get categoryFilter() {
+      return categoryFilter;
+    },
     get activeFilteredView() {
       return activeFilteredView;
     },
@@ -964,6 +1239,18 @@ function createFeedViewStore() {
     get toolbarTypeFilter() {
       return toolbarTypeFilter;
     },
+    get toolbarDateFilter() {
+      return toolbarDateFilter;
+    },
+    get toolbarReadingLength() {
+      return toolbarReadingLength;
+    },
+    get toolbarDomainFilter() {
+      return toolbarDomainFilter;
+    },
+    get availableSavedDomains() {
+      return availableSavedDomains;
+    },
     get currentSortOrder() {
       return toolbarSortOrder ?? preferences.sortOrder;
     },
@@ -972,6 +1259,15 @@ function createFeedViewStore() {
     },
     get savedView() {
       return savedView;
+    },
+    get isSavedView() {
+      return isSavedView;
+    },
+    get isSavedChannel() {
+      return isSavedChannel;
+    },
+    get toolbarSavedSourceFilter() {
+      return toolbarSavedSourceFilter;
     },
 
     // All filtered items (not paginated) — for bulk operations like mark-all-as-read
@@ -1020,9 +1316,26 @@ function createFeedViewStore() {
     setToolbarTypeFilter(types: SubscriptionSourceType[]) {
       toolbarTypeFilter = types;
     },
+    setToolbarSavedSourceFilter(sources: SavedSourceType[]) {
+      toolbarSavedSourceFilter = sources;
+    },
+    setToolbarDateFilter(preset: DateAddedPreset | null) {
+      toolbarDateFilter = preset;
+    },
+    setToolbarReadingLength(lengths: ReadingLengthFilter[]) {
+      toolbarReadingLength = lengths;
+    },
+    setToolbarDomainFilter(domains: string[]) {
+      toolbarDomainFilter = domains;
+    },
     setToolbarSourceFilter(mode: 'all' | 'include', keys: string[]) {
       toolbarSourceMode = mode;
       toolbarSourceKeys = keys;
+    },
+    setSortOrder(order: SortOrder) {
+      if (viewFilter) {
+        toolbarSortOrder = order;
+      }
     },
     toggleSortOrder() {
       if (viewFilter) {
@@ -1052,6 +1365,7 @@ function createFeedViewStore() {
       feeds: string | null;
       contentType?: 'shares' | 'documents' | null;
       view?: string | null;
+      category?: string | null;
     }) {
       feedFilter = filters.feed;
       savedFilter = filters.saved;
@@ -1061,16 +1375,29 @@ function createFeedViewStore() {
       feedsFilter = filters.feeds;
       contentTypeFilter = filters.contentType ?? null;
       viewFilter = filters.view ?? null;
+      categoryFilter = filters.category ?? null;
       // Reset pagination when filters change
       loadedArticleCount = DEFAULT_PAGE_SIZE;
       // Populate toolbar from saved view, or reset to defaults
       if (filters.view) {
-        const fv = filteredViewsStore.getById(parseInt(filters.view));
+        const fv =
+          filteredViewsStore.getByUuid(filters.view) ??
+          filteredViewsStore.getById(parseInt(filters.view, 10));
         if (fv) {
-          if (fv.sourceMode != null) {
+          if (fv.mode === 'saved') {
+            // Saved channel — load saved-specific filters
+            toolbarSavedSourceFilter = fv.savedSourceFilter ? [...fv.savedSourceFilter] : [];
+            toolbarDateFilter = fv.savedDateFilter ?? null;
+            toolbarReadingLength = fv.savedReadingLength ? [...fv.savedReadingLength] : [];
+            toolbarDomainFilter = fv.savedDomainFilter ? [...fv.savedDomainFilter] : [];
+            toolbarSourceMode = 'all';
+            toolbarSourceKeys = [];
+            toolbarTypeFilter = [];
+          } else if (fv.sourceMode != null) {
             // New format (coerce any stale 'exclude' to 'include')
             toolbarSourceMode = fv.sourceMode === 'all' ? 'all' : 'include';
             toolbarSourceKeys = toolbarSourceMode === 'all' ? [] : [...(fv.sourceKeys ?? [])];
+            toolbarSavedSourceFilter = [];
           } else {
             // Legacy format — migrate
             const migrated = migrateLegacyView(
@@ -1083,18 +1410,20 @@ function createFeedViewStore() {
                 accountMode: fv.accountMode,
                 accountDids: fv.accountDids,
               },
-              getAllSubIds(),
-              getAllFollowDids()
+              getAllSubRkeys(),
+              getAllFollowDids(),
+              getIdToRkeyMap()
             );
             toolbarSourceMode = migrated.sourceMode;
             toolbarSourceKeys = migrated.sourceKeys;
+            toolbarSavedSourceFilter = [];
           }
           showOnlyUnread = fv.readFilter === 'unread';
           toolbarSortOrder = fv.sortOrder;
           toolbarTagFilter = fv.tagFilter ? [...fv.tagFilter] : [];
           toolbarTypeFilter = fv.typeFilter ? [...fv.typeFilter] : [];
           // Fire-and-forget legacy migration write-back
-          if (fv.sourceMode == null && fv.id != null) {
+          if (fv.sourceMode == null && fv.mode !== 'saved' && fv.id != null) {
             filteredViewsStore.update(fv.id, {
               sourceMode: toolbarSourceMode,
               sourceKeys: [...toolbarSourceKeys],

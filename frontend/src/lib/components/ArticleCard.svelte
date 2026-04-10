@@ -26,6 +26,7 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
+  import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
@@ -96,6 +97,31 @@
   let isShareMode = $derived(Boolean(share && !article && !document));
   // Determine if we're in document mode (showing someone's published document)
   let isDocumentMode = $derived(Boolean(document && !article && !share));
+
+  // Can the user follow this source? (not already subscribed)
+  let canFollowSource = $derived.by(() => {
+    if (!auth.user) return false;
+    // For shares/documents from another person, check if we follow that person's shares
+    if (isShareMode && share?.authorDid && share.authorDid !== auth.user.did) {
+      return !subscriptionsStore.subscriptions.some(
+        (s) => s.sourceType === 'atproto.shares' && s.subjectDid === share!.authorDid
+      );
+    }
+    if (isDocumentMode && document?.authorDid && document.authorDid !== auth.user.did) {
+      return !subscriptionsStore.subscriptions.some(
+        (s) => s.sourceType === 'atproto.documents' && s.subjectDid === document!.authorDid
+      );
+    }
+    return false;
+  });
+
+  function handleFollowSource() {
+    overflowMenuOpen = false;
+    if ((isShareMode && share?.authorDid) || (isDocumentMode && document?.authorDid)) {
+      const did = share?.authorDid || document?.authorDid || '';
+      sidebarStore.openAddFeedModalForDid(did);
+    }
+  }
 
   // Normalize data for article, share, and document modes
   let itemUrl = $derived(
@@ -824,6 +850,12 @@
                 <button class="overflow-menu-item" onclick={handleOverflowMargin}>
                   <Icon name="margin" size={16} />
                   <span>Save to Margin</span>
+                </button>
+              {/if}
+              {#if canFollowSource}
+                <button class="overflow-menu-item" onclick={handleFollowSource}>
+                  <Icon name="plus" size={16} />
+                  <span>Follow source</span>
                 </button>
               {/if}
             </div>

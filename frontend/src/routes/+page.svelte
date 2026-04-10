@@ -33,6 +33,7 @@
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import { useScrollDirection } from '$lib/hooks/useScrollDirection.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
+  import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { syncStore } from '$lib/stores/sync.svelte';
   import type { Subscription, BlueskyProfile } from '$lib/types';
@@ -50,6 +51,28 @@
   let feedSwitcherOpen = $state(false);
   let filterSheetOpen = $state(false);
   let readerOpen = $state(false);
+  let filterSheetInitialTab = $state<'filters' | 'channel'>('filters');
+  let editingChannelId = $state<number | null>(null);
+  let channelCreateMode = $state(false);
+  let channelCreateInitialType = $state<'feed' | 'saved' | null>(null);
+
+  function handleEditChannel(id: number) {
+    feedSwitcherOpen = false;
+    editingChannelId = id;
+    channelCreateMode = false;
+    channelCreateInitialType = null;
+    filterSheetInitialTab = 'channel';
+    filterSheetOpen = true;
+  }
+
+  function handleCreateChannel(type: 'feed' | 'saved' = 'feed') {
+    feedSwitcherOpen = false;
+    editingChannelId = null;
+    channelCreateMode = true;
+    channelCreateInitialType = type;
+    filterSheetInitialTab = 'channel';
+    filterSheetOpen = true;
+  }
 
   // Integration collection picker state
   let collectionPickerOpen = $state(false);
@@ -182,6 +205,7 @@
       feeds: null,
       contentType,
       view: url.searchParams.get('view'),
+      category: url.searchParams.get('category'),
     };
     untrack(() => feedViewStore.setFilters(filters));
   });
@@ -194,7 +218,7 @@
   let feedListView = $state<ReturnType<typeof FeedListView> | null>(null);
   let savedListView = $state<ReturnType<typeof SavedListView> | null>(null);
 
-  let isSavedView = $derived(Boolean(feedViewStore.savedFilter));
+  let isSavedView = $derived(feedViewStore.isSavedView);
 
   function getArticleElements(): HTMLElement[] {
     if (isSavedView) {
@@ -234,7 +258,10 @@
   let pageTitle = $derived.by(() => {
     if (feedViewStore.viewFilter) {
       const fv = feedViewStore.activeFilteredView;
-      return fv?.name || 'View';
+      return fv?.name || 'Channel';
+    }
+    if (feedViewStore.categoryFilter) {
+      return feedViewStore.categoryFilter;
     }
     if (feedViewStore.feedFilter) {
       const sub = subscriptionsStore.subscriptions.find(
@@ -255,7 +282,7 @@
       }
       return baseName;
     }
-    return 'All';
+    return 'Everything';
   });
 
   // Get unread count for the current view
@@ -576,6 +603,7 @@
           !feedViewStore.sharedFilter &&
           !feedViewStore.sharerFilter &&
           !feedViewStore.followingFilter}
+        onEditChannel={(id) => sidebarStore.openChannelModal(id)}
       />
     {/if}
 
@@ -682,7 +710,13 @@
         currentTitle={pageTitle}
         onScrollToTop={scrollToTop}
         onOpenFeedSwitcher={() => (feedSwitcherOpen = true)}
-        onOpenFilterSheet={() => (filterSheetOpen = true)}
+        onOpenFilterSheet={() => {
+          filterSheetInitialTab = 'filters';
+          const currentView = feedViewStore.viewFilter;
+          editingChannelId = currentView ? parseInt(currentView) : null;
+          channelCreateMode = false;
+          filterSheetOpen = true;
+        }}
         {hasActiveFilters}
       />
 
@@ -691,20 +725,24 @@
         onclose={() => (feedSwitcherOpen = false)}
         title="Switch Feed"
       >
-        <MobileFeedSwitcher onclose={() => (feedSwitcherOpen = false)} currentTitle={pageTitle} />
+        <MobileFeedSwitcher
+          onclose={() => (feedSwitcherOpen = false)}
+          currentTitle={pageTitle}
+          onEditChannel={handleEditChannel}
+          onCreateChannel={handleCreateChannel}
+        />
       </BottomSheet>
 
       <BottomSheet
         open={filterSheetOpen}
         onclose={() => (filterSheetOpen = false)}
-        title="Filters & Style"
+        title={filterSheetInitialTab === 'channel'
+          ? editingChannelId != null
+            ? 'Edit Channel'
+            : 'New Channel'
+          : 'Filters & Style'}
       >
         <MobileFilterSheet
-          showSourceFilter={!feedViewStore.feedFilter &&
-            !feedViewStore.savedFilter &&
-            !feedViewStore.sharedFilter &&
-            !feedViewStore.sharerFilter &&
-            !feedViewStore.followingFilter}
           expandAllItems={preferences.expandAllItems}
           onToggleExpandAll={(value) => {
             preferences.setExpandAllItems(value);
@@ -717,6 +755,18 @@
             ? markAllAsReadInCurrentView
             : undefined}
           onclose={() => (filterSheetOpen = false)}
+          initialTab={filterSheetInitialTab}
+          {editingChannelId}
+          {channelCreateMode}
+          initialChannelType={channelCreateInitialType}
+          oncreated={(id) => {
+            filterSheetOpen = false;
+            goto(`/?view=${id}`);
+          }}
+          ondeleted={() => {
+            filterSheetOpen = false;
+            goto('/');
+          }}
         />
       </BottomSheet>
     {/if}

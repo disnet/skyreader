@@ -197,6 +197,7 @@ export async function syncSubscriptions(session: Session, env: Env): Promise<Syn
       subjectDid: string | null;
       customTitle: string | null;
       customIconUrl: string | null;
+      category: string | null;
     }> = [];
 
     for (const pdsRecord of sortedPdsRecords) {
@@ -227,6 +228,7 @@ export async function syncSubscriptions(session: Session, env: Env): Promise<Syn
           subjectDid: pdsRecord.value.subjectDid || null,
           customTitle: pdsRecord.value.customTitle || null,
           customIconUrl: pdsRecord.value.customIconUrl || null,
+          category: pdsRecord.value.category || null,
         });
       }
     }
@@ -243,8 +245,8 @@ export async function syncSubscriptions(session: Session, env: Env): Promise<Syn
         const recordUri = buildRecordUri(session.did, COLLECTION, sub.rkey);
         return env.DB.prepare(
           `INSERT OR IGNORE INTO subscriptions_cache
-					 (user_did, record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					 (user_did, record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url, category)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           session.did,
           recordUri,
@@ -254,7 +256,8 @@ export async function syncSubscriptions(session: Session, env: Env): Promise<Syn
           sub.sourceType,
           sub.subjectDid,
           sub.customTitle,
-          sub.customIconUrl
+          sub.customIconUrl,
+          sub.category
         );
       });
 
@@ -432,7 +435,8 @@ export async function pushSubscriptionToPds(
   subjectDid?: string,
   collectionNsid?: string,
   customTitle?: string,
-  customIconUrl?: string
+  customIconUrl?: string,
+  category?: string
 ): Promise<PDSResult<void>> {
   const pdsClient = createPDSClient(session);
 
@@ -441,6 +445,7 @@ export async function pushSubscriptionToPds(
     feedUrl: feedUrl || undefined,
     title,
     siteUrl,
+    category,
     createdAt: new Date().toISOString(),
     sourceType,
     subjectDid,

@@ -23,9 +23,10 @@
   interface Props {
     open: boolean;
     onclose: () => void;
+    initialValue?: string;
   }
 
-  let { open, onclose }: Props = $props();
+  let { open, onclose, initialValue = '' }: Props = $props();
   let error = $state<string | null>(null);
 
   // Search state
@@ -99,6 +100,13 @@
   let selectedCount = $derived(
     selectedPublications.size + (sharesSelected ? 1 : 0) + (freestandingDocsSelected ? 1 : 0)
   );
+
+  // Pre-fill input when modal opens with an initial value
+  $effect(() => {
+    if (open && initialValue) {
+      inputValue = initialValue;
+    }
+  });
 
   function resetAll() {
     inputValue = '';

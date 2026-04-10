@@ -13,9 +13,10 @@
   interface Props {
     open: boolean;
     onclose: () => void;
+    initialValue?: string;
   }
 
-  let { open, onclose }: Props = $props();
+  let { open, onclose, initialValue = '' }: Props = $props();
   let error = $state<string | null>(null);
 
   let inputValue = $state('');
@@ -26,6 +27,13 @@
   const isAtLimit = $derived(
     subscriptionsStore.subscriptions.length >= subscriptionsStore.maxSubscriptions
   );
+
+  // Pre-fill input when modal opens with an initial value
+  $effect(() => {
+    if (open && initialValue) {
+      inputValue = initialValue;
+    }
+  });
 
   function resetAll() {
     inputValue = '';

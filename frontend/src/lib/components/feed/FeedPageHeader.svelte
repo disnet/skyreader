@@ -23,6 +23,8 @@
     onEdit?: () => void;
     onDelete?: () => void;
     showSourceFilter?: boolean;
+    hideControls?: boolean;
+    onEditChannel?: (id: number) => void;
   }
 
   let {
@@ -38,6 +40,8 @@
     onEdit,
     onDelete,
     showSourceFilter = true,
+    hideControls = false,
+    onEditChannel,
   }: Props = $props();
 
   // Tick counter to force re-evaluation of relative time
@@ -97,7 +101,7 @@
   }
 
   let dropdownOpen = $derived(sidebarStore.navigationDropdownOpen);
-  let isSavedView = $derived(Boolean(feedViewStore.savedFilter));
+  let isSavedView = $derived(Boolean(feedViewStore.savedFilter) || feedViewStore.isSavedChannel);
 
   let menuItems = $derived.by(() => {
     const items: Array<{ label: string; icon: string; onclick: () => void; variant?: 'danger' }> =
@@ -163,107 +167,124 @@
       {/if}
     </div>
 
-    <div class="control-right">
-      {#if isSavedView}
-        <div class="view-toggle" role="group" aria-label="Saved view">
-          <button
-            class:active={feedViewStore.savedView === 'inbox'}
-            onclick={() => feedViewStore.setSavedView('inbox')}
-            aria-label="Inbox"
-            title="Inbox"
-          >
-            <Icon name="inbox" size={16} />
-            <span class="btn-label">Inbox</span>
-          </button>
-          <button
-            class:active={feedViewStore.savedView === 'archive'}
-            onclick={() => feedViewStore.setSavedView('archive')}
-            aria-label="Archive"
-            title="Archive"
-          >
-            <Icon name="archive" size={16} />
-            <span class="btn-label">Archive</span>
-          </button>
-          <span class="toggle-divider"></span>
-          <button
-            onclick={() => feedViewStore.toggleSortOrder()}
-            title={feedViewStore.currentSortOrder === 'newest' ? 'Newest first' : 'Oldest first'}
-          >
-            <Icon
-              name={feedViewStore.currentSortOrder === 'newest' ? 'arrow-down' : 'arrow-up'}
-              size={16}
-            />
-            <span class="btn-label"
-              >{feedViewStore.currentSortOrder === 'newest' ? 'New' : 'Old'}</span
-            >
-          </button>
-          <span class="toggle-divider"></span>
-          <button
-            onclick={() => sidebarStore.openSaveArticleModal()}
-            aria-label="Save article by URL"
-            title="Save article by URL"
-          >
-            <Icon name="plus" size={16} />
-            <span class="btn-label">Add</span>
-          </button>
-        </div>
-      {:else}
-        <div class="view-toggle" role="group" aria-label="View controls">
-          {#if onToggleExpandAll}
+    {#if !hideControls}
+      <div class="control-right">
+        {#if isSavedView}
+          <div class="view-toggle" role="group" aria-label="Saved view">
             <button
-              class:active={!expandAllItems}
-              onclick={() => onToggleExpandAll(false)}
-              aria-label="List view"
-              title="List view"
+              class:active={feedViewStore.savedView === 'inbox'}
+              onclick={() => feedViewStore.setSavedView('inbox')}
+              aria-label="Inbox"
+              title="Inbox"
             >
-              <Icon name="list" size={16} />
-              <span class="btn-label">List</span>
+              <Icon name="inbox" size={16} />
+              <span class="btn-label">Inbox</span>
             </button>
             <button
-              class:active={expandAllItems}
-              onclick={() => onToggleExpandAll(true)}
-              aria-label="Expanded view"
-              title="Expanded view"
+              class:active={feedViewStore.savedView === 'archive'}
+              onclick={() => feedViewStore.setSavedView('archive')}
+              aria-label="Archive"
+              title="Archive"
             >
-              <Icon name="newspaper" size={16} />
-              <span class="btn-label">Expand</span>
+              <Icon name="archive" size={16} />
+              <span class="btn-label">Archive</span>
+            </button>
+            {#if !feedViewStore.isSavedChannel}
+              <span class="toggle-divider"></span>
+              <button
+                onclick={() => feedViewStore.toggleSortOrder()}
+                title={feedViewStore.currentSortOrder === 'newest'
+                  ? 'Newest first'
+                  : 'Oldest first'}
+              >
+                <Icon
+                  name={feedViewStore.currentSortOrder === 'newest' ? 'arrow-down' : 'arrow-up'}
+                  size={16}
+                />
+                <span class="btn-label"
+                  >{feedViewStore.currentSortOrder === 'newest' ? 'New' : 'Old'}</span
+                >
+              </button>
+            {/if}
+            <span class="toggle-divider"></span>
+            <button
+              onclick={() => sidebarStore.openSaveArticleModal()}
+              aria-label="Save article by URL"
+              title="Save article by URL"
+            >
+              <Icon name="plus" size={16} />
+              <span class="btn-label">Add</span>
+            </button>
+            {#if feedViewStore.isSavedChannel && onEditChannel}
+              <span class="toggle-divider"></span>
+              <button
+                onclick={() => onEditChannel(parseInt(feedViewStore.viewFilter!))}
+                aria-label="Edit channel"
+                title="Edit channel"
+              >
+                <Icon name="edit" size={16} />
+                <span class="btn-label">Edit</span>
+              </button>
+            {/if}
+          </div>
+        {:else}
+          <div class="view-toggle" role="group" aria-label="View controls">
+            {#if onToggleExpandAll}
+              <button
+                class:active={!expandAllItems}
+                onclick={() => onToggleExpandAll(false)}
+                aria-label="List view"
+                title="List view"
+              >
+                <Icon name="list" size={16} />
+                <span class="btn-label">List</span>
+              </button>
+              <button
+                class:active={expandAllItems}
+                onclick={() => onToggleExpandAll(true)}
+                aria-label="Expanded view"
+                title="Expanded view"
+              >
+                <Icon name="newspaper" size={16} />
+                <span class="btn-label">Expand</span>
+              </button>
+              <span class="toggle-divider"></span>
+            {/if}
+            <button
+              class:active={styleToolbarOpen}
+              onclick={() => {
+                styleToolbarOpen = !styleToolbarOpen;
+                if (styleToolbarOpen) feedViewStore.setFilterToolbarOpen(false);
+              }}
+              aria-label="Toggle style"
+              title="Style"
+            >
+              <Icon name="type" size={16} />
+              <span class="btn-label">Style</span>
             </button>
             <span class="toggle-divider"></span>
-          {/if}
-          <button
-            class:active={styleToolbarOpen}
-            onclick={() => {
-              styleToolbarOpen = !styleToolbarOpen;
-              if (styleToolbarOpen) feedViewStore.setFilterToolbarOpen(false);
-            }}
-            aria-label="Toggle style"
-            title="Style"
-          >
-            <Icon name="type" size={16} />
-            <span class="btn-label">Style</span>
-          </button>
-          <span class="toggle-divider"></span>
-          <button
-            class="filter-toggle-btn"
-            class:active={feedViewStore.filterToolbarOpen}
-            onclick={() => {
-              const opening = !feedViewStore.filterToolbarOpen;
-              feedViewStore.setFilterToolbarOpen(opening);
-              if (opening) {
-                styleToolbarOpen = false;
-              } else {
-                feedViewStore.setSourcePopoverOpen(false);
-              }
-            }}
-            aria-label="Toggle filters"
-            title="Filter"
-          >
-            <Icon name="filter" size={16} />
-            <span class="btn-label">Filter</span>
-          </button>
-        </div>
-      {/if}
-    </div>
+            <button
+              class="filter-toggle-btn"
+              class:active={feedViewStore.filterToolbarOpen}
+              onclick={() => {
+                const opening = !feedViewStore.filterToolbarOpen;
+                feedViewStore.setFilterToolbarOpen(opening);
+                if (opening) {
+                  styleToolbarOpen = false;
+                } else {
+                  feedViewStore.setSourcePopoverOpen(false);
+                }
+              }}
+              aria-label="Toggle filters"
+              title="Filter"
+            >
+              <Icon name="filter" size={16} />
+              <span class="btn-label">Filter</span>
+            </button>
+          </div>
+        {/if}
+      </div>
+    {/if}
   </div>
 
   {#if !isSavedView && styleToolbarOpen}
@@ -271,9 +292,9 @@
       <AppearanceToolbar />
     </div>
   {/if}
-  {#if !isSavedView && feedViewStore.filterToolbarOpen}
+  {#if !feedViewStore.isSavedChannel && feedViewStore.filterToolbarOpen}
     <div class="filter-toolbar-row">
-      <FilterToolbar {showSourceFilter} />
+      <FilterToolbar {showSourceFilter} {onEditChannel} />
     </div>
   {/if}
 </div>

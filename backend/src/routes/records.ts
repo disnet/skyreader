@@ -12,6 +12,7 @@ interface SubscriptionRow {
   subject_did: string | null;
   custom_title: string | null;
   custom_icon_url: string | null;
+  category: string | null;
 }
 
 interface ShareRow {
@@ -54,7 +55,7 @@ export async function handleRecordsList(request: Request, env: Env): Promise<Res
 
     if (collection === 'app.skyreader.feed.subscription') {
       const result = await env.DB.prepare(
-        'SELECT record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url FROM subscriptions_cache WHERE user_did = ?'
+        'SELECT record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url, category FROM subscriptions_cache WHERE user_did = ?'
       )
         .bind(session.did)
         .all<SubscriptionRow>();
@@ -76,6 +77,7 @@ export async function handleRecordsList(request: Request, env: Env): Promise<Res
             subjectDid: row.subject_did || undefined,
             customTitle: row.custom_title || undefined,
             customIconUrl: row.custom_icon_url || undefined,
+            category: row.category || undefined,
           },
         };
       });

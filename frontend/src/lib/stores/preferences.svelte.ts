@@ -2,7 +2,7 @@ import { browser } from '$app/environment';
 
 export type ArticleFont = 'sans-serif' | 'serif' | 'mono';
 export type ArticleFontSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
-export type SortOrder = 'newest' | 'oldest';
+export type BaseSortOrder = 'newest' | 'oldest';
 
 const FONT_SIZE_ORDER: ArticleFontSize[] = ['xs', 'sm', 'md', 'lg', 'xl'];
 
@@ -11,7 +11,7 @@ interface PreferencesState {
   articleFontSize: ArticleFontSize;
   scrollToMarkAsRead: boolean;
   expandAllItems: boolean;
-  sortOrder: SortOrder;
+  sortOrder: BaseSortOrder;
 }
 
 const STORAGE_KEY = 'skyreader-preferences';
@@ -99,7 +99,7 @@ function createPreferencesStore() {
     save();
   }
 
-  function setSortOrder(order: SortOrder) {
+  function setSortOrder(order: BaseSortOrder) {
     state.sortOrder = order;
     save();
   }
