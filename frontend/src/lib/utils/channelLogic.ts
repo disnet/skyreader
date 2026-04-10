@@ -447,9 +447,7 @@ export const DOMAIN_CLUSTERS = [
 
 export function getDomainSuggestions(ctx: SuggestionContext): ChannelSuggestion[] {
   const suggestions: ChannelSuggestion[] = [];
-  const subs = ctx.subscriptions.filter(
-    (s) => (!s.sourceType || s.sourceType === 'rss') && s.rkey
-  );
+  const subs = ctx.subscriptions.filter((s) => (!s.sourceType || s.sourceType === 'rss') && s.rkey);
 
   for (const cluster of DOMAIN_CLUSTERS) {
     const matchingRkeys: string[] = [];

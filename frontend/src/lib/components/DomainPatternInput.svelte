@@ -6,7 +6,12 @@
     hint?: string;
   }
 
-  let { patterns, availableDomains, onchange, hint = 'Press Enter to add. Matches against feed URL hostnames.' }: Props = $props();
+  let {
+    patterns,
+    availableDomains,
+    onchange,
+    hint = 'Press Enter to add. Matches against feed URL hostnames.',
+  }: Props = $props();
 
   let domainInput = $state('');
   let suggestionsOpen = $state(false);

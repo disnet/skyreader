@@ -8,11 +8,7 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { goto } from '$app/navigation';
   import { subscriptionSourceKey } from '$lib/utils/sourceKeys';
-  import type {
-    SubscriptionSourceType,
-    SavedSourceType,
-    ReadingLengthFilter,
-  } from '$lib/types';
+  import type { SubscriptionSourceType, SavedSourceType, ReadingLengthFilter } from '$lib/types';
   import {
     TYPE_OPTIONS,
     SAVED_SOURCE_OPTIONS,

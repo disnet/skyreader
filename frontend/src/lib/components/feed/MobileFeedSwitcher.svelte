@@ -262,10 +262,7 @@
 
   <div class="items-list">
     {#each filteredItems as { section, groupId, items }}
-      <div
-        class="nav-group"
-        class:tinted={groupId === 'everything' || groupId === 'saved'}
-      >
+      <div class="nav-group" class:tinted={groupId === 'everything' || groupId === 'saved'}>
         {#if section}
           <div class="section-header">
             <span>{section}</span>

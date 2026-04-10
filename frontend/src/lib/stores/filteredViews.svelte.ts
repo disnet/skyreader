@@ -79,8 +79,8 @@ function createFilteredViewsStore() {
     for (const s of subscriptions) {
       if (s.id != null && s.rkey) idToRkeyMap.set(String(s.id), s.rkey);
     }
-    const hasNumericRssKeys = all.some(
-      (v) => v.sourceKeys?.some((key) => isRssSource(key) && /^rss~\d+$/.test(key))
+    const hasNumericRssKeys = all.some((v) =>
+      v.sourceKeys?.some((key) => isRssSource(key) && /^rss~\d+$/.test(key))
     );
     if (hasNumericRssKeys) {
       for (const view of all) {
@@ -114,12 +114,7 @@ function createFilteredViewsStore() {
       const { channels: remoteChannels, deletedUuids } = await api.getChannels();
       const pendingDeletes = await loadPendingDeletes();
 
-      const ops = computeSyncOperations(
-        views,
-        remoteChannels,
-        deletedUuids ?? [],
-        pendingDeletes
-      );
+      const ops = computeSyncOperations(views, remoteChannels, deletedUuids ?? [], pendingDeletes);
 
       // Build the new views state without mutating `views` until all DB ops succeed.
       let updatedViews = [...views];

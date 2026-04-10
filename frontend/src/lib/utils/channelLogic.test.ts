@@ -385,7 +385,9 @@ describe('isAlreadyCovered', () => {
       }),
     ];
     // 1 out of 4 overlap (25%)
-    expect(isAlreadyCovered(['rss~rkey-1', 'rss~rkey-2', 'rss~rkey-3', 'rss~rkey-4'], [], views)).toBe(false);
+    expect(
+      isAlreadyCovered(['rss~rkey-1', 'rss~rkey-2', 'rss~rkey-3', 'rss~rkey-4'], [], views)
+    ).toBe(false);
   });
 
   it('returns false when no views exist', () => {

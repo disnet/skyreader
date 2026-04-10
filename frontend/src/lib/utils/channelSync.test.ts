@@ -52,7 +52,8 @@ describe('fromRemote', () => {
     const remote = makeRemote({
       uuid: 'a',
       name: 'News',
-      config: '{"readFilter":"unread","sortOrder":"oldest","sourceMode":"include","sourceKeys":["rss~abc"]}',
+      config:
+        '{"readFilter":"unread","sortOrder":"oldest","sourceMode":"include","sourceKeys":["rss~abc"]}',
     });
     const result = fromRemote(remote);
     expect(result.uuid).toBe('a');
