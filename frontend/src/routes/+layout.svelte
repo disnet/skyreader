@@ -4,6 +4,7 @@
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
   import { auth } from '$lib/stores/auth.svelte';
+  import { appManager } from '$lib/stores/app.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
@@ -102,6 +103,16 @@
         }
       });
     });
+  });
+
+  // Initialize app data (cache-first hydrate + background refresh).
+  // Lives in the layout so that reloading on any authenticated route
+  // (e.g. /sources, /activity) still triggers initialization. The
+  // appManager has an internal phase guard so re-entry is a no-op.
+  $effect(() => {
+    if (browser && auth.isAuthenticated) {
+      appManager.initialize();
+    }
   });
 
   // Register global keyboard shortcuts on mount
