@@ -103,7 +103,7 @@
     collectionPickerOpen = true;
   }
 
-  async function handleCollectionSelected(collection: CollectionSelection | null) {
+  async function handleCollectionSelected(selection: CollectionSelection[]) {
     collectionPickerOpen = false;
     const data = pendingIntegrationData;
     if (!data) return;
@@ -120,9 +120,13 @@
       description: data.description,
       author: data.author,
       publishedAt: data.publishedAt,
-      collectionUri: collection?.uri,
-      collectionCid: collection?.cid,
+      collections: selection,
     };
+
+    const savedSuffix =
+      selection.length > 0
+        ? ` (${selection.length} collection${selection.length === 1 ? '' : 's'})`
+        : '';
 
     if (syncStore.isOnline) {
       const id = toastStore.add(`Saving to ${label}...`);
@@ -132,16 +136,15 @@
             url: data.url,
             title: data.title,
             description: data.description,
-            collectionUri: collection?.uri,
+            collectionUris: selection.map((c) => c.uri),
           });
         } else {
           await api.createSembleCard({
             ...data,
-            collectionUri: collection?.uri,
-            collectionCid: collection?.cid,
+            collections: selection,
           });
         }
-        toastStore.update(id, 'success', `Saved to ${label}`);
+        toastStore.update(id, 'success', `Saved to ${label}${savedSuffix}`);
       } catch (err) {
         if (err instanceof ScopeUpgradeError) {
           toastStore.update(id, 'error', 'Please log in again to grant integration permissions');

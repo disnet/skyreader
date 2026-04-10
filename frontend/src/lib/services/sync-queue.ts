@@ -83,6 +83,8 @@ export interface IntegrationPayload {
   description?: string;
   author?: string;
   publishedAt?: string;
+  collections?: { uri: string; cid: string }[];
+  // Legacy single-collection fields — still read from in-flight queued entries
   collectionUri?: string;
   collectionCid?: string;
 }
@@ -588,12 +590,20 @@ class SyncQueue {
   ): Promise<void> {
     if (operation !== 'create') return;
 
+    // Normalize legacy single-collection queued entries into the new array shape.
+    const collections =
+      payload.collections && payload.collections.length > 0
+        ? payload.collections
+        : payload.collectionUri && payload.collectionCid
+          ? [{ uri: payload.collectionUri, cid: payload.collectionCid }]
+          : [];
+
     if (payload.type === 'margin') {
       await api.createMarginBookmark({
         url: payload.url,
         title: payload.title,
         description: payload.description,
-        collectionUri: payload.collectionUri,
+        collectionUris: collections.map((c) => c.uri),
       });
     } else {
       await api.createSembleCard({
@@ -602,8 +612,7 @@ class SyncQueue {
         description: payload.description,
         author: payload.author,
         publishedAt: payload.publishedAt,
-        collectionUri: payload.collectionUri,
-        collectionCid: payload.collectionCid,
+        collections,
       });
     }
   }
