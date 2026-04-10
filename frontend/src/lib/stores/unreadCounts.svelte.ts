@@ -93,16 +93,21 @@ function createUnreadCountsStore() {
           view.savedSourceFilter && view.savedSourceFilter.length > 0
             ? new Set(view.savedSourceFilter)
             : null;
-        let count = 0;
+
+        // Use a Set of item keys so the same item can't be counted twice —
+        // e.g. when a guid exists in multiple subscriptions, or when a
+        // bookmark and its primary-store counterpart refer to the same item.
+        const seen = new Set<string>();
 
         // Count non-archived saved articles (source = 'feed')
         if (!sourceFilter || sourceFilter.has('feed')) {
           for (const article of articlesStore.allArticles) {
+            if (seen.has(article.guid)) continue;
             if (
               itemLabelsStore.isSaved(article.guid) &&
               !itemLabelsStore.isArchived(article.guid)
             ) {
-              count++;
+              seen.add(article.guid);
             }
           }
         }
@@ -110,11 +115,12 @@ function createUnreadCountsStore() {
         // Count non-archived saved shares (source = 'share')
         if (!sourceFilter || sourceFilter.has('share')) {
           for (const share of socialStore.shares) {
+            if (seen.has(share.recordUri)) continue;
             if (
               itemLabelsStore.isSaved(share.recordUri) &&
               !itemLabelsStore.isArchived(share.recordUri)
             ) {
-              count++;
+              seen.add(share.recordUri);
             }
           }
         }
@@ -122,41 +128,29 @@ function createUnreadCountsStore() {
         // Count non-archived saved documents (source = 'document')
         if (!sourceFilter || sourceFilter.has('document')) {
           for (const doc of socialStore.documents) {
+            if (seen.has(doc.recordUri)) continue;
             if (
               itemLabelsStore.isSaved(doc.recordUri) &&
               !itemLabelsStore.isArchived(doc.recordUri)
             ) {
-              count++;
+              seen.add(doc.recordUri);
             }
           }
         }
 
-        // Count non-archived bookmarks (deduped against above)
-        const savedArticleGuids = new Set(
-          articlesStore.allArticles
-            .filter((a) => itemLabelsStore.isSaved(a.guid))
-            .map((a) => a.guid)
-        );
-        const savedShareUris = new Set(
-          socialStore.shares
-            .filter((s) => itemLabelsStore.isSaved(s.recordUri))
-            .map((s) => s.recordUri)
-        );
-        const savedDocUris = new Set(
-          socialStore.documents
-            .filter((d) => itemLabelsStore.isSaved(d.recordUri))
-            .map((d) => d.recordUri)
-        );
+        // Count non-archived bookmarks, deduping against items already counted
+        // above via itemGuid (regardless of bm.source — legacy rows may lack it).
         for (const bm of savesStore.articles) {
-          if (sourceFilter && bm.source && !sourceFilter.has(bm.source)) continue;
-          if (bm.source === 'feed' && bm.itemGuid && savedArticleGuids.has(bm.itemGuid)) continue;
-          if (bm.source === 'share' && bm.itemGuid && savedShareUris.has(bm.itemGuid)) continue;
-          if (bm.source === 'document' && bm.itemGuid && savedDocUris.has(bm.itemGuid)) continue;
+          const src = bm.source ?? 'url';
+          if (sourceFilter && !sourceFilter.has(src)) continue;
+          const key = bm.itemGuid || bm.uri || bm.rkey;
+          if (seen.has(key)) continue;
           const archiveKey = bm.itemGuid || bm.uri || '';
-          if (!itemLabelsStore.isArchived(archiveKey)) count++;
+          if (itemLabelsStore.isArchived(archiveKey)) continue;
+          seen.add(key);
         }
 
-        counts.set(view.id, count);
+        counts.set(view.id, seen.size);
         continue;
       }
 

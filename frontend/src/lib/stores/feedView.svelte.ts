@@ -758,17 +758,19 @@ function createFeedViewStore() {
       const documentRecordUris = new Set(starredDocumentItems.map((d) => d.key));
       const bookmarkItems: FeedDisplayItem[] = savesStore.articles
         .filter((bm) => {
-          // Apply saved source filter for saved channels
-          if (sourceFilter && bm.source && !sourceFilter.has(bm.source)) return false;
-          // Skip feed-source bookmarks whose guid matches a saved article in the articles store
-          if (bm.source === 'feed' && bm.itemGuid && allSavedArticleGuids.has(bm.itemGuid))
-            return false;
-          // Skip share-source bookmarks whose itemGuid matches a displayed share
-          if (bm.source === 'share' && bm.itemGuid && shareRecordUris.has(bm.itemGuid))
-            return false;
-          // Skip document-source bookmarks whose itemGuid matches a displayed document
-          if (bm.source === 'document' && bm.itemGuid && documentRecordUris.has(bm.itemGuid))
-            return false;
+          // Apply saved source filter for saved channels. Treat a missing
+          // source as 'url' (the default for legacy rows) so the filter still
+          // applies instead of silently letting the bookmark through.
+          const src = bm.source ?? 'url';
+          if (sourceFilter && !sourceFilter.has(src)) return false;
+          // Dedup against items already displayed via the primary stores.
+          // Checked regardless of bm.source so legacy rows with undefined
+          // source can't slip through and show up twice.
+          if (bm.itemGuid) {
+            if (allSavedArticleGuids.has(bm.itemGuid)) return false;
+            if (shareRecordUris.has(bm.itemGuid)) return false;
+            if (documentRecordUris.has(bm.itemGuid)) return false;
+          }
           // Use itemGuid (article guid) for archive checks when available, since archive
           // labels are stored against the article guid, not the AT Protocol URI
           const archiveKey = bm.itemGuid || bm.uri || '';
