@@ -38,6 +38,7 @@
     initialTab?: 'filters' | 'channel';
     editingChannelId?: number | null;
     channelCreateMode?: boolean;
+    initialChannelType?: 'feed' | 'saved' | null;
     oncreated?: (uuid: string) => void;
     ondeleted?: () => void;
   }
@@ -51,6 +52,7 @@
     initialTab = 'filters',
     editingChannelId = undefined,
     channelCreateMode = false,
+    initialChannelType = null,
     oncreated,
     ondeleted,
   }: Props = $props();
@@ -231,7 +233,7 @@
     // New channel defaults
     if (channelCreateMode) {
       chName = '';
-      chChannelType = 'feed';
+      chChannelType = initialChannelType ?? 'feed';
       chMode = 'manual';
       chAutoRuleType = 'frequency:high';
       chRecentWithinDays = 14;
@@ -1361,6 +1363,5 @@
     .match-preview.empty {
       background: rgba(255, 255, 255, 0.03);
     }
-
   }
 </style>

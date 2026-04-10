@@ -29,12 +29,20 @@
   interface Props {
     open: boolean;
     editingViewId: number | null;
+    initialChannelType?: 'feed' | 'saved' | null;
     onclose: () => void;
     oncreated?: (uuid: string) => void;
     ondeleted?: () => void;
   }
 
-  let { open, editingViewId, onclose, oncreated, ondeleted }: Props = $props();
+  let {
+    open,
+    editingViewId,
+    initialChannelType = null,
+    onclose,
+    oncreated,
+    ondeleted,
+  }: Props = $props();
 
   // Form state
   let name = $state('');
@@ -229,7 +237,7 @@
       }
       // New channel defaults
       name = '';
-      channelType = 'feed';
+      channelType = initialChannelType ?? 'feed';
       channelMode = 'manual';
       autoRuleType = 'frequency:high';
       recentWithinDays = 14;
@@ -797,7 +805,6 @@
     border-color: var(--color-primary);
     box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1);
   }
-
 
   .visually-hidden {
     position: absolute;

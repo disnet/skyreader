@@ -24,7 +24,7 @@
     onclose: () => void;
     currentTitle: string;
     onEditChannel?: (id: number) => void;
-    onCreateChannel?: () => void;
+    onCreateChannel?: (type?: 'feed' | 'saved') => void;
   }
 
   let { onclose, currentTitle, onEditChannel, onCreateChannel }: Props = $props();
@@ -50,35 +50,83 @@
     | 'newspaper';
 
   type NavItem =
-    | { type: 'view'; id: string; label: string; count?: number; icon: IconName }
-    | { type: 'feed'; id: number; label: string; count: number; iconUrl: string | null }
-    | { type: 'utility'; id: string; label: string; count?: number; icon: IconName }
-    | { type: 'filteredView'; id: string; label: string; count?: number; icon: IconName };
+    | { type: 'view'; id: string; label: string; count?: number; icon: IconName; indent?: boolean }
+    | {
+        type: 'feed';
+        id: number;
+        label: string;
+        count: number;
+        iconUrl: string | null;
+        indent?: boolean;
+      }
+    | {
+        type: 'utility';
+        id: string;
+        label: string;
+        count?: number;
+        icon: IconName;
+        indent?: boolean;
+      }
+    | {
+        type: 'filteredView';
+        id: string;
+        label: string;
+        count?: number;
+        icon: IconName;
+        indent?: boolean;
+      };
 
   type SectionData = {
     section: string;
+    groupId?: 'everything' | 'saved' | 'other' | 'sources';
     items: NavItem[];
   };
 
   let filteredItems = $derived.by((): SectionData[] => {
     const query = searchQuery.toLowerCase().trim();
 
-    const views: NavItem[] = [
-      { type: 'view', id: 'all', label: 'Everything', count: totalUnread, icon: 'inbox' },
-      { type: 'view', id: 'saved', label: 'Saved', count: savedCount, icon: 'bookmark' },
+    const everythingItem: NavItem = {
+      type: 'view',
+      id: 'all',
+      label: 'Everything',
+      count: totalUnread,
+      icon: 'inbox',
+    };
+    const savedItem: NavItem = {
+      type: 'view',
+      id: 'saved',
+      label: 'Saved',
+      count: savedCount,
+      icon: 'bookmark',
+    };
+    const otherItems: NavItem[] = [
       { type: 'view', id: 'shared', label: 'Shared', count: sharedCount, icon: 'share' },
       { type: 'utility', id: 'activity', label: 'Activity', count: activityCount, icon: 'bell' },
       { type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' as IconName },
       { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' as IconName },
     ];
 
-    const channels: NavItem[] = filteredViewsStore.views.map((v) => ({
-      type: 'filteredView' as const,
-      id: v.uuid,
-      label: v.name,
-      count: v.id != null ? (unreadCounts.channelCounts.get(v.id) ?? 0) : 0,
-      icon: 'newspaper' as const,
-    }));
+    const sourceChannelItems: NavItem[] = filteredViewsStore.views
+      .filter((v) => v.mode !== 'saved')
+      .map((v) => ({
+        type: 'filteredView' as const,
+        id: v.uuid,
+        label: v.name,
+        count: v.id != null ? (unreadCounts.channelCounts.get(v.id) ?? 0) : 0,
+        icon: 'newspaper' as const,
+        indent: true,
+      }));
+
+    const savedChannelItems: NavItem[] = filteredViewsStore.views
+      .filter((v) => v.mode === 'saved')
+      .map((v) => ({
+        type: 'filteredView' as const,
+        id: v.uuid,
+        label: v.name,
+        count: v.id != null ? (unreadCounts.channelCounts.get(v.id) ?? 0) : 0,
+        icon: 'bookmark' as const,
+        indent: true,
+      }));
 
     const feedItems: NavItem[] = subscriptions.map((s) => ({
       type: 'feed' as const,
@@ -101,23 +149,27 @@
 
     const sections: SectionData[] = [];
 
-    const filteredViews = views.filter(filterItem);
-    if (filteredViews.length > 0) {
-      sections.push({ section: '', items: filteredViews });
+    // Everything group: Everything + source channels (+ suggestions rendered inline in template)
+    const everythingGroup = [everythingItem, ...sourceChannelItems].filter(filterItem);
+    if (everythingGroup.length > 0 || (!query && channelSuggestions.suggestions.length > 0)) {
+      sections.push({ section: '', groupId: 'everything', items: everythingGroup });
     }
 
-    const filteredChannels = channels.filter(filterItem);
-    if (
-      filteredChannels.length > 0 ||
-      channelSuggestions.suggestions.length > 0 ||
-      savedChannelSuggestions.suggestions.length > 0
-    ) {
-      sections.push({ section: 'Channels', items: filteredChannels });
+    // Saved group: Saved + saved channels (+ suggestions rendered inline in template)
+    const savedGroup = [savedItem, ...savedChannelItems].filter(filterItem);
+    if (savedGroup.length > 0 || (!query && savedChannelSuggestions.suggestions.length > 0)) {
+      sections.push({ section: '', groupId: 'saved', items: savedGroup });
+    }
+
+    // Other utility items
+    const filteredOther = otherItems.filter(filterItem);
+    if (filteredOther.length > 0) {
+      sections.push({ section: '', groupId: 'other', items: filteredOther });
     }
 
     const filteredFeeds = feedItems.filter(filterItem);
     if (filteredFeeds.length > 0) {
-      sections.push({ section: 'Sources', items: filteredFeeds });
+      sections.push({ section: 'Sources', groupId: 'sources', items: filteredFeeds });
     }
 
     return sections;
@@ -209,112 +261,99 @@
   </div>
 
   <div class="items-list">
-    {#each filteredItems as { section, items }}
-      {#if section}
-        <div class="section-header">
-          <span>{section}</span>
-          {#if section === 'Channels' && onCreateChannel}
+    {#each filteredItems as { section, groupId, items }}
+      <div
+        class="nav-group"
+        class:tinted={groupId === 'everything' || groupId === 'saved'}
+      >
+        {#if section}
+          <div class="section-header">
+            <span>{section}</span>
+          </div>
+        {/if}
+        {#each items as item}
+          {#if item.type === 'view' && (item.id === 'all' || item.id === 'saved') && onCreateChannel}
+            <div class="nav-item-row" class:active={isItemActive(item)}>
+              <button class="nav-item-main" onclick={() => selectItem(item)}>
+                <span class="item-icon"><Icon name={item.icon} size={18} /></span>
+                <span class="item-label">{item.label}</span>
+              </button>
+              <button
+                class="channel-add-btn"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  onCreateChannel(item.id === 'saved' ? 'saved' : 'feed');
+                }}
+                aria-label="New channel"
+              >
+                <Icon name="plus" size={16} />
+              </button>
+              {#if item.count && item.count > 0}
+                <span class="item-count row-count">{item.count}</span>
+              {/if}
+            </div>
+          {:else if item.type === 'filteredView' && onEditChannel}
+            <div class="nav-item-row" class:active={isItemActive(item)}>
+              <button class="nav-item-main" onclick={() => selectItem(item)}>
+                <span class="item-icon"><Icon name={item.icon} size={18} /></span>
+                <span class="item-label">{item.label}</span>
+              </button>
+              <button
+                class="channel-edit-btn"
+                onclick={() => {
+                  const view = filteredViewsStore.getByUuid(item.id);
+                  if (view?.id != null) onEditChannel(view.id);
+                }}
+                aria-label="Edit channel"
+              >
+                <Icon name="edit" size={14} />
+              </button>
+              {#if item.count && item.count > 0}
+                <span class="item-count row-count">{item.count}</span>
+              {/if}
+            </div>
+          {:else}
             <button
-              class="section-add-btn"
-              onclick={(e) => {
-                e.stopPropagation();
-                onCreateChannel();
-              }}
-              aria-label="New channel"
+              class="nav-item"
+              class:active={isItemActive(item)}
+              onclick={() => selectItem(item)}
             >
-              <Icon name="plus" size={14} />
-            </button>
-          {/if}
-        </div>
-      {/if}
-      {#each items as item}
-        {#if item.type === 'filteredView' && onEditChannel}
-          <div
-            class="nav-item-row"
-            class:active={isItemActive(item)}
-            class:section-child={!!section}
-          >
-            <button class="nav-item-main" onclick={() => selectItem(item)}>
-              <span class="item-icon"><Icon name={item.icon} size={18} /></span>
+              {#if item.type === 'view' || item.type === 'utility' || item.type === 'filteredView'}
+                <span class="item-icon"><Icon name={item.icon} size={18} /></span>
+              {:else if item.type === 'feed'}
+                {#if item.iconUrl}
+                  <img src={item.iconUrl} alt="" class="feed-icon" />
+                {:else}
+                  <span class="feed-icon-placeholder"></span>
+                {/if}
+              {/if}
               <span class="item-label">{item.label}</span>
               {#if item.count && item.count > 0}
                 <span class="item-count">{item.count}</span>
               {/if}
             </button>
-            <button
-              class="channel-edit-btn"
-              onclick={() => {
-                const view = filteredViewsStore.getByUuid(item.id);
-                if (view?.id != null) onEditChannel(view.id);
-              }}
-              aria-label="Edit channel"
-            >
-              <Icon name="edit" size={14} />
-            </button>
-          </div>
-        {:else}
-          <button
-            class="nav-item"
-            class:active={isItemActive(item)}
-            class:section-child={!!section}
-            onclick={() => selectItem(item)}
-          >
-            {#if item.type === 'view' || item.type === 'utility' || item.type === 'filteredView'}
-              <span class="item-icon"><Icon name={item.icon} size={18} /></span>
-            {:else if item.type === 'feed'}
-              {#if item.iconUrl}
-                <img src={item.iconUrl} alt="" class="feed-icon" />
-              {:else}
-                <span class="feed-icon-placeholder"></span>
-              {/if}
-            {/if}
-            <span class="item-label">{item.label}</span>
-            {#if item.count && item.count > 0}
-              <span class="item-count">{item.count}</span>
-            {/if}
-          </button>
-        {/if}
-      {/each}
-      {#if section === 'Channels' && (channelSuggestions.suggestions.length > 0 || savedChannelSuggestions.suggestions.length > 0) && !searchQuery}
-        {#each channelSuggestions.suggestions as suggestion (suggestion.id)}
-          <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-          <div class="nav-item suggestion-accept" onclick={() => acceptSuggestion(suggestion)}>
-            <span class="item-icon suggestion-icon"><Icon name="plus" size={16} /></span>
-            <span class="item-label">{suggestion.name}</span>
-            <span class="suggestion-actions" onclick={(e) => e.stopPropagation()}>
-              <Tooltip text={suggestion.description} />
-              <button
-                class="suggestion-dismiss"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  channelSuggestions.dismiss(suggestion.id);
-                }}
-              >
-                <Icon name="x" size={14} />
-              </button>
-            </span>
-          </div>
+          {/if}
         {/each}
-        {#each savedChannelSuggestions.suggestions as suggestion (suggestion.id)}
-          <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-          <div class="nav-item suggestion-accept" onclick={() => acceptSavedSuggestion(suggestion)}>
-            <span class="item-icon suggestion-icon"><Icon name="plus" size={16} /></span>
-            <span class="item-label">{suggestion.name}</span>
-            <span class="suggestion-actions" onclick={(e) => e.stopPropagation()}>
-              <Tooltip text={suggestion.description} />
-              <button
-                class="suggestion-dismiss"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  savedChannelSuggestions.dismiss(suggestion.id);
-                }}
-              >
-                <Icon name="x" size={14} />
-              </button>
-            </span>
-          </div>
-        {/each}
-        {#if channelSuggestions.hasMore || channelSuggestions.suggestions.length > 0 || savedChannelSuggestions.hasMore || savedChannelSuggestions.suggestions.length > 0}
+        {#if groupId === 'everything' && !searchQuery}
+          {#each channelSuggestions.suggestions as suggestion (suggestion.id)}
+            <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+            <div class="nav-item suggestion-accept" onclick={() => acceptSuggestion(suggestion)}>
+              <span class="item-icon suggestion-icon"><Icon name="plus" size={16} /></span>
+              <span class="item-label">{suggestion.name}</span>
+              <span class="suggestion-actions" onclick={(e) => e.stopPropagation()}>
+                <Tooltip text={suggestion.description} />
+                <button
+                  class="suggestion-dismiss"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    channelSuggestions.dismiss(suggestion.id);
+                  }}
+                >
+                  <Icon name="x" size={14} />
+                </button>
+              </span>
+            </div>
+          {/each}
           <a
             href="/channels/discover"
             class="nav-item more-suggestions-link"
@@ -324,7 +363,39 @@
             <span class="item-label">More channel ideas</span>
           </a>
         {/if}
-      {/if}
+        {#if groupId === 'saved' && !searchQuery}
+          {#each savedChannelSuggestions.suggestions as suggestion (suggestion.id)}
+            <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+            <div
+              class="nav-item suggestion-accept"
+              onclick={() => acceptSavedSuggestion(suggestion)}
+            >
+              <span class="item-icon suggestion-icon"><Icon name="plus" size={16} /></span>
+              <span class="item-label">{suggestion.name}</span>
+              <span class="suggestion-actions" onclick={(e) => e.stopPropagation()}>
+                <Tooltip text={suggestion.description} />
+                <button
+                  class="suggestion-dismiss"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    savedChannelSuggestions.dismiss(suggestion.id);
+                  }}
+                >
+                  <Icon name="x" size={14} />
+                </button>
+              </span>
+            </div>
+          {/each}
+          <a
+            href="/channels/discover"
+            class="nav-item more-suggestions-link"
+            onclick={() => onclose()}
+          >
+            <span class="item-icon"><Icon name="arrow-right" size={16} /></span>
+            <span class="item-label">More channel ideas</span>
+          </a>
+        {/if}
+      </div>
     {/each}
     {#if filteredItems.length === 0 || filteredItems.every((s) => s.items.length === 0)}
       <div class="no-results">No matches found</div>
@@ -381,21 +452,23 @@
     letter-spacing: 0.05em;
   }
 
-  .section-add-btn {
+  .channel-add-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 1.75rem;
-    height: 1.75rem;
+    width: 2rem;
+    height: 2rem;
     padding: 0;
+    margin-right: 0.5rem;
     background: none;
     border: none;
     border-radius: 6px;
     color: var(--color-text-secondary);
     cursor: pointer;
+    flex-shrink: 0;
   }
 
-  .section-add-btn:active {
+  .channel-add-btn:active {
     background: var(--color-bg-secondary, #f5f5f5);
   }
 
@@ -423,6 +496,39 @@
     background: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
     color: var(--color-primary);
     font-weight: 500;
+  }
+
+  .nav-group {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .nav-group.tinted {
+    background: rgba(0, 0, 0, 0.025);
+    border-radius: 12px;
+    margin: 0 0.5rem 0.5rem;
+    padding: 0.25rem 0;
+  }
+
+  .nav-group.tinted .nav-item,
+  .nav-group.tinted .nav-item-row {
+    margin-left: 0;
+    margin-right: 0;
+    width: calc(100% - 0rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .nav-group.tinted {
+      background: rgba(255, 255, 255, 0.025);
+    }
+  }
+
+  .row-count {
+    margin-right: 1rem;
+  }
+
+  .nav-item-row.active .row-count {
+    color: var(--color-primary);
   }
 
   .nav-item-row {

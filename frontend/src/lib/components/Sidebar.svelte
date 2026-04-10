@@ -141,8 +141,11 @@
   let channelModalOpen = $derived(sidebarStore.channelModalOpen);
   let editingChannelId = $derived(sidebarStore.editingChannelId);
 
-  function openChannelModal(viewId: number | null = null) {
-    sidebarStore.openChannelModal(viewId);
+  function openChannelModal(
+    viewId: number | null = null,
+    initialType: 'feed' | 'saved' | null = null
+  ) {
+    sidebarStore.openChannelModal(viewId, initialType);
   }
 
   function handleViewContextMenu(e: MouseEvent, viewId: number) {
@@ -262,6 +265,10 @@
 
   let uncategorizedSources = $derived(subscriptionsStore.subscriptions.filter((s) => !s.category));
 
+  // Split channels: source channels live under Everything, saved channels under Saved
+  let sourceChannels = $derived(filteredViewsStore.views.filter((v) => v.mode !== 'saved'));
+  let savedChannels = $derived(filteredViewsStore.views.filter((v) => v.mode === 'saved'));
+
   function handleBackdropClick() {
     sidebarStore.closeMobile();
   }
@@ -292,115 +299,189 @@
 
   <!-- Navigation items -->
   <nav class="sidebar-nav">
-    <button
-      class="nav-item"
-      class:active={currentFilter().type === 'all'}
-      onclick={() => selectFilter('all')}
-    >
-      <span class="nav-icon"><Icon name="inbox" /></span>
-      <span class="nav-label">Everything</span>
-      {#if totalUnread > 0}
-        <span class="nav-count">{totalUnread}</span>
-      {/if}
-    </button>
-
-    <button
-      class="nav-item"
-      class:active={currentFilter().type === 'saved'}
-      onclick={() => selectFilter('saved')}
-    >
-      <span class="nav-icon"><Icon name="bookmark" /></span>
-      <span class="nav-label">Saved</span>
-      {#if itemLabelsStore.inboxCount > 0}
-        <span class="nav-count">{itemLabelsStore.inboxCount}</span>
-      {/if}
-    </button>
-
-    <!-- Channels section (formerly Views) -->
-    <NavSection
-      title="Channels"
-      icon="layers"
-      isExpanded={sidebarStore.expandedSections.channels}
-      showOnlyUnread={false}
-      isActive={false}
-      onToggle={() => sidebarStore.toggleSection('channels')}
-      onLabelClick={() => sidebarStore.toggleSection('channels')}
-      onAdd={() => openChannelModal()}
-    >
-      {#each filteredViewsStore.views as view (view.uuid)}
-        <ViewItem
-          {view}
-          isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
-          isRenaming={renamingViewId === view.id}
-          unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
-          onSelect={() => selectFilter('view', view.uuid)}
-          onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-          onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
-          onTouchEnd={handleViewTouchEnd}
-          onTouchMove={handleViewTouchMove}
-          onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-          onRename={async (name) => {
-            if (view.id != null) {
-              await filteredViewsStore.update(view.id, { name });
-            }
-            renamingViewId = null;
+    <!-- Everything: top-level filter + nested source channels -->
+    <div class="nav-group" class:expanded={sidebarStore.expandedSections.everything}>
+      <div class="nav-row" class:active={currentFilter().type === 'all'}>
+        <button class="nav-row-main" onclick={() => selectFilter('all')}>
+          <span class="nav-icon"><Icon name="inbox" /></span>
+          <span class="nav-label">Everything</span>
+        </button>
+        <button
+          class="row-add-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            openChannelModal(null, 'feed');
           }}
-          onRenameCancel={() => (renamingViewId = null)}
-        />
-      {:else}
-        {#if channelSuggestions.suggestions.length === 0 && savedChannelSuggestions.suggestions.length === 0}
-          <div class="empty-section">No channels yet</div>
-        {/if}
-      {/each}
-      {#each channelSuggestions.suggestions as suggestion (suggestion.id)}
-        <div class="suggestion-item">
-          <button class="suggestion-accept" onclick={() => acceptSuggestion(suggestion)}>
-            <span class="suggestion-icon"><Icon name="plus" size={12} /></span>
-            <span class="suggestion-name">{suggestion.name}</span>
-          </button>
-          <Tooltip text={suggestion.description} />
-          <button
-            class="suggestion-dismiss"
-            onclick={(e) => {
-              e.stopPropagation();
-              channelSuggestions.dismiss(suggestion.id);
-            }}
-            title="Dismiss"
-          >
-            <Icon name="x" size={12} />
-          </button>
-        </div>
-      {/each}
-      {#each savedChannelSuggestions.suggestions as suggestion (suggestion.id)}
-        <div class="suggestion-item">
-          <button class="suggestion-accept" onclick={() => acceptSavedSuggestion(suggestion)}>
-            <span class="suggestion-icon"><Icon name="plus" size={12} /></span>
-            <span class="suggestion-name">{suggestion.name}</span>
-          </button>
-          <Tooltip text={suggestion.description} />
-          <button
-            class="suggestion-dismiss"
-            onclick={(e) => {
-              e.stopPropagation();
-              savedChannelSuggestions.dismiss(suggestion.id);
-            }}
-            title="Dismiss"
-          >
-            <Icon name="x" size={12} />
-          </button>
-        </div>
-      {/each}
-      {#if channelSuggestions.hasMore || channelSuggestions.suggestions.length > 0 || savedChannelSuggestions.hasMore || savedChannelSuggestions.suggestions.length > 0}
-        <a
-          href="/channels/discover"
-          class="more-suggestions-link"
-          onclick={() => sidebarStore.closeMobile()}
+          title="New channel"
         >
-          More channel ideas
-          <Icon name="arrow-right" size={12} />
-        </a>
+          <Icon name="plus" size={14} strokeWidth={2} />
+        </button>
+        {#if totalUnread > 0}
+          <span class="nav-count">{totalUnread}</span>
+        {/if}
+        <button
+          class="row-disclosure-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            sidebarStore.toggleSection('everything');
+          }}
+          aria-label="Toggle channels"
+        >
+          <Icon
+            name={sidebarStore.expandedSections.everything ? 'chevron-down' : 'chevron-right'}
+            size={14}
+            strokeWidth={2.5}
+          />
+        </button>
+      </div>
+      {#if sidebarStore.expandedSections.everything}
+        <div class="nav-children">
+          {#each sourceChannels as view (view.uuid)}
+            <ViewItem
+              {view}
+              isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
+              isRenaming={renamingViewId === view.id}
+              unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
+              onSelect={() => selectFilter('view', view.uuid)}
+              onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+              onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
+              onTouchEnd={handleViewTouchEnd}
+              onTouchMove={handleViewTouchMove}
+              onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+              onRename={async (name) => {
+                if (view.id != null) {
+                  await filteredViewsStore.update(view.id, { name });
+                }
+                renamingViewId = null;
+              }}
+              onRenameCancel={() => (renamingViewId = null)}
+            />
+          {/each}
+          {#each channelSuggestions.suggestions as suggestion (suggestion.id)}
+            <div class="suggestion-item">
+              <button class="suggestion-accept" onclick={() => acceptSuggestion(suggestion)}>
+                <span class="suggestion-icon"><Icon name="plus" size={12} /></span>
+                <span class="suggestion-name">{suggestion.name}</span>
+              </button>
+              <Tooltip text={suggestion.description} />
+              <button
+                class="suggestion-dismiss"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  channelSuggestions.dismiss(suggestion.id);
+                }}
+                title="Dismiss"
+              >
+                <Icon name="x" size={12} />
+              </button>
+            </div>
+          {/each}
+          {#if sourceChannels.length === 0 && channelSuggestions.suggestions.length === 0}
+            <div class="empty-section">No channels yet</div>
+          {/if}
+          <a
+            href="/channels/discover"
+            class="more-suggestions-link"
+            onclick={() => sidebarStore.closeMobile()}
+          >
+            More channel ideas
+            <Icon name="arrow-right" size={12} />
+          </a>
+        </div>
       {/if}
-    </NavSection>
+    </div>
+
+    <!-- Saved: top-level filter + nested saved channels -->
+    <div class="nav-group" class:expanded={sidebarStore.expandedSections.saved}>
+      <div class="nav-row" class:active={currentFilter().type === 'saved'}>
+        <button class="nav-row-main" onclick={() => selectFilter('saved')}>
+          <span class="nav-icon"><Icon name="bookmark" /></span>
+          <span class="nav-label">Saved</span>
+        </button>
+        <button
+          class="row-add-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            openChannelModal(null, 'saved');
+          }}
+          title="New saved channel"
+        >
+          <Icon name="plus" size={14} strokeWidth={2} />
+        </button>
+        {#if itemLabelsStore.inboxCount > 0}
+          <span class="nav-count">{itemLabelsStore.inboxCount}</span>
+        {/if}
+        <button
+          class="row-disclosure-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            sidebarStore.toggleSection('saved');
+          }}
+          aria-label="Toggle saved channels"
+        >
+          <Icon
+            name={sidebarStore.expandedSections.saved ? 'chevron-down' : 'chevron-right'}
+            size={14}
+            strokeWidth={2.5}
+          />
+        </button>
+      </div>
+      {#if sidebarStore.expandedSections.saved}
+        <div class="nav-children">
+          {#each savedChannels as view (view.uuid)}
+            <ViewItem
+              {view}
+              isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
+              isRenaming={renamingViewId === view.id}
+              unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
+              onSelect={() => selectFilter('view', view.uuid)}
+              onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+              onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
+              onTouchEnd={handleViewTouchEnd}
+              onTouchMove={handleViewTouchMove}
+              onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+              onRename={async (name) => {
+                if (view.id != null) {
+                  await filteredViewsStore.update(view.id, { name });
+                }
+                renamingViewId = null;
+              }}
+              onRenameCancel={() => (renamingViewId = null)}
+            />
+          {/each}
+          {#each savedChannelSuggestions.suggestions as suggestion (suggestion.id)}
+            <div class="suggestion-item">
+              <button class="suggestion-accept" onclick={() => acceptSavedSuggestion(suggestion)}>
+                <span class="suggestion-icon"><Icon name="plus" size={12} /></span>
+                <span class="suggestion-name">{suggestion.name}</span>
+              </button>
+              <Tooltip text={suggestion.description} />
+              <button
+                class="suggestion-dismiss"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  savedChannelSuggestions.dismiss(suggestion.id);
+                }}
+                title="Dismiss"
+              >
+                <Icon name="x" size={12} />
+              </button>
+            </div>
+          {/each}
+          {#if savedChannels.length === 0 && savedChannelSuggestions.suggestions.length === 0}
+            <div class="empty-section">No saved channels yet</div>
+          {/if}
+          <a
+            href="/channels/discover"
+            class="more-suggestions-link"
+            onclick={() => sidebarStore.closeMobile()}
+          >
+            More channel ideas
+            <Icon name="arrow-right" size={12} />
+          </a>
+        </div>
+      {/if}
+    </div>
 
     <button
       class="nav-item"
@@ -580,6 +661,7 @@
 <FilteredViewModal
   open={channelModalOpen}
   editingViewId={editingChannelId}
+  initialChannelType={sidebarStore.initialChannelType}
   onclose={() => sidebarStore.closeChannelModal()}
   oncreated={(id) => selectFilter('view', id)}
   ondeleted={() => selectFilter('all')}
@@ -723,6 +805,104 @@
     font: inherit;
     color: var(--color-text);
     transition: background-color 0.15s;
+  }
+
+  .nav-group {
+    border-radius: 12px;
+    transition: background-color 0.15s;
+  }
+
+  .nav-group + .nav-group {
+    margin-top: 0.5rem;
+  }
+
+  .nav-group.expanded {
+    background-color: rgba(0, 0, 0, 0.025);
+    padding-bottom: 0.25rem;
+  }
+
+  .nav-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border-radius: 12px;
+    color: var(--color-text);
+    transition: background-color 0.15s;
+  }
+
+  .nav-row:hover {
+    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+  }
+
+  .nav-row.active {
+    background-color: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
+    color: var(--color-primary);
+  }
+
+  .nav-row-main {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex: 1;
+    min-width: 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    padding: 0;
+  }
+
+  .nav-row.active .nav-count {
+    color: var(--color-primary);
+  }
+
+  .row-add-btn,
+  .row-disclosure-btn {
+    flex-shrink: 0;
+    width: 1.25rem;
+    height: 1.25rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+  }
+
+  .row-add-btn {
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  .nav-row:hover .row-add-btn {
+    opacity: 0.6;
+  }
+
+  .row-add-btn:hover {
+    opacity: 1 !important;
+    color: var(--color-primary);
+  }
+
+  .row-disclosure-btn:hover {
+    color: var(--color-text);
+  }
+
+  .nav-row.active .row-disclosure-btn {
+    color: var(--color-primary);
+  }
+
+  .nav-children {
+    margin-top: 0.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
   }
 
   .nav-item:hover {
@@ -965,6 +1145,14 @@
   @media (prefers-color-scheme: dark) {
     .nav-item:hover {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
+    }
+
+    .nav-row:hover {
+      background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
+    }
+
+    .nav-group.expanded {
+      background-color: rgba(255, 255, 255, 0.025);
     }
   }
 </style>

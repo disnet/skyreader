@@ -54,19 +54,22 @@
   let filterSheetInitialTab = $state<'filters' | 'channel'>('filters');
   let editingChannelId = $state<number | null>(null);
   let channelCreateMode = $state(false);
+  let channelCreateInitialType = $state<'feed' | 'saved' | null>(null);
 
   function handleEditChannel(id: number) {
     feedSwitcherOpen = false;
     editingChannelId = id;
     channelCreateMode = false;
+    channelCreateInitialType = null;
     filterSheetInitialTab = 'channel';
     filterSheetOpen = true;
   }
 
-  function handleCreateChannel() {
+  function handleCreateChannel(type: 'feed' | 'saved' = 'feed') {
     feedSwitcherOpen = false;
     editingChannelId = null;
     channelCreateMode = true;
+    channelCreateInitialType = type;
     filterSheetInitialTab = 'channel';
     filterSheetOpen = true;
   }
@@ -755,6 +758,7 @@
           initialTab={filterSheetInitialTab}
           {editingChannelId}
           {channelCreateMode}
+          initialChannelType={channelCreateInitialType}
           oncreated={(id) => {
             filterSheetOpen = false;
             goto(`/?view=${id}`);

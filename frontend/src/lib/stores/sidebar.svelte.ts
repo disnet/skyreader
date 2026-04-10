@@ -9,7 +9,8 @@ interface SidebarState {
   expandedSections: {
     shared: boolean;
     feeds: boolean;
-    channels: boolean;
+    everything: boolean;
+    saved: boolean;
   };
   showOnlyUnread: {
     shared: boolean;
@@ -31,7 +32,8 @@ function createSidebarStore() {
     expandedSections: {
       shared: false,
       feeds: false,
-      channels: true,
+      everything: true,
+      saved: true,
     },
     showOnlyUnread: {
       shared: false,
@@ -47,11 +49,20 @@ function createSidebarStore() {
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
+        // Migrate legacy `channels` key → both `everything` and `saved`
+        const legacyChannels = parsed.expandedSections?.channels;
+        const migrated = { ...parsed.expandedSections };
+        if (legacyChannels != null) {
+          if (migrated.everything == null) migrated.everything = legacyChannels;
+          if (migrated.saved == null) migrated.saved = legacyChannels;
+          delete migrated.channels;
+        }
         state.expandedSections = {
           shared: false,
           feeds: false,
-          channels: true,
-          ...parsed.expandedSections,
+          everything: true,
+          saved: true,
+          ...migrated,
         };
         state.showOnlyUnread = parsed.showOnlyUnread ?? { shared: false, feeds: false };
         state.expandedCategories = parsed.expandedCategories ?? {};
@@ -82,7 +93,7 @@ function createSidebarStore() {
     state.isOpen = false;
   }
 
-  function toggleSection(section: 'shared' | 'feeds' | 'channels') {
+  function toggleSection(section: 'shared' | 'feeds' | 'everything' | 'saved') {
     state.expandedSections[section] = !state.expandedSections[section];
     persist();
   }
@@ -105,6 +116,7 @@ function createSidebarStore() {
   let addSourceInitialValue = $state<string>('');
   let channelModalOpen = $state(false);
   let editingChannelId = $state<number | null>(null);
+  let initialChannelType = $state<'feed' | 'saved' | null>(null);
 
   function openAddFeedModal() {
     state.addFeedModalOpen = true;
@@ -142,8 +154,12 @@ function createSidebarStore() {
     state.saveArticleModalOpen = false;
   }
 
-  function openChannelModal(viewId: number | null = null) {
+  function openChannelModal(
+    viewId: number | null = null,
+    initialType: 'feed' | 'saved' | null = null
+  ) {
     editingChannelId = viewId;
+    initialChannelType = initialType;
     channelModalOpen = true;
   }
 
@@ -199,6 +215,9 @@ function createSidebarStore() {
     },
     get editingChannelId() {
       return editingChannelId;
+    },
+    get initialChannelType() {
+      return initialChannelType;
     },
     get expandedCategories() {
       return state.expandedCategories;

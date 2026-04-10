@@ -158,11 +158,25 @@
 
   // Navigation item type
   type NavItem =
-    | { type: 'view'; id: string; label: string; count?: number; icon: IconName }
-    | { type: 'feed'; id: number; label: string; count: number; iconUrl: string | null }
-    | { type: 'utility'; id: string; label: string; count?: number; icon: IconName }
-    | { type: 'action'; id: string; label: string; icon: IconName }
-    | { type: 'filteredView'; id: string; label: string; icon: IconName };
+    | { type: 'view'; id: string; label: string; count?: number; icon: IconName; indent?: boolean }
+    | {
+        type: 'feed';
+        id: number;
+        label: string;
+        count: number;
+        iconUrl: string | null;
+        indent?: boolean;
+      }
+    | {
+        type: 'utility';
+        id: string;
+        label: string;
+        count?: number;
+        icon: IconName;
+        indent?: boolean;
+      }
+    | { type: 'action'; id: string; label: string; icon: IconName; indent?: boolean }
+    | { type: 'filteredView'; id: string; label: string; icon: IconName; indent?: boolean };
 
   // Section type with optional icon and click handler for styled section headers
   type SectionData = {
@@ -176,21 +190,46 @@
   let filteredItems = $derived.by((): SectionData[] => {
     const query = searchQuery.toLowerCase().trim();
 
-    const views: NavItem[] = [
-      { type: 'view', id: 'all', label: 'All', count: totalUnread, icon: 'inbox' },
-      { type: 'view', id: 'saved', label: 'Saved', count: savedCount, icon: 'bookmark' },
+    const everythingItem: NavItem = {
+      type: 'view',
+      id: 'all',
+      label: 'Everything',
+      count: totalUnread,
+      icon: 'inbox',
+    };
+    const savedItem: NavItem = {
+      type: 'view',
+      id: 'saved',
+      label: 'Saved',
+      count: savedCount,
+      icon: 'bookmark',
+    };
+    const otherViews: NavItem[] = [
       { type: 'view', id: 'shared', label: 'Shared', count: sharedCount, icon: 'share' },
       { type: 'utility', id: 'activity', label: 'Activity', count: activityCount, icon: 'bell' },
       { type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' },
       { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' },
     ];
 
-    const customViews: NavItem[] = filteredViewsStore.views.map((v) => ({
-      type: 'filteredView' as const,
-      id: v.uuid,
-      label: v.name,
-      icon: 'filter' as const,
-    }));
+    const sourceChannelItems: NavItem[] = filteredViewsStore.views
+      .filter((v) => v.mode !== 'saved')
+      .map((v) => ({
+        type: 'filteredView' as const,
+        id: v.uuid,
+        label: v.name,
+        icon: 'filter' as const,
+        indent: true,
+      }));
+
+    const savedChannelItems: NavItem[] = filteredViewsStore.views
+      .filter((v) => v.mode === 'saved')
+      .map((v) => ({
+        type: 'filteredView' as const,
+        id: v.uuid,
+        label: v.name,
+        icon: 'bookmark' as const,
+        indent: true,
+      }));
 
     const addViewAction: NavItem = {
       type: 'action',
@@ -241,10 +280,22 @@
 
     const sections: SectionData[] = [];
 
-    // System views + custom views + add action in one flat section
-    const allViews = [...views, ...customViews, addViewAction].filter(filterItem);
-    if (allViews.length > 0) {
-      sections.push({ section: '', items: allViews });
+    // Everything group: Everything + nested source channels
+    const everythingGroup = [everythingItem, ...sourceChannelItems].filter(filterItem);
+    if (everythingGroup.length > 0) {
+      sections.push({ section: '', items: everythingGroup });
+    }
+
+    // Saved group: Saved + nested saved channels
+    const savedGroup = [savedItem, ...savedChannelItems].filter(filterItem);
+    if (savedGroup.length > 0) {
+      sections.push({ section: '', items: savedGroup });
+    }
+
+    // Other views + add action
+    const otherGroup = [...otherViews, addViewAction].filter(filterItem);
+    if (otherGroup.length > 0) {
+      sections.push({ section: '', items: otherGroup });
     }
 
     // Categorized feeds - one section per folder
@@ -588,7 +639,7 @@
               filteredItems.slice(0, sectionIndex).reduce((acc, s) => acc + s.items.length, 0) +
               itemIndex}
             {#if item.type === 'filteredView' && renamingViewUuid === item.id}
-              <div class="nav-item rename-row" class:section-child={!!section}>
+              <div class="nav-item rename-row" class:section-child={item.indent || !!section}>
                 <span class="item-icon"><Icon name={item.icon} size={16} /></span>
                 <!-- svelte-ignore a11y_autofocus -->
                 <input
@@ -611,7 +662,7 @@
             {:else}
               <button
                 class="nav-item"
-                class:section-child={!!section}
+                class:section-child={item.indent || !!section}
                 class:active={isItemActive(item)}
                 class:highlighted={flatIndex === highlightedIndex}
                 role="option"
@@ -739,7 +790,7 @@
               filteredItems.slice(0, sectionIndex).reduce((acc, s) => acc + s.items.length, 0) +
               itemIndex}
             {#if item.type === 'filteredView' && renamingViewUuid === item.id}
-              <div class="nav-item rename-row" class:section-child={!!section}>
+              <div class="nav-item rename-row" class:section-child={item.indent || !!section}>
                 <span class="item-icon"><Icon name={item.icon} size={16} /></span>
                 <!-- svelte-ignore a11y_autofocus -->
                 <input
@@ -762,7 +813,7 @@
             {:else}
               <button
                 class="nav-item"
-                class:section-child={!!section}
+                class:section-child={item.indent || !!section}
                 class:active={isItemActive(item)}
                 class:highlighted={flatIndex === highlightedIndex}
                 role="option"
