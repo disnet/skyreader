@@ -39,6 +39,18 @@ export interface MetadataEntry {
   value: string; // JSON-serialized value
 }
 
+// Cached Semble/Margin collection for the integration share picker.
+// Keyed by [integration+uri] so the same Dexie table can hold both integrations.
+export interface IntegrationCollectionCacheEntry {
+  integration: 'semble' | 'margin';
+  uri: string;
+  cid: string;
+  name?: string;
+  description?: string;
+  createdAt?: string;
+  cachedAt: number;
+}
+
 class SkyreaderDatabase extends Dexie {
   subscriptions!: Table<Subscription>;
   articles!: Table<Article>;
@@ -53,6 +65,7 @@ class SkyreaderDatabase extends Dexie {
   itemTags!: Table<ItemTags>;
   itemLabels!: Table<ItemLabel>;
   saved!: Table<SavedItem>;
+  integrationCollections!: Table<IntegrationCollectionCacheEntry>;
 
   constructor() {
     super('skyreader');
@@ -303,6 +316,11 @@ class SkyreaderDatabase extends Dexie {
           }
         }
       });
+
+    // Add integrationCollections table for Semble/Margin collection picker cache
+    this.version(28).stores({
+      integrationCollections: '[integration+uri], integration, cachedAt',
+    });
   }
 }
 
@@ -324,6 +342,7 @@ export async function clearAllData(): Promise<void> {
     db.itemTags.clear(),
     db.itemLabels.clear(),
     db.saved.clear(),
+    db.integrationCollections.clear(),
   ]);
 }
 

@@ -644,9 +644,12 @@ class ApiClient {
     description?: string;
     author?: string;
     publishedAt?: string;
-    collectionUri?: string;
-    collectionCid?: string;
-  }): Promise<{ uri: string; cid: string }> {
+    collections?: { uri: string; cid: string }[];
+  }): Promise<{
+    uri: string;
+    cid: string;
+    collectionResults?: { uri: string; error?: string }[];
+  }> {
     return this.fetch('/api/integrations/semble/cards', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -661,8 +664,12 @@ class ApiClient {
     url: string;
     title?: string;
     description?: string;
-    collectionUri?: string;
-  }): Promise<{ uri: string; cid: string }> {
+    collectionUris?: string[];
+  }): Promise<{
+    uri: string;
+    cid: string;
+    collectionResults?: { uri: string; error?: string }[];
+  }> {
     return this.fetch('/api/integrations/margin/bookmarks', {
       method: 'POST',
       body: JSON.stringify(data),

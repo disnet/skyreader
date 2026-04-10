@@ -96,6 +96,8 @@ export async function handleCreateSembleCard(request: Request, env: Env): Promis
     description?: string;
     author?: string;
     publishedAt?: string;
+    collections?: { uri: string; cid: string }[];
+    // Legacy single-collection fields — still accepted from in-flight queued entries
     collectionUri?: string;
     collectionCid?: string;
   };
@@ -114,6 +116,13 @@ export async function handleCreateSembleCard(request: Request, env: Env): Promis
       headers: { 'Content-Type': 'application/json' },
     });
   }
+
+  const collections: { uri: string; cid: string }[] =
+    body.collections && body.collections.length > 0
+      ? body.collections
+      : body.collectionUri && body.collectionCid
+        ? [{ uri: body.collectionUri, cid: body.collectionCid }]
+        : [];
 
   const rkey = generateTID();
   const metadata: Record<string, string> = {};
@@ -142,12 +151,13 @@ export async function handleCreateSembleCard(request: Request, env: Env): Promis
     });
   }
 
-  // If a collection was specified, add the card to it via collectionLink
-  if (body.collectionUri && body.collectionCid) {
+  // For each selected collection, create a collectionLink record.
+  const collectionResults: { uri: string; error?: string }[] = [];
+  for (const col of collections) {
     const linkRkey = generateTID();
     const collectionLink = {
       $type: 'network.cosmik.collectionLink',
-      collection: { uri: body.collectionUri, cid: body.collectionCid },
+      collection: { uri: col.uri, cid: col.cid },
       card: { uri: result.data.uri, cid: result.data.cid },
       addedBy: session.did,
       addedAt: new Date().toISOString(),
@@ -158,23 +168,19 @@ export async function handleCreateSembleCard(request: Request, env: Env): Promis
       linkRkey,
       collectionLink
     );
-    if (!linkResult.success) {
-      // Card was created but collection link failed — return success with warning
-      return new Response(
-        JSON.stringify({
-          uri: result.data.uri,
-          cid: result.data.cid,
-          collectionError: linkResult.error,
-        }),
-        { status: 201, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    collectionResults.push(
+      linkResult.success ? { uri: col.uri } : { uri: col.uri, error: linkResult.error }
+    );
   }
 
-  return new Response(JSON.stringify({ uri: result.data.uri, cid: result.data.cid }), {
-    status: 201,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return new Response(
+    JSON.stringify({
+      uri: result.data.uri,
+      cid: result.data.cid,
+      ...(collectionResults.length > 0 ? { collectionResults } : {}),
+    }),
+    { status: 201, headers: { 'Content-Type': 'application/json' } }
+  );
 }
 
 /**
@@ -238,6 +244,8 @@ export async function handleCreateMarginBookmark(request: Request, env: Env): Pr
     url: string;
     title?: string;
     description?: string;
+    collectionUris?: string[];
+    // Legacy single-collection field — still accepted from in-flight queued entries
     collectionUri?: string;
   };
   try {
@@ -255,6 +263,13 @@ export async function handleCreateMarginBookmark(request: Request, env: Env): Pr
       headers: { 'Content-Type': 'application/json' },
     });
   }
+
+  const collectionUris: string[] =
+    body.collectionUris && body.collectionUris.length > 0
+      ? body.collectionUris
+      : body.collectionUri
+        ? [body.collectionUri]
+        : [];
 
   const rkey = generateTID();
   const record = {
@@ -276,12 +291,13 @@ export async function handleCreateMarginBookmark(request: Request, env: Env): Pr
     });
   }
 
-  // If a collection was specified, add the bookmark to it
-  if (body.collectionUri) {
+  // For each selected collection, create a collectionItem record.
+  const collectionResults: { uri: string; error?: string }[] = [];
+  for (const uri of collectionUris) {
     const itemRkey = generateTID();
     const collectionItem = {
       $type: 'at.margin.collectionItem',
-      collection: body.collectionUri,
+      collection: uri,
       annotation: result.data.uri,
       createdAt: new Date().toISOString(),
     };
@@ -290,22 +306,17 @@ export async function handleCreateMarginBookmark(request: Request, env: Env): Pr
       itemRkey,
       collectionItem
     );
-    if (!itemResult.success) {
-      return new Response(
-        JSON.stringify({
-          uri: result.data.uri,
-          cid: result.data.cid,
-          collectionError: itemResult.error,
-        }),
-        { status: 201, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    collectionResults.push(itemResult.success ? { uri } : { uri, error: itemResult.error });
   }
 
-  return new Response(JSON.stringify({ uri: result.data.uri, cid: result.data.cid }), {
-    status: 201,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return new Response(
+    JSON.stringify({
+      uri: result.data.uri,
+      cid: result.data.cid,
+      ...(collectionResults.length > 0 ? { collectionResults } : {}),
+    }),
+    { status: 201, headers: { 'Content-Type': 'application/json' } }
+  );
 }
 
 /**
