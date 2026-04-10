@@ -10,7 +10,6 @@ test.describe('Navigation', () => {
     await expect(authedPage.locator('.nav-label', { hasText: 'Manage Sources' })).toBeVisible();
     await expect(authedPage.locator('.nav-label', { hasText: 'Activity' })).toBeVisible();
     await expect(authedPage.locator('.nav-label', { hasText: 'Settings' })).toBeVisible();
-    await expect(authedPage.locator('text=Channels')).toBeVisible();
   });
 
   test('clicking Saved sets filter', async ({ authedPage }) => {

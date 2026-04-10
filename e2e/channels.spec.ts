@@ -1,11 +1,14 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
 
-/** Create a channel via the sidebar + button and modal form. */
+/** Create a source channel via the Everything row's + button and modal form. */
 async function createChannel(page: Page, name: string) {
-  const channelsSection = page.locator('.section-header', { hasText: 'Channels' });
-  await expect(channelsSection).toBeVisible({ timeout: 15_000 });
-  await channelsSection.locator('.add-btn').click();
+  // Channels live under the Everything nav row. Click the + add button on that row.
+  const everythingRow = page.locator('.nav-row', {
+    has: page.locator('.nav-label', { hasText: 'Everything' }),
+  });
+  await expect(everythingRow).toBeVisible({ timeout: 15_000 });
+  await everythingRow.locator('.row-add-btn').click({ force: true });
 
   // Fill the channel name in the modal
   const nameInput = page.locator('#view-name');
@@ -21,8 +24,10 @@ async function createChannel(page: Page, name: string) {
 }
 
 test.describe('Channels', () => {
-  test('sidebar shows Channels section', async ({ authedPage }) => {
-    await expect(authedPage.locator('text=Channels')).toBeVisible({ timeout: 15_000 });
+  test('sidebar shows Everything section', async ({ authedPage }) => {
+    await expect(authedPage.locator('.nav-label', { hasText: 'Everything' })).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   test('create a new channel via + button', async ({ authedPage }) => {
@@ -35,19 +40,18 @@ test.describe('Channels', () => {
   test('rename a channel via context menu', async ({ authedPage }) => {
     await createChannel(authedPage, 'Rename Me');
 
-    // Click the more (three dot) button to open context menu
+    // Right-click the view item to open the context menu
     const viewItem = authedPage.locator('.view-item', { hasText: 'Rename Me' });
-    const moreBtn = viewItem.locator('.more-btn');
-    // Force click since the more-btn may be hidden until hover
-    await moreBtn.click({ force: true });
+    await viewItem.click({ button: 'right' });
 
     // Click Rename in the context menu
     const renameItem = authedPage.locator('.context-menu-item', { hasText: 'Rename' });
     await expect(renameItem).toBeVisible({ timeout: 5_000 });
     await renameItem.click();
 
-    // An input should appear with the current name
-    const renameInput = viewItem.locator('.rename-input');
+    // An input should appear — when the view enters rename mode the nav-label
+    // is replaced with an input, so we can't filter by the old name's text.
+    const renameInput = authedPage.locator('.view-item .rename-input');
     await expect(renameInput).toBeVisible({ timeout: 5_000 });
 
     // Clear and type a new name

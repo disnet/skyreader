@@ -74,10 +74,11 @@
     saving = true;
 
     try {
-      // Local-only update - no backend sync
+      // Local-only update - no backend sync. Pass empty strings through (not
+      // converted to undefined) so clearing a custom field actually takes effect.
       await subscriptionsStore.updateLocal(subscription.id, {
-        customTitle: customTitle.trim() || undefined,
-        customIconUrl: iconUrl.trim() || undefined,
+        customTitle: customTitle.trim(),
+        customIconUrl: iconUrl.trim(),
       });
       handleClose();
     } catch (e) {
