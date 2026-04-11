@@ -770,7 +770,7 @@ export function getSavedSourceTypeSuggestions(
       name: cfg.name,
       description: `${count} ${cfg.desc}`,
       savedSourceFilter: [cfg.source],
-      readFilter: 'all',
+      readFilter: 'unread',
       sortOrder: 'newest',
     });
   }
@@ -798,7 +798,7 @@ export function getSavedReadingLengthSuggestions(
         name: 'Saved Long Reads',
         description: `${longCount} saved items with 15+ minute read time`,
         savedReadingLength: ['long'],
-        readFilter: 'all',
+        readFilter: 'unread',
         sortOrder: 'longest',
       });
     }
@@ -812,7 +812,7 @@ export function getSavedReadingLengthSuggestions(
         name: 'Saved Quick Reads',
         description: `${quickCount} saved items you can finish in under 5 minutes`,
         savedReadingLength: ['quick'],
-        readFilter: 'all',
+        readFilter: 'unread',
         sortOrder: 'shortest',
       });
     }
@@ -841,7 +841,7 @@ export function getSavedDomainSuggestions(ctx: SavedSuggestionContext): SavedCha
       name: `Saved from ${displayName}`,
       description: `${count} saved items from ${displayName}`,
       savedDomainFilter: [domain],
-      readFilter: 'all',
+      readFilter: 'unread',
       sortOrder: 'newest',
     });
   }

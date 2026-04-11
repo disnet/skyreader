@@ -252,7 +252,7 @@
       savedReadingLength = new Set();
       savedDomainFilter = new Set();
       savedTagFilter = new Set();
-      readFilter = 'all';
+      readFilter = (initialChannelType ?? 'feed') === 'saved' ? 'unread' : 'all';
       sortOrder = 'newest';
       typeFilter = new Set();
       feedSearch = '';
@@ -700,10 +700,12 @@
       <div class="form-group">
         <span class="form-label">{channelType === 'saved' ? 'Status' : 'Read State'}</span>
         <div class="radio-group">
-          <label class="radio-label">
-            <input type="radio" bind:group={readFilter} value="all" />
-            All
-          </label>
+          {#if channelType !== 'saved'}
+            <label class="radio-label">
+              <input type="radio" bind:group={readFilter} value="all" />
+              All
+            </label>
+          {/if}
           <label class="radio-label">
             <input type="radio" bind:group={readFilter} value="unread" />
             {channelType === 'saved' ? 'Inbox only' : 'Unread only'}
