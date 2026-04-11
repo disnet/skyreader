@@ -106,7 +106,7 @@ function getItemDate(item: FeedDisplayItem): number {
   }
 }
 
-function getSavedDate(item: FeedDisplayItem): number {
+export function getSavedDate(item: FeedDisplayItem): number {
   if (item.type === 'saved') {
     return new Date(item.item.savedAt).getTime();
   }
@@ -126,7 +126,7 @@ function getItemPublishedDate(item: FeedDisplayItem): number {
   return getItemDate(item);
 }
 
-function getItemWordCount(item: FeedDisplayItem): number | null {
+export function getItemWordCount(item: FeedDisplayItem): number | null {
   if (item.type === 'saved') return item.item.wordCount;
   if (item.type === 'article') {
     const text = item.item.content || item.item.summary || '';
@@ -143,7 +143,7 @@ function getItemWordCount(item: FeedDisplayItem): number | null {
   return null;
 }
 
-function getItemDomain(item: FeedDisplayItem): string | null {
+export function getItemDomain(item: FeedDisplayItem): string | null {
   if (item.type === 'saved') return item.item.domain;
   const url =
     item.type === 'article'
@@ -161,7 +161,7 @@ function getItemDomain(item: FeedDisplayItem): string | null {
   }
 }
 
-function datePresetToMs(preset: DateAddedPreset): number {
+export function datePresetToMs(preset: DateAddedPreset): number {
   const DAY = 86400000;
   switch (preset) {
     case 'last-week':
@@ -176,7 +176,7 @@ function datePresetToMs(preset: DateAddedPreset): number {
 }
 
 const WPM = 200;
-function matchesReadingLength(wc: number | null, bucket: ReadingLengthFilter): boolean {
+export function matchesReadingLength(wc: number | null, bucket: ReadingLengthFilter): boolean {
   if (wc === null) return false;
   const minutes = wc / WPM;
   switch (bucket) {
@@ -423,7 +423,7 @@ function createFeedViewStore() {
     let articles: Article[];
 
     if (isSavedView) {
-      // Starred view with inbox/archive sub-filter
+      // Saved view with inbox/archive sub-filter
       if (savedView === 'inbox') {
         articles = allArticles.filter((a) => {
           return itemLabelsStore.isSaved(a.guid) && !itemLabelsStore.isArchived(a.guid);
@@ -700,17 +700,45 @@ function createFeedViewStore() {
     if (isSavedView) {
       const sortOrder = effectiveFilters.sortOrder;
       const isArchiveView = savedView === 'archive';
+
+      // Per-item predicate for saved-channel filters. Used both for the final
+      // item list *and* for deciding whether an article should dedup a bookmark
+      // — otherwise a feed-saved article that doesn't match the channel filter
+      // would silently kill its matching bookmark even though the article
+      // itself never shows up.
+      const dateCutoff = toolbarDateFilter ? datePresetToMs(toolbarDateFilter) : null;
+      const domainSet =
+        toolbarDomainFilter.length > 0
+          ? new Set(toolbarDomainFilter.map((d) => d.toLowerCase()))
+          : null;
+      const readingLengths = toolbarReadingLength;
+      const matchesSavedChannelFilters = (item: FeedDisplayItem): boolean => {
+        if (dateCutoff !== null && getSavedDate(item) < dateCutoff) return false;
+        if (readingLengths.length > 0) {
+          const wc = getItemWordCount(item);
+          if (wc === null) return false;
+          if (!readingLengths.some((b) => matchesReadingLength(wc, b))) return false;
+        }
+        if (domainSet) {
+          const domain = getItemDomain(item);
+          if (domain === null || !domainSet.has(domain.toLowerCase())) return false;
+        }
+        return true;
+      };
       const sourceFilter =
         isSavedChannel && toolbarSavedSourceFilter.length > 0
           ? new Set(toolbarSavedSourceFilter)
           : null;
 
-      // Start with starred articles from filteredArticles (already filtered by savedView)
-      // For saved channels with source filter, only include if 'feed' source is allowed
+      // Start with saved articles from filteredArticles (already filtered by savedView).
+      // Use the full filteredArticles list, not displayedArticles — saved-channel
+      // filters (reading length, date, domain) are applied at the end of this
+      // block, and pagination-before-filter would hide matches that fall outside
+      // the current page window.
       const articleItems: FeedDisplayItem[] =
         sourceFilter && !sourceFilter.has('feed')
           ? []
-          : displayedArticles.map((item) => ({
+          : filteredArticles.map((item) => ({
               type: 'article' as const,
               item,
               key: item.guid,
@@ -748,14 +776,28 @@ function createFeedViewStore() {
                 key: d.recordUri,
               }));
 
-      // Add bookmarks — exclude bookmarks already shown via articles/shares/documents
-      // Use ALL saved article guids for dedup (not just displayed ones) to prevent
-      // archived feed-source bookmarks from reappearing as 'saved' type items
+      // Add bookmarks — exclude bookmarks already shown via articles/shares/documents.
+      // Only dedup against articles that actually match the channel filters;
+      // otherwise an article that's filtered out (e.g. by reading length) would
+      // silently kill its matching bookmark, and the sidebar count would not
+      // agree with the displayed list.
       const allSavedArticleGuids = new Set(
-        articlesStore.allArticles.filter((a) => itemLabelsStore.isSaved(a.guid)).map((a) => a.guid)
+        articlesStore.allArticles
+          .filter(
+            (a) =>
+              itemLabelsStore.isSaved(a.guid) &&
+              matchesSavedChannelFilters({ type: 'article', item: a, key: a.guid })
+          )
+          .map((a) => a.guid)
       );
-      const shareRecordUris = new Set(starredShareItems.map((s) => s.key));
-      const documentRecordUris = new Set(starredDocumentItems.map((d) => d.key));
+      // Only dedup bookmarks against shares/documents that will actually pass
+      // the channel filters — same reasoning as allSavedArticleGuids above.
+      const shareRecordUris = new Set(
+        starredShareItems.filter((s) => matchesSavedChannelFilters(s)).map((s) => s.key)
+      );
+      const documentRecordUris = new Set(
+        starredDocumentItems.filter((d) => matchesSavedChannelFilters(d)).map((d) => d.key)
+      );
       const bookmarkItems: FeedDisplayItem[] = savesStore.articles
         .filter((bm) => {
           // Apply saved source filter for saved channels. Treat a missing
@@ -829,11 +871,13 @@ function createFeedViewStore() {
         items = items.filter((item) => getSavedDate(item) >= cutoff);
       }
 
-      // Apply reading length filter
+      // Apply reading length filter. Items with unknown word count are
+      // excluded so the list matches the sidebar count and the suggestion
+      // that promised "N long reads".
       if (toolbarReadingLength.length > 0) {
         items = items.filter((item) => {
           const wc = getItemWordCount(item);
-          if (wc === null) return true; // include items with unknown word count
+          if (wc === null) return false;
           return toolbarReadingLength.some((bucket) => matchesReadingLength(wc, bucket));
         });
       }
@@ -929,6 +973,9 @@ function createFeedViewStore() {
   // Derived: unified pagination state
   let hasMore = $derived.by(() => {
     const mode = viewMode;
+    // Saved views render the full filteredArticles list, so there is nothing
+    // more to load beyond what's already shown.
+    if (isSavedView) return false;
     if (mode === 'combined') {
       return loadedArticleCount < filteredArticles.length || socialStore.hasMore;
     }
@@ -1393,6 +1440,10 @@ function createFeedViewStore() {
             toolbarSourceMode = 'all';
             toolbarSourceKeys = [];
             toolbarTypeFilter = [];
+            // Derive the inbox/archive tab from the channel's readFilter so
+            // entering a channel lands on its persisted Status, not leftover
+            // global state from a prior view.
+            savedView = fv.readFilter === 'read' ? 'archive' : 'inbox';
           } else if (fv.sourceMode != null) {
             // New format (coerce any stale 'exclude' to 'include')
             toolbarSourceMode = fv.sourceMode === 'all' ? 'all' : 'include';

@@ -321,6 +321,25 @@ class SkyreaderDatabase extends Dexie {
     this.version(28).stores({
       integrationCollections: '[integration+uri], integration, cachedAt',
     });
+
+    // Saved channels historically defaulted readFilter='all' from dead-code
+    // defaults. Now that readFilter actually drives inbox/archive filtering,
+    // coerce those defaults to 'unread' (Inbox only). Users who explicitly
+    // pick 'all' after this upgrade keep their choice.
+    this.version(29)
+      .stores({})
+      .upgrade(async (tx) => {
+        const views = await tx.table('filteredViews').toArray();
+        const now = Date.now();
+        for (const view of views) {
+          if (view.mode === 'saved' && view.readFilter === 'all') {
+            await tx.table('filteredViews').update(view.id, {
+              readFilter: 'unread',
+              updatedAt: now,
+            });
+          }
+        }
+      });
   }
 }
 

@@ -4,6 +4,14 @@ import { socialStore } from './social.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
 import { savesStore } from './saves.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
+import {
+  type FeedDisplayItem,
+  getItemWordCount,
+  getItemDomain,
+  getSavedDate,
+  datePresetToMs,
+  matchesReadingLength,
+} from './feedView.svelte';
 import { liveDb } from '$lib/services/liveDb.svelte';
 import {
   isRssSource,
@@ -94,6 +102,30 @@ function createUnreadCountsStore() {
             ? new Set(view.savedSourceFilter)
             : null;
 
+        const dateCutoff = view.savedDateFilter ? datePresetToMs(view.savedDateFilter) : null;
+        const readingLengths = view.savedReadingLength ?? [];
+        const domainSet =
+          view.savedDomainFilter && view.savedDomainFilter.length > 0
+            ? new Set(view.savedDomainFilter.map((d) => d.toLowerCase()))
+            : null;
+
+        const matchesChannelFilters = (item: FeedDisplayItem): boolean => {
+          if (dateCutoff !== null && getSavedDate(item) < dateCutoff) return false;
+          if (readingLengths.length > 0) {
+            const wc = getItemWordCount(item);
+            // Exclude items with unknown word count — the suggestion counts
+            // promised a specific number of long reads, so a bookmark whose
+            // wordCount was never computed shouldn't be silently counted as one.
+            if (wc === null) return false;
+            if (!readingLengths.some((b) => matchesReadingLength(wc, b))) return false;
+          }
+          if (domainSet) {
+            const domain = getItemDomain(item);
+            if (domain === null || !domainSet.has(domain.toLowerCase())) return false;
+          }
+          return true;
+        };
+
         // Use a Set of item keys so the same item can't be counted twice —
         // e.g. when a guid exists in multiple subscriptions, or when a
         // bookmark and its primary-store counterpart refer to the same item.
@@ -107,6 +139,12 @@ function createUnreadCountsStore() {
               itemLabelsStore.isSaved(article.guid) &&
               !itemLabelsStore.isArchived(article.guid)
             ) {
+              const displayItem: FeedDisplayItem = {
+                type: 'article',
+                item: article,
+                key: article.guid,
+              };
+              if (!matchesChannelFilters(displayItem)) continue;
               seen.add(article.guid);
             }
           }
@@ -120,6 +158,12 @@ function createUnreadCountsStore() {
               itemLabelsStore.isSaved(share.recordUri) &&
               !itemLabelsStore.isArchived(share.recordUri)
             ) {
+              const displayItem: FeedDisplayItem = {
+                type: 'share',
+                item: share,
+                key: share.recordUri,
+              };
+              if (!matchesChannelFilters(displayItem)) continue;
               seen.add(share.recordUri);
             }
           }
@@ -133,6 +177,12 @@ function createUnreadCountsStore() {
               itemLabelsStore.isSaved(doc.recordUri) &&
               !itemLabelsStore.isArchived(doc.recordUri)
             ) {
+              const displayItem: FeedDisplayItem = {
+                type: 'document',
+                item: doc,
+                key: doc.recordUri,
+              };
+              if (!matchesChannelFilters(displayItem)) continue;
               seen.add(doc.recordUri);
             }
           }
@@ -147,6 +197,12 @@ function createUnreadCountsStore() {
           if (seen.has(key)) continue;
           const archiveKey = bm.itemGuid || bm.uri || '';
           if (itemLabelsStore.isArchived(archiveKey)) continue;
+          const displayItem: FeedDisplayItem = {
+            type: 'saved',
+            item: bm,
+            key: bm.uri || bm.itemGuid || bm.rkey,
+          };
+          if (!matchesChannelFilters(displayItem)) continue;
           seen.add(key);
         }
 

@@ -214,7 +214,7 @@
       savedDomainFilter: suggestion.savedDomainFilter,
       savedReadingLength: suggestion.savedReadingLength,
       savedDateFilter: suggestion.savedDateFilter,
-      readFilter: suggestion.readFilter ?? 'all',
+      readFilter: suggestion.readFilter ?? 'unread',
       sortOrder: suggestion.sortOrder ?? 'newest',
     });
     selectFilter('view', id);
