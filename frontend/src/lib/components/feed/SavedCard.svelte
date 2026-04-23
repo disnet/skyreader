@@ -17,6 +17,8 @@
     onOpen,
     onArchive,
     onRemove,
+    onShare,
+    isShared = false,
     onHover,
     onSaveToSemble,
     onSaveToMargin,
@@ -26,6 +28,8 @@
     onOpen?: () => void;
     onArchive?: () => void;
     onRemove?: () => void;
+    onShare?: () => void;
+    isShared?: boolean;
     onHover?: () => void;
     onSaveToSemble?: () => void;
     onSaveToMargin?: () => void;
@@ -239,6 +243,7 @@
       label: string;
       icon?: string;
       variant?: 'default' | 'danger';
+      active?: boolean;
       onclick: () => void;
     }[] = [
       {
@@ -256,6 +261,14 @@
         },
       },
     ];
+    if (onShare) {
+      items.push({
+        label: isShared ? (displayItem.type === 'share' ? 'Reshared' : 'Shared') : 'Share',
+        icon: 'share',
+        active: isShared,
+        onclick: () => onShare!(),
+      });
+    }
     if (onSaveToSemble) {
       items.push({
         label: 'Save to Semble',
