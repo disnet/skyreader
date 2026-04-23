@@ -6,6 +6,7 @@
     label: string;
     icon?: string;
     variant?: 'default' | 'danger';
+    active?: boolean;
     keepOpen?: boolean;
     onclick: () => void;
   }
@@ -146,6 +147,7 @@
         <button
           class="menu-item"
           class:danger={item.variant === 'danger'}
+          class:active={item.active}
           onclick={(e) => handleItemClick(item, e)}
           role="menuitem"
         >
@@ -220,6 +222,10 @@
 
   .menu-item:hover {
     background: var(--color-bg-secondary);
+  }
+
+  .menu-item.active {
+    color: var(--color-primary, #0066cc);
   }
 
   .menu-item.danger {
