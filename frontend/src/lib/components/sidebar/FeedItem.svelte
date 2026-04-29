@@ -44,7 +44,6 @@
 
   let isAtProto = $derived(subscription.sourceType?.startsWith('atproto.') ?? false);
   let sourceDisplay = $derived(getSourceDisplay(subscription.sourceType, subscription.feedUrl));
-  let sourceLabel = $derived(sourceDisplay.label === 'Publication' ? 'Pub' : sourceDisplay.label);
 
   let faviconUrl = $derived(
     subscription.customIconUrl ||
@@ -171,7 +170,6 @@
     >
       <Icon name="more-horizontal" size={14} />
     </span>
-    <span class="source-type-pill" title={sourceDisplay.label}>{sourceLabel}</span>
     {#if loadingState === 'error'}
       <span
         class="retry-btn"
@@ -200,6 +198,9 @@
     {:else if unreadCount > 0}
       <span class="nav-count">{unreadCount}</span>
     {/if}
+    <span class="source-type-icon" title={sourceDisplay.label} aria-label={sourceDisplay.label}>
+      <Icon name={sourceDisplay.iconName as any} size={13} strokeWidth={2} />
+    </span>
   </button>
 
   {#if showErrorPopover && errorDetails}
@@ -297,17 +298,17 @@
     --source-accent: #557f89;
   }
 
-  .source-type-pill {
+  .source-type-icon {
     flex-shrink: 0;
-    font-size: 0.625rem;
-    font-weight: 650;
-    letter-spacing: 0.02em;
-    line-height: 1;
-    padding: 0.1875rem 0.3125rem;
+    width: 1.125rem;
+    height: 1.125rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     border-radius: 999px;
-    color: color-mix(in srgb, var(--source-accent) 78%, var(--color-text-secondary));
-    background: color-mix(in srgb, var(--source-accent) 8%, transparent);
-    border: 1px solid color-mix(in srgb, var(--source-accent) 14%, transparent);
+    color: color-mix(in srgb, var(--source-accent) 72%, var(--color-text-secondary));
+    background: color-mix(in srgb, var(--source-accent) 7%, transparent);
+    border: 1px solid color-mix(in srgb, var(--source-accent) 12%, transparent);
   }
 
   .feed-favicon {
