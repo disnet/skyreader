@@ -2,6 +2,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { getFaviconUrl } from '$lib/utils/favicon';
+  import { getSourceDisplay } from '$lib/utils/sourceDisplay';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { sharesStore } from '$lib/stores/shares.svelte';
@@ -19,6 +20,7 @@
   } from '$lib/stores/savedChannelSuggestions.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import Tooltip from '$lib/components/Tooltip.svelte';
+  import type { Subscription } from '$lib/types';
 
   interface Props {
     onclose: () => void;
@@ -47,16 +49,30 @@
     | 'settings'
     | 'filter'
     | 'plus'
-    | 'newspaper';
+    | 'newspaper'
+    | 'rss'
+    | 'file-text'
+    | 'folder';
 
   type NavItem =
     | { type: 'view'; id: string; label: string; count?: number; icon: IconName; indent?: boolean }
+    | {
+        type: 'category';
+        id: string;
+        label: string;
+        count: number;
+        icon: IconName;
+        indent?: boolean;
+      }
     | {
         type: 'feed';
         id: number;
         label: string;
         count: number;
         iconUrl: string | null;
+        sourceIcon: string;
+        sourceLabel: string;
+        sourceClass: string;
         indent?: boolean;
       }
     | {
@@ -81,6 +97,49 @@
     groupId?: 'everything' | 'saved' | 'other' | 'sources';
     items: NavItem[];
   };
+
+  function sourceSortRank(sub: Subscription): number {
+    if (!sub.sourceType || sub.sourceType === 'rss') return 0;
+    if (sub.sourceType === 'atproto.shares') return 1;
+    if (sub.sourceType === 'atproto.documents' && sub.feedUrl?.startsWith('at://')) return 2;
+    if (sub.sourceType === 'atproto.documents') return 3;
+    return 4;
+  }
+
+  function sortSources(sources: Subscription[]) {
+    return [...sources].sort((a, b) => {
+      const rankDiff = sourceSortRank(a) - sourceSortRank(b);
+      if (rankDiff !== 0) return rankDiff;
+      return (a.customTitle || a.title || '').localeCompare(
+        b.customTitle || b.title || '',
+        undefined,
+        {
+          sensitivity: 'base',
+        }
+      );
+    });
+  }
+
+  function sourceToNavItem(s: Subscription, indent = false): NavItem {
+    const sourceDisplay = getSourceDisplay(s.sourceType, s.feedUrl);
+    return {
+      type: 'feed',
+      id: s.id!,
+      label: s.customTitle || s.title,
+      count: feedUnreadCounts.get(s.id!) || 0,
+      iconUrl:
+        s.customIconUrl ||
+        (s.sourceType?.startsWith('atproto.')
+          ? s.siteUrl
+            ? getFaviconUrl(s.siteUrl)
+            : '/icons/icon-192.svg'
+          : getFaviconUrl(s.siteUrl || s.feedUrl || '')),
+      sourceIcon: sourceDisplay.iconName,
+      sourceLabel: sourceDisplay.label,
+      sourceClass: sourceDisplay.pillClass,
+      indent,
+    };
+  }
 
   let filteredItems = $derived.by((): SectionData[] => {
     const query = searchQuery.toLowerCase().trim();
@@ -128,24 +187,49 @@
         indent: true,
       }));
 
-    const feedItems: NavItem[] = subscriptions.map((s) => ({
-      type: 'feed' as const,
-      id: s.id!,
-      label: s.customTitle || s.title,
-      count: feedUnreadCounts.get(s.id!) || 0,
-      iconUrl:
-        s.customIconUrl ||
-        (s.sourceType?.startsWith('atproto.')
-          ? s.siteUrl
-            ? getFaviconUrl(s.siteUrl)
-            : '/icons/icon-192.svg'
-          : getFaviconUrl(s.siteUrl || s.feedUrl || '')),
-    }));
-
     const filterItem = (item: NavItem) => {
       if (!query) return true;
       return item.label.toLowerCase().includes(query);
     };
+
+    const byCategory = new Map<string, Subscription[]>();
+    const uncategorized: Subscription[] = [];
+    for (const sub of subscriptions) {
+      if (sub.category) {
+        const existing = byCategory.get(sub.category) || [];
+        existing.push(sub);
+        byCategory.set(sub.category, existing);
+      } else {
+        uncategorized.push(sub);
+      }
+    }
+
+    const feedItems: NavItem[] = [];
+    for (const [name, subs] of [...byCategory.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const sortedSubs = sortSources(subs);
+      const childItems = sortedSubs.map((s) => sourceToNavItem(s, true));
+      const categoryItem: NavItem = {
+        type: 'category',
+        id: name,
+        label: name,
+        count: sortedSubs.reduce(
+          (sum, s) => sum + (s.id ? (feedUnreadCounts.get(s.id) ?? 0) : 0),
+          0
+        ),
+        icon: 'folder',
+      };
+
+      if (!query || filterItem(categoryItem)) {
+        feedItems.push(categoryItem, ...childItems);
+      } else {
+        const matchingChildren = childItems.filter(filterItem);
+        if (matchingChildren.length > 0) {
+          feedItems.push(categoryItem, ...matchingChildren);
+        }
+      }
+    }
+    const uncategorizedItems = sortSources(uncategorized).map((s) => sourceToNavItem(s));
+    feedItems.push(...(query ? uncategorizedItems.filter(filterItem) : uncategorizedItems));
 
     const sections: SectionData[] = [];
 
@@ -167,9 +251,8 @@
       sections.push({ section: '', groupId: 'other', items: filteredOther });
     }
 
-    const filteredFeeds = feedItems.filter(filterItem);
-    if (filteredFeeds.length > 0) {
-      sections.push({ section: 'Sources', groupId: 'sources', items: filteredFeeds });
+    if (feedItems.length > 0) {
+      sections.push({ section: 'Sources', groupId: 'sources', items: feedItems });
     }
 
     return sections;
@@ -182,8 +265,10 @@
     const saved = url.searchParams.get('saved');
     const shared = url.searchParams.get('shared');
     const view = url.searchParams.get('view');
+    const category = url.searchParams.get('category');
     if (view) return { type: 'filteredView', id: view };
     if (feed) return { type: 'feed', id: parseInt(feed) };
+    if (category) return { type: 'category', name: category };
     if (saved) return { type: 'saved' };
     if (shared) return { type: 'shared' };
     return { type: 'all' };
@@ -197,6 +282,8 @@
       if (item.id === 'shared' && filter.type === 'shared') return true;
     }
     if (item.type === 'feed' && filter.type === 'feed' && filter.id === item.id) return true;
+    if (item.type === 'category' && filter.type === 'category' && filter.name === item.id)
+      return true;
     if (item.type === 'filteredView' && filter.type === 'filteredView' && filter.id === item.id)
       return true;
     return false;
@@ -238,6 +325,8 @@
       else if (item.id === 'shared') url = '/?shared=true';
     } else if (item.type === 'feed') {
       url = `/?feed=${item.id}`;
+    } else if (item.type === 'category') {
+      url = `/?category=${encodeURIComponent(item.id)}`;
     } else if (item.type === 'filteredView') {
       url = `/?view=${item.id}`;
     } else if (item.type === 'utility') {
@@ -313,9 +402,11 @@
             <button
               class="nav-item"
               class:active={isItemActive(item)}
+              class:indent={item.indent}
+              class:category-item={item.type === 'category'}
               onclick={() => selectItem(item)}
             >
-              {#if item.type === 'view' || item.type === 'utility' || item.type === 'filteredView'}
+              {#if item.type === 'view' || item.type === 'utility' || item.type === 'filteredView' || item.type === 'category'}
                 <span class="item-icon"><Icon name={item.icon} size={18} /></span>
               {:else if item.type === 'feed'}
                 {#if item.iconUrl}
@@ -327,6 +418,15 @@
               <span class="item-label">{item.label}</span>
               {#if item.count && item.count > 0}
                 <span class="item-count">{item.count}</span>
+              {/if}
+              {#if item.type === 'feed'}
+                <span
+                  class="source-type-icon {item.sourceClass}"
+                  title={item.sourceLabel}
+                  aria-label={item.sourceLabel}
+                >
+                  <Icon name={item.sourceIcon as any} size={13} strokeWidth={2} />
+                </span>
               {/if}
             </button>
           {/if}
@@ -495,6 +595,22 @@
     font-weight: 500;
   }
 
+  .nav-item.indent {
+    padding-left: 2.25rem;
+  }
+
+  .nav-item.category-item {
+    color: var(--color-text-secondary);
+    font-size: 0.875rem;
+    font-weight: 600;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+  }
+
+  .nav-item.category-item.active {
+    color: var(--color-primary);
+  }
+
   .nav-group {
     display: flex;
     flex-direction: column;
@@ -607,6 +723,39 @@
     padding: 0.125rem 0.5rem;
     border-radius: 999px;
     flex-shrink: 0;
+  }
+
+  .source-type-icon {
+    flex-shrink: 0;
+    width: 1.125rem;
+    height: 1.125rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    color: color-mix(in srgb, var(--source-accent) 72%, var(--color-text-secondary));
+    background: color-mix(in srgb, var(--source-accent) 7%, transparent);
+    border: 1px solid color-mix(in srgb, var(--source-accent) 12%, transparent);
+  }
+
+  .source-type-icon.pill-rss {
+    --source-accent: #9a6a3a;
+  }
+
+  .source-type-icon.pill-shares {
+    --source-accent: #4f7f61;
+  }
+
+  .source-type-icon.pill-documents {
+    --source-accent: #74609a;
+  }
+
+  .source-type-icon.pill-publication {
+    --source-accent: #9a694b;
+  }
+
+  .source-type-icon.pill-collection {
+    --source-accent: #557f89;
   }
 
   .suggestion-accept {
