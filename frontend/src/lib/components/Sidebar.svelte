@@ -242,6 +242,28 @@
     unreadCount: number;
   }
 
+  function sourceSortRank(sub: Subscription): number {
+    if (!sub.sourceType || sub.sourceType === 'rss') return 0;
+    if (sub.sourceType === 'atproto.shares') return 1;
+    if (sub.sourceType === 'atproto.documents' && sub.feedUrl?.startsWith('at://')) return 2;
+    if (sub.sourceType === 'atproto.documents') return 3;
+    return 4;
+  }
+
+  function sortSources(sources: typeof subscriptionsStore.subscriptions) {
+    return [...sources].sort((a, b) => {
+      const rankDiff = sourceSortRank(a) - sourceSortRank(b);
+      if (rankDiff !== 0) return rankDiff;
+      return (a.customTitle || a.title || '').localeCompare(
+        b.customTitle || b.title || '',
+        undefined,
+        {
+          sensitivity: 'base',
+        }
+      );
+    });
+  }
+
   let sourceCategories = $derived.by((): CategoryGroup[] => {
     const byCategory = new Map<string, typeof subscriptionsStore.subscriptions>();
     for (const sub of subscriptionsStore.subscriptions) {
@@ -254,7 +276,7 @@
     return [...byCategory.entries()]
       .map(([name, subs]) => ({
         name,
-        subscriptions: subs,
+        subscriptions: sortSources(subs),
         unreadCount: subs.reduce(
           (sum, s) => sum + (s.id ? (unreadCounts.feedCounts.get(s.id) ?? 0) : 0),
           0
@@ -263,7 +285,9 @@
       .sort((a, b) => a.name.localeCompare(b.name));
   });
 
-  let uncategorizedSources = $derived(subscriptionsStore.subscriptions.filter((s) => !s.category));
+  let uncategorizedSources = $derived(
+    sortSources(subscriptionsStore.subscriptions.filter((s) => !s.category))
+  );
 
   // Split channels: source channels live under Everything, saved channels under Saved
   let sourceChannels = $derived(filteredViewsStore.views.filter((v) => v.mode !== 'saved'));
