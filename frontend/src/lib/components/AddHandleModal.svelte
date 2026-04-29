@@ -538,6 +538,7 @@
           placeholder="@handle or name..."
           bind:value={inputValue}
           oninput={handleInput}
+          autofocus
         />
       </div>
 

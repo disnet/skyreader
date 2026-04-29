@@ -144,6 +144,7 @@
             placeholder="https://example.com/feed.xml"
             bind:value={inputValue}
             disabled={isDiscovering}
+            autofocus
           />
           <button type="submit" class="add-btn" disabled={isDiscovering || !inputValue.trim()}>
             {isDiscovering ? 'Adding...' : 'Add'}
