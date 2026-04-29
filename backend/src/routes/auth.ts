@@ -32,7 +32,7 @@ import {
 } from '../utils/cookies';
 
 // Maximum number of users allowed during beta
-const MAX_USERS = 600;
+const MAX_USERS = 650;
 
 // Granular scopes for Skyreader's custom lexicons
 // Requests write access only to app.skyreader.* record collections
