@@ -26,15 +26,57 @@ import {
  * Used by Sidebar, NavigationDropdown, and page title.
  */
 function createUnreadCountsStore() {
-  // Per-feed unread counts
+  // Per-source unread counts. RSS sources count unread feed articles; ATProto sources
+  // count unread social records scoped to the subscribed author/publication.
   let feedCounts = $derived.by(() => {
     liveDb.articlesVersion;
     itemLabelsStore.readPositions;
+    itemLabelsStore.socialPositions;
+
     const counts = new Map<number, number>();
     for (const sub of subscriptionsStore.subscriptions) {
-      if (sub.id) {
+      if (!sub.id) continue;
+
+      if (!sub.sourceType || sub.sourceType === 'rss') {
         counts.set(sub.id, articlesStore.getUnreadCount(sub.id));
+        continue;
       }
+
+      if (sub.sourceType === 'atproto.shares' && sub.subjectDid) {
+        let count = 0;
+        for (const share of socialStore.shares) {
+          if (
+            share.authorDid === sub.subjectDid &&
+            !itemLabelsStore.isSocialRead(share.recordUri)
+          ) {
+            count++;
+          }
+        }
+        counts.set(sub.id, count);
+        continue;
+      }
+
+      if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
+        let count = 0;
+        for (const doc of socialStore.documents) {
+          if (doc.authorDid !== sub.subjectDid) continue;
+          if (itemLabelsStore.isSocialRead(doc.recordUri)) continue;
+
+          // Publication subscriptions are scoped to a site URI. Freestanding document
+          // subscriptions intentionally exclude documents attached to an ATProto site.
+          if (sub.feedUrl === '__freestanding__') {
+            if (doc.siteUri?.startsWith('at://')) continue;
+          } else if (sub.feedUrl?.startsWith('at://')) {
+            if (doc.siteUri !== sub.feedUrl) continue;
+          }
+
+          count++;
+        }
+        counts.set(sub.id, count);
+        continue;
+      }
+
+      counts.set(sub.id, 0);
     }
     return counts;
   });
