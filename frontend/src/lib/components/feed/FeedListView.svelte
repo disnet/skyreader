@@ -366,6 +366,10 @@
     isLoading={feedViewStore.isLoadingMore}
     onLoadMore={() => feedViewStore.loadMore()}
   />
+
+  {#if preferences.scrollToMarkAsRead && !feedViewStore.hasMore && feedViewStore.currentItems.length > 0}
+    <div class="scroll-mark-overscroll"></div>
+  {/if}
 </div>
 
 <style>
@@ -378,6 +382,11 @@
   .hidden-behind-reader {
     visibility: hidden;
     position: fixed;
+    pointer-events: none;
+  }
+
+  .scroll-mark-overscroll {
+    height: 100vh;
     pointer-events: none;
   }
 </style>

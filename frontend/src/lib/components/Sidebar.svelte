@@ -5,106 +5,70 @@
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { sharesStore } from '$lib/stores/shares.svelte';
-  import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { activityStore } from '$lib/stores/activity.svelte';
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-  import { fetchSingleFeed } from '$lib/services/feedFetcher';
+  import { channelSuggestions } from '$lib/stores/channelSuggestions.svelte';
+  import { savedChannelSuggestions } from '$lib/stores/savedChannelSuggestions.svelte';
+  import type { SavedChannelSuggestion } from '$lib/stores/savedChannelSuggestions.svelte';
+  import { syncAutoRuleChannels } from '$lib/stores/channelAutoUpdate.svelte';
   import { onMount, onDestroy } from 'svelte';
   import AddFeedModal from './AddFeedModal.svelte';
+  import EditFeedModal from './EditFeedModal.svelte';
+  import type { Subscription } from '$lib/types';
   import AddHandleModal from './AddHandleModal.svelte';
   import SaveArticleModal from './SaveArticleModal.svelte';
-  import AddDropdownMenu from './AddDropdownMenu.svelte';
-  import EditFeedModal from './EditFeedModal.svelte';
-  import ContextMenu from './sidebar/ContextMenu.svelte';
+  import FilteredViewModal from './FilteredViewModal.svelte';
+  import AddSourceInput from './AddSourceInput.svelte';
   import NavSection from './sidebar/NavSection.svelte';
-  import FeedItem from './sidebar/FeedItem.svelte';
   import ViewItem from './sidebar/ViewItem.svelte';
-  import SidebarAddFeed from './sidebar/SidebarAddFeed.svelte';
+  import ContextMenu from './sidebar/ContextMenu.svelte';
+  import FeedItem from './sidebar/FeedItem.svelte';
   import Icon from './Icon.svelte';
-  import type { Subscription } from '$lib/types';
+  import Tooltip from './Tooltip.svelte';
+  import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
+  import { fetchSingleFeed } from '$lib/services/feedFetcher';
 
-  async function removeFeed(id: number) {
-    if (confirm('Are you sure you want to remove this subscription?')) {
-      await subscriptionsStore.remove(id);
-    }
+  function handleFeedContextMenu(e: MouseEvent, feedId: number) {
+    e.preventDefault();
+    feedContextMenu = { x: e.clientX, y: e.clientY, feedId };
   }
 
-  // Context menu state (feeds)
-  let contextMenu = $state<{ x: number; y: number; feedId: number } | null>(null);
-  let longPressTimer: ReturnType<typeof setTimeout> | null = null;
-  let longPressTriggered = $state(false);
-
-  // Edit modal state
-  let editingSubscription = $state<Subscription | null>(null);
-  let editModalOpen = $state(false);
+  function closeFeedContextMenu() {
+    feedContextMenu = null;
+  }
 
   function handleEditFeed(feedId: number) {
-    const sub = subscriptionsStore.getById(feedId);
-    if (sub) {
-      editingSubscription = sub;
-      editModalOpen = true;
+    const sub = subscriptionsStore.subscriptions.find((s) => s.id === feedId);
+    if (sub) editingSubscription = sub;
+  }
+
+  async function handleUnsubscribeFeed(feedId: number) {
+    if (confirm('Are you sure you want to unsubscribe from this feed?')) {
+      await subscriptionsStore.remove(feedId);
+      // If we're currently viewing this feed, navigate away
+      if (currentFilter().type === 'feed' && currentFilter().id === feedId) {
+        selectFilter('all');
+      }
     }
-  }
-
-  function closeEditModal() {
-    editModalOpen = false;
-    editingSubscription = null;
-  }
-
-  function handleContextMenu(e: MouseEvent, feedId: number) {
-    e.preventDefault();
-    contextMenu = { x: e.clientX, y: e.clientY, feedId };
-  }
-
-  function handleTouchStart(e: TouchEvent, feedId: number) {
-    longPressTriggered = false;
-    const touch = e.touches[0];
-    longPressTimer = setTimeout(() => {
-      longPressTriggered = true;
-      contextMenu = { x: touch.clientX, y: touch.clientY, feedId };
-    }, 500);
-  }
-
-  function handleTouchEnd(e: TouchEvent) {
-    if (longPressTimer) {
-      clearTimeout(longPressTimer);
-      longPressTimer = null;
-    }
-    if (longPressTriggered) {
-      e.preventDefault();
-    }
-  }
-
-  function handleTouchMove() {
-    if (longPressTimer) {
-      clearTimeout(longPressTimer);
-      longPressTimer = null;
-    }
-  }
-
-  function closeContextMenu() {
-    contextMenu = null;
   }
 
   function handleClickOutside(e: MouseEvent) {
-    if (contextMenu) {
-      closeContextMenu();
-    }
     if (viewContextMenu) {
       closeViewContextMenu();
+    }
+    if (feedContextMenu) {
+      closeFeedContextMenu();
     }
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (contextMenu && e.key === 'Escape') {
-      closeContextMenu();
-    }
-    if (viewContextMenu && e.key === 'Escape') {
-      closeViewContextMenu();
+    if (e.key === 'Escape') {
+      if (viewContextMenu) closeViewContextMenu();
+      if (feedContextMenu) closeFeedContextMenu();
     }
   }
 
@@ -121,7 +85,6 @@
   onDestroy(() => {
     document.removeEventListener('click', handleClickOutside);
     document.removeEventListener('keydown', handleKeydown);
-    if (longPressTimer) clearTimeout(longPressTimer);
     if (viewLongPressTimer) clearTimeout(viewLongPressTimer);
     document.body.classList.remove('sidebar-open-mobile');
   });
@@ -136,8 +99,14 @@
     }
   });
 
-  let feedUnreadCounts = $derived(unreadCounts.feedCounts);
-  let totalUnread = $derived(unreadCounts.totalArticles);
+  // Auto-update channels with autoRules when subscriptions change
+  $effect(() => {
+    // Access subscriptions to trigger reactivity
+    subscriptionsStore.subscriptions;
+    syncAutoRuleChannels();
+  });
+
+  let totalUnread = $derived(unreadCounts.totalArticles + unreadCounts.totalSocial);
 
   // Current filter from URL
   let currentFilter = $derived(() => {
@@ -149,38 +118,35 @@
     const feed = $page.url.searchParams.get('feed');
     const starred = $page.url.searchParams.get('saved');
     const shared = $page.url.searchParams.get('shared');
-    if (view) return { type: 'view' as const, id: parseInt(view) };
+    const category = $page.url.searchParams.get('category');
+    if (view) return { type: 'view' as const, id: view };
     if (feed) return { type: 'feed' as const, id: parseInt(feed) };
+    if (category) return { type: 'category' as const, name: category };
     if (starred) return { type: 'saved' as const };
     if (shared) return { type: 'shared' as const };
     return { type: 'all' as const };
   });
 
-  // Sort and optionally filter subscriptions by unread count (descending)
-  let sortedSubscriptions = $derived(() => {
-    let subs = [...subscriptionsStore.subscriptions].sort((a, b) => {
-      const countA = feedUnreadCounts.get(a.id!) || 0;
-      const countB = feedUnreadCounts.get(b.id!) || 0;
-      return countB - countA;
-    });
-    if (sidebarStore.showOnlyUnread.feeds) {
-      subs = subs.filter((s) => (feedUnreadCounts.get(s.id!) || 0) > 0);
-    }
-    return subs;
-  });
-
-  // Update sorted IDs in store for keyboard navigation
-  $effect(() => {
-    const sorted = sortedSubscriptions();
-    const ids = sorted.map((s) => s.id!).filter((id) => id !== undefined);
-    sidebarStore.setSortedFeedIds(ids);
-  });
-
   // View context menu state
   let viewContextMenu = $state<{ x: number; y: number; viewId: number } | null>(null);
+
+  // Feed context menu state
+  let feedContextMenu = $state<{ x: number; y: number; feedId: number } | null>(null);
+  let editingSubscription = $state<Subscription | null>(null);
   let viewLongPressTimer: ReturnType<typeof setTimeout> | null = null;
   let viewLongPressTriggered = $state(false);
   let renamingViewId = $state<number | null>(null);
+
+  // Channel create/edit modal (via sidebarStore)
+  let channelModalOpen = $derived(sidebarStore.channelModalOpen);
+  let editingChannelId = $derived(sidebarStore.editingChannelId);
+
+  function openChannelModal(
+    viewId: number | null = null,
+    initialType: 'feed' | 'saved' | null = null
+  ) {
+    sidebarStore.openChannelModal(viewId, initialType);
+  }
 
   function handleViewContextMenu(e: MouseEvent, viewId: number) {
     e.preventDefault();
@@ -222,15 +188,43 @@
   }
 
   async function handleDeleteView(viewId: number) {
-    if (confirm('Are you sure you want to delete this view?')) {
+    if (confirm('Are you sure you want to delete this channel?')) {
       await filteredViewsStore.remove(viewId);
     }
+  }
+
+  async function acceptSuggestion(suggestion: (typeof channelSuggestions.suggestions)[0]) {
+    const id = await filteredViewsStore.create({
+      name: suggestion.name,
+      sourceMode: suggestion.sourceMode,
+      sourceKeys: suggestion.sourceKeys,
+      typeFilter: suggestion.typeFilter.length > 0 ? suggestion.typeFilter : undefined,
+      autoRule: suggestion.autoRule,
+      readFilter: 'unread',
+      sortOrder: 'newest',
+    });
+    selectFilter('view', id);
+  }
+
+  async function acceptSavedSuggestion(suggestion: SavedChannelSuggestion) {
+    const id = await filteredViewsStore.create({
+      name: suggestion.name,
+      mode: 'saved',
+      savedSourceFilter: suggestion.savedSourceFilter,
+      savedDomainFilter: suggestion.savedDomainFilter,
+      savedReadingLength: suggestion.savedReadingLength,
+      savedDateFilter: suggestion.savedDateFilter,
+      readFilter: suggestion.readFilter ?? 'unread',
+      sortOrder: suggestion.sortOrder ?? 'newest',
+    });
+    selectFilter('view', id);
   }
 
   function selectFilter(type: string, id?: string | number) {
     const params = new URLSearchParams();
     if (type === 'view' && id) params.set('view', String(id));
     else if (type === 'feed' && id) params.set('feed', String(id));
+    else if (type === 'category' && id) params.set('category', String(id));
     else if (type === 'saved') params.set('saved', 'true');
     else if (type === 'shared') params.set('shared', 'true');
 
@@ -240,6 +234,64 @@
     // Close mobile sidebar after navigation
     sidebarStore.closeMobile();
   }
+
+  // Group subscriptions by category for the Sources section
+  interface CategoryGroup {
+    name: string;
+    subscriptions: typeof subscriptionsStore.subscriptions;
+    unreadCount: number;
+  }
+
+  function sourceSortRank(sub: Subscription): number {
+    if (!sub.sourceType || sub.sourceType === 'rss') return 0;
+    if (sub.sourceType === 'atproto.shares') return 1;
+    if (sub.sourceType === 'atproto.documents' && sub.feedUrl?.startsWith('at://')) return 2;
+    if (sub.sourceType === 'atproto.documents') return 3;
+    return 4;
+  }
+
+  function sortSources(sources: typeof subscriptionsStore.subscriptions) {
+    return [...sources].sort((a, b) => {
+      const rankDiff = sourceSortRank(a) - sourceSortRank(b);
+      if (rankDiff !== 0) return rankDiff;
+      return (a.customTitle || a.title || '').localeCompare(
+        b.customTitle || b.title || '',
+        undefined,
+        {
+          sensitivity: 'base',
+        }
+      );
+    });
+  }
+
+  let sourceCategories = $derived.by((): CategoryGroup[] => {
+    const byCategory = new Map<string, typeof subscriptionsStore.subscriptions>();
+    for (const sub of subscriptionsStore.subscriptions) {
+      if (sub.category) {
+        const existing = byCategory.get(sub.category) || [];
+        existing.push(sub);
+        byCategory.set(sub.category, existing);
+      }
+    }
+    return [...byCategory.entries()]
+      .map(([name, subs]) => ({
+        name,
+        subscriptions: sortSources(subs),
+        unreadCount: subs.reduce(
+          (sum, s) => sum + (s.id ? (unreadCounts.feedCounts.get(s.id) ?? 0) : 0),
+          0
+        ),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  });
+
+  let uncategorizedSources = $derived(
+    sortSources(subscriptionsStore.subscriptions.filter((s) => !s.category))
+  );
+
+  // Split channels: source channels live under Everything, saved channels under Saved
+  let sourceChannels = $derived(filteredViewsStore.views.filter((v) => v.mode !== 'saved'));
+  let savedChannels = $derived(filteredViewsStore.views.filter((v) => v.mode === 'saved'));
 
   function handleBackdropClick() {
     sidebarStore.closeMobile();
@@ -276,34 +328,194 @@
         <span class="tier-badge">{auth.user.tier}</span>
       {/if}
     </a>
-    <AddDropdownMenu />
+    <AddSourceInput />
   </div>
 
   <!-- Navigation items -->
   <nav class="sidebar-nav">
-    <button
-      class="nav-item"
-      class:active={currentFilter().type === 'all'}
-      onclick={() => selectFilter('all')}
-    >
-      <span class="nav-icon"><Icon name="inbox" /></span>
-      <span class="nav-label">All</span>
-      {#if totalUnread > 0}
-        <span class="nav-count">{totalUnread}</span>
+    <!-- Everything: top-level filter + nested source channels -->
+    <div class="nav-group" class:expanded={sidebarStore.expandedSections.everything}>
+      <div class="nav-row" class:active={currentFilter().type === 'all'}>
+        <button class="nav-row-main" onclick={() => selectFilter('all')}>
+          <span class="nav-icon"><Icon name="inbox" /></span>
+          <span class="nav-label">Everything</span>
+        </button>
+        <button
+          class="row-add-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            openChannelModal(null, 'feed');
+          }}
+          title="New channel"
+        >
+          <Icon name="plus" size={14} strokeWidth={2} />
+        </button>
+        {#if totalUnread > 0}
+          <span class="nav-count">{totalUnread}</span>
+        {/if}
+        <button
+          class="row-disclosure-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            sidebarStore.toggleSection('everything');
+          }}
+          aria-label="Toggle channels"
+        >
+          <Icon
+            name={sidebarStore.expandedSections.everything ? 'chevron-down' : 'chevron-right'}
+            size={14}
+            strokeWidth={2.5}
+          />
+        </button>
+      </div>
+      {#if sidebarStore.expandedSections.everything}
+        <div class="nav-children">
+          {#each sourceChannels as view (view.uuid)}
+            <ViewItem
+              {view}
+              isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
+              isRenaming={renamingViewId === view.id}
+              unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
+              onSelect={() => selectFilter('view', view.uuid)}
+              onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+              onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
+              onTouchEnd={handleViewTouchEnd}
+              onTouchMove={handleViewTouchMove}
+              onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+              onRename={async (name) => {
+                if (view.id != null) {
+                  await filteredViewsStore.update(view.id, { name });
+                }
+                renamingViewId = null;
+              }}
+              onRenameCancel={() => (renamingViewId = null)}
+            />
+          {/each}
+          {#each channelSuggestions.suggestions as suggestion (suggestion.id)}
+            <div class="suggestion-item">
+              <button class="suggestion-accept" onclick={() => acceptSuggestion(suggestion)}>
+                <span class="suggestion-icon"><Icon name="plus" size={12} /></span>
+                <span class="suggestion-name">{suggestion.name}</span>
+              </button>
+              <Tooltip text={suggestion.description} />
+              <button
+                class="suggestion-dismiss"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  channelSuggestions.dismiss(suggestion.id);
+                }}
+                title="Dismiss"
+              >
+                <Icon name="x" size={12} />
+              </button>
+            </div>
+          {/each}
+          {#if sourceChannels.length === 0 && channelSuggestions.suggestions.length === 0}
+            <div class="empty-section">No channels yet</div>
+          {/if}
+          <a
+            href="/channels/discover"
+            class="more-suggestions-link"
+            onclick={() => sidebarStore.closeMobile()}
+          >
+            More channel ideas
+            <Icon name="arrow-right" size={12} />
+          </a>
+        </div>
       {/if}
-    </button>
+    </div>
 
-    <button
-      class="nav-item"
-      class:active={currentFilter().type === 'saved'}
-      onclick={() => selectFilter('saved')}
-    >
-      <span class="nav-icon"><Icon name="bookmark" /></span>
-      <span class="nav-label">Saved</span>
-      {#if itemLabelsStore.inboxCount > 0}
-        <span class="nav-count">{itemLabelsStore.inboxCount}</span>
+    <!-- Saved: top-level filter + nested saved channels -->
+    <div class="nav-group" class:expanded={sidebarStore.expandedSections.saved}>
+      <div class="nav-row" class:active={currentFilter().type === 'saved'}>
+        <button class="nav-row-main" onclick={() => selectFilter('saved')}>
+          <span class="nav-icon"><Icon name="bookmark" /></span>
+          <span class="nav-label">Saved</span>
+        </button>
+        <button
+          class="row-add-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            openChannelModal(null, 'saved');
+          }}
+          title="New saved channel"
+        >
+          <Icon name="plus" size={14} strokeWidth={2} />
+        </button>
+        {#if itemLabelsStore.inboxCount > 0}
+          <span class="nav-count">{itemLabelsStore.inboxCount}</span>
+        {/if}
+        <button
+          class="row-disclosure-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            sidebarStore.toggleSection('saved');
+          }}
+          aria-label="Toggle saved channels"
+        >
+          <Icon
+            name={sidebarStore.expandedSections.saved ? 'chevron-down' : 'chevron-right'}
+            size={14}
+            strokeWidth={2.5}
+          />
+        </button>
+      </div>
+      {#if sidebarStore.expandedSections.saved}
+        <div class="nav-children">
+          {#each savedChannels as view (view.uuid)}
+            <ViewItem
+              {view}
+              isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
+              isRenaming={renamingViewId === view.id}
+              unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
+              onSelect={() => selectFilter('view', view.uuid)}
+              onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+              onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
+              onTouchEnd={handleViewTouchEnd}
+              onTouchMove={handleViewTouchMove}
+              onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+              onRename={async (name) => {
+                if (view.id != null) {
+                  await filteredViewsStore.update(view.id, { name });
+                }
+                renamingViewId = null;
+              }}
+              onRenameCancel={() => (renamingViewId = null)}
+            />
+          {/each}
+          {#each savedChannelSuggestions.suggestions as suggestion (suggestion.id)}
+            <div class="suggestion-item">
+              <button class="suggestion-accept" onclick={() => acceptSavedSuggestion(suggestion)}>
+                <span class="suggestion-icon"><Icon name="plus" size={12} /></span>
+                <span class="suggestion-name">{suggestion.name}</span>
+              </button>
+              <Tooltip text={suggestion.description} />
+              <button
+                class="suggestion-dismiss"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  savedChannelSuggestions.dismiss(suggestion.id);
+                }}
+                title="Dismiss"
+              >
+                <Icon name="x" size={12} />
+              </button>
+            </div>
+          {/each}
+          {#if savedChannels.length === 0 && savedChannelSuggestions.suggestions.length === 0}
+            <div class="empty-section">No saved channels yet</div>
+          {/if}
+          <a
+            href="/channels/discover"
+            class="more-suggestions-link"
+            onclick={() => sidebarStore.closeMobile()}
+          >
+            More channel ideas
+            <Icon name="arrow-right" size={12} />
+          </a>
+        </div>
       {/if}
-    </button>
+    </div>
 
     <button
       class="nav-item"
@@ -317,6 +529,16 @@
       {/if}
     </button>
 
+    <!-- Bottom nav -->
+    <a
+      href="/sources"
+      class="nav-item nav-link"
+      class:active={$page.url.pathname === '/sources'}
+      onclick={() => sidebarStore.closeMobile()}
+    >
+      <span class="nav-icon"><Icon name="rss" /></span>
+      <span class="nav-label">Manage Sources</span>
+    </a>
     <a
       href="/activity"
       class="nav-item nav-link"
@@ -340,64 +562,10 @@
       <span class="nav-label">Settings</span>
     </a>
 
-    <a
-      href="https://github.com/disnet/skyreader/issues"
-      class="nav-item nav-link"
-      target="_blank"
-      rel="noopener noreferrer"
-    >
-      <span class="nav-icon"><Icon name="message-circle" /></span>
-      <span class="nav-label">Feedback</span>
-    </a>
-
-    <div class="nav-separator"></div>
-
-    <!-- Custom views -->
-    {#each filteredViewsStore.views as view (view.id)}
-      <ViewItem
-        {view}
-        isActive={currentFilter().type === 'view' && currentFilter().id === view.id}
-        isRenaming={renamingViewId === view.id}
-        onSelect={() => selectFilter('view', view.id)}
-        onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-        onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
-        onTouchEnd={handleViewTouchEnd}
-        onTouchMove={handleViewTouchMove}
-        onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-        onRename={async (name) => {
-          if (view.id != null) {
-            await filteredViewsStore.update(view.id, { name });
-          }
-          renamingViewId = null;
-        }}
-        onRenameCancel={() => (renamingViewId = null)}
-      />
-    {/each}
-
-    <button
-      class="nav-item new-view-btn"
-      onclick={async () => {
-        const id = await filteredViewsStore.create({
-          name: 'new view',
-          sourceMode: 'include',
-          sourceKeys: [],
-          readFilter: 'unread',
-          sortOrder: 'newest',
-        });
-        selectFilter('view', id);
-        feedViewStore.setFilterToolbarOpen(true);
-        feedViewStore.setSourcePopoverOpen(true);
-      }}
-    >
-      <span class="nav-icon"><Icon name="plus" size={16} /></span>
-      <span class="nav-label">New view</span>
-    </button>
-
-    <div class="nav-separator"></div>
-
-    <!-- Feeds section -->
+    <!-- Sources section -->
+    <div class="sources-separator"></div>
     <NavSection
-      title="Feeds"
+      title="Sources"
       icon="rss"
       isExpanded={sidebarStore.expandedSections.feeds}
       showOnlyUnread={sidebarStore.showOnlyUnread.feeds}
@@ -405,40 +573,104 @@
       onToggle={() => sidebarStore.toggleSection('feeds')}
       onLabelClick={() => sidebarStore.toggleSection('feeds')}
       onUnreadToggle={() => sidebarStore.toggleShowOnlyUnread('feeds')}
-      onAdd={() => sidebarStore.openAddFeedModal()}
     >
-      <SidebarAddFeed />
-      {#each sortedSubscriptions() as sub (sub.id)}
-        {@const count = feedUnreadCounts.get(sub.id!) || 0}
-        {@const status = sub.feedUrl ? feedStatusStore.getStatus(sub.feedUrl) : undefined}
-        {@const loadingState =
-          status?.status === 'pending'
-            ? 'loading'
+      {#if sourceCategories.length > 0 || uncategorizedSources.length > 0}
+        {#each sourceCategories as cat (cat.name)}
+          <div class="category-group">
+            <div class="category-header">
+              <button
+                class="category-expand-btn"
+                onclick={() => sidebarStore.toggleCategory(cat.name)}
+                aria-label={sidebarStore.isCategoryExpanded(cat.name) ? 'Collapse' : 'Expand'}
+              >
+                <Icon
+                  name={sidebarStore.isCategoryExpanded(cat.name)
+                    ? 'chevron-down'
+                    : 'chevron-right'}
+                  size={12}
+                  strokeWidth={2.5}
+                />
+              </button>
+              <button
+                class="category-name-btn"
+                class:active={currentFilter().type === 'category' &&
+                  currentFilter().name === cat.name}
+                onclick={() => selectFilter('category', cat.name)}
+              >
+                <Icon name="folder" size={14} />
+                <span class="category-label">{cat.name}</span>
+              </button>
+              {#if cat.unreadCount > 0}
+                <span class="category-count">{cat.unreadCount}</span>
+              {/if}
+            </div>
+            {#if sidebarStore.isCategoryExpanded(cat.name)}
+              <div class="category-items">
+                {#each cat.subscriptions as sub (sub.rkey)}
+                  {@const feedUrl = sub.feedUrl ?? ''}
+                  {@const status = feedStatusStore.getStatus(feedUrl)}
+                  {@const loadingState = !feedUrl
+                    ? 'ready'
+                    : status?.status === 'error' || status?.status === 'circuit-open'
+                      ? 'error'
+                      : status?.status === 'pending'
+                        ? 'loading'
+                        : 'ready'}
+                  {@const subUnread = sub.id ? (unreadCounts.feedCounts.get(sub.id) ?? 0) : 0}
+                  {#if !sidebarStore.showOnlyUnread.feeds || subUnread > 0}
+                    <FeedItem
+                      subscription={sub}
+                      unreadCount={subUnread}
+                      isActive={currentFilter().type === 'feed' && currentFilter().id === sub.id}
+                      {loadingState}
+                      errorMessage={status?.errorMessage ?? ''}
+                      errorDetails={feedStatusStore.getErrorDetails(feedUrl)}
+                      onSelect={() => sub.id && selectFilter('feed', sub.id)}
+                      onContextMenu={(e) => sub.id && handleFeedContextMenu(e, sub.id)}
+                      onTouchStart={() => {}}
+                      onTouchEnd={() => {}}
+                      onTouchMove={() => {}}
+                      onRetry={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
+                      onMoreClick={(e) => sub.id && handleFeedContextMenu(e, sub.id)}
+                    />
+                  {/if}
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/each}
+        {#each uncategorizedSources as sub (sub.rkey)}
+          {@const feedUrl = sub.feedUrl ?? ''}
+          {@const status = feedStatusStore.getStatus(feedUrl)}
+          {@const loadingState = !feedUrl
+            ? 'ready'
             : status?.status === 'error' || status?.status === 'circuit-open'
               ? 'error'
-              : undefined}
-        {@const feedError = sub.feedUrl ? feedStatusStore.getStatusMessage(sub.feedUrl) : undefined}
-        {@const errorDetails = sub.feedUrl
-          ? feedStatusStore.getErrorDetails(sub.feedUrl)
-          : undefined}
-        <FeedItem
-          subscription={sub}
-          unreadCount={count}
-          isActive={currentFilter().type === 'feed' && currentFilter().id === sub.id}
-          {loadingState}
-          errorMessage={feedError || undefined}
-          {errorDetails}
-          onSelect={() => selectFilter('feed', sub.id)}
-          onContextMenu={(e) => sub.id && handleContextMenu(e, sub.id)}
-          onTouchStart={(e) => sub.id && handleTouchStart(e, sub.id)}
-          onTouchEnd={handleTouchEnd}
-          onTouchMove={handleTouchMove}
-          onRetry={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
-          onMoreClick={(e) => sub.id && handleContextMenu(e, sub.id)}
-        />
+              : status?.status === 'pending'
+                ? 'loading'
+                : 'ready'}
+          {@const subUnread = sub.id ? (unreadCounts.feedCounts.get(sub.id) ?? 0) : 0}
+          {#if !sidebarStore.showOnlyUnread.feeds || subUnread > 0}
+            <FeedItem
+              subscription={sub}
+              unreadCount={subUnread}
+              isActive={currentFilter().type === 'feed' && currentFilter().id === sub.id}
+              {loadingState}
+              errorMessage={status?.errorMessage ?? ''}
+              errorDetails={feedStatusStore.getErrorDetails(feedUrl)}
+              onSelect={() => sub.id && selectFilter('feed', sub.id)}
+              onContextMenu={(e) => sub.id && handleFeedContextMenu(e, sub.id)}
+              onTouchStart={() => {}}
+              onTouchEnd={() => {}}
+              onTouchMove={() => {}}
+              onRetry={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
+              onMoreClick={(e) => sub.id && handleFeedContextMenu(e, sub.id)}
+            />
+          {/if}
+        {/each}
       {:else}
-        <div class="empty-section">No subscriptions</div>
-      {/each}
+        <div class="empty-section">No sources yet</div>
+      {/if}
     </NavSection>
   </nav>
 </aside>
@@ -446,11 +678,13 @@
 <AddFeedModal
   open={sidebarStore.addFeedModalOpen}
   onclose={() => sidebarStore.closeAddFeedModal()}
+  initialValue={sidebarStore.addSourceInitialValue}
 />
 
 <AddHandleModal
   open={sidebarStore.addHandleModalOpen}
   onclose={() => sidebarStore.closeAddHandleModal()}
+  initialValue={sidebarStore.addSourceInitialValue}
 />
 
 <SaveArticleModal
@@ -458,29 +692,43 @@
   onclose={() => sidebarStore.closeSaveArticleModal()}
 />
 
-{#if contextMenu}
-  {@const feedId = contextMenu.feedId}
-  <ContextMenu
-    x={contextMenu.x}
-    y={contextMenu.y}
-    onEdit={() => handleEditFeed(feedId)}
-    onDelete={() => removeFeed(feedId)}
-    onClose={closeContextMenu}
-  />
-{/if}
-
-<EditFeedModal open={editModalOpen} subscription={editingSubscription} onclose={closeEditModal} />
+<FilteredViewModal
+  open={channelModalOpen}
+  editingViewId={editingChannelId}
+  initialChannelType={sidebarStore.initialChannelType}
+  onclose={() => sidebarStore.closeChannelModal()}
+  oncreated={(id) => selectFilter('view', id)}
+  ondeleted={() => selectFilter('all')}
+/>
 
 {#if viewContextMenu}
   {@const viewId = viewContextMenu.viewId}
   <ContextMenu
     x={viewContextMenu.x}
     y={viewContextMenu.y}
+    onEdit={() => openChannelModal(viewId)}
     onRename={() => handleRenameView(viewId)}
     onDelete={() => handleDeleteView(viewId)}
     onClose={closeViewContextMenu}
   />
 {/if}
+
+{#if feedContextMenu}
+  <ContextMenu
+    x={feedContextMenu.x}
+    y={feedContextMenu.y}
+    onEdit={() => handleEditFeed(feedContextMenu!.feedId)}
+    onDelete={() => handleUnsubscribeFeed(feedContextMenu!.feedId)}
+    onClose={closeFeedContextMenu}
+    deleteLabel="Unsubscribe"
+  />
+{/if}
+
+<EditFeedModal
+  open={editingSubscription !== null}
+  subscription={editingSubscription}
+  onclose={() => (editingSubscription = null)}
+/>
 
 <style>
   .sidebar-backdrop {
@@ -597,6 +845,104 @@
     transition: background-color 0.15s;
   }
 
+  .nav-group {
+    border-radius: 12px;
+    transition: background-color 0.15s;
+  }
+
+  .nav-group + .nav-group {
+    margin-top: 0.5rem;
+  }
+
+  .nav-group.expanded {
+    background-color: rgba(0, 0, 0, 0.025);
+    padding-bottom: 0.25rem;
+  }
+
+  .nav-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border-radius: 12px;
+    color: var(--color-text);
+    transition: background-color 0.15s;
+  }
+
+  .nav-row:hover {
+    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+  }
+
+  .nav-row.active {
+    background-color: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
+    color: var(--color-primary);
+  }
+
+  .nav-row-main {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex: 1;
+    min-width: 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    padding: 0;
+  }
+
+  .nav-row.active .nav-count {
+    color: var(--color-primary);
+  }
+
+  .row-add-btn,
+  .row-disclosure-btn {
+    flex-shrink: 0;
+    width: 1.25rem;
+    height: 1.25rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+  }
+
+  .row-add-btn {
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  .nav-row:hover .row-add-btn {
+    opacity: 0.6;
+  }
+
+  .row-add-btn:hover {
+    opacity: 1 !important;
+    color: var(--color-primary);
+  }
+
+  .row-disclosure-btn:hover {
+    color: var(--color-text);
+  }
+
+  .nav-row.active .row-disclosure-btn {
+    color: var(--color-primary);
+  }
+
+  .nav-children {
+    margin-top: 0.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
   .nav-item:hover {
     background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
   }
@@ -636,6 +982,12 @@
     color: var(--color-primary);
   }
 
+  .sources-separator {
+    height: 1px;
+    background: var(--color-border);
+    margin: 0.75rem 0.75rem;
+  }
+
   .empty-section {
     padding: 0.5rem 0.75rem;
     font-size: 0.8125rem;
@@ -643,12 +995,164 @@
     font-style: italic;
   }
 
-  .new-view-btn {
-    color: var(--color-text-secondary);
+  .suggestion-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
   }
 
-  .new-view-btn:hover {
+  .suggestion-accept {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    color: var(--color-text-secondary);
+    font: inherit;
+    font-size: 0.875rem;
+    text-align: left;
+    transition: color 0.15s;
+  }
+
+  .suggestion-accept:hover {
+    color: var(--color-primary);
+  }
+
+  .suggestion-icon {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1px dashed currentColor;
+  }
+
+  .suggestion-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+
+  .more-suggestions-link {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    transition: color 0.15s;
+  }
+
+  .more-suggestions-link:hover {
+    color: var(--color-primary);
+  }
+
+  .suggestion-dismiss {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    padding: 0;
+    opacity: 0;
+    transition: opacity 0.15s;
+    border-radius: 4px;
+  }
+
+  .suggestion-item:hover .suggestion-dismiss {
+    opacity: 0.6;
+  }
+
+  .suggestion-dismiss:hover {
+    opacity: 1 !important;
     color: var(--color-text);
+  }
+
+  .category-group {
+    margin-bottom: 2px;
+  }
+
+  .category-items {
+    padding-left: 1.25rem;
+  }
+
+  .category-header {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.375rem 0.5rem;
+    border-radius: 8px;
+  }
+
+  .category-expand-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.125rem;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .category-name-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex: 1;
+    min-width: 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.125rem 0.25rem;
+    border-radius: 6px;
+    font: inherit;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    transition:
+      color 0.15s,
+      background-color 0.15s;
+  }
+
+  .category-name-btn:hover {
+    color: var(--color-text);
+    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+  }
+
+  .category-name-btn.active {
+    color: var(--color-primary);
+    background-color: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
+  }
+
+  .category-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .category-count {
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    padding-right: 0.25rem;
   }
 
   .nav-separator {
@@ -679,6 +1183,14 @@
   @media (prefers-color-scheme: dark) {
     .nav-item:hover {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
+    }
+
+    .nav-row:hover {
+      background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
+    }
+
+    .nav-group.expanded {
+      background-color: rgba(255, 255, 255, 0.025);
     }
   }
 </style>

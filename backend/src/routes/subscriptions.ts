@@ -23,7 +23,8 @@ async function maybePushToPds(
   subjectDid?: string,
   collectionNsid?: string,
   customTitle?: string,
-  customIconUrl?: string
+  customIconUrl?: string,
+  category?: string
 ): Promise<void> {
   console.log('[PDS Sync] maybePushToPds called:', {
     pdsSyncEnabled,
@@ -54,7 +55,8 @@ async function maybePushToPds(
       subjectDid,
       collectionNsid,
       customTitle,
-      customIconUrl
+      customIconUrl,
+      category
     );
     if (result.success) {
       console.log('[PDS Sync] Successfully pushed subscription to PDS');
@@ -67,23 +69,22 @@ async function maybePushToPds(
 }
 
 /**
- * Helper to delete subscription from PDS in background (fire and forget)
- * Accepts pdsSyncEnabled to avoid redundant DB lookups
+ * Helper to delete subscription from PDS.
+ *
+ * Deletes must be awaited by the HTTP handler. If we only schedule them with waitUntil,
+ * a sync that starts immediately after the response can pull the still-existing PDS
+ * record back into the local cache, making the unsubscribe appear to do nothing.
  */
-async function maybeDeleteFromPds(
+async function deleteFromPdsIfEnabled(
   session: Session,
   pdsSyncEnabled: boolean,
   rkey: string
 ): Promise<void> {
   if (!pdsSyncEnabled) return;
 
-  try {
-    const result = await deleteSubscriptionFromPds(session, rkey);
-    if (!result.success) {
-      console.error(`[PDS Sync] Failed to delete subscription: ${result.error}`);
-    }
-  } catch (error) {
-    console.error('[PDS Sync] Error deleting subscription:', error);
+  const result = await deleteSubscriptionFromPds(session, rkey);
+  if (!result.success) {
+    throw new Error(`Failed to delete subscription from PDS: ${result.error}`);
   }
 }
 
@@ -490,8 +491,8 @@ export async function handleCreateSubscription(
     await env.DB.prepare(
       `
 			INSERT OR REPLACE INTO subscriptions_cache
-			(user_did, record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url)
-			VALUES (?, ?, ?, ?, unixepoch(), ?, ?, ?, ?)
+			(user_did, record_uri, feed_url, title, category, created_at, source_type, subject_did, custom_title, custom_icon_url)
+			VALUES (?, ?, ?, ?, ?, unixepoch(), ?, ?, ?, ?)
 			`
     )
       .bind(
@@ -499,6 +500,7 @@ export async function handleCreateSubscription(
         recordUri,
         feedUrl || '',
         title || null,
+        category || null,
         sourceType || null,
         subjectDid || null,
         customTitle || null,
@@ -540,7 +542,8 @@ export async function handleCreateSubscription(
         subjectDid,
         collectionNsid,
         customTitle,
-        customIconUrl
+        customIconUrl,
+        category
       )
     );
 
@@ -603,14 +606,14 @@ export async function handleDeleteSubscription(
   }
 
   try {
+    // Delete from PDS before removing the local cache/returning so the next sync cannot
+    // re-import the record.
+    const settings = await getUserSettings(env, session.did);
+    await deleteFromPdsIfEnabled(session, settings.pdsSyncEnabled, rkey);
+
     await env.DB.prepare('DELETE FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?')
       .bind(session.did, `%/${rkey}`)
       .run();
-
-    // Delete from PDS in background if sync is enabled (fire and forget)
-    // Fetch settings once here to avoid redundant lookups in the helper
-    const settings = await getUserSettings(env, session.did);
-    ctx.waitUntil(maybeDeleteFromPds(session, settings.pdsSyncEnabled, rkey));
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json' },
@@ -656,7 +659,11 @@ export async function handleUpdateSubscription(
     return invalidRkeyResponse();
   }
 
-  let body: { customTitle?: string | null; customIconUrl?: string | null };
+  let body: {
+    customTitle?: string | null;
+    customIconUrl?: string | null;
+    category?: string | null;
+  };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -669,7 +676,7 @@ export async function handleUpdateSubscription(
   try {
     // Read existing row to get full record for PDS push
     const existing = await env.DB.prepare(
-      `SELECT feed_url, title, source_type, subject_did, custom_title, custom_icon_url
+      `SELECT feed_url, title, source_type, subject_did, custom_title, custom_icon_url, category
        FROM subscriptions_cache
        WHERE user_did = ? AND record_uri LIKE ?`
     )
@@ -681,6 +688,7 @@ export async function handleUpdateSubscription(
         subject_did: string | null;
         custom_title: string | null;
         custom_icon_url: string | null;
+        category: string | null;
       }>();
 
     if (!existing) {
@@ -695,12 +703,13 @@ export async function handleUpdateSubscription(
       body.customTitle === null ? null : (body.customTitle ?? existing.custom_title);
     const newCustomIconUrl =
       body.customIconUrl === null ? null : (body.customIconUrl ?? existing.custom_icon_url);
+    const newCategory = body.category === null ? null : (body.category ?? existing.category);
 
     await env.DB.prepare(
-      `UPDATE subscriptions_cache SET custom_title = ?, custom_icon_url = ?
+      `UPDATE subscriptions_cache SET custom_title = ?, custom_icon_url = ?, category = ?
        WHERE user_did = ? AND record_uri LIKE ?`
     )
-      .bind(newCustomTitle, newCustomIconUrl, session.did, `%/${rkey}`)
+      .bind(newCustomTitle, newCustomIconUrl, newCategory, session.did, `%/${rkey}`)
       .run();
 
     // Push full record to PDS in background
@@ -717,7 +726,8 @@ export async function handleUpdateSubscription(
         existing.subject_did || undefined,
         undefined,
         newCustomTitle || undefined,
-        newCustomIconUrl || undefined
+        newCustomIconUrl || undefined,
+        newCategory || undefined
       )
     );
 
@@ -845,10 +855,10 @@ export async function handleBulkCreateSubscriptions(
         env.DB.prepare(
           `
 					INSERT OR REPLACE INTO subscriptions_cache
-					(user_did, record_uri, feed_url, title, created_at)
-					VALUES (?, ?, ?, ?, unixepoch())
+					(user_did, record_uri, feed_url, title, category, created_at)
+					VALUES (?, ?, ?, ?, ?, unixepoch())
 					`
-        ).bind(session.did, recordUri, sub.feedUrl, sub.title || null)
+        ).bind(session.did, recordUri, sub.feedUrl, sub.title || null, sub.category || null)
       );
 
       feedsToFetch.push(sub.feedUrl);
@@ -893,6 +903,157 @@ export async function handleBulkCreateSubscriptions(
     console.error('Bulk create subscriptions error:', error);
     const errorMessage =
       error instanceof Error ? `${error.name}: ${error.message}` : 'Failed to create subscriptions';
+    return new Response(JSON.stringify({ error: errorMessage }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// POST /api/subscriptions/bulk-update - Bulk update subscription fields
+export async function handleBulkUpdateSubscriptions(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  let body: {
+    rkeys: string[];
+    updates: {
+      customTitle?: string | null;
+      customIconUrl?: string | null;
+      category?: string | null;
+    };
+  };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const { rkeys, updates } = body;
+
+  if (!Array.isArray(rkeys) || rkeys.length === 0) {
+    return new Response(JSON.stringify({ error: 'rkeys array is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  if (!updates || typeof updates !== 'object') {
+    return new Response(JSON.stringify({ error: 'updates object is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  for (const rkey of rkeys) {
+    if (!isValidRkey(rkey)) {
+      return new Response(JSON.stringify({ error: `Invalid rkey format: ${rkey}` }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
+
+  try {
+    // Build SET clause from provided updates
+    const setClauses: string[] = [];
+    const setValues: (string | null)[] = [];
+
+    if (updates.customTitle !== undefined) {
+      setClauses.push('custom_title = ?');
+      setValues.push(updates.customTitle);
+    }
+    if (updates.customIconUrl !== undefined) {
+      setClauses.push('custom_icon_url = ?');
+      setValues.push(updates.customIconUrl);
+    }
+    if (updates.category !== undefined) {
+      setClauses.push('category = ?');
+      setValues.push(updates.category);
+    }
+
+    if (setClauses.length === 0) {
+      return new Response(JSON.stringify({ success: true, updated: 0 }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const batchStatements = rkeys.map((rkey) =>
+      env.DB.prepare(
+        `UPDATE subscriptions_cache SET ${setClauses.join(', ')}
+         WHERE user_did = ? AND record_uri LIKE ?`
+      ).bind(...setValues, session.did, `%/${rkey}`)
+    );
+
+    await env.DB.batch(batchStatements);
+
+    // Push updated records to PDS in background
+    const settings = await getUserSettings(env, session.did);
+    if (settings.pdsSyncEnabled) {
+      const rows = await env.DB.prepare(
+        `SELECT record_uri, feed_url, title, source_type, subject_did, custom_title, custom_icon_url, category
+         FROM subscriptions_cache
+         WHERE user_did = ? AND (${rkeys.map(() => 'record_uri LIKE ?').join(' OR ')})`
+      )
+        .bind(session.did, ...rkeys.map((rk) => `%/${rk}`))
+        .all<{
+          record_uri: string;
+          feed_url: string;
+          title: string | null;
+          source_type: string | null;
+          subject_did: string | null;
+          custom_title: string | null;
+          custom_icon_url: string | null;
+          category: string | null;
+        }>();
+
+      for (const row of rows.results) {
+        const rkey = row.record_uri.split('/').pop()!;
+        ctx.waitUntil(
+          maybePushToPds(
+            session,
+            true,
+            rkey,
+            row.feed_url,
+            row.title || undefined,
+            undefined,
+            row.source_type || undefined,
+            row.subject_did || undefined,
+            undefined,
+            row.custom_title || undefined,
+            row.custom_icon_url || undefined,
+            row.category || undefined
+          )
+        );
+      }
+    }
+
+    return new Response(JSON.stringify({ success: true, updated: rkeys.length }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Bulk update subscriptions error:', error);
+    const errorMessage =
+      error instanceof Error ? `${error.name}: ${error.message}` : 'Failed to update subscriptions';
     return new Response(JSON.stringify({ error: errorMessage }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },

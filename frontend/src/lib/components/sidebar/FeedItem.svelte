@@ -4,6 +4,7 @@
   import type { ErrorDetails } from '$lib/stores/feedStatus.svelte';
   import FeedErrorPopover from './FeedErrorPopover.svelte';
   import Icon from '../Icon.svelte';
+  import { getSourceDisplay } from '$lib/utils/sourceDisplay';
 
   type LoadingState = 'loading' | 'error' | 'ready';
 
@@ -42,6 +43,8 @@
   }: Props = $props();
 
   let isAtProto = $derived(subscription.sourceType?.startsWith('atproto.') ?? false);
+  let sourceDisplay = $derived(getSourceDisplay(subscription.sourceType, subscription.feedUrl));
+  let sourceLabel = $derived(sourceDisplay.label === 'Publication' ? 'Pub' : sourceDisplay.label);
 
   let faviconUrl = $derived(
     subscription.customIconUrl ||
@@ -116,7 +119,7 @@
 
 <div class="feed-item-wrapper">
   <button
-    class="nav-item sub-item feed-item"
+    class="nav-item sub-item feed-item {sourceDisplay.pillClass}"
     class:active={isActive}
     class:has-error={loadingState === 'error'}
     onclick={onSelect}
@@ -168,6 +171,7 @@
     >
       <Icon name="more-horizontal" size={14} />
     </span>
+    <span class="source-type-pill" title={sourceDisplay.label}>{sourceLabel}</span>
     {#if loadingState === 'error'}
       <span
         class="retry-btn"
@@ -271,6 +275,39 @@
     -webkit-touch-callout: none;
     -webkit-user-select: none;
     user-select: none;
+  }
+
+  .feed-item.pill-rss {
+    --source-accent: #9a6a3a;
+  }
+
+  .feed-item.pill-shares {
+    --source-accent: #4f7f61;
+  }
+
+  .feed-item.pill-documents {
+    --source-accent: #74609a;
+  }
+
+  .feed-item.pill-publication {
+    --source-accent: #9a694b;
+  }
+
+  .feed-item.pill-collection {
+    --source-accent: #557f89;
+  }
+
+  .source-type-pill {
+    flex-shrink: 0;
+    font-size: 0.625rem;
+    font-weight: 650;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    padding: 0.1875rem 0.3125rem;
+    border-radius: 999px;
+    color: color-mix(in srgb, var(--source-accent) 78%, var(--color-text-secondary));
+    background: color-mix(in srgb, var(--source-accent) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--source-accent) 14%, transparent);
   }
 
   .feed-favicon {

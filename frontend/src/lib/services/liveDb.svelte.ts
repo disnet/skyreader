@@ -91,10 +91,17 @@ class LiveDatabase {
    */
   async updateSubscriptionLocal(
     id: number,
-    updates: { customTitle?: string; customIconUrl?: string }
+    updates: { customTitle?: string; customIconUrl?: string; category?: string | null }
   ): Promise<void> {
-    await safeUpdate(db.subscriptions, id, updates);
-    this._subscriptions = this._subscriptions.map((s) => (s.id === id ? { ...s, ...updates } : s));
+    // Dexie doesn't accept null — use undefined to clear fields
+    const dexieUpdates: Record<string, string | undefined> = {};
+    if (updates.customTitle !== undefined) dexieUpdates.customTitle = updates.customTitle;
+    if (updates.customIconUrl !== undefined) dexieUpdates.customIconUrl = updates.customIconUrl;
+    if (updates.category !== undefined) dexieUpdates.category = updates.category ?? undefined;
+    await safeUpdate(db.subscriptions, id, dexieUpdates);
+    this._subscriptions = this._subscriptions.map((s) =>
+      s.id === id ? { ...s, ...dexieUpdates } : s
+    );
     this.subscriptionsVersion++;
   }
 
@@ -258,6 +265,13 @@ class LiveDatabase {
    */
   getSubscriptionById(id: number): Subscription | undefined {
     return this._subscriptions.find((s) => s.id === id);
+  }
+
+  /**
+   * Get a subscription by rkey
+   */
+  getSubscriptionByRkey(rkey: string): Subscription | undefined {
+    return this._subscriptions.find((s) => s.rkey === rkey);
   }
 
   /**

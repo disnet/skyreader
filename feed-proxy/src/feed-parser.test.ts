@@ -277,6 +277,173 @@ describe('parseFeed', () => {
 		});
 	});
 
+	describe('entity decoding', () => {
+		it('decodes entities in URLs with query parameters', () => {
+			const rss = `<?xml version="1.0"?>
+<rss version="2.0">
+  <channel>
+    <title>Test</title>
+    <link>https://example.com</link>
+    <item>
+      <title>Post</title>
+      <link>https://example.com/post?a=1&amp;b=2&amp;c=3</link>
+      <guid>https://example.com/post?a=1&amp;b=2&amp;c=3</guid>
+    </item>
+  </channel>
+</rss>`;
+
+			const result = parseFeed(rss, 'https://example.com/feed.xml');
+
+			expect(result.items[0].url).toBe('https://example.com/post?a=1&b=2&c=3');
+			expect(result.items[0].guid).toBe('https://example.com/post?a=1&b=2&c=3');
+		});
+
+		it('decodes entities in Atom link href attributes', () => {
+			const atom = `<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Test</title>
+  <link href="https://example.com?x=1&amp;y=2" rel="alternate"/>
+  <entry>
+    <title>Post</title>
+    <link href="https://example.com/post?a=1&amp;b=2" rel="alternate"/>
+    <id>post-1</id>
+    <updated>2024-01-01T12:00:00Z</updated>
+  </entry>
+</feed>`;
+
+			const result = parseFeed(atom, 'https://example.com/feed.xml');
+
+			expect(result.siteUrl).toBe('https://example.com?x=1&y=2');
+			expect(result.items[0].url).toBe('https://example.com/post?a=1&b=2');
+		});
+
+		it('decodes entities in media:content image URLs', () => {
+			const rss = `<?xml version="1.0"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <title>Test</title>
+    <link>https://example.com</link>
+    <item>
+      <title>Post</title>
+      <link>https://example.com/post</link>
+      <guid>post-1</guid>
+      <media:content url="https://cdn.example.com/img?id=123&amp;w=800" type="image/jpeg"/>
+    </item>
+  </channel>
+</rss>`;
+
+			const result = parseFeed(rss, 'https://example.com/feed.xml');
+
+			expect(result.items[0].imageUrl).toBe('https://cdn.example.com/img?id=123&w=800');
+		});
+
+		it('handles feeds with many entities without hitting expansion limits', () => {
+			// Simulate a content-heavy feed like Hugo generates with many &amp;rsquo; etc.
+			const entityHeavyContent = Array.from(
+				{ length: 200 },
+				(_, i) => `Item ${i} with &amp;rsquo; and &amp;ldquo;quotes&amp;rdquo; and &amp;hellip;`
+			).join(' ');
+
+			const rss = `<?xml version="1.0"?>
+<rss version="2.0">
+  <channel>
+    <title>Entity Heavy Feed</title>
+    <link>https://example.com</link>
+    <item>
+      <title>Post with lots of entities</title>
+      <link>https://example.com/post</link>
+      <guid>entity-post</guid>
+      <description>${entityHeavyContent}</description>
+    </item>
+  </channel>
+</rss>`;
+
+			// Should not throw "Entity expansion limit exceeded"
+			const result = parseFeed(rss, 'https://example.com/feed.xml');
+
+			expect(result.items).toHaveLength(1);
+			// &amp;rsquo; decodes to &rsquo; (XML entity &amp; → &, leaving the HTML entity name)
+			expect(result.items[0].summary).toContain('&rsquo;');
+			expect(result.items[0].summary).toContain('&ldquo;');
+		});
+
+		it('decodes numeric and hex entities', () => {
+			const rss = `<?xml version="1.0"?>
+<rss version="2.0">
+  <channel>
+    <title>Test</title>
+    <link>https://example.com</link>
+    <item>
+      <title>Caf&#233; &#x2014; Recipe</title>
+      <link>https://example.com/post</link>
+      <guid>numeric-post</guid>
+    </item>
+  </channel>
+</rss>`;
+
+			const result = parseFeed(rss, 'https://example.com/feed.xml');
+
+			expect(result.items[0].title).toBe('Caf\u00e9 \u2014 Recipe');
+		});
+
+		it('does not double-decode &amp;lt; into <', () => {
+			const rss = `<?xml version="1.0"?>
+<rss version="2.0">
+  <channel>
+    <title>Test</title>
+    <link>https://example.com</link>
+    <item>
+      <title>Use &amp;lt;div&amp;gt; for layout</title>
+      <link>https://example.com/post</link>
+      <guid>double-decode-post</guid>
+    </item>
+  </channel>
+</rss>`;
+
+			const result = parseFeed(rss, 'https://example.com/feed.xml');
+
+			expect(result.items[0].title).toBe('Use &lt;div&gt; for layout');
+		});
+
+		it('decodes high Unicode code points (emoji)', () => {
+			const rss = `<?xml version="1.0"?>
+<rss version="2.0">
+  <channel>
+    <title>Test</title>
+    <link>https://example.com</link>
+    <item>
+      <title>Hello &#128512; World &#x1F600;</title>
+      <link>https://example.com/post</link>
+      <guid>emoji-post</guid>
+    </item>
+  </channel>
+</rss>`;
+
+			const result = parseFeed(rss, 'https://example.com/feed.xml');
+
+			expect(result.items[0].title).toBe('Hello \u{1F600} World \u{1F600}');
+		});
+
+		it('decodes entities in RSS siteUrl', () => {
+			const rss = `<?xml version="1.0"?>
+<rss version="2.0">
+  <channel>
+    <title>Test</title>
+    <link>https://example.com/site?lang=en&amp;region=us</link>
+    <item>
+      <title>Post</title>
+      <link>https://example.com/post</link>
+      <guid>post-1</guid>
+    </item>
+  </channel>
+</rss>`;
+
+			const result = parseFeed(rss, 'https://example.com/feed.xml');
+
+			expect(result.siteUrl).toBe('https://example.com/site?lang=en&region=us');
+		});
+	});
+
 	describe('error handling', () => {
 		it('throws on HTML response', () => {
 			const html = '<!DOCTYPE html><html><head><title>Not a feed</title></head></html>';

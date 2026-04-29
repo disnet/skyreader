@@ -6,8 +6,10 @@
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
+  import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { sharesStore } from '$lib/stores/shares.svelte';
   import type { ItemLabelType } from '$lib/types';
   import {
     extractSembleMetadata,
@@ -139,6 +141,138 @@
     feedViewStore.select(index);
   }
 
+  function isValidShareUrl(url: string | null | undefined): url is string {
+    if (!url) return false;
+    try {
+      new URL(url);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function getDocumentShareUrl(item: FeedDisplayItem): string | null {
+    if (item.type !== 'document') return null;
+    if (isValidShareUrl(item.item.canonicalUrl)) return item.item.canonicalUrl;
+    if (isValidShareUrl(item.item.path)) return item.item.path;
+    return null;
+  }
+
+  function canShareItem(item: FeedDisplayItem): boolean {
+    if (item.type === 'article') return isValidShareUrl(item.item.url);
+    if (item.type === 'userShare') return isValidShareUrl(item.article.url);
+    if (item.type === 'share') return isValidShareUrl(item.item.itemUrl);
+    if (item.type === 'document') return getDocumentShareUrl(item) !== null;
+
+    // Saved fallback rows for shares/documents do not include the original author DID,
+    // so sharing them as plain links would lose reshare attribution and use the wrong key.
+    if (item.item.source === 'share' || item.item.source === 'document') return false;
+    if (item.item.contentType === 'share' || item.item.contentType === 'document') return false;
+    return isValidShareUrl(item.item.url);
+  }
+
+  function getSharedKey(item: FeedDisplayItem): string | null {
+    if (!canShareItem(item)) return null;
+    if (item.type === 'article') return item.item.guid;
+    if (item.type === 'userShare') return item.article.guid;
+    if (item.type === 'share') return item.item.itemGuid || item.item.itemUrl;
+    if (item.type === 'document') return item.item.recordUri;
+    return item.item.itemGuid || item.item.url;
+  }
+
+  function isItemShared(item: FeedDisplayItem): boolean {
+    const key = getSharedKey(item);
+    return key ? sharesStore.isShared(key) : false;
+  }
+
+  async function handleShareItem(item: FeedDisplayItem) {
+    const sharedKey = getSharedKey(item);
+    if (!sharedKey) return;
+
+    if (sharesStore.isShared(sharedKey)) {
+      await sharesStore.unshare(sharedKey);
+      return;
+    }
+
+    if (item.type === 'article') {
+      const article = item.item;
+      const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
+      await sharesStore.share(
+        sub?.rkey || '',
+        sub?.feedUrl || '',
+        article.guid,
+        article.url,
+        article.title,
+        article.author,
+        article.content,
+        article.summary,
+        article.imageUrl,
+        article.publishedAt
+      );
+    } else if (item.type === 'userShare') {
+      const article = item.article;
+      const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
+      await sharesStore.share(
+        sub?.rkey || '',
+        sub?.feedUrl || '',
+        article.guid,
+        article.url,
+        article.title,
+        article.author,
+        article.content,
+        article.summary,
+        article.imageUrl,
+        article.publishedAt
+      );
+    } else if (item.type === 'share') {
+      const share = item.item;
+      await sharesStore.reshare(
+        share.recordUri,
+        share.authorDid,
+        share.itemUrl,
+        share.itemGuid,
+        share.itemTitle,
+        share.itemAuthor,
+        share.itemDescription,
+        share.content,
+        share.itemImage,
+        share.itemPublishedAt,
+        share.feedUrl
+      );
+    } else if (item.type === 'document') {
+      const doc = item.item;
+      const url = getDocumentShareUrl(item);
+      if (!url) return;
+      await sharesStore.reshare(
+        doc.recordUri,
+        doc.authorDid,
+        url,
+        doc.recordUri,
+        doc.title,
+        undefined,
+        doc.description,
+        doc.textContent,
+        undefined,
+        doc.publishedAt,
+        doc.siteUri
+      );
+    } else {
+      const saved = item.item;
+      await sharesStore.share(
+        '',
+        '',
+        saved.itemGuid || saved.url,
+        saved.url,
+        saved.title || undefined,
+        saved.author || undefined,
+        saved.content || undefined,
+        saved.description || undefined,
+        saved.image || undefined,
+        saved.publishedAt || undefined
+      );
+    }
+  }
+
   export function openSelectedReader() {
     const index = feedViewStore.selectedIndex;
     if (index < 0) return;
@@ -164,6 +298,8 @@
       handleRemoveBookmark(readerItem!);
       closeReader();
     }}
+    onShare={canShareItem(readerItem) ? () => handleShareItem(readerItem!) : undefined}
+    isShared={isItemShared(readerItem)}
     onSaveToSemble={onSaveToSemble
       ? () => onSaveToSemble(extractSembleMetadata(readerItem!))
       : undefined}
@@ -183,6 +319,8 @@
         onHover={() => handleSelect(index)}
         onArchive={() => handleArchive(displayItem)}
         onRemove={() => handleRemoveBookmark(displayItem)}
+        onShare={canShareItem(displayItem) ? () => handleShareItem(displayItem) : undefined}
+        isShared={isItemShared(displayItem)}
         onSaveToSemble={onSaveToSemble
           ? () => onSaveToSemble(extractSembleMetadata(displayItem))
           : undefined}

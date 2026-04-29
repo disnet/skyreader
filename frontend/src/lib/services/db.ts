@@ -39,6 +39,18 @@ export interface MetadataEntry {
   value: string; // JSON-serialized value
 }
 
+// Cached Semble/Margin collection for the integration share picker.
+// Keyed by [integration+uri] so the same Dexie table can hold both integrations.
+export interface IntegrationCollectionCacheEntry {
+  integration: 'semble' | 'margin';
+  uri: string;
+  cid: string;
+  name?: string;
+  description?: string;
+  createdAt?: string;
+  cachedAt: number;
+}
+
 class SkyreaderDatabase extends Dexie {
   subscriptions!: Table<Subscription>;
   articles!: Table<Article>;
@@ -53,6 +65,7 @@ class SkyreaderDatabase extends Dexie {
   itemTags!: Table<ItemTags>;
   itemLabels!: Table<ItemLabel>;
   saved!: Table<SavedItem>;
+  integrationCollections!: Table<IntegrationCollectionCacheEntry>;
 
   constructor() {
     super('skyreader');
@@ -283,6 +296,50 @@ class SkyreaderDatabase extends Dexie {
       subscriptions:
         '++id, rkey, feedUrl, category, fetchStatus, source, localUpdatedAt, sourceType, subjectDid',
     });
+
+    // Channels redesign: sourceMode/sourceKeys/autoRule/typeFilter stored as non-indexed fields.
+    // Version bump ensures any pending upgrades run before we access the new fields.
+    this.version(26).stores({});
+
+    // Add uuid to filteredViews for cross-device sync
+    this.version(27)
+      .stores({
+        filteredViews: '++id, uuid, name, position',
+      })
+      .upgrade(async (tx) => {
+        const views = await tx.table('filteredViews').toArray();
+        for (const view of views) {
+          if (!view.uuid) {
+            await tx.table('filteredViews').update(view.id, {
+              uuid: crypto.randomUUID(),
+            });
+          }
+        }
+      });
+
+    // Add integrationCollections table for Semble/Margin collection picker cache
+    this.version(28).stores({
+      integrationCollections: '[integration+uri], integration, cachedAt',
+    });
+
+    // Saved channels historically defaulted readFilter='all' from dead-code
+    // defaults. Now that readFilter actually drives inbox/archive filtering,
+    // coerce those defaults to 'unread' (Inbox only). Users who explicitly
+    // pick 'all' after this upgrade keep their choice.
+    this.version(29)
+      .stores({})
+      .upgrade(async (tx) => {
+        const views = await tx.table('filteredViews').toArray();
+        const now = Date.now();
+        for (const view of views) {
+          if (view.mode === 'saved' && view.readFilter === 'all') {
+            await tx.table('filteredViews').update(view.id, {
+              readFilter: 'unread',
+              updatedAt: now,
+            });
+          }
+        }
+      });
   }
 }
 
@@ -304,7 +361,36 @@ export async function clearAllData(): Promise<void> {
     db.itemTags.clear(),
     db.itemLabels.clear(),
     db.saved.clear(),
+    db.integrationCollections.clear(),
   ]);
+}
+
+/**
+ * Verify IndexedDB is accessible and the Dexie schema is intact.
+ * If the database is corrupted or unavailable (common on iOS after long idle
+ * or under storage pressure), delete and recreate it so the app can start
+ * with an empty cache instead of white-screening.
+ *
+ * Returns true if healthy, false if the DB had to be reset.
+ */
+export async function checkDbHealth(): Promise<boolean> {
+  try {
+    // Attempt a lightweight read — this forces Dexie to open the DB and
+    // run any pending version upgrades.
+    await db.metadata.get('__health_check__');
+    return true;
+  } catch (e) {
+    console.error('IndexedDB health check failed, resetting database:', e);
+    try {
+      db.close();
+      await Dexie.delete('skyreader');
+      // Re-open so subsequent code can use db normally
+      await db.open();
+    } catch (resetError) {
+      console.error('Failed to reset IndexedDB:', resetError);
+    }
+    return false;
+  }
 }
 
 // Metadata helpers for persisting app state

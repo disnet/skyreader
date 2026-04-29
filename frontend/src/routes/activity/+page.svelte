@@ -5,8 +5,12 @@
   import { activityStore } from '$lib/stores/activity.svelte';
   import { profileService } from '$lib/services/profiles';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
-  import PageHeader from '$lib/components/common/PageHeader.svelte';
+  import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
+  import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
+  import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
+  import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import StateView from '$lib/components/common/StateView.svelte';
+  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { formatRelativeDate } from '$lib/utils/date';
   import type { BlueskyProfile, ReshareActivity } from '$lib/types';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
@@ -65,14 +69,16 @@
     return `${first} and ${othersCount} others`;
   }
 
+  let feedSwitcherOpen = $state(false);
+
   async function loadMore() {
     await activityStore.loadReshareActivity(true);
   }
 </script>
 
-<div class="activity-page">
-  <PageHeader title="Activity" subtitle="See who reshared your articles" />
+<FeedPageHeader title="Activity" hideControls />
 
+<div class="activity-page">
   <StateView
     isLoading={activityStore.isLoading && activityStore.reshareActivity.length === 0}
     isEmpty={activityStore.reshareActivity.length === 0}
@@ -103,6 +109,26 @@
       onLoadMore={loadMore}
     />
   </StateView>
+
+  {#if mobileStore.isMobile}
+    <MobileBottomBar
+      controlsVisible={true}
+      currentTitle="Activity"
+      onScrollToTop={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+      onOpenFeedSwitcher={() => (feedSwitcherOpen = true)}
+      onOpenFilterSheet={() => {}}
+      hasActiveFilters={false}
+      hideFilterButton
+    />
+
+    <BottomSheet
+      open={feedSwitcherOpen}
+      onclose={() => (feedSwitcherOpen = false)}
+      title="Switch Feed"
+    >
+      <MobileFeedSwitcher onclose={() => (feedSwitcherOpen = false)} currentTitle="Activity" />
+    </BottomSheet>
+  {/if}
 </div>
 
 <style>
@@ -111,8 +137,15 @@
     flex-direction: column;
     max-width: 600px;
     margin: 0 auto;
-    padding: 0 1rem;
+    padding: 3.5rem 1rem 1rem;
     gap: 1rem;
+  }
+
+  @media (max-width: 1000px) {
+    .activity-page {
+      padding-top: 0.5rem;
+      padding-bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 1rem);
+    }
   }
 
   .activity-list {

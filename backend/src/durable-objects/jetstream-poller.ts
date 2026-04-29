@@ -529,16 +529,19 @@ export class JetstreamPoller implements DurableObject {
     const recordUri = `at://${did}/app.skyreader.feed.subscription/${rkey}`;
 
     if ((operation === 'create' || operation === 'update') && record) {
-      // Extract sourceType and subjectDid from the record (cast to access AT Proto fields)
+      // Extract fields from the record (cast to access AT Proto fields)
       const recAny = record as Record<string, unknown>;
       const sourceType = (recAny.sourceType as string) || null;
       const subjectDid = (recAny.subjectDid as string) || null;
+      const customTitle = (recAny.customTitle as string) || null;
+      const customIconUrl = (recAny.customIconUrl as string) || null;
+      const category = (recAny.category as string) || null;
 
       try {
         await this.env.DB.prepare(
           `
-					INSERT OR REPLACE INTO subscriptions_cache (user_did, record_uri, feed_url, title, created_at, source_type, subject_did)
-					VALUES (?, ?, ?, ?, ?, ?, ?)
+					INSERT OR REPLACE INTO subscriptions_cache (user_did, record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url, category)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				`
         )
           .bind(
@@ -550,7 +553,10 @@ export class JetstreamPoller implements DurableObject {
               ? Math.floor(new Date(record.createdAt).getTime() / 1000)
               : Math.floor(Date.now() / 1000),
             sourceType,
-            subjectDid
+            subjectDid,
+            customTitle,
+            customIconUrl,
+            category
           )
           .run();
       } catch (dbError) {

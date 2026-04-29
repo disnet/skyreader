@@ -7,5 +7,126 @@
   </head>
   <body data-sveltekit-preload-data="hover">
     <div style="display: contents">%sveltekit.body%</div>
+    <div
+      id="skyreader-recovery"
+      style="
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        background: #fff;
+        color: #333;
+        font-family: system-ui, sans-serif;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        text-align: center;
+        padding: 2rem;
+      "
+    >
+      <h2 style="margin: 0 0 0.5rem; font-size: 1.25rem">Something went wrong</h2>
+      <p style="margin: 0 0 1.5rem; color: #666; font-size: 0.9375rem">
+        The app failed to start. This can happen after an update or long idle period.
+      </p>
+      <button
+        onclick="location.reload()"
+        style="
+          padding: 0.75rem 1.5rem;
+          font-size: 1rem;
+          border: none;
+          border-radius: 8px;
+          background: #4a9fd4;
+          color: #fff;
+          cursor: pointer;
+          margin-bottom: 0.75rem;
+        "
+      >
+        Reload app
+      </button>
+      <button
+        id="skyreader-clear-btn"
+        style="
+          padding: 0.5rem 1rem;
+          font-size: 0.875rem;
+          border: 1px solid #ccc;
+          border-radius: 8px;
+          background: #fff;
+          color: #666;
+          cursor: pointer;
+        "
+      >
+        Clear data &amp; reload
+      </button>
+    </div>
+    <script>
+      (function () {
+        var shown = false;
+        function showRecovery() {
+          if (shown) return;
+          shown = true;
+          var el = document.getElementById('skyreader-recovery');
+          if (el) el.style.display = 'flex';
+        }
+        // Catch uncaught JS errors (e.g. missing code-split chunks after SW update)
+        window.addEventListener('error', function (e) {
+          if (e.filename) showRecovery();
+        });
+        // Catch unhandled promise rejections (e.g. failed dynamic imports)
+        window.addEventListener('unhandledrejection', function (e) {
+          showRecovery();
+        });
+        // Safety net: if after 8s the body still has no visible content, show recovery
+        setTimeout(function () {
+          var app = document.querySelector('[data-sveltekit-preload-data]');
+          if (app && app.children.length <= 2 && !document.querySelector('.app')) {
+            showRecovery();
+          }
+        }, 8000);
+        // "Clear data & reload" — wipe IndexedDB + caches, then reload
+        document.getElementById('skyreader-clear-btn').addEventListener('click', function () {
+          var promises = [];
+          // Delete IndexedDB
+          try {
+            promises.push(
+              new Promise(function (res) {
+                var req = indexedDB.deleteDatabase('skyreader');
+                req.onsuccess = req.onerror = req.onblocked = res;
+              })
+            );
+          } catch (e) {}
+          // Clear all caches
+          if (window.caches) {
+            promises.push(
+              caches.keys().then(function (keys) {
+                return Promise.all(
+                  keys.map(function (k) {
+                    return caches.delete(k);
+                  })
+                );
+              })
+            );
+          }
+          // Unregister service workers
+          if (navigator.serviceWorker) {
+            promises.push(
+              navigator.serviceWorker.getRegistrations().then(function (regs) {
+                return Promise.all(
+                  regs.map(function (r) {
+                    return r.unregister();
+                  })
+                );
+              })
+            );
+          }
+          Promise.all(promises)
+            .then(function () {
+              location.reload();
+            })
+            .catch(function () {
+              location.reload();
+            });
+        });
+      })();
+    </script>
   </body>
 </html>

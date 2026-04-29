@@ -1,15 +1,17 @@
 import { XMLParser } from 'fast-xml-parser';
 import type { ParsedFeed, FeedItem } from './types';
 
-// Pre-compiled regex patterns for HTML entity decoding
+// Pre-compiled regex patterns for XML entity decoding
+// IMPORTANT: &amp; must be decoded LAST to avoid double-decoding
+// (e.g., &amp;lt; should become &lt;, not <)
 const HTML_ENTITY_PATTERNS: Array<[RegExp, string]> = [
-	[/&amp;/g, '&'],
 	[/&lt;/g, '<'],
 	[/&gt;/g, '>'],
 	[/&quot;/g, '"'],
 	[/&#39;/g, "'"],
 	[/&apos;/g, "'"],
 	[/&nbsp;/g, ' '],
+	[/&amp;/g, '&'],
 ];
 const NUMERIC_ENTITY_PATTERN = /&#(\d+);/g;
 const HEX_ENTITY_PATTERN = /&#x([0-9a-f]+);/gi;
@@ -23,6 +25,7 @@ const parser = new XMLParser({
 	cdataPropName: '#cdata',
 	trimValues: true,
 	parseTagValue: false,
+	processEntities: false,
 	isArray: (name) => ['item', 'entry', 'link', 'category'].includes(name),
 });
 
@@ -120,10 +123,10 @@ function parseRssFeed(channel: any, feedUrl: string): ParsedFeed {
 		items.push({
 			guid,
 			url,
-			title: decodeHtmlEntities(title),
-			author: author ? decodeHtmlEntities(author) : undefined,
-			content: content ? decodeHtmlEntities(content) : undefined,
-			summary: summary ? decodeHtmlEntities(summary) : undefined,
+			title,
+			author,
+			content,
+			summary,
 			imageUrl,
 			publishedAt: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString(),
 		});
@@ -131,8 +134,8 @@ function parseRssFeed(channel: any, feedUrl: string): ParsedFeed {
 
 	const description = getText(channel.description);
 	return {
-		title: decodeHtmlEntities(getText(channel.title) || 'Untitled Feed'),
-		description: description ? decodeHtmlEntities(description) : undefined,
+		title: getText(channel.title) || 'Untitled Feed',
+		description,
 		siteUrl: getText(channel.link),
 		imageUrl: channel.image?.url ? getText(channel.image.url) : undefined,
 		items,
@@ -157,18 +160,18 @@ function parseAtomFeed(feed: any, feedUrl: string): ParsedFeed {
 		items.push({
 			guid,
 			url,
-			title: decodeHtmlEntities(title),
-			author: author ? decodeHtmlEntities(author) : undefined,
-			content: content ? decodeHtmlEntities(content) : undefined,
-			summary: summary ? decodeHtmlEntities(summary) : undefined,
+			title,
+			author,
+			content,
+			summary,
 			publishedAt: updated ? new Date(updated).toISOString() : new Date().toISOString(),
 		});
 	}
 
 	const subtitle = getText(feed.subtitle);
 	return {
-		title: decodeHtmlEntities(getText(feed.title) || 'Untitled Feed'),
-		description: subtitle ? decodeHtmlEntities(subtitle) : undefined,
+		title: getText(feed.title) || 'Untitled Feed',
+		description: subtitle,
 		siteUrl: getAtomLink(feed.link, 'alternate'),
 		imageUrl: getText(feed.icon) || getText(feed.logo),
 		items,
@@ -194,18 +197,18 @@ function parseRdfFeed(rdf: any, feedUrl: string): ParsedFeed {
 		items.push({
 			guid,
 			url,
-			title: decodeHtmlEntities(title),
-			author: author ? decodeHtmlEntities(author) : undefined,
-			content: content ? decodeHtmlEntities(content) : undefined,
-			summary: summary ? decodeHtmlEntities(summary) : undefined,
+			title,
+			author,
+			content,
+			summary,
 			publishedAt: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString(),
 		});
 	}
 
 	const rdfDescription = getText(channel.description);
 	return {
-		title: decodeHtmlEntities(getText(channel.title) || 'Untitled Feed'),
-		description: rdfDescription ? decodeHtmlEntities(rdfDescription) : undefined,
+		title: getText(channel.title) || 'Untitled Feed',
+		description: rdfDescription,
 		siteUrl: getText(channel.link),
 		imageUrl: rdf.image?.url ? getText(rdf.image.url) : undefined,
 		items,
@@ -213,20 +216,25 @@ function parseRdfFeed(rdf: any, feedUrl: string): ParsedFeed {
 	};
 }
 
-function getText(node: any): string | undefined {
+function getTextRaw(node: any): string | undefined {
 	if (node === undefined || node === null) return undefined;
 	if (typeof node === 'string') return node;
 	if (typeof node === 'number') return String(node);
-	if (Array.isArray(node)) return node.length > 0 ? getText(node[0]) : undefined;
+	if (Array.isArray(node)) return node.length > 0 ? getTextRaw(node[0]) : undefined;
 	if (typeof node === 'object') {
-		if (node['#cdata'] !== undefined) return getText(node['#cdata']);
-		if (node['#text'] !== undefined) return getText(node['#text']);
+		if (node['#cdata'] !== undefined) return getTextRaw(node['#cdata']);
+		if (node['#text'] !== undefined) return getTextRaw(node['#text']);
 		for (const key of Object.keys(node)) {
-			const val = getText(node[key]);
+			const val = getTextRaw(node[key]);
 			if (val) return val;
 		}
 	}
 	return undefined;
+}
+
+function getText(node: any): string | undefined {
+	const raw = getTextRaw(node);
+	return raw !== undefined ? decodeHtmlEntities(raw) : undefined;
 }
 
 function getAtomLink(links: any, rel: string): string | undefined {
@@ -235,11 +243,11 @@ function getAtomLink(links: any, rel: string): string | undefined {
 
 	for (const link of linkArray) {
 		const linkRel = link['@_rel'] || 'alternate';
-		if (linkRel === rel && link['@_href']) return link['@_href'];
+		if (linkRel === rel && link['@_href']) return decodeHtmlEntities(link['@_href']);
 	}
 
 	for (const link of linkArray) {
-		if (link['@_href']) return link['@_href'];
+		if (link['@_href']) return decodeHtmlEntities(link['@_href']);
 	}
 
 	return undefined;
@@ -250,19 +258,19 @@ function extractRssItemImage(item: any): string | undefined {
 		const media = Array.isArray(item['media:content'])
 			? item['media:content'][0]
 			: item['media:content'];
-		if (media['@_url']) return media['@_url'];
+		if (media['@_url']) return decodeHtmlEntities(media['@_url']);
 	}
 
 	if (item['media:thumbnail']) {
 		const thumb = Array.isArray(item['media:thumbnail'])
 			? item['media:thumbnail'][0]
 			: item['media:thumbnail'];
-		if (thumb['@_url']) return thumb['@_url'];
+		if (thumb['@_url']) return decodeHtmlEntities(thumb['@_url']);
 	}
 
 	if (item.enclosure) {
 		const enc = Array.isArray(item.enclosure) ? item.enclosure[0] : item.enclosure;
-		if (enc['@_type']?.startsWith('image') && enc['@_url']) return enc['@_url'];
+		if (enc['@_type']?.startsWith('image') && enc['@_url']) return decodeHtmlEntities(enc['@_url']);
 	}
 
 	return undefined;
@@ -283,12 +291,14 @@ function decodeHtmlEntities(text: string): string {
 		decoded = decoded.replace(pattern, replacement);
 	}
 
-	decoded = decoded.replace(NUMERIC_ENTITY_PATTERN, (_, num) =>
-		String.fromCharCode(parseInt(num, 10))
-	);
-	decoded = decoded.replace(HEX_ENTITY_PATTERN, (_, hex) =>
-		String.fromCharCode(parseInt(hex, 16))
-	);
+	decoded = decoded.replace(NUMERIC_ENTITY_PATTERN, (_, num) => {
+		try { return String.fromCodePoint(parseInt(num, 10)); }
+		catch { return `&#${num};`; }
+	});
+	decoded = decoded.replace(HEX_ENTITY_PATTERN, (_, hex) => {
+		try { return String.fromCodePoint(parseInt(hex, 16)); }
+		catch { return `&#x${hex};`; }
+	});
 
 	return decoded;
 }

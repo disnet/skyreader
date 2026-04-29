@@ -9,9 +9,10 @@
     onRename?: () => void;
     onDelete: () => void;
     onClose: () => void;
+    deleteLabel?: string;
   }
 
-  let { x, y, onEdit, onRename, onDelete, onClose }: Props = $props();
+  let { x, y, onEdit, onRename, onDelete, onClose, deleteLabel = 'Delete' }: Props = $props();
 
   let menuRef: HTMLDivElement | null = $state(null);
   let adjustedX = $state(0);
@@ -87,7 +88,7 @@
   {/if}
   <button class="context-menu-item danger" onclick={handleDelete} role="menuitem">
     <span class="context-menu-icon"><Icon name="trash" size={16} /></span>
-    Delete
+    {deleteLabel}
   </button>
 </div>
 

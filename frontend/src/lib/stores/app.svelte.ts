@@ -10,7 +10,7 @@ import { syncStore } from './sync.svelte';
 import { savesStore } from './saves.svelte';
 import { fetchAllFeeds } from '$lib/services/feedFetcher';
 import { api } from '$lib/services/api';
-import { getMetadata, setMetadata } from '$lib/services/db';
+import { getMetadata, setMetadata, checkDbHealth } from '$lib/services/db';
 import type { Subscription } from '$lib/types';
 
 const LAST_REFRESH_KEY = 'lastRefreshAt';
@@ -50,6 +50,13 @@ function createAppManager() {
     error = null;
 
     try {
+      // Verify IndexedDB is accessible before reading from it.
+      // On iOS, the DB can become corrupted or evicted after long idle.
+      const dbHealthy = await checkDbHealth();
+      if (!dbHealthy) {
+        console.warn('IndexedDB was reset — starting with empty cache');
+      }
+
       // Load persisted lastRefreshAt from IndexedDB
       const persistedRefreshAt = await getMetadata<number>(LAST_REFRESH_KEY);
       if (persistedRefreshAt) {
@@ -82,6 +89,7 @@ function createAppManager() {
       }
 
       // Phase 2: Refresh from backend (background, skip when offline)
+      // This also syncs channels bidirectionally via filteredViewsStore.syncWithBackend()
       if (syncStore.isOnline) {
         phase = 'refreshing';
         await refreshFromBackend();
@@ -117,12 +125,13 @@ function createAppManager() {
     let newArticles = 0;
 
     try {
-      // Sync subscriptions, read positions, and social data in parallel
+      // Sync subscriptions, read positions, social data, and channels in parallel
       const [syncResult] = await Promise.all([
         syncSubscriptions(),
         itemLabelsStore.load(),
         shareReadingStore.load(),
         socialStore.loadFeed(true),
+        filteredViewsStore.syncWithBackend(),
       ]);
 
       // One-time migration: push existing local custom fields to backend

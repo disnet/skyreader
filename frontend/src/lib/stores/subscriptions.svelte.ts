@@ -277,22 +277,57 @@ function createSubscriptionsStore() {
    */
   async function updateLocal(
     id: number,
-    updates: { customTitle?: string; customIconUrl?: string }
+    updates: { customTitle?: string; customIconUrl?: string; category?: string | null }
   ): Promise<void> {
     // Update IndexedDB immediately for instant UI
     await liveDb.updateSubscriptionLocal(id, updates);
 
-    // Sync to backend in background
+    // Sync to backend in background — only send fields that were explicitly passed
     const sub = liveDb.getSubscriptionById(id);
     if (sub) {
-      api
-        .updateSubscription(sub.rkey, {
-          customTitle: updates.customTitle ?? null,
-          customIconUrl: updates.customIconUrl ?? null,
-        })
-        .catch((err) => {
-          console.error('[Subscriptions] Failed to sync custom fields to backend:', err);
-        });
+      const patch: {
+        customTitle?: string | null;
+        customIconUrl?: string | null;
+        category?: string | null;
+      } = {};
+      if (updates.customTitle !== undefined) patch.customTitle = updates.customTitle ?? null;
+      if (updates.customIconUrl !== undefined) patch.customIconUrl = updates.customIconUrl ?? null;
+      if (updates.category !== undefined) patch.category = updates.category ?? null;
+
+      api.updateSubscription(sub.rkey, patch).catch((err) => {
+        console.error('[Subscriptions] Failed to sync custom fields to backend:', err);
+      });
+    }
+  }
+
+  /**
+   * Bulk update subscription custom fields (instant local + single backend request)
+   */
+  async function bulkUpdateLocal(
+    ids: number[],
+    updates: { customTitle?: string; customIconUrl?: string; category?: string | null }
+  ): Promise<void> {
+    // Update IndexedDB immediately for instant UI
+    await Promise.all(ids.map((id) => liveDb.updateSubscriptionLocal(id, updates)));
+
+    // Sync to backend in a single request
+    const rkeys = ids
+      .map((id) => liveDb.getSubscriptionById(id)?.rkey)
+      .filter((rkey): rkey is string => !!rkey);
+
+    if (rkeys.length > 0) {
+      const patch: {
+        customTitle?: string | null;
+        customIconUrl?: string | null;
+        category?: string | null;
+      } = {};
+      if (updates.customTitle !== undefined) patch.customTitle = updates.customTitle ?? null;
+      if (updates.customIconUrl !== undefined) patch.customIconUrl = updates.customIconUrl ?? null;
+      if (updates.category !== undefined) patch.category = updates.category ?? null;
+
+      api.bulkUpdateSubscriptions(rkeys, patch).catch((err) => {
+        console.error('[Subscriptions] Failed to bulk sync custom fields to backend:', err);
+      });
     }
   }
 
@@ -337,6 +372,13 @@ function createSubscriptionsStore() {
   }
 
   /**
+   * Get a subscription by rkey
+   */
+  function getByRkey(rkey: string): Subscription | undefined {
+    return liveDb.getSubscriptionByRkey(rkey);
+  }
+
+  /**
    * Get a subscription by feed URL
    */
   function getByUrl(feedUrl: string): Subscription | undefined {
@@ -370,11 +412,13 @@ function createSubscriptionsStore() {
     addBulk,
     update,
     updateLocal,
+    bulkUpdateLocal,
     remove,
     removeAll,
 
     // Lookups
     getById,
+    getByRkey,
     getByUrl,
   };
 }

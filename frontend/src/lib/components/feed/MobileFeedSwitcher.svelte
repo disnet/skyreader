@@ -9,14 +9,25 @@
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
+  import {
+    channelSuggestions,
+    type ChannelSuggestion,
+  } from '$lib/stores/channelSuggestions.svelte';
+  import {
+    savedChannelSuggestions,
+    type SavedChannelSuggestion,
+  } from '$lib/stores/savedChannelSuggestions.svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import Tooltip from '$lib/components/Tooltip.svelte';
 
   interface Props {
     onclose: () => void;
     currentTitle: string;
+    onEditChannel?: (id: number) => void;
+    onCreateChannel?: (type?: 'feed' | 'saved') => void;
   }
 
-  let { onclose, currentTitle }: Props = $props();
+  let { onclose, currentTitle, onEditChannel, onCreateChannel }: Props = $props();
 
   let searchQuery = $state('');
 
@@ -28,36 +39,94 @@
   let sharedCount = $derived(sharesStore.userShares.size);
   let activityCount = $derived(activityStore.totalReshareCount);
 
-  type IconName = 'inbox' | 'bookmark' | 'share' | 'bell' | 'settings' | 'filter' | 'plus';
+  type IconName =
+    | 'inbox'
+    | 'bookmark'
+    | 'share'
+    | 'bell'
+    | 'settings'
+    | 'filter'
+    | 'plus'
+    | 'newspaper';
 
   type NavItem =
-    | { type: 'view'; id: string; label: string; count?: number; icon: IconName }
-    | { type: 'feed'; id: number; label: string; count: number; iconUrl: string | null }
-    | { type: 'utility'; id: string; label: string; count?: number; icon: IconName }
-    | { type: 'filteredView'; id: number; label: string; icon: IconName };
+    | { type: 'view'; id: string; label: string; count?: number; icon: IconName; indent?: boolean }
+    | {
+        type: 'feed';
+        id: number;
+        label: string;
+        count: number;
+        iconUrl: string | null;
+        indent?: boolean;
+      }
+    | {
+        type: 'utility';
+        id: string;
+        label: string;
+        count?: number;
+        icon: IconName;
+        indent?: boolean;
+      }
+    | {
+        type: 'filteredView';
+        id: string;
+        label: string;
+        count?: number;
+        icon: IconName;
+        indent?: boolean;
+      };
 
   type SectionData = {
     section: string;
+    groupId?: 'everything' | 'saved' | 'other' | 'sources';
     items: NavItem[];
   };
 
   let filteredItems = $derived.by((): SectionData[] => {
     const query = searchQuery.toLowerCase().trim();
 
-    const views: NavItem[] = [
-      { type: 'view', id: 'all', label: 'All', count: totalUnread, icon: 'inbox' },
-      { type: 'view', id: 'saved', label: 'Saved', count: savedCount, icon: 'bookmark' },
+    const everythingItem: NavItem = {
+      type: 'view',
+      id: 'all',
+      label: 'Everything',
+      count: totalUnread,
+      icon: 'inbox',
+    };
+    const savedItem: NavItem = {
+      type: 'view',
+      id: 'saved',
+      label: 'Saved',
+      count: savedCount,
+      icon: 'bookmark',
+    };
+    const otherItems: NavItem[] = [
       { type: 'view', id: 'shared', label: 'Shared', count: sharedCount, icon: 'share' },
       { type: 'utility', id: 'activity', label: 'Activity', count: activityCount, icon: 'bell' },
+      { type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' as IconName },
       { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' as IconName },
     ];
 
-    const customViews: NavItem[] = filteredViewsStore.views.map((v) => ({
-      type: 'filteredView' as const,
-      id: v.id!,
-      label: v.name,
-      icon: 'filter' as const,
-    }));
+    const sourceChannelItems: NavItem[] = filteredViewsStore.views
+      .filter((v) => v.mode !== 'saved')
+      .map((v) => ({
+        type: 'filteredView' as const,
+        id: v.uuid,
+        label: v.name,
+        count: v.id != null ? (unreadCounts.channelCounts.get(v.id) ?? 0) : 0,
+        icon: 'newspaper' as const,
+        indent: true,
+      }));
+
+    const savedChannelItems: NavItem[] = filteredViewsStore.views
+      .filter((v) => v.mode === 'saved')
+      .map((v) => ({
+        type: 'filteredView' as const,
+        id: v.uuid,
+        label: v.name,
+        count: v.id != null ? (unreadCounts.channelCounts.get(v.id) ?? 0) : 0,
+        icon: 'bookmark' as const,
+        indent: true,
+      }));
 
     const feedItems: NavItem[] = subscriptions.map((s) => ({
       type: 'feed' as const,
@@ -80,14 +149,27 @@
 
     const sections: SectionData[] = [];
 
-    const allViews = [...views, ...customViews].filter(filterItem);
-    if (allViews.length > 0) {
-      sections.push({ section: '', items: allViews });
+    // Everything group: Everything + source channels (+ suggestions rendered inline in template)
+    const everythingGroup = [everythingItem, ...sourceChannelItems].filter(filterItem);
+    if (everythingGroup.length > 0 || (!query && channelSuggestions.suggestions.length > 0)) {
+      sections.push({ section: '', groupId: 'everything', items: everythingGroup });
+    }
+
+    // Saved group: Saved + saved channels (+ suggestions rendered inline in template)
+    const savedGroup = [savedItem, ...savedChannelItems].filter(filterItem);
+    if (savedGroup.length > 0 || (!query && savedChannelSuggestions.suggestions.length > 0)) {
+      sections.push({ section: '', groupId: 'saved', items: savedGroup });
+    }
+
+    // Other utility items
+    const filteredOther = otherItems.filter(filterItem);
+    if (filteredOther.length > 0) {
+      sections.push({ section: '', groupId: 'other', items: filteredOther });
     }
 
     const filteredFeeds = feedItems.filter(filterItem);
     if (filteredFeeds.length > 0) {
-      sections.push({ section: 'Feeds', items: filteredFeeds });
+      sections.push({ section: 'Sources', groupId: 'sources', items: filteredFeeds });
     }
 
     return sections;
@@ -100,7 +182,7 @@
     const saved = url.searchParams.get('saved');
     const shared = url.searchParams.get('shared');
     const view = url.searchParams.get('view');
-    if (view) return { type: 'filteredView', id: parseInt(view) };
+    if (view) return { type: 'filteredView', id: view };
     if (feed) return { type: 'feed', id: parseInt(feed) };
     if (saved) return { type: 'saved' };
     if (shared) return { type: 'shared' };
@@ -118,6 +200,35 @@
     if (item.type === 'filteredView' && filter.type === 'filteredView' && filter.id === item.id)
       return true;
     return false;
+  }
+
+  async function acceptSuggestion(suggestion: ChannelSuggestion) {
+    const id = await filteredViewsStore.create({
+      name: suggestion.name,
+      sourceMode: suggestion.sourceMode,
+      sourceKeys: suggestion.sourceKeys,
+      typeFilter: suggestion.typeFilter.length > 0 ? suggestion.typeFilter : undefined,
+      autoRule: suggestion.autoRule,
+      readFilter: 'unread',
+      sortOrder: 'newest',
+    });
+    goto(`/?view=${id}`);
+    onclose();
+  }
+
+  async function acceptSavedSuggestion(suggestion: SavedChannelSuggestion) {
+    const id = await filteredViewsStore.create({
+      name: suggestion.name,
+      mode: 'saved',
+      savedSourceFilter: suggestion.savedSourceFilter,
+      savedDomainFilter: suggestion.savedDomainFilter,
+      savedReadingLength: suggestion.savedReadingLength,
+      savedDateFilter: suggestion.savedDateFilter,
+      readFilter: suggestion.readFilter ?? 'unread',
+      sortOrder: suggestion.sortOrder ?? 'newest',
+    });
+    goto(`/?view=${id}`);
+    onclose();
   }
 
   function selectItem(item: NavItem) {
@@ -150,32 +261,138 @@
   </div>
 
   <div class="items-list">
-    {#each filteredItems as { section, items }}
-      {#if section}
-        <div class="section-header">{section}</div>
-      {/if}
-      {#each items as item}
-        <button
-          class="nav-item"
-          class:active={isItemActive(item)}
-          class:section-child={!!section}
-          onclick={() => selectItem(item)}
-        >
-          {#if item.type === 'view' || item.type === 'utility' || item.type === 'filteredView'}
-            <span class="item-icon"><Icon name={item.icon} size={18} /></span>
-          {:else if item.type === 'feed'}
-            {#if item.iconUrl}
-              <img src={item.iconUrl} alt="" class="feed-icon" />
-            {:else}
-              <span class="feed-icon-placeholder"></span>
-            {/if}
+    {#each filteredItems as { section, groupId, items }}
+      <div class="nav-group" class:tinted={groupId === 'everything' || groupId === 'saved'}>
+        {#if section}
+          <div class="section-header">
+            <span>{section}</span>
+          </div>
+        {/if}
+        {#each items as item}
+          {#if item.type === 'view' && (item.id === 'all' || item.id === 'saved') && onCreateChannel}
+            <div class="nav-item-row" class:active={isItemActive(item)}>
+              <button class="nav-item-main" onclick={() => selectItem(item)}>
+                <span class="item-icon"><Icon name={item.icon} size={18} /></span>
+                <span class="item-label">{item.label}</span>
+              </button>
+              <button
+                class="channel-add-btn"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  onCreateChannel(item.id === 'saved' ? 'saved' : 'feed');
+                }}
+                aria-label="New channel"
+              >
+                <Icon name="plus" size={16} />
+              </button>
+              {#if item.count && item.count > 0}
+                <span class="item-count row-count">{item.count}</span>
+              {/if}
+            </div>
+          {:else if item.type === 'filteredView' && onEditChannel}
+            <div class="nav-item-row" class:active={isItemActive(item)}>
+              <button class="nav-item-main" onclick={() => selectItem(item)}>
+                <span class="item-icon"><Icon name={item.icon} size={18} /></span>
+                <span class="item-label">{item.label}</span>
+              </button>
+              <button
+                class="channel-edit-btn"
+                onclick={() => {
+                  const view = filteredViewsStore.getByUuid(item.id);
+                  if (view?.id != null) onEditChannel(view.id);
+                }}
+                aria-label="Edit channel"
+              >
+                <Icon name="edit" size={14} />
+              </button>
+              {#if item.count && item.count > 0}
+                <span class="item-count row-count">{item.count}</span>
+              {/if}
+            </div>
+          {:else}
+            <button
+              class="nav-item"
+              class:active={isItemActive(item)}
+              onclick={() => selectItem(item)}
+            >
+              {#if item.type === 'view' || item.type === 'utility' || item.type === 'filteredView'}
+                <span class="item-icon"><Icon name={item.icon} size={18} /></span>
+              {:else if item.type === 'feed'}
+                {#if item.iconUrl}
+                  <img src={item.iconUrl} alt="" class="feed-icon" />
+                {:else}
+                  <span class="feed-icon-placeholder"></span>
+                {/if}
+              {/if}
+              <span class="item-label">{item.label}</span>
+              {#if item.count && item.count > 0}
+                <span class="item-count">{item.count}</span>
+              {/if}
+            </button>
           {/if}
-          <span class="item-label">{item.label}</span>
-          {#if item.type !== 'filteredView' && item.count && item.count > 0}
-            <span class="item-count">{item.count}</span>
-          {/if}
-        </button>
-      {/each}
+        {/each}
+        {#if groupId === 'everything' && !searchQuery}
+          {#each channelSuggestions.suggestions as suggestion (suggestion.id)}
+            <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+            <div class="nav-item suggestion-accept" onclick={() => acceptSuggestion(suggestion)}>
+              <span class="item-icon suggestion-icon"><Icon name="plus" size={16} /></span>
+              <span class="item-label">{suggestion.name}</span>
+              <span class="suggestion-actions" onclick={(e) => e.stopPropagation()}>
+                <Tooltip text={suggestion.description} />
+                <button
+                  class="suggestion-dismiss"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    channelSuggestions.dismiss(suggestion.id);
+                  }}
+                >
+                  <Icon name="x" size={14} />
+                </button>
+              </span>
+            </div>
+          {/each}
+          <a
+            href="/channels/discover"
+            class="nav-item more-suggestions-link"
+            onclick={() => onclose()}
+          >
+            <span class="item-icon"><Icon name="arrow-right" size={16} /></span>
+            <span class="item-label">More channel ideas</span>
+          </a>
+        {/if}
+        {#if groupId === 'saved' && !searchQuery}
+          {#each savedChannelSuggestions.suggestions as suggestion (suggestion.id)}
+            <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+            <div
+              class="nav-item suggestion-accept"
+              onclick={() => acceptSavedSuggestion(suggestion)}
+            >
+              <span class="item-icon suggestion-icon"><Icon name="plus" size={16} /></span>
+              <span class="item-label">{suggestion.name}</span>
+              <span class="suggestion-actions" onclick={(e) => e.stopPropagation()}>
+                <Tooltip text={suggestion.description} />
+                <button
+                  class="suggestion-dismiss"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    savedChannelSuggestions.dismiss(suggestion.id);
+                  }}
+                >
+                  <Icon name="x" size={14} />
+                </button>
+              </span>
+            </div>
+          {/each}
+          <a
+            href="/channels/discover"
+            class="nav-item more-suggestions-link"
+            onclick={() => onclose()}
+          >
+            <span class="item-icon"><Icon name="arrow-right" size={16} /></span>
+            <span class="item-label">More channel ideas</span>
+          </a>
+        {/if}
+      </div>
     {/each}
     {#if filteredItems.length === 0 || filteredItems.every((s) => s.items.length === 0)}
       <div class="no-results">No matches found</div>
@@ -221,12 +438,35 @@
   }
 
   .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     padding: 0.75rem 1rem 0.375rem;
     font-size: 0.6875rem;
     font-weight: 600;
     color: var(--color-text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.05em;
+  }
+
+  .channel-add-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    margin-right: 0.5rem;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .channel-add-btn:active {
+    background: var(--color-bg-secondary, #f5f5f5);
   }
 
   .nav-item {
@@ -253,6 +493,76 @@
     background: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
     color: var(--color-primary);
     font-weight: 500;
+  }
+
+  .nav-group {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .nav-group.tinted {
+    background: rgba(0, 0, 0, 0.025);
+    border-radius: 12px;
+    margin: 0 0.5rem 0.5rem;
+    padding: 0.25rem 0;
+  }
+
+  .nav-group.tinted .nav-item,
+  .nav-group.tinted .nav-item-row {
+    margin-left: 0;
+    margin-right: 0;
+    width: calc(100% - 0rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .nav-group.tinted {
+      background: rgba(255, 255, 255, 0.025);
+    }
+  }
+
+  .row-count {
+    margin-right: 1rem;
+  }
+
+  .nav-item-row.active .row-count {
+    color: var(--color-primary);
+  }
+
+  .nav-item-row {
+    display: flex;
+    align-items: center;
+    margin: 0 0.5rem;
+    border-radius: 8px;
+    transition: background 0.15s;
+  }
+
+  .nav-item-row.active {
+    background: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
+    color: var(--color-primary);
+    font-weight: 500;
+  }
+
+  .nav-item-row.active .item-icon {
+    color: var(--color-primary);
+  }
+
+  .nav-item-main {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex: 1;
+    min-width: 0;
+    padding: 0.625rem 0 0.625rem 1rem;
+    background: none;
+    border: none;
+    color: inherit;
+    font: inherit;
+    font-size: 0.9375rem;
+    text-align: left;
+  }
+
+  .nav-item-main:active {
+    opacity: 0.7;
   }
 
   .item-icon {
@@ -299,6 +609,68 @@
     flex-shrink: 0;
   }
 
+  .suggestion-accept {
+    color: var(--color-text-secondary);
+  }
+
+  .suggestion-icon {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 1.5px dashed currentColor;
+  }
+
+  .suggestion-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-shrink: 0;
+  }
+
+  .suggestion-dismiss {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    border-radius: 6px;
+    flex-shrink: 0;
+    padding: 0;
+  }
+
+  .suggestion-dismiss:active {
+    background: var(--color-bg-secondary);
+  }
+
+  .more-suggestions-link {
+    text-decoration: none;
+    color: var(--color-text-secondary);
+    font-size: 0.8125rem;
+  }
+
+  .channel-edit-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+
+  .channel-edit-btn:active {
+    background: var(--color-bg-secondary, #f5f5f5);
+  }
+
   .no-results {
     padding: 1.5rem;
     text-align: center;
@@ -316,6 +688,11 @@
     }
 
     .item-count {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .section-add-btn:active,
+    .channel-edit-btn:active {
       background: rgba(255, 255, 255, 0.1);
     }
   }

@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { browser } from '$app/environment';
+  import { browser, version } from '$app/environment';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
   import { auth } from '$lib/stores/auth.svelte';
+  import { appManager } from '$lib/stores/app.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
@@ -59,6 +60,30 @@
     waitingWorker?.postMessage({ type: 'SKIP_WAITING' });
   }
 
+  /** Ask a waiting SW for its version; returns null on timeout or error. */
+  function getWorkerVersion(worker: ServiceWorker): Promise<string | null> {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve(null), 1000);
+      const channel = new MessageChannel();
+      channel.port1.onmessage = (event) => {
+        clearTimeout(timeout);
+        resolve(event.data?.version ?? null);
+      };
+      worker.postMessage({ type: 'GET_VERSION' }, [channel.port2]);
+    });
+  }
+
+  /** Only show the update banner if the waiting worker is actually a new version. */
+  async function offerUpdate(worker: ServiceWorker) {
+    const workerVersion = await getWorkerVersion(worker);
+    // Show banner if the versions differ, or if we couldn't determine the version
+    // (e.g. older SW without GET_VERSION support — safe to prompt).
+    if (workerVersion !== version) {
+      waitingWorker = worker;
+      updateAvailable = true;
+    }
+  }
+
   // Detect new service worker versions
   onMount(() => {
     if (!browser || !('serviceWorker' in navigator)) return;
@@ -80,8 +105,7 @@
 
     navigator.serviceWorker.ready.then((registration) => {
       if (registration.waiting) {
-        waitingWorker = registration.waiting;
-        updateAvailable = true;
+        offerUpdate(registration.waiting);
       }
 
       registration.addEventListener('updatefound', () => {
@@ -89,8 +113,7 @@
         if (!newWorker) return;
         newWorker.addEventListener('statechange', () => {
           if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            waitingWorker = newWorker;
-            updateAvailable = true;
+            offerUpdate(newWorker);
           }
         });
       });
@@ -102,6 +125,16 @@
         }
       });
     });
+  });
+
+  // Initialize app data (cache-first hydrate + background refresh).
+  // Lives in the layout so that reloading on any authenticated route
+  // (e.g. /sources, /activity) still triggers initialization. The
+  // appManager has an internal phase guard so re-entry is a no-op.
+  $effect(() => {
+    if (browser && auth.isAuthenticated) {
+      appManager.initialize();
+    }
   });
 
   // Register global keyboard shortcuts on mount

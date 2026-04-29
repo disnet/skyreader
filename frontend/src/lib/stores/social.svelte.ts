@@ -47,8 +47,15 @@ function createSocialStore() {
           await safeBulkPut(db.socialDocuments, result.documents);
         }
       } else {
-        shares = [...shares, ...result.shares];
-        documents = [...documents, ...(result.documents || [])];
+        const existingShareUris = new Set(shares.map((s) => s.recordUri));
+        const newShares = result.shares.filter((s) => !existingShareUris.has(s.recordUri));
+        shares = [...shares, ...newShares];
+
+        const newDocs = result.documents || [];
+        const existingDocUris = new Set(documents.map((d) => d.recordUri));
+        const uniqueNewDocs = newDocs.filter((d) => !existingDocUris.has(d.recordUri));
+        documents = [...documents, ...uniqueNewDocs];
+
         await safeBulkPut(db.socialShares, result.shares);
         if (result.documents && result.documents.length > 0) {
           await safeBulkPut(db.socialDocuments, result.documents);

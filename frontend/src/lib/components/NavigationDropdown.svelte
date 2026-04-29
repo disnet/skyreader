@@ -37,23 +37,23 @@
   let mobilePanelEl = $state<HTMLDivElement | null>(null);
   let isMobile = $state(false);
 
-  // View context menu state
-  let viewMenuId = $state<number | null>(null);
+  // View context menu state (uses uuid for identification)
+  let viewMenuUuid = $state<string | null>(null);
   let viewMenuX = $state(0);
   let viewMenuY = $state(0);
   let viewMenuRef = $state<HTMLDivElement | null>(null);
   let adjustedMenuX = $state(0);
   let adjustedMenuY = $state(0);
-  let renamingViewId = $state<number | null>(null);
+  let renamingViewUuid = $state<string | null>(null);
   let renameValue = $state('');
   let renameInputRef = $state<HTMLInputElement | null>(null);
 
-  function openViewMenu(e: MouseEvent, viewId: number) {
+  function openViewMenu(e: MouseEvent, viewUuid: string) {
     e.stopPropagation();
     e.preventDefault();
     viewMenuX = e.clientX;
     viewMenuY = e.clientY;
-    viewMenuId = viewId;
+    viewMenuUuid = viewUuid;
   }
 
   $effect(() => {
@@ -79,14 +79,14 @@
   });
 
   function closeViewMenu() {
-    viewMenuId = null;
+    viewMenuUuid = null;
   }
 
-  function startRenameView(viewId: number) {
-    const view = filteredViewsStore.getById(viewId);
+  function startRenameView(viewUuid: string) {
+    const view = filteredViewsStore.getByUuid(viewUuid);
     if (!view) return;
     closeViewMenu();
-    renamingViewId = viewId;
+    renamingViewUuid = viewUuid;
     renameValue = view.name;
     tick().then(() => {
       renameInputRef?.focus();
@@ -96,28 +96,30 @@
 
   function commitRenameView() {
     const trimmed = renameValue.trim();
-    if (renamingViewId !== null && trimmed) {
-      const view = filteredViewsStore.getById(renamingViewId);
-      if (view && trimmed !== view.name) {
-        filteredViewsStore.update(renamingViewId, { name: trimmed });
+    if (renamingViewUuid !== null && trimmed) {
+      const view = filteredViewsStore.getByUuid(renamingViewUuid);
+      if (view && view.id != null && trimmed !== view.name) {
+        filteredViewsStore.update(view.id, { name: trimmed });
       }
     }
-    renamingViewId = null;
+    renamingViewUuid = null;
     renameValue = '';
   }
 
   function cancelRenameView() {
-    renamingViewId = null;
+    renamingViewUuid = null;
     renameValue = '';
   }
 
-  async function deleteView(viewId: number) {
+  async function deleteView(viewUuid: string) {
     closeViewMenu();
-    if (!confirm('Are you sure you want to delete this view?')) return;
-    await filteredViewsStore.remove(viewId);
+    if (!confirm('Are you sure you want to delete this channel?')) return;
+    const view = filteredViewsStore.getByUuid(viewUuid);
+    if (!view || view.id == null) return;
+    await filteredViewsStore.remove(view.id);
     // If we're currently viewing the deleted view, navigate away
     const currentView = $page.url.searchParams.get('view');
-    if (currentView && parseInt(currentView) === viewId) {
+    if (currentView === viewUuid) {
       goto('/');
     }
   }
@@ -151,15 +153,30 @@
     | 'newspaper'
     | 'plus'
     | 'filter'
-    | 'layers';
+    | 'layers'
+    | 'folder';
 
   // Navigation item type
   type NavItem =
-    | { type: 'view'; id: string; label: string; count?: number; icon: IconName }
-    | { type: 'feed'; id: number; label: string; count: number; iconUrl: string | null }
-    | { type: 'utility'; id: string; label: string; count?: number; icon: IconName }
-    | { type: 'action'; id: string; label: string; icon: IconName }
-    | { type: 'filteredView'; id: number; label: string; icon: IconName };
+    | { type: 'view'; id: string; label: string; count?: number; icon: IconName; indent?: boolean }
+    | {
+        type: 'feed';
+        id: number;
+        label: string;
+        count: number;
+        iconUrl: string | null;
+        indent?: boolean;
+      }
+    | {
+        type: 'utility';
+        id: string;
+        label: string;
+        count?: number;
+        icon: IconName;
+        indent?: boolean;
+      }
+    | { type: 'action'; id: string; label: string; icon: IconName; indent?: boolean }
+    | { type: 'filteredView'; id: string; label: string; icon: IconName; indent?: boolean };
 
   // Section type with optional icon and click handler for styled section headers
   type SectionData = {
@@ -173,41 +190,82 @@
   let filteredItems = $derived.by((): SectionData[] => {
     const query = searchQuery.toLowerCase().trim();
 
-    const views: NavItem[] = [
-      { type: 'view', id: 'all', label: 'All', count: totalUnread, icon: 'inbox' },
-      { type: 'view', id: 'saved', label: 'Saved', count: savedCount, icon: 'bookmark' },
+    const everythingItem: NavItem = {
+      type: 'view',
+      id: 'all',
+      label: 'Everything',
+      count: totalUnread,
+      icon: 'inbox',
+    };
+    const savedItem: NavItem = {
+      type: 'view',
+      id: 'saved',
+      label: 'Saved',
+      count: savedCount,
+      icon: 'bookmark',
+    };
+    const otherViews: NavItem[] = [
       { type: 'view', id: 'shared', label: 'Shared', count: sharedCount, icon: 'share' },
       { type: 'utility', id: 'activity', label: 'Activity', count: activityCount, icon: 'bell' },
+      { type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' },
       { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' },
     ];
 
-    const customViews: NavItem[] = filteredViewsStore.views.map((v) => ({
-      type: 'filteredView' as const,
-      id: v.id!,
-      label: v.name,
-      icon: 'filter' as const,
-    }));
+    const sourceChannelItems: NavItem[] = filteredViewsStore.views
+      .filter((v) => v.mode !== 'saved')
+      .map((v) => ({
+        type: 'filteredView' as const,
+        id: v.uuid,
+        label: v.name,
+        icon: 'filter' as const,
+        indent: true,
+      }));
+
+    const savedChannelItems: NavItem[] = filteredViewsStore.views
+      .filter((v) => v.mode === 'saved')
+      .map((v) => ({
+        type: 'filteredView' as const,
+        id: v.uuid,
+        label: v.name,
+        icon: 'bookmark' as const,
+        indent: true,
+      }));
 
     const addViewAction: NavItem = {
       type: 'action',
-      id: 'add-view',
-      label: 'New view',
+      id: 'add-channel',
+      label: 'New channel',
       icon: 'plus',
     };
 
-    const feedItems: NavItem[] = subscriptions.map((s) => ({
-      type: 'feed' as const,
-      id: s.id!,
-      label: s.customTitle || s.title,
-      count: feedUnreadCounts.get(s.id!) || 0,
-      iconUrl:
-        s.customIconUrl ||
-        (s.sourceType?.startsWith('atproto.')
-          ? s.siteUrl
-            ? getFaviconUrl(s.siteUrl)
-            : '/icons/icon-192.svg'
-          : getFaviconUrl(s.siteUrl || s.feedUrl || '')),
-    }));
+    function toFeedItem(s: (typeof subscriptions)[0]): NavItem & { type: 'feed' } {
+      return {
+        type: 'feed' as const,
+        id: s.id!,
+        label: s.customTitle || s.title,
+        count: feedUnreadCounts.get(s.id!) || 0,
+        iconUrl:
+          s.customIconUrl ||
+          (s.sourceType?.startsWith('atproto.')
+            ? s.siteUrl
+              ? getFaviconUrl(s.siteUrl)
+              : '/icons/icon-192.svg'
+            : getFaviconUrl(s.siteUrl || s.feedUrl || '')),
+      };
+    }
+
+    // Group subscriptions by category
+    const byCategory = new Map<string, typeof subscriptions>();
+    const uncategorized: typeof subscriptions = [];
+    for (const s of subscriptions) {
+      if (s.category) {
+        const existing = byCategory.get(s.category) || [];
+        existing.push(s);
+        byCategory.set(s.category, existing);
+      } else {
+        uncategorized.push(s);
+      }
+    }
 
     // Filter by search query
     const filterItem = (item: NavItem) => {
@@ -222,22 +280,48 @@
 
     const sections: SectionData[] = [];
 
-    // System views + custom views + add action in one flat section
-    const allViews = [...views, ...customViews, addViewAction].filter(filterItem);
-    if (allViews.length > 0) {
-      sections.push({ section: '', items: allViews });
+    // Everything group: Everything + nested source channels
+    const everythingGroup = [everythingItem, ...sourceChannelItems].filter(filterItem);
+    if (everythingGroup.length > 0) {
+      sections.push({ section: '', items: everythingGroup });
     }
 
-    const filteredFeeds = feedItems.filter(filterItem);
-    if (filteredFeeds.length > 0 || filterSection('Feeds')) {
+    // Saved group: Saved + nested saved channels
+    const savedGroup = [savedItem, ...savedChannelItems].filter(filterItem);
+    if (savedGroup.length > 0) {
+      sections.push({ section: '', items: savedGroup });
+    }
+
+    // Other views + add action
+    const otherGroup = [...otherViews, addViewAction].filter(filterItem);
+    if (otherGroup.length > 0) {
+      sections.push({ section: '', items: otherGroup });
+    }
+
+    // Categorized feeds - one section per folder
+    const sortedCategories = [...byCategory.entries()].sort(([a], [b]) => a.localeCompare(b));
+    for (const [category, subs] of sortedCategories) {
+      const items = subs.map(toFeedItem).filter(filterItem);
+      if (items.length > 0 || filterSection(category)) {
+        sections.push({
+          section: category,
+          icon: 'folder' as IconName,
+          items,
+        });
+      }
+    }
+
+    // Uncategorized feeds
+    const uncategorizedItems = uncategorized.map(toFeedItem).filter(filterItem);
+    if (uncategorizedItems.length > 0 || filterSection('Feeds')) {
       sections.push({
-        section: 'Feeds',
+        section: sortedCategories.length > 0 ? 'Uncategorized' : 'Feeds',
         icon: 'rss',
         onSectionClick: () => {
           sidebarStore.toggleSection('feeds');
           close();
         },
-        items: filteredFeeds,
+        items: uncategorizedItems,
       });
     }
 
@@ -255,6 +339,7 @@
 
     // Utility pages (separate routes)
     if (pathname === '/activity') return { type: 'icon', name: 'bell' };
+    if (pathname === '/sources') return { type: 'icon', name: 'rss' };
     if (pathname === '/settings') return { type: 'icon', name: 'settings' };
 
     // Feed page filters (query params on /)
@@ -293,7 +378,7 @@
     const saved = url.searchParams.get('saved');
     const shared = url.searchParams.get('shared');
     const view = url.searchParams.get('view');
-    if (view) return { type: 'filteredView', id: parseInt(view) };
+    if (view) return { type: 'filteredView', id: view };
     if (feed) return { type: 'feed', id: parseInt(feed) };
     if (saved) return { type: 'saved' };
     if (shared) return { type: 'shared' };
@@ -353,10 +438,10 @@
   function selectItem(item: NavItem) {
     if (item.type === 'action') {
       close();
-      if (item.id === 'add-view') {
+      if (item.id === 'add-channel') {
         filteredViewsStore
           .create({
-            name: 'new view',
+            name: 'new channel',
             sourceMode: 'include',
             sourceKeys: [],
             readFilter: 'unread',
@@ -553,8 +638,8 @@
             {@const flatIndex =
               filteredItems.slice(0, sectionIndex).reduce((acc, s) => acc + s.items.length, 0) +
               itemIndex}
-            {#if item.type === 'filteredView' && renamingViewId === item.id}
-              <div class="nav-item rename-row" class:section-child={!!section}>
+            {#if item.type === 'filteredView' && renamingViewUuid === item.id}
+              <div class="nav-item rename-row" class:section-child={item.indent || !!section}>
                 <span class="item-icon"><Icon name={item.icon} size={16} /></span>
                 <!-- svelte-ignore a11y_autofocus -->
                 <input
@@ -577,7 +662,7 @@
             {:else}
               <button
                 class="nav-item"
-                class:section-child={!!section}
+                class:section-child={item.indent || !!section}
                 class:active={isItemActive(item)}
                 class:highlighted={flatIndex === highlightedIndex}
                 role="option"
@@ -628,7 +713,7 @@
   {/if}
 </div>
 
-{#if viewMenuId !== null}
+{#if viewMenuUuid !== null}
   <!-- View context menu (portaled to body to escape backdrop-filter containing block) -->
   <div class="view-menu-portal" use:portal>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -639,11 +724,15 @@
       style="left: {adjustedMenuX}px; top: {adjustedMenuY}px;"
       role="menu"
     >
-      <button class="view-menu-item" onclick={() => startRenameView(viewMenuId!)} role="menuitem">
+      <button class="view-menu-item" onclick={() => startRenameView(viewMenuUuid!)} role="menuitem">
         <span class="view-menu-icon"><Icon name="edit" size={16} /></span>
         Rename
       </button>
-      <button class="view-menu-item danger" onclick={() => deleteView(viewMenuId!)} role="menuitem">
+      <button
+        class="view-menu-item danger"
+        onclick={() => deleteView(viewMenuUuid!)}
+        role="menuitem"
+      >
         <span class="view-menu-icon"><Icon name="trash" size={16} /></span>
         Delete
       </button>
@@ -700,8 +789,8 @@
             {@const flatIndex =
               filteredItems.slice(0, sectionIndex).reduce((acc, s) => acc + s.items.length, 0) +
               itemIndex}
-            {#if item.type === 'filteredView' && renamingViewId === item.id}
-              <div class="nav-item rename-row" class:section-child={!!section}>
+            {#if item.type === 'filteredView' && renamingViewUuid === item.id}
+              <div class="nav-item rename-row" class:section-child={item.indent || !!section}>
                 <span class="item-icon"><Icon name={item.icon} size={16} /></span>
                 <!-- svelte-ignore a11y_autofocus -->
                 <input
@@ -724,7 +813,7 @@
             {:else}
               <button
                 class="nav-item"
-                class:section-child={!!section}
+                class:section-child={item.indent || !!section}
                 class:active={isItemActive(item)}
                 class:highlighted={flatIndex === highlightedIndex}
                 role="option"

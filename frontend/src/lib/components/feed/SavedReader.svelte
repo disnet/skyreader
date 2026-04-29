@@ -29,6 +29,7 @@
     onRemove,
     onToggleSave,
     onShare,
+    isShared = false,
     onSaveToSemble,
     onSaveToMargin,
   }: {
@@ -38,6 +39,7 @@
     onRemove?: () => void;
     onToggleSave?: () => void;
     onShare?: () => void;
+    isShared?: boolean;
     onSaveToSemble?: () => void;
     onSaveToMargin?: () => void;
   } = $props();
@@ -124,6 +126,9 @@
 
   let isArchived = $derived(itemLabelsStore.isArchived(itemKey));
   let isSaved = $derived(itemLabelsStore.isSaved(itemKey));
+  let shareLabel = $derived(
+    isShared ? (readerItem.type === 'share' ? 'Reshared' : 'Shared') : 'Share'
+  );
 
   let sanitizedContent = $derived(sanitizeHtml(displayContent, itemUrl));
 
@@ -138,6 +143,7 @@
       label: string;
       icon?: string;
       variant?: 'default' | 'danger';
+      active?: boolean;
       keepOpen?: boolean;
       onclick: () => void;
     }[] = [];
@@ -160,8 +166,9 @@
 
     if (onShare) {
       items.push({
-        label: 'Share',
+        label: shareLabel,
         icon: 'share',
+        active: isShared,
         onclick: () => onShare!(),
       });
     }
@@ -382,9 +389,14 @@
         {/if}
 
         {#if onShare}
-          <button class="action-btn" onclick={() => onShare!()} title="Share">
+          <button
+            class="action-btn"
+            class:active={isShared}
+            onclick={() => onShare!()}
+            title={shareLabel}
+          >
             <Icon name="share" size={18} />
-            <span class="action-label">Share</span>
+            <span class="action-label">{shareLabel}</span>
           </button>
         {/if}
 
@@ -442,7 +454,12 @@
           </button>
         {/if}
         {#if onShare}
-          <button class="bottom-btn" onclick={() => onShare!()} title="Share">
+          <button
+            class="bottom-btn"
+            class:active={isShared}
+            onclick={() => onShare!()}
+            title={shareLabel}
+          >
             <Icon name="share" size={20} />
           </button>
         {/if}
@@ -510,13 +527,14 @@
               {#if onShare}
                 <button
                   class="sheet-action-btn"
+                  class:active={isShared}
                   onclick={() => {
                     onShare!();
                     styleSheetOpen = false;
                   }}
                 >
                   <Icon name="share" size={18} />
-                  <span>Share</span>
+                  <span>{shareLabel}</span>
                 </button>
               {/if}
               {#if onSaveToSemble}
@@ -1281,6 +1299,11 @@
 
   .sheet-action-btn:active {
     background: var(--color-bg-secondary, #f5f5f5);
+  }
+
+  .sheet-action-btn.active,
+  .sheet-action-btn.active :global(.icon) {
+    color: var(--color-primary, #0066cc);
   }
 
   .sheet-action-btn :global(.icon) {

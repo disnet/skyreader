@@ -7,6 +7,7 @@
     view: FilteredView;
     isActive: boolean;
     isRenaming: boolean;
+    unreadCount?: number;
     onSelect: () => void;
     onContextMenu: (e: MouseEvent) => void;
     onTouchStart: (e: TouchEvent) => void;
@@ -21,6 +22,7 @@
     view,
     isActive,
     isRenaming,
+    unreadCount = 0,
     onSelect,
     onContextMenu,
     onTouchStart,
@@ -63,7 +65,9 @@
   ontouchend={onTouchEnd}
   ontouchmove={onTouchMove}
 >
-  <span class="view-icon"><Icon name="filter" size={14} /></span>
+  <span class="view-icon"
+    ><Icon name={view.mode === 'saved' ? 'bookmark' : 'newspaper'} size={14} /></span
+  >
   {#if isRenaming}
     <!-- svelte-ignore a11y_autofocus -->
     <input
@@ -84,6 +88,9 @@
     />
   {:else}
     <span class="nav-label">{view.name}</span>
+    {#if unreadCount > 0}
+      <span class="nav-count">{unreadCount}</span>
+    {/if}
     <span
       class="more-btn"
       role="button"
@@ -152,6 +159,16 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 0.875rem;
+  }
+
+  .nav-count {
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+  }
+
+  .nav-item.active .nav-count {
+    color: var(--color-primary);
   }
 
   .view-item {

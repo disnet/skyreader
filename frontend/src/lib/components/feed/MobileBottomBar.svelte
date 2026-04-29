@@ -9,6 +9,7 @@
     onOpenFeedSwitcher: () => void;
     onOpenFilterSheet: () => void;
     hasActiveFilters: boolean;
+    hideFilterButton?: boolean;
   }
 
   let {
@@ -18,6 +19,7 @@
     onOpenFeedSwitcher,
     onOpenFilterSheet,
     hasActiveFilters,
+    hideFilterButton = false,
   }: Props = $props();
 
   let addMenuOpen = $state(false);
@@ -92,19 +94,21 @@
         </div>
       {/if}
     </div>
-    <span class="bar-divider"></span>
-    <button
-      class="bar-btn"
-      class:has-filters={hasActiveFilters}
-      onclick={onOpenFilterSheet}
-      aria-label="Filters and style"
-      title="Filters & Style"
-    >
-      <Icon name="sliders" size={20} />
-      {#if hasActiveFilters}
-        <span class="filter-dot"></span>
-      {/if}
-    </button>
+    {#if !hideFilterButton}
+      <span class="bar-divider"></span>
+      <button
+        class="bar-btn"
+        class:has-filters={hasActiveFilters}
+        onclick={onOpenFilterSheet}
+        aria-label="Filters and style"
+        title="Filters & Style"
+      >
+        <Icon name="sliders" size={20} />
+        {#if hasActiveFilters}
+          <span class="filter-dot"></span>
+        {/if}
+      </button>
+    {/if}
     <span class="bar-divider"></span>
     <button
       class="bar-btn"

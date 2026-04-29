@@ -23,9 +23,10 @@
   interface Props {
     open: boolean;
     onclose: () => void;
+    initialValue?: string;
   }
 
-  let { open, onclose }: Props = $props();
+  let { open, onclose, initialValue = '' }: Props = $props();
   let error = $state<string | null>(null);
 
   // Search state
@@ -45,6 +46,11 @@
   let sharesSelected = $state(false);
   let freestandingDocsSelected = $state(false);
   let isSubscribing = $state(false);
+
+  // Unsubscribe tracking: when a subscribed item is de-selected, it's added here
+  let unsubscribePublicationUris = $state<Set<string>>(new Set());
+  let unsubscribeShares = $state(false);
+  let unsubscribeFreestandingDocs = $state(false);
 
   // Standard subscriptions state
   type StandardSub = {
@@ -96,9 +102,49 @@
     return keys;
   });
 
-  let selectedCount = $derived(
-    selectedPublications.size + (sharesSelected ? 1 : 0) + (freestandingDocsSelected ? 1 : 0)
+  // Map content keys → subscription IDs for unsubscribing
+  let subscribedSubIds = $derived.by(() => {
+    if (!selectedAccount) return new Map<string, number>();
+    const map = new Map<string, number>();
+    for (const sub of subscriptionsStore.subscriptions) {
+      if (sub.subjectDid !== selectedAccount.did) continue;
+      if (sub.id === undefined) continue;
+      if (sub.sourceType === 'atproto.shares') {
+        map.set('shares', sub.id);
+      } else if (sub.sourceType === 'atproto.documents') {
+        if (sub.feedUrl === '__freestanding__') {
+          map.set('__freestanding__', sub.id);
+        } else if (sub.feedUrl) {
+          map.set(sub.feedUrl, sub.id);
+        }
+      }
+    }
+    return map;
+  });
+
+  // Derived: effectively selected state for the special content types
+  let freestandingSubbed = $derived(subscribedKeys.has('__freestanding__'));
+  let freestandingActive = $derived(
+    freestandingSubbed ? !unsubscribeFreestandingDocs : freestandingDocsSelected
   );
+  let sharesSubbed = $derived(subscribedKeys.has('shares'));
+  let sharesActive = $derived(sharesSubbed ? !unsubscribeShares : sharesSelected);
+
+  let changeCount = $derived(
+    selectedPublications.size +
+      (sharesSelected ? 1 : 0) +
+      (freestandingDocsSelected ? 1 : 0) +
+      unsubscribePublicationUris.size +
+      (unsubscribeShares ? 1 : 0) +
+      (unsubscribeFreestandingDocs ? 1 : 0)
+  );
+
+  // Pre-fill input when modal opens with an initial value
+  $effect(() => {
+    if (open && initialValue) {
+      inputValue = initialValue;
+    }
+  });
 
   function resetAll() {
     inputValue = '';
@@ -115,6 +161,9 @@
     sharesSelected = false;
     freestandingDocsSelected = false;
     isSubscribing = false;
+    unsubscribePublicationUris = new Set();
+    unsubscribeShares = false;
+    unsubscribeFreestandingDocs = false;
     if (searchTimeout) clearTimeout(searchTimeout);
   }
 
@@ -165,6 +214,9 @@
     selectedPublications = new Set();
     sharesSelected = false;
     freestandingDocsSelected = false;
+    unsubscribePublicationUris = new Set();
+    unsubscribeShares = false;
+    unsubscribeFreestandingDocs = false;
 
     try {
       const result = await api.detectContent(account.did);
@@ -172,17 +224,14 @@
       shareCount = result.shareCount;
       freestandingDocumentCount = result.freestandingDocumentCount;
 
-      for (const pub of result.publications) {
-        if (!subscribedKeys.has(pub.uri)) {
-          selectedPublications.add(pub.uri);
-        }
-      }
-      selectedPublications = new Set(selectedPublications);
-      if (result.shareCount > 0 && !subscribedKeys.has('shares')) {
-        sharesSelected = true;
-      }
-      if (result.freestandingDocumentCount > 0 && !subscribedKeys.has('__freestanding__')) {
-        freestandingDocsSelected = true;
+      // For a new account, default to selecting everything discoverable.
+      // For an account the user already follows, reflect their current choices only;
+      // they can opt into additional sources manually.
+      const hasExistingSubscriptions = subscribedKeys.size > 0;
+      if (!hasExistingSubscriptions) {
+        selectedPublications = new Set(result.publications.map((pub) => pub.uri));
+        sharesSelected = result.shareCount > 0;
+        freestandingDocsSelected = result.freestandingDocumentCount > 0;
       }
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to detect content';
@@ -200,11 +249,24 @@
     selectedPublications = new Set();
     sharesSelected = false;
     freestandingDocsSelected = false;
+    unsubscribePublicationUris = new Set();
+    unsubscribeShares = false;
+    unsubscribeFreestandingDocs = false;
     error = null;
   }
 
   function togglePublication(uri: string) {
-    if (subscribedKeys.has(uri)) return;
+    if (subscribedKeys.has(uri)) {
+      // Already subscribed — toggle unsubscribe
+      const next = new Set(unsubscribePublicationUris);
+      if (next.has(uri)) {
+        next.delete(uri);
+      } else {
+        next.add(uri);
+      }
+      unsubscribePublicationUris = next;
+      return;
+    }
     const next = new Set(selectedPublications);
     if (next.has(uri)) {
       next.delete(uri);
@@ -215,12 +277,18 @@
   }
 
   function toggleShares() {
-    if (subscribedKeys.has('shares')) return;
+    if (subscribedKeys.has('shares')) {
+      unsubscribeShares = !unsubscribeShares;
+      return;
+    }
     sharesSelected = !sharesSelected;
   }
 
   function toggleFreestandingDocs() {
-    if (subscribedKeys.has('__freestanding__')) return;
+    if (subscribedKeys.has('__freestanding__')) {
+      unsubscribeFreestandingDocs = !unsubscribeFreestandingDocs;
+      return;
+    }
     freestandingDocsSelected = !freestandingDocsSelected;
   }
 
@@ -403,18 +471,35 @@
   });
 
   async function handleSubscribe() {
-    if (!selectedAccount || selectedCount === 0) return;
-
-    if (!subscriptionsStore.canAddMore) {
-      error = 'Subscription limit reached';
-      return;
-    }
+    if (!selectedAccount || changeCount === 0) return;
 
     error = null;
     isSubscribing = true;
     let firstAddedId: number | null = null;
 
     try {
+      // Unsubscribe from de-selected items first
+      if (unsubscribeShares) {
+        const id = subscribedSubIds.get('shares');
+        if (id !== undefined) await subscriptionsStore.remove(id);
+      }
+      if (unsubscribeFreestandingDocs) {
+        const id = subscribedSubIds.get('__freestanding__');
+        if (id !== undefined) await subscriptionsStore.remove(id);
+      }
+      for (const pubUri of unsubscribePublicationUris) {
+        const id = subscribedSubIds.get(pubUri);
+        if (id !== undefined) await subscriptionsStore.remove(id);
+      }
+
+      // Subscribe to newly selected items
+      if (selectedPublications.size > 0 || sharesSelected || freestandingDocsSelected) {
+        if (!subscriptionsStore.canAddMore) {
+          error = `Subscription limit reached (${subscriptionsStore.maxSubscriptions} max)`;
+          return;
+        }
+      }
+
       for (const pubUri of selectedPublications) {
         const pub = publications.find((p) => p.uri === pubUri);
         if (!pub) continue;
@@ -469,7 +554,7 @@
         sidebarStore.closeMobile();
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to subscribe';
+      error = e instanceof Error ? e.message : 'Failed to update subscriptions';
     } finally {
       isSubscribing = false;
     }
@@ -512,17 +597,19 @@
   {/if}
 {/snippet}
 
-<Modal {open} onclose={handleClose} title="Add @handle">
-  {#if isAtLimit}
-    <p class="limit-message">
-      You've reached the maximum of {subscriptionsStore.maxSubscriptions} feeds. Remove some feeds to
-      add new ones.
-    </p>
-  {:else if step === 'search'}
+<Modal {open} onclose={handleClose}>
+  {#if step === 'search'}
     <div class="modal-content">
       <p class="modal-desc">
-        Follow a Bluesky account to see their shared articles and publications.
+        Follow an Atmosphere account (Bluesky, Blacksky, npmx, etc.) to see their shared articles
+        and publications.
       </p>
+      {#if isAtLimit}
+        <p class="limit-message">
+          You've reached the maximum of {subscriptionsStore.maxSubscriptions} feeds. Remove some feeds
+          to add new ones.
+        </p>
+      {/if}
       <div class="input-group">
         <input
           type="text"
@@ -530,6 +617,7 @@
           placeholder="@handle or name..."
           bind:value={inputValue}
           oninput={handleInput}
+          autofocus
         />
       </div>
 
@@ -571,6 +659,19 @@
           <span class="selected-name">{selectedAccount.displayName || selectedAccount.handle}</span>
           <span class="selected-handle">@{selectedAccount.handle}</span>
         </div>
+        <a
+          class="bsky-profile-link"
+          href="https://bsky.app/profile/{selectedAccount.handle}"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="View on Bluesky"
+        >
+          <svg class="bsky-icon" viewBox="0 0 568 501" fill="none" aria-hidden="true">
+            <path
+              d="M123.121 33.6637C188.241 82.5526 258.281 181.681 284 234.873C309.719 181.681 379.759 82.5526 444.879 33.6637C491.866 -1.61175 568 -28.9061 568 57.9464C568 75.2916 558.055 203.659 552.222 224.501C531.947 296.954 458.067 315.434 392.347 304.249C507.222 323.8 536.444 388.56 473.333 453.32C353.473 576.312 301.061 422.461 287.631 383.039C285.169 375.812 284.017 372.431 284 375.306C283.983 372.431 282.831 375.812 280.369 383.039C266.939 422.461 214.527 576.312 94.6667 453.32C31.5556 388.56 60.7778 323.8 175.653 304.249C109.933 315.434 36.0534 296.954 15.7778 224.501C9.94493 203.659 0 75.2916 0 57.9464C0 -28.9061 76.1344 -1.61175 123.121 33.6637Z"
+            />
+          </svg>
+        </a>
       </div>
 
       {#if isDetecting}
@@ -582,16 +683,12 @@
         <div class="content-list">
           <button
             class="content-item"
-            class:selected={freestandingDocsSelected}
-            class:is-subscribed={subscribedKeys.has('__freestanding__')}
+            class:selected={freestandingActive}
+            class:is-subscribed={freestandingSubbed}
             onclick={toggleFreestandingDocs}
-            disabled={subscribedKeys.has('__freestanding__')}
           >
-            <span
-              class="checkbox"
-              class:checked={freestandingDocsSelected || subscribedKeys.has('__freestanding__')}
-            >
-              {#if freestandingDocsSelected || subscribedKeys.has('__freestanding__')}&#10003;{/if}
+            <span class="checkbox" class:checked={freestandingActive}>
+              {#if freestandingActive}&#10003;{/if}
             </span>
             <span class="content-info">
               <span class="content-name"
@@ -599,20 +696,21 @@
               >
               <span class="content-desc">Free-standing documents by @{selectedAccount.handle}</span>
             </span>
-            {#if subscribedKeys.has('__freestanding__')}
+            {#if freestandingSubbed && unsubscribeFreestandingDocs}
+              <span class="unsubscribing-badge">Removing</span>
+            {:else if freestandingSubbed}
               <span class="subscribed-badge">Subscribed</span>
             {/if}
           </button>
 
           <button
             class="content-item"
-            class:selected={sharesSelected}
-            class:is-subscribed={subscribedKeys.has('shares')}
+            class:selected={sharesActive}
+            class:is-subscribed={sharesSubbed}
             onclick={toggleShares}
-            disabled={subscribedKeys.has('shares')}
           >
-            <span class="checkbox" class:checked={sharesSelected || subscribedKeys.has('shares')}>
-              {#if sharesSelected || subscribedKeys.has('shares')}&#10003;{/if}
+            <span class="checkbox" class:checked={sharesActive}>
+              {#if sharesActive}&#10003;{/if}
             </span>
             <span class="content-info">
               <span class="content-name"
@@ -620,7 +718,9 @@
               >
               <span class="content-desc">Articles shared by @{selectedAccount.handle}</span>
             </span>
-            {#if subscribedKeys.has('shares')}
+            {#if sharesSubbed && unsubscribeShares}
+              <span class="unsubscribing-badge">Removing</span>
+            {:else if sharesSubbed}
               <span class="subscribed-badge">Subscribed</span>
             {/if}
           </button>
@@ -630,18 +730,16 @@
           <div class="content-list">
             {#each publications as pub (pub.uri)}
               {@const isSubscribed = subscribedKeys.has(pub.uri)}
+              {@const unsubscribing = unsubscribePublicationUris.has(pub.uri)}
+              {@const isActive = isSubscribed ? !unsubscribing : selectedPublications.has(pub.uri)}
               <button
                 class="content-item"
-                class:selected={selectedPublications.has(pub.uri)}
+                class:selected={isActive}
                 class:is-subscribed={isSubscribed}
                 onclick={() => togglePublication(pub.uri)}
-                disabled={isSubscribed}
               >
-                <span
-                  class="checkbox"
-                  class:checked={selectedPublications.has(pub.uri) || isSubscribed}
-                >
-                  {#if selectedPublications.has(pub.uri) || isSubscribed}&#10003;{/if}
+                <span class="checkbox" class:checked={isActive}>
+                  {#if isActive}&#10003;{/if}
                 </span>
                 <span class="content-info">
                   <span class="content-name">{pub.name || pub.url}</span>
@@ -652,7 +750,9 @@
                     <span class="content-desc">{pub.description}</span>
                   {/if}
                 </span>
-                {#if isSubscribed}
+                {#if isSubscribed && unsubscribing}
+                  <span class="unsubscribing-badge">Removing</span>
+                {:else if isSubscribed}
                   <span class="subscribed-badge">Subscribed</span>
                 {/if}
               </button>
@@ -663,12 +763,12 @@
         <button
           class="subscribe-btn"
           onclick={handleSubscribe}
-          disabled={selectedCount === 0 || isSubscribing}
+          disabled={changeCount === 0 || isSubscribing}
         >
           {#if isSubscribing}
-            Subscribing...
+            Updating...
           {:else}
-            Subscribe{selectedCount > 0 ? ` (${selectedCount})` : ''}
+            Update subscriptions{changeCount > 0 ? ` (${changeCount})` : ''}
           {/if}
         </button>
       {/if}
@@ -812,6 +912,7 @@
     padding: 0.75rem;
     background: var(--color-bg-secondary);
     border-radius: 8px;
+    position: relative;
   }
 
   .selected-avatar {
@@ -846,6 +947,32 @@
   .selected-handle {
     font-size: 0.8125rem;
     color: var(--color-text-secondary);
+  }
+
+  .bsky-profile-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    margin-left: auto;
+    color: var(--color-text-secondary);
+    transition:
+      background-color 0.15s,
+      color 0.15s;
+  }
+
+  .bsky-profile-link:hover {
+    background: var(--color-bg);
+    color: #0085ff;
+  }
+
+  .bsky-icon {
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
   }
 
   .detecting {
@@ -900,13 +1027,8 @@
     border-bottom: none;
   }
 
-  .content-item:hover:not(:disabled) {
+  .content-item:hover {
     background: var(--color-bg-secondary);
-  }
-
-  .content-item.is-subscribed {
-    opacity: 0.6;
-    cursor: default;
   }
 
   .checkbox {
@@ -966,6 +1088,16 @@
     font-size: 0.75rem;
     color: var(--color-text-secondary);
     background: var(--color-bg-secondary);
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+    flex-shrink: 0;
+    align-self: center;
+  }
+
+  .unsubscribing-badge {
+    font-size: 0.75rem;
+    color: var(--color-error);
+    background: color-mix(in srgb, var(--color-error) 10%, transparent);
     padding: 0.125rem 0.5rem;
     border-radius: 4px;
     flex-shrink: 0;
