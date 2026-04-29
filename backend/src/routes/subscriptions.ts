@@ -69,23 +69,22 @@ async function maybePushToPds(
 }
 
 /**
- * Helper to delete subscription from PDS in background (fire and forget)
- * Accepts pdsSyncEnabled to avoid redundant DB lookups
+ * Helper to delete subscription from PDS.
+ *
+ * Deletes must be awaited by the HTTP handler. If we only schedule them with waitUntil,
+ * a sync that starts immediately after the response can pull the still-existing PDS
+ * record back into the local cache, making the unsubscribe appear to do nothing.
  */
-async function maybeDeleteFromPds(
+async function deleteFromPdsIfEnabled(
   session: Session,
   pdsSyncEnabled: boolean,
   rkey: string
 ): Promise<void> {
   if (!pdsSyncEnabled) return;
 
-  try {
-    const result = await deleteSubscriptionFromPds(session, rkey);
-    if (!result.success) {
-      console.error(`[PDS Sync] Failed to delete subscription: ${result.error}`);
-    }
-  } catch (error) {
-    console.error('[PDS Sync] Error deleting subscription:', error);
+  const result = await deleteSubscriptionFromPds(session, rkey);
+  if (!result.success) {
+    throw new Error(`Failed to delete subscription from PDS: ${result.error}`);
   }
 }
 
@@ -607,14 +606,14 @@ export async function handleDeleteSubscription(
   }
 
   try {
+    // Delete from PDS before removing the local cache/returning so the next sync cannot
+    // re-import the record.
+    const settings = await getUserSettings(env, session.did);
+    await deleteFromPdsIfEnabled(session, settings.pdsSyncEnabled, rkey);
+
     await env.DB.prepare('DELETE FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?')
       .bind(session.did, `%/${rkey}`)
       .run();
-
-    // Delete from PDS in background if sync is enabled (fire and forget)
-    // Fetch settings once here to avoid redundant lookups in the helper
-    const settings = await getUserSettings(env, session.did);
-    ctx.waitUntil(maybeDeleteFromPds(session, settings.pdsSyncEnabled, rkey));
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json' },
