@@ -691,207 +691,223 @@ function createFeedViewStore() {
   // Derived: article lookup by guid
   let articlesByGuid = $derived(articlesStore.articlesByGuid);
 
+  // Derived: full merged-and-filtered saved-items list (pre-pagination).
+  // Exposed separately from currentItems so the saved-view rendering path can
+  // slice into it for infinite scroll while hasMore/loadMore still see the
+  // total count.
+  let savedItemsAll = $derived.by((): FeedDisplayItem[] => {
+    if (!isSavedView) return [];
+
+    const sortOrder = effectiveFilters.sortOrder;
+    const isArchiveView = savedView === 'archive';
+
+    // Per-item predicate for saved-channel filters. Used both for the final
+    // item list *and* for deciding whether an article should dedup a bookmark
+    // — otherwise a feed-saved article that doesn't match the channel filter
+    // would silently kill its matching bookmark even though the article
+    // itself never shows up.
+    const dateCutoff = toolbarDateFilter ? datePresetToMs(toolbarDateFilter) : null;
+    const domainSet =
+      toolbarDomainFilter.length > 0
+        ? new Set(toolbarDomainFilter.map((d) => d.toLowerCase()))
+        : null;
+    const readingLengths = toolbarReadingLength;
+    const matchesSavedChannelFilters = (item: FeedDisplayItem): boolean => {
+      if (dateCutoff !== null && getSavedDate(item) < dateCutoff) return false;
+      if (readingLengths.length > 0) {
+        const wc = getItemWordCount(item);
+        if (wc === null) return false;
+        if (!readingLengths.some((b) => matchesReadingLength(wc, b))) return false;
+      }
+      if (domainSet) {
+        const domain = getItemDomain(item);
+        if (domain === null || !domainSet.has(domain.toLowerCase())) return false;
+      }
+      return true;
+    };
+    const sourceFilter =
+      isSavedChannel && toolbarSavedSourceFilter.length > 0
+        ? new Set(toolbarSavedSourceFilter)
+        : null;
+
+    // Start with saved articles from filteredArticles (already filtered by savedView).
+    // Use the full filteredArticles list, not displayedArticles — saved-channel
+    // filters (reading length, date, domain) are applied at the end of this
+    // block, and pagination-before-filter would hide matches that fall outside
+    // the current page window.
+    const articleItems: FeedDisplayItem[] =
+      sourceFilter && !sourceFilter.has('feed')
+        ? []
+        : filteredArticles.map((item) => ({
+            type: 'article' as const,
+            item,
+            key: item.guid,
+          }));
+
+    // Add starred shares (source type 'share')
+    const starredShareItems: FeedDisplayItem[] =
+      sourceFilter && !sourceFilter.has('share')
+        ? []
+        : socialStore.shares
+            .filter((s) => {
+              if (!itemLabelsStore.isSaved(s.recordUri)) return false;
+              if (isArchiveView) return itemLabelsStore.isArchived(s.recordUri);
+              return !itemLabelsStore.isArchived(s.recordUri);
+            })
+            .map((s) => ({
+              type: 'share' as const,
+              item: s,
+              key: s.recordUri,
+            }));
+
+    // Add starred documents (source type 'document')
+    const starredDocumentItems: FeedDisplayItem[] =
+      sourceFilter && !sourceFilter.has('document')
+        ? []
+        : socialStore.documents
+            .filter((d) => {
+              if (!itemLabelsStore.isSaved(d.recordUri)) return false;
+              if (isArchiveView) return itemLabelsStore.isArchived(d.recordUri);
+              return !itemLabelsStore.isArchived(d.recordUri);
+            })
+            .map((d) => ({
+              type: 'document' as const,
+              item: d,
+              key: d.recordUri,
+            }));
+
+    // Add bookmarks — exclude bookmarks already shown via articles/shares/documents.
+    // Only dedup against articles that actually match the channel filters;
+    // otherwise an article that's filtered out (e.g. by reading length) would
+    // silently kill its matching bookmark, and the sidebar count would not
+    // agree with the displayed list.
+    const allSavedArticleGuids = new Set(
+      articlesStore.allArticles
+        .filter(
+          (a) =>
+            itemLabelsStore.isSaved(a.guid) &&
+            matchesSavedChannelFilters({ type: 'article', item: a, key: a.guid })
+        )
+        .map((a) => a.guid)
+    );
+    // Only dedup bookmarks against shares/documents that will actually pass
+    // the channel filters — same reasoning as allSavedArticleGuids above.
+    const shareRecordUris = new Set(
+      starredShareItems.filter((s) => matchesSavedChannelFilters(s)).map((s) => s.key)
+    );
+    const documentRecordUris = new Set(
+      starredDocumentItems.filter((d) => matchesSavedChannelFilters(d)).map((d) => d.key)
+    );
+    const bookmarkItems: FeedDisplayItem[] = savesStore.articles
+      .filter((bm) => {
+        // Apply saved source filter for saved channels. Treat a missing
+        // source as 'url' (the default for legacy rows) so the filter still
+        // applies instead of silently letting the bookmark through.
+        const src = bm.source ?? 'url';
+        if (sourceFilter && !sourceFilter.has(src)) return false;
+        // Dedup against items already displayed via the primary stores.
+        // Checked regardless of bm.source so legacy rows with undefined
+        // source can't slip through and show up twice.
+        if (bm.itemGuid) {
+          if (allSavedArticleGuids.has(bm.itemGuid)) return false;
+          if (shareRecordUris.has(bm.itemGuid)) return false;
+          if (documentRecordUris.has(bm.itemGuid)) return false;
+        }
+        // Use itemGuid (article guid) for archive checks when available, since archive
+        // labels are stored against the article guid, not the AT Protocol URI
+        const archiveKey = bm.itemGuid || bm.uri || '';
+        if (isArchiveView) return itemLabelsStore.isArchived(archiveKey);
+        return !itemLabelsStore.isArchived(archiveKey);
+      })
+      .map((bm) => ({
+        type: 'saved' as const,
+        item: bm,
+        key: bm.uri || bm.itemGuid || bm.rkey,
+      }));
+
+    let items: FeedDisplayItem[] = [
+      ...articleItems,
+      ...starredShareItems,
+      ...starredDocumentItems,
+      ...bookmarkItems,
+    ];
+
+    // Sort saved items
+    const sort = isSavedChannel ? (toolbarSortOrder ?? 'newest') : sortOrder;
+    items.sort((a, b) => {
+      switch (sort) {
+        case 'published-newest':
+        case 'published-oldest': {
+          const dateA = getItemPublishedDate(a);
+          const dateB = getItemPublishedDate(b);
+          return sort === 'published-newest' ? dateB - dateA : dateA - dateB;
+        }
+        case 'shortest':
+        case 'longest': {
+          const wcA = getItemWordCount(a) ?? 0;
+          const wcB = getItemWordCount(b) ?? 0;
+          return sort === 'shortest' ? wcA - wcB : wcB - wcA;
+        }
+        case 'domain-asc':
+        case 'domain-desc': {
+          const domA = (getItemDomain(a) ?? '').toLowerCase();
+          const domB = (getItemDomain(b) ?? '').toLowerCase();
+          const cmp = domA.localeCompare(domB);
+          return sort === 'domain-asc' ? cmp : -cmp;
+        }
+        default: {
+          // newest / oldest — sort by savedAt
+          const dateA = getSavedDate(a);
+          const dateB = getSavedDate(b);
+          return sort === 'oldest' ? dateA - dateB : dateB - dateA;
+        }
+      }
+    });
+
+    // Apply tag filter
+    if (toolbarTagFilter.length > 0) {
+      const _tags = itemLabelsStore.tagsByItem;
+      items = items.filter((item) => itemLabelsStore.itemHasAnyTag(item.key, toolbarTagFilter));
+    }
+
+    // Apply date added filter
+    if (toolbarDateFilter) {
+      const cutoff = datePresetToMs(toolbarDateFilter);
+      items = items.filter((item) => getSavedDate(item) >= cutoff);
+    }
+
+    // Apply reading length filter. Items with unknown word count are
+    // excluded so the list matches the sidebar count and the suggestion
+    // that promised "N long reads".
+    if (toolbarReadingLength.length > 0) {
+      items = items.filter((item) => {
+        const wc = getItemWordCount(item);
+        if (wc === null) return false;
+        return toolbarReadingLength.some((bucket) => matchesReadingLength(wc, bucket));
+      });
+    }
+
+    // Apply domain filter
+    if (toolbarDomainFilter.length > 0) {
+      const domainSet = new Set(toolbarDomainFilter.map((d) => d.toLowerCase()));
+      items = items.filter((item) => {
+        const domain = getItemDomain(item);
+        return domain !== null && domainSet.has(domain.toLowerCase());
+      });
+    }
+
+    return items;
+  });
+
   // Derived: unified current items for the active view mode
   let currentItems = $derived.by((): FeedDisplayItem[] => {
     const mode = viewMode;
     let items: FeedDisplayItem[];
 
-    // Special handling for bookmarks view: include starred items of all types
+    // Saved view: paginate the merged/filtered list so very long saved-item
+    // lists don't render the whole DOM at once.
     if (isSavedView) {
-      const sortOrder = effectiveFilters.sortOrder;
-      const isArchiveView = savedView === 'archive';
-
-      // Per-item predicate for saved-channel filters. Used both for the final
-      // item list *and* for deciding whether an article should dedup a bookmark
-      // — otherwise a feed-saved article that doesn't match the channel filter
-      // would silently kill its matching bookmark even though the article
-      // itself never shows up.
-      const dateCutoff = toolbarDateFilter ? datePresetToMs(toolbarDateFilter) : null;
-      const domainSet =
-        toolbarDomainFilter.length > 0
-          ? new Set(toolbarDomainFilter.map((d) => d.toLowerCase()))
-          : null;
-      const readingLengths = toolbarReadingLength;
-      const matchesSavedChannelFilters = (item: FeedDisplayItem): boolean => {
-        if (dateCutoff !== null && getSavedDate(item) < dateCutoff) return false;
-        if (readingLengths.length > 0) {
-          const wc = getItemWordCount(item);
-          if (wc === null) return false;
-          if (!readingLengths.some((b) => matchesReadingLength(wc, b))) return false;
-        }
-        if (domainSet) {
-          const domain = getItemDomain(item);
-          if (domain === null || !domainSet.has(domain.toLowerCase())) return false;
-        }
-        return true;
-      };
-      const sourceFilter =
-        isSavedChannel && toolbarSavedSourceFilter.length > 0
-          ? new Set(toolbarSavedSourceFilter)
-          : null;
-
-      // Start with saved articles from filteredArticles (already filtered by savedView).
-      // Use the full filteredArticles list, not displayedArticles — saved-channel
-      // filters (reading length, date, domain) are applied at the end of this
-      // block, and pagination-before-filter would hide matches that fall outside
-      // the current page window.
-      const articleItems: FeedDisplayItem[] =
-        sourceFilter && !sourceFilter.has('feed')
-          ? []
-          : filteredArticles.map((item) => ({
-              type: 'article' as const,
-              item,
-              key: item.guid,
-            }));
-
-      // Add starred shares (source type 'share')
-      const starredShareItems: FeedDisplayItem[] =
-        sourceFilter && !sourceFilter.has('share')
-          ? []
-          : socialStore.shares
-              .filter((s) => {
-                if (!itemLabelsStore.isSaved(s.recordUri)) return false;
-                if (isArchiveView) return itemLabelsStore.isArchived(s.recordUri);
-                return !itemLabelsStore.isArchived(s.recordUri);
-              })
-              .map((s) => ({
-                type: 'share' as const,
-                item: s,
-                key: s.recordUri,
-              }));
-
-      // Add starred documents (source type 'document')
-      const starredDocumentItems: FeedDisplayItem[] =
-        sourceFilter && !sourceFilter.has('document')
-          ? []
-          : socialStore.documents
-              .filter((d) => {
-                if (!itemLabelsStore.isSaved(d.recordUri)) return false;
-                if (isArchiveView) return itemLabelsStore.isArchived(d.recordUri);
-                return !itemLabelsStore.isArchived(d.recordUri);
-              })
-              .map((d) => ({
-                type: 'document' as const,
-                item: d,
-                key: d.recordUri,
-              }));
-
-      // Add bookmarks — exclude bookmarks already shown via articles/shares/documents.
-      // Only dedup against articles that actually match the channel filters;
-      // otherwise an article that's filtered out (e.g. by reading length) would
-      // silently kill its matching bookmark, and the sidebar count would not
-      // agree with the displayed list.
-      const allSavedArticleGuids = new Set(
-        articlesStore.allArticles
-          .filter(
-            (a) =>
-              itemLabelsStore.isSaved(a.guid) &&
-              matchesSavedChannelFilters({ type: 'article', item: a, key: a.guid })
-          )
-          .map((a) => a.guid)
-      );
-      // Only dedup bookmarks against shares/documents that will actually pass
-      // the channel filters — same reasoning as allSavedArticleGuids above.
-      const shareRecordUris = new Set(
-        starredShareItems.filter((s) => matchesSavedChannelFilters(s)).map((s) => s.key)
-      );
-      const documentRecordUris = new Set(
-        starredDocumentItems.filter((d) => matchesSavedChannelFilters(d)).map((d) => d.key)
-      );
-      const bookmarkItems: FeedDisplayItem[] = savesStore.articles
-        .filter((bm) => {
-          // Apply saved source filter for saved channels. Treat a missing
-          // source as 'url' (the default for legacy rows) so the filter still
-          // applies instead of silently letting the bookmark through.
-          const src = bm.source ?? 'url';
-          if (sourceFilter && !sourceFilter.has(src)) return false;
-          // Dedup against items already displayed via the primary stores.
-          // Checked regardless of bm.source so legacy rows with undefined
-          // source can't slip through and show up twice.
-          if (bm.itemGuid) {
-            if (allSavedArticleGuids.has(bm.itemGuid)) return false;
-            if (shareRecordUris.has(bm.itemGuid)) return false;
-            if (documentRecordUris.has(bm.itemGuid)) return false;
-          }
-          // Use itemGuid (article guid) for archive checks when available, since archive
-          // labels are stored against the article guid, not the AT Protocol URI
-          const archiveKey = bm.itemGuid || bm.uri || '';
-          if (isArchiveView) return itemLabelsStore.isArchived(archiveKey);
-          return !itemLabelsStore.isArchived(archiveKey);
-        })
-        .map((bm) => ({
-          type: 'saved' as const,
-          item: bm,
-          key: bm.uri || bm.itemGuid || bm.rkey,
-        }));
-
-      items = [...articleItems, ...starredShareItems, ...starredDocumentItems, ...bookmarkItems];
-
-      // Sort saved items
-      const sort = isSavedChannel ? (toolbarSortOrder ?? 'newest') : sortOrder;
-      items.sort((a, b) => {
-        switch (sort) {
-          case 'published-newest':
-          case 'published-oldest': {
-            const dateA = getItemPublishedDate(a);
-            const dateB = getItemPublishedDate(b);
-            return sort === 'published-newest' ? dateB - dateA : dateA - dateB;
-          }
-          case 'shortest':
-          case 'longest': {
-            const wcA = getItemWordCount(a) ?? 0;
-            const wcB = getItemWordCount(b) ?? 0;
-            return sort === 'shortest' ? wcA - wcB : wcB - wcA;
-          }
-          case 'domain-asc':
-          case 'domain-desc': {
-            const domA = (getItemDomain(a) ?? '').toLowerCase();
-            const domB = (getItemDomain(b) ?? '').toLowerCase();
-            const cmp = domA.localeCompare(domB);
-            return sort === 'domain-asc' ? cmp : -cmp;
-          }
-          default: {
-            // newest / oldest — sort by savedAt
-            const dateA = getSavedDate(a);
-            const dateB = getSavedDate(b);
-            return sort === 'oldest' ? dateA - dateB : dateB - dateA;
-          }
-        }
-      });
-
-      // Apply tag filter
-      if (toolbarTagFilter.length > 0) {
-        const _tags = itemLabelsStore.tagsByItem;
-        items = items.filter((item) => itemLabelsStore.itemHasAnyTag(item.key, toolbarTagFilter));
-      }
-
-      // Apply date added filter
-      if (toolbarDateFilter) {
-        const cutoff = datePresetToMs(toolbarDateFilter);
-        items = items.filter((item) => getSavedDate(item) >= cutoff);
-      }
-
-      // Apply reading length filter. Items with unknown word count are
-      // excluded so the list matches the sidebar count and the suggestion
-      // that promised "N long reads".
-      if (toolbarReadingLength.length > 0) {
-        items = items.filter((item) => {
-          const wc = getItemWordCount(item);
-          if (wc === null) return false;
-          return toolbarReadingLength.some((bucket) => matchesReadingLength(wc, bucket));
-        });
-      }
-
-      // Apply domain filter
-      if (toolbarDomainFilter.length > 0) {
-        const domainSet = new Set(toolbarDomainFilter.map((d) => d.toLowerCase()));
-        items = items.filter((item) => {
-          const domain = getItemDomain(item);
-          return domain !== null && domainSet.has(domain.toLowerCase());
-        });
-      }
-
-      return items;
+      return savedItemsAll.slice(0, loadedArticleCount);
     }
 
     if (mode === 'combined') {
@@ -973,9 +989,7 @@ function createFeedViewStore() {
   // Derived: unified pagination state
   let hasMore = $derived.by(() => {
     const mode = viewMode;
-    // Saved views render the full filteredArticles list, so there is nothing
-    // more to load beyond what's already shown.
-    if (isSavedView) return false;
+    if (isSavedView) return loadedArticleCount < savedItemsAll.length;
     if (mode === 'combined') {
       return loadedArticleCount < filteredArticles.length || socialStore.hasMore;
     }
@@ -1013,6 +1027,16 @@ function createFeedViewStore() {
 
   async function loadMore() {
     const mode = viewMode;
+
+    // Saved channels still report viewMode === 'articles', so check isSavedView
+    // first — otherwise we'd page filteredArticles.length instead of the
+    // merged saved-items count (which also includes shares/documents/bookmarks).
+    if (isSavedView) {
+      if (loadedArticleCount < savedItemsAll.length) {
+        loadedArticleCount += DEFAULT_PAGE_SIZE;
+      }
+      return;
+    }
 
     if (mode === 'combined') {
       await Promise.all([
@@ -1403,6 +1427,7 @@ function createFeedViewStore() {
     syncToolbarToSavedView,
     setSavedView(view: 'inbox' | 'archive') {
       savedView = view;
+      loadedArticleCount = DEFAULT_PAGE_SIZE;
     },
     openTagMenu(itemKey: string) {
       tagMenuItemKey = itemKey;
