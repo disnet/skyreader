@@ -343,6 +343,17 @@
         share.itemUrl,
         share.itemTitle
       );
+    } else if (item.type === 'document') {
+      const doc = item.item;
+      if (itemLabelsStore.isSocialRead(doc.recordUri)) return;
+
+      itemLabelsStore.markSocialAsRead(
+        'document',
+        doc.recordUri,
+        doc.authorDid,
+        doc.canonicalUrl || '',
+        doc.title
+      );
     }
     // userShare items don't auto-mark as read from scroll
   }
