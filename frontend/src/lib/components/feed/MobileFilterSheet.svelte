@@ -12,6 +12,7 @@
   import type {
     ChannelAutoRule,
     SavedSourceType,
+    SubscriptionSourceType,
     DateAddedPreset,
     ReadingLengthFilter,
     SortOrder,
@@ -19,6 +20,7 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import {
     SAVED_SOURCE_OPTIONS,
+    TYPE_OPTIONS,
     DATE_PRESET_OPTIONS_SHORT as DATE_PRESET_OPTIONS,
     READING_LENGTH_OPTIONS_SHORT as READING_LENGTH_OPTIONS,
     SAVED_SORT_OPTIONS_SHORT as SAVED_SORT_OPTIONS,
@@ -85,6 +87,7 @@
   let chDomainPatterns = $state<string[]>([]);
   let chSourceMode = $state<'all' | 'include'>('all');
   let chSourceKeys = $state<Set<string>>(new Set());
+  let chTypeFilter = $state<Set<SubscriptionSourceType>>(new Set());
   let chSaving = $state(false);
   let chError = $state<string | null>(null);
   let chNameManuallyEdited = $state(false);
@@ -210,6 +213,7 @@
         chSavedDomainFilter = new Set(view.savedDomainFilter ?? []);
         chSavedTagFilter = new Set(view.tagFilter ?? []);
         chSortOrder = view.sortOrder;
+        chTypeFilter = new Set(view.typeFilter ?? []);
         const isSmartChannel = !!view.autoRule;
         if (isSmartChannel) {
           chMode = 'smart';
@@ -243,6 +247,7 @@
       chNameManuallyEdited = false;
       chSourceMode = 'all';
       chSourceKeys = new Set();
+      chTypeFilter = new Set();
       chSavedSourceFilter = new Set();
       chSavedDateFilter = '';
       chSavedReadingLength = new Set();
@@ -262,6 +267,13 @@
       next.add(key);
     }
     chSourceKeys = next;
+  }
+
+  function toggleChTypeFilter(type: SubscriptionSourceType) {
+    const next = new Set(chTypeFilter);
+    if (next.has(type)) next.delete(type);
+    else next.add(type);
+    chTypeFilter = next;
   }
 
   async function handleChDelete() {
@@ -306,6 +318,12 @@
               sourceMode: isSmartMode ? ('include' as const) : chSourceMode,
               sourceKeys: isSmartMode ? chMatchedSourceKeys : Array.from(chSourceKeys),
               autoRule: isSmartMode ? chCurrentAutoRule : undefined,
+              typeFilter:
+                chMode === 'manual' && chSourceMode === 'include'
+                  ? undefined
+                  : chTypeFilter.size > 0
+                    ? Array.from(chTypeFilter)
+                    : undefined,
               readFilter: 'unread' as const,
               sortOrder: 'newest' as const,
             };
@@ -891,6 +909,25 @@
           {/if}
         </div>
       {/if}
+
+      {#if chChannelType === 'feed' && !(chMode === 'manual' && chSourceMode === 'include')}
+        <div class="sheet-section">
+          <div class="section-label">Content Types</div>
+          <div class="source-list">
+            {#each TYPE_OPTIONS as opt}
+              <label class="source-item">
+                <input
+                  type="checkbox"
+                  checked={chTypeFilter.has(opt.value)}
+                  onchange={() => toggleChTypeFilter(opt.value)}
+                />
+                <span class="source-name">{opt.label}</span>
+              </label>
+            {/each}
+          </div>
+          <p class="section-hint">Leave all unchecked to show all types</p>
+        </div>
+      {/if}
     {/if}
 
     {#if chError}
@@ -1136,6 +1173,13 @@
     padding: 0.75rem;
     text-align: center;
     font-size: 0.8125rem;
+    color: var(--color-text-secondary);
+  }
+
+  .section-hint {
+    margin: 0;
+    padding-left: 0.25rem;
+    font-size: 0.75rem;
     color: var(--color-text-secondary);
   }
 
