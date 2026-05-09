@@ -728,8 +728,7 @@
         onOpenFeedSwitcher={() => (feedSwitcherOpen = true)}
         onOpenFilterSheet={() => {
           filterSheetInitialTab = 'filters';
-          const currentView = feedViewStore.viewFilter;
-          editingChannelId = currentView ? parseInt(currentView) : null;
+          editingChannelId = feedViewStore.activeFilteredView?.id ?? null;
           channelCreateMode = false;
           filterSheetOpen = true;
         }}
