@@ -519,6 +519,7 @@
       if (appManager.isStale(STALE_THRESHOLD_MS)) {
         console.log('Data is stale, refreshing...');
         await appManager.refreshFromBackend();
+        feedViewStore.clearReadThisSession();
       }
     }
     lastVisibleTime = Date.now();
@@ -526,6 +527,7 @@
 
   async function handleRefreshWithToast() {
     const newArticles = await appManager.refreshFromBackend();
+    feedViewStore.clearReadThisSession();
     if (newArticles > 0) {
       const id = toastStore.add(`${newArticles} new article${newArticles === 1 ? '' : 's'}`);
       toastStore.update(id, 'success');
