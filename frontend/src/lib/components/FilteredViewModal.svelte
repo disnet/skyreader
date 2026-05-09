@@ -319,7 +319,12 @@
               autoRule: isSmartMode ? currentAutoRule : undefined,
               readFilter,
               sortOrder,
-              typeFilter: typeFilter.size > 0 ? Array.from(typeFilter) : undefined,
+              typeFilter:
+                channelMode === 'manual' && sourceMode === 'include'
+                  ? undefined
+                  : typeFilter.size > 0
+                    ? Array.from(typeFilter)
+                    : undefined,
             };
 
       if (editingViewId != null) {
@@ -676,7 +681,7 @@
     {/if}
 
     <div class="advanced-section">
-      {#if channelType === 'feed'}
+      {#if channelType === 'feed' && !(channelMode === 'manual' && sourceMode === 'include')}
         <!-- Type Filter (feed channels only) -->
         <div class="form-group">
           <span class="form-label">Content Types</span>

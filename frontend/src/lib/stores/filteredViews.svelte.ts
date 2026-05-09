@@ -105,7 +105,39 @@ function createFilteredViewsStore() {
       }
     }
 
+    // One-time fix: manual feed channels with sourceMode='include' should not
+    // carry a typeFilter — the modal no longer offers it for that combination,
+    // but channels created before that change still have it set and silently
+    // hide their explicitly-included sources.
+    const fixedTypeFilterViews: FilteredView[] = [];
+    for (const view of all) {
+      if (
+        view.mode !== 'saved' &&
+        view.autoRule == null &&
+        view.sourceMode === 'include' &&
+        view.typeFilter &&
+        view.typeFilter.length > 0
+      ) {
+        const updates: Partial<FilteredView> = {
+          typeFilter: undefined,
+          updatedAt: Date.now(),
+        };
+        Object.assign(view, updates);
+        if (view.id != null) {
+          await safeUpdate(db.filteredViews, view.id, updates);
+        }
+        fixedTypeFilterViews.push(view);
+      }
+    }
+
     views = all;
+
+    // Propagate the typeFilter fix to the backend so other devices pick it up.
+    // syncWithBackend doesn't push updates to channels that already exist on
+    // the remote, so we have to do it explicitly here.
+    for (const view of fixedTypeFilterViews) {
+      pushToBackend(view);
+    }
   }
 
   /** Sync with backend: merge remote channels with local, bidirectionally. */
