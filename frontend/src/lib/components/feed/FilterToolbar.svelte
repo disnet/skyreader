@@ -546,7 +546,10 @@
     <div class="filter-group">
       <button
         class="filter-btn edit-channel-btn"
-        onclick={() => onEditChannel(parseInt(feedViewStore.viewFilter!))}
+        onclick={() => {
+          const id = feedViewStore.activeFilteredView?.id;
+          if (id != null) onEditChannel(id);
+        }}
         title="Edit channel"
       >
         <Icon name="edit" size={16} />
