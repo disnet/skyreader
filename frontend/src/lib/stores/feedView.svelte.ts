@@ -1111,6 +1111,12 @@ function createFeedViewStore() {
     readDocumentUrisThisSession = new Set();
   }
 
+  function clearReadThisSession() {
+    readArticleGuidsThisSession = new Set();
+    readShareUrisThisSession = new Set();
+    readDocumentUrisThisSession = new Set();
+  }
+
   // Derived: all unique domains from saved items (for domain filter picker)
   let availableSavedDomains = $derived.by((): string[] => {
     if (!isSavedView) return [];
@@ -1339,6 +1345,7 @@ function createFeedViewStore() {
     expand,
     collapse,
     resetSelection,
+    clearReadThisSession,
     toggleUnreadFilter,
     trackSeenThisSession,
     trackItemsAsReadThisSession,
