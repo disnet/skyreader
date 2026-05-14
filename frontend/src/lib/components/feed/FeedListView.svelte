@@ -62,9 +62,9 @@
   }
 
   export function openSelectedReader() {
-    const index = feedViewStore.selectedIndex;
-    if (index < 0) return;
-    const item = feedViewStore.currentItems[index];
+    const key = feedViewStore.selectedKey;
+    if (key === null) return;
+    const item = feedViewStore.currentItems.find((i) => i.key === key);
     if (item) {
       openReader(item);
     }
@@ -86,7 +86,8 @@
   }
 
   async function handleExpand(index: number) {
-    if (feedViewStore.expandedIndex === index) {
+    const key = feedViewStore.currentItems[index]?.key ?? null;
+    if (key !== null && feedViewStore.expandedKey === key) {
       feedViewStore.collapse();
     } else {
       feedViewStore.select(index);
@@ -97,7 +98,8 @@
   }
 
   function handleSelect(index: number) {
-    if (feedViewStore.selectedIndex === index) {
+    const key = feedViewStore.currentItems[index]?.key ?? null;
+    if (key !== null && feedViewStore.selectedKey === key) {
       feedViewStore.deselect();
     } else {
       feedViewStore.select(index);
@@ -225,9 +227,9 @@
           isSaved={itemLabelsStore.isSaved(article.guid)}
           isShared={sharesStore.isShared(article.guid)}
           shareNote={sharesStore.getShareNote(article.guid)}
-          selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
-          expanded={feedViewStore.expandedIndex === index}
-          highlighted={feedViewStore.selectedIndex === index}
+          selected={preferences.expandAllItems || feedViewStore.selectedKey === displayItem.key}
+          expanded={feedViewStore.expandedKey === displayItem.key}
+          highlighted={feedViewStore.selectedKey === displayItem.key}
           onToggleSave={() => onToggleSave(article)}
           onToggleRead={() => handleToggleRead(article)}
           onShare={() => sub && onShare(article, sub)}
@@ -250,9 +252,9 @@
           {localArticle}
           isRead={itemLabelsStore.isSocialRead(share.recordUri)}
           isSaved={itemLabelsStore.isSaved(share.recordUri)}
-          selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
-          expanded={feedViewStore.expandedIndex === index}
-          highlighted={feedViewStore.selectedIndex === index}
+          selected={preferences.expandAllItems || feedViewStore.selectedKey === displayItem.key}
+          expanded={feedViewStore.expandedKey === displayItem.key}
+          highlighted={feedViewStore.selectedKey === displayItem.key}
           onToggleSave={() =>
             itemLabelsStore.toggleSave(share.recordUri, 'share', share.itemUrl, share.itemTitle, {
               type: 'share',
@@ -306,9 +308,9 @@
           isShared={true}
           shareNote={share.note}
           reshareCount={share.reshareCount || 0}
-          selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
-          expanded={feedViewStore.expandedIndex === index}
-          highlighted={feedViewStore.selectedIndex === index}
+          selected={preferences.expandAllItems || feedViewStore.selectedKey === displayItem.key}
+          expanded={feedViewStore.expandedKey === displayItem.key}
+          highlighted={feedViewStore.selectedKey === displayItem.key}
           onToggleSave={() => onToggleSave(article)}
           onToggleRead={() => handleToggleRead(article)}
           onUnshare={() => onUnshare(share.articleGuid)}
@@ -328,9 +330,9 @@
           document={doc}
           isRead={itemLabelsStore.isSocialRead(doc.recordUri)}
           isSaved={itemLabelsStore.isSaved(doc.recordUri)}
-          selected={preferences.expandAllItems || feedViewStore.selectedIndex === index}
-          expanded={feedViewStore.expandedIndex === index}
-          highlighted={feedViewStore.selectedIndex === index}
+          selected={preferences.expandAllItems || feedViewStore.selectedKey === displayItem.key}
+          expanded={feedViewStore.expandedKey === displayItem.key}
+          highlighted={feedViewStore.selectedKey === displayItem.key}
           onToggleSave={() =>
             itemLabelsStore.toggleSave(
               doc.recordUri,

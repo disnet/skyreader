@@ -37,16 +37,20 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     return subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
   }
 
+  // Helper to resolve the currently-selected item by key. Returns null when
+  // nothing is selected or the previously-selected item is no longer present.
+  function getSelectedItem(): FeedDisplayItem | null {
+    const key = feedViewStore.selectedKey;
+    if (key === null) return null;
+    return feedViewStore.currentItems.find((i) => i.key === key) ?? null;
+  }
+
   // Helper to get selected article info
   function getSelectedArticle(): {
     article: Article;
     sub: Subscription;
   } | null {
-    const selectedIndex = feedViewStore.selectedIndex;
-    if (selectedIndex < 0) return null;
-
-    const items = feedViewStore.currentItems;
-    const item = items[selectedIndex];
+    const item = getSelectedItem();
     if (!item) return null;
 
     const article = getArticleFromItem(item);
@@ -77,11 +81,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 
   // Open selected item in new tab
   function openSelectedItem() {
-    const selectedIndex = feedViewStore.selectedIndex;
-    if (selectedIndex < 0) return;
-
-    const items = feedViewStore.currentItems;
-    const item = items[selectedIndex];
+    const item = getSelectedItem();
     if (!item) return;
 
     let url: string;
@@ -103,11 +103,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 
   // Toggle save on selected item (works for all item types)
   function toggleSelectedSave() {
-    const selectedIndex = feedViewStore.selectedIndex;
-    if (selectedIndex < 0) return;
-
-    const items = feedViewStore.currentItems;
-    const item = items[selectedIndex];
+    const item = getSelectedItem();
     if (!item) return;
 
     if (item.type === 'article') {
@@ -198,11 +194,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 
   // Toggle read/unread on selected item
   function toggleSelectedRead() {
-    const selectedIndex = feedViewStore.selectedIndex;
-    if (selectedIndex < 0) return;
-
-    const items = feedViewStore.currentItems;
-    const item = items[selectedIndex];
+    const item = getSelectedItem();
     if (!item) return;
 
     if (item.type === 'article' || item.type === 'userShare') {
@@ -249,10 +241,12 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
   // Navigation actions
   async function selectNextItem() {
     const currentItems = feedViewStore.currentItems;
-    const selectedIndex = feedViewStore.selectedIndex;
     if (currentItems.length === 0) return;
 
-    const nextIndex = Math.min(selectedIndex + 1, currentItems.length - 1);
+    const selectedKey = feedViewStore.selectedKey;
+    const currentIndex =
+      selectedKey === null ? -1 : currentItems.findIndex((i) => i.key === selectedKey);
+    const nextIndex = Math.min(currentIndex + 1, currentItems.length - 1);
     feedViewStore.select(nextIndex);
 
     // If we're at the last item, try to load more
@@ -266,10 +260,12 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 
   async function selectPreviousItem() {
     const currentItems = feedViewStore.currentItems;
-    const selectedIndex = feedViewStore.selectedIndex;
     if (currentItems.length === 0) return;
 
-    feedViewStore.select(Math.max(selectedIndex - 1, 0));
+    const selectedKey = feedViewStore.selectedKey;
+    const currentIndex =
+      selectedKey === null ? -1 : currentItems.findIndex((i) => i.key === selectedKey);
+    feedViewStore.select(Math.max(currentIndex - 1, 0));
 
     await tick();
     params.scrollToCenter();
@@ -280,24 +276,24 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
   }
 
   function hasSelected() {
-    return auth.isAuthenticated && feedViewStore.selectedIndex >= 0;
+    return auth.isAuthenticated && feedViewStore.selectedKey !== null;
   }
 
   // Toggle expand action (or open bookmark reader in bookmarks view)
   async function toggleExpand() {
-    const selectedIndex = feedViewStore.selectedIndex;
-    if (selectedIndex < 0) return;
+    const selectedKey = feedViewStore.selectedKey;
+    if (selectedKey === null) return;
 
     if (feedViewStore.savedFilter && params.openSavedReader) {
       params.openSavedReader();
       return;
     }
 
-    const expandedIndex = feedViewStore.expandedIndex;
-    if (expandedIndex === selectedIndex) {
+    if (feedViewStore.expandedKey === selectedKey) {
       feedViewStore.collapse();
     } else {
-      feedViewStore.expand(selectedIndex);
+      const idx = feedViewStore.currentItems.findIndex((i) => i.key === selectedKey);
+      if (idx >= 0) feedViewStore.expand(idx);
     }
     await tick();
     params.scrollToCenter();
@@ -368,9 +364,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       description: 'Tag item',
       category: 'Article',
       action: () => {
-        const idx = feedViewStore.selectedIndex;
-        if (idx < 0) return;
-        const item = feedViewStore.currentItems[idx];
+        const item = getSelectedItem();
         if (!item) return;
         if (feedViewStore.tagMenuItemKey === item.key) {
           feedViewStore.closeTagMenu();
@@ -415,9 +409,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       description: 'Archive/unarchive saved item',
       category: 'Article',
       action: () => {
-        const idx = feedViewStore.selectedIndex;
-        if (idx < 0) return;
-        const item = feedViewStore.currentItems[idx];
+        const item = getSelectedItem();
         if (!item) return;
         const itemType = item.type === 'userShare' ? 'userShare' : item.type;
         itemLabelsStore.toggleArchive(
@@ -434,7 +426,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       description: 'Toggle highlight on paragraph',
       category: 'Article',
       action: () => params.toggleHighlight?.(),
-      condition: () => hasSelected() && feedViewStore.expandedIndex >= 0,
+      condition: () => hasSelected() && feedViewStore.expandedKey !== null,
     });
 
     // Full-screen reader for feed items (not in bookmarks view, which uses Enter)

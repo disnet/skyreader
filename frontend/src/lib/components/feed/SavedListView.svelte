@@ -274,9 +274,9 @@
   }
 
   export function openSelectedReader() {
-    const index = feedViewStore.selectedIndex;
-    if (index < 0) return;
-    const item = feedViewStore.currentItems[index];
+    const key = feedViewStore.selectedKey;
+    if (key === null) return;
+    const item = feedViewStore.currentItems.find((i) => i.key === key);
     if (item) {
       openReader(item);
     }
@@ -314,7 +314,7 @@
     <div bind:this={articleElements[index]}>
       <SavedCard
         {displayItem}
-        selected={feedViewStore.selectedIndex === index}
+        selected={feedViewStore.selectedKey === displayItem.key}
         onOpen={() => openReader(displayItem)}
         onHover={() => handleSelect(index)}
         onArchive={() => handleArchive(displayItem)}
