@@ -192,8 +192,11 @@ export function matchesReadingLength(wc: number | null, bucket: ReadingLengthFil
 function createFeedViewStore() {
   // UI state
   let showOnlyUnread = $state(true);
-  let selectedIndex = $state(-1);
-  let expandedIndex = $state(-1);
+  // Track selection/expansion by item key (stable across refreshes) rather than
+  // by array index — list refreshes re-sort items so an index would point at a
+  // different item after a refresh.
+  let selectedKey = $state<string | null>(null);
+  let expandedKey = $state<string | null>(null);
   let loadedArticleCount = $state(DEFAULT_PAGE_SIZE);
 
   // Tag menu state (which item key should show the tag menu, null = closed)
@@ -1056,16 +1059,20 @@ function createFeedViewStore() {
     }
   }
 
-  function select(index: number) {
-    if (index === selectedIndex) return;
+  function selectByKey(key: string | null) {
+    if (key === selectedKey) return;
 
-    const items = currentItems;
-    const item = items[index];
+    if (key === null) {
+      selectedKey = null;
+      expandedKey = null;
+      return;
+    }
+
+    const item = currentItems.find((i) => i.key === key);
     if (!item) return;
 
-    // Set selectedIndex first
-    selectedIndex = index;
-    expandedIndex = -1;
+    selectedKey = key;
+    expandedKey = null;
 
     // Track the item to keep it visible in unread filter for this session
     if (item.type === 'article') {
@@ -1112,23 +1119,27 @@ function createFeedViewStore() {
     // userShare items don't auto-mark as read
   }
 
+  function select(index: number) {
+    selectByKey(currentItems[index]?.key ?? null);
+  }
+
   function deselect() {
-    selectedIndex = -1;
-    expandedIndex = -1;
+    selectedKey = null;
+    expandedKey = null;
     // Don't clear session sets - items should stay visible until view changes
   }
 
   function expand(index: number) {
-    expandedIndex = index;
+    expandedKey = currentItems[index]?.key ?? null;
   }
 
   function collapse() {
-    expandedIndex = -1;
+    expandedKey = null;
   }
 
   function resetSelection() {
-    selectedIndex = -1;
-    expandedIndex = -1;
+    selectedKey = null;
+    expandedKey = null;
     // Clear session sets when switching views/feeds
     readArticleGuidsThisSession = new Set();
     readShareUrisThisSession = new Set();
@@ -1248,11 +1259,17 @@ function createFeedViewStore() {
     get currentItems() {
       return currentItems;
     },
+    get selectedKey() {
+      return selectedKey;
+    },
+    get expandedKey() {
+      return expandedKey;
+    },
     get selectedIndex() {
-      return selectedIndex;
+      return selectedKey === null ? -1 : currentItems.findIndex((i) => i.key === selectedKey);
     },
     get expandedIndex() {
-      return expandedIndex;
+      return expandedKey === null ? -1 : currentItems.findIndex((i) => i.key === expandedKey);
     },
     get showOnlyUnread() {
       return showOnlyUnread;
@@ -1365,6 +1382,7 @@ function createFeedViewStore() {
     loadArticles,
     loadMore,
     select,
+    selectByKey,
     deselect,
     expand,
     collapse,
