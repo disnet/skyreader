@@ -220,63 +220,141 @@ export async function resolveHandle(handle: string): Promise<string> {
   );
 }
 
-// Get PDS URL from DID
-export async function getPdsFromDid(did: string): Promise<string> {
-  let didDoc: Record<string, unknown>;
-  let resolverUrl: string;
-  let response: Response;
+// PDS endpoints rarely change, but users can migrate. Keep TTL short enough
+// that a migration self-heals within a day even without cache invalidation.
+const PDS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-  if (did.startsWith('did:plc:')) {
-    resolverUrl = `https://plc.directory/${did}`;
-    try {
-      response = await fetch(resolverUrl);
-    } catch (err) {
-      console.error(`getPdsFromDid: fetch threw for ${resolverUrl}:`, err);
-      throw new Error(`Could not resolve DID: ${did} (network error)`);
-    }
-    if (!response.ok) {
-      const body = await response.text().catch(() => '<unreadable>');
-      console.error(
-        `getPdsFromDid: ${resolverUrl} returned ${response.status} ${response.statusText}; body: ${body.slice(0, 500)}`
-      );
-      throw new Error(`Could not resolve DID: ${did} (HTTP ${response.status})`);
-    }
-    didDoc = (await response.json()) as Record<string, unknown>;
-  } else if (did.startsWith('did:web:')) {
-    const domain = did.substring(8).replace(/:/g, '/');
-    resolverUrl = `https://${domain}/.well-known/did.json`;
-    try {
-      response = await fetch(resolverUrl);
-    } catch (err) {
-      console.error(`getPdsFromDid: fetch threw for ${resolverUrl}:`, err);
-      throw new Error(`Could not resolve DID: ${did} (network error)`);
-    }
-    if (!response.ok) {
-      const body = await response.text().catch(() => '<unreadable>');
-      console.error(
-        `getPdsFromDid: ${resolverUrl} returned ${response.status} ${response.statusText}; body: ${body.slice(0, 500)}`
-      );
-      throw new Error(`Could not resolve DID: ${did} (HTTP ${response.status})`);
-    }
-    didDoc = (await response.json()) as Record<string, unknown>;
-  } else {
-    throw new Error(`Unsupported DID method: ${did}`);
-  }
-
-  // Find PDS service in DID document
+function extractPdsFromDidDoc(didDoc: Record<string, unknown>, did: string): string {
   const services = didDoc.service as
     | { id: string; type: string; serviceEndpoint: string }[]
     | undefined;
-  if (services) {
-    const pdsService = services.find(
-      (s) => s.type === 'AtprotoPersonalDataServer' || s.id === '#atproto_pds'
+  const pdsService = services?.find(
+    (s) => s.type === 'AtprotoPersonalDataServer' || s.id === '#atproto_pds'
+  );
+  if (!pdsService) {
+    throw new Error(`No PDS service found in DID document for: ${did}`);
+  }
+  return pdsService.serviceEndpoint;
+}
+
+async function fetchDidDocFrom(url: string, did: string): Promise<Record<string, unknown>> {
+  let response: Response;
+  try {
+    response = await fetch(url);
+  } catch (err) {
+    console.error(`getPdsFromDid: fetch threw for ${url}:`, err);
+    throw new Error(`Could not resolve DID: ${did} (network error from ${url})`);
+  }
+  if (!response.ok) {
+    const body = await response.text().catch(() => '<unreadable>');
+    console.error(
+      `getPdsFromDid: ${url} returned ${response.status} ${response.statusText}; body: ${body.slice(0, 500)}`
     );
-    if (pdsService) {
-      return pdsService.serviceEndpoint;
+    throw new Error(`Could not resolve DID: ${did} (HTTP ${response.status} from ${url})`);
+  }
+  return (await response.json()) as Record<string, unknown>;
+}
+
+// Resolve DID via plc.directory (or did:web), with a bsky.app AppView fallback for did:plc.
+async function resolvePdsFromNetwork(did: string): Promise<string> {
+  if (did.startsWith('did:plc:')) {
+    try {
+      const didDoc = await fetchDidDocFrom(`https://plc.directory/${did}`, did);
+      return extractPdsFromDidDoc(didDoc, did);
+    } catch (err) {
+      console.warn(
+        `getPdsFromDid: plc.directory failed for ${did}, trying bsky.app fallback:`,
+        err
+      );
     }
+    // describeRepo on the AppView returns the full DID document under `didDoc`.
+    const describe = (await fetchDidDocFrom(
+      `https://api.bsky.app/xrpc/com.atproto.repo.describeRepo?repo=${encodeURIComponent(did)}`,
+      did
+    )) as { didDoc?: Record<string, unknown> };
+    if (!describe.didDoc) {
+      throw new Error(`bsky.app describeRepo returned no didDoc for ${did}`);
+    }
+    return extractPdsFromDidDoc(describe.didDoc, did);
   }
 
-  throw new Error(`No PDS service found in DID document for: ${did}`);
+  if (did.startsWith('did:web:')) {
+    const domain = did.substring(8).replace(/:/g, '/');
+    const didDoc = await fetchDidDocFrom(`https://${domain}/.well-known/did.json`, did);
+    return extractPdsFromDidDoc(didDoc, did);
+  }
+
+  throw new Error(`Unsupported DID method: ${did}`);
+}
+
+// Get PDS URL from DID, with D1 caching and AppView fallback. Returns
+// `fromCache: true` when the value came from a fresh cache hit, so callers
+// can invalidate and retry if the cached endpoint turns out to be stale
+// (e.g., user migrated their PDS).
+export async function getPdsFromDid(
+  did: string,
+  env: Env
+): Promise<{ pdsUrl: string; fromCache: boolean }> {
+  // 1. Fresh cache hit
+  let cached: { pds_url: string; updated_at: number } | null = null;
+  try {
+    cached = await env.DB.prepare('SELECT pds_url, updated_at FROM did_pds_cache WHERE did = ?')
+      .bind(did)
+      .first<{ pds_url: string; updated_at: number }>();
+  } catch (err) {
+    console.error('getPdsFromDid: cache read failed:', err);
+  }
+
+  if (cached && Date.now() - cached.updated_at < PDS_CACHE_TTL_MS) {
+    return { pdsUrl: cached.pds_url, fromCache: true };
+  }
+
+  // 2. Network resolution (plc.directory, with bsky.app fallback for did:plc)
+  let pdsUrl: string | null = null;
+  let networkError: unknown;
+  try {
+    pdsUrl = await resolvePdsFromNetwork(did);
+  } catch (err) {
+    networkError = err;
+    console.error(`getPdsFromDid: network resolution failed for ${did}:`, err);
+  }
+
+  // 3. Stale cache fallback — keeps login working if plc.directory and bsky.app both fail
+  if (!pdsUrl) {
+    if (cached) {
+      console.warn(
+        `getPdsFromDid: using stale cached PDS for ${did} (age ${Math.round((Date.now() - cached.updated_at) / 1000)}s)`
+      );
+      return { pdsUrl: cached.pds_url, fromCache: true };
+    }
+    if (networkError instanceof Error) throw networkError;
+    throw new Error(`Could not resolve DID: ${did}`);
+  }
+
+  // 4. Cache successful resolution
+  try {
+    await env.DB.prepare(
+      'INSERT INTO did_pds_cache (did, pds_url, updated_at) VALUES (?, ?, ?) ' +
+        'ON CONFLICT(did) DO UPDATE SET pds_url = excluded.pds_url, updated_at = excluded.updated_at'
+    )
+      .bind(did, pdsUrl, Date.now())
+      .run();
+  } catch (err) {
+    console.error('getPdsFromDid: cache write failed:', err);
+  }
+
+  return { pdsUrl, fromCache: false };
+}
+
+// Evict a DID from the PDS cache. Call after an OAuth failure that suggests
+// the cached endpoint is stale (e.g., user migrated their PDS).
+export async function invalidatePdsCache(did: string, env: Env): Promise<void> {
+  try {
+    await env.DB.prepare('DELETE FROM did_pds_cache WHERE did = ?').bind(did).run();
+    console.warn(`invalidatePdsCache: evicted ${did}`);
+  } catch (err) {
+    console.error('invalidatePdsCache failed:', err);
+  }
 }
 
 // Fetch Authorization Server metadata

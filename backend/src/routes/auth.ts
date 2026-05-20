@@ -9,6 +9,7 @@ import {
   resolveHandle,
   normalizeHandleInput,
   getPdsFromDid,
+  invalidatePdsCache,
   fetchAuthServerMetadata,
   storeOAuthState,
   getOAuthState,
@@ -234,14 +235,28 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
     // Resolve handle to DID
     const did = await resolveHandle(normalizedHandle);
 
-    // Get PDS URL from DID
-    const pdsUrl = await getPdsFromDid(did);
+    // Get PDS URL from DID (may be served from cache)
+    let { pdsUrl, fromCache } = await getPdsFromDid(did, env);
 
     // Always request all scopes (base + integrations)
     const requestedScopes = ALL_POSSIBLE_SCOPES;
 
-    // Fetch authorization server metadata
-    const authMeta = await fetchAuthServerMetadata(pdsUrl);
+    // Fetch authorization server metadata. If the PDS came from cache and the
+    // endpoint no longer accepts us (e.g., user migrated their PDS), evict
+    // and re-resolve once.
+    let authMeta;
+    try {
+      authMeta = await fetchAuthServerMetadata(pdsUrl);
+    } catch (err) {
+      if (!fromCache) throw err;
+      console.warn(
+        `Auth metadata failed for cached PDS ${pdsUrl} (DID ${did}); evicting and retrying`,
+        err
+      );
+      await invalidatePdsCache(did, env);
+      ({ pdsUrl, fromCache } = await getPdsFromDid(did, env));
+      authMeta = await fetchAuthServerMetadata(pdsUrl);
+    }
 
     // Generate PKCE
     const { codeVerifier, codeChallenge } = await generatePKCE();
@@ -380,6 +395,15 @@ export async function handleAuthCallback(
 
   if (error) {
     const errorDescription = url.searchParams.get('error_description') || error;
+    // The OAuth handshake failed at the auth server. If the user migrated their
+    // PDS, our cached endpoint is the most likely culprit — evict so the next
+    // login attempt re-resolves the DID fresh.
+    if (state) {
+      const oauthState = await getOAuthState(env, state).catch(() => null);
+      if (oauthState?.did) {
+        await invalidatePdsCache(oauthState.did, env);
+      }
+    }
     return Response.redirect(
       `${env.FRONTEND_URL}/auth/error?error=${encodeURIComponent(errorDescription)}`
     );
@@ -552,6 +576,9 @@ export async function handleAuthCallback(
       if (!tokenResponse.ok) {
         const finalErrorText = retried ? await tokenResponse.text() : errorText;
         console.error('Token exchange failed:', finalErrorText);
+        // Token exchange against the cached PDS failed — could be a stale
+        // cache after a PDS migration. Evict so the next attempt re-resolves.
+        await invalidatePdsCache(oauthState.did, env);
         return Response.redirect(
           `${oauthState.frontendUrl}/auth/error?error=Token+exchange+failed`
         );
