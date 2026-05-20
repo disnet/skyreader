@@ -223,18 +223,40 @@ export async function resolveHandle(handle: string): Promise<string> {
 // Get PDS URL from DID
 export async function getPdsFromDid(did: string): Promise<string> {
   let didDoc: Record<string, unknown>;
+  let resolverUrl: string;
+  let response: Response;
 
   if (did.startsWith('did:plc:')) {
-    const response = await fetch(`https://plc.directory/${did}`);
+    resolverUrl = `https://plc.directory/${did}`;
+    try {
+      response = await fetch(resolverUrl);
+    } catch (err) {
+      console.error(`getPdsFromDid: fetch threw for ${resolverUrl}:`, err);
+      throw new Error(`Could not resolve DID: ${did} (network error)`);
+    }
     if (!response.ok) {
-      throw new Error(`Could not resolve DID: ${did}`);
+      const body = await response.text().catch(() => '<unreadable>');
+      console.error(
+        `getPdsFromDid: ${resolverUrl} returned ${response.status} ${response.statusText}; body: ${body.slice(0, 500)}`
+      );
+      throw new Error(`Could not resolve DID: ${did} (HTTP ${response.status})`);
     }
     didDoc = (await response.json()) as Record<string, unknown>;
   } else if (did.startsWith('did:web:')) {
     const domain = did.substring(8).replace(/:/g, '/');
-    const response = await fetch(`https://${domain}/.well-known/did.json`);
+    resolverUrl = `https://${domain}/.well-known/did.json`;
+    try {
+      response = await fetch(resolverUrl);
+    } catch (err) {
+      console.error(`getPdsFromDid: fetch threw for ${resolverUrl}:`, err);
+      throw new Error(`Could not resolve DID: ${did} (network error)`);
+    }
     if (!response.ok) {
-      throw new Error(`Could not resolve DID: ${did}`);
+      const body = await response.text().catch(() => '<unreadable>');
+      console.error(
+        `getPdsFromDid: ${resolverUrl} returned ${response.status} ${response.statusText}; body: ${body.slice(0, 500)}`
+      );
+      throw new Error(`Could not resolve DID: ${did} (HTTP ${response.status})`);
     }
     didDoc = (await response.json()) as Record<string, unknown>;
   } else {
