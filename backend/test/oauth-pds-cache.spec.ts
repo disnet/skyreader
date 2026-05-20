@@ -109,9 +109,7 @@ describe('getPdsFromDid / invalidatePdsCache', () => {
   });
 
   it('returns cached value without network on fresh hit', async () => {
-    await env.DB.prepare(
-      'INSERT INTO did_pds_cache (did, pds_url, updated_at) VALUES (?, ?, ?)'
-    )
+    await env.DB.prepare('INSERT INTO did_pds_cache (did, pds_url, updated_at) VALUES (?, ?, ?)')
       .bind(PLC_DID, FIRST_PDS, Date.now())
       .run();
 
@@ -126,9 +124,7 @@ describe('getPdsFromDid / invalidatePdsCache', () => {
 
   it('refreshes when cache is older than TTL (24h)', async () => {
     const staleAt = Date.now() - 25 * 60 * 60 * 1000; // 25h ago
-    await env.DB.prepare(
-      'INSERT INTO did_pds_cache (did, pds_url, updated_at) VALUES (?, ?, ?)'
-    )
+    await env.DB.prepare('INSERT INTO did_pds_cache (did, pds_url, updated_at) VALUES (?, ?, ?)')
       .bind(PLC_DID, FIRST_PDS, staleAt)
       .run();
 
@@ -174,9 +170,7 @@ describe('getPdsFromDid / invalidatePdsCache', () => {
 
   it('falls back to stale cache when both plc.directory and bsky.app fail', async () => {
     const staleAt = Date.now() - 25 * 60 * 60 * 1000;
-    await env.DB.prepare(
-      'INSERT INTO did_pds_cache (did, pds_url, updated_at) VALUES (?, ?, ?)'
-    )
+    await env.DB.prepare('INSERT INTO did_pds_cache (did, pds_url, updated_at) VALUES (?, ?, ?)')
       .bind(PLC_DID, FIRST_PDS, staleAt)
       .run();
 
@@ -213,9 +207,7 @@ describe('getPdsFromDid / invalidatePdsCache', () => {
   });
 
   it('invalidatePdsCache removes the entry', async () => {
-    await env.DB.prepare(
-      'INSERT INTO did_pds_cache (did, pds_url, updated_at) VALUES (?, ?, ?)'
-    )
+    await env.DB.prepare('INSERT INTO did_pds_cache (did, pds_url, updated_at) VALUES (?, ?, ?)')
       .bind(PLC_DID, FIRST_PDS, Date.now())
       .run();
 
@@ -242,9 +234,7 @@ describe('auth login: cache-bust on stale PDS', () => {
 
   it('evicts cache and re-resolves when fetchAuthServerMetadata fails on cached PDS', async () => {
     // Seed cache pointing at the OLD (now-stale) PDS.
-    await env.DB.prepare(
-      'INSERT INTO did_pds_cache (did, pds_url, updated_at) VALUES (?, ?, ?)'
-    )
+    await env.DB.prepare('INSERT INTO did_pds_cache (did, pds_url, updated_at) VALUES (?, ?, ?)')
       .bind(PLC_DID, FIRST_PDS, Date.now())
       .run();
 
