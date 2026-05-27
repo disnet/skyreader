@@ -7,6 +7,7 @@ import { pushSubscriptionToPds, deleteSubscriptionFromPds } from '../services/su
 import { createPDSClient, type WriteOp } from '../services/pds-client';
 import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
 import { getUserTierLimits } from '../services/user-tier';
+import { normalizeFeedUrl } from '../lib/feed-url';
 
 /**
  * Helper to sync subscription to PDS in background (fire and forget)
@@ -126,7 +127,8 @@ async function maybeBulkPushToPds(
     return;
   }
 
-  // Build lookup maps by rkey and feedUrl
+  // Build lookup maps by rkey and feedUrl. Normalize feedUrls so we catch
+  // existing PDS records with trivial URL variants (case, trailing slash).
   const pdsByRkey = new Map<
     string,
     { feedUrl: string; title?: string; customTitle?: string; customIconUrl?: string }
@@ -138,7 +140,11 @@ async function maybeBulkPushToPds(
       pdsByRkey.set(rkey, record.value);
     }
     if (record.value.feedUrl) {
-      pdsByFeedUrl.add(record.value.feedUrl);
+      try {
+        pdsByFeedUrl.add(normalizeFeedUrl(record.value.feedUrl));
+      } catch {
+        pdsByFeedUrl.add(record.value.feedUrl);
+      }
     }
   }
 
@@ -149,7 +155,14 @@ async function maybeBulkPushToPds(
 
   for (const sub of subscriptions) {
     // Skip if this feedUrl already exists in PDS (avoid duplicates)
-    if (pdsByFeedUrl.has(sub.feedUrl)) {
+    const subNormalized = (() => {
+      try {
+        return normalizeFeedUrl(sub.feedUrl);
+      } catch {
+        return sub.feedUrl;
+      }
+    })();
+    if (pdsByFeedUrl.has(subNormalized)) {
       skippedExisting++;
       continue;
     }
@@ -462,6 +475,10 @@ export async function handleCreateSubscription(
     }
   }
 
+  // Normalize the feed URL so we dedup against trivial variants
+  // (case, trailing slash, default port, fragment).
+  const normalizedFeedUrl = feedUrl ? normalizeFeedUrl(feedUrl) : '';
+
   // Check subscription limit
   try {
     const limits = await getUserTierLimits(env, session.did);
@@ -488,17 +505,29 @@ export async function handleCreateSubscription(
     const collection = 'app.skyreader.feed.subscription';
     const recordUri = `at://${session.did}/${collection}/${rkey}`;
 
-    await env.DB.prepare(
+    // Atomic, idempotent insert. The partial UNIQUE indexes installed by
+    // 0052_subscription_dedup.sql make a duplicate insert a silent no-op:
+    //   - RSS: (user_did, feed_url) when source_type IS NULL OR = 'rss'
+    //   - AT Proto: (user_did, source_type, subject_did)
+    // On conflict we return the EXISTING row so the caller — including a
+    // racing concurrent POST — gets the original rkey/uri back. This makes
+    // double-submit a no-op end-to-end and avoids creating an orphan PDS
+    // record on the losing side of the race.
+    const insertResult = await env.DB.prepare(
       `
-			INSERT OR REPLACE INTO subscriptions_cache
+			INSERT INTO subscriptions_cache
 			(user_did, record_uri, feed_url, title, category, created_at, source_type, subject_did, custom_title, custom_icon_url)
 			VALUES (?, ?, ?, ?, ?, unixepoch(), ?, ?, ?, ?)
+			ON CONFLICT(user_did, feed_url) WHERE source_type IS NULL OR source_type = 'rss' DO NOTHING
+			ON CONFLICT(user_did, source_type, subject_did) WHERE source_type LIKE 'atproto.%' AND subject_did IS NOT NULL DO NOTHING
+			ON CONFLICT(record_uri) DO NOTHING
+			RETURNING record_uri
 			`
     )
       .bind(
         session.did,
         recordUri,
-        feedUrl || '',
+        normalizedFeedUrl,
         title || null,
         category || null,
         sourceType || null,
@@ -506,15 +535,47 @@ export async function handleCreateSubscription(
         customTitle || null,
         customIconUrl || null
       )
-      .run();
+      .first<{ record_uri: string }>();
+
+    if (!insertResult) {
+      // A row already exists for this logical feed. Return the existing
+      // subscription's rkey/uri instead of creating a second PDS record.
+      const existing = isAtProto
+        ? await env.DB.prepare(
+            `SELECT record_uri FROM subscriptions_cache
+             WHERE user_did = ? AND source_type = ? AND subject_did = ?`
+          )
+            .bind(session.did, sourceType, subjectDid)
+            .first<{ record_uri: string }>()
+        : await env.DB.prepare(
+            `SELECT record_uri FROM subscriptions_cache
+             WHERE user_did = ? AND feed_url = ?
+               AND (source_type IS NULL OR source_type = 'rss')`
+          )
+            .bind(session.did, normalizedFeedUrl)
+            .first<{ record_uri: string }>();
+
+      if (existing) {
+        const existingRkey = existing.record_uri.split('/').pop() || rkey;
+        return new Response(
+          JSON.stringify({
+            rkey: existingRkey,
+            uri: existing.record_uri,
+            existing: true,
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      // Fall through — extremely unlikely race between conflict and lookup.
+    }
 
     // Warm up proxy cache for RSS subscriptions only
-    if (!isAtProto && feedUrl) {
-      const cacheResult = await warmProxyCache(env, feedUrl);
+    if (!isAtProto && normalizedFeedUrl) {
+      const cacheResult = await warmProxyCache(env, normalizedFeedUrl);
       if (cacheResult.success) {
-        console.log(`Warmed proxy cache: ${feedUrl} (${cacheResult.itemCount} items)`);
+        console.log(`Warmed proxy cache: ${normalizedFeedUrl} (${cacheResult.itemCount} items)`);
       } else {
-        console.error(`Failed to warm cache for ${feedUrl}: ${cacheResult.error}`);
+        console.error(`Failed to warm cache for ${normalizedFeedUrl}: ${cacheResult.error}`);
       }
     }
 
@@ -527,15 +588,16 @@ export async function handleCreateSubscription(
       }
     }
 
-    // Push to PDS in background if sync is enabled (fire and forget)
-    // Fetch settings once here to avoid redundant lookups in the helper
+    // Push to PDS in background if sync is enabled (fire and forget).
+    // Only reached when the D1 insert won — losing concurrent requests
+    // returned early above, so we never create an orphan PDS record.
     const settings = await getUserSettings(env, session.did);
     ctx.waitUntil(
       maybePushToPds(
         session,
         settings.pdsSyncEnabled,
         rkey,
-        feedUrl || '',
+        normalizedFeedUrl,
         title,
         siteUrl,
         sourceType,
@@ -785,7 +847,21 @@ export async function handleBulkCreateSubscriptions(
     });
   }
 
-  // Validate all subscriptions
+  // Validate + normalize all subscriptions.
+  // We also dedupe within the input on (user_did, normalizedFeedUrl) so that
+  // an OPML file containing the same feed twice doesn't generate two writes
+  // — the partial UNIQUE index would catch the second, but at the cost of an
+  // extra round-trip and a confusing PDS push retry.
+  const seenUrls = new Set<string>();
+  const normalizedSubscriptions: Array<{
+    rkey: string;
+    feedUrl: string;
+    title?: string;
+    siteUrl?: string;
+    category?: string;
+    source?: string;
+    externalRef?: string;
+  }> = [];
   for (const sub of subscriptions) {
     if (!sub.rkey || typeof sub.rkey !== 'string') {
       return new Response(JSON.stringify({ error: 'Each subscription must have an rkey' }), {
@@ -812,23 +888,28 @@ export async function handleBulkCreateSubscriptions(
         headers: { 'Content-Type': 'application/json' },
       });
     }
+
+    const normalized = normalizeFeedUrl(sub.feedUrl);
+    if (seenUrls.has(normalized)) continue;
+    seenUrls.add(normalized);
+    normalizedSubscriptions.push({ ...sub, feedUrl: normalized });
   }
 
   // Check subscription limit
   try {
     const limits = await getUserTierLimits(env, session.did);
     const currentCount = await countUserSubscriptions(env, session.did);
-    const totalAfterImport = currentCount + subscriptions.length;
+    const totalAfterImport = currentCount + normalizedSubscriptions.length;
 
     if (totalAfterImport > limits.maxSubscriptions) {
       const available = Math.max(0, limits.maxSubscriptions - currentCount);
       return new Response(
         JSON.stringify({
           error: 'subscription_limit_exceeded',
-          message: `Adding ${subscriptions.length} feeds would exceed the maximum of ${limits.maxSubscriptions}.`,
+          message: `Adding ${normalizedSubscriptions.length} feeds would exceed the maximum of ${limits.maxSubscriptions}.`,
           limit: limits.maxSubscriptions,
           current: currentCount,
-          requested: subscriptions.length,
+          requested: normalizedSubscriptions.length,
           available,
         }),
         {
@@ -847,16 +928,20 @@ export async function handleBulkCreateSubscriptions(
     const feedsToFetch: string[] = [];
     const results: Array<{ rkey: string; uri: string }> = [];
 
-    for (const sub of subscriptions) {
+    for (const sub of normalizedSubscriptions) {
       const recordUri = `at://${session.did}/${collection}/${sub.rkey}`;
       results.push({ rkey: sub.rkey, uri: recordUri });
 
+      // Idempotent insert: a duplicate of an existing feed silently no-ops
+      // via the partial UNIQUE index installed in 0052_subscription_dedup.
       batchStatements.push(
         env.DB.prepare(
           `
-					INSERT OR REPLACE INTO subscriptions_cache
+					INSERT INTO subscriptions_cache
 					(user_did, record_uri, feed_url, title, category, created_at)
 					VALUES (?, ?, ?, ?, ?, unixepoch())
+					ON CONFLICT(user_did, feed_url) WHERE source_type IS NULL OR source_type = 'rss' DO NOTHING
+					ON CONFLICT(record_uri) DO NOTHING
 					`
         ).bind(session.did, recordUri, sub.feedUrl, sub.title || null, sub.category || null)
       );
@@ -886,13 +971,18 @@ export async function handleBulkCreateSubscriptions(
       console.log(`${feedsToFetch.length - MAX_FEEDS_TO_WARM} feeds will be warmed by cron`);
     }
 
-    // Push to PDS in background if sync is enabled
+    // Push to PDS in background if sync is enabled. maybeBulkPushToPds
+    // already lists existing PDS records and skips duplicates by feedUrl.
     const settings = await getUserSettings(env, session.did);
     ctx.waitUntil(
       maybeBulkPushToPds(
         session,
         settings.pdsSyncEnabled,
-        subscriptions.map((sub) => ({ rkey: sub.rkey, feedUrl: sub.feedUrl, title: sub.title }))
+        normalizedSubscriptions.map((sub) => ({
+          rkey: sub.rkey,
+          feedUrl: sub.feedUrl,
+          title: sub.title,
+        }))
       )
     );
 

@@ -1,6 +1,21 @@
 import type { Env, Session } from '../types';
 import { createPDSClient, type PDSResult, type WriteOp } from './pds-client';
 import { getUserTierLimits } from './user-tier';
+import { normalizeFeedUrl } from '../lib/feed-url';
+
+/**
+ * Normalise a feed URL for use as a dedup key.
+ * Falls back to the raw input if URL parsing throws — that keeps malformed
+ * legacy URLs comparable to themselves (sync just won't dedup them).
+ */
+function normalizeKey(feedUrl: string | undefined): string {
+  if (!feedUrl) return '';
+  try {
+    return normalizeFeedUrl(feedUrl);
+  } catch {
+    return feedUrl;
+  }
+}
 
 const COLLECTION = 'app.skyreader.feed.subscription';
 
@@ -147,17 +162,21 @@ export async function syncSubscriptions(session: Session, env: Env): Promise<Syn
     const localSubscriptions = localResult.results || [];
     console.log(`[SubscriptionSync] Found ${localSubscriptions.length} local subscriptions`);
 
-    // Build a unique key for deduplication: feedUrl for RSS, sourceType+subjectDid for AT Proto
+    // Build a unique key for deduplication: normalized feedUrl for RSS,
+    // sourceType+subjectDid for AT Proto.
     function subscriptionKey(feedUrl?: string, sourceType?: string, subjectDid?: string): string {
       if (sourceType && sourceType.startsWith('atproto.') && subjectDid) {
         return `${sourceType}:${subjectDid}`;
       }
-      return feedUrl || '';
+      return normalizeKey(feedUrl);
     }
 
-    // Create lookup maps
+    // Create lookup maps. sortedPdsRecords is ascending by createdAt, so the
+    // first record we see for a given key is the oldest. We keep that one as
+    // the canonical entry and treat later ones as duplicates to be ignored.
     const pdsByKey = new Map<string, (typeof sortedPdsRecords)[0]>();
     const pdsByRkey = new Map<string, (typeof sortedPdsRecords)[0]>();
+    const pdsDuplicateRkeys = new Set<string>();
     for (const record of sortedPdsRecords) {
       const key = subscriptionKey(
         record.value.feedUrl,
@@ -165,7 +184,18 @@ export async function syncSubscriptions(session: Session, env: Env): Promise<Syn
         record.value.subjectDid
       );
       if (key) {
-        pdsByKey.set(key, record);
+        if (pdsByKey.has(key)) {
+          // Newer duplicate of an older record — log so we can spot lingering
+          // PDS-side dupes that need manual cleanup, but keep the older one.
+          const existingRkey = extractRkey(pdsByKey.get(key)!.uri);
+          const newerRkey = extractRkey(record.uri);
+          console.warn(
+            `[SubscriptionSync] PDS duplicate for ${key}: kept ${existingRkey}, ignoring newer ${newerRkey}`
+          );
+          pdsDuplicateRkeys.add(newerRkey);
+        } else {
+          pdsByKey.set(key, record);
+        }
         pdsByRkey.set(extractRkey(record.uri), record);
       }
     }
@@ -201,6 +231,13 @@ export async function syncSubscriptions(session: Session, env: Env): Promise<Syn
     }> = [];
 
     for (const pdsRecord of sortedPdsRecords) {
+      const rkey = extractRkey(pdsRecord.uri);
+      // Skip duplicate PDS records (older record wins, see above).
+      if (pdsDuplicateRkeys.has(rkey)) {
+        result.skipped++;
+        continue;
+      }
+
       const key = subscriptionKey(
         pdsRecord.value.feedUrl,
         pdsRecord.value.sourceType,
@@ -216,10 +253,11 @@ export async function syncSubscriptions(session: Session, env: Env): Promise<Syn
           continue;
         }
 
-        const rkey = extractRkey(pdsRecord.uri);
+        // Persist the normalized feed URL so the partial UNIQUE index in
+        // 0052_subscription_dedup catches future trivial-variant inserts.
         toAddLocally.push({
           rkey,
-          feedUrl: pdsRecord.value.feedUrl || '',
+          feedUrl: pdsRecord.value.feedUrl ? normalizeKey(pdsRecord.value.feedUrl) : '',
           title: pdsRecord.value.title || null,
           createdAt: pdsRecord.value.createdAt
             ? Math.floor(new Date(pdsRecord.value.createdAt).getTime() / 1000)
@@ -442,7 +480,7 @@ export async function pushSubscriptionToPds(
 
   const record: PDSSubscriptionRecord = {
     $type: COLLECTION,
-    feedUrl: feedUrl || undefined,
+    feedUrl: feedUrl ? normalizeKey(feedUrl) : undefined,
     title,
     siteUrl,
     category,

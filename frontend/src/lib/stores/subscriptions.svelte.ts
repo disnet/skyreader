@@ -2,6 +2,7 @@ import { liveDb } from '$lib/services/liveDb.svelte';
 import { feedStatusStore } from './feedStatus.svelte';
 import { api } from '$lib/services/api';
 import { auth } from './auth.svelte';
+import { normalizeFeedUrlSafe } from '$lib/utils/feedUrl';
 import type { Subscription, SubscriptionSourceType } from '$lib/types';
 
 // Generate a TID (Timestamp Identifier) for AT Protocol records
@@ -149,18 +150,20 @@ function createSubscriptionsStore() {
     let truncated = 0;
     const source = options?.source || 'manual';
 
-    // Get existing feed URLs for duplicate detection
+    // Get existing feed URLs for duplicate detection (normalized so trivial
+    // variants like trailing slash / case don't slip through as new feeds).
     const existingUrls = new Set(
-      subscriptions.filter((s) => s.feedUrl).map((s) => s.feedUrl!.toLowerCase())
+      subscriptions.filter((s) => s.feedUrl).map((s) => normalizeFeedUrlSafe(s.feedUrl!))
     );
 
     // Filter out duplicates first
     let feedsToAdd = feeds.filter((feed) => {
-      if (existingUrls.has(feed.feedUrl.toLowerCase())) {
+      const normalized = normalizeFeedUrlSafe(feed.feedUrl);
+      if (existingUrls.has(normalized)) {
         skipped.push(feed.feedUrl);
         return false;
       }
-      existingUrls.add(feed.feedUrl.toLowerCase());
+      existingUrls.add(normalized);
       return true;
     });
 

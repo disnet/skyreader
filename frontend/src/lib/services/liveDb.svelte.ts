@@ -1,5 +1,6 @@
 import { db } from './db';
 import { safeAdd, safeUpdate, safeBulkAdd } from './safeDb.svelte';
+import { normalizeFeedUrlSafe } from '$lib/utils/feedUrl';
 import type { Subscription, Article, FeedItem } from '$lib/types';
 
 const MAX_ARTICLES_PER_FEED = 100;
@@ -36,11 +37,37 @@ class LiveDatabase {
   }
 
   /**
-   * Load all subscriptions from IndexedDB into memory
+   * Load all subscriptions from IndexedDB into memory.
+   *
+   * Defensive dedup: a stale PWA cache from before the backend dedup
+   * migration may contain two IDB rows for the same logical feed (e.g.,
+   * trailing slash variants). The backend UNIQUE index now prevents new
+   * dups, but we still need to hide pre-existing ones at render time.
+   * RSS: dedup on normalized feed URL, AT Proto: dedup on (sourceType, subjectDid).
+   * Prefer the oldest row (smallest id) when a collision is detected.
    */
   async loadSubscriptions(): Promise<Subscription[]> {
     try {
-      this._subscriptions = await db.subscriptions.toArray();
+      const rows = await db.subscriptions.toArray();
+      const seen = new Map<string, Subscription>();
+      for (const sub of rows) {
+        let key: string;
+        if (sub.sourceType?.startsWith('atproto.') && sub.subjectDid) {
+          key = `${sub.sourceType}:${sub.subjectDid}`;
+        } else if (sub.feedUrl) {
+          key = `rss:${normalizeFeedUrlSafe(sub.feedUrl)}`;
+        } else {
+          key = `id:${sub.id}`; // No dedup key — keep as-is.
+        }
+        const existing = seen.get(key);
+        if (
+          !existing ||
+          (typeof sub.id === 'number' && typeof existing.id === 'number' && sub.id < existing.id)
+        ) {
+          seen.set(key, sub);
+        }
+      }
+      this._subscriptions = [...seen.values()];
       this._subscriptionsLoaded = true;
       this.subscriptionsVersion++;
       return this._subscriptions;
@@ -275,10 +302,12 @@ class LiveDatabase {
   }
 
   /**
-   * Get a subscription by feed URL
+   * Get a subscription by feed URL. Both sides are normalized so trivial
+   * variants (case, trailing slash, default port, fragment) match.
    */
   getSubscriptionByUrl(feedUrl: string): Subscription | undefined {
-    return this._subscriptions.find((s) => s.feedUrl?.toLowerCase() === feedUrl.toLowerCase());
+    const needle = normalizeFeedUrlSafe(feedUrl);
+    return this._subscriptions.find((s) => s.feedUrl && normalizeFeedUrlSafe(s.feedUrl) === needle);
   }
 
   /**
