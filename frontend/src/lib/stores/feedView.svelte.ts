@@ -1409,11 +1409,35 @@ function createFeedViewStore() {
     setToolbarTagFilter(tags: string[]) {
       toolbarTagFilter = tags;
     },
+    toggleToolbarTag(tag: string) {
+      toolbarTagFilter = toolbarTagFilter.includes(tag)
+        ? toolbarTagFilter.filter((t) => t !== tag)
+        : [...toolbarTagFilter, tag];
+    },
+    clearToolbarTag() {
+      toolbarTagFilter = [];
+    },
     setToolbarTypeFilter(types: SubscriptionSourceType[]) {
       toolbarTypeFilter = types;
     },
+    toggleToolbarType(type: SubscriptionSourceType) {
+      toolbarTypeFilter = toolbarTypeFilter.includes(type)
+        ? toolbarTypeFilter.filter((t) => t !== type)
+        : [...toolbarTypeFilter, type];
+    },
+    clearToolbarType() {
+      toolbarTypeFilter = [];
+    },
     setToolbarSavedSourceFilter(sources: SavedSourceType[]) {
       toolbarSavedSourceFilter = sources;
+    },
+    toggleToolbarSavedSource(source: SavedSourceType) {
+      toolbarSavedSourceFilter = toolbarSavedSourceFilter.includes(source)
+        ? toolbarSavedSourceFilter.filter((s) => s !== source)
+        : [...toolbarSavedSourceFilter, source];
+    },
+    clearToolbarSavedSource() {
+      toolbarSavedSourceFilter = [];
     },
     setToolbarDateFilter(preset: DateAddedPreset | null) {
       toolbarDateFilter = preset;
@@ -1421,11 +1445,33 @@ function createFeedViewStore() {
     setToolbarReadingLength(lengths: ReadingLengthFilter[]) {
       toolbarReadingLength = lengths;
     },
+    toggleToolbarReadingLength(bucket: ReadingLengthFilter) {
+      toolbarReadingLength = toolbarReadingLength.includes(bucket)
+        ? toolbarReadingLength.filter((l) => l !== bucket)
+        : [...toolbarReadingLength, bucket];
+    },
+    clearToolbarReadingLength() {
+      toolbarReadingLength = [];
+    },
     setToolbarDomainFilter(domains: string[]) {
       toolbarDomainFilter = domains;
     },
+    toggleToolbarDomain(domain: string) {
+      toolbarDomainFilter = toolbarDomainFilter.includes(domain)
+        ? toolbarDomainFilter.filter((d) => d !== domain)
+        : [...toolbarDomainFilter, domain];
+    },
+    clearToolbarDomain() {
+      toolbarDomainFilter = [];
+    },
     setToolbarSourceFilter(mode: 'all' | 'include', keys: string[]) {
       toolbarSourceMode = mode;
+      toolbarSourceKeys = keys;
+    },
+    toggleToolbarSourceKey(key: string) {
+      const keys = toolbarSourceKeys.includes(key)
+        ? toolbarSourceKeys.filter((k) => k !== key)
+        : [...toolbarSourceKeys, key];
       toolbarSourceKeys = keys;
     },
     setSortOrder(order: SortOrder) {

@@ -1,14 +1,13 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import FilterPopover from './FilterPopover.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { getFaviconUrl } from '$lib/utils/favicon';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { goto } from '$app/navigation';
   import { subscriptionSourceKey } from '$lib/utils/sourceKeys';
-  import type { SubscriptionSourceType, SavedSourceType, ReadingLengthFilter } from '$lib/types';
+  import { filterSubscriptionsBySearch, subscriptionIconUrl } from '$lib/utils/subscriptionDisplay';
   import {
     TYPE_OPTIONS,
     SAVED_SOURCE_OPTIONS,
@@ -25,100 +24,58 @@
   let { showSourceFilter, onEditChannel }: Props = $props();
 
   let ef = $derived(feedViewStore.effectiveFilters);
-
-  // Popover open/close state (stored in feedViewStore so it can be opened externally)
-  let sourcePopoverOpen = $derived(feedViewStore.sourcePopoverOpen);
-  let sourcePopoverRef: HTMLDivElement | null = $state(null);
-
-  // Derive a Set for quick membership checks
   let sourceKeySet = $derived(new Set(ef.sourceKeys));
 
   // Search state for filtering lists
   let feedSearch = $state('');
+  let domainSearchText = $state('');
 
-  // Clear search when popover closes
+  // Clear search when source popover closes
   $effect(() => {
-    if (!sourcePopoverOpen) {
+    if (!feedViewStore.sourcePopoverOpen) {
       feedSearch = '';
     }
   });
 
-  // Filtered subscriptions based on search
   let filteredSubscriptions = $derived(
-    feedSearch
-      ? subscriptionsStore.subscriptions.filter((sub) => {
-          const term = feedSearch.toLowerCase();
-          return (
-            (sub.customTitle || sub.title).toLowerCase().includes(term) ||
-            (sub.feedUrl?.toLowerCase().includes(term) ?? false)
-          );
-        })
-      : subscriptionsStore.subscriptions
+    filterSubscriptionsBySearch(subscriptionsStore.subscriptions, feedSearch)
   );
 
-  // Type filter state
-  let typePopoverOpen = $state(false);
-  let typePopoverRef = $state<HTMLDivElement | null>(null);
   let activeTypeFilter = $derived(feedViewStore.toolbarTypeFilter);
   let activeTypeSet = $derived(new Set(activeTypeFilter));
+  let typeFilterLabel = $derived(
+    activeTypeFilter.length === 0 ? 'Type' : `Type (${activeTypeFilter.length})`
+  );
 
-  let typeFilterLabel = $derived.by(() => {
-    if (activeTypeFilter.length === 0) return 'Type';
-    return `Type (${activeTypeFilter.length})`;
-  });
-
-  function toggleTypeFilter(type: SubscriptionSourceType) {
-    const newTypes = activeTypeSet.has(type)
-      ? activeTypeFilter.filter((t) => t !== type)
-      : [...activeTypeFilter, type];
-    feedViewStore.setToolbarTypeFilter(newTypes);
-  }
-
-  function clearTypeFilter() {
-    feedViewStore.setToolbarTypeFilter([]);
-  }
-
-  // Saved source filter state (for saved-mode channels)
   let isSavedChannel = $derived(feedViewStore.isSavedChannel);
   let activeSavedSourceFilter = $derived(feedViewStore.toolbarSavedSourceFilter);
   let activeSavedSourceSet = $derived(new Set(activeSavedSourceFilter));
+  let savedSourceFilterLabel = $derived(
+    activeSavedSourceFilter.length === 0 ? 'Source' : `Source (${activeSavedSourceFilter.length})`
+  );
 
-  let savedSourceFilterLabel = $derived.by(() => {
-    if (activeSavedSourceFilter.length === 0) return 'Source';
-    return `Source (${activeSavedSourceFilter.length})`;
-  });
-
-  // Date filter state
   let activeDateFilter = $derived(feedViewStore.toolbarDateFilter);
   let dateFilterLabel = $derived.by(() => {
     if (!activeDateFilter) return 'Date';
-    const opt = DATE_PRESET_OPTIONS.find((o) => o.value === activeDateFilter);
-    return opt ? opt.label : 'Date';
+    return DATE_PRESET_OPTIONS.find((o) => o.value === activeDateFilter)?.label ?? 'Date';
   });
 
-  // Reading length filter state
   let activeReadingLength = $derived(feedViewStore.toolbarReadingLength);
   let activeReadingLengthSet = $derived(new Set(activeReadingLength));
-  let readingLengthLabel = $derived.by(() => {
-    if (activeReadingLength.length === 0) return 'Length';
-    return `Length (${activeReadingLength.length})`;
-  });
+  let readingLengthLabel = $derived(
+    activeReadingLength.length === 0 ? 'Length' : `Length (${activeReadingLength.length})`
+  );
 
-  // Domain filter state
   let activeDomainFilter = $derived(feedViewStore.toolbarDomainFilter);
   let activeDomainSet = $derived(new Set(activeDomainFilter));
-  let domainFilterLabel = $derived.by(() => {
-    if (activeDomainFilter.length === 0) return 'Domain';
-    return `Domain (${activeDomainFilter.length})`;
-  });
+  let domainFilterLabel = $derived(
+    activeDomainFilter.length === 0 ? 'Domain' : `Domain (${activeDomainFilter.length})`
+  );
   let availableDomains = $derived(feedViewStore.availableSavedDomains);
 
-  // Sort label for saved channels
-  let savedSortLabel = $derived.by(() => {
-    const current = feedViewStore.currentSortOrder;
-    const opt = SAVED_SORT_OPTIONS.find((o) => o.value === current);
-    return opt ? opt.label : 'Sort';
-  });
+  let savedSortLabel = $derived(
+    SAVED_SORT_OPTIONS.find((o) => o.value === feedViewStore.currentSortOrder)?.label ?? 'Sort'
+  );
 
   let hasSavedChannelFilters = $derived(
     activeSavedSourceFilter.length > 0 ||
@@ -127,41 +84,18 @@
       activeDomainFilter.length > 0
   );
 
-  // Popover state for new dropdowns
+  // Popover open states (local to this component)
+  let typePopoverOpen = $state(false);
   let datePopoverOpen = $state(false);
   let lengthPopoverOpen = $state(false);
   let domainPopoverOpen = $state(false);
   let sortPopoverOpen = $state(false);
-  let datePopoverRef = $state<HTMLElement | null>(null);
-  let lengthPopoverRef = $state<HTMLElement | null>(null);
-  let domainPopoverRef = $state<HTMLElement | null>(null);
-  let sortPopoverRef = $state<HTMLElement | null>(null);
-  let domainSearchText = $state('');
+  let tagPopoverOpen = $state(false);
 
-  function toggleSavedSourceFilter(source: SavedSourceType) {
-    const newSources = activeSavedSourceSet.has(source)
-      ? activeSavedSourceFilter.filter((s) => s !== source)
-      : [...activeSavedSourceFilter, source];
-    feedViewStore.setToolbarSavedSourceFilter(newSources);
-  }
-
-  function clearSavedSourceFilter() {
-    feedViewStore.setToolbarSavedSourceFilter([]);
-  }
-
-  function toggleReadingLength(bucket: ReadingLengthFilter) {
-    const newLengths = activeReadingLengthSet.has(bucket)
-      ? activeReadingLength.filter((l) => l !== bucket)
-      : [...activeReadingLength, bucket];
-    feedViewStore.setToolbarReadingLength(newLengths);
-  }
-
-  function toggleDomainFilter(domain: string) {
-    const newDomains = activeDomainSet.has(domain)
-      ? activeDomainFilter.filter((d) => d !== domain)
-      : [...activeDomainFilter, domain];
-    feedViewStore.setToolbarDomainFilter(newDomains);
-  }
+  // Clear domain search when domain popover closes
+  $effect(() => {
+    if (!domainPopoverOpen) domainSearchText = '';
+  });
 
   let filteredDomains = $derived.by(() => {
     if (!domainSearchText) return availableDomains;
@@ -169,54 +103,19 @@
     return availableDomains.filter((d) => d.toLowerCase().includes(q));
   });
 
-  function handleTypeClickOutside(e: MouseEvent) {
-    if (typePopoverOpen && typePopoverRef && !typePopoverRef.contains(e.target as Node)) {
-      typePopoverOpen = false;
-    }
-  }
-
-  // Tag filter state
-  let tagPopoverOpen = $state(false);
-  let tagPopoverRef = $state<HTMLDivElement | null>(null);
   let allTags = $derived(itemLabelsStore.allTags);
   let activeTagFilter = $derived(feedViewStore.toolbarTagFilter);
   let activeTagSet = $derived(new Set(activeTagFilter));
-
-  let tagFilterLabel = $derived.by(() => {
-    if (activeTagFilter.length === 0) return 'Tags';
-    return `Tags (${activeTagFilter.length})`;
-  });
-
-  function toggleTagFilter(tag: string) {
-    const newTags = activeTagSet.has(tag)
-      ? activeTagFilter.filter((t) => t !== tag)
-      : [...activeTagFilter, tag];
-    feedViewStore.setToolbarTagFilter(newTags);
-  }
-
-  function clearTagFilter() {
-    feedViewStore.setToolbarTagFilter([]);
-  }
-
-  function handleTagClickOutside(e: MouseEvent) {
-    if (tagPopoverOpen && tagPopoverRef && !tagPopoverRef.contains(e.target as Node)) {
-      tagPopoverOpen = false;
-    }
-  }
+  let tagFilterLabel = $derived(
+    activeTagFilter.length === 0 ? 'Tags' : `Tags (${activeTagFilter.length})`
+  );
 
   function setSourceMode(mode: 'all' | 'include') {
     feedViewStore.setToolbarSourceFilter(mode, mode === 'all' ? [] : [...ef.sourceKeys]);
   }
 
-  function toggleSourceKey(key: string) {
-    const keys = sourceKeySet.has(key)
-      ? ef.sourceKeys.filter((k) => k !== key)
-      : [...ef.sourceKeys, key];
-    feedViewStore.setToolbarSourceFilter(ef.sourceMode, keys);
-  }
-
   // All possible source keys (deduplicated across all subscriptions)
-  let allSourceKeys = $derived(() => {
+  let allSourceKeys = $derived.by(() => {
     const keys = new Set<string>();
     for (const sub of subscriptionsStore.subscriptions) {
       const key = subscriptionSourceKey(sub);
@@ -226,70 +125,25 @@
   });
 
   let allSourcesSelected = $derived(
-    allSourceKeys().length > 0 && allSourceKeys().every((k) => sourceKeySet.has(k))
+    allSourceKeys.length > 0 && allSourceKeys.every((k) => sourceKeySet.has(k))
   );
 
   function selectAllSources() {
-    const newKeys = allSourceKeys().filter((k) => !sourceKeySet.has(k));
+    const newKeys = allSourceKeys.filter((k) => !sourceKeySet.has(k));
     if (newKeys.length > 0) {
       feedViewStore.setToolbarSourceFilter(ef.sourceMode, [...ef.sourceKeys, ...newKeys]);
     }
   }
 
   function deselectAllSources() {
-    const allKeySet = new Set(allSourceKeys());
+    const allKeySet = new Set(allSourceKeys);
     const keys = ef.sourceKeys.filter((k) => !allKeySet.has(k));
     feedViewStore.setToolbarSourceFilter(ef.sourceMode, keys);
   }
 
-  function handleClickOutside(e: MouseEvent) {
-    if (sourcePopoverOpen && sourcePopoverRef && !sourcePopoverRef.contains(e.target as Node)) {
-      feedViewStore.setSourcePopoverOpen(false);
-    }
-    handleTypeClickOutside(e);
-    handleTagClickOutside(e);
-    if (datePopoverOpen && datePopoverRef && !datePopoverRef.contains(e.target as Node)) {
-      datePopoverOpen = false;
-    }
-    if (lengthPopoverOpen && lengthPopoverRef && !lengthPopoverRef.contains(e.target as Node)) {
-      lengthPopoverOpen = false;
-    }
-    if (domainPopoverOpen && domainPopoverRef && !domainPopoverRef.contains(e.target as Node)) {
-      domainPopoverOpen = false;
-      domainSearchText = '';
-    }
-    if (sortPopoverOpen && sortPopoverRef && !sortPopoverRef.contains(e.target as Node)) {
-      sortPopoverOpen = false;
-    }
-  }
-
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      feedViewStore.setSourcePopoverOpen(false);
-      typePopoverOpen = false;
-      tagPopoverOpen = false;
-      datePopoverOpen = false;
-      lengthPopoverOpen = false;
-      domainPopoverOpen = false;
-      sortPopoverOpen = false;
-      domainSearchText = '';
-    }
-  }
-
-  onMount(() => {
-    document.addEventListener('click', handleClickOutside, true);
-    document.addEventListener('keydown', handleKeydown);
-  });
-
-  onDestroy(() => {
-    document.removeEventListener('click', handleClickOutside, true);
-    document.removeEventListener('keydown', handleKeydown);
-  });
-
-  let sourceFilterLabel = $derived.by(() => {
-    if (ef.sourceMode === 'all') return 'Sources';
-    return `Sources (${ef.sourceKeys.length})`;
-  });
+  let sourceFilterLabel = $derived(
+    ef.sourceMode === 'all' ? 'Sources' : `Sources (${ef.sourceKeys.length})`
+  );
 
   // Save view state
   let showNameInput = $state(false);
@@ -297,7 +151,6 @@
   let nameInputRef = $state<HTMLInputElement | null>(null);
   let saving = $state(false);
 
-  // Whether we're editing an existing saved view
   let isEditingView = $derived(!!feedViewStore.viewFilter);
 
   // Rename view state
@@ -352,13 +205,10 @@
 
   async function handleSave() {
     if (isEditingView) {
-      // Update existing view
       feedViewStore.syncToolbarToSavedView();
     } else {
-      // Show name input for new channel
       showNameInput = true;
       newViewName = '';
-      // Focus the input after it renders
       requestAnimationFrame(() => nameInputRef?.focus());
     }
   }
@@ -395,111 +245,34 @@
       newViewName = '';
     }
   }
-
-  // Svelte action: reposition popover to stay within viewport
-  function viewportAware(node: HTMLElement) {
-    const PADDING = 8;
-
-    function reposition() {
-      // Reset inline overrides so we measure from default CSS position
-      node.style.left = '';
-      node.style.right = '';
-      node.style.top = '';
-      node.style.bottom = '';
-      node.style.maxHeight = '';
-
-      const rect = node.getBoundingClientRect();
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-
-      // Horizontal: if overflowing left, anchor to left edge of parent instead
-      if (rect.left < PADDING) {
-        node.style.right = 'auto';
-        node.style.left = '0';
-      }
-      // If it still overflows right after flipping, pin to right edge of viewport
-      const rectAfter = node.getBoundingClientRect();
-      if (rectAfter.right > vw - PADDING) {
-        node.style.right = '0';
-        node.style.left = 'auto';
-      }
-
-      // Vertical: constrain max-height so it doesn't overflow bottom
-      const topAfterH = node.getBoundingClientRect().top;
-      const availableBelow = vh - topAfterH - PADDING;
-      if (rect.height > availableBelow && availableBelow > 120) {
-        node.style.maxHeight = `${availableBelow}px`;
-      } else if (availableBelow < 120) {
-        // Not enough room below — flip above the trigger
-        node.style.top = 'auto';
-        node.style.bottom = 'calc(100% + 4px)';
-        // Constrain max-height above too
-        const parent = node.offsetParent as HTMLElement | null;
-        const parentRect = parent?.getBoundingClientRect();
-        const availableAbove = parentRect ? parentRect.top - PADDING : vh / 2;
-        if (rect.height > availableAbove) {
-          node.style.maxHeight = `${availableAbove}px`;
-        }
-      }
-    }
-
-    requestAnimationFrame(reposition);
-
-    window.addEventListener('resize', reposition);
-    window.addEventListener('scroll', reposition, true);
-
-    // Reposition when content changes (e.g. switching source mode)
-    const observer = new MutationObserver(() => requestAnimationFrame(reposition));
-    observer.observe(node, { childList: true, subtree: true });
-
-    return {
-      destroy() {
-        window.removeEventListener('resize', reposition);
-        window.removeEventListener('scroll', reposition, true);
-        observer.disconnect();
-      },
-    };
-  }
 </script>
 
 <div class="filter-toolbar" role="toolbar" aria-label="Filter controls">
   <!-- Group 1: Sort + Read state -->
   <div class="filter-group">
     {#if isSavedChannel}
-      <!-- Saved channel: sort dropdown -->
-      <div class="dropdown-wrapper" bind:this={sortPopoverRef}>
-        <button
-          class="filter-btn"
-          onclick={(e) => {
-            e.stopPropagation();
-            sortPopoverOpen = !sortPopoverOpen;
-          }}
-          title="Sort order"
-        >
-          <Icon name="arrow-down" size={16} />
-          <span class="filter-label">{savedSortLabel}</span>
-          <Icon name="chevron-down" size={12} />
-        </button>
-        {#if sortPopoverOpen}
-          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-          <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
-            <div class="popover-list">
-              {#each SAVED_SORT_OPTIONS as opt}
-                <button
-                  class="popover-option"
-                  class:active={feedViewStore.currentSortOrder === opt.value}
-                  onclick={() => {
-                    feedViewStore.setSortOrder(opt.value);
-                    sortPopoverOpen = false;
-                  }}
-                >
-                  {opt.label}
-                </button>
-              {/each}
-            </div>
-          </div>
-        {/if}
-      </div>
+      <FilterPopover
+        iconName="arrow-down"
+        label={savedSortLabel}
+        title="Sort order"
+        open={sortPopoverOpen}
+        onOpenChange={(v) => (sortPopoverOpen = v)}
+      >
+        <div class="popover-list">
+          {#each SAVED_SORT_OPTIONS as opt}
+            <button
+              class="popover-option"
+              class:active={feedViewStore.currentSortOrder === opt.value}
+              onclick={() => {
+                feedViewStore.setSortOrder(opt.value);
+                sortPopoverOpen = false;
+              }}
+            >
+              {opt.label}
+            </button>
+          {/each}
+        </div>
+      </FilterPopover>
     {:else}
       <button
         class="filter-btn"
@@ -562,282 +335,219 @@
 
       <!-- Saved source filter (for saved-mode channels) -->
       <div class="filter-group">
-        <div class="dropdown-wrapper" bind:this={typePopoverRef}>
-          <button
-            class="filter-btn"
-            class:has-filter={activeSavedSourceFilter.length > 0}
-            onclick={(e) => {
-              e.stopPropagation();
-              typePopoverOpen = !typePopoverOpen;
-            }}
-          >
-            <Icon name="layers" size={16} />
-            <span class="filter-label">{savedSourceFilterLabel}</span>
-            <Icon name="chevron-down" size={12} />
-          </button>
-
-          {#if typePopoverOpen}
-            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-            <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
-              <div class="popover-group-header">
-                <span>Save Sources</span>
-                {#if activeSavedSourceFilter.length > 0}
-                  <button class="select-all-btn" onclick={clearSavedSourceFilter}>Clear</button>
-                {/if}
-              </div>
-              <div class="popover-list">
-                {#each SAVED_SOURCE_OPTIONS as opt}
-                  <label class="check-label">
-                    <input
-                      type="checkbox"
-                      checked={activeSavedSourceSet.has(opt.value)}
-                      onchange={() => toggleSavedSourceFilter(opt.value)}
-                    />
-                    <span class="check-text">{opt.label}</span>
-                  </label>
-                {/each}
-              </div>
-            </div>
-          {/if}
-        </div>
+        <FilterPopover
+          iconName="layers"
+          label={savedSourceFilterLabel}
+          hasFilter={activeSavedSourceFilter.length > 0}
+          open={typePopoverOpen}
+          onOpenChange={(v) => (typePopoverOpen = v)}
+        >
+          <div class="popover-group-header">
+            <span>Save Sources</span>
+            {#if activeSavedSourceFilter.length > 0}
+              <button class="select-all-btn" onclick={() => feedViewStore.clearToolbarSavedSource()}
+                >Clear</button
+              >
+            {/if}
+          </div>
+          <div class="popover-list">
+            {#each SAVED_SOURCE_OPTIONS as opt}
+              <label class="check-label">
+                <input
+                  type="checkbox"
+                  checked={activeSavedSourceSet.has(opt.value)}
+                  onchange={() => feedViewStore.toggleToolbarSavedSource(opt.value)}
+                />
+                <span class="check-text">{opt.label}</span>
+              </label>
+            {/each}
+          </div>
+        </FilterPopover>
       </div>
 
       <!-- Date filter -->
       <div class="filter-group">
-        <div class="dropdown-wrapper" bind:this={datePopoverRef}>
-          <button
-            class="filter-btn"
-            class:has-filter={!!activeDateFilter}
-            onclick={(e) => {
-              e.stopPropagation();
-              datePopoverOpen = !datePopoverOpen;
-            }}
-          >
-            <Icon name="clock" size={16} />
-            <span class="filter-label">{dateFilterLabel}</span>
-            <Icon name="chevron-down" size={12} />
-          </button>
-          {#if datePopoverOpen}
-            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-            <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
-              <div class="popover-list">
-                {#each DATE_PRESET_OPTIONS as opt}
-                  <button
-                    class="popover-option"
-                    class:active={(activeDateFilter ?? '') === opt.value}
-                    onclick={() => {
-                      feedViewStore.setToolbarDateFilter(opt.value || null);
-                      datePopoverOpen = false;
-                    }}
-                  >
-                    {opt.label}
-                  </button>
-                {/each}
-              </div>
-            </div>
-          {/if}
-        </div>
+        <FilterPopover
+          iconName="clock"
+          label={dateFilterLabel}
+          hasFilter={!!activeDateFilter}
+          open={datePopoverOpen}
+          onOpenChange={(v) => (datePopoverOpen = v)}
+        >
+          <div class="popover-list">
+            {#each DATE_PRESET_OPTIONS as opt}
+              <button
+                class="popover-option"
+                class:active={(activeDateFilter ?? '') === opt.value}
+                onclick={() => {
+                  feedViewStore.setToolbarDateFilter(opt.value || null);
+                  datePopoverOpen = false;
+                }}
+              >
+                {opt.label}
+              </button>
+            {/each}
+          </div>
+        </FilterPopover>
       </div>
 
       <!-- Reading length filter -->
       <div class="filter-group">
-        <div class="dropdown-wrapper" bind:this={lengthPopoverRef}>
-          <button
-            class="filter-btn"
-            class:has-filter={activeReadingLength.length > 0}
-            onclick={(e) => {
-              e.stopPropagation();
-              lengthPopoverOpen = !lengthPopoverOpen;
-            }}
-          >
-            <Icon name="file-text" size={16} />
-            <span class="filter-label">{readingLengthLabel}</span>
-            <Icon name="chevron-down" size={12} />
-          </button>
-          {#if lengthPopoverOpen}
-            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-            <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
-              <div class="popover-group-header">
-                <span>Reading Length</span>
-                {#if activeReadingLength.length > 0}
-                  <button
-                    class="select-all-btn"
-                    onclick={() => feedViewStore.setToolbarReadingLength([])}>Clear</button
-                  >
-                {/if}
-              </div>
-              <div class="popover-list">
-                {#each READING_LENGTH_OPTIONS as opt}
-                  <label class="check-label">
-                    <input
-                      type="checkbox"
-                      checked={activeReadingLengthSet.has(opt.value)}
-                      onchange={() => toggleReadingLength(opt.value)}
-                    />
-                    <span class="check-text">{opt.label}</span>
-                  </label>
-                {/each}
-              </div>
-            </div>
-          {/if}
-        </div>
+        <FilterPopover
+          iconName="file-text"
+          label={readingLengthLabel}
+          hasFilter={activeReadingLength.length > 0}
+          open={lengthPopoverOpen}
+          onOpenChange={(v) => (lengthPopoverOpen = v)}
+        >
+          <div class="popover-group-header">
+            <span>Reading Length</span>
+            {#if activeReadingLength.length > 0}
+              <button
+                class="select-all-btn"
+                onclick={() => feedViewStore.clearToolbarReadingLength()}>Clear</button
+              >
+            {/if}
+          </div>
+          <div class="popover-list">
+            {#each READING_LENGTH_OPTIONS as opt}
+              <label class="check-label">
+                <input
+                  type="checkbox"
+                  checked={activeReadingLengthSet.has(opt.value)}
+                  onchange={() => feedViewStore.toggleToolbarReadingLength(opt.value)}
+                />
+                <span class="check-text">{opt.label}</span>
+              </label>
+            {/each}
+          </div>
+        </FilterPopover>
       </div>
 
       <!-- Domain filter -->
       {#if availableDomains.length > 0}
         <div class="filter-group">
-          <div class="dropdown-wrapper" bind:this={domainPopoverRef}>
-            <button
-              class="filter-btn"
-              class:has-filter={activeDomainFilter.length > 0}
-              onclick={(e) => {
-                e.stopPropagation();
-                domainPopoverOpen = !domainPopoverOpen;
-              }}
-            >
-              <Icon name="globe" size={16} />
-              <span class="filter-label">{domainFilterLabel}</span>
-              <Icon name="chevron-down" size={12} />
-            </button>
-            {#if domainPopoverOpen}
-              <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-              <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
-                <div class="popover-group-header">
-                  <span>Domains</span>
-                  {#if activeDomainFilter.length > 0}
-                    <button
-                      class="select-all-btn"
-                      onclick={() => feedViewStore.setToolbarDomainFilter([])}>Clear</button
-                    >
-                  {/if}
-                </div>
-                <div class="popover-search">
+          <FilterPopover
+            iconName="globe"
+            label={domainFilterLabel}
+            hasFilter={activeDomainFilter.length > 0}
+            open={domainPopoverOpen}
+            onOpenChange={(v) => (domainPopoverOpen = v)}
+          >
+            <div class="popover-group-header">
+              <span>Domains</span>
+              {#if activeDomainFilter.length > 0}
+                <button class="select-all-btn" onclick={() => feedViewStore.clearToolbarDomain()}
+                  >Clear</button
+                >
+              {/if}
+            </div>
+            <div class="popover-search">
+              <input
+                type="text"
+                placeholder="Search domains..."
+                bind:value={domainSearchText}
+                class="search-input"
+              />
+            </div>
+            <div class="popover-list">
+              {#each filteredDomains as domain}
+                <label class="check-label">
                   <input
-                    type="text"
-                    placeholder="Search domains..."
-                    bind:value={domainSearchText}
-                    class="search-input"
+                    type="checkbox"
+                    checked={activeDomainSet.has(domain)}
+                    onchange={() => feedViewStore.toggleToolbarDomain(domain)}
                   />
-                </div>
-                <div class="popover-list">
-                  {#each filteredDomains as domain}
-                    <label class="check-label">
-                      <input
-                        type="checkbox"
-                        checked={activeDomainSet.has(domain)}
-                        onchange={() => toggleDomainFilter(domain)}
-                      />
-                      <span class="check-text">{domain}</span>
-                    </label>
-                  {/each}
-                  {#if domainSearchText && filteredDomains.length === 0}
-                    <div class="no-results">No domains match</div>
-                  {/if}
-                </div>
-              </div>
-            {/if}
-          </div>
+                  <span class="check-text">{domain}</span>
+                </label>
+              {/each}
+              {#if domainSearchText && filteredDomains.length === 0}
+                <div class="no-results">No domains match</div>
+              {/if}
+            </div>
+          </FilterPopover>
         </div>
       {/if}
     {:else if showSourceFilter}
       <span class="toolbar-divider group-divider"></span>
 
-      <!-- Group 2: Sources dropdown -->
+      <!-- Sources dropdown -->
       <div class="filter-group">
-        <div class="dropdown-wrapper" bind:this={sourcePopoverRef}>
-          <button
-            class="filter-btn source-btn"
-            class:has-filter={ef.sourceMode !== 'all'}
-            onclick={(e) => {
-              e.stopPropagation();
-              feedViewStore.setSourcePopoverOpen(!sourcePopoverOpen);
-            }}
-          >
-            <Icon name="filter" size={16} />
-            <span class="filter-label">{sourceFilterLabel}</span>
-            <Icon name="chevron-down" size={12} />
-          </button>
+        <FilterPopover
+          iconName="filter"
+          label={sourceFilterLabel}
+          hasFilter={ef.sourceMode !== 'all'}
+          buttonClass="source-btn"
+          open={feedViewStore.sourcePopoverOpen}
+          onOpenChange={(v) => feedViewStore.setSourcePopoverOpen(v)}
+        >
+          <div class="popover-section">
+            <label class="radio-label">
+              <input
+                type="radio"
+                name="sourceMode"
+                value="all"
+                checked={ef.sourceMode === 'all'}
+                onchange={() => setSourceMode('all')}
+              />
+              All sources
+            </label>
+            <label class="radio-label">
+              <input
+                type="radio"
+                name="sourceMode"
+                value="include"
+                checked={ef.sourceMode === 'include'}
+                onchange={() => setSourceMode('include')}
+              />
+              Include only
+            </label>
+          </div>
 
-          {#if sourcePopoverOpen}
-            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-            <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
-              <div class="popover-section">
-                <label class="radio-label">
-                  <input
-                    type="radio"
-                    name="sourceMode"
-                    value="all"
-                    checked={ef.sourceMode === 'all'}
-                    onchange={() => setSourceMode('all')}
-                  />
-                  All sources
-                </label>
-                <label class="radio-label">
-                  <input
-                    type="radio"
-                    name="sourceMode"
-                    value="include"
-                    checked={ef.sourceMode === 'include'}
-                    onchange={() => setSourceMode('include')}
-                  />
-                  Include only
-                </label>
+          {#if ef.sourceMode === 'include'}
+            {#if subscriptionsStore.subscriptions.length > 0}
+              <div class="popover-group-header">
+                <span>Subscriptions</span>
+                <button
+                  class="select-all-btn"
+                  onclick={allSourcesSelected ? deselectAllSources : selectAllSources}
+                >
+                  {allSourcesSelected ? 'Deselect all' : 'Select all'}
+                </button>
               </div>
-
-              {#if ef.sourceMode === 'include'}
-                <!-- Subscriptions list -->
-                {#if subscriptionsStore.subscriptions.length > 0}
-                  <div class="popover-group-header">
-                    <span>Subscriptions</span>
-                    <button
-                      class="select-all-btn"
-                      onclick={allSourcesSelected ? deselectAllSources : selectAllSources}
-                    >
-                      {allSourcesSelected ? 'Deselect all' : 'Select all'}
-                    </button>
-                  </div>
-                  <div class="popover-search">
-                    <input
-                      type="text"
-                      placeholder="Search subscriptions..."
-                      bind:value={feedSearch}
-                      class="search-input"
-                    />
-                  </div>
-                  <div class="popover-list">
-                    {#each filteredSubscriptions as sub}
-                      {@const key = subscriptionSourceKey(sub)}
-                      {#if key}
-                        {@const isAtProto = sub.sourceType?.startsWith('atproto.') ?? false}
-                        {@const iconUrl =
-                          sub.customIconUrl ||
-                          (isAtProto
-                            ? sub.siteUrl
-                              ? getFaviconUrl(sub.siteUrl)
-                              : '/icons/icon-192.svg'
-                            : getFaviconUrl(sub.siteUrl || sub.feedUrl || ''))}
-                        <label class="check-label">
-                          <input
-                            type="checkbox"
-                            checked={sourceKeySet.has(key)}
-                            onchange={() => toggleSourceKey(key)}
-                          />
-                          {#if iconUrl}
-                            <img src={iconUrl} alt="" class="check-icon" />
-                          {/if}
-                          <span class="check-text">{sub.customTitle || sub.title}</span>
-                        </label>
+              <div class="popover-search">
+                <input
+                  type="text"
+                  placeholder="Search subscriptions..."
+                  bind:value={feedSearch}
+                  class="search-input"
+                />
+              </div>
+              <div class="popover-list">
+                {#each filteredSubscriptions as sub}
+                  {@const key = subscriptionSourceKey(sub)}
+                  {#if key}
+                    {@const iconUrl = subscriptionIconUrl(sub)}
+                    <label class="check-label">
+                      <input
+                        type="checkbox"
+                        checked={sourceKeySet.has(key)}
+                        onchange={() => feedViewStore.toggleToolbarSourceKey(key)}
+                      />
+                      {#if iconUrl}
+                        <img src={iconUrl} alt="" class="check-icon" />
                       {/if}
-                    {/each}
-                    {#if feedSearch && filteredSubscriptions.length === 0}
-                      <div class="no-results">No subscriptions match</div>
-                    {/if}
-                  </div>
+                      <span class="check-text">{sub.customTitle || sub.title}</span>
+                    </label>
+                  {/if}
+                {/each}
+                {#if feedSearch && filteredSubscriptions.length === 0}
+                  <div class="no-results">No subscriptions match</div>
                 {/if}
-              {/if}
-            </div>
+              </div>
+            {/if}
           {/if}
-        </div>
+        </FilterPopover>
       </div>
     {/if}
 
@@ -846,44 +556,34 @@
 
       <!-- Type filter dropdown -->
       <div class="filter-group">
-        <div class="dropdown-wrapper" bind:this={typePopoverRef}>
-          <button
-            class="filter-btn"
-            class:has-filter={activeTypeFilter.length > 0}
-            onclick={(e) => {
-              e.stopPropagation();
-              typePopoverOpen = !typePopoverOpen;
-            }}
-          >
-            <Icon name="layers" size={16} />
-            <span class="filter-label">{typeFilterLabel}</span>
-            <Icon name="chevron-down" size={12} />
-          </button>
-
-          {#if typePopoverOpen}
-            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-            <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
-              <div class="popover-group-header">
-                <span>Types</span>
-                {#if activeTypeFilter.length > 0}
-                  <button class="select-all-btn" onclick={clearTypeFilter}>Clear</button>
-                {/if}
-              </div>
-              <div class="popover-list">
-                {#each TYPE_OPTIONS as opt}
-                  <label class="check-label">
-                    <input
-                      type="checkbox"
-                      checked={activeTypeSet.has(opt.value)}
-                      onchange={() => toggleTypeFilter(opt.value)}
-                    />
-                    <span class="check-text">{opt.label}</span>
-                  </label>
-                {/each}
-              </div>
-            </div>
-          {/if}
-        </div>
+        <FilterPopover
+          iconName="layers"
+          label={typeFilterLabel}
+          hasFilter={activeTypeFilter.length > 0}
+          open={typePopoverOpen}
+          onOpenChange={(v) => (typePopoverOpen = v)}
+        >
+          <div class="popover-group-header">
+            <span>Types</span>
+            {#if activeTypeFilter.length > 0}
+              <button class="select-all-btn" onclick={() => feedViewStore.clearToolbarType()}
+                >Clear</button
+              >
+            {/if}
+          </div>
+          <div class="popover-list">
+            {#each TYPE_OPTIONS as opt}
+              <label class="check-label">
+                <input
+                  type="checkbox"
+                  checked={activeTypeSet.has(opt.value)}
+                  onchange={() => feedViewStore.toggleToolbarType(opt.value)}
+                />
+                <span class="check-text">{opt.label}</span>
+              </label>
+            {/each}
+          </div>
+        </FilterPopover>
       </div>
     {/if}
 
@@ -892,44 +592,34 @@
 
       <!-- Tags dropdown -->
       <div class="filter-group">
-        <div class="dropdown-wrapper" bind:this={tagPopoverRef}>
-          <button
-            class="filter-btn"
-            class:has-filter={activeTagFilter.length > 0}
-            onclick={(e) => {
-              e.stopPropagation();
-              tagPopoverOpen = !tagPopoverOpen;
-            }}
-          >
-            <Icon name="tag" size={16} />
-            <span class="filter-label">{tagFilterLabel}</span>
-            <Icon name="chevron-down" size={12} />
-          </button>
-
-          {#if tagPopoverOpen}
-            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-            <div class="popover" use:viewportAware onclick={(e) => e.stopPropagation()}>
-              <div class="popover-group-header">
-                <span>Tags</span>
-                {#if activeTagFilter.length > 0}
-                  <button class="select-all-btn" onclick={clearTagFilter}>Clear</button>
-                {/if}
-              </div>
-              <div class="popover-list">
-                {#each allTags as tag}
-                  <label class="check-label">
-                    <input
-                      type="checkbox"
-                      checked={activeTagSet.has(tag)}
-                      onchange={() => toggleTagFilter(tag)}
-                    />
-                    <span class="check-text">{tag}</span>
-                  </label>
-                {/each}
-              </div>
-            </div>
-          {/if}
-        </div>
+        <FilterPopover
+          iconName="tag"
+          label={tagFilterLabel}
+          hasFilter={activeTagFilter.length > 0}
+          open={tagPopoverOpen}
+          onOpenChange={(v) => (tagPopoverOpen = v)}
+        >
+          <div class="popover-group-header">
+            <span>Tags</span>
+            {#if activeTagFilter.length > 0}
+              <button class="select-all-btn" onclick={() => feedViewStore.clearToolbarTag()}
+                >Clear</button
+              >
+            {/if}
+          </div>
+          <div class="popover-list">
+            {#each allTags as tag}
+              <label class="check-label">
+                <input
+                  type="checkbox"
+                  checked={activeTagSet.has(tag)}
+                  onchange={() => feedViewStore.toggleToolbarTag(tag)}
+                />
+                <span class="check-text">{tag}</span>
+              </label>
+            {/each}
+          </div>
+        </FilterPopover>
       </div>
     {/if}
 
@@ -1034,6 +724,7 @@
     opacity: 0.5;
   }
 
+  /* Direct filter-btn instances in this component (sort toggle, edit/save/rename/delete). */
   .filter-btn {
     display: flex;
     align-items: center;
@@ -1052,11 +743,6 @@
   .filter-btn:hover {
     color: var(--color-text);
     background: var(--color-bg-secondary, #f5f5f5);
-  }
-
-  .filter-btn.has-filter {
-    color: var(--color-primary, #2563eb);
-    background: rgba(37, 99, 235, 0.08);
   }
 
   .filter-label {
@@ -1095,27 +781,18 @@
     color: var(--color-text);
   }
 
-  /* Dropdown wrapper */
-  .dropdown-wrapper {
-    position: relative;
+  /* Hide chevron on the source filter button at narrower widths to save space. */
+  :global(.source-btn .icon:last-child) {
+    /* default visible */
   }
 
-  .popover {
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 0;
-    min-width: 200px;
-    max-width: 280px;
-    background: var(--color-bg, #fff);
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-    z-index: 100;
-    overflow: hidden;
-    max-height: 520px;
-    overflow-y: auto;
+  @media (max-width: 900px) {
+    :global(.source-btn .icon:last-child) {
+      display: none;
+    }
   }
 
+  /* Popover content (rendered inside FilterPopover snippets, so styled in caller scope). */
   .popover-section {
     padding: 0.5rem;
     display: flex;
@@ -1222,7 +899,7 @@
     gap: 0.125rem;
   }
 
-  /* Save button */
+  /* Save button states */
   .save-btn {
     color: var(--color-text-secondary);
   }
@@ -1299,28 +976,20 @@
     cursor: not-allowed;
   }
 
-  /* Tablet: hide labels, keep horizontal */
   @media (max-width: 900px) {
     .filter-label {
       display: none;
     }
-
-    .source-btn :global(.icon:last-child) {
-      display: none;
-    }
-
     .filter-btn,
     .segment-btn {
       padding: 0.4rem;
     }
   }
 
-  /* Mobile: horizontal icon-only layout */
   @media (max-width: 640px) {
     .segment-label {
       display: none;
     }
-
     .filter-btn,
     .segment-btn {
       padding: 0.4rem;
@@ -1342,14 +1011,6 @@
 
     .filter-btn:hover {
       background: rgba(255, 255, 255, 0.1);
-    }
-
-    .filter-btn.has-filter {
-      background: rgba(37, 99, 235, 0.2);
-    }
-
-    .popover {
-      background: var(--color-bg, #1a1a1a);
     }
 
     .name-input {

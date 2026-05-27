@@ -5,9 +5,9 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
-  import { getFaviconUrl } from '$lib/utils/favicon';
   import { subscriptionSourceKey } from '$lib/utils/sourceKeys';
   import { computeSourceKeys } from '$lib/utils/channelLogic';
+  import { filterSubscriptionsBySearch, subscriptionIconUrl } from '$lib/utils/subscriptionDisplay';
   import DomainPatternInput from '$lib/components/DomainPatternInput.svelte';
   import type {
     ChannelAutoRule,
@@ -188,15 +188,7 @@
   });
 
   let chFilteredSubscriptions = $derived(
-    chFeedSearch
-      ? subscriptionsStore.subscriptions.filter((sub) => {
-          const term = chFeedSearch.toLowerCase();
-          return (
-            (sub.customTitle || sub.title).toLowerCase().includes(term) ||
-            (sub.feedUrl?.toLowerCase().includes(term) ?? false)
-          );
-        })
-      : subscriptionsStore.subscriptions
+    filterSubscriptionsBySearch(subscriptionsStore.subscriptions, chFeedSearch)
   );
 
   // Reset channel editor when editingChannelId changes
@@ -450,16 +442,10 @@
           </div>
           <div class="toggle-row">
             {#each READING_LENGTH_OPTIONS as opt}
-              {@const isActive = feedViewStore.toolbarReadingLength.includes(opt.value)}
               <button
                 class="toggle-btn"
-                class:active={isActive}
-                onclick={() => {
-                  const current = feedViewStore.toolbarReadingLength;
-                  feedViewStore.setToolbarReadingLength(
-                    isActive ? current.filter((l) => l !== opt.value) : [...current, opt.value]
-                  );
-                }}
+                class:active={feedViewStore.toolbarReadingLength.includes(opt.value)}
+                onclick={() => feedViewStore.toggleToolbarReadingLength(opt.value)}
               >
                 {opt.label}
               </button>
@@ -476,16 +462,10 @@
             </div>
             <div class="toggle-row wrap">
               {#each feedViewStore.availableSavedDomains as domain}
-                {@const isActive = feedViewStore.toolbarDomainFilter.includes(domain)}
                 <button
                   class="toggle-btn chip"
-                  class:active={isActive}
-                  onclick={() => {
-                    const current = feedViewStore.toolbarDomainFilter;
-                    feedViewStore.setToolbarDomainFilter(
-                      isActive ? current.filter((d) => d !== domain) : [...current, domain]
-                    );
-                  }}
+                  class:active={feedViewStore.toolbarDomainFilter.includes(domain)}
+                  onclick={() => feedViewStore.toggleToolbarDomain(domain)}
                 >
                   {domain}
                 </button>
@@ -881,14 +861,7 @@
               {#each chFilteredSubscriptions as sub}
                 {@const key = subscriptionSourceKey(sub)}
                 {#if key}
-                  {@const isAtProto = sub.sourceType?.startsWith('atproto.') ?? false}
-                  {@const iconUrl =
-                    sub.customIconUrl ||
-                    (isAtProto
-                      ? sub.siteUrl
-                        ? getFaviconUrl(sub.siteUrl)
-                        : '/icons/icon-192.svg'
-                      : getFaviconUrl(sub.siteUrl || sub.feedUrl || ''))}
+                  {@const iconUrl = subscriptionIconUrl(sub)}
                   <label class="source-item">
                     <input
                       type="checkbox"
