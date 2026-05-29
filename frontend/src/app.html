@@ -34,7 +34,7 @@
         The app failed to start. This can happen after an update or long idle period.
       </p>
       <button
-        onclick="location.reload()"
+        id="skyreader-reload-btn"
         style="
           padding: 0.75rem 1.5rem;
           font-size: 1rem;
@@ -87,6 +87,10 @@
             showRecovery();
           }
         }, 8000);
+        // "Reload app" — plain reload (inline onclick is blocked by CSP script-src-attr)
+        document.getElementById('skyreader-reload-btn').addEventListener('click', function () {
+          location.reload();
+        });
         // "Clear data & reload" — wipe IndexedDB + caches, then reload
         document.getElementById('skyreader-clear-btn').addEventListener('click', function () {
           var promises = [];
