@@ -12,7 +12,10 @@ primary_region = "sjc"
   force_https = true
   auto_stop_machines = true
   auto_start_machines = true
-  min_machines_running = 0
+  # Keep one machine alive: the self-warming loop runs in-process on a timer and
+  # can only keep the cache fresh while a machine is up. Letting this drop to 0
+  # would stop warming whenever traffic is idle, defeating the purpose.
+  min_machines_running = 1
 
 [vm]
   cpu_kind = "shared"
@@ -21,5 +24,15 @@ primary_region = "sjc"
 
 [env]
   DATA_DIR = "/data"
-  CACHE_TTL_SECONDS = "900"
+  # Fresh window. The self-warming loop refreshes active feeds before they reach
+  # this age, so user requests stay HITs even at a tight 5-minute freshness.
+  CACHE_TTL_SECONDS = "300"
   STALE_TTL_SECONDS = "3600"
+  # Self-warming loop. WARM_REFRESH_THRESHOLD defaults to a margin below CACHE_TTL;
+  # set explicitly only to override. Feeds not requested within WARM_ACTIVE_WINDOW
+  # stop being polled so abandoned feeds age out.
+  WARM_ENABLED = "true"
+  WARM_INTERVAL_SECONDS = "60"
+  WARM_ACTIVE_WINDOW_SECONDS = "1209600"
+  WARM_BATCH_CAP = "200"
+  WARM_CONCURRENCY = "8"
