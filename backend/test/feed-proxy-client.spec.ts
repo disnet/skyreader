@@ -24,16 +24,19 @@ describe('FeedProxyClient', () => {
   describe('non-JSON proxy responses', () => {
     // Regression: a plain-text infra error like "error code: 502" used to leak a
     // confusing "Unexpected token 'e'... is not valid JSON" SyntaxError to the user.
-    it('surfaces a clean error for a plain-text 502 body', async () => {
+    it('surfaces a clean, neutral error for a plain-text 502 body', async () => {
       globalThis.fetch = vi
         .fn()
         .mockResolvedValueOnce(new Response('error code: 502', { status: 502 }));
 
       const client = createClient();
-      await expect(client.discoverFeeds('https://www.cbc.ca')).rejects.toMatchObject({
-        name: 'FeedProxyError',
-        message: 'Feed service is temporarily unavailable (HTTP 502). Please try again.',
-      });
+      const err = await client.discoverFeeds('https://www.cbc.ca').catch((e) => e);
+      expect(err).toBeInstanceOf(FeedProxyError);
+      expect(err.message).toContain('HTTP 502');
+      // Don't misattribute an ambiguous edge error to our own service being down,
+      // and don't tell the user to "try again" (a bot block won't clear on retry).
+      expect(err.message).not.toMatch(/feed service is/i);
+      expect(err.message).not.toMatch(/try again/i);
     });
 
     it('does not throw a JSON SyntaxError', async () => {
@@ -79,6 +82,27 @@ describe('FeedProxyClient', () => {
         name: 'FeedProxyError',
         message: 'No feeds found',
       });
+    });
+
+    // A site blocking our fetcher comes back as 200 + { blocked: true }; the flag
+    // must ride along on the thrown error so callers can branch on it.
+    it('propagates the blocked flag from a "blocking automated access" response', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error:
+              'www.cbc.ca is blocking automated access (HTTP 403). The site likely uses a bot filter or CDN.',
+            blocked: true,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+
+      const client = createClient();
+      const err = await client.discoverFeeds('https://www.cbc.ca').catch((e) => e);
+      expect(err).toBeInstanceOf(FeedProxyError);
+      expect(err.blocked).toBe(true);
+      expect(err.message).toContain('blocking automated access');
     });
   });
 });

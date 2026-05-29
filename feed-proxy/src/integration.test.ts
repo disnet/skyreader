@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { createApp, initDatabase, cleanupCache, hashUrl, classifyError, calculateBackoff, type AppConfig, type CacheRow } from './app';
+import { createApp, initDatabase, cleanupCache, hashUrl, classifyError, describeFetchFailure, calculateBackoff, type AppConfig, type CacheRow } from './app';
 
 // Sample RSS feed for mocking
 const SAMPLE_RSS = `<?xml version="1.0" encoding="UTF-8"?>
@@ -562,6 +562,27 @@ describe('Integration Tests', () => {
 		});
 	});
 
+	describe('describeFetchFailure', () => {
+		it('flags a 403 as blocked with a site-specific message', () => {
+			const { error, blocked } = describeFetchFailure(403, 'https://www.cbc.ca/news');
+			expect(blocked).toBe(true);
+			expect(error).toContain('www.cbc.ca');
+			expect(error).toContain('blocking automated access');
+			expect(error).toContain('403');
+		});
+
+		it('does not flag other failures as blocked', () => {
+			expect(describeFetchFailure(500, 'https://example.com').blocked).toBe(false);
+			expect(describeFetchFailure(404, 'https://example.com').blocked).toBe(false);
+			expect(describeFetchFailure(429, 'https://example.com').blocked).toBe(false);
+		});
+
+		it('falls back to the raw url when it cannot be parsed as a host', () => {
+			const { error } = describeFetchFailure(500, 'not-a-url');
+			expect(error).toBe('Failed to fetch not-a-url: HTTP 500');
+		});
+	});
+
 	describe('Backoff calculation', () => {
 		it('calculates exponential backoff', () => {
 			const BASE = 5 * 60 * 1000; // 5 minutes
@@ -712,7 +733,7 @@ describe('Integration Tests', () => {
 
 			const cached = db.query<CacheRow, [string]>('SELECT * FROM cache WHERE url_hash = ?').get(urlHash);
 			expect(cached?.error_count).toBe(1);
-			expect(cached?.last_error).toBe('HTTP 403');
+			expect(cached?.last_error).toContain('blocking automated access');
 			// Permanent error should have 7-day backoff
 			const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
 			const expectedMin = Date.now() + sevenDaysMs - 1000;
@@ -859,7 +880,13 @@ describe('Integration Tests', () => {
 
 					expect(res.status).toBe(502);
 					expect(json.cache).toBe('ERROR');
-					expect(json.error).toBe(`HTTP ${status}`);
+					// A 403 gets an explanatory "blocked" message; others stay compact.
+					if (status === 403) {
+						expect(json.error).toContain('blocking automated access');
+						expect(json.error).toContain('403');
+					} else {
+						expect(json.error).toBe(`HTTP ${status}`);
+					}
 
 					fetchMock?.mockRestore();
 				}
@@ -1462,7 +1489,7 @@ describe('Integration Tests', () => {
 				expect(json.feeds).toEqual([]);
 			});
 
-			it('handles HTTP errors', async () => {
+			it('surfaces a 403 as a clean "blocked" condition, not a 502 gateway error', async () => {
 				const { app } = createTestApp();
 				fetchMock = mockFetch(() => new Response('Forbidden', { status: 403 }));
 
@@ -1471,8 +1498,26 @@ describe('Integration Tests', () => {
 				});
 				const json = await res.json();
 
+				// 200, not 502: the proxy worked; the site refused us.
+				expect(res.status).toBe(200);
+				expect(json.blocked).toBe(true);
+				expect(json.error).toContain('blocking automated access');
+				expect(json.error).toContain('example.com');
+				expect(json.error).toContain('403');
+			});
+
+			it('keeps a non-403 upstream failure as a 502', async () => {
+				const { app } = createTestApp();
+				fetchMock = mockFetch(() => new Response('Server Error', { status: 500 }));
+
+				const res = await app.request('/discover?url=https://example.com/', {
+					headers: { 'X-Proxy-Secret': 'test-secret' },
+				});
+				const json = await res.json();
+
 				expect(res.status).toBe(502);
-				expect(json.error).toBe('Failed to fetch: HTTP 403');
+				expect(json.blocked).toBe(false);
+				expect(json.error).toBe('Failed to fetch example.com: HTTP 500');
 			});
 
 			it('handles network errors', async () => {

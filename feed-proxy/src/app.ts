@@ -56,6 +56,39 @@ export function classifyError(status: number): ErrorType {
 	return 'recoverable';
 }
 
+// A bare 403 from the target site means the server is explicitly refusing our
+// automated fetcher — bot filters / CDNs like Cloudflare and Akamai answer 403
+// to clients they don't recognize. This is a property of the *target site*, not
+// a failure of our proxy, so we label it distinctly instead of folding it into
+// a generic gateway error.
+export function isBlockedStatus(status: number): boolean {
+	return status === 403;
+}
+
+// Canonical phrase used in every "blocked" message so downstream layers can
+// recognize the condition by substring without threading a flag through every
+// cache row. Keep it stable if you reword the surrounding text.
+export const BLOCKED_MESSAGE_MARKER = 'blocking automated access';
+
+export function describeFetchFailure(
+	status: number,
+	url: string
+): { error: string; blocked: boolean } {
+	let host: string;
+	try {
+		host = new URL(url).hostname;
+	} catch {
+		host = url;
+	}
+	if (isBlockedStatus(status)) {
+		return {
+			error: `${host} is ${BLOCKED_MESSAGE_MARKER} (HTTP ${status}). The site likely uses a bot filter or CDN (e.g. Cloudflare, Akamai) that rejects non-browser clients.`,
+			blocked: true,
+		};
+	}
+	return { error: `Failed to fetch ${host}: HTTP ${status}`, blocked: false };
+}
+
 const BASE_DELAY_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_DELAY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const PERMANENT_ERROR_DELAY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -202,7 +235,11 @@ export function createApp(db: Database, config: AppConfig) {
 			if (!response.ok) {
 				const errorType = classifyError(response.status);
 				const newErrorCount = (cached?.error_count || 0) + 1;
-				const errorMessage = `HTTP ${response.status}`;
+				// A 403 means the site is blocking our fetcher — store the explanatory
+				// message so the reader UI can say so. Other statuses keep the compact
+				// "HTTP n" form (downstream classifies them by code).
+				const failure = describeFetchFailure(response.status, url);
+				const errorMessage = failure.blocked ? failure.error : `HTTP ${response.status}`;
 
 				let nextRetryAt: number;
 				if (errorType === 'permanent') {
@@ -543,7 +580,11 @@ export function createApp(db: Database, config: AppConfig) {
 			});
 
 			if (!response.ok) {
-				return c.json({ error: `Failed to fetch: HTTP ${response.status}` }, 502);
+				const { error, blocked } = describeFetchFailure(response.status, siteUrl);
+				// A clean upstream block is a successful determination on our side
+				// (the proxy worked; the site refused us), so don't return 502 — that
+				// reads like our gateway failed. Other upstream failures stay 502.
+				return c.json({ error, blocked }, blocked ? 200 : 502);
 			}
 
 			const contentType = response.headers.get('Content-Type') || '';
@@ -660,7 +701,8 @@ export function createApp(db: Database, config: AppConfig) {
 			});
 
 			if (!response.ok) {
-				return c.json({ error: `Failed to fetch: HTTP ${response.status}` }, 502);
+				const { error, blocked } = describeFetchFailure(response.status, body.url);
+				return c.json({ error, blocked }, 502);
 			}
 
 			const html = await readResponseWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
