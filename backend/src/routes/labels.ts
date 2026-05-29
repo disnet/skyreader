@@ -1,11 +1,6 @@
 import type { Env } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
-
-function generateTid(): string {
-  const now = Date.now();
-  const random = Math.random().toString(36).substring(2, 8);
-  return `${now.toString(36)}${random}`;
-}
+import { generateTid } from '../utils/tid';
 
 interface LabelRow {
   item_key: string;

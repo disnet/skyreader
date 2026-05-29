@@ -3,13 +3,8 @@ import { safeAdd } from '$lib/services/safeDb.svelte';
 import { api } from '$lib/services/api';
 import { syncQueue, type ShareReadingPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
+import { generateTid } from '$lib/utils/tid';
 import type { ShareReadPosition } from '$lib/types';
-
-function generateTid(): string {
-  const now = Date.now();
-  const random = Math.random().toString(36).substring(2, 8);
-  return `${now.toString(36)}${random}`;
-}
 
 function createShareReadingStore() {
   let shareReadPositions = $state<Map<string, ShareReadPosition>>(new Map());

@@ -3,15 +3,10 @@ import { safeAdd } from '$lib/services/safeDb.svelte';
 import { api } from '$lib/services/api';
 import { syncQueue, type SocialReadingPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
+import { generateTid } from '$lib/utils/tid';
 import type { SocialReadPosition, SocialItemType } from '$lib/types';
 
 const BULK_BATCH_SIZE = 500; // Must match backend limit
-
-function generateTid(): string {
-  const now = Date.now();
-  const random = Math.random().toString(36).substring(2, 8);
-  return `${now.toString(36)}${random}`;
-}
 
 function createSocialReadingStore() {
   let positions = $state<Map<string, SocialReadPosition>>(new Map());

@@ -1,12 +1,6 @@
 import type { Env } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
-
-// Generate a TID (Timestamp Identifier) for AT Protocol records
-function generateTid(): string {
-  const now = Date.now();
-  const random = Math.random().toString(36).substring(2, 8);
-  return `${now.toString(36)}${random}`;
-}
+import { generateTid } from '../utils/tid';
 
 const MAX_SQL_PARAMS = 90; // Conservative limit for D1 (empirically lower than SQLite's 999)
 
