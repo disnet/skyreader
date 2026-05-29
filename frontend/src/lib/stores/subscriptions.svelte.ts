@@ -2,6 +2,7 @@ import { liveDb } from '$lib/services/liveDb.svelte';
 import { feedStatusStore } from './feedStatus.svelte';
 import { api } from '$lib/services/api';
 import { auth } from './auth.svelte';
+import { subscriptionDedupKey, createInFlightGuard } from '$lib/services/subscriptionDedup';
 import type { Subscription, SubscriptionSourceType } from '$lib/types';
 
 // Generate a TID (Timestamp Identifier) for AT Protocol records
@@ -21,13 +22,13 @@ function createSubscriptionsStore() {
   let isLoading = $state(false);
   let error = $state<string | null>(null);
 
-  // Tracks adds currently in flight, keyed by feed URL / atproto stream. The
-  // in-memory duplicate check below only sees subscriptions already persisted
-  // locally, but add() awaits the backend before inserting — so two rapid
-  // adds of the same feed (e.g. double-clicking a discovered-feed button) both
-  // pass that check and create duplicates with different rkeys. This guard
-  // rejects the second concurrent add before it hits the backend.
-  const inFlightAdds = new Set<string>();
+  // Serializes adds by feed URL / atproto stream. The in-memory duplicate
+  // check below only sees subscriptions already persisted locally, but add()
+  // awaits the backend before inserting — so two rapid adds of the same feed
+  // (e.g. double-clicking a discovered-feed button) both pass that check and
+  // create duplicates with different rkeys. This guard rejects the second
+  // concurrent add before it hits the backend.
+  const addGuard = createInFlightGuard();
 
   // Derived: subscriptions from liveDb (reactive via version)
   let subscriptions = $derived.by(() => {
@@ -74,40 +75,37 @@ function createSubscriptionsStore() {
 
     const isAtProto = options?.sourceType && options.sourceType.startsWith('atproto.');
 
-    // Key identifying this subscription for duplicate detection.
-    const dedupKey = isAtProto
-      ? `atproto:${options?.sourceType}:${options?.subjectDid}:${options?.feedUrl || feedUrl || ''}`
-      : `rss:${(feedUrl || '').toLowerCase()}`;
+    // Key identifying this subscription for concurrent-duplicate detection.
+    const dedupKey = subscriptionDedupKey({
+      sourceType: options?.sourceType,
+      subjectDid: options?.subjectDid,
+      feedUrl: options?.feedUrl || feedUrl,
+    });
+    const dupError = isAtProto
+      ? 'You are already subscribed to this content stream'
+      : 'You are already subscribed to this feed';
 
     // Reject a second add of the same feed while the first is still in flight.
-    if (inFlightAdds.has(dedupKey)) {
-      throw new Error(
-        isAtProto
-          ? 'You are already subscribed to this content stream'
-          : 'You are already subscribed to this feed'
-      );
-    }
-
-    // Check for duplicate against already-persisted subscriptions
-    if (isAtProto && options?.subjectDid && options?.sourceType) {
-      // For AT Proto subs, check by subjectDid + sourceType + feedUrl (publication URI)
-      const existing = subscriptions.find(
-        (s) =>
-          s.sourceType === options.sourceType &&
-          s.subjectDid === options.subjectDid &&
-          (s.feedUrl || '') === (options.feedUrl || feedUrl || '')
-      );
-      if (existing) {
-        throw new Error('You are already subscribed to this content stream');
+    // (addGuard.run throws DuplicateInFlightError before any side effects.)
+    return addGuard.run(dedupKey, dupError, async () => {
+      // Check for duplicate against already-persisted subscriptions
+      if (isAtProto && options?.subjectDid && options?.sourceType) {
+        // For AT Proto subs, check by subjectDid + sourceType + feedUrl (publication URI)
+        const existing = subscriptions.find(
+          (s) =>
+            s.sourceType === options.sourceType &&
+            s.subjectDid === options.subjectDid &&
+            (s.feedUrl || '') === (options.feedUrl || feedUrl || '')
+        );
+        if (existing) {
+          throw new Error('You are already subscribed to this content stream');
+        }
+      } else if (feedUrl) {
+        if (liveDb.getSubscriptionByUrl(feedUrl)) {
+          throw new Error('You are already subscribed to this feed');
+        }
       }
-    } else if (feedUrl) {
-      if (liveDb.getSubscriptionByUrl(feedUrl)) {
-        throw new Error('You are already subscribed to this feed');
-      }
-    }
 
-    inFlightAdds.add(dedupKey);
-    try {
       const rkey = generateTid();
       const now = new Date().toISOString();
 
@@ -147,9 +145,7 @@ function createSubscriptionsStore() {
       }
 
       return id;
-    } finally {
-      inFlightAdds.delete(dedupKey);
-    }
+    });
   }
 
   /**

@@ -1,5 +1,6 @@
 import { db } from './db';
 import { safeAdd, safeUpdate, safeBulkAdd } from './safeDb.svelte';
+import { dedupeSubscriptionsByRkey } from './subscriptionDedup';
 import type { Subscription, Article, FeedItem } from '$lib/types';
 
 const MAX_ARTICLES_PER_FEED = 100;
@@ -43,7 +44,7 @@ class LiveDatabase {
       const all = await db.subscriptions.toArray();
       // Heal any pre-existing duplicates (same rkey) that an older build's
       // add/sync race may have persisted to the cache.
-      this._subscriptions = await this.dedupeSubscriptionsByRkey(all);
+      this._subscriptions = await this.dedupeSubscriptions(all);
       this._subscriptionsLoaded = true;
       this.subscriptionsVersion++;
       return this._subscriptions;
@@ -59,18 +60,8 @@ class LiveDatabase {
    * canonical AT Protocol record identity, so two rows with the same rkey
    * are always the same subscription.
    */
-  private async dedupeSubscriptionsByRkey(subs: Subscription[]): Promise<Subscription[]> {
-    const seen = new Set<string>();
-    const kept: Subscription[] = [];
-    const dupeIds: number[] = [];
-    for (const sub of subs) {
-      if (sub.rkey && seen.has(sub.rkey)) {
-        if (sub.id != null) dupeIds.push(sub.id);
-        continue;
-      }
-      if (sub.rkey) seen.add(sub.rkey);
-      kept.push(sub);
-    }
+  private async dedupeSubscriptions(subs: Subscription[]): Promise<Subscription[]> {
+    const { kept, dupeIds } = dedupeSubscriptionsByRkey(subs);
     if (dupeIds.length > 0) {
       console.warn(`Removing ${dupeIds.length} duplicate subscription(s) from cache`);
       try {
