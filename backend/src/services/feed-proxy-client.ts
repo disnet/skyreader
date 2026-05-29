@@ -94,8 +94,18 @@ export class FeedProxyClient {
       headers,
     });
 
-    // Always try to parse as JSON - proxy returns JSON even for errors
-    return response.json() as Promise<T>;
+    // The proxy app returns JSON for its own errors, but infrastructure in
+    // front of it (Fly.io edge, gateway timeouts) can return a plain-text body
+    // like "error code: 502". Read as text first so a non-JSON body surfaces a
+    // clean message instead of leaking a confusing JSON parse SyntaxError.
+    const text = await response.text();
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new FeedProxyError(
+        `Feed service is temporarily unavailable (HTTP ${response.status}). Please try again.`
+      );
+    }
   }
 
   /**
