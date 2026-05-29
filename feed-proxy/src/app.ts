@@ -31,7 +31,10 @@ interface FilterResult {
 }
 
 const FETCH_HEADERS = {
-	'User-Agent': 'Skyreader/1.0 (+https://skyreader.app; like FeedFetcher-Google)',
+	// Don't impersonate Googlebot (e.g. "like FeedFetcher-Google"): CDNs such as
+	// Akamai (used by cbc.ca) verify Google crawlers by reverse-DNS and 403 any
+	// non-Google IP that claims to be one. Identify honestly with a contact URL.
+	'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)',
 	Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
 	'Accept-Language': 'en-US,en;q=0.9',
 	'Accept-Encoding': 'gzip, deflate',
