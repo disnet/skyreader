@@ -40,7 +40,10 @@ class LiveDatabase {
    */
   async loadSubscriptions(): Promise<Subscription[]> {
     try {
-      this._subscriptions = await db.subscriptions.toArray();
+      const all = await db.subscriptions.toArray();
+      // Heal any pre-existing duplicates (same rkey) that an older build's
+      // add/sync race may have persisted to the cache.
+      this._subscriptions = await this.dedupeSubscriptionsByRkey(all);
       this._subscriptionsLoaded = true;
       this.subscriptionsVersion++;
       return this._subscriptions;
@@ -48,6 +51,35 @@ class LiveDatabase {
       console.error('Failed to load subscriptions from IndexedDB:', e);
       return [];
     }
+  }
+
+  /**
+   * Remove duplicate subscriptions that share an rkey, keeping the first
+   * (lowest-id) row and deleting the rest from IndexedDB. rkey is the
+   * canonical AT Protocol record identity, so two rows with the same rkey
+   * are always the same subscription.
+   */
+  private async dedupeSubscriptionsByRkey(subs: Subscription[]): Promise<Subscription[]> {
+    const seen = new Set<string>();
+    const kept: Subscription[] = [];
+    const dupeIds: number[] = [];
+    for (const sub of subs) {
+      if (sub.rkey && seen.has(sub.rkey)) {
+        if (sub.id != null) dupeIds.push(sub.id);
+        continue;
+      }
+      if (sub.rkey) seen.add(sub.rkey);
+      kept.push(sub);
+    }
+    if (dupeIds.length > 0) {
+      console.warn(`Removing ${dupeIds.length} duplicate subscription(s) from cache`);
+      try {
+        await db.subscriptions.bulkDelete(dupeIds);
+      } catch (e) {
+        console.error('Failed to delete duplicate subscriptions:', e);
+      }
+    }
+    return kept;
   }
 
   /**
@@ -70,7 +102,26 @@ class LiveDatabase {
    * Add a new subscription to both IndexedDB and memory
    */
   async addSubscription(subscription: Omit<Subscription, 'id'>): Promise<number> {
+    // Idempotent on rkey. The user's own add() and a background sync (e.g. on
+    // tab refocus) can both try to insert the same record — without this guard
+    // they create duplicate rows with identical rkeys. Return the existing id.
+    if (subscription.rkey) {
+      const existing = this._subscriptions.find((s) => s.rkey === subscription.rkey);
+      if (existing?.id != null) return existing.id;
+    }
+
     const id = await safeAdd(db.subscriptions, subscription);
+
+    // Re-check after the await: a concurrent caller may have inserted the same
+    // rkey while this write was in flight. If so, drop our row and reuse theirs.
+    if (subscription.rkey) {
+      const raced = this._subscriptions.find((s) => s.rkey === subscription.rkey);
+      if (raced?.id != null) {
+        await db.subscriptions.delete(id);
+        return raced.id;
+      }
+    }
+
     this._subscriptions = [...this._subscriptions, { ...subscription, id }];
     this.subscriptionsVersion++;
     return id;
