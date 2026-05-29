@@ -253,6 +253,9 @@ function createFeedStatusStore() {
       case 'pending':
         return 'Loading...';
       case 'error':
+        if (status.errorMessage?.toLowerCase().includes('blocking automated access')) {
+          return 'Blocked by site';
+        }
         if (status.errorType === 'permanent') {
           return 'Feed unavailable';
         }
@@ -290,8 +293,14 @@ function createFeedStatusStore() {
       errorCode = `HTTP ${httpMatch[1]}`;
     }
 
-    // Parse HTTP status codes and common error patterns
-    if (errorMsg.includes('401')) {
+    // Parse HTTP status codes and common error patterns.
+    // The "blocked" case must come before the generic 403 branch — its message
+    // contains "(HTTP 403)" but warrants a more specific explanation.
+    if (errorMsg.includes('blocking automated access')) {
+      title = 'Blocked by site';
+      description =
+        "This site blocks Skyreader's feed fetcher, likely through a bot filter or CDN (e.g. Cloudflare, Akamai). The feed can't be fetched automatically.";
+    } else if (errorMsg.includes('401')) {
       title = 'Authentication Required';
       description = 'This feed requires login credentials that Skyreader cannot provide.';
     } else if (errorMsg.includes('403')) {

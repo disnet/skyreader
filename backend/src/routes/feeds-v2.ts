@@ -348,9 +348,15 @@ export async function handleV2FeedDiscover(request: Request, env: Env): Promise<
     });
   } catch (error) {
     console.error('V2 feed discovery error:', error);
+    const blocked = error instanceof FeedProxyError && error.blocked === true;
+    // Status stays non-2xx so the frontend's fetch wrapper throws and the modal
+    // surfaces error.message. The clear "blocking automated access" wording now
+    // comes from the message itself; `blocked` is carried for any caller that
+    // wants to branch on it.
     return new Response(
       JSON.stringify({
         error: error instanceof Error ? error.message : 'Failed to discover feeds',
+        blocked,
       }),
       {
         status: 502,

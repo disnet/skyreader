@@ -3,12 +3,16 @@ import type { Env, FeedItem } from '../types';
 export class FeedProxyError extends Error {
   errorCount?: number;
   nextRetryAt?: number;
+  // True when the failure is the target site refusing our automated fetcher
+  // (e.g. a bot filter / CDN 403), as opposed to our proxy being unavailable.
+  blocked?: boolean;
 
-  constructor(message: string, errorCount?: number, nextRetryAt?: number) {
+  constructor(message: string, errorCount?: number, nextRetryAt?: number, blocked?: boolean) {
     super(message);
     this.name = 'FeedProxyError';
     this.errorCount = errorCount;
     this.nextRetryAt = nextRetryAt;
+    this.blocked = blocked;
   }
 }
 
@@ -98,12 +102,17 @@ export class FeedProxyClient {
     // front of it (Fly.io edge, gateway timeouts) can return a plain-text body
     // like "error code: 502". Read as text first so a non-JSON body surfaces a
     // clean message instead of leaking a confusing JSON parse SyntaxError.
+    //
+    // We can't tell from a bare edge error whether the proxy is down or the
+    // target site is stalling/blocking us, so phrase it neutrally — don't claim
+    // our service is unavailable or tell the user to "try again" (a bot block
+    // won't clear on retry).
     const text = await response.text();
     try {
       return JSON.parse(text) as T;
     } catch {
       throw new FeedProxyError(
-        `Feed service is temporarily unavailable (HTTP ${response.status}). Please try again.`
+        `Couldn't load the feed (HTTP ${response.status}). The source may be blocking automated access or temporarily unavailable.`
       );
     }
   }
@@ -154,10 +163,12 @@ export class FeedProxyClient {
    */
   async discoverFeeds(siteUrl: string): Promise<string[]> {
     const params = new URLSearchParams({ url: siteUrl });
-    const raw = await this.fetch<{ feeds?: string[]; error?: string }>(`/discover?${params}`);
+    const raw = await this.fetch<{ feeds?: string[]; error?: string; blocked?: boolean }>(
+      `/discover?${params}`
+    );
 
     if (raw.error) {
-      throw new FeedProxyError(raw.error);
+      throw new FeedProxyError(raw.error, undefined, undefined, raw.blocked);
     }
 
     return raw.feeds || [];
@@ -229,8 +240,21 @@ export class FeedProxyClient {
     });
 
     if (!response.ok) {
+      // The proxy returns a JSON error body ({ error, blocked }); fall back to
+      // the raw text if it's a non-JSON edge error.
       const text = await response.text();
-      throw new FeedProxyError(text || `Failed to fetch HTML: HTTP ${response.status}`);
+      try {
+        const body = JSON.parse(text) as { error?: string; blocked?: boolean };
+        throw new FeedProxyError(
+          body.error || `Failed to fetch HTML: HTTP ${response.status}`,
+          undefined,
+          undefined,
+          body.blocked
+        );
+      } catch (e) {
+        if (e instanceof FeedProxyError) throw e;
+        throw new FeedProxyError(text || `Failed to fetch HTML: HTTP ${response.status}`);
+      }
     }
 
     return response.text();
