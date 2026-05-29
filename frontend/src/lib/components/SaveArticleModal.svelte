@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import Modal from '$lib/components/common/Modal.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { ScopeUpgradeError } from '$lib/services/api';
@@ -38,9 +39,15 @@
 
     error = null;
     try {
-      await savesStore.saveFromUrl(url);
+      const saved = await savesStore.saveFromUrl(url);
       urlValue = '';
       onclose();
+      // Take the user to the saved article. Navigate first, THEN signal which
+      // item to open: SavedListView opens it via pushState, which must happen
+      // after the goto navigation has settled (otherwise the navigation resets
+      // page.state and the reader is torn down mid-render → null deref crash).
+      await goto('/?saved=true');
+      savesStore.pendingOpenKey = saved.uri || saved.itemGuid || saved.rkey;
     } catch (err) {
       if (err instanceof ScopeUpgradeError) {
         showScopeUpgrade = true;

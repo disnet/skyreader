@@ -182,6 +182,50 @@ GET /discover?url=https://example.com
 }
 ```
 
+### POST /extract
+
+Fetch a URL and return cleaned, extracted article content (via [Defuddle](https://github.com/kepano/defuddle), run server-side with linkedom). Results are cached per URL for 7 days, since article content is effectively immutable — so repeat and cross-user extractions of the same article skip the fetch + parse.
+
+```
+POST /extract
+Content-Type: application/json
+
+{ "url": "https://example.com/some-article" }
+```
+
+**Response:**
+
+```json
+{
+  "title": "Article Title",
+  "author": "Jane Doe",
+  "description": "A short summary.",
+  "content": "<p>Cleaned article HTML…</p>",
+  "domain": "example.com",
+  "image": "https://example.com/cover.jpg",
+  "published": "2026-01-02T00:00:00.000Z",
+  "wordCount": 1234
+}
+```
+
+`published` is normalized to ISO 8601 (or `null` if missing/implausible); all string fields are `null` when absent.
+
+**Response Headers:**
+
+| Header | Description |
+|--------|-------------|
+| `X-Cache` | `HIT` (fresh cache), `MISS` (fetched + extracted), `COALESCED` (joined an in-flight extraction) |
+| `X-Cache-Age` | Age of the cached entry in seconds (on `HIT`) |
+
+**Error Response:**
+
+```json
+{
+  "error": "example.com is blocking automated access (HTTP 403)…",
+  "blocked": true
+}
+```
+
 ### GET /health
 
 Health check endpoint (no authentication required).

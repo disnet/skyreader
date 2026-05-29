@@ -13,6 +13,10 @@ function createSavesStore() {
   let saving = $state(false);
   let error = $state<string | null>(null);
 
+  // Display-item key of a freshly-added save that the saved view should open in
+  // the reader once it appears. Consumed (and cleared) by SavedListView.
+  let pendingOpenKey = $state<string | null>(null);
+
   // O(1) lookup maps
   let savedByGuid = $state<Map<string, SavedItem>>(new Map());
   let savedByUrl = $state<Map<string, SavedItem>>(new Map());
@@ -477,6 +481,12 @@ function createSavesStore() {
     },
     get error() {
       return error;
+    },
+    get pendingOpenKey() {
+      return pendingOpenKey;
+    },
+    set pendingOpenKey(key: string | null) {
+      pendingOpenKey = key;
     },
     load,
     saveFromUrl,

@@ -53,7 +53,7 @@ import {
   handleDeleteSaved,
   handleDeleteSavedByGuid,
 } from './routes/saved';
-import { handleFetchHtml } from './routes/fetch-html';
+import { handleExtract } from './routes/extract';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
 import {
   handleIntegrationStatus,
@@ -311,10 +311,10 @@ export default {
           response = await handleBulkAddLabels(request, env);
           break;
 
-        // Fetch HTML route (for client-side extraction)
-        case url.pathname === '/api/fetch-html':
+        // Article extraction route (fetch + Defuddle via the feed proxy)
+        case url.pathname === '/api/extract':
           if (!session) return unauthorizedResponse(headers);
-          response = await handleFetchHtml(request, env);
+          response = await handleExtract(request, env);
           break;
 
         // Saved routes
