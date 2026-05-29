@@ -9,6 +9,7 @@ import {
 } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
 import { savesStore } from './saves.svelte';
+import { generateTid } from '$lib/utils/tid';
 import type {
   ItemLabel,
   ItemLabelType,
@@ -25,12 +26,6 @@ export interface SavedArticle {
   articleUrl?: string;
   articleTitle?: string;
   readAt: number;
-}
-
-function generateTid(): string {
-  const now = Date.now();
-  const random = Math.random().toString(36).substring(2, 8);
-  return `${now.toString(36)}${random}`;
 }
 
 function createItemLabelsStore() {

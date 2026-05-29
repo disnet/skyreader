@@ -3,13 +3,8 @@ import { db } from '$lib/services/db';
 import { safeAdd, safeBulkPut } from '$lib/services/safeDb.svelte';
 import { syncQueue, type SharePayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
+import { generateTid } from '$lib/utils/tid';
 import type { UserShare } from '$lib/types';
-
-function generateTid(): string {
-  const now = Date.now();
-  const random = Math.random().toString(36).substring(2, 8);
-  return `${now.toString(36)}${random}`;
-}
 
 function createSharesStore() {
   let userShares = $state<Map<string, UserShare>>(new Map());

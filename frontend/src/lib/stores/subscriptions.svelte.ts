@@ -3,14 +3,8 @@ import { feedStatusStore } from './feedStatus.svelte';
 import { api } from '$lib/services/api';
 import { auth } from './auth.svelte';
 import { subscriptionDedupKey, createInFlightGuard } from '$lib/services/subscriptionDedup';
+import { generateTid } from '$lib/utils/tid';
 import type { Subscription, SubscriptionSourceType } from '$lib/types';
-
-// Generate a TID (Timestamp Identifier) for AT Protocol records
-function generateTid(): string {
-  const now = Date.now();
-  const random = Math.random().toString(36).substring(2, 8);
-  return `${now.toString(36)}${random}`;
-}
 
 /**
  * Subscriptions Store - CRUD operations for feed subscriptions
