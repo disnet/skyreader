@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
+  import { writable, type Writable } from 'svelte/store';
   import { useRegisterSW } from 'virtual:pwa-register/svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { appManager } from '$lib/stores/app.svelte';
@@ -59,20 +60,29 @@
   // is WAITING (registerType: 'prompt' — it does not auto-activate). This replaces the
   // previous hand-rolled getVersion/controllerchange logic, which was prone to skew.
   // In dev there's no SW (devOptions.enabled = false), so this is an inert no-op.
-  const { needRefresh, updateServiceWorker } = useRegisterSW({
-    onRegisteredSW(_swScriptUrl, registration) {
-      if (!registration) return;
-      // Poll for a newer SW hourly, and whenever the tab regains focus —
-      // the latter covers iOS PWAs resuming from a long background idle.
-      setInterval(() => registration.update(), 60 * 60 * 1000);
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') registration.update();
-      });
-    },
-    onRegisterError(error) {
-      console.error('Service worker registration failed:', error);
-    },
-  });
+  //
+  // useRegisterSW() is NOT SSR-safe in this version: it synchronously calls register(),
+  // whose `"serviceWorker" in navigator` check throws when `navigator` is undefined.
+  // adapter-static prerenders the SPA shell at build time, so guard on `browser` and
+  // fall back to inert stores during prerender — otherwise the build crashes.
+  let needRefresh: Writable<boolean> = writable(false);
+  let updateServiceWorker: (reloadPage?: boolean) => Promise<void> = async () => {};
+  if (browser) {
+    ({ needRefresh, updateServiceWorker } = useRegisterSW({
+      onRegisteredSW(_swScriptUrl, registration) {
+        if (!registration) return;
+        // Poll for a newer SW hourly, and whenever the tab regains focus —
+        // the latter covers iOS PWAs resuming from a long background idle.
+        setInterval(() => registration.update(), 60 * 60 * 1000);
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') registration.update();
+        });
+      },
+      onRegisterError(error) {
+        console.error('Service worker registration failed:', error);
+      },
+    }));
+  }
 
   function applyUpdate() {
     updating = true;
