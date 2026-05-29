@@ -6,6 +6,14 @@ import type { Subscription } from '$lib/types';
 const BATCH_SIZE = 50;
 const GUIDS_PER_FEED = 10;
 
+// On a cold fetch (no cached GUIDs for a feed) the proxy returns its full
+// backlog — up to ~100 items per feed. With many subscriptions that's a lot
+// of data to download and write to IndexedDB before the first paint, most of
+// which the user will never scroll to. Cap the initial backlog; subsequent
+// incremental syncs (which send since_guids) return only new items and ignore
+// this limit, so steady-state behaviour is unchanged.
+const COLD_START_LIMIT = 30;
+
 /**
  * Check if a subscription's title should be updated from feed metadata.
  * Returns true when the current title is a fallback (URL, hostname, etc.)
@@ -68,7 +76,12 @@ export async function fetchAllFeeds(
   if (typeof navigator !== 'undefined' && !navigator.onLine) return result;
 
   // Build feed requests with since_guids
-  const feedRequests: Array<{ url: string; since_guids?: string[]; subscriptionId: number }> = [];
+  const feedRequests: Array<{
+    url: string;
+    since_guids?: string[];
+    limit?: number;
+    subscriptionId: number;
+  }> = [];
 
   for (const sub of subscriptions) {
     if (!sub.id || !sub.feedUrl) continue;
@@ -82,9 +95,13 @@ export async function fetchAllFeeds(
     }
 
     const recentGuids = liveDb.getRecentGuids(sub.id, GUIDS_PER_FEED);
+    const hasGuids = recentGuids.length > 0;
     feedRequests.push({
       url: sub.feedUrl,
-      since_guids: recentGuids.length > 0 ? recentGuids : undefined,
+      since_guids: hasGuids ? recentGuids : undefined,
+      // Cap the backlog only on a cold fetch; with since_guids the proxy
+      // returns just the new items and ignores limit anyway.
+      limit: hasGuids ? undefined : COLD_START_LIMIT,
       subscriptionId: sub.id,
     });
   }
@@ -100,6 +117,7 @@ export async function fetchAllFeeds(
         batch.map((req) => ({
           url: req.url,
           since_guids: req.since_guids,
+          limit: req.limit,
         }))
       );
 
