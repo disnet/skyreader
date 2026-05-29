@@ -4,6 +4,9 @@ import { feedStatusStore, type V2FeedResult } from '$lib/stores/feedStatus.svelt
 import type { Subscription } from '$lib/types';
 
 const BATCH_SIZE = 50;
+// Small first batch so the initial feeds land and the UI paints quickly;
+// later batches use the full BATCH_SIZE for throughput.
+const FIRST_BATCH_SIZE = 8;
 const GUIDS_PER_FEED = 10;
 
 // On a cold fetch (no cached GUIDs for a feed) the proxy returns its full
@@ -108,9 +111,16 @@ export async function fetchAllFeeds(
 
   if (feedRequests.length === 0) return result;
 
-  // Process in batches
-  for (let i = 0; i < feedRequests.length; i += BATCH_SIZE) {
-    const batch = feedRequests.slice(i, i + BATCH_SIZE);
+  // Process in batches. Each batch is merged (and repaints the UI) as it lands,
+  // so use a small first batch to get content on screen fast, then ramp to full
+  // batches for throughput on the rest.
+  let offset = 0;
+  let isFirstBatch = true;
+  while (offset < feedRequests.length) {
+    const batchSize = isFirstBatch ? FIRST_BATCH_SIZE : BATCH_SIZE;
+    const batch = feedRequests.slice(offset, offset + batchSize);
+    offset += batchSize;
+    isFirstBatch = false;
 
     try {
       const { feeds } = await api.fetchFeedsBatchV2(
