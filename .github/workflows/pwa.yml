@@ -1,0 +1,58 @@
+name: PWA Tests
+
+on:
+  pull_request:
+    branches: [main]
+    # Service worker / offline behavior is a function of the frontend build and the
+    # PWA test harness — no backend involved, so only run when those change.
+    paths:
+      - 'frontend/**'
+      - 'e2e-pwa/**'
+      - 'playwright.pwa.config.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/pwa.yml'
+
+concurrency:
+  group: pwa-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  pwa:
+    name: Service Worker / Offline E2E
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      # webkit is the closest iOS Safari engine proxy; --with-deps pulls the OS
+      # libraries it needs on Ubuntu. The config builds the frontend + serves preview.
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium webkit
+
+      - name: Run PWA tests
+        run: npm run test:pwa
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: pwa-playwright-report
+          path: playwright-report/
+          retention-days: 14
