@@ -1,8 +1,59 @@
 import { sveltekit } from '@sveltejs/kit/vite';
+import { SvelteKitPWA } from '@vite-pwa/sveltekit';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  plugins: [sveltekit()],
+  plugins: [
+    sveltekit(),
+    SvelteKitPWA({
+      // injectManifest lets us keep a hand-written service worker for our custom
+      // message / sync / periodicsync handlers, while Workbox injects a complete,
+      // build-versioned precache manifest (self.__WB_MANIFEST) for atomic shell+chunk
+      // caching. @vite-pwa/sveltekit reads SvelteKit's own built service worker, so the
+      // source MUST live at SvelteKit's conventional path: src/service-worker.ts.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'service-worker.js',
+
+      // 'prompt' => a new SW installs and WAITS; we surface an update banner and only
+      // activate it when the user clicks Update (updateServiceWorker(true) posts SKIP_WAITING).
+      registerType: 'prompt',
+
+      // We register the SW ourselves via useRegisterSW() inside the app bundle, so the
+      // registration runs under our nonce'd, strict-dynamic CSP. Do not inject a script tag.
+      injectRegister: false,
+
+      // The web app manifest is hand-maintained at static/manifest.json and linked from
+      // the layout <head>; don't let the plugin generate/inject a competing one.
+      manifest: false,
+
+      kit: {
+        // adapter-static is a pure SPA (fallback: 'index.html'). The plugin precaches
+        // the navigation shell as a single manifest entry whose revision tracks the
+        // build version. fallbackMapping: '/' makes that entry's URL '/' instead of the
+        // default 'index.html' — critical because the install-time precache FETCH uses
+        // this URL, and hosts (vite preview, Cloudflare Pages) serve the SPA shell at
+        // '/' but may 404 on '/index.html'. A 404 there rejects the whole install and
+        // the worker never activates. '/' is served universally, so install succeeds.
+        spa: { fallbackMapping: '/' },
+        adapterFallback: 'index.html',
+      },
+
+      injectManifest: {
+        // Precache the full client build so any single SW version always holds a
+        // complete, self-consistent set of hashed JS/CSS chunks + static assets. The
+        // SPA shell (index.html) is added to the manifest separately by kit.spa above,
+        // so it is NOT globbed here (no prerendered/ dir exists in a pure SPA).
+        globPatterns: ['client/**/*.{js,css,ico,png,svg,webp,webmanifest}'],
+      },
+
+      devOptions: {
+        // The injectManifest SW is only built for production. Test it via build + preview.
+        enabled: false,
+        type: 'module',
+      },
+    }),
+  ],
   server: {
     host: '127.0.0.1',
     port: 5173,

@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { browser, version } from '$app/environment';
+  import { browser } from '$app/environment';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
+  import { useRegisterSW } from 'virtual:pwa-register/svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { appManager } from '$lib/stores/app.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
@@ -17,9 +18,7 @@
   import '../app.css';
 
   let { children } = $props();
-  let updateAvailable = $state(false);
   let updating = $state(false);
-  let waitingWorker: ServiceWorker | null = null;
 
   let pageTitle = $derived.by(() => {
     if (!auth.isAuthenticated) return 'Skyreader';
@@ -55,76 +54,41 @@
     goto(`/?feed=${feedIds[newIndex]}`);
   }
 
+  // Service worker registration + update detection, handled by @vite-pwa/sveltekit's
+  // workbox-window wrapper. `needRefresh` becomes true when a new SW has installed and
+  // is WAITING (registerType: 'prompt' — it does not auto-activate). This replaces the
+  // previous hand-rolled getVersion/controllerchange logic, which was prone to skew.
+  // In dev there's no SW (devOptions.enabled = false), so this is an inert no-op.
+  const { needRefresh, updateServiceWorker } = useRegisterSW({
+    onRegisteredSW(_swScriptUrl, registration) {
+      if (!registration) return;
+      // Poll for a newer SW hourly, and whenever the tab regains focus —
+      // the latter covers iOS PWAs resuming from a long background idle.
+      setInterval(() => registration.update(), 60 * 60 * 1000);
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') registration.update();
+      });
+    },
+    onRegisterError(error) {
+      console.error('Service worker registration failed:', error);
+    },
+  });
+
   function applyUpdate() {
     updating = true;
-    waitingWorker?.postMessage({ type: 'SKIP_WAITING' });
+    // Posts SKIP_WAITING to the waiting worker and reloads once it activates.
+    updateServiceWorker(true);
   }
 
-  /** Ask a waiting SW for its version; returns null on timeout or error. */
-  function getWorkerVersion(worker: ServiceWorker): Promise<string | null> {
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => resolve(null), 1000);
-      const channel = new MessageChannel();
-      channel.port1.onmessage = (event) => {
-        clearTimeout(timeout);
-        resolve(event.data?.version ?? null);
-      };
-      worker.postMessage({ type: 'GET_VERSION' }, [channel.port2]);
-    });
-  }
-
-  /** Only show the update banner if the waiting worker is actually a new version. */
-  async function offerUpdate(worker: ServiceWorker) {
-    const workerVersion = await getWorkerVersion(worker);
-    // Show banner if the versions differ, or if we couldn't determine the version
-    // (e.g. older SW without GET_VERSION support — safe to prompt).
-    if (workerVersion !== version) {
-      waitingWorker = worker;
-      updateAvailable = true;
-    }
-  }
-
-  // Detect new service worker versions
+  // Dev only: tear down any service worker left registered by a previous production
+  // build / `npm run preview`, so it can't serve stale cached assets over Vite's dev
+  // server. (vite-plugin-pwa doesn't register a SW in dev with devOptions disabled.)
   onMount(() => {
-    if (!browser || !('serviceWorker' in navigator)) return;
-
-    // In dev mode, clean up any stale SW registrations and bail out.
-    // Vite serves a new SW on every load, which causes an infinite
-    // controllerchange → reload loop if a registration persists.
-    if (import.meta.env.DEV) {
-      navigator.serviceWorker.getRegistrations().then((registrations) => {
-        registrations.forEach((reg) => reg.unregister());
-      });
-      return;
+    if (browser && import.meta.env.DEV && 'serviceWorker' in navigator) {
+      navigator.serviceWorker
+        .getRegistrations()
+        .then((registrations) => registrations.forEach((reg) => reg.unregister()));
     }
-
-    // Reload when the new SW takes control (after SKIP_WAITING → skipWaiting → activate → clients.claim)
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      window.location.reload();
-    });
-
-    navigator.serviceWorker.ready.then((registration) => {
-      if (registration.waiting) {
-        offerUpdate(registration.waiting);
-      }
-
-      registration.addEventListener('updatefound', () => {
-        const newWorker = registration.installing;
-        if (!newWorker) return;
-        newWorker.addEventListener('statechange', () => {
-          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            offerUpdate(newWorker);
-          }
-        });
-      });
-
-      // Check for updates when the tab regains focus
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
-          registration.update();
-        }
-      });
-    });
   });
 
   // Initialize app data (cache-first hydrate + background refresh).
@@ -273,7 +237,7 @@
 <Toast />
 <RefreshProgressBar />
 
-{#if updateAvailable}
+{#if $needRefresh}
   <div class="update-banner">
     {#if updating}
       <span>Updating...</span>
