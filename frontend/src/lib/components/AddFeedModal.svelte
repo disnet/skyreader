@@ -84,7 +84,11 @@
     }
   }
 
+  let isAdding = $state(false);
+
   async function addFeed(url: string) {
+    if (isAdding) return;
+    isAdding = true;
     error = null;
     try {
       const tempTitle = new URL(url).hostname;
@@ -112,6 +116,7 @@
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to add feed';
       isDiscovering = false;
+      isAdding = false;
     }
   }
 
@@ -158,7 +163,7 @@
       <p class="section-label">Multiple feeds found — select one:</p>
       <div class="search-results">
         {#each discoveredFeeds as url}
-          <button class="result-btn" onclick={() => addFeed(url)}>
+          <button class="result-btn" onclick={() => addFeed(url)} disabled={isAdding}>
             <span class="result-info">
               <span class="result-name feed-url">{url}</span>
             </span>
@@ -257,8 +262,13 @@
     border-bottom: none;
   }
 
-  .result-btn:hover {
+  .result-btn:hover:not(:disabled) {
     background: var(--color-bg-secondary);
+  }
+
+  .result-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .result-info {

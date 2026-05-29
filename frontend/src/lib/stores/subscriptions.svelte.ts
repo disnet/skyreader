@@ -21,6 +21,14 @@ function createSubscriptionsStore() {
   let isLoading = $state(false);
   let error = $state<string | null>(null);
 
+  // Tracks adds currently in flight, keyed by feed URL / atproto stream. The
+  // in-memory duplicate check below only sees subscriptions already persisted
+  // locally, but add() awaits the backend before inserting — so two rapid
+  // adds of the same feed (e.g. double-clicking a discovered-feed button) both
+  // pass that check and create duplicates with different rkeys. This guard
+  // rejects the second concurrent add before it hits the backend.
+  const inFlightAdds = new Set<string>();
+
   // Derived: subscriptions from liveDb (reactive via version)
   let subscriptions = $derived.by(() => {
     const _version = liveDb.subscriptionsVersion;
@@ -66,7 +74,21 @@ function createSubscriptionsStore() {
 
     const isAtProto = options?.sourceType && options.sourceType.startsWith('atproto.');
 
-    // Check for duplicate
+    // Key identifying this subscription for duplicate detection.
+    const dedupKey = isAtProto
+      ? `atproto:${options?.sourceType}:${options?.subjectDid}:${options?.feedUrl || feedUrl || ''}`
+      : `rss:${(feedUrl || '').toLowerCase()}`;
+
+    // Reject a second add of the same feed while the first is still in flight.
+    if (inFlightAdds.has(dedupKey)) {
+      throw new Error(
+        isAtProto
+          ? 'You are already subscribed to this content stream'
+          : 'You are already subscribed to this feed'
+      );
+    }
+
+    // Check for duplicate against already-persisted subscriptions
     if (isAtProto && options?.subjectDid && options?.sourceType) {
       // For AT Proto subs, check by subjectDid + sourceType + feedUrl (publication URI)
       const existing = subscriptions.find(
@@ -84,45 +106,50 @@ function createSubscriptionsStore() {
       }
     }
 
-    const rkey = generateTid();
-    const now = new Date().toISOString();
+    inFlightAdds.add(dedupKey);
+    try {
+      const rkey = generateTid();
+      const now = new Date().toISOString();
 
-    // Sync to backend first
-    await api.createSubscription({
-      rkey,
-      feedUrl: feedUrl || undefined,
-      title,
-      siteUrl: options?.siteUrl,
-      category: options?.category,
-      tags: options?.tags,
-      sourceType: options?.sourceType,
-      subjectDid: options?.subjectDid,
-      collectionNsid: options?.collectionNsid,
-    });
+      // Sync to backend first
+      await api.createSubscription({
+        rkey,
+        feedUrl: feedUrl || undefined,
+        title,
+        siteUrl: options?.siteUrl,
+        category: options?.category,
+        tags: options?.tags,
+        sourceType: options?.sourceType,
+        subjectDid: options?.subjectDid,
+        collectionNsid: options?.collectionNsid,
+      });
 
-    // Store locally after successful backend sync
-    const subscription: Omit<Subscription, 'id'> = {
-      rkey,
-      feedUrl,
-      title,
-      siteUrl: options?.siteUrl,
-      category: options?.category,
-      tags: options?.tags || [],
-      createdAt: now,
-      localUpdatedAt: Date.now(),
-      fetchStatus: isAtProto ? 'ready' : 'pending',
-      source: options?.source,
-      sourceType: options?.sourceType,
-      subjectDid: options?.subjectDid,
-      collectionNsid: options?.collectionNsid,
-    };
+      // Store locally after successful backend sync
+      const subscription: Omit<Subscription, 'id'> = {
+        rkey,
+        feedUrl,
+        title,
+        siteUrl: options?.siteUrl,
+        category: options?.category,
+        tags: options?.tags || [],
+        createdAt: now,
+        localUpdatedAt: Date.now(),
+        fetchStatus: isAtProto ? 'ready' : 'pending',
+        source: options?.source,
+        sourceType: options?.sourceType,
+        subjectDid: options?.subjectDid,
+        collectionNsid: options?.collectionNsid,
+      };
 
-    const id = await liveDb.addSubscription(subscription);
-    if (!isAtProto && feedUrl) {
-      feedStatusStore.markPending(feedUrl);
+      const id = await liveDb.addSubscription(subscription);
+      if (!isAtProto && feedUrl) {
+        feedStatusStore.markPending(feedUrl);
+      }
+
+      return id;
+    } finally {
+      inFlightAdds.delete(dedupKey);
     }
-
-    return id;
   }
 
   /**
