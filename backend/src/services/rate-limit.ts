@@ -26,7 +26,7 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   '/api/feeds/fetch': EXPENSIVE_LIMIT,
   '/api/feeds/discover': EXPENSIVE_LIMIT,
   '/api/leaflet/resolve': EXPENSIVE_LIMIT,
-  '/api/fetch-html': EXPENSIVE_LIMIT,
+  '/api/extract': EXPENSIVE_LIMIT,
 
   // PDS sync operations (allow retries for hasMore batching)
   '/api/sync/full': { limit: 20, windowMs: 300000 },

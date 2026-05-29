@@ -71,6 +71,18 @@
     });
   }
 
+  // When a URL is added, open its reader as soon as the new item lands in the
+  // list (savesStore signals which key to open after the save + navigation).
+  $effect(() => {
+    const key = savesStore.pendingOpenKey;
+    if (!key) return;
+    const item = feedViewStore.currentItems.find((i) => i.key === key);
+    if (item) {
+      savesStore.pendingOpenKey = null;
+      if (readerItem?.key !== key) openReader(item);
+    }
+  });
+
   function getItemType(item: FeedDisplayItem): ItemLabelType {
     if (item.type === 'userShare') return 'userShare';
     return item.type;

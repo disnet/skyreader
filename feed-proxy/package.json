@@ -10,13 +10,13 @@
     "test:watch": "bun test --watch"
   },
   "dependencies": {
+    "defuddle": "^0.18.1",
     "fast-xml-parser": "^4.3.0",
     "hono": "^4.4.0",
-    "jsdom": "^26.0.0"
+    "linkedom": "^0.18.12"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/jsdom": "^21.1.0",
     "typescript": "^5.4.0"
   }
 }

@@ -2,8 +2,9 @@ import type { Env } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
 import { FeedProxyClient } from '../services/feed-proxy-client';
 
-// POST /api/fetch-html — fetch raw HTML from a URL via feed proxy
-export async function handleFetchHtml(request: Request, env: Env): Promise<Response> {
+// POST /api/extract — fetch a URL and return extracted article content via the
+// feed proxy (which runs Defuddle and caches the result).
+export async function handleExtract(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405,
@@ -47,13 +48,15 @@ export async function handleFetchHtml(request: Request, env: Env): Promise<Respo
 
   try {
     const proxyClient = new FeedProxyClient(env);
-    const html = await proxyClient.fetchHtml(body.url);
-    return new Response(html, {
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    const extracted = await proxyClient.extract(body.url);
+    return new Response(JSON.stringify(extracted), {
+      headers: { 'Content-Type': 'application/json' },
     });
   } catch (error) {
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Failed to fetch HTML' }),
+      JSON.stringify({
+        error: error instanceof Error ? error.message : 'Failed to extract article',
+      }),
       {
         status: 502,
         headers: { 'Content-Type': 'application/json' },

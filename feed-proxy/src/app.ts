@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { Database } from 'bun:sqlite';
+import { Defuddle } from 'defuddle/node';
 import { parseFeed } from './feed-parser';
 import type { ParsedFeed, FeedItem } from './types';
 
@@ -108,11 +109,64 @@ const PERMANENT_ERROR_DELAY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_RECOVERABLE_ERRORS = 5;
 const FETCH_TIMEOUT_MS = 30 * 1000; // 30 seconds
 const MAX_RESPONSE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+// Extracted article content is effectively immutable per URL; cache it for a long
+// time so repeat (and cross-user) saves of the same article are free.
+const EXTRACT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+export interface ExtractedArticle {
+	title: string | null;
+	author: string | null;
+	description: string | null;
+	content: string | null;
+	domain: string | null;
+	image: string | null;
+	published: string | null;
+	wordCount: number;
+}
+
+// Coerce a Defuddle date string to a valid ISO timestamp, rejecting obviously
+// bogus values (pre-1990 or future-dated) the same way the old client did.
+function toValidISODate(value: string | undefined | null): string | null {
+	if (!value) return null;
+	const ms = new Date(value).getTime();
+	if (isNaN(ms)) return null;
+	if (ms < 631152000000 || ms > Date.now() + 86400000) return null;
+	return new Date(ms).toISOString();
+}
+
+async function extractArticle(html: string, url: string): Promise<ExtractedArticle> {
+	// Defuddle's node entry builds a DOM from the HTML string via linkedom and
+	// resolves relative URLs against `url`.
+	const result = await Defuddle(html, url, { url });
+	return {
+		title: result.title || null,
+		author: result.author || null,
+		description: result.description || null,
+		content: result.content || null,
+		domain: result.domain || null,
+		image: result.image || null,
+		published: toValidISODate(result.published),
+		wordCount: result.wordCount || 0,
+	};
+}
 
 export class ResponseTooLargeError extends Error {
 	constructor(size: number, limit: number) {
 		super(`Response size ${size} exceeds limit of ${limit} bytes`);
 		this.name = 'ResponseTooLargeError';
+	}
+}
+
+// Carries an upstream-fetch failure (with the proxy's HTTP status + blocked flag)
+// out of the async extraction closure so the route can render the right response.
+class FetchHtmlError extends Error {
+	constructor(
+		message: string,
+		readonly status: number,
+		readonly blocked: boolean
+	) {
+		super(message);
+		this.name = 'FetchHtmlError';
 	}
 }
 
@@ -209,6 +263,19 @@ export function initDatabase(db: Database): void {
 		db.run(`ALTER TABLE cache ADD COLUMN last_requested_at INTEGER`);
 	}
 	db.run(`CREATE INDEX IF NOT EXISTS idx_cache_last_requested_at ON cache(last_requested_at)`);
+
+	// Extracted article content (Defuddle output), keyed by source URL. Separate
+	// from the feed cache: article content is effectively immutable per URL, so it
+	// has its own long TTL and is not touched by the feed self-warming loop.
+	db.run(`
+		CREATE TABLE IF NOT EXISTS extract_cache (
+			url_hash TEXT PRIMARY KEY,
+			url TEXT NOT NULL,
+			extracted_json TEXT NOT NULL,
+			cached_at INTEGER NOT NULL
+		)
+	`);
+	db.run(`CREATE INDEX IF NOT EXISTS idx_extract_cache_cached_at ON extract_cache(cached_at)`);
 }
 
 export function createApp(db: Database, config: AppConfig) {
@@ -216,6 +283,8 @@ export function createApp(db: Database, config: AppConfig) {
 
 	// Track in-flight fetches to avoid duplicate requests
 	const inFlight = new Map<string, Promise<ParsedFeed | null>>();
+	// Same idea for /extract: collapse concurrent extractions of the same URL.
+	const inFlightExtract = new Map<string, Promise<ExtractedArticle>>();
 
 	async function fetchParseAndCache(
 		url: string,
@@ -753,8 +822,10 @@ export function createApp(db: Database, config: AppConfig) {
 		}
 	});
 
-	// Fetch raw HTML from a URL (extraction done client-side)
-	app.post('/fetch-html', async (c) => {
+	// Fetch a URL and return cleaned, extracted article content (Defuddle).
+	// Results are cached (article content is effectively immutable per URL), so
+	// repeat and cross-user saves of the same article skip the fetch + extract.
+	app.post('/extract', async (c) => {
 		if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret) {
 			return c.json({ error: 'Unauthorized' }, 401);
 		}
@@ -776,25 +847,62 @@ export function createApp(db: Database, config: AppConfig) {
 			return c.json({ error: 'Invalid url' }, 400);
 		}
 
+		const url = body.url;
+		const urlHash = hashUrl(url);
+		const now = Date.now();
+
+		// Serve from cache when fresh.
+		const cached = db
+			.query<{ extracted_json: string; cached_at: number }, [string]>(
+				'SELECT extracted_json, cached_at FROM extract_cache WHERE url_hash = ?'
+			)
+			.get(urlHash);
+		if (cached && now - cached.cached_at < EXTRACT_CACHE_TTL_MS) {
+			c.header('X-Cache', 'HIT');
+			c.header('X-Cache-Age', String(Math.floor((now - cached.cached_at) / 1000)));
+			return c.body(cached.extracted_json, 200, { 'Content-Type': 'application/json' });
+		}
+
+		// Collapse concurrent extractions of the same URL into one fetch + parse.
+		let pending = inFlightExtract.get(urlHash);
+		const isLeader = !pending;
+		if (!pending) {
+			pending = (async () => {
+				const response = await fetch(url, {
+					headers: {
+						...FETCH_HEADERS,
+						Accept: 'text/html, application/xhtml+xml, */*',
+					},
+					redirect: 'follow',
+					signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+				});
+
+				if (!response.ok) {
+					const { error, blocked } = describeFetchFailure(response.status, url);
+					throw new FetchHtmlError(error, 502, blocked);
+				}
+
+				const html = await readResponseWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
+				const extracted = await extractArticle(html, url);
+
+				db.run(
+					'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at) VALUES (?, ?, ?, ?)',
+					[urlHash, url, JSON.stringify(extracted), Date.now()]
+				);
+
+				return extracted;
+			})();
+			inFlightExtract.set(urlHash, pending);
+		}
+
 		try {
-			const response = await fetch(body.url, {
-				headers: {
-					...FETCH_HEADERS,
-					Accept: 'text/html, application/xhtml+xml, */*',
-				},
-				redirect: 'follow',
-				signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-			});
-
-			if (!response.ok) {
-				const { error, blocked } = describeFetchFailure(response.status, body.url);
-				return c.json({ error, blocked }, 502);
-			}
-
-			const html = await readResponseWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
-
-			return c.html(html);
+			const extracted = await pending;
+			c.header('X-Cache', isLeader ? 'MISS' : 'COALESCED');
+			return c.json(extracted);
 		} catch (error) {
+			if (error instanceof FetchHtmlError) {
+				return c.json({ error: error.message, blocked: error.blocked }, 502);
+			}
 			const isTimeout = error instanceof Error && error.name === 'TimeoutError';
 			const isTooLarge = error instanceof ResponseTooLargeError;
 			const msg = isTimeout
@@ -805,6 +913,8 @@ export function createApp(db: Database, config: AppConfig) {
 						? error.message
 						: 'Unknown error';
 			return c.json({ error: msg }, 502);
+		} finally {
+			if (isLeader) inFlightExtract.delete(urlHash);
 		}
 	});
 
@@ -990,5 +1100,8 @@ export function createApp(db: Database, config: AppConfig) {
 export function cleanupCache(db: Database): number {
 	const threshold = Date.now() - 7 * 24 * 60 * 60 * 1000; // 7 days
 	const result = db.run('DELETE FROM cache WHERE fetched_at < ?', [threshold]);
-	return result.changes;
+	const extractResult = db.run('DELETE FROM extract_cache WHERE cached_at < ?', [
+		Date.now() - EXTRACT_CACHE_TTL_MS,
+	]);
+	return result.changes + extractResult.changes;
 }

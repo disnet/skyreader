@@ -16,6 +16,17 @@ export class FeedProxyError extends Error {
   }
 }
 
+export interface ExtractedArticle {
+  title: string | null;
+  author: string | null;
+  description: string | null;
+  content: string | null;
+  domain: string | null;
+  image: string | null;
+  published: string | null;
+  wordCount: number;
+}
+
 export interface ProxyFeedResponse {
   title: string;
   description?: string;
@@ -224,10 +235,11 @@ export class FeedProxyClient {
   }
 
   /**
-   * Fetch raw HTML from a URL (extraction done client-side)
+   * Fetch a URL and return cleaned, extracted article content (Defuddle, done
+   * proxy-side and cached).
    */
-  async fetchHtml(url: string): Promise<string> {
-    const proxyUrl = `${this.proxyUrl}/fetch-html`;
+  async extract(url: string): Promise<ExtractedArticle> {
+    const proxyUrl = `${this.proxyUrl}/extract`;
 
     const headers = new Headers();
     headers.set('X-Proxy-Secret', this.proxySecret);
@@ -246,17 +258,17 @@ export class FeedProxyClient {
       try {
         const body = JSON.parse(text) as { error?: string; blocked?: boolean };
         throw new FeedProxyError(
-          body.error || `Failed to fetch HTML: HTTP ${response.status}`,
+          body.error || `Failed to extract article: HTTP ${response.status}`,
           undefined,
           undefined,
           body.blocked
         );
       } catch (e) {
         if (e instanceof FeedProxyError) throw e;
-        throw new FeedProxyError(text || `Failed to fetch HTML: HTTP ${response.status}`);
+        throw new FeedProxyError(text || `Failed to extract article: HTTP ${response.status}`);
       }
     }
 
-    return response.text();
+    return (await response.json()) as ExtractedArticle;
   }
 }

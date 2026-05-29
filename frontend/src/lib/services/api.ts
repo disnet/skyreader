@@ -53,6 +53,17 @@ export class OfflineError extends Error {
   }
 }
 
+export interface ExtractedArticle {
+  title: string | null;
+  author: string | null;
+  description: string | null;
+  content: string | null;
+  domain: string | null;
+  image: string | null;
+  published: string | null;
+  wordCount: number;
+}
+
 class ApiClient {
   private onUnauthorized: (() => void) | null = null;
   private onScopeUpgradeRequired: (() => void) | null = null;
@@ -680,13 +691,13 @@ class ApiClient {
     return this.fetch('/api/integrations/margin/collections');
   }
 
-  // Fetch raw HTML via proxy (for client-side extraction)
-  async fetchHtml(url: string): Promise<string> {
+  // Extract article content via the proxy (fetch + Defuddle, cached proxy-side)
+  async extract(url: string): Promise<ExtractedArticle> {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       throw new OfflineError();
     }
 
-    const response = await fetch(`${API_BASE}/api/fetch-html`, {
+    const response = await fetch(`${API_BASE}/api/extract`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -700,10 +711,10 @@ class ApiClient {
         }
         throw new Error('Session expired');
       }
-      throw new Error(`Failed to fetch HTML: ${response.status}`);
+      throw new Error(`Failed to extract article: ${response.status}`);
     }
 
-    return response.text();
+    return (await response.json()) as ExtractedArticle;
   }
 
   // Bookmarks
