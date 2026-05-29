@@ -14,9 +14,10 @@ const config = {
       strict: true,
     }),
     serviceWorker: {
-      // Service worker doesn't work in dev mode on Firefox due to ES module restrictions.
-      // Use `npm run build && npm run preview` to test the service worker.
-      register: process.env.NODE_ENV === 'production',
+      // Disable SvelteKit's built-in service worker handling — @vite-pwa/sveltekit
+      // (configured in vite.config.ts) now owns the service worker, its registration,
+      // and precaching. Leaving this on would produce a second, conflicting SW.
+      register: false,
     },
     // CSP is handled by:
     // - Dev: hooks.server.ts

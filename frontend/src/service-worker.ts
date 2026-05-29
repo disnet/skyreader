@@ -1,159 +1,106 @@
-/// <reference types="@sveltejs/kit" />
 /// <reference lib="webworker" />
+//
+// Service worker (Workbox, injectManifest strategy).
+//
+// Built by @vite-pwa/sveltekit (see vite.config.ts). Workbox replaces
+// `self.__WB_MANIFEST` at build time with the full, revisioned list of build
+// assets, so a given SW version always precaches a COMPLETE, self-consistent set
+// of HTML shell + hashed JS/CSS chunks. This is what makes updates atomic: the
+// shell and the chunks it imports always come from the same build, eliminating
+// the version-skew that caused blank screens / "Something went wrong" on iOS.
 
-import { build, files, version } from '$service-worker';
+import {
+  precacheAndRoute,
+  cleanupOutdatedCaches,
+  createHandlerBoundToURL,
+  type PrecacheEntry,
+} from 'workbox-precaching';
+import { NavigationRoute, registerRoute } from 'workbox-routing';
+import { NetworkFirst } from 'workbox-strategies';
+import { clientsClaim } from 'workbox-core';
 
-declare const self: ServiceWorkerGlobalScope;
+declare const self: ServiceWorkerGlobalScope & {
+  __WB_MANIFEST: Array<PrecacheEntry | string>;
+};
 
-const CACHE_NAME = `skyreader-${version}`;
-const STATIC_ASSETS = [...build, ...files];
-
-// Constants for background refresh
+// Constants for background refresh (Chromium periodic sync)
 const PERIODIC_SYNC_TAG = 'background-feed-refresh';
 const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 const LAST_REFRESH_KEY = 'lastRefreshAt';
 
-// API routes to cache with network-first strategy
-const API_CACHE_ROUTES = ['/api/v2/feeds/fetch', '/api/social/feed', '/api/social/popular'];
+// ---------------------------------------------------------------------------
+// Precaching — the full build, cached atomically on install.
+// ---------------------------------------------------------------------------
 
-self.addEventListener('install', (event) => {
-  // Only cache the SPA fallback — static assets are cached lazily on fetch.
-  // This keeps install fast so the update banner appears quickly.
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.add('/')));
-  // Do NOT call skipWaiting() here. Activating a new SW while old pages are
-  // still running can break lazily-loaded code-split chunks whose filenames
-  // changed between builds. Instead, the app sends a SKIP_WAITING message
-  // when the user explicitly accepts the update.
-});
+// Drop caches from previous (Workbox) builds so we don't accumulate stale chunks.
+cleanupOutdatedCaches();
 
-// Listen for messages from the app
+// Precache + serve every build asset cache-first. If any asset fails to fetch
+// during install, the install fails and the OLD worker keeps serving its complete
+// set — we never end up half-installed with missing chunks.
+precacheAndRoute(self.__WB_MANIFEST);
+
+// ---------------------------------------------------------------------------
+// Navigation — always serve the precached app shell (app-shell model).
+// ---------------------------------------------------------------------------
+//
+// This is the key robustness change. Rather than network-first (which would fetch
+// a NEW build's HTML while the OLD build's chunks are still cached → skew), every
+// navigation is answered from the precached shell that belongs to THIS SW version.
+// Fresh content still arrives via the API; fresh app code arrives via the SW update.
+//
+// The SPA shell is precached under the key '/' (see kit.spa.fallbackMapping in
+// vite.config.ts). createHandlerBoundToURL does a direct precache-map lookup, so this
+// must match that key exactly — binding to anything not in the manifest throws
+// 'non-precached-url' at startup and the worker never boots.
+const navigationHandler = createHandlerBoundToURL('/');
+registerRoute(
+  new NavigationRoute(navigationHandler, {
+    // Don't treat API or build-asset paths as navigations (belt-and-suspenders —
+    // NavigationRoute already only matches request.mode === 'navigate').
+    denylist: [/^\/api\//, /^\/_app\//],
+  })
+);
+
+// ---------------------------------------------------------------------------
+// API GET routes — network-first with cache fallback (offline reads).
+// ---------------------------------------------------------------------------
+//
+// Mirrors the previous SW's cached routes. NetworkFirst returns the cached
+// response (or rejects) when offline — no more fake `{offline:true}` 200 body that
+// could poison callers. registerRoute matches GET only by default, so POST/batch
+// mutations are never cached.
+registerRoute(
+  ({ url }) =>
+    url.pathname.startsWith('/api/v2/feeds/fetch') ||
+    url.pathname.startsWith('/api/social/feed') ||
+    url.pathname.startsWith('/api/social/popular'),
+  new NetworkFirst({
+    cacheName: 'skyreader-api',
+    networkTimeoutSeconds: 5,
+  })
+);
+
+// Take control of open clients as soon as we activate. Combined with the
+// 'prompt' update flow (skipWaiting only on the SKIP_WAITING message below),
+// this means: first install controls immediately; updates wait for the user.
+clientsClaim();
+
+// ---------------------------------------------------------------------------
+// Custom message handler — explicit, user-driven update activation.
+// ---------------------------------------------------------------------------
+//
+// useRegisterSW(...).updateServiceWorker(true) in the app posts {type:'SKIP_WAITING'}
+// to the waiting worker; we activate only then so we never swap code mid-session.
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
-  if (event.data && event.data.type === 'GET_VERSION') {
-    event.ports[0]?.postMessage({ version });
-  }
 });
 
-self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches
-      .keys()
-      .then((keys) => {
-        return Promise.all(
-          keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
-        );
-      })
-      .then(() => self.clients.claim())
-  );
-});
-
-self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-
-  // Skip non-GET requests
-  if (event.request.method !== 'GET') return;
-
-  // Skip chrome-extension and other non-http schemes
-  if (!url.protocol.startsWith('http')) return;
-
-  // Static assets: cache-first, cache on miss (lazy population)
-  if (STATIC_ASSETS.includes(url.pathname)) {
-    event.respondWith(
-      caches.match(event.request).then((cached) => {
-        if (cached) return cached;
-        return fetch(event.request).then((response) => {
-          if (response.ok) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          }
-          return response;
-        });
-      })
-    );
-    return;
-  }
-
-  // API routes: network-first with cache fallback
-  if (API_CACHE_ROUTES.some((route) => url.pathname.startsWith(route))) {
-    event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          // Clone and cache successful responses
-          if (response.ok) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, clone);
-            });
-          }
-          return response;
-        })
-        .catch(async () => {
-          // Fallback to cache when offline
-          const cached = await caches.match(event.request);
-          if (cached) return cached;
-
-          // Return offline indicator for API calls
-          return new Response(JSON.stringify({ offline: true, error: 'You are offline' }), {
-            headers: { 'Content-Type': 'application/json' },
-          });
-        })
-    );
-    return;
-  }
-
-  // Navigation requests: network-first with timeout, cache fallback.
-  // iOS PWAs can hang on fetch after long idle — the timeout ensures
-  // we fall back to the cached shell instead of showing a white screen.
-  if (event.request.mode === 'navigate') {
-    const NAVIGATION_TIMEOUT_MS = 3000;
-
-    event.respondWith(
-      new Promise<Response>((resolve) => {
-        let settled = false;
-
-        const timer = setTimeout(async () => {
-          if (settled) return;
-          settled = true;
-          // Timeout — serve from cache
-          const cached = (await caches.match(event.request)) || (await caches.match('/'));
-          resolve(cached || new Response('Offline', { status: 503 }));
-        }, NAVIGATION_TIMEOUT_MS);
-
-        fetch(event.request)
-          .then(async (response) => {
-            clearTimeout(timer);
-            if (settled) return;
-            settled = true;
-            // Cache the fresh HTML so next offline load is up-to-date
-            if (response.ok) {
-              const clone = response.clone();
-              caches.open(CACHE_NAME).then((cache) => cache.put('/', clone));
-            }
-            resolve(response);
-          })
-          .catch(async () => {
-            clearTimeout(timer);
-            if (settled) return;
-            settled = true;
-            const cached = (await caches.match(event.request)) || (await caches.match('/'));
-            resolve(cached || new Response('Offline', { status: 503 }));
-          });
-      })
-    );
-    return;
-  }
-
-  // All other requests: network with cache fallback
-  event.respondWith(
-    fetch(event.request).catch(async () => {
-      return (await caches.match(event.request)) || new Response('Offline', { status: 503 });
-    })
-  );
-});
-
-// Background sync for pending operations (not supported in Firefox)
+// ---------------------------------------------------------------------------
+// Background sync for queued mutations (not supported in Firefox/Safari).
+// ---------------------------------------------------------------------------
 if (typeof self.registration !== 'undefined' && 'sync' in self.registration) {
   self.addEventListener('sync', (event) => {
     if ((event as ExtendableEvent & { tag?: string }).tag === 'sync-queue') {
@@ -168,7 +115,9 @@ if (typeof self.registration !== 'undefined' && 'sync' in self.registration) {
   });
 }
 
-// Periodic background sync handler (Chromium only)
+// ---------------------------------------------------------------------------
+// Periodic background sync (Chromium only).
+// ---------------------------------------------------------------------------
 self.addEventListener('periodicsync', (event: Event) => {
   const syncEvent = event as ExtendableEvent & { tag: string };
   if (syncEvent.tag === PERIODIC_SYNC_TAG) {
@@ -191,14 +140,12 @@ async function handlePeriodicSync(): Promise<void> {
     const clients = await self.clients.matchAll({ type: 'window' });
 
     if (clients.length > 0) {
-      // Send message to clients to trigger refresh
       clients.forEach((client) => {
         client.postMessage({ type: 'BACKGROUND_REFRESH_REQUESTED' });
       });
       console.log('Background refresh requested via client message');
     } else {
-      // No clients open - just update the timestamp
-      // The actual refresh will happen when the app is opened
+      // No clients open — the refresh will happen when the app is next opened.
       console.log('No clients available for background refresh');
     }
   } catch (error) {
@@ -206,7 +153,7 @@ async function handlePeriodicSync(): Promise<void> {
   }
 }
 
-async function getLastRefreshFromIndexedDB(): Promise<number | null> {
+function getLastRefreshFromIndexedDB(): Promise<number | null> {
   return new Promise((resolve) => {
     const request = indexedDB.open('skyreader');
 
