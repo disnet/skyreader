@@ -40,8 +40,8 @@ const DEFAULT_CONFIG: AppConfig = {
 function createTestApp(config: Partial<AppConfig> = {}) {
 	const db = new Database(':memory:');
 	initDatabase(db);
-	const { app, inFlight } = createApp(db, { ...DEFAULT_CONFIG, ...config });
-	return { db, app, inFlight };
+	const { app, inFlight, warmStaleFeeds } = createApp(db, { ...DEFAULT_CONFIG, ...config });
+	return { db, app, inFlight, warmStaleFeeds };
 }
 
 function mockFetch(responseFactory: () => Response) {
@@ -1767,5 +1767,166 @@ describe('Integration Tests', () => {
 				expect(json.feeds[largeUrl].error).toContain('exceeds limit');
 			});
 		});
+	});
+});
+
+describe('Self-warming loop', () => {
+	let fetchMock: ReturnType<typeof spyOn>;
+
+	afterEach(() => {
+		fetchMock?.mockRestore();
+	});
+
+	interface InsertOpts {
+		urlHash?: string;
+		fetchedAt: number;
+		lastRequestedAt: number | null;
+		nextRetryAt?: number | null;
+		errorCount?: number;
+		parsedJson?: string;
+	}
+
+	function insertCacheRow(db: Database, url: string, opts: InsertOpts) {
+		const parsed = opts.parsedJson ?? JSON.stringify({ title: 'Cached', items: [], fetchedAt: opts.fetchedAt });
+		db.run(
+			`INSERT INTO cache (url_hash, url, parsed_json, cached_at, fetched_at, error_count, next_retry_at, last_requested_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			[
+				opts.urlHash ?? hashUrl(url),
+				url,
+				parsed,
+				opts.fetchedAt,
+				opts.fetchedAt,
+				opts.errorCount ?? 0,
+				opts.nextRetryAt ?? null,
+				opts.lastRequestedAt,
+			]
+		);
+	}
+
+	it('refreshes an active feed that is older than the threshold', async () => {
+		const { db, warmStaleFeeds } = createTestApp({ warmRefreshThresholdMs: 1000 });
+		fetchMock = mockFetch(() => new Response(SAMPLE_RSS));
+
+		const url = 'https://example.com/stale-feed';
+		const now = Date.now();
+		insertCacheRow(db, url, { fetchedAt: now - 10_000, lastRequestedAt: now - 5_000 });
+
+		const refreshed = await warmStaleFeeds();
+
+		expect(refreshed).toBe(1);
+		expect(fetchMock.mock.calls.length).toBe(1);
+
+		// fetched_at should be bumped to ~now and content replaced with the live feed
+		const row = db.query<CacheRow, [string]>('SELECT * FROM cache WHERE url = ?').get(url);
+		expect(row!.fetched_at).toBeGreaterThan(now - 1000);
+		expect(JSON.parse(row!.parsed_json).title).toBe('Test Blog');
+	});
+
+	it('preserves last_requested_at across a warm refresh (so abandoned feeds age out)', async () => {
+		const { db, warmStaleFeeds } = createTestApp({ warmRefreshThresholdMs: 1000 });
+		fetchMock = mockFetch(() => new Response(SAMPLE_RSS));
+
+		const url = 'https://example.com/stale-feed';
+		const now = Date.now();
+		const lastRequested = now - 5_000;
+		insertCacheRow(db, url, { fetchedAt: now - 10_000, lastRequestedAt: lastRequested });
+
+		await warmStaleFeeds();
+
+		const row = db.query<CacheRow, [string]>('SELECT * FROM cache WHERE url = ?').get(url);
+		expect(row!.last_requested_at).toBe(lastRequested);
+	});
+
+	it('skips feeds that are still fresh', async () => {
+		const { db, warmStaleFeeds } = createTestApp({ warmRefreshThresholdMs: 60_000 });
+		fetchMock = mockFetch(() => new Response(SAMPLE_RSS));
+
+		const now = Date.now();
+		insertCacheRow(db, 'https://example.com/fresh', { fetchedAt: now - 1000, lastRequestedAt: now - 1000 });
+
+		const refreshed = await warmStaleFeeds();
+
+		expect(refreshed).toBe(0);
+		expect(fetchMock.mock.calls.length).toBe(0);
+	});
+
+	it('skips feeds outside the active window', async () => {
+		const { db, warmStaleFeeds } = createTestApp({
+			warmRefreshThresholdMs: 1000,
+			warmActiveWindowMs: 10_000,
+		});
+		fetchMock = mockFetch(() => new Response(SAMPLE_RSS));
+
+		const now = Date.now();
+		// Stale, but not requested within the active window
+		insertCacheRow(db, 'https://example.com/abandoned', { fetchedAt: now - 60_000, lastRequestedAt: now - 60_000 });
+		// Stale, but never requested by a client (NULL)
+		insertCacheRow(db, 'https://example.com/never-requested', { fetchedAt: now - 60_000, lastRequestedAt: null });
+
+		const refreshed = await warmStaleFeeds();
+
+		expect(refreshed).toBe(0);
+		expect(fetchMock.mock.calls.length).toBe(0);
+	});
+
+	it('skips feeds in error backoff', async () => {
+		const { db, warmStaleFeeds } = createTestApp({ warmRefreshThresholdMs: 1000 });
+		fetchMock = mockFetch(() => new Response(SAMPLE_RSS));
+
+		const now = Date.now();
+		insertCacheRow(db, 'https://example.com/backoff', {
+			fetchedAt: now - 60_000,
+			lastRequestedAt: now - 1000,
+			errorCount: 3,
+			nextRetryAt: now + 60_000,
+		});
+
+		const refreshed = await warmStaleFeeds();
+
+		expect(refreshed).toBe(0);
+		expect(fetchMock.mock.calls.length).toBe(0);
+	});
+
+	it('honors the batch cap', async () => {
+		const { db, warmStaleFeeds } = createTestApp({ warmRefreshThresholdMs: 1000, warmBatchCap: 2 });
+		fetchMock = mockFetch(() => new Response(SAMPLE_RSS));
+
+		const now = Date.now();
+		for (let i = 0; i < 5; i++) {
+			insertCacheRow(db, `https://example.com/feed-${i}`, {
+				fetchedAt: now - 10_000 - i,
+				lastRequestedAt: now - 5_000,
+			});
+		}
+
+		const refreshed = await warmStaleFeeds();
+
+		expect(refreshed).toBe(2);
+		expect(fetchMock.mock.calls.length).toBe(2);
+	});
+
+	it('GET /feed bumps last_requested_at on a cache hit', async () => {
+		const { db, app } = createTestApp();
+		fetchMock = mockFetch(() => new Response(SAMPLE_RSS));
+
+		const url = 'https://example.com/hit-feed';
+		const now = Date.now();
+		// Fresh row with real content but no recorded request yet
+		insertCacheRow(db, url, {
+			fetchedAt: now - 1000,
+			lastRequestedAt: null,
+			parsedJson: JSON.stringify({ title: 'Test Blog', items: [{ guid: 'g', title: 't', url: 'u' }], fetchedAt: now }),
+		});
+
+		const res = await app.request(`/feed?url=${encodeURIComponent(url)}`, {
+			headers: { 'X-Proxy-Secret': 'test-secret' },
+		});
+		expect(res.headers.get('X-Cache')).toBe('HIT');
+		expect(fetchMock.mock.calls.length).toBe(0); // served from cache
+
+		const row = db.query<CacheRow, [string]>('SELECT * FROM cache WHERE url = ?').get(url);
+		expect(row!.last_requested_at).not.toBeNull();
+		expect(row!.last_requested_at!).toBeGreaterThanOrEqual(now - 1000);
 	});
 });

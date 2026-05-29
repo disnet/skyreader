@@ -8,6 +8,18 @@ export interface AppConfig {
 	cacheTtlMs: number;
 	staleTtlMs: number;
 	defaultLimit: number;
+	// Self-warming loop (optional; defaults applied in createApp).
+	// Refresh any cached feed older than this so user requests always land in the
+	// fresh window (a HIT) instead of triggering a blocking upstream fetch.
+	warmRefreshThresholdMs?: number;
+	// Only warm feeds requested by a client within this window, so abandoned feeds
+	// age out of the working set (and eventually get cleaned up) instead of being
+	// polled forever.
+	warmActiveWindowMs?: number;
+	// Max feeds to refresh per warm tick (bounds work regardless of cache size).
+	warmBatchCap?: number;
+	// Max concurrent upstream fetches during a warm tick.
+	warmConcurrency?: number;
 }
 
 export interface CacheRow {
@@ -22,6 +34,7 @@ export interface CacheRow {
 	last_error: string | null;
 	last_error_at: number | null;
 	next_retry_at: number | null;
+	last_requested_at: number | null;
 }
 
 interface FilterResult {
@@ -190,6 +203,12 @@ export function initDatabase(db: Database): void {
 	if (!columnNames.has('next_retry_at')) {
 		db.run(`ALTER TABLE cache ADD COLUMN next_retry_at INTEGER`);
 	}
+	// Tracks the last time a client actually asked for this feed. Drives the
+	// self-warming loop's "active feed" window so we stop polling abandoned feeds.
+	if (!columnNames.has('last_requested_at')) {
+		db.run(`ALTER TABLE cache ADD COLUMN last_requested_at INTEGER`);
+	}
+	db.run(`CREATE INDEX IF NOT EXISTS idx_cache_last_requested_at ON cache(last_requested_at)`);
 }
 
 export function createApp(db: Database, config: AppConfig) {
@@ -263,9 +282,9 @@ export function createApp(db: Database, config: AppConfig) {
 					// Create a cache entry for tracking errors even without content
 					const emptyFeed: ParsedFeed = { title: '', items: [], fetchedAt: now };
 					db.run(
-						`INSERT INTO cache (url_hash, url, parsed_json, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at)
-						VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-						[urlHash, url, JSON.stringify(emptyFeed), now, now, newErrorCount, errorMessage, now, nextRetryAt]
+						`INSERT INTO cache (url_hash, url, parsed_json, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
+						VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+						[urlHash, url, JSON.stringify(emptyFeed), now, now, newErrorCount, errorMessage, now, nextRetryAt, now]
 					);
 				}
 
@@ -312,10 +331,13 @@ export function createApp(db: Database, config: AppConfig) {
 
 			const parsedJson = JSON.stringify(parsed);
 
-			// Success: save feed and reset error tracking
+			// Success: save feed and reset error tracking.
+			// last_requested_at is set only on insert (a fresh user-request miss) and
+			// deliberately NOT in DO UPDATE, so warm-loop refreshes preserve the real
+			// last-requested time rather than keeping abandoned feeds alive forever.
 			db.run(
-				`INSERT INTO cache (url_hash, url, parsed_json, etag, last_modified, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL)
+				`INSERT INTO cache (url_hash, url, parsed_json, etag, last_modified, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?)
 				ON CONFLICT(url_hash) DO UPDATE SET
 					parsed_json = excluded.parsed_json,
 					etag = excluded.etag,
@@ -326,7 +348,7 @@ export function createApp(db: Database, config: AppConfig) {
 					last_error = NULL,
 					last_error_at = NULL,
 					next_retry_at = NULL`,
-				[urlHash, url, parsedJson, etag, lastModified, now, now]
+				[urlHash, url, parsedJson, etag, lastModified, now, now, now]
 			);
 
 			return parsed;
@@ -354,9 +376,9 @@ export function createApp(db: Database, config: AppConfig) {
 			} else {
 				const emptyFeed: ParsedFeed = { title: '', items: [], fetchedAt: now };
 				db.run(
-					`INSERT INTO cache (url_hash, url, parsed_json, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-					[urlHash, url, JSON.stringify(emptyFeed), now, now, newErrorCount, errorMessage, now, nextRetryAt]
+					`INSERT INTO cache (url_hash, url, parsed_json, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					[urlHash, url, JSON.stringify(emptyFeed), now, now, newErrorCount, errorMessage, now, nextRetryAt, now]
 				);
 			}
 
@@ -379,6 +401,69 @@ export function createApp(db: Database, config: AppConfig) {
 		});
 
 		inFlight.set(urlHash, promise);
+	}
+
+	// Mark that a client just asked for this feed, so the warm loop knows it's
+	// still part of the active working set. No-op if the row doesn't exist yet
+	// (a cold miss) — fetchParseAndCache seeds last_requested_at on insert.
+	function recordRequest(urlHash: string, now: number): void {
+		db.run('UPDATE cache SET last_requested_at = ? WHERE url_hash = ?', [now, urlHash]);
+	}
+
+	// Warm loop config (defaults keep the active set fresh well inside cacheTtlMs).
+	// Mirror index.ts's production default: leave a ~2-interval margin (assuming the
+	// default 60s tick) below the TTL, but never less than half the TTL. For a 300s
+	// TTL this is 180s, giving ~120s of headroom before a refreshed feed could expire.
+	const warmRefreshThresholdMs =
+		config.warmRefreshThresholdMs ?? Math.max(cacheTtlMs - 120_000, Math.floor(cacheTtlMs / 2));
+	const warmActiveWindowMs = config.warmActiveWindowMs ?? 14 * 24 * 60 * 60 * 1000;
+	const warmBatchCap = config.warmBatchCap ?? 200;
+	const warmConcurrency = config.warmConcurrency ?? 8;
+
+	// Proactively re-fetch feeds that are about to go stale so user requests land
+	// on a fresh cache (a HIT) instead of triggering a blocking upstream fetch.
+	// Reuses the on-demand fetch path (and its circuit breaker / conditional
+	// requests) and dedups against in-flight refreshes via the same inFlight map.
+	async function warmStaleFeeds(): Promise<number> {
+		const now = Date.now();
+		const rows = db
+			.query<CacheRow, [number, number, number, number]>(
+				`SELECT * FROM cache
+				WHERE fetched_at < ?
+					AND (next_retry_at IS NULL OR next_retry_at < ?)
+					AND last_requested_at IS NOT NULL
+					AND last_requested_at > ?
+				ORDER BY fetched_at ASC
+				LIMIT ?`
+			)
+			.all(now - warmRefreshThresholdMs, now, now - warmActiveWindowMs, warmBatchCap);
+
+		if (rows.length === 0) return 0;
+
+		const queue = [...rows];
+		let refreshed = 0;
+
+		async function worker(): Promise<void> {
+			for (let row = queue.shift(); row; row = queue.shift()) {
+				// Skip feeds an on-demand request is already refreshing.
+				if (inFlight.has(row.url_hash)) continue;
+				const promise = fetchParseAndCache(row.url, row.url_hash, row).finally(() => {
+					inFlight.delete(row.url_hash);
+				});
+				inFlight.set(row.url_hash, promise);
+				try {
+					await promise;
+					refreshed++;
+				} catch {
+					// fetchParseAndCache already records errors/backoff; never let one
+					// bad feed abort the warm tick.
+				}
+			}
+		}
+
+		await Promise.all(Array.from({ length: Math.min(warmConcurrency, queue.length) }, worker));
+
+		return refreshed;
 	}
 
 	const app = new Hono();
@@ -465,6 +550,7 @@ export function createApp(db: Database, config: AppConfig) {
 		const now = Date.now();
 
 		const cached = db.query<CacheRow, [string]>('SELECT * FROM cache WHERE url_hash = ?').get(urlHash);
+		recordRequest(urlHash, now);
 
 		let feed: ParsedFeed | null = null;
 		let cacheStatus: string;
@@ -800,6 +886,7 @@ export function createApp(db: Database, config: AppConfig) {
 				const cached = db
 					.query<CacheRow, [string]>('SELECT * FROM cache WHERE url_hash = ?')
 					.get(urlHash);
+				recordRequest(urlHash, now);
 
 				let feed: ParsedFeed | null = null;
 				let cacheStatus: string;
@@ -897,7 +984,7 @@ export function createApp(db: Database, config: AppConfig) {
 		return c.json({ feeds: results });
 	});
 
-	return { app, inFlight };
+	return { app, inFlight, warmStaleFeeds };
 }
 
 export function cleanupCache(db: Database): number {
