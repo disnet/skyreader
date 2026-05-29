@@ -102,6 +102,17 @@ e2e/
 - **Async PATCH:** The frontend fires subscription PATCH requests in the background. Use `page.waitForResponse()` to ensure D1 is updated before reloading.
 - **Cleanup:** Each test's `testUser` fixture automatically deletes its seeded data after the test.
 
+### PWA / Service Worker Tests (root)
+```bash
+npm run test:pwa             # Service worker + offline E2E (chromium + webkit)
+```
+
+These are **separate** from the main E2E suite (`playwright.pwa.config.ts`, specs in `e2e-pwa/`) because the service worker only exists in a **production build** — the main suite runs dev servers where the SW is disabled. This config builds the frontend and serves it via `vite preview` on port 4173 (no backend needed; PWA boot/offline behavior doesn't depend on the API).
+
+- **Prereq:** `npx playwright install chromium webkit` (webkit = closest iOS Safari engine proxy).
+- **What's covered:** `build-output.spec.ts` (the built SW precaches the shell as `/` not `index.html`, every precache URL exists, custom handlers present — fast disk-only checks), `service-worker.spec.ts` (registers → full precache → activated → controls; no-skew invariant), `offline.spec.ts` (offline reload + deep-link still render the shell; recovery overlay stays hidden).
+- **webkit caveat:** Playwright webkit throws an internal error when navigating with `setOffline(true)`, so the offline-navigation tests are chromium-only (guarded with `test.skip`). webkit still verifies SW lifecycle + healthy load. True installed iOS Safari PWA behavior still needs manual device testing.
+
 ## Architecture Overview
 
 ```
