@@ -67,6 +67,9 @@ export interface ExtractedArticle {
 class ApiClient {
   private onUnauthorized: (() => void) | null = null;
   private onScopeUpgradeRequired: (() => void) | null = null;
+  // In-flight session probe, shared so a burst of concurrent 401s only triggers
+  // one re-verification request instead of a thundering herd.
+  private sessionProbe: Promise<'valid' | 'invalid' | 'unknown'> | null = null;
 
   // Set callback for when 401 is received (session invalid)
   setOnUnauthorized(callback: () => void) {
@@ -78,7 +81,41 @@ class ApiClient {
     this.onScopeUpgradeRequired = callback;
   }
 
-  private async fetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  // Re-verify the session directly against /api/auth/me. Used to distinguish a
+  // genuinely-invalid session from a transient 401 (e.g. a blip during a deploy
+  // when the API custom domain is mid-rollout, or the cross-subdomain cookie
+  // isn't attached to a particular in-flight request). Returns:
+  //   'valid'   - session is fine, the original 401 was transient
+  //   'invalid' - probe also got 401, session is genuinely gone
+  //   'unknown' - network/other error, can't confirm; treat as transient
+  // The probe uses a raw fetch (not this.fetch) to avoid recursing into the 401
+  // handler, and is deduped via this.sessionProbe.
+  private probeSession(): Promise<'valid' | 'invalid' | 'unknown'> {
+    if (this.sessionProbe) return this.sessionProbe;
+    const probe = (async (): Promise<'valid' | 'invalid' | 'unknown'> => {
+      try {
+        const response = await fetch(`${API_BASE}/api/auth/me`, {
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (response.ok) return 'valid';
+        if (response.status === 401) return 'invalid';
+        return 'unknown';
+      } catch {
+        return 'unknown';
+      } finally {
+        this.sessionProbe = null;
+      }
+    })();
+    this.sessionProbe = probe;
+    return probe;
+  }
+
+  private async fetch<T>(
+    path: string,
+    options: RequestInit = {},
+    retriedAfter401 = false
+  ): Promise<T> {
     // Fail fast when offline instead of waiting for network timeout
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       throw new OfflineError();
@@ -99,6 +136,25 @@ class ApiClient {
     if (!response.ok) {
       // Handle 401 - session is invalid/expired
       if (response.status === 401) {
+        // Don't immediately tear down local auth: a single 401 is often
+        // transient (e.g. during a prod deploy). Re-verify the session before
+        // logging out. Skip re-verification if this is already the post-probe
+        // retry, to avoid looping.
+        if (!retriedAfter401) {
+          const status = await this.probeSession();
+          if (status === 'valid') {
+            // Session is fine — the 401 was transient. Retry the original
+            // request once, transparently.
+            return this.fetch<T>(path, options, true);
+          }
+          if (status === 'unknown') {
+            // Couldn't confirm the session is gone (network blip mid-deploy).
+            // Surface the failure but keep the user logged in.
+            throw new Error('Session check failed');
+          }
+          // status === 'invalid' → session genuinely gone, fall through.
+        }
+
         console.warn('Session expired or invalid, logging out...');
         if (this.onUnauthorized) {
           this.onUnauthorized();
