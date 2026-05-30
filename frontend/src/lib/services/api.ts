@@ -573,6 +573,7 @@ class ApiClient {
   async getLabels(
     options: {
       label?: string;
+      labels?: string[];
       itemType?: ItemLabelType;
       cursor?: string;
       limit?: number;
@@ -587,11 +588,15 @@ class ApiClient {
       rkey?: string;
       createdAt: number;
       updatedAt: number;
+      // Tombstone marker: set (unix seconds) when the label was deleted; only
+      // appears in delta (`since`) responses. Live snapshots never include it.
+      deletedAt?: number | null;
     }>;
     cursor?: string;
   }> {
     const params = new URLSearchParams();
     if (options.label) params.set('label', options.label);
+    if (options.labels?.length) params.set('labels', options.labels.join(','));
     if (options.itemType) params.set('itemType', options.itemType);
     if (options.cursor) params.set('cursor', options.cursor);
     if (options.limit) params.set('limit', String(options.limit));
@@ -601,7 +606,7 @@ class ApiClient {
   }
 
   async getAllLabels(
-    options: { label?: string; itemType?: ItemLabelType; since?: number } = {}
+    options: { label?: string; labels?: string[]; itemType?: ItemLabelType; since?: number } = {}
   ): Promise<
     Array<{
       itemKey: string;
@@ -611,6 +616,7 @@ class ApiClient {
       rkey?: string;
       createdAt: number;
       updatedAt: number;
+      deletedAt?: number | null;
     }>
   > {
     const all: Array<{
@@ -621,6 +627,7 @@ class ApiClient {
       rkey?: string;
       createdAt: number;
       updatedAt: number;
+      deletedAt?: number | null;
     }> = [];
     let cursor: string | undefined;
     do {

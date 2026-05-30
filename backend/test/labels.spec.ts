@@ -76,6 +76,7 @@ type LabelsResponse = {
     label: string;
     props: Record<string, unknown>;
     updatedAt: number;
+    deletedAt: number | null;
   }>;
   cursor?: string;
 };
@@ -86,6 +87,23 @@ async function getLabels(path: string): Promise<{ status: number; body: LabelsRe
   await waitOnExecutionContext(ctx);
   const body = (await response.json()) as LabelsResponse;
   return { status: response.status, body };
+}
+
+// Issue a mutating request (POST add / DELETE) against /api/labels.
+async function mutateLabels(method: 'POST' | 'DELETE', body: unknown): Promise<number> {
+  const ctx = createExecutionContext();
+  const request = new IncomingRequest('http://localhost/api/labels', {
+    method,
+    headers: {
+      Cookie: `session_id=${TEST_SESSION_ID}`,
+      Origin: env.FRONTEND_URL,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const response = await worker.fetch(request, env, ctx);
+  await waitOnExecutionContext(ctx);
+  return response.status;
 }
 
 describe('GET /api/labels', () => {
@@ -132,6 +150,27 @@ describe('GET /api/labels', () => {
     expect(body.labels.map((l) => l.itemKey)).toEqual(['b']);
   });
 
+  it('restricts to a set of label types when ?labels= is provided', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    await insertLabel('a', { updatedAt: now - 30, label: 'tagged' });
+    await insertLabel('b', { updatedAt: now - 20, label: 'archived' });
+    await insertLabel('c', { updatedAt: now - 10, label: 'read' });
+
+    const { body } = await getLabels('/api/labels?labels=tagged,archived');
+    expect(body.labels.map((l) => l.itemKey)).toEqual(['b', 'a']);
+  });
+
+  it('excludes unrelated label types (read) from a labels-filtered delta', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    await insertLabel('tag', { updatedAt: now - 10, label: 'tagged' });
+    await insertLabel('readrow', { updatedAt: now - 5, label: 'read' });
+
+    const { body } = await getLabels(
+      `/api/labels?labels=tagged,archived,readProgress&since=${now - 50}`
+    );
+    expect(body.labels.map((l) => l.itemKey)).toEqual(['tag']);
+  });
+
   describe('delta sync (?since=)', () => {
     it('returns only rows changed strictly after the cursor', async () => {
       const now = Math.floor(Date.now() / 1000);
@@ -158,6 +197,56 @@ describe('GET /api/labels', () => {
 
       const { body } = await getLabels(`/api/labels?label=tagged&since=${now - 50}`);
       expect(body.labels.map((l) => l.itemKey)).toEqual(['new-tag']);
+    });
+  });
+
+  describe('tombstones (soft delete)', () => {
+    it('DELETE soft-deletes: the row surfaces in a delta with deletedAt set', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      await insertLabel('tag-me', { updatedAt: now - 100, label: 'tagged' });
+
+      expect(await mutateLabels('DELETE', { itemKey: 'tag-me', label: 'tagged' })).toBe(200);
+
+      const { body } = await getLabels(`/api/labels?since=${now - 100}`);
+      expect(body.labels).toHaveLength(1);
+      expect(body.labels[0].itemKey).toBe('tag-me');
+      expect(body.labels[0].deletedAt).toBeGreaterThan(0);
+    });
+
+    it('a full snapshot excludes tombstoned rows', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      await insertLabel('keep', { updatedAt: now - 100, label: 'tagged' });
+      await insertLabel('drop', { updatedAt: now - 100, label: 'tagged' });
+
+      expect(await mutateLabels('DELETE', { itemKey: 'drop', label: 'tagged' })).toBe(200);
+
+      const { body } = await getLabels('/api/labels');
+      expect(body.labels.map((l) => l.itemKey)).toEqual(['keep']);
+    });
+
+    it('re-adding a deleted label resurrects it (clears the tombstone)', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      await insertLabel('revive', {
+        updatedAt: now - 100,
+        label: 'tagged',
+        props: { tags: ['a'] },
+      });
+
+      expect(await mutateLabels('DELETE', { itemKey: 'revive', label: 'tagged' })).toBe(200);
+      expect(
+        await mutateLabels('POST', {
+          itemKey: 'revive',
+          itemType: 'article',
+          label: 'tagged',
+          props: { tags: ['b'] },
+        })
+      ).toBe(200);
+
+      const { body } = await getLabels('/api/labels');
+      expect(body.labels).toHaveLength(1);
+      expect(body.labels[0].itemKey).toBe('revive');
+      expect(body.labels[0].deletedAt).toBeNull();
+      expect(body.labels[0].props).toEqual({ tags: ['b'] });
     });
   });
 });
