@@ -1,5 +1,6 @@
 import type { Env, FeedItem } from '../types';
 import { FeedProxyClient, FeedProxyError } from '../services/feed-proxy-client';
+import { resolveStandardSite } from '../utils/canonical-url';
 
 interface V2FeedResponse {
   title: string;
@@ -342,8 +343,21 @@ export async function handleV2FeedDiscover(request: Request, env: Env): Promise<
 
   try {
     const client = new FeedProxyClient(env);
-    const feeds = await client.discoverFeeds(siteUrl);
-    return new Response(JSON.stringify({ feeds }), {
+    const { feeds, standardSites } = await client.discoverFeeds(siteUrl);
+
+    // Resolve + verify the first advertised standard.site into a subscribable
+    // publication (the HTML <link> is only a hint; resolveStandardSite confirms it
+    // via the domain's .well-known endpoint). Preferred over RSS/Atom in the UI.
+    let standardSite = null;
+    if (standardSites.length > 0) {
+      try {
+        standardSite = await resolveStandardSite(standardSites[0], env);
+      } catch (error) {
+        console.error('Standard.site resolution error:', error);
+      }
+    }
+
+    return new Response(JSON.stringify({ feeds, standardSite }), {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error) {

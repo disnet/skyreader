@@ -225,7 +225,17 @@ class ApiClient {
     });
   }
 
-  async discoverFeedsV2(url: string): Promise<{ feeds: string[] }> {
+  async discoverFeedsV2(url: string): Promise<{
+    feeds: string[];
+    standardSite?: {
+      did: string;
+      publicationUri: string;
+      name: string;
+      url?: string;
+      description?: string;
+      iconUrl?: string;
+    } | null;
+  }> {
     return this.fetch(`/api/v2/feeds/discover?url=${encodeURIComponent(url)}`);
   }
 

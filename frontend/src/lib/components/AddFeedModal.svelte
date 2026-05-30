@@ -2,6 +2,7 @@
   import { goto } from '$app/navigation';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
+  import { socialStore } from '$lib/stores/social.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import { api } from '$lib/services/api';
@@ -9,6 +10,15 @@
   import Modal from '$lib/components/common/Modal.svelte';
 
   type Step = 'input' | 'select-feeds';
+
+  interface StandardSite {
+    did: string;
+    publicationUri: string;
+    name: string;
+    url?: string;
+    description?: string;
+    iconUrl?: string;
+  }
 
   interface Props {
     open: boolean;
@@ -23,6 +33,7 @@
   let step = $state<Step>('input');
   let isDiscovering = $state(false);
   let discoveredFeeds = $state<string[]>([]);
+  let standardSite = $state<StandardSite | null>(null);
 
   const isAtLimit = $derived(
     subscriptionsStore.subscriptions.length >= subscriptionsStore.maxSubscriptions
@@ -40,7 +51,9 @@
     step = 'input';
     error = null;
     isDiscovering = false;
+    isAdding = false;
     discoveredFeeds = [];
+    standardSite = null;
   }
 
   function handleClose() {
@@ -60,6 +73,7 @@
     error = null;
     isDiscovering = true;
     discoveredFeeds = [];
+    standardSite = null;
 
     try {
       let url = trimmed;
@@ -68,13 +82,23 @@
       }
 
       const result = await api.discoverFeedsV2(url);
-      if (result.feeds.length === 0) {
+      const site = result.standardSite ?? null;
+      const feeds = result.feeds;
+      // standard.site is the preferred option, so it counts ahead of RSS/Atom feeds.
+      const candidateCount = (site ? 1 : 0) + feeds.length;
+
+      if (candidateCount === 0) {
         error = 'No feeds found at this URL';
         isDiscovering = false;
-      } else if (result.feeds.length === 1) {
-        await addFeed(result.feeds[0]);
+      } else if (candidateCount === 1) {
+        if (site) {
+          await addStandardSite(site);
+        } else {
+          await addFeed(feeds[0]);
+        }
       } else {
-        discoveredFeeds = result.feeds;
+        standardSite = site;
+        discoveredFeeds = feeds;
         step = 'select-feeds';
         isDiscovering = false;
       }
@@ -120,9 +144,41 @@
     }
   }
 
+  async function addStandardSite(site: StandardSite) {
+    if (isAdding) return;
+    isAdding = true;
+    error = null;
+    try {
+      const id = await subscriptionsStore.add(site.publicationUri, site.name, {
+        sourceType: 'atproto.documents',
+        subjectDid: site.did,
+        siteUrl: site.url,
+        feedUrl: site.publicationUri,
+      });
+
+      if (site.iconUrl) {
+        try {
+          await subscriptionsStore.updateLocal(id, { customIconUrl: site.iconUrl });
+        } catch {
+          // Ignore errors setting the icon
+        }
+      }
+
+      socialStore.loadFeed(true);
+      handleClose();
+      goto(`/?feed=${id}`);
+      sidebarStore.closeMobile();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to add subscription';
+      isDiscovering = false;
+      isAdding = false;
+    }
+  }
+
   function goBackToInput() {
     step = 'input';
     discoveredFeeds = [];
+    standardSite = null;
     error = null;
   }
 </script>
@@ -161,15 +217,40 @@
     <div class="modal-content">
       <button class="back-btn" onclick={goBackToInput}>&#8249; Back</button>
       <p class="section-label">Multiple feeds found — select one:</p>
-      <div class="search-results">
-        {#each discoveredFeeds as url}
-          <button class="result-btn" onclick={() => addFeed(url)} disabled={isAdding}>
-            <span class="result-info">
-              <span class="result-name feed-url">{url}</span>
+      {#if standardSite}
+        <button
+          class="result-btn standard-btn"
+          onclick={() => standardSite && addStandardSite(standardSite)}
+          disabled={isAdding}
+        >
+          {#if standardSite.iconUrl}
+            <img class="result-icon" src={standardSite.iconUrl} alt="" />
+          {/if}
+          <span class="result-info">
+            <span class="result-name">
+              {standardSite.name}
+              <span class="badge">standard.site</span>
             </span>
-          </button>
-        {/each}
-      </div>
+            {#if standardSite.url}
+              <span class="result-sub feed-url">{standardSite.url}</span>
+            {/if}
+          </span>
+        </button>
+        {#if discoveredFeeds.length > 0}
+          <p class="section-label">Or subscribe via RSS/Atom:</p>
+        {/if}
+      {/if}
+      {#if discoveredFeeds.length > 0}
+        <div class="search-results">
+          {#each discoveredFeeds as url}
+            <button class="result-btn" onclick={() => addFeed(url)} disabled={isAdding}>
+              <span class="result-info">
+                <span class="result-name feed-url">{url}</span>
+              </span>
+            </button>
+          {/each}
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -269,6 +350,41 @@
   .result-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .standard-btn {
+    border: 1px solid var(--color-accent, #0085ff);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--color-accent, #0085ff) 8%, transparent);
+  }
+
+  .standard-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-accent, #0085ff) 14%, transparent);
+  }
+
+  .result-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+
+  .badge {
+    display: inline-block;
+    margin-left: 0.4rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    background: var(--color-accent, #0085ff);
+    color: white;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    vertical-align: middle;
+  }
+
+  .result-sub {
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
   }
 
   .result-info {
