@@ -1431,6 +1431,61 @@ describe('Integration Tests', () => {
 				expect(json.feeds).toContain('https://example.com/atom.xml');
 			});
 
+			it('detects standard.site advertisements in HTML', async () => {
+				const { app } = createTestApp();
+				const html = `
+					<!DOCTYPE html>
+					<html>
+					<head>
+						<link rel="alternate" type="application/rss+xml" href="https://underreacted.leaflet.pub/rss">
+						<link rel="alternate" href="at://did:plc:fpruhuo22xkm5o7ttr2ktxdo/site.standard.document/3mjfjsk24qk2i">
+						<link rel="site.standard.document" href="at://did:plc:fpruhuo22xkm5o7ttr2ktxdo/site.standard.document/3mjfjsk24qk2i">
+					</head>
+					<body>Hello</body>
+					</html>
+				`;
+				fetchMock = mockFetch(() => new Response(html, {
+					headers: { 'Content-Type': 'text/html' },
+				}));
+
+				const res = await app.request('/discover?url=https://underreacted.leaflet.pub/', {
+					headers: { 'X-Proxy-Secret': 'test-secret' },
+				});
+				const json = await res.json();
+
+				expect(res.status).toBe(200);
+				// RSS feed is still discovered alongside the standard.site
+				expect(json.feeds).toContain('https://underreacted.leaflet.pub/rss');
+				// The at:// document URI is reported once (deduped across both link tags)
+				expect(json.standardSites).toEqual([
+					'at://did:plc:fpruhuo22xkm5o7ttr2ktxdo/site.standard.document/3mjfjsk24qk2i',
+				]);
+			});
+
+			it('returns an empty standardSites array when none are advertised', async () => {
+				const { app } = createTestApp();
+				const html = `
+					<!DOCTYPE html>
+					<html>
+					<head>
+						<link rel="alternate" type="application/rss+xml" href="/feed.xml">
+					</head>
+					<body>Hello</body>
+					</html>
+				`;
+				fetchMock = mockFetch(() => new Response(html, {
+					headers: { 'Content-Type': 'text/html' },
+				}));
+
+				const res = await app.request('/discover?url=https://example.com/', {
+					headers: { 'X-Proxy-Secret': 'test-secret' },
+				});
+				const json = await res.json();
+
+				expect(res.status).toBe(200);
+				expect(json.standardSites).toEqual([]);
+			});
+
 			it('probes common feed paths when no links found', async () => {
 				const { app } = createTestApp();
 				const html = `<!DOCTYPE html><html><body>No feeds here</body></html>`;

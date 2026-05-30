@@ -751,7 +751,7 @@ export function createApp(db: Database, config: AppConfig) {
 				contentType.includes('rss') ||
 				contentType.includes('atom')
 			) {
-				return c.json({ feeds: [siteUrl] });
+				return c.json({ feeds: [siteUrl], standardSites: [] });
 			}
 
 			// Parse HTML to find link tags
@@ -771,6 +771,29 @@ export function createApp(db: Database, config: AppConfig) {
 						feedUrl = new URL(feedUrl, baseUrl).toString();
 					}
 					feeds.push(feedUrl);
+				}
+			}
+
+			// Detect standard.site (AT Protocol) advertisements. Sites expose these as
+			// <link> tags whose href is an at:// URI pointing to a site.standard.document
+			// record, e.g. <link rel="site.standard.document" href="at://did/site.standard.document/rkey">.
+			// The at:// href (regardless of rel) is the reliable signal.
+			const standardSites: string[] = [];
+			const maxStandardSites = 5;
+			const linkTagRegex = /<link\b[^>]*>/gi;
+			let linkTag;
+			while (
+				(linkTag = linkTagRegex.exec(text)) !== null &&
+				standardSites.length < maxStandardSites
+			) {
+				const href = linkTag[0].match(/href=["']([^"']+)["']/i)?.[1];
+				if (
+					href &&
+					href.startsWith('at://') &&
+					href.includes('/site.standard.document/') &&
+					!standardSites.includes(href)
+				) {
+					standardSites.push(href);
 				}
 			}
 
@@ -810,7 +833,7 @@ export function createApp(db: Database, config: AppConfig) {
 				}
 			}
 
-			return c.json({ feeds });
+			return c.json({ feeds, standardSites });
 		} catch (error) {
 			const isTimeout = error instanceof Error && error.name === 'TimeoutError';
 			const msg = isTimeout

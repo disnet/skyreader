@@ -263,6 +263,138 @@ export async function resolvePublicationUrl(siteUri: string, env: Env): Promise<
 }
 
 /**
+ * A standard.site discovered from a website and verified against its domain,
+ * resolved into a subscribable AT Protocol publication.
+ */
+export interface ResolvedStandardSite {
+  /** DID whose repo holds the site.standard.document records to subscribe to */
+  did: string;
+  /**
+   * The verified publication AT URI (at://did/site.standard.publication/rkey),
+   * used as the subscription's feedUrl.
+   */
+  publicationUri: string;
+  name: string;
+  url?: string;
+  description?: string;
+  iconUrl?: string;
+}
+
+/**
+ * Verify a publication against its domain via the standard.site .well-known
+ * endpoint.
+ *
+ * Per https://standard.site/docs/verification, the <link> hint in a page's HTML
+ * must not be trusted on its own. Verification is a bidirectional consistency
+ * check: the publication record claims a domain (its `url`), and that domain must
+ * claim the same publication back via /.well-known/site.standard.publication.
+ *
+ * Returns true only when the well-known endpoint at `publicationUrl`'s origin
+ * returns the `expectedUri` (the publication AT URI we resolved).
+ */
+async function verifyPublicationDomain(
+  publicationUrl: string,
+  expectedUri: string
+): Promise<boolean> {
+  try {
+    const origin = new URL(publicationUrl).origin;
+    const res = await fetch(`${origin}/.well-known/site.standard.publication`, {
+      headers: { Accept: 'application/json, text/plain, */*' },
+      redirect: 'follow',
+    });
+    if (!res.ok) {
+      return false;
+    }
+    // The endpoint may return a bare AT URI or a JSON object containing one.
+    const body = (await res.text()).trim();
+    const advertisedUri = body.match(/at:\/\/[^\s"']+/)?.[0];
+    return advertisedUri === expectedUri;
+  } catch (error) {
+    console.warn('[canonical-url] Publication domain verification failed:', error);
+    return false;
+  }
+}
+
+/**
+ * Resolve a discovered site.standard.document URI into a *verified*, subscribable
+ * publication.
+ *
+ * Given an `at://did/site.standard.document/rkey` URI (advertised in a website's
+ * <link> hint), fetch the document record, follow its `site` field to the owning
+ * site.standard.publication, then verify the publication against its domain's
+ * /.well-known/site.standard.publication endpoint (per the standard.site spec —
+ * the HTML hint alone is not trusted).
+ *
+ * Returns the publication's name/url/icon (so the frontend can create an
+ * `atproto.documents` subscription) only when verification succeeds, otherwise
+ * null. Documents without a verifiable publication (freestanding or loose
+ * https:// sites) cannot be tied back to the domain and are not offered.
+ */
+export async function resolveStandardSite(
+  documentUri: string,
+  _env: Env
+): Promise<ResolvedStandardSite | null> {
+  const doc = parseAtUri(documentUri);
+  if (!doc || doc.collection !== 'site.standard.document') {
+    return null;
+  }
+
+  const pdsUrl = await resolvePdsUrl(doc.did);
+  if (!pdsUrl) {
+    return null;
+  }
+
+  let site: string | undefined;
+  try {
+    const params = new URLSearchParams({
+      repo: doc.did,
+      collection: doc.collection,
+      rkey: doc.rkey,
+    });
+    const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${params}`);
+    if (res.ok) {
+      const data = (await res.json()) as { value?: { site?: string } };
+      site = data.value?.site;
+    }
+  } catch (error) {
+    console.error('[canonical-url] Error fetching document record:', error);
+  }
+
+  // Only at:// publications can be verified against a domain. Loose https://
+  // sites and freestanding documents have no well-known binding, so we don't
+  // offer them from URL discovery.
+  if (!site || !site.startsWith('at://')) {
+    return null;
+  }
+
+  const pub = parseAtUri(site);
+  if (!pub || pub.collection !== 'site.standard.publication') {
+    return null;
+  }
+
+  const record = await fetchPublicationRecord(pdsUrl, pub.did, pub.collection, pub.rkey);
+  if (!record?.url) {
+    return null;
+  }
+
+  // Confirm the bidirectional binding before trusting the hint.
+  const verified = await verifyPublicationDomain(record.url, site);
+  if (!verified) {
+    console.warn(`[canonical-url] Unverified standard.site, not offering: ${site}`);
+    return null;
+  }
+
+  return {
+    did: doc.did,
+    publicationUri: site,
+    name: record.name || record.url,
+    url: record.url,
+    description: record.description,
+    iconUrl: resolveBlobUrl(pub.did, record.icon) || undefined,
+  };
+}
+
+/**
  * Combine a base URL with a path, handling slash normalization
  */
 export function buildCanonicalUrl(baseUrl: string, path: string): string {
