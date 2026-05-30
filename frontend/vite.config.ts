@@ -15,6 +15,19 @@ export default defineConfig({
       srcDir: 'src',
       filename: 'service-worker.js',
 
+      // SvelteKit 2 defaults kit.paths.relative = true, so adapter-static sets Vite's
+      // base to './'. @vite-pwa/sveltekit inherits that and would register the SW with
+      // a RELATIVE url+scope ('./service-worker.js', scope './'). The registration runs
+      // from inside the app bundle on whatever route the SW first installs on — e.g.
+      // '/auth/callback' right after OAuth. workbox-window then resolves './' against
+      // that path, asking for '/auth/service-worker.js' with scope '/auth/'. No such
+      // file exists, the SPA host serves the index.html fallback, and the browser tries
+      // to install an HTML document as a worker → "error during installation" (and, when
+      // it does load, a uselessly narrow '/auth/' scope). Pin both absolute so the worker
+      // is always '/service-worker.js' with root scope no matter which route registers it.
+      scope: '/',
+      buildBase: '/',
+
       // 'prompt' => a new SW installs and WAITS; we surface an update banner and only
       // activate it when the user clicks Update (updateServiceWorker(true) posts SKIP_WAITING).
       registerType: 'prompt',
