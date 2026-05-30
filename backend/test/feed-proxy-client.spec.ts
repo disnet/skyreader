@@ -62,9 +62,31 @@ describe('FeedProxyClient', () => {
       );
 
       const client = createClient();
-      await expect(client.discoverFeeds('https://www.cbc.ca')).resolves.toEqual([
-        'https://www.cbc.ca/webfeed/rss/rss-topstories',
-      ]);
+      await expect(client.discoverFeeds('https://www.cbc.ca')).resolves.toEqual({
+        feeds: ['https://www.cbc.ca/webfeed/rss/rss-topstories'],
+        standardSites: [],
+      });
+    });
+
+    it('returns discovered standard.site URIs alongside feeds', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            feeds: ['https://underreacted.leaflet.pub/rss'],
+            standardSites: ['at://did:plc:abc123/site.standard.document/3mjfjsk24qk2i'],
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        )
+      );
+
+      const client = createClient();
+      await expect(client.discoverFeeds('https://underreacted.leaflet.pub')).resolves.toEqual({
+        feeds: ['https://underreacted.leaflet.pub/rss'],
+        standardSites: ['at://did:plc:abc123/site.standard.document/3mjfjsk24qk2i'],
+      });
     });
 
     // The proxy's own application-level errors are valid JSON and must still
