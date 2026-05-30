@@ -56,6 +56,108 @@ export function subscriptionDedupKey(input: {
   return `rss:${(input.feedUrl || '').toLowerCase()}`;
 }
 
+type FeedIdentity = { sourceType?: string; subjectDid?: string; feedUrl?: string };
+
+/**
+ * Feed identity for a subscription, or null when it has none (an RSS row with
+ * no feedUrl that isn't an atproto stream). Rows without an identity can never
+ * be proven duplicates of each other, so they're left untouched.
+ */
+function feedIdentity(sub: FeedIdentity): string | null {
+  const isAtProto = !!sub.sourceType && sub.sourceType.startsWith('atproto.');
+  if (!isAtProto && !sub.feedUrl) return null;
+  return subscriptionDedupKey({
+    sourceType: sub.sourceType,
+    subjectDid: sub.subjectDid,
+    feedUrl: sub.feedUrl,
+  });
+}
+
+/**
+ * True when `a` is older than `b`, by createdAt and then by ascending id. Used
+ * to pick the original row to keep among same-feed duplicates — the later
+ * (racing) add is the one we drop.
+ */
+function isOlder(
+  a: { createdAt?: string; id?: number },
+  b: { createdAt?: string; id?: number }
+): boolean {
+  const ta = a.createdAt ? Date.parse(a.createdAt) : NaN;
+  const tb = b.createdAt ? Date.parse(b.createdAt) : NaN;
+  if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) return ta < tb;
+  return (a.id ?? Infinity) < (b.id ?? Infinity);
+}
+
+/**
+ * Remove subscriptions that point at the same underlying feed but carry
+ * different rkeys — the "same feed, different rkey" class (bug 2). These slip
+ * past dedupeSubscriptionsByRkey because each duplicate is a distinct AT
+ * Protocol record. They arise when two adds of one feed each mint their own
+ * rkey: a concurrent add the in-flight guard didn't serialize, or the same feed
+ * added on two devices (two PDS records).
+ *
+ * Identity is `feedIdentity`; the row kept per feed is the oldest (the original
+ * add), with later duplicates reported for deletion. Original array order is
+ * preserved for the kept rows. Rows without a feed identity are always kept.
+ */
+export function dedupeSubscriptionsByFeed<
+  T extends Pick<
+    Subscription,
+    'rkey' | 'id' | 'createdAt' | 'sourceType' | 'subjectDid' | 'feedUrl'
+  >,
+>(subs: T[]): { kept: T[]; dupeIds: number[] } {
+  // Pass 1: pick the canonical (oldest) row for each feed identity.
+  const canonical = new Map<string, T>();
+  for (const sub of subs) {
+    const key = feedIdentity(sub);
+    if (!key) continue;
+    const current = canonical.get(key);
+    if (!current || isOlder(sub, current)) canonical.set(key, sub);
+  }
+
+  // Pass 2: emit canonical + identity-less rows in original order; drop the rest.
+  const kept: T[] = [];
+  const dupeIds: number[] = [];
+  for (const sub of subs) {
+    const key = feedIdentity(sub);
+    if (!key || canonical.get(key) === sub) {
+      kept.push(sub);
+    } else if (sub.id != null) {
+      dupeIds.push(sub.id);
+    }
+  }
+  return { kept, dupeIds };
+}
+
+/**
+ * Collapse PDS subscription records that point at the same feed but carry
+ * different rkeys, keeping the oldest record and reporting the rkeys of the
+ * redundant ones so the caller can delete them from the PDS. Deterministic:
+ * ties on createdAt break by ascending rkey (no clock dependency).
+ */
+export function dedupeRemoteSubscriptionRecords<V extends FeedIdentity & { createdAt?: string }>(
+  records: Array<{ rkey: string; value: V }>
+): { duplicateRkeys: string[] } {
+  const canonical = new Map<string, { rkey: string; value: V }>();
+  const duplicateRkeys: string[] = [];
+  for (const rec of records) {
+    const key = feedIdentity(rec.value);
+    if (!key) continue;
+    const current = canonical.get(key);
+    if (!current) {
+      canonical.set(key, rec);
+      continue;
+    }
+    const recIsOlder =
+      isOlder({ createdAt: rec.value.createdAt }, { createdAt: current.value.createdAt }) ||
+      (rec.value.createdAt === current.value.createdAt && rec.rkey < current.rkey);
+    const [keep, drop] = recIsOlder ? [rec, current] : [current, rec];
+    canonical.set(key, keep);
+    duplicateRkeys.push(drop.rkey);
+  }
+  return { duplicateRkeys };
+}
+
 /** Raised when a second operation for an already-in-flight key is attempted. */
 export class DuplicateInFlightError extends Error {
   constructor(message: string) {

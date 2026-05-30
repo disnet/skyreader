@@ -10,6 +10,7 @@ import { syncStore } from './sync.svelte';
 import { savesStore } from './saves.svelte';
 import { fetchAllFeeds } from '$lib/services/feedFetcher';
 import { api } from '$lib/services/api';
+import { dedupeRemoteSubscriptionRecords } from '$lib/services/subscriptionDedup';
 import { getMetadata, setMetadata, checkDbHealth } from '$lib/services/db';
 import type { Subscription } from '$lib/types';
 
@@ -194,6 +195,30 @@ function createAppManager() {
       // Build maps for comparison
       const localByRkey = new Map(liveDb.subscriptions.map((s) => [s.rkey, s]));
       const remoteByRkey = new Map(response.records.map((r) => [r.uri.split('/').pop() || '', r]));
+
+      // Collapse PDS records that point at the same feed but carry different
+      // rkeys (e.g. the same feed added on two devices). Without this the diff
+      // below would re-add every duplicate to the cache on each sync. Keep the
+      // oldest record and delete the rest from the PDS so the duplicate source
+      // does not reappear.
+      const { duplicateRkeys } = dedupeRemoteSubscriptionRecords(
+        [...remoteByRkey.entries()].map(([rkey, r]) => ({ rkey, value: r.value }))
+      );
+      for (const rkey of duplicateRkeys) {
+        remoteByRkey.delete(rkey);
+        try {
+          await api.deleteSubscription(rkey);
+        } catch (e) {
+          console.error('Failed to delete duplicate PDS subscription:', e);
+        }
+        const localDup = liveDb.getSubscriptionByRkey(rkey);
+        if (localDup?.id != null) {
+          await liveDb.deleteSubscription(localDup.id);
+          localByRkey.delete(rkey);
+          result.removed.push(localDup.feedUrl || '');
+          if (localDup.feedUrl) feedStatusStore.clearStatus(localDup.feedUrl);
+        }
+      }
 
       // Find added subscriptions (in remote but not local)
       for (const [rkey, record] of remoteByRkey) {

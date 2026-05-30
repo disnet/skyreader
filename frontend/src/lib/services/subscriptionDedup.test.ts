@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   dedupeSubscriptionsByRkey,
+  dedupeSubscriptionsByFeed,
+  dedupeRemoteSubscriptionRecords,
   subscriptionDedupKey,
   createInFlightGuard,
   DuplicateInFlightError,
@@ -68,8 +70,120 @@ describe('dedupeSubscriptionsByRkey', () => {
 });
 
 /**
- * Bug 2: same-feed / different-rkey duplicates from concurrent adds.
+ * Bug 2: same-feed / different-rkey duplicates.
+ *
+ * Two records pointing at one feed each carry a distinct rkey, so they slip
+ * past dedupeSubscriptionsByRkey. dedupeSubscriptionsByFeed heals the local
+ * cache; dedupeRemoteSubscriptionRecords heals the PDS during sync.
  */
+describe('dedupeSubscriptionsByFeed', () => {
+  it('keeps the oldest of two RSS rows that share a feed url', () => {
+    const subs = [
+      sub({ id: 1, rkey: 'a', feedUrl: 'https://x.com/feed', createdAt: '2026-01-02T00:00:00Z' }),
+      sub({ id: 2, rkey: 'b', feedUrl: 'https://x.com/feed', createdAt: '2026-01-01T00:00:00Z' }),
+    ];
+    const { kept, dupeIds } = dedupeSubscriptionsByFeed(subs);
+    expect(kept.map((s) => s.id)).toEqual([2]); // older createdAt wins
+    expect(dupeIds).toEqual([1]);
+  });
+
+  it('matches feed urls case-insensitively', () => {
+    const subs = [
+      sub({ id: 1, rkey: 'a', feedUrl: 'https://x.com/Feed' }),
+      sub({ id: 2, rkey: 'b', feedUrl: 'https://x.com/feed' }),
+    ];
+    const { dupeIds } = dedupeSubscriptionsByFeed(subs);
+    expect(dupeIds).toEqual([2]);
+  });
+
+  it('preserves original order of the kept rows', () => {
+    const subs = [
+      sub({ id: 1, rkey: 'a', feedUrl: 'https://a.com/feed' }),
+      sub({ id: 2, rkey: 'b', feedUrl: 'https://x.com/feed', createdAt: '2026-01-02T00:00:00Z' }),
+      sub({ id: 3, rkey: 'c', feedUrl: 'https://b.com/feed' }),
+      sub({ id: 4, rkey: 'd', feedUrl: 'https://x.com/feed', createdAt: '2026-01-01T00:00:00Z' }),
+    ];
+    const { kept } = dedupeSubscriptionsByFeed(subs);
+    expect(kept.map((s) => s.id)).toEqual([1, 3, 4]); // the older x.com row (id 4) survives in place
+  });
+
+  it('collapses atproto streams by sourceType + subjectDid + uri', () => {
+    const subs = [
+      sub({
+        id: 1,
+        rkey: 'a',
+        sourceType: 'atproto.collection',
+        subjectDid: 'did:plc:abc',
+        feedUrl: 'at://did:plc:abc/app.bsky.feed/1',
+        createdAt: '2026-01-01T00:00:00Z',
+      }),
+      sub({
+        id: 2,
+        rkey: 'b',
+        sourceType: 'atproto.collection',
+        subjectDid: 'did:plc:abc',
+        feedUrl: 'at://did:plc:abc/app.bsky.feed/1',
+        createdAt: '2026-01-02T00:00:00Z',
+      }),
+    ];
+    const { kept, dupeIds } = dedupeSubscriptionsByFeed(subs);
+    expect(kept.map((s) => s.id)).toEqual([1]);
+    expect(dupeIds).toEqual([2]);
+  });
+
+  it('does not merge different feeds', () => {
+    const subs = [
+      sub({ id: 1, rkey: 'a', feedUrl: 'https://a.com/feed' }),
+      sub({ id: 2, rkey: 'b', feedUrl: 'https://b.com/feed' }),
+    ];
+    const { kept, dupeIds } = dedupeSubscriptionsByFeed(subs);
+    expect(kept).toHaveLength(2);
+    expect(dupeIds).toEqual([]);
+  });
+
+  it('leaves rows without a feed identity untouched', () => {
+    const subs = [
+      sub({ id: 1, rkey: 'a', feedUrl: undefined }),
+      sub({ id: 2, rkey: 'b', feedUrl: undefined }),
+    ];
+    const { kept, dupeIds } = dedupeSubscriptionsByFeed(subs);
+    expect(kept).toHaveLength(2);
+    expect(dupeIds).toEqual([]);
+  });
+});
+
+describe('dedupeRemoteSubscriptionRecords', () => {
+  const rec = (rkey: string, feedUrl: string, createdAt?: string) => ({
+    rkey,
+    value: { feedUrl, createdAt },
+  });
+
+  it('reports the newer of two same-feed records for deletion', () => {
+    const { duplicateRkeys } = dedupeRemoteSubscriptionRecords([
+      rec('a', 'https://x.com/feed', '2026-01-02T00:00:00Z'),
+      rec('b', 'https://x.com/feed', '2026-01-01T00:00:00Z'),
+    ]);
+    expect(duplicateRkeys).toEqual(['a']); // 'b' is older → kept
+  });
+
+  it('breaks createdAt ties deterministically by ascending rkey', () => {
+    const ts = '2026-01-01T00:00:00Z';
+    const { duplicateRkeys } = dedupeRemoteSubscriptionRecords([
+      rec('zzz', 'https://x.com/feed', ts),
+      rec('aaa', 'https://x.com/feed', ts),
+    ]);
+    expect(duplicateRkeys).toEqual(['zzz']); // 'aaa' < 'zzz' → kept
+  });
+
+  it('keeps distinct feeds and reports nothing', () => {
+    const { duplicateRkeys } = dedupeRemoteSubscriptionRecords([
+      rec('a', 'https://a.com/feed'),
+      rec('b', 'https://b.com/feed'),
+    ]);
+    expect(duplicateRkeys).toEqual([]);
+  });
+});
+
 describe('subscriptionDedupKey', () => {
   it('keys RSS feeds by case-insensitive URL', () => {
     const a = subscriptionDedupKey({ feedUrl: 'https://example.com/Feed.xml' });
