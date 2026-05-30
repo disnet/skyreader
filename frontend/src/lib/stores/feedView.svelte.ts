@@ -6,6 +6,7 @@ import { socialStore } from './social.svelte';
 import { savesStore } from './saves.svelte';
 import { preferences } from './preferences.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
+import { liveDb } from '$lib/services/liveDb.svelte';
 import type {
   Article,
   SocialShare,
@@ -419,7 +420,10 @@ function createFeedViewStore() {
     // If no articles are allowed by source filter, return empty
     if (!showArticles) return [];
 
-    // Access articlesStore version for reactivity
+    // Subscribe directly to the live DB version. The sidebar counts already do
+    // this; the feed list needs the same dependency so background refreshes
+    // repaint the active Everything view without a route/filter change.
+    liveDb.articlesVersion;
     const allArticles = articlesStore.allArticles;
     const sortOrder = fv.sortOrder;
 
