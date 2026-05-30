@@ -51,6 +51,13 @@ function createItemLabelsStore() {
   let readPositionsCursor = 0;
   let readPositionsFullSynced = false;
 
+  // Managed-labels (tagged/archived/readProgress) delta-sync cursor and session
+  // flag, mirroring the read-position pattern: the first sync does a full
+  // reconcile (catching deletions made on other devices), later refreshes fetch
+  // only rows changed since the cursor (in unix seconds).
+  let managedLabelsCursor = 0;
+  let managedLabelsFullSynced = false;
+
   // Debounce state for batching mark-read calls
   let pendingMarkRead: Array<{
     articleGuid: string;
@@ -184,9 +191,7 @@ function createItemLabelsStore() {
         await Promise.all([
           loadReadPositionsFromBackend(),
           loadSocialReadPositionsFromBackend(),
-          loadTagsFromBackend(),
-          loadArchivedFromBackend(),
-          loadReadProgressFromBackend(),
+          loadManagedLabelsFromBackend(),
         ]);
         hasLoaded = true;
       } catch (e) {
@@ -338,122 +343,99 @@ function createItemLabelsStore() {
     }
   }
 
-  async function loadTagsFromBackend() {
-    const taggedLabels = await api.getAllLabels({ label: 'tagged' });
+  // The backend-managed (non-read) label types stored in item_labels_cache.
+  // 'read' positions live in dedicated tables/endpoints; 'highlights' are
+  // local-only. Everything else here is fetched in a single pass.
+  const MANAGED_LABELS = ['tagged', 'archived', 'readProgress'] as const;
 
-    // Remove old tagged labels from state
-    const toRemove: string[] = [];
-    for (const [, lbl] of labelMap) {
-      if (lbl.label === 'tagged') {
-        toRemove.push(lbl.itemKey);
+  // Fetch managed labels in ONE paginated stream and reconcile each type,
+  // instead of issuing a separate (paginated) /api/labels request per type.
+  //
+  // The first sync of the session is a full fetch that reconciles deletions
+  // (tags/archives removed on other devices); subsequent refreshes fetch only
+  // rows changed since our cursor, keeping the common refresh tiny. As with read
+  // positions, cross-device DELETIONS only surface on the next full sync, since
+  // a delta returns updated rows and cannot observe absent ones.
+  async function loadManagedLabelsFromBackend() {
+    const managed = new Set<string>(MANAGED_LABELS);
+    const isFull = !managedLabelsFullSynced;
+    const fetched = await api.getAllLabels(isFull ? {} : { since: managedLabelsCursor });
+
+    // Group fetched labels by type (ignoring any non-managed labels) and track
+    // the newest updated_at (unix seconds) for the next delta cursor. Only the
+    // server-sourced timestamp is used — local labels store updatedAt in ms.
+    let maxUpdatedAt = managedLabelsCursor;
+    const byLabel = new Map<string, typeof fetched>();
+    for (const raw of fetched) {
+      if (!managed.has(raw.label)) continue;
+      if (raw.updatedAt > maxUpdatedAt) maxUpdatedAt = raw.updatedAt;
+      let arr = byLabel.get(raw.label);
+      if (!arr) {
+        arr = [];
+        byLabel.set(raw.label, arr);
+      }
+      arr.push(raw);
+    }
+
+    // Full sync: reconcile deletions by dropping local managed labels absent
+    // from the complete server set. (Deltas only upsert — see note above.)
+    const removed: Array<[string, string]> = [];
+    if (isFull) {
+      const serverKeys = new Set<string>();
+      for (const raw of fetched) {
+        if (managed.has(raw.label)) serverKeys.add(makeKey(raw.itemKey, raw.label));
+      }
+      for (const [, lbl] of labelMap) {
+        if (managed.has(lbl.label) && !serverKeys.has(makeKey(lbl.itemKey, lbl.label))) {
+          removed.push([lbl.itemKey, lbl.label]);
+        }
+      }
+      for (const [itemKey, label] of removed) {
+        removeFromState(itemKey, label);
       }
     }
-    for (const itemKey of toRemove) {
-      removeFromState(itemKey, 'tagged');
-    }
 
-    // Add from backend
+    // Upsert fetched labels (full and delta), normalising props per label type.
     const dbOps: ItemLabel[] = [];
-    for (const t of taggedLabels) {
-      const tags = (t.props?.tags as string[]) || [];
-      if (tags.length === 0) continue;
+    for (const raw of byLabel.get('tagged') || []) {
+      const tags = (raw.props?.tags as string[]) || [];
+      if (tags.length === 0) {
+        // Defensive: an empty tag set means "untagged" — drop it locally.
+        removeFromState(raw.itemKey, 'tagged');
+        removed.push([raw.itemKey, 'tagged']);
+        continue;
+      }
       const lbl: ItemLabel = {
-        itemKey: t.itemKey,
-        itemType: t.itemType as ItemLabelType,
+        itemKey: raw.itemKey,
+        itemType: raw.itemType as ItemLabelType,
         label: 'tagged',
         props: { tags },
-        createdAt: t.createdAt,
-        updatedAt: t.updatedAt,
+        createdAt: raw.createdAt,
+        updatedAt: raw.updatedAt,
       };
       addToState(lbl);
       dbOps.push(lbl);
     }
-
-    triggerReactivity();
-
-    // Sync to IndexedDB
-    try {
-      const oldTagged = await db.itemLabels.where('label').equals('tagged').toArray();
-      for (const l of oldTagged) {
-        await db.itemLabels.where('[itemKey+label]').equals([l.itemKey, 'tagged']).delete();
-      }
-      if (dbOps.length > 0) {
-        await safeBulkPut(db.itemLabels, dbOps);
-      }
-    } catch (e) {
-      console.error('Failed to sync tags to cache:', e);
-    }
-  }
-
-  async function loadArchivedFromBackend() {
-    const archivedLabels = await api.getAllLabels({ label: 'archived' });
-
-    // Remove old archived labels from state
-    const toRemove: string[] = [];
-    for (const [, lbl] of labelMap) {
-      if (lbl.label === 'archived') {
-        toRemove.push(lbl.itemKey);
-      }
-    }
-    for (const itemKey of toRemove) {
-      removeFromState(itemKey, 'archived');
-    }
-
-    // Add from backend
-    const dbOps: ItemLabel[] = [];
-    for (const a of archivedLabels) {
+    for (const raw of byLabel.get('archived') || []) {
       const lbl: ItemLabel = {
-        itemKey: a.itemKey,
-        itemType: (a.itemType as ItemLabelType) || 'article',
+        itemKey: raw.itemKey,
+        itemType: (raw.itemType as ItemLabelType) || 'article',
         label: 'archived',
-        props: a.props || {},
-        createdAt: a.createdAt,
-        updatedAt: a.updatedAt,
+        props: raw.props || {},
+        createdAt: raw.createdAt,
+        updatedAt: raw.updatedAt,
       };
       addToState(lbl);
       dbOps.push(lbl);
     }
-
-    triggerReactivity();
-
-    // Sync to IndexedDB
-    try {
-      const oldArchived = await db.itemLabels.where('label').equals('archived').toArray();
-      for (const l of oldArchived) {
-        await db.itemLabels.where('[itemKey+label]').equals([l.itemKey, 'archived']).delete();
-      }
-      if (dbOps.length > 0) {
-        await safeBulkPut(db.itemLabels, dbOps);
-      }
-    } catch (e) {
-      console.error('Failed to sync archived labels to cache:', e);
-    }
-  }
-
-  async function loadReadProgressFromBackend() {
-    const progressLabels = await api.getAllLabels({ label: 'readProgress' });
-
-    // Remove old readProgress labels from state
-    const toRemove: string[] = [];
-    for (const [, lbl] of labelMap) {
-      if (lbl.label === 'readProgress') {
-        toRemove.push(lbl.itemKey);
-      }
-    }
-    for (const itemKey of toRemove) {
-      removeFromState(itemKey, 'readProgress');
-    }
-
-    // Add from backend
-    const dbOps: ItemLabel[] = [];
-    for (const p of progressLabels) {
+    for (const raw of byLabel.get('readProgress') || []) {
       const lbl: ItemLabel = {
-        itemKey: p.itemKey,
-        itemType: (p.itemType as ItemLabelType) || 'article',
+        itemKey: raw.itemKey,
+        itemType: (raw.itemType as ItemLabelType) || 'article',
         label: 'readProgress',
-        props: p.props || {},
-        createdAt: p.createdAt,
-        updatedAt: p.updatedAt,
+        props: raw.props || {},
+        createdAt: raw.createdAt,
+        updatedAt: raw.updatedAt,
       };
       addToState(lbl);
       dbOps.push(lbl);
@@ -461,18 +443,20 @@ function createItemLabelsStore() {
 
     triggerReactivity();
 
-    // Sync to IndexedDB
+    // Sync to IndexedDB: delete removed labels, then bulk-put the changed set.
     try {
-      const oldProgress = await db.itemLabels.where('label').equals('readProgress').toArray();
-      for (const l of oldProgress) {
-        await db.itemLabels.where('[itemKey+label]').equals([l.itemKey, 'readProgress']).delete();
+      for (const [itemKey, label] of removed) {
+        await db.itemLabels.where('[itemKey+label]').equals([itemKey, label]).delete();
       }
       if (dbOps.length > 0) {
         await safeBulkPut(db.itemLabels, dbOps);
       }
     } catch (e) {
-      console.error('Failed to sync read progress to cache:', e);
+      console.error('Failed to sync managed labels to cache:', e);
     }
+
+    managedLabelsCursor = maxUpdatedAt;
+    managedLabelsFullSynced = true;
   }
 
   // --- Query methods ---
