@@ -328,6 +328,7 @@
   function handleContentClick(e: MouseEvent) {
     // Link clicks are handled by useLinkInterception when expanded
     if ((e.target as HTMLElement).closest('a')) return;
+    if ((e.target as HTMLElement).closest('video, audio, iframe')) return;
     e.stopPropagation();
 
     if (expanded) {
@@ -1182,6 +1183,26 @@
     line-clamp: 8;
     -webkit-box-orient: vertical;
     overflow: hidden;
+  }
+
+  .article-body :global(video) {
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+    margin: 0.75rem 0;
+    cursor: auto;
+  }
+
+  .article-body :global(iframe) {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    aspect-ratio: 16 / 9;
+    height: auto;
+    border: 0;
+    border-radius: 6px;
+    margin: 0.75rem 0;
+    cursor: auto;
   }
 
   .article-body :global(img) {

@@ -6,6 +6,8 @@ export interface LinkMenuState {
   anchorRect: DOMRect;
 }
 
+const INTERACTIVE_MEDIA_SELECTOR = 'video, audio, iframe, embed, object';
+
 interface LinkInterceptionParams {
   contentEl: () => HTMLElement | undefined;
   enabled: () => boolean;
@@ -20,7 +22,10 @@ export function useLinkInterception(params: LinkInterceptionParams) {
     // Let modifier clicks (cmd/ctrl/shift/middle-click) use default browser behavior
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
 
-    const link = (e.target as HTMLElement).closest('a[href]') as HTMLAnchorElement | null;
+    const target = e.target as HTMLElement;
+    if (target.closest(INTERACTIVE_MEDIA_SELECTOR)) return;
+
+    const link = target.closest('a[href]') as HTMLAnchorElement | null;
     if (!link) return;
     if (!params.enabled()) return;
 
