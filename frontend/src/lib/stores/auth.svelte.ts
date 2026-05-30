@@ -1,5 +1,5 @@
 import { browser } from '$app/environment';
-import { api } from '$lib/services/api';
+import { api, OfflineError, SessionRefreshError } from '$lib/services/api';
 import { clearAllData } from '$lib/services/db';
 import { unregisterPeriodicSync } from '$lib/services/backgroundRefresh';
 import type { User } from '$lib/types';
@@ -90,7 +90,11 @@ function createAuthStore() {
       const user = await api.getMe();
       setUser(user);
       return true;
-    } catch {
+    } catch (error) {
+      if (error instanceof OfflineError || error instanceof SessionRefreshError) {
+        return !!state.user;
+      }
+
       // Session invalid - clear local state
       state.user = null;
       if (browser) {

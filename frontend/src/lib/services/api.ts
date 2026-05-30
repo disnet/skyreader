@@ -78,10 +78,14 @@ export interface ExtractedArticle {
 // How many times a single request transparently retries a transient
 // session-refresh (503) before giving up and surfacing SessionRefreshError.
 const MAX_SESSION_REFRESH_RETRIES = 4;
+const MAX_UNAUTHORIZED_RETRIES = 1;
+
+type SessionProbeResult = 'active' | 'expired' | 'unknown';
 
 class ApiClient {
   private onUnauthorized: (() => void) | null = null;
   private onScopeUpgradeRequired: (() => void) | null = null;
+  private sessionProbe: Promise<SessionProbeResult> | null = null;
 
   // Set callback for when 401 is received (session invalid)
   setOnUnauthorized(callback: () => void) {
@@ -93,7 +97,48 @@ class ApiClient {
     this.onScopeUpgradeRequired = callback;
   }
 
-  private async fetch<T>(path: string, options: RequestInit = {}, attempt = 0): Promise<T> {
+  private probeSession(): Promise<SessionProbeResult> {
+    if (this.sessionProbe) return this.sessionProbe;
+
+    const runProbe = async (sessionRefreshAttempt = 0): Promise<SessionProbeResult> => {
+      try {
+        const response = await fetch(`${API_BASE}/api/auth/me`, {
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+        });
+
+        if (response.ok) return 'active';
+        if (response.status === 401) return 'expired';
+
+        if (response.status === 503) {
+          const body = await response
+            .json()
+            .catch(() => null as { retryable?: boolean; error?: string } | null);
+          if (body?.retryable && sessionRefreshAttempt < MAX_SESSION_REFRESH_RETRIES) {
+            const delay = 400 * 2 ** sessionRefreshAttempt;
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            return runProbe(sessionRefreshAttempt + 1);
+          }
+        }
+      } catch {
+        // A failed probe is not evidence that the session is gone.
+      } finally {
+        this.sessionProbe = null;
+      }
+
+      return 'unknown';
+    };
+
+    this.sessionProbe = runProbe();
+    return this.sessionProbe;
+  }
+
+  private async fetch<T>(
+    path: string,
+    options: RequestInit = {},
+    sessionRefreshAttempt = 0,
+    unauthorizedAttempt = 0
+  ): Promise<T> {
     // Fail fast when offline instead of waiting for network timeout
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       throw new OfflineError();
@@ -121,12 +166,12 @@ class ApiClient {
           .json()
           .catch(() => null as { retryable?: boolean; error?: string } | null);
         if (body?.retryable) {
-          if (attempt < MAX_SESSION_REFRESH_RETRIES) {
+          if (sessionRefreshAttempt < MAX_SESSION_REFRESH_RETRIES) {
             // 400ms, 800ms, 1.6s, 3.2s — covers the refresh-poll window without
             // hammering the backend.
-            const delay = 400 * 2 ** attempt;
+            const delay = 400 * 2 ** sessionRefreshAttempt;
             await new Promise((resolve) => setTimeout(resolve, delay));
-            return this.fetch<T>(path, options, attempt + 1);
+            return this.fetch<T>(path, options, sessionRefreshAttempt + 1, unauthorizedAttempt);
           }
           // Exhausted retries — keep the user logged in and let the caller decide.
           throw new SessionRefreshError();
@@ -134,13 +179,26 @@ class ApiClient {
         throw new Error(body?.error || `HTTP ${response.status}`);
       }
 
-      // Handle 401 - session is genuinely invalid/expired. The backend now returns
-      // 503 (above) for recoverable refresh hiccups, so a 401 means re-auth.
+      // Handle 401. During deploys, an open tab can occasionally see one stale/racy
+      // 401 from a background request even though the cookie-backed session is still
+      // valid. Confirm against /api/auth/me before tearing down local auth.
       if (response.status === 401) {
-        console.warn('Session expired or invalid, logging out...');
-        if (this.onUnauthorized) {
-          this.onUnauthorized();
+        const sessionStatus = path === '/api/auth/me' ? 'expired' : await this.probeSession();
+
+        if (sessionStatus === 'active') {
+          if (unauthorizedAttempt < MAX_UNAUTHORIZED_RETRIES) {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            return this.fetch<T>(path, options, sessionRefreshAttempt, unauthorizedAttempt + 1);
+          }
+          throw new Error('Unauthorized');
         }
+
+        if (sessionStatus === 'unknown') {
+          throw new SessionRefreshError();
+        }
+
+        console.warn('Session expired or invalid, logging out...');
+        if (this.onUnauthorized) this.onUnauthorized();
         throw new Error('Session expired');
       }
 
