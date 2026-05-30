@@ -1,6 +1,6 @@
 import { db } from './db';
 import { safeAdd, safeUpdate, safeBulkAdd } from './safeDb.svelte';
-import { dedupeSubscriptionsByRkey } from './subscriptionDedup';
+import { dedupeSubscriptionsByRkey, dedupeSubscriptionsByFeed } from './subscriptionDedup';
 import { selectNewArticles, computeArticleLimitDeletions } from './articleMerge';
 import type { Subscription, Article, FeedItem } from '$lib/types';
 
@@ -54,13 +54,18 @@ class LiveDatabase {
   }
 
   /**
-   * Remove duplicate subscriptions that share an rkey, keeping the first
-   * (lowest-id) row and deleting the rest from IndexedDB. rkey is the
-   * canonical AT Protocol record identity, so two rows with the same rkey
-   * are always the same subscription.
+   * Heal duplicate subscriptions in the cache, deleting the redundant rows from
+   * IndexedDB. Two classes are collapsed:
+   *  1. Same rkey — two rows of one AT Protocol record (an add/sync race).
+   *  2. Same feed, different rkey — two records pointing at one feed (a
+   *     concurrent add or the same feed added on two devices).
+   * The oldest row in each group is kept; the rest are deleted. PDS-side
+   * cleanup of class 2 happens in the sync flow (see syncSubscriptions).
    */
   private async dedupeSubscriptions(subs: Subscription[]): Promise<Subscription[]> {
-    const { kept, dupeIds } = dedupeSubscriptionsByRkey(subs);
+    const byRkey = dedupeSubscriptionsByRkey(subs);
+    const byFeed = dedupeSubscriptionsByFeed(byRkey.kept);
+    const dupeIds = [...byRkey.dupeIds, ...byFeed.dupeIds];
     if (dupeIds.length > 0) {
       console.warn(`Removing ${dupeIds.length} duplicate subscription(s) from cache`);
       try {
@@ -69,7 +74,7 @@ class LiveDatabase {
         console.error('Failed to delete duplicate subscriptions:', e);
       }
     }
-    return kept;
+    return byFeed.kept;
   }
 
   /**
