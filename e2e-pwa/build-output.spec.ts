@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -38,6 +38,38 @@ test.describe('built service worker', () => {
       expect(existsSync(resolve(buildDir, rel)), `no build asset for precache URL "${url}"`).toBe(
         true
       );
+    }
+  });
+
+  test('registers the worker with an ABSOLUTE url + root scope', () => {
+    // The registration is emitted into the app bundle (workbox-window's `new Workbox(url,
+    // {scope})`), not into service-worker.js. SvelteKit 2's paths.relative=true makes Vite's
+    // base "./", which would emit "./service-worker.js" + scope "./". That resolves relative
+    // to whatever route first installs the SW (e.g. "/auth/callback" → "/auth/service-worker.js",
+    // scope "/auth/"), 404s to the SPA fallback, and bricks install. We pin scope/buildBase to
+    // "/" in vite.config.ts; assert the built bundle never reintroduces a relative form.
+    const immutable = resolve(buildDir, '_app/immutable');
+    const jsFiles: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = resolve(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith('.js')) jsFiles.push(full);
+      }
+    };
+    walk(immutable);
+
+    const swRefs = jsFiles
+      .map((f) => readFileSync(f, 'utf8'))
+      .filter((src) => src.includes('service-worker.js'));
+    expect(swRefs.length, 'no bundle chunk references service-worker.js').toBeGreaterThan(0);
+
+    for (const src of swRefs) {
+      // Workbox is registered as `new <minified>("<url>",{scope:"<scope>",...})`.
+      const reg = src.match(/\(\s*"((?:\.\/)?\/?service-worker\.js)"\s*,\s*\{scope:"([^"]*)"/);
+      expect(reg, 'could not locate the Workbox registration call').not.toBeNull();
+      expect(reg![1], 'SW url must be root-absolute, not relative').toBe('/service-worker.js');
+      expect(reg![2], 'SW scope must be "/", not relative').toBe('/');
     }
   });
 
