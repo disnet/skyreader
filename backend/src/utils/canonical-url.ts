@@ -316,14 +316,60 @@ async function verifyPublicationDomain(
 }
 
 /**
- * Resolve a discovered site.standard.document URI into a *verified*, subscribable
+ * Resolve + verify a site.standard.publication URI into a subscribable publication.
+ *
+ * Fetches the publication record and confirms the bidirectional binding against
+ * the domain's /.well-known/site.standard.publication endpoint (per the
+ * standard.site spec — the HTML hint alone is not trusted). Returns null when the
+ * record has no URL or verification fails.
+ */
+async function resolveVerifiedPublication(
+  publicationUri: string
+): Promise<ResolvedStandardSite | null> {
+  const pub = parseAtUri(publicationUri);
+  if (!pub || pub.collection !== 'site.standard.publication') {
+    return null;
+  }
+
+  const pdsUrl = await resolvePdsUrl(pub.did);
+  if (!pdsUrl) {
+    return null;
+  }
+
+  const record = await fetchPublicationRecord(pdsUrl, pub.did, pub.collection, pub.rkey);
+  if (!record?.url) {
+    return null;
+  }
+
+  // Confirm the bidirectional binding before trusting the hint.
+  const verified = await verifyPublicationDomain(record.url, publicationUri);
+  if (!verified) {
+    console.warn(`[canonical-url] Unverified standard.site, not offering: ${publicationUri}`);
+    return null;
+  }
+
+  return {
+    did: pub.did,
+    publicationUri,
+    name: record.name || record.url,
+    url: record.url,
+    description: record.description,
+    iconUrl: resolveBlobUrl(pub.did, record.icon) || undefined,
+  };
+}
+
+/**
+ * Resolve a discovered standard.site URI into a *verified*, subscribable
  * publication.
  *
- * Given an `at://did/site.standard.document/rkey` URI (advertised in a website's
- * <link> hint), fetch the document record, follow its `site` field to the owning
- * site.standard.publication, then verify the publication against its domain's
- * /.well-known/site.standard.publication endpoint (per the standard.site spec —
- * the HTML hint alone is not trusted).
+ * Accepts either of the at:// URIs advertised in a website's <link> hint:
+ * - `at://did/site.standard.publication/rkey` (publication homepages) — used
+ *   directly.
+ * - `at://did/site.standard.document/rkey` (article pages) — the document record
+ *   is fetched and its `site` field followed to the owning publication.
+ *
+ * In both cases the resolved publication is verified against its domain's
+ * /.well-known/site.standard.publication endpoint (per the standard.site spec).
  *
  * Returns the publication's name/url/icon (so the frontend can create an
  * `atproto.documents` subscription) only when verification succeeds, otherwise
@@ -331,14 +377,24 @@ async function verifyPublicationDomain(
  * https:// sites) cannot be tied back to the domain and are not offered.
  */
 export async function resolveStandardSite(
-  documentUri: string,
+  uri: string,
   _env: Env
 ): Promise<ResolvedStandardSite | null> {
-  const doc = parseAtUri(documentUri);
-  if (!doc || doc.collection !== 'site.standard.document') {
+  const parsed = parseAtUri(uri);
+  if (!parsed) {
     return null;
   }
 
+  // Publication homepages advertise the publication directly.
+  if (parsed.collection === 'site.standard.publication') {
+    return resolveVerifiedPublication(uri);
+  }
+
+  if (parsed.collection !== 'site.standard.document') {
+    return null;
+  }
+
+  const doc = parsed;
   const pdsUrl = await resolvePdsUrl(doc.did);
   if (!pdsUrl) {
     return null;
@@ -367,31 +423,14 @@ export async function resolveStandardSite(
     return null;
   }
 
-  const pub = parseAtUri(site);
-  if (!pub || pub.collection !== 'site.standard.publication') {
+  const resolved = await resolveVerifiedPublication(site);
+  if (!resolved) {
     return null;
   }
 
-  const record = await fetchPublicationRecord(pdsUrl, pub.did, pub.collection, pub.rkey);
-  if (!record?.url) {
-    return null;
-  }
-
-  // Confirm the bidirectional binding before trusting the hint.
-  const verified = await verifyPublicationDomain(record.url, site);
-  if (!verified) {
-    console.warn(`[canonical-url] Unverified standard.site, not offering: ${site}`);
-    return null;
-  }
-
-  return {
-    did: doc.did,
-    publicationUri: site,
-    name: record.name || record.url,
-    url: record.url,
-    description: record.description,
-    iconUrl: resolveBlobUrl(pub.did, record.icon) || undefined,
-  };
+  // Subscribe to the document author's repo (which holds the documents we
+  // discovered), not the publication owner's — these differ for loose documents.
+  return { ...resolved, did: doc.did };
 }
 
 /**

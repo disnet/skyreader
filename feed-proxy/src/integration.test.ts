@@ -1462,6 +1462,37 @@ describe('Integration Tests', () => {
 				]);
 			});
 
+			it('detects a site.standard.publication advertised on a homepage', async () => {
+				const { app } = createTestApp();
+				// Publication homepages advertise the publication record directly rather
+				// than a per-article document (matches underreacted.leaflet.pub).
+				const html = `
+					<!DOCTYPE html>
+					<html>
+					<head>
+						<link rel="alternate" type="application/rss+xml" href="https://underreacted.leaflet.pub/rss">
+						<link rel="alternate" href="at://did:plc:fpruhuo22xkm5o7ttr2ktxdo/site.standard.publication/3m23dstduds2v">
+						<link rel="site.standard.publication" href="at://did:plc:fpruhuo22xkm5o7ttr2ktxdo/site.standard.publication/3m23dstduds2v">
+					</head>
+					<body>Hello</body>
+					</html>
+				`;
+				fetchMock = mockFetch(() => new Response(html, {
+					headers: { 'Content-Type': 'text/html' },
+				}));
+
+				const res = await app.request('/discover?url=https://underreacted.leaflet.pub/', {
+					headers: { 'X-Proxy-Secret': 'test-secret' },
+				});
+				const json = await res.json();
+
+				expect(res.status).toBe(200);
+				expect(json.feeds).toContain('https://underreacted.leaflet.pub/rss');
+				expect(json.standardSites).toEqual([
+					'at://did:plc:fpruhuo22xkm5o7ttr2ktxdo/site.standard.publication/3m23dstduds2v',
+				]);
+			});
+
 			it('returns an empty standardSites array when none are advertised', async () => {
 				const { app } = createTestApp();
 				const html = `
