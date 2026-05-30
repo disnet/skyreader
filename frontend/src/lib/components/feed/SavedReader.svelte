@@ -1116,6 +1116,26 @@
     margin: 1rem 0;
   }
 
+  .reader-body :global(video) {
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+    margin: 1rem 0;
+    cursor: auto;
+  }
+
+  .reader-body :global(iframe) {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    aspect-ratio: 16 / 9;
+    height: auto;
+    border: 0;
+    border-radius: 6px;
+    margin: 1rem 0;
+    cursor: auto;
+  }
+
   .reader-body :global(a) {
     color: var(--color-primary, #0066cc);
   }

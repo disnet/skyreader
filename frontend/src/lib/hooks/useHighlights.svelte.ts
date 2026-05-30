@@ -4,6 +4,7 @@ import { createSelector, createSelectorForElement, findTextInDOM } from '$lib/ut
 import type { ItemLabelType, Highlight, TextQuoteSelector } from '$lib/types';
 
 const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
+const INTERACTIVE_MEDIA_SELECTOR = 'video, audio, iframe, embed, object';
 
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
@@ -127,8 +128,8 @@ export function useHighlights(params: HighlightParams) {
     if (!params.enabled()) return;
 
     const target = e.target as HTMLElement;
-    // Don't intercept link double-clicks
-    if (target.closest('a')) return;
+    // Don't intercept interactive content.
+    if (target.closest(`a, ${INTERACTIVE_MEDIA_SELECTOR}`)) return;
 
     const blockEl = target.closest(BLOCK_SELECTORS) as HTMLElement | null;
     if (!blockEl) return;
@@ -161,6 +162,8 @@ export function useHighlights(params: HighlightParams) {
 
   function handleMouseUp(e: MouseEvent) {
     if (!params.enabled()) return;
+    const target = e.target as HTMLElement;
+    if (target.closest(INTERACTIVE_MEDIA_SELECTOR)) return;
     // Small delay to let selection finalize
     setTimeout(() => {
       const selection = window.getSelection();
@@ -186,6 +189,7 @@ export function useHighlights(params: HighlightParams) {
 
   function handleClick(e: MouseEvent) {
     const target = e.target as HTMLElement;
+    if (target.closest(INTERACTIVE_MEDIA_SELECTOR)) return;
     const mark = target.closest('mark.highlight') as HTMLElement | null;
     if (!mark) return;
 

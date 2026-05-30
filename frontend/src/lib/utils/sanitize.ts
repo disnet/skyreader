@@ -1,6 +1,48 @@
 import DOMPurify from 'dompurify';
 
 /**
+ * Hosts allowed to be embedded via <iframe>. Only well-known video
+ * providers are permitted; any other iframe is stripped during sanitization.
+ */
+const ALLOWED_IFRAME_HOSTS = new Set([
+  'www.youtube.com',
+  'youtube.com',
+  'www.youtube-nocookie.com',
+  'youtube-nocookie.com',
+  'player.vimeo.com',
+]);
+
+const VIDEO_IFRAME_ALLOW =
+  'accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
+
+function disableIframeAutoplay(url: URL): void {
+  url.searchParams.set('autoplay', '0');
+
+  // Vimeo's background mode implies autoplay + muted + loop with controls hidden.
+  if (url.hostname.toLowerCase() === 'player.vimeo.com' && url.searchParams.get('background')) {
+    url.searchParams.set('background', '0');
+  }
+}
+
+/**
+ * Returns the normalized (absolute, https) URL for a video iframe src if it
+ * points at an allowed provider, or null if the iframe should be removed.
+ */
+export function allowedIframeSrc(src: string | null, base: URL | null): string | null {
+  if (!src) return null;
+  let url: URL;
+  try {
+    url = new URL(src, base ?? undefined);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:') return null;
+  if (!ALLOWED_IFRAME_HOSTS.has(url.hostname.toLowerCase())) return null;
+  disableIframeAutoplay(url);
+  return url.href;
+}
+
+/**
  * Sanitizes HTML content, rewrites relative URLs to be absolute
  * based on the article's source URL, and opens all links in new tab.
  */
@@ -58,6 +100,11 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
     }
 
     // Rewrite video/audio src and poster (only if we have a valid base)
+    if (node.tagName === 'VIDEO' || node.tagName === 'AUDIO') {
+      node.removeAttribute('autoplay');
+      node.setAttribute('preload', 'metadata');
+    }
+
     if (
       base &&
       (node.tagName === 'VIDEO' || node.tagName === 'AUDIO') &&
@@ -91,9 +138,30 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
         }
       }
     }
+
+    // Only allow iframes from trusted video providers; strip all others.
+    if (node.tagName === 'IFRAME') {
+      const normalized = allowedIframeSrc(node.getAttribute('src'), base);
+      if (!normalized) {
+        node.remove();
+        return;
+      }
+      node.setAttribute('src', normalized);
+      node.setAttribute('loading', 'lazy');
+      node.setAttribute('allow', VIDEO_IFRAME_ALLOW);
+      node.setAttribute('allowfullscreen', '');
+      node.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+      // Drop fixed dimensions so the responsive CSS wrapper controls sizing.
+      node.removeAttribute('width');
+      node.removeAttribute('height');
+      node.removeAttribute('style');
+    }
   });
 
-  const sanitized = DOMPurify.sanitize(html);
+  const sanitized = DOMPurify.sanitize(html, {
+    ADD_TAGS: ['iframe'],
+    ADD_ATTR: ['allow', 'allowfullscreen', 'frameborder', 'referrerpolicy', 'scrolling'],
+  });
 
   // Remove hook to avoid affecting other calls
   DOMPurify.removeHook('afterSanitizeAttributes');
