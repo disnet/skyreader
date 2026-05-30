@@ -542,16 +542,18 @@ class ApiClient {
   }
 
   // Reading (read positions)
-  async getReadPositions(): Promise<{
+  // Pass `since` (a previously returned cursor) for an incremental delta fetch;
+  // omit it for a full windowed fetch. Returns the new cursor to send next time.
+  async getReadPositions(since?: number): Promise<{
     positions: Array<{
       item_guid: string;
-      item_url: string | null;
-      item_title: string | null;
       read_at: number;
       rkey: string;
     }>;
+    cursor: number;
   }> {
-    return this.fetch('/api/reading/positions');
+    const params = since ? `?since=${since}` : '';
+    return this.fetch(`/api/reading/positions${params}`);
   }
 
   async markAsRead(data: {

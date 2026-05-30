@@ -20,6 +20,12 @@ import type {
 
 const BULK_BATCH_SIZE = 500;
 
+// Retention window for read-position reconciliation. Must match
+// READ_POSITIONS_WINDOW_SECONDS in the backend's reading route: a full sync only
+// reconciles (deletes) read labels within this window, since the server only
+// returns reads this recent. Older local read state is preserved untouched.
+const READ_POSITIONS_WINDOW_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+
 // Re-export for consumers that used this type from reading store
 export interface SavedArticle {
   articleGuid: string;
@@ -37,6 +43,12 @@ function createItemLabelsStore() {
   let socialPositions = $state<Map<string, SocialReadPosition>>(new Map());
   let isLoading = $state(true);
   let hasLoaded = false;
+
+  // Read-position delta-sync cursor (max updated_at seen, in unix seconds) and a
+  // session flag: the first sync reconciles a full windowed snapshot, later
+  // refreshes fetch only what changed since the cursor.
+  let readPositionsCursor = 0;
+  let readPositionsFullSynced = false;
 
   // Debounce state for batching mark-read calls
   let pendingMarkRead: Array<{
@@ -191,33 +203,51 @@ function createItemLabelsStore() {
   }
 
   async function loadReadPositionsFromBackend() {
-    const { positions } = await api.getReadPositions();
+    // First sync of the session does a full (windowed) reconcile to pick up
+    // un-reads made on other devices; subsequent refreshes fetch only the delta
+    // since our cursor, which keeps the common refresh tiny regardless of how
+    // many articles the account has ever read.
+    const isFull = !readPositionsFullSynced;
+    const { positions, cursor } = await api.getReadPositions(
+      isFull ? undefined : readPositionsCursor
+    );
     const now = Date.now();
 
-    // Preserve local-only labels (archived, tags) that aren't in backend
-    // Remove old read labels for articles, then re-add from backend
-    const toRemove: Array<[string, string]> = [];
-    for (const [compKey, lbl] of labelMap) {
-      if (lbl.itemType === 'article' && lbl.label === 'read') {
-        toRemove.push([lbl.itemKey, lbl.label]);
+    if (isFull) {
+      // Reconcile deletions, but only WITHIN the retention window — the backend
+      // only returns recent reads, so anything absent-and-recent was un-read
+      // elsewhere, while absent-and-old is simply outside the window and must be
+      // preserved (older local read state, never re-sent by the server).
+      const serverGuids = new Set(positions.map((p) => p.item_guid));
+      const windowStart = now - READ_POSITIONS_WINDOW_MS;
+      const toRemove: Array<[string, string]> = [];
+      for (const [, lbl] of labelMap) {
+        if (lbl.itemType !== 'article' || lbl.label !== 'read') continue;
+        const readAt = (lbl.props.readAt as number) || 0;
+        if (readAt >= windowStart && !serverGuids.has(lbl.itemKey)) {
+          toRemove.push([lbl.itemKey, lbl.label]);
+        }
+      }
+      for (const [itemKey, label] of toRemove) {
+        removeFromState(itemKey, label);
+      }
+      try {
+        for (const [itemKey, label] of toRemove) {
+          await db.itemLabels.where('[itemKey+label]').equals([itemKey, label]).delete();
+        }
+      } catch (e) {
+        console.error('Failed to remove stale read positions from cache:', e);
       }
     }
-    for (const [itemKey, label] of toRemove) {
-      removeFromState(itemKey, label);
-    }
 
-    // Add from backend
+    // Upsert positions from backend (both full and delta).
     const dbOps: ItemLabel[] = [];
     for (const p of positions) {
       const readLabel: ItemLabel = {
         itemKey: p.item_guid,
         itemType: 'article',
         label: 'read',
-        props: {
-          readAt: p.read_at,
-          itemUrl: p.item_url || undefined,
-          itemTitle: p.item_title || undefined,
-        },
+        props: { readAt: p.read_at },
         createdAt: p.read_at || now,
         updatedAt: now,
       };
@@ -227,24 +257,16 @@ function createItemLabelsStore() {
 
     triggerReactivity();
 
-    // Sync to IndexedDB: clear old read labels for articles and re-add
     try {
-      // Delete old article read labels
-      const oldLabels = await db.itemLabels
-        .where('label')
-        .equals('read')
-        .filter((l) => l.itemType === 'article')
-        .toArray();
-      const deleteKeys = oldLabels.map((l) => [l.itemKey, l.label] as [string, string]);
-      for (const [itemKey, label] of deleteKeys) {
-        await db.itemLabels.where('[itemKey+label]').equals([itemKey, label]).delete();
-      }
       if (dbOps.length > 0) {
         await safeBulkPut(db.itemLabels, dbOps);
       }
     } catch (e) {
       console.error('Failed to sync read positions to cache:', e);
     }
+
+    if (cursor) readPositionsCursor = cursor;
+    readPositionsFullSynced = true;
   }
 
   async function loadSocialReadPositionsFromBackend() {
