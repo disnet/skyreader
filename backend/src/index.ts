@@ -69,7 +69,7 @@ import {
   handleUpsertChannel,
   handleDeleteChannel,
 } from './routes/channels';
-import { getSessionFromRequest, updateUserActivity } from './services/oauth';
+import { resolveSessionFromRequest, updateUserActivity } from './services/oauth';
 import { checkRateLimit, cleanupRateLimits, getRateLimitConfig } from './services/rate-limit';
 
 export { JetstreamPoller } from './durable-objects/jetstream-poller';
@@ -97,6 +97,28 @@ function unauthorizedResponse(headers: HeadersInit): Response {
   });
 }
 
+// A live session whose token couldn't be refreshed right this instant (in backoff,
+// raced by a concurrent refresh, or the refresh poll timed out). This is NOT a logout:
+// the client should back off and retry. Returned as 503 so it can never be confused
+// with the 401 that means "you are genuinely logged out".
+function sessionRetryResponse(headers: HeadersInit): Response {
+  return new Response(JSON.stringify({ error: 'session_refresh_pending', retryable: true }), {
+    status: 503,
+    headers: { ...headers, 'Content-Type': 'application/json', 'Retry-After': '2' },
+  });
+}
+
+// Routes that are reachable WITHOUT a session. A transient refresh hiccup must not
+// block these (especially logout, which has to clear a half-dead session's cookie).
+function isPublicPath(pathname: string): boolean {
+  return (
+    pathname.startsWith('/.well-known/') ||
+    pathname === '/api/auth/login' ||
+    pathname === '/api/auth/callback' ||
+    pathname === '/api/auth/logout'
+  );
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -109,7 +131,8 @@ export default {
     }
 
     // Track user activity for authenticated requests (non-blocking)
-    const session = await getSessionFromRequest(request, env);
+    const sessionResult = await resolveSessionFromRequest(request, env);
+    const session = sessionResult.session;
     if (session) {
       ctx.waitUntil(updateUserActivity(env, session.did));
 
@@ -128,6 +151,11 @@ export default {
           },
         });
       }
+    } else if (sessionResult.reason === 'transient' && !isPublicPath(url.pathname)) {
+      // The user still has a valid session, we just couldn't refresh its token in
+      // time (e.g. concurrent request burst right after a deploy). Tell the client to
+      // retry instead of returning the 401 that would tear down its auth.
+      return sessionRetryResponse(headers);
     }
 
     try {

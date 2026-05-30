@@ -576,8 +576,31 @@ function getBaseUrl(url: URL): string {
   return `${url.protocol}//${host}`;
 }
 
-// Get session from cookie or Authorization header, auto-refreshing if needed
-export async function getSessionFromRequest(request: Request, env: Env): Promise<Session | null> {
+// Why a session resolution produced no usable session. This lets callers avoid
+// logging a user out over a momentary hiccup:
+//   'none'      - no credentials presented (no cookie / bearer). Not logged in.
+//   'permanent' - session is genuinely gone: deleted, refresh token revoked/expired
+//                 (invalid_grant), or too many refresh failures. User MUST re-auth.
+//   'transient' - the session row is still alive, but its access token is expired and
+//                 a refresh couldn't complete RIGHT NOW (in backoff, raced by a
+//                 concurrent refresh, or the poll timed out). The next attempt will
+//                 very likely succeed — e.g. a burst of requests after a deploy. The
+//                 caller should retry, NOT log the user out.
+export type SessionFailureReason = 'none' | 'permanent' | 'transient';
+
+export interface SessionResolution {
+  session: Session | null;
+  // Set only when session is null.
+  reason?: SessionFailureReason;
+}
+
+// Resolve the session for a request, auto-refreshing if needed, and report WHY it's
+// unavailable when it is. Prefer this over getSessionFromRequest at the auth gate so a
+// transient refresh failure can be surfaced as a retryable error instead of a logout.
+export async function resolveSessionFromRequest(
+  request: Request,
+  env: Env
+): Promise<SessionResolution> {
   // Try cookie first (new method)
   const cookieHeader = request.headers.get('Cookie');
   const cookies = parseCookies(cookieHeader);
@@ -592,13 +615,14 @@ export async function getSessionFromRequest(request: Request, env: Env): Promise
   }
 
   if (!sessionId) {
-    return null;
+    return { session: null, reason: 'none' };
   }
 
   const session = await getSessionWithRefreshState(env, sessionId);
 
   if (!session) {
-    return null;
+    // No row for this session id — it was deleted or never existed. Re-auth required.
+    return { session: null, reason: 'permanent' };
   }
 
   // Check if session has exceeded max refresh failures
@@ -606,7 +630,7 @@ export async function getSessionFromRequest(request: Request, env: Env): Promise
     console.log(
       `Session for ${session.handle} has exceeded max refresh failures, treating as invalid`
     );
-    return null;
+    return { session: null, reason: 'permanent' };
   }
 
   // Check if token is expired or about to expire (within 5 minutes)
@@ -625,9 +649,10 @@ export async function getSessionFromRequest(request: Request, env: Env): Promise
       // If token not actually expired yet, continue with existing session
       if (!isActuallyExpired) {
         console.log(`Token still valid for ${session.handle}, using existing session`);
-        return session;
+        return { session };
       }
-      return null;
+      // Token expired and we're mid-backoff after a transient failure — recoverable.
+      return { session: null, reason: 'transient' };
     }
 
     console.log(
@@ -637,7 +662,7 @@ export async function getSessionFromRequest(request: Request, env: Env): Promise
     try {
       const refreshedSession = await refreshSession(env, sessionId, session, request);
       if (refreshedSession) {
-        return refreshedSession;
+        return { session: refreshedSession };
       }
     } catch (error) {
       console.error('Token refresh error:', error);
@@ -663,7 +688,7 @@ export async function getSessionFromRequest(request: Request, env: Env): Promise
           console.log(
             `Session for ${session.handle} was deleted during concurrent refresh (likely permanent error)`
           );
-          return null;
+          return { session: null, reason: 'permanent' };
         }
 
         const updatedTimeUntilExpiry = (updatedSession.expiresAt || 0) - Date.now();
@@ -671,7 +696,7 @@ export async function getSessionFromRequest(request: Request, env: Env): Promise
           console.log(
             `Concurrent refresh completed for ${session.handle} after ${attempt}s, using updated session`
           );
-          return updatedSession;
+          return { session: updatedSession };
         }
 
         // Check if refresh is still in progress (using the refresh_in_progress lock field)
@@ -685,7 +710,12 @@ export async function getSessionFromRequest(request: Request, env: Env): Promise
             `Concurrent refresh failed for ${session.handle}: ${updatedSession.lastRefreshError || 'unknown error'}, ` +
               `failures: ${updatedSession.refreshFailures}/${MAX_REFRESH_FAILURES}`
           );
-          return null;
+          // If the failures hit the cap, the session is effectively dead.
+          if (updatedSession.refreshFailures >= MAX_REFRESH_FAILURES) {
+            return { session: null, reason: 'permanent' };
+          }
+          // Otherwise it's a transient failure with retries left — recoverable.
+          return { session: null, reason: 'transient' };
         }
 
         if (attempt < maxAttempts) {
@@ -695,20 +725,28 @@ export async function getSessionFromRequest(request: Request, env: Env): Promise
         }
       }
 
-      // Timed out waiting for concurrent refresh
+      // Timed out waiting for concurrent refresh — the refresh may still land shortly.
       console.log(
-        `Timed out waiting for concurrent refresh for ${session.handle}, session invalid`
+        `Timed out waiting for concurrent refresh for ${session.handle}, treating as transient`
       );
-      return null;
+      return { session: null, reason: 'transient' };
     }
 
     // Token not actually expired yet, use existing session
     console.log(
       `Refresh failed but token still valid for ${session.handle}, using existing session`
     );
-    return session;
+    return { session };
   }
 
+  return { session };
+}
+
+// Get session from cookie or Authorization header, auto-refreshing if needed.
+// Thin wrapper over resolveSessionFromRequest for callers that only need the session
+// itself (and treat any absence as "not authenticated").
+export async function getSessionFromRequest(request: Request, env: Env): Promise<Session | null> {
+  const { session } = await resolveSessionFromRequest(request, env);
   return session;
 }
 

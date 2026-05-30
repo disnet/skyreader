@@ -53,6 +53,17 @@ export class OfflineError extends Error {
   }
 }
 
+// The backend has a live session for us but couldn't refresh its access token right
+// now (e.g. a request burst racing a token refresh just after a deploy). This is a
+// transient, retryable condition — NOT a logout. Surfaced after the in-fetch retries
+// are exhausted so callers keep the user signed in.
+export class SessionRefreshError extends Error {
+  constructor() {
+    super('Session is refreshing, please retry');
+    this.name = 'SessionRefreshError';
+  }
+}
+
 export interface ExtractedArticle {
   title: string | null;
   author: string | null;
@@ -64,12 +75,13 @@ export interface ExtractedArticle {
   wordCount: number;
 }
 
+// How many times a single request transparently retries a transient
+// session-refresh (503) before giving up and surfacing SessionRefreshError.
+const MAX_SESSION_REFRESH_RETRIES = 4;
+
 class ApiClient {
   private onUnauthorized: (() => void) | null = null;
   private onScopeUpgradeRequired: (() => void) | null = null;
-  // In-flight session probe, shared so a burst of concurrent 401s only triggers
-  // one re-verification request instead of a thundering herd.
-  private sessionProbe: Promise<'valid' | 'invalid' | 'unknown'> | null = null;
 
   // Set callback for when 401 is received (session invalid)
   setOnUnauthorized(callback: () => void) {
@@ -81,41 +93,7 @@ class ApiClient {
     this.onScopeUpgradeRequired = callback;
   }
 
-  // Re-verify the session directly against /api/auth/me. Used to distinguish a
-  // genuinely-invalid session from a transient 401 (e.g. a blip during a deploy
-  // when the API custom domain is mid-rollout, or the cross-subdomain cookie
-  // isn't attached to a particular in-flight request). Returns:
-  //   'valid'   - session is fine, the original 401 was transient
-  //   'invalid' - probe also got 401, session is genuinely gone
-  //   'unknown' - network/other error, can't confirm; treat as transient
-  // The probe uses a raw fetch (not this.fetch) to avoid recursing into the 401
-  // handler, and is deduped via this.sessionProbe.
-  private probeSession(): Promise<'valid' | 'invalid' | 'unknown'> {
-    if (this.sessionProbe) return this.sessionProbe;
-    const probe = (async (): Promise<'valid' | 'invalid' | 'unknown'> => {
-      try {
-        const response = await fetch(`${API_BASE}/api/auth/me`, {
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        });
-        if (response.ok) return 'valid';
-        if (response.status === 401) return 'invalid';
-        return 'unknown';
-      } catch {
-        return 'unknown';
-      } finally {
-        this.sessionProbe = null;
-      }
-    })();
-    this.sessionProbe = probe;
-    return probe;
-  }
-
-  private async fetch<T>(
-    path: string,
-    options: RequestInit = {},
-    retriedAfter401 = false
-  ): Promise<T> {
+  private async fetch<T>(path: string, options: RequestInit = {}, attempt = 0): Promise<T> {
     // Fail fast when offline instead of waiting for network timeout
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       throw new OfflineError();
@@ -134,27 +112,31 @@ class ApiClient {
     });
 
     if (!response.ok) {
-      // Handle 401 - session is invalid/expired
-      if (response.status === 401) {
-        // Don't immediately tear down local auth: a single 401 is often
-        // transient (e.g. during a prod deploy). Re-verify the session before
-        // logging out. Skip re-verification if this is already the post-probe
-        // retry, to avoid looping.
-        if (!retriedAfter401) {
-          const status = await this.probeSession();
-          if (status === 'valid') {
-            // Session is fine — the 401 was transient. Retry the original
-            // request once, transparently.
-            return this.fetch<T>(path, options, true);
+      // Handle 503 session_refresh_pending - the backend has a live session for us
+      // but couldn't refresh its token in time (transient, e.g. a request burst
+      // racing a refresh right after a deploy). Back off and retry transparently;
+      // crucially, do NOT log out. The 401 below is reserved for genuine logout.
+      if (response.status === 503) {
+        const body = await response
+          .json()
+          .catch(() => null as { retryable?: boolean; error?: string } | null);
+        if (body?.retryable) {
+          if (attempt < MAX_SESSION_REFRESH_RETRIES) {
+            // 400ms, 800ms, 1.6s, 3.2s — covers the refresh-poll window without
+            // hammering the backend.
+            const delay = 400 * 2 ** attempt;
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            return this.fetch<T>(path, options, attempt + 1);
           }
-          if (status === 'unknown') {
-            // Couldn't confirm the session is gone (network blip mid-deploy).
-            // Surface the failure but keep the user logged in.
-            throw new Error('Session check failed');
-          }
-          // status === 'invalid' → session genuinely gone, fall through.
+          // Exhausted retries — keep the user logged in and let the caller decide.
+          throw new SessionRefreshError();
         }
+        throw new Error(body?.error || `HTTP ${response.status}`);
+      }
 
+      // Handle 401 - session is genuinely invalid/expired. The backend now returns
+      // 503 (above) for recoverable refresh hiccups, so a 401 means re-auth.
+      if (response.status === 401) {
         console.warn('Session expired or invalid, logging out...');
         if (this.onUnauthorized) {
           this.onUnauthorized();
@@ -754,30 +736,14 @@ class ApiClient {
     return this.fetch('/api/integrations/margin/collections');
   }
 
-  // Extract article content via the proxy (fetch + Defuddle, cached proxy-side)
+  // Extract article content via the proxy (fetch + Defuddle, cached proxy-side).
+  // Routes through this.fetch so it shares the 503-retry / 401-logout handling
+  // (previously a raw fetch here logged users out on any 401, bypassing that logic).
   async extract(url: string): Promise<ExtractedArticle> {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      throw new OfflineError();
-    }
-
-    const response = await fetch(`${API_BASE}/api/extract`, {
+    return this.fetch<ExtractedArticle>('/api/extract', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
       body: JSON.stringify({ url }),
     });
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        if (this.onUnauthorized) {
-          this.onUnauthorized();
-        }
-        throw new Error('Session expired');
-      }
-      throw new Error(`Failed to extract article: ${response.status}`);
-    }
-
-    return (await response.json()) as ExtractedArticle;
   }
 
   // Bookmarks
