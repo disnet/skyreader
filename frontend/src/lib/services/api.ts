@@ -594,6 +594,7 @@ class ApiClient {
       itemType?: ItemLabelType;
       cursor?: string;
       limit?: number;
+      since?: number;
     } = {}
   ): Promise<{
     labels: Array<{
@@ -612,11 +613,14 @@ class ApiClient {
     if (options.itemType) params.set('itemType', options.itemType);
     if (options.cursor) params.set('cursor', options.cursor);
     if (options.limit) params.set('limit', String(options.limit));
+    if (options.since !== undefined) params.set('since', String(options.since));
     const query = params.toString();
     return this.fetch(`/api/labels${query ? `?${query}` : ''}`);
   }
 
-  async getAllLabels(options: { label?: string; itemType?: ItemLabelType } = {}): Promise<
+  async getAllLabels(
+    options: { label?: string; itemType?: ItemLabelType; since?: number } = {}
+  ): Promise<
     Array<{
       itemKey: string;
       itemType: string;
@@ -638,7 +642,8 @@ class ApiClient {
     }> = [];
     let cursor: string | undefined;
     do {
-      const response = await this.getLabels({ ...options, cursor });
+      // Use the backend max page size to minimise round-trips when paginating.
+      const response = await this.getLabels({ ...options, cursor, limit: 500 });
       all.push(...response.labels);
       cursor = response.cursor;
     } while (cursor);

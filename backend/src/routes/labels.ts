@@ -48,6 +48,10 @@ export async function handleGetLabels(request: Request, env: Env): Promise<Respo
   const cursor = url.searchParams.get('cursor');
   const limitParam = url.searchParams.get('limit');
   const limit = Math.min(Math.max(1, Number(limitParam) || DEFAULT_LIMIT), MAX_LIMIT);
+  // Delta sync: `?since=<unix_seconds>` returns only rows changed since the
+  // client's cursor (updated_at strictly greater). Omit it for a full fetch.
+  const sinceParam = url.searchParams.get('since');
+  const since = sinceParam !== null ? parseInt(sinceParam, 10) : NaN;
 
   try {
     let query = `SELECT id, item_key, item_type, label, props, rkey, created_at, updated_at
@@ -62,6 +66,10 @@ export async function handleGetLabels(request: Request, env: Env): Promise<Respo
     if (itemTypeFilter) {
       query += ' AND item_type = ?';
       params.push(itemTypeFilter);
+    }
+    if (Number.isFinite(since)) {
+      query += ' AND updated_at > ?';
+      params.push(since);
     }
 
     if (cursor) {
