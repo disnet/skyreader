@@ -16,9 +16,26 @@ interface ItemLabelRow {
   item_key: string;
   props: string | null;
   rkey: string | null;
+  updated_at: number;
 }
 
-// GET /api/reading/positions - List all read positions for the current user
+// Read positions grow unbounded over the lifetime of an account, so the GET is
+// optimized in three ways (see handleGetReadPositions):
+//   1. Slim payload  — only item_guid/read_at/rkey are returned (no url/title).
+//   2. Delta sync     — `?since=<updated_at>` returns only rows changed since the
+//                       client's cursor; the common refresh is then tiny.
+//   3. Windowing      — a full sync (no `since`) is bounded to recent reads, since
+//                       older read state can't suppress articles no longer fetched.
+// NOTE: the window must stay in sync with READ_POSITIONS_WINDOW_MS in the
+// frontend's itemLabels store, which scopes its reconcile deletions to the same
+// window so it never drops older local read state.
+const READ_POSITIONS_WINDOW_SECONDS = 90 * 24 * 60 * 60; // 90 days
+const READ_POSITIONS_MAX_ROWS = 5000; // hard backstop on a single response
+
+// GET /api/reading/positions - List read positions for the current user.
+// Pass `?since=<unix_seconds>` for an incremental (delta) fetch; omit it for a
+// full (windowed) fetch. Returns { positions, cursor }, where cursor is the max
+// updated_at in the batch — the client sends it back as `since` next time.
 export async function handleGetReadPositions(request: Request, env: Env): Promise<Response> {
   const session = await getSessionFromRequest(request, env);
   if (!session) {
@@ -29,27 +46,37 @@ export async function handleGetReadPositions(request: Request, env: Env): Promis
   }
 
   try {
+    const url = new URL(request.url);
+    const sinceParam = url.searchParams.get('since');
+    const since = sinceParam !== null ? parseInt(sinceParam, 10) : NaN;
+    const isDelta = Number.isFinite(since);
+
+    // Delta: only rows changed since the cursor (naturally small, no window).
+    // Full: the most recent rows within the retention window.
+    const lowerBound = isDelta
+      ? since
+      : Math.floor(Date.now() / 1000) - READ_POSITIONS_WINDOW_SECONDS;
+    const comparator = isDelta ? '>' : '>=';
+
     const result = await env.DB.prepare(
       `
-      SELECT item_key, props, rkey FROM item_labels_cache
-      WHERE user_did = ? AND label = 'read' AND item_type = 'article'
+      SELECT item_key, props, rkey, updated_at FROM item_labels_cache
+      WHERE user_did = ? AND label = 'read' AND item_type = 'article' AND updated_at ${comparator} ?
       ORDER BY updated_at DESC
+      LIMIT ?
     `
     )
-      .bind(session.did)
+      .bind(session.did, lowerBound, READ_POSITIONS_MAX_ROWS)
       .all<ItemLabelRow>();
 
+    let cursor = isDelta ? since : 0;
     const positions = result.results.map((row) => {
-      let readAt: number | null = null;
-      let itemUrl: string | null = null;
-      let itemTitle: string | null = null;
+      if (row.updated_at > cursor) cursor = row.updated_at;
 
+      let readAt: number | null = null;
       if (row.props) {
         try {
-          const parsed = JSON.parse(row.props);
-          readAt = parsed.readAt ?? null;
-          itemUrl = parsed.itemUrl ?? null;
-          itemTitle = parsed.itemTitle ?? null;
+          readAt = JSON.parse(row.props).readAt ?? null;
         } catch {
           // ignore parse errors
         }
@@ -57,14 +84,12 @@ export async function handleGetReadPositions(request: Request, env: Env): Promis
 
       return {
         item_guid: row.item_key,
-        item_url: itemUrl,
-        item_title: itemTitle,
         read_at: readAt,
         rkey: row.rkey,
       };
     });
 
-    return new Response(JSON.stringify({ positions }), {
+    return new Response(JSON.stringify({ positions, cursor }), {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error) {
