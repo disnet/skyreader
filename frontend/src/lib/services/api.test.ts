@@ -76,20 +76,107 @@ describe('api transient 503 (session_refresh_pending)', () => {
 });
 
 describe('api genuine 401', () => {
-  it('logs out immediately (no probe, no retry)', async () => {
+  it('/auth/me 401 logs out immediately', async () => {
     fetchMock.mockResolvedValueOnce(json(401, { error: 'Unauthorized' }));
 
     await expect(api.getMe()).rejects.toThrow('Session expired');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
   });
+
+  it('confirms a non-/auth/me 401 before logging out', async () => {
+    fetchMock
+      .mockResolvedValueOnce(json(401, { error: 'Unauthorized' }))
+      .mockResolvedValueOnce(json(401, { error: 'Unauthorized' }));
+
+    await expect(api.getSettings()).rejects.toThrow('Session expired');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/auth/me',
+      expect.objectContaining({ credentials: 'include' })
+    );
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not log out when a non-/auth/me 401 is followed by a valid session probe', async () => {
+    vi.useFakeTimers();
+    fetchMock
+      .mockResolvedValueOnce(json(401, { error: 'Unauthorized' }))
+      .mockResolvedValueOnce(json(200, { did: 'did:plc:abc', handle: 'a.bsky.social' }))
+      .mockResolvedValueOnce(json(200, { pdsSyncEnabled: true, lastPdsSyncSubscriptions: null }));
+
+    const promise = api.getSettings();
+    await vi.runAllTimersAsync();
+    const settings = await promise;
+
+    expect(settings).toMatchObject({ pdsSyncEnabled: true });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it('dedupes concurrent session probes after a burst of 401s', async () => {
+    vi.useFakeTimers();
+
+    let resolveProbe!: (response: Response) => void;
+    const probeResponse = new Promise<Response>((resolve) => {
+      resolveProbe = resolve;
+    });
+    let settingsCalls = 0;
+    let integrationStatusCalls = 0;
+    let probeCalls = 0;
+
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === '/api/auth/me') {
+        probeCalls += 1;
+        return probeResponse;
+      }
+
+      if (url === '/api/settings') {
+        settingsCalls += 1;
+        return settingsCalls === 1
+          ? json(401, { error: 'Unauthorized' })
+          : json(200, { pdsSyncEnabled: true, lastPdsSyncSubscriptions: null });
+      }
+
+      if (url === '/api/integrations/status') {
+        integrationStatusCalls += 1;
+        return integrationStatusCalls === 1
+          ? json(401, { error: 'Unauthorized' })
+          : json(200, { semble: { connected: false }, margin: { connected: false } });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const settingsPromise = api.getSettings();
+    const integrationStatusPromise = api.getIntegrationStatus();
+
+    for (let i = 0; i < 5; i += 1) {
+      await Promise.resolve();
+    }
+    expect(probeCalls).toBe(1);
+
+    resolveProbe(json(200, { did: 'did:plc:abc', handle: 'a.bsky.social' }));
+    await vi.runAllTimersAsync();
+
+    await expect(settingsPromise).resolves.toMatchObject({ pdsSyncEnabled: true });
+    await expect(integrationStatusPromise).resolves.toMatchObject({
+      semble: { connected: false },
+    });
+    expect(probeCalls).toBe(1);
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
 });
 
 describe('extract() shares the same auth handling', () => {
-  it('logs out on 401 (previously this raw-fetch path bypassed retry/logout logic)', async () => {
-    fetchMock.mockResolvedValueOnce(json(401, { error: 'Unauthorized' }));
+  it('logs out on confirmed 401 (previously this raw-fetch path bypassed retry/logout logic)', async () => {
+    fetchMock
+      .mockResolvedValueOnce(json(401, { error: 'Unauthorized' }))
+      .mockResolvedValueOnce(json(401, { error: 'Unauthorized' }));
 
     await expect(api.extract('https://example.com/post')).rejects.toThrow('Session expired');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
   });
 
