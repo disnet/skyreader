@@ -531,6 +531,7 @@ export default {
 
         let oauthDeleted = 0;
         let sessionsDeleted = 0;
+        let labelTombstonesDeleted = 0;
 
         // Clean up expired OAuth states
         try {
@@ -561,9 +562,25 @@ export default {
           console.error('[Cron] D1 WRITE ERROR deleting expired sessions:', error);
         }
 
+        // Purge old label tombstones (soft-deleted archived/tagged rows). The
+        // retention must outlast any realistic delta-cursor staleness so a
+        // client offline for a while still replays the deletion; 90 days mirrors
+        // the read-position window. deleted_at is unix seconds.
+        try {
+          const tombstoneCutoff = Math.floor(now / 1000) - 90 * 24 * 60 * 60;
+          const tombstoneResult = await env.DB.prepare(
+            'DELETE FROM item_labels_cache WHERE deleted_at IS NOT NULL AND deleted_at < ?'
+          )
+            .bind(tombstoneCutoff)
+            .run();
+          labelTombstonesDeleted = tombstoneResult.meta?.changes || 0;
+        } catch (error) {
+          console.error('[Cron] D1 WRITE ERROR purging label tombstones:', error);
+        }
+
         d1CleanupDuration = Date.now() - cleanupStart;
         console.log(
-          `[Cron] D1 cleanup: deleted ${oauthDeleted} OAuth states, ${sessionsDeleted} sessions, ${d1CleanupDuration}ms`
+          `[Cron] D1 cleanup: deleted ${oauthDeleted} OAuth states, ${sessionsDeleted} sessions, ${labelTombstonesDeleted} label tombstones, ${d1CleanupDuration}ms`
         );
       }
 

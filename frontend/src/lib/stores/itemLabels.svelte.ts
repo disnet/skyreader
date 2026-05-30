@@ -1,5 +1,5 @@
 import { api } from '$lib/services/api';
-import { db } from '$lib/services/db';
+import { db, getMetadata, setMetadata } from '$lib/services/db';
 import { safePut, safeAdd, safeBulkPut } from '$lib/services/safeDb.svelte';
 import {
   syncQueue,
@@ -51,12 +51,17 @@ function createItemLabelsStore() {
   let readPositionsCursor = 0;
   let readPositionsFullSynced = false;
 
-  // Managed-labels (tagged/archived/readProgress) delta-sync cursor and session
-  // flag, mirroring the read-position pattern: the first sync does a full
-  // reconcile (catching deletions made on other devices), later refreshes fetch
-  // only rows changed since the cursor (in unix seconds).
+  // Managed-labels (tagged/archived/readProgress) delta-sync cursor (max
+  // updated_at seen, in unix seconds). Unlike read positions, this cursor is
+  // PERSISTED across sessions in IndexedDB: the backend tombstones deletions, so
+  // the delta is lossless and a cold start can resume from the saved cursor
+  // instead of re-fetching the whole label history. A brand-new client (no saved
+  // cursor) does one full snapshot to bootstrap; every sync after that is a
+  // delta. Hydrated once per session from `MANAGED_LABELS_CURSOR_KEY`.
+  const MANAGED_LABELS_CURSOR_KEY = 'managedLabelsCursor';
   let managedLabelsCursor = 0;
-  let managedLabelsFullSynced = false;
+  let managedLabelsCursorLoaded = false;
+  let managedLabelsCursorHasValue = false;
 
   // Debounce state for batching mark-read calls
   let pendingMarkRead: Array<{
@@ -351,48 +356,57 @@ function createItemLabelsStore() {
   // Fetch managed labels in ONE paginated stream and reconcile each type,
   // instead of issuing a separate (paginated) /api/labels request per type.
   //
-  // The first sync of the session is a full fetch that reconciles deletions
-  // (tags/archives removed on other devices); subsequent refreshes fetch only
-  // rows changed since our cursor, keeping the common refresh tiny. As with read
-  // positions, cross-device DELETIONS only surface on the next full sync, since
-  // a delta returns updated rows and cannot observe absent ones.
+  // The cursor is persisted across sessions (see MANAGED_LABELS_CURSOR_KEY): a
+  // brand-new client does one full snapshot to bootstrap, and every sync after
+  // that — including cold starts — is a delta. Because the backend tombstones
+  // deletions, deltas carry removals too (rows with `deletedAt` set), so there
+  // is NO periodic full reconcile: cross-device deletes arrive in the delta.
   async function loadManagedLabelsFromBackend() {
     const managed = new Set<string>(MANAGED_LABELS);
-    const isFull = !managedLabelsFullSynced;
-    const fetched = await api.getAllLabels(isFull ? {} : { since: managedLabelsCursor });
 
-    // Group fetched labels by type (ignoring any non-managed labels) and track
-    // the newest updated_at (unix seconds) for the next delta cursor. Only the
-    // server-sourced timestamp is used — local labels store updatedAt in ms.
+    // Hydrate the persisted cursor once per session. A saved value means a prior
+    // session already bootstrapped the full snapshot, so we can delta from here.
+    if (!managedLabelsCursorLoaded) {
+      const persisted = await getMetadata<number>(MANAGED_LABELS_CURSOR_KEY);
+      if (typeof persisted === 'number') {
+        managedLabelsCursor = persisted;
+        managedLabelsCursorHasValue = true;
+      }
+      managedLabelsCursorLoaded = true;
+    }
+
+    // Restrict the fetch to our label types server-side. `item_labels_cache`
+    // also holds `read` rows (owned by the reading route); without this filter
+    // the delta would carry that read churn for the client to discard, and a big
+    // enough batch could spill into extra pagination round-trips.
+    const labels = [...MANAGED_LABELS];
+    const isFull = !managedLabelsCursorHasValue;
+    const fetched = await api.getAllLabels(
+      isFull ? { labels } : { since: managedLabelsCursor, labels }
+    );
+
+    // Walk the fetched rows: track the newest updated_at (unix seconds) for the
+    // next cursor, apply tombstones as removals, and group live rows by type.
+    // Only the server-sourced timestamp is used — local labels store updatedAt
+    // in ms. (A full snapshot never contains tombstones — the backend filters
+    // them — so the deletedAt branch only fires on deltas.)
     let maxUpdatedAt = managedLabelsCursor;
+    const removed: Array<[string, string]> = [];
     const byLabel = new Map<string, typeof fetched>();
     for (const raw of fetched) {
       if (!managed.has(raw.label)) continue;
       if (raw.updatedAt > maxUpdatedAt) maxUpdatedAt = raw.updatedAt;
+      if (raw.deletedAt != null) {
+        removeFromState(raw.itemKey, raw.label);
+        removed.push([raw.itemKey, raw.label]);
+        continue;
+      }
       let arr = byLabel.get(raw.label);
       if (!arr) {
         arr = [];
         byLabel.set(raw.label, arr);
       }
       arr.push(raw);
-    }
-
-    // Full sync: reconcile deletions by dropping local managed labels absent
-    // from the complete server set. (Deltas only upsert — see note above.)
-    const removed: Array<[string, string]> = [];
-    if (isFull) {
-      const serverKeys = new Set<string>();
-      for (const raw of fetched) {
-        if (managed.has(raw.label)) serverKeys.add(makeKey(raw.itemKey, raw.label));
-      }
-      for (const [, lbl] of labelMap) {
-        if (managed.has(lbl.label) && !serverKeys.has(makeKey(lbl.itemKey, lbl.label))) {
-          removed.push([lbl.itemKey, lbl.label]);
-        }
-      }
-      for (const [itemKey, label] of removed) {
-        removeFromState(itemKey, label);
-      }
     }
 
     // Upsert fetched labels (full and delta), normalising props per label type.
@@ -455,8 +469,14 @@ function createItemLabelsStore() {
       console.error('Failed to sync managed labels to cache:', e);
     }
 
+    // Advance and persist the cursor so the next cold start resumes as a delta.
     managedLabelsCursor = maxUpdatedAt;
-    managedLabelsFullSynced = true;
+    managedLabelsCursorHasValue = true;
+    try {
+      await setMetadata(MANAGED_LABELS_CURSOR_KEY, managedLabelsCursor);
+    } catch (e) {
+      console.error('Failed to persist managed labels cursor:', e);
+    }
   }
 
   // --- Query methods ---

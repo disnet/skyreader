@@ -10,6 +10,7 @@ interface LabelRow {
   rkey: string | null;
   created_at: number;
   updated_at: number;
+  deleted_at: number | null;
 }
 
 const DEFAULT_LIMIT = 100;
@@ -44,6 +45,13 @@ export async function handleGetLabels(request: Request, env: Env): Promise<Respo
 
   const url = new URL(request.url);
   const labelFilter = url.searchParams.get('label');
+  // `?labels=a,b,c` restricts to a set of label types — used by the managed
+  // sync so its delta isn't bloated with unrelated `read` rows that share this
+  // table. Combinable with `label` (single), though callers use one or neither.
+  const labelsFilter = (url.searchParams.get('labels') ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   const itemTypeFilter = url.searchParams.get('itemType');
   const cursor = url.searchParams.get('cursor');
   const limitParam = url.searchParams.get('limit');
@@ -54,7 +62,7 @@ export async function handleGetLabels(request: Request, env: Env): Promise<Respo
   const since = sinceParam !== null ? parseInt(sinceParam, 10) : NaN;
 
   try {
-    let query = `SELECT id, item_key, item_type, label, props, rkey, created_at, updated_at
+    let query = `SELECT id, item_key, item_type, label, props, rkey, created_at, updated_at, deleted_at
       FROM item_labels_cache
       WHERE user_did = ?`;
     const params: (string | number)[] = [session.did];
@@ -63,13 +71,22 @@ export async function handleGetLabels(request: Request, env: Env): Promise<Respo
       query += ' AND label = ?';
       params.push(labelFilter);
     }
+    if (labelsFilter.length > 0) {
+      query += ` AND label IN (${labelsFilter.map(() => '?').join(', ')})`;
+      params.push(...labelsFilter);
+    }
     if (itemTypeFilter) {
       query += ' AND item_type = ?';
       params.push(itemTypeFilter);
     }
     if (Number.isFinite(since)) {
+      // Delta: include tombstones (deleted_at set) so the client can replay
+      // deletions made on other devices. The row stays until GC purges it.
       query += ' AND updated_at > ?';
       params.push(since);
+    } else {
+      // Full snapshot: live rows only — a fresh client has nothing to remove.
+      query += ' AND deleted_at IS NULL';
     }
 
     if (cursor) {
@@ -103,6 +120,7 @@ export async function handleGetLabels(request: Request, env: Env): Promise<Respo
       rkey: row.rkey,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      deletedAt: row.deleted_at,
     }));
 
     const nextCursor = hasMore
@@ -166,7 +184,8 @@ export async function handleAddLabel(request: Request, env: Env): Promise<Respon
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_did, item_key, label) DO UPDATE SET
          props = excluded.props,
-         updated_at = excluded.updated_at`
+         updated_at = excluded.updated_at,
+         deleted_at = NULL`
     )
       .bind(
         session.did,
@@ -227,10 +246,16 @@ export async function handleDeleteLabel(request: Request, env: Env): Promise<Res
   }
 
   try {
+    // Soft-delete (tombstone): bump updated_at and set deleted_at so the row
+    // surfaces in other devices' `?since=` deltas as a removal. A later re-add
+    // resurrects it (ON CONFLICT clears deleted_at); the hourly cron GCs old
+    // tombstones. `read` positions are owned by the reading route and are still
+    // hard-deleted there — they never reach this handler.
+    const now = Math.floor(Date.now() / 1000);
     await env.DB.prepare(
-      'DELETE FROM item_labels_cache WHERE user_did = ? AND item_key = ? AND label = ?'
+      'UPDATE item_labels_cache SET deleted_at = ?, updated_at = ? WHERE user_did = ? AND item_key = ? AND label = ?'
     )
-      .bind(session.did, itemKey, label)
+      .bind(now, now, session.did, itemKey, label)
       .run();
 
     return new Response(JSON.stringify({ success: true }), {
@@ -300,7 +325,8 @@ export async function handleBulkAddLabels(request: Request, env: Env): Promise<R
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_did, item_key, label) DO UPDATE SET
            props = excluded.props,
-           updated_at = excluded.updated_at`
+           updated_at = excluded.updated_at,
+           deleted_at = NULL`
       ).bind(
         session.did,
         item.itemKey,
