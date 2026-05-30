@@ -775,8 +775,10 @@ export function createApp(db: Database, config: AppConfig) {
 			}
 
 			// Detect standard.site (AT Protocol) advertisements. Sites expose these as
-			// <link> tags whose href is an at:// URI pointing to a site.standard.document
-			// record, e.g. <link rel="site.standard.document" href="at://did/site.standard.document/rkey">.
+			// <link> tags whose href is an at:// URI pointing to either a
+			// site.standard.document record (article pages) or a site.standard.publication
+			// record (publication homepages), e.g.
+			// <link rel="site.standard.publication" href="at://did/site.standard.publication/rkey">.
 			// The at:// href (regardless of rel) is the reliable signal.
 			const standardSites: string[] = [];
 			const maxStandardSites = 5;
@@ -790,7 +792,8 @@ export function createApp(db: Database, config: AppConfig) {
 				if (
 					href &&
 					href.startsWith('at://') &&
-					href.includes('/site.standard.document/') &&
+					(href.includes('/site.standard.document/') ||
+						href.includes('/site.standard.publication/')) &&
 					!standardSites.includes(href)
 				) {
 					standardSites.push(href);
