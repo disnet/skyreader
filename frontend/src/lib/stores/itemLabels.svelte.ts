@@ -25,7 +25,7 @@ const BULK_BATCH_SIZE = 500;
 // READ_POSITIONS_WINDOW_SECONDS in the backend's reading route: a full sync only
 // reconciles (deletes) read labels within this window, since the server only
 // returns reads this recent. Older local read state is preserved untouched.
-const READ_POSITIONS_WINDOW_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+const READ_POSITIONS_WINDOW_MS = 2 * 365 * 24 * 60 * 60 * 1000; // 2 years
 
 // Re-export for consumers that used this type from reading store
 export interface SavedArticle {

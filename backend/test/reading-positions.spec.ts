@@ -7,7 +7,7 @@ const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 const TEST_DID = 'did:plc:readingpositions123';
 const TEST_SESSION_ID = 'test-session-reading-positions';
 const DAY_SECONDS = 24 * 60 * 60;
-const WINDOW_SECONDS = 90 * DAY_SECONDS; // must match READ_POSITIONS_WINDOW_SECONDS
+const WINDOW_SECONDS = 2 * 365 * DAY_SECONDS; // must match READ_POSITIONS_WINDOW_SECONDS
 
 async function setupTestUser() {
   await env.DB.prepare(

@@ -24,13 +24,22 @@ interface ItemLabelRow {
 //   1. Slim payload  — only item_guid/read_at/rkey are returned (no url/title).
 //   2. Delta sync     — `?since=<updated_at>` returns only rows changed since the
 //                       client's cursor; the common refresh is then tiny.
-//   3. Windowing      — a full sync (no `since`) is bounded to recent reads, since
-//                       older read state can't suppress articles no longer fetched.
+//   3. Windowing      — a full sync (no `since`) is bounded to recent reads.
+// The window must be wide enough to cover every article the feed can surface on
+// a cold start (empty cache). The cold-start fetch pulls the most-recent N items
+// PER FEED regardless of age (see COLD_START_LIMIT in feedFetcher.ts), so a
+// low-frequency feed's backlog can be well over a year old. If a read falls
+// outside this window, that already-read article reappears as unread on a fresh
+// login — there's no local read state to fall back on after logout clears the
+// cache. Hence a generous window; the delta sync keeps steady-state cheap anyway.
 // NOTE: the window must stay in sync with READ_POSITIONS_WINDOW_MS in the
 // frontend's itemLabels store, which scopes its reconcile deletions to the same
 // window so it never drops older local read state.
-const READ_POSITIONS_WINDOW_SECONDS = 90 * 24 * 60 * 60; // 90 days
-const READ_POSITIONS_MAX_ROWS = 5000; // hard backstop on a single response
+const READ_POSITIONS_WINDOW_SECONDS = 2 * 365 * 24 * 60 * 60; // 2 years
+// Backstop on a single response. Must stay above the number of reads a heavy
+// user can accumulate within the window, or ORDER BY updated_at DESC would drop
+// the OLDEST in-window reads first — exactly the old articles we need to suppress.
+const READ_POSITIONS_MAX_ROWS = 100000;
 
 // GET /api/reading/positions - List read positions for the current user.
 // Pass `?since=<unix_seconds>` for an incremental (delta) fetch; omit it for a
