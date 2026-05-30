@@ -10,6 +10,7 @@ import {
 import { syncStore } from './sync.svelte';
 import { savesStore } from './saves.svelte';
 import { generateTid } from '$lib/utils/tid';
+import { staleReadLabelsInWindow } from './readPositionReconcile';
 import type {
   ItemLabel,
   ItemLabelType,
@@ -220,14 +221,7 @@ function createItemLabelsStore() {
       // preserved (older local read state, never re-sent by the server).
       const serverGuids = new Set(positions.map((p) => p.item_guid));
       const windowStart = now - READ_POSITIONS_WINDOW_MS;
-      const toRemove: Array<[string, string]> = [];
-      for (const [, lbl] of labelMap) {
-        if (lbl.itemType !== 'article' || lbl.label !== 'read') continue;
-        const readAt = (lbl.props.readAt as number) || 0;
-        if (readAt >= windowStart && !serverGuids.has(lbl.itemKey)) {
-          toRemove.push([lbl.itemKey, lbl.label]);
-        }
-      }
+      const toRemove = staleReadLabelsInWindow(labelMap.values(), serverGuids, windowStart);
       for (const [itemKey, label] of toRemove) {
         removeFromState(itemKey, label);
       }
