@@ -3,6 +3,12 @@ import { Database } from 'bun:sqlite';
 import { Defuddle } from 'defuddle/node';
 import { parseFeed } from './feed-parser';
 import type { ParsedFeed, FeedItem } from './types';
+import {
+	fetchDocumentsForAuthor,
+	filterByPublication,
+	filterSinceUris,
+	type ProxyDocument,
+} from './standard-site';
 
 export interface AppConfig {
 	proxySecret?: string;
@@ -42,6 +48,27 @@ interface FilterResult {
 	items: FeedItem[];
 	filter: 'MATCHED' | 'FULL' | 'LIMITED' | 'NONE';
 	matchedGuid?: string;
+}
+
+// Cache row for an author's resolved standard.site documents. Mirrors `cache`'s
+// freshness/backoff columns so documents reuse the same TTL / stale-while-
+// revalidate / circuit-breaker machinery, keyed by the author DID.
+export interface DocumentCacheRow {
+	did: string;
+	documents_json: string;
+	cached_at: number;
+	fetched_at: number;
+	error_count: number;
+	last_error: string | null;
+	last_error_at: number | null;
+	next_retry_at: number | null;
+	last_requested_at: number | null;
+}
+
+interface DocumentRequestEntry {
+	did: string;
+	siteUri?: string;
+	since_uris?: string[];
 }
 
 const FETCH_HEADERS = {
@@ -276,6 +303,47 @@ export function initDatabase(db: Database): void {
 		)
 	`);
 	db.run(`CREATE INDEX IF NOT EXISTS idx_extract_cache_cached_at ON extract_cache(cached_at)`);
+
+	// DID → PDS URL resolution cache (used by standard.site document fetching).
+	db.run(`
+		CREATE TABLE IF NOT EXISTS did_cache (
+			did TEXT PRIMARY KEY,
+			pds_url TEXT,
+			cached_at INTEGER NOT NULL
+		)
+	`);
+
+	// Resolved standard.site publication metadata (base URL + icon), mirroring the
+	// backend's former D1 publications_cache.
+	db.run(`
+		CREATE TABLE IF NOT EXISTS publication_cache (
+			publication_uri TEXT PRIMARY KEY,
+			base_url TEXT,
+			icon TEXT,
+			cached_at INTEGER NOT NULL
+		)
+	`);
+
+	// Per-author resolved standard.site documents. Same freshness/backoff shape as
+	// `cache`, keyed by the author DID. Documents are stored unfiltered (full
+	// author list); the publication scope filter is applied per-request.
+	db.run(`
+		CREATE TABLE IF NOT EXISTS document_cache (
+			did TEXT PRIMARY KEY,
+			documents_json TEXT NOT NULL,
+			cached_at INTEGER NOT NULL,
+			fetched_at INTEGER NOT NULL,
+			error_count INTEGER DEFAULT 0,
+			last_error TEXT,
+			last_error_at INTEGER,
+			next_retry_at INTEGER,
+			last_requested_at INTEGER
+		)
+	`);
+	db.run(`CREATE INDEX IF NOT EXISTS idx_document_cache_fetched_at ON document_cache(fetched_at)`);
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_document_cache_last_requested_at ON document_cache(last_requested_at)`
+	);
 }
 
 export function createApp(db: Database, config: AppConfig) {
@@ -285,6 +353,8 @@ export function createApp(db: Database, config: AppConfig) {
 	const inFlight = new Map<string, Promise<ParsedFeed | null>>();
 	// Same idea for /extract: collapse concurrent extractions of the same URL.
 	const inFlightExtract = new Map<string, Promise<ExtractedArticle>>();
+	// And for standard.site document fetches, keyed by author DID.
+	const inFlightDocs = new Map<string, Promise<ProxyDocument[] | null>>();
 
 	async function fetchParseAndCache(
 		url: string,
@@ -532,6 +602,129 @@ export function createApp(db: Database, config: AppConfig) {
 
 		await Promise.all(Array.from({ length: Math.min(warmConcurrency, queue.length) }, worker));
 
+		return refreshed;
+	}
+
+	// --- standard.site documents -------------------------------------------------
+	// Mirrors fetchParseAndCache for an author's resolved document list: circuit
+	// breaker on backoff, fetch + resolve via fetchDocumentsForAuthor, persist, and
+	// fall back to stale-but-real content on error.
+
+	async function fetchAndCacheDocuments(
+		did: string,
+		cached?: DocumentCacheRow
+	): Promise<ProxyDocument[] | null> {
+		const now = Date.now();
+
+		// Circuit breaker: respect backoff window.
+		if (cached?.next_retry_at && now < cached.next_retry_at) {
+			return cached.documents_json
+				? (JSON.parse(cached.documents_json) as ProxyDocument[])
+				: null;
+		}
+
+		try {
+			const documents = await fetchDocumentsForAuthor(db, did);
+			const documentsJson = JSON.stringify(documents);
+
+			// last_requested_at only set on insert (a real client miss), not on the
+			// warm-loop refresh path — same rationale as the feed cache.
+			db.run(
+				`INSERT INTO document_cache (did, documents_json, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
+				VALUES (?, ?, ?, ?, 0, NULL, NULL, NULL, ?)
+				ON CONFLICT(did) DO UPDATE SET
+					documents_json = excluded.documents_json,
+					cached_at = excluded.cached_at,
+					fetched_at = excluded.fetched_at,
+					error_count = 0,
+					last_error = NULL,
+					last_error_at = NULL,
+					next_retry_at = NULL`,
+				[did, documentsJson, now, now, now]
+			);
+
+			return documents;
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : 'Unknown error';
+			const newErrorCount = (cached?.error_count || 0) + 1;
+			const nextRetryAt =
+				newErrorCount >= MAX_RECOVERABLE_ERRORS
+					? now + PERMANENT_ERROR_DELAY_MS
+					: now + calculateBackoff(newErrorCount);
+			console.error(`[Proxy] documents ${did}: ${msg} (retry at ${new Date(nextRetryAt).toISOString()})`);
+
+			if (cached) {
+				db.run(
+					'UPDATE document_cache SET error_count = ?, last_error = ?, last_error_at = ?, next_retry_at = ? WHERE did = ?',
+					[newErrorCount, msg, now, nextRetryAt, did]
+				);
+			} else {
+				db.run(
+					`INSERT INTO document_cache (did, documents_json, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					[did, '[]', now, now, newErrorCount, msg, now, nextRetryAt, now]
+				);
+			}
+
+			// Serve stale-but-real documents if we have them.
+			if (cached?.documents_json) {
+				const stale = JSON.parse(cached.documents_json) as ProxyDocument[];
+				if (stale.length > 0) return stale;
+			}
+			return null;
+		}
+	}
+
+	function triggerBackgroundDocumentRefresh(did: string, cached?: DocumentCacheRow): void {
+		if (inFlightDocs.has(did)) return;
+		const promise = fetchAndCacheDocuments(did, cached).finally(() => {
+			inFlightDocs.delete(did);
+		});
+		inFlightDocs.set(did, promise);
+	}
+
+	function recordDocumentRequest(did: string, now: number): void {
+		db.run('UPDATE document_cache SET last_requested_at = ? WHERE did = ?', [now, did]);
+	}
+
+	// Proactively refresh active authors' documents before they go stale, mirroring
+	// warmStaleFeeds.
+	async function warmStaleDocuments(): Promise<number> {
+		const now = Date.now();
+		const rows = db
+			.query<DocumentCacheRow, [number, number, number, number]>(
+				`SELECT * FROM document_cache
+				WHERE fetched_at < ?
+					AND (next_retry_at IS NULL OR next_retry_at < ?)
+					AND last_requested_at IS NOT NULL
+					AND last_requested_at > ?
+				ORDER BY fetched_at ASC
+				LIMIT ?`
+			)
+			.all(now - warmRefreshThresholdMs, now, now - warmActiveWindowMs, warmBatchCap);
+
+		if (rows.length === 0) return 0;
+
+		const queue = [...rows];
+		let refreshed = 0;
+
+		async function worker(): Promise<void> {
+			for (let row = queue.shift(); row; row = queue.shift()) {
+				if (inFlightDocs.has(row.did)) continue;
+				const promise = fetchAndCacheDocuments(row.did, row).finally(() => {
+					inFlightDocs.delete(row.did);
+				});
+				inFlightDocs.set(row.did, promise);
+				try {
+					await promise;
+					refreshed++;
+				} catch {
+					// errors already recorded in fetchAndCacheDocuments
+				}
+			}
+		}
+
+		await Promise.all(Array.from({ length: Math.min(warmConcurrency, queue.length) }, worker));
 		return refreshed;
 	}
 
@@ -1120,14 +1313,128 @@ export function createApp(db: Database, config: AppConfig) {
 		return c.json({ feeds: results });
 	});
 
-	return { app, inFlight, warmStaleFeeds };
+	// Bulk standard.site document endpoint. Symmetric with /feeds, but keyed by
+	// author DID instead of feed URL. Returns each requested author's documents
+	// (scoped to a publication and trimmed to what the client hasn't seen yet).
+	app.post('/documents', async (c) => {
+		if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret) {
+			return c.json({ error: 'Unauthorized' }, 401);
+		}
+
+		let body: { authors?: DocumentRequestEntry[] };
+		try {
+			body = await c.req.json();
+		} catch {
+			return c.json({ error: 'Invalid JSON body' }, 400);
+		}
+
+		const authors = body.authors;
+		if (!Array.isArray(authors)) {
+			return c.json({ error: 'Missing authors array' }, 400);
+		}
+		if (authors.length === 0) {
+			return c.json({ error: 'Empty request' }, 400);
+		}
+		if (authors.length > 50) {
+			return c.json({ error: 'Too many authors (max 50)' }, 400);
+		}
+
+		const now = Date.now();
+
+		interface DocumentResult {
+			did: string;
+			siteUri?: string;
+			documents: ProxyDocument[];
+			status: 'ready' | 'error';
+			error?: string;
+			errorCount?: number;
+			nextRetryAt?: number;
+		}
+
+		const results: DocumentResult[] = await Promise.all(
+			authors.map(async (entry): Promise<DocumentResult> => {
+				const { did, siteUri } = entry;
+
+				if (!did || typeof did !== 'string' || !did.startsWith('did:')) {
+					return { did: String(did), siteUri, documents: [], status: 'error', error: 'Invalid DID' };
+				}
+
+				const cached = db
+					.query<DocumentCacheRow, [string]>('SELECT * FROM document_cache WHERE did = ?')
+					.get(did);
+				recordDocumentRequest(did, now);
+
+				let documents: ProxyDocument[] | null = null;
+
+				if (cached && cached.documents_json) {
+					const age = now - cached.fetched_at;
+					const inErrorBackoff =
+						cached.error_count > 0 && cached.next_retry_at && now < cached.next_retry_at;
+					const stale = JSON.parse(cached.documents_json) as ProxyDocument[];
+					const isErrorPlaceholder = cached.error_count > 0 && stale.length === 0;
+
+					if (inErrorBackoff && isErrorPlaceholder) {
+						return {
+							did,
+							siteUri,
+							documents: [],
+							status: 'error',
+							error: cached.last_error || 'Failed to fetch documents',
+							errorCount: cached.error_count,
+							nextRetryAt: cached.next_retry_at ?? undefined,
+						};
+					}
+
+					if (!isErrorPlaceholder) {
+						if (age < cacheTtlMs) {
+							documents = stale;
+						} else if (age < staleTtlMs) {
+							documents = stale;
+							triggerBackgroundDocumentRefresh(did, cached);
+						}
+					}
+				}
+
+				if (!documents) {
+					documents = await fetchAndCacheDocuments(did, cached ?? undefined);
+				}
+
+				if (!documents) {
+					const errorCache = db
+						.query<DocumentCacheRow, [string]>('SELECT * FROM document_cache WHERE did = ?')
+						.get(did);
+					return {
+						did,
+						siteUri,
+						documents: [],
+						status: 'error',
+						error: errorCache?.last_error || 'Failed to fetch documents',
+						errorCount: errorCache?.error_count || 0,
+						nextRetryAt: errorCache?.next_retry_at || undefined,
+					};
+				}
+
+				const scoped = filterByPublication(documents, siteUri);
+				const trimmed = filterSinceUris(scoped, new Set(entry.since_uris || []));
+
+				return { did, siteUri, documents: trimmed, status: 'ready' };
+			})
+		);
+
+		return c.json({ authors: results });
+	});
+
+	return { app, inFlight, warmStaleFeeds, warmStaleDocuments };
 }
 
 export function cleanupCache(db: Database): number {
-	const threshold = Date.now() - 7 * 24 * 60 * 60 * 1000; // 7 days
+	const now = Date.now();
+	const threshold = now - 7 * 24 * 60 * 60 * 1000; // 7 days
 	const result = db.run('DELETE FROM cache WHERE fetched_at < ?', [threshold]);
 	const extractResult = db.run('DELETE FROM extract_cache WHERE cached_at < ?', [
-		Date.now() - EXTRACT_CACHE_TTL_MS,
+		now - EXTRACT_CACHE_TTL_MS,
 	]);
-	return result.changes + extractResult.changes;
+	// Documents age out on the same 7-day idle window as feeds.
+	const docResult = db.run('DELETE FROM document_cache WHERE fetched_at < ?', [threshold]);
+	return result.changes + extractResult.changes + docResult.changes;
 }

@@ -1,5 +1,6 @@
 import type { Env, FeedItem } from '../types';
 import { FeedProxyClient, FeedProxyError } from '../services/feed-proxy-client';
+import type { ProxyDocumentEntry } from '../services/feed-proxy-client';
 import { resolveStandardSite } from '../utils/canonical-url';
 
 interface V2FeedResponse {
@@ -244,6 +245,115 @@ export async function handleV2BatchFeedFetch(request: Request, env: Env): Promis
     }
 
     return new Response(JSON.stringify({ feeds: responseFeeds }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+interface V2BatchDocumentResponse {
+  authors: ProxyDocumentEntry[];
+}
+
+/**
+ * POST /api/v2/documents/batch
+ *
+ * Batch fetch standard.site documents for multiple authors via the Fly.io proxy.
+ * Thin pass-through — no D1 reads/writes. Documents come back already resolved
+ * (canonical URL + site icon) in the frontend's SocialDocument shape.
+ *
+ * Request body:
+ * {
+ *   documents: Array<{
+ *     did: string;            // publisher DID (subjectDid of an atproto.documents sub)
+ *     siteUri?: string;       // at://...publication, '__freestanding__', or omit for all
+ *     since_uris?: string[];  // recordUris the client already has (incremental trim)
+ *   }>
+ * }
+ */
+export async function handleV2BatchDocumentFetch(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  let body: {
+    documents?: Array<{ did: string; siteUri?: string; since_uris?: string[] }>;
+  };
+
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const entries = body.documents;
+  if (!entries || !Array.isArray(entries) || entries.length === 0) {
+    return new Response(JSON.stringify({ error: 'Missing documents array in request body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  if (entries.length > 50) {
+    return new Response(JSON.stringify({ error: 'Too many authors (max 50)' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Only forward entries with a plausible DID; surface the rest as error entries
+  // in the response. Order isn't preserved (invalids are emitted first), but the
+  // client reconciles by did/siteUri, not by position.
+  const valid: typeof entries = [];
+  const invalid: typeof entries = [];
+  for (const entry of entries) {
+    if (entry.did && typeof entry.did === 'string' && entry.did.startsWith('did:')) {
+      valid.push(entry);
+    } else {
+      invalid.push(entry);
+    }
+  }
+
+  const errorEntry = (
+    entry: { did: string; siteUri?: string },
+    error: string
+  ): ProxyDocumentEntry => ({
+    did: entry.did,
+    siteUri: entry.siteUri,
+    documents: [],
+    status: 'error',
+    error,
+  });
+
+  const authors: ProxyDocumentEntry[] = invalid.map((e) => errorEntry(e, 'Invalid DID'));
+
+  if (valid.length === 0) {
+    return new Response(JSON.stringify({ authors }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  try {
+    const client = new FeedProxyClient(env);
+    const proxyEntries = await client.fetchDocumentsBatch(valid);
+    authors.push(...proxyEntries);
+
+    const response: V2BatchDocumentResponse = { authors };
+    return new Response(JSON.stringify(response), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('V2 batch document fetch error:', error);
+    const message = error instanceof Error ? error.message : 'Proxy fetch failed';
+    for (const entry of valid) {
+      authors.push(errorEntry(entry, message));
+    }
+    return new Response(JSON.stringify({ authors }), {
       headers: { 'Content-Type': 'application/json' },
     });
   }

@@ -5,7 +5,7 @@
   import { socialStore } from '$lib/stores/social.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { auth } from '$lib/stores/auth.svelte';
-  import { fetchSingleFeed } from '$lib/services/feedFetcher';
+  import { fetchSingleFeed, fetchAllDocuments } from '$lib/services/feedFetcher';
   import { searchBlueskyActors, type BlueskySearchResult } from '$lib/services/blueskySearch';
   import { api } from '$lib/services/api';
   import Icon from '../Icon.svelte';
@@ -250,6 +250,7 @@
       });
 
       socialStore.loadFeed(true);
+      void fetchAllDocuments(subscriptionsStore.subscriptions);
       goto(`/?feed=${subId}`);
       sidebarStore.closeMobile();
       inputFocused = false;
@@ -499,6 +500,7 @@
       }
 
       socialStore.loadFeed(true);
+      void fetchAllDocuments(subscriptionsStore.subscriptions);
       reset();
 
       if (firstAddedId) {

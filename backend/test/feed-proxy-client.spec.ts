@@ -127,4 +127,59 @@ describe('FeedProxyClient', () => {
       expect(err.message).toContain('blocking automated access');
     });
   });
+
+  describe('fetchDocumentsBatch', () => {
+    it('returns per-author document entries from the proxy', async () => {
+      const entry = {
+        did: 'did:plc:abc123',
+        siteUri: 'at://did:plc:abc123/site.standard.publication/pub1',
+        status: 'ready' as const,
+        documents: [
+          {
+            authorDid: 'did:plc:abc123',
+            recordUri: 'at://did:plc:abc123/site.standard.document/doc1',
+            recordCid: 'cid1',
+            siteUri: 'at://did:plc:abc123/site.standard.publication/pub1',
+            title: 'Hello',
+            publishedAt: '2024-01-02T00:00:00.000Z',
+            createdAt: '2024-01-02T00:00:00.000Z',
+            canonicalUrl: 'https://blog.example.com/hello',
+          },
+        ],
+      };
+      const fetchMock = vi.fn().mockResolvedValueOnce(
+        new Response(JSON.stringify({ authors: [entry] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+      globalThis.fetch = fetchMock;
+
+      const client = createClient();
+      const result = await client.fetchDocumentsBatch([
+        { did: 'did:plc:abc123', siteUri: 'at://did:plc:abc123/site.standard.publication/pub1' },
+      ]);
+
+      expect(result).toEqual([entry]);
+      // Posts to the proxy's /documents endpoint with the secret header.
+      const [calledUrl, init] = fetchMock.mock.calls[0];
+      expect(String(calledUrl)).toBe('https://proxy.example/documents');
+      expect(init.method).toBe('POST');
+    });
+
+    it('throws when the proxy response lacks an authors array', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'boom' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+
+      const client = createClient();
+      await expect(client.fetchDocumentsBatch([{ did: 'did:plc:abc123' }])).rejects.toMatchObject({
+        name: 'FeedProxyError',
+        message: 'boom',
+      });
+    });
+  });
 });

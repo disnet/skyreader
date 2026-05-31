@@ -4,7 +4,7 @@
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
-  import { fetchSingleFeed } from '$lib/services/feedFetcher';
+  import { fetchSingleFeed, fetchAllDocuments } from '$lib/services/feedFetcher';
   import { api } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
   import Modal from '$lib/components/common/Modal.svelte';
@@ -165,6 +165,9 @@
       }
 
       socialStore.loadFeed(true);
+      // Fetch this publication's documents now so they appear immediately
+      // (also refreshed on the regular cycle).
+      void fetchAllDocuments(subscriptionsStore.subscriptions);
       handleClose();
       goto(`/?feed=${id}`);
       sidebarStore.closeMobile();

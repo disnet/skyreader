@@ -6,6 +6,32 @@ import { itemLabelsStore } from './itemLabels.svelte';
 import { syncStore } from './sync.svelte';
 import type { SocialDocument, SocialShare } from '$lib/types';
 
+/**
+ * Whether a document falls within a subscription's publication scope, mirroring
+ * the proxy's filterByPublication:
+ * - undefined → all of the author's documents
+ * - '__freestanding__' → documents not tied to an at:// publication
+ * - an at://...publication URI → only that publication
+ */
+function docInScope(d: SocialDocument, siteUri?: string): boolean {
+  if (!siteUri) return true;
+  if (siteUri === '__freestanding__') return !d.siteUri || !d.siteUri.startsWith('at://');
+  return d.siteUri === siteUri;
+}
+
+function sortByPublishedDesc(docs: SocialDocument[]): SocialDocument[] {
+  return [...docs].sort(
+    (a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
+  );
+}
+
+interface DocumentResult {
+  did: string;
+  siteUri?: string;
+  documents: SocialDocument[];
+  status: 'ready' | 'error';
+}
+
 function createSocialStore() {
   let shares = $state<SocialShare[]>([]);
   let documents = $state<SocialDocument[]>([]);
@@ -34,41 +60,30 @@ function createSocialStore() {
     }
 
     try {
-      const result = await api.getSocialFeed(reset ? undefined : (cursor ?? undefined));
+      // Documents no longer come from /api/social/feed — they're fetched lazily
+      // per-publication through the feed proxy (see fetchAllDocuments) and applied
+      // via applyDocumentResults. This endpoint now serves shares only.
+      const result = await api.getSocialFeed(reset ? undefined : (cursor ?? undefined), 50, false);
 
       if (reset) {
         shares = result.shares;
-        documents = result.documents || [];
-        // Cache in IndexedDB
+        // Load cached documents so they appear immediately; fetchAllDocuments
+        // refreshes them from the proxy on the same cycle as RSS feeds.
+        documents = await db.socialDocuments.orderBy('publishedAt').reverse().toArray();
         await db.socialShares.clear();
         await safeBulkPut(db.socialShares, result.shares);
-        await db.socialDocuments.clear();
-        if (result.documents && result.documents.length > 0) {
-          await safeBulkPut(db.socialDocuments, result.documents);
-        }
       } else {
         const existingShareUris = new Set(shares.map((s) => s.recordUri));
         const newShares = result.shares.filter((s) => !existingShareUris.has(s.recordUri));
         shares = [...shares, ...newShares];
-
-        const newDocs = result.documents || [];
-        const existingDocUris = new Set(documents.map((d) => d.recordUri));
-        const uniqueNewDocs = newDocs.filter((d) => !existingDocUris.has(d.recordUri));
-        documents = [...documents, ...uniqueNewDocs];
-
         await safeBulkPut(db.socialShares, result.shares);
-        if (result.documents && result.documents.length > 0) {
-          await safeBulkPut(db.socialDocuments, result.documents);
-        }
       }
 
       cursor = result.cursor;
       hasMore = !!result.cursor;
 
       // Prefetch author profiles from Bluesky (fire and forget)
-      const shareAuthorDids = result.shares.map((s) => s.authorDid);
-      const docAuthorDids = (result.documents || []).map((d) => d.authorDid);
-      const authorDids = [...new Set([...shareAuthorDids, ...docAuthorDids])];
+      const authorDids = [...new Set(result.shares.map((s) => s.authorDid))];
       profileService.prefetch(authorDids);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load social feed';
@@ -100,6 +115,47 @@ function createSocialStore() {
     } finally {
       isLoadingFeed = false;
     }
+  }
+
+  /**
+   * Apply freshly-fetched documents from the proxy. Each result is authoritative
+   * for its (author, publication scope), so reconciling per scope makes edits and
+   * deletes self-heal: in-scope documents the proxy no longer returns are dropped,
+   * the rest upserted. Persists the full set to IndexedDB in one pass.
+   */
+  async function applyDocumentResults(results: DocumentResult[]): Promise<void> {
+    const ready = results.filter((r) => r.status === 'ready');
+    if (ready.length === 0) return;
+
+    let next = documents;
+    for (const r of ready) {
+      // Drop everything currently in this scope, then add the fresh set.
+      next = [
+        ...next.filter((d) => !(d.authorDid === r.did && docInScope(d, r.siteUri))),
+        ...r.documents,
+      ];
+    }
+
+    // Dedup by recordUri (a doc can fall in two overlapping subscription scopes);
+    // the most recently applied wins.
+    const byUri = new Map<string, SocialDocument>();
+    for (const d of next) byUri.set(d.recordUri, d);
+    documents = sortByPublishedDesc([...byUri.values()]);
+
+    // Mirror to IndexedDB. The table uses an auto-increment id, so strip stale ids
+    // and rewrite wholesale (counts are small — a few authors × ~100 docs).
+    try {
+      await db.socialDocuments.clear();
+      await safeBulkPut(
+        db.socialDocuments,
+        documents.map(({ id: _id, ...rest }) => rest)
+      );
+    } catch (e) {
+      console.error('Failed to persist documents to IndexedDB:', e);
+    }
+
+    // Prefetch author profiles (fire and forget).
+    profileService.prefetch([...new Set(ready.map((r) => r.did))]);
   }
 
   function reset() {
@@ -136,6 +192,7 @@ function createSocialStore() {
     },
     loadFeed,
     loadPopular,
+    applyDocumentResults,
     reset,
     getSharesByAuthor,
   };

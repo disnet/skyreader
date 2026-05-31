@@ -283,6 +283,25 @@ class ApiClient {
     });
   }
 
+  async fetchDocumentsBatchV2(
+    documents: Array<{ did: string; siteUri?: string; since_uris?: string[] }>
+  ): Promise<{
+    authors: Array<{
+      did: string;
+      siteUri?: string;
+      documents: SocialDocument[];
+      status: 'ready' | 'error';
+      error?: string;
+      errorCount?: number;
+      nextRetryAt?: number;
+    }>;
+  }> {
+    return this.fetch('/api/v2/documents/batch', {
+      method: 'POST',
+      body: JSON.stringify({ documents }),
+    });
+  }
+
   async discoverFeedsV2(url: string): Promise<{
     feeds: string[];
     standardSite?: {

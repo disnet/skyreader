@@ -6,7 +6,12 @@ import {
   handleAuthMe,
   handleClientMetadata,
 } from './routes/auth';
-import { handleV2FeedFetch, handleV2BatchFeedFetch, handleV2FeedDiscover } from './routes/feeds-v2';
+import {
+  handleV2FeedFetch,
+  handleV2BatchFeedFetch,
+  handleV2FeedDiscover,
+  handleV2BatchDocumentFetch,
+} from './routes/feeds-v2';
 import {
   handleSocialFeed,
   handleGroupedSocialFeed,
@@ -202,6 +207,10 @@ export default {
         case url.pathname === '/api/v2/feeds/discover':
           if (!session) return unauthorizedResponse(headers);
           response = await handleV2FeedDiscover(request, env);
+          break;
+        case url.pathname === '/api/v2/documents/batch':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleV2BatchDocumentFetch(request, env);
           break;
 
         // Social routes

@@ -53,6 +53,47 @@ export interface ProxyBatchResponse {
   feeds: Record<string, ProxyBatchFeedEntry>;
 }
 
+/**
+ * A resolved standard.site document, shaped to match the frontend's
+ * `SocialDocument` (minus the client-only `id`). Returned by the proxy's
+ * `/documents` endpoint with canonical URL + site icon already resolved.
+ */
+export interface ProxyDocument {
+  authorDid: string;
+  recordUri: string;
+  recordCid: string;
+  siteUri: string;
+  title: string;
+  publishedAt: string;
+  path?: string;
+  description?: string;
+  coverImageCid?: string;
+  textContent?: string;
+  bskyPostUri?: string;
+  tags?: string[];
+  updatedAt?: string;
+  canonicalUrl?: string;
+  content?: unknown;
+  indexedAt?: string;
+  createdAt: string;
+  siteIcon?: string;
+}
+
+export interface ProxyDocumentEntry {
+  did: string;
+  siteUri?: string;
+  documents: ProxyDocument[];
+  status: 'ready' | 'error';
+  error?: string;
+  errorCount?: number;
+  nextRetryAt?: number;
+}
+
+interface RawDocumentBatchResponse {
+  authors?: ProxyDocumentEntry[];
+  error?: string;
+}
+
 // Raw response types from the proxy
 interface RawFeedResponse {
   feed: {
@@ -238,6 +279,34 @@ export class FeedProxyClient {
     }
 
     return result;
+  }
+
+  /**
+   * Fetch standard.site documents for multiple authors in a single request.
+   *
+   * Each entry is an author DID, optionally scoped to a publication (`siteUri`:
+   * an `at://...publication/rkey`, `'__freestanding__'`, or omitted for all),
+   * and optionally trimmed to documents the client hasn't seen (`since_uris`).
+   * Returns the proxy's per-author entries verbatim (already in SocialDocument
+   * shape).
+   */
+  async fetchDocumentsBatch(
+    authors: Array<{
+      did: string;
+      siteUri?: string;
+      since_uris?: string[];
+    }>
+  ): Promise<ProxyDocumentEntry[]> {
+    const raw = await this.fetch<RawDocumentBatchResponse>('/documents', {
+      method: 'POST',
+      body: JSON.stringify({ authors }),
+    });
+
+    if (!raw.authors) {
+      throw new FeedProxyError(raw.error || 'Invalid response from feed proxy');
+    }
+
+    return raw.authors;
   }
 
   /**
