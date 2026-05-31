@@ -72,16 +72,26 @@
       ? subscriptionsStore.subscriptions.find((s) => s.id === displayItem.item.subscriptionId)
       : undefined
   );
-  let feedTitle = $derived(sub?.customTitle || sub?.title || '');
+  let feedTitle = $derived.by(() => {
+    if (displayItem.type === 'article') return sub?.customTitle || sub?.title || '';
+    // Documents (standard.site): show publication hostname like a normal feed item
+    if (displayItem.type === 'document') {
+      const docUrl = displayItem.item.canonicalUrl || displayItem.item.siteUri;
+      if (docUrl) {
+        try {
+          return new URL(docUrl).hostname.replace(/^www\./, '');
+        } catch {
+          return '';
+        }
+      }
+    }
+    return '';
+  });
 
-  // Author info (for shares/documents)
+  // Author info (for shares)
   let authorProfile = $state<{ handle?: string } | null>(null);
   $effect(() => {
     if (displayItem.type === 'share') {
-      profileService.getProfile(displayItem.item.authorDid).then((p) => {
-        authorProfile = p;
-      });
-    } else if (displayItem.type === 'document') {
       profileService.getProfile(displayItem.item.authorDid).then((p) => {
         authorProfile = p;
       });
@@ -91,7 +101,6 @@
   });
   let authorHandle = $derived.by(() => {
     if (displayItem.type === 'share') return authorProfile?.handle || displayItem.item.authorDid;
-    if (displayItem.type === 'document') return authorProfile?.handle || displayItem.item.authorDid;
     return '';
   });
 
@@ -155,7 +164,6 @@
   // Type badge
   let typeBadge = $derived.by(() => {
     if (displayItem.type === 'share') return `Shared by @${authorHandle}`;
-    if (displayItem.type === 'document') return `By @${authorHandle}`;
     if (displayItem.type === 'saved') return displayItem.item.domain || 'Saved';
     return '';
   });
