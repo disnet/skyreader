@@ -37,7 +37,7 @@ console.log(`[Proxy] Initialized database at ${DATA_DIR}/cache.db`);
 console.log(`[Proxy] TTL: ${CACHE_TTL_MS / 1000}s fresh, ${STALE_TTL_MS / 1000}s stale`);
 
 // Create app
-const { app, warmStaleFeeds } = createApp(db, {
+const { app, warmStaleFeeds, warmStaleDocuments } = createApp(db, {
 	proxySecret: PROXY_SECRET,
 	cacheTtlMs: CACHE_TTL_MS,
 	staleTtlMs: STALE_TTL_MS,
@@ -72,9 +72,10 @@ if (WARM_ENABLED) {
 		// Skip if the previous tick is still draining (slow upstreams) to avoid pile-up.
 		if (warmRunning) return;
 		warmRunning = true;
-		warmStaleFeeds()
-			.then((refreshed) => {
-				if (refreshed > 0) console.log(`[Proxy] Warmer refreshed ${refreshed} feed(s)`);
+		Promise.all([warmStaleFeeds(), warmStaleDocuments()])
+			.then(([feeds, docs]) => {
+				if (feeds > 0) console.log(`[Proxy] Warmer refreshed ${feeds} feed(s)`);
+				if (docs > 0) console.log(`[Proxy] Warmer refreshed ${docs} author document set(s)`);
 			})
 			.catch((err) => console.error('[Proxy] Warmer error:', err))
 			.finally(() => {

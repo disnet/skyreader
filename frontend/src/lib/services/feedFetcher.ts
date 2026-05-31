@@ -1,7 +1,11 @@
 import { api } from './api';
 import { liveDb } from './liveDb.svelte';
 import { feedStatusStore, type V2FeedResult } from '$lib/stores/feedStatus.svelte';
+import { socialStore } from '$lib/stores/social.svelte';
 import type { Subscription } from '$lib/types';
+
+// Max authors per /documents request (matches the proxy/backend cap).
+const DOCUMENT_BATCH_SIZE = 50;
 
 const BATCH_SIZE = 50;
 // Small first batch so the initial feeds land and the UI paints quickly;
@@ -189,6 +193,51 @@ export async function fetchAllFeeds(
   }
 
   return result;
+}
+
+/**
+ * Fetch standard.site documents for all `atproto.documents` subscriptions via the
+ * proxy batch endpoint and hand the results to the social store, which reconciles
+ * them into the timeline (and IndexedDB).
+ *
+ * Each subscription maps to an author DID (`subjectDid`) scoped to a publication
+ * (`feedUrl`: an at://...publication URI, '__freestanding__', or empty for all of
+ * the author's documents). The full current list is fetched (no since-trim) so
+ * upstream edits and deletes self-heal.
+ *
+ * @param subscriptions - All subscriptions; non-document ones are ignored.
+ */
+export async function fetchAllDocuments(subscriptions: Subscription[]): Promise<void> {
+  // Skip network requests when offline - cached documents are already loaded.
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+
+  const requests = subscriptions
+    .filter((sub) => sub.sourceType === 'atproto.documents' && sub.subjectDid)
+    .map((sub) => ({
+      did: sub.subjectDid as string,
+      siteUri: sub.feedUrl || undefined,
+    }));
+
+  if (requests.length === 0) return;
+
+  // Collect every batch's results, then reconcile once. Applying per-batch would
+  // clear + rewrite the whole IndexedDB table on each batch (O(batches × total));
+  // a single apply at the end is one rewrite regardless of how many batches.
+  const allAuthors: Awaited<ReturnType<typeof api.fetchDocumentsBatchV2>>['authors'] = [];
+  for (let offset = 0; offset < requests.length; offset += DOCUMENT_BATCH_SIZE) {
+    const batch = requests.slice(offset, offset + DOCUMENT_BATCH_SIZE);
+    try {
+      const { authors } = await api.fetchDocumentsBatchV2(batch);
+      allAuthors.push(...authors);
+    } catch (e) {
+      // Don't let a document batch failure abort the overall refresh.
+      console.error('Document batch fetch failed:', e);
+    }
+  }
+
+  if (allAuthors.length > 0) {
+    await socialStore.applyDocumentResults(allAuthors);
+  }
 }
 
 export interface FetchSingleFeedResult {

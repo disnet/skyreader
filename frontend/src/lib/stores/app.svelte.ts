@@ -8,7 +8,7 @@ import { feedStatusStore } from './feedStatus.svelte';
 import { articlesStore } from './articles.svelte';
 import { syncStore } from './sync.svelte';
 import { savesStore } from './saves.svelte';
-import { fetchAllFeeds } from '$lib/services/feedFetcher';
+import { fetchAllFeeds, fetchAllDocuments } from '$lib/services/feedFetcher';
 import { api } from '$lib/services/api';
 import { dedupeRemoteSubscriptionRecords } from '$lib/services/subscriptionDedup';
 import { getMetadata, setMetadata, checkDbHealth } from '$lib/services/db';
@@ -138,9 +138,13 @@ function createAppManager() {
       // One-time migration: push existing local custom fields to backend
       await migrateCustomFieldsToBackend();
 
-      // Fetch all feeds using batch API
+      // Fetch all feeds (RSS) and standard.site documents in parallel; both
+      // source from the proxy and merge client-side.
       if (liveDb.subscriptions.length > 0) {
-        const result = await fetchAllFeeds(liveDb.subscriptions, articlesStore.savedGuids);
+        const [result] = await Promise.all([
+          fetchAllFeeds(liveDb.subscriptions, articlesStore.savedGuids),
+          fetchAllDocuments(liveDb.subscriptions),
+        ]);
         newArticles = result.newArticles;
       }
 
