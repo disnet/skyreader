@@ -2,12 +2,15 @@
   interface Props {
     title: string;
     description: string;
+    /** Primary action as a link (navigation) */
     actionHref?: string;
+    /** Primary action as a callback (in-place action). Takes precedence over actionHref. */
+    onAction?: () => void;
     actionText?: string;
     icon?: string;
   }
 
-  let { title, description, actionHref, actionText, icon }: Props = $props();
+  let { title, description, actionHref, onAction, actionText, icon }: Props = $props();
 </script>
 
 <div class="empty-state">
@@ -16,8 +19,12 @@
   {/if}
   <h2>{title}</h2>
   <p>{description}</p>
-  {#if actionHref && actionText}
-    <a href={actionHref} class="btn btn-primary">{actionText}</a>
+  {#if actionText}
+    {#if onAction}
+      <button type="button" class="empty-action" onclick={onAction}>{actionText}</button>
+    {:else if actionHref}
+      <a href={actionHref} class="empty-action">{actionText}</a>
+    {/if}
   {/if}
 </div>
 
@@ -41,6 +48,34 @@
   }
 
   .empty-state p {
-    margin-bottom: 1rem;
+    margin-bottom: 1.5rem;
+    max-width: 42ch;
+    margin-left: auto;
+    margin-right: auto;
+    line-height: 1.5;
+  }
+
+  .empty-action {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    font: inherit;
+    font-weight: 500;
+    line-height: 1.4;
+    color: #fff;
+    background: var(--color-primary);
+    border: none;
+    border-radius: var(--radius-md, 6px);
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+  }
+
+  .empty-action:hover {
+    background: var(--color-primary-dark);
+  }
+
+  .empty-action:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.35);
   }
 </style>

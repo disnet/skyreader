@@ -16,6 +16,7 @@
   import { api, ScopeUpgradeError } from '$lib/services/api';
   import { syncQueue, type IntegrationPayload } from '$lib/services/sync-queue';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import LibraryEmptyState from '$lib/components/LibraryEmptyState.svelte';
   import LoadingState from '$lib/components/LoadingState.svelte';
   import WelcomePage from '$lib/components/feed/WelcomePage.svelte';
   import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
@@ -634,6 +635,8 @@
           <EmptyState
             title="No matching items"
             description="This filtered view has no items matching its criteria"
+            actionHref="/"
+            actionText="Show everything"
           />
         {:else if feedViewStore.sharedFilter}
           <EmptyState title="No shared articles" description="Share articles to see them here" />
@@ -670,12 +673,14 @@
           {:else}
             <EmptyState title="No articles" description="This feed has no articles" />
           {/if}
+        {:else if subscriptionsStore.subscriptions.length === 0}
+          <LibraryEmptyState onAddFeed={() => sidebarStore.openAddFeedModal()} />
         {:else if feedViewStore.showOnlyUnread}
           <EmptyState title="No unread articles" description="You're all caught up!" />
         {:else}
           <EmptyState
             title="No articles"
-            description="Add some subscriptions using the + button in the sidebar"
+            description="Your feeds haven't published anything yet. Check back later."
           />
         {/if}
       {:else if isSavedView}

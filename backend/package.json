@@ -6,6 +6,7 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev --test-scheduled",
+    "clean": "rm -rf .wrangler/state/v3/d1/",
     "start": "wrangler dev",
     "test": "vitest",
     "cf-typegen": "wrangler types",
