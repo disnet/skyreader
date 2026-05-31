@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-05-31T00:00:00Z",
+  "title": "Design System: Skyreader",
+  "extensions": {
+    "colorMeta": {
+      "primary": { "role": "primary", "displayName": "Skyreader Blue", "canonical": "#0066cc", "tonalRamp": ["#001b33", "#002b52", "#003e75", "#005299", "#0066cc", "#3389d6", "#74b1e3", "#cce3f5"] },
+      "primary-dark": { "role": "primary", "displayName": "Pressed Blue", "canonical": "#0052a3", "tonalRamp": ["#001426", "#002247", "#003366", "#00427f", "#0052a3", "#2e7bc4", "#6fa9dd", "#c7e0f3"] },
+      "sky": { "role": "secondary", "displayName": "Sky Identity", "canonical": "#4a9fd4", "tonalRamp": ["#0f2e44", "#16475f", "#1f6388", "#2f82ac", "#4a9fd4", "#74b6df", "#a6d2ec", "#dceef8"] },
+      "highlight": { "role": "tertiary", "displayName": "Highlight Gold", "canonical": "#f5c518", "tonalRamp": ["#3d3104", "#5c4a06", "#7a630a", "#a8850d", "#d6a912", "#f5c518", "#f8d556", "#fdeeb0"] },
+      "bg": { "role": "neutral", "displayName": "Surface", "canonical": "#ffffff", "tonalRamp": ["#1a1a1a", "#333333", "#4d4d4d", "#737373", "#999999", "#bfbfbf", "#e0e0e0", "#ffffff"] },
+      "bg-secondary": { "role": "neutral", "displayName": "Sunken", "canonical": "#f5f5f5", "tonalRamp": ["#2a2a2a", "#404040", "#595959", "#808080", "#a6a6a6", "#cccccc", "#e8e8e8", "#f5f5f5"] },
+      "text": { "role": "neutral", "displayName": "Ink", "canonical": "#333333", "tonalRamp": ["#0d0d0d", "#1a1a1a", "#262626", "#333333", "#4d4d4d", "#737373", "#999999", "#cccccc"] },
+      "text-secondary": { "role": "neutral", "displayName": "Muted Ink", "canonical": "#666666", "tonalRamp": ["#1a1a1a", "#333333", "#4d4d4d", "#666666", "#808080", "#999999", "#b3b3b3", "#d9d9d9"] },
+      "border": { "role": "neutral", "displayName": "Divider", "canonical": "#e0e0e0", "tonalRamp": ["#404040", "#595959", "#737373", "#8c8c8c", "#a6a6a6", "#c0c0c0", "#e0e0e0", "#f2f2f2"] },
+      "success": { "role": "semantic", "displayName": "Success Green", "canonical": "#4caf50", "tonalRamp": ["#10300f", "#1a4a18", "#266b23", "#327f2f", "#4caf50", "#74c476", "#a4d9a6", "#d8efd9"] },
+      "warning": { "role": "semantic", "displayName": "Warning Amber", "canonical": "#ff9800", "tonalRamp": ["#3d2500", "#5c3800", "#7a4b00", "#a86600", "#d68000", "#ff9800", "#ffb74d", "#ffe0b2"] },
+      "error": { "role": "semantic", "displayName": "Error Red", "canonical": "#f44336", "tonalRamp": ["#3d0f0b", "#5c1712", "#7a1f18", "#a82a20", "#d6362a", "#f44336", "#f88078", "#fcc7c2"] }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline", "purpose": "Page and major section titles. The largest type in the chrome (1.25rem ceiling)." },
+      "title": { "displayName": "Title", "purpose": "Article titles in list/card rows and modal headers." },
+      "body": { "displayName": "Body", "purpose": "Default UI text and controls." },
+      "article": { "displayName": "Article", "purpose": "The reading surface. Reader-controlled font family and size; measure capped 65-75ch." },
+      "label": { "displayName": "Label", "purpose": "Metadata, timestamps, feed names. Muted Ink, never below 4.5:1." }
+    },
+    "shadows": [
+      { "name": "raised", "value": "0 2px 8px rgba(0,0,0,0.1)", "purpose": "Small floating elements: popover menus, tooltips, context menus. Dark mode bumps to 0.3." },
+      { "name": "floating", "value": "0 4px 16px rgba(0,0,0,0.15)", "purpose": "Mid-level overlays: dropdowns, toasts. Dark mode bumps to 0.4." },
+      { "name": "overlay", "value": "0 8px 32px rgba(0,0,0,0.25)", "purpose": "Modals and dialogs above a backdrop. Dark mode bumps to 0.5." },
+      { "name": "focus-ring", "value": "0 0 0 2px rgba(0,102,204,0.1)", "purpose": "Primary-tinted focus indicator on interactive elements." }
+    ],
+    "motion": [
+      { "name": "ease-standard", "value": "ease", "purpose": "Default easing for state transitions." },
+      { "name": "duration-fast", "value": "0.15s", "purpose": "Color, opacity, and background state changes (hover, active)." },
+      { "name": "duration-base", "value": "0.2s", "purpose": "Button background shifts and larger state transitions." }
+    ],
+    "breakpoints": [
+      { "name": "mobile", "value": "768px", "purpose": "Below this the sidebar collapses to an overlay drawer and the bottom bar appears." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single high-emphasis action per view. Quiet hover, no transform.",
+      "html": "<button class=\"ds-btn-primary\">Add feed</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--color-primary, #0066cc); color: #fff; border: none; border-radius: 6px; padding: 8px 16px; font-weight: 500; font-size: 1rem; cursor: pointer; transition: background-color 0.2s; } .ds-btn-primary:hover { background: var(--color-primary-dark, #0052a3); } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(0,102,204,0.3); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Lower-emphasis action. Sunken fill with a Divider border.",
+      "html": "<button class=\"ds-btn-secondary\">Cancel</button>",
+      "css": ".ds-btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--color-bg-secondary, #f5f5f5); color: var(--color-text, #333); border: 1px solid var(--color-border, #e0e0e0); border-radius: 6px; padding: 8px 16px; font-weight: 500; font-size: 1rem; cursor: pointer; transition: background-color 0.15s; } .ds-btn-secondary:hover { background: var(--color-border, #e0e0e0); } .ds-btn-secondary:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(0,102,204,0.3); }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Full-width field. Focus shifts the border to primary; outline is replaced, never removed.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Search feeds\" />",
+      "css": ".ds-input { width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid var(--color-border, #e0e0e0); border-radius: 6px; background: var(--color-bg, #fff); color: var(--color-text, #333); font-size: 1rem; transition: border-color 0.15s; } .ds-input::placeholder { color: var(--color-text-secondary, #666); } .ds-input:focus { outline: none; border-color: var(--color-primary, #0066cc); }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Sparingly-used container for genuinely grouped content. Flat at rest; defined by a 1px border. No nesting.",
+      "html": "<div class=\"ds-card\"><h3 class=\"ds-card-title\">The Verge</h3><p class=\"ds-card-meta\">12 unread &middot; updated 4m ago</p></div>",
+      "css": ".ds-card { background: var(--color-bg, #fff); border: 1px solid var(--color-border, #e0e0e0); border-radius: 8px; padding: 16px; color: var(--color-text, #333); } .ds-card-title { margin: 0 0 4px; font-size: 1rem; font-weight: 600; } .ds-card-meta { margin: 0; font-size: 0.875rem; color: var(--color-text-secondary, #666); }"
+    },
+    {
+      "name": "Sidebar Nav Item (active)",
+      "kind": "nav",
+      "refersTo": "nav",
+      "description": "Feed/channel row. Selection is a Wash Blue tint, never a colored side-stripe or heavy fill.",
+      "html": "<div class=\"ds-nav-item active\"><svg class=\"ds-nav-icon\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4 11a9 9 0 0 1 9 9\"/><path d=\"M4 4a16 16 0 0 1 16 16\"/><circle cx=\"5\" cy=\"19\" r=\"1\"/></svg><span>Top Stories</span></div>",
+      "css": ".ds-nav-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; color: var(--color-text, #333); font-size: 0.875rem; font-weight: 500; cursor: pointer; transition: background-color 0.15s; } .ds-nav-item:hover { background: var(--color-bg-secondary, #f5f5f5); } .ds-nav-item.active { background: var(--color-sidebar-active, rgba(0,102,204,0.1)); color: var(--color-primary, #0066cc); } .ds-nav-icon { flex: none; }"
+    },
+    {
+      "name": "Success Toast",
+      "kind": "custom",
+      "refersTo": "toast",
+      "description": "Floating confirmation. Uses the Floating shadow; color pairs with a checkmark icon, never color alone.",
+      "html": "<div class=\"ds-toast\"><svg class=\"ds-toast-icon\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 6 9 17l-5-5\"/></svg><span>Synced to your PDS</span></div>",
+      "css": ".ds-toast { display: inline-flex; align-items: center; gap: 8px; background: var(--color-bg, #fff); border: 1px solid var(--color-success, #4caf50); border-radius: 8px; padding: 12px 16px; font-size: 0.9375rem; color: var(--color-text, #333); box-shadow: 0 4px 16px rgba(0,0,0,0.15); } .ds-toast-icon { flex: none; color: var(--color-success, #4caf50); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Owned Library",
+    "overview": "Skyreader is your personal, portable collection of reading - a well-kept shelf that happens to live on infrastructure you own. The design exists to make that library feel calm, ordered, and yours. Chrome is quiet and recedes; the text you came to read is the one element allowed to raise its voice. Every surface decision is measured against a single question: does this help or distract from reading? When in doubt, it goes. The system is flat, restrained, and content-forward. Depth is conveyed through 1px borders and tonal background layering, not decoration - shadows appear only when something genuinely floats above the page. Color is held in reserve: a single confident blue carries interaction, and the rest of the interface is a disciplined neutral ramp so that an article, a highlight, or an unread marker reads instantly. It works in both light and dark, both must independently pass contrast, and it respects prefers-reduced-motion on every transition.",
+    "keyCharacteristics": [
+      "Flat by default; depth only where things overlap.",
+      "One blue. Color is rare and therefore meaningful.",
+      "Neutral, near-monochrome chrome so content is the only color event.",
+      "Reader-controlled article typography (family + size) is a first-class feature.",
+      "Calm density: efficient for many feeds, never cramped."
+    ],
+    "rules": [
+      { "name": "The One Blue Rule", "body": "There is exactly one interaction blue: #0066cc (--color-primary). The values #2563eb, #3b82f6, and #0085ff in the current code are drift, not palette, and are scheduled for consolidation. Never introduce a new blue.", "section": "colors" },
+      { "name": "The Reserved Color Rule", "body": "Outside of the one blue and the semantic trio, the interface is neutral. Color is an event: an unread dot, a highlight, a sync state. No screen has more than one non-neutral hue competing for attention (excluding semantic state).", "section": "colors" },
+      { "name": "The One Voice Rule", "body": "The chrome uses a single typeface family. Hierarchy comes from weight (400 vs 600) and size, never from a second UI font. The only typographic variety the user sees is the one they chose for the article body.", "section": "typography" },
+      { "name": "The No-Shout Rule", "body": "UI headings top out around 1.25rem. There is no hero display type; oversized headings would be chrome competing with content.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "A surface at rest casts no shadow. If you are adding a box-shadow to a card, list row, or panel in the page flow, stop - use a border or a tonal background instead. Shadow signals that an element has left the page plane.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do use exactly one interaction blue, #0066cc (--color-primary). Consolidate any #2563eb / #3b82f6 / #0085ff you encounter into the token.",
+      "Do keep content surfaces flat and separate them with 1px Divider borders and Surface-vs-Sunken tonal layering.",
+      "Do reserve shadows (Raised / Floating / Overlay) for elements that float above the page - modals, dropdowns, toasts, popovers - and bump shadow opacity in dark mode.",
+      "Do hold muted text (#666666 / dark #999999) and placeholders to at least 4.5:1; bump toward Ink before reaching for a lighter gray.",
+      "Do keep article measure at 65-75ch and preserve reader control over article font family and size.",
+      "Do pair every color signal (unread, sync state, social cue) with shape, weight, or text - color is never the sole carrier of meaning.",
+      "Do provide a prefers-reduced-motion fallback (crossfade or instant) for every transition."
+    ],
+    "donts": [
+      "Don't build a generic SaaS dashboard: no cards-everywhere grids, gradient accents, or hero-metric templates.",
+      "Don't recreate a cluttered legacy reader: no dense toolbar walls or every-feature-visible chrome crowding the content.",
+      "Don't drift toward the cream/beige editorial cliche: the body background is true white (#ffffff) / dark (#1a1a1a), never warm paper.",
+      "Don't let the social layer look like an algorithmic feed: shares and notes stay quiet, chronological, and human-scaled.",
+      "Don't add resting box-shadow to in-flow cards, rows, or panels (The Flat-By-Default Rule).",
+      "Don't introduce a second UI typeface; hierarchy is weight and size in the system sans.",
+      "Don't use a colored border-left / border-right stripe as an accent on rows, cards, or alerts.",
+      "Don't exceed 1.25rem for UI headings; there is no hero display type in this app.",
+      "Don't use background-clip: text gradient text anywhere."
+    ]
+  }
+}
