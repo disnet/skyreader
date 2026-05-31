@@ -3,7 +3,7 @@ import { seedSavedArticle } from './seed';
 
 test.describe('Saved Articles', () => {
   test('seeded saved article appears in saved view', async ({ authedPage, testUser }) => {
-    seedSavedArticle(testUser, {
+    await seedSavedArticle(testUser, {
       url: 'https://example.com/saved-article',
       title: 'My Saved Article',
       domain: 'example.com',
@@ -15,7 +15,7 @@ test.describe('Saved Articles', () => {
   });
 
   test('delete saved article via API', async ({ authedPage, testUser }) => {
-    const rkey = seedSavedArticle(testUser, {
+    const rkey = await seedSavedArticle(testUser, {
       url: 'https://example.com/to-delete',
       title: 'Article To Delete',
       domain: 'example.com',

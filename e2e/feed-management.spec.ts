@@ -26,7 +26,7 @@ test.describe('Feed Management', () => {
   });
 
   test('remove feed via sources page menu', async ({ authedPage, testUser }) => {
-    seedSubscription(testUser, {
+    await seedSubscription(testUser, {
       feedUrl: 'https://example.com/delete-test.xml',
       title: 'Delete Test Feed',
     });
@@ -71,15 +71,15 @@ test.describe('Feed Management', () => {
   });
 
   test('multiple feeds show on sources page', async ({ authedPage, testUser }) => {
-    seedSubscription(testUser, {
+    await seedSubscription(testUser, {
       feedUrl: 'https://example.com/feed1.xml',
       title: 'Multi Feed One',
     });
-    seedSubscription(testUser, {
+    await seedSubscription(testUser, {
       feedUrl: 'https://example.com/feed2.xml',
       title: 'Multi Feed Two',
     });
-    seedSubscription(testUser, {
+    await seedSubscription(testUser, {
       feedUrl: 'https://example.com/feed3.xml',
       title: 'Multi Feed Three',
     });

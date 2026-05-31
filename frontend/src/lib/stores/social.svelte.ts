@@ -4,33 +4,8 @@ import { api } from '$lib/services/api';
 import { profileService } from '$lib/services/profiles';
 import { itemLabelsStore } from './itemLabels.svelte';
 import { syncStore } from './sync.svelte';
+import { reconcileDocuments, type DocumentScopeResult } from '$lib/services/documentSync';
 import type { SocialDocument, SocialShare } from '$lib/types';
-
-/**
- * Whether a document falls within a subscription's publication scope, mirroring
- * the proxy's filterByPublication:
- * - undefined → all of the author's documents
- * - '__freestanding__' → documents not tied to an at:// publication
- * - an at://...publication URI → only that publication
- */
-function docInScope(d: SocialDocument, siteUri?: string): boolean {
-  if (!siteUri) return true;
-  if (siteUri === '__freestanding__') return !d.siteUri || !d.siteUri.startsWith('at://');
-  return d.siteUri === siteUri;
-}
-
-function sortByPublishedDesc(docs: SocialDocument[]): SocialDocument[] {
-  return [...docs].sort(
-    (a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
-  );
-}
-
-interface DocumentResult {
-  did: string;
-  siteUri?: string;
-  documents: SocialDocument[];
-  status: 'ready' | 'error';
-}
 
 function createSocialStore() {
   let shares = $state<SocialShare[]>([]);
@@ -123,24 +98,11 @@ function createSocialStore() {
    * deletes self-heal: in-scope documents the proxy no longer returns are dropped,
    * the rest upserted. Persists the full set to IndexedDB in one pass.
    */
-  async function applyDocumentResults(results: DocumentResult[]): Promise<void> {
+  async function applyDocumentResults(results: DocumentScopeResult[]): Promise<void> {
     const ready = results.filter((r) => r.status === 'ready');
     if (ready.length === 0) return;
 
-    let next = documents;
-    for (const r of ready) {
-      // Drop everything currently in this scope, then add the fresh set.
-      next = [
-        ...next.filter((d) => !(d.authorDid === r.did && docInScope(d, r.siteUri))),
-        ...r.documents,
-      ];
-    }
-
-    // Dedup by recordUri (a doc can fall in two overlapping subscription scopes);
-    // the most recently applied wins.
-    const byUri = new Map<string, SocialDocument>();
-    for (const d of next) byUri.set(d.recordUri, d);
-    documents = sortByPublishedDesc([...byUri.values()]);
+    documents = reconcileDocuments(documents, ready);
 
     // Mirror to IndexedDB. The table uses an auto-increment id, so strip stale ids
     // and rewrite wholesale (counts are small — a few authors × ~100 docs).

@@ -8,9 +8,9 @@ interface TestFixtures {
 
 export const test = base.extend<TestFixtures>({
   testUser: async ({}, use) => {
-    const user = seedTestUser();
+    const user = await seedTestUser();
     await use(user);
-    cleanupTestData(user);
+    await cleanupTestData(user);
   },
 
   authedPage: async ({ context, testUser }, use) => {

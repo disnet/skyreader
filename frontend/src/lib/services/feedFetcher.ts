@@ -2,6 +2,7 @@ import { api } from './api';
 import { liveDb } from './liveDb.svelte';
 import { feedStatusStore, type V2FeedResult } from '$lib/stores/feedStatus.svelte';
 import { socialStore } from '$lib/stores/social.svelte';
+import { buildDocumentRequests, collectDocumentBatches } from './documentSync';
 import type { Subscription } from '$lib/types';
 
 // Max authors per /documents request (matches the proxy/backend cap).
@@ -211,29 +212,15 @@ export async function fetchAllDocuments(subscriptions: Subscription[]): Promise<
   // Skip network requests when offline - cached documents are already loaded.
   if (typeof navigator !== 'undefined' && !navigator.onLine) return;
 
-  const requests = subscriptions
-    .filter((sub) => sub.sourceType === 'atproto.documents' && sub.subjectDid)
-    .map((sub) => ({
-      did: sub.subjectDid as string,
-      siteUri: sub.feedUrl || undefined,
-    }));
-
+  const requests = buildDocumentRequests(subscriptions);
   if (requests.length === 0) return;
 
   // Collect every batch's results, then reconcile once. Applying per-batch would
   // clear + rewrite the whole IndexedDB table on each batch (O(batches × total));
   // a single apply at the end is one rewrite regardless of how many batches.
-  const allAuthors: Awaited<ReturnType<typeof api.fetchDocumentsBatchV2>>['authors'] = [];
-  for (let offset = 0; offset < requests.length; offset += DOCUMENT_BATCH_SIZE) {
-    const batch = requests.slice(offset, offset + DOCUMENT_BATCH_SIZE);
-    try {
-      const { authors } = await api.fetchDocumentsBatchV2(batch);
-      allAuthors.push(...authors);
-    } catch (e) {
-      // Don't let a document batch failure abort the overall refresh.
-      console.error('Document batch fetch failed:', e);
-    }
-  }
+  const allAuthors = await collectDocumentBatches(requests, DOCUMENT_BATCH_SIZE, (batch) =>
+    api.fetchDocumentsBatchV2(batch)
+  );
 
   if (allAuthors.length > 0) {
     await socialStore.applyDocumentResults(allAuthors);

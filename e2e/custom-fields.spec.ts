@@ -22,7 +22,7 @@ test.describe('Custom Fields', () => {
   const FEED_TITLE = 'Example Feed';
 
   test('edit custom title via sources page', async ({ authedPage, testUser }) => {
-    seedSubscription(testUser, { feedUrl: FEED_URL, title: FEED_TITLE });
+    await seedSubscription(testUser, { feedUrl: FEED_URL, title: FEED_TITLE });
 
     await authedPage.reload();
     await authedPage.locator('.nav-label', { hasText: 'Manage Sources' }).click();
@@ -73,7 +73,7 @@ test.describe('Custom Fields', () => {
   });
 
   test('clear custom title resets to original', async ({ authedPage, testUser }) => {
-    seedSubscription(testUser, {
+    await seedSubscription(testUser, {
       feedUrl: FEED_URL,
       title: FEED_TITLE,
       customTitle: 'Old Custom Title',
@@ -108,7 +108,7 @@ test.describe('Custom Fields', () => {
   });
 
   test('set custom icon URL shows preview', async ({ authedPage, testUser }) => {
-    seedSubscription(testUser, { feedUrl: FEED_URL, title: FEED_TITLE });
+    await seedSubscription(testUser, { feedUrl: FEED_URL, title: FEED_TITLE });
 
     await authedPage.reload();
     await authedPage.locator('.nav-label', { hasText: 'Manage Sources' }).click();

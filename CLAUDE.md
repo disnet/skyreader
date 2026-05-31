@@ -83,14 +83,14 @@ npm run test:e2e:headed      # Run with visible browser
 Playwright spins up the backend (port 8787) and frontend (port 5173) via `webServer` config, or reuses already-running servers from `./scripts/dev-local.sh`.
 
 **Prerequisites:**
-- `backend/.dev.vars` must include `ALLOWED_ORIGINS=http://127.0.0.1:5173`
+- `backend/.dev.vars` must include `ALLOWED_ORIGINS=http://127.0.0.1:5173` and `E2E_TEST_MODE=true`
 - Install: `npm install && npx playwright install chromium` (from root)
 
 **Test structure:**
 ```
 e2e/
 ├── global-setup.ts          # Applies D1 migrations before test run
-├── seed.ts                  # Seeds test data into D1 via wrangler CLI
+├── seed.ts                  # Seeds test data into D1 via the backend's /api/test/exec endpoint
 ├── fixtures.ts              # Custom Playwright fixtures (testUser, authedPage)
 └── custom-fields.spec.ts    # Test specs
 ```
