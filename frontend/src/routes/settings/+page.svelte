@@ -312,16 +312,16 @@
   {/if}
 
   <section class="card">
-    <h2>Data Portability</h2>
+    <h2>The Atmosphere</h2>
     <p class="setting-description" style="margin-top: 0;">
-      Your <strong>shares and saves are always stored</strong> in your Personal Data Server (PDS).
-      This makes them publicly visible and portable to any AT Protocol compatible service.
+      Your <strong>shares and saves always live in the Atmosphere</strong> — stored on your atproto
+      PDS, where they're portable to any Atmospheric app and publicly visible.
       {#if auth.user}
         <a
           href="https://pdsls.dev/at://{auth.user.did}"
           target="_blank"
           rel="noopener noreferrer"
-          class="pds-link">View your public PDS data</a
+          class="pds-link">View your PDS data</a
         >
       {/if}
     </p>
@@ -332,12 +332,11 @@
       <div class="sync-toggle-section">
         <label class="toggle-setting">
           <input type="checkbox" checked={pdsSyncEnabled} onchange={handleTogglePdsSync} />
-          <span>Also sync subscriptions</span>
+          <span>Turn on Atmospheric sync</span>
         </label>
         <p class="setting-description">
-          Optionally store your feed subscriptions in your PDS. Note: this data will be <strong
-            >publicly visible</strong
-          > on your PDS, but gives you full backup and portability.
+          Also store your feed subscriptions on your PDS. They'll be backed up and portable across
+          the Atmosphere, but become <strong>publicly visible</strong>.
         </p>
       </div>
 
