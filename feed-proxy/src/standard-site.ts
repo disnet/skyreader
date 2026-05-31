@@ -147,7 +147,7 @@ async function fetchRecord<T>(
  * URI, caching the result in SQLite. Returns nulls for non-`at://` sites (loose
  * https:// documents) — those have no publication record to resolve.
  */
-async function resolveSiteMeta(
+export async function resolveSiteMeta(
 	db: Database,
 	siteUri: string
 ): Promise<{ baseUrl: string | null; icon: string | null }> {

@@ -1,6 +1,9 @@
 // Re-export the global Env interface from worker-configuration.d.ts
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface Env extends globalThis.Env {}
+export interface Env extends globalThis.Env {
+  // Set to 'true' only in `.dev.vars` for local/CI e2e runs; gates the test-only
+  // D1 exec endpoint (see routes/test-utils.ts). Never set in production.
+  E2E_TEST_MODE?: string;
+}
 
 export interface User {
   did: string;

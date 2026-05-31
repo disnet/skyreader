@@ -74,6 +74,7 @@ import {
   handleUpsertChannel,
   handleDeleteChannel,
 } from './routes/channels';
+import { handleTestExec } from './routes/test-utils';
 import { resolveSessionFromRequest, updateUserActivity } from './services/oauth';
 import { checkRateLimit, cleanupRateLimits, getRateLimitConfig } from './services/rate-limit';
 
@@ -168,6 +169,12 @@ export default {
 
       // Route matching
       switch (true) {
+        // Test-only D1 exec endpoint (e2e seed/cleanup). Mounted only when
+        // E2E_TEST_MODE is set, so it's unreachable in production.
+        case url.pathname === '/api/test/exec' && env.E2E_TEST_MODE === 'true':
+          response = await handleTestExec(request, env);
+          break;
+
         // OAuth client metadata
         case url.pathname === '/.well-known/client-metadata':
           response = await handleClientMetadata(request, env);

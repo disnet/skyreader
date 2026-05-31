@@ -1424,7 +1424,7 @@ export function createApp(db: Database, config: AppConfig) {
 		return c.json({ authors: results });
 	});
 
-	return { app, inFlight, warmStaleFeeds, warmStaleDocuments };
+	return { app, inFlight, inFlightDocs, warmStaleFeeds, warmStaleDocuments };
 }
 
 export function cleanupCache(db: Database): number {
