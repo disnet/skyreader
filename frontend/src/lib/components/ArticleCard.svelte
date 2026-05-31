@@ -152,9 +152,9 @@
         }
       }
     }
-    // For documents, extract hostname from canonicalUrl
+    // For documents, extract hostname from canonicalUrl (fall back to siteUri)
     if (isDocumentMode) {
-      const url = document?.canonicalUrl;
+      const url = document?.canonicalUrl || document?.siteUri;
       if (url) {
         try {
           return new URL(url).hostname.replace(/^www\./, '');
@@ -609,18 +609,6 @@
           >
         {/if}
       </div>
-    {:else if isDocumentMode && document}
-      <div class="share-attribution">
-        <span class="attribution-icon-wrapper"><Icon name="newspaper" size={12} /></span>
-        published by
-        <button
-          class="share-author-link"
-          onclick={(e) => {
-            e.stopPropagation();
-            sidebarStore.openAddFeedModalForDid(document.authorDid);
-          }}>@{authorHandle}</button
-        >
-      </div>
     {/if}
     <div class="article-header-row">
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -978,13 +966,6 @@
   .attribution-icon {
     width: 12px;
     height: 12px;
-    flex-shrink: 0;
-  }
-
-  .attribution-icon-wrapper {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
     flex-shrink: 0;
   }
 

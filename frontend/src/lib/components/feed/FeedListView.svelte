@@ -30,6 +30,26 @@
   let { onToggleSave, onShare, onUnshare, onReaderChange, onSaveToSemble, onSaveToMargin }: Props =
     $props();
 
+  // Resolve the atproto.documents subscription a document belongs to, so its
+  // publication label can link and filter like an RSS feed title. Mirrors the
+  // author + publication scoping in feedView.svelte.ts's document filter.
+  function findDocumentSubscription(doc: SocialDocument) {
+    const subs = subscriptionsStore.subscriptions.filter(
+      (s) => s.sourceType === 'atproto.documents' && s.subjectDid === doc.authorDid
+    );
+    if (subs.length === 0) return undefined;
+    // Prefer a publication-scoped sub whose publication URI matches the doc's site
+    const scoped = subs.find((s) => s.feedUrl?.startsWith('at://') && s.feedUrl === doc.siteUri);
+    if (scoped) return scoped;
+    // Next, a freestanding sub when the doc isn't tied to a publication
+    const freestanding = subs.find(
+      (s) => s.feedUrl === '__freestanding__' && (!doc.siteUri || !doc.siteUri.startsWith('at://'))
+    );
+    if (freestanding) return freestanding;
+    // Fall back to any author-level sub
+    return subs[0];
+  }
+
   // Reader overlay state — readerItem holds the data, page.state.readerOpen drives history
   let readerItem = $state<FeedDisplayItem | null>(null);
   let savedScrollY = 0;
@@ -326,8 +346,10 @@
         />
       {:else if displayItem.type === 'document'}
         {@const doc = displayItem.item}
+        {@const docSub = findDocumentSubscription(doc)}
         <ArticleCard
           document={doc}
+          feedId={docSub?.id}
           isRead={itemLabelsStore.isSocialRead(doc.recordUri)}
           isSaved={itemLabelsStore.isSaved(doc.recordUri)}
           selected={preferences.expandAllItems || feedViewStore.selectedKey === displayItem.key}
