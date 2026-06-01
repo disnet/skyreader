@@ -16,6 +16,8 @@
   import { isPcktBlogContent, renderPcktBlogContent } from '$lib/utils/pckt-blog-renderer';
   import { isOffprintContent, renderOffprintContent } from '$lib/utils/offprint-renderer';
   import { isGreengaleContent, renderGreengaleContent } from '$lib/utils/greengale-renderer';
+  import { getExternalArticleLink, getLinkPostNote } from '$lib/utils/linkPost';
+  import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { profileService } from '$lib/services/profiles';
   import { sharesStore } from '$lib/stores/shares.svelte';
@@ -97,6 +99,12 @@
   let isShareMode = $derived(Boolean(share && !article && !document));
   // Determine if we're in document mode (showing someone's published document)
   let isDocumentMode = $derived(Boolean(document && !article && !share));
+  // The external article a document points at, if it's a "link post" (Phase 2).
+  let linkPostUrl = $derived(document ? getExternalArticleLink(document) : undefined);
+  // Link-post mode: a document whose primary content is an EXTERNAL article. The
+  // card inverts — the external article is the thing you read; the linkblog entry
+  // is the byline.
+  let isLinkPostMode = $derived(isDocumentMode && Boolean(linkPostUrl));
 
   // Can the user follow this source? (not already subscribed)
   let canFollowSource = $derived.by(() => {
@@ -123,9 +131,10 @@
     }
   }
 
-  // Normalize data for article, share, and document modes
+  // Normalize data for article, share, and document modes. For a link post the
+  // external article is what we open/link to — not the linkblog permalink.
   let itemUrl = $derived(
-    article?.url || share?.itemUrl || document?.canonicalUrl || document?.path || ''
+    article?.url || share?.itemUrl || linkPostUrl || document?.canonicalUrl || document?.path || ''
   );
   let itemTitle = $derived(article?.title || share?.itemTitle || document?.title || itemUrl);
   let itemPublishedAt = $derived(
@@ -152,9 +161,10 @@
         }
       }
     }
-    // For documents, extract hostname from canonicalUrl (fall back to siteUri)
+    // For documents, extract hostname from the external article (link posts) or
+    // the canonicalUrl (fall back to siteUri).
     if (isDocumentMode) {
-      const url = document?.canonicalUrl || document?.siteUri;
+      const url = linkPostUrl || document?.canonicalUrl || document?.siteUri;
       if (url) {
         try {
           return new URL(url).hostname.replace(/^www\./, '');
@@ -166,8 +176,29 @@
     return undefined;
   });
 
+  // Escape a plaintext note before embedding it in the rendered HTML lead. (The
+  // whole displayContent is later run through sanitizeHtml, but the note is raw
+  // user text, so escape it so `<`/`&` show literally.)
+  function escapeNoteHtml(text: string): string {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
   // Content handling - article has priority, then share content, then localArticle, then document
   let displayContent = $derived.by(() => {
+    // Link post: once the external article has been fetched, render the user's
+    // note as a lead, then the full article. Until then, fall through to the
+    // leaflet preview (note + website card) below.
+    if (isLinkPostMode && linkPostUrl && document) {
+      const fetched = linkPostContentStore.get(linkPostUrl);
+      if (fetched?.content) {
+        const note = getLinkPostNote(document);
+        const lead = note
+          ? `<blockquote class="link-post-note" style="margin: 0 0 1.25em; padding-left: 0.875em; border-left: 3px solid var(--color-primary, #0066cc); color: var(--color-text-secondary, #666); font-style: italic">${escapeNoteHtml(note)}</blockquote>`
+          : '';
+        return lead + fetched.content;
+      }
+    }
+
     // For articles and shares, use existing logic
     if (article?.content) return article.content;
     if (article?.summary) return article.summary;
@@ -314,8 +345,8 @@
     const wasSelected = selected;
     onSelect?.();
     // Note: onRead is NOT called here - selectArticle in +page.svelte handles marking as read
-    // For shares, fetch content when first selecting
-    if (isShareMode && !wasSelected && onFetchContent) {
+    // For shares and link posts, fetch the full external article when first selecting
+    if ((isShareMode || isLinkPostMode) && !wasSelected && onFetchContent) {
       onFetchContent();
     }
   }
@@ -386,6 +417,8 @@
   // Compute favicon URL - for shares of documents, feedUrl may be an AT Protocol URI
   // which getFaviconUrl can't handle, so fall back to itemUrl
   let faviconUrl = $derived.by(() => {
+    // Link posts show the external article's favicon, not the publication icon.
+    if (linkPostUrl) return getFaviconUrl(linkPostUrl);
     if (document?.siteIcon) return document.siteIcon;
     if (document?.canonicalUrl) return getFaviconUrl(document.canonicalUrl);
     // For shares, check if feedUrl is an AT Protocol URI
@@ -608,6 +641,18 @@
             >({displayReshareCount})</span
           >
         {/if}
+      </div>
+    {:else if isLinkPostMode && document}
+      <div class="share-attribution">
+        <img src={logo} alt="" class="attribution-icon" />
+        linked by
+        <button
+          class="share-author-link"
+          onclick={(e) => {
+            e.stopPropagation();
+            sidebarStore.openAddFeedModalForDid(document.authorDid);
+          }}>@{authorHandle}</button
+        >
       </div>
     {/if}
     <div class="article-header-row">

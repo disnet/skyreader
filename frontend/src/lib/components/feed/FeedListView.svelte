@@ -10,6 +10,7 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { sharesStore } from '$lib/stores/shares.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
+  import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import type { Article, SocialDocument } from '$lib/types';
   import {
@@ -18,6 +19,7 @@
     type SembleMetadata,
     type MarginMetadata,
   } from '$lib/utils/displayItem';
+  import { getDocumentEffectiveUrl, getExternalArticleLink } from '$lib/utils/linkPost';
 
   interface Props {
     onToggleSave: (article: Article) => void;
@@ -348,6 +350,8 @@
       {:else if displayItem.type === 'document'}
         {@const doc = displayItem.item}
         {@const docSub = findDocumentSubscription(doc)}
+        {@const docUrl = getDocumentEffectiveUrl(doc)}
+        {@const linkUrl = getExternalArticleLink(doc)}
         <ArticleCard
           document={doc}
           feedId={docSub?.id}
@@ -356,21 +360,17 @@
           selected={preferences.expandAllItems || feedViewStore.selectedKey === displayItem.key}
           expanded={feedViewStore.expandedKey === displayItem.key}
           highlighted={feedViewStore.selectedKey === displayItem.key}
+          isFetching={linkUrl ? linkPostContentStore.isFetching(linkUrl) : false}
+          onFetchContent={linkUrl ? () => linkPostContentStore.fetch(linkUrl) : undefined}
           onToggleSave={() =>
-            itemLabelsStore.toggleSave(
-              doc.recordUri,
-              'document',
-              doc.canonicalUrl || doc.path || '',
-              doc.title,
-              {
-                type: 'document',
-                recordUri: doc.recordUri,
-                url: doc.canonicalUrl || doc.path || '',
-                title: doc.title,
-                description: doc.description,
-                publishedAt: doc.publishedAt,
-              }
-            )}
+            itemLabelsStore.toggleSave(doc.recordUri, 'document', docUrl, doc.title, {
+              type: 'document',
+              recordUri: doc.recordUri,
+              url: docUrl,
+              title: doc.title,
+              description: doc.description,
+              publishedAt: doc.publishedAt,
+            })}
           onToggleRead={() => handleToggleDocumentRead(doc)}
           onSelect={() => handleSelect(index)}
           onExpand={() => handleExpand(index)}

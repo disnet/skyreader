@@ -48,6 +48,9 @@ export interface ProxyDocument {
 	indexedAt?: string;
 	createdAt: string;
 	siteIcon?: string;
+	// External resource refs (RFC-8288-style). A linkblog "link post" carries the
+	// shared article's https URL here; the frontend renders it as a link post.
+	links?: Array<{ uri: string; rel?: string }>;
 }
 
 interface BlobRef {
@@ -69,6 +72,7 @@ interface DocumentRecord {
 	createdAt?: string;
 	updatedAt?: string;
 	content?: unknown;
+	links?: Array<{ uri?: string; rel?: string }>;
 }
 
 interface PublicationRecord {
@@ -265,6 +269,14 @@ export async function fetchDocumentsForAuthor(
 			? buildCanonicalUrl(meta.baseUrl, doc.path || '')
 			: doc.path || '';
 
+		// Surface external resource refs (the shared article URL for link posts),
+		// keeping only entries with a real uri.
+		const links = Array.isArray(doc.links)
+			? doc.links
+					.filter((l): l is { uri: string; rel?: string } => typeof l?.uri === 'string' && !!l.uri)
+					.map((l) => ({ uri: l.uri, ...(l.rel ? { rel: l.rel } : {}) }))
+			: [];
+
 		documents.push({
 			authorDid,
 			recordUri: record.uri,
@@ -284,6 +296,7 @@ export async function fetchDocumentsForAuthor(
 			indexedAt: fetchedAtISO,
 			createdAt: toISO(doc.createdAt, toISO(doc.publishedAt, fetchedAtISO)),
 			siteIcon: meta.icon || undefined,
+			links: links.length > 0 ? links : undefined,
 		});
 	}
 

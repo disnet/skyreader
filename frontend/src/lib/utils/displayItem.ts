@@ -5,6 +5,7 @@ import { isLeafletContent, renderLeafletContent } from '$lib/utils/leaflet-rende
 import { isPcktBlogContent, renderPcktBlogContent } from '$lib/utils/pckt-blog-renderer';
 import { isOffprintContent, renderOffprintContent } from '$lib/utils/offprint-renderer';
 import { isGreengaleContent, renderGreengaleContent } from '$lib/utils/greengale-renderer';
+import { getDocumentEffectiveUrl } from '$lib/utils/linkPost';
 import type {
   LeafletContent,
   PcktBlogContent,
@@ -57,7 +58,8 @@ function getTitle(item: FeedDisplayItem): string {
 function getUrl(item: FeedDisplayItem): string {
   if (item.type === 'article') return item.item.url;
   if (item.type === 'share') return item.item.itemUrl;
-  if (item.type === 'document') return item.item.canonicalUrl || item.item.path || '';
+  // Link posts resolve to the external article; normal docs to their permalink.
+  if (item.type === 'document') return getDocumentEffectiveUrl(item.item);
   if (item.type === 'saved') return item.item.url;
   return '';
 }
@@ -103,9 +105,14 @@ function getFavicon(item: FeedDisplayItem, sub?: Subscription): string {
   if (item.type === 'article') {
     return getFaviconUrl(sub?.siteUrl || sub?.feedUrl || item.item.url);
   }
-  if (item.type === 'document' && item.item.siteIcon) return item.item.siteIcon;
-  if (item.type === 'document' && item.item.canonicalUrl)
-    return getFaviconUrl(item.item.canonicalUrl);
+  if (item.type === 'document') {
+    // Link posts use the external article's favicon; normal docs the site icon.
+    const effective = getDocumentEffectiveUrl(item.item);
+    if (effective.startsWith('http') && effective !== (item.item.canonicalUrl || ''))
+      return getFaviconUrl(effective);
+    if (item.item.siteIcon) return item.item.siteIcon;
+    if (item.item.canonicalUrl) return getFaviconUrl(item.item.canonicalUrl);
+  }
   if (item.type === 'share') return getFaviconUrl(item.item.itemUrl);
   if (item.type === 'saved') return getFaviconUrl(item.item.url);
   const url = getUrl(item);
@@ -175,7 +182,7 @@ export function extractSembleMetadata(item: FeedDisplayItem): SembleMetadata {
       };
     case 'document':
       return {
-        url: item.item.canonicalUrl || item.item.path || '',
+        url: getDocumentEffectiveUrl(item.item),
         title: item.item.title,
         description: item.item.description,
         publishedAt: item.item.publishedAt,
