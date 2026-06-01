@@ -8,6 +8,7 @@
   import { api } from '$lib/services/api';
   import { profileService } from '$lib/services/profiles';
   import { syncStore } from '$lib/stores/sync.svelte';
+  import { getFaviconUrl } from '$lib/utils/favicon';
   import Modal from '$lib/components/common/Modal.svelte';
 
   interface Publication {
@@ -105,6 +106,20 @@
   });
 
   let changeCount = $derived(selectedPublications.size + unsubscribePublicationUris.size);
+
+  // Track icons that failed to load so we can fall back to a placeholder.
+  let failedIcons = $state<Set<string>>(new Set());
+
+  // Prefer the publication's own icon, falling back to a favicon derived from its URL.
+  function pubIconUrl(pub: { uri: string; url?: string; iconUrl?: string }): string {
+    if (failedIcons.has(pub.uri)) return '';
+    return pub.iconUrl || (pub.url ? getFaviconUrl(pub.url, 64) : '');
+  }
+
+  function handleIconError(uri: string) {
+    if (failedIcons.has(uri)) return;
+    failedIcons = new Set(failedIcons).add(uri);
+  }
 
   // Pre-fill input when modal opens with an initial value
   $effect(() => {
@@ -469,6 +484,17 @@
       {#each standardSubs as sub (sub.uri)}
         {@const isSubscribed = subscribedPublisherDids.has(sub.publisherDid)}
         <div class="standard-sub-row">
+          {#if pubIconUrl(sub.publication)}
+            <img
+              src={pubIconUrl(sub.publication)}
+              alt=""
+              class="pub-favicon"
+              loading="lazy"
+              onerror={() => handleIconError(sub.publication.uri)}
+            />
+          {:else}
+            <span class="pub-favicon-placeholder"></span>
+          {/if}
           <div class="standard-sub-info">
             <span class="standard-sub-name">{sub.publication.name}</span>
             <span class="standard-sub-url">{sub.publication.url}</span>
@@ -592,6 +618,17 @@
               <span class="checkbox" class:checked={isActive}>
                 {#if isActive}&#10003;{/if}
               </span>
+              {#if pubIconUrl(pub)}
+                <img
+                  src={pubIconUrl(pub)}
+                  alt=""
+                  class="pub-favicon"
+                  loading="lazy"
+                  onerror={() => handleIconError(pub.uri)}
+                />
+              {:else}
+                <span class="pub-favicon-placeholder"></span>
+              {/if}
               <span class="content-info">
                 <span class="content-name">{pub.name || pub.url}</span>
                 {#if pub.url}
@@ -909,6 +946,25 @@
     background: var(--color-accent, #0085ff);
     border-color: var(--color-accent, #0085ff);
     color: white;
+  }
+
+  .pub-favicon {
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    object-fit: cover;
+    margin-top: 1px;
+    background: var(--color-bg-secondary);
+  }
+
+  .pub-favicon-placeholder {
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    margin-top: 1px;
+    background: var(--color-border);
   }
 
   .content-info {
