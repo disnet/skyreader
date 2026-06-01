@@ -26,7 +26,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import Icon from './Icon.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
-  import ShareNoteComposer from '$lib/components/feed/ShareNoteComposer.svelte';
+  import ShareCommentBox from '$lib/components/feed/ShareCommentBox.svelte';
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
@@ -267,11 +267,9 @@
   // Get reshare count from share if in share mode
   let displayReshareCount = $derived(share?.reshareCount || reshareCount);
 
-  async function handleReshare(e: MouseEvent) {
-    e.stopPropagation();
-    if (isResharing || hasReshared || !share) return;
-    if (!auth.user) return;
-
+  // Reshare someone else's share (share mode) — creates your own share record.
+  async function doReshare() {
+    if (isResharing || hasReshared || !share || !auth.user) return;
     isResharing = true;
     try {
       await sharesStore.reshare(
@@ -292,26 +290,12 @@
     }
   }
 
-  async function handleUnreshare(e: MouseEvent) {
-    e.stopPropagation();
-    if (isResharing || !hasReshared) return;
-
-    isResharing = true;
-    try {
-      await sharesStore.unshare(itemGuid);
-    } finally {
-      isResharing = false;
-    }
-  }
-
-  async function handleShareDocument(e: MouseEvent) {
-    e.stopPropagation();
-    if (isSharingDocument || hasSharedDocument || !document) return;
-    if (!auth.user) return;
-
+  // Share a (non-link-post) document — reuses the reshare record, with the
+  // document recordUri as reshareOf.
+  async function doShareDocument() {
+    if (isSharingDocument || hasSharedDocument || !document || !auth.user) return;
     isSharingDocument = true;
     try {
-      // Reuse reshare function - document recordUri as reshareOf
       await sharesStore.reshare(
         document.recordUri, // reshareOfUri
         document.authorDid, // reshareOfAuthorDid
@@ -327,18 +311,6 @@
         document.publishedAt, // articlePublishedAt
         document.siteUri // feedUrl
       );
-    } finally {
-      isSharingDocument = false;
-    }
-  }
-
-  async function handleUnshareDocument(e: MouseEvent) {
-    e.stopPropagation();
-    if (isSharingDocument || !hasSharedDocument || !document) return;
-
-    isSharingDocument = true;
-    try {
-      await sharesStore.unshare(document.recordUri);
     } finally {
       isSharingDocument = false;
     }
@@ -392,40 +364,11 @@
     onToggleSave?.();
   }
 
-  // Sharing to the linkblog opens a note composer (note optional). The actual
-  // share fires from the composer's submit so a note can ride along.
-  let shareComposerOpen = $state(false);
-  let shareBtnRef = $state<HTMLButtonElement | null>(null);
-
-  let shareHost = $derived.by(() => {
-    try {
-      return new URL(itemUrl).hostname.replace(/^www\./, '');
-    } catch {
-      return undefined;
-    }
-  });
-
-  function handleShare(e: MouseEvent) {
-    e.stopPropagation();
-    shareComposerOpen = true;
-  }
-
-  function handleShareSubmit(note: string | undefined) {
-    shareComposerOpen = false;
-    // Link posts: a Share with no note is a boost (bare recommend); a Share with
-    // a note is a quote (your own link post crediting the original). Plain
-    // articles/documents keep the existing onShare behavior.
-    if (isLinkPostMode && document) {
-      const trimmed = note?.trim();
-      if (trimmed) {
-        handleQuote(trimmed);
-      } else {
-        handleBoost();
-      }
-      return;
-    }
-    onShare?.(note);
-  }
+  // Sharing is a one-tap action: the share fires immediately (note-less), and an
+  // inline comment box lives in the card for as long as the item is shared, so
+  // commentary can be added or edited any time. Toggling the Share button off
+  // unshares (and removes the box). The unified logic lives below, after the
+  // per-mode primitives it depends on.
 
   // ── Link-post boost / quote (Phase 3) ──────────────────────────────────────
   let isBoosting = $state(false);
@@ -454,17 +397,6 @@
     }
   }
 
-  async function handleUnboost(e: MouseEvent) {
-    e.stopPropagation();
-    if (!document || isBoosting || !isBoosted) return;
-    isBoosting = true;
-    try {
-      await linkblogStore.unboost(document.recordUri);
-    } finally {
-      isBoosting = false;
-    }
-  }
-
   async function handleQuote(note: string) {
     if (!document || !linkPostUrl) return;
     const article: Article = {
@@ -483,14 +415,99 @@
     await linkblogStore.shareLink(article, note, document.recordUri);
   }
 
-  async function handleUnquote(e: MouseEvent) {
-    e.stopPropagation();
-    if (linkPostUrl) await linkblogStore.unshare(linkPostUrl);
+  // ── Unified share + comment + remove (all surfaces) ─────────────────────────
+  // Every share button now shares instantly and opens the comment box. Already
+  // shared? The button reopens the box to edit the note. Each mode maps onto its
+  // own record: plain articles + quotes are linkblog documents; reshares and
+  // shared documents are app.skyreader.social.share records; a bare link-post
+  // share is a boost that a comment upgrades into a quote.
+
+  let shareBusy = $derived(isResharing || isBoosting || isSharingDocument);
+
+  let currentlyShared = $derived.by(() => {
+    if (isShareMode) return hasReshared;
+    if (isLinkPostMode) return isQuoted || isBoosted;
+    if (isDocumentMode) return hasSharedDocument;
+    return isShared;
+  });
+
+  let currentNote = $derived.by(() => {
+    if (isShareMode) return sharesStore.getShareNote(itemGuid);
+    if (isLinkPostMode) return isQuoted && linkPostUrl ? linkblogStore.getNote(linkPostUrl) : '';
+    if (isDocumentMode && document) return sharesStore.getShareNote(document.recordUri);
+    return shareNote;
+  });
+
+  let shareLabel = $derived.by(() => {
+    if (shareBusy) return '…';
+    if (!currentlyShared) return 'Share';
+    if (isShareMode) return 'Reshared';
+    if (isLinkPostMode) return isQuoted ? 'Quoted' : 'Boosted';
+    return 'Shared';
+  });
+
+  // Social-graph shares (reshare/link-post/document) require sign-in; a plain
+  // article share is gated by whether the page wired up onShare.
+  let showShareAction = $derived(
+    isShareMode || isLinkPostMode || isDocumentMode ? Boolean(auth.user) : true
+  );
+
+  let defaultShareCount = $derived(
+    !isShareMode && !isLinkPostMode && !isDocumentMode && currentlyShared && displayReshareCount > 0
+      ? displayReshareCount
+      : 0
+  );
+
+  // Fire the note-less share for the current mode.
+  async function shareNow() {
+    if (isShareMode) return doReshare();
+    if (isLinkPostMode) return handleBoost();
+    if (isDocumentMode) return doShareDocument();
+    onShare?.(undefined);
   }
 
-  function handleUnshare(e: MouseEvent) {
+  // Share button is a toggle: share when new (the comment box then appears),
+  // unshare when already shared (the box goes away with it).
+  function handleShareClick(e: MouseEvent) {
     e.stopPropagation();
-    onUnshare?.();
+    if (shareBusy) return;
+    if (currentlyShared) removeShare();
+    else shareNow();
+  }
+
+  // Attach/update the note for the current mode. On a bare link-post boost, a
+  // non-empty comment upgrades it into a quote (crediting the original post).
+  // The box stays visible after saving — it's persistent while shared.
+  async function applyComment(note: string) {
+    if (isShareMode) {
+      sharesStore.setNote(itemGuid, note);
+    } else if (isLinkPostMode) {
+      if (isQuoted && linkPostUrl) {
+        linkblogStore.setNote(linkPostUrl, note);
+      } else if (note) {
+        // Boost → quote: drop the bare recommend, write a linkblog quote instead.
+        if (isBoosted && document) await linkblogStore.unboost(document.recordUri);
+        await handleQuote(note);
+      }
+    } else if (isDocumentMode && document) {
+      sharesStore.setNote(document.recordUri, note);
+    } else {
+      linkblogStore.setNote(itemUrl, note);
+    }
+  }
+
+  // Remove the share entirely (toggling the Share button off).
+  async function removeShare() {
+    if (isShareMode) {
+      await sharesStore.unshare(itemGuid);
+    } else if (isLinkPostMode) {
+      if (isQuoted && linkPostUrl) await linkblogStore.unshare(linkPostUrl);
+      else if (isBoosted && document) await linkblogStore.unboost(document.recordUri);
+    } else if (isDocumentMode && document) {
+      await sharesStore.unshare(document.recordUri);
+    } else {
+      onUnshare?.();
+    }
   }
 
   function handleToggleRead(e: MouseEvent) {
@@ -875,6 +892,12 @@
       <span class="article-date">{formatRelativeDate(itemPublishedAt)}</span>
     </div>
 
+    <!-- Inline share-comment composer: present for as long as the item is shared,
+         sitting between the text and the controls. Add or edit the note any time. -->
+    {#if currentlyShared}
+      <ShareCommentBox initialNote={currentNote ?? ''} onsubmit={applyComment} />
+    {/if}
+
     <div
       class="article-actions-container"
       class:scroll-hidden={expanded && isActionBarFloating && !feedViewStore.mobileControlsVisible}
@@ -887,83 +910,23 @@
             class="action-label">Save</span
           >
         </button>
-        <!-- Share button (restored to direct action) -->
-        {#if isShareMode}
-          {#if auth.user}
-            {#if hasReshared}
-              <button class="action-btn reshared" onclick={handleUnreshare} disabled={isResharing}>
-                <span class="action-icon"><Icon name="share" size={16} /></span><span
-                  class="action-label">{isResharing ? '...' : 'Reshared'}</span
-                >
-              </button>
-            {:else}
-              <button class="action-btn" onclick={handleReshare} disabled={isResharing}>
-                <span class="action-icon"><Icon name="share" size={16} /></span><span
-                  class="action-label">{isResharing ? '...' : 'Reshare'}</span
-                >
-              </button>
-            {/if}
-          {/if}
-        {:else if isLinkPostMode}
-          {#if auth.user}
-            {#if isQuoted}
-              <button class="action-btn shared" onclick={handleUnquote}>
-                <span class="action-icon"><Icon name="share" size={16} /></span>
-                <span class="action-label">Quoted</span>
-              </button>
-            {:else if isBoosted}
-              <button class="action-btn shared" onclick={handleUnboost} disabled={isBoosting}>
-                <span class="action-icon"><Icon name="share" size={16} /></span>
-                <span class="action-label">{isBoosting ? '...' : 'Boosted'}</span>
-              </button>
-            {:else}
-              <button
-                class="action-btn"
-                class:active={shareComposerOpen}
-                onclick={handleShare}
-                disabled={isBoosting}
-                bind:this={shareBtnRef}
-              >
-                <span class="action-icon"><Icon name="share" size={16} /></span>
-                <span class="action-label">{isBoosting ? '...' : 'Share'}</span>
-              </button>
-            {/if}
-          {/if}
-        {:else if isDocumentMode}
-          {#if auth.user}
-            {#if hasSharedDocument}
-              <button
-                class="action-btn shared"
-                onclick={handleUnshareDocument}
-                disabled={isSharingDocument}
-              >
-                <span class="action-icon"><Icon name="share" size={16} /></span>
-                <span class="action-label">{isSharingDocument ? '...' : 'Shared'}</span>
-              </button>
-            {:else}
-              <button class="action-btn" onclick={handleShareDocument} disabled={isSharingDocument}>
-                <span class="action-icon"><Icon name="share" size={16} /></span>
-                <span class="action-label">{isSharingDocument ? '...' : 'Share'}</span>
-              </button>
-            {/if}
-          {/if}
-        {:else if isShared}
-          <button class="action-btn shared" onclick={handleUnshare}>
-            <span class="action-icon"><Icon name="share" size={16} /></span><span
-              class="action-label">Share</span
-            >{#if displayReshareCount > 0}<span class="reshare-count">({displayReshareCount})</span
-              >{/if}
-          </button>
-        {:else}
+        <!-- Share is a toggle: one tap shares (the comment box appears below);
+             tapping again unshares. -->
+        {#if showShareAction}
           <button
             class="action-btn"
-            class:active={shareComposerOpen}
-            onclick={handleShare}
-            bind:this={shareBtnRef}
-            ><span class="action-icon"><Icon name="share" size={16} /></span><span
-              class="action-label">Share</span
-            ></button
+            class:shared={currentlyShared}
+            onclick={handleShareClick}
+            disabled={shareBusy}
+            aria-pressed={currentlyShared}
           >
+            <span class="action-icon"><Icon name="share" size={16} /></span><span
+              class="action-label"
+              >{shareLabel}{#if defaultShareCount > 0}<span class="reshare-count"
+                  >({defaultShareCount})</span
+                >{/if}</span
+            >
+          </button>
         {/if}
         {#if onOpenFullscreen && hasContent}
           <button
@@ -1092,16 +1055,6 @@
         }}
       />
     {/if}
-
-    <ShareNoteComposer
-      open={shareComposerOpen}
-      anchorEl={shareBtnRef}
-      articleTitle={itemTitle}
-      articleHost={shareHost}
-      hintText={isLinkPostMode ? 'Empty = boost · add a note to quote' : 'Posts to your linkblog.'}
-      onsubmit={handleShareSubmit}
-      onclose={() => (shareComposerOpen = false)}
-    />
 
     {#if linkInterception.menuState}
       {#key linkInterception.menuState.url + linkInterception.menuState.anchorRect.top}

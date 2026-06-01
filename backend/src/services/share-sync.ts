@@ -379,6 +379,8 @@ export async function pushShareToPds(
       uri: string;
       authorDid: string;
     };
+    /** Preserve the original record createdAt across note edits; defaults to now. */
+    createdAt?: string;
   }
 ): Promise<PDSResult<PutRecordResponse>> {
   const pdsClient = createPDSClient(session);
@@ -386,7 +388,7 @@ export async function pushShareToPds(
   const record: PDSShareRecord = {
     $type: COLLECTION,
     itemUrl: shareData.itemUrl,
-    createdAt: new Date().toISOString(),
+    createdAt: shareData.createdAt || new Date().toISOString(),
     feedUrl: shareData.feedUrl,
     itemTitle: shareData.itemTitle,
     itemAuthor: shareData.itemAuthor,

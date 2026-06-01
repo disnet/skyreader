@@ -220,6 +220,40 @@ function createSharesStore() {
     return db.userShares.orderBy('createdAt').reverse().toArray();
   }
 
+  // Set (or clear, with '') the note on an already-shared article. Optimistically
+  // updates local state + cache, PATCHes the PDS record, and rolls back on
+  // failure. No-op if the article isn't shared or has no rkey yet.
+  async function setNote(articleGuid: string, note: string) {
+    const existing = userShares.get(articleGuid);
+    if (!existing || !existing.rkey) return;
+
+    const next = note.trim() || undefined;
+    const prevNote = existing.note;
+    if (next === prevNote) return;
+
+    // Optimistic update (local state + cache)
+    userShares.set(articleGuid, { ...existing, note: next });
+    userShares = new Map(userShares);
+    if (existing.id !== undefined) {
+      await db.userShares.update(existing.id, { note: next });
+    }
+
+    try {
+      await api.updateShareNote(existing.rkey, next ?? '');
+    } catch (e) {
+      // Roll back — the note didn't land.
+      console.error('Failed to update share note:', e);
+      const cur = userShares.get(articleGuid);
+      if (cur) {
+        userShares.set(articleGuid, { ...cur, note: prevNote });
+        userShares = new Map(userShares);
+        if (cur.id !== undefined) {
+          await db.userShares.update(cur.id, { note: prevNote });
+        }
+      }
+    }
+  }
+
   // Reshare an existing share (one-click reshare)
   async function reshare(
     reshareOfUri: string,
@@ -341,6 +375,7 @@ function createSharesStore() {
     isShared,
     getShareNote,
     share,
+    setNote,
     unshare,
     reshare,
     getSharedArticles,

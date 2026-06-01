@@ -12,6 +12,7 @@ import {
   deleteLinkblogShare,
   getPublicationMeta,
   publicationUri,
+  updateLinkblogShareNote,
   updatePublication,
   writeBoost,
   writeLinkblogShare,
@@ -108,6 +109,43 @@ export async function handleCreateLinkblogShare(request: Request, env: Env): Pro
     rkey,
     publication: publicationUri(session.did),
   });
+}
+
+// PATCH /api/linkblog/share/:rkey — update the note on an existing share.
+// Body: { note: string } (empty string clears the commentary).
+export async function handleUpdateLinkblogShare(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'PATCH') {
+    return json({ error: 'Method not allowed' }, 405);
+  }
+
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Unauthorized' }, 401);
+  if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
+    return insufficientScopesResponse();
+  }
+
+  const pathParts = new URL(request.url).pathname.split('/');
+  const rkey = pathParts[pathParts.length - 1];
+  if (!rkey || !isValidRkey(rkey)) {
+    return invalidRkeyResponse();
+  }
+
+  let body: { note?: string };
+  try {
+    body = (await request.json()) as { note?: string };
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+  if (typeof body.note !== 'string') {
+    return json({ error: 'note must be a string' }, 400);
+  }
+
+  const result = await updateLinkblogShareNote(session, rkey, body.note);
+  if (!result.success) {
+    if (isScopeError(result.error)) return insufficientScopesResponse();
+    return json({ error: result.error }, result.retryable ? 503 : 502);
+  }
+  return json({ uri: result.data.uri, cid: result.data.cid, rkey });
 }
 
 // DELETE /api/linkblog/share/:rkey

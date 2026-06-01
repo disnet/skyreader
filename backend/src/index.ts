@@ -20,10 +20,16 @@ import {
   handleReshareActivity,
   handleDetectContent,
 } from './routes/social';
-import { handleGetMyShares, handleCreateShare, handleDeleteShare } from './routes/shares';
+import {
+  handleGetMyShares,
+  handleCreateShare,
+  handleDeleteShare,
+  handleUpdateShare,
+} from './routes/shares';
 import {
   handleCreateLinkblogShare,
   handleDeleteLinkblogShare,
+  handleUpdateLinkblogShare,
   handleCreateBoost,
   handleDeleteBoost,
   handleGetPublication,
@@ -294,7 +300,10 @@ export default {
           break;
         case url.pathname.startsWith('/api/shares/') && url.pathname !== '/api/shares/my':
           if (!session) return unauthorizedResponse(headers);
-          response = await handleDeleteShare(request, env, ctx);
+          response =
+            request.method === 'PATCH'
+              ? await handleUpdateShare(request, env)
+              : await handleDeleteShare(request, env, ctx);
           break;
 
         // Linkblog endpoints — sharing as portable site.standard.document records
@@ -304,7 +313,10 @@ export default {
           break;
         case url.pathname.startsWith('/api/linkblog/share/'):
           if (!session) return unauthorizedResponse(headers);
-          response = await handleDeleteLinkblogShare(request, env);
+          response =
+            request.method === 'PATCH'
+              ? await handleUpdateLinkblogShare(request, env)
+              : await handleDeleteLinkblogShare(request, env);
           break;
         case url.pathname === '/api/linkblog/boost':
           if (!session) return unauthorizedResponse(headers);
