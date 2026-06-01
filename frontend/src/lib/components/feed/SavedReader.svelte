@@ -2,7 +2,7 @@
   import type { Article } from '$lib/types';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import { normalizeDisplayItem, getAuthorLabel } from '$lib/utils/displayItem';
-  import { getExternalArticleLink, getLinkPostNote } from '$lib/utils/linkPost';
+  import { getExternalArticleLink } from '$lib/utils/linkPost';
   import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
   import { sanitizeHtml } from '$lib/utils/sanitize';
   import { formatRelativeDate } from '$lib/utils/date';
@@ -122,24 +122,18 @@
     if (linkPostUrl) linkPostContentStore.fetch(linkPostUrl);
   });
 
+  // The fetched external article for a link post (carries the real author).
+  let linkPostArticle = $derived(
+    linkPostUrl && readerItem.type === 'document'
+      ? linkPostContentStore.get(linkPostUrl)
+      : undefined
+  );
+
   let displayContent = $derived.by(() => {
-    if (linkPostUrl && readerItem.type === 'document') {
-      const fetched = linkPostContentStore.get(linkPostUrl);
-      if (fetched?.content) {
-        const note = getLinkPostNote(readerItem.item);
-        // The note is the author's own voice — render it as prose, not a quote.
-        const lead = note
-          ? `<p class="link-post-note" style="margin: 0 0 1.5em">${escapeNoteHtml(note)}</p>`
-          : '';
-        return lead + fetched.content;
-      }
-    }
+    // In the reader we show the external article itself — not the sharer's note.
+    if (linkPostArticle?.content) return linkPostArticle.content;
     return normalized.displayContent;
   });
-
-  function escapeNoteHtml(text: string): string {
-    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
 
   // Author info (documents)
   let authorProfile = $state<{ handle?: string } | null>(null);
@@ -153,7 +147,14 @@
       authorProfile = null;
     }
   });
-  let authorLabel = $derived(getAuthorLabel(readerItem, authorProfile));
+  // For a link post the reader shows the external article, so attribute its
+  // real author (from the extract) rather than the person who shared it.
+  let authorLabel = $derived.by(() => {
+    if (linkPostUrl && readerItem.type === 'document') {
+      return linkPostArticle?.author ? `by ${linkPostArticle.author}` : '';
+    }
+    return getAuthorLabel(readerItem, authorProfile);
+  });
 
   let isArchived = $derived(itemLabelsStore.isArchived(itemKey));
   let isSaved = $derived(itemLabelsStore.isSaved(itemKey));
