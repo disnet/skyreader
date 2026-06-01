@@ -501,7 +501,7 @@
                   sourceLabel="Publication"
                   pillClass="pill-publication"
                   subscribed={false}
-                  fallbackIcon="newspaper"
+                  fallbackIcon="standard-site"
                   onSubscribe={() => subscribePublication(group.did, pub)}
                 />
               {/if}

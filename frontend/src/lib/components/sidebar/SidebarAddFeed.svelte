@@ -533,7 +533,9 @@
             <span>Loading subscriptions...</span>
           </div>
         {:else}
-          <div class="dropdown-label">Your standard.site subscriptions</div>
+          <div class="dropdown-label standard-label">
+            <Icon name="standard-site" size={12} /> Your standard.site subscriptions
+          </div>
           {#each standardSubs as sub (sub.uri)}
             {@const isSubscribed = subscribedPublisherDids.has(sub.publisherDid)}
             <div class="dropdown-item standard-sub-item">
@@ -746,6 +748,12 @@
     color: var(--color-text-secondary);
     padding: 0.375rem 0.625rem 0.125rem;
     font-weight: 500;
+  }
+
+  .standard-label {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
   }
 
   .dropdown-item {

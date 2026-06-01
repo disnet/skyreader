@@ -605,21 +605,23 @@
         <span class="read-dot"></span>
       </span>
       <button class="article-header" onclick={handleHeaderClick}>
-        {#if faviconUrl}
-          <img src={faviconUrl} alt="" class="favicon" />
-        {/if}
-        <span class="article-title">
-          {#if isOpen}
-            <a
-              href={itemUrl}
-              target="_blank"
-              rel="noopener"
-              class="article-title-link"
-              onclick={(e) => e.stopPropagation()}>{itemTitle}</a
-            >
-          {:else}
-            {itemTitle}
+        <span class="title-line">
+          {#if faviconUrl}
+            <img src={faviconUrl} alt="" class="favicon" />
           {/if}
+          <span class="article-title">
+            {#if isOpen}
+              <a
+                href={itemUrl}
+                target="_blank"
+                rel="noopener"
+                class="article-title-link"
+                onclick={(e) => e.stopPropagation()}>{itemTitle}</a
+              >
+            {:else}
+              {itemTitle}
+            {/if}
+          </span>
         </span>
         {#if isLinkPostMode && document}
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -641,11 +643,23 @@
         {/if}
         {#if displayFeedTitle}
           {#if feedId}
-            <a href="/?feed={feedId}" class="feed-title-link" onclick={(e) => e.stopPropagation()}
-              >{displayFeedTitle}</a
+            <a
+              href="/?feed={feedId}"
+              class="feed-title-link"
+              title={isDocumentMode ? 'standard.site' : 'RSS'}
+              onclick={(e) => e.stopPropagation()}
+              ><Icon
+                name={isDocumentMode ? 'standard-site' : 'rss'}
+                size={12}
+              />{displayFeedTitle}</a
             >
           {:else}
-            <span class="feed-title-label">{displayFeedTitle}</span>
+            <span class="feed-title-label" title={isDocumentMode ? 'standard.site' : 'RSS'}
+              ><Icon
+                name={isDocumentMode ? 'standard-site' : 'rss'}
+                size={12}
+              />{displayFeedTitle}</span
+            >
           {/if}
         {/if}
         {#if readTimeMinutes > 0}
@@ -744,8 +758,12 @@
         <img src={faviconUrl} alt="" class="favicon" />
       {/if}
       {#if feedTitle}
-        <a href="/?feed={feedId}" class="feed-title-link" onclick={(e) => e.stopPropagation()}
-          >{feedTitle}</a
+        <a
+          href="/?feed={feedId}"
+          class="feed-title-link"
+          title={isDocumentMode ? 'standard.site' : 'RSS'}
+          onclick={(e) => e.stopPropagation()}
+          ><Icon name={isDocumentMode ? 'standard-site' : 'rss'} size={12} />{feedTitle}</a
         >
       {/if}
       {#if readTimeMinutes > 0}
@@ -1167,6 +1185,13 @@
     font: inherit;
   }
 
+  /* On desktop the wrapper is transparent: favicon + title flow directly into
+     the header flex row. On mobile it becomes a full-width row so the favicon
+     rides with the title and the meta wraps to a second line (see media query). */
+  .title-line {
+    display: contents;
+  }
+
   .favicon {
     width: 16px;
     height: 16px;
@@ -1258,6 +1283,13 @@
   .article-read-time :global(.icon) {
     vertical-align: -2px;
     margin-right: 0.15rem;
+  }
+
+  .feed-title-link :global(.icon),
+  .feed-title-label :global(.icon) {
+    margin-right: 0.3rem;
+    vertical-align: -0.1em;
+    color: var(--color-text-secondary);
   }
 
   .feed-title-link,
@@ -1711,7 +1743,7 @@
     display: none;
   }
 
-  /* Mobile: two-line header — [title] on top, [icon] [feed] [date] below */
+  /* Mobile: two-line header — [icon] [title] on top, [source] [date] below */
   @media (max-width: 600px) {
     .read-toggle {
       margin-top: calc(0.5rem + 5px);
@@ -1722,15 +1754,20 @@
       gap: 0.25rem 0.5rem;
     }
 
-    .article-title {
-      order: 0;
+    /* Favicon + title become a full-width first line (as on desktop), so the
+       source mark + feed title + meta wrap to a second line below. */
+    .title-line {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
       flex-basis: 100%;
+      min-width: 0;
+      order: 0;
     }
 
-    .favicon {
-      order: 1;
-      margin-right: 0;
-      align-self: center;
+    .article-title {
+      flex: 1 1 0;
+      min-width: 0;
     }
 
     .feed-title-link,
