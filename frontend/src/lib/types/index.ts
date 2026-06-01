@@ -557,6 +557,9 @@ export interface SocialDocument {
   indexedAt?: string;
   createdAt: string;
   siteIcon?: string;
+  // External resource refs (RFC-8288-style). A linkblog "link post" carries the
+  // shared article's https URL here (rel: 'related'); see utils/linkPost.ts.
+  links?: Array<{ uri: string; rel?: string }>;
 }
 
 // Grouped share for deduplicated feed

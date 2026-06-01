@@ -208,6 +208,7 @@ describe('POST /documents', () => {
 					createdAt: '2024-01-02T00:00:00Z',
 					coverImage: { ref: { $link: 'covercid' }, mimeType: 'image/jpeg' },
 					content: { $type: 'pub.leaflet.document', pages: [] },
+					links: [{ uri: 'https://example.com/the-article', rel: 'related' }, { rel: 'nouri' }],
 				}),
 			],
 		});
@@ -224,6 +225,8 @@ describe('POST /documents', () => {
 		expect(doc.coverImageCid).toBe('covercid');
 		expect(doc.siteIcon).toContain('iconcid');
 		expect(doc.content).toEqual({ $type: 'pub.leaflet.document', pages: [] });
+		// The external link survives fetch→cache→response; entries without a uri are dropped.
+		expect(doc.links).toEqual([{ uri: 'https://example.com/the-article', rel: 'related' }]);
 	});
 
 	it('applies the publication filter and returns newest first', async () => {

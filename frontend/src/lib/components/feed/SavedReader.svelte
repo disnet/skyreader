@@ -2,6 +2,8 @@
   import type { Article, SocialShare, SocialDocument } from '$lib/types';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import { normalizeDisplayItem, getAuthorLabel } from '$lib/utils/displayItem';
+  import { getExternalArticleLink, getLinkPostNote } from '$lib/utils/linkPost';
+  import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
   import { sanitizeHtml } from '$lib/utils/sanitize';
   import { formatRelativeDate } from '$lib/utils/date';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
@@ -107,8 +109,35 @@
   let title = $derived(normalized.title);
   let itemUrl = $derived(normalized.url);
   let publishedAt = $derived(normalized.publishedAt);
-  let displayContent = $derived(normalized.displayContent);
   let faviconUrl = $derived(normalized.faviconUrl);
+
+  // Link post: the external article URL, if this reader item is one. Opening the
+  // reader fetches the full article in-app (the leaflet note + card is the
+  // fallback shown until it arrives).
+  let linkPostUrl = $derived(
+    readerItem.type === 'document' ? getExternalArticleLink(readerItem.item) : undefined
+  );
+  $effect(() => {
+    if (linkPostUrl) linkPostContentStore.fetch(linkPostUrl);
+  });
+
+  let displayContent = $derived.by(() => {
+    if (linkPostUrl && readerItem.type === 'document') {
+      const fetched = linkPostContentStore.get(linkPostUrl);
+      if (fetched?.content) {
+        const note = getLinkPostNote(readerItem.item);
+        const lead = note
+          ? `<blockquote class="link-post-note" style="margin: 0 0 1.25em; padding-left: 0.875em; border-left: 3px solid var(--color-primary, #0066cc); color: var(--color-text-secondary, #666); font-style: italic">${escapeNoteHtml(note)}</blockquote>`
+          : '';
+        return lead + fetched.content;
+      }
+    }
+    return normalized.displayContent;
+  });
+
+  function escapeNoteHtml(text: string): string {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
 
   // Author info (shares/documents)
   let authorProfile = $state<{ handle?: string } | null>(null);
