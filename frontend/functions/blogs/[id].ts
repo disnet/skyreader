@@ -11,6 +11,7 @@ import {
   PublicationMeta,
   blogTitle,
   escapeHtml,
+  externalArticleUrl,
   fetchLinkblogDocuments,
   fetchPublicationMeta,
   formatDate,
@@ -18,14 +19,17 @@ import {
   hostnameOf,
   htmlResponse,
   isDid,
+  linkPostNote,
   renderPage,
   resolveHandleToDid,
   rkeyFromUri,
   safeHttpUrl,
 } from './_lib';
 
-function excerpt(doc: ProxyDocument): string {
-  const text = (doc.description || doc.textContent || '').trim();
+// The entry body: the user's note (a link post's whole point), falling back to the
+// article excerpt for a plain document.
+function entryBody(doc: ProxyDocument): string {
+  const text = (linkPostNote(doc) || doc.description || doc.textContent || '').trim();
   if (text.length <= 280) return text;
   return text.slice(0, 277).trimEnd() + '…';
 }
@@ -35,8 +39,9 @@ function renderEntry(did: string, doc: ProxyDocument): string {
   const permalink = rkey ? `/blogs/${encodeURIComponent(did)}/${encodeURIComponent(rkey)}` : null;
   const title = escapeHtml(doc.title || 'Untitled');
   const titleHtml = permalink ? `<a href="${permalink}">${title}</a>` : title;
-  const body = excerpt(doc);
-  const host = hostnameOf(doc.canonicalUrl);
+  const body = entryBody(doc);
+  // The shared article's host (link post), falling back to the doc's own URL.
+  const host = hostnameOf(externalArticleUrl(doc) || doc.canonicalUrl);
   const date = formatDate(doc.publishedAt || doc.createdAt);
 
   const meta: string[] = [];

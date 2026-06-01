@@ -23,7 +23,11 @@
 
   interface Props {
     onToggleSave: (article: Article) => void;
-    onShare: (article: Article, sub: (typeof subscriptionsStore.subscriptions)[0]) => void;
+    onShare: (
+      article: Article,
+      sub: (typeof subscriptionsStore.subscriptions)[0],
+      note?: string
+    ) => void;
     onUnshare: (guid: string) => void;
     onReaderChange?: (open: boolean) => void;
     onSaveToSemble?: (data: SembleMetadata) => void;
@@ -192,16 +196,16 @@
     }
   }
 
-  function handleReaderShare() {
+  function handleReaderShare(note?: string) {
     if (!readerItem) return;
     if (readerItem.type === 'article') {
       const article = readerItem.item;
       const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
-      if (sub) onShare(article, sub);
+      if (sub) onShare(article, sub, note);
     } else if (readerItem.type === 'userShare') {
       const article = readerItem.article;
       const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
-      if (sub) onShare(article, sub);
+      if (sub) onShare(article, sub, note);
     }
   }
 
@@ -230,6 +234,7 @@
     onShare={readerItem.type === 'article' || readerItem.type === 'userShare'
       ? handleReaderShare
       : undefined}
+    useNoteComposer={true}
     onSaveToSemble={onSaveToSemble ? handleReaderSemble : undefined}
     onSaveToMargin={onSaveToMargin ? handleReaderMargin : undefined}
   />
@@ -255,7 +260,7 @@
           highlighted={feedViewStore.selectedKey === displayItem.key}
           onToggleSave={() => onToggleSave(article)}
           onToggleRead={() => handleToggleRead(article)}
-          onShare={() => sub && onShare(article, sub)}
+          onShare={(note) => sub && onShare(article, sub, note)}
           onUnshare={() => onUnshare(article.url)}
           onSelect={() => handleSelect(index)}
           onExpand={() => handleExpand(index)}

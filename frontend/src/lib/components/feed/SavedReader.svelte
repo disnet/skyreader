@@ -20,6 +20,7 @@
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
+  import ShareNoteComposer from '$lib/components/feed/ShareNoteComposer.svelte';
   import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { tick, onMount, onDestroy } from 'svelte';
@@ -32,6 +33,7 @@
     onToggleSave,
     onShare,
     isShared = false,
+    useNoteComposer = false,
     onSaveToSemble,
     onSaveToMargin,
   }: {
@@ -40,8 +42,10 @@
     onArchive?: () => void;
     onRemove?: () => void;
     onToggleSave?: () => void;
-    onShare?: () => void;
+    onShare?: (note?: string) => void;
     isShared?: boolean;
+    /** When true, Share opens the linkblog note composer instead of sharing instantly. */
+    useNoteComposer?: boolean;
     onSaveToSemble?: () => void;
     onSaveToMargin?: () => void;
   } = $props();
@@ -159,6 +163,42 @@
     isShared ? (readerItem.type === 'share' ? 'Reshared' : 'Shared') : 'Share'
   );
 
+  // Linkblog note composer (only when useNoteComposer is set by the caller).
+  let shareComposerOpen = $state(false);
+  let shareAnchorEl = $state<HTMLElement | null>(null);
+
+  let shareArticle = $derived.by((): Article | null => {
+    if (readerItem.type === 'article') return readerItem.item;
+    if (readerItem.type === 'userShare') return readerItem.article;
+    return null;
+  });
+
+  let shareComposerTitle = $derived(shareArticle?.title ?? '');
+  let shareComposerHost = $derived.by(() => {
+    if (!shareArticle?.url) return undefined;
+    try {
+      return new URL(shareArticle.url).hostname.replace(/^www\./, '');
+    } catch {
+      return undefined;
+    }
+  });
+
+  // Open the composer (vs. sharing instantly) only for an unshared article when
+  // the caller opted in. Otherwise fall back to the immediate onShare().
+  function triggerShare(anchor: HTMLElement | null) {
+    if (useNoteComposer && !isShared && shareArticle) {
+      shareAnchorEl = anchor;
+      shareComposerOpen = true;
+    } else {
+      onShare?.();
+    }
+  }
+
+  function handleShareSubmit(note: string | undefined) {
+    shareComposerOpen = false;
+    onShare?.(note);
+  }
+
   let sanitizedContent = $derived(sanitizeHtml(displayContent, itemUrl));
 
   let readTimeMinutes = $derived.by(() => {
@@ -198,7 +238,7 @@
         label: shareLabel,
         icon: 'share',
         active: isShared,
-        onclick: () => onShare!(),
+        onclick: () => triggerShare(overflowRef),
       });
     }
 
@@ -421,7 +461,7 @@
           <button
             class="action-btn"
             class:active={isShared}
-            onclick={() => onShare!()}
+            onclick={(e) => triggerShare(e.currentTarget as HTMLElement)}
             title={shareLabel}
           >
             <Icon name="share" size={18} />
@@ -453,6 +493,15 @@
           onClose={() => (tagMenuOpen = false)}
         />
       {/if}
+
+      <ShareNoteComposer
+        open={shareComposerOpen}
+        anchorEl={shareAnchorEl}
+        articleTitle={shareComposerTitle}
+        articleHost={shareComposerHost}
+        onsubmit={handleShareSubmit}
+        onclose={() => (shareComposerOpen = false)}
+      />
     </header>
 
     <!-- Mobile: bottom bar -->
@@ -486,7 +535,7 @@
           <button
             class="bottom-btn"
             class:active={isShared}
-            onclick={() => onShare!()}
+            onclick={(e) => triggerShare(e.currentTarget as HTMLElement)}
             title={shareLabel}
           >
             <Icon name="share" size={20} />
@@ -557,9 +606,10 @@
                 <button
                   class="sheet-action-btn"
                   class:active={isShared}
-                  onclick={() => {
-                    onShare!();
+                  onclick={(e) => {
+                    const anchor = e.currentTarget as HTMLElement;
                     styleSheetOpen = false;
+                    triggerShare(anchor);
                   }}
                 >
                   <Icon name="share" size={18} />

@@ -9,6 +9,7 @@ import {
   PublicationMeta,
   blogTitle,
   escapeHtml,
+  externalArticleUrl,
   fetchLinkblogDocuments,
   fetchPublicationMeta,
   formatDate,
@@ -16,11 +17,17 @@ import {
   hostnameOf,
   htmlResponse,
   isDid,
+  linkPostNote,
   renderPage,
   resolveHandleToDid,
   rkeyFromUri,
   safeHttpUrl,
 } from '../_lib';
+
+// The user's note (a link post's commentary), falling back to the article excerpt.
+function entryNote(doc: ProxyDocument): string {
+  return (linkPostNote(doc) || doc.description || doc.textContent || '').trim();
+}
 
 function renderEntryPage(
   origin: string,
@@ -31,15 +38,15 @@ function renderEntryPage(
 ): string {
   const blogName = blogTitle(profile, pub);
   const title = escapeHtml(doc.title || 'Untitled');
-  const note = (doc.description || doc.textContent || '').trim();
-  const host = hostnameOf(doc.canonicalUrl);
+  const note = entryNote(doc);
+  // The shared article (link post), falling back to the doc's own URL.
+  const articleUrl = safeHttpUrl(externalArticleUrl(doc) || doc.canonicalUrl);
+  const host = hostnameOf(articleUrl ?? undefined);
   const date = formatDate(doc.publishedAt || doc.createdAt);
 
   const meta: string[] = [];
   if (host) meta.push(`<span class="src">${escapeHtml(host)}</span>`);
   if (date) meta.push(`<span>${escapeHtml(date)}</span>`);
-
-  const articleUrl = safeHttpUrl(doc.canonicalUrl);
   const readMore = articleUrl
     ? `<a class="readmore" href="${escapeHtml(articleUrl)}" rel="noopener noreferrer">Read the full article${host ? ` on ${escapeHtml(host)}` : ''} →</a>`
     : '';
@@ -89,7 +96,7 @@ export async function onRequestGet(context: BlogContext): Promise<Response> {
   }
 
   const body = renderEntryPage(origin, did, profile, pub, doc);
-  const note = (doc.description || doc.textContent || '').trim();
+  const note = entryNote(doc);
   const html = renderPage(
     {
       title: `${doc.title || 'Untitled'} · ${blogTitle(profile, pub)}`,
