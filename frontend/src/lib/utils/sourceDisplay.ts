@@ -13,9 +13,9 @@ export function getSourceDisplay(
   switch (sourceType) {
     case 'atproto.documents':
       if (feedUrl) {
-        return { label: 'Publication', iconName: 'newspaper', pillClass: 'pill-publication' };
+        return { label: 'Publication', iconName: 'standard-site', pillClass: 'pill-publication' };
       }
-      return { label: 'Documents', iconName: 'file-text', pillClass: 'pill-documents' };
+      return { label: 'Documents', iconName: 'standard-site', pillClass: 'pill-documents' };
     case 'atproto.collection':
       return { label: 'Collection', iconName: 'folder', pillClass: 'pill-collection' };
     default:

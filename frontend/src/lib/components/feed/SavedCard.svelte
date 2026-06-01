@@ -302,7 +302,7 @@
             {#if faviconUrl}
               <img src={faviconUrl} alt="" class="favicon" />
             {:else}
-              <Icon name="rss" size={14} />
+              <Icon name={itemType === 'document' ? 'standard-site' : 'rss'} size={14} />
             {/if}
           </span>
           {#if typeBadge}

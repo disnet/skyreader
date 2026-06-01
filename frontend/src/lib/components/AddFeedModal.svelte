@@ -8,6 +8,7 @@
   import { api } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
   import Modal from '$lib/components/common/Modal.svelte';
+  import Icon from '$lib/components/Icon.svelte';
 
   type Step = 'input' | 'select-feeds';
 
@@ -232,7 +233,7 @@
           <span class="result-info">
             <span class="result-name">
               {standardSite.name}
-              <span class="badge">standard.site</span>
+              <span class="badge"><Icon name="standard-site" size={12} />standard.site</span>
             </span>
             {#if standardSite.url}
               <span class="result-sub feed-url">{standardSite.url}</span>
@@ -374,7 +375,9 @@
   }
 
   .badge {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
     margin-left: 0.4rem;
     padding: 0.05rem 0.4rem;
     border-radius: 999px;

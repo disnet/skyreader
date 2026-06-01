@@ -10,6 +10,7 @@
   import { syncStore } from '$lib/stores/sync.svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import Modal from '$lib/components/common/Modal.svelte';
+  import Icon from '$lib/components/Icon.svelte';
 
   interface Publication {
     uri: string;
@@ -479,7 +480,9 @@
       <span>Loading subscriptions...</span>
     </div>
   {:else if standardSubs.length > 0}
-    <p class="section-label">Your standard.site subscriptions</p>
+    <p class="section-label standard-label">
+      <Icon name="standard-site" size={13} /> Your standard.site subscriptions
+    </p>
     <div class="standard-subs-list">
       {#each standardSubs as sub (sub.uri)}
         {@const isSubscribed = subscribedPublisherDids.has(sub.publisherDid)}
@@ -493,7 +496,9 @@
               onerror={() => handleIconError(sub.publication.uri)}
             />
           {:else}
-            <span class="pub-favicon-placeholder"></span>
+            <span class="pub-favicon-placeholder">
+              <Icon name="standard-site" size={16} />
+            </span>
           {/if}
           <div class="standard-sub-info">
             <span class="standard-sub-name">{sub.publication.name}</span>
@@ -627,7 +632,9 @@
                   onerror={() => handleIconError(pub.uri)}
                 />
               {:else}
-                <span class="pub-favicon-placeholder"></span>
+                <span class="pub-favicon-placeholder">
+                  <Icon name="standard-site" size={16} />
+                </span>
               {/if}
               <span class="content-info">
                 <span class="content-name">{pub.name || pub.url}</span>
@@ -959,12 +966,16 @@
   }
 
   .pub-favicon-placeholder {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     width: 20px;
     height: 20px;
     border-radius: 4px;
     flex-shrink: 0;
     margin-top: 1px;
-    background: var(--color-border);
+    background: var(--color-bg-secondary);
+    color: var(--color-text-tertiary, var(--color-text-secondary));
   }
 
   .content-info {
@@ -1054,6 +1065,12 @@
     text-transform: uppercase;
     letter-spacing: 0.03em;
     margin: 0;
+  }
+
+  .standard-label {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
   }
 
   .standard-subs-list {
