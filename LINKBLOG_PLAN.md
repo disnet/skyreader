@@ -203,6 +203,120 @@ Ordered to de-risk: read-only/public first (no migration), then write, then reti
   D1 `shares` table, the share branch of the Jetstream poller. Read-state folds into normal
   per-URL tracking.
 
+### Phase 5 — Network-wide mentions on every item ("the Atmosphere knows about this")
+
+Phase 3 puts social context on *linkblog posts*. Phase 5 generalizes it to **every item in the
+feed** — regular RSS articles and standard.site links alike — by asking Constellation "who across
+the Atmosphere has linked this URL?" and surfacing a quiet count: *"3 people are talking about
+this."* It's the same backlink lookup Phase 3 already does, widened from one collection to all of
+them and moved server-side so it's computed once and shared by every reader.
+
+This phase ships independently of the linkblog write path — it enriches content that already
+exists.
+
+#### What Constellation gives us
+
+Constellation indexes the whole firehose into a backlink graph keyed on the target string, so an
+external article URL is the target of many record types, not just `site.standard.document`:
+
+- `app.bsky.feed.post` — external embeds (`.embed.external.uri`) and rich-text link facets
+  (`.facets[].features[].uri`)
+- `site.standard.document` (linkblog entries), leaflet/whitewind/frontpage posts, etc.
+
+Constellation indexes **plain `https://` web URLs**, not only `at://` targets — verified live
+against `GET /links/all`: `https://atproto.com/blog/indexing-standard-site` returns
+`app.bsky.feed.post` linkers (via `.embed.external.uri` and facet links) plus `network.cosmik.card`;
+`https://www.theverge.com/` returns 30+ distinct bsky linkers. So the lookup works for arbitrary
+feed-article URLs.
+
+Use **`GET /links/all?target=<url>`** — one request returns *every* `(collection, path)` source
+pointing at the URL with `records` + `distinct_dids` per path, so we don't enumerate collections by
+hand; Constellation reports what's out there. Two non-obvious wrinkles the live data revealed:
+
+- **Whitelist what counts as "talking."** Constellation indexes far more than discussion. The same
+  query also surfaces our *own* `app.skyreader.feed.subscription.siteUrl`, bookmark/card types
+  (`network.cosmik.card`, `app.blento.card`), etc. — subscribing to or bookmarking a URL is not
+  commentary. Count post/linkblog-style collections (`app.bsky.feed.post`, `site.standard.document`,
+  leaflet/whitewind/frontpage); ignore subscription/card records.
+- **The headline number is a distinct-DID *union*, not a sum.** A single bsky post links a URL via
+  `.embed.external.uri`, `.embed.media.external.uri`, *and* `.facets[].features[].uri`; a person who
+  embeds *and* facet-links double-counts if you add the per-path `distinct_dids`. A truthful "N
+  people" requires unioning the actual DID *sets* across the counted paths/collections (fetch the
+  DID lists via `/links/count/distinct-dids` / `/links` per source and union), not summing the
+  per-path totals from `/links/all`. Use `/links/all` to discover *which* sources exist, then union
+  DIDs over the whitelisted ones.
+
+#### Cache server-side, keyed by normalized URL — not in the feed blob
+
+The mention count for a URL is identical for every user, so computing it per-card-per-user is pure
+waste. Cache it **once in the proxy**, shared by all readers. Crucially, do **not** fold counts
+into the feed's `parsed_json` blob (`app.ts` `cache.parsed_json`): that blob is re-parsed wholesale
+every warm refresh, which erases any notion of "new items." Instead, a dedicated table keyed by the
+**normalized article URL**:
+
+```sql
+CREATE TABLE IF NOT EXISTS mention_cache (
+  url_hash      TEXT PRIMARY KEY,   -- hash of the *normalized* URL
+  url           TEXT NOT NULL,
+  distinct_dids INTEGER NOT NULL DEFAULT 0,
+  sources_json  TEXT,               -- optional per-collection breakdown from /links/all
+  first_seen_at INTEGER NOT NULL,
+  checked_at    INTEGER NOT NULL
+)
+```
+
+Keying by URL (not by feed) dedups across **both** users and feeds: the same article appearing in
+three feeds — or linked in a linkblog *and* present in an RSS feed — is one row. At serve time,
+left-join each item's normalized URL against `mention_cache` and attach the count; a miss or zero
+renders nothing (silent degradation, same contract as Phase 3 — `constellation.ts`).
+
+#### Cadence is the hard part, not volume
+
+A freshly-published article has **~0 mentions at the moment it enters the feed** — nobody has seen
+it yet to talk about it. So "enrich on first cache" yields zero for everything new, the opposite of
+useful; discussion accumulates over the following hours/days. `mention_cache` therefore needs its
+**own** freshness logic, decoupled from the ~5-minute feed TTL:
+
+- On first sighting of a URL, query once, then **re-poll on a decay curve** — recheck hot for the
+  first ~24–48h, back off, then freeze the row as "settled" and stop querying.
+- **Never** re-query every URL on every warm tick — that just relocates the volume problem onto our
+  own server.
+
+Hook the *trigger* into the existing self-warming loop (`warmStaleFeeds()`, `app.ts`): it already
+iterates active feeds with their items in hand, and only touches feeds someone actually requested
+(`last_requested_at` window), which naturally scopes enrichment to content people read. Gate each
+URL on `checked_at` + item age so most ticks do nothing. Net cost drops from `N_users × M_items` to
+`M_distinct_URLs × repoll_count` — tractable enough that self-hosting Constellation stays deferred.
+
+#### URL canonicalization is the make-or-break
+
+Constellation matches the target **string exactly**. A feed's article URL almost never equals the
+URL someone pasted into Bluesky: tracking params (`?utm_*`, `?ref=`), trailing slash, scheme,
+`www`, AMP/mobile variants, feed GUID vs. canonical. Without a normalization pass (strip tracking
+params; canonicalize scheme/host/slash; optionally query a couple of variants) the feature returns
+false zeros for articles that have real discussion and feels broken. This is the actual engineering
+work of the phase, independent of where the result is cached.
+
+#### Render & signal
+
+- A quiet count-only line on regular `ArticleCard`s, behind a **minimum threshold** (≥2–3 distinct
+  DIDs) so we never query-then-hide noise. Calm and terse (PRODUCT.md) — *"3 people linked this."*
+- Prefer the honest mechanical phrasing (*linked this*) over implying verified discussion
+  (*talking about this*) unless we actually inspect the posts.
+- Expand-to-see-who (handles + notes, the Phase 3 `alsoLinkedBy` shape) is an optional follow-on,
+  fetched lazily on open — it carries the per-linker PDS `getRecord` cost, so keep it off the
+  always-on path.
+
+#### Work items
+
+- `feed-proxy`: `mention_cache` table + cleanup branch alongside the existing TTL sweep
+  (`app.ts` cleanup); a `getArticleMentions(url)` helper that uses `/links/all` to discover sources
+  then unions distinct DIDs over a whitelisted set of collections (generalize `constellation.ts`); a
+  URL-normalization helper; re-poll/decay gate wired into `warmStaleFeeds()`;
+  serve-time join attaching counts to feed items.
+- `frontend`: count line + threshold in `ArticleCard.svelte`; optional expand reusing the Phase 3
+  social-context UI.
+
 ## What we retire
 
 - Lexicons: `app.skyreader.social.share`, `app.skyreader.social.shareReadPosition`.
