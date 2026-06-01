@@ -16,7 +16,6 @@
   import { isOffprintContent, renderOffprintContent } from '$lib/utils/offprint-renderer';
   import { isGreengaleContent, renderGreengaleContent } from '$lib/utils/greengale-renderer';
   import { getExternalArticleLink, getLinkPostNote } from '$lib/utils/linkPost';
-  import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { socialContextStore } from '$lib/stores/socialContext.svelte';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
@@ -36,7 +35,6 @@
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import type { ItemTags, ItemLabelType } from '$lib/types';
   import { tick } from 'svelte';
-  import logo from '$lib/assets/logo.svg';
 
   let {
     article,
@@ -49,7 +47,6 @@
     isSaved = false,
     isShared = false,
     shareNote,
-    isFetching = false,
     selected = false,
     expanded = false,
     highlighted = false,
@@ -59,7 +56,6 @@
     onUnshare,
     onSelect,
     onExpand,
-    onFetchContent,
     onOpenFullscreen,
     onSaveToSemble,
     onSaveToMargin,
@@ -74,7 +70,6 @@
     isSaved?: boolean;
     isShared?: boolean;
     shareNote?: string;
-    isFetching?: boolean;
     selected?: boolean;
     expanded?: boolean;
     highlighted?: boolean;
@@ -84,7 +79,6 @@
     onUnshare?: () => void;
     onSelect?: () => void;
     onExpand?: () => void;
-    onFetchContent?: () => void;
     onOpenFullscreen?: () => void;
     onSaveToSemble?: () => void;
     onSaveToMargin?: () => void;
@@ -146,28 +140,24 @@
     return undefined;
   });
 
-  // Escape a plaintext note before embedding it in the rendered HTML lead. (The
-  // whole displayContent is later run through sanitizeHtml, but the note is raw
-  // user text, so escape it so `<`/`&` show literally.)
-  function escapeNoteHtml(text: string): string {
-    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
+  // The user's commentary on a link post, rendered as plain prose (not a
+  // blockquote) — it's the author's own voice, and a quote box double-quotes
+  // once notes get rich formatting.
+  let linkPostNote = $derived(isLinkPostMode && document ? getLinkPostNote(document) : undefined);
+  // The article excerpt + thumbnail for the link-card preview.
+  let linkPostExcerpt = $derived(isLinkPostMode ? document?.description : undefined);
+  let linkPostThumb = $derived(
+    isLinkPostMode && document?.coverImageCid
+      ? `https://cdn.bsky.app/img/feed_thumbnail/plain/${document.authorDid}/${document.coverImageCid}@jpeg`
+      : undefined
+  );
 
   // Content handling - article has priority, then share content, then localArticle, then document
   let displayContent = $derived.by(() => {
-    // Link post: once the external article has been fetched, render the user's
-    // note as a lead, then the full article. Until then, fall through to the
-    // leaflet preview (note + website card) below.
-    if (isLinkPostMode && linkPostUrl && document) {
-      const fetched = linkPostContentStore.get(linkPostUrl);
-      if (fetched?.content) {
-        const note = getLinkPostNote(document);
-        const lead = note
-          ? `<blockquote class="link-post-note" style="margin: 0 0 1.25em; padding-left: 0.875em; border-left: 3px solid var(--color-primary, #0066cc); color: var(--color-text-secondary, #666); font-style: italic">${escapeNoteHtml(note)}</blockquote>`
-          : '';
-        return lead + fetched.content;
-      }
-    }
+    // Link posts don't inline the full article (that bounces through the
+    // fullscreen reader on demand). The expanded body is rendered as explicit
+    // note + link-card markup below, so there's no HTML content here.
+    if (isLinkPostMode) return '';
 
     // For articles, use existing logic
     if (article?.content) return article.content;
@@ -213,15 +203,12 @@
     }
   });
   let authorHandle = $derived(authorProfile?.handle || document?.authorDid);
+  let authorAvatar = $derived(authorProfile?.avatar);
 
   function handleHeaderClick() {
     const wasSelected = selected;
     onSelect?.();
     // Note: onRead is NOT called here - selectArticle in +page.svelte handles marking as read
-    // For link posts, fetch the full external article when first selecting
-    if (isLinkPostMode && !wasSelected && onFetchContent) {
-      onFetchContent();
-    }
     // Lazily pull Constellation social context for a link post (adornment only).
     if (isLinkPostMode && document && !wasSelected) {
       socialContextStore.fetch({
@@ -268,22 +255,19 @@
   // unshares (and removes the box). The unified logic lives below, after the
   // per-mode primitives it depends on.
 
-  // ── Link-post boost / document quote (Phase 3 / Phase 4) ────────────────────
-  // Sharing a document writes a linkblog entry. A link post can be boosted (a
-  // bare recommend) or quoted (an entry carrying a note); a plain document is
-  // quoted, keyed by the document's own URL. Both quote paths write a
-  // site.standard.document whose repostUri points at the original document.
-  let isBoosting = $state(false);
+  // ── Resharing a document (Phase 7) ──────────────────────────────────────────
+  // Every reshare is one shape: a site.standard.document in your own linkblog,
+  // keyed by the article URL and toggled by the Share button (note optional).
+  // Resharing a link post records the original doc's AT URI as a `rel: repost`
+  // ref (repostUri) so the via-attribution chain survives. (The old bare
+  // `recommend` boost write path was removed entirely in Phase 7.)
   let isQuoting = $state(false);
-  let isBoosted = $derived(
-    isLinkPostMode && document ? linkblogStore.isBoosted(document.recordUri) : false
-  );
   // The URL under which this document's linkblog entry is keyed: the external
   // article for a link post, else the document's own canonical URL.
   let quoteKey = $derived(
     isDocumentMode ? linkPostUrl || document?.canonicalUrl || document?.path || '' : ''
   );
-  // A quote is an entry in your own linkblog for this document.
+  // Whether this document already has an entry in your own linkblog.
   let isQuoted = $derived(isDocumentMode && quoteKey ? linkblogStore.isShared(quoteKey) : false);
   let socialContext = $derived(
     isLinkPostMode && document ? socialContextStore.get(document.recordUri) : undefined
@@ -293,17 +277,8 @@
     (socialContext?.alsoLinkedBy ?? []).filter((e) => e.did !== document?.authorDid)
   );
 
-  async function handleBoost() {
-    if (!document || isBoosting || isBoosted) return;
-    isBoosting = true;
-    try {
-      await linkblogStore.boost(document.recordUri);
-    } finally {
-      isBoosting = false;
-    }
-  }
-
-  // Write a linkblog quote of the current document (repostUri = the doc's AT URI).
+  // Write a linkblog entry for the current document (repostUri = the doc's AT URI,
+  // so a reshared link post credits the original).
   async function handleQuote(note: string) {
     if (!document || !quoteKey) return;
     const quoteArticle: Article = {
@@ -324,14 +299,13 @@
 
   // ── Unified share + comment + remove (all surfaces) ─────────────────────────
   // Every share button shares instantly and opens the comment box. Already
-  // shared? The button reopens the box to edit the note. Plain articles + quotes
-  // are linkblog documents; a bare link-post share is a boost that a comment
-  // upgrades into a quote.
+  // shared? The button reopens the box to edit the note. Documents (incl. link
+  // posts) become linkblog entries keyed by the article URL; plain articles go
+  // through the page's onShare.
 
-  let shareBusy = $derived(isBoosting || isQuoting);
+  let shareBusy = $derived(isQuoting);
 
   let currentlyShared = $derived.by(() => {
-    if (isLinkPostMode) return isQuoted || isBoosted;
     if (isDocumentMode) return isQuoted;
     return isShared;
   });
@@ -341,13 +315,7 @@
     return shareNote;
   });
 
-  let shareLabel = $derived.by(() => {
-    if (shareBusy) return '…';
-    if (!currentlyShared) return 'Share';
-    if (isLinkPostMode) return isQuoted ? 'Quoted' : 'Boosted';
-    if (isDocumentMode) return 'Quoted';
-    return 'Shared';
-  });
+  let shareLabel = $derived(shareBusy ? '…' : currentlyShared ? 'Shared' : 'Share');
 
   // Document sharing requires sign-in; a plain article share is gated by whether
   // the page wired up onShare.
@@ -355,7 +323,6 @@
 
   // Fire the note-less share for the current mode.
   async function shareNow() {
-    if (isLinkPostMode) return handleBoost();
     if (isDocumentMode) {
       isQuoting = true;
       try {
@@ -377,19 +344,10 @@
     else shareNow();
   }
 
-  // Attach/update the note for the current mode. On a bare link-post boost, a
-  // non-empty comment upgrades it into a quote (crediting the original post).
-  // The box stays visible after saving — it's persistent while shared.
+  // Attach/update the note. The box stays visible after saving — it's persistent
+  // while shared.
   async function applyComment(note: string) {
-    if (isLinkPostMode) {
-      if (isQuoted && quoteKey) {
-        linkblogStore.setNote(quoteKey, note);
-      } else if (note) {
-        // Boost → quote: drop the bare recommend, write a linkblog quote instead.
-        if (isBoosted && document) await linkblogStore.unboost(document.recordUri);
-        await handleQuote(note);
-      }
-    } else if (isDocumentMode) {
+    if (isDocumentMode) {
       if (isQuoted && quoteKey) linkblogStore.setNote(quoteKey, note);
       else await handleQuote(note);
     } else {
@@ -399,10 +357,7 @@
 
   // Remove the share entirely (toggling the Share button off).
   async function removeShare() {
-    if (isLinkPostMode) {
-      if (isQuoted && quoteKey) await linkblogStore.unshare(quoteKey);
-      else if (isBoosted && document) await linkblogStore.unboost(document.recordUri);
-    } else if (isDocumentMode) {
+    if (isDocumentMode) {
       if (quoteKey) await linkblogStore.unshare(quoteKey);
     } else {
       onUnshare?.();
@@ -637,19 +592,6 @@
   class:highlighted
 >
   <div class="article-sticky-header">
-    {#if isLinkPostMode && document}
-      <div class="share-attribution">
-        <img src={logo} alt="" class="attribution-icon" />
-        linked by
-        <button
-          class="share-author-link"
-          onclick={(e) => {
-            e.stopPropagation();
-            sidebarStore.openAddFeedModalForDid(document.authorDid);
-          }}>@{authorHandle}</button
-        >
-      </div>
-    {/if}
     <div class="article-header-row">
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <span
@@ -679,6 +621,24 @@
             {itemTitle}
           {/if}
         </span>
+        {#if isLinkPostMode && document}
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <span
+            class="via-pill"
+            title="@{authorHandle}"
+            onclick={(e) => {
+              e.stopPropagation();
+              sidebarStore.openAddFeedModalForDid(document.authorDid);
+            }}
+            role="button"
+            tabindex="-1"
+          >
+            {#if authorAvatar}
+              <img src={authorAvatar} alt="" class="via-avatar" />
+            {/if}
+            <span class="via-handle">@{authorHandle}</span>
+          </span>
+        {/if}
         {#if displayFeedTitle}
           {#if feedId}
             <a href="/?feed={feedId}" class="feed-title-link" onclick={(e) => e.stopPropagation()}
@@ -701,8 +661,34 @@
   {#if isOpen}
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <div class="article-content" onclick={handleContentClick}>
-      {#if isFetching}
-        <p class="article-loading">Loading article content...</p>
+      {#if isLinkPostMode}
+        <!-- A link post: the author's note as prose, then the external article as
+             a card. Tapping the card opens the in-app reader (which fetches the
+             full article), so there's no inline loading flash here. -->
+        {#if linkPostNote}
+          <p class="link-post-note">{linkPostNote}</p>
+        {/if}
+        <button
+          class="link-card"
+          onclick={(e) => {
+            e.stopPropagation();
+            onOpenFullscreen?.();
+          }}
+        >
+          {#if linkPostThumb}
+            <img src={linkPostThumb} alt="" class="link-card-thumb" />
+          {/if}
+          <span class="link-card-body">
+            <span class="link-card-site">
+              {#if faviconUrl}<img src={faviconUrl} alt="" class="link-card-favicon" />{/if}
+              {#if displayFeedTitle}{displayFeedTitle}{/if}
+            </span>
+            <span class="link-card-title">{itemTitle}</span>
+            {#if linkPostExcerpt}
+              <span class="link-card-excerpt">{linkPostExcerpt}</span>
+            {/if}
+          </span>
+        </button>
       {:else if hasContent}
         <div class="article-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
           <div
@@ -1001,35 +987,109 @@
     position: relative;
   }
 
-  .share-attribution {
-    display: flex;
+  /* "via @handle" byline pill — sits in the title row's metadata cluster so a
+     link post reads as an article with a person attached, not a special card. */
+  .via-pill {
+    display: inline-flex;
     align-items: center;
-    gap: 0.25rem;
-    font-size: 0.75rem;
-    color: var(--color-text-secondary);
-    padding: 0.25rem 0 0;
-  }
-
-  .attribution-icon {
-    width: 12px;
-    height: 12px;
+    gap: 0.3125rem;
     flex-shrink: 0;
-  }
-
-  .share-author-link {
+    max-width: 11rem;
+    font-size: 0.8rem;
     color: var(--color-text-secondary);
-    text-decoration: none;
-    background: none;
-    border: none;
-    padding: 0;
-    font: inherit;
-    font-size: inherit;
     cursor: pointer;
   }
 
-  .share-author-link:hover {
+  .via-pill:hover {
     color: var(--color-primary);
-    text-decoration: underline;
+  }
+
+  .via-avatar {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+    background: var(--color-bg-secondary, #f0f0f0);
+  }
+
+  .via-handle {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Link-post body: the note as prose, then the article as a tappable card. */
+  .link-post-note {
+    font-family: var(--article-font);
+    font-size: var(--article-font-size);
+    line-height: 1.7;
+    color: var(--color-text);
+    margin: 0 0 1rem;
+    overflow-wrap: break-word;
+  }
+
+  .link-card {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: 1px solid var(--color-border, #e5e5e5);
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+  }
+
+  .link-card:hover {
+    border-color: var(--color-primary, #0066cc);
+  }
+
+  .link-card-thumb {
+    width: 100%;
+    max-height: 180px;
+    object-fit: cover;
+  }
+
+  .link-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.75rem;
+    min-width: 0;
+  }
+
+  .link-card-site {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+  }
+
+  .link-card-favicon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+
+  .link-card-title {
+    font-weight: 600;
+    color: var(--color-text);
+    line-height: 1.35;
+  }
+
+  .link-card-excerpt {
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--color-text-secondary);
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   /* Link-post social context line (Constellation). Quiet, text-first. */
@@ -1345,13 +1405,6 @@
 
   .article-body :global(mark.highlight:hover) {
     background-color: color-mix(in srgb, #f5c518 40%, transparent);
-  }
-
-  .article-loading {
-    font-size: 0.875rem;
-    color: var(--color-text-secondary);
-    margin-top: 0.5rem;
-    font-style: italic;
   }
 
   .article-actions-container {

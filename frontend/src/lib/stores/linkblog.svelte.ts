@@ -15,25 +15,19 @@ import { api } from '$lib/services/api';
 import { db } from '$lib/services/db';
 import { safeAdd } from '$lib/services/safeDb.svelte';
 import { generateTid } from '$lib/utils/tid';
-import type { Article, LinkblogBoost, LinkblogShare } from '$lib/types';
+import type { Article, LinkblogShare } from '$lib/types';
 
 function createLinkblogStore() {
   // Keyed by external article URL (the linkblog dedup key).
   let shares = $state<Map<string, LinkblogShare>>(new Map());
-  // Boosts (bare recommends) keyed by the boosted document's record URI.
-  let boosts = $state<Map<string, LinkblogBoost>>(new Map());
   let hasLoaded = false;
 
   async function load() {
     if (hasLoaded) return;
     hasLoaded = true;
     try {
-      const [cachedShares, cachedBoosts] = await Promise.all([
-        db.linkblogShares.toArray(),
-        db.linkblogBoosts.toArray(),
-      ]);
+      const cachedShares = await db.linkblogShares.toArray();
       shares = new Map(cachedShares.map((s) => [s.articleUrl, s]));
-      boosts = new Map(cachedBoosts.map((b) => [b.documentUri, b]));
     } catch (e) {
       console.error('Failed to load linkblog state from cache:', e);
     }
@@ -45,10 +39,6 @@ function createLinkblogStore() {
 
   function getNote(articleUrl: string): string | undefined {
     return shares.get(articleUrl)?.note;
-  }
-
-  function isBoosted(documentUri: string): boolean {
-    return boosts.has(documentUri);
   }
 
   // Share an article to the linkblog. Optimistically marks it shared, writes the
@@ -170,83 +160,13 @@ function createLinkblogStore() {
     }
   }
 
-  // Boost (bare recommend) a link post. Optimistically marks it boosted, writes
-  // the recommend via the backend, and rolls back on failure.
-  async function boost(documentUri: string) {
-    if (!documentUri || boosts.has(documentUri)) return;
-
-    const rkey = generateTid();
-    const entry: LinkblogBoost = {
-      rkey,
-      documentUri,
-      createdAt: new Date().toISOString(),
-    };
-
-    // Optimistic insert (local state + cache)
-    boosts.set(documentUri, entry);
-    boosts = new Map(boosts);
-    const id = await safeAdd(db.linkblogBoosts, entry);
-    if (id !== undefined) {
-      boosts.set(documentUri, { ...entry, id });
-      boosts = new Map(boosts);
-    }
-
-    try {
-      const result = await api.createBoost({ rkey, document: documentUri });
-      const stored = boosts.get(documentUri);
-      if (stored) {
-        stored.recordUri = result.uri;
-        if (stored.id !== undefined) {
-          await db.linkblogBoosts.update(stored.id, { recordUri: result.uri });
-        }
-      }
-    } catch (e) {
-      // Roll back the optimistic insert — the boost didn't land.
-      console.error('Failed to write boost:', e);
-      const stored = boosts.get(documentUri);
-      boosts.delete(documentUri);
-      boosts = new Map(boosts);
-      if (stored?.id !== undefined) {
-        await db.linkblogBoosts.delete(stored.id);
-      }
-      // Not rethrown — runs from an onclick handler; scope errors surface globally.
-    }
-  }
-
-  async function unboost(documentUri: string) {
-    const existing = boosts.get(documentUri);
-    if (!existing) return;
-
-    // Optimistic remove
-    boosts.delete(documentUri);
-    boosts = new Map(boosts);
-    if (existing.id !== undefined) {
-      await db.linkblogBoosts.delete(existing.id);
-    }
-
-    try {
-      await api.deleteBoost(existing.rkey);
-    } catch (e) {
-      // Roll back — the delete didn't land, so keep showing it as boosted.
-      console.error('Failed to delete boost:', e);
-      const restored = { ...existing };
-      delete restored.id;
-      const id = await safeAdd(db.linkblogBoosts, restored);
-      boosts.set(documentUri, id !== undefined ? { ...restored, id } : restored);
-      boosts = new Map(boosts);
-    }
-  }
-
   return {
     load,
     isShared,
     getNote,
-    isBoosted,
     shareLink,
     setNote,
     unshare,
-    boost,
-    unboost,
   };
 }
 

@@ -410,6 +410,55 @@ after a publication is stamped.
   change, vs. a versioned target (`/linkblog/v1`) that fragments the registry across versions.
   Defaulting to unversioned.
 
+### Phase 7 — Link-post rendering & reshare refinement
+
+Phases 1–3 shipped a working link post, but the *feel* was off: a heavyweight "linked by" badge
+above the row, the commentary as a double-quoting `blockquote`, a visible "Loading article
+content…" flash when opening (the full article was inline-fetched into the card), and two storage
+shapes for a reshare (bare `recommend` boost vs. `document` quote). This phase makes a link post
+read like *an article that happens to have a person attached*, and collapses the reshare model.
+
+**Settled changes:**
+
+1. **One reshare shape — the document.** Drop the bare-`recommend` boost from the share affordance.
+   Every reshare writes a `site.standard.document` (a real linkblog entry, note optional), keyed by
+   the external article URL and toggled by the one Share button. Resharing *another* linkblog post
+   carries the original doc's AT URI as a `rel: "repost"` link alongside the `rel: "related"` article
+   ref (already implemented in `linkblog-sync.ts`) — preserving the via-attribution chain. Label is
+   just **Share / Shared** everywhere (the "Boosted"/"Quoted" split is gone). Social proof doesn't
+   regress: Constellation's "who else linked this article" (Phase 5) now counts every reshare.
+   - The `recommend`/boost **write path is removed entirely**: `writeBoost`/`deleteBoost` +
+     `buildRecommendRecord` + `RECOMMEND_COLLECTION` (`linkblog-sync.ts`), the
+     `POST/DELETE /api/linkblog/boost` routes, `boost`/`unboost`/`isBoosted` (`linkblog.svelte.ts`),
+     the `LinkblogBoost` type, the `createBoost`/`deleteBoost` API client methods, the
+     `linkblogBoosts` Dexie table (dropped in **db v33**), and the now-dead
+     `repo:site.standard.graph.recommend` OAuth scope. A future ♥ "recommend" would be reintroduced
+     fresh if ever wanted. *(Constellation's recommend-**count** read path in the proxy/social-context
+     is a separate Phase-3 read feature and is left in place — see open question below.)*
+
+2. **Collapsed row — inline "via" pill.** The `.share-attribution` top row is gone. The byline is a
+   small **avatar + @handle pill** trailing the title in the metadata cluster (postfix; title leads,
+   per "the text is the product"). It uses the **sharer's avatar** (not the Skyreader logo) so the
+   *who* is glanceable; the leading icon stays the **article's favicon** (source identity, consistent
+   with RSS rows).
+
+3. **Expanded — note as prose, card opens the reader.** The note renders as **normal prose** (not a
+   blockquote — it's the author's own voice, and blockquote breaks once notes get rich formatting).
+   The card **no longer inline-fetches the full article** (no loading flash): expanded = note +
+   **website link-card** (favicon · site · title · excerpt · thumb). Tapping the card opens the
+   **in-app fullscreen reader** (`SavedReader`), which fetches the full article with its own loading
+   state — keeping reading in-app rather than bouncing to a raw browser tab. "Open in browser" stays
+   a quiet secondary action. (`SavedReader`'s own note lead also switches blockquote → prose.)
+
+**Deferred follow-ups (shape decided, not built):**
+
+- **Read-state / dedup by normalized URL** — the same article can appear as a link post *and* in an
+  RSS sub. Key read-state on the normalized article URL (the Phase 5 normalization) so reading once,
+  via either path, marks both.
+- **Merge same-URL shares from multiple sharers** — collapse N followed linkbloggers sharing the
+  same article into one card with stacked avatars + each note, overlapping with Phase 5's "N people
+  linked this." Changes the card model (one card, N sharers), so noted now.
+
 ## What we retire
 
 - Lexicons: `app.skyreader.social.share`, `app.skyreader.social.shareReadPosition`.

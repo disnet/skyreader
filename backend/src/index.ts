@@ -18,8 +18,6 @@ import {
   handleCreateLinkblogShare,
   handleDeleteLinkblogShare,
   handleUpdateLinkblogShare,
-  handleCreateBoost,
-  handleDeleteBoost,
   handleGetPublication,
   handleUpdatePublication,
   handleDiscover,
@@ -270,14 +268,6 @@ export default {
             request.method === 'PATCH'
               ? await handleUpdateLinkblogShare(request, env)
               : await handleDeleteLinkblogShare(request, env);
-          break;
-        case url.pathname === '/api/linkblog/boost':
-          if (!session) return unauthorizedResponse(headers);
-          response = await handleCreateBoost(request, env);
-          break;
-        case url.pathname.startsWith('/api/linkblog/boost/'):
-          if (!session) return unauthorizedResponse(headers);
-          response = await handleDeleteBoost(request, env);
           break;
         case url.pathname === '/api/linkblog/publication':
           if (!session) return unauthorizedResponse(headers);
