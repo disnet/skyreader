@@ -9,6 +9,7 @@ import {
 	filterSinceUris,
 	type ProxyDocument,
 } from './standard-site';
+import { getSocialContext, type SocialContext, type SocialContextQuery } from './constellation';
 
 export interface AppConfig {
 	proxySecret?: string;
@@ -312,6 +313,25 @@ export function initDatabase(db: Database): void {
 			cached_at INTEGER NOT NULL
 		)
 	`);
+	// Migration: add the handle column for DID caches predating Phase 3.
+	const didColumns = db.query<{ name: string }, []>(`PRAGMA table_info(did_cache)`).all();
+	if (!didColumns.some((c) => c.name === 'handle')) {
+		db.run(`ALTER TABLE did_cache ADD COLUMN handle TEXT`);
+	}
+
+	// Assembled Constellation social context per link post (recommend/quote counts
+	// + "also linked by"), keyed by the query bundle. Short TTL — the Constellation
+	// index is firehose-fresh.
+	db.run(`
+		CREATE TABLE IF NOT EXISTS constellation_cache (
+			cache_key TEXT PRIMARY KEY,
+			context_json TEXT NOT NULL,
+			cached_at INTEGER NOT NULL
+		)
+	`);
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_constellation_cache_cached_at ON constellation_cache(cached_at)`
+	);
 
 	// Resolved standard.site publication metadata (base URL + icon), mirroring the
 	// backend's former D1 publications_cache.
@@ -355,6 +375,8 @@ export function createApp(db: Database, config: AppConfig) {
 	const inFlightExtract = new Map<string, Promise<ExtractedArticle>>();
 	// And for standard.site document fetches, keyed by author DID.
 	const inFlightDocs = new Map<string, Promise<ProxyDocument[] | null>>();
+	// Collapse concurrent social-context lookups for the same link post.
+	const inFlightContext = new Map<string, Promise<SocialContext>>();
 
 	async function fetchParseAndCache(
 		url: string,
@@ -1424,6 +1446,67 @@ export function createApp(db: Database, config: AppConfig) {
 		return c.json({ authors: results });
 	});
 
+	// Social context for link posts (Phase 3). Batch lookup of Constellation
+	// backlink data — recommend/quote counts + "who else linked this article" — per
+	// link post. Adornment only: each item degrades silently to zeros/empty, and
+	// the whole endpoint is best-effort so the read never depends on it.
+	app.post('/social-context', async (c) => {
+		if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret) {
+			return c.json({ error: 'Unauthorized' }, 401);
+		}
+
+		let body: { items?: Array<SocialContextQuery & { key?: string }> };
+		try {
+			body = await c.req.json();
+		} catch {
+			return c.json({ error: 'Invalid JSON body' }, 400);
+		}
+
+		const items = body.items;
+		if (!Array.isArray(items)) {
+			return c.json({ error: 'Missing items array' }, 400);
+		}
+		if (items.length === 0) {
+			return c.json({ error: 'Empty request' }, 400);
+		}
+		if (items.length > 25) {
+			return c.json({ error: 'Too many items (max 25)' }, 400);
+		}
+
+		const results = await Promise.all(
+			items.map(async (item) => {
+				const query: SocialContextQuery = {
+					docUri: item.docUri,
+					articleUrl: item.articleUrl,
+					excludeDid: item.excludeDid,
+				};
+				// Key the response back to the request (the client's own `key`, or the
+				// docUri, so it can reconcile by position-independent id).
+				const key = item.key || item.docUri || item.articleUrl || '';
+				const inflightKey = `${query.docUri || ''}|${query.articleUrl || ''}|${query.excludeDid || ''}`;
+
+				let pending = inFlightContext.get(inflightKey);
+				if (!pending) {
+					pending = getSocialContext(db, query).finally(() => {
+						inFlightContext.delete(inflightKey);
+					});
+					inFlightContext.set(inflightKey, pending);
+				}
+
+				try {
+					const context = await pending;
+					return { key, ...context };
+				} catch (error) {
+					// Best-effort: never fail the batch over one item.
+					console.error('[social-context] item error:', error);
+					return { key, recommendCount: 0, quoteCount: 0, alsoLinkedBy: [] };
+				}
+			})
+		);
+
+		return c.json({ items: results });
+	});
+
 	return { app, inFlight, inFlightDocs, warmStaleFeeds, warmStaleDocuments };
 }
 
@@ -1436,5 +1519,12 @@ export function cleanupCache(db: Database): number {
 	]);
 	// Documents age out on the same 7-day idle window as feeds.
 	const docResult = db.run('DELETE FROM document_cache WHERE fetched_at < ?', [threshold]);
-	return result.changes + extractResult.changes + docResult.changes;
+	// Constellation context is short-lived; drop anything past a generous window so
+	// the table can't accumulate stale link-post bundles.
+	const constellationResult = db.run('DELETE FROM constellation_cache WHERE cached_at < ?', [
+		now - 24 * 60 * 60 * 1000,
+	]);
+	return (
+		result.changes + extractResult.changes + docResult.changes + constellationResult.changes
+	);
 }

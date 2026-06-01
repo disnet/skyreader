@@ -12,6 +12,8 @@ import { createPDSClient, type PDSResult, type PutRecordResponse } from './pds-c
 
 export const PUBLICATION_COLLECTION = 'site.standard.publication';
 export const DOCUMENT_COLLECTION = 'site.standard.document';
+// A boost (bare reshare) of someone's link post.
+export const RECOMMEND_COLLECTION = 'site.standard.graph.recommend';
 
 // One dedicated linkblog publication per user, at a fixed rkey.
 export const LINKBLOG_RKEY = 'skyreader-links';
@@ -175,6 +177,10 @@ export interface LinkblogShareInput {
   articlePublishedAt?: string;
   note?: string; // the user's commentary
   tags?: string[];
+  // Quote-reshare: the AT URI of the original link post being quoted. Added to
+  // `links` as a `rel: "repost"` ref for provenance, alongside the article ref,
+  // so the quote is its own linkblog entry that still credits the source.
+  repostUri?: string;
 }
 
 interface DocumentRecord {
@@ -227,6 +233,9 @@ export function buildLinkblogDocument(
   const note = input.note?.trim();
   const textContent = [note, excerpt].filter(Boolean).join('\n\n') || undefined;
 
+  const links: Array<{ uri: string; rel: string }> = [{ uri: input.articleUrl, rel: 'related' }];
+  if (input.repostUri) links.push({ uri: input.repostUri, rel: 'repost' });
+
   return {
     $type: DOCUMENT_COLLECTION,
     site: publicationUri(did),
@@ -237,7 +246,7 @@ export function buildLinkblogDocument(
     description: excerpt || undefined,
     textContent,
     tags: input.tags && input.tags.length > 0 ? input.tags : undefined,
-    links: [{ uri: input.articleUrl, rel: 'related' }],
+    links,
     content: buildLeafletContent(input, excerpt),
   };
 }
@@ -262,4 +271,37 @@ export async function deleteLinkblogShare(
   rkey: string
 ): Promise<PDSResult<void>> {
   return createPDSClient(session).deleteRecord(DOCUMENT_COLLECTION, rkey);
+}
+
+// ── Boost (recommend) ────────────────────────────────────────────────────────
+//
+// A boost is a bare `site.standard.graph.recommend` pointing at someone's link
+// post — the "reshare without commentary" half of the split (commentary → quote,
+// which is a document). No publication needed; it's a standalone graph record.
+
+interface RecommendRecord {
+  $type: string;
+  document: string; // AT URI of the recommended link post
+  createdAt: string;
+}
+
+export function buildRecommendRecord(documentUri: string): RecommendRecord {
+  return {
+    $type: RECOMMEND_COLLECTION,
+    document: documentUri,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+export async function writeBoost(
+  session: Session,
+  rkey: string,
+  documentUri: string
+): Promise<PDSResult<PutRecordResponse>> {
+  const record = buildRecommendRecord(documentUri);
+  return createPDSClient(session).putRecord(RECOMMEND_COLLECTION, rkey, record);
+}
+
+export async function deleteBoost(session: Session, rkey: string): Promise<PDSResult<void>> {
+  return createPDSClient(session).deleteRecord(RECOMMEND_COLLECTION, rkey);
 }

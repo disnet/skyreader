@@ -18,6 +18,8 @@
   import { isGreengaleContent, renderGreengaleContent } from '$lib/utils/greengale-renderer';
   import { getExternalArticleLink, getLinkPostNote } from '$lib/utils/linkPost';
   import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
+  import { linkblogStore } from '$lib/stores/linkblog.svelte';
+  import { socialContextStore } from '$lib/stores/socialContext.svelte';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { profileService } from '$lib/services/profiles';
   import { sharesStore } from '$lib/stores/shares.svelte';
@@ -350,6 +352,14 @@
     if ((isShareMode || isLinkPostMode) && !wasSelected && onFetchContent) {
       onFetchContent();
     }
+    // Lazily pull Constellation social context for a link post (adornment only).
+    if (isLinkPostMode && document && !wasSelected) {
+      socialContextStore.fetch({
+        docUri: document.recordUri,
+        articleUrl: linkPostUrl,
+        excludeDid: document.authorDid,
+      });
+    }
   }
 
   function handleExpandClick(e: MouseEvent) {
@@ -402,7 +412,80 @@
 
   function handleShareSubmit(note: string | undefined) {
     shareComposerOpen = false;
+    // Link posts: a Share with no note is a boost (bare recommend); a Share with
+    // a note is a quote (your own link post crediting the original). Plain
+    // articles/documents keep the existing onShare behavior.
+    if (isLinkPostMode && document) {
+      const trimmed = note?.trim();
+      if (trimmed) {
+        handleQuote(trimmed);
+      } else {
+        handleBoost();
+      }
+      return;
+    }
     onShare?.(note);
+  }
+
+  // ── Link-post boost / quote (Phase 3) ──────────────────────────────────────
+  let isBoosting = $state(false);
+  let isBoosted = $derived(
+    isLinkPostMode && document ? linkblogStore.isBoosted(document.recordUri) : false
+  );
+  // A quote is just an entry in your own linkblog for this article.
+  let isQuoted = $derived(
+    isLinkPostMode && linkPostUrl ? linkblogStore.isShared(linkPostUrl) : false
+  );
+  let socialContext = $derived(
+    isLinkPostMode && document ? socialContextStore.get(document.recordUri) : undefined
+  );
+  // Other linkers, minus this post's own author (already shown in the byline).
+  let alsoLinkedBy = $derived(
+    (socialContext?.alsoLinkedBy ?? []).filter((e) => e.did !== document?.authorDid)
+  );
+
+  async function handleBoost() {
+    if (!document || isBoosting || isBoosted) return;
+    isBoosting = true;
+    try {
+      await linkblogStore.boost(document.recordUri);
+    } finally {
+      isBoosting = false;
+    }
+  }
+
+  async function handleUnboost(e: MouseEvent) {
+    e.stopPropagation();
+    if (!document || isBoosting || !isBoosted) return;
+    isBoosting = true;
+    try {
+      await linkblogStore.unboost(document.recordUri);
+    } finally {
+      isBoosting = false;
+    }
+  }
+
+  async function handleQuote(note: string) {
+    if (!document || !linkPostUrl) return;
+    const article: Article = {
+      subscriptionId: 0,
+      guid: linkPostUrl,
+      url: linkPostUrl,
+      title: itemTitle,
+      author: undefined,
+      summary: document.description,
+      imageUrl: document.coverImageCid
+        ? `https://cdn.bsky.app/img/feed_fullsize/plain/${document.authorDid}/${document.coverImageCid}@jpeg`
+        : undefined,
+      publishedAt: document.publishedAt,
+      fetchedAt: Date.now(),
+    };
+    await linkblogStore.shareLink(article, note, document.recordUri);
+  }
+
+  async function handleUnquote(e: MouseEvent) {
+    e.stopPropagation();
+    if (linkPostUrl) await linkblogStore.unshare(linkPostUrl);
   }
 
   function handleUnshare(e: MouseEvent) {
@@ -741,6 +824,41 @@
       {/if}
     </div>
 
+    <!-- Link-post social context (Constellation): recommends, quotes, and who
+         else across the Atmosphere linked this article. Adornment only — absent
+         until it lazily loads, and silently absent if Constellation is down. -->
+    {#if isLinkPostMode && socialContext && (socialContext.recommendCount > 0 || socialContext.quoteCount > 0 || alsoLinkedBy.length > 0)}
+      <div class="link-post-context">
+        {#if socialContext.recommendCount > 0 || socialContext.quoteCount > 0}
+          <span class="context-stat">
+            {#if socialContext.recommendCount > 0}{socialContext.recommendCount}
+              {socialContext.recommendCount === 1
+                ? 'recommend'
+                : 'recommends'}{/if}{#if socialContext.recommendCount > 0 && socialContext.quoteCount > 0}
+              ·
+            {/if}{#if socialContext.quoteCount > 0}{socialContext.quoteCount}
+              {socialContext.quoteCount === 1 ? 'quote' : 'quotes'}{/if}
+          </span>
+        {/if}
+        {#if alsoLinkedBy.length > 0}
+          <div class="context-also-linked">
+            <span class="context-also-label">also linked by</span>
+            {#each alsoLinkedBy as entry (entry.recordUri)}
+              <span class="context-also-entry">
+                <button
+                  class="context-handle"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    sidebarStore.openAddFeedModalForDid(entry.did);
+                  }}>@{entry.handle ?? entry.did.slice(0, 16)}</button
+                >{#if entry.note}<span class="context-note">“{entry.note}”</span>{/if}
+              </span>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     <!-- Mobile: meta line below content -->
     <div class="article-meta-mobile">
       {#if faviconUrl}
@@ -783,6 +901,31 @@
                 <span class="action-icon"><Icon name="share" size={16} /></span><span
                   class="action-label">{isResharing ? '...' : 'Reshare'}</span
                 >
+              </button>
+            {/if}
+          {/if}
+        {:else if isLinkPostMode}
+          {#if auth.user}
+            {#if isQuoted}
+              <button class="action-btn shared" onclick={handleUnquote}>
+                <span class="action-icon"><Icon name="share" size={16} /></span>
+                <span class="action-label">Quoted</span>
+              </button>
+            {:else if isBoosted}
+              <button class="action-btn shared" onclick={handleUnboost} disabled={isBoosting}>
+                <span class="action-icon"><Icon name="share" size={16} /></span>
+                <span class="action-label">{isBoosting ? '...' : 'Boosted'}</span>
+              </button>
+            {:else}
+              <button
+                class="action-btn"
+                class:active={shareComposerOpen}
+                onclick={handleShare}
+                disabled={isBoosting}
+                bind:this={shareBtnRef}
+              >
+                <span class="action-icon"><Icon name="share" size={16} /></span>
+                <span class="action-label">{isBoosting ? '...' : 'Share'}</span>
               </button>
             {/if}
           {/if}
@@ -955,6 +1098,7 @@
       anchorEl={shareBtnRef}
       articleTitle={itemTitle}
       articleHost={shareHost}
+      hintText={isLinkPostMode ? 'Empty = boost · add a note to quote' : 'Posts to your linkblog.'}
       onsubmit={handleShareSubmit}
       onclose={() => (shareComposerOpen = false)}
     />
@@ -1066,6 +1210,61 @@
     font-size: 0.7rem;
     color: var(--color-text-secondary);
     margin-left: 0.25rem;
+  }
+
+  /* Link-post social context line (Constellation). Quiet, text-first. */
+  .link-post-context {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin: 0 0 0.75rem;
+    padding-top: 0.625rem;
+    border-top: 1px solid var(--color-border, #e8e8e8);
+    font-size: 0.8125rem;
+    color: var(--color-text-secondary);
+  }
+
+  .context-stat {
+    color: var(--color-text-secondary);
+  }
+
+  .context-also-linked {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.375rem;
+    line-height: 1.4;
+  }
+
+  .context-also-label {
+    color: var(--color-text-secondary);
+  }
+
+  .context-also-entry {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.3125rem;
+    min-width: 0;
+  }
+
+  .context-handle {
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .context-handle:hover {
+    color: var(--color-primary);
+    text-decoration: underline;
+  }
+
+  .context-note {
+    color: var(--color-text);
+    font-style: italic;
   }
 
   .article-header-row {

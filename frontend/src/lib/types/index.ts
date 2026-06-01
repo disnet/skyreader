@@ -648,6 +648,35 @@ export interface LinkblogShare {
   createdAt: string;
 }
 
+// A locally-tracked boost (Phase 3): a bare site.standard.graph.recommend of
+// someone's link post, keyed by the boosted document's record URI so the boost
+// button can show state + support un-boosting.
+export interface LinkblogBoost {
+  id?: number;
+  rkey: string;
+  documentUri: string; // AT URI of the boosted link post
+  recordUri?: string; // AT URI of our recommend record (set after the write lands)
+  createdAt: string;
+}
+
+// One other person who linked the same external article (Constellation), with
+// their commentary if available. Powers the "also linked by …" context line.
+export interface AlsoLinkedEntry {
+  did: string;
+  handle: string | null;
+  note: string | null;
+  recordUri: string;
+}
+
+// Constellation social context for a single link post (Phase 3). Adornment only;
+// all fields are best-effort and degrade to zero/empty.
+export interface SocialContextResult {
+  key: string;
+  recommendCount: number;
+  quoteCount: number;
+  alsoLinkedBy: AlsoLinkedEntry[];
+}
+
 // The user's linkblog publication metadata (site.standard.publication), as
 // returned by the backend. `exists` is false when the publication hasn't been
 // created yet (first share creates it lazily).

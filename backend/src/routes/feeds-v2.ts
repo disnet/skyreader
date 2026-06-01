@@ -1,6 +1,10 @@
 import type { Env, FeedItem } from '../types';
 import { FeedProxyClient, FeedProxyError } from '../services/feed-proxy-client';
-import type { ProxyDocumentEntry } from '../services/feed-proxy-client';
+import type {
+  ProxyDocumentEntry,
+  SocialContextQuery,
+  SocialContextResult,
+} from '../services/feed-proxy-client';
 import { resolveStandardSite } from '../utils/canonical-url';
 
 interface V2FeedResponse {
@@ -354,6 +358,70 @@ export async function handleV2BatchDocumentFetch(request: Request, env: Env): Pr
       authors.push(errorEntry(entry, message));
     }
     return new Response(JSON.stringify({ authors }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+/**
+ * POST /api/v2/social-context
+ *
+ * Batch fetch Constellation social context for link posts via the Fly.io proxy
+ * (Phase 3). Thin pass-through — no D1. Each item carries an optional `key` (the
+ * client reconciles by it), a `docUri` (the link post's record), and/or an
+ * `articleUrl` (the external article, for "who else linked this"). Best-effort:
+ * on any proxy failure we return empty context per item rather than erroring, so
+ * the read never depends on it.
+ */
+export async function handleV2SocialContext(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  let body: { items?: SocialContextQuery[] };
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const items = body.items;
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return new Response(JSON.stringify({ error: 'Missing items array in request body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  if (items.length > 25) {
+    return new Response(JSON.stringify({ error: 'Too many items (max 25)' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const emptyFor = (item: SocialContextQuery): SocialContextResult => ({
+    key: item.key || item.docUri || item.articleUrl || '',
+    recommendCount: 0,
+    quoteCount: 0,
+    alsoLinkedBy: [],
+  });
+
+  try {
+    const client = new FeedProxyClient(env);
+    const results = await client.fetchSocialContext(items);
+    return new Response(JSON.stringify({ items: results }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    // Adornment only — degrade to empty context instead of failing the request.
+    console.error('V2 social-context fetch error:', error);
+    return new Response(JSON.stringify({ items: items.map(emptyFor) }), {
       headers: { 'Content-Type': 'application/json' },
     });
   }

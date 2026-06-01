@@ -8,10 +8,12 @@ import { getSessionFromRequest } from '../services/oauth';
 import { hasRequiredScopes, insufficientScopesResponse, LINKBLOG_SCOPES } from './auth';
 import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
 import {
+  deleteBoost,
   deleteLinkblogShare,
   getPublicationMeta,
   publicationUri,
   updatePublication,
+  writeBoost,
   writeLinkblogShare,
   type LinkblogShareInput,
 } from '../services/linkblog-sync';
@@ -39,6 +41,10 @@ function isHttpUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isAtUri(value: string): boolean {
+  return typeof value === 'string' && value.startsWith('at://');
 }
 
 interface CreateLinkblogShareRequest extends LinkblogShareInput {
@@ -74,6 +80,9 @@ export async function handleCreateLinkblogShare(request: Request, env: Env): Pro
   if (!body.articleUrl || !isHttpUrl(body.articleUrl)) {
     return json({ error: 'articleUrl must be a valid http(s) URL' }, 400);
   }
+  if (body.repostUri !== undefined && !isAtUri(body.repostUri)) {
+    return json({ error: 'repostUri must be an at:// URI' }, 400);
+  }
 
   const input: LinkblogShareInput = {
     articleUrl: body.articleUrl,
@@ -84,6 +93,7 @@ export async function handleCreateLinkblogShare(request: Request, env: Env): Pro
     articlePublishedAt: body.articlePublishedAt,
     note: body.note,
     tags: body.tags,
+    repostUri: body.repostUri,
   };
 
   const result = await writeLinkblogShare(session, env, rkey, input);
@@ -119,6 +129,71 @@ export async function handleDeleteLinkblogShare(request: Request, env: Env): Pro
   }
 
   const result = await deleteLinkblogShare(session, rkey);
+  if (!result.success) {
+    if (isScopeError(result.error)) return insufficientScopesResponse();
+    return json({ error: result.error }, result.retryable ? 503 : 502);
+  }
+  return json({ success: true });
+}
+
+// POST /api/linkblog/boost
+//
+// A boost is a bare recommend of someone's link post (no commentary — that's a
+// quote, which goes through /share). The rkey is client-generated for optimistic
+// insertion; `document` is the AT URI of the link post being boosted.
+export async function handleCreateBoost(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') {
+    return json({ error: 'Method not allowed' }, 405);
+  }
+
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Unauthorized' }, 401);
+  if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
+    return insufficientScopesResponse();
+  }
+
+  let body: { rkey?: string; document?: string };
+  try {
+    body = (await request.json()) as { rkey?: string; document?: string };
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  if (!body.rkey || !isValidRkey(body.rkey)) {
+    return invalidRkeyResponse();
+  }
+  if (!body.document || !isAtUri(body.document)) {
+    return json({ error: 'document must be an at:// URI' }, 400);
+  }
+
+  const result = await writeBoost(session, body.rkey, body.document);
+  if (!result.success) {
+    if (isScopeError(result.error)) return insufficientScopesResponse();
+    return json({ error: result.error }, result.retryable ? 503 : 502);
+  }
+
+  return json({ uri: result.data.uri, cid: result.data.cid, rkey: body.rkey });
+}
+
+// DELETE /api/linkblog/boost/:rkey
+export async function handleDeleteBoost(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'DELETE') {
+    return json({ error: 'Method not allowed' }, 405);
+  }
+
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Unauthorized' }, 401);
+  if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
+    return insufficientScopesResponse();
+  }
+
+  const pathParts = new URL(request.url).pathname.split('/');
+  const rkey = pathParts[pathParts.length - 1];
+  if (!rkey || !isValidRkey(rkey)) {
+    return invalidRkeyResponse();
+  }
+
+  const result = await deleteBoost(session, rkey);
   if (!result.success) {
     if (isScopeError(result.error)) return insufficientScopesResponse();
     return json({ error: result.error }, result.retryable ? 503 : 502);

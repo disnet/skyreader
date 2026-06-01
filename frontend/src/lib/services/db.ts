@@ -8,6 +8,7 @@ import type {
   SocialShare,
   UserShare,
   LinkblogShare,
+  LinkblogBoost,
   FilteredView,
   ItemTags,
   ItemLabel,
@@ -61,6 +62,7 @@ class SkyreaderDatabase extends Dexie {
   socialDocuments!: Table<SocialDocument>;
   userShares!: Table<UserShare>;
   linkblogShares!: Table<LinkblogShare>;
+  linkblogBoosts!: Table<LinkblogBoost>;
   syncQueue!: Table<SyncQueueEntry>;
   metadata!: Table<MetadataEntry>;
   filteredViews!: Table<FilteredView>;
@@ -348,6 +350,12 @@ class SkyreaderDatabase extends Dexie {
     this.version(30).stores({
       linkblogShares: '++id, articleUrl, rkey',
     });
+
+    // Linkblog Phase 3: locally-tracked boosts (bare recommends) of others' link
+    // posts, keyed by the boosted document's record URI for state + un-boosting.
+    this.version(31).stores({
+      linkblogBoosts: '++id, documentUri, rkey',
+    });
   }
 }
 
@@ -364,6 +372,7 @@ export async function clearAllData(): Promise<void> {
     db.socialDocuments.clear(),
     db.userShares.clear(),
     db.linkblogShares.clear(),
+    db.linkblogBoosts.clear(),
     db.syncQueue.clear(),
     db.metadata.clear(),
     db.filteredViews.clear(),

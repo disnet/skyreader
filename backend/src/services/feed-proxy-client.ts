@@ -94,6 +94,33 @@ interface RawDocumentBatchResponse {
   error?: string;
 }
 
+// Social context (Constellation) request/response shapes (Phase 3).
+export interface SocialContextQuery {
+  key?: string;
+  docUri?: string;
+  articleUrl?: string;
+  excludeDid?: string;
+}
+
+export interface AlsoLinkedEntry {
+  did: string;
+  handle: string | null;
+  note: string | null;
+  recordUri: string;
+}
+
+export interface SocialContextResult {
+  key: string;
+  recommendCount: number;
+  quoteCount: number;
+  alsoLinkedBy: AlsoLinkedEntry[];
+}
+
+interface RawSocialContextResponse {
+  items?: SocialContextResult[];
+  error?: string;
+}
+
 // Raw response types from the proxy
 interface RawFeedResponse {
   feed: {
@@ -307,6 +334,24 @@ export class FeedProxyClient {
     }
 
     return raw.authors;
+  }
+
+  /**
+   * Fetch Constellation social context for a batch of link posts (Phase 3):
+   * recommend/quote counts + "who else linked this article" (with handles +
+   * notes). Best-effort adornment — the proxy degrades each item silently.
+   */
+  async fetchSocialContext(items: SocialContextQuery[]): Promise<SocialContextResult[]> {
+    const raw = await this.fetch<RawSocialContextResponse>('/social-context', {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    });
+
+    if (!raw.items) {
+      throw new FeedProxyError(raw.error || 'Invalid response from feed proxy');
+    }
+
+    return raw.items;
   }
 
   /**

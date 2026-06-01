@@ -9,6 +9,7 @@ import type {
   ParsedFeed,
   ReshareActivity,
   SembleCollection,
+  SocialContextResult,
   SocialDocument,
   SocialShare,
   User,
@@ -530,6 +531,8 @@ class ApiClient {
     articlePublishedAt?: string;
     note?: string;
     tags?: string[];
+    // Quote-reshare: the AT URI of the original link post being quoted.
+    repostUri?: string;
   }): Promise<{ uri: string; cid: string; rkey: string; publication: string }> {
     return this.fetch('/api/linkblog/share', {
       method: 'POST',
@@ -540,6 +543,34 @@ class ApiClient {
   async deleteLinkblogShare(rkey: string): Promise<{ success: boolean }> {
     return this.fetch(`/api/linkblog/share/${rkey}`, {
       method: 'DELETE',
+    });
+  }
+
+  // Boost — a bare recommend of someone's link post (no commentary).
+  async createBoost(data: {
+    rkey: string;
+    document: string;
+  }): Promise<{ uri: string; cid: string; rkey: string }> {
+    return this.fetch('/api/linkblog/boost', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteBoost(rkey: string): Promise<{ success: boolean }> {
+    return this.fetch(`/api/linkblog/boost/${rkey}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Social context (Constellation) for link posts — recommend/quote counts +
+  // "who else linked this article". Best-effort adornment; degrades to empty.
+  async fetchSocialContext(
+    items: Array<{ key?: string; docUri?: string; articleUrl?: string; excludeDid?: string }>
+  ): Promise<{ items: SocialContextResult[] }> {
+    return this.fetch('/api/v2/social-context', {
+      method: 'POST',
+      body: JSON.stringify({ items }),
     });
   }
 
