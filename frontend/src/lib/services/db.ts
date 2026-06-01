@@ -7,6 +7,7 @@ import type {
   SocialDocument,
   SocialShare,
   UserShare,
+  LinkblogShare,
   FilteredView,
   ItemTags,
   ItemLabel,
@@ -59,6 +60,7 @@ class SkyreaderDatabase extends Dexie {
   socialShares!: Table<SocialShare>;
   socialDocuments!: Table<SocialDocument>;
   userShares!: Table<UserShare>;
+  linkblogShares!: Table<LinkblogShare>;
   syncQueue!: Table<SyncQueueEntry>;
   metadata!: Table<MetadataEntry>;
   filteredViews!: Table<FilteredView>;
@@ -340,6 +342,12 @@ class SkyreaderDatabase extends Dexie {
           }
         }
       });
+
+    // Linkblog (Phase 1): local record of articles shared to the user's
+    // skyreader-links publication, keyed by external article URL for dedup.
+    this.version(30).stores({
+      linkblogShares: '++id, articleUrl, rkey',
+    });
   }
 }
 
@@ -355,6 +363,7 @@ export async function clearAllData(): Promise<void> {
     db.socialShares.clear(),
     db.socialDocuments.clear(),
     db.userShares.clear(),
+    db.linkblogShares.clear(),
     db.syncQueue.clear(),
     db.metadata.clear(),
     db.filteredViews.clear(),

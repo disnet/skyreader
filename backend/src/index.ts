@@ -21,6 +21,12 @@ import {
 } from './routes/social';
 import { handleGetMyShares, handleCreateShare, handleDeleteShare } from './routes/shares';
 import {
+  handleCreateLinkblogShare,
+  handleDeleteLinkblogShare,
+  handleGetPublication,
+  handleUpdatePublication,
+} from './routes/linkblog';
+import {
   handleCreateSubscription,
   handleDeleteSubscription,
   handleUpdateSubscription,
@@ -282,6 +288,24 @@ export default {
         case url.pathname.startsWith('/api/shares/') && url.pathname !== '/api/shares/my':
           if (!session) return unauthorizedResponse(headers);
           response = await handleDeleteShare(request, env, ctx);
+          break;
+
+        // Linkblog endpoints — sharing as portable site.standard.document records
+        case url.pathname === '/api/linkblog/share':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleCreateLinkblogShare(request, env);
+          break;
+        case url.pathname.startsWith('/api/linkblog/share/'):
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleDeleteLinkblogShare(request, env);
+          break;
+        case url.pathname === '/api/linkblog/publication':
+          if (!session) return unauthorizedResponse(headers);
+          if (request.method === 'GET') {
+            response = await handleGetPublication(request, env);
+          } else {
+            response = await handleUpdatePublication(request, env);
+          }
           break;
 
         // Subscriptions endpoints (new)

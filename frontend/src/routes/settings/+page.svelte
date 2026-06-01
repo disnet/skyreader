@@ -19,6 +19,7 @@
   import { api, RateLimitError } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
+  import type { LinkblogPublication } from '$lib/types';
 
   $effect(() => {
     viewTitleStore.set('Settings');
@@ -50,6 +51,15 @@
   let syncError = $state<string | null>(null);
   let syncSuccess = $state<string | null>(null);
 
+  // Linkblog publication settings
+  let linkblogPub = $state<LinkblogPublication | null>(null);
+  let linkblogName = $state('');
+  let linkblogDescription = $state('');
+  let isLinkblogLoading = $state(false);
+  let isSavingLinkblog = $state(false);
+  let linkblogError = $state<string | null>(null);
+  let linkblogSuccess = $state<string | null>(null);
+
   onMount(async () => {
     if (!auth.isAuthenticated) {
       goto('/auth/login?returnUrl=/settings');
@@ -62,7 +72,49 @@
 
     // Load PDS sync settings
     await loadSyncSettings();
+    await loadLinkblog();
   });
+
+  async function loadLinkblog() {
+    if (!syncStore.isOnline) return;
+    isLinkblogLoading = true;
+    try {
+      const pub = await api.getLinkblogPublication();
+      linkblogPub = pub;
+      linkblogName = pub.name;
+      linkblogDescription = pub.description ?? '';
+    } catch (error) {
+      console.error('Failed to load linkblog publication:', error);
+    } finally {
+      isLinkblogLoading = false;
+    }
+  }
+
+  async function handleSaveLinkblog() {
+    if (isSavingLinkblog) return;
+    if (!syncStore.isOnline) {
+      linkblogError = 'You are offline. Connect to the internet to update your linkblog.';
+      return;
+    }
+    isSavingLinkblog = true;
+    linkblogError = null;
+    linkblogSuccess = null;
+    try {
+      const pub = await api.updateLinkblogPublication({
+        name: linkblogName,
+        description: linkblogDescription,
+      });
+      linkblogPub = pub;
+      linkblogName = pub.name;
+      linkblogDescription = pub.description ?? '';
+      linkblogSuccess = 'Saved.';
+    } catch (error) {
+      console.error('Failed to update linkblog publication:', error);
+      linkblogError = error instanceof Error ? error.message : 'Failed to save.';
+    } finally {
+      isSavingLinkblog = false;
+    }
+  }
 
   async function loadSyncSettings() {
     if (!syncStore.isOnline) return;
@@ -362,6 +414,54 @@
         {#if syncSuccess}
           <p class="sync-success">{syncSuccess}</p>
         {/if}
+      {/if}
+    {/if}
+  </section>
+
+  <section class="card">
+    <h2>Your linkblog</h2>
+    <p class="setting-description" style="margin-top: 0;">
+      Sharing an article publishes it to your <strong>linkblog</strong> — a portable publication in your
+      PDS, public by design and readable across the Atmosphere.
+    </p>
+    {#if isLinkblogLoading}
+      <p class="loading">Loading linkblog…</p>
+    {:else}
+      {#if linkblogPub}
+        <p class="setting-description" style="margin-top: 0;">
+          <a href={linkblogPub.url} target="_blank" rel="noopener noreferrer"
+            >View your linkblog →</a
+          >
+        </p>
+      {/if}
+      <div class="linkblog-field">
+        <label for="linkblog-name">Name</label>
+        <input
+          id="linkblog-name"
+          type="text"
+          bind:value={linkblogName}
+          maxlength="120"
+          placeholder="My links"
+        />
+      </div>
+      <div class="linkblog-field">
+        <label for="linkblog-description">Description</label>
+        <textarea
+          id="linkblog-description"
+          bind:value={linkblogDescription}
+          rows="2"
+          maxlength="500"
+          placeholder="Optional"
+        ></textarea>
+      </div>
+      <button class="btn btn-secondary" onclick={handleSaveLinkblog} disabled={isSavingLinkblog}>
+        {#if isSavingLinkblog}Saving…{:else}Save{/if}
+      </button>
+      {#if linkblogError}
+        <p class="sync-error">{linkblogError}</p>
+      {/if}
+      {#if linkblogSuccess}
+        <p class="sync-success">{linkblogSuccess}</p>
       {/if}
     {/if}
   </section>
@@ -827,5 +927,32 @@
     color: var(--color-success, #22c55e);
     font-size: 0.875rem;
     margin-top: 0.5rem;
+  }
+
+  .linkblog-field {
+    margin-bottom: 0.875rem;
+  }
+
+  .linkblog-field label {
+    display: block;
+    font-size: 0.875rem;
+    margin-bottom: 0.375rem;
+    color: var(--color-text-secondary);
+  }
+
+  .linkblog-field input,
+  .linkblog-field textarea {
+    width: 100%;
+    padding: 0.5rem 0.625rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font: inherit;
+    box-sizing: border-box;
+  }
+
+  .linkblog-field textarea {
+    resize: vertical;
   }
 </style>

@@ -9,6 +9,7 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { sharesStore } from '$lib/stores/shares.svelte';
+  import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import type { Article, SocialDocument } from '$lib/types';
   import {
@@ -245,15 +246,15 @@
           feedId={sub?.id}
           isRead={itemLabelsStore.isRead(article.guid)}
           isSaved={itemLabelsStore.isSaved(article.guid)}
-          isShared={sharesStore.isShared(article.guid)}
-          shareNote={sharesStore.getShareNote(article.guid)}
+          isShared={linkblogStore.isShared(article.url)}
+          shareNote={linkblogStore.getNote(article.url)}
           selected={preferences.expandAllItems || feedViewStore.selectedKey === displayItem.key}
           expanded={feedViewStore.expandedKey === displayItem.key}
           highlighted={feedViewStore.selectedKey === displayItem.key}
           onToggleSave={() => onToggleSave(article)}
           onToggleRead={() => handleToggleRead(article)}
           onShare={() => sub && onShare(article, sub)}
-          onUnshare={() => onUnshare(article.guid)}
+          onUnshare={() => onUnshare(article.url)}
           onSelect={() => handleSelect(index)}
           onExpand={() => handleExpand(index)}
           onOpenFullscreen={() => openReader(displayItem)}
@@ -333,7 +334,7 @@
           highlighted={feedViewStore.selectedKey === displayItem.key}
           onToggleSave={() => onToggleSave(article)}
           onToggleRead={() => handleToggleRead(article)}
-          onUnshare={() => onUnshare(share.articleGuid)}
+          onUnshare={() => sharesStore.unshare(share.articleGuid)}
           onSelect={() => handleSelect(index)}
           onExpand={() => handleExpand(index)}
           onOpenFullscreen={() => openReader(displayItem)}

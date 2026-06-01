@@ -630,6 +630,33 @@ export interface UserShare {
   reshareCount?: number;
 }
 
+// A locally-tracked linkblog share (Phase 1). Sharing an article now writes a
+// site.standard.document to the user's skyreader-links publication; we keep a
+// local record keyed by the external article URL so the share button can show
+// "shared" state and support un-sharing. (Authoritative reconciliation from the
+// PDS arrives in Phase 2, once the proxy surfaces the document's `links`.)
+export interface LinkblogShare {
+  id?: number;
+  rkey: string;
+  recordUri?: string;
+  articleUrl: string;
+  articleTitle?: string;
+  note?: string;
+  createdAt: string;
+}
+
+// The user's linkblog publication metadata (site.standard.publication), as
+// returned by the backend. `exists` is false when the publication hasn't been
+// created yet (first share creates it lazily).
+export interface LinkblogPublication {
+  uri: string;
+  url: string;
+  name: string;
+  description?: string;
+  iconUrl?: string;
+  exists: boolean;
+}
+
 export interface ParsedFeed {
   title: string;
   description?: string;
