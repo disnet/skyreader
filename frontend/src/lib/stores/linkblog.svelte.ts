@@ -111,6 +111,40 @@ function createLinkblogStore() {
     }
   }
 
+  // Set (or clear, with '') the note on an already-shared article. Optimistically
+  // updates local state + cache, PATCHes the PDS document, and rolls back on
+  // failure. No-op if the article isn't shared yet.
+  async function setNote(articleUrl: string, note: string) {
+    const existing = shares.get(articleUrl);
+    if (!existing) return;
+
+    const next = note.trim() || undefined;
+    const prevNote = existing.note;
+    if (next === prevNote) return;
+
+    // Optimistic update (local state + cache)
+    shares.set(articleUrl, { ...existing, note: next });
+    shares = new Map(shares);
+    if (existing.id !== undefined) {
+      await db.linkblogShares.update(existing.id, { note: next });
+    }
+
+    try {
+      await api.updateLinkblogShareNote(existing.rkey, next ?? '');
+    } catch (e) {
+      // Roll back — the note didn't land.
+      console.error('Failed to update linkblog note:', e);
+      const cur = shares.get(articleUrl);
+      if (cur) {
+        shares.set(articleUrl, { ...cur, note: prevNote });
+        shares = new Map(shares);
+        if (cur.id !== undefined) {
+          await db.linkblogShares.update(cur.id, { note: prevNote });
+        }
+      }
+    }
+  }
+
   async function unshare(articleUrl: string) {
     const existing = shares.get(articleUrl);
     if (!existing) return;
@@ -209,6 +243,7 @@ function createLinkblogStore() {
     getNote,
     isBoosted,
     shareLink,
+    setNote,
     unshare,
     boost,
     unboost,

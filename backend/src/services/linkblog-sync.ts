@@ -273,6 +273,39 @@ export async function deleteLinkblogShare(
   return createPDSClient(session).deleteRecord(DOCUMENT_COLLECTION, rkey);
 }
 
+// Update just the note on an existing share document, leaving everything else
+// (createdAt, publishedAt, path, links/provenance, tags, the article link-card)
+// intact. We read the record back, swap the note-derived parts — the leaflet
+// text block and the flattened `textContent` — and putRecord under the same rkey.
+export async function updateLinkblogShareNote(
+  session: Session,
+  rkey: string,
+  note: string
+): Promise<PDSResult<PutRecordResponse>> {
+  const pdsClient = createPDSClient(session);
+  const existing = await pdsClient.getRecord<DocumentRecord>(DOCUMENT_COLLECTION, rkey);
+  if (!existing.success) return existing;
+
+  const rec = existing.data.value;
+  // Reconstruct the article link-card inputs from the stored record so the
+  // rebuilt content keeps the same external link, title, and excerpt.
+  const articleUrl = rec.links?.find((l) => l.rel === 'related')?.uri || '';
+  const excerpt = rec.description || '';
+  const trimmedNote = note.trim();
+
+  const updated: DocumentRecord = {
+    ...rec,
+    $type: DOCUMENT_COLLECTION,
+    textContent: [trimmedNote, excerpt].filter(Boolean).join('\n\n') || undefined,
+    content: buildLeafletContent(
+      { articleUrl, articleTitle: rec.title, excerpt, note: trimmedNote },
+      excerpt
+    ),
+  };
+
+  return pdsClient.putRecord(DOCUMENT_COLLECTION, rkey, updated);
+}
+
 // ── Boost (recommend) ────────────────────────────────────────────────────────
 //
 // A boost is a bare `site.standard.graph.recommend` pointing at someone's link

@@ -376,3 +376,86 @@ export async function handleDeleteShare(
     });
   }
 }
+
+// PATCH /api/shares/:rkey - Update the note (commentary) on an existing share.
+// Body: { note: string } (empty string clears the note). We re-push the record
+// to the PDS with the new note, preserving its original createdAt and all other
+// article fields read back from D1, then update the cached note.
+export async function handleUpdateShare(request: Request, env: Env): Promise<Response> {
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+  if (request.method !== 'PATCH') return json({ error: 'Method not allowed' }, 405);
+
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Unauthorized' }, 401);
+
+  const pathParts = new URL(request.url).pathname.split('/');
+  const rkey = pathParts[pathParts.length - 1];
+  if (!rkey || rkey === 'shares') return json({ error: 'rkey is required' }, 400);
+
+  let body: { note?: string };
+  try {
+    body = (await request.json()) as { note?: string };
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+  if (typeof body.note !== 'string') return json({ error: 'note must be a string' }, 400);
+  const note = body.note.trim();
+
+  try {
+    const collection = 'app.skyreader.social.share';
+    const atUri = `at://${session.did}/${collection}/${rkey}`;
+
+    const row = await env.DB.prepare(
+      `SELECT record_uri, feed_url, item_url, item_title, item_author, item_description,
+              content, item_image, item_guid, item_published_at, note, created_at,
+              reshare_of_uri, reshare_of_author_did
+       FROM shares WHERE author_did = ? AND record_uri = ?`
+    )
+      .bind(session.did, atUri)
+      .first<UserShareRow>();
+
+    if (!row) return json({ error: 'Share not found' }, 404);
+
+    // Re-push to the PDS with the new note, preserving the original createdAt and
+    // all article fields so only the commentary changes.
+    const pdsResult = await pushShareToPds(session, rkey, {
+      itemUrl: row.item_url,
+      feedUrl: row.feed_url || undefined,
+      itemGuid: row.item_guid || undefined,
+      itemTitle: row.item_title || undefined,
+      itemAuthor: row.item_author || undefined,
+      itemDescription: row.item_description || undefined,
+      content: row.content || undefined,
+      itemImage: row.item_image || undefined,
+      itemPublishedAt: row.item_published_at
+        ? new Date(row.item_published_at).toISOString()
+        : undefined,
+      note: note || undefined,
+      reshareOf:
+        row.reshare_of_uri && row.reshare_of_author_did
+          ? { uri: row.reshare_of_uri, authorDid: row.reshare_of_author_did }
+          : undefined,
+      createdAt: new Date(row.created_at).toISOString(),
+    });
+    if (!pdsResult.success) {
+      console.error('[UpdateShare] Failed to push to PDS:', pdsResult.error);
+      return json({ error: pdsResult.error }, pdsResult.retryable ? 503 : 502);
+    }
+
+    await env.DB.prepare('UPDATE shares SET note = ? WHERE author_did = ? AND record_uri = ?')
+      .bind(note || null, session.did, atUri)
+      .run();
+
+    return json({ success: true, uri: pdsResult.data.uri, rkey });
+  } catch (error) {
+    console.error('Update share error:', error);
+    const errorMessage =
+      error instanceof Error ? `${error.name}: ${error.message}` : 'Failed to update share';
+    return json({ error: errorMessage }, 500);
+  }
+}

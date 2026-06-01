@@ -520,6 +520,14 @@ class ApiClient {
     });
   }
 
+  // Update the note on an existing share (empty string clears it).
+  async updateShareNote(rkey: string, note: string): Promise<{ success: boolean; uri: string }> {
+    return this.fetch(`/api/shares/${rkey}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ note }),
+    });
+  }
+
   // Linkblog — sharing as a portable site.standard.document (Phase 1)
   async createLinkblogShare(data: {
     rkey: string;
@@ -543,6 +551,17 @@ class ApiClient {
   async deleteLinkblogShare(rkey: string): Promise<{ success: boolean }> {
     return this.fetch(`/api/linkblog/share/${rkey}`, {
       method: 'DELETE',
+    });
+  }
+
+  // Update the note on an existing linkblog share (empty string clears it).
+  async updateLinkblogShareNote(
+    rkey: string,
+    note: string
+  ): Promise<{ uri: string; cid: string; rkey: string }> {
+    return this.fetch(`/api/linkblog/share/${rkey}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ note }),
     });
   }
 
