@@ -57,37 +57,6 @@ export interface ParsedFeed {
   fetchedAt: number;
 }
 
-export interface Share {
-  id: number;
-  authorDid: string;
-  recordUri: string;
-  recordCid: string;
-  feedUrl?: string;
-  itemUrl: string;
-  itemTitle?: string;
-  itemAuthor?: string;
-  itemDescription?: string;
-  content?: string;
-  itemImage?: string;
-  itemGuid?: string;
-  itemPublishedAt?: string;
-  note?: string;
-  tags?: string[];
-  indexedAt: string;
-  createdAt: string;
-  reshareOf?: {
-    uri: string;
-    authorDid: string;
-  };
-  reshareCount: number;
-}
-
-export interface ShareWithAuthor extends Share {
-  authorHandle: string;
-  authorDisplayName?: string;
-  authorAvatar?: string;
-}
-
 export interface Document {
   id: number;
   authorDid: string;

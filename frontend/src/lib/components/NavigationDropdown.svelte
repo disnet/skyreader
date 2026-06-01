@@ -6,8 +6,6 @@
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-  import { sharesStore } from '$lib/stores/shares.svelte';
-  import { activityStore } from '$lib/stores/activity.svelte';
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
@@ -27,8 +25,6 @@
   let totalUnread = $derived(unreadCounts.totalArticles);
 
   let savedCount = $derived(itemLabelsStore.savedCount);
-  let sharedCount = $derived(sharesStore.userShares.size);
-  let activityCount = $derived(activityStore.totalReshareCount);
 
   let searchQuery = $state('');
   let highlightedIndex = $state(-1);
@@ -205,8 +201,6 @@
       icon: 'bookmark',
     };
     const otherViews: NavItem[] = [
-      { type: 'view', id: 'shared', label: 'Shared', count: sharedCount, icon: 'share' },
-      { type: 'utility', id: 'activity', label: 'Activity', count: activityCount, icon: 'bell' },
       { type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' },
       { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' },
     ];
@@ -338,7 +332,6 @@
     const pathname = $page.url.pathname;
 
     // Utility pages (separate routes)
-    if (pathname === '/activity') return { type: 'icon', name: 'bell' };
     if (pathname === '/sources') return { type: 'icon', name: 'rss' };
     if (pathname === '/settings') return { type: 'icon', name: 'settings' };
 

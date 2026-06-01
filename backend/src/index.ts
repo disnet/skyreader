@@ -13,19 +13,7 @@ import {
   handleV2BatchDocumentFetch,
   handleV2SocialContext,
 } from './routes/feeds-v2';
-import {
-  handleSocialFeed,
-  handleGroupedSocialFeed,
-  handlePopularShares,
-  handleReshareActivity,
-  handleDetectContent,
-} from './routes/social';
-import {
-  handleGetMyShares,
-  handleCreateShare,
-  handleDeleteShare,
-  handleUpdateShare,
-} from './routes/shares';
+import { handleDetectContent } from './routes/social';
 import {
   handleCreateLinkblogShare,
   handleDeleteLinkblogShare,
@@ -50,9 +38,6 @@ import {
   handleMarkSocialItemAsRead,
   handleMarkSocialItemAsUnread,
   handleBulkMarkSocialItemsAsRead,
-  handleGetShareReadPositions,
-  handleMarkShareAsRead,
-  handleMarkShareAsUnread,
 } from './routes/social-reading';
 
 import { handleRecordsList } from './routes/records';
@@ -242,22 +227,9 @@ export default {
           break;
 
         // Social routes
-        case url.pathname === '/api/social/feed':
-          response = await handleSocialFeed(request, env);
-          break;
-        case url.pathname === '/api/social/feed/grouped':
-          response = await handleGroupedSocialFeed(request, env);
-          break;
-        case url.pathname === '/api/social/popular':
-          response = await handlePopularShares(request, env);
-          break;
         case url.pathname === '/api/social/detect-content':
           if (!session) return unauthorizedResponse(headers);
           response = await handleDetectContent(request, env);
-          break;
-        case url.pathname === '/api/activity/reshares':
-          if (!session) return unauthorizedResponse(headers);
-          response = await handleReshareActivity(request, env);
           break;
         // Unified social reading routes (new)
         case url.pathname === '/api/social/read-positions':
@@ -275,37 +247,6 @@ export default {
         case url.pathname.startsWith('/api/social/read-positions/'):
           if (!session) return unauthorizedResponse(headers);
           response = await handleMarkSocialItemAsUnread(request, env);
-          break;
-        // Legacy share reading routes (backwards compatibility)
-        case url.pathname === '/api/social/share-read':
-          if (!session) return unauthorizedResponse(headers);
-          if (request.method === 'GET') {
-            response = await handleGetShareReadPositions(request, env);
-          } else {
-            response = await handleMarkShareAsRead(request, env);
-          }
-          break;
-        case url.pathname.startsWith('/api/social/share-read/'):
-          if (!session) return unauthorizedResponse(headers);
-          response = await handleMarkShareAsUnread(request, env);
-          break;
-
-        // User's own shares route
-        case url.pathname === '/api/shares/my':
-          response = await handleGetMyShares(request, env);
-          break;
-
-        // Shares endpoints (new)
-        case url.pathname === '/api/shares':
-          if (!session) return unauthorizedResponse(headers);
-          response = await handleCreateShare(request, env, ctx);
-          break;
-        case url.pathname.startsWith('/api/shares/') && url.pathname !== '/api/shares/my':
-          if (!session) return unauthorizedResponse(headers);
-          response =
-            request.method === 'PATCH'
-              ? await handleUpdateShare(request, env)
-              : await handleDeleteShare(request, env, ctx);
           break;
 
         // Linkblog discovery — find friends with linkblogs / browse all (Phase 6)

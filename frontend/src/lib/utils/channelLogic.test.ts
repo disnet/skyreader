@@ -143,7 +143,7 @@ describe('computeSourceKeys', () => {
         makeSub({
           id: 1,
           category: 'Social',
-          sourceType: 'atproto.shares',
+          sourceType: 'atproto.documents',
           subjectDid: 'did:plc:a',
         }),
         makeSub({
@@ -154,7 +154,7 @@ describe('computeSourceKeys', () => {
         }),
       ];
       const keys = computeSourceKeys({ type: 'category', value: 'Social' }, subs, []);
-      expect(keys).toEqual(['did:plc:a~shares', 'did:plc:b~documents']);
+      expect(keys).toEqual(['did:plc:a~documents', 'did:plc:b~documents']);
     });
 
     it('skips subscriptions without rkey', () => {
@@ -192,7 +192,7 @@ describe('computeSourceKeys', () => {
         makeSub({
           id: 1,
           feedUrl: 'https://substack.com/feed',
-          sourceType: 'atproto.shares',
+          sourceType: 'atproto.documents',
           subjectDid: 'did:plc:a',
         }),
       ];
@@ -210,16 +210,16 @@ describe('computeSourceKeys', () => {
   describe('people rule', () => {
     it('collects all atproto subscriptions', () => {
       const subs = [
-        makeSub({ id: 1, sourceType: 'atproto.shares', subjectDid: 'did:plc:a' }),
+        makeSub({ id: 1, sourceType: 'atproto.documents', subjectDid: 'did:plc:a' }),
         makeSub({ id: 2, sourceType: 'atproto.documents', subjectDid: 'did:plc:b' }),
         makeSub({ id: 3 }), // RSS, no subjectDid
       ];
       const keys = computeSourceKeys({ type: 'people' }, subs, []);
-      expect(keys).toEqual(['did:plc:a~shares', 'did:plc:b~documents']);
+      expect(keys).toEqual(['did:plc:a~documents', 'did:plc:b~documents']);
     });
 
     it('skips subscriptions without subjectDid', () => {
-      const subs = [makeSub({ id: 1, sourceType: 'atproto.shares' })];
+      const subs = [makeSub({ id: 1, sourceType: 'atproto.documents' })];
       const keys = computeSourceKeys({ type: 'people' }, subs, []);
       expect(keys).toEqual([]);
     });
@@ -292,12 +292,12 @@ describe('computeSourceKeys', () => {
         makeSub({
           id: 3,
           createdAt: recent,
-          sourceType: 'atproto.shares',
+          sourceType: 'atproto.documents',
           subjectDid: 'did:plc:a',
         }),
       ];
       const keys = computeSourceKeys({ type: 'recent', withinDays: 14 }, subs, []);
-      expect(keys).toEqual(['rss~rkey-1', 'did:plc:a~shares']);
+      expect(keys).toEqual(['rss~rkey-1', 'did:plc:a~documents']);
     });
   });
 });
@@ -361,7 +361,7 @@ describe('isAlreadyCovered', () => {
 
   it('returns false when type filters do not match', () => {
     const views = [makeView({ id: 1, sourceMode: 'all', typeFilter: ['rss'] })];
-    expect(isAlreadyCovered([], ['atproto.shares'], views)).toBe(false);
+    expect(isAlreadyCovered([], ['atproto.documents'], views)).toBe(false);
   });
 
   it('returns true when 70%+ of source keys overlap', () => {
@@ -451,7 +451,7 @@ describe('getTypeSuggestions', () => {
       subscriptions: [
         makeSub({ id: 1 }),
         makeSub({ id: 2 }),
-        makeSub({ id: 3, sourceType: 'atproto.shares', subjectDid: 'did:plc:a' }),
+        makeSub({ id: 3, sourceType: 'atproto.documents', subjectDid: 'did:plc:a' }),
         makeSub({ id: 4, sourceType: 'atproto.documents', subjectDid: 'did:plc:b' }),
       ],
       articles: [],
@@ -494,8 +494,8 @@ describe('getPeopleSuggestion', () => {
   it('suggests People I Follow with 3+ atproto subscriptions', () => {
     const ctx: SuggestionContext = {
       subscriptions: [
-        makeSub({ id: 1, sourceType: 'atproto.shares', subjectDid: 'did:plc:a' }),
-        makeSub({ id: 2, sourceType: 'atproto.shares', subjectDid: 'did:plc:b' }),
+        makeSub({ id: 1, sourceType: 'atproto.documents', subjectDid: 'did:plc:a' }),
+        makeSub({ id: 2, sourceType: 'atproto.documents', subjectDid: 'did:plc:b' }),
         makeSub({ id: 3, sourceType: 'atproto.documents', subjectDid: 'did:plc:c' }),
       ],
       articles: [],
@@ -509,7 +509,7 @@ describe('getPeopleSuggestion', () => {
 
   it('returns empty with fewer than 3 atproto subscriptions', () => {
     const ctx: SuggestionContext = {
-      subscriptions: [makeSub({ id: 1, sourceType: 'atproto.shares', subjectDid: 'did:plc:a' })],
+      subscriptions: [makeSub({ id: 1, sourceType: 'atproto.documents', subjectDid: 'did:plc:a' })],
       articles: [],
       views: [],
     };

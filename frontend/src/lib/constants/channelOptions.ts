@@ -11,14 +11,12 @@ import type {
 
 export const TYPE_OPTIONS: { value: SubscriptionSourceType; label: string }[] = [
   { value: 'rss', label: 'RSS Feeds' },
-  { value: 'atproto.shares', label: 'Skyreader Shares' },
   { value: 'atproto.documents', label: 'Standard.site Documents' },
 ];
 
 export const SAVED_SOURCE_OPTIONS: { value: SavedSourceType; label: string }[] = [
   { value: 'url', label: 'URL Saves' },
   { value: 'feed', label: 'Feed Articles' },
-  { value: 'share', label: 'Shared Articles' },
   { value: 'document', label: 'Documents' },
 ];
 

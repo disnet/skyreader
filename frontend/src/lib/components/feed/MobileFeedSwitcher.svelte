@@ -5,8 +5,6 @@
   import { getSourceDisplay } from '$lib/utils/sourceDisplay';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-  import { sharesStore } from '$lib/stores/shares.svelte';
-  import { activityStore } from '$lib/stores/activity.svelte';
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
@@ -38,8 +36,6 @@
   let feedUnreadCounts = $derived(unreadCounts.feedCounts);
   let totalUnread = $derived(unreadCounts.totalArticles);
   let savedCount = $derived(itemLabelsStore.savedCount);
-  let sharedCount = $derived(sharesStore.userShares.size);
-  let activityCount = $derived(activityStore.totalReshareCount);
 
   type IconName =
     | 'inbox'
@@ -100,7 +96,6 @@
 
   function sourceSortRank(sub: Subscription): number {
     if (!sub.sourceType || sub.sourceType === 'rss') return 0;
-    if (sub.sourceType === 'atproto.shares') return 1;
     if (sub.sourceType === 'atproto.documents' && sub.feedUrl?.startsWith('at://')) return 2;
     if (sub.sourceType === 'atproto.documents') return 3;
     return 4;
@@ -159,8 +154,6 @@
       icon: 'bookmark',
     };
     const otherItems: NavItem[] = [
-      { type: 'view', id: 'shared', label: 'Shared', count: sharedCount, icon: 'share' },
-      { type: 'utility', id: 'activity', label: 'Activity', count: activityCount, icon: 'bell' },
       { type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' as IconName },
       { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' as IconName },
     ];

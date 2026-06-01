@@ -214,102 +214,6 @@ function createSavesStore() {
     }
   }
 
-  async function saveShare(share: {
-    recordUri: string;
-    itemUrl: string;
-    itemTitle?: string;
-    itemAuthor?: string;
-    itemDescription?: string;
-    itemImage?: string;
-    itemPublishedAt?: string;
-  }): Promise<SavedItem> {
-    saving = true;
-    error = null;
-    try {
-      const rkey = generateTid();
-      const now = new Date().toISOString();
-
-      const savedItem: SavedItem = {
-        rkey,
-        uri: '',
-        url: share.itemUrl || '',
-        title: share.itemTitle || null,
-        author: share.itemAuthor || null,
-        description: share.itemDescription || null,
-        content: null,
-        contentType: 'share',
-        domain: null,
-        image: share.itemImage || null,
-        wordCount: null,
-        publishedAt: share.itemPublishedAt || null,
-        savedAt: now,
-        source: 'share',
-        itemGuid: share.recordUri,
-      };
-
-      articles = [savedItem, ...articles];
-      rebuildMaps();
-      await safePut(db.saved, savedItem);
-
-      if (syncStore.isOnline) {
-        try {
-          const result = await api.saveFromUrl(share.itemUrl || '', rkey, {
-            source: 'share',
-            itemGuid: share.recordUri,
-            title: share.itemTitle,
-            author: share.itemAuthor,
-            description: share.itemDescription,
-            image: share.itemImage,
-            publishedAt: share.itemPublishedAt,
-          });
-
-          const updated: SavedItem = {
-            ...savedItem,
-            uri: result.uri,
-            rkey: result.rkey,
-          };
-          articles = articles.map((a) => (a.rkey === rkey ? updated : a));
-          rebuildMaps();
-          await safePut(db.saved, updated);
-          return updated;
-        } catch (err) {
-          console.error('Failed to save share to backend, queueing:', err);
-          await syncQueue.enqueue('create', 'saved', share.recordUri, {
-            rkey,
-            url: share.itemUrl || '',
-            source: 'share',
-            itemGuid: share.recordUri,
-            title: share.itemTitle,
-            author: share.itemAuthor,
-            description: share.itemDescription,
-            image: share.itemImage,
-            publishedAt: share.itemPublishedAt,
-          } as SavedPayload);
-          return savedItem;
-        }
-      } else {
-        await syncQueue.enqueue('create', 'saved', share.recordUri, {
-          rkey,
-          url: share.itemUrl || '',
-          source: 'share',
-          itemGuid: share.recordUri,
-          title: share.itemTitle,
-          author: share.itemAuthor,
-          description: share.itemDescription,
-          image: share.itemImage,
-          publishedAt: share.itemPublishedAt,
-        } as SavedPayload);
-        return savedItem;
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to save share';
-      error = msg;
-      throw err;
-    } finally {
-      saving = false;
-    }
-  }
-
   async function saveDocument(doc: {
     recordUri: string;
     url: string;
@@ -491,7 +395,6 @@ function createSavesStore() {
     load,
     saveFromUrl,
     saveArticle,
-    saveShare,
     saveDocument,
     unsaveByGuid,
     remove,

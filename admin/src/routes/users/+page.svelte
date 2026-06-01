@@ -60,7 +60,6 @@
 		<th><a href={sortUrl('last_active_at')}>Last Active{sortIndicator('last_active_at')}</a></th>
 		<th><a href={sortUrl('tier')}>Tier{sortIndicator('tier')}</a></th>
 		<th>Subs</th>
-		<th>Shares</th>
 	{/snippet}
 
 	{#each data.rows as user}
@@ -71,7 +70,6 @@
 			<td>{formatDate(user.last_active_at)}</td>
 			<td>{user.tier ?? 'free'}</td>
 			<td>{user.subscription_count ?? 0}</td>
-			<td>{user.share_count ?? 0}</td>
 		</tr>
 	{:else}
 		<tr>

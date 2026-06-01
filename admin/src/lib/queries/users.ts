@@ -1,4 +1,4 @@
-import type { UserRow, SubscriptionRow, ShareRow, PaginatedResult } from '$lib/types';
+import type { UserRow, SubscriptionRow, PaginatedResult } from '$lib/types';
 
 export async function listUsers(
 	db: D1Database,
@@ -34,8 +34,7 @@ export async function listUsers(
 		.prepare(
 			`SELECT u.did, u.handle, u.display_name, u.avatar_url, u.pds_url,
 				u.last_active_at, u.registered_at, u.created_at, u.tier,
-				(SELECT COUNT(*) FROM subscriptions_cache sc WHERE sc.user_did = u.did) as subscription_count,
-				(SELECT COUNT(*) FROM shares s WHERE s.author_did = u.did) as share_count
+				(SELECT COUNT(*) FROM subscriptions_cache sc WHERE sc.user_did = u.did) as subscription_count
 			FROM users u
 			${where}
 			ORDER BY ${sortCol} ${sortDir}
@@ -85,19 +84,5 @@ export async function getUserSubscriptions(db: D1Database, did: string): Promise
 		)
 		.bind(did)
 		.all<SubscriptionRow>();
-	return result.results;
-}
-
-export async function getUserShares(db: D1Database, did: string): Promise<ShareRow[]> {
-	const result = await db
-		.prepare(
-			`SELECT record_uri, item_url, item_title, note, created_at
-			FROM shares
-			WHERE author_did = ?
-			ORDER BY created_at DESC
-			LIMIT 100`
-		)
-		.bind(did)
-		.all<ShareRow>();
 	return result.results;
 }

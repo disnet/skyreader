@@ -1,7 +1,7 @@
 import type { Env, Session } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
 import { warmProxyCache, warmProxyCacheBatch } from './feeds-v2';
-import { backfillDocumentsForUser, backfillSharesForUser } from './social';
+import { backfillDocumentsForUser } from './social';
 import { getUserSettings } from './settings';
 import { pushSubscriptionToPds, deleteSubscriptionFromPds } from '../services/subscription-sync';
 import { createPDSClient, type WriteOp } from '../services/pds-client';
@@ -433,7 +433,7 @@ export async function handleCreateSubscription(
         }
       );
     }
-    const validSourceTypes = ['atproto.shares', 'atproto.documents', 'atproto.collection'];
+    const validSourceTypes = ['atproto.documents', 'atproto.collection'];
     if (!validSourceTypes.includes(sourceType)) {
       return new Response(
         JSON.stringify({
@@ -519,12 +519,8 @@ export async function handleCreateSubscription(
     }
 
     // Backfill content for AT Proto subscriptions
-    if (subjectDid) {
-      if (sourceType === 'atproto.documents') {
-        ctx.waitUntil(backfillDocumentsForUser(env, subjectDid));
-      } else if (sourceType === 'atproto.shares') {
-        ctx.waitUntil(backfillSharesForUser(env, subjectDid));
-      }
+    if (subjectDid && sourceType === 'atproto.documents') {
+      ctx.waitUntil(backfillDocumentsForUser(env, subjectDid));
     }
 
     // Push to PDS in background if sync is enabled (fire and forget)

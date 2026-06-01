@@ -1,11 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   rssSourceKey,
-  sharesSourceKey,
   documentsSourceKey,
   parseSourceKey,
   isRssSource,
-  isSharesSource,
   isDocumentsSource,
   getRssSubscriptionRkey,
   getSourceDid,
@@ -20,10 +18,6 @@ describe('source key construction', () => {
   it('creates RSS source keys', () => {
     expect(rssSourceKey('3l7e5x2b7ik2c')).toBe('rss~3l7e5x2b7ik2c');
     expect(rssSourceKey('abc')).toBe('rss~abc');
-  });
-
-  it('creates shares source keys', () => {
-    expect(sharesSourceKey('did:plc:abc123')).toBe('did:plc:abc123~shares');
   });
 
   it('creates documents source keys', () => {
@@ -62,17 +56,12 @@ describe('parseSourceKey', () => {
 describe('type guards', () => {
   it('isRssSource', () => {
     expect(isRssSource('rss~3l7e5x2b7ik2c')).toBe(true);
-    expect(isRssSource('did:plc:abc~shares')).toBe(false);
-  });
-
-  it('isSharesSource', () => {
-    expect(isSharesSource('did:plc:abc~shares')).toBe(true);
-    expect(isSharesSource('rss~abc')).toBe(false);
+    expect(isRssSource('did:plc:abc~documents')).toBe(false);
   });
 
   it('isDocumentsSource', () => {
     expect(isDocumentsSource('did:plc:abc~documents')).toBe(true);
-    expect(isDocumentsSource('did:plc:abc~shares')).toBe(false);
+    expect(isDocumentsSource('rss~abc')).toBe(false);
   });
 });
 
@@ -84,7 +73,7 @@ describe('extractors', () => {
   });
 
   it('getSourceDid', () => {
-    expect(getSourceDid('did:plc:abc123~shares')).toBe('did:plc:abc123');
+    expect(getSourceDid('did:plc:abc123~documents')).toBe('did:plc:abc123');
   });
 });
 
@@ -104,17 +93,6 @@ describe('subscriptionSourceKey', () => {
     expect(subscriptionSourceKey({ ...baseSub, id: 1, sourceType: 'rss' })).toBe('rss~abc');
   });
 
-  it('returns shares key for atproto.shares', () => {
-    expect(
-      subscriptionSourceKey({
-        ...baseSub,
-        id: 1,
-        sourceType: 'atproto.shares',
-        subjectDid: 'did:plc:x',
-      })
-    ).toBe('did:plc:x~shares');
-  });
-
   it('returns documents key for atproto.documents', () => {
     expect(
       subscriptionSourceKey({
@@ -131,7 +109,9 @@ describe('subscriptionSourceKey', () => {
   });
 
   it('returns null for atproto types without subjectDid', () => {
-    expect(subscriptionSourceKey({ ...baseSub, id: 1, sourceType: 'atproto.shares' })).toBeNull();
+    expect(
+      subscriptionSourceKey({ ...baseSub, id: 1, sourceType: 'atproto.documents' })
+    ).toBeNull();
   });
 });
 
@@ -154,7 +134,7 @@ describe('migrateLegacyView', () => {
 
   it('no feeds + no accounts → include with empty keys', () => {
     const result = migrateLegacyView(
-      { showArticles: false, showShares: false, showDocuments: false },
+      { showArticles: false, showDocuments: false },
       allSubRkeys,
       allDids
     );
@@ -164,7 +144,7 @@ describe('migrateLegacyView', () => {
 
   it('include specific feeds', () => {
     const result = migrateLegacyView(
-      { feedMode: 'include', feedIds: [1, 3], showShares: false, showDocuments: false },
+      { feedMode: 'include', feedIds: [1, 3], showDocuments: false },
       allSubRkeys,
       allDids,
       idToRkey
@@ -175,7 +155,7 @@ describe('migrateLegacyView', () => {
 
   it('exclude specific feeds', () => {
     const result = migrateLegacyView(
-      { feedMode: 'exclude', feedIds: [2], showShares: false, showDocuments: false },
+      { feedMode: 'exclude', feedIds: [2], showDocuments: false },
       allSubRkeys,
       allDids,
       idToRkey
@@ -184,9 +164,9 @@ describe('migrateLegacyView', () => {
     expect(result.sourceKeys).toEqual(['rss~rk1', 'rss~rk3']);
   });
 
-  it('all feeds + include specific accounts with shares only', () => {
+  it('all feeds + include specific accounts with documents', () => {
     const result = migrateLegacyView(
-      { accountMode: 'include', accountDids: ['did:plc:a'], showDocuments: false },
+      { accountMode: 'include', accountDids: ['did:plc:a'] },
       allSubRkeys,
       allDids
     );
@@ -194,8 +174,7 @@ describe('migrateLegacyView', () => {
     expect(result.sourceKeys).toContain('rss~rk1');
     expect(result.sourceKeys).toContain('rss~rk2');
     expect(result.sourceKeys).toContain('rss~rk3');
-    expect(result.sourceKeys).toContain('did:plc:a~shares');
-    expect(result.sourceKeys).not.toContain('did:plc:a~documents');
-    expect(result.sourceKeys).not.toContain('did:plc:b~shares');
+    expect(result.sourceKeys).toContain('did:plc:a~documents');
+    expect(result.sourceKeys).not.toContain('did:plc:b~documents');
   });
 });

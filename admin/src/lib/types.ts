@@ -21,7 +21,6 @@ export interface UserRow {
 	registered_at: number | null;
 	created_at: number;
 	subscription_count?: number;
-	share_count?: number;
 	tier: string;
 }
 
@@ -39,14 +38,6 @@ export interface SubscriptionRow {
 	feed_url: string;
 	title: string | null;
 	source: string | null;
-	created_at: number;
-}
-
-export interface ShareRow {
-	record_uri: string;
-	item_url: string;
-	item_title: string | null;
-	note: string | null;
 	created_at: number;
 }
 

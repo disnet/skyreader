@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Article, SocialShare, SocialDocument } from '$lib/types';
+  import type { Article } from '$lib/types';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import { normalizeDisplayItem, getAuthorLabel } from '$lib/utils/displayItem';
   import { getExternalArticleLink, getLinkPostNote } from '$lib/utils/linkPost';
@@ -64,10 +64,7 @@
   let itemKey = $derived(readerItem.key);
   let itemTags = $derived(itemLabelsStore.getTagsForItem(itemKey));
 
-  let labelItemType = $derived.by((): 'article' | 'share' | 'document' | 'userShare' | 'saved' => {
-    if (readerItem.type === 'userShare') return 'userShare';
-    return readerItem.type;
-  });
+  let labelItemType = $derived.by((): 'article' | 'document' | 'saved' => readerItem.type);
 
   const fontOptions: { value: ArticleFont; label: string; family: string }[] = [
     { value: 'sans-serif', label: 'Sans', family: 'sans-serif' },
@@ -143,7 +140,7 @@
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  // Author info (shares/documents)
+  // Author info (documents)
   let authorProfile = $state<{ handle?: string } | null>(null);
   $effect(() => {
     const did = normalized.authorDid;
@@ -159,9 +156,7 @@
 
   let isArchived = $derived(itemLabelsStore.isArchived(itemKey));
   let isSaved = $derived(itemLabelsStore.isSaved(itemKey));
-  let shareLabel = $derived(
-    isShared ? (readerItem.type === 'share' ? 'Reshared' : 'Shared') : 'Share'
-  );
+  let shareLabel = $derived(isShared ? 'Shared' : 'Share');
 
   // Linkblog note composer (only when useNoteComposer is set by the caller).
   let shareComposerOpen = $state(false);
@@ -169,7 +164,6 @@
 
   let shareArticle = $derived.by((): Article | null => {
     if (readerItem.type === 'article') return readerItem.item;
-    if (readerItem.type === 'userShare') return readerItem.article;
     return null;
   });
 

@@ -5,7 +5,7 @@ import { auth } from '$lib/stores/auth.svelte';
 import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
 import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-import { sharesStore } from '$lib/stores/shares.svelte';
+import { linkblogStore } from '$lib/stores/linkblog.svelte';
 import { sidebarStore } from '$lib/stores/sidebar.svelte';
 import type { Article, Subscription } from '$lib/types';
 
@@ -26,8 +26,6 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
   function getArticleFromItem(item: FeedDisplayItem): Article | null {
     if (item.type === 'article') {
       return item.item;
-    } else if (item.type === 'userShare') {
-      return item.article;
     }
     return null;
   }
@@ -57,24 +55,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     if (!article) return null;
 
     const sub = getSubscriptionForArticle(article);
-    if (!sub) {
-      // For userShares without local subscription, create a minimal sub
-      if (item.type === 'userShare') {
-        return {
-          article,
-          sub: {
-            rkey: '',
-            feedUrl: item.item.feedUrl || '',
-            id: 0,
-            title: '',
-            tags: [],
-            createdAt: '',
-            localUpdatedAt: 0,
-          } as Subscription,
-        };
-      }
-      return null;
-    }
+    if (!sub) return null;
 
     return { article, sub };
   }
@@ -87,14 +68,10 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     let url: string;
     if (item.type === 'article') {
       url = item.item.url;
-    } else if (item.type === 'share') {
-      url = item.item.itemUrl;
     } else if (item.type === 'document') {
       url = item.item.canonicalUrl || item.item.path || '';
-    } else if (item.type === 'saved') {
-      url = item.item.url;
     } else {
-      url = item.item.articleUrl;
+      url = item.item.url;
     }
     if (url) {
       window.open(url, '_blank');
@@ -117,40 +94,6 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
         imageUrl: item.item.imageUrl,
         publishedAt: item.item.publishedAt,
       });
-    } else if (item.type === 'userShare') {
-      itemLabelsStore.toggleSave(
-        item.article.guid,
-        'article',
-        item.article.url,
-        item.article.title,
-        {
-          type: 'article',
-          guid: item.article.guid,
-          url: item.article.url,
-          title: item.article.title,
-          author: item.article.author,
-          summary: item.article.summary,
-          imageUrl: item.article.imageUrl,
-          publishedAt: item.article.publishedAt,
-        }
-      );
-    } else if (item.type === 'share') {
-      itemLabelsStore.toggleSave(
-        item.item.recordUri,
-        'share',
-        item.item.itemUrl,
-        item.item.itemTitle,
-        {
-          type: 'share',
-          recordUri: item.item.recordUri,
-          itemUrl: item.item.itemUrl,
-          itemTitle: item.item.itemTitle,
-          itemAuthor: item.item.itemAuthor,
-          itemDescription: item.item.itemDescription,
-          itemImage: item.item.itemImage,
-          itemPublishedAt: item.item.itemPublishedAt,
-        }
-      );
     } else if (item.type === 'document') {
       itemLabelsStore.toggleSave(
         item.item.recordUri,
@@ -169,26 +112,16 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     }
   }
 
-  // Share/unshare selected item
+  // Share/unshare selected item to the linkblog (article items only)
   function toggleSelectedShare() {
     const selected = getSelectedArticle();
     if (!selected) return;
 
-    const { article, sub } = selected;
-    if (sharesStore.isShared(article.guid)) {
-      sharesStore.unshare(article.guid);
+    const { article } = selected;
+    if (linkblogStore.isShared(article.url)) {
+      linkblogStore.unshare(article.url);
     } else {
-      sharesStore.share(
-        sub.rkey,
-        sub.feedUrl || '',
-        article.guid,
-        article.url,
-        article.title,
-        article.author,
-        article.summary,
-        article.imageUrl,
-        article.publishedAt
-      );
+      linkblogStore.shareLink(article);
     }
   }
 
@@ -197,8 +130,8 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     const item = getSelectedItem();
     if (!item) return;
 
-    if (item.type === 'article' || item.type === 'userShare') {
-      const article = item.type === 'article' ? item.item : item.article;
+    if (item.type === 'article') {
+      const article = item.item;
       const sub = getSubscriptionForArticle(article);
       if (!sub) return;
 
@@ -206,20 +139,6 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
         itemLabelsStore.markAsUnread(article.guid);
       } else {
         itemLabelsStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
-      }
-    } else if (item.type === 'share') {
-      const share = item.item;
-      if (itemLabelsStore.isSocialRead(share.recordUri)) {
-        itemLabelsStore.markSocialAsUnread(share.recordUri);
-      } else {
-        feedViewStore.trackSeenThisSession(item);
-        itemLabelsStore.markSocialAsRead(
-          'share',
-          share.recordUri,
-          share.authorDid,
-          share.itemUrl,
-          share.itemTitle
-        );
       }
     } else if (item.type === 'document') {
       const doc = item.item;
@@ -381,8 +300,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       description: 'Toggle unread filter',
       category: 'Other',
       action: () => feedViewStore.toggleUnreadFilter(),
-      condition: () =>
-        auth.isAuthenticated && !feedViewStore.savedFilter && !feedViewStore.sharedFilter,
+      condition: () => auth.isAuthenticated && !feedViewStore.savedFilter,
     });
 
     keyboardStore.register({
@@ -411,11 +329,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       action: () => {
         const item = getSelectedItem();
         if (!item) return;
-        const itemType = item.type === 'userShare' ? 'userShare' : item.type;
-        itemLabelsStore.toggleArchive(
-          item.key,
-          itemType as 'article' | 'share' | 'document' | 'userShare'
-        );
+        itemLabelsStore.toggleArchive(item.key, item.type);
       },
       condition: () => hasSelected() && !!feedViewStore.savedFilter,
     });

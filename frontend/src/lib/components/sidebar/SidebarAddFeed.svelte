@@ -47,10 +47,8 @@
   let selectedAccount = $state<BlueskySearchResult | null>(null);
   let isDetecting = $state(false);
   let publications = $state<Publication[]>([]);
-  let shareCount = $state(0);
   let freestandingDocumentCount = $state(0);
   let selectedPublications = $state<Set<string>>(new Set());
-  let sharesSelected = $state(false);
   let freestandingDocsSelected = $state(false);
   let isSubscribing = $state(false);
 
@@ -78,9 +76,7 @@
     const keys = new Set<string>();
     for (const sub of subscriptionsStore.subscriptions) {
       if (sub.subjectDid === selectedAccount.did) {
-        if (sub.sourceType === 'atproto.shares') {
-          keys.add('shares');
-        } else if (sub.sourceType === 'atproto.documents') {
+        if (sub.sourceType === 'atproto.documents') {
           if (sub.feedUrl === '__freestanding__') {
             keys.add('__freestanding__');
           } else {
@@ -92,9 +88,7 @@
     return keys;
   });
 
-  let selectedCount = $derived(
-    selectedPublications.size + (sharesSelected ? 1 : 0) + (freestandingDocsSelected ? 1 : 0)
-  );
+  let selectedCount = $derived(selectedPublications.size + (freestandingDocsSelected ? 1 : 0));
 
   function looksLikeUrl(value: string): boolean {
     const trimmed = value.trim();
@@ -275,10 +269,8 @@
     selectedAccount = null;
     isDetecting = false;
     publications = [];
-    shareCount = 0;
     freestandingDocumentCount = 0;
     selectedPublications = new Set();
-    sharesSelected = false;
     freestandingDocsSelected = false;
     isSubscribing = false;
     if (searchTimeout) clearTimeout(searchTimeout);
@@ -389,16 +381,13 @@
     isDetecting = true;
     error = null;
     publications = [];
-    shareCount = 0;
     freestandingDocumentCount = 0;
     selectedPublications = new Set();
-    sharesSelected = false;
     freestandingDocsSelected = false;
 
     try {
       const result = await api.detectContent(account.did);
       publications = result.publications;
-      shareCount = result.shareCount;
       freestandingDocumentCount = result.freestandingDocumentCount;
 
       // Pre-select unsubscribed items
@@ -408,9 +397,6 @@
         }
       }
       selectedPublications = new Set(selectedPublications);
-      if (result.shareCount > 0 && !subscribedKeys.has('shares')) {
-        sharesSelected = true;
-      }
       if (result.freestandingDocumentCount > 0 && !subscribedKeys.has('__freestanding__')) {
         freestandingDocsSelected = true;
       }
@@ -430,11 +416,6 @@
       next.add(uri);
     }
     selectedPublications = next;
-  }
-
-  function toggleShares() {
-    if (subscribedKeys.has('shares')) return;
-    sharesSelected = !sharesSelected;
   }
 
   function toggleFreestandingDocs() {
@@ -485,18 +466,6 @@
           }
         );
         if (!firstAddedId) firstAddedId = docsId;
-      }
-
-      if (sharesSelected && subscriptionsStore.canAddMore) {
-        const sharesId = await subscriptionsStore.add(
-          undefined,
-          `Shares from @${selectedAccount.handle}`,
-          {
-            sourceType: 'atproto.shares',
-            subjectDid: selectedAccount.did,
-          }
-        );
-        if (!firstAddedId) firstAddedId = sharesId;
       }
 
       socialStore.loadFeed(true);
@@ -698,27 +667,6 @@
                   >
                 </span>
                 {#if subscribedKeys.has('__freestanding__')}
-                  <span class="sub-badge">Subscribed</span>
-                {/if}
-              </button>
-
-              <button
-                class="dropdown-item content-item"
-                class:selected={sharesSelected}
-                class:is-subscribed={subscribedKeys.has('shares')}
-                onclick={toggleShares}
-                disabled={subscribedKeys.has('shares')}
-              >
-                <span class="check" class:checked={sharesSelected || subscribedKeys.has('shares')}>
-                  {#if sharesSelected || subscribedKeys.has('shares')}&#10003;{/if}
-                </span>
-                <span class="content-info">
-                  <span class="content-name"
-                    >Shared articles <span class="content-count">({shareCount})</span></span
-                  >
-                  <span class="content-desc">Articles shared by @{selectedAccount.handle}</span>
-                </span>
-                {#if subscribedKeys.has('shares')}
                   <span class="sub-badge">Subscribed</span>
                 {/if}
               </button>

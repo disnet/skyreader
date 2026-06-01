@@ -56,7 +56,7 @@ describe('staleReadLabelsInWindow', () => {
       label({ itemKey: 'starred', label: 'starred', props: { readAt: WINDOW_START + 1 } }),
       label({ itemKey: 'archived', label: 'archived', props: { readAt: WINDOW_START + 1 } }),
       label({ itemKey: 'tagged', label: 'tag:foo', props: { readAt: WINDOW_START + 1 } }),
-      label({ itemKey: 'share', itemType: 'share', props: { readAt: WINDOW_START + 1 } }),
+      label({ itemKey: 'doc', itemType: 'document', props: { readAt: WINDOW_START + 1 } }),
     ];
     const result = staleReadLabelsInWindow(labels, new Set(), WINDOW_START);
     expect(result).toEqual([]);

@@ -81,7 +81,7 @@
     icon: 'inbox' | 'bookmark' | 'file-text' | 'users' | 'rss' | 'share' | 'plus' | 'newspaper';
     description: string;
     sourceMode: 'all' | 'include';
-    typeFilter?: ('rss' | 'atproto.shares' | 'atproto.documents')[];
+    typeFilter?: ('rss' | 'atproto.documents')[];
     autoRule?: ChannelAutoRule;
   }
 
@@ -136,9 +136,9 @@
       name: 'Social',
       icon: 'share',
       description:
-        'Only content from people you follow — shares and published documents, without RSS articles mixed in.',
+        'Only content from people you follow — published documents and linkblog posts, without RSS articles mixed in.',
       sourceMode: 'all',
-      typeFilter: ['atproto.shares', 'atproto.documents'],
+      typeFilter: ['atproto.documents'],
     },
     {
       id: 'recent:new',
@@ -203,14 +203,6 @@
       description: 'Saved items you can finish in under 5 minutes. Perfect for short breaks.',
       savedReadingLength: ['quick'],
       sortOrder: 'shortest',
-    },
-    {
-      id: 'saved:source-share',
-      name: 'Saved Shares',
-      icon: 'share',
-      description:
-        'Shared articles you bookmarked. Keep track of the best content from people you follow.',
-      savedSourceFilter: ['share'],
     },
     {
       id: 'saved:source-document',

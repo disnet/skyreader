@@ -11,11 +11,7 @@ export interface User {
   };
 }
 
-export type SubscriptionSourceType =
-  | 'rss'
-  | 'atproto.shares'
-  | 'atproto.documents'
-  | 'atproto.collection';
+export type SubscriptionSourceType = 'rss' | 'atproto.documents' | 'atproto.collection';
 
 export interface Subscription {
   id?: number;
@@ -66,18 +62,8 @@ export interface ReadPosition {
   starred: boolean;
 }
 
-export interface ShareReadPosition {
-  id?: number;
-  rkey?: string;
-  shareUri: string;
-  shareAuthorDid: string;
-  itemUrl: string;
-  itemTitle?: string;
-  readAt: string;
-}
-
 // Unified social read position types
-export type SocialItemType = 'share' | 'document';
+export type SocialItemType = 'document';
 
 export interface SocialReadPosition {
   id?: number;
@@ -88,28 +74,6 @@ export interface SocialReadPosition {
   itemUrl: string;
   itemTitle?: string;
   readAt: string;
-}
-
-export interface SocialShare {
-  id?: number;
-  authorDid: string;
-  recordUri: string;
-  feedUrl?: string;
-  itemUrl: string;
-  itemTitle?: string;
-  itemAuthor?: string;
-  itemDescription?: string;
-  itemImage?: string;
-  itemGuid?: string;
-  itemPublishedAt?: string;
-  note?: string;
-  content?: string;
-  createdAt: string;
-  reshareOf?: {
-    uri: string;
-    authorDid: string;
-  };
-  reshareCount?: number;
 }
 
 // Leaflet content types for pub.leaflet.content format
@@ -562,47 +526,6 @@ export interface SocialDocument {
   links?: Array<{ uri: string; rel?: string }>;
 }
 
-// Grouped share for deduplicated feed
-export interface GroupedShare {
-  itemUrl: string;
-  itemTitle?: string;
-  itemAuthor?: string;
-  itemDescription?: string;
-  itemImage?: string;
-  itemGuid?: string;
-  itemPublishedAt?: string;
-  feedUrl?: string;
-  content?: string;
-  sharers: Array<{
-    did: string;
-    recordUri: string;
-    createdAt: string;
-    note?: string;
-    reshareCount: number;
-  }>;
-  firstSharer: {
-    did: string;
-    recordUri: string;
-  };
-  totalShareCount: number;
-  latestShareAt: string;
-}
-
-// Reshare activity item (grouped by article)
-export interface ReshareActivity {
-  originalShare: {
-    uri: string;
-    itemUrl: string;
-    itemTitle?: string;
-  };
-  resharers: Array<{
-    did: string;
-    resharedAt: string;
-  }>;
-  totalCount: number;
-  latestReshareAt: string;
-}
-
 // Profile info fetched from Bluesky
 export interface BlueskyProfile {
   did: string;
@@ -623,28 +546,6 @@ export interface LinkblogPerson {
   blogUrl: string;
   // Whether the current user already follows this person on Bluesky.
   isFollow: boolean;
-}
-
-export interface UserShare {
-  id?: number;
-  rkey?: string;
-  subscriptionRkey?: string;
-  feedUrl?: string;
-  articleGuid: string;
-  articleUrl: string;
-  articleTitle?: string;
-  articleAuthor?: string;
-  articleDescription?: string;
-  articleContent?: string;
-  articleImage?: string;
-  articlePublishedAt?: string;
-  note?: string;
-  createdAt: string;
-  reshareOf?: {
-    uri: string;
-    authorDid: string;
-  };
-  reshareCount?: number;
 }
 
 // A locally-tracked linkblog share (Phase 1). Sharing an article now writes a
@@ -726,7 +627,6 @@ export interface FeedItem {
 // Combined feed item for unified "all" view
 export type CombinedFeedItem =
   | { type: 'article'; item: Article; date: string }
-  | { type: 'share'; item: SocialShare; date: string }
   | { type: 'document'; item: SocialDocument; date: string };
 
 /**
@@ -742,7 +642,7 @@ export type ChannelAutoRule =
   | { type: 'longReads'; minLength: number }
   | { type: 'recent'; withinDays: number };
 
-export type SavedSourceType = 'url' | 'feed' | 'share' | 'document';
+export type SavedSourceType = 'url' | 'feed' | 'document';
 export type DateAddedPreset = 'last-week' | 'last-month' | 'last-3-months' | 'last-year';
 export type ReadingLengthFilter = 'quick' | 'medium' | 'long';
 export type SortOrder =
@@ -798,7 +698,7 @@ export interface ItemTags {
   itemType: ItemLabelType;
 }
 
-export type ItemLabelType = 'article' | 'share' | 'document' | 'userShare' | 'saved';
+export type ItemLabelType = 'article' | 'document' | 'saved';
 
 export interface SavedItem {
   rkey: string;
@@ -814,7 +714,7 @@ export interface SavedItem {
   wordCount: number | null;
   publishedAt: string | null;
   savedAt: string;
-  source?: 'url' | 'feed' | 'share' | 'document';
+  source?: 'url' | 'feed' | 'document';
   itemGuid?: string;
 }
 

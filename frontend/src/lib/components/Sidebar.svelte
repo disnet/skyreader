@@ -4,9 +4,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { sharesStore } from '$lib/stores/shares.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
-  import { activityStore } from '$lib/stores/activity.svelte';
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
@@ -75,11 +73,6 @@
   onMount(() => {
     document.addEventListener('click', handleClickOutside);
     document.addEventListener('keydown', handleKeydown);
-
-    // Load activity count if authenticated
-    if (auth.isAuthenticated && !activityStore.hasLoadedInitial) {
-      activityStore.loadReshareActivity();
-    }
   });
 
   onDestroy(() => {
@@ -244,7 +237,6 @@
 
   function sourceSortRank(sub: Subscription): number {
     if (!sub.sourceType || sub.sourceType === 'rss') return 0;
-    if (sub.sourceType === 'atproto.shares') return 1;
     if (sub.sourceType === 'atproto.documents' && sub.feedUrl?.startsWith('at://')) return 2;
     if (sub.sourceType === 'atproto.documents') return 3;
     return 4;
@@ -507,18 +499,6 @@
       {/if}
     </div>
 
-    <button
-      class="nav-item"
-      class:active={currentFilter().type === 'shared'}
-      onclick={() => selectFilter('shared')}
-    >
-      <span class="nav-icon"><Icon name="share" /></span>
-      <span class="nav-label">Shared</span>
-      {#if sharesStore.userShares.size > 0}
-        <span class="nav-count">{sharesStore.userShares.size}</span>
-      {/if}
-    </button>
-
     <!-- Bottom nav -->
     <a
       href="/sources"
@@ -528,18 +508,6 @@
     >
       <span class="nav-icon"><Icon name="rss" /></span>
       <span class="nav-label">Manage Sources</span>
-    </a>
-    <a
-      href="/activity"
-      class="nav-item nav-link"
-      class:active={$page.url.pathname === '/activity'}
-      onclick={() => sidebarStore.closeMobile()}
-    >
-      <span class="nav-icon"><Icon name="bell" /></span>
-      <span class="nav-label">Activity</span>
-      {#if activityStore.totalReshareCount > 0}
-        <span class="nav-count">{activityStore.totalReshareCount}</span>
-      {/if}
     </a>
 
     <a

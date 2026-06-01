@@ -1,7 +1,7 @@
 import type { Env } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
 
-const ALLOWED_COLLECTIONS = ['app.skyreader.feed.subscription', 'app.skyreader.social.share'];
+const ALLOWED_COLLECTIONS = ['app.skyreader.feed.subscription'];
 
 interface SubscriptionRow {
   record_uri: string;
@@ -13,22 +13,6 @@ interface SubscriptionRow {
   custom_title: string | null;
   custom_icon_url: string | null;
   category: string | null;
-}
-
-interface ShareRow {
-  record_uri: string;
-  record_cid: string;
-  feed_url: string | null;
-  item_url: string;
-  item_title: string | null;
-  item_author: string | null;
-  item_description: string | null;
-  item_image: string | null;
-  item_guid: string | null;
-  item_published_at: number | null;
-  note: string | null;
-  tags: string | null;
-  created_at: number;
 }
 
 export async function handleRecordsList(request: Request, env: Env): Promise<Response> {
@@ -81,35 +65,6 @@ export async function handleRecordsList(request: Request, env: Env): Promise<Res
           },
         };
       });
-    } else if (collection === 'app.skyreader.social.share') {
-      const result = await env.DB.prepare(
-        `SELECT record_uri, record_cid, feed_url, item_url, item_title, item_author,
-				        item_description, item_image, item_guid, item_published_at, note, tags, created_at
-				 FROM shares WHERE author_did = ?`
-      )
-        .bind(session.did)
-        .all<ShareRow>();
-
-      records = result.results.map((row) => ({
-        uri: row.record_uri,
-        cid: row.record_cid,
-        value: {
-          $type: collection,
-          feedUrl: row.feed_url,
-          itemUrl: row.item_url,
-          itemTitle: row.item_title,
-          itemAuthor: row.item_author,
-          itemDescription: row.item_description,
-          itemImage: row.item_image,
-          itemGuid: row.item_guid,
-          itemPublishedAt: row.item_published_at
-            ? new Date(row.item_published_at).toISOString()
-            : undefined,
-          note: row.note,
-          tags: row.tags ? JSON.parse(row.tags) : undefined,
-          createdAt: new Date(row.created_at).toISOString(),
-        },
-      }));
     }
 
     return new Response(JSON.stringify({ records }), {
