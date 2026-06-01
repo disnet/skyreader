@@ -8,7 +8,6 @@
   import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-  import { sharesStore } from '$lib/stores/shares.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
@@ -162,21 +161,8 @@
 
   function handleReaderSave() {
     if (!readerItem) return;
-    if (readerItem.type === 'article' || readerItem.type === 'userShare') {
-      const article = readerItem.type === 'article' ? readerItem.item : readerItem.article;
-      onToggleSave(article);
-    } else if (readerItem.type === 'share') {
-      const share = readerItem.item;
-      itemLabelsStore.toggleSave(share.recordUri, 'share', share.itemUrl, share.itemTitle, {
-        type: 'share',
-        recordUri: share.recordUri,
-        itemUrl: share.itemUrl,
-        itemTitle: share.itemTitle,
-        itemAuthor: share.itemAuthor,
-        itemDescription: share.itemDescription,
-        itemImage: share.itemImage,
-        itemPublishedAt: share.itemPublishedAt,
-      });
+    if (readerItem.type === 'article') {
+      onToggleSave(readerItem.item);
     } else if (readerItem.type === 'document') {
       const doc = readerItem.item;
       itemLabelsStore.toggleSave(
@@ -200,10 +186,6 @@
     if (!readerItem) return;
     if (readerItem.type === 'article') {
       const article = readerItem.item;
-      const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
-      if (sub) onShare(article, sub, note);
-    } else if (readerItem.type === 'userShare') {
-      const article = readerItem.article;
       const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
       if (sub) onShare(article, sub, note);
     }
@@ -231,9 +213,7 @@
     {readerItem}
     onClose={closeReader}
     onToggleSave={handleReaderSave}
-    onShare={readerItem.type === 'article' || readerItem.type === 'userShare'
-      ? handleReaderShare
-      : undefined}
+    onShare={readerItem.type === 'article' ? handleReaderShare : undefined}
     useNoteComposer={true}
     onSaveToSemble={onSaveToSemble ? handleReaderSemble : undefined}
     onSaveToMargin={onSaveToMargin ? handleReaderMargin : undefined}
@@ -262,86 +242,6 @@
           onToggleRead={() => handleToggleRead(article)}
           onShare={(note) => sub && onShare(article, sub, note)}
           onUnshare={() => onUnshare(article.url)}
-          onSelect={() => handleSelect(index)}
-          onExpand={() => handleExpand(index)}
-          onOpenFullscreen={() => openReader(displayItem)}
-          onSaveToSemble={onSaveToSemble
-            ? () => onSaveToSemble(extractSembleMetadata(displayItem))
-            : undefined}
-          onSaveToMargin={onSaveToMargin
-            ? () => onSaveToMargin(extractMarginMetadata(displayItem))
-            : undefined}
-        />
-      {:else if displayItem.type === 'share'}
-        {@const share = displayItem.item}
-        {@const localArticle = feedViewStore.getArticleForShare(share)}
-        <ArticleCard
-          {share}
-          {localArticle}
-          isRead={itemLabelsStore.isSocialRead(share.recordUri)}
-          isSaved={itemLabelsStore.isSaved(share.recordUri)}
-          selected={preferences.expandAllItems || feedViewStore.selectedKey === displayItem.key}
-          expanded={feedViewStore.expandedKey === displayItem.key}
-          highlighted={feedViewStore.selectedKey === displayItem.key}
-          onToggleSave={() =>
-            itemLabelsStore.toggleSave(share.recordUri, 'share', share.itemUrl, share.itemTitle, {
-              type: 'share',
-              recordUri: share.recordUri,
-              itemUrl: share.itemUrl,
-              itemTitle: share.itemTitle,
-              itemAuthor: share.itemAuthor,
-              itemDescription: share.itemDescription,
-              itemImage: share.itemImage,
-              itemPublishedAt: share.itemPublishedAt,
-            })}
-          onToggleRead={() => {
-            if (itemLabelsStore.isSocialRead(share.recordUri)) {
-              itemLabelsStore.markSocialAsUnread(share.recordUri);
-            } else {
-              feedViewStore.trackSeenThisSession({
-                type: 'share',
-                item: share,
-                key: share.recordUri,
-              });
-              itemLabelsStore.markSocialAsRead(
-                'share',
-                share.recordUri,
-                share.authorDid,
-                share.itemUrl,
-                share.itemTitle
-              );
-            }
-          }}
-          onSelect={() => handleSelect(index)}
-          onExpand={() => handleExpand(index)}
-          onOpenFullscreen={() => openReader(displayItem)}
-          onSaveToSemble={onSaveToSemble
-            ? () => onSaveToSemble(extractSembleMetadata(displayItem))
-            : undefined}
-          onSaveToMargin={onSaveToMargin
-            ? () => onSaveToMargin(extractMarginMetadata(displayItem))
-            : undefined}
-        />
-      {:else if displayItem.type === 'userShare'}
-        {@const share = displayItem.item}
-        {@const article = displayItem.article}
-        {@const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId)}
-        <ArticleCard
-          {article}
-          siteUrl={sub?.siteUrl || sub?.feedUrl}
-          feedTitle={sub?.customTitle || sub?.title}
-          feedId={sub?.id}
-          isRead={itemLabelsStore.isRead(article.guid)}
-          isSaved={itemLabelsStore.isSaved(article.guid)}
-          isShared={true}
-          shareNote={share.note}
-          reshareCount={share.reshareCount || 0}
-          selected={preferences.expandAllItems || feedViewStore.selectedKey === displayItem.key}
-          expanded={feedViewStore.expandedKey === displayItem.key}
-          highlighted={feedViewStore.selectedKey === displayItem.key}
-          onToggleSave={() => onToggleSave(article)}
-          onToggleRead={() => handleToggleRead(article)}
-          onUnshare={() => sharesStore.unshare(share.articleGuid)}
           onSelect={() => handleSelect(index)}
           onExpand={() => handleExpand(index)}
           onOpenFullscreen={() => openReader(displayItem)}

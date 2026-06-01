@@ -280,7 +280,7 @@ function createItemLabelsStore() {
     // Clear old social read labels
     const toRemove: Array<[string, string]> = [];
     for (const [, lbl] of labelMap) {
-      if ((lbl.itemType === 'share' || lbl.itemType === 'document') && lbl.label === 'read') {
+      if (lbl.itemType === 'document' && lbl.label === 'read') {
         toRemove.push([lbl.itemKey, lbl.label]);
       }
     }
@@ -293,7 +293,7 @@ function createItemLabelsStore() {
     const dbOps: ItemLabel[] = [];
 
     for (const p of positions) {
-      const itemType: ItemLabelType = p.type === 'share' ? 'share' : 'document';
+      const itemType: ItemLabelType = 'document';
       const readLabel: ItemLabel = {
         itemKey: p.itemUri,
         itemType,
@@ -330,7 +330,7 @@ function createItemLabelsStore() {
       const oldLabels = await db.itemLabels
         .where('label')
         .equals('read')
-        .filter((l) => l.itemType === 'share' || l.itemType === 'document')
+        .filter((l) => l.itemType === 'document')
         .toArray();
       for (const l of oldLabels) {
         await db.itemLabels.where('[itemKey+label]').equals([l.itemKey, l.label]).delete();
@@ -716,16 +716,6 @@ function createItemLabelsStore() {
         publishedAt?: string;
       }
     | {
-        type: 'share';
-        recordUri: string;
-        itemUrl: string;
-        itemTitle?: string;
-        itemAuthor?: string;
-        itemDescription?: string;
-        itemImage?: string;
-        itemPublishedAt?: string;
-      }
-    | {
         type: 'document';
         recordUri: string;
         url: string;
@@ -756,12 +746,6 @@ function createItemLabelsStore() {
         await savesStore.saveArticle(saveMeta);
       } else {
         await savesStore.unsaveByGuid(saveMeta.guid);
-      }
-    } else if (saveMeta.type === 'share') {
-      if (!wasSaved) {
-        await savesStore.saveShare(saveMeta);
-      } else {
-        await savesStore.unsaveByGuid(saveMeta.recordUri);
       }
     } else if (saveMeta.type === 'document') {
       if (!wasSaved) {
@@ -1023,7 +1007,7 @@ function createItemLabelsStore() {
     const now = Date.now();
     const nowIso = new Date().toISOString();
 
-    const itemType: ItemLabelType = type === 'share' ? 'share' : 'document';
+    const itemType: ItemLabelType = 'document';
     const readLabel: ItemLabel = {
       itemKey: itemUri,
       itemType,
@@ -1110,7 +1094,7 @@ function createItemLabelsStore() {
     const dbOps: ItemLabel[] = [];
 
     for (const item of itemsWithRkeys) {
-      const itemType: ItemLabelType = item.type === 'share' ? 'share' : 'document';
+      const itemType: ItemLabelType = 'document';
       const readLabel: ItemLabel = {
         itemKey: item.itemUri,
         itemType,
@@ -1217,7 +1201,7 @@ function createItemLabelsStore() {
     if (!rkey) return;
 
     const payload: SocialReadingPayload = {
-      type: type === 'share' ? 'share' : 'document',
+      type: 'document',
       rkey,
       itemUri,
       authorDid,
@@ -1383,13 +1367,7 @@ function createItemLabelsStore() {
     const result = new Map<ItemLabelType, Set<string>>();
     for (const bm of savesStore.articles) {
       const type: ItemLabelType =
-        bm.source === 'share'
-          ? 'share'
-          : bm.source === 'document'
-            ? 'document'
-            : bm.source === 'feed'
-              ? 'article'
-              : 'saved';
+        bm.source === 'document' ? 'document' : bm.source === 'feed' ? 'article' : 'saved';
       let set = result.get(type);
       if (!set) {
         set = new Set();

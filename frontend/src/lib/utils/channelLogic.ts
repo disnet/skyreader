@@ -15,7 +15,7 @@ import type {
   DateAddedPreset,
 } from '$lib/types';
 import type { ChannelAutoRule } from '$lib/types';
-import { rssSourceKey, sharesSourceKey, documentsSourceKey } from '$lib/utils/sourceKeys';
+import { rssSourceKey, documentsSourceKey } from '$lib/utils/sourceKeys';
 
 // ─── Auto-rule validation ─────────────────────────────────────────────
 
@@ -114,8 +114,6 @@ export function computeSourceKeys(
         if (sub.category?.trim().toLowerCase() === rule.value.toLowerCase()) {
           if (!sub.sourceType || sub.sourceType === 'rss') {
             keys.push(rssSourceKey(sub.rkey));
-          } else if (sub.sourceType === 'atproto.shares' && sub.subjectDid) {
-            keys.push(sharesSourceKey(sub.subjectDid));
           } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
             keys.push(documentsSourceKey(sub.subjectDid));
           }
@@ -130,8 +128,6 @@ export function computeSourceKeys(
         if (sub.tags.some((t) => t.trim().toLowerCase() === tagLower)) {
           if (!sub.sourceType || sub.sourceType === 'rss') {
             keys.push(rssSourceKey(sub.rkey));
-          } else if (sub.sourceType === 'atproto.shares' && sub.subjectDid) {
-            keys.push(sharesSourceKey(sub.subjectDid));
           } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
             keys.push(documentsSourceKey(sub.subjectDid));
           }
@@ -159,9 +155,7 @@ export function computeSourceKeys(
     case 'people': {
       for (const sub of subscriptions) {
         if (!sub.subjectDid) continue;
-        if (sub.sourceType === 'atproto.shares') {
-          keys.push(sharesSourceKey(sub.subjectDid));
-        } else if (sub.sourceType === 'atproto.documents') {
+        if (sub.sourceType === 'atproto.documents') {
           keys.push(documentsSourceKey(sub.subjectDid));
         }
       }
@@ -201,8 +195,6 @@ export function computeSourceKeys(
         if (created >= cutoff) {
           if (!sub.sourceType || sub.sourceType === 'rss') {
             keys.push(rssSourceKey(sub.rkey));
-          } else if (sub.sourceType === 'atproto.shares' && sub.subjectDid) {
-            keys.push(sharesSourceKey(sub.subjectDid));
           } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
             keys.push(documentsSourceKey(sub.subjectDid));
           }
@@ -300,11 +292,9 @@ export function getTypeSuggestions(ctx: SuggestionContext): ChannelSuggestion[] 
   const subs = ctx.subscriptions;
 
   const rssSubs = subs.filter((s) => !s.sourceType || s.sourceType === 'rss');
-  const shareSubs = subs.filter((s) => s.sourceType === 'atproto.shares');
   const docSubs = subs.filter((s) => s.sourceType === 'atproto.documents');
-  const atprotoSubs = [...shareSubs, ...docSubs];
 
-  if (rssSubs.length >= 2 && atprotoSubs.length >= 2) {
+  if (rssSubs.length >= 2 && docSubs.length >= 2) {
     if (!isAlreadyCovered([], ['rss'], ctx.views)) {
       suggestions.push({
         id: 'type:articles',
@@ -316,18 +306,14 @@ export function getTypeSuggestions(ctx: SuggestionContext): ChannelSuggestion[] 
       });
     }
 
-    const socialTypes: SubscriptionSourceType[] = [];
-    if (shareSubs.length > 0) socialTypes.push('atproto.shares');
-    if (docSubs.length > 0) socialTypes.push('atproto.documents');
-
-    if (socialTypes.length > 0 && !isAlreadyCovered([], socialTypes, ctx.views)) {
+    if (!isAlreadyCovered([], ['atproto.documents'], ctx.views)) {
       suggestions.push({
         id: 'type:social',
         name: 'Social',
-        description: `${atprotoSubs.length} people you follow`,
+        description: `${docSubs.length} people you follow`,
         sourceMode: 'all',
         sourceKeys: [],
-        typeFilter: socialTypes,
+        typeFilter: ['atproto.documents'],
       });
     }
   }
@@ -369,8 +355,7 @@ export function getTagSuggestions(ctx: SuggestionContext): ChannelSuggestion[] {
 
 export function getPeopleSuggestion(ctx: SuggestionContext): ChannelSuggestion[] {
   const atprotoSubs = ctx.subscriptions.filter(
-    (s) =>
-      s.subjectDid && (s.sourceType === 'atproto.shares' || s.sourceType === 'atproto.documents')
+    (s) => s.subjectDid && s.sourceType === 'atproto.documents'
   );
   if (atprotoSubs.length < MIN_SOURCES_FOR_SUGGESTION) return [];
 
@@ -378,11 +363,7 @@ export function getPeopleSuggestion(ctx: SuggestionContext): ChannelSuggestion[]
   const seenDids = new Set<string>();
   for (const sub of atprotoSubs) {
     if (!sub.subjectDid) continue;
-    if (sub.sourceType === 'atproto.shares') {
-      sourceKeys.push(sharesSourceKey(sub.subjectDid));
-    } else if (sub.sourceType === 'atproto.documents') {
-      sourceKeys.push(documentsSourceKey(sub.subjectDid));
-    }
+    sourceKeys.push(documentsSourceKey(sub.subjectDid));
     seenDids.add(sub.subjectDid);
   }
   if (isAlreadyCovered(sourceKeys, [], ctx.views)) return [];
@@ -391,7 +372,7 @@ export function getPeopleSuggestion(ctx: SuggestionContext): ChannelSuggestion[]
     {
       id: 'people:all',
       name: 'People I Follow',
-      description: `${seenDids.size} people, all shares and articles`,
+      description: `${seenDids.size} people you follow`,
       sourceMode: 'include',
       sourceKeys,
       typeFilter: [],
@@ -594,8 +575,6 @@ export function getRecentSuggestion(
     if (created < cutoff) continue;
     if (!sub.sourceType || sub.sourceType === 'rss') {
       recentKeys.push(rssSourceKey(sub.rkey));
-    } else if (sub.sourceType === 'atproto.shares' && sub.subjectDid) {
-      recentKeys.push(sharesSourceKey(sub.subjectDid));
     } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
       recentKeys.push(documentsSourceKey(sub.subjectDid));
     }
@@ -756,7 +735,6 @@ export function getSavedSourceTypeSuggestions(
   const sourceConfigs: { source: SavedSourceType; name: string; desc: string }[] = [
     { source: 'feed', name: 'Saved from Feeds', desc: 'articles saved from your RSS feeds' },
     { source: 'url', name: 'Saved from Web', desc: 'pages saved by URL' },
-    { source: 'share', name: 'Saved Shares', desc: 'shared articles you bookmarked' },
     { source: 'document', name: 'Saved Documents', desc: 'published documents you bookmarked' },
   ];
 
@@ -861,7 +839,6 @@ const SAVED_PRIORITY: Record<string, number> = {
   'saved:source-url': 2,
   'saved:long-reads': 3,
   'saved:quick-reads': 4,
-  'saved:source-share': 5,
   'saved:source-document': 6,
 };
 

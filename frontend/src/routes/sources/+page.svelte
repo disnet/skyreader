@@ -35,7 +35,6 @@
 
   interface DetectedContent {
     publications: DetectedPublication[];
-    shareCount: number;
     freestandingDocumentCount: number;
     loading: boolean;
   }
@@ -88,7 +87,6 @@
     did: string;
     profile: BlueskyProfile | null;
     subscriptions: Subscription[];
-    hasShares: boolean;
     hasDocuments: boolean;
     totalUnread: number;
   }
@@ -97,11 +95,7 @@
     const byDid = new Map<string, Subscription[]>();
     for (const sub of subscriptionsStore.subscriptions) {
       if (!sub.subjectDid) continue;
-      if (
-        sub.sourceType === 'atproto.shares' ||
-        sub.sourceType === 'atproto.documents' ||
-        sub.sourceType === 'atproto.collection'
-      ) {
+      if (sub.sourceType === 'atproto.documents' || sub.sourceType === 'atproto.collection') {
         const existing = byDid.get(sub.subjectDid) || [];
         existing.push(sub);
         byDid.set(sub.subjectDid, existing);
@@ -110,7 +104,6 @@
 
     const groups: PersonGroup[] = [];
     for (const [did, subs] of byDid) {
-      const hasShares = subs.some((s) => s.sourceType === 'atproto.shares');
       const hasDocuments = subs.some((s) => s.sourceType === 'atproto.documents');
       const totalUnread = subs.reduce(
         (sum, s) => sum + (s.id ? (unreadCounts.feedCounts.get(s.id) ?? 0) : 0),
@@ -120,7 +113,6 @@
         did,
         profile: profiles.get(did) || null,
         subscriptions: subs,
-        hasShares,
         hasDocuments,
         totalUnread,
       });
@@ -247,13 +239,6 @@
     return group.profile?.displayName || group.profile?.handle || group.did;
   }
 
-  async function subscribeShares(did: string, handle: string) {
-    await subscriptionsStore.add(undefined, `Shares from @${handle}`, {
-      sourceType: 'atproto.shares',
-      subjectDid: did,
-    });
-  }
-
   async function subscribeFreestandingDocs(did: string, handle: string) {
     await subscriptionsStore.add('__freestanding__', `Documents from @${handle}`, {
       sourceType: 'atproto.documents',
@@ -377,7 +362,6 @@
         const next = new Map(detectedContent);
         next.set(did, {
           publications: [],
-          shareCount: 0,
           freestandingDocumentCount: 0,
           loading: true,
         });
@@ -389,7 +373,6 @@
         .then((result) => {
           const content = {
             publications: result.publications,
-            shareCount: result.shareCount,
             freestandingDocumentCount: result.freestandingDocumentCount,
           };
           saveContentCache(did, content);
@@ -402,7 +385,6 @@
             const updated = new Map(detectedContent);
             updated.set(did, {
               publications: [],
-              shareCount: 0,
               freestandingDocumentCount: 0,
               loading: false,
             });
@@ -522,22 +504,6 @@
           {/each}
 
           <!-- Unsubscribed content streams -->
-          {#if !group.hasShares}
-            <SourceRow
-              iconUrl={avatarUrl}
-              iconRound={true}
-              title="Skyreader Shares"
-              subtitle={detected && !detected.loading && detected.shareCount > 0
-                ? `Articles they share and recommend (${detected.shareCount})`
-                : 'Articles they share and recommend on Skyreader'}
-              sourceLabel="Shares"
-              pillClass="pill-shares"
-              subscribed={false}
-              fallbackIcon="share"
-              onSubscribe={() => subscribeShares(group.did, handle)}
-            />
-          {/if}
-
           {#if detected && !detected.loading}
             {#if !group.subscriptions.some((s) => s.sourceType === 'atproto.documents' && s.feedUrl === '__freestanding__') && detected.freestandingDocumentCount > 0}
               <SourceRow

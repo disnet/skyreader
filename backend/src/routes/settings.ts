@@ -5,7 +5,6 @@ export interface UserSettings {
   pdsSyncEnabled: boolean;
   lastPdsSyncSubscriptions: number | null;
   lastPdsSyncReadPositions: number | null;
-  lastPdsSyncShares: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -15,7 +14,6 @@ interface UserSettingsRow {
   pds_sync_enabled: number;
   last_pds_sync_subscriptions: number | null;
   last_pds_sync_read_positions: number | null;
-  last_pds_sync_shares: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -26,7 +24,6 @@ function rowToSettings(row: UserSettingsRow | null): UserSettings {
       pdsSyncEnabled: false,
       lastPdsSyncSubscriptions: null,
       lastPdsSyncReadPositions: null,
-      lastPdsSyncShares: null,
       createdAt: Math.floor(Date.now() / 1000),
       updatedAt: Math.floor(Date.now() / 1000),
     };
@@ -35,7 +32,6 @@ function rowToSettings(row: UserSettingsRow | null): UserSettings {
     pdsSyncEnabled: row.pds_sync_enabled === 1,
     lastPdsSyncSubscriptions: row.last_pds_sync_subscriptions,
     lastPdsSyncReadPositions: row.last_pds_sync_read_positions,
-    lastPdsSyncShares: row.last_pds_sync_shares,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -142,7 +138,7 @@ export async function getUserSettings(env: Env, did: string): Promise<UserSettin
 export async function updateSyncTimestamp(
   env: Env,
   did: string,
-  collection: 'subscriptions' | 'read_positions' | 'shares'
+  collection: 'subscriptions' | 'read_positions'
 ): Promise<void> {
   if (collection === 'subscriptions') {
     await env.DB.prepare(
@@ -160,16 +156,6 @@ export async function updateSyncTimestamp(
 			 VALUES (?, unixepoch(), unixepoch())
 			 ON CONFLICT(user_did) DO UPDATE SET
 			   last_pds_sync_read_positions = unixepoch(),
-			   updated_at = unixepoch()`
-    )
-      .bind(did)
-      .run();
-  } else {
-    await env.DB.prepare(
-      `INSERT INTO user_settings (user_did, last_pds_sync_shares, updated_at)
-			 VALUES (?, unixepoch(), unixepoch())
-			 ON CONFLICT(user_did) DO UPDATE SET
-			   last_pds_sync_shares = unixepoch(),
 			   updated_at = unixepoch()`
     )
       .bind(did)

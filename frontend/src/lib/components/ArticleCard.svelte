@@ -1,7 +1,6 @@
 <script lang="ts">
   import type {
     Article,
-    SocialShare,
     SocialDocument,
     BlueskyProfile,
     LeafletContent,
@@ -22,7 +21,6 @@
   import { socialContextStore } from '$lib/stores/socialContext.svelte';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { profileService } from '$lib/services/profiles';
-  import { sharesStore } from '$lib/stores/shares.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import Icon from './Icon.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
@@ -42,7 +40,6 @@
 
   let {
     article,
-    share,
     document,
     localArticle,
     siteUrl,
@@ -52,7 +49,6 @@
     isSaved = false,
     isShared = false,
     shareNote,
-    reshareCount = 0,
     isFetching = false,
     selected = false,
     expanded = false,
@@ -61,7 +57,6 @@
     onToggleRead,
     onShare,
     onUnshare,
-    onReshare,
     onSelect,
     onExpand,
     onFetchContent,
@@ -70,7 +65,6 @@
     onSaveToMargin,
   }: {
     article?: Article;
-    share?: SocialShare;
     document?: SocialDocument;
     localArticle?: Article;
     siteUrl?: string;
@@ -80,7 +74,6 @@
     isSaved?: boolean;
     isShared?: boolean;
     shareNote?: string;
-    reshareCount?: number;
     isFetching?: boolean;
     selected?: boolean;
     expanded?: boolean;
@@ -89,7 +82,6 @@
     onToggleRead?: () => void;
     onShare?: (note?: string) => void;
     onUnshare?: () => void;
-    onReshare?: () => void;
     onSelect?: () => void;
     onExpand?: () => void;
     onFetchContent?: () => void;
@@ -98,10 +90,8 @@
     onSaveToMargin?: () => void;
   } = $props();
 
-  // Determine if we're in share mode (showing someone else's share)
-  let isShareMode = $derived(Boolean(share && !article && !document));
   // Determine if we're in document mode (showing someone's published document)
-  let isDocumentMode = $derived(Boolean(document && !article && !share));
+  let isDocumentMode = $derived(Boolean(document && !article));
   // The external article a document points at, if it's a "link post" (Phase 2).
   let linkPostUrl = $derived(document ? getExternalArticleLink(document) : undefined);
   // Link-post mode: a document whose primary content is an EXTERNAL article. The
@@ -112,12 +102,7 @@
   // Can the user follow this source? (not already subscribed)
   let canFollowSource = $derived.by(() => {
     if (!auth.user) return false;
-    // For shares/documents from another person, check if we follow that person's shares
-    if (isShareMode && share?.authorDid && share.authorDid !== auth.user.did) {
-      return !subscriptionsStore.subscriptions.some(
-        (s) => s.sourceType === 'atproto.shares' && s.subjectDid === share!.authorDid
-      );
-    }
+    // For a document from another person, check if we follow that person's documents
     if (isDocumentMode && document?.authorDid && document.authorDid !== auth.user.did) {
       return !subscriptionsStore.subscriptions.some(
         (s) => s.sourceType === 'atproto.documents' && s.subjectDid === document!.authorDid
@@ -128,42 +113,24 @@
 
   function handleFollowSource() {
     overflowMenuOpen = false;
-    if ((isShareMode && share?.authorDid) || (isDocumentMode && document?.authorDid)) {
-      const did = share?.authorDid || document?.authorDid || '';
-      sidebarStore.openAddFeedModalForDid(did);
+    if (isDocumentMode && document?.authorDid) {
+      sidebarStore.openAddFeedModalForDid(document.authorDid);
     }
   }
 
-  // Normalize data for article, share, and document modes. For a link post the
+  // Normalize data for article and document modes. For a link post the
   // external article is what we open/link to — not the linkblog permalink.
   let itemUrl = $derived(
-    article?.url || share?.itemUrl || linkPostUrl || document?.canonicalUrl || document?.path || ''
+    article?.url || linkPostUrl || document?.canonicalUrl || document?.path || ''
   );
-  let itemTitle = $derived(article?.title || share?.itemTitle || document?.title || itemUrl);
-  let itemPublishedAt = $derived(
-    article?.publishedAt ||
-      share?.itemPublishedAt ||
-      share?.createdAt ||
-      document?.publishedAt ||
-      ''
-  );
-  let itemGuid = $derived(article?.guid || share?.itemGuid || document?.recordUri || itemUrl);
-  let displaySiteUrl = $derived(siteUrl || share?.feedUrl || document?.siteUri || itemUrl);
+  let itemTitle = $derived(article?.title || document?.title || itemUrl);
+  let itemPublishedAt = $derived(article?.publishedAt || document?.publishedAt || '');
+  let itemGuid = $derived(article?.guid || document?.recordUri || itemUrl);
+  let displaySiteUrl = $derived(siteUrl || document?.siteUri || itemUrl);
 
-  // Derive a publication name for shares/documents when feedTitle isn't provided
+  // Derive a publication name for documents when feedTitle isn't provided
   let displayFeedTitle = $derived.by(() => {
     if (feedTitle) return feedTitle;
-    // For shares, extract hostname from feedUrl or itemUrl
-    if (isShareMode) {
-      const url = share?.feedUrl || share?.itemUrl;
-      if (url) {
-        try {
-          return new URL(url).hostname.replace(/^www\./, '');
-        } catch {
-          return undefined;
-        }
-      }
-    }
     // For documents, extract hostname from the external article (link posts) or
     // the canonicalUrl (fall back to siteUri).
     if (isDocumentMode) {
@@ -202,13 +169,11 @@
       }
     }
 
-    // For articles and shares, use existing logic
+    // For articles, use existing logic
     if (article?.content) return article.content;
     if (article?.summary) return article.summary;
-    if (share?.content) return share.content;
     if (localArticle?.content) return localArticle.content;
     if (localArticle?.summary) return localArticle.summary;
-    if (share?.itemDescription) return share.itemDescription;
 
     // For documents with structured Leaflet content, render it
     if (document?.content && isLeafletContent(document.content)) {
@@ -237,91 +202,24 @@
     return '';
   });
 
-  // Profile fetching for share mode and document mode
+  // Profile fetching for document mode
   let authorProfile = $state<BlueskyProfile | null>(null);
   $effect(() => {
-    const authorDid = share?.authorDid || document?.authorDid;
+    const authorDid = document?.authorDid;
     if (authorDid) {
       profileService.getProfile(authorDid).then((p) => {
         authorProfile = p;
       });
     }
   });
-  let authorHandle = $derived(authorProfile?.handle || share?.authorDid || document?.authorDid);
-
-  // Reshare state for share mode
-  let isResharing = $state(false);
-  let hasReshared = $derived.by(() => {
-    if (!isShareMode) return false;
-    const guid = itemGuid;
-    return sharesStore.isShared(guid);
-  });
-
-  // Share state for document mode
-  let isSharingDocument = $state(false);
-  let hasSharedDocument = $derived.by(() => {
-    if (!isDocumentMode || !document) return false;
-    return sharesStore.isShared(document.recordUri);
-  });
-
-  // Get reshare count from share if in share mode
-  let displayReshareCount = $derived(share?.reshareCount || reshareCount);
-
-  // Reshare someone else's share (share mode) — creates your own share record.
-  async function doReshare() {
-    if (isResharing || hasReshared || !share || !auth.user) return;
-    isResharing = true;
-    try {
-      await sharesStore.reshare(
-        share.recordUri,
-        share.authorDid,
-        share.itemUrl,
-        share.itemGuid,
-        share.itemTitle,
-        undefined,
-        share.itemDescription,
-        share.content,
-        share.itemImage,
-        share.itemPublishedAt,
-        share.feedUrl
-      );
-    } finally {
-      isResharing = false;
-    }
-  }
-
-  // Share a (non-link-post) document — reuses the reshare record, with the
-  // document recordUri as reshareOf.
-  async function doShareDocument() {
-    if (isSharingDocument || hasSharedDocument || !document || !auth.user) return;
-    isSharingDocument = true;
-    try {
-      await sharesStore.reshare(
-        document.recordUri, // reshareOfUri
-        document.authorDid, // reshareOfAuthorDid
-        document.canonicalUrl || document.path || '', // articleUrl
-        document.recordUri, // articleGuid (use recordUri for dedup)
-        document.title, // articleTitle
-        undefined, // articleAuthor (resolve from DID elsewhere)
-        document.description, // articleDescription
-        displayContent, // articleContent (rendered HTML)
-        document.coverImageCid
-          ? `https://cdn.bsky.app/img/feed_fullsize/plain/${document.authorDid}/${document.coverImageCid}@jpeg`
-          : undefined, // articleImage
-        document.publishedAt, // articlePublishedAt
-        document.siteUri // feedUrl
-      );
-    } finally {
-      isSharingDocument = false;
-    }
-  }
+  let authorHandle = $derived(authorProfile?.handle || document?.authorDid);
 
   function handleHeaderClick() {
     const wasSelected = selected;
     onSelect?.();
     // Note: onRead is NOT called here - selectArticle in +page.svelte handles marking as read
-    // For shares and link posts, fetch the full external article when first selecting
-    if ((isShareMode || isLinkPostMode) && !wasSelected && onFetchContent) {
+    // For link posts, fetch the full external article when first selecting
+    if (isLinkPostMode && !wasSelected && onFetchContent) {
       onFetchContent();
     }
     // Lazily pull Constellation social context for a link post (adornment only).
@@ -370,15 +268,23 @@
   // unshares (and removes the box). The unified logic lives below, after the
   // per-mode primitives it depends on.
 
-  // ── Link-post boost / quote (Phase 3) ──────────────────────────────────────
+  // ── Link-post boost / document quote (Phase 3 / Phase 4) ────────────────────
+  // Sharing a document writes a linkblog entry. A link post can be boosted (a
+  // bare recommend) or quoted (an entry carrying a note); a plain document is
+  // quoted, keyed by the document's own URL. Both quote paths write a
+  // site.standard.document whose repostUri points at the original document.
   let isBoosting = $state(false);
+  let isQuoting = $state(false);
   let isBoosted = $derived(
     isLinkPostMode && document ? linkblogStore.isBoosted(document.recordUri) : false
   );
-  // A quote is just an entry in your own linkblog for this article.
-  let isQuoted = $derived(
-    isLinkPostMode && linkPostUrl ? linkblogStore.isShared(linkPostUrl) : false
+  // The URL under which this document's linkblog entry is keyed: the external
+  // article for a link post, else the document's own canonical URL.
+  let quoteKey = $derived(
+    isDocumentMode ? linkPostUrl || document?.canonicalUrl || document?.path || '' : ''
   );
+  // A quote is an entry in your own linkblog for this document.
+  let isQuoted = $derived(isDocumentMode && quoteKey ? linkblogStore.isShared(quoteKey) : false);
   let socialContext = $derived(
     isLinkPostMode && document ? socialContextStore.get(document.recordUri) : undefined
   );
@@ -397,12 +303,13 @@
     }
   }
 
+  // Write a linkblog quote of the current document (repostUri = the doc's AT URI).
   async function handleQuote(note: string) {
-    if (!document || !linkPostUrl) return;
-    const article: Article = {
+    if (!document || !quoteKey) return;
+    const quoteArticle: Article = {
       subscriptionId: 0,
-      guid: linkPostUrl,
-      url: linkPostUrl,
+      guid: quoteKey,
+      url: quoteKey,
       title: itemTitle,
       author: undefined,
       summary: document.description,
@@ -412,57 +319,52 @@
       publishedAt: document.publishedAt,
       fetchedAt: Date.now(),
     };
-    await linkblogStore.shareLink(article, note, document.recordUri);
+    await linkblogStore.shareLink(quoteArticle, note, document.recordUri);
   }
 
   // ── Unified share + comment + remove (all surfaces) ─────────────────────────
-  // Every share button now shares instantly and opens the comment box. Already
-  // shared? The button reopens the box to edit the note. Each mode maps onto its
-  // own record: plain articles + quotes are linkblog documents; reshares and
-  // shared documents are app.skyreader.social.share records; a bare link-post
-  // share is a boost that a comment upgrades into a quote.
+  // Every share button shares instantly and opens the comment box. Already
+  // shared? The button reopens the box to edit the note. Plain articles + quotes
+  // are linkblog documents; a bare link-post share is a boost that a comment
+  // upgrades into a quote.
 
-  let shareBusy = $derived(isResharing || isBoosting || isSharingDocument);
+  let shareBusy = $derived(isBoosting || isQuoting);
 
   let currentlyShared = $derived.by(() => {
-    if (isShareMode) return hasReshared;
     if (isLinkPostMode) return isQuoted || isBoosted;
-    if (isDocumentMode) return hasSharedDocument;
+    if (isDocumentMode) return isQuoted;
     return isShared;
   });
 
   let currentNote = $derived.by(() => {
-    if (isShareMode) return sharesStore.getShareNote(itemGuid);
-    if (isLinkPostMode) return isQuoted && linkPostUrl ? linkblogStore.getNote(linkPostUrl) : '';
-    if (isDocumentMode && document) return sharesStore.getShareNote(document.recordUri);
+    if (isDocumentMode) return isQuoted && quoteKey ? linkblogStore.getNote(quoteKey) : '';
     return shareNote;
   });
 
   let shareLabel = $derived.by(() => {
     if (shareBusy) return '…';
     if (!currentlyShared) return 'Share';
-    if (isShareMode) return 'Reshared';
     if (isLinkPostMode) return isQuoted ? 'Quoted' : 'Boosted';
+    if (isDocumentMode) return 'Quoted';
     return 'Shared';
   });
 
-  // Social-graph shares (reshare/link-post/document) require sign-in; a plain
-  // article share is gated by whether the page wired up onShare.
-  let showShareAction = $derived(
-    isShareMode || isLinkPostMode || isDocumentMode ? Boolean(auth.user) : true
-  );
-
-  let defaultShareCount = $derived(
-    !isShareMode && !isLinkPostMode && !isDocumentMode && currentlyShared && displayReshareCount > 0
-      ? displayReshareCount
-      : 0
-  );
+  // Document sharing requires sign-in; a plain article share is gated by whether
+  // the page wired up onShare.
+  let showShareAction = $derived(isDocumentMode ? Boolean(auth.user) : true);
 
   // Fire the note-less share for the current mode.
   async function shareNow() {
-    if (isShareMode) return doReshare();
     if (isLinkPostMode) return handleBoost();
-    if (isDocumentMode) return doShareDocument();
+    if (isDocumentMode) {
+      isQuoting = true;
+      try {
+        await handleQuote('');
+      } finally {
+        isQuoting = false;
+      }
+      return;
+    }
     onShare?.(undefined);
   }
 
@@ -479,18 +381,17 @@
   // non-empty comment upgrades it into a quote (crediting the original post).
   // The box stays visible after saving — it's persistent while shared.
   async function applyComment(note: string) {
-    if (isShareMode) {
-      sharesStore.setNote(itemGuid, note);
-    } else if (isLinkPostMode) {
-      if (isQuoted && linkPostUrl) {
-        linkblogStore.setNote(linkPostUrl, note);
+    if (isLinkPostMode) {
+      if (isQuoted && quoteKey) {
+        linkblogStore.setNote(quoteKey, note);
       } else if (note) {
         // Boost → quote: drop the bare recommend, write a linkblog quote instead.
         if (isBoosted && document) await linkblogStore.unboost(document.recordUri);
         await handleQuote(note);
       }
-    } else if (isDocumentMode && document) {
-      sharesStore.setNote(document.recordUri, note);
+    } else if (isDocumentMode) {
+      if (isQuoted && quoteKey) linkblogStore.setNote(quoteKey, note);
+      else await handleQuote(note);
     } else {
       linkblogStore.setNote(itemUrl, note);
     }
@@ -498,13 +399,11 @@
 
   // Remove the share entirely (toggling the Share button off).
   async function removeShare() {
-    if (isShareMode) {
-      await sharesStore.unshare(itemGuid);
-    } else if (isLinkPostMode) {
-      if (isQuoted && linkPostUrl) await linkblogStore.unshare(linkPostUrl);
+    if (isLinkPostMode) {
+      if (isQuoted && quoteKey) await linkblogStore.unshare(quoteKey);
       else if (isBoosted && document) await linkblogStore.unboost(document.recordUri);
-    } else if (isDocumentMode && document) {
-      await sharesStore.unshare(document.recordUri);
+    } else if (isDocumentMode) {
+      if (quoteKey) await linkblogStore.unshare(quoteKey);
     } else {
       onUnshare?.();
     }
@@ -533,18 +432,13 @@
     return Math.max(1, Math.round(wordCount / 200));
   });
 
-  // Compute favicon URL - for shares of documents, feedUrl may be an AT Protocol URI
-  // which getFaviconUrl can't handle, so fall back to itemUrl
+  // Compute favicon URL. For documents whose siteUri is an AT Protocol URI
+  // (which getFaviconUrl can't handle), fall back to the canonical/site URL.
   let faviconUrl = $derived.by(() => {
     // Link posts show the external article's favicon, not the publication icon.
     if (linkPostUrl) return getFaviconUrl(linkPostUrl);
     if (document?.siteIcon) return document.siteIcon;
     if (document?.canonicalUrl) return getFaviconUrl(document.canonicalUrl);
-    // For shares, check if feedUrl is an AT Protocol URI
-    if (share?.feedUrl?.startsWith('at://')) {
-      // Use itemUrl for favicon instead
-      return getFaviconUrl(share.itemUrl);
-    }
     if (displaySiteUrl) return getFaviconUrl(displaySiteUrl);
     return '';
   });
@@ -614,7 +508,6 @@
   let tagMenuOpen = $derived(tagMenuOpenLocal || feedViewStore.tagMenuItemKey === itemGuid);
 
   let itemTagType = $derived.by((): ItemTags['itemType'] => {
-    if (isShareMode) return 'share';
     if (isDocumentMode) return 'document';
     return 'article';
   });
@@ -744,24 +637,7 @@
   class:highlighted
 >
   <div class="article-sticky-header">
-    {#if isShareMode && share}
-      <div class="share-attribution">
-        <img src={logo} alt="" class="attribution-icon" />
-        shared by
-        <button
-          class="share-author-link"
-          onclick={(e) => {
-            e.stopPropagation();
-            sidebarStore.openAddFeedModalForDid(share.authorDid);
-          }}>@{authorHandle}</button
-        >
-        {#if displayReshareCount > 0}
-          <span class="attribution-reshare-count" title="{displayReshareCount} reshares"
-            >({displayReshareCount})</span
-          >
-        {/if}
-      </div>
-    {:else if isLinkPostMode && document}
+    {#if isLinkPostMode && document}
       <div class="share-attribution">
         <img src={logo} alt="" class="attribution-icon" />
         linked by
@@ -921,10 +797,7 @@
             aria-pressed={currentlyShared}
           >
             <span class="action-icon"><Icon name="share" size={16} /></span><span
-              class="action-label"
-              >{shareLabel}{#if defaultShareCount > 0}<span class="reshare-count"
-                  >({defaultShareCount})</span
-                >{/if}</span
+              class="action-label">{shareLabel}</span
             >
           </button>
         {/if}
@@ -1157,12 +1030,6 @@
   .share-author-link:hover {
     color: var(--color-primary);
     text-decoration: underline;
-  }
-
-  .attribution-reshare-count {
-    font-size: 0.7rem;
-    color: var(--color-text-secondary);
-    margin-left: 0.25rem;
   }
 
   /* Link-post social context line (Constellation). Quiet, text-first. */
@@ -1607,18 +1474,9 @@
     color: var(--color-primary, #0066cc);
   }
 
-  .action-btn.reshared {
-    color: var(--color-success, #22c55e);
-  }
-
   .action-btn:disabled {
     cursor: default;
     opacity: 0.7;
-  }
-
-  .reshare-count {
-    font-size: 0.75rem;
-    margin-left: 0.25rem;
   }
 
   .action-btn.show-more-btn,

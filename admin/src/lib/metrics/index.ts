@@ -1,10 +1,9 @@
 import type { MetricDefinition, MetricValue } from '$lib/types';
 import { userMetrics } from './users';
 import { feedMetrics } from './feeds';
-import { shareMetrics } from './shares';
 import { systemMetrics } from './system';
 
-const allMetrics: MetricDefinition[] = [...userMetrics, ...feedMetrics, ...shareMetrics, ...systemMetrics];
+const allMetrics: MetricDefinition[] = [...userMetrics, ...feedMetrics, ...systemMetrics];
 
 export interface MetricGroup {
 	category: string;
@@ -33,7 +32,7 @@ export async function loadAllMetrics(db: D1Database): Promise<MetricGroup[]> {
 		grouped.set(r.category, list);
 	}
 
-	const categoryOrder = ['Users', 'Feeds', 'Shares', 'System'];
+	const categoryOrder = ['Users', 'Feeds', 'System'];
 	return categoryOrder
 		.filter((c) => grouped.has(c))
 		.map((c) => ({ category: c, metrics: grouped.get(c)! }));

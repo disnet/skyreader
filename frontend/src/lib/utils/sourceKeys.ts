@@ -1,5 +1,5 @@
 // Source key utilities for unified source filter model
-// Format: "rss~{rkey}", "{did}~shares", "{did}~documents"
+// Format: "rss~{rkey}", "{did}~documents"
 
 const SEP = '~';
 
@@ -9,10 +9,6 @@ export function rssSourceKey(rkey: string): string {
   return `rss${SEP}${rkey}`;
 }
 
-export function sharesSourceKey(did: string): string {
-  return `${did}${SEP}shares`;
-}
-
 export function documentsSourceKey(did: string): string {
   return `${did}${SEP}documents`;
 }
@@ -20,7 +16,7 @@ export function documentsSourceKey(did: string): string {
 // --- Parsing ---
 
 export interface ParsedSourceKey {
-  kind: string; // 'rss', 'shares', 'documents', etc.
+  kind: string; // 'rss', 'documents', etc.
   id: string; // subscription ID for RSS, DID for account sources
 }
 
@@ -34,7 +30,7 @@ export function parseSourceKey(key: string): ParsedSourceKey {
   if (prefix === 'rss') {
     return { kind: 'rss', id: suffix };
   }
-  // Account sources: "{did}~shares", "{did}~documents"
+  // Account sources: "{did}~documents"
   return { kind: suffix, id: prefix };
 }
 
@@ -42,10 +38,6 @@ export function parseSourceKey(key: string): ParsedSourceKey {
 
 export function isRssSource(key: string): boolean {
   return key.startsWith(`rss${SEP}`);
-}
-
-export function isSharesSource(key: string): boolean {
-  return key.endsWith(`${SEP}shares`);
 }
 
 export function isDocumentsSource(key: string): boolean {
@@ -71,9 +63,6 @@ export function subscriptionSourceKey(sub: Subscription): string | null {
   if (!sub.sourceType || sub.sourceType === 'rss') {
     return rssSourceKey(sub.rkey);
   }
-  if (sub.sourceType === 'atproto.shares' && sub.subjectDid) {
-    return sharesSourceKey(sub.subjectDid);
-  }
   if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
     return documentsSourceKey(sub.subjectDid);
   }
@@ -83,7 +72,6 @@ export function subscriptionSourceKey(sub: Subscription): string | null {
 // --- Account source kinds (for UI iteration) ---
 
 export const ACCOUNT_SOURCE_KINDS = [
-  { kind: 'shares', label: 'Shares', keyFn: sharesSourceKey },
   { kind: 'documents', label: 'Articles', keyFn: documentsSourceKey },
 ] as const;
 
@@ -91,7 +79,6 @@ export const ACCOUNT_SOURCE_KINDS = [
 
 export interface LegacyViewFields {
   showArticles?: boolean;
-  showShares?: boolean;
   showDocuments?: boolean;
   feedMode?: 'none' | 'all' | 'include' | 'exclude';
   feedIds?: number[];
@@ -121,7 +108,6 @@ export function migrateLegacyView(
 ): MigratedSourceFilter {
   const {
     showArticles = true,
-    showShares = true,
     showDocuments = true,
     feedMode = 'all',
     feedIds = [],
@@ -129,9 +115,9 @@ export function migrateLegacyView(
     accountDids = [],
   } = view;
 
-  // Effective modes (respect showArticles/showShares/showDocuments)
+  // Effective modes (respect showArticles/showDocuments)
   const effFeedMode = !showArticles ? 'none' : feedMode;
-  const effAccountMode = !showShares && !showDocuments ? 'none' : accountMode;
+  const effAccountMode = !showDocuments ? 'none' : accountMode;
 
   // Both disabled → include with empty keys (shows nothing)
   if (effFeedMode === 'none' && effAccountMode === 'none') {
@@ -139,7 +125,7 @@ export function migrateLegacyView(
   }
 
   // Both "all" with all content types → truly all
-  if (effFeedMode === 'all' && effAccountMode === 'all' && showShares && showDocuments) {
+  if (effFeedMode === 'all' && effAccountMode === 'all' && showDocuments) {
     return { sourceMode: 'all', sourceKeys: [] };
   }
 
@@ -168,19 +154,16 @@ export function migrateLegacyView(
   // Collect account sources
   if (effAccountMode === 'all') {
     for (const did of allDids) {
-      if (showShares) keys.push(sharesSourceKey(did));
       if (showDocuments) keys.push(documentsSourceKey(did));
     }
   } else if (effAccountMode === 'include') {
     for (const did of accountDids) {
-      if (showShares) keys.push(sharesSourceKey(did));
       if (showDocuments) keys.push(documentsSourceKey(did));
     }
   } else if (effAccountMode === 'exclude') {
     const excludedSet = new Set(accountDids);
     for (const did of allDids) {
       if (excludedSet.has(did)) continue;
-      if (showShares) keys.push(sharesSourceKey(did));
       if (showDocuments) keys.push(documentsSourceKey(did));
     }
   }

@@ -40,16 +40,13 @@
   let selectedAccount = $state<BlueskySearchResult | null>(null);
   let isDetecting = $state(false);
   let publications = $state<Publication[]>([]);
-  let shareCount = $state(0);
   let freestandingDocumentCount = $state(0);
   let selectedPublications = $state<Set<string>>(new Set());
-  let sharesSelected = $state(false);
   let freestandingDocsSelected = $state(false);
   let isSubscribing = $state(false);
 
   // Unsubscribe tracking: when a subscribed item is de-selected, it's added here
   let unsubscribePublicationUris = $state<Set<string>>(new Set());
-  let unsubscribeShares = $state(false);
   let unsubscribeFreestandingDocs = $state(false);
 
   // Standard subscriptions state
@@ -88,9 +85,7 @@
     const keys = new Set<string>();
     for (const sub of subscriptionsStore.subscriptions) {
       if (sub.subjectDid === selectedAccount.did) {
-        if (sub.sourceType === 'atproto.shares') {
-          keys.add('shares');
-        } else if (sub.sourceType === 'atproto.documents') {
+        if (sub.sourceType === 'atproto.documents') {
           if (sub.feedUrl === '__freestanding__') {
             keys.add('__freestanding__');
           } else {
@@ -109,9 +104,7 @@
     for (const sub of subscriptionsStore.subscriptions) {
       if (sub.subjectDid !== selectedAccount.did) continue;
       if (sub.id === undefined) continue;
-      if (sub.sourceType === 'atproto.shares') {
-        map.set('shares', sub.id);
-      } else if (sub.sourceType === 'atproto.documents') {
+      if (sub.sourceType === 'atproto.documents') {
         if (sub.feedUrl === '__freestanding__') {
           map.set('__freestanding__', sub.id);
         } else if (sub.feedUrl) {
@@ -127,15 +120,10 @@
   let freestandingActive = $derived(
     freestandingSubbed ? !unsubscribeFreestandingDocs : freestandingDocsSelected
   );
-  let sharesSubbed = $derived(subscribedKeys.has('shares'));
-  let sharesActive = $derived(sharesSubbed ? !unsubscribeShares : sharesSelected);
-
   let changeCount = $derived(
     selectedPublications.size +
-      (sharesSelected ? 1 : 0) +
       (freestandingDocsSelected ? 1 : 0) +
       unsubscribePublicationUris.size +
-      (unsubscribeShares ? 1 : 0) +
       (unsubscribeFreestandingDocs ? 1 : 0)
   );
 
@@ -155,14 +143,11 @@
     selectedAccount = null;
     isDetecting = false;
     publications = [];
-    shareCount = 0;
     freestandingDocumentCount = 0;
     selectedPublications = new Set();
-    sharesSelected = false;
     freestandingDocsSelected = false;
     isSubscribing = false;
     unsubscribePublicationUris = new Set();
-    unsubscribeShares = false;
     unsubscribeFreestandingDocs = false;
     if (searchTimeout) clearTimeout(searchTimeout);
   }
@@ -209,19 +194,15 @@
     isDetecting = true;
     error = null;
     publications = [];
-    shareCount = 0;
     freestandingDocumentCount = 0;
     selectedPublications = new Set();
-    sharesSelected = false;
     freestandingDocsSelected = false;
     unsubscribePublicationUris = new Set();
-    unsubscribeShares = false;
     unsubscribeFreestandingDocs = false;
 
     try {
       const result = await api.detectContent(account.did);
       publications = result.publications;
-      shareCount = result.shareCount;
       freestandingDocumentCount = result.freestandingDocumentCount;
 
       // For a new account, default to selecting everything discoverable.
@@ -230,7 +211,6 @@
       const hasExistingSubscriptions = subscribedKeys.size > 0;
       if (!hasExistingSubscriptions) {
         selectedPublications = new Set(result.publications.map((pub) => pub.uri));
-        sharesSelected = result.shareCount > 0;
         freestandingDocsSelected = result.freestandingDocumentCount > 0;
       }
     } catch (e) {
@@ -244,13 +224,10 @@
     step = 'search';
     selectedAccount = null;
     publications = [];
-    shareCount = 0;
     freestandingDocumentCount = 0;
     selectedPublications = new Set();
-    sharesSelected = false;
     freestandingDocsSelected = false;
     unsubscribePublicationUris = new Set();
-    unsubscribeShares = false;
     unsubscribeFreestandingDocs = false;
     error = null;
   }
@@ -274,14 +251,6 @@
       next.add(uri);
     }
     selectedPublications = next;
-  }
-
-  function toggleShares() {
-    if (subscribedKeys.has('shares')) {
-      unsubscribeShares = !unsubscribeShares;
-      return;
-    }
-    sharesSelected = !sharesSelected;
   }
 
   function toggleFreestandingDocs() {
@@ -479,10 +448,6 @@
 
     try {
       // Unsubscribe from de-selected items first
-      if (unsubscribeShares) {
-        const id = subscribedSubIds.get('shares');
-        if (id !== undefined) await subscriptionsStore.remove(id);
-      }
       if (unsubscribeFreestandingDocs) {
         const id = subscribedSubIds.get('__freestanding__');
         if (id !== undefined) await subscriptionsStore.remove(id);
@@ -493,7 +458,7 @@
       }
 
       // Subscribe to newly selected items
-      if (selectedPublications.size > 0 || sharesSelected || freestandingDocsSelected) {
+      if (selectedPublications.size > 0 || freestandingDocsSelected) {
         if (!subscriptionsStore.canAddMore) {
           error = `Subscription limit reached (${subscriptionsStore.maxSubscriptions} max)`;
           return;
@@ -532,18 +497,6 @@
           }
         );
         if (!firstAddedId) firstAddedId = docsId;
-      }
-
-      if (sharesSelected && subscriptionsStore.canAddMore) {
-        const sharesId = await subscriptionsStore.add(
-          undefined,
-          `Shares from @${selectedAccount.handle}`,
-          {
-            sourceType: 'atproto.shares',
-            subjectDid: selectedAccount.did,
-          }
-        );
-        if (!firstAddedId) firstAddedId = sharesId;
       }
 
       socialStore.loadFeed(true);
@@ -601,7 +554,7 @@
   {#if step === 'search'}
     <div class="modal-content">
       <p class="modal-desc">
-        Follow an Atmosphere account (Bluesky, Blacksky, npmx, etc.) to see their shared articles
+        Follow an Atmosphere account (Bluesky, Blacksky, npmx, etc.) to see their published posts
         and publications.
       </p>
       {#if isAtLimit}
@@ -699,28 +652,6 @@
             {#if freestandingSubbed && unsubscribeFreestandingDocs}
               <span class="unsubscribing-badge">Removing</span>
             {:else if freestandingSubbed}
-              <span class="subscribed-badge">Subscribed</span>
-            {/if}
-          </button>
-
-          <button
-            class="content-item"
-            class:selected={sharesActive}
-            class:is-subscribed={sharesSubbed}
-            onclick={toggleShares}
-          >
-            <span class="checkbox" class:checked={sharesActive}>
-              {#if sharesActive}&#10003;{/if}
-            </span>
-            <span class="content-info">
-              <span class="content-name"
-                >Shared articles <span class="content-count">({shareCount})</span></span
-              >
-              <span class="content-desc">Articles shared by @{selectedAccount.handle}</span>
-            </span>
-            {#if sharesSubbed && unsubscribeShares}
-              <span class="unsubscribing-badge">Removing</span>
-            {:else if sharesSubbed}
               <span class="subscribed-badge">Subscribed</span>
             {/if}
           </button>

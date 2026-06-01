@@ -2,11 +2,8 @@ import Dexie, { type Table } from 'dexie';
 import type {
   Subscription,
   Article,
-  ShareReadPosition,
   SocialReadPosition,
   SocialDocument,
-  SocialShare,
-  UserShare,
   LinkblogShare,
   LinkblogBoost,
   FilteredView,
@@ -19,15 +16,7 @@ import type {
 export interface SyncQueueEntry {
   id?: number;
   operation: 'create' | 'update' | 'delete';
-  collection:
-    | 'reading'
-    | 'shares'
-    | 'shareReading'
-    | 'socialReading'
-    | 'follows'
-    | 'label'
-    | 'saved'
-    | 'integration';
+  collection: 'reading' | 'socialReading' | 'follows' | 'label' | 'saved' | 'integration';
   key: string; // Deduplication key (e.g., articleGuid, rkey)
   payload: string; // JSON-serialized data
   timestamp: number;
@@ -56,11 +45,8 @@ export interface IntegrationCollectionCacheEntry {
 class SkyreaderDatabase extends Dexie {
   subscriptions!: Table<Subscription>;
   articles!: Table<Article>;
-  shareReadPositions!: Table<ShareReadPosition>;
   socialReadPositions!: Table<SocialReadPosition>;
-  socialShares!: Table<SocialShare>;
   socialDocuments!: Table<SocialDocument>;
-  userShares!: Table<UserShare>;
   linkblogShares!: Table<LinkblogShare>;
   linkblogBoosts!: Table<LinkblogBoost>;
   syncQueue!: Table<SyncQueueEntry>;
@@ -159,9 +145,18 @@ class SkyreaderDatabase extends Dexie {
         socialReadPositions: '++id, rkey, type, itemUri, authorDid',
       })
       .upgrade(async (tx) => {
-        // Migrate existing shareReadPositions to socialReadPositions with type='share'
+        // Migrate existing shareReadPositions to socialReadPositions with type='share'.
+        // (The legacy share-read-position shape, since removed from the live types.)
+        type LegacyShareReadPosition = {
+          rkey?: string;
+          shareUri: string;
+          shareAuthorDid: string;
+          itemUrl: string;
+          itemTitle?: string;
+          readAt: string;
+        };
         const sharePositions = await tx.table('shareReadPositions').toArray();
-        const migrated = sharePositions.map((p: ShareReadPosition) => ({
+        const migrated = sharePositions.map((p: LegacyShareReadPosition) => ({
           rkey: p.rkey,
           type: 'share' as const,
           itemUri: p.shareUri,
@@ -356,6 +351,14 @@ class SkyreaderDatabase extends Dexie {
     this.version(31).stores({
       linkblogBoosts: '++id, documentUri, rkey',
     });
+
+    // Phase 4 teardown: the legacy share system is gone. Drop its three tables.
+    // (Old records, if any, are abandoned — the app no longer reads shares.)
+    this.version(32).stores({
+      socialShares: null,
+      userShares: null,
+      shareReadPositions: null,
+    });
   }
 }
 
@@ -366,11 +369,8 @@ export async function clearAllData(): Promise<void> {
   await Promise.all([
     db.subscriptions.clear(),
     db.articles.clear(),
-    db.shareReadPositions.clear(),
     db.socialReadPositions.clear(),
-    db.socialShares.clear(),
     db.socialDocuments.clear(),
-    db.userShares.clear(),
     db.linkblogShares.clear(),
     db.linkblogBoosts.clear(),
     db.syncQueue.clear(),

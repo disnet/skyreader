@@ -2,7 +2,6 @@ import type { MetricDefinition } from '$lib/types';
 
 const rowCountTables = [
 	{ table: 'users', label: 'Users' },
-	{ table: 'shares', label: 'Shares' },
 	{ table: 'feed_metadata', label: 'Feeds' },
 	{ table: 'feed_items', label: 'Feed Items' },
 	{ table: 'subscriptions_cache', label: 'Subscriptions' }

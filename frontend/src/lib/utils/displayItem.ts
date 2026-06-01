@@ -19,10 +19,10 @@ export interface NormalizedDisplayItem {
   publishedAt: string;
   displayContent: string;
   faviconUrl: string;
-  /** DID of the author for shares/documents, undefined for articles */
+  /** DID of the author for documents, undefined for articles */
   authorDid: string | undefined;
   /** Label type for itemLabels operations */
-  labelItemType: 'article' | 'share' | 'document' | 'userShare' | 'saved';
+  labelItemType: 'article' | 'document' | 'saved';
 }
 
 /**
@@ -43,13 +43,12 @@ export function normalizeDisplayItem(
     displayContent: getDisplayContent(item),
     faviconUrl: getFavicon(item, sub),
     authorDid: getAuthorDid(item),
-    labelItemType: item.type === 'userShare' ? 'userShare' : item.type,
+    labelItemType: item.type,
   };
 }
 
 function getTitle(item: FeedDisplayItem): string {
   if (item.type === 'article') return item.item.title || item.item.url;
-  if (item.type === 'share') return item.item.itemTitle || item.item.itemUrl;
   if (item.type === 'document') return item.item.title || item.item.recordUri;
   if (item.type === 'saved') return item.item.title || item.item.url;
   return '';
@@ -57,7 +56,6 @@ function getTitle(item: FeedDisplayItem): string {
 
 function getUrl(item: FeedDisplayItem): string {
   if (item.type === 'article') return item.item.url;
-  if (item.type === 'share') return item.item.itemUrl;
   // Link posts resolve to the external article; normal docs to their permalink.
   if (item.type === 'document') return getDocumentEffectiveUrl(item.item);
   if (item.type === 'saved') return item.item.url;
@@ -66,7 +64,6 @@ function getUrl(item: FeedDisplayItem): string {
 
 function getPublishedAt(item: FeedDisplayItem): string {
   if (item.type === 'article') return item.item.publishedAt;
-  if (item.type === 'share') return item.item.itemPublishedAt || item.item.createdAt;
   if (item.type === 'document') return item.item.publishedAt;
   if (item.type === 'saved') return item.item.publishedAt || item.item.savedAt;
   return '';
@@ -75,9 +72,6 @@ function getPublishedAt(item: FeedDisplayItem): string {
 function getDisplayContent(item: FeedDisplayItem): string {
   if (item.type === 'article') {
     return item.item.content || item.item.summary || '';
-  }
-  if (item.type === 'share') {
-    return item.item.content || item.item.itemDescription || '';
   }
   if (item.type === 'document') {
     const doc = item.item;
@@ -113,14 +107,12 @@ function getFavicon(item: FeedDisplayItem, sub?: Subscription): string {
     if (item.item.siteIcon) return item.item.siteIcon;
     if (item.item.canonicalUrl) return getFaviconUrl(item.item.canonicalUrl);
   }
-  if (item.type === 'share') return getFaviconUrl(item.item.itemUrl);
   if (item.type === 'saved') return getFaviconUrl(item.item.url);
   const url = getUrl(item);
   return url ? getFaviconUrl(url) : '';
 }
 
 function getAuthorDid(item: FeedDisplayItem): string | undefined {
-  if (item.type === 'share') return item.item.authorDid;
   if (item.type === 'document') return item.item.authorDid;
   return undefined;
 }
@@ -134,10 +126,6 @@ export function getAuthorLabel(
   authorProfile: { handle?: string } | null
 ): string {
   if (item.type === 'article' && item.item.author) return `by ${item.item.author}`;
-  if (item.type === 'share') {
-    const handle = authorProfile?.handle || item.item.authorDid;
-    return `shared by @${handle}`;
-  }
   if (item.type === 'document') {
     const handle = authorProfile?.handle || item.item.authorDid;
     return `by @${handle}`;
@@ -173,13 +161,6 @@ export function extractSembleMetadata(item: FeedDisplayItem): SembleMetadata {
         author: item.item.author,
         publishedAt: item.item.publishedAt,
       };
-    case 'share':
-      return {
-        url: item.item.itemUrl,
-        title: item.item.itemTitle,
-        description: item.item.itemDescription,
-        publishedAt: item.item.itemPublishedAt,
-      };
     case 'document':
       return {
         url: getDocumentEffectiveUrl(item.item),
@@ -194,14 +175,6 @@ export function extractSembleMetadata(item: FeedDisplayItem): SembleMetadata {
         description: item.item.description ?? undefined,
         author: item.item.author ?? undefined,
         publishedAt: item.item.publishedAt ?? undefined,
-      };
-    case 'userShare':
-      return {
-        url: item.article.url,
-        title: item.article.title,
-        description: item.article.summary,
-        author: item.article.author,
-        publishedAt: item.article.publishedAt,
       };
   }
 }

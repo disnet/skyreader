@@ -1,6 +1,5 @@
 import type {
   FeedItem,
-  GroupedShare,
   IntegrationStatus,
   ItemLabel,
   ItemLabelType,
@@ -8,11 +7,9 @@ import type {
   LinkblogPublication,
   MarginCollection,
   ParsedFeed,
-  ReshareActivity,
   SembleCollection,
   SocialContextResult,
   SocialDocument,
-  SocialShare,
   User,
 } from '$lib/types';
 
@@ -319,85 +316,6 @@ class ApiClient {
     return this.fetch(`/api/v2/feeds/discover?url=${encodeURIComponent(url)}`);
   }
 
-  // Social
-  async getSocialFeed(
-    cursor?: string,
-    limit = 50,
-    includeDocuments = true
-  ): Promise<{
-    shares: SocialShare[];
-    documents?: SocialDocument[];
-    cursor: string | null;
-  }> {
-    const params = new URLSearchParams({ limit: limit.toString() });
-    if (cursor) params.set('cursor', cursor);
-    if (includeDocuments) params.set('include', 'documents');
-    return this.fetch(`/api/social/feed?${params}`);
-  }
-
-  async getGroupedSocialFeed(
-    cursor?: string,
-    limit = 30
-  ): Promise<{
-    groups: GroupedShare[];
-    cursor: string | null;
-  }> {
-    const params = new URLSearchParams({ limit: limit.toString() });
-    if (cursor) params.set('cursor', cursor);
-    return this.fetch(`/api/social/feed/grouped?${params}`);
-  }
-
-  async getReshareActivity(
-    cursor?: string,
-    limit = 50
-  ): Promise<{
-    activity: ReshareActivity[];
-    cursor: string | null;
-  }> {
-    const params = new URLSearchParams({ limit: limit.toString() });
-    if (cursor) params.set('cursor', cursor);
-    return this.fetch(`/api/activity/reshares?${params}`);
-  }
-
-  async getPopularShares(
-    period: 'day' | 'week' | 'month' = 'week',
-    cursor?: string,
-    limit = 50
-  ): Promise<{
-    shares: (SocialShare & { shareCount: number })[];
-    cursor: string | null;
-  }> {
-    const params = new URLSearchParams({ period, limit: limit.toString() });
-    if (cursor) params.set('cursor', cursor);
-    return this.fetch(`/api/social/popular?${params}`);
-  }
-
-  // User's own shares
-  async getMyShares(): Promise<{
-    shares: Array<{
-      recordUri: string;
-      recordCid: string;
-      feedUrl?: string;
-      articleGuid?: string;
-      articleUrl: string;
-      articleTitle?: string;
-      articleAuthor?: string;
-      articleDescription?: string;
-      articleContent?: string;
-      articleImage?: string;
-      articlePublishedAt?: string;
-      note?: string;
-      createdAt: string;
-      reshareOf?: {
-        uri: string;
-        authorDid: string | null;
-      };
-      reshareCount?: number;
-    }>;
-  }> {
-    return this.fetch('/api/shares/my');
-  }
-
   // Content detection
   async detectContent(did: string): Promise<{
     did: string;
@@ -408,7 +326,6 @@ class ApiClient {
       description?: string;
       iconUrl?: string;
     }>;
-    shareCount: number;
     freestandingDocumentCount: number;
   }> {
     return this.fetch(`/api/social/detect-content?did=${encodeURIComponent(did)}`);
@@ -501,45 +418,6 @@ class ApiClient {
     });
   }
 
-  // Shares
-  async createShare(data: {
-    rkey: string;
-    itemUrl: string;
-    feedUrl?: string;
-    itemGuid?: string;
-    itemTitle?: string;
-    itemAuthor?: string;
-    itemDescription?: string;
-    content?: string;
-    itemImage?: string;
-    itemPublishedAt?: string;
-    note?: string;
-    tags?: string[];
-    reshareOf?: {
-      uri: string;
-      authorDid: string;
-    };
-  }): Promise<{ rkey: string; uri: string }> {
-    return this.fetch('/api/shares', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async deleteShare(rkey: string): Promise<{ success: boolean }> {
-    return this.fetch(`/api/shares/${rkey}`, {
-      method: 'DELETE',
-    });
-  }
-
-  // Update the note on an existing share (empty string clears it).
-  async updateShareNote(rkey: string, note: string): Promise<{ success: boolean; uri: string }> {
-    return this.fetch(`/api/shares/${rkey}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ note }),
-    });
-  }
-
   // Linkblog — sharing as a portable site.standard.document (Phase 1)
   async createLinkblogShare(data: {
     rkey: string;
@@ -620,10 +498,10 @@ class ApiClient {
   }
 
   // Unified social read positions (new API)
-  async getSocialReadPositions(type?: 'share' | 'document'): Promise<{
+  async getSocialReadPositions(type?: 'document'): Promise<{
     positions: Array<{
       rkey: string;
-      type: 'share' | 'document';
+      type: 'document';
       itemUri: string;
       authorDid: string;
       itemUrl: string | null;
@@ -636,7 +514,7 @@ class ApiClient {
   }
 
   async markSocialItemAsRead(data: {
-    type: 'share' | 'document';
+    type: 'document';
     rkey: string;
     itemUri: string;
     authorDid: string;
@@ -651,7 +529,7 @@ class ApiClient {
 
   async markSocialItemsAsReadBulk(
     items: Array<{
-      type: 'share' | 'document';
+      type: 'document';
       rkey: string;
       itemUri: string;
       authorDid: string;
@@ -669,39 +547,6 @@ class ApiClient {
     return this.fetch(`/api/social/read-positions/${rkey}`, {
       method: 'DELETE',
     });
-  }
-
-  // Share read positions (legacy API - kept for backwards compatibility)
-  async markShareAsRead(data: {
-    rkey: string;
-    shareUri: string;
-    shareAuthorDid: string;
-    itemUrl?: string;
-    itemTitle?: string;
-  }): Promise<{ rkey: string; uri: string }> {
-    return this.fetch('/api/social/share-read', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async markShareAsUnread(rkey: string): Promise<{ success: boolean }> {
-    return this.fetch(`/api/social/share-read/${rkey}`, {
-      method: 'DELETE',
-    });
-  }
-
-  async getShareReadPositions(): Promise<{
-    positions: Array<{
-      rkey: string;
-      shareUri: string;
-      shareAuthorDid: string;
-      itemUrl: string | null;
-      itemTitle: string | null;
-      readAt: string;
-    }>;
-  }> {
-    return this.fetch('/api/social/share-read');
   }
 
   // List records (still used for syncFromBackend)
@@ -947,7 +792,7 @@ class ApiClient {
     rkey: string,
     options?: {
       fromFeed?: boolean;
-      source?: 'url' | 'feed' | 'share' | 'document';
+      source?: 'url' | 'feed' | 'document';
       itemGuid?: string;
       title?: string;
       author?: string;
@@ -972,7 +817,7 @@ class ApiClient {
     wordCount: number | null;
     publishedAt: string | null;
     savedAt: string;
-    source?: 'url' | 'feed' | 'share' | 'document';
+    source?: 'url' | 'feed' | 'document';
     itemGuid?: string;
   }> {
     return this.fetch('/api/saved', {
@@ -996,7 +841,7 @@ class ApiClient {
       wordCount: number | null;
       publishedAt: string | null;
       savedAt: string;
-      source?: 'url' | 'feed' | 'share' | 'document';
+      source?: 'url' | 'feed' | 'document';
       itemGuid?: string;
     }>;
   }> {

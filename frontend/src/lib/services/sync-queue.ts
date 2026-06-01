@@ -4,14 +4,7 @@ import { api } from './api';
 const MAX_RETRIES = 5;
 
 export type SyncOperation = 'create' | 'update' | 'delete';
-export type SyncCollection =
-  | 'reading'
-  | 'shares'
-  | 'shareReading'
-  | 'socialReading'
-  | 'label'
-  | 'saved'
-  | 'integration';
+export type SyncCollection = 'reading' | 'socialReading' | 'label' | 'saved' | 'integration';
 
 // Payload types for each collection
 export interface ReadingPayload {
@@ -20,34 +13,8 @@ export interface ReadingPayload {
   articleTitle?: string;
 }
 
-export interface SharePayload {
-  rkey: string;
-  subscriptionRkey?: string;
-  feedUrl: string;
-  articleGuid: string;
-  articleUrl: string;
-  articleTitle?: string;
-  articleAuthor?: string;
-  articleContent?: string;
-  articleDescription?: string;
-  articleImage?: string;
-  articlePublishedAt?: string;
-  reshareOf?: {
-    uri: string;
-    authorDid: string;
-  };
-}
-
-export interface ShareReadingPayload {
-  rkey: string;
-  shareUri: string;
-  shareAuthorDid: string;
-  itemUrl?: string;
-  itemTitle?: string;
-}
-
 export interface SocialReadingPayload {
-  type: 'share' | 'document';
+  type: 'document';
   rkey: string;
   itemUri: string;
   authorDid: string;
@@ -91,8 +58,6 @@ export interface IntegrationPayload {
 
 type SyncPayload =
   | ReadingPayload
-  | SharePayload
-  | ShareReadingPayload
   | SocialReadingPayload
   | LabelPayload
   | SavedPayload
@@ -415,12 +380,6 @@ class SyncQueue {
       case 'reading':
         await this.executeReadingOperation(entry.operation, payload as ReadingPayload);
         break;
-      case 'shares':
-        await this.executeShareOperation(entry.operation, payload as SharePayload);
-        break;
-      case 'shareReading':
-        await this.executeShareReadingOperation(entry.operation, payload as ShareReadingPayload);
-        break;
       case 'socialReading':
         await this.executeSocialReadingOperation(entry.operation, payload as SocialReadingPayload);
         break;
@@ -451,63 +410,6 @@ class SyncQueue {
         break;
       case 'delete':
         await api.markAsUnread(payload.articleGuid);
-        break;
-    }
-  }
-
-  private async executeShareOperation(
-    operation: SyncOperation,
-    payload: SharePayload
-  ): Promise<void> {
-    switch (operation) {
-      case 'create':
-        await api.createShare({
-          rkey: payload.rkey,
-          itemUrl: payload.articleUrl,
-          feedUrl: payload.feedUrl || undefined,
-          itemGuid: payload.articleGuid || undefined,
-          itemTitle: payload.articleTitle,
-          itemAuthor: payload.articleAuthor,
-          itemDescription: payload.articleDescription
-            ? payload.articleDescription.slice(0, 1000)
-            : undefined,
-          content: payload.articleContent,
-          itemImage:
-            payload.articleImage &&
-            (payload.articleImage.startsWith('http://') ||
-              payload.articleImage.startsWith('https://'))
-              ? payload.articleImage
-              : undefined,
-          itemPublishedAt: payload.articlePublishedAt,
-          reshareOf: payload.reshareOf,
-        });
-        break;
-      case 'delete':
-        await api.deleteShare(payload.rkey);
-        break;
-    }
-  }
-
-  private async executeShareReadingOperation(
-    operation: SyncOperation,
-    payload: ShareReadingPayload
-  ): Promise<void> {
-    switch (operation) {
-      case 'create':
-        await api.markShareAsRead({
-          rkey: payload.rkey,
-          shareUri: payload.shareUri,
-          shareAuthorDid: payload.shareAuthorDid,
-          itemUrl:
-            payload.itemUrl &&
-            (payload.itemUrl.startsWith('http://') || payload.itemUrl.startsWith('https://'))
-              ? payload.itemUrl
-              : undefined,
-          itemTitle: payload.itemTitle || undefined,
-        });
-        break;
-      case 'delete':
-        await api.markShareAsUnread(payload.rkey);
         break;
     }
   }
@@ -545,7 +447,7 @@ class SyncQueue {
       case 'create':
         await api.addLabel({
           itemKey: payload.itemKey,
-          itemType: payload.itemType as 'article' | 'share' | 'document' | 'userShare',
+          itemType: payload.itemType as 'article' | 'document',
           label: payload.label,
           props: payload.props,
         });
@@ -564,7 +466,7 @@ class SyncQueue {
       case 'create':
         await api.saveFromUrl(payload.url, payload.rkey, {
           fromFeed: payload.fromFeed,
-          source: payload.source as 'url' | 'feed' | 'share' | 'document' | undefined,
+          source: payload.source as 'url' | 'feed' | 'document' | undefined,
           itemGuid: payload.itemGuid,
           title: payload.title,
           author: payload.author,

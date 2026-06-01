@@ -1,12 +1,8 @@
 // Lexicon schemas - imported statically for Cloudflare Workers
 import feedSubscription from '../../lexicons/app/skyreader/feed/subscription.json';
-import socialShare from '../../lexicons/app/skyreader/social/share.json';
-import socialShareReadPosition from '../../lexicons/app/skyreader/social/shareReadPosition.json';
 
 const lexicons: Record<string, object> = {
   'app/skyreader/feed/subscription.json': feedSubscription,
-  'app/skyreader/social/share.json': socialShare,
-  'app/skyreader/social/shareReadPosition.json': socialShareReadPosition,
 };
 
 export function handleLexicon(request: Request): Response {

@@ -198,12 +198,10 @@
   $effect(() => {
     const url = $page.url;
     const typeParam = url.searchParams.get('type');
-    const contentType: 'shares' | 'documents' | null =
-      typeParam === 'shares' || typeParam === 'documents' ? typeParam : null;
+    const contentType: 'documents' | null = typeParam === 'documents' ? typeParam : null;
     const filters = {
       feed: url.searchParams.get('feed'),
       saved: url.searchParams.get('saved'),
-      shared: url.searchParams.get('shared'),
       sharer: url.searchParams.get('sharer'),
       following: url.searchParams.get('following'),
       feeds: null,
@@ -274,17 +272,9 @@
       return sub?.customTitle || sub?.title || 'Feed';
     }
     if (feedViewStore.savedFilter) return 'Saved';
-    if (feedViewStore.sharedFilter) return 'Shared';
     if (feedViewStore.followingFilter) return 'Following';
     if (feedViewStore.sharerFilter) {
-      const baseName = sharerProfile?.displayName || sharerProfile?.handle || 'Shared';
-      if (feedViewStore.contentTypeFilter === 'shares') {
-        return `${baseName} - Shares`;
-      }
-      if (feedViewStore.contentTypeFilter === 'documents') {
-        return `${baseName} - Articles`;
-      }
-      return baseName;
+      return sharerProfile?.displayName || sharerProfile?.handle || 'Articles';
     }
     return 'Everything';
   });
@@ -294,15 +284,11 @@
     if (feedViewStore.feedFilter) {
       return unreadCounts.feedCounts.get(parseInt(feedViewStore.feedFilter)) || 0;
     }
-    if (feedViewStore.savedFilter || feedViewStore.sharedFilter) {
+    if (feedViewStore.savedFilter) {
       return 0;
     }
     if (feedViewStore.sharerFilter) {
-      const did = feedViewStore.sharerFilter;
-      if (feedViewStore.contentTypeFilter === 'shares') return unreadCounts.getSharesForSharer(did);
-      if (feedViewStore.contentTypeFilter === 'documents')
-        return unreadCounts.getDocsForSharer(did);
-      return unreadCounts.getUnreadForSharer(did);
+      return unreadCounts.getUnreadForSharer(feedViewStore.sharerFilter);
     }
     if (feedViewStore.followingFilter) {
       return unreadCounts.totalSocial;
@@ -333,17 +319,6 @@
       if (sub) {
         itemLabelsStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
       }
-    } else if (item.type === 'share') {
-      const share = item.item;
-      if (itemLabelsStore.isSocialRead(share.recordUri)) return;
-
-      itemLabelsStore.markSocialAsRead(
-        'share',
-        share.recordUri,
-        share.authorDid,
-        share.itemUrl,
-        share.itemTitle
-      );
     } else if (item.type === 'document') {
       const doc = item.item;
       if (itemLabelsStore.isSocialRead(doc.recordUri)) return;
@@ -356,7 +331,6 @@
         doc.title
       );
     }
-    // userShare items don't auto-mark as read from scroll
   }
 
   // Initialize scroll-to-mark-as-read hook
@@ -404,7 +378,6 @@
     // Track in session sets so items stay visible (greyed out) in unread filter
     feedViewStore.trackItemsAsReadThisSession(
       articlesToMark.map((a) => a.articleGuid),
-      [],
       []
     );
 
@@ -414,7 +387,6 @@
   async function markAllAsReadInCurrentView() {
     // Use all filtered items (not just paginated/displayed) for articles
     const allArticles = feedViewStore.filteredArticles;
-    const allShares = feedViewStore.displayedShares;
     const allDocuments = feedViewStore.displayedDocuments;
 
     const articlesToMark: Array<{
@@ -423,7 +395,6 @@
       articleUrl: string;
       articleTitle: string;
     }> = [];
-    const shareUrisToTrack: string[] = [];
     const documentUrisToTrack: string[] = [];
 
     for (const article of allArticles) {
@@ -440,19 +411,13 @@
       }
     }
 
-    for (const share of allShares) {
-      if (!itemLabelsStore.isSocialRead(share.recordUri)) {
-        shareUrisToTrack.push(share.recordUri);
-      }
-    }
-
     for (const doc of allDocuments) {
       if (!itemLabelsStore.isSocialRead(doc.recordUri)) {
         documentUrisToTrack.push(doc.recordUri);
       }
     }
 
-    const totalCount = articlesToMark.length + shareUrisToTrack.length + documentUrisToTrack.length;
+    const totalCount = articlesToMark.length + documentUrisToTrack.length;
     if (totalCount === 0) return;
 
     if (totalCount > 100) {
@@ -462,30 +427,17 @@
     // Track in session sets so items stay visible (greyed out) in unread filter
     feedViewStore.trackItemsAsReadThisSession(
       articlesToMark.map((a) => a.articleGuid),
-      shareUrisToTrack,
       documentUrisToTrack
     );
 
     // Build social items for bulk marking
     const socialItemsToMark: Array<{
-      type: 'share' | 'document';
+      type: 'document';
       itemUri: string;
       authorDid: string;
       itemUrl: string;
       itemTitle?: string;
     }> = [];
-
-    for (const share of allShares) {
-      if (shareUrisToTrack.includes(share.recordUri)) {
-        socialItemsToMark.push({
-          type: 'share',
-          itemUri: share.recordUri,
-          authorDid: share.authorDid,
-          itemUrl: share.itemUrl,
-          itemTitle: share.itemTitle,
-        });
-      }
-    }
 
     for (const doc of allDocuments) {
       if (documentUrisToTrack.includes(doc.recordUri)) {
@@ -567,7 +519,6 @@
     const _ = [
       feedViewStore.feedFilter,
       feedViewStore.savedFilter,
-      feedViewStore.sharedFilter,
       feedViewStore.sharerFilter,
       feedViewStore.followingFilter,
       feedViewStore.contentTypeFilter,
@@ -608,16 +559,13 @@
           }
         }}
         onRefresh={handleRefreshWithToast}
-        onMarkAllAsRead={!feedViewStore.savedFilter && !feedViewStore.sharedFilter
-          ? markAllAsReadInCurrentView
-          : undefined}
+        onMarkAllAsRead={!feedViewStore.savedFilter ? markAllAsReadInCurrentView : undefined}
         onEdit={feedViewStore.feedFilter ? handleEditFeed : undefined}
         onDelete={feedViewStore.feedFilter
           ? () => removeFeed(parseInt(feedViewStore.feedFilter!))
           : undefined}
         showSourceFilter={!feedViewStore.feedFilter &&
           !feedViewStore.savedFilter &&
-          !feedViewStore.sharedFilter &&
           !feedViewStore.sharerFilter &&
           !feedViewStore.followingFilter}
         onEditChannel={(id) => sidebarStore.openChannelModal(id)}
@@ -638,30 +586,25 @@
             actionHref="/"
             actionText="Show everything"
           />
-        {:else if feedViewStore.sharedFilter}
-          <EmptyState title="No shared articles" description="Share articles to see them here" />
         {:else if feedViewStore.followingFilter}
           {#if feedViewStore.showOnlyUnread}
             <EmptyState
-              title="No unread shares"
-              description="You're all caught up on shares from people you follow"
+              title="No unread posts"
+              description="You're all caught up on people you follow"
             />
           {:else}
             <EmptyState
-              title="No shared articles"
-              description="People you follow haven't shared any articles yet"
+              title="No posts"
+              description="People you follow haven't posted to their linkblogs yet"
             />
           {/if}
         {:else if feedViewStore.sharerFilter}
           {#if feedViewStore.showOnlyUnread}
-            <EmptyState
-              title="No unread shares"
-              description="You're all caught up on shares from this user"
-            />
+            <EmptyState title="No unread posts" description="You're all caught up on this person" />
           {:else}
             <EmptyState
-              title="No shares from this user"
-              description="This user hasn't shared any articles yet"
+              title="No posts from this person"
+              description="This person hasn't posted to their linkblog yet"
             />
           {/if}
         {:else if feedViewStore.feedFilter}
@@ -759,9 +702,7 @@
             }
           }}
           {isSavedView}
-          onMarkAllAsRead={!feedViewStore.savedFilter && !feedViewStore.sharedFilter
-            ? markAllAsReadInCurrentView
-            : undefined}
+          onMarkAllAsRead={!feedViewStore.savedFilter ? markAllAsReadInCurrentView : undefined}
           onclose={() => (filterSheetOpen = false)}
           initialTab={filterSheetInitialTab}
           {editingChannelId}

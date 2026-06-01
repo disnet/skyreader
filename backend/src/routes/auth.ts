@@ -40,9 +40,7 @@ const MAX_USERS = 650;
 export const GRANULAR_SCOPES = [
   'atproto',
   'repo:app.skyreader.feed.subscription',
-  'repo:app.skyreader.social.share',
   'repo:app.skyreader.social.follow',
-  'repo:app.skyreader.social.shareReadPosition',
   'repo:app.skyreader.feed.saved',
 ].join(' ');
 

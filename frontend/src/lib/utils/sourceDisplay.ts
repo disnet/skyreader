@@ -11,8 +11,6 @@ export function getSourceDisplay(
   feedUrl?: string
 ): SourceDisplayInfo {
   switch (sourceType) {
-    case 'atproto.shares':
-      return { label: 'Shares', iconName: 'share', pillClass: 'pill-shares' };
     case 'atproto.documents':
       if (feedUrl && feedUrl !== '__freestanding__') {
         return { label: 'Publication', iconName: 'newspaper', pillClass: 'pill-publication' };

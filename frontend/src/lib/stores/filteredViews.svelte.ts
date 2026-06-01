@@ -51,7 +51,6 @@ function createFilteredViewsStore() {
         const migrated = migrateLegacyView(
           {
             showArticles: view.showArticles,
-            showShares: view.showShares,
             showDocuments: view.showDocuments,
             feedMode: view.feedMode,
             feedIds: view.feedIds,

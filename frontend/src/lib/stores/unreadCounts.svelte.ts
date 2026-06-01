@@ -15,7 +15,6 @@ import {
 import { liveDb } from '$lib/services/liveDb.svelte';
 import {
   isRssSource,
-  isSharesSource,
   isDocumentsSource,
   getRssSubscriptionRkey,
   getSourceDid,
@@ -39,20 +38,6 @@ function createUnreadCountsStore() {
 
       if (!sub.sourceType || sub.sourceType === 'rss') {
         counts.set(sub.id, articlesStore.getUnreadCount(sub.id));
-        continue;
-      }
-
-      if (sub.sourceType === 'atproto.shares' && sub.subjectDid) {
-        let count = 0;
-        for (const share of socialStore.shares) {
-          if (
-            share.authorDid === sub.subjectDid &&
-            !itemLabelsStore.isSocialRead(share.recordUri)
-          ) {
-            count++;
-          }
-        }
-        counts.set(sub.id, count);
         continue;
       }
 
@@ -96,18 +81,6 @@ function createUnreadCountsStore() {
     return count;
   });
 
-  // Unread shares by author
-  let sharerShareCounts = $derived.by(() => {
-    itemLabelsStore.socialPositions;
-    const counts = new Map<string, number>();
-    for (const share of socialStore.shares) {
-      if (!itemLabelsStore.isSocialRead(share.recordUri)) {
-        counts.set(share.authorDid, (counts.get(share.authorDid) || 0) + 1);
-      }
-    }
-    return counts;
-  });
-
   // Unread documents by author
   let sharerDocCounts = $derived.by(() => {
     itemLabelsStore.socialPositions;
@@ -121,10 +94,7 @@ function createUnreadCountsStore() {
   });
 
   // Total unread social items
-  let totalSocial = $derived(
-    Array.from(sharerShareCounts.values()).reduce((a, b) => a + b, 0) +
-      Array.from(sharerDocCounts.values()).reduce((a, b) => a + b, 0)
-  );
+  let totalSocial = $derived(Array.from(sharerDocCounts.values()).reduce((a, b) => a + b, 0));
 
   // Per-channel (FilteredView) unread counts
   let channelCounts = $derived.by(() => {
@@ -192,25 +162,6 @@ function createUnreadCountsStore() {
           }
         }
 
-        // Count non-archived saved shares (source = 'share')
-        if (!sourceFilter || sourceFilter.has('share')) {
-          for (const share of socialStore.shares) {
-            if (seen.has(share.recordUri)) continue;
-            if (
-              itemLabelsStore.isSaved(share.recordUri) &&
-              !itemLabelsStore.isArchived(share.recordUri)
-            ) {
-              const displayItem: FeedDisplayItem = {
-                type: 'share',
-                item: share,
-                key: share.recordUri,
-              };
-              if (!matchesChannelFilters(displayItem)) continue;
-              seen.add(share.recordUri);
-            }
-          }
-        }
-
         // Count non-archived saved documents (source = 'document')
         if (!sourceFilter || sourceFilter.has('document')) {
           for (const doc of socialStore.documents) {
@@ -260,9 +211,6 @@ function createUnreadCountsStore() {
       const showRss =
         (typeFilter.length === 0 || typeFilter.includes('rss')) &&
         (sourceMode === 'all' || sourceKeys.some(isRssSource));
-      const showShares =
-        (typeFilter.length === 0 || typeFilter.includes('atproto.shares')) &&
-        (sourceMode === 'all' || sourceKeys.some(isSharesSource));
       const showDocs =
         (typeFilter.length === 0 || typeFilter.includes('atproto.documents')) &&
         (sourceMode === 'all' || sourceKeys.some(isDocumentsSource));
@@ -294,18 +242,6 @@ function createUnreadCountsStore() {
         }
       }
 
-      // Count unread shares — sum from pre-computed per-author map
-      if (showShares) {
-        if (sourceMode === 'all') {
-          for (const c of sharerShareCounts.values()) count += c;
-        } else {
-          const allowedDids = new Set(sourceKeys.filter(isSharesSource).map(getSourceDid));
-          for (const did of allowedDids) {
-            count += sharerShareCounts.get(did) || 0;
-          }
-        }
-      }
-
       // Count unread documents — sum from pre-computed per-author map
       if (showDocs) {
         if (sourceMode === 'all') {
@@ -330,9 +266,6 @@ function createUnreadCountsStore() {
     get totalArticles() {
       return totalArticles;
     },
-    get sharerShareCounts() {
-      return sharerShareCounts;
-    },
     get sharerDocCounts() {
       return sharerDocCounts;
     },
@@ -343,10 +276,7 @@ function createUnreadCountsStore() {
       return channelCounts;
     },
     getUnreadForSharer(did: string): number {
-      return (sharerShareCounts.get(did) || 0) + (sharerDocCounts.get(did) || 0);
-    },
-    getSharesForSharer(did: string): number {
-      return sharerShareCounts.get(did) || 0;
+      return sharerDocCounts.get(did) || 0;
     },
     getDocsForSharer(did: string): number {
       return sharerDocCounts.get(did) || 0;

@@ -9,7 +9,6 @@ export async function getTableRowCounts(db: D1Database): Promise<TableCount[]> {
 		'sessions',
 		'subscriptions_cache',
 		'item_labels_cache',
-		'shares',
 		'documents',
 		'feed_metadata',
 		'feed_items',

@@ -1,7 +1,5 @@
 import { liveDb } from '$lib/services/liveDb.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
-import { shareReadingStore } from './shareReading.svelte';
-import { sharesStore } from './shares.svelte';
 import { linkblogStore } from './linkblog.svelte';
 import { socialStore } from './social.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
@@ -70,8 +68,6 @@ function createAppManager() {
         liveDb.loadSubscriptions(),
         liveDb.loadArticles(),
         itemLabelsStore.load(),
-        shareReadingStore.load(),
-        sharesStore.load(),
         linkblogStore.load(),
         filteredViewsStore.load(),
         savesStore.load(),
@@ -132,7 +128,6 @@ function createAppManager() {
       const [syncResult] = await Promise.all([
         syncSubscriptions(),
         itemLabelsStore.load(),
-        shareReadingStore.load(),
         socialStore.loadFeed(true),
         filteredViewsStore.syncWithBackend(),
       ]);

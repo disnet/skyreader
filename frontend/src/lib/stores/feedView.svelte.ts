@@ -1,7 +1,6 @@
 import { articlesStore } from './articles.svelte';
 import { subscriptionsStore } from './subscriptions.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
-import { sharesStore } from './shares.svelte';
 import { socialStore } from './social.svelte';
 import { savesStore } from './saves.svelte';
 import { preferences } from './preferences.svelte';
@@ -9,10 +8,8 @@ import { filteredViewsStore } from './filteredViews.svelte';
 import { liveDb } from '$lib/services/liveDb.svelte';
 import type {
   Article,
-  SocialShare,
   SocialDocument,
   CombinedFeedItem,
-  UserShare,
   SavedItem,
   SubscriptionSourceType,
   SavedSourceType,
@@ -22,22 +19,19 @@ import type {
 } from '$lib/types';
 import {
   isRssSource,
-  isSharesSource,
   isDocumentsSource,
   getRssSubscriptionRkey,
   getSourceDid,
   migrateLegacyView,
 } from '$lib/utils/sourceKeys';
 
-export type ViewMode = 'articles' | 'shares' | 'userShares' | 'combined';
+export type ViewMode = 'articles' | 'shares' | 'combined';
 
 /**
  * Unified feed item type for rendering - wraps all item types with common metadata
  */
 export type FeedDisplayItem =
   | { type: 'article'; item: Article; key: string }
-  | { type: 'share'; item: SocialShare; key: string }
-  | { type: 'userShare'; item: UserShare; article: Article; key: string }
   | { type: 'document'; item: SocialDocument; key: string }
   | { type: 'saved'; item: SavedItem; key: string };
 
@@ -96,14 +90,10 @@ function deriveAllowedDids(
 function getItemDate(item: FeedDisplayItem): number {
   if (item.type === 'article') {
     return new Date(item.item.publishedAt).getTime();
-  } else if (item.type === 'share') {
-    return new Date(item.item.itemPublishedAt || item.item.createdAt).getTime();
   } else if (item.type === 'document') {
     return new Date(item.item.publishedAt).getTime();
-  } else if (item.type === 'saved') {
-    return new Date(item.item.savedAt).getTime();
   } else {
-    return new Date(item.item.createdAt).getTime();
+    return new Date(item.item.savedAt).getTime();
   }
 }
 
@@ -133,10 +123,6 @@ export function getItemWordCount(item: FeedDisplayItem): number | null {
     const text = item.item.content || item.item.summary || '';
     return text ? text.split(/\s+/).length : null;
   }
-  if (item.type === 'share') {
-    const text = item.item.content || item.item.itemDescription || '';
-    return text ? text.split(/\s+/).length : null;
-  }
   if (item.type === 'document') {
     const text = item.item.textContent || item.item.description || '';
     return text ? text.split(/\s+/).length : null;
@@ -149,11 +135,9 @@ export function getItemDomain(item: FeedDisplayItem): string | null {
   const url =
     item.type === 'article'
       ? item.item.url
-      : item.type === 'share'
-        ? item.item.itemUrl
-        : item.type === 'document'
-          ? item.item.canonicalUrl || item.item.path
-          : null;
+      : item.type === 'document'
+        ? item.item.canonicalUrl || item.item.path
+        : null;
   if (!url) return null;
   try {
     return new URL(url).hostname;
@@ -217,7 +201,7 @@ function createFeedViewStore() {
   let toolbarTagFilter = $state<string[]>([]);
   // Type filter (empty = all types shown)
   let toolbarTypeFilter = $state<SubscriptionSourceType[]>([]);
-  // Saved source filter (for saved-mode channels: url, feed, share, document)
+  // Saved source filter (for saved-mode channels: url, feed, document)
   let toolbarSavedSourceFilter = $state<SavedSourceType[]>([]);
   // Saved channel: date added filter
   let toolbarDateFilter = $state<DateAddedPreset | null>(null);
@@ -232,11 +216,10 @@ function createFeedViewStore() {
   // URL filters (set by component from $page store)
   let feedFilter = $state<string | null>(null);
   let savedFilter = $state<string | null>(null);
-  let sharedFilter = $state<string | null>(null);
   let sharerFilter = $state<string | null>(null);
   let followingFilter = $state<string | null>(null);
   let feedsFilter = $state<string | null>(null); // deprecated, kept for setFilters compat
-  let contentTypeFilter = $state<'shares' | 'documents' | null>(null);
+  let contentTypeFilter = $state<'documents' | null>(null);
   let viewFilter = $state<string | null>(null);
   let categoryFilter = $state<string | null>(null);
 
@@ -368,12 +351,11 @@ function createFeedViewStore() {
   let viewMode = $derived.by((): ViewMode => {
     if (isSavedChannel) return 'articles'; // saved channels use their own rendering path
     if (activeFilteredView) return 'combined';
-    if (sharedFilter) return 'userShares';
     if (sharerFilter || followingFilter) return 'shares';
     if (feedFilter) {
-      // AT Proto subscriptions show shares/documents, not articles
+      // AT Proto subscriptions show documents, not articles
       const sub = feedFilterSubscription;
-      if (sub?.sourceType === 'atproto.shares' || sub?.sourceType === 'atproto.documents') {
+      if (sub?.sourceType === 'atproto.documents') {
         return 'shares';
       }
       return 'articles';
@@ -386,7 +368,6 @@ function createFeedViewStore() {
   // Track items that were read during this view session to keep them visible
   // These are cleared when switching views/feeds
   let readArticleGuidsThisSession = $state<Set<string>>(new Set());
-  let readShareUrisThisSession = $state<Set<string>>(new Set());
   let readDocumentUrisThisSession = $state<Set<string>>(new Set());
 
   // Derived: whether articles are shown (any RSS source allowed and type filter permits)
@@ -395,14 +376,6 @@ function createFeedViewStore() {
     if (fv.typeFilter.length > 0 && !fv.typeFilter.includes('rss')) return false;
     if (fv.sourceMode === 'all') return true;
     return fv.sourceKeys.some(isRssSource);
-  });
-
-  // Derived: whether shares are shown (any shares source allowed and type filter permits)
-  let showShares = $derived.by((): boolean => {
-    const fv = effectiveFilters;
-    if (fv.typeFilter.length > 0 && !fv.typeFilter.includes('atproto.shares')) return false;
-    if (fv.sourceMode === 'all') return true;
-    return fv.sourceKeys.some(isSharesSource);
   });
 
   // Derived: whether documents are shown (any documents source allowed and type filter permits)
@@ -489,83 +462,6 @@ function createFeedViewStore() {
   // Derived: paginated articles (limited to loadedArticleCount)
   let displayedArticles = $derived(filteredArticles.slice(0, loadedArticleCount));
 
-  // Derived: filtered shares
-  let displayedShares = $derived.by((): SocialShare[] => {
-    const fv = effectiveFilters;
-
-    // If shares are not shown by source filter, return empty
-    if (!showShares) return [];
-
-    // Return empty if contentTypeFilter is 'documents'
-    if (contentTypeFilter === 'documents') return [];
-
-    // When feedFilter points to an atproto.documents subscription, hide shares
-    const feedSub = feedFilterSubscription;
-    if (feedSub?.sourceType === 'atproto.documents') return [];
-
-    const shares = socialStore.shares;
-    const sortOrder = fv.sortOrder;
-
-    let filtered: SocialShare[];
-    if (feedSub?.sourceType === 'atproto.shares' && feedSub.subjectDid) {
-      // Filter to shares from this subscription's subject
-      filtered = shares.filter((s) => s.authorDid === feedSub.subjectDid);
-    } else if (sharerFilter) {
-      filtered = shares.filter((s) => s.authorDid === sharerFilter);
-    } else {
-      filtered = [...shares];
-    }
-
-    // Apply source-based DID filtering for shares
-    const allowedDids = deriveAllowedDids(fv, isSharesSource);
-    if (allowedDids !== null) {
-      filtered = filtered.filter((s) => allowedDids.has(s.authorDid));
-    }
-
-    // Filter by category: only show shares from subscriptions in the category
-    if (categorySubscriptionIds) {
-      const categoryDids = new Set<string>();
-      for (const sub of subscriptionsStore.subscriptions) {
-        if (sub.category === categoryFilter && sub.subjectDid) {
-          categoryDids.add(sub.subjectDid);
-        }
-      }
-      filtered = filtered.filter((s) => categoryDids.has(s.authorDid));
-    }
-
-    // Apply read filter
-    if (fv.readFilter === 'unread') {
-      filtered = filtered.filter(
-        (s) =>
-          !itemLabelsStore.isSocialRead(s.recordUri) || readShareUrisThisSession.has(s.recordUri)
-      );
-    } else if (fv.readFilter === 'read') {
-      filtered = filtered.filter((s) => itemLabelsStore.isSocialRead(s.recordUri));
-    }
-
-    // Apply sort order
-    filtered.sort((a, b) => {
-      const dateA = new Date(a.itemPublishedAt || a.createdAt).getTime();
-      const dateB = new Date(b.itemPublishedAt || b.createdAt).getTime();
-      return sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
-    });
-
-    return filtered;
-  });
-
-  // Derived: user's own shares
-  let displayedUserShares = $derived.by((): UserShare[] => {
-    if (!sharedFilter) return [];
-
-    const sortOrder = preferences.sortOrder;
-    const shares = Array.from(sharesStore.userShares.values());
-    shares.sort((a, b) => {
-      const diff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-      return sortOrder === 'newest' ? diff : -diff;
-    });
-    return shares;
-  });
-
   // Derived: filtered documents
   let displayedDocuments = $derived.by((): SocialDocument[] => {
     const fv = effectiveFilters;
@@ -573,13 +469,7 @@ function createFeedViewStore() {
     // If documents are not shown by source filter, return empty
     if (!showDocuments) return [];
 
-    // Return empty if contentTypeFilter is 'shares'
-    if (contentTypeFilter === 'shares') return [];
-
-    // When feedFilter points to an atproto.shares subscription, hide documents
     const feedSub = feedFilterSubscription;
-    if (feedSub?.sourceType === 'atproto.shares') return [];
-
     const docs = socialStore.documents;
     const sortOrder = fv.sortOrder;
 
@@ -637,12 +527,12 @@ function createFeedViewStore() {
     return filtered;
   });
 
-  // Derived: combined view (articles + shares + documents merged by date)
-  // When there are more articles to load, social items are limited to the date range
-  // of currently loaded articles. This prevents old social items (e.g. from a year ago)
+  // Derived: combined view (articles + documents merged by date)
+  // When there are more articles to load, documents are limited to the date range
+  // of currently loaded articles. This prevents old documents (e.g. from a year ago)
   // from dominating the tail of the list while there are plenty of unloaded articles
   // that should fill the gap. As more articles load, the date range expands and more
-  // social items become visible.
+  // documents become visible.
   let displayedCombined = $derived.by((): CombinedFeedItem[] => {
     if (viewMode !== 'combined') return [];
 
@@ -650,7 +540,6 @@ function createFeedViewStore() {
     const sortOrder = fv.sortOrder;
     const hasMoreArticlesToLoad = loadedArticleCount < filteredArticles.length;
 
-    let sharesToInclude = displayedShares;
     let documentsToInclude = displayedDocuments;
 
     if (hasMoreArticlesToLoad && displayedArticles.length > 0) {
@@ -662,9 +551,6 @@ function createFeedViewStore() {
           : displayedArticles[0];
       const cutoffTime = new Date(oldestArticle.publishedAt).getTime();
 
-      sharesToInclude = displayedShares.filter(
-        (s) => new Date(s.itemPublishedAt || s.createdAt).getTime() >= cutoffTime
-      );
       documentsToInclude = displayedDocuments.filter(
         (d) => new Date(d.publishedAt).getTime() >= cutoffTime
       );
@@ -675,11 +561,6 @@ function createFeedViewStore() {
         type: 'article' as const,
         item,
         date: item.publishedAt,
-      })),
-      ...sharesToInclude.map((item) => ({
-        type: 'share' as const,
-        item,
-        date: item.itemPublishedAt || item.createdAt,
       })),
       ...documentsToInclude.map((item) => ({
         type: 'document' as const,
@@ -694,9 +575,6 @@ function createFeedViewStore() {
     });
     return combined;
   });
-
-  // Derived: article lookup by guid
-  let articlesByGuid = $derived(articlesStore.articlesByGuid);
 
   // Derived: full merged-and-filtered saved-items list (pre-pagination).
   // Exposed separately from currentItems so the saved-view rendering path can
@@ -751,22 +629,6 @@ function createFeedViewStore() {
             key: item.guid,
           }));
 
-    // Add starred shares (source type 'share')
-    const starredShareItems: FeedDisplayItem[] =
-      sourceFilter && !sourceFilter.has('share')
-        ? []
-        : socialStore.shares
-            .filter((s) => {
-              if (!itemLabelsStore.isSaved(s.recordUri)) return false;
-              if (isArchiveView) return itemLabelsStore.isArchived(s.recordUri);
-              return !itemLabelsStore.isArchived(s.recordUri);
-            })
-            .map((s) => ({
-              type: 'share' as const,
-              item: s,
-              key: s.recordUri,
-            }));
-
     // Add starred documents (source type 'document')
     const starredDocumentItems: FeedDisplayItem[] =
       sourceFilter && !sourceFilter.has('document')
@@ -797,11 +659,8 @@ function createFeedViewStore() {
         )
         .map((a) => a.guid)
     );
-    // Only dedup bookmarks against shares/documents that will actually pass
+    // Only dedup bookmarks against documents that will actually pass
     // the channel filters — same reasoning as allSavedArticleGuids above.
-    const shareRecordUris = new Set(
-      starredShareItems.filter((s) => matchesSavedChannelFilters(s)).map((s) => s.key)
-    );
     const documentRecordUris = new Set(
       starredDocumentItems.filter((d) => matchesSavedChannelFilters(d)).map((d) => d.key)
     );
@@ -817,7 +676,6 @@ function createFeedViewStore() {
         // source can't slip through and show up twice.
         if (bm.itemGuid) {
           if (allSavedArticleGuids.has(bm.itemGuid)) return false;
-          if (shareRecordUris.has(bm.itemGuid)) return false;
           if (documentRecordUris.has(bm.itemGuid)) return false;
         }
         // Use itemGuid (article guid) for archive checks when available, since archive
@@ -832,12 +690,7 @@ function createFeedViewStore() {
         key: bm.uri || bm.itemGuid || bm.rkey,
       }));
 
-    let items: FeedDisplayItem[] = [
-      ...articleItems,
-      ...starredShareItems,
-      ...starredDocumentItems,
-      ...bookmarkItems,
-    ];
+    let items: FeedDisplayItem[] = [...articleItems, ...starredDocumentItems, ...bookmarkItems];
 
     // Sort saved items
     const sort = isSavedChannel ? (toolbarSortOrder ?? 'newest') : sortOrder;
@@ -921,59 +774,17 @@ function createFeedViewStore() {
       items = displayedCombined.map((item) => {
         if (item.type === 'article') {
           return { type: 'article' as const, item: item.item, key: item.item.guid };
-        } else if (item.type === 'share') {
-          return { type: 'share' as const, item: item.item, key: item.item.recordUri };
         } else {
           return { type: 'document' as const, item: item.item, key: item.item.recordUri };
         }
       });
     } else if (mode === 'shares') {
-      // Combine shares and documents, sorted by date
-      const sortOrder = preferences.sortOrder;
-      type ItemWithDate = FeedDisplayItem & { date: number };
-      const rawItems: ItemWithDate[] = [
-        ...displayedShares.map((item) => ({
-          type: 'share' as const,
-          item,
-          key: item.recordUri,
-          date: new Date(item.itemPublishedAt || item.createdAt).getTime(),
-        })),
-        ...displayedDocuments.map((item) => ({
-          type: 'document' as const,
-          item,
-          key: item.recordUri,
-          date: new Date(item.publishedAt).getTime(),
-        })),
-      ];
-
-      rawItems.sort((a, b) => {
-        const diff = b.date - a.date;
-        return sortOrder === 'newest' ? diff : -diff;
-      });
-
-      items = rawItems.map(({ type, item, key }) => ({ type, item, key }) as FeedDisplayItem);
-    } else if (mode === 'userShares') {
-      items = displayedUserShares.map((share) => {
-        const localArticle = articlesByGuid.get(share.articleGuid);
-        const article: Article = localArticle || {
-          guid: share.articleGuid,
-          url: share.articleUrl,
-          title: share.articleTitle || share.articleUrl,
-          author: share.articleAuthor,
-          content: share.articleContent,
-          summary: share.articleDescription,
-          imageUrl: share.articleImage,
-          publishedAt: share.articlePublishedAt || share.createdAt,
-          subscriptionId: 0,
-          fetchedAt: Date.now(),
-        };
-        return {
-          type: 'userShare' as const,
-          item: share,
-          article,
-          key: share.articleGuid,
-        };
-      });
+      // Documents from followed linkblogs, sorted by date
+      items = displayedDocuments.map((item) => ({
+        type: 'document' as const,
+        item,
+        key: item.recordUri,
+      }));
     } else {
       // articles mode
       items = displayedArticles.map((item) => ({
@@ -997,18 +808,15 @@ function createFeedViewStore() {
   let hasMore = $derived.by(() => {
     const mode = viewMode;
     if (isSavedView) return loadedArticleCount < savedItemsAll.length;
-    if (mode === 'combined') {
-      return loadedArticleCount < filteredArticles.length || socialStore.hasMore;
-    }
-    if (mode === 'shares') return socialStore.hasMore;
-    if (mode === 'userShares') return false;
+    if (mode === 'combined') return loadedArticleCount < filteredArticles.length;
+    // 'shares' mode shows documents, which aren't cursor-paginated.
+    if (mode === 'shares') return false;
     return loadedArticleCount < filteredArticles.length;
   });
 
   let isLoadingMore = $derived.by(() => {
     const mode = viewMode;
-    if (mode === 'combined') return socialStore.isLoading;
-    if (mode === 'shares') return socialStore.isLoading;
+    if (mode === 'combined' || mode === 'shares') return socialStore.isLoading;
     return false;
   });
 
@@ -1045,22 +853,12 @@ function createFeedViewStore() {
       return;
     }
 
-    if (mode === 'combined') {
-      await Promise.all([
-        socialStore.hasMore ? socialStore.loadFeed(false) : Promise.resolve(),
-        Promise.resolve().then(() => {
-          if (loadedArticleCount < filteredArticles.length) {
-            loadedArticleCount += DEFAULT_PAGE_SIZE;
-          }
-        }),
-      ]);
-    } else if (mode === 'shares') {
-      await socialStore.loadFeed(false);
-    } else if (mode === 'articles') {
+    if (mode === 'combined' || mode === 'articles') {
       if (loadedArticleCount < filteredArticles.length) {
         loadedArticleCount += DEFAULT_PAGE_SIZE;
       }
     }
+    // 'shares' mode shows documents (not paginated) — nothing to load.
   }
 
   function selectByKey(key: string | null) {
@@ -1082,9 +880,6 @@ function createFeedViewStore() {
     if (item.type === 'article') {
       readArticleGuidsThisSession.add(item.item.guid);
       readArticleGuidsThisSession = new Set(readArticleGuidsThisSession);
-    } else if (item.type === 'share') {
-      readShareUrisThisSession.add(item.item.recordUri);
-      readShareUrisThisSession = new Set(readShareUrisThisSession);
     } else if (item.type === 'document') {
       readDocumentUrisThisSession.add(item.item.recordUri);
       readDocumentUrisThisSession = new Set(readDocumentUrisThisSession);
@@ -1096,17 +891,6 @@ function createFeedViewStore() {
       const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
       if (sub && !itemLabelsStore.isRead(article.guid)) {
         itemLabelsStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
-      }
-    } else if (item.type === 'share') {
-      const share = item.item;
-      if (!itemLabelsStore.isSocialRead(share.recordUri)) {
-        itemLabelsStore.markSocialAsRead(
-          'share',
-          share.recordUri,
-          share.authorDid,
-          share.itemUrl,
-          share.itemTitle
-        );
       }
     } else if (item.type === 'document') {
       const doc = item.item;
@@ -1120,7 +904,6 @@ function createFeedViewStore() {
         );
       }
     }
-    // userShare items don't auto-mark as read
   }
 
   function select(index: number) {
@@ -1146,13 +929,11 @@ function createFeedViewStore() {
     expandedKey = null;
     // Clear session sets when switching views/feeds
     readArticleGuidsThisSession = new Set();
-    readShareUrisThisSession = new Set();
     readDocumentUrisThisSession = new Set();
   }
 
   function clearReadThisSession() {
     readArticleGuidsThisSession = new Set();
-    readShareUrisThisSession = new Set();
     readDocumentUrisThisSession = new Set();
   }
 
@@ -1221,9 +1002,6 @@ function createFeedViewStore() {
     if (item.type === 'article') {
       readArticleGuidsThisSession.add(item.item.guid);
       readArticleGuidsThisSession = new Set(readArticleGuidsThisSession);
-    } else if (item.type === 'share') {
-      readShareUrisThisSession.add(item.item.recordUri);
-      readShareUrisThisSession = new Set(readShareUrisThisSession);
     } else if (item.type === 'document') {
       readDocumentUrisThisSession.add(item.item.recordUri);
       readDocumentUrisThisSession = new Set(readDocumentUrisThisSession);
@@ -1231,28 +1009,15 @@ function createFeedViewStore() {
   }
 
   // Bulk-track items as read this session so they stay visible in unread filter
-  function trackItemsAsReadThisSession(
-    articleGuids: string[],
-    shareUris: string[],
-    documentUris: string[]
-  ) {
+  function trackItemsAsReadThisSession(articleGuids: string[], documentUris: string[]) {
     if (articleGuids.length > 0) {
       for (const guid of articleGuids) readArticleGuidsThisSession.add(guid);
       readArticleGuidsThisSession = new Set(readArticleGuidsThisSession);
-    }
-    if (shareUris.length > 0) {
-      for (const uri of shareUris) readShareUrisThisSession.add(uri);
-      readShareUrisThisSession = new Set(readShareUrisThisSession);
     }
     if (documentUris.length > 0) {
       for (const uri of documentUris) readDocumentUrisThisSession.add(uri);
       readDocumentUrisThisSession = new Set(readDocumentUrisThisSession);
     }
-  }
-
-  function getArticleForShare(share: SocialShare): Article | undefined {
-    if (!share.itemGuid) return undefined;
-    return articlesByGuid.get(share.itemGuid);
   }
 
   return {
@@ -1291,9 +1056,6 @@ function createFeedViewStore() {
     },
     get savedFilter() {
       return savedFilter;
-    },
-    get sharedFilter() {
-      return sharedFilter;
     },
     get sharerFilter() {
       return sharerFilter;
@@ -1372,15 +1134,9 @@ function createFeedViewStore() {
     get filteredArticles() {
       return filteredArticles;
     },
-    get displayedShares() {
-      return displayedShares;
-    },
     get displayedDocuments() {
       return displayedDocuments;
     },
-
-    // Article lookup
-    getArticleForShare,
 
     // Actions
     loadArticles,
@@ -1506,17 +1262,15 @@ function createFeedViewStore() {
     setFilters(filters: {
       feed: string | null;
       saved: string | null;
-      shared: string | null;
       sharer: string | null;
       following: string | null;
       feeds: string | null;
-      contentType?: 'shares' | 'documents' | null;
+      contentType?: 'documents' | null;
       view?: string | null;
       category?: string | null;
     }) {
       feedFilter = filters.feed;
       savedFilter = filters.saved;
-      sharedFilter = filters.shared;
       sharerFilter = filters.sharer;
       followingFilter = filters.following;
       feedsFilter = filters.feeds;
@@ -1554,7 +1308,6 @@ function createFeedViewStore() {
             const migrated = migrateLegacyView(
               {
                 showArticles: fv.showArticles,
-                showShares: fv.showShares,
                 showDocuments: fv.showDocuments,
                 feedMode: fv.feedMode,
                 feedIds: fv.feedIds,

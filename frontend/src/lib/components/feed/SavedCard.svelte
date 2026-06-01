@@ -1,12 +1,10 @@
 <script lang="ts">
-  import type { Article, SocialShare, SocialDocument } from '$lib/types';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import { formatRelativeDate } from '$lib/utils/date';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
-  import { profileService } from '$lib/services/profiles';
   import Icon from '$lib/components/Icon.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
@@ -17,8 +15,6 @@
     onOpen,
     onArchive,
     onRemove,
-    onShare,
-    isShared = false,
     onHover,
     onSaveToSemble,
     onSaveToMargin,
@@ -28,8 +24,6 @@
     onOpen?: () => void;
     onArchive?: () => void;
     onRemove?: () => void;
-    onShare?: () => void;
-    isShared?: boolean;
     onHover?: () => void;
     onSaveToSemble?: () => void;
     onSaveToMargin?: () => void;
@@ -41,7 +35,6 @@
 
   let title = $derived.by(() => {
     if (displayItem.type === 'article') return displayItem.item.title || displayItem.item.url;
-    if (displayItem.type === 'share') return displayItem.item.itemTitle || displayItem.item.itemUrl;
     if (displayItem.type === 'document')
       return displayItem.item.title || displayItem.item.recordUri;
     if (displayItem.type === 'saved') return displayItem.item.title || displayItem.item.url;
@@ -50,7 +43,6 @@
 
   let url = $derived.by(() => {
     if (displayItem.type === 'article') return displayItem.item.url;
-    if (displayItem.type === 'share') return displayItem.item.itemUrl;
     if (displayItem.type === 'document')
       return displayItem.item.canonicalUrl || displayItem.item.path || '';
     if (displayItem.type === 'saved') return displayItem.item.url;
@@ -59,8 +51,6 @@
 
   let publishedAt = $derived.by(() => {
     if (displayItem.type === 'article') return displayItem.item.publishedAt;
-    if (displayItem.type === 'share')
-      return displayItem.item.itemPublishedAt || displayItem.item.createdAt;
     if (displayItem.type === 'document') return displayItem.item.publishedAt;
     if (displayItem.type === 'saved') return displayItem.item.savedAt;
     return '';
@@ -88,22 +78,6 @@
     return '';
   });
 
-  // Author info (for shares)
-  let authorProfile = $state<{ handle?: string } | null>(null);
-  $effect(() => {
-    if (displayItem.type === 'share') {
-      profileService.getProfile(displayItem.item.authorDid).then((p) => {
-        authorProfile = p;
-      });
-    } else {
-      authorProfile = null;
-    }
-  });
-  let authorHandle = $derived.by(() => {
-    if (displayItem.type === 'share') return authorProfile?.handle || displayItem.item.authorDid;
-    return '';
-  });
-
   let faviconUrl = $derived.by(() => {
     if (displayItem.type === 'article') {
       return getFaviconUrl(sub?.siteUrl || sub?.feedUrl || displayItem.item.url);
@@ -113,9 +87,6 @@
     }
     if (displayItem.type === 'document' && displayItem.item.canonicalUrl) {
       return getFaviconUrl(displayItem.item.canonicalUrl);
-    }
-    if (displayItem.type === 'share') {
-      return getFaviconUrl(displayItem.item.itemUrl);
     }
     if (displayItem.type === 'saved') {
       return getFaviconUrl(displayItem.item.url);
@@ -131,8 +102,6 @@
     let content = '';
     if (displayItem.type === 'article') {
       content = displayItem.item.content || displayItem.item.summary || '';
-    } else if (displayItem.type === 'share') {
-      content = displayItem.item.content || displayItem.item.itemDescription || '';
     } else if (displayItem.type === 'document') {
       content = displayItem.item.textContent || displayItem.item.description || '';
     } else if (displayItem.type === 'saved') {
@@ -150,8 +119,6 @@
     let raw = '';
     if (displayItem.type === 'article') {
       raw = displayItem.item.summary || displayItem.item.content || '';
-    } else if (displayItem.type === 'share') {
-      raw = displayItem.item.itemDescription || displayItem.item.content || '';
     } else if (displayItem.type === 'document') {
       raw = displayItem.item.description || displayItem.item.textContent || '';
     } else if (displayItem.type === 'saved') {
@@ -163,7 +130,6 @@
 
   // Type badge
   let typeBadge = $derived.by(() => {
-    if (displayItem.type === 'share') return `Shared by @${authorHandle}`;
     if (displayItem.type === 'saved') return displayItem.item.domain || 'Saved';
     return '';
   });
@@ -241,10 +207,7 @@
   let tagMenuAnchorRef = $state<HTMLElement | null>(null);
   let tagMenuOpen = $derived(tagMenuOpenLocal || feedViewStore.tagMenuItemKey === itemKey);
 
-  let labelItemType = $derived.by((): 'article' | 'share' | 'document' | 'userShare' | 'saved' => {
-    if (displayItem.type === 'userShare') return 'userShare';
-    return displayItem.type;
-  });
+  let labelItemType = $derived.by((): 'article' | 'document' | 'saved' => displayItem.type);
 
   let popoverMenuItems = $derived.by(() => {
     const items: {
@@ -269,14 +232,6 @@
         },
       },
     ];
-    if (onShare) {
-      items.push({
-        label: isShared ? (displayItem.type === 'share' ? 'Reshared' : 'Shared') : 'Share',
-        icon: 'share',
-        active: isShared,
-        onclick: () => onShare!(),
-      });
-    }
     if (onSaveToSemble) {
       items.push({
         label: 'Save to Semble',

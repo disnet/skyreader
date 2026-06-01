@@ -120,30 +120,6 @@
 	<p class="empty">No subscriptions</p>
 {/if}
 
-<h2>Shares ({data.shares.length})</h2>
-
-{#if data.shares.length > 0}
-	<DataTable>
-		{#snippet header()}
-			<th>Title</th>
-			<th>URL</th>
-			<th>Note</th>
-			<th>Date</th>
-		{/snippet}
-
-		{#each data.shares as share}
-			<tr>
-				<td>{share.item_title ?? '—'}</td>
-				<td class="url-cell"><a href={share.item_url} target="_blank">{share.item_url}</a></td>
-				<td>{share.note ?? '—'}</td>
-				<td>{formatDate(share.created_at)}</td>
-			</tr>
-		{/each}
-	</DataTable>
-{:else}
-	<p class="empty">No shares</p>
-{/if}
-
 <style>
 	.breadcrumb {
 		font-size: 0.875rem;
