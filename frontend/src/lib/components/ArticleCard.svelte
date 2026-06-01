@@ -638,7 +638,7 @@
             {#if authorAvatar}
               <img src={authorAvatar} alt="" class="via-avatar" />
             {/if}
-            <span class="via-handle">@{authorHandle}</span>
+            <span class="via-label">shared</span>
           </span>
         {/if}
         {#if displayFeedTitle}
@@ -1012,7 +1012,6 @@
     align-items: center;
     gap: 0.3125rem;
     flex-shrink: 0;
-    max-width: 11rem;
     font-size: 0.8rem;
     color: var(--color-text-secondary);
     cursor: pointer;
@@ -1031,9 +1030,7 @@
     background: var(--color-bg-secondary, #f0f0f0);
   }
 
-  .via-handle {
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .via-label {
     white-space: nowrap;
   }
 
@@ -1752,6 +1749,12 @@
     .article-header {
       flex-wrap: wrap;
       gap: 0.25rem 0.5rem;
+      /* The title takes a full-width first line; the meta items (via-pill,
+         feed title, read-time, date) wrap to a second line. Center them on the
+         cross axis so the via-pill's avatar shares a centerline with the small
+         meta text instead of top-aligning. The title-line keeps its own
+         flex-start alignment internally. */
+      align-items: center;
     }
 
     /* Favicon + title become a full-width first line (as on desktop), so the
