@@ -317,6 +317,99 @@ work of the phase, independent of where the result is cached.
 - `frontend`: count line + threshold in `ArticleCard.svelte`; optional expand reusing the Phase 3
   social-context UI.
 
+### Phase 6 — Linkblog discovery & onboarding
+
+The empty state of "following linkblogs" is dead until you can *find* the ones worth following. This
+phase answers **"which people I already follow on Bluesky have a Skyreader linkblog?"** and seeds a
+logged-out/logged-in **`/discover`** of all linkblogs. Like Phase 0/5 it's read-side and ships
+independently of the write path.
+
+The feature is an **intersection**: `(my Bluesky follows) ∩ (everyone with a skyreader-links
+publication)`. The two halves have very different costs.
+
+- **My follows** — cheap. `app.bsky.graph.getFollows?actor=<did>` on the public AppView
+  (`public.api.bsky.app`, already used for `getProfile`), no auth, 100/page, and each entry already
+  carries handle + displayName + avatar — i.e. the follows call *is* the empty-state render data.
+- **Membership ("has a linkblog")** — the cost center, and the design decision.
+
+#### Decision (settled): publication marker → Constellation registry
+
+Every `site.standard.publication` we write carries one **constant** field,
+`skyreaderLinkblog: "https://skyreader.app/linkblog"` (`LINKBLOG_MARKER_URL` in
+`backend/src/services/linkblog-sync.ts`). Constellation indexes that constant target across all
+publications, so a **single** query enumerates every Skyreader linkblog author — no per-follow PDS
+probing, no maintained indexer (the philosophy of this whole plan):
+
+```
+GET /links/all?target=https://skyreader.app/linkblog
+  → links["site.standard.publication"][".skyreaderLinkblog"].distinct_dids   # the count
+GET /links?target=https://skyreader.app/linkblog&collection=site.standard.publication&path=.skyreaderLinkblog
+  → linking_records: [{ did, rkey }, …]                                       # the actual authors
+```
+
+**Why a marker rather than probing follows.** Probing each follow's PDS for the publication is
+accurate and needs no new field, but scales with **O(my follows)** — a cold-start tax for
+power-followers, blind to how small the product actually is. The registry scales with **O(total
+linkblog population)**: while Skyreader is young that's ~one cheap query regardless of follow count,
+and it's the same dataset `/discover` wants anyway. Intersect the registry DIDs with the follows
+list locally.
+
+**Why this is safe / why it works (both verified):**
+- *Publications are extendable* — the `site.standard.publication` lexicon docs say so explicitly,
+  and AT Proto records are open unions (validators ignore + pass through unknown fields). We write
+  straight to the PDS via `putRecord`, so standard.site's renderer simply ignores the field.
+- *Constellation indexes URI values at arbitrary custom paths on arbitrary lexicons* — confirmed
+  live: `GET /links/all` for a web URL returns our own `app.skyreader.feed.subscription`'s `.siteUrl`
+  field, a custom path on a custom lexicon Constellation has no built-in knowledge of. So the marker
+  at path `.skyreaderLinkblog` will be indexed the same way.
+
+**Constraints that fall out of "it's a registry key":**
+- The marker MUST be a single global constant, **not** env-derived — dev/staging/prod must all write
+  the identical target string or the registry fragments. (Hence a hardcoded `https://skyreader.app/…`
+  even in local dev, where OAuth writes to the user's *real* PDS and hits the *real* firehose.)
+- **Backfill is lazy**, no migration job: `ensureLinkblogPublication()` stamps the marker onto any
+  pre-marker publication on the user's next share (non-destructive, at most one extra write per
+  user), and `updatePublication()` re-stamps it on any settings save.
+
+#### Work items — all done
+
+- **Write path** — `LINKBLOG_MARKER_URL` constant + `skyreaderLinkblog` on the publication record in
+  `ensureLinkblogPublication()` (create + lazy backfill) and `updatePublication()`.
+  `backend/src/services/linkblog-sync.ts`.
+- **`feed-proxy`** — `getLinkblogRegistry(db)` pages Constellation `/links` for the marker target,
+  collecting distinct author DIDs, cached in a single-row `linkblog_registry_cache` (15-min TTL,
+  serves stale on outage). Served at `GET /linkblog-registry`. (`feed-proxy/src/linkblog-registry.ts`,
+  `app.ts`.)
+- **`backend`** — `bsky-appview.ts` (`fetchFollows`/`fetchProfiles` against the public AppView, no
+  auth); `linkblog-discovery.ts` intersects the registry with the user's follows
+  (`getLinkblogFriends` = follows ∩ registry, profiles free from getFollows; `getLinkblogDiscover` =
+  whole registry, friends-first, others' profiles resolved, capped at 100). Routes
+  `GET /api/linkblog/discover/friends` and `GET /api/linkblog/discover` (`routes/linkblog.ts`,
+  `FeedProxyClient.fetchLinkblogRegistry`). Each person carries `publicationUri` + `blogUrl` so the
+  client can subscribe directly.
+- **`frontend`** — `stores/linkblogDiscovery.svelte.ts` (lazy, session-cached, `subscribe()` =
+  `atproto.documents` sub scoped to the publication); `components/LinkblogDiscovery.svelte` (people
+  list, avatar/handle, one-tap Follow → Following state from existing subs); `/sources/discover`
+  page (full registry) + friends onboarding wired into the `/sources` People empty state and an entry
+  link. Calm/terse per PRODUCT.md, One-Blue Follow button per DESIGN.md.
+
+**Caveat — verify in prod:** the marker→Constellation registry only fully proves out once real
+stamped publications hit the firehose. The indexing mechanism is verified live (Constellation indexes
+custom-lexicon URI paths — `app.skyreader.feed.subscription.siteUrl`), but the first real check is
+querying `/links?target=https://skyreader.app/linkblog&collection=site.standard.publication&path=.skyreaderLinkblog`
+after a publication is stamped.
+
+#### Open questions (Phase 6)
+
+- **`/discover` ranking** — recency of last post, recommend counts (Constellation), "recommended by
+  people you follow," or a mix? Presentation choice; data's all there.
+- **standard.site-native discover** — the publication lexicon also has `preferences.showInDiscover`
+  (boolean). Set it (true by default?) so linkblogs surface in *standard.site's* discover too, or
+  keep discovery Constellation-only for now? Orthogonal to our registry.
+- **Marker stability** — keep the marker unversioned (`/linkblog`) and re-backfill if semantics ever
+  change, vs. a versioned target (`/linkblog/v1`) that fragments the registry across versions.
+  Defaulting to unversioned.
+
 ## What we retire
 
 - Lexicons: `app.skyreader.social.share`, `app.skyreader.social.shareReadPosition`.

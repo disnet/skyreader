@@ -10,6 +10,7 @@ import {
 	type ProxyDocument,
 } from './standard-site';
 import { getSocialContext, type SocialContext, type SocialContextQuery } from './constellation';
+import { getLinkblogRegistry } from './linkblog-registry';
 
 export interface AppConfig {
 	proxySecret?: string;
@@ -332,6 +333,18 @@ export function initDatabase(db: Database): void {
 	db.run(
 		`CREATE INDEX IF NOT EXISTS idx_constellation_cache_cached_at ON constellation_cache(cached_at)`
 	);
+
+	// The Skyreader linkblog registry (Phase 6): a single cached row holding every
+	// DID that has a linkblog, derived from one Constellation marker query. Global
+	// and slowly-changing, so one row serves all users. Self-refreshing in place
+	// (upsert on the fixed `marker` key) — no cleanup branch needed.
+	db.run(`
+		CREATE TABLE IF NOT EXISTS linkblog_registry_cache (
+			marker TEXT PRIMARY KEY,
+			dids_json TEXT NOT NULL,
+			cached_at INTEGER NOT NULL
+		)
+	`);
 
 	// Resolved standard.site publication metadata (base URL + icon), mirroring the
 	// backend's former D1 publications_cache.
@@ -1444,6 +1457,18 @@ export function createApp(db: Database, config: AppConfig) {
 		);
 
 		return c.json({ authors: results });
+	});
+
+	// Linkblog registry (Phase 6): the DIDs of everyone with a Skyreader linkblog,
+	// from one cached Constellation marker query. The backend intersects this with
+	// a user's Bluesky follows (onboarding) or lists it whole (/discover). Cheap,
+	// global, and degrades to empty/stale on a Constellation outage.
+	app.get('/linkblog-registry', async (c) => {
+		if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret) {
+			return c.json({ error: 'Unauthorized' }, 401);
+		}
+		const dids = await getLinkblogRegistry(db);
+		return c.json({ dids });
 	});
 
 	// Social context for link posts (Phase 3). Batch lookup of Constellation

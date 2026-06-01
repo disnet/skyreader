@@ -355,6 +355,19 @@ export class FeedProxyClient {
   }
 
   /**
+   * Fetch the linkblog registry (Phase 6): the DIDs of everyone with a Skyreader
+   * linkblog, from the proxy's cached Constellation marker query. Best-effort —
+   * the proxy returns an empty list on a Constellation outage rather than error.
+   */
+  async fetchLinkblogRegistry(): Promise<string[]> {
+    const raw = await this.fetch<{ dids?: string[]; error?: string }>('/linkblog-registry');
+    if (!raw.dids) {
+      throw new FeedProxyError(raw.error || 'Invalid response from feed proxy');
+    }
+    return raw.dids;
+  }
+
+  /**
    * Fetch a URL and return cleaned, extracted article content (Defuddle, done
    * proxy-side and cached).
    */

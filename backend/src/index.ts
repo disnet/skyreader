@@ -34,6 +34,8 @@ import {
   handleDeleteBoost,
   handleGetPublication,
   handleUpdatePublication,
+  handleDiscover,
+  handleDiscoverFriends,
 } from './routes/linkblog';
 import {
   handleCreateSubscription,
@@ -304,6 +306,16 @@ export default {
             request.method === 'PATCH'
               ? await handleUpdateShare(request, env)
               : await handleDeleteShare(request, env, ctx);
+          break;
+
+        // Linkblog discovery — find friends with linkblogs / browse all (Phase 6)
+        case url.pathname === '/api/linkblog/discover/friends':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleDiscoverFriends(request, env);
+          break;
+        case url.pathname === '/api/linkblog/discover':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleDiscover(request, env);
           break;
 
         // Linkblog endpoints — sharing as portable site.standard.document records

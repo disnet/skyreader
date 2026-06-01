@@ -611,6 +611,20 @@ export interface BlueskyProfile {
   avatar?: string;
 }
 
+// A person with a Skyreader linkblog, surfaced by discovery (Phase 6).
+export interface LinkblogPerson {
+  did: string;
+  handle: string | null;
+  displayName?: string;
+  avatar?: string;
+  // The publication to subscribe to (at://did/site.standard.publication/skyreader-links).
+  publicationUri: string;
+  // The public linkblog page — used as the subscription's siteUrl.
+  blogUrl: string;
+  // Whether the current user already follows this person on Bluesky.
+  isFollow: boolean;
+}
+
 export interface UserShare {
   id?: number;
   rkey?: string;
