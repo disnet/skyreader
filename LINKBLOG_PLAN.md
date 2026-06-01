@@ -203,72 +203,104 @@ Ordered to de-risk: read-only/public first (no migration), then write, then reti
   D1 `shares` table, the share branch of the Jetstream poller. Read-state folds into normal
   per-URL tracking.
 
-### Phase 5 — Network-wide mentions on every item ("the Atmosphere knows about this")
+### Phase 5 — Atmosphere context on every item ("where this is being talked about")
 
 Phase 3 puts social context on *linkblog posts*. Phase 5 generalizes it to **every item in the
 feed** — regular RSS articles and standard.site links alike — by asking Constellation "who across
-the Atmosphere has linked this URL?" and surfacing a quiet count: *"3 people are talking about
-this."* It's the same backlink lookup Phase 3 already does, widened from one collection to all of
-them and moved server-side so it's computed once and shared by every reader.
+the Atmosphere has referenced this URL, and *how*?" It's the same backlink lookup Phase 3 already
+does, widened from one collection to all of them, **sliced by the kind of reference**, and moved
+server-side so it's computed once and shared by every reader.
+
+The original cut of this phase surfaced one flat count (*"3 people linked this"*). That throws away
+the most useful signal — *where* and *how* the link is being engaged — and is also dishonest:
+saving and highlighting aren't discussing. A thoughtful **linkblog note**, a **Bluesky** thread, a
+**margin.at** highlight on a specific passage, and a saved **Semble** card are four different
+invitations. So the headline becomes a **lead lane** (the most meaningful kind, with its honest
+verb) and the rest roll into *"+N more,"* expanding to a per-kind breakdown.
 
 This phase ships independently of the linkblog write path — it enriches content that already
 exists.
 
-#### What Constellation gives us
+#### Source lanes — the whitelist becomes a typed mapping
 
 Constellation indexes the whole firehose into a backlink graph keyed on the target string, so an
-external article URL is the target of many record types, not just `site.standard.document`:
+external article URL is the target of many record types — and it indexes **plain `https://` web
+URLs**, not only `at://` targets (verified live: `GET /links/all` for
+`https://atproto.com/blog/indexing-standard-site` returns `app.bsky.feed.post` linkers via
+`.embed.external.uri` + facet links plus `network.cosmik.card`; `https://www.theverge.com/` returns
+30+ distinct bsky linkers). So the lookup works for arbitrary feed-article URLs.
 
-- `app.bsky.feed.post` — external embeds (`.embed.external.uri`) and rich-text link facets
-  (`.facets[].features[].uri`)
-- `site.standard.document` (linkblog entries), leaflet/whitewind/frontpage posts, etc.
+Rather than a yes/no "counts as talking" whitelist, Phase 5 maps each meaningful `(collection,
+path)` source into a named **lane** with its own label, honest verb, and icon:
 
-Constellation indexes **plain `https://` web URLs**, not only `at://` targets — verified live
-against `GET /links/all`: `https://atproto.com/blog/indexing-standard-site` returns
-`app.bsky.feed.post` linkers (via `.embed.external.uri` and facet links) plus `network.cosmik.card`;
-`https://www.theverge.com/` returns 30+ distinct bsky linkers. So the lookup works for arbitrary
-feed-article URLs.
+| Lane | Collection → path | Verb | What it is |
+|------|-------------------|------|------------|
+| **Linkblogs** | `site.standard.document` → `.links[].uri` | *noted* | Skyreader / standard.site link posts (commentary) |
+| **Bluesky** | `app.bsky.feed.post` → `.embed.external.uri`, `.embed.media.external.uri`, both `…#link.uri` facet spellings | *posted* | Posts embedding or facet-linking the URL |
+| **margin.at** | `at.margin.note` → `.target.source` | *highlighted* | Highlights / annotations anchored on the page |
+| **Semble** | `network.cosmik.card` → `.content.url`, `.url` | *saved* | The URL saved into a card / collection |
 
-Use **`GET /links/all?target=<url>`** — one request returns *every* `(collection, path)` source
-pointing at the URL with `records` + `distinct_dids` per path, so we don't enumerate collections by
-hand; Constellation reports what's out there. Two non-obvious wrinkles the live data revealed:
+- **Linkblogs** and **Bluesky** carry commentary text (a note / a post body) — these are
+  *discussion*. **margin.at** and **Semble** are *marks* on the article (a highlight, a saved card),
+  qualitatively different and labeled honestly as such.
+- **Ignored, not bucketed:** our own `app.skyreader.feed.subscription.siteUrl`, generic bookmarks
+  (`community.lexicon.bookmarks.bookmark`), referrer/analytics paths, and post-like collections from
+  other apps we don't lane yet (`pub.leaflet.document`, `net.anisota.feed.post`, `app.tomarigi.feed.post`,
+  `place.stream.chat.message`). A new linking app simply doesn't appear until we add a lane for it —
+  graceful, never a miscount.
+- **The whitelist must be path-precise, not collection-precise** — verified live, this is the
+  make-or-break. `GET /links/all?target=https://anisota.net/harvest` returns
+  `net.anisota.beta.game.session.sessionContext.referrer` (337 dids) and
+  `net.anisota.beta.game.log.metadata.referrer` (330 dids): a game logging the page as an HTTP
+  *referrer*, not 600+ people discussing it. The same trap lives *inside* a laned collection — for
+  `app.bsky.feed.post`, count only `.embed.external.uri` / `.embed.media.external.uri` / the two
+  `…#link.uri` facet paths, and drop `.text`, `.embed.images[].alt`, `.bridgyOriginalUrl`. A lane is
+  a set of `(collection, exact-path)` tuples, never a whole collection.
+- **NSIDs verified live (2026-06-01):** `at.margin.note.target.source` (margin.at) confirmed on both
+  test URLs; `network.cosmik.card` (`.content.url` / `.url`) is the only card-type backlink on a
+  known-Semble URL — Semble writes the shared **Cosmik** card lexicon, not a `semble.*` NSID. Also
+  noted: `site.standard.document` can reference a URL via an inline body facet, not only `.links[].uri`
+  — the Linkblogs lane may need that second path so body-mentions aren't missed.
 
-- **Whitelist what counts as "talking."** Constellation indexes far more than discussion. The same
-  query also surfaces our *own* `app.skyreader.feed.subscription.siteUrl`, bookmark/card types
-  (`network.cosmik.card`, `app.blento.card`), etc. — subscribing to or bookmarking a URL is not
-  commentary. Count post/linkblog-style collections (`app.bsky.feed.post`, `site.standard.document`,
-  leaflet/whitewind/frontpage); ignore subscription/card records.
-- **The headline number is a distinct-DID *union*, not a sum.** A single bsky post links a URL via
-  `.embed.external.uri`, `.embed.media.external.uri`, *and* `.facets[].features[].uri`; a person who
-  embeds *and* facet-links double-counts if you add the per-path `distinct_dids`. A truthful "N
-  people" requires unioning the actual DID *sets* across the counted paths/collections (fetch the
-  DID lists via `/links/count/distinct-dids` / `/links` per source and union), not summing the
-  per-path totals from `/links/all`. Use `/links/all` to discover *which* sources exist, then union
-  DIDs over the whitelisted ones.
+Use **`GET /links/all?target=<url>`** — one request returns *every* `(collection, path)` source with
+`records` + `distinct_dids` per path; bucket each into its lane (or drop it). Two non-obvious
+wrinkles the live data revealed, now applied **per lane**:
 
-#### Cache server-side, keyed by normalized URL — not in the feed blob
+- **Bucket, don't enumerate.** `/links/all` tells us which sources exist; we never enumerate
+  collections by hand. The lane registry decides which buckets render.
+- **Each per-lane count is a distinct-DID *union*, not a sum.** A single bsky post links a URL via
+  `.embed.external.uri`, `.embed.media.external.uri`, *and* `.facets[].features[].uri`; summing the
+  per-path `distinct_dids` double-counts someone who embeds *and* facet-links. A truthful per-lane
+  "N people" unions the DID *sets* across that lane's paths (fetch the DID lists via
+  `/links/count/distinct-dids` / `/links` per source and union). The **total** — for the threshold
+  and the *"+N more"* roll-up — is the union across *all* lanes: a person who noted *and* posted is
+  one person in the total, but legitimately appears in both lanes.
 
-The mention count for a URL is identical for every user, so computing it per-card-per-user is pure
-waste. Cache it **once in the proxy**, shared by all readers. Crucially, do **not** fold counts
-into the feed's `parsed_json` blob (`app.ts` `cache.parsed_json`): that blob is re-parsed wholesale
-every warm refresh, which erases any notion of "new items." Instead, a dedicated table keyed by the
-**normalized article URL**:
+#### Cache server-side, keyed by normalized URL — per-lane breakdown
+
+The breakdown for a URL is identical for every user, so computing it per-card-per-user is pure
+waste. Cache it **once in the proxy**, shared by all readers. Crucially, do **not** fold it into the
+feed's `parsed_json` blob (`app.ts` `cache.parsed_json`): that blob is re-parsed wholesale every
+warm refresh, which erases any notion of "new items." Instead, a dedicated table keyed by the
+**normalized article URL**, storing the per-lane breakdown rather than a single integer:
 
 ```sql
 CREATE TABLE IF NOT EXISTS mention_cache (
   url_hash      TEXT PRIMARY KEY,   -- hash of the *normalized* URL
   url           TEXT NOT NULL,
-  distinct_dids INTEGER NOT NULL DEFAULT 0,
-  sources_json  TEXT,               -- optional per-collection breakdown from /links/all
+  total_dids    INTEGER NOT NULL DEFAULT 0,  -- distinct-DID union across ALL lanes (threshold + "+N more")
+  lanes_json    TEXT,               -- [{ lane, dids, sampleDids? }] per non-empty lane, in priority order
   first_seen_at INTEGER NOT NULL,
   checked_at    INTEGER NOT NULL
 )
 ```
 
 Keying by URL (not by feed) dedups across **both** users and feeds: the same article appearing in
-three feeds — or linked in a linkblog *and* present in an RSS feed — is one row. At serve time,
-left-join each item's normalized URL against `mention_cache` and attach the count; a miss or zero
-renders nothing (silent degradation, same contract as Phase 3 — `constellation.ts`).
+three feeds — or linked in a linkblog *and* present in an RSS feed — is one row. `lanes_json` keeps
+lanes in priority order so the serve path picks the lead without re-sorting. At serve time,
+left-join each item's normalized URL against `mention_cache` and attach the breakdown; a miss or a
+sub-threshold total renders nothing (silent degradation, same contract as Phase 3 —
+`constellation.ts`).
 
 #### Cadence is the hard part, not volume
 
@@ -297,25 +329,49 @@ params; canonicalize scheme/host/slash; optionally query a couple of variants) t
 false zeros for articles that have real discussion and feels broken. This is the actual engineering
 work of the phase, independent of where the result is cached.
 
-#### Render & signal
+#### Render & signal — lead lane, roll-up, honest verbs
 
-- A quiet count-only line on regular `ArticleCard`s, behind a **minimum threshold** (≥2–3 distinct
-  DIDs) so we never query-then-hide noise. Calm and terse (PRODUCT.md) — *"3 people linked this."*
-- Prefer the honest mechanical phrasing (*linked this*) over implying verified discussion
-  (*talking about this*) unless we actually inspect the posts.
-- Expand-to-see-who (handles + notes, the Phase 3 `alsoLinkedBy` shape) is an optional follow-on,
-  fetched lazily on open — it carries the per-linker PDS `getRecord` cost, so keep it off the
-  always-on path.
+- **Lead lane inline.** The always-on line on a regular `ArticleCard` shows the single
+  highest-priority non-empty lane with its lane icon, count, and honest verb: *"✍ 3 linkblog
+  notes."* Priority order = **Linkblogs → Bluesky → margin.at → Semble** (commentary before marks).
+  Behind a **minimum threshold** (total ≥ 2–3 distinct DIDs) so we never query-then-hide noise.
+- **Roll-up.** Trailing *"· +N more ▾"* where N is the distinct people in the *other* lanes not
+  already counted in the lead lane (union math, not a sum). Tapping it expands the row.
+- **Expanded breakdown.** Each non-empty lane on its own line — icon, count, honest verb
+  (*noted / posted / highlighted / saved*). The **Linkblogs** and **Bluesky** lanes can lazily
+  resolve to the actual people + notes (the Phase 3 `alsoLinkedBy` shape) on open — this carries the
+  per-linker PDS `getRecord` cost, so keep it off the always-on path. margin.at / Semble stay
+  count-only in v1.
+- **Honest phrasing throughout** — *noted / posted / highlighted / saved*, never a blanket "talking
+  about this." A highlight isn't a discussion; a saved card isn't commentary.
+- Calm and terse (PRODUCT.md): one line at rest, never a metrics strip (the algorithmic-feed
+  anti-reference). Color stays reserved per DESIGN.md — neutral lane icons, muted-ink count, no
+  badge fills.
 
 #### Work items
 
-- `feed-proxy`: `mention_cache` table + cleanup branch alongside the existing TTL sweep
-  (`app.ts` cleanup); a `getArticleMentions(url)` helper that uses `/links/all` to discover sources
-  then unions distinct DIDs over a whitelisted set of collections (generalize `constellation.ts`); a
-  URL-normalization helper; re-poll/decay gate wired into `warmStaleFeeds()`;
-  serve-time join attaching counts to feed items.
-- `frontend`: count line + threshold in `ArticleCard.svelte`; optional expand reusing the Phase 3
-  social-context UI.
+- `feed-proxy`:
+  - a **lane registry** (`{ id, label, verb, icon, collections: [{ nsid, path }] }[]`) — the single
+    hardcoded mapping; generalize `constellation.ts`.
+  - `mention_cache` table (per-lane `lanes_json` + `total_dids`) + cleanup branch alongside the
+    existing TTL sweep (`app.ts` cleanup).
+  - `getArticleLanes(url)`: `/links/all` to discover sources → bucket into lanes → union distinct
+    DIDs per lane and across all → return ordered non-empty lanes + total.
+  - URL-normalization helper; re-poll/decay gate wired into `warmStaleFeeds()`; serve-time join
+    attaching the breakdown to feed items.
+  - All four lane NSIDs/paths are now verified live (Linkblogs `site.standard.document`, Bluesky
+    `app.bsky.feed.post`, margin.at `at.margin.note.target.source`, Semble `network.cosmik.card`) —
+    the registry can be written directly. Encode each lane as `(collection, exact-path)` tuples and
+    exclude referrer/alt/bridgy noise paths (see the path-precision note above).
+- `frontend`:
+  - lead-lane + *"+N more"* line + threshold in `ArticleCard.svelte`; neutral lane icons (Linkblog /
+    Bluesky / margin / card) added to the Lucide icon set.
+  - expand reusing the Phase 3 social-context UI, grouped by lane; lazy people/notes for the
+    Linkblogs + Bluesky lanes only.
+
+**Deferred follow-on — follows-aware lead lane.** The shared cache is unpersonalized, but the client
+could re-rank the lead toward a lane containing DIDs the user follows (Phase 6 follows data), e.g.
+*"2 people you follow noted this."* Off the shared path, client-side only; noted, not built.
 
 ### Phase 6 — Linkblog discovery & onboarding
 
