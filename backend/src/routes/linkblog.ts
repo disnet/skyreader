@@ -18,6 +18,7 @@ import {
   writeLinkblogShare,
   type LinkblogShareInput,
 } from '../services/linkblog-sync';
+import { getLinkblogDiscover, getLinkblogFriends } from '../services/linkblog-discovery';
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -237,6 +238,32 @@ export async function handleDeleteBoost(request: Request, env: Env): Promise<Res
     return json({ error: result.error }, result.retryable ? 503 : 502);
   }
   return json({ success: true });
+}
+
+// GET /api/linkblog/discover/friends — people the user follows on Bluesky who
+// have a linkblog (Phase 6 onboarding). Read-only; no linkblog scopes needed.
+export async function handleDiscoverFriends(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'GET') {
+    return json({ error: 'Method not allowed' }, 405);
+  }
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Unauthorized' }, 401);
+
+  const people = await getLinkblogFriends(session, env);
+  return json({ people });
+}
+
+// GET /api/linkblog/discover — the whole linkblog registry, friends first
+// (flagged isFollow), for the /discover page. Read-only.
+export async function handleDiscover(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'GET') {
+    return json({ error: 'Method not allowed' }, 405);
+  }
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Unauthorized' }, 401);
+
+  const people = await getLinkblogDiscover(session, env);
+  return json({ people });
 }
 
 // GET /api/linkblog/publication — current (or default) publication metadata.

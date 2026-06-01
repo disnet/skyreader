@@ -4,6 +4,7 @@ import type {
   IntegrationStatus,
   ItemLabel,
   ItemLabelType,
+  LinkblogPerson,
   LinkblogPublication,
   MarginCollection,
   ParsedFeed,
@@ -411,6 +412,17 @@ class ApiClient {
     freestandingDocumentCount: number;
   }> {
     return this.fetch(`/api/social/detect-content?did=${encodeURIComponent(did)}`);
+  }
+
+  // Linkblog discovery (Phase 6)
+  // Friends with linkblogs: people you follow on Bluesky who have one.
+  async getLinkblogFriends(): Promise<{ people: LinkblogPerson[] }> {
+    return this.fetch('/api/linkblog/discover/friends');
+  }
+
+  // The whole linkblog registry for /discover — friends first, then others.
+  async getLinkblogDiscover(): Promise<{ people: LinkblogPerson[] }> {
+    return this.fetch('/api/linkblog/discover');
   }
 
   // Subscriptions

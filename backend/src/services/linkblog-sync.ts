@@ -18,6 +18,21 @@ export const RECOMMEND_COLLECTION = 'site.standard.graph.recommend';
 // One dedicated linkblog publication per user, at a fixed rkey.
 export const LINKBLOG_RKEY = 'skyreader-links';
 
+// Discovery marker. Every linkblog publication carries this single constant URL
+// so Constellation indexes them all under one target — turning the backlink
+// index into a zero-maintenance "who has a linkblog" registry:
+//   GET /links/all?target=<LINKBLOG_MARKER_URL>
+//     → links["site.standard.publication"][".skyreaderLinkblog"].distinct_dids
+// returns every linkblog author's DID; intersect locally with a user's follows
+// for onboarding, or list globally for /discover. (Publications are extendable
+// per the standard.site lexicon, and Constellation indexes URI values at
+// arbitrary custom paths — verified live against app.skyreader.feed.subscription.)
+//
+// MUST be a single global constant (NOT env-derived): the registry only works if
+// every publication across dev/staging/prod writes the exact same target string.
+// See LINKBLOG_PLAN.md Phase 6.
+export const LINKBLOG_MARKER_URL = 'https://skyreader.app/linkblog';
+
 // Generous excerpt cap — the excerpt is the only durable copy if the source
 // link-rots or paywalls, so keep it roomy, but bound it so a record can't bloat.
 const MAX_EXCERPT_CHARS = 1500;
@@ -35,6 +50,9 @@ interface PublicationRecord {
   name?: string;
   description?: string;
   icon?: BlobRef;
+  // Constant discovery marker (see LINKBLOG_MARKER_URL). Optional in the type
+  // because pre-existing publications predate it and get backfilled lazily.
+  skyreaderLinkblog?: string;
 }
 
 export function publicationUri(did: string): string {
@@ -119,6 +137,20 @@ export async function ensureLinkblogPublication(
   );
 
   if (existing.success) {
+    // Lazy backfill: stamp the discovery marker onto publications created before
+    // it existed, so they become discoverable via Constellation. Non-destructive
+    // (preserves all user-customized fields) and runs at most once per user —
+    // subsequent shares find the marker already present and skip the extra write.
+    const value = existing.data.value;
+    if (value.skyreaderLinkblog !== LINKBLOG_MARKER_URL) {
+      const updated: PublicationRecord = {
+        ...value,
+        $type: PUBLICATION_COLLECTION,
+        skyreaderLinkblog: LINKBLOG_MARKER_URL,
+      };
+      const put = await pdsClient.putRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY, updated);
+      if (!put.success) return put;
+    }
     return { success: true, data: { uri: publicationUri(session.did), created: false } };
   }
 
@@ -126,6 +158,7 @@ export async function ensureLinkblogPublication(
     $type: PUBLICATION_COLLECTION,
     url: linkblogBaseUrl(env, session.did),
     name: defaultPublicationName(session),
+    skyreaderLinkblog: LINKBLOG_MARKER_URL,
   };
 
   const put = await pdsClient.putRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY, record);
@@ -154,6 +187,7 @@ export async function updatePublication(
     ...base,
     $type: PUBLICATION_COLLECTION,
     url: base.url || linkblogBaseUrl(env, session.did),
+    skyreaderLinkblog: LINKBLOG_MARKER_URL,
   };
   if (updates.name !== undefined)
     record.name = updates.name.trim() || defaultPublicationName(session);

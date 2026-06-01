@@ -11,6 +11,7 @@
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { getSourceDisplay } from '$lib/utils/sourceDisplay';
   import Icon from '$lib/components/Icon.svelte';
+  import LinkblogDiscovery from '$lib/components/LinkblogDiscovery.svelte';
   import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
   import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
   import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
@@ -463,6 +464,11 @@
   <!-- People tab -->
   {#if activeTab === 'people'}
     {#if filteredPeople.length > 0}
+      <a class="discover-link" href="/sources/discover">
+        <Icon name="users" size={14} />
+        Discover linkblogs to follow
+        <Icon name="chevron-right" size={14} />
+      </a>
       <div class="select-all-row">
         <label class="checkbox-label">
           <input type="checkbox" checked={allSelected} onchange={toggleSelectAll} />
@@ -572,13 +578,21 @@
           {/if}
         {/each}
       </div>
-    {:else}
+    {:else if searchQuery}
       <div class="empty-state">
-        {#if searchQuery}
-          <p>No people match "{searchQuery}"</p>
-        {:else}
-          <p>No people yet. Follow a @handle to get started.</p>
-        {/if}
+        <p>No people match "{searchQuery}"</p>
+      </div>
+    {:else}
+      <div class="people-onboarding">
+        <p class="onboarding-lead">
+          Follow a @handle to get started — or follow the linkblogs of people you already know on
+          Bluesky:
+        </p>
+        <LinkblogDiscovery variant="friends" />
+        <a class="discover-link standalone" href="/sources/discover">
+          Browse all linkblogs
+          <Icon name="chevron-right" size={14} />
+        </a>
       </div>
     {/if}
   {/if}
@@ -853,5 +867,36 @@
     padding: 3rem 1rem;
     color: var(--color-text-secondary);
     font-size: 0.875rem;
+  }
+
+  .discover-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--color-primary);
+    text-decoration: none;
+    padding: 0.5rem 0;
+  }
+
+  .discover-link:hover {
+    text-decoration: underline;
+  }
+
+  .discover-link.standalone {
+    margin-top: 0.75rem;
+  }
+
+  .people-onboarding {
+    padding: 0.5rem 0 2rem;
+  }
+
+  .onboarding-lead {
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+    line-height: 1.5;
+    margin: 0 0 1rem;
+    max-width: 52ch;
   }
 </style>
