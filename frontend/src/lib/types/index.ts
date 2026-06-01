@@ -563,17 +563,6 @@ export interface LinkblogShare {
   createdAt: string;
 }
 
-// A locally-tracked boost (Phase 3): a bare site.standard.graph.recommend of
-// someone's link post, keyed by the boosted document's record URI so the boost
-// button can show state + support un-boosting.
-export interface LinkblogBoost {
-  id?: number;
-  rkey: string;
-  documentUri: string; // AT URI of the boosted link post
-  recordUri?: string; // AT URI of our recommend record (set after the write lands)
-  createdAt: string;
-}
-
 // One other person who linked the same external article (Constellation), with
 // their commentary if available. Powers the "also linked by …" context line.
 export interface AlsoLinkedEntry {

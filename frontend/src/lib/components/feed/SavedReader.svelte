@@ -127,8 +127,9 @@
       const fetched = linkPostContentStore.get(linkPostUrl);
       if (fetched?.content) {
         const note = getLinkPostNote(readerItem.item);
+        // The note is the author's own voice — render it as prose, not a quote.
         const lead = note
-          ? `<blockquote class="link-post-note" style="margin: 0 0 1.25em; padding-left: 0.875em; border-left: 3px solid var(--color-primary, #0066cc); color: var(--color-text-secondary, #666); font-style: italic">${escapeNoteHtml(note)}</blockquote>`
+          ? `<p class="link-post-note" style="margin: 0 0 1.5em">${escapeNoteHtml(note)}</p>`
           : '';
         return lead + fetched.content;
       }

@@ -12,8 +12,6 @@ import { createPDSClient, type PDSResult, type PutRecordResponse } from './pds-c
 
 export const PUBLICATION_COLLECTION = 'site.standard.publication';
 export const DOCUMENT_COLLECTION = 'site.standard.document';
-// A boost (bare reshare) of someone's link post.
-export const RECOMMEND_COLLECTION = 'site.standard.graph.recommend';
 
 // One dedicated linkblog publication per user, at a fixed rkey.
 export const LINKBLOG_RKEY = 'skyreader-links';
@@ -338,37 +336,4 @@ export async function updateLinkblogShareNote(
   };
 
   return pdsClient.putRecord(DOCUMENT_COLLECTION, rkey, updated);
-}
-
-// ── Boost (recommend) ────────────────────────────────────────────────────────
-//
-// A boost is a bare `site.standard.graph.recommend` pointing at someone's link
-// post — the "reshare without commentary" half of the split (commentary → quote,
-// which is a document). No publication needed; it's a standalone graph record.
-
-interface RecommendRecord {
-  $type: string;
-  document: string; // AT URI of the recommended link post
-  createdAt: string;
-}
-
-export function buildRecommendRecord(documentUri: string): RecommendRecord {
-  return {
-    $type: RECOMMEND_COLLECTION,
-    document: documentUri,
-    createdAt: new Date().toISOString(),
-  };
-}
-
-export async function writeBoost(
-  session: Session,
-  rkey: string,
-  documentUri: string
-): Promise<PDSResult<PutRecordResponse>> {
-  const record = buildRecommendRecord(documentUri);
-  return createPDSClient(session).putRecord(RECOMMEND_COLLECTION, rkey, record);
-}
-
-export async function deleteBoost(session: Session, rkey: string): Promise<PDSResult<void>> {
-  return createPDSClient(session).deleteRecord(RECOMMEND_COLLECTION, rkey);
 }

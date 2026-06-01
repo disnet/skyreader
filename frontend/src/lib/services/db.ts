@@ -5,7 +5,6 @@ import type {
   SocialReadPosition,
   SocialDocument,
   LinkblogShare,
-  LinkblogBoost,
   FilteredView,
   ItemTags,
   ItemLabel,
@@ -48,7 +47,6 @@ class SkyreaderDatabase extends Dexie {
   socialReadPositions!: Table<SocialReadPosition>;
   socialDocuments!: Table<SocialDocument>;
   linkblogShares!: Table<LinkblogShare>;
-  linkblogBoosts!: Table<LinkblogBoost>;
   syncQueue!: Table<SyncQueueEntry>;
   metadata!: Table<MetadataEntry>;
   filteredViews!: Table<FilteredView>;
@@ -359,6 +357,12 @@ class SkyreaderDatabase extends Dexie {
       userShares: null,
       shareReadPositions: null,
     });
+
+    // Phase 7: the recommend/boost write path is removed — every reshare is now a
+    // linkblog document. Drop the locally-tracked boosts table.
+    this.version(33).stores({
+      linkblogBoosts: null,
+    });
   }
 }
 
@@ -372,7 +376,6 @@ export async function clearAllData(): Promise<void> {
     db.socialReadPositions.clear(),
     db.socialDocuments.clear(),
     db.linkblogShares.clear(),
-    db.linkblogBoosts.clear(),
     db.syncQueue.clear(),
     db.metadata.clear(),
     db.filteredViews.clear(),

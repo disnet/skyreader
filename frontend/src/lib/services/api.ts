@@ -455,23 +455,6 @@ class ApiClient {
     });
   }
 
-  // Boost — a bare recommend of someone's link post (no commentary).
-  async createBoost(data: {
-    rkey: string;
-    document: string;
-  }): Promise<{ uri: string; cid: string; rkey: string }> {
-    return this.fetch('/api/linkblog/boost', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async deleteBoost(rkey: string): Promise<{ success: boolean }> {
-    return this.fetch(`/api/linkblog/boost/${rkey}`, {
-      method: 'DELETE',
-    });
-  }
-
   // Social context (Constellation) for link posts — recommend/quote counts +
   // "who else linked this article". Best-effort adornment; degrades to empty.
   async fetchSocialContext(
