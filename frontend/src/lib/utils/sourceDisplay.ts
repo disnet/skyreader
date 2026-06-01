@@ -12,7 +12,7 @@ export function getSourceDisplay(
 ): SourceDisplayInfo {
   switch (sourceType) {
     case 'atproto.documents':
-      if (feedUrl && feedUrl !== '__freestanding__') {
+      if (feedUrl) {
         return { label: 'Publication', iconName: 'newspaper', pillClass: 'pill-publication' };
       }
       return { label: 'Documents', iconName: 'file-text', pillClass: 'pill-documents' };

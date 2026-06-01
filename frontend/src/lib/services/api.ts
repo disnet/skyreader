@@ -326,7 +326,6 @@ class ApiClient {
       description?: string;
       iconUrl?: string;
     }>;
-    freestandingDocumentCount: number;
   }> {
     return this.fetch(`/api/social/detect-content?did=${encodeURIComponent(did)}`);
   }

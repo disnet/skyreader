@@ -46,11 +46,6 @@
     // Prefer a publication-scoped sub whose publication URI matches the doc's site
     const scoped = subs.find((s) => s.feedUrl?.startsWith('at://') && s.feedUrl === doc.siteUri);
     if (scoped) return scoped;
-    // Next, a freestanding sub when the doc isn't tied to a publication
-    const freestanding = subs.find(
-      (s) => s.feedUrl === '__freestanding__' && (!doc.siteUri || !doc.siteUri.startsWith('at://'))
-    );
-    if (freestanding) return freestanding;
     // Fall back to any author-level sub
     return subs[0];
   }

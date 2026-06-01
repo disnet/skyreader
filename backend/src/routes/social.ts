@@ -168,28 +168,19 @@ export async function handleDetectContent(request: Request, env: Env): Promise<R
   try {
     const pdsUrl = await resolvePdsUrl(did);
     if (!pdsUrl) {
-      return new Response(JSON.stringify({ did, publications: [], freestandingDocumentCount: 0 }), {
+      return new Response(JSON.stringify({ did, publications: [] }), {
         headers: { 'Content-Type': 'application/json' },
       });
     }
 
-    // Query PDS in parallel for publications and documents
-    const [pubResponse, docsResponse] = await Promise.all([
-      fetch(
-        `${pdsUrl}/xrpc/com.atproto.repo.listRecords?${new URLSearchParams({
-          repo: did,
-          collection: 'site.standard.publication',
-          limit: '100',
-        })}`
-      ),
-      fetch(
-        `${pdsUrl}/xrpc/com.atproto.repo.listRecords?${new URLSearchParams({
-          repo: did,
-          collection: 'site.standard.document',
-          limit: '100',
-        })}`
-      ),
-    ]);
+    // Query PDS for the user's publications
+    const pubResponse = await fetch(
+      `${pdsUrl}/xrpc/com.atproto.repo.listRecords?${new URLSearchParams({
+        repo: did,
+        collection: 'site.standard.publication',
+        limit: '100',
+      })}`
+    );
 
     interface PublicationBlobRef {
       ref: { $link: string };
@@ -230,19 +221,7 @@ export async function handleDetectContent(request: Request, env: Env): Promise<R
       });
     }
 
-    // Count free-standing documents (not associated with any publication)
-    let freestandingDocumentCount = 0;
-    if (docsResponse.ok) {
-      const docsData = (await docsResponse.json()) as {
-        records: Array<{ uri: string; value: { site?: string } }>;
-      };
-      const publicationUris = new Set(publications.map((p) => p.uri));
-      freestandingDocumentCount = docsData.records.filter(
-        (r) => !r.value.site || !publicationUris.has(r.value.site)
-      ).length;
-    }
-
-    return new Response(JSON.stringify({ did, publications, freestandingDocumentCount }), {
+    return new Response(JSON.stringify({ did, publications }), {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error) {

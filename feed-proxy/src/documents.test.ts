@@ -163,8 +163,6 @@ describe('standard-site helpers', () => {
 		];
 		expect(filterByPublication(docs).length).toBe(3);
 		expect(filterByPublication(docs, PUB_URI)).toEqual([docs[0]]);
-		// __freestanding__ = anything not tied to an at:// publication
-		expect(filterByPublication(docs, '__freestanding__')).toEqual([docs[1], docs[2]]);
 	});
 
 	it('trims documents the client already has (since_uris)', () => {
@@ -239,17 +237,17 @@ describe('POST /documents', () => {
 			],
 		});
 
-		// Scoped to the publication: excludes the freestanding doc.
+		// Scoped to the publication: excludes the doc without an at:// publication.
 		const scoped = (await (await postDocuments(app, [{ did: AUTHOR, siteUri: PUB_URI }])).json()) as {
 			authors: Array<{ documents: ProxyDocument[] }>;
 		};
 		expect(scoped.authors[0].documents.map((d) => d.title)).toEqual(['C', 'A']);
 
-		// Freestanding scope: only the doc without an at:// publication.
-		const free = (await (
-			await postDocuments(app, [{ did: AUTHOR, siteUri: '__freestanding__' }])
-		).json()) as { authors: Array<{ documents: ProxyDocument[] }> };
-		expect(free.authors[0].documents.map((d) => d.title)).toEqual(['Freestanding']);
+		// Unscoped: all of the author's documents, newest first.
+		const all = (await (await postDocuments(app, [{ did: AUTHOR }])).json()) as {
+			authors: Array<{ documents: ProxyDocument[] }>;
+		};
+		expect(all.authors[0].documents.map((d) => d.title)).toEqual(['Freestanding', 'C', 'A']);
 	});
 
 	it('serves a second request from cache (single upstream fetch round)', async () => {

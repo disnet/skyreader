@@ -269,7 +269,7 @@ interface V2BatchDocumentResponse {
  * {
  *   documents: Array<{
  *     did: string;            // publisher DID (subjectDid of an atproto.documents sub)
- *     siteUri?: string;       // at://...publication, '__freestanding__', or omit for all
+ *     siteUri?: string;       // at://...publication, or omit for all
  *     since_uris?: string[];  // recordUris the client already has (incremental trim)
  *   }>
  * }

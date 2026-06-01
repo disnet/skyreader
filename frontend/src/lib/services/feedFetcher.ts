@@ -202,9 +202,9 @@ export async function fetchAllFeeds(
  * them into the timeline (and IndexedDB).
  *
  * Each subscription maps to an author DID (`subjectDid`) scoped to a publication
- * (`feedUrl`: an at://...publication URI, '__freestanding__', or empty for all of
- * the author's documents). The full current list is fetched (no since-trim) so
- * upstream edits and deletes self-heal.
+ * (`feedUrl`: an at://...publication URI, or empty for all of the author's
+ * documents). The full current list is fetched (no since-trim) so upstream edits
+ * and deletes self-heal.
  *
  * @param subscriptions - All subscriptions; non-document ones are ignored.
  */

@@ -47,11 +47,8 @@ function createUnreadCountsStore() {
           if (doc.authorDid !== sub.subjectDid) continue;
           if (itemLabelsStore.isSocialRead(doc.recordUri)) continue;
 
-          // Publication subscriptions are scoped to a site URI. Freestanding document
-          // subscriptions intentionally exclude documents attached to an ATProto site.
-          if (sub.feedUrl === '__freestanding__') {
-            if (doc.siteUri?.startsWith('at://')) continue;
-          } else if (sub.feedUrl?.startsWith('at://')) {
+          // Publication subscriptions are scoped to a site URI.
+          if (sub.feedUrl?.startsWith('at://')) {
             if (doc.siteUri !== sub.feedUrl) continue;
           }
 
