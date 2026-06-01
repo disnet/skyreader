@@ -192,10 +192,21 @@ export class PDSClient {
         // Determine if error is retryable
         const retryable = response.status === 429 || response.status >= 500;
 
-        console.error(`[PDSClient] Request failed: ${method} ${endpoint}`, {
-          status: response.status,
-          error: errorMessage,
-        });
+        // A missing record is a normal lookup outcome (e.g. probing whether the
+        // linkblog publication exists yet before lazily creating it), not a
+        // failure — log it quietly so it doesn't surface as a scary error.
+        const isNotFound =
+          response.status === 400 &&
+          (errorData?.error === 'RecordNotFound' || /could not locate record/i.test(errorMessage));
+
+        if (isNotFound) {
+          console.log(`[PDSClient] ${method} ${endpoint} — record not found`);
+        } else {
+          console.error(`[PDSClient] Request failed: ${method} ${endpoint}`, {
+            status: response.status,
+            error: errorMessage,
+          });
+        }
 
         return { success: false, error: errorMessage, retryable };
       }
@@ -290,6 +301,26 @@ export class PDSClient {
       rkey,
       record,
     });
+  }
+
+  /**
+   * Fetch a single record from the PDS. Returns success:false (non-retryable)
+   * when the record doesn't exist, so callers can distinguish "missing" from a
+   * transient error and decide whether to create it.
+   */
+  async getRecord<T = unknown>(
+    collection: string,
+    rkey: string
+  ): Promise<PDSResult<{ uri: string; cid: string; value: T }>> {
+    const params = new URLSearchParams({
+      repo: this.session.did,
+      collection,
+      rkey,
+    });
+    return this.request<{ uri: string; cid: string; value: T }>(
+      'GET',
+      `com.atproto.repo.getRecord?${params}`
+    );
   }
 
   /**

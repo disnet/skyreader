@@ -58,8 +58,21 @@ export const MARGIN_SCOPES = [
   'repo:at.margin.collectionItem',
 ];
 
+// Linkblog scopes — sharing writes standard.site records to the user's PDS.
+// (recommend is for Phase 3 boosts; included now so a single re-auth covers it.)
+export const LINKBLOG_SCOPES = [
+  'repo:site.standard.publication',
+  'repo:site.standard.document',
+  'repo:site.standard.graph.recommend',
+];
+
 // All possible scopes (base + all integrations) — used in client metadata
-export const ALL_POSSIBLE_SCOPES = [GRANULAR_SCOPES, ...SEMBLE_SCOPES, ...MARGIN_SCOPES].join(' ');
+export const ALL_POSSIBLE_SCOPES = [
+  GRANULAR_SCOPES,
+  ...SEMBLE_SCOPES,
+  ...MARGIN_SCOPES,
+  ...LINKBLOG_SCOPES,
+].join(' ');
 
 // Check if granted scopes satisfy the required scopes
 export function hasRequiredScopes(

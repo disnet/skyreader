@@ -4,6 +4,7 @@ import type {
   IntegrationStatus,
   ItemLabel,
   ItemLabelType,
+  LinkblogPublication,
   MarginCollection,
   ParsedFeed,
   ReshareActivity,
@@ -515,6 +516,44 @@ class ApiClient {
   async deleteShare(rkey: string): Promise<{ success: boolean }> {
     return this.fetch(`/api/shares/${rkey}`, {
       method: 'DELETE',
+    });
+  }
+
+  // Linkblog — sharing as a portable site.standard.document (Phase 1)
+  async createLinkblogShare(data: {
+    rkey: string;
+    articleUrl: string;
+    articleTitle?: string;
+    articleAuthor?: string;
+    excerpt?: string;
+    articleImage?: string;
+    articlePublishedAt?: string;
+    note?: string;
+    tags?: string[];
+  }): Promise<{ uri: string; cid: string; rkey: string; publication: string }> {
+    return this.fetch('/api/linkblog/share', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteLinkblogShare(rkey: string): Promise<{ success: boolean }> {
+    return this.fetch(`/api/linkblog/share/${rkey}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getLinkblogPublication(): Promise<LinkblogPublication> {
+    return this.fetch('/api/linkblog/publication');
+  }
+
+  async updateLinkblogPublication(data: {
+    name?: string;
+    description?: string;
+  }): Promise<LinkblogPublication> {
+    return this.fetch('/api/linkblog/publication', {
+      method: 'PATCH',
+      body: JSON.stringify(data),
     });
   }
 

@@ -4,7 +4,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-  import { sharesStore } from '$lib/stores/shares.svelte';
+  import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
@@ -704,20 +704,8 @@
               imageUrl: article.imageUrl,
               publishedAt: article.publishedAt,
             })}
-          onShare={(article, sub) =>
-            sharesStore.share(
-              sub.rkey,
-              sub.feedUrl || '',
-              article.guid,
-              article.url,
-              article.title,
-              article.author,
-              article.content,
-              article.summary,
-              article.imageUrl,
-              article.publishedAt
-            )}
-          onUnshare={(guid) => sharesStore.unshare(guid)}
+          onShare={(article) => linkblogStore.shareLink(article)}
+          onUnshare={(url) => linkblogStore.unshare(url)}
           onReaderChange={(open) => (readerOpen = open)}
           onSaveToSemble={handleSaveToSemble}
           onSaveToMargin={handleSaveToMargin}

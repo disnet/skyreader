@@ -1,9 +1,13 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { SvelteKitPWA } from '@vite-pwa/sveltekit';
 import { defineConfig } from 'vite';
+import { blogsDevPlugin } from './vite-plugin-blogs-dev';
 
 export default defineConfig({
   plugins: [
+    // Serve the public /blogs/* Pages Functions in dev (before SvelteKit's SPA
+    // fallback can swallow them). No-op for production builds.
+    blogsDevPlugin(),
     sveltekit(),
     SvelteKitPWA({
       // injectManifest lets us keep a hand-written service worker for our custom
