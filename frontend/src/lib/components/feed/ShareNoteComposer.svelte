@@ -17,12 +17,22 @@
     articleTitle: string;
     /** Hostname of the shared article, shown as quiet context. */
     articleHost?: string;
+    /** Quiet one-line hint under the field. Defaults to the linkblog-share copy. */
+    hintText?: string;
     /** Called with the trimmed note (undefined when left empty = bare share). */
     onsubmit: (note: string | undefined) => void;
     onclose: () => void;
   }
 
-  let { open, anchorEl, articleTitle, articleHost, onsubmit, onclose }: Props = $props();
+  let {
+    open,
+    anchorEl,
+    articleTitle,
+    articleHost,
+    hintText = 'Posts to your linkblog.',
+    onsubmit,
+    onclose,
+  }: Props = $props();
 
   let note = $state('');
   let popoverEl = $state<HTMLDivElement | null>(null);
@@ -116,7 +126,7 @@
           placeholder="Add a note… (optional)"
           onkeydown={handleKeydown}
         ></textarea>
-        <p class="hint">Posts to your linkblog.</p>
+        <p class="hint">{hintText}</p>
         <div class="actions">
           <button class="btn btn-ghost" onclick={onclose}>Cancel</button>
           <button class="btn btn-primary" onclick={submit}>
@@ -150,7 +160,7 @@
         onkeydown={handleKeydown}
       ></textarea>
       <div class="footer">
-        <span class="hint">Posts to your linkblog.</span>
+        <span class="hint">{hintText}</span>
         <div class="actions">
           <button class="btn btn-ghost" onclick={onclose}>Cancel</button>
           <button class="btn btn-primary" onclick={submit}>

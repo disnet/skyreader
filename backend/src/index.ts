@@ -11,6 +11,7 @@ import {
   handleV2BatchFeedFetch,
   handleV2FeedDiscover,
   handleV2BatchDocumentFetch,
+  handleV2SocialContext,
 } from './routes/feeds-v2';
 import {
   handleSocialFeed,
@@ -23,6 +24,8 @@ import { handleGetMyShares, handleCreateShare, handleDeleteShare } from './route
 import {
   handleCreateLinkblogShare,
   handleDeleteLinkblogShare,
+  handleCreateBoost,
+  handleDeleteBoost,
   handleGetPublication,
   handleUpdatePublication,
 } from './routes/linkblog';
@@ -225,6 +228,10 @@ export default {
           if (!session) return unauthorizedResponse(headers);
           response = await handleV2BatchDocumentFetch(request, env);
           break;
+        case url.pathname === '/api/v2/social-context':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleV2SocialContext(request, env);
+          break;
 
         // Social routes
         case url.pathname === '/api/social/feed':
@@ -298,6 +305,14 @@ export default {
         case url.pathname.startsWith('/api/linkblog/share/'):
           if (!session) return unauthorizedResponse(headers);
           response = await handleDeleteLinkblogShare(request, env);
+          break;
+        case url.pathname === '/api/linkblog/boost':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleCreateBoost(request, env);
+          break;
+        case url.pathname.startsWith('/api/linkblog/boost/'):
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleDeleteBoost(request, env);
           break;
         case url.pathname === '/api/linkblog/publication':
           if (!session) return unauthorizedResponse(headers);

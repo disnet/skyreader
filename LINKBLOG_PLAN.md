@@ -183,11 +183,17 @@ Ordered to de-risk: read-only/public first (no migration), then write, then reti
 - "Open → fetch full article" via feed-proxy reader (https) / document pipeline (at://).
 - Subscribing to a linkblog = `atproto.documents` subscription scoped to `skyreader-links`.
 
-### Phase 3 — Social context (Constellation) — **v1 includes "who else linked this"**
+### Phase 3 — Social context (Constellation) — **v1 includes "who else linked this"** ✅ done
 - Proxy helper + `constellation_cache` for: recommend counts/DIDs, "who else linked this
-  article," "who quoted this."
-- Boost action writes `site.standard.graph.recommend`; quote action writes a document.
-- Render social-context line; silent degradation.
+  article" (with handles + notes), "who quoted this." (`feed-proxy/src/constellation.ts`,
+  `POST /social-context`; DID→handle resolution added to `did-resolver.ts`.)
+- Boost action writes `site.standard.graph.recommend`; quote action writes a document with a
+  `rel:repost` ref. (`backend` `linkblog-sync.ts` `writeBoost`/`deleteBoost` + `repostUri`;
+  routes `POST/DELETE /api/linkblog/boost`, `POST /api/v2/social-context` passthrough.)
+- **Affordance (settled):** one Share button on link posts → empty note = boost, note = quote.
+- **Context line (settled):** counts + who (handles & notes), lazy-fetched on open.
+- Render social-context line; silent degradation. (`frontend` `socialContext.svelte.ts`,
+  `linkblog.svelte.ts` boost state, `ArticleCard.svelte`.)
 
 ### Phase 4 — Migration + teardown
 - One-time backfill: for each existing `app.skyreader.social.share`, create the publication (if

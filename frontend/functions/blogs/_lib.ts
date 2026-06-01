@@ -261,6 +261,90 @@ export function externalArticleUrl(doc: ProxyDocument): string | undefined {
   return doc.links?.find((l) => /^https?:\/\//i.test(l.uri))?.uri;
 }
 
+// ── Social context (Constellation, via the feed proxy) ───────────────────────
+
+export interface AlsoLinkedEntry {
+  did: string;
+  handle: string | null;
+  note: string | null;
+  recordUri: string;
+}
+
+export interface SocialContext {
+  key: string;
+  recommendCount: number;
+  quoteCount: number;
+  alsoLinkedBy: AlsoLinkedEntry[];
+}
+
+// Batch-fetch Constellation social context for link posts via the proxy. Keyed by
+// each item's `key` (we use the document's record URI). Best-effort: returns an
+// empty map on any error so the page still renders. Pass `articleUrl` to also
+// surface "who else linked this" (heavier — it fetches each linker's note); omit
+// it for a counts-only lookup (used on the index to keep SSR fast).
+export async function fetchSocialContext(
+  env: BlogEnv,
+  items: Array<{ key: string; docUri?: string; articleUrl?: string; excludeDid?: string }>
+): Promise<Map<string, SocialContext>> {
+  const out = new Map<string, SocialContext>();
+  if (items.length === 0) return out;
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (env.FEED_PROXY_SECRET) headers['X-Proxy-Secret'] = env.FEED_PROXY_SECRET;
+
+    const res = await fetch(`${env.FEED_PROXY_URL}/social-context`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ items: items.slice(0, 25) }),
+    });
+    if (!res.ok) return out;
+
+    const data = (await res.json()) as { items?: SocialContext[] };
+    for (const ctx of data.items ?? []) {
+      if (ctx?.key) out.set(ctx.key, ctx);
+    }
+    return out;
+  } catch {
+    return out;
+  }
+}
+
+// A quiet "3 recommends · 1 quote" fragment for the entry meta row. Returns '' when
+// there's nothing to show.
+export function renderSocialCounts(ctx: SocialContext | undefined): string {
+  if (!ctx) return '';
+  const parts: string[] = [];
+  if (ctx.recommendCount > 0) {
+    parts.push(`${ctx.recommendCount} ${ctx.recommendCount === 1 ? 'recommend' : 'recommends'}`);
+  }
+  if (ctx.quoteCount > 0) {
+    parts.push(`${ctx.quoteCount} ${ctx.quoteCount === 1 ? 'quote' : 'quotes'}`);
+  }
+  if (parts.length === 0) return '';
+  return `<span class="social">${escapeHtml(parts.join(' · '))}</span>`;
+}
+
+// The "Also linked by @alice, @bob …" block (with notes) for the permalink page.
+// Handles link to the linker's Bluesky profile. Returns '' when nobody else has
+// linked the article.
+export function renderAlsoLinkedBy(ctx: SocialContext | undefined): string {
+  if (!ctx || ctx.alsoLinkedBy.length === 0) return '';
+  const items = ctx.alsoLinkedBy
+    .map((e) => {
+      const label = e.handle ? `@${escapeHtml(e.handle)}` : escapeHtml(e.did.slice(0, 16));
+      const who = e.handle
+        ? `<a href="https://bsky.app/profile/${escapeHtml(e.handle)}">${label}</a>`
+        : label;
+      const note = e.note ? ` <span class="alsonote">“${escapeHtml(e.note)}”</span>` : '';
+      return `<li>${who}${note}</li>`;
+    })
+    .join('');
+  return `<div class="alsolinked">
+  <span class="alsolabel">Also linked across the Atmosphere</span>
+  <ul>${items}</ul>
+</div>`;
+}
+
 // ── Rendering ────────────────────────────────────────────────────────────────
 
 // One Blue (#0066cc), system sans, true-white body, flat by default — per
@@ -302,6 +386,12 @@ const STYLES = `
   .entry p { margin: 0.375rem 0 0; color: var(--ink); }
   .meta { font-size: 0.8125rem; color: var(--faint); margin-top: 0.625rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
   .meta .src { color: var(--muted); }
+  .meta .social { color: var(--muted); }
+  .alsolinked { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--line); font-size: 0.9375rem; }
+  .alsolabel { display: block; color: var(--muted); font-size: 0.8125rem; margin-bottom: 0.5rem; }
+  .alsolinked ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.375rem; }
+  .alsolinked li { color: var(--ink); }
+  .alsonote { color: var(--muted); }
   .empty { color: var(--muted); padding: 2.5rem 0; text-align: center; }
   .back { display: inline-block; font-size: 0.875rem; margin-bottom: 1.5rem; color: var(--muted); }
   .readmore { display: inline-block; margin-top: 1.25rem; font-weight: 500; }

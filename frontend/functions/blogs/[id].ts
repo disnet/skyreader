@@ -9,11 +9,13 @@ import {
   Profile,
   ProxyDocument,
   PublicationMeta,
+  SocialContext,
   blogTitle,
   escapeHtml,
   externalArticleUrl,
   fetchLinkblogDocuments,
   fetchPublicationMeta,
+  fetchSocialContext,
   formatDate,
   getProfile,
   hostnameOf,
@@ -21,6 +23,7 @@ import {
   isDid,
   linkPostNote,
   renderPage,
+  renderSocialCounts,
   resolveHandleToDid,
   rkeyFromUri,
   safeHttpUrl,
@@ -34,7 +37,7 @@ function entryBody(doc: ProxyDocument): string {
   return text.slice(0, 277).trimEnd() + '…';
 }
 
-function renderEntry(did: string, doc: ProxyDocument): string {
+function renderEntry(did: string, doc: ProxyDocument, ctx: SocialContext | undefined): string {
   const rkey = rkeyFromUri(doc.recordUri);
   const permalink = rkey ? `/blogs/${encodeURIComponent(did)}/${encodeURIComponent(rkey)}` : null;
   const title = escapeHtml(doc.title || 'Untitled');
@@ -47,6 +50,8 @@ function renderEntry(did: string, doc: ProxyDocument): string {
   const meta: string[] = [];
   if (host) meta.push(`<span class="src">${escapeHtml(host)}</span>`);
   if (date) meta.push(`<span>${escapeHtml(date)}</span>`);
+  const social = renderSocialCounts(ctx);
+  if (social) meta.push(social);
 
   return `<article class="entry">
   <h2>${titleHtml}</h2>
@@ -60,7 +65,8 @@ function renderIndex(
   did: string,
   profile: Profile | null,
   pub: PublicationMeta | null,
-  docs: ProxyDocument[]
+  docs: ProxyDocument[],
+  social: Map<string, SocialContext>
 ): string {
   const title = blogTitle(profile, pub);
   const icon = safeHttpUrl(pub?.icon || profile?.avatar);
@@ -80,7 +86,7 @@ function renderIndex(
 <hr class="divider" />`;
 
   const list = docs.length
-    ? docs.map((d) => renderEntry(did, d)).join('\n')
+    ? docs.map((d) => renderEntry(did, d, social.get(d.recordUri))).join('\n')
     : `<p class="empty">No links yet.</p>`;
 
   const foot = `<footer class="foot">A linkblog on <a href="${escapeHtml(origin)}">Skyreader</a>, stored in the Atmosphere.</footer>`;
@@ -113,8 +119,15 @@ export async function onRequestGet(context: BlogContext): Promise<Response> {
     fetchLinkblogDocuments(env, did),
   ]);
 
+  // Counts-only social context for the most recent entries (one proxy batch, no
+  // per-linker PDS fetches) — keeps the index fast. Best-effort; empty on failure.
+  const social = await fetchSocialContext(
+    env,
+    docs.slice(0, 25).map((d) => ({ key: d.recordUri, docUri: d.recordUri }))
+  );
+
   const title = blogTitle(profile, pub);
-  const body = renderIndex(origin, did, profile, pub, docs);
+  const body = renderIndex(origin, did, profile, pub, docs, social);
   const html = renderPage(
     {
       title,

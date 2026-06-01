@@ -7,18 +7,22 @@ import {
   Profile,
   ProxyDocument,
   PublicationMeta,
+  SocialContext,
   blogTitle,
   escapeHtml,
   externalArticleUrl,
   fetchLinkblogDocuments,
   fetchPublicationMeta,
+  fetchSocialContext,
   formatDate,
   getProfile,
   hostnameOf,
   htmlResponse,
   isDid,
   linkPostNote,
+  renderAlsoLinkedBy,
   renderPage,
+  renderSocialCounts,
   resolveHandleToDid,
   rkeyFromUri,
   safeHttpUrl,
@@ -34,7 +38,8 @@ function renderEntryPage(
   did: string,
   profile: Profile | null,
   pub: PublicationMeta | null,
-  doc: ProxyDocument
+  doc: ProxyDocument,
+  ctx: SocialContext | undefined
 ): string {
   const blogName = blogTitle(profile, pub);
   const title = escapeHtml(doc.title || 'Untitled');
@@ -47,6 +52,8 @@ function renderEntryPage(
   const meta: string[] = [];
   if (host) meta.push(`<span class="src">${escapeHtml(host)}</span>`);
   if (date) meta.push(`<span>${escapeHtml(date)}</span>`);
+  const social = renderSocialCounts(ctx);
+  if (social) meta.push(social);
   const readMore = articleUrl
     ? `<a class="readmore" href="${escapeHtml(articleUrl)}" rel="noopener noreferrer">Read the full article${host ? ` on ${escapeHtml(host)}` : ''} →</a>`
     : '';
@@ -57,6 +64,7 @@ function renderEntryPage(
   ${meta.length ? `<div class="meta">${meta.join('')}</div>` : ''}
   ${note ? `<p style="margin-top:1.25rem;">${escapeHtml(note)}</p>` : ''}
   ${readMore}
+  ${renderAlsoLinkedBy(ctx)}
 </article>
 <footer class="foot">A linkblog on <a href="${escapeHtml(origin)}">Skyreader</a>, stored in the Atmosphere.</footer>`;
 }
@@ -95,7 +103,18 @@ export async function onRequestGet(context: BlogContext): Promise<Response> {
     return htmlResponse(notFoundPage(origin), 404);
   }
 
-  const body = renderEntryPage(origin, did, profile, pub, doc);
+  // Full social context for this single entry: recommend/quote counts + who else
+  // across the Atmosphere linked the same article (with their notes). Best-effort.
+  const social = await fetchSocialContext(env, [
+    {
+      key: doc.recordUri,
+      docUri: doc.recordUri,
+      articleUrl: externalArticleUrl(doc),
+      excludeDid: did,
+    },
+  ]);
+
+  const body = renderEntryPage(origin, did, profile, pub, doc, social.get(doc.recordUri));
   const note = entryNote(doc);
   const html = renderPage(
     {
