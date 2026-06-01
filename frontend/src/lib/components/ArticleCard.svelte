@@ -203,6 +203,9 @@
     }
   });
   let authorHandle = $derived(authorProfile?.handle || document?.authorDid);
+  let authorDisplayName = $derived(
+    authorProfile?.displayName || authorProfile?.handle || document?.authorDid
+  );
   let authorAvatar = $derived(authorProfile?.avatar);
 
   function handleHeaderClick() {
@@ -635,13 +638,14 @@
             role="button"
             tabindex="-1"
           >
+            <span class="via-label">Shared by</span>
             {#if authorAvatar}
               <img src={authorAvatar} alt="" class="via-avatar" />
             {/if}
-            <span class="via-label">shared</span>
+            <span class="via-name">{authorDisplayName}</span>
           </span>
         {/if}
-        {#if displayFeedTitle}
+        {#if displayFeedTitle && !isLinkPostMode}
           {#if feedId}
             <a
               href="/?feed={feedId}"
@@ -1012,6 +1016,7 @@
     align-items: center;
     gap: 0.3125rem;
     flex-shrink: 0;
+    max-width: 11rem;
     font-size: 0.8rem;
     color: var(--color-text-secondary);
     cursor: pointer;
@@ -1031,6 +1036,12 @@
   }
 
   .via-label {
+    white-space: nowrap;
+  }
+
+  .via-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
