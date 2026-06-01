@@ -25,9 +25,11 @@ export interface BlogContext {
   params: Record<string, string | string[]>;
 }
 
-// Subset of the proxy's ProxyDocument we render. The proxy currently drops the
-// external `links` field and treats `content` as opaque — surfacing those is
-// Phase 2, so Phase 0 renders the durable top-level fields only.
+// Subset of the proxy's ProxyDocument we render. For a linkblog "link post" the
+// user's commentary lives in `content` (a pub.leaflet text block) and the shared
+// article's URL in `links` — `description`/`textContent` hold the article excerpt,
+// not the note. We surface both so the page renders the note + links to the
+// external article (not the linkblog permalink).
 export interface ProxyDocument {
   authorDid: string;
   recordUri: string;
@@ -40,6 +42,8 @@ export interface ProxyDocument {
   canonicalUrl?: string;
   createdAt: string;
   siteIcon?: string;
+  links?: Array<{ uri: string; rel?: string }>;
+  content?: unknown;
 }
 
 export interface Profile {
@@ -215,6 +219,46 @@ export async function fetchLinkblogDocuments(env: BlogEnv, did: string): Promise
   } catch {
     return [];
   }
+}
+
+// ── Link-post fields ─────────────────────────────────────────────────────────
+
+interface LeafletTextBlock {
+  $type?: string;
+  plaintext?: string;
+}
+interface LeafletPage {
+  blocks?: Array<{ block?: LeafletTextBlock }>;
+}
+interface LeafletContent {
+  $type?: string;
+  pages?: LeafletPage[];
+}
+
+// The user's commentary on a link post: the plaintext of the first
+// `pub.leaflet.blocks.text` block (Skyreader writes the note as the leading text
+// block, before the website card). Returns '' when there's no note — the document's
+// `description`/`textContent` hold the article excerpt, not the note.
+export function linkPostNote(doc: ProxyDocument): string {
+  const content = doc.content as LeafletContent | undefined;
+  if (content && content.$type === 'pub.leaflet.content') {
+    for (const page of content.pages ?? []) {
+      for (const wrapper of page.blocks ?? []) {
+        if (wrapper.block?.$type === 'pub.leaflet.blocks.text') {
+          const text = wrapper.block.plaintext?.trim();
+          if (text) return text;
+        }
+      }
+    }
+  }
+  return '';
+}
+
+// The external article a link post points at: the first http(s) `links` entry.
+// (`at://` repost refs are quote-reshares — ignored here.) Returns undefined for a
+// plain document, so callers fall back to the document's own canonical URL.
+export function externalArticleUrl(doc: ProxyDocument): string | undefined {
+  return doc.links?.find((l) => /^https?:\/\//i.test(l.uri))?.uri;
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────

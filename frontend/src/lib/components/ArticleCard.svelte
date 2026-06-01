@@ -24,6 +24,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import Icon from './Icon.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
+  import ShareNoteComposer from '$lib/components/feed/ShareNoteComposer.svelte';
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
@@ -84,7 +85,7 @@
     highlighted?: boolean;
     onToggleSave?: () => void;
     onToggleRead?: () => void;
-    onShare?: () => void;
+    onShare?: (note?: string) => void;
     onUnshare?: () => void;
     onReshare?: () => void;
     onSelect?: () => void;
@@ -381,9 +382,27 @@
     onToggleSave?.();
   }
 
+  // Sharing to the linkblog opens a note composer (note optional). The actual
+  // share fires from the composer's submit so a note can ride along.
+  let shareComposerOpen = $state(false);
+  let shareBtnRef = $state<HTMLButtonElement | null>(null);
+
+  let shareHost = $derived.by(() => {
+    try {
+      return new URL(itemUrl).hostname.replace(/^www\./, '');
+    } catch {
+      return undefined;
+    }
+  });
+
   function handleShare(e: MouseEvent) {
     e.stopPropagation();
-    onShare?.();
+    shareComposerOpen = true;
+  }
+
+  function handleShareSubmit(note: string | undefined) {
+    shareComposerOpen = false;
+    onShare?.(note);
   }
 
   function handleUnshare(e: MouseEvent) {
@@ -793,7 +812,11 @@
               >{/if}
           </button>
         {:else}
-          <button class="action-btn" onclick={handleShare}
+          <button
+            class="action-btn"
+            class:active={shareComposerOpen}
+            onclick={handleShare}
+            bind:this={shareBtnRef}
             ><span class="action-icon"><Icon name="share" size={16} /></span><span
               class="action-label">Share</span
             ></button
@@ -926,6 +949,15 @@
         }}
       />
     {/if}
+
+    <ShareNoteComposer
+      open={shareComposerOpen}
+      anchorEl={shareBtnRef}
+      articleTitle={itemTitle}
+      articleHost={shareHost}
+      onsubmit={handleShareSubmit}
+      onclose={() => (shareComposerOpen = false)}
+    />
 
     {#if linkInterception.menuState}
       {#key linkInterception.menuState.url + linkInterception.menuState.anchorRect.top}
@@ -1418,7 +1450,8 @@
     color: #ffc107;
   }
 
-  .action-btn.shared {
+  .action-btn.shared,
+  .action-btn.active {
     color: var(--color-primary, #0066cc);
   }
 

@@ -704,7 +704,7 @@
               imageUrl: article.imageUrl,
               publishedAt: article.publishedAt,
             })}
-          onShare={(article) => linkblogStore.shareLink(article)}
+          onShare={(article, _sub, note) => linkblogStore.shareLink(article, note)}
           onUnshare={(url) => linkblogStore.unshare(url)}
           onReaderChange={(open) => (readerOpen = open)}
           onSaveToSemble={handleSaveToSemble}
