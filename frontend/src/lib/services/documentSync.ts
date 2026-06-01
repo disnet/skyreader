@@ -25,12 +25,10 @@ export interface DocumentScopeResult {
  * Whether a document falls within a subscription's publication scope, mirroring
  * the proxy's filterByPublication:
  * - undefined → all of the author's documents
- * - '__freestanding__' → documents not tied to an at:// publication
  * - an at://...publication URI → only that publication
  */
 export function docInScope(d: SocialDocument, siteUri?: string): boolean {
   if (!siteUri) return true;
-  if (siteUri === '__freestanding__') return !d.siteUri || !d.siteUri.startsWith('at://');
   return d.siteUri === siteUri;
 }
 
@@ -74,8 +72,8 @@ export function reconcileDocuments(
 /**
  * Map subscriptions to per-author document requests. Only `atproto.documents`
  * subscriptions with a `subjectDid` produce a request; the publication scope comes
- * from `feedUrl` (an at://...publication URI, '__freestanding__', or empty for all
- * of the author's documents).
+ * from `feedUrl` (an at://...publication URI, or empty for all of the author's
+ * documents).
  */
 export function buildDocumentRequests(subscriptions: Subscription[]): DocumentRequest[] {
   return subscriptions

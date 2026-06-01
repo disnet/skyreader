@@ -43,14 +43,6 @@ describe('docInScope', () => {
     expect(docInScope(doc({ siteUri: PUB_A }), PUB_A)).toBe(true);
     expect(docInScope(doc({ siteUri: PUB_B }), PUB_A)).toBe(false);
   });
-
-  it('matches only non-at:// docs for __freestanding__', () => {
-    expect(docInScope(doc({ siteUri: PUB_A }), '__freestanding__')).toBe(false);
-    expect(docInScope(doc({ siteUri: '' }), '__freestanding__')).toBe(true);
-    expect(docInScope(doc({ siteUri: 'https://loose.example.com' }), '__freestanding__')).toBe(
-      true
-    );
-  });
 });
 
 describe('reconcileDocuments', () => {

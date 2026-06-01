@@ -40,14 +40,11 @@
   let selectedAccount = $state<BlueskySearchResult | null>(null);
   let isDetecting = $state(false);
   let publications = $state<Publication[]>([]);
-  let freestandingDocumentCount = $state(0);
   let selectedPublications = $state<Set<string>>(new Set());
-  let freestandingDocsSelected = $state(false);
   let isSubscribing = $state(false);
 
   // Unsubscribe tracking: when a subscribed item is de-selected, it's added here
   let unsubscribePublicationUris = $state<Set<string>>(new Set());
-  let unsubscribeFreestandingDocs = $state(false);
 
   // Standard subscriptions state
   type StandardSub = {
@@ -86,11 +83,7 @@
     for (const sub of subscriptionsStore.subscriptions) {
       if (sub.subjectDid === selectedAccount.did) {
         if (sub.sourceType === 'atproto.documents') {
-          if (sub.feedUrl === '__freestanding__') {
-            keys.add('__freestanding__');
-          } else {
-            keys.add(sub.feedUrl || 'documents-all');
-          }
+          keys.add(sub.feedUrl || 'documents-all');
         }
       }
     }
@@ -104,28 +97,14 @@
     for (const sub of subscriptionsStore.subscriptions) {
       if (sub.subjectDid !== selectedAccount.did) continue;
       if (sub.id === undefined) continue;
-      if (sub.sourceType === 'atproto.documents') {
-        if (sub.feedUrl === '__freestanding__') {
-          map.set('__freestanding__', sub.id);
-        } else if (sub.feedUrl) {
-          map.set(sub.feedUrl, sub.id);
-        }
+      if (sub.sourceType === 'atproto.documents' && sub.feedUrl) {
+        map.set(sub.feedUrl, sub.id);
       }
     }
     return map;
   });
 
-  // Derived: effectively selected state for the special content types
-  let freestandingSubbed = $derived(subscribedKeys.has('__freestanding__'));
-  let freestandingActive = $derived(
-    freestandingSubbed ? !unsubscribeFreestandingDocs : freestandingDocsSelected
-  );
-  let changeCount = $derived(
-    selectedPublications.size +
-      (freestandingDocsSelected ? 1 : 0) +
-      unsubscribePublicationUris.size +
-      (unsubscribeFreestandingDocs ? 1 : 0)
-  );
+  let changeCount = $derived(selectedPublications.size + unsubscribePublicationUris.size);
 
   // Pre-fill input when modal opens with an initial value
   $effect(() => {
@@ -143,12 +122,9 @@
     selectedAccount = null;
     isDetecting = false;
     publications = [];
-    freestandingDocumentCount = 0;
     selectedPublications = new Set();
-    freestandingDocsSelected = false;
     isSubscribing = false;
     unsubscribePublicationUris = new Set();
-    unsubscribeFreestandingDocs = false;
     if (searchTimeout) clearTimeout(searchTimeout);
   }
 
@@ -194,16 +170,12 @@
     isDetecting = true;
     error = null;
     publications = [];
-    freestandingDocumentCount = 0;
     selectedPublications = new Set();
-    freestandingDocsSelected = false;
     unsubscribePublicationUris = new Set();
-    unsubscribeFreestandingDocs = false;
 
     try {
       const result = await api.detectContent(account.did);
       publications = result.publications;
-      freestandingDocumentCount = result.freestandingDocumentCount;
 
       // For a new account, default to selecting everything discoverable.
       // For an account the user already follows, reflect their current choices only;
@@ -211,7 +183,6 @@
       const hasExistingSubscriptions = subscribedKeys.size > 0;
       if (!hasExistingSubscriptions) {
         selectedPublications = new Set(result.publications.map((pub) => pub.uri));
-        freestandingDocsSelected = result.freestandingDocumentCount > 0;
       }
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to detect content';
@@ -224,11 +195,8 @@
     step = 'search';
     selectedAccount = null;
     publications = [];
-    freestandingDocumentCount = 0;
     selectedPublications = new Set();
-    freestandingDocsSelected = false;
     unsubscribePublicationUris = new Set();
-    unsubscribeFreestandingDocs = false;
     error = null;
   }
 
@@ -251,14 +219,6 @@
       next.add(uri);
     }
     selectedPublications = next;
-  }
-
-  function toggleFreestandingDocs() {
-    if (subscribedKeys.has('__freestanding__')) {
-      unsubscribeFreestandingDocs = !unsubscribeFreestandingDocs;
-      return;
-    }
-    freestandingDocsSelected = !freestandingDocsSelected;
   }
 
   function parseAtUri(atUri: string): { did: string; collection: string; rkey: string } | null {
@@ -448,17 +408,13 @@
 
     try {
       // Unsubscribe from de-selected items first
-      if (unsubscribeFreestandingDocs) {
-        const id = subscribedSubIds.get('__freestanding__');
-        if (id !== undefined) await subscriptionsStore.remove(id);
-      }
       for (const pubUri of unsubscribePublicationUris) {
         const id = subscribedSubIds.get(pubUri);
         if (id !== undefined) await subscriptionsStore.remove(id);
       }
 
       // Subscribe to newly selected items
-      if (selectedPublications.size > 0 || freestandingDocsSelected) {
+      if (selectedPublications.size > 0) {
         if (!subscriptionsStore.canAddMore) {
           error = `Subscription limit reached (${subscriptionsStore.maxSubscriptions} max)`;
           return;
@@ -484,19 +440,6 @@
         if (pub.iconUrl) {
           await subscriptionsStore.updateLocal(subId, { customIconUrl: pub.iconUrl });
         }
-      }
-
-      if (freestandingDocsSelected && subscriptionsStore.canAddMore) {
-        const docsId = await subscriptionsStore.add(
-          '__freestanding__',
-          `Documents from @${selectedAccount.handle}`,
-          {
-            sourceType: 'atproto.documents',
-            subjectDid: selectedAccount.did,
-            feedUrl: '__freestanding__',
-          }
-        );
-        if (!firstAddedId) firstAddedId = docsId;
       }
 
       socialStore.loadFeed(true);
@@ -632,64 +575,40 @@
           <span class="spinner"></span>
           <span>Detecting available content...</span>
         </div>
+      {:else if publications.length === 0}
+        <p class="no-content">No publications found for @{selectedAccount.handle}.</p>
       {:else}
         <div class="content-list">
-          <button
-            class="content-item"
-            class:selected={freestandingActive}
-            class:is-subscribed={freestandingSubbed}
-            onclick={toggleFreestandingDocs}
-          >
-            <span class="checkbox" class:checked={freestandingActive}>
-              {#if freestandingActive}&#10003;{/if}
-            </span>
-            <span class="content-info">
-              <span class="content-name"
-                >Documents <span class="content-count">({freestandingDocumentCount})</span></span
-              >
-              <span class="content-desc">Free-standing documents by @{selectedAccount.handle}</span>
-            </span>
-            {#if freestandingSubbed && unsubscribeFreestandingDocs}
-              <span class="unsubscribing-badge">Removing</span>
-            {:else if freestandingSubbed}
-              <span class="subscribed-badge">Subscribed</span>
-            {/if}
-          </button>
-        </div>
-
-        {#if publications.length > 0}
-          <div class="content-list">
-            {#each publications as pub (pub.uri)}
-              {@const isSubscribed = subscribedKeys.has(pub.uri)}
-              {@const unsubscribing = unsubscribePublicationUris.has(pub.uri)}
-              {@const isActive = isSubscribed ? !unsubscribing : selectedPublications.has(pub.uri)}
-              <button
-                class="content-item"
-                class:selected={isActive}
-                class:is-subscribed={isSubscribed}
-                onclick={() => togglePublication(pub.uri)}
-              >
-                <span class="checkbox" class:checked={isActive}>
-                  {#if isActive}&#10003;{/if}
-                </span>
-                <span class="content-info">
-                  <span class="content-name">{pub.name || pub.url}</span>
-                  {#if pub.url}
-                    <span class="content-url">{pub.url}</span>
-                  {/if}
-                  {#if pub.description}
-                    <span class="content-desc">{pub.description}</span>
-                  {/if}
-                </span>
-                {#if isSubscribed && unsubscribing}
-                  <span class="unsubscribing-badge">Removing</span>
-                {:else if isSubscribed}
-                  <span class="subscribed-badge">Subscribed</span>
+          {#each publications as pub (pub.uri)}
+            {@const isSubscribed = subscribedKeys.has(pub.uri)}
+            {@const unsubscribing = unsubscribePublicationUris.has(pub.uri)}
+            {@const isActive = isSubscribed ? !unsubscribing : selectedPublications.has(pub.uri)}
+            <button
+              class="content-item"
+              class:selected={isActive}
+              class:is-subscribed={isSubscribed}
+              onclick={() => togglePublication(pub.uri)}
+            >
+              <span class="checkbox" class:checked={isActive}>
+                {#if isActive}&#10003;{/if}
+              </span>
+              <span class="content-info">
+                <span class="content-name">{pub.name || pub.url}</span>
+                {#if pub.url}
+                  <span class="content-url">{pub.url}</span>
                 {/if}
-              </button>
-            {/each}
-          </div>
-        {/if}
+                {#if pub.description}
+                  <span class="content-desc">{pub.description}</span>
+                {/if}
+              </span>
+              {#if isSubscribed && unsubscribing}
+                <span class="unsubscribing-badge">Removing</span>
+              {:else if isSubscribed}
+                <span class="subscribed-badge">Subscribed</span>
+              {/if}
+            </button>
+          {/each}
+        </div>
 
         <button
           class="subscribe-btn"
@@ -939,6 +858,14 @@
     overflow: hidden;
   }
 
+  .no-content {
+    margin: 0;
+    padding: 1rem 0;
+    text-align: center;
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+  }
+
   .content-item {
     display: flex;
     align-items: flex-start;
@@ -1007,11 +934,6 @@
 
   .content-desc {
     font-size: 0.8125rem;
-    color: var(--color-text-secondary);
-  }
-
-  .content-count {
-    font-weight: 400;
     color: var(--color-text-secondary);
   }
 

@@ -312,8 +312,8 @@ export class FeedProxyClient {
    * Fetch standard.site documents for multiple authors in a single request.
    *
    * Each entry is an author DID, optionally scoped to a publication (`siteUri`:
-   * an `at://...publication/rkey`, `'__freestanding__'`, or omitted for all),
-   * and optionally trimmed to documents the client hasn't seen (`since_uris`).
+   * an `at://...publication/rkey`, or omitted for all), and optionally trimmed
+   * to documents the client hasn't seen (`since_uris`).
    * Returns the proxy's per-author entries verbatim (already in SocialDocument
    * shape).
    */

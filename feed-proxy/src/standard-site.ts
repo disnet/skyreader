@@ -309,13 +309,9 @@ export async function fetchDocumentsForAuthor(
  * Apply a subscription's publication scope to an author's document list:
  * - empty/undefined → all documents
  * - `at://...` → only documents whose `site` matches that publication
- * - `__freestanding__` → only documents not tied to an at:// publication
  */
 export function filterByPublication(documents: ProxyDocument[], siteUri?: string): ProxyDocument[] {
 	if (!siteUri) return documents;
-	if (siteUri === '__freestanding__') {
-		return documents.filter((d) => !d.siteUri || !d.siteUri.startsWith('at://'));
-	}
 	return documents.filter((d) => d.siteUri === siteUri);
 }
 

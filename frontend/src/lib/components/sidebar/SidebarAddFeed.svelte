@@ -47,9 +47,7 @@
   let selectedAccount = $state<BlueskySearchResult | null>(null);
   let isDetecting = $state(false);
   let publications = $state<Publication[]>([]);
-  let freestandingDocumentCount = $state(0);
   let selectedPublications = $state<Set<string>>(new Set());
-  let freestandingDocsSelected = $state(false);
   let isSubscribing = $state(false);
 
   // Standard subscriptions state
@@ -77,18 +75,14 @@
     for (const sub of subscriptionsStore.subscriptions) {
       if (sub.subjectDid === selectedAccount.did) {
         if (sub.sourceType === 'atproto.documents') {
-          if (sub.feedUrl === '__freestanding__') {
-            keys.add('__freestanding__');
-          } else {
-            keys.add(sub.feedUrl || 'documents-all');
-          }
+          keys.add(sub.feedUrl || 'documents-all');
         }
       }
     }
     return keys;
   });
 
-  let selectedCount = $derived(selectedPublications.size + (freestandingDocsSelected ? 1 : 0));
+  let selectedCount = $derived(selectedPublications.size);
 
   function looksLikeUrl(value: string): boolean {
     const trimmed = value.trim();
@@ -269,9 +263,7 @@
     selectedAccount = null;
     isDetecting = false;
     publications = [];
-    freestandingDocumentCount = 0;
     selectedPublications = new Set();
-    freestandingDocsSelected = false;
     isSubscribing = false;
     if (searchTimeout) clearTimeout(searchTimeout);
   }
@@ -381,14 +373,11 @@
     isDetecting = true;
     error = null;
     publications = [];
-    freestandingDocumentCount = 0;
     selectedPublications = new Set();
-    freestandingDocsSelected = false;
 
     try {
       const result = await api.detectContent(account.did);
       publications = result.publications;
-      freestandingDocumentCount = result.freestandingDocumentCount;
 
       // Pre-select unsubscribed items
       for (const pub of result.publications) {
@@ -397,9 +386,6 @@
         }
       }
       selectedPublications = new Set(selectedPublications);
-      if (result.freestandingDocumentCount > 0 && !subscribedKeys.has('__freestanding__')) {
-        freestandingDocsSelected = true;
-      }
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to detect content';
     } finally {
@@ -416,11 +402,6 @@
       next.add(uri);
     }
     selectedPublications = next;
-  }
-
-  function toggleFreestandingDocs() {
-    if (subscribedKeys.has('__freestanding__')) return;
-    freestandingDocsSelected = !freestandingDocsSelected;
   }
 
   async function handleSubscribe() {
@@ -453,19 +434,6 @@
         if (pub.iconUrl) {
           await subscriptionsStore.updateLocal(subId, { customIconUrl: pub.iconUrl });
         }
-      }
-
-      if (freestandingDocsSelected && subscriptionsStore.canAddMore) {
-        const docsId = await subscriptionsStore.add(
-          '__freestanding__',
-          `Documents from @${selectedAccount.handle}`,
-          {
-            sourceType: 'atproto.documents',
-            subjectDid: selectedAccount.did,
-            feedUrl: '__freestanding__',
-          }
-        );
-        if (!firstAddedId) firstAddedId = docsId;
       }
 
       socialStore.loadFeed(true);
@@ -642,66 +610,37 @@
               <span class="spinner"></span>
               <span>Detecting content...</span>
             </div>
+          {:else if publications.length === 0}
+            <div class="no-content">No publications found for @{selectedAccount.handle}.</div>
           {:else}
             <div class="content-group">
-              <button
-                class="dropdown-item content-item"
-                class:selected={freestandingDocsSelected}
-                class:is-subscribed={subscribedKeys.has('__freestanding__')}
-                onclick={toggleFreestandingDocs}
-                disabled={subscribedKeys.has('__freestanding__')}
-              >
-                <span
-                  class="check"
-                  class:checked={freestandingDocsSelected || subscribedKeys.has('__freestanding__')}
+              {#each publications as pub (pub.uri)}
+                {@const isSubscribed = subscribedKeys.has(pub.uri)}
+                <button
+                  class="dropdown-item content-item"
+                  class:selected={selectedPublications.has(pub.uri)}
+                  class:is-subscribed={isSubscribed}
+                  onclick={() => togglePublication(pub.uri)}
+                  disabled={isSubscribed}
                 >
-                  {#if freestandingDocsSelected || subscribedKeys.has('__freestanding__')}&#10003;{/if}
-                </span>
-                <span class="content-info">
-                  <span class="content-name"
-                    >Documents <span class="content-count">({freestandingDocumentCount})</span
-                    ></span
+                  <span
+                    class="check"
+                    class:checked={selectedPublications.has(pub.uri) || isSubscribed}
                   >
-                  <span class="content-desc"
-                    >Free-standing documents by @{selectedAccount.handle}</span
-                  >
-                </span>
-                {#if subscribedKeys.has('__freestanding__')}
-                  <span class="sub-badge">Subscribed</span>
-                {/if}
-              </button>
-            </div>
-
-            {#if publications.length > 0}
-              <div class="content-group">
-                {#each publications as pub (pub.uri)}
-                  {@const isSubscribed = subscribedKeys.has(pub.uri)}
-                  <button
-                    class="dropdown-item content-item"
-                    class:selected={selectedPublications.has(pub.uri)}
-                    class:is-subscribed={isSubscribed}
-                    onclick={() => togglePublication(pub.uri)}
-                    disabled={isSubscribed}
-                  >
-                    <span
-                      class="check"
-                      class:checked={selectedPublications.has(pub.uri) || isSubscribed}
-                    >
-                      {#if selectedPublications.has(pub.uri) || isSubscribed}&#10003;{/if}
-                    </span>
-                    <span class="content-info">
-                      <span class="content-name">{pub.name || pub.url}</span>
-                      {#if pub.description}
-                        <span class="content-desc">{pub.description}</span>
-                      {/if}
-                    </span>
-                    {#if isSubscribed}
-                      <span class="sub-badge">Subscribed</span>
+                    {#if selectedPublications.has(pub.uri) || isSubscribed}&#10003;{/if}
+                  </span>
+                  <span class="content-info">
+                    <span class="content-name">{pub.name || pub.url}</span>
+                    {#if pub.description}
+                      <span class="content-desc">{pub.description}</span>
                     {/if}
-                  </button>
-                {/each}
-              </div>
-            {/if}
+                  </span>
+                  {#if isSubscribed}
+                    <span class="sub-badge">Subscribed</span>
+                  {/if}
+                </button>
+              {/each}
+            </div>
 
             {#if selectedCount > 0}
               <button class="subscribe-btn" onclick={handleSubscribe} disabled={isSubscribing}>
@@ -1039,16 +978,18 @@
     white-space: nowrap;
   }
 
-  .content-count {
-    font-weight: 400;
-    color: var(--color-text-secondary);
-  }
-
   .content-group {
     border: 1px solid var(--color-border);
     border-radius: 6px;
     margin: 0.25rem 0.375rem;
     overflow: hidden;
+  }
+
+  .no-content {
+    padding: 0.625rem 0.5rem;
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    text-align: center;
   }
 
   .content-group .dropdown-item {

@@ -35,7 +35,6 @@
 
   interface DetectedContent {
     publications: DetectedPublication[];
-    freestandingDocumentCount: number;
     loading: boolean;
   }
 
@@ -239,14 +238,6 @@
     return group.profile?.displayName || group.profile?.handle || group.did;
   }
 
-  async function subscribeFreestandingDocs(did: string, handle: string) {
-    await subscriptionsStore.add('__freestanding__', `Documents from @${handle}`, {
-      sourceType: 'atproto.documents',
-      subjectDid: did,
-      feedUrl: '__freestanding__',
-    });
-  }
-
   async function subscribePublication(did: string, pub: DetectedPublication) {
     const subId = await subscriptionsStore.add(pub.uri, pub.name || pub.url, {
       sourceType: 'atproto.documents',
@@ -279,7 +270,7 @@
   function getFaviconUrl(sub: Subscription): string | null {
     if (sub.customIconUrl) return sub.customIconUrl;
     const url = sub.siteUrl || sub.feedUrl;
-    if (!url || url === '__freestanding__') return null;
+    if (!url) return null;
     try {
       const host = new URL(url).hostname;
       return `https://icons.duckduckgo.com/ip3/${host}.ico`;
@@ -362,7 +353,6 @@
         const next = new Map(detectedContent);
         next.set(did, {
           publications: [],
-          freestandingDocumentCount: 0,
           loading: true,
         });
         detectedContent = next;
@@ -373,7 +363,6 @@
         .then((result) => {
           const content = {
             publications: result.publications,
-            freestandingDocumentCount: result.freestandingDocumentCount,
           };
           saveContentCache(did, content);
           const updated = new Map(detectedContent);
@@ -385,7 +374,6 @@
             const updated = new Map(detectedContent);
             updated.set(did, {
               publications: [],
-              freestandingDocumentCount: 0,
               loading: false,
             });
             detectedContent = updated;
@@ -497,28 +485,12 @@
               fallbackIcon={display.iconName}
               onToggleSelect={() => sub.id && toggleSelect(sub.id)}
               onRemove={() => handleRemove(sub)}
-              onEdit={sub.sourceType === 'atproto.documents' && sub.feedUrl !== '__freestanding__'
-                ? () => handleEdit(sub)
-                : null}
+              onEdit={sub.sourceType === 'atproto.documents' ? () => handleEdit(sub) : null}
             />
           {/each}
 
           <!-- Unsubscribed content streams -->
           {#if detected && !detected.loading}
-            {#if !group.subscriptions.some((s) => s.sourceType === 'atproto.documents' && s.feedUrl === '__freestanding__') && detected.freestandingDocumentCount > 0}
-              <SourceRow
-                iconUrl={avatarUrl}
-                iconRound={true}
-                title="Documents"
-                subtitle="Free-standing documents by @{handle} ({detected.freestandingDocumentCount})"
-                sourceLabel="Documents"
-                pillClass="pill-documents"
-                subscribed={false}
-                fallbackIcon="file-text"
-                onSubscribe={() => subscribeFreestandingDocs(group.did, handle)}
-              />
-            {/if}
-
             {#each detected.publications as pub (pub.uri)}
               {#if !group.subscriptions.some((s) => s.sourceType === 'atproto.documents' && s.feedUrl === pub.uri)}
                 <SourceRow
