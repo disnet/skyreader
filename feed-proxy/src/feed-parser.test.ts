@@ -2,9 +2,9 @@ import { describe, expect, it } from 'bun:test';
 import { parseFeed } from './feed-parser';
 
 describe('parseFeed', () => {
-	describe('RSS 2.0', () => {
-		it('parses a basic RSS feed', () => {
-			const rss = `<?xml version="1.0" encoding="UTF-8"?>
+  describe('RSS 2.0', () => {
+    it('parses a basic RSS feed', () => {
+      const rss = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
     <title>Test Blog</title>
@@ -27,20 +27,20 @@ describe('parseFeed', () => {
   </channel>
 </rss>`;
 
-			const result = parseFeed(rss, 'https://example.com/feed.xml');
+      const result = parseFeed(rss, 'https://example.com/feed.xml');
 
-			expect(result.title).toBe('Test Blog');
-			expect(result.description).toBe('A test blog');
-			expect(result.siteUrl).toBe('https://example.com');
-			expect(result.items).toHaveLength(2);
-			expect(result.items[0].guid).toBe('post-1');
-			expect(result.items[0].title).toBe('First Post');
-			expect(result.items[0].url).toBe('https://example.com/post-1');
-			expect(result.items[0].summary).toBe('This is the first post');
-		});
+      expect(result.title).toBe('Test Blog');
+      expect(result.description).toBe('A test blog');
+      expect(result.siteUrl).toBe('https://example.com');
+      expect(result.items).toHaveLength(2);
+      expect(result.items[0].guid).toBe('post-1');
+      expect(result.items[0].title).toBe('First Post');
+      expect(result.items[0].url).toBe('https://example.com/post-1');
+      expect(result.items[0].summary).toBe('This is the first post');
+    });
 
-		it('decodes HTML entities in titles', () => {
-			const rss = `<?xml version="1.0"?>
+    it('decodes HTML entities in titles', () => {
+      const rss = `<?xml version="1.0"?>
 <rss version="2.0">
   <channel>
     <title>Test &amp; Blog</title>
@@ -53,14 +53,14 @@ describe('parseFeed', () => {
   </channel>
 </rss>`;
 
-			const result = parseFeed(rss, 'https://example.com/feed.xml');
+      const result = parseFeed(rss, 'https://example.com/feed.xml');
 
-			expect(result.title).toBe('Test & Blog');
-			expect(result.items[0].title).toBe('Post with "quotes" & more');
-		});
+      expect(result.title).toBe('Test & Blog');
+      expect(result.items[0].title).toBe('Post with "quotes" & more');
+    });
 
-		it('handles CDATA sections', () => {
-			const rss = `<?xml version="1.0"?>
+    it('handles CDATA sections', () => {
+      const rss = `<?xml version="1.0"?>
 <rss version="2.0">
   <channel>
     <title>Test Blog</title>
@@ -74,14 +74,14 @@ describe('parseFeed', () => {
   </channel>
 </rss>`;
 
-			const result = parseFeed(rss, 'https://example.com/feed.xml');
+      const result = parseFeed(rss, 'https://example.com/feed.xml');
 
-			expect(result.items[0].title).toBe('Post with <em>HTML</em>');
-			expect(result.items[0].summary).toBe('<p>Content with HTML</p>');
-		});
+      expect(result.items[0].title).toBe('Post with <em>HTML</em>');
+      expect(result.items[0].summary).toBe('<p>Content with HTML</p>');
+    });
 
-		it('extracts content:encoded over description', () => {
-			const rss = `<?xml version="1.0"?>
+    it('extracts content:encoded over description', () => {
+      const rss = `<?xml version="1.0"?>
 <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
   <channel>
     <title>Test Blog</title>
@@ -96,14 +96,14 @@ describe('parseFeed', () => {
   </channel>
 </rss>`;
 
-			const result = parseFeed(rss, 'https://example.com/feed.xml');
+      const result = parseFeed(rss, 'https://example.com/feed.xml');
 
-			expect(result.items[0].content).toBe('<p>Full content here</p>');
-			expect(result.items[0].summary).toBe('Short summary');
-		});
+      expect(result.items[0].content).toBe('<p>Full content here</p>');
+      expect(result.items[0].summary).toBe('Short summary');
+    });
 
-		it('extracts dc:creator as author', () => {
-			const rss = `<?xml version="1.0"?>
+    it('extracts dc:creator as author', () => {
+      const rss = `<?xml version="1.0"?>
 <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
     <title>Test Blog</title>
@@ -117,13 +117,13 @@ describe('parseFeed', () => {
   </channel>
 </rss>`;
 
-			const result = parseFeed(rss, 'https://example.com/feed.xml');
+      const result = parseFeed(rss, 'https://example.com/feed.xml');
 
-			expect(result.items[0].author).toBe('John Doe');
-		});
+      expect(result.items[0].author).toBe('John Doe');
+    });
 
-		it('extracts media:content image', () => {
-			const rss = `<?xml version="1.0"?>
+    it('extracts media:content image', () => {
+      const rss = `<?xml version="1.0"?>
 <rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
   <channel>
     <title>Test Blog</title>
@@ -137,15 +137,15 @@ describe('parseFeed', () => {
   </channel>
 </rss>`;
 
-			const result = parseFeed(rss, 'https://example.com/feed.xml');
+      const result = parseFeed(rss, 'https://example.com/feed.xml');
 
-			expect(result.items[0].imageUrl).toBe('https://example.com/image.jpg');
-		});
-	});
+      expect(result.items[0].imageUrl).toBe('https://example.com/image.jpg');
+    });
+  });
 
-	describe('Atom', () => {
-		it('parses a basic Atom feed', () => {
-			const atom = `<?xml version="1.0" encoding="UTF-8"?>
+  describe('Atom', () => {
+    it('parses a basic Atom feed', () => {
+      const atom = `<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>Test Blog</title>
   <subtitle>A test blog</subtitle>
@@ -163,20 +163,20 @@ describe('parseFeed', () => {
   </entry>
 </feed>`;
 
-			const result = parseFeed(atom, 'https://example.com/feed.xml');
+      const result = parseFeed(atom, 'https://example.com/feed.xml');
 
-			expect(result.title).toBe('Test Blog');
-			expect(result.description).toBe('A test blog');
-			expect(result.siteUrl).toBe('https://example.com');
-			expect(result.items).toHaveLength(1);
-			expect(result.items[0].guid).toBe('urn:uuid:post-1');
-			expect(result.items[0].title).toBe('First Post');
-			expect(result.items[0].url).toBe('https://example.com/post-1');
-			expect(result.items[0].author).toBe('Jane Doe');
-		});
+      expect(result.title).toBe('Test Blog');
+      expect(result.description).toBe('A test blog');
+      expect(result.siteUrl).toBe('https://example.com');
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0].guid).toBe('urn:uuid:post-1');
+      expect(result.items[0].title).toBe('First Post');
+      expect(result.items[0].url).toBe('https://example.com/post-1');
+      expect(result.items[0].author).toBe('Jane Doe');
+    });
 
-		it('extracts content over summary', () => {
-			const atom = `<?xml version="1.0"?>
+    it('extracts content over summary', () => {
+      const atom = `<?xml version="1.0"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>Test Blog</title>
   <entry>
@@ -188,68 +188,68 @@ describe('parseFeed', () => {
   </entry>
 </feed>`;
 
-			const result = parseFeed(atom, 'https://example.com/feed.xml');
+      const result = parseFeed(atom, 'https://example.com/feed.xml');
 
-			expect(result.items[0].content).toBe('<p>Full content here</p>');
-			expect(result.items[0].summary).toBe('Short summary');
-		});
-	});
+      expect(result.items[0].content).toBe('<p>Full content here</p>');
+      expect(result.items[0].summary).toBe('Short summary');
+    });
+  });
 
-	describe('JSON Feed', () => {
-		it('parses a JSON Feed 1.1', () => {
-			const json = JSON.stringify({
-				version: 'https://jsonfeed.org/version/1.1',
-				title: 'Test Blog',
-				description: 'A test blog',
-				home_page_url: 'https://example.com',
-				items: [
-					{
-						id: 'post-1',
-						url: 'https://example.com/post-1',
-						title: 'First Post',
-						content_html: '<p>Content here</p>',
-						date_published: '2024-01-01T12:00:00Z',
-						author: {
-							name: 'John Doe',
-						},
-					},
-				],
-			});
+  describe('JSON Feed', () => {
+    it('parses a JSON Feed 1.1', () => {
+      const json = JSON.stringify({
+        version: 'https://jsonfeed.org/version/1.1',
+        title: 'Test Blog',
+        description: 'A test blog',
+        home_page_url: 'https://example.com',
+        items: [
+          {
+            id: 'post-1',
+            url: 'https://example.com/post-1',
+            title: 'First Post',
+            content_html: '<p>Content here</p>',
+            date_published: '2024-01-01T12:00:00Z',
+            author: {
+              name: 'John Doe',
+            },
+          },
+        ],
+      });
 
-			const result = parseFeed(json, 'https://example.com/feed.json');
+      const result = parseFeed(json, 'https://example.com/feed.json');
 
-			expect(result.title).toBe('Test Blog');
-			expect(result.description).toBe('A test blog');
-			expect(result.siteUrl).toBe('https://example.com');
-			expect(result.items).toHaveLength(1);
-			expect(result.items[0].guid).toBe('post-1');
-			expect(result.items[0].title).toBe('First Post');
-			expect(result.items[0].content).toBe('<p>Content here</p>');
-			expect(result.items[0].author).toBe('John Doe');
-		});
+      expect(result.title).toBe('Test Blog');
+      expect(result.description).toBe('A test blog');
+      expect(result.siteUrl).toBe('https://example.com');
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0].guid).toBe('post-1');
+      expect(result.items[0].title).toBe('First Post');
+      expect(result.items[0].content).toBe('<p>Content here</p>');
+      expect(result.items[0].author).toBe('John Doe');
+    });
 
-		it('uses content_text when content_html is absent', () => {
-			const json = JSON.stringify({
-				version: 'https://jsonfeed.org/version/1',
-				title: 'Test',
-				items: [
-					{
-						id: 'text-post',
-						title: 'Text Post',
-						content_text: 'Plain text content',
-					},
-				],
-			});
+    it('uses content_text when content_html is absent', () => {
+      const json = JSON.stringify({
+        version: 'https://jsonfeed.org/version/1',
+        title: 'Test',
+        items: [
+          {
+            id: 'text-post',
+            title: 'Text Post',
+            content_text: 'Plain text content',
+          },
+        ],
+      });
 
-			const result = parseFeed(json, 'https://example.com/feed.json');
+      const result = parseFeed(json, 'https://example.com/feed.json');
 
-			expect(result.items[0].content).toBe('Plain text content');
-		});
-	});
+      expect(result.items[0].content).toBe('Plain text content');
+    });
+  });
 
-	describe('RDF/RSS 1.0', () => {
-		it('parses an RDF feed', () => {
-			const rdf = `<?xml version="1.0"?>
+  describe('RDF/RSS 1.0', () => {
+    it('parses an RDF feed', () => {
+      const rdf = `<?xml version="1.0"?>
 <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
          xmlns="http://purl.org/rss/1.0/"
          xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -267,19 +267,19 @@ describe('parseFeed', () => {
   </item>
 </rdf:RDF>`;
 
-			const result = parseFeed(rdf, 'https://example.com/feed.rdf');
+      const result = parseFeed(rdf, 'https://example.com/feed.rdf');
 
-			expect(result.title).toBe('Test Blog');
-			expect(result.description).toBe('A test blog');
-			expect(result.items).toHaveLength(1);
-			expect(result.items[0].title).toBe('First Post');
-			expect(result.items[0].author).toBe('Author Name');
-		});
-	});
+      expect(result.title).toBe('Test Blog');
+      expect(result.description).toBe('A test blog');
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0].title).toBe('First Post');
+      expect(result.items[0].author).toBe('Author Name');
+    });
+  });
 
-	describe('entity decoding', () => {
-		it('decodes entities in URLs with query parameters', () => {
-			const rss = `<?xml version="1.0"?>
+  describe('entity decoding', () => {
+    it('decodes entities in URLs with query parameters', () => {
+      const rss = `<?xml version="1.0"?>
 <rss version="2.0">
   <channel>
     <title>Test</title>
@@ -292,14 +292,14 @@ describe('parseFeed', () => {
   </channel>
 </rss>`;
 
-			const result = parseFeed(rss, 'https://example.com/feed.xml');
+      const result = parseFeed(rss, 'https://example.com/feed.xml');
 
-			expect(result.items[0].url).toBe('https://example.com/post?a=1&b=2&c=3');
-			expect(result.items[0].guid).toBe('https://example.com/post?a=1&b=2&c=3');
-		});
+      expect(result.items[0].url).toBe('https://example.com/post?a=1&b=2&c=3');
+      expect(result.items[0].guid).toBe('https://example.com/post?a=1&b=2&c=3');
+    });
 
-		it('decodes entities in Atom link href attributes', () => {
-			const atom = `<?xml version="1.0"?>
+    it('decodes entities in Atom link href attributes', () => {
+      const atom = `<?xml version="1.0"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>Test</title>
   <link href="https://example.com?x=1&amp;y=2" rel="alternate"/>
@@ -311,14 +311,14 @@ describe('parseFeed', () => {
   </entry>
 </feed>`;
 
-			const result = parseFeed(atom, 'https://example.com/feed.xml');
+      const result = parseFeed(atom, 'https://example.com/feed.xml');
 
-			expect(result.siteUrl).toBe('https://example.com?x=1&y=2');
-			expect(result.items[0].url).toBe('https://example.com/post?a=1&b=2');
-		});
+      expect(result.siteUrl).toBe('https://example.com?x=1&y=2');
+      expect(result.items[0].url).toBe('https://example.com/post?a=1&b=2');
+    });
 
-		it('decodes entities in media:content image URLs', () => {
-			const rss = `<?xml version="1.0"?>
+    it('decodes entities in media:content image URLs', () => {
+      const rss = `<?xml version="1.0"?>
 <rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
   <channel>
     <title>Test</title>
@@ -332,19 +332,19 @@ describe('parseFeed', () => {
   </channel>
 </rss>`;
 
-			const result = parseFeed(rss, 'https://example.com/feed.xml');
+      const result = parseFeed(rss, 'https://example.com/feed.xml');
 
-			expect(result.items[0].imageUrl).toBe('https://cdn.example.com/img?id=123&w=800');
-		});
+      expect(result.items[0].imageUrl).toBe('https://cdn.example.com/img?id=123&w=800');
+    });
 
-		it('handles feeds with many entities without hitting expansion limits', () => {
-			// Simulate a content-heavy feed like Hugo generates with many &amp;rsquo; etc.
-			const entityHeavyContent = Array.from(
-				{ length: 200 },
-				(_, i) => `Item ${i} with &amp;rsquo; and &amp;ldquo;quotes&amp;rdquo; and &amp;hellip;`
-			).join(' ');
+    it('handles feeds with many entities without hitting expansion limits', () => {
+      // Simulate a content-heavy feed like Hugo generates with many &amp;rsquo; etc.
+      const entityHeavyContent = Array.from(
+        { length: 200 },
+        (_, i) => `Item ${i} with &amp;rsquo; and &amp;ldquo;quotes&amp;rdquo; and &amp;hellip;`
+      ).join(' ');
 
-			const rss = `<?xml version="1.0"?>
+      const rss = `<?xml version="1.0"?>
 <rss version="2.0">
   <channel>
     <title>Entity Heavy Feed</title>
@@ -358,17 +358,17 @@ describe('parseFeed', () => {
   </channel>
 </rss>`;
 
-			// Should not throw "Entity expansion limit exceeded"
-			const result = parseFeed(rss, 'https://example.com/feed.xml');
+      // Should not throw "Entity expansion limit exceeded"
+      const result = parseFeed(rss, 'https://example.com/feed.xml');
 
-			expect(result.items).toHaveLength(1);
-			// &amp;rsquo; decodes to &rsquo; (XML entity &amp; → &, leaving the HTML entity name)
-			expect(result.items[0].summary).toContain('&rsquo;');
-			expect(result.items[0].summary).toContain('&ldquo;');
-		});
+      expect(result.items).toHaveLength(1);
+      // &amp;rsquo; decodes to &rsquo; (XML entity &amp; → &, leaving the HTML entity name)
+      expect(result.items[0].summary).toContain('&rsquo;');
+      expect(result.items[0].summary).toContain('&ldquo;');
+    });
 
-		it('decodes numeric and hex entities', () => {
-			const rss = `<?xml version="1.0"?>
+    it('decodes numeric and hex entities', () => {
+      const rss = `<?xml version="1.0"?>
 <rss version="2.0">
   <channel>
     <title>Test</title>
@@ -381,13 +381,13 @@ describe('parseFeed', () => {
   </channel>
 </rss>`;
 
-			const result = parseFeed(rss, 'https://example.com/feed.xml');
+      const result = parseFeed(rss, 'https://example.com/feed.xml');
 
-			expect(result.items[0].title).toBe('Caf\u00e9 \u2014 Recipe');
-		});
+      expect(result.items[0].title).toBe('Caf\u00e9 \u2014 Recipe');
+    });
 
-		it('does not double-decode &amp;lt; into <', () => {
-			const rss = `<?xml version="1.0"?>
+    it('does not double-decode &amp;lt; into <', () => {
+      const rss = `<?xml version="1.0"?>
 <rss version="2.0">
   <channel>
     <title>Test</title>
@@ -400,13 +400,13 @@ describe('parseFeed', () => {
   </channel>
 </rss>`;
 
-			const result = parseFeed(rss, 'https://example.com/feed.xml');
+      const result = parseFeed(rss, 'https://example.com/feed.xml');
 
-			expect(result.items[0].title).toBe('Use &lt;div&gt; for layout');
-		});
+      expect(result.items[0].title).toBe('Use &lt;div&gt; for layout');
+    });
 
-		it('decodes high Unicode code points (emoji)', () => {
-			const rss = `<?xml version="1.0"?>
+    it('decodes high Unicode code points (emoji)', () => {
+      const rss = `<?xml version="1.0"?>
 <rss version="2.0">
   <channel>
     <title>Test</title>
@@ -419,13 +419,13 @@ describe('parseFeed', () => {
   </channel>
 </rss>`;
 
-			const result = parseFeed(rss, 'https://example.com/feed.xml');
+      const result = parseFeed(rss, 'https://example.com/feed.xml');
 
-			expect(result.items[0].title).toBe('Hello \u{1F600} World \u{1F600}');
-		});
+      expect(result.items[0].title).toBe('Hello \u{1F600} World \u{1F600}');
+    });
 
-		it('decodes entities in RSS siteUrl', () => {
-			const rss = `<?xml version="1.0"?>
+    it('decodes entities in RSS siteUrl', () => {
+      const rss = `<?xml version="1.0"?>
 <rss version="2.0">
   <channel>
     <title>Test</title>
@@ -438,37 +438,40 @@ describe('parseFeed', () => {
   </channel>
 </rss>`;
 
-			const result = parseFeed(rss, 'https://example.com/feed.xml');
+      const result = parseFeed(rss, 'https://example.com/feed.xml');
 
-			expect(result.siteUrl).toBe('https://example.com/site?lang=en&region=us');
-		});
-	});
+      expect(result.siteUrl).toBe('https://example.com/site?lang=en&region=us');
+    });
+  });
 
-	describe('error handling', () => {
-		it('throws on HTML response', () => {
-			const html = '<!DOCTYPE html><html><head><title>Not a feed</title></head></html>';
+  describe('error handling', () => {
+    it('throws on HTML response', () => {
+      const html = '<!DOCTYPE html><html><head><title>Not a feed</title></head></html>';
 
-			expect(() => parseFeed(html, 'https://example.com/page')).toThrow('HTML instead of a feed');
-		});
+      expect(() => parseFeed(html, 'https://example.com/page')).toThrow('HTML instead of a feed');
+    });
 
-		it('throws on unknown format', () => {
-			const xml = '<?xml version="1.0"?><unknown><data>test</data></unknown>';
+    it('throws on unknown format', () => {
+      const xml = '<?xml version="1.0"?><unknown><data>test</data></unknown>';
 
-			expect(() => parseFeed(xml, 'https://example.com/feed')).toThrow('Unknown feed format');
-		});
-	});
+      expect(() => parseFeed(xml, 'https://example.com/feed')).toThrow('Unknown feed format');
+    });
+  });
 
-	describe('item limits', () => {
-		it('limits items to MAX_ITEMS_TO_PARSE (30)', () => {
-			const items = Array.from({ length: 50 }, (_, i) => `
+  describe('item limits', () => {
+    it('limits items to MAX_ITEMS_TO_PARSE (30)', () => {
+      const items = Array.from(
+        { length: 50 },
+        (_, i) => `
         <item>
           <title>Post ${i + 1}</title>
           <link>https://example.com/post-${i + 1}</link>
           <guid>post-${i + 1}</guid>
         </item>
-      `).join('');
+      `
+      ).join('');
 
-			const rss = `<?xml version="1.0"?>
+      const rss = `<?xml version="1.0"?>
 <rss version="2.0">
   <channel>
     <title>Big Feed</title>
@@ -477,11 +480,11 @@ describe('parseFeed', () => {
   </channel>
 </rss>`;
 
-			const result = parseFeed(rss, 'https://example.com/feed.xml');
+      const result = parseFeed(rss, 'https://example.com/feed.xml');
 
-			expect(result.items).toHaveLength(30);
-			expect(result.items[0].title).toBe('Post 1');
-			expect(result.items[29].title).toBe('Post 30');
-		});
-	});
+      expect(result.items).toHaveLength(30);
+      expect(result.items[0].title).toBe('Post 1');
+      expect(result.items[29].title).toBe('Post 30');
+    });
+  });
 });

@@ -65,7 +65,10 @@
     try {
       await linkblogDiscoveryStore.subscribe(p);
     } catch (e) {
-      failed = { ...failed, [p.did]: e instanceof Error ? e.message : 'Could not follow' };
+      failed = {
+        ...failed,
+        [p.did]: e instanceof Error ? e.message : 'Could not follow',
+      };
     } finally {
       const { [p.did]: _, ...rest } = pending;
       pending = rest;

@@ -137,7 +137,11 @@ class LiveDatabase {
    */
   async updateSubscriptionLocal(
     id: number,
-    updates: { customTitle?: string; customIconUrl?: string; category?: string | null }
+    updates: {
+      customTitle?: string;
+      customIconUrl?: string;
+      category?: string | null;
+    }
   ): Promise<void> {
     // Dexie doesn't accept null — use undefined to clear fields
     const dexieUpdates: Record<string, string | undefined> = {};

@@ -38,21 +38,21 @@ GET /feed?url=https://example.com/feed.xml&since_guids=abc,def&limit=50
 
 **Query Parameters:**
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `url` | Yes | Feed URL to fetch |
-| `since_guids` | No | Comma-separated GUIDs the client already has |
-| `limit` | No | Max items when no GUID match (default: 100, max: 500) |
+| Parameter     | Required | Description                                           |
+| ------------- | -------- | ----------------------------------------------------- |
+| `url`         | Yes      | Feed URL to fetch                                     |
+| `since_guids` | No       | Comma-separated GUIDs the client already has          |
+| `limit`       | No       | Max items when no GUID match (default: 100, max: 500) |
 
 **Response Headers:**
 
-| Header | Values | Description |
-|--------|--------|-------------|
-| `X-Cache` | `HIT`, `STALE`, `MISS`, `REVALIDATED` | Cache status |
-| `X-Cache-Age` | seconds | Age of cached data |
-| `X-Filter` | `MATCHED:<guid>`, `FULL`, `NONE` | Filter result |
-| `X-Total-Items` | number | Total items in feed |
-| `X-Returned-Items` | number | Items returned after filtering |
+| Header             | Values                                | Description                    |
+| ------------------ | ------------------------------------- | ------------------------------ |
+| `X-Cache`          | `HIT`, `STALE`, `MISS`, `REVALIDATED` | Cache status                   |
+| `X-Cache-Age`      | seconds                               | Age of cached data             |
+| `X-Filter`         | `MATCHED:<guid>`, `FULL`, `NONE`      | Filter result                  |
+| `X-Total-Items`    | number                                | Total items in feed            |
+| `X-Returned-Items` | number                                | Items returned after filtering |
 
 **Response Body:**
 
@@ -147,18 +147,15 @@ GET /discover?url=https://example.com
 
 **Query Parameters:**
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `url` | Yes | Website URL to discover feeds from |
+| Parameter | Required | Description                        |
+| --------- | -------- | ---------------------------------- |
+| `url`     | Yes      | Website URL to discover feeds from |
 
 **Response:**
 
 ```json
 {
-  "feeds": [
-    "https://example.com/feed.xml",
-    "https://example.com/atom.xml"
-  ]
+  "feeds": ["https://example.com/feed.xml", "https://example.com/atom.xml"]
 }
 ```
 
@@ -212,10 +209,10 @@ Content-Type: application/json
 
 **Response Headers:**
 
-| Header | Description |
-|--------|-------------|
-| `X-Cache` | `HIT` (fresh cache), `MISS` (fetched + extracted), `COALESCED` (joined an in-flight extraction) |
-| `X-Cache-Age` | Age of the cached entry in seconds (on `HIT`) |
+| Header        | Description                                                                                     |
+| ------------- | ----------------------------------------------------------------------------------------------- |
+| `X-Cache`     | `HIT` (fresh cache), `MISS` (fetched + extracted), `COALESCED` (joined an in-flight extraction) |
+| `X-Cache-Age` | Age of the cached entry in seconds (on `HIT`)                                                   |
 
 **Error Response:**
 
@@ -266,11 +263,11 @@ The `since_guids` parameter enables selective item filtering to reduce bandwidth
 2. **Proxy finds first match**: Scans feed items (newest first) for matching GUID
 3. **Returns newer items**: Only items appearing before the match are returned
 
-| Scenario | X-Filter Header | Items Returned |
-|----------|-----------------|----------------|
-| No `since_guids` provided | `NONE` | All items |
-| GUID found in feed | `MATCHED:<guid>` | Items newer than match |
-| No GUID found (rotated out) | `FULL` | Up to `limit` items |
+| Scenario                    | X-Filter Header  | Items Returned         |
+| --------------------------- | ---------------- | ---------------------- |
+| No `since_guids` provided   | `NONE`           | All items              |
+| GUID found in feed          | `MATCHED:<guid>` | Items newer than match |
+| No GUID found (rotated out) | `FULL`           | Up to `limit` items    |
 
 **Example flow:**
 
@@ -291,21 +288,21 @@ curl "/feed?url=...&since_guids=old-guid&limit=50"
 
 ## Configuration
 
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
-| `PROXY_SECRET` | (none) | Shared secret for `X-Proxy-Secret` header |
-| `DATA_DIR` | `./data` | SQLite database location |
-| `CACHE_TTL_SECONDS` | `900` | Fresh cache duration (15 min) |
-| `STALE_TTL_SECONDS` | `3600` | Stale cache max age (1 hour) |
-| `PORT` | `3000` | HTTP server port |
+| Environment Variable | Default  | Description                               |
+| -------------------- | -------- | ----------------------------------------- |
+| `PROXY_SECRET`       | (none)   | Shared secret for `X-Proxy-Secret` header |
+| `DATA_DIR`           | `./data` | SQLite database location                  |
+| `CACHE_TTL_SECONDS`  | `900`    | Fresh cache duration (15 min)             |
+| `STALE_TTL_SECONDS`  | `3600`   | Stale cache max age (1 hour)              |
+| `PORT`               | `3000`   | HTTP server port                          |
 
 ## Cache Behavior
 
-| Cache State | Age | Behavior |
-|-------------|-----|----------|
-| **Fresh** | < 15 min | Return immediately |
-| **Stale** | 15-60 min | Return + background refresh |
-| **Expired** | > 60 min | Fetch synchronously |
+| Cache State | Age       | Behavior                    |
+| ----------- | --------- | --------------------------- |
+| **Fresh**   | < 15 min  | Return immediately          |
+| **Stale**   | 15-60 min | Return + background refresh |
+| **Expired** | > 60 min  | Fetch synchronously         |
 
 The proxy uses HTTP conditional requests (ETag, Last-Modified) to minimize bandwidth when refreshing.
 
@@ -315,11 +312,11 @@ The proxy implements intelligent error handling with retry logic and circuit bre
 
 ### Error Classification
 
-| Category | HTTP Status Codes | Behavior |
-|----------|-------------------|----------|
-| **Transient** | 429, 500, 502, 503, 504 | Retry with exponential backoff |
-| **Permanent** | 401, 403, 404, 410 | No retry for 7 days |
-| **Recoverable** | Other 4xx errors | Limited retries, then treat as permanent |
+| Category        | HTTP Status Codes       | Behavior                                 |
+| --------------- | ----------------------- | ---------------------------------------- |
+| **Transient**   | 429, 500, 502, 503, 504 | Retry with exponential backoff           |
+| **Permanent**   | 401, 403, 404, 410      | No retry for 7 days                      |
+| **Recoverable** | Other 4xx errors        | Limited retries, then treat as permanent |
 
 Network errors (timeouts, DNS failures) are treated as transient.
 
@@ -330,18 +327,19 @@ Network errors (timeouts, DNS failures) are treated as transient.
 - **Permanent errors**: 7-day backoff
 - **Max recoverable errors**: After 5 consecutive failures, treated as permanent
 
-| Error Count | Backoff Duration |
-|-------------|------------------|
-| 1 | 5 minutes |
-| 2 | 10 minutes |
-| 3 | 20 minutes |
-| 4 | 40 minutes |
-| 5 | 1 hour 20 minutes |
-| 6+ | Capped at 24 hours |
+| Error Count | Backoff Duration   |
+| ----------- | ------------------ |
+| 1           | 5 minutes          |
+| 2           | 10 minutes         |
+| 3           | 20 minutes         |
+| 4           | 40 minutes         |
+| 5           | 1 hour 20 minutes  |
+| 6+          | Capped at 24 hours |
 
 ### Circuit Breaker
 
 When a feed is in backoff:
+
 1. Fetch attempts are skipped entirely
 2. Cached data (if available) is returned immediately
 3. After backoff expires, a single fetch is attempted
@@ -444,11 +442,11 @@ Client Request
 
 This is an enhanced version of `skyreader-feed-cache` with:
 
-| Feature | feed-cache | feed-proxy |
-|---------|------------|------------|
-| Basic caching | ✓ | ✓ |
-| GUID filtering | ✗ | ✓ |
-| Per-feed bulk filtering | ✗ | ✓ |
-| Filter metadata headers | ✗ | ✓ |
+| Feature                 | feed-cache | feed-proxy |
+| ----------------------- | ---------- | ---------- |
+| Basic caching           | ✓          | ✓          |
+| GUID filtering          | ✗          | ✓          |
+| Per-feed bulk filtering | ✗          | ✓          |
+| Filter metadata headers | ✗          | ✓          |
 
 Use `feed-cache` for simple caching. Use `feed-proxy` when clients need incremental updates.

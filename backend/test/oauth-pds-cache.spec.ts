@@ -260,7 +260,9 @@ describe('auth login: cache-bust on stale PDS', () => {
           ok: true,
           status: 200,
           headers: new Headers(),
-          json: async () => ({ authorization_servers: ['https://auth.example.com'] }),
+          json: async () => ({
+            authorization_servers: ['https://auth.example.com'],
+          }),
           text: async () => '',
         };
       }
@@ -288,7 +290,9 @@ describe('auth login: cache-bust on stale PDS', () => {
           ok: true,
           status: 200,
           headers: new Headers(),
-          json: async () => ({ request_uri: 'urn:ietf:params:oauth:request_uri:ok' }),
+          json: async () => ({
+            request_uri: 'urn:ietf:params:oauth:request_uri:ok',
+          }),
           text: async () => '',
         };
       }

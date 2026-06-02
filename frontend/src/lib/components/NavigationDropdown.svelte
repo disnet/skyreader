@@ -154,7 +154,14 @@
 
   // Navigation item type
   type NavItem =
-    | { type: 'view'; id: string; label: string; count?: number; icon: IconName; indent?: boolean }
+    | {
+        type: 'view';
+        id: string;
+        label: string;
+        count?: number;
+        icon: IconName;
+        indent?: boolean;
+      }
     | {
         type: 'feed';
         id: number;
@@ -171,8 +178,20 @@
         icon: IconName;
         indent?: boolean;
       }
-    | { type: 'action'; id: string; label: string; icon: IconName; indent?: boolean }
-    | { type: 'filteredView'; id: string; label: string; icon: IconName; indent?: boolean };
+    | {
+        type: 'action';
+        id: string;
+        label: string;
+        icon: IconName;
+        indent?: boolean;
+      }
+    | {
+        type: 'filteredView';
+        id: string;
+        label: string;
+        icon: IconName;
+        indent?: boolean;
+      };
 
   // Section type with optional icon and click handler for styled section headers
   type SectionData = {

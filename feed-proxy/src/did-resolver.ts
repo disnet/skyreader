@@ -17,34 +17,34 @@ const PLC_DIRECTORY = 'https://plc.directory';
 const DID_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 interface DidDocument {
-	id: string;
-	alsoKnownAs?: string[];
-	service?: Array<{ id: string; type: string; serviceEndpoint: string }>;
+  id: string;
+  alsoKnownAs?: string[];
+  service?: Array<{ id: string; type: string; serviceEndpoint: string }>;
 }
 
 interface DidCacheRow {
-	did: string;
-	pds_url: string | null;
-	handle: string | null;
-	cached_at: number;
+  did: string;
+  pds_url: string | null;
+  handle: string | null;
+  cached_at: number;
 }
 
 interface ResolvedDid {
-	pdsUrl: string | null;
-	handle: string | null;
+  pdsUrl: string | null;
+  handle: string | null;
 }
 
 function pdsFromDoc(doc: DidDocument): string | null {
-	const pdsService = doc.service?.find(
-		(s) => s.id === '#atproto_pds' || s.type === 'AtprotoPersonalDataServer'
-	);
-	return pdsService?.serviceEndpoint || null;
+  const pdsService = doc.service?.find(
+    (s) => s.id === '#atproto_pds' || s.type === 'AtprotoPersonalDataServer'
+  );
+  return pdsService?.serviceEndpoint || null;
 }
 
 // The handle is the first `at://`-prefixed entry in `alsoKnownAs`, sans scheme.
 function handleFromDoc(doc: DidDocument): string | null {
-	const aka = doc.alsoKnownAs?.find((a) => a.startsWith('at://'));
-	return aka ? aka.slice('at://'.length) : null;
+  const aka = doc.alsoKnownAs?.find((a) => a.startsWith('at://'));
+  return aka ? aka.slice('at://'.length) : null;
 }
 
 /**
@@ -53,44 +53,45 @@ function handleFromDoc(doc: DidDocument): string | null {
  * unresolvable.
  */
 async function resolveDidUncached(did: string): Promise<ResolvedDid> {
-	try {
-		let doc: DidDocument | null = null;
-		if (did.startsWith('did:plc:')) {
-			const response = await fetch(`${PLC_DIRECTORY}/${did}`);
-			if (response.ok) doc = (await response.json()) as DidDocument;
-		} else if (did.startsWith('did:web:')) {
-			const domain = did.replace('did:web:', '');
-			const response = await fetch(`https://${domain}/.well-known/did.json`);
-			if (response.ok) doc = (await response.json()) as DidDocument;
-		}
-		if (!doc) return { pdsUrl: null, handle: null };
-		return { pdsUrl: pdsFromDoc(doc), handle: handleFromDoc(doc) };
-	} catch (error) {
-		console.error(`[did-resolver] Failed to resolve ${did}:`, error);
-		return { pdsUrl: null, handle: null };
-	}
+  try {
+    let doc: DidDocument | null = null;
+    if (did.startsWith('did:plc:')) {
+      const response = await fetch(`${PLC_DIRECTORY}/${did}`);
+      if (response.ok) doc = (await response.json()) as DidDocument;
+    } else if (did.startsWith('did:web:')) {
+      const domain = did.replace('did:web:', '');
+      const response = await fetch(`https://${domain}/.well-known/did.json`);
+      if (response.ok) doc = (await response.json()) as DidDocument;
+    }
+    if (!doc) return { pdsUrl: null, handle: null };
+    return { pdsUrl: pdsFromDoc(doc), handle: handleFromDoc(doc) };
+  } catch (error) {
+    console.error(`[did-resolver] Failed to resolve ${did}:`, error);
+    return { pdsUrl: null, handle: null };
+  }
 }
 
 // Read a still-fresh cache row, or null if missing/stale.
 function readFreshCache(db: Database, did: string): DidCacheRow | null {
-	const cached = db
-		.query<DidCacheRow, [string]>(
-			'SELECT did, pds_url, handle, cached_at FROM did_cache WHERE did = ?'
-		)
-		.get(did);
-	if (cached && Date.now() - cached.cached_at < DID_CACHE_TTL_MS) return cached;
-	return null;
+  const cached = db
+    .query<
+      DidCacheRow,
+      [string]
+    >('SELECT did, pds_url, handle, cached_at FROM did_cache WHERE did = ?')
+    .get(did);
+  if (cached && Date.now() - cached.cached_at < DID_CACHE_TTL_MS) return cached;
+  return null;
 }
 
 // Resolve the DID document once and persist both pds_url + handle.
 async function resolveAndCache(db: Database, did: string): Promise<ResolvedDid> {
-	const resolved = await resolveDidUncached(did);
-	db.run(
-		`INSERT INTO did_cache (did, pds_url, handle, cached_at) VALUES (?, ?, ?, ?)
+  const resolved = await resolveDidUncached(did);
+  db.run(
+    `INSERT INTO did_cache (did, pds_url, handle, cached_at) VALUES (?, ?, ?, ?)
 		ON CONFLICT(did) DO UPDATE SET pds_url = excluded.pds_url, handle = excluded.handle, cached_at = excluded.cached_at`,
-		[did, resolved.pdsUrl, resolved.handle, Date.now()]
-	);
-	return resolved;
+    [did, resolved.pdsUrl, resolved.handle, Date.now()]
+  );
+  return resolved;
 }
 
 /**
@@ -99,9 +100,9 @@ async function resolveAndCache(db: Database, did: string): Promise<ResolvedDid> 
  * within the TTL.
  */
 export async function resolvePdsUrl(db: Database, did: string): Promise<string | null> {
-	const cached = readFreshCache(db, did);
-	if (cached) return cached.pds_url;
-	return (await resolveAndCache(db, did)).pdsUrl;
+  const cached = readFreshCache(db, did);
+  if (cached) return cached.pds_url;
+  return (await resolveAndCache(db, did)).pdsUrl;
 }
 
 /**
@@ -109,7 +110,7 @@ export async function resolvePdsUrl(db: Database, did: string): Promise<string |
  * PDS URL. Returns null when unresolvable.
  */
 export async function resolveHandle(db: Database, did: string): Promise<string | null> {
-	const cached = readFreshCache(db, did);
-	if (cached) return cached.handle;
-	return (await resolveAndCache(db, did)).handle;
+  const cached = readFreshCache(db, did);
+  if (cached) return cached.handle;
+  return (await resolveAndCache(db, did)).handle;
 }

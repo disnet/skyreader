@@ -111,7 +111,11 @@ function unauthorizedResponse(headers: HeadersInit): Response {
 function sessionRetryResponse(headers: HeadersInit): Response {
   return new Response(JSON.stringify({ error: 'session_refresh_pending', retryable: true }), {
     status: 503,
-    headers: { ...headers, 'Content-Type': 'application/json', 'Retry-After': '2' },
+    headers: {
+      ...headers,
+      'Content-Type': 'application/json',
+      'Retry-After': '2',
+    },
   });
 }
 

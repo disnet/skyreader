@@ -51,7 +51,12 @@
     if (onEdit) items.push({ label: 'Edit', icon: 'edit', onclick: onEdit });
     if (onRefresh) items.push({ label: 'Refresh', icon: 'refresh-cw', onclick: onRefresh });
     if (onRemove)
-      items.push({ label: 'Remove', icon: 'trash', variant: 'danger', onclick: onRemove });
+      items.push({
+        label: 'Remove',
+        icon: 'trash',
+        variant: 'danger',
+        onclick: onRemove,
+      });
     return items;
   });
 </script>

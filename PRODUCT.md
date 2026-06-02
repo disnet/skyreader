@@ -15,8 +15,8 @@ positions — to be present, not bolted on.
 
 Their context: reading on a phone during downtime and on a laptop at a desk, often offline or on
 flaky connections (the app is a PWA with IndexedDB + a sync queue for exactly this). The job to be
-done is *keep up with the feeds and people I care about, on infrastructure I own, without an
-algorithm deciding for me.*
+done is _keep up with the feeds and people I care about, on infrastructure I own, without an
+algorithm deciding for me._
 
 ## Product Purpose
 
@@ -37,7 +37,7 @@ reading come forward. Voice is plain and unhurried — direct sentences, no hype
 points by default. Personality comes from restraint and precision, not decoration: generous
 whitespace, confident typography, and a quiet confidence that the product knows what it's for.
 
-The emotional goal is *ownership and ease* — the sense of a well-kept personal library that
+The emotional goal is _ownership and ease_ — the sense of a well-kept personal library that
 belongs to you, where catching up feels relaxing rather than like clearing a backlog under duress.
 
 ## Anti-references

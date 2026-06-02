@@ -26,7 +26,12 @@ interface GetProfilesResponse {
 }
 
 function toLite(p: BskyProfileLite): BskyProfileLite {
-  return { did: p.did, handle: p.handle, displayName: p.displayName, avatar: p.avatar };
+  return {
+    did: p.did,
+    handle: p.handle,
+    displayName: p.displayName,
+    avatar: p.avatar,
+  };
 }
 
 /**

@@ -62,7 +62,9 @@ function createLinkblogDiscoveryStore() {
       siteUrl: person.blogUrl,
     });
     if (person.avatar) {
-      await subscriptionsStore.updateLocal(id, { customIconUrl: person.avatar });
+      await subscriptionsStore.updateLocal(id, {
+        customIconUrl: person.avatar,
+      });
     }
   }
 

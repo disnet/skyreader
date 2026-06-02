@@ -64,7 +64,10 @@ function createSidebarStore() {
           saved: true,
           ...migrated,
         };
-        state.showOnlyUnread = parsed.showOnlyUnread ?? { shared: false, feeds: false };
+        state.showOnlyUnread = parsed.showOnlyUnread ?? {
+          shared: false,
+          feeds: false,
+        };
         state.expandedCategories = parsed.expandedCategories ?? {};
       } catch {
         // Ignore parse errors

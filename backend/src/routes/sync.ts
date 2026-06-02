@@ -40,7 +40,10 @@ export async function handleFullSync(request: Request, env: Env): Promise<Respon
   const settings = await getUserSettings(env, session.did);
   if (!settings.pdsSyncEnabled) {
     return new Response(
-      JSON.stringify({ error: 'PDS sync is not enabled', code: 'sync_disabled' }),
+      JSON.stringify({
+        error: 'PDS sync is not enabled',
+        code: 'sync_disabled',
+      }),
       {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
@@ -104,7 +107,10 @@ export async function handleSyncSubscriptions(request: Request, env: Env): Promi
   const settings = await getUserSettings(env, session.did);
   if (!settings.pdsSyncEnabled) {
     return new Response(
-      JSON.stringify({ error: 'PDS sync is not enabled', code: 'sync_disabled' }),
+      JSON.stringify({
+        error: 'PDS sync is not enabled',
+        code: 'sync_disabled',
+      }),
       {
         status: 400,
         headers: { 'Content-Type': 'application/json' },

@@ -139,7 +139,10 @@ export async function fetchAllFeeds(
       // Process results. Articles are collected and merged once per batch
       // (rather than once per feed) so the in-memory article array is rebuilt
       // and re-sorted a single time — a big win on cold start with many feeds.
-      const toMerge: Array<{ subscriptionId: number; items: V2FeedResult['items'] }> = [];
+      const toMerge: Array<{
+        subscriptionId: number;
+        items: V2FeedResult['items'];
+      }> = [];
 
       for (const req of batch) {
         const feedResult = feeds[req.url] as V2FeedResult | undefined;
@@ -173,7 +176,10 @@ export async function fetchAllFeeds(
 
         // Queue new articles for a single batched merge below
         if (feedResult.items && feedResult.items.length > 0) {
-          toMerge.push({ subscriptionId: req.subscriptionId, items: feedResult.items });
+          toMerge.push({
+            subscriptionId: req.subscriptionId,
+            items: feedResult.items,
+          });
         }
 
         result.successfulFeeds++;

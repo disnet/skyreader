@@ -33,7 +33,10 @@ export function recoveryVisible(page: Page) {
 /** True if the app shell rendered something (not a blank page). */
 export async function shellRendered(page: Page) {
   try {
-    await page.waitForSelector('.app, .login-btn, main', { state: 'attached', timeout: 8000 });
+    await page.waitForSelector('.app, .login-btn, main', {
+      state: 'attached',
+      timeout: 8000,
+    });
     return true;
   } catch {
     return false;

@@ -4,21 +4,25 @@ test.describe('Settings', () => {
   test('displays user info', async ({ authedPage, testUser }) => {
     await authedPage.goto('/settings');
     // Handle appears in both sidebar and settings page; use the main content area
-    await expect(
-      authedPage.getByRole('main').getByText('@' + testUser.handle)
-    ).toBeVisible({ timeout: 10_000 });
+    await expect(authedPage.getByRole('main').getByText('@' + testUser.handle)).toBeVisible({
+      timeout: 10_000,
+    });
     await expect(authedPage.getByRole('main').getByText(testUser.did)).toBeVisible();
   });
 
   test('displays plan info', async ({ authedPage }) => {
     await authedPage.goto('/settings');
-    await expect(authedPage.locator('.plan-name')).toHaveText('Free', { timeout: 10_000 });
+    await expect(authedPage.locator('.plan-name')).toHaveText('Free', {
+      timeout: 10_000,
+    });
     await expect(authedPage.getByText('Feed subscriptions')).toBeVisible();
   });
 
   test('font option buttons work', async ({ authedPage }) => {
     await authedPage.goto('/settings');
-    await expect(authedPage.locator('.font-option').first()).toBeVisible({ timeout: 10_000 });
+    await expect(authedPage.locator('.font-option').first()).toBeVisible({
+      timeout: 10_000,
+    });
 
     // Click "Serif" option
     const serifButton = authedPage.locator('.font-option', { hasText: 'Serif' }).first();
@@ -28,7 +32,9 @@ test.describe('Settings', () => {
 
   test('font size buttons work', async ({ authedPage }) => {
     await authedPage.goto('/settings');
-    await expect(authedPage.locator('.font-size-option').first()).toBeVisible({ timeout: 10_000 });
+    await expect(authedPage.locator('.font-size-option').first()).toBeVisible({
+      timeout: 10_000,
+    });
 
     // Click "L" option
     const largeButton = authedPage.locator('.font-size-option', { hasText: 'L' }).first();

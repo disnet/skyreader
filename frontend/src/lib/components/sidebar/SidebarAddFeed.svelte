@@ -105,7 +105,11 @@
         const res = await fetch(`https://plc.directory/${did}`);
         if (!res.ok) return null;
         const doc = (await res.json()) as {
-          service?: Array<{ id: string; type: string; serviceEndpoint: string }>;
+          service?: Array<{
+            id: string;
+            type: string;
+            serviceEndpoint: string;
+          }>;
         };
         const svc = doc.service?.find(
           (s) => s.id === '#atproto_pds' || s.type === 'AtprotoPersonalDataServer'
@@ -116,7 +120,11 @@
         const res = await fetch(`https://${domain}/.well-known/did.json`);
         if (!res.ok) return null;
         const doc = (await res.json()) as {
-          service?: Array<{ id: string; type: string; serviceEndpoint: string }>;
+          service?: Array<{
+            id: string;
+            type: string;
+            serviceEndpoint: string;
+          }>;
         };
         const svc = doc.service?.find(
           (s) => s.id === '#atproto_pds' || s.type === 'AtprotoPersonalDataServer'
@@ -432,7 +440,9 @@
         });
         if (!firstAddedId) firstAddedId = subId;
         if (pub.iconUrl) {
-          await subscriptionsStore.updateLocal(subId, { customIconUrl: pub.iconUrl });
+          await subscriptionsStore.updateLocal(subId, {
+            customIconUrl: pub.iconUrl,
+          });
         }
       }
 
@@ -613,7 +623,9 @@
               <span>Detecting content...</span>
             </div>
           {:else if publications.length === 0}
-            <div class="no-content">No publications found for @{selectedAccount.handle}.</div>
+            <div class="no-content">
+              No publications found for @{selectedAccount.handle}.
+            </div>
           {:else}
             <div class="content-group">
               {#each publications as pub (pub.uri)}

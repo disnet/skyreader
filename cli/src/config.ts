@@ -35,5 +35,7 @@ export function saveConfig(config: Config): void {
   const dir = getConfigDir();
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const configPath = getConfigPath();
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', {
+    mode: 0o600,
+  });
 }

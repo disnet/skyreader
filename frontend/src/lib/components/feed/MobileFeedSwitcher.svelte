@@ -51,7 +51,14 @@
     | 'folder';
 
   type NavItem =
-    | { type: 'view'; id: string; label: string; count?: number; icon: IconName; indent?: boolean }
+    | {
+        type: 'view';
+        id: string;
+        label: string;
+        count?: number;
+        icon: IconName;
+        indent?: boolean;
+      }
     | {
         type: 'category';
         id: string;
@@ -154,8 +161,18 @@
       icon: 'bookmark',
     };
     const otherItems: NavItem[] = [
-      { type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' as IconName },
-      { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' as IconName },
+      {
+        type: 'utility',
+        id: 'sources',
+        label: 'Manage Sources',
+        icon: 'rss' as IconName,
+      },
+      {
+        type: 'utility',
+        id: 'settings',
+        label: 'Settings',
+        icon: 'settings' as IconName,
+      },
     ];
 
     const sourceChannelItems: NavItem[] = filteredViewsStore.views
@@ -229,7 +246,11 @@
     // Everything group: Everything + source channels (+ suggestions rendered inline in template)
     const everythingGroup = [everythingItem, ...sourceChannelItems].filter(filterItem);
     if (everythingGroup.length > 0 || (!query && channelSuggestions.suggestions.length > 0)) {
-      sections.push({ section: '', groupId: 'everything', items: everythingGroup });
+      sections.push({
+        section: '',
+        groupId: 'everything',
+        items: everythingGroup,
+      });
     }
 
     // Saved group: Saved + saved channels (+ suggestions rendered inline in template)
@@ -245,7 +266,11 @@
     }
 
     if (feedItems.length > 0) {
-      sections.push({ section: 'Sources', groupId: 'sources', items: feedItems });
+      sections.push({
+        section: 'Sources',
+        groupId: 'sources',
+        items: feedItems,
+      });
     }
 
     return sections;

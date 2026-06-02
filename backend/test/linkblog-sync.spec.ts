@@ -45,7 +45,9 @@ describe('buildLinkblogDocument', () => {
     const content = doc.content as {
       $type: string;
       pages: Array<{
-        blocks: Array<{ block: { $type: string; url?: string; plaintext?: string } }>;
+        blocks: Array<{
+          block: { $type: string; url?: string; plaintext?: string };
+        }>;
       }>;
     };
     expect(content.$type).toBe('pub.leaflet.content');
@@ -57,7 +59,9 @@ describe('buildLinkblogDocument', () => {
   });
 
   it('falls back to the URL as title and omits empty note block', () => {
-    const bare = buildLinkblogDocument(DID, RKEY, { articleUrl: 'https://example.com/x' });
+    const bare = buildLinkblogDocument(DID, RKEY, {
+      articleUrl: 'https://example.com/x',
+    });
     expect(bare.title).toBe('https://example.com/x');
     const content = bare.content as {
       pages: Array<{ blocks: Array<{ block: { $type: string } }> }>;

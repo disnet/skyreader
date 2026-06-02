@@ -55,7 +55,9 @@ describe('handleV2BatchDocumentFetch', () => {
   });
 
   it('rejects more than 50 authors', async () => {
-    const documents = Array.from({ length: 51 }, (_, i) => ({ did: `did:plc:${i}` }));
+    const documents = Array.from({ length: 51 }, (_, i) => ({
+      did: `did:plc:${i}`,
+    }));
     const res = await handleV2BatchDocumentFetch(request({ documents }), ENV);
     expect(res.status).toBe(400);
   });
@@ -68,7 +70,9 @@ describe('handleV2BatchDocumentFetch', () => {
       request({ documents: [{ did: 'not-a-did' }, { did: '' }] }),
       ENV
     );
-    const json = (await res.json()) as { authors: Array<{ status: string; error?: string }> };
+    const json = (await res.json()) as {
+      authors: Array<{ status: string; error?: string }>;
+    };
 
     expect(res.status).toBe(200);
     expect(json.authors).toHaveLength(2);
@@ -88,7 +92,9 @@ describe('handleV2BatchDocumentFetch', () => {
     globalThis.fetch = fetchMock;
 
     const res = await handleV2BatchDocumentFetch(
-      request({ documents: [{ did: 'did:plc:abc', siteUri: proxyEntry.siteUri }] }),
+      request({
+        documents: [{ did: 'did:plc:abc', siteUri: proxyEntry.siteUri }],
+      }),
       ENV
     );
     const json = (await res.json()) as { authors: unknown[] };
@@ -100,7 +106,11 @@ describe('handleV2BatchDocumentFetch', () => {
   });
 
   it('partitions invalid DIDs out and only forwards the valid ones', async () => {
-    const okEntry = { did: 'did:plc:ok', documents: [], status: 'ready' as const };
+    const okEntry = {
+      did: 'did:plc:ok',
+      documents: [],
+      status: 'ready' as const,
+    };
     const fetchMock = vi.fn().mockResolvedValueOnce(proxyResponse({ authors: [okEntry] }));
     globalThis.fetch = fetchMock;
 

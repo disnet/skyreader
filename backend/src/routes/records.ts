@@ -35,7 +35,11 @@ export async function handleRecordsList(request: Request, env: Env): Promise<Res
   }
 
   try {
-    let records: Array<{ uri: string; cid: string; value: Record<string, unknown> }> = [];
+    let records: Array<{
+      uri: string;
+      cid: string;
+      value: Record<string, unknown>;
+    }> = [];
 
     if (collection === 'app.skyreader.feed.subscription') {
       const result = await env.DB.prepare(
@@ -73,7 +77,9 @@ export async function handleRecordsList(request: Request, env: Env): Promise<Res
   } catch (error) {
     console.error('Record list error:', error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Failed to list records' }),
+      JSON.stringify({
+        error: error instanceof Error ? error.message : 'Failed to list records',
+      }),
       {
         status: 500,
         headers: { 'Content-Type': 'application/json' },

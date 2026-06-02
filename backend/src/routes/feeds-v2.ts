@@ -104,7 +104,9 @@ export async function handleV2FeedFetch(request: Request, env: Env): Promise<Res
     }
 
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Failed to fetch feed' }),
+      JSON.stringify({
+        error: error instanceof Error ? error.message : 'Failed to fetch feed',
+      }),
       {
         status: 502,
         headers: { 'Content-Type': 'application/json' },
@@ -469,7 +471,11 @@ export async function handleV2Mentions(request: Request, env: Env): Promise<Resp
     });
   }
 
-  const emptyFor = (url: string): ArticleMentionsResult => ({ url, total: 0, lanes: [] });
+  const emptyFor = (url: string): ArticleMentionsResult => ({
+    url,
+    total: 0,
+    lanes: [],
+  });
 
   try {
     const client = new FeedProxyClient(env);
@@ -530,11 +536,17 @@ export async function warmProxyCacheBatch(
       const feedResult = batchResponse.feeds[feedUrl];
 
       if (!feedResult) {
-        results[feedUrl] = { success: false, error: 'Feed not found in proxy response' };
+        results[feedUrl] = {
+          success: false,
+          error: 'Feed not found in proxy response',
+        };
       } else if (feedResult.status === 'error') {
         results[feedUrl] = { success: false, error: feedResult.error };
       } else {
-        results[feedUrl] = { success: true, itemCount: feedResult.items.length };
+        results[feedUrl] = {
+          success: true,
+          itemCount: feedResult.items.length,
+        };
       }
     }
   } catch (error) {

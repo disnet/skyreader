@@ -151,7 +151,10 @@ describe('Subscription Custom Fields', () => {
       const ctx = createExecutionContext();
       const request = makeAuthRequest(`/api/subscriptions/${TEST_RKEY}`, {
         method: 'PATCH',
-        body: { customTitle: 'My Custom Title', customIconUrl: 'https://example.com/icon.png' },
+        body: {
+          customTitle: 'My Custom Title',
+          customIconUrl: 'https://example.com/icon.png',
+        },
       });
       const response = await worker.fetch(request, env, ctx);
       await waitOnExecutionContext(ctx);
@@ -284,7 +287,10 @@ describe('Subscription Custom Fields', () => {
       const ctx = createExecutionContext();
       const request = makeAuthRequest(`/api/subscriptions/${TEST_RKEY}`, {
         method: 'PATCH',
-        body: { customTitle: 'PDS Title', customIconUrl: 'https://example.com/pds.png' },
+        body: {
+          customTitle: 'PDS Title',
+          customIconUrl: 'https://example.com/pds.png',
+        },
       });
       const response = await worker.fetch(request, env, ctx);
       await waitOnExecutionContext(ctx);
@@ -292,7 +298,9 @@ describe('Subscription Custom Fields', () => {
       expect(response.status).toBe(200);
       expect(putRecordCalled).toBe(true);
 
-      const body = putRecordBody as { record?: { customTitle?: string; customIconUrl?: string } };
+      const body = putRecordBody as {
+        record?: { customTitle?: string; customIconUrl?: string };
+      };
       expect(body?.record?.customTitle).toBe('PDS Title');
       expect(body?.record?.customIconUrl).toBe('https://example.com/pds.png');
     });
@@ -397,7 +405,9 @@ describe('Subscription Custom Fields', () => {
 
       expect(response.status).toBe(200);
 
-      const body = putRecordBody as { record?: { customTitle?: string; customIconUrl?: string } };
+      const body = putRecordBody as {
+        record?: { customTitle?: string; customIconUrl?: string };
+      };
       expect(body?.record?.customTitle).toBe('Custom PDS');
       expect(body?.record?.customIconUrl).toBe('https://example.com/pds-icon.png');
     });
@@ -514,7 +524,9 @@ describe('Subscription Custom Fields', () => {
       expect(result.pushedToPds).toBe(1);
 
       const body = applyWritesBody as {
-        writes?: Array<{ value?: { customTitle?: string; customIconUrl?: string } }>;
+        writes?: Array<{
+          value?: { customTitle?: string; customIconUrl?: string };
+        }>;
       };
       expect(body?.writes?.[0]?.value?.customTitle).toBe('Pushed Title');
       expect(body?.writes?.[0]?.value?.customIconUrl).toBe('https://example.com/pushed.png');

@@ -20,9 +20,9 @@ test.describe('Feed Management', () => {
     // Navigate to the sources page via SPA navigation (preserves store state)
     await authedPage.locator('.nav-label', { hasText: 'Manage Sources' }).click();
     await authedPage.locator('button.tab', { hasText: 'Websites' }).click();
-    await expect(
-      authedPage.locator('.source-title', { hasText: 'xkcd' })
-    ).toBeVisible({ timeout: 30_000 });
+    await expect(authedPage.locator('.source-title', { hasText: 'xkcd' })).toBeVisible({
+      timeout: 30_000,
+    });
   });
 
   test('remove feed via sources page menu', async ({ authedPage, testUser }) => {
@@ -88,12 +88,10 @@ test.describe('Feed Management', () => {
     await authedPage.locator('.nav-label', { hasText: 'Manage Sources' }).click();
     await authedPage.locator('button.tab', { hasText: 'Websites' }).click();
 
-    await expect(
-      authedPage.locator('.source-title', { hasText: 'Multi Feed One' })
-    ).toBeVisible({ timeout: 15_000 });
-    await expect(
-      authedPage.locator('.source-title', { hasText: 'Multi Feed Two' })
-    ).toBeVisible();
+    await expect(authedPage.locator('.source-title', { hasText: 'Multi Feed One' })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(authedPage.locator('.source-title', { hasText: 'Multi Feed Two' })).toBeVisible();
     await expect(
       authedPage.locator('.source-title', { hasText: 'Multi Feed Three' })
     ).toBeVisible();

@@ -129,7 +129,12 @@ async function maybeBulkPushToPds(
   // Build lookup maps by rkey and feedUrl
   const pdsByRkey = new Map<
     string,
-    { feedUrl: string; title?: string; customTitle?: string; customIconUrl?: string }
+    {
+      feedUrl: string;
+      title?: string;
+      customTitle?: string;
+      customIconUrl?: string;
+    }
   >();
   const pdsByFeedUrl = new Set<string>();
   for (const record of listResult.data) {
@@ -381,7 +386,9 @@ export async function handleCreateSubscription(
 
   let body: CreateSubscriptionRequest & { rkey: string };
   try {
-    body = (await request.json()) as CreateSubscriptionRequest & { rkey: string };
+    body = (await request.json()) as CreateSubscriptionRequest & {
+      rkey: string;
+    };
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
       status: 400,
@@ -888,7 +895,11 @@ export async function handleBulkCreateSubscriptions(
       maybeBulkPushToPds(
         session,
         settings.pdsSyncEnabled,
-        subscriptions.map((sub) => ({ rkey: sub.rkey, feedUrl: sub.feedUrl, title: sub.title }))
+        subscriptions.map((sub) => ({
+          rkey: sub.rkey,
+          feedUrl: sub.feedUrl,
+          title: sub.title,
+        }))
       )
     );
 

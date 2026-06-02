@@ -51,8 +51,12 @@ describe('PDSClient', () => {
       const client = createPDSClient(session);
 
       const mockRecords = [
-        createPdsRecord('at://did:plc:test123/app.test.collection/rkey1', { foo: 'bar' }),
-        createPdsRecord('at://did:plc:test123/app.test.collection/rkey2', { foo: 'baz' }),
+        createPdsRecord('at://did:plc:test123/app.test.collection/rkey1', {
+          foo: 'bar',
+        }),
+        createPdsRecord('at://did:plc:test123/app.test.collection/rkey2', {
+          foo: 'baz',
+        }),
       ];
 
       globalThis.fetch = vi.fn().mockResolvedValueOnce({
@@ -103,13 +107,19 @@ describe('PDSClient', () => {
 
       // Page 1
       const page1Records = [
-        createPdsRecord('at://did:plc:test123/app.test.collection/rkey1', { n: 1 }),
-        createPdsRecord('at://did:plc:test123/app.test.collection/rkey2', { n: 2 }),
+        createPdsRecord('at://did:plc:test123/app.test.collection/rkey1', {
+          n: 1,
+        }),
+        createPdsRecord('at://did:plc:test123/app.test.collection/rkey2', {
+          n: 2,
+        }),
       ];
 
       // Page 2
       const page2Records = [
-        createPdsRecord('at://did:plc:test123/app.test.collection/rkey3', { n: 3 }),
+        createPdsRecord('at://did:plc:test123/app.test.collection/rkey3', {
+          n: 3,
+        }),
       ];
 
       globalThis.fetch = vi
@@ -153,7 +163,9 @@ describe('PDSClient', () => {
         });
       });
 
-      const result = await client.listAllRecords('app.test.collection', { maxPages: 3 });
+      const result = await client.listAllRecords('app.test.collection', {
+        maxPages: 3,
+      });
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -179,7 +191,9 @@ describe('PDSClient', () => {
         });
       });
 
-      const result = await client.listAllRecords('app.test.collection', { maxRecords: 250 });
+      const result = await client.listAllRecords('app.test.collection', {
+        maxRecords: 250,
+      });
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -245,7 +259,9 @@ describe('PDSClient', () => {
         }),
       });
 
-      const result = await client.putRecord('app.test.collection', 'rkey1', { foo: 'bar' });
+      const result = await client.putRecord('app.test.collection', 'rkey1', {
+        foo: 'bar',
+      });
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -436,7 +452,9 @@ describe('PDSClient', () => {
           }),
       });
 
-      const result = await client.putRecord('app.test.collection', 'rkey', { invalid: true });
+      const result = await client.putRecord('app.test.collection', 'rkey', {
+        invalid: true,
+      });
 
       expect(result.success).toBe(false);
       if (!result.success) {

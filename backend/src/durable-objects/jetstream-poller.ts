@@ -199,7 +199,10 @@ export class JetstreamPoller implements DurableObject {
   // --- Subscriptions Stream ---
   // Watches globally (all app.skyreader.feed.subscription events) but only
   // processes events for users who have sync enabled in Skyreader
-  private async pollSubscriptionsStream(): Promise<{ processed: number; errors: number }> {
+  private async pollSubscriptionsStream(): Promise<{
+    processed: number;
+    errors: number;
+  }> {
     // Fetch sync-enabled DIDs upfront to check before inserting
     const syncEnabledDids = await this.getSyncEnabledDidsSet();
 
@@ -373,7 +376,10 @@ export class JetstreamPoller implements DurableObject {
   // --- Documents Stream ---
   // Watches site.standard.document events globally but only processes
   // events from users who are followed by at least one Skyreader user
-  private async pollDocumentsStream(): Promise<{ processed: number; errors: number }> {
+  private async pollDocumentsStream(): Promise<{
+    processed: number;
+    errors: number;
+  }> {
     // Fetch followed DIDs upfront to check before inserting
     const followedDids = await this.getFollowedDids();
 
@@ -596,7 +602,10 @@ export class JetstreamPoller implements DurableObject {
   // --- Saved Stream ---
   // Watches globally (all app.skyreader.feed.saved events) but only
   // processes events for registered Skyreader users
-  private async pollSavedStream(): Promise<{ processed: number; errors: number }> {
+  private async pollSavedStream(): Promise<{
+    processed: number;
+    errors: number;
+  }> {
     const registeredDids = await this.getRegisteredDidsSet();
 
     const cursor = await this.state.storage.get<string>('cursor_saved');

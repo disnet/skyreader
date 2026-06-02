@@ -14,7 +14,11 @@ interface JWKWithKid extends JsonWebKey {
 }
 
 // Cache for imported key pair to avoid repeated imports
-let cachedKeyPair: { privateKey: CryptoKey; publicKey: CryptoKey; kid: string } | null = null;
+let cachedKeyPair: {
+  privateKey: CryptoKey;
+  publicKey: CryptoKey;
+  kid: string;
+} | null = null;
 
 /**
  * Clear the cached key pair (for testing purposes only).

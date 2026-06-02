@@ -143,7 +143,10 @@ describe('api genuine 401', () => {
         integrationStatusCalls += 1;
         return integrationStatusCalls === 1
           ? json(401, { error: 'Unauthorized' })
-          : json(200, { semble: { connected: false }, margin: { connected: false } });
+          : json(200, {
+              semble: { connected: false },
+              margin: { connected: false },
+            });
       }
 
       throw new Error(`Unexpected fetch: ${url}`);
@@ -160,7 +163,9 @@ describe('api genuine 401', () => {
     resolveProbe(json(200, { did: 'did:plc:abc', handle: 'a.bsky.social' }));
     await vi.runAllTimersAsync();
 
-    await expect(settingsPromise).resolves.toMatchObject({ pdsSyncEnabled: true });
+    await expect(settingsPromise).resolves.toMatchObject({
+      pdsSyncEnabled: true,
+    });
     await expect(integrationStatusPromise).resolves.toMatchObject({
       semble: { connected: false },
     });

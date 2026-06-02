@@ -21,7 +21,12 @@
   let selectedUrls: Set<string> = $state(new Set());
   let existingUrls: Set<string> = $state(new Set());
   let progress = $state({ current: 0, total: 0 });
-  let results = $state({ added: 0, skipped: 0, failed: [] as string[], truncated: 0 });
+  let results = $state({
+    added: 0,
+    skipped: 0,
+    failed: [] as string[],
+    truncated: 0,
+  });
   let fileInput: HTMLInputElement | undefined = $state();
 
   const availableSlots = $derived(
@@ -153,7 +158,9 @@
     {/if}
   {:else if modalState === 'preview'}
     <div class="preview-header">
-      <p>Found {parsedFeeds.length} feed{parsedFeeds.length === 1 ? '' : 's'}</p>
+      <p>
+        Found {parsedFeeds.length} feed{parsedFeeds.length === 1 ? '' : 's'}
+      </p>
       <div class="selection-actions">
         <button class="link-btn" onclick={selectAll}>Select all</button>
         <button class="link-btn" onclick={selectNone}>Select none</button>

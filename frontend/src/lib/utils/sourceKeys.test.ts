@@ -29,7 +29,10 @@ describe('source key construction', () => {
 
 describe('parseSourceKey', () => {
   it('parses RSS keys', () => {
-    expect(parseSourceKey('rss~3l7e5x2b7ik2c')).toEqual({ kind: 'rss', id: '3l7e5x2b7ik2c' });
+    expect(parseSourceKey('rss~3l7e5x2b7ik2c')).toEqual({
+      kind: 'rss',
+      id: '3l7e5x2b7ik2c',
+    });
   });
 
   it('parses shares keys', () => {
@@ -110,7 +113,11 @@ describe('subscriptionSourceKey', () => {
 
   it('returns null for atproto types without subjectDid', () => {
     expect(
-      subscriptionSourceKey({ ...baseSub, id: 1, sourceType: 'atproto.documents' })
+      subscriptionSourceKey({
+        ...baseSub,
+        id: 1,
+        sourceType: 'atproto.documents',
+      })
     ).toBeNull();
   });
 });

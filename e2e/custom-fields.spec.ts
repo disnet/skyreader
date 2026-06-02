@@ -49,12 +49,14 @@ test.describe('Custom Fields', () => {
     await authedPage.locator('button[type="submit"]').click();
 
     // Wait for modal to close
-    await expect(authedPage.locator('#feed-title')).not.toBeVisible({ timeout: 5_000 });
+    await expect(authedPage.locator('#feed-title')).not.toBeVisible({
+      timeout: 5_000,
+    });
 
     // Verify the sources page now shows the custom title
-    await expect(
-      sourceRowByTitle(authedPage, customTitle)
-    ).toBeVisible({ timeout: 10_000 });
+    await expect(sourceRowByTitle(authedPage, customTitle)).toBeVisible({
+      timeout: 10_000,
+    });
 
     // Wait for the PATCH to actually complete so D1 is updated
     const patchResp = await patchPromise;
@@ -67,9 +69,9 @@ test.describe('Custom Fields', () => {
     await authedPage.locator('.nav-label', { hasText: 'Everything' }).click();
     await authedPage.locator('.nav-label', { hasText: 'Manage Sources' }).click();
     await authedPage.locator('button.tab', { hasText: 'Websites' }).click();
-    await expect(
-      sourceRowByTitle(authedPage, customTitle)
-    ).toBeVisible({ timeout: 15_000 });
+    await expect(sourceRowByTitle(authedPage, customTitle)).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   test('clear custom title resets to original', async ({ authedPage, testUser }) => {
@@ -102,9 +104,9 @@ test.describe('Custom Fields', () => {
     await authedPage.locator('button[type="submit"]').click();
 
     // Sources page should show the original title now
-    await expect(
-      sourceRowByTitle(authedPage, FEED_TITLE)
-    ).toBeVisible({ timeout: 5_000 });
+    await expect(sourceRowByTitle(authedPage, FEED_TITLE)).toBeVisible({
+      timeout: 5_000,
+    });
   });
 
   test('set custom icon URL shows preview', async ({ authedPage, testUser }) => {

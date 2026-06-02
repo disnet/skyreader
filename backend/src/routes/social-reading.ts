@@ -288,7 +288,9 @@ export async function handleBulkMarkSocialItemsAsRead(
     }
     if (!item.rkey || !item.itemUri || !item.authorDid) {
       return new Response(
-        JSON.stringify({ error: 'Each item must have rkey, itemUri, and authorDid' }),
+        JSON.stringify({
+          error: 'Each item must have rkey, itemUri, and authorDid',
+        }),
         {
           status: 400,
           headers: { 'Content-Type': 'application/json' },

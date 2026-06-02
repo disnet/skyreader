@@ -22,34 +22,34 @@
 // Query params that are pure tracking / session noise — stripped before matching.
 // Anything not listed is preserved (some sites key real content off `?p=`, `?id=`).
 const TRACKING_PARAMS = new Set([
-	'utm_source',
-	'utm_medium',
-	'utm_campaign',
-	'utm_term',
-	'utm_content',
-	'utm_id',
-	'utm_name',
-	'utm_reader',
-	'ref',
-	'ref_src',
-	'ref_url',
-	'source',
-	'fbclid',
-	'gclid',
-	'dclid',
-	'msclkid',
-	'mc_cid',
-	'mc_eid',
-	'igshid',
-	'igsh',
-	'si',
-	'spm',
-	'cmpid',
-	'_hsenc',
-	'_hsmi',
-	'vero_id',
-	'oly_anon_id',
-	'oly_enc_id',
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_term',
+  'utm_content',
+  'utm_id',
+  'utm_name',
+  'utm_reader',
+  'ref',
+  'ref_src',
+  'ref_url',
+  'source',
+  'fbclid',
+  'gclid',
+  'dclid',
+  'msclkid',
+  'mc_cid',
+  'mc_eid',
+  'igshid',
+  'igsh',
+  'si',
+  'spm',
+  'cmpid',
+  '_hsenc',
+  '_hsmi',
+  'vero_id',
+  'oly_anon_id',
+  'oly_enc_id',
 ]);
 
 /**
@@ -62,33 +62,33 @@ const TRACKING_PARAMS = new Set([
  * - trims a trailing slash (except on the bare root)
  */
 export function normalizeArticleUrl(input: string): string | null {
-	let url: URL;
-	try {
-		url = new URL(input.trim());
-	} catch {
-		return null;
-	}
+  let url: URL;
+  try {
+    url = new URL(input.trim());
+  } catch {
+    return null;
+  }
 
-	if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
 
-	url.hostname = url.hostname.toLowerCase();
-	url.hash = '';
-	url.port = '';
+  url.hostname = url.hostname.toLowerCase();
+  url.hash = '';
+  url.port = '';
 
-	// Strip tracking params, keep + sort the rest so equivalent URLs key the same.
-	const kept: Array<[string, string]> = [];
-	for (const [key, value] of url.searchParams) {
-		if (TRACKING_PARAMS.has(key.toLowerCase())) continue;
-		kept.push([key, value]);
-	}
-	kept.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-	url.search = '';
-	for (const [key, value] of kept) url.searchParams.append(key, value);
+  // Strip tracking params, keep + sort the rest so equivalent URLs key the same.
+  const kept: Array<[string, string]> = [];
+  for (const [key, value] of url.searchParams) {
+    if (TRACKING_PARAMS.has(key.toLowerCase())) continue;
+    kept.push([key, value]);
+  }
+  kept.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  url.search = '';
+  for (const [key, value] of kept) url.searchParams.append(key, value);
 
-	// Trim a single trailing slash on a non-root path.
-	if (url.pathname.length > 1 && url.pathname.endsWith('/')) {
-		url.pathname = url.pathname.slice(0, -1);
-	}
+  // Trim a single trailing slash on a non-root path.
+  if (url.pathname.length > 1 && url.pathname.endsWith('/')) {
+    url.pathname = url.pathname.slice(0, -1);
+  }
 
-	return url.toString();
+  return url.toString();
 }

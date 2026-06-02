@@ -95,7 +95,10 @@ function createFilteredViewsStore() {
           return `rss~${rkey}`;
         });
         if (changed) {
-          const updates: Partial<FilteredView> = { sourceKeys: newKeys, updatedAt: Date.now() };
+          const updates: Partial<FilteredView> = {
+            sourceKeys: newKeys,
+            updatedAt: Date.now(),
+          };
           Object.assign(view, updates);
           if (view.id != null) {
             await safeUpdate(db.filteredViews, view.id, updates);

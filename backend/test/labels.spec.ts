@@ -126,8 +126,16 @@ describe('GET /api/labels', () => {
 
   it('returns all managed label types in one unfiltered fetch', async () => {
     const now = Math.floor(Date.now() / 1000);
-    await insertLabel('a', { updatedAt: now - 30, label: 'tagged', props: { tags: ['t'] } });
-    await insertLabel('b', { updatedAt: now - 20, label: 'archived', props: { archivedAt: 1 } });
+    await insertLabel('a', {
+      updatedAt: now - 30,
+      label: 'tagged',
+      props: { tags: ['t'] },
+    });
+    await insertLabel('b', {
+      updatedAt: now - 20,
+      label: 'archived',
+      props: { archivedAt: 1 },
+    });
     await insertLabel('c', {
       updatedAt: now - 10,
       label: 'readProgress',
@@ -193,7 +201,10 @@ describe('GET /api/labels', () => {
       const now = Math.floor(Date.now() / 1000);
       await insertLabel('old-tag', { updatedAt: now - 100, label: 'tagged' });
       await insertLabel('new-tag', { updatedAt: now - 10, label: 'tagged' });
-      await insertLabel('new-archived', { updatedAt: now - 10, label: 'archived' });
+      await insertLabel('new-archived', {
+        updatedAt: now - 10,
+        label: 'archived',
+      });
 
       const { body } = await getLabels(`/api/labels?label=tagged&since=${now - 50}`);
       expect(body.labels.map((l) => l.itemKey)).toEqual(['new-tag']);

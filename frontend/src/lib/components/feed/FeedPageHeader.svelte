@@ -104,8 +104,12 @@
   let isSavedView = $derived(Boolean(feedViewStore.savedFilter) || feedViewStore.isSavedChannel);
 
   let menuItems = $derived.by(() => {
-    const items: Array<{ label: string; icon: string; onclick: () => void; variant?: 'danger' }> =
-      [];
+    const items: Array<{
+      label: string;
+      icon: string;
+      onclick: () => void;
+      variant?: 'danger';
+    }> = [];
     if (onMarkAllAsRead) {
       items.push({
         label: 'Mark all as read',

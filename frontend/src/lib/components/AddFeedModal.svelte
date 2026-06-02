@@ -159,7 +159,9 @@
 
       if (site.iconUrl) {
         try {
-          await subscriptionsStore.updateLocal(id, { customIconUrl: site.iconUrl });
+          await subscriptionsStore.updateLocal(id, {
+            customIconUrl: site.iconUrl,
+          });
         } catch {
           // Ignore errors setting the icon
         }

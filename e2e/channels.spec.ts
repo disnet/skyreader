@@ -45,7 +45,9 @@ test.describe('Channels', () => {
     await viewItem.click({ button: 'right' });
 
     // Click Rename in the context menu
-    const renameItem = authedPage.locator('.context-menu-item', { hasText: 'Rename' });
+    const renameItem = authedPage.locator('.context-menu-item', {
+      hasText: 'Rename',
+    });
     await expect(renameItem).toBeVisible({ timeout: 5_000 });
     await renameItem.click();
 
@@ -60,7 +62,9 @@ test.describe('Channels', () => {
 
     // The channel should now display the new name
     await expect(
-      authedPage.locator('.view-item .nav-label', { hasText: 'My Tech Channel' })
+      authedPage.locator('.view-item .nav-label', {
+        hasText: 'My Tech Channel',
+      })
     ).toBeVisible({
       timeout: 5_000,
     });
@@ -77,19 +81,25 @@ test.describe('Channels', () => {
     authedPage.on('dialog', (dialog) => dialog.accept());
 
     // Click Delete
-    const deleteItem = authedPage.locator('.context-menu-item.danger', { hasText: 'Delete' });
+    const deleteItem = authedPage.locator('.context-menu-item.danger', {
+      hasText: 'Delete',
+    });
     await expect(deleteItem).toBeVisible({ timeout: 5_000 });
     await deleteItem.click();
 
     // Channel should be gone — wait for it to disappear
-    const channel = authedPage.locator('.view-item .nav-label', { hasText: 'Delete Me' });
+    const channel = authedPage.locator('.view-item .nav-label', {
+      hasText: 'Delete Me',
+    });
     await expect(channel).not.toBeVisible({ timeout: 5_000 });
   });
 
   test('clicking a channel navigates to its view', async ({ authedPage }) => {
     await createChannel(authedPage, 'Nav Channel');
 
-    const viewItem = authedPage.locator('.view-item', { hasText: 'Nav Channel' });
+    const viewItem = authedPage.locator('.view-item', {
+      hasText: 'Nav Channel',
+    });
 
     // Navigate away first
     await authedPage.locator('.nav-label', { hasText: 'Everything' }).click();

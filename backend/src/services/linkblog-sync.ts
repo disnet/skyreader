@@ -149,7 +149,10 @@ export async function ensureLinkblogPublication(
       const put = await pdsClient.putRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY, updated);
       if (!put.success) return put;
     }
-    return { success: true, data: { uri: publicationUri(session.did), created: false } };
+    return {
+      success: true,
+      data: { uri: publicationUri(session.did), created: false },
+    };
   }
 
   const record: PublicationRecord = {
@@ -161,7 +164,10 @@ export async function ensureLinkblogPublication(
 
   const put = await pdsClient.putRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY, record);
   if (!put.success) return put;
-  return { success: true, data: { uri: publicationUri(session.did), created: true } };
+  return {
+    success: true,
+    data: { uri: publicationUri(session.did), created: true },
+  };
 }
 
 // Update the publication's name/description, preserving url + icon. Creates the
@@ -179,7 +185,10 @@ export async function updatePublication(
 
   const base: PublicationRecord = existing.success
     ? existing.data.value
-    : { url: linkblogBaseUrl(env, session.did), name: defaultPublicationName(session) };
+    : {
+        url: linkblogBaseUrl(env, session.did),
+        name: defaultPublicationName(session),
+      };
 
   const record: PublicationRecord = {
     ...base,
@@ -238,7 +247,9 @@ function buildLeafletContent(input: LinkblogShareInput, excerpt: string): unknow
 
   const note = input.note?.trim();
   if (note) {
-    blocks.push({ block: { $type: 'pub.leaflet.blocks.text', plaintext: note } });
+    blocks.push({
+      block: { $type: 'pub.leaflet.blocks.text', plaintext: note },
+    });
   }
 
   const website: Record<string, unknown> = {

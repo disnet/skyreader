@@ -210,8 +210,16 @@ describe('computeSourceKeys', () => {
   describe('people rule', () => {
     it('collects all atproto subscriptions', () => {
       const subs = [
-        makeSub({ id: 1, sourceType: 'atproto.documents', subjectDid: 'did:plc:a' }),
-        makeSub({ id: 2, sourceType: 'atproto.documents', subjectDid: 'did:plc:b' }),
+        makeSub({
+          id: 1,
+          sourceType: 'atproto.documents',
+          subjectDid: 'did:plc:a',
+        }),
+        makeSub({
+          id: 2,
+          sourceType: 'atproto.documents',
+          subjectDid: 'did:plc:b',
+        }),
         makeSub({ id: 3 }), // RSS, no subjectDid
       ];
       const keys = computeSourceKeys({ type: 'people' }, subs, []);
@@ -233,7 +241,11 @@ describe('computeSourceKeys', () => {
       const subs = [makeSub({ id: 1 }), makeSub({ id: 2 })];
       // 30 articles in 14 days = ~2.14/day for sub 1
       const articles = Array.from({ length: 30 }, (_, i) =>
-        makeArticle({ subscriptionId: 1, guid: `a${i}`, publishedAt: recentDate })
+        makeArticle({
+          subscriptionId: 1,
+          guid: `a${i}`,
+          publishedAt: recentDate,
+        })
       );
       // 2 articles for sub 2 = ~0.14/day
       articles.push(makeArticle({ subscriptionId: 2, guid: 'b1', publishedAt: recentDate }));
@@ -251,7 +263,11 @@ describe('computeSourceKeys', () => {
         makeArticle({ subscriptionId: 1, guid: 'a2', publishedAt: recentDate }),
         // 30 articles for sub 2 → high freq, not low
         ...Array.from({ length: 30 }, (_, i) =>
-          makeArticle({ subscriptionId: 2, guid: `b${i}`, publishedAt: recentDate })
+          makeArticle({
+            subscriptionId: 2,
+            guid: `b${i}`,
+            publishedAt: recentDate,
+          })
         ),
       ];
 
@@ -270,10 +286,26 @@ describe('computeSourceKeys', () => {
     it('selects feeds with high average content length', () => {
       const subs = [makeSub({ id: 1 }), makeSub({ id: 2 })];
       const articles = [
-        makeArticle({ subscriptionId: 1, guid: 'a1', content: 'x'.repeat(6000) }),
-        makeArticle({ subscriptionId: 1, guid: 'a2', content: 'x'.repeat(7000) }),
-        makeArticle({ subscriptionId: 2, guid: 'b1', content: 'x'.repeat(100) }),
-        makeArticle({ subscriptionId: 2, guid: 'b2', content: 'x'.repeat(200) }),
+        makeArticle({
+          subscriptionId: 1,
+          guid: 'a1',
+          content: 'x'.repeat(6000),
+        }),
+        makeArticle({
+          subscriptionId: 1,
+          guid: 'a2',
+          content: 'x'.repeat(7000),
+        }),
+        makeArticle({
+          subscriptionId: 2,
+          guid: 'b1',
+          content: 'x'.repeat(100),
+        }),
+        makeArticle({
+          subscriptionId: 2,
+          guid: 'b2',
+          content: 'x'.repeat(200),
+        }),
       ];
       const keys = computeSourceKeys({ type: 'longReads', minLength: 5000 }, subs, articles);
       expect(keys).toEqual(['rss~rkey-1']);
@@ -412,7 +444,10 @@ describe('getCategorySuggestions', () => {
     const suggestions = getCategorySuggestions(ctx);
     expect(suggestions).toHaveLength(1);
     expect(suggestions[0].name).toBe('Tech');
-    expect(suggestions[0].autoRule).toEqual({ type: 'category', value: 'Tech' });
+    expect(suggestions[0].autoRule).toEqual({
+      type: 'category',
+      value: 'Tech',
+    });
     expect(suggestions[0].sourceKeys).toEqual(['rss~rkey-1', 'rss~rkey-2', 'rss~rkey-3']);
   });
 
@@ -451,8 +486,16 @@ describe('getTypeSuggestions', () => {
       subscriptions: [
         makeSub({ id: 1 }),
         makeSub({ id: 2 }),
-        makeSub({ id: 3, sourceType: 'atproto.documents', subjectDid: 'did:plc:a' }),
-        makeSub({ id: 4, sourceType: 'atproto.documents', subjectDid: 'did:plc:b' }),
+        makeSub({
+          id: 3,
+          sourceType: 'atproto.documents',
+          subjectDid: 'did:plc:a',
+        }),
+        makeSub({
+          id: 4,
+          sourceType: 'atproto.documents',
+          subjectDid: 'did:plc:b',
+        }),
       ],
       articles: [],
       views: [],
@@ -494,9 +537,21 @@ describe('getPeopleSuggestion', () => {
   it('suggests People I Follow with 3+ atproto subscriptions', () => {
     const ctx: SuggestionContext = {
       subscriptions: [
-        makeSub({ id: 1, sourceType: 'atproto.documents', subjectDid: 'did:plc:a' }),
-        makeSub({ id: 2, sourceType: 'atproto.documents', subjectDid: 'did:plc:b' }),
-        makeSub({ id: 3, sourceType: 'atproto.documents', subjectDid: 'did:plc:c' }),
+        makeSub({
+          id: 1,
+          sourceType: 'atproto.documents',
+          subjectDid: 'did:plc:a',
+        }),
+        makeSub({
+          id: 2,
+          sourceType: 'atproto.documents',
+          subjectDid: 'did:plc:b',
+        }),
+        makeSub({
+          id: 3,
+          sourceType: 'atproto.documents',
+          subjectDid: 'did:plc:c',
+        }),
       ],
       articles: [],
       views: [],
@@ -509,7 +564,13 @@ describe('getPeopleSuggestion', () => {
 
   it('returns empty with fewer than 3 atproto subscriptions', () => {
     const ctx: SuggestionContext = {
-      subscriptions: [makeSub({ id: 1, sourceType: 'atproto.documents', subjectDid: 'did:plc:a' })],
+      subscriptions: [
+        makeSub({
+          id: 1,
+          sourceType: 'atproto.documents',
+          subjectDid: 'did:plc:a',
+        }),
+      ],
       articles: [],
       views: [],
     };
@@ -537,8 +598,14 @@ describe('getDomainSuggestions', () => {
   it('clusters github feeds', () => {
     const ctx: SuggestionContext = {
       subscriptions: [
-        makeSub({ id: 1, feedUrl: 'https://github.com/org/repo/releases.atom' }),
-        makeSub({ id: 2, feedUrl: 'https://github.com/org/repo2/releases.atom' }),
+        makeSub({
+          id: 1,
+          feedUrl: 'https://github.com/org/repo/releases.atom',
+        }),
+        makeSub({
+          id: 2,
+          feedUrl: 'https://github.com/org/repo2/releases.atom',
+        }),
         makeSub({ id: 3, siteUrl: 'https://user.github.io' }),
       ],
       articles: [],
@@ -558,7 +625,11 @@ describe('getFrequencySuggestions', () => {
     // 30+ articles each for subs 1-3 in last 14 days
     const articles = [1, 2, 3].flatMap((subId) =>
       Array.from({ length: 30 }, (_, i) =>
-        makeArticle({ subscriptionId: subId, guid: `${subId}-${i}`, publishedAt: recentDate })
+        makeArticle({
+          subscriptionId: subId,
+          guid: `${subId}-${i}`,
+          publishedAt: recentDate,
+        })
       )
     );
     const ctx: SuggestionContext = { subscriptions: subs, articles, views: [] };
@@ -570,8 +641,16 @@ describe('getFrequencySuggestions', () => {
     const subs = [makeSub({ id: 1 }), makeSub({ id: 2 }), makeSub({ id: 3 }), makeSub({ id: 4 })];
     // 1-3 articles each → low freq
     const articles = [1, 2, 3].flatMap((subId) => [
-      makeArticle({ subscriptionId: subId, guid: `${subId}-0`, publishedAt: recentDate }),
-      makeArticle({ subscriptionId: subId, guid: `${subId}-1`, publishedAt: recentDate }),
+      makeArticle({
+        subscriptionId: subId,
+        guid: `${subId}-0`,
+        publishedAt: recentDate,
+      }),
+      makeArticle({
+        subscriptionId: subId,
+        guid: `${subId}-1`,
+        publishedAt: recentDate,
+      }),
     ]);
     const ctx: SuggestionContext = { subscriptions: subs, articles, views: [] };
     const suggestions = getFrequencySuggestions(ctx);
@@ -592,8 +671,16 @@ describe('getLongReadsSuggestion', () => {
   it('suggests Long Reads when 3+ feeds have high avg content length', () => {
     const subs = [makeSub({ id: 1 }), makeSub({ id: 2 }), makeSub({ id: 3 })];
     const articles = subs.flatMap((sub) => [
-      makeArticle({ subscriptionId: sub.id!, guid: `${sub.id}-a`, content: 'x'.repeat(6000) }),
-      makeArticle({ subscriptionId: sub.id!, guid: `${sub.id}-b`, content: 'x'.repeat(7000) }),
+      makeArticle({
+        subscriptionId: sub.id!,
+        guid: `${sub.id}-a`,
+        content: 'x'.repeat(6000),
+      }),
+      makeArticle({
+        subscriptionId: sub.id!,
+        guid: `${sub.id}-b`,
+        content: 'x'.repeat(7000),
+      }),
     ]);
     const ctx: SuggestionContext = { subscriptions: subs, articles, views: [] };
     const suggestions = getLongReadsSuggestion(ctx);
@@ -604,8 +691,16 @@ describe('getLongReadsSuggestion', () => {
   it('returns empty when feeds have short content', () => {
     const subs = [makeSub({ id: 1 }), makeSub({ id: 2 }), makeSub({ id: 3 })];
     const articles = subs.flatMap((sub) => [
-      makeArticle({ subscriptionId: sub.id!, guid: `${sub.id}-a`, content: 'x'.repeat(100) }),
-      makeArticle({ subscriptionId: sub.id!, guid: `${sub.id}-b`, content: 'x'.repeat(200) }),
+      makeArticle({
+        subscriptionId: sub.id!,
+        guid: `${sub.id}-a`,
+        content: 'x'.repeat(100),
+      }),
+      makeArticle({
+        subscriptionId: sub.id!,
+        guid: `${sub.id}-b`,
+        content: 'x'.repeat(200),
+      }),
     ]);
     const ctx: SuggestionContext = { subscriptions: subs, articles, views: [] };
     expect(getLongReadsSuggestion(ctx)).toHaveLength(0);
@@ -621,7 +716,11 @@ describe('getRecentSuggestion', () => {
       makeSub({ id: 2, createdAt: recent }),
       makeSub({ id: 3, createdAt: recent }),
     ];
-    const ctx: SuggestionContext = { subscriptions: subs, articles: [], views: [] };
+    const ctx: SuggestionContext = {
+      subscriptions: subs,
+      articles: [],
+      views: [],
+    };
     const suggestions = getRecentSuggestion(ctx);
     expect(suggestions).toHaveLength(1);
     expect(suggestions[0].id).toBe('recent:new');
@@ -634,7 +733,11 @@ describe('getRecentSuggestion', () => {
       makeSub({ id: 2, createdAt: old }),
       makeSub({ id: 3, createdAt: old }),
     ];
-    const ctx: SuggestionContext = { subscriptions: subs, articles: [], views: [] };
+    const ctx: SuggestionContext = {
+      subscriptions: subs,
+      articles: [],
+      views: [],
+    };
     expect(getRecentSuggestion(ctx)).toHaveLength(0);
   });
 });

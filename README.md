@@ -47,6 +47,7 @@ cd skyreader
 This runs D1 migrations, starts the feed proxy (port 3000), backend (port 8787), and frontend (port 5173).
 
 To start services individually:
+
 ```bash
 cd feed-proxy && bun run dev                # port 3000
 cd backend && npm run dev                   # port 8787

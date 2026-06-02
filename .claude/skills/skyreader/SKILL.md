@@ -11,17 +11,20 @@ Use the `skyreader` CLI to interact with the user's Skyreader account. The CLI m
 ## Commands
 
 ### Check auth status
+
 ```bash
 skyreader whoami
 ```
 
 ### List subscriptions
+
 ```bash
 skyreader subscriptions
 skyreader subscriptions --json
 ```
 
 ### Fetch feed articles
+
 ```bash
 # All subscribed feeds
 skyreader feeds --all --limit 5
@@ -48,6 +51,7 @@ skyreader feeds --all --json
 ```
 
 ### Saved articles
+
 ```bash
 # Inbox (default - non-archived)
 skyreader saved

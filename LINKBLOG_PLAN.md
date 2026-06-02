@@ -26,23 +26,23 @@ ask Constellation."** Nothing in the new design needs a maintained indexer.
 
 ## Decisions (settled)
 
-| # | Decision | Choice |
-|---|----------|--------|
-| 1 | Social-feed mechanism | **Fold into the pull model** — subscribing to a linkblog = an `atproto.documents` subscription scoped to that publication. No firehose/D1 for shares. |
-| 2 | Where the shared URL lives | The document's **`links`** field (RFC-8288-style external resource ref). |
-| 3 | Rich rendering / interop | `content` = **`pub.leaflet.content`** with a `website` link-card block + text block(s) for the note. |
-| 4 | Reshares | Split: **boost** = `site.standard.graph.recommend` (bare); **quote** = a new `site.standard.document` whose `links` points at the original doc's AT URI (`rel: "repost"`). |
-| 5 | Share body | Store a **generous excerpt** (~first paragraph) + card metadata; Skyreader fetches/renders the **full article on demand** via the `links` URL (existing feed-proxy reader path). |
-| 6 | Publication | A **dedicated** `skyreader-links` publication, separate from any other standard.site blog the user has, with **user-customizable** name/description/icon. |
-| 7 | Social context | **Constellation** (`constellation.microcosm.blue`) for recommend counts AND **"who else in the Atmosphere linked this article"** — both **in v1**. Cached in the proxy, degrades silently. |
-| 8 | Public render | Logged-out **`/blogs/<handle-or-did>/`** SSR page rendering the linkblog from the proxy's PDS cache. |
+| #   | Decision                   | Choice                                                                                                                                                                                     |
+| --- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | Social-feed mechanism      | **Fold into the pull model** — subscribing to a linkblog = an `atproto.documents` subscription scoped to that publication. No firehose/D1 for shares.                                      |
+| 2   | Where the shared URL lives | The document's **`links`** field (RFC-8288-style external resource ref).                                                                                                                   |
+| 3   | Rich rendering / interop   | `content` = **`pub.leaflet.content`** with a `website` link-card block + text block(s) for the note.                                                                                       |
+| 4   | Reshares                   | Split: **boost** = `site.standard.graph.recommend` (bare); **quote** = a new `site.standard.document` whose `links` points at the original doc's AT URI (`rel: "repost"`).                 |
+| 5   | Share body                 | Store a **generous excerpt** (~first paragraph) + card metadata; Skyreader fetches/renders the **full article on demand** via the `links` URL (existing feed-proxy reader path).           |
+| 6   | Publication                | A **dedicated** `skyreader-links` publication, separate from any other standard.site blog the user has, with **user-customizable** name/description/icon.                                  |
+| 7   | Social context             | **Constellation** (`constellation.microcosm.blue`) for recommend counts AND **"who else in the Atmosphere linked this article"** — both **in v1**. Cached in the proxy, degrades silently. |
+| 8   | Public render              | Logged-out **`/blogs/<handle-or-did>/`** SSR page rendering the linkblog from the proxy's PDS cache.                                                                                       |
 
 ## Data model
 
 ### The linkblog publication — `site.standard.publication`
 
 - rkey: `skyreader-links` (fixed, one per user; distinct from the user's other publications).
-- `url`: the **canonical base** → `https://skyreader.app/blogs/<did>/` (DID-based; see *Handle vs DID*).
+- `url`: the **canonical base** → `https://skyreader.app/blogs/<did>/` (DID-based; see _Handle vs DID_).
 - `name` / `description` / `icon`: user-customizable (defaults: name = "<display name>'s links",
   icon = avatar).
 - Created **lazily on first share**.
@@ -56,16 +56,18 @@ ask Constellation."** Nothing in the new design needs a maintained indexer.
   "title": "<shared article title>",
   "path": "/<rkey>",
   "publishedAt": "<now>",
-  "description": "<~first paragraph excerpt>",      // durable fallback copy
-  "textContent": "<plaintext note + excerpt>",       // search / fallback
-  "links": [                                          // ← the external article
-    { "uri": "https://example.com/the-article", "rel": "related" }
+  "description": "<~first paragraph excerpt>", // durable fallback copy
+  "textContent": "<plaintext note + excerpt>", // search / fallback
+  "links": [
+    // ← the external article
+    { "uri": "https://example.com/the-article", "rel": "related" },
   ],
-  "content": {                                        // ← rich, interoperable body
+  "content": {
+    // ← rich, interoperable body
     "$type": "pub.leaflet.content",
-    "...": "website link-card block (article) + text block(s) (the note)"
+    "...": "website link-card block (article) + text block(s) (the note)",
   },
-  "bskyPostRef": { "uri": "...", "cid": "..." }       // optional: off-platform comments
+  "bskyPostRef": { "uri": "...", "cid": "..." }, // optional: off-platform comments
 }
 ```
 
@@ -77,7 +79,11 @@ ask Constellation."** Nothing in the new design needs a maintained indexer.
 ### A boost — `site.standard.graph.recommend`
 
 ```jsonc
-{ "$type": "site.standard.graph.recommend", "document": "at://<author>/site.standard.document/<rkey>", "createdAt": "<now>" }
+{
+  "$type": "site.standard.graph.recommend",
+  "document": "at://<author>/site.standard.document/<rkey>",
+  "createdAt": "<now>",
+}
 ```
 
 Bare by design (no commentary). Commentary → make a quote instead (a new document).
@@ -130,9 +136,9 @@ share in app                   pull per subscribed author      Constellation    
 
 ### Render — a new `link-post` mode
 
-`ArticleCard`'s `isDocumentMode` renders a document as *the thing you read* (canonicalUrl = the
+`ArticleCard`'s `isDocumentMode` renders a document as _the thing you read_ (canonicalUrl = the
 doc). A link post is the inverse: the **primary card is the external article**; the linkblog entry
-is a *secondary* permalink. Add a sibling mode keyed off "has an external `links` ref" (or "from a
+is a _secondary_ permalink. Add a sibling mode keyed off "has an external `links` ref" (or "from a
 `skyreader-links` publication"):
 
 - primary: external article link-card (title / excerpt / thumbnail) → opens via feed-proxy reader
@@ -167,23 +173,27 @@ render, with Skyreader as fallback — keep the model open to this even though v
 Ordered to de-risk: read-only/public first (no migration), then write, then retire the old stack.
 
 ### Phase 0 — Public linkblog page (no migration, ships independently)
+
 - SSR `/blogs/<handle-or-did>/` + `/blogs/<id>/<rkey>` routes, rendering from proxy cache.
 - Handle↔DID resolution + alias redirect.
 - Renders existing `site.standard.document` content today.
 
 ### Phase 1 — Write path (publication + share)
+
 - Lazily create the `skyreader-links` publication on first share (DID-based `url`).
 - New share action writes a `site.standard.document` (excerpt + `links` + `pub.leaflet` card),
   optimistic local insert (reuse `sharesStore` pattern).
 - Settings surface to customize publication name/description/icon.
 
 ### Phase 2 — Read feed via pull model
+
 - Surface `links` + `website` card in `ProxyDocument` (`standard-site.ts`).
 - New `link-post` render mode in `ArticleCard`.
 - "Open → fetch full article" via feed-proxy reader (https) / document pipeline (at://).
 - Subscribing to a linkblog = `atproto.documents` subscription scoped to `skyreader-links`.
 
 ### Phase 3 — Social context (Constellation) — **v1 includes "who else linked this"** ✅ done
+
 - Proxy helper + `constellation_cache` for: recommend counts/DIDs, "who else linked this
   article" (with handles + notes), "who quoted this." (`feed-proxy/src/constellation.ts`,
   `POST /social-context`; DID→handle resolution added to `did-resolver.ts`.)
@@ -196,6 +206,7 @@ Ordered to de-risk: read-only/public first (no migration), then write, then reti
   `linkblog.svelte.ts` boost state, `ArticleCard.svelte`.)
 
 ### Phase 4 — Migration + teardown
+
 - One-time backfill: for each existing `app.skyreader.social.share`, create the publication (if
   needed) + an equivalent `site.standard.document`.
 - Transition window: keep reading the old collection so nothing disappears.
@@ -205,18 +216,18 @@ Ordered to de-risk: read-only/public first (no migration), then write, then reti
 
 ### Phase 5 — Atmosphere context on every item ("where this is being talked about")
 
-Phase 3 puts social context on *linkblog posts*. Phase 5 generalizes it to **every item in the
+Phase 3 puts social context on _linkblog posts_. Phase 5 generalizes it to **every item in the
 feed** — regular RSS articles and standard.site links alike — by asking Constellation "who across
-the Atmosphere has referenced this URL, and *how*?" It's the same backlink lookup Phase 3 already
+the Atmosphere has referenced this URL, and _how_?" It's the same backlink lookup Phase 3 already
 does, widened from one collection to all of them, **sliced by the kind of reference**, and moved
 server-side so it's computed once and shared by every reader.
 
-The original cut of this phase surfaced one flat count (*"3 people linked this"*). That throws away
-the most useful signal — *where* and *how* the link is being engaged — and is also dishonest:
+The original cut of this phase surfaced one flat count (_"3 people linked this"_). That throws away
+the most useful signal — _where_ and _how_ the link is being engaged — and is also dishonest:
 saving and highlighting aren't discussing. A thoughtful **linkblog note**, a **Bluesky** thread, a
 **margin.at** highlight on a specific passage, and a saved **Semble** card are four different
 invitations. So the headline becomes a **lead lane** (the most meaningful kind, with its honest
-verb) and the rest roll into *"+N more,"* expanding to a per-kind breakdown.
+verb) and the rest roll into _"+N more,"_ expanding to a per-kind breakdown.
 
 This phase ships independently of the linkblog write path — it enriches content that already
 exists.
@@ -233,15 +244,15 @@ URLs**, not only `at://` targets (verified live: `GET /links/all` for
 Rather than a yes/no "counts as talking" whitelist, Phase 5 maps each meaningful `(collection,
 path)` source into a named **lane** with its own label, honest verb, and icon:
 
-| Lane | Collection → path | Verb | What it is |
-|------|-------------------|------|------------|
-| **Linkblogs** | `site.standard.document` → `.links[].uri` | *noted* | Skyreader / standard.site link posts (commentary) |
-| **Bluesky** | `app.bsky.feed.post` → `.embed.external.uri`, `.embed.media.external.uri`, both `…#link.uri` facet spellings | *posted* | Posts embedding or facet-linking the URL |
-| **margin.at** | `at.margin.note` → `.target.source` | *highlighted* | Highlights / annotations anchored on the page |
-| **Semble** | `network.cosmik.card` → `.content.url`, `.url` | *saved* | The URL saved into a card / collection |
+| Lane          | Collection → path                                                                                            | Verb          | What it is                                        |
+| ------------- | ------------------------------------------------------------------------------------------------------------ | ------------- | ------------------------------------------------- |
+| **Linkblogs** | `site.standard.document` → `.links[].uri`                                                                    | _noted_       | Skyreader / standard.site link posts (commentary) |
+| **Bluesky**   | `app.bsky.feed.post` → `.embed.external.uri`, `.embed.media.external.uri`, both `…#link.uri` facet spellings | _posted_      | Posts embedding or facet-linking the URL          |
+| **margin.at** | `at.margin.note` → `.target.source`                                                                          | _highlighted_ | Highlights / annotations anchored on the page     |
+| **Semble**    | `network.cosmik.card` → `.content.url`, `.url`                                                               | _saved_       | The URL saved into a card / collection            |
 
 - **Linkblogs** and **Bluesky** carry commentary text (a note / a post body) — these are
-  *discussion*. **margin.at** and **Semble** are *marks* on the article (a highlight, a saved card),
+  _discussion_. **margin.at** and **Semble** are _marks_ on the article (a highlight, a saved card),
   qualitatively different and labeled honestly as such.
 - **Ignored, not bucketed:** our own `app.skyreader.feed.subscription.siteUrl`, generic bookmarks
   (`community.lexicon.bookmarks.bookmark`), referrer/analytics paths, and post-like collections from
@@ -252,7 +263,7 @@ path)` source into a named **lane** with its own label, honest verb, and icon:
   make-or-break. `GET /links/all?target=https://anisota.net/harvest` returns
   `net.anisota.beta.game.session.sessionContext.referrer` (337 dids) and
   `net.anisota.beta.game.log.metadata.referrer` (330 dids): a game logging the page as an HTTP
-  *referrer*, not 600+ people discussing it. The same trap lives *inside* a laned collection — for
+  _referrer_, not 600+ people discussing it. The same trap lives _inside_ a laned collection — for
   `app.bsky.feed.post`, count only `.embed.external.uri` / `.embed.media.external.uri` / the two
   `…#link.uri` facet paths, and drop `.text`, `.embed.images[].alt`, `.bridgyOriginalUrl`. A lane is
   a set of `(collection, exact-path)` tuples, never a whole collection.
@@ -262,18 +273,18 @@ path)` source into a named **lane** with its own label, honest verb, and icon:
   noted: `site.standard.document` can reference a URL via an inline body facet, not only `.links[].uri`
   — the Linkblogs lane may need that second path so body-mentions aren't missed.
 
-Use **`GET /links/all?target=<url>`** — one request returns *every* `(collection, path)` source with
+Use **`GET /links/all?target=<url>`** — one request returns _every_ `(collection, path)` source with
 `records` + `distinct_dids` per path; bucket each into its lane (or drop it). Two non-obvious
 wrinkles the live data revealed, now applied **per lane**:
 
 - **Bucket, don't enumerate.** `/links/all` tells us which sources exist; we never enumerate
   collections by hand. The lane registry decides which buckets render.
-- **Each per-lane count is a distinct-DID *union*, not a sum.** A single bsky post links a URL via
-  `.embed.external.uri`, `.embed.media.external.uri`, *and* `.facets[].features[].uri`; summing the
-  per-path `distinct_dids` double-counts someone who embeds *and* facet-links. A truthful per-lane
-  "N people" unions the DID *sets* across that lane's paths (fetch the DID lists via
+- **Each per-lane count is a distinct-DID _union_, not a sum.** A single bsky post links a URL via
+  `.embed.external.uri`, `.embed.media.external.uri`, _and_ `.facets[].features[].uri`; summing the
+  per-path `distinct_dids` double-counts someone who embeds _and_ facet-links. A truthful per-lane
+  "N people" unions the DID _sets_ across that lane's paths (fetch the DID lists via
   `/links/count/distinct-dids` / `/links` per source and union). The **total** — for the threshold
-  and the *"+N more"* roll-up — is the union across *all* lanes: a person who noted *and* posted is
+  and the _"+N more"_ roll-up — is the union across _all_ lanes: a person who noted _and_ posted is
   one person in the total, but legitimately appears in both lanes.
 
 #### Cache server-side, keyed by normalized URL — per-lane breakdown
@@ -296,7 +307,7 @@ CREATE TABLE IF NOT EXISTS mention_cache (
 ```
 
 Keying by URL (not by feed) dedups across **both** users and feeds: the same article appearing in
-three feeds — or linked in a linkblog *and* present in an RSS feed — is one row. `lanes_json` keeps
+three feeds — or linked in a linkblog _and_ present in an RSS feed — is one row. `lanes_json` keeps
 lanes in priority order so the lead is `lanes[0]` without re-sorting. A miss or a sub-threshold
 total renders nothing (silent degradation, same contract as Phase 3).
 
@@ -322,7 +333,7 @@ useful; discussion accumulates over the following hours/days. `mention_cache` th
 - **Never** re-query every URL on every warm tick — that just relocates the volume problem onto our
   own server.
 
-Hook the *trigger* into the existing self-warming loop (`warmStaleFeeds()`, `app.ts`): it already
+Hook the _trigger_ into the existing self-warming loop (`warmStaleFeeds()`, `app.ts`): it already
 iterates active feeds with their items in hand, and only touches feeds someone actually requested
 (`last_requested_at` window), which naturally scopes enrichment to content people read. Gate each
 URL on `checked_at` + item age so most ticks do nothing. Net cost drops from `N_users × M_items` to
@@ -343,7 +354,7 @@ because it matches the exact shared string and a feed's article URL is normally 
 canonical (which is also what people paste):
 
 - **Keep `www`.** Stripping it turned `https://www.theverge.com/` (22–30+ real Bluesky linkers)
-  into a *false zero* — the shared URL keeps the `www`. This was caught only by running the real
+  into a _false zero_ — the shared URL keeps the `www`. This was caught only by running the real
   lookup, not the mocks.
 - **Keep the scheme** (http feeds stay http) — upgrading would mismatch linkers who pasted http.
 
@@ -353,17 +364,17 @@ matching proves lossy.
 #### Render & signal — lead lane, roll-up, honest verbs
 
 - **Lead lane inline.** The always-on line on a regular `ArticleCard` shows the single
-  highest-priority non-empty lane with its lane icon, count, and honest verb: *"✍ 3 linkblog
-  notes."* Priority order = **Linkblogs → Bluesky → margin.at → Semble** (commentary before marks).
+  highest-priority non-empty lane with its lane icon, count, and honest verb: _"✍ 3 linkblog
+  notes."_ Priority order = **Linkblogs → Bluesky → margin.at → Semble** (commentary before marks).
   Behind a **minimum threshold** (total ≥ 2–3 distinct DIDs) so we never query-then-hide noise.
-- **Roll-up.** Trailing *"· +N more ▾"* where N is the distinct people in the *other* lanes not
+- **Roll-up.** Trailing _"· +N more ▾"_ where N is the distinct people in the _other_ lanes not
   already counted in the lead lane (union math, not a sum). Tapping it expands the row.
 - **Expanded breakdown.** Each non-empty lane on its own line — icon, count, honest verb
-  (*noted / posted / highlighted / saved*). The **Linkblogs** and **Bluesky** lanes can lazily
+  (_noted / posted / highlighted / saved_). The **Linkblogs** and **Bluesky** lanes can lazily
   resolve to the actual people + notes (the Phase 3 `alsoLinkedBy` shape) on open — this carries the
   per-linker PDS `getRecord` cost, so keep it off the always-on path. margin.at / Semble stay
   count-only in v1.
-- **Honest phrasing throughout** — *noted / posted / highlighted / saved*, never a blanket "talking
+- **Honest phrasing throughout** — _noted / posted / highlighted / saved_, never a blanket "talking
   about this." A highlight isn't a discussion; a saved card isn't commentary.
 - Calm and terse (PRODUCT.md): one line at rest, never a metrics strip (the algorithmic-feed
   anti-reference). Color stays reserved per DESIGN.md — neutral lane icons, muted-ink count, no
@@ -397,7 +408,7 @@ matching proves lossy.
 
 **Deferred follow-on — follows-aware lead lane.** The shared cache is unpersonalized, but the client
 could re-rank the lead toward a lane containing DIDs the user follows (Phase 6 follows data), e.g.
-*"2 people you follow noted this."* Off the shared path, client-side only; noted, not built.
+_"2 people you follow noted this."_ Off the shared path, client-side only; noted, not built.
 
 **Deferred follow-on — per-person expand.** The breakdown is counts only; the Linkblogs + Bluesky
 lanes could lazily resolve to handles + notes on open via the Phase 3 `alsoLinkedBy` path
@@ -405,7 +416,7 @@ lanes could lazily resolve to handles + notes on open via the Phase 3 `alsoLinke
 
 ### Phase 6 — Linkblog discovery & onboarding
 
-The empty state of "following linkblogs" is dead until you can *find* the ones worth following. This
+The empty state of "following linkblogs" is dead until you can _find_ the ones worth following. This
 phase answers **"which people I already follow on Bluesky have a Skyreader linkblog?"** and seeds a
 logged-out/logged-in **`/discover`** of all linkblogs. Like Phase 0/5 it's read-side and ships
 independently of the write path.
@@ -415,7 +426,7 @@ publication)`. The two halves have very different costs.
 
 - **My follows** — cheap. `app.bsky.graph.getFollows?actor=<did>` on the public AppView
   (`public.api.bsky.app`, already used for `getProfile`), no auth, 100/page, and each entry already
-  carries handle + displayName + avatar — i.e. the follows call *is* the empty-state render data.
+  carries handle + displayName + avatar — i.e. the follows call _is_ the empty-state render data.
 - **Membership ("has a linkblog")** — the cost center, and the design decision.
 
 #### Decision (settled): publication marker → Constellation registry
@@ -441,18 +452,20 @@ and it's the same dataset `/discover` wants anyway. Intersect the registry DIDs 
 list locally.
 
 **Why this is safe / why it works (both verified):**
-- *Publications are extendable* — the `site.standard.publication` lexicon docs say so explicitly,
+
+- _Publications are extendable_ — the `site.standard.publication` lexicon docs say so explicitly,
   and AT Proto records are open unions (validators ignore + pass through unknown fields). We write
   straight to the PDS via `putRecord`, so standard.site's renderer simply ignores the field.
-- *Constellation indexes URI values at arbitrary custom paths on arbitrary lexicons* — confirmed
+- _Constellation indexes URI values at arbitrary custom paths on arbitrary lexicons_ — confirmed
   live: `GET /links/all` for a web URL returns our own `app.skyreader.feed.subscription`'s `.siteUrl`
   field, a custom path on a custom lexicon Constellation has no built-in knowledge of. So the marker
   at path `.skyreaderLinkblog` will be indexed the same way.
 
 **Constraints that fall out of "it's a registry key":**
+
 - The marker MUST be a single global constant, **not** env-derived — dev/staging/prod must all write
   the identical target string or the registry fragments. (Hence a hardcoded `https://skyreader.app/…`
-  even in local dev, where OAuth writes to the user's *real* PDS and hits the *real* firehose.)
+  even in local dev, where OAuth writes to the user's _real_ PDS and hits the _real_ firehose.)
 - **Backfill is lazy**, no migration job: `ensureLinkblogPublication()` stamps the marker onto any
   pre-marker publication on the user's next share (non-destructive, at most one extra write per
   user), and `updatePublication()` re-stamps it on any settings save.
@@ -490,7 +503,7 @@ after a publication is stamped.
 - **`/discover` ranking** — recency of last post, recommend counts (Constellation), "recommended by
   people you follow," or a mix? Presentation choice; data's all there.
 - **standard.site-native discover** — the publication lexicon also has `preferences.showInDiscover`
-  (boolean). Set it (true by default?) so linkblogs surface in *standard.site's* discover too, or
+  (boolean). Set it (true by default?) so linkblogs surface in _standard.site's_ discover too, or
   keep discovery Constellation-only for now? Orthogonal to our registry.
 - **Marker stability** — keep the marker unversioned (`/linkblog`) and re-backfill if semantics ever
   change, vs. a versioned target (`/linkblog/v1`) that fragments the registry across versions.
@@ -498,17 +511,17 @@ after a publication is stamped.
 
 ### Phase 7 — Link-post rendering & reshare refinement
 
-Phases 1–3 shipped a working link post, but the *feel* was off: a heavyweight "linked by" badge
+Phases 1–3 shipped a working link post, but the _feel_ was off: a heavyweight "linked by" badge
 above the row, the commentary as a double-quoting `blockquote`, a visible "Loading article
 content…" flash when opening (the full article was inline-fetched into the card), and two storage
 shapes for a reshare (bare `recommend` boost vs. `document` quote). This phase makes a link post
-read like *an article that happens to have a person attached*, and collapses the reshare model.
+read like _an article that happens to have a person attached_, and collapses the reshare model.
 
 **Settled changes:**
 
 1. **One reshare shape — the document.** Drop the bare-`recommend` boost from the share affordance.
    Every reshare writes a `site.standard.document` (a real linkblog entry, note optional), keyed by
-   the external article URL and toggled by the one Share button. Resharing *another* linkblog post
+   the external article URL and toggled by the one Share button. Resharing _another_ linkblog post
    carries the original doc's AT URI as a `rel: "repost"` link alongside the `rel: "related"` article
    ref (already implemented in `linkblog-sync.ts`) — preserving the via-attribution chain. Label is
    just **Share / Shared** everywhere (the "Boosted"/"Quoted" split is gone). Social proof doesn't
@@ -519,13 +532,13 @@ read like *an article that happens to have a person attached*, and collapses the
      the `LinkblogBoost` type, the `createBoost`/`deleteBoost` API client methods, the
      `linkblogBoosts` Dexie table (dropped in **db v33**), and the now-dead
      `repo:site.standard.graph.recommend` OAuth scope. A future ♥ "recommend" would be reintroduced
-     fresh if ever wanted. *(Constellation's recommend-**count** read path in the proxy/social-context
-     is a separate Phase-3 read feature and is left in place — see open question below.)*
+     fresh if ever wanted. _(Constellation's recommend-**count** read path in the proxy/social-context
+     is a separate Phase-3 read feature and is left in place — see open question below.)_
 
 2. **Collapsed row — inline "via" pill.** The `.share-attribution` top row is gone. The byline is a
    small **avatar + @handle pill** trailing the title in the metadata cluster (postfix; title leads,
    per "the text is the product"). It uses the **sharer's avatar** (not the Skyreader logo) so the
-   *who* is glanceable; the leading icon stays the **article's favicon** (source identity, consistent
+   _who_ is glanceable; the leading icon stays the **article's favicon** (source identity, consistent
    with RSS rows).
 
 3. **Expanded — note as prose, card opens the reader.** The note renders as **normal prose** (not a
@@ -538,7 +551,7 @@ read like *an article that happens to have a person attached*, and collapses the
 
 **Deferred follow-ups (shape decided, not built):**
 
-- **Read-state / dedup by normalized URL** — the same article can appear as a link post *and* in an
+- **Read-state / dedup by normalized URL** — the same article can appear as a link post _and_ in an
   RSS sub. Key read-state on the normalized article URL (the Phase 5 normalization) so reading once,
   via either path, marks both.
 - **Merge same-URL shares from multiple sharers** — collapse N followed linkbloggers sharing the

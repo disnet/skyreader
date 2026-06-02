@@ -37,7 +37,11 @@ export type WriteOp =
       rkey: string;
       value: unknown;
     }
-  | { $type: 'com.atproto.repo.applyWrites#delete'; collection: string; rkey: string };
+  | {
+      $type: 'com.atproto.repo.applyWrites#delete';
+      collection: string;
+      rkey: string;
+    };
 
 /**
  * Response type for applyWrites API

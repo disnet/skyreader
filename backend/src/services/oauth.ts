@@ -57,7 +57,10 @@ export function generateRandomString(length: number): string {
 }
 
 // Generate PKCE code verifier and challenge
-export async function generatePKCE(): Promise<{ codeVerifier: string; codeChallenge: string }> {
+export async function generatePKCE(): Promise<{
+  codeVerifier: string;
+  codeChallenge: string;
+}> {
   const codeVerifier = generateRandomString(32);
   const encoder = new TextEncoder();
   const data = encoder.encode(codeVerifier);
@@ -191,7 +194,9 @@ export async function resolveHandle(handle: string): Promise<string> {
   try {
     const dnsUrl = `https://dns.google/resolve?name=_atproto.${normalizedHandle}&type=TXT`;
     const dnsResponse = await fetch(dnsUrl);
-    const dnsData = (await dnsResponse.json()) as { Answer?: { data: string }[] };
+    const dnsData = (await dnsResponse.json()) as {
+      Answer?: { data: string }[];
+    };
     if (dnsData.Answer && dnsData.Answer.length > 0) {
       const txtRecord = dnsData.Answer[0].data.replace(/"/g, '');
       if (txtRecord.startsWith('did=')) {
@@ -370,7 +375,9 @@ export async function fetchAuthServerMetadata(pdsUrl: string): Promise<{
   if (!resourceResponse.ok) {
     throw new Error(`Could not fetch resource server metadata from ${pdsUrl}`);
   }
-  const resourceMeta = (await resourceResponse.json()) as { authorization_servers: string[] };
+  const resourceMeta = (await resourceResponse.json()) as {
+    authorization_servers: string[];
+  };
 
   const authServerUrl = resourceMeta.authorization_servers[0];
 

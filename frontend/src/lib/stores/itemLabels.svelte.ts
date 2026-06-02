@@ -629,7 +629,11 @@ function createItemLabelsStore() {
         itemKey: article.articleGuid,
         itemType: 'article',
         label: 'read',
-        props: { readAt: now, itemUrl: article.articleUrl, itemTitle: article.articleTitle },
+        props: {
+          readAt: now,
+          itemUrl: article.articleUrl,
+          itemTitle: article.articleTitle,
+        },
         createdAt: now,
         updatedAt: now,
       };
@@ -875,7 +879,12 @@ function createItemLabelsStore() {
       // Upsert the tagged label with current tags
       if (syncStore.isOnline) {
         try {
-          await api.addLabel({ itemKey, itemType, label: 'tagged', props: { tags } });
+          await api.addLabel({
+            itemKey,
+            itemType,
+            label: 'tagged',
+            props: { tags },
+          });
         } catch (e) {
           console.error('Failed to sync tagged label, queueing for retry:', e);
           await syncQueue.enqueue('create', 'label', `${itemKey}\0tagged`, payload);
@@ -977,7 +986,11 @@ function createItemLabelsStore() {
           console.error('Failed to delete tagged label from DB:', e);
         }
       } else {
-        const updated: ItemLabel = { ...lbl, props: { tags: newTags }, updatedAt: now };
+        const updated: ItemLabel = {
+          ...lbl,
+          props: { tags: newTags },
+          updatedAt: now,
+        };
         addToState(updated);
         await safePut(db.itemLabels, updated);
       }
@@ -1266,7 +1279,12 @@ function createItemLabelsStore() {
       const props = { paragraphIndex, totalParagraphs, lastReadAt: now };
       if (syncStore.isOnline) {
         try {
-          await api.addLabel({ itemKey, itemType, label: 'readProgress', props });
+          await api.addLabel({
+            itemKey,
+            itemType,
+            label: 'readProgress',
+            props,
+          });
         } catch (e) {
           console.error('Failed to sync read progress, queueing for retry:', e);
           await syncQueue.enqueue('create', 'label', `${itemKey}\0readProgress`, {

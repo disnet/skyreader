@@ -652,7 +652,11 @@ function createFeedViewStore() {
         .filter(
           (a) =>
             itemLabelsStore.isSaved(a.guid) &&
-            matchesSavedChannelFilters({ type: 'article', item: a, key: a.guid })
+            matchesSavedChannelFilters({
+              type: 'article',
+              item: a,
+              key: a.guid,
+            })
         )
         .map((a) => a.guid)
     );
@@ -770,9 +774,17 @@ function createFeedViewStore() {
     if (mode === 'combined') {
       items = displayedCombined.map((item) => {
         if (item.type === 'article') {
-          return { type: 'article' as const, item: item.item, key: item.item.guid };
+          return {
+            type: 'article' as const,
+            item: item.item,
+            key: item.item.guid,
+          };
         } else {
-          return { type: 'document' as const, item: item.item, key: item.item.recordUri };
+          return {
+            type: 'document' as const,
+            item: item.item,
+            key: item.item.recordUri,
+          };
         }
       });
     } else if (mode === 'shares') {

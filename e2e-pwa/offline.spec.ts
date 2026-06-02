@@ -11,7 +11,11 @@ test.describe('offline resilience', () => {
     expect(await recoveryVisible(page)).toBe(false);
   });
 
-  test('reload while offline still renders the app shell', async ({ browserName, context, page }) => {
+  test('reload while offline still renders the app shell', async ({
+    browserName,
+    context,
+    page,
+  }) => {
     // Playwright's webkit throws "internal error" when navigating with setOffline(true);
     // the SW itself works in webkit (lifecycle + healthy-load tests pass). Offline serving
     // is verified on chromium here and on real iOS Safari via manual device testing.

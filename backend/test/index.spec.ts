@@ -57,7 +57,9 @@ describe('API routes', () => {
     it('GET /api/auth/login returns 400 without handle', async () => {
       const response = await SELF.fetch('http://localhost/api/auth/login');
       expect(response.status).toBe(400);
-      expect(await response.json()).toEqual({ error: 'Missing handle parameter' });
+      expect(await response.json()).toEqual({
+        error: 'Missing handle parameter',
+      });
     });
   });
 
