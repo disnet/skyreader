@@ -154,6 +154,16 @@
   .mobile-bottom-bar.hidden {
     transform: translateY(100%);
     opacity: 0;
+    pointer-events: none;
+  }
+
+  /* The pills opt back into pointer events (the bar itself is none so taps fall
+     through the gaps). When the bar is hidden, revoke that — otherwise the
+     invisible, translated-away controls still hit-test and you tap buttons you
+     can't see. pointer-events inherits, so the pills' buttons follow. */
+  .mobile-bottom-bar.hidden .left-pill,
+  .mobile-bottom-bar.hidden .right-pill {
+    pointer-events: none;
   }
 
   .left-pill {
