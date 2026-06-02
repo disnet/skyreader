@@ -11,6 +11,8 @@ import {
 } from './standard-site';
 import { getSocialContext, type SocialContext, type SocialContextQuery } from './constellation';
 import { getLinkblogRegistry } from './linkblog-registry';
+import { readCachedMentions, enrichMentions } from './mentions';
+import { normalizeArticleUrl } from './url-normalize';
 
 export interface AppConfig {
 	proxySecret?: string;
@@ -29,6 +31,9 @@ export interface AppConfig {
 	warmBatchCap?: number;
 	// Max concurrent upstream fetches during a warm tick.
 	warmConcurrency?: number;
+	// Pre-warm Phase 5 mention counts for a refreshed feed's items (extra
+	// Constellation load). Off by default; enabled in production via index.ts.
+	warmMentionsEnabled?: boolean;
 }
 
 export interface CacheRow {
@@ -377,6 +382,24 @@ export function initDatabase(db: Database): void {
 	db.run(
 		`CREATE INDEX IF NOT EXISTS idx_document_cache_last_requested_at ON document_cache(last_requested_at)`
 	);
+
+	// Network-wide article mentions (Phase 5), keyed by the *normalized* article
+	// URL so the same article dedups across every user and every feed it appears
+	// in. `total_dids` is the distinct-DID union across all lanes (the threshold +
+	// "+N more"); `lanes_json` is the per-lane breakdown in priority order. The row
+	// has its own decay-based freshness (see mentions.ts), decoupled from the feed
+	// TTL — `first_seen_at` anchors the curve, `checked_at` gates re-polling.
+	db.run(`
+		CREATE TABLE IF NOT EXISTS mention_cache (
+			url_hash TEXT PRIMARY KEY,
+			url TEXT NOT NULL,
+			total_dids INTEGER NOT NULL DEFAULT 0,
+			lanes_json TEXT NOT NULL DEFAULT '[]',
+			first_seen_at INTEGER NOT NULL,
+			checked_at INTEGER NOT NULL
+		)
+	`);
+	db.run(`CREATE INDEX IF NOT EXISTS idx_mention_cache_checked_at ON mention_cache(checked_at)`);
 }
 
 export function createApp(db: Database, config: AppConfig) {
@@ -390,6 +413,30 @@ export function createApp(db: Database, config: AppConfig) {
 	const inFlightDocs = new Map<string, Promise<ProxyDocument[] | null>>();
 	// Collapse concurrent social-context lookups for the same link post.
 	const inFlightContext = new Map<string, Promise<SocialContext>>();
+	// Collapse concurrent mention enrichments for the same normalized URL.
+	const inFlightMentions = new Map<string, Promise<void>>();
+
+	// Fire-and-forget background enrichment of an article's mention breakdown,
+	// deduped per normalized URL. The decay gate inside enrichMentions makes most
+	// of these no-ops (fresh/settled rows), so callers can trigger liberally.
+	function triggerMentionEnrich(normUrl: string): void {
+		if (inFlightMentions.has(normUrl)) return;
+		const promise = enrichMentions(db, normUrl).finally(() => {
+			inFlightMentions.delete(normUrl);
+		});
+		inFlightMentions.set(normUrl, promise);
+	}
+
+	// Pre-warm mention breakdowns for a freshly refreshed feed's newest items so
+	// counts are ready before a reader opens them. Decay-gated + deduped; capped
+	// per feed to bound Constellation load.
+	const WARM_MENTION_ITEM_CAP = 25;
+	function warmFeedItemMentions(feed: ParsedFeed): void {
+		for (const item of feed.items.slice(0, WARM_MENTION_ITEM_CAP)) {
+			const normUrl = normalizeArticleUrl(item.url);
+			if (normUrl) triggerMentionEnrich(normUrl);
+		}
+	}
 
 	async function fetchParseAndCache(
 		url: string,
@@ -593,6 +640,7 @@ export function createApp(db: Database, config: AppConfig) {
 	const warmActiveWindowMs = config.warmActiveWindowMs ?? 14 * 24 * 60 * 60 * 1000;
 	const warmBatchCap = config.warmBatchCap ?? 200;
 	const warmConcurrency = config.warmConcurrency ?? 8;
+	const warmMentionsEnabled = config.warmMentionsEnabled ?? false;
 
 	// Proactively re-fetch feeds that are about to go stale so user requests land
 	// on a fresh cache (a HIT) instead of triggering a blocking upstream fetch.
@@ -626,8 +674,10 @@ export function createApp(db: Database, config: AppConfig) {
 				});
 				inFlight.set(row.url_hash, promise);
 				try {
-					await promise;
+					const feed = await promise;
 					refreshed++;
+					// Pre-warm Phase 5 mention counts for this feed's items (decay-gated).
+					if (feed && warmMentionsEnabled) warmFeedItemMentions(feed);
 				} catch {
 					// fetchParseAndCache already records errors/backoff; never let one
 					// bad feed abort the warm tick.
@@ -1532,6 +1582,48 @@ export function createApp(db: Database, config: AppConfig) {
 		return c.json({ items: results });
 	});
 
+	// Network-wide article mentions (Phase 5). Batch lookup of the per-lane
+	// breakdown for a set of article URLs, keyed back by the original URL string.
+	// Non-blocking: returns whatever is cached now (empty on a cold/sub-threshold
+	// URL) and triggers a decay-gated background enrichment so a later poll has it.
+	// Adornment only — the read never depends on it.
+	app.post('/mentions', async (c) => {
+		if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret) {
+			return c.json({ error: 'Unauthorized' }, 401);
+		}
+
+		let body: { urls?: string[] };
+		try {
+			body = await c.req.json();
+		} catch {
+			return c.json({ error: 'Invalid JSON body' }, 400);
+		}
+
+		const urls = body.urls;
+		if (!Array.isArray(urls)) {
+			return c.json({ error: 'Missing urls array' }, 400);
+		}
+		if (urls.length === 0) {
+			return c.json({ error: 'Empty request' }, 400);
+		}
+		if (urls.length > 50) {
+			return c.json({ error: 'Too many urls (max 50)' }, 400);
+		}
+
+		const now = Date.now();
+		const seen = new Set<string>();
+		const items = urls.map((url) => {
+			// Dedup repeated URLs in one batch; only the first triggers enrichment.
+			const fresh = !seen.has(url);
+			seen.add(url);
+			const { normUrl, mentions, shouldEnrich } = readCachedMentions(db, url, now);
+			if (fresh && shouldEnrich && normUrl) triggerMentionEnrich(normUrl);
+			return { url, total: mentions.total, lanes: mentions.lanes };
+		});
+
+		return c.json({ items });
+	});
+
 	return { app, inFlight, inFlightDocs, warmStaleFeeds, warmStaleDocuments };
 }
 
@@ -1549,7 +1641,16 @@ export function cleanupCache(db: Database): number {
 	const constellationResult = db.run('DELETE FROM constellation_cache WHERE cached_at < ?', [
 		now - 24 * 60 * 60 * 1000,
 	]);
+	// Mention rows settle (stop being re-checked) after ~7 days; drop them well
+	// past that so the article is old and rarely read by the time it's evicted.
+	const mentionResult = db.run('DELETE FROM mention_cache WHERE checked_at < ?', [
+		now - 30 * 24 * 60 * 60 * 1000,
+	]);
 	return (
-		result.changes + extractResult.changes + docResult.changes + constellationResult.changes
+		result.changes +
+		extractResult.changes +
+		docResult.changes +
+		constellationResult.changes +
+		mentionResult.changes
 	);
 }

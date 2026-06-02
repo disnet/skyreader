@@ -9,6 +9,7 @@ import type {
   ParsedFeed,
   SembleCollection,
   SocialContextResult,
+  ArticleMentions,
   SocialDocument,
   User,
 } from '$lib/types';
@@ -462,6 +463,16 @@ class ApiClient {
     return this.fetch('/api/v2/social-context', {
       method: 'POST',
       body: JSON.stringify({ items }),
+    });
+  }
+
+  // Network-wide article mentions (Phase 5) — per-lane breakdown of who across
+  // the Atmosphere referenced these URLs. Best-effort adornment; degrades to
+  // empty per URL.
+  async fetchArticleMentions(urls: string[]): Promise<{ items: ArticleMentions[] }> {
+    return this.fetch('/api/v2/mentions', {
+      method: 'POST',
+      body: JSON.stringify({ urls }),
     });
   }
 
