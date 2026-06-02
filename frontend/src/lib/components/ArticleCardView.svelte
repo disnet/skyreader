@@ -96,18 +96,16 @@
     onContentTap?.();
   }
 
-  // Atmosphere is collapsed to a quiet one-line summary by default; tapping it
-  // reveals the source lanes. Ephemeral display state, so it lives in the view.
+  // The Atmosphere panel is opened from a button in the action bar; it floats
+  // above the card as a scrollable overlay rather than pushing the body down.
+  // Ephemeral display state, so it lives in the view.
   let atmosphereOpen = $state(false);
 
-  const atmosphereSummary = $derived.by(() => {
-    const parts = laneRow
-      .filter((l) => l.count > 0)
-      .map((l) => `${l.count}${l.capped ? '+' : ''} ${l.label}`);
-    const canAdd = laneRow.some((l) => l.canCreate);
-    const mine = laneRow.some((l) => l.isMine);
-    return { parts, canAdd, mine, hasAny: parts.length > 0 };
-  });
+  // Headline numbers for the action-bar button: total references across lanes,
+  // whether any lane hit its lookup cap, and whether one of them is the user's.
+  const atmosphereTotal = $derived(laneRow.reduce((sum, l) => sum + l.count, 0));
+  const atmosphereCapped = $derived(laneRow.some((l) => l.capped));
+  const atmosphereMine = $derived(laneRow.some((l) => l.isMine));
 </script>
 
 <article
@@ -267,127 +265,6 @@
       </div>
     {/if}
 
-    <!-- The Atmosphere row (Phase 5): for an open article, one quiet line of
-         source lanes. Each lane shows how many others referenced this URL that
-         way AND is the affordance to add yours; tapping expands the people. -->
-    {#if laneRow.length > 0}
-      <div class="atmosphere">
-        {#if !atmosphereOpen}
-          <!-- Quiet summary: counts only, tap to reveal the lanes. -->
-          <button
-            type="button"
-            class="atmosphere-summary"
-            class:mine={atmosphereSummary.mine}
-            onclick={(e) => {
-              e.stopPropagation();
-              atmosphereOpen = true;
-            }}
-          >
-            <Icon name="layers" size={14} />
-            <span class="atmosphere-summary-text">
-              {#if atmosphereSummary.hasAny}{atmosphereSummary.parts.join(
-                  ' · '
-                )}{:else if atmosphereSummary.canAdd}Add to the Atmosphere{:else}Atmosphere{/if}
-            </span>
-            <Icon name="chevron-down" size={12} />
-          </button>
-        {:else}
-          <div class="atmosphere-lanes">
-            <button
-              type="button"
-              class="lane-chip atmosphere-collapse"
-              title="Hide"
-              onclick={(e) => {
-                e.stopPropagation();
-                atmosphereOpen = false;
-              }}
-            >
-              <Icon name="layers" size={14} />
-              <Icon name="chevron-up" size={12} />
-            </button>
-            {#each laneRow as row (row.id)}
-              <button
-                type="button"
-                class="lane-chip"
-                class:active={expandedLane === row.id}
-                class:mine={row.isMine}
-                title={row.title}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  onToggleLane?.(row.id);
-                }}
-              >
-                <Icon name={row.icon} size={14} />
-                {#if row.count > 0}
-                  <span class="lane-count">{row.count}{row.capped ? '+' : ''}</span>
-                {:else}
-                  <span class="lane-label">{row.label}</span>
-                {/if}
-                <Icon name={expandedLane === row.id ? 'chevron-up' : 'chevron-down'} size={12} />
-              </button>
-            {/each}
-          </div>
-
-          {#if expandedLane && expandedLaneMeta}
-            {@const lane = expandedLane}
-            {@const meta = expandedLaneMeta}
-            <div class="lane-detail">
-              {#if expandedLaneItems?.loading}
-                <div class="lane-detail-status">Loading…</div>
-              {:else if expandedLaneItems && expandedLaneItems.entries.length > 0}
-                <ul class="lane-people">
-                  {#each expandedLaneItems.entries as entry (entry.did + (entry.url ?? ''))}
-                    <li class="lane-person">
-                      <button
-                        type="button"
-                        class="lane-person-handle"
-                        onclick={(e) => {
-                          e.stopPropagation();
-                          onOpenAuthor?.(entry.did);
-                        }}>@{entry.handle ?? entry.did.slice(0, 18)}</button
-                      >
-                      {#if entry.note}<span class="lane-person-note">{entry.note}</span>{/if}
-                      {#if entry.url}
-                        <a
-                          class="lane-person-link"
-                          href={entry.url}
-                          target="_blank"
-                          rel="noopener"
-                          title="Open {meta.label}"
-                          onclick={(e) => e.stopPropagation()}
-                          ><Icon name="external-link" size={13} /></a
-                        >
-                      {/if}
-                    </li>
-                  {/each}
-                </ul>
-              {:else if !expandedLaneItems?.loading}
-                <!-- Loaded-empty, or a zero-count lane we never fetched: same hint. -->
-                <div class="lane-detail-status">
-                  {#if meta.canCreate}Be the first to {meta.verb} this.{:else}Nothing here yet.{/if}
-                </div>
-              {/if}
-
-              {#if meta.canCreate}
-                <button
-                  type="button"
-                  class="lane-create"
-                  class:done={meta.createIsEdit}
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    onCreateInLane?.(lane);
-                  }}
-                >
-                  <Icon name={meta.createIsEdit ? 'edit' : 'plus'} size={14} />
-                  <span>{meta.createLabel}</span>
-                </button>
-              {/if}
-            </div>
-          {/if}
-        {/if}
-      </div>
-    {/if}
-
     <!-- Inline share-comment composer: present for as long as the item is shared. -->
     {#if currentlyShared}
       <ShareCommentBox
@@ -431,6 +308,160 @@
               class="action-label">{shareLabel}</span
             >
           </button>
+        {/if}
+        <!-- Discussion: how this link travels across the Atmosphere. The button
+             carries the total reference count; tapping floats a scrollable panel
+             over the card (above the bar) rather than pushing the body down. -->
+        {#if laneRow.length > 0}
+          <div class="atmosphere-wrapper">
+            <button
+              class="action-btn atmosphere-btn"
+              class:active={atmosphereOpen}
+              class:has-mentions={atmosphereTotal > 0}
+              aria-haspopup="dialog"
+              aria-expanded={atmosphereOpen}
+              title={atmosphereTotal > 0
+                ? `${atmosphereTotal}${atmosphereCapped ? '+' : ''} across the Atmosphere`
+                : 'Add to the discussion'}
+              onclick={(e) => {
+                e.stopPropagation();
+                atmosphereOpen = !atmosphereOpen;
+              }}
+            >
+              <span class="action-icon"><Icon name="activity" size={16} /></span><span
+                class="action-label">Discussion</span
+              >{#if atmosphereTotal > 0}<span class="atmosphere-count" class:mine={atmosphereMine}
+                  >{atmosphereTotal}{atmosphereCapped ? '+' : ''}</span
+                >{/if}
+            </button>
+            {#if atmosphereOpen}
+              <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+              <div
+                class="atmosphere-backdrop"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  atmosphereOpen = false;
+                }}
+              ></div>
+              <div class="atmosphere-panel" role="dialog" aria-label="Discussion">
+                <header class="atmosphere-panel-head">
+                  <span class="atmosphere-panel-title">
+                    <Icon name="activity" size={15} />
+                    Discussion
+                    {#if atmosphereTotal > 0}
+                      <span class="atmosphere-panel-total"
+                        >{atmosphereTotal}{atmosphereCapped ? '+' : ''}</span
+                      >
+                    {/if}
+                  </span>
+                  <button
+                    type="button"
+                    class="atmosphere-panel-close"
+                    title="Close"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      atmosphereOpen = false;
+                    }}
+                  >
+                    <Icon name="x" size={16} />
+                  </button>
+                </header>
+                <p class="atmosphere-panel-sub">Discussion across the Atmosphere.</p>
+                <div class="atmosphere-panel-scroll">
+                  {#each laneRow as row (row.id)}
+                    {@const isExpanded = expandedLane === row.id}
+                    <div class="lane" class:expanded={isExpanded}>
+                      <button
+                        type="button"
+                        class="lane-row"
+                        class:mine={row.isMine}
+                        aria-expanded={isExpanded}
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          onToggleLane?.(row.id);
+                        }}
+                      >
+                        <span class="lane-row-icon"><Icon name={row.icon} size={16} /></span>
+                        <span class="lane-row-name">{row.label}</span>
+                        {#if row.count > 0}
+                          <span class="lane-row-meta"
+                            ><span class="lane-row-count">{row.count}{row.capped ? '+' : ''}</span>
+                            {row.verb}</span
+                          >
+                        {:else}
+                          <span class="lane-row-add">Add yours</span>
+                        {/if}
+                        <span class="lane-row-chevron"
+                          ><Icon
+                            name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                            size={14}
+                          /></span
+                        >
+                      </button>
+
+                      {#if isExpanded && expandedLaneMeta}
+                        {@const meta = expandedLaneMeta}
+                        <div class="lane-body">
+                          {#if expandedLaneItems?.loading}
+                            <div class="lane-status">Loading…</div>
+                          {:else if expandedLaneItems && expandedLaneItems.entries.length > 0}
+                            <ul class="lane-people">
+                              {#each expandedLaneItems.entries as entry (entry.did + (entry.url ?? ''))}
+                                <li class="lane-person">
+                                  <div class="lane-person-row">
+                                    <button
+                                      type="button"
+                                      class="lane-person-handle"
+                                      onclick={(e) => {
+                                        e.stopPropagation();
+                                        onOpenAuthor?.(entry.did);
+                                      }}>@{entry.handle ?? entry.did.slice(0, 18)}</button
+                                    >
+                                    {#if entry.url}
+                                      <a
+                                        class="lane-person-link"
+                                        href={entry.url}
+                                        target="_blank"
+                                        rel="noopener"
+                                        title="Open {meta.label}"
+                                        onclick={(e) => e.stopPropagation()}
+                                        ><Icon name="external-link" size={13} /></a
+                                      >
+                                    {/if}
+                                  </div>
+                                  {#if entry.note}<p class="lane-person-note">{entry.note}</p>{/if}
+                                </li>
+                              {/each}
+                            </ul>
+                          {:else if !expandedLaneItems?.loading}
+                            <div class="lane-status">
+                              {#if meta.canCreate}Be the first to {meta.verb} this.{:else}Nothing
+                                here yet.{/if}
+                            </div>
+                          {/if}
+
+                          {#if meta.canCreate}
+                            <button
+                              type="button"
+                              class="lane-create"
+                              class:done={meta.createIsEdit}
+                              onclick={(e) => {
+                                e.stopPropagation();
+                                onCreateInLane?.(row.id);
+                              }}
+                            >
+                              <Icon name={meta.createIsEdit ? 'edit' : 'plus'} size={14} />
+                              <span>{meta.createLabel}</span>
+                            </button>
+                          {/if}
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          </div>
         {/if}
         {#if hasOpenFullscreen && hasContent}
           <button
@@ -785,163 +816,295 @@
     overflow: hidden;
   }
 
-  /* The Atmosphere row (Phase 5) — source lanes for an open article. One quiet
-     line of lane chips; each shows others' references and adds yours on expand.
-     Flat and neutral per DESIGN.md; the One Blue shows only on hover/active. The
-     left indent lines the lanes up under the source favicon. */
-  .atmosphere {
-    margin: 0.25rem 0 0.5rem;
-    padding-left: 1.625rem;
-  }
-
-  .atmosphere-lanes {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.375rem;
-  }
-
-  /* Quiet one-line summary that stands in for the lane chips until tapped. */
-  .atmosphere-summary {
+  /* The Atmosphere button + overlay panel. The button lives in the action bar
+     and carries the total reference count; tapping floats a scrollable panel
+     above the card. Flat and neutral per DESIGN.md — shadow appears only because
+     the panel genuinely floats above the page. */
+  .atmosphere-wrapper {
+    position: relative;
     display: inline-flex;
-    align-items: center;
-    gap: 0.4375rem;
-    max-width: 100%;
-    padding: 0.25rem 0;
-    background: none;
-    border: none;
-    font: inherit;
-    font-size: 0.8125rem;
-    color: var(--color-text-secondary);
-    cursor: pointer;
   }
 
-  .atmosphere-summary:hover,
-  .atmosphere-summary.mine {
-    color: var(--color-primary);
+  .atmosphere-btn.has-mentions {
+    color: var(--color-text);
   }
 
-  .atmosphere-summary :global(.icon:first-child) {
-    flex-shrink: 0;
-    opacity: 0.8;
-  }
-
-  .atmosphere-summary :global(.icon:last-child) {
-    flex-shrink: 0;
-    opacity: 0.45;
-  }
-
-  .atmosphere-summary-text {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* The leading chip that folds the lanes back into the summary line. */
-  .atmosphere-collapse {
-    gap: 0.1875rem;
-    padding-inline: 0.375rem;
-    color: var(--color-text-secondary);
-  }
-
-  .lane-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3125rem;
-    padding: 0.1875rem 0.5rem;
-    background: none;
-    border: 1px solid var(--color-border, #e0e0e0);
+  /* The count rides the action-bar button: a quiet neutral pill at rest that
+     picks up the One Blue on hover, when the panel is open, or when it's yours. */
+  .atmosphere-count {
+    margin-left: 0.3125rem;
+    min-width: 1.125rem;
+    padding: 0 0.375rem;
     border-radius: 999px;
-    font: inherit;
-    font-size: 0.8125rem;
+    background: var(--color-bg-secondary, #f0f0f0);
     color: var(--color-text-secondary);
-    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.5;
+    text-align: center;
     transition:
       color 0.15s ease,
-      border-color 0.15s ease,
       background-color 0.15s ease;
   }
 
-  .lane-chip:hover,
-  .lane-chip.active,
-  .lane-chip.mine {
+  .atmosphere-btn:hover .atmosphere-count,
+  .atmosphere-btn.active .atmosphere-count,
+  .atmosphere-count.mine {
+    background: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
     color: var(--color-primary);
-    border-color: var(--color-primary);
   }
 
-  .lane-chip.active {
-    background: var(--color-sidebar-active, rgba(0, 102, 204, 0.08));
+  /* Click-catcher so a tap anywhere outside the panel dismisses it. */
+  .atmosphere-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 99;
   }
 
-  .lane-chip :global(.icon) {
+  .atmosphere-panel {
+    position: absolute;
+    bottom: calc(100% + 0.625rem);
+    left: 0;
+    z-index: 100;
+    width: min(24rem, calc(100vw - 2rem));
+    display: flex;
+    flex-direction: column;
+    background: var(--color-bg, #fff);
+    border: 1px solid var(--color-border, #e0e0e0);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.16);
+    overflow: hidden;
+    transform-origin: bottom left;
+    animation: atmosphere-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  @keyframes atmosphere-in {
+    from {
+      opacity: 0;
+      transform: translateY(0.5rem) scale(0.98);
+    }
+  }
+
+  /* On phones the anchored popover can't fit beside a centered action bar without
+     running off-screen, so it becomes a bottom sheet: full width, slides up from
+     the edge, with a light scrim. Avoids any horizontal clipping. */
+  @media (max-width: 600px) {
+    .atmosphere-backdrop {
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .atmosphere-panel {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: auto;
+      border-radius: 14px 14px 0 0;
+      border-bottom: none;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      transform-origin: bottom center;
+      animation-name: atmosphere-sheet-in;
+    }
+
+    .atmosphere-panel-scroll {
+      max-height: 60vh;
+    }
+  }
+
+  @keyframes atmosphere-sheet-in {
+    from {
+      opacity: 0;
+      transform: translateY(100%);
+    }
+  }
+
+  .atmosphere-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.75rem 0.875rem 0;
+  }
+
+  .atmosphere-panel-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4375rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-text);
+  }
+
+  .atmosphere-panel-title :global(.icon) {
+    color: var(--color-text-secondary);
+  }
+
+  .atmosphere-panel-total {
+    padding: 0.0625rem 0.375rem;
+    border-radius: 999px;
+    background: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
+    color: var(--color-primary);
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .atmosphere-panel-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    margin: -0.25rem -0.25rem 0 0;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+
+  .atmosphere-panel-close:hover {
+    background: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+    color: var(--color-text);
+  }
+
+  .atmosphere-panel-sub {
+    margin: 0.125rem 0 0;
+    padding: 0 0.875rem 0.625rem;
+    font-size: 0.8125rem;
+    color: var(--color-text-secondary);
+  }
+
+  .atmosphere-panel-scroll {
+    max-height: min(60vh, 22rem);
+    overflow-y: auto;
+    border-top: 1px solid var(--color-border, #e0e0e0);
+    overscroll-behavior: contain;
+  }
+
+  .lane {
+    border-bottom: 1px solid var(--color-border, #e0e0e0);
+  }
+
+  .lane:last-child {
+    border-bottom: none;
+  }
+
+  .lane-row {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    width: 100%;
+    padding: 0.625rem 0.875rem;
+    background: none;
+    border: none;
+    font: inherit;
+    text-align: left;
+    color: var(--color-text);
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+  }
+
+  .lane-row:hover,
+  .lane.expanded .lane-row {
+    background: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
+  }
+
+  .lane-row-icon {
+    display: inline-flex;
     flex-shrink: 0;
-    opacity: 0.9;
+    color: var(--color-text-secondary);
   }
 
-  /* The trailing chevron is a soft hint, not a control. */
-  .lane-chip > :global(.icon:last-child) {
-    opacity: 0.45;
+  .lane-row.mine .lane-row-icon {
+    color: var(--color-primary);
   }
 
-  .lane-count {
+  .lane-row-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.875rem;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .lane-row-meta {
+    flex-shrink: 0;
+    font-size: 0.8125rem;
+    color: var(--color-text-secondary);
+  }
+
+  .lane-row-count {
     font-variant-numeric: tabular-nums;
     font-weight: 600;
+    color: var(--color-text);
   }
 
-  .lane-label {
-    white-space: nowrap;
-  }
-
-  .lane-detail {
-    margin-top: 0.5rem;
-    padding-top: 0.125rem;
+  .lane-row-add {
+    flex-shrink: 0;
     font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--color-primary);
   }
 
-  .lane-detail-status {
+  .lane-row-chevron {
+    display: inline-flex;
+    flex-shrink: 0;
     color: var(--color-text-secondary);
-    padding: 0.125rem 0 0.375rem;
+    opacity: 0.6;
+  }
+
+  /* People + create affordance, indented under the lane name. */
+  .lane-body {
+    padding: 0 0.875rem 0.75rem 2.5rem;
+  }
+
+  .lane-status {
+    padding: 0.125rem 0 0.5rem;
+    font-size: 0.8125rem;
+    color: var(--color-text-secondary);
   }
 
   .lane-people {
     list-style: none;
-    margin: 0 0 0.375rem;
+    margin: 0 0 0.5rem;
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.3125rem;
+    gap: 0.625rem;
   }
 
   .lane-person {
-    display: flex;
-    align-items: baseline;
-    gap: 0.4375rem;
     min-width: 0;
-    line-height: 1.4;
+  }
+
+  .lane-person-row {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
   }
 
   .lane-person-handle {
-    flex-shrink: 0;
+    min-width: 0;
     background: none;
     border: none;
     padding: 0;
     font: inherit;
     font-size: 0.8125rem;
-    color: var(--color-text-secondary);
+    font-weight: 600;
+    color: var(--color-text);
     cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .lane-person-handle:hover {
     color: var(--color-primary);
     text-decoration: underline;
-  }
-
-  .lane-person-note {
-    flex: 1;
-    min-width: 0;
-    color: var(--color-text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .lane-person-link {
@@ -954,26 +1117,56 @@
     color: var(--color-primary);
   }
 
-  /* The "add yours" affordance — a quiet One-Blue text button. */
+  .lane-person-note {
+    margin: 0.125rem 0 0;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    color: var(--color-text-secondary);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* The "add yours" affordance — a quiet outlined One-Blue button. */
   .lane-create {
     display: inline-flex;
     align-items: center;
     gap: 0.375rem;
+    padding: 0.3125rem 0.625rem;
     background: none;
-    border: none;
-    padding: 0.25rem 0;
+    border: 1px solid var(--color-border, #e0e0e0);
+    border-radius: 6px;
     font: inherit;
     font-size: 0.8125rem;
+    font-weight: 500;
     color: var(--color-primary, #0066cc);
     cursor: pointer;
+    transition:
+      border-color 0.15s ease,
+      background-color 0.15s ease;
   }
 
   .lane-create:hover {
-    text-decoration: underline;
+    border-color: var(--color-primary);
+    background: var(--color-sidebar-active, rgba(0, 102, 204, 0.08));
   }
 
   .lane-create.done {
     color: var(--color-text-secondary);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .atmosphere-panel {
+      animation: none;
+    }
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .atmosphere-panel {
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
   }
 
   .link-post-context {

@@ -86,8 +86,8 @@ export const fixtures: CardFixture[] = [
     },
   },
   {
-    name: 'Expanded · atmosphere row',
-    note: 'Source lanes with counts; the Linkblogs lane is expanded with people.',
+    name: 'Expanded · atmosphere',
+    note: 'Tap "Discussion" in the action bar to float the lane panel; Linkblogs is expanded with people.',
     props: {
       ...base,
       expanded: true,
@@ -208,6 +208,54 @@ export const fixtures: CardFixture[] = [
       showActionBarIntegrations: true,
       hasSaveToSemble: true,
       hasSaveToMargin: true,
+      // Link posts now carry the Atmosphere row too — keyed off the external
+      // article's URL (how the linked piece travels the network).
+      laneRow: [
+        {
+          id: 'linkblog',
+          count: 4,
+          capped: false,
+          canCreate: true,
+          icon: 'standard-site',
+          label: 'Linkblogs',
+          verb: 'noted',
+          title: '4 noted this · Linkblogs',
+          isMine: false,
+        },
+        {
+          id: 'bluesky',
+          count: 8,
+          capped: false,
+          canCreate: true,
+          icon: 'bluesky',
+          label: 'Bluesky',
+          verb: 'posted',
+          title: '8 posted this · Bluesky',
+          isMine: false,
+        },
+        {
+          id: 'margin',
+          count: 0,
+          capped: false,
+          canCreate: true,
+          icon: 'margin',
+          label: 'margin.at',
+          verb: 'highlighted',
+          title: 'margin.at — add yours',
+          isMine: false,
+        },
+        {
+          id: 'semble',
+          count: 0,
+          capped: false,
+          canCreate: true,
+          icon: 'semble',
+          label: 'Semble',
+          verb: 'saved',
+          title: 'Semble — add yours',
+          isMine: false,
+        },
+      ],
       socialContext: { recommendCount: 5, quoteCount: 2 },
       alsoLinkedBy: [
         {
@@ -227,7 +275,7 @@ export const fixtures: CardFixture[] = [
   },
   {
     name: 'Document',
-    note: 'A published standard.site document (not a link post).',
+    note: 'A published standard.site document. Fresh — no mentions yet, so only Bluesky anchors the panel ("Add yours"); the Discussion button still shows.',
     props: {
       ...base,
       itemTitle: 'Notes on building an owned library',
@@ -246,6 +294,44 @@ export const fixtures: CardFixture[] = [
       hasSaveToSemble: true,
       hasSaveToMargin: true,
       hasOpenFullscreen: true,
+      // No mentions yet: Bluesky always anchors the panel so the button is
+      // present on every open card. Margin/Semble appear because the user has
+      // those integrations wired (canCreate), offering "Add yours".
+      laneRow: [
+        {
+          id: 'bluesky',
+          count: 0,
+          capped: false,
+          canCreate: true,
+          icon: 'bluesky',
+          label: 'Bluesky',
+          verb: 'posted',
+          title: 'Bluesky — add yours',
+          isMine: false,
+        },
+        {
+          id: 'margin',
+          count: 0,
+          capped: false,
+          canCreate: true,
+          icon: 'margin',
+          label: 'margin.at',
+          verb: 'highlighted',
+          title: 'margin.at — add yours',
+          isMine: false,
+        },
+        {
+          id: 'semble',
+          count: 0,
+          capped: false,
+          canCreate: true,
+          icon: 'semble',
+          label: 'Semble',
+          verb: 'saved',
+          title: 'Semble — add yours',
+          isMine: false,
+        },
+      ],
     },
   },
   {
