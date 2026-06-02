@@ -492,6 +492,56 @@ export async function handleV2Mentions(request: Request, env: Env): Promise<Resp
   }
 }
 
+/**
+ * POST /api/v2/mention-lane
+ *
+ * Resolve the people inside one mention lane (Phase 5 "see existing items") via
+ * the Fly.io proxy: who referenced this article URL via that lane, each with
+ * their note + a link out. Thin pass-through — no D1. Lazily called when a lane
+ * is expanded. Best-effort: on any proxy failure we return an empty list rather
+ * than erroring, so the read never depends on it.
+ */
+export async function handleV2MentionLane(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  let body: { url?: string; lane?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const { url, lane } = body;
+  if (!url || typeof url !== 'string' || !lane || typeof lane !== 'string') {
+    return new Response(JSON.stringify({ error: 'Missing url or lane in request body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  try {
+    const client = new FeedProxyClient(env);
+    const entries = await client.fetchMentionLaneItems(url, lane);
+    return new Response(JSON.stringify({ entries }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    // Adornment only — degrade to an empty list instead of failing the request.
+    console.error('V2 mention-lane fetch error:', error);
+    return new Response(JSON.stringify({ entries: [] }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
 export interface WarmCacheResult {
   success: boolean;
   itemCount?: number;

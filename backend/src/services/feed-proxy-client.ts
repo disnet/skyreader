@@ -144,6 +144,20 @@ interface RawMentionsResponse {
   error?: string;
 }
 
+// One resolved reference inside a lane (Phase 5 "see existing items"): a person
+// who referenced an article URL via that lane, with their note + a link out.
+export interface MentionLaneEntryResult {
+  did: string;
+  handle: string | null;
+  note: string | null;
+  url: string | null;
+}
+
+interface RawMentionLaneResponse {
+  entries?: MentionLaneEntryResult[];
+  error?: string;
+}
+
 // Raw response types from the proxy
 interface RawFeedResponse {
   feed: {
@@ -394,6 +408,25 @@ export class FeedProxyClient {
     }
 
     return raw.items;
+  }
+
+  /**
+   * Fetch the people inside one mention lane (Phase 5 "see existing items"): who
+   * referenced this article URL via that lane, each with their note + a link out
+   * to the post / card / highlight. Resolved lazily on lane expand. Best-effort —
+   * the proxy returns an empty list rather than error on a Constellation outage.
+   */
+  async fetchMentionLaneItems(url: string, lane: string): Promise<MentionLaneEntryResult[]> {
+    const raw = await this.fetch<RawMentionLaneResponse>('/mention-lane', {
+      method: 'POST',
+      body: JSON.stringify({ url, lane }),
+    });
+
+    if (!raw.entries) {
+      throw new FeedProxyError(raw.error || 'Invalid response from feed proxy');
+    }
+
+    return raw.entries;
   }
 
   /**
