@@ -482,7 +482,8 @@
             >
           </button>
         {/if}
-        <!-- Inline open & tag — visible when there's space, hidden when narrow -->
+        <!-- Inline open — visible when there's space, hidden when narrow.
+             Read & Tag live in the overflow menu instead (always). -->
         <button
           class="action-btn collapsible"
           onclick={(e) => {
@@ -492,19 +493,6 @@
         >
           <span class="action-icon"><Icon name="external-link" size={16} /></span><span
             class="action-label">Open</span
-          >
-        </button>
-        <button
-          class="action-btn collapsible"
-          class:tagged={itemTagCount > 0}
-          onclick={(e) => {
-            e.stopPropagation();
-            onTagClick?.();
-          }}
-          bind:this={tagBtnRef}
-        >
-          <span class="action-icon"><Icon name="tag" size={16} /></span><span class="action-label"
-            >Tag{#if itemTagCount > 0}<span class="tag-count">({itemTagCount})</span>{/if}</span
           >
         </button>
         {#if showActionBarIntegrations && hasSaveToSemble}
@@ -533,11 +521,9 @@
             >
           </button>
         {/if}
-        <!-- Overflow menu: shown when inline buttons are collapsed -->
-        <div
-          class="overflow-menu-wrapper"
-          class:has-integrations={showActionBarIntegrations && (hasSaveToSemble || hasSaveToMargin)}
-        >
+        <!-- Overflow menu: always present — it's the permanent home for Read &
+             Tag, plus Open-in-browser (narrow only), integrations, and follow. -->
+        <div class="overflow-menu-wrapper">
           <button
             class="action-btn overflow-trigger"
             class:tagged={itemTagCount > 0}
@@ -561,21 +547,11 @@
                   onCloseOverflow?.();
                 }}
               >
-                <Icon name={isRead ? 'circle' : 'circle-dot'} size={16} />
+                <Icon name={isRead ? 'circle' : 'check'} size={16} />
                 <span>{isRead ? 'Mark unread' : 'Mark read'}</span>
               </button>
               <button
-                class="overflow-menu-item narrow-only"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  onOverflowOpenUrl?.();
-                }}
-              >
-                <Icon name="external-link" size={16} />
-                <span>Open in browser</span>
-              </button>
-              <button
-                class="overflow-menu-item narrow-only"
+                class="overflow-menu-item"
                 class:tagged={itemTagCount > 0}
                 onclick={(e) => {
                   e.stopPropagation();
@@ -587,6 +563,16 @@
                   >Tag{#if itemTagCount > 0}
                     ({itemTagCount}){/if}</span
                 >
+              </button>
+              <button
+                class="overflow-menu-item narrow-only"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  onOverflowOpenUrl?.();
+                }}
+              >
+                <Icon name="external-link" size={16} />
+                <span>Open in browser</span>
               </button>
               {#if showActionBarIntegrations && hasSaveToSemble}
                 <button
@@ -1230,6 +1216,13 @@
     text-decoration: none;
   }
 
+  /* When a read article is open its title renders as a link (blue), which would
+     otherwise override the read-mute. Keep the same muted signal as the collapsed
+     row so "already read" stays legible once expanded. */
+  .article-item.read .article-title-link {
+    color: var(--color-text-secondary);
+  }
+
   .article-title-link:hover {
     text-decoration: underline;
   }
@@ -1600,11 +1593,6 @@
     color: var(--color-primary, #0066cc);
   }
 
-  .tag-count {
-    font-size: 0.75rem;
-    margin-left: 0.125rem;
-  }
-
   .tag-chips {
     display: flex;
     flex-wrap: wrap;
@@ -1729,33 +1717,26 @@
     display: none;
   }
 
-  /* Default: hide overflow wrapper unless integrations present */
+  /* Overflow is always present — it's the permanent home for Read & Tag. */
   .overflow-menu-wrapper {
-    display: none;
-  }
-
-  .overflow-menu-wrapper.has-integrations {
     display: block;
     position: relative;
   }
 
-  /* Hide Open/Tag overflow items when their inline buttons are visible */
+  /* Open-in-browser duplicates the inline Open button, so it only shows in the
+     menu once that inline button has collapsed (narrow). */
   .overflow-menu-item.narrow-only {
     display: none;
   }
 
-  /* Narrow: collapse Open & Tag into overflow, and drop every label so the
-     remaining buttons (Save, Share, Discussion, Reader, overflow, More) go
-     icon-only instead of overflowing their row. The labeled set is ~480px wide,
-     so it won't fit a phone-width card — icon-only has to kick in here, not at
-     some much narrower width. */
+  /* Narrow: collapse the inline Open button into the overflow menu (revealing the
+     menu's Open-in-browser item), and drop every label so the remaining buttons
+     (Save, Share, Discussion, Reader, overflow, More) go icon-only instead of
+     overflowing their row. The labeled set is ~480px wide, so it won't fit a
+     phone-width card — icon-only has to kick in here, not at some narrower width. */
   @container (max-width: 520px) {
     .action-btn.collapsible {
       display: none;
-    }
-    .overflow-menu-wrapper {
-      display: block;
-      position: relative;
     }
     .overflow-menu-item.narrow-only {
       display: flex;
