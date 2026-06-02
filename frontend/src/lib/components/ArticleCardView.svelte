@@ -1374,7 +1374,9 @@
      line-clamp) so a first child's top margin is contained; the expanded body is
      plain block, where that same margin collapses out and up. If the first child
      is an <h2>/<figure>/<ul>/<blockquote> with a top margin, that mismatch makes
-     the text jump on expand. Forcing the edge margins to 0 keeps the top stable. */
+     the text jump on expand. Forcing the edge margins to 0 keeps the top stable.
+     The read-progress highlight is injected into the body-wrapper, not the body,
+     so it never displaces these first/last content children. */
   .article-body :global(> :first-child) {
     margin-top: 0;
   }

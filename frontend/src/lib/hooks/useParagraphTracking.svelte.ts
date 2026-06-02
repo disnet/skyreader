@@ -122,14 +122,21 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     const contentEl = params.contentEl();
     if (!contentEl || paragraphs.length === 0) return;
 
+    // Anchor the highlight to the body *wrapper*, not the content element itself.
+    // Injecting it as a child of contentEl would steal the `:first-child` slot and
+    // displace the first paragraph (which has its top margin zeroed only while it's
+    // the first child), making the text jump down on expand. The wrapper fills the
+    // same box, so the absolute highlight lands identically.
+    const highlightHost = contentEl.parentElement ?? contentEl;
+
     if (!highlightEl) {
-      highlightEl = createHighlightEl(contentEl);
+      highlightEl = createHighlightEl(highlightHost);
     }
 
     const para = paragraphs[currentParagraphIndex];
     if (!para) return;
 
-    const top = getOffsetRelativeTo(para, contentEl);
+    const top = getOffsetRelativeTo(para, highlightHost);
     const height = para.offsetHeight;
 
     highlightEl.style.top = `${top}px`;
