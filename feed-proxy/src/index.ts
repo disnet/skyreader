@@ -21,6 +21,9 @@ const WARM_REFRESH_THRESHOLD_MS = process.env.WARM_REFRESH_THRESHOLD_SECONDS
 const WARM_ACTIVE_WINDOW_MS = parseInt(process.env.WARM_ACTIVE_WINDOW_SECONDS || String(14 * 24 * 60 * 60), 10) * 1000;
 const WARM_BATCH_CAP = parseInt(process.env.WARM_BATCH_CAP || '200', 10);
 const WARM_CONCURRENCY = parseInt(process.env.WARM_CONCURRENCY || '8', 10);
+// Pre-warm Phase 5 article mention counts as feeds are warmed (extra
+// Constellation load); on by default in production, disable with WARM_MENTIONS=false.
+const WARM_MENTIONS_ENABLED = (process.env.WARM_MENTIONS ?? 'true') !== 'false';
 
 // Ensure data directory exists
 try {
@@ -46,6 +49,7 @@ const { app, warmStaleFeeds, warmStaleDocuments } = createApp(db, {
 	warmActiveWindowMs: WARM_ACTIVE_WINDOW_MS,
 	warmBatchCap: WARM_BATCH_CAP,
 	warmConcurrency: WARM_CONCURRENCY,
+	warmMentionsEnabled: WARM_MENTIONS_ENABLED,
 });
 
 // Run cleanup on startup and every hour

@@ -18,6 +18,7 @@
   import { getExternalArticleLink, getLinkPostNote } from '$lib/utils/linkPost';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { socialContextStore } from '$lib/stores/socialContext.svelte';
+  import { articleMentionsStore } from '$lib/stores/articleMentions.svelte';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { profileService } from '$lib/services/profiles';
   import { auth } from '$lib/stores/auth.svelte';
@@ -279,6 +280,37 @@
   let alsoLinkedBy = $derived(
     (socialContext?.alsoLinkedBy ?? []).filter((e) => e.did !== document?.authorDid)
   );
+
+  // ── Network-wide mentions (Phase 5) ─────────────────────────────────────────
+  // For a regular article, how is it being referenced across the Atmosphere —
+  // linkblog notes / Bluesky posts / margin.at highlights / Semble saves. Lazy +
+  // batched (the store dedups across all cards); adornment only, hidden when
+  // there's no signal. Not for documents/link posts (those use Phase 3 context).
+  $effect(() => {
+    if (!isDocumentMode && article?.url) articleMentionsStore.fetch(article.url);
+  });
+  let articleMentions = $derived(
+    !isDocumentMode && article?.url ? articleMentionsStore.get(article.url) : undefined
+  );
+  let mentionLanes = $derived(articleMentions?.lanes ?? []);
+  let leadLane = $derived(mentionLanes[0]);
+  // Distinct people beyond the lead lane (union math: lead ⊆ total).
+  let mentionMore = $derived(
+    articleMentions && leadLane ? Math.max(0, articleMentions.total - leadLane.count) : 0
+  );
+  let showMentionBreakdown = $state(false);
+
+  // Lane → Icon.svelte glyph (typed; the proxy also sends an icon hint).
+  const LANE_ICON = {
+    linkblog: 'standard-site',
+    bluesky: 'bluesky',
+    margin: 'margin',
+    semble: 'semble',
+  } as const;
+
+  function mentionNoun(noun: string, count: number): string {
+    return count === 1 ? noun : `${noun}s`;
+  }
 
   // Write a linkblog entry for the current document (repostUri = the doc's AT URI,
   // so a reshared link post credits the original).
@@ -675,6 +707,51 @@
       </button>
     </div>
   </div>
+
+  <!-- Network-wide mentions (Phase 5): a quiet lead-lane line — the most
+       meaningful kind of reference with its honest noun — rolling the rest into
+       "+N more". Adornment only; absent until it lazily loads and silently
+       absent below the signal threshold or when the lookup is unavailable. -->
+  {#if leadLane}
+    <div class="article-mentions" class:expanded-breakdown={showMentionBreakdown}>
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <span
+        class="mentions-lead"
+        class:interactive={mentionMore > 0}
+        role={mentionMore > 0 ? 'button' : undefined}
+        tabindex={mentionMore > 0 ? -1 : undefined}
+        title={mentionMore > 0 ? 'See where this is referenced' : undefined}
+        onclick={(e) => {
+          if (mentionMore === 0) return;
+          e.stopPropagation();
+          showMentionBreakdown = !showMentionBreakdown;
+        }}
+      >
+        <Icon name={LANE_ICON[leadLane.lane]} size={12} />
+        <span class="mentions-text"
+          >{leadLane.count}{leadLane.capped ? '+' : ''}
+          {mentionNoun(leadLane.noun, leadLane.count)}</span
+        >
+        {#if mentionMore > 0}
+          <span class="mentions-more">· +{mentionMore} more</span>
+          <Icon name={showMentionBreakdown ? 'chevron-up' : 'chevron-down'} size={12} />
+        {/if}
+      </span>
+
+      {#if showMentionBreakdown}
+        <div class="mentions-breakdown">
+          {#each mentionLanes as lane (lane.lane)}
+            <div class="mentions-lane">
+              <Icon name={LANE_ICON[lane.lane]} size={13} />
+              <span class="mentions-lane-count">{lane.count}{lane.capped ? '+' : ''}</span>
+              <span class="mentions-lane-label">{lane.label}</span>
+              <span class="mentions-lane-verb">{lane.verb}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   {#if isOpen}
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
@@ -1119,6 +1196,72 @@
   }
 
   /* Link-post social context line (Constellation). Quiet, text-first. */
+  /* Network-wide mentions (Phase 5) — a quiet lead line under the header. The
+     left indent lines the lane icon up under the source favicon. */
+  .article-mentions {
+    padding: 0.0625rem 0 0.1875rem 1.625rem;
+    font-size: 0.8125rem;
+    color: var(--color-text-secondary);
+  }
+
+  .mentions-lead {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3125rem;
+    color: var(--color-text-secondary);
+  }
+
+  .mentions-lead.interactive {
+    cursor: pointer;
+  }
+
+  .mentions-lead.interactive:hover {
+    color: var(--color-primary);
+  }
+
+  .mentions-lead :global(.icon) {
+    flex-shrink: 0;
+    opacity: 0.85;
+  }
+
+  .mentions-text {
+    white-space: nowrap;
+  }
+
+  .mentions-breakdown {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin-top: 0.375rem;
+  }
+
+  .mentions-lane {
+    display: flex;
+    align-items: center;
+    gap: 0.4375rem;
+    line-height: 1.3;
+  }
+
+  .mentions-lane :global(.icon) {
+    flex-shrink: 0;
+    opacity: 0.85;
+  }
+
+  .mentions-lane-count {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: var(--color-text);
+    min-width: 1.25rem;
+  }
+
+  .mentions-lane-label {
+    color: var(--color-text);
+  }
+
+  .mentions-lane-verb {
+    color: var(--color-text-secondary);
+  }
+
   .link-post-context {
     display: flex;
     flex-direction: column;

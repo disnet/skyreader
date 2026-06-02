@@ -4,6 +4,7 @@ import type {
   ProxyDocumentEntry,
   SocialContextQuery,
   SocialContextResult,
+  ArticleMentionsResult,
 } from '../services/feed-proxy-client';
 import { resolveStandardSite } from '../utils/canonical-url';
 
@@ -422,6 +423,64 @@ export async function handleV2SocialContext(request: Request, env: Env): Promise
     // Adornment only — degrade to empty context instead of failing the request.
     console.error('V2 social-context fetch error:', error);
     return new Response(JSON.stringify({ items: items.map(emptyFor) }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+/**
+ * POST /api/v2/mentions
+ *
+ * Batch fetch the network-wide mention breakdown for article URLs via the Fly.io
+ * proxy (Phase 5). Thin pass-through — no D1. Each URL resolves to per-lane
+ * distinct-DID counts + a deduped total, keyed back by the original URL string.
+ * Best-effort: on any proxy failure we return empty per URL rather than erroring,
+ * so the read never depends on it.
+ */
+export async function handleV2Mentions(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  let body: { urls?: string[] };
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const urls = body.urls;
+  if (!urls || !Array.isArray(urls) || urls.length === 0) {
+    return new Response(JSON.stringify({ error: 'Missing urls array in request body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  if (urls.length > 50) {
+    return new Response(JSON.stringify({ error: 'Too many urls (max 50)' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const emptyFor = (url: string): ArticleMentionsResult => ({ url, total: 0, lanes: [] });
+
+  try {
+    const client = new FeedProxyClient(env);
+    const results = await client.fetchArticleMentions(urls);
+    return new Response(JSON.stringify({ items: results }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    // Adornment only — degrade to empty per URL instead of failing the request.
+    console.error('V2 mentions fetch error:', error);
+    return new Response(JSON.stringify({ items: urls.map(emptyFor) }), {
       headers: { 'Content-Type': 'application/json' },
     });
   }

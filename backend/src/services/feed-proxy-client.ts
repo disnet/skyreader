@@ -121,6 +121,29 @@ interface RawSocialContextResponse {
   error?: string;
 }
 
+// Network-wide article mentions (Phase 5): per-lane breakdown of who across the
+// Atmosphere referenced an article URL, keyed back by the original URL string.
+export interface MentionLaneResult {
+  lane: string;
+  label: string;
+  verb: string;
+  noun: string;
+  icon: string;
+  count: number;
+  capped: boolean;
+}
+
+export interface ArticleMentionsResult {
+  url: string;
+  total: number;
+  lanes: MentionLaneResult[];
+}
+
+interface RawMentionsResponse {
+  items?: ArticleMentionsResult[];
+  error?: string;
+}
+
 // Raw response types from the proxy
 interface RawFeedResponse {
   feed: {
@@ -345,6 +368,25 @@ export class FeedProxyClient {
     const raw = await this.fetch<RawSocialContextResponse>('/social-context', {
       method: 'POST',
       body: JSON.stringify({ items }),
+    });
+
+    if (!raw.items) {
+      throw new FeedProxyError(raw.error || 'Invalid response from feed proxy');
+    }
+
+    return raw.items;
+  }
+
+  /**
+   * Fetch the network-wide mention breakdown for a batch of article URLs
+   * (Phase 5): per-lane distinct-DID counts + a deduped total, keyed back by the
+   * original URL. Best-effort adornment — the proxy returns empty per URL on a
+   * cold/sub-threshold lookup and enriches in the background for a later poll.
+   */
+  async fetchArticleMentions(urls: string[]): Promise<ArticleMentionsResult[]> {
+    const raw = await this.fetch<RawMentionsResponse>('/mentions', {
+      method: 'POST',
+      body: JSON.stringify({ urls }),
     });
 
     if (!raw.items) {

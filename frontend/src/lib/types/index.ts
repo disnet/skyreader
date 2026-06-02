@@ -581,6 +581,30 @@ export interface SocialContextResult {
   alsoLinkedBy: AlsoLinkedEntry[];
 }
 
+// One source lane of network-wide mentions for an article (Phase 5): a kind of
+// reference (linkblog note / Bluesky post / margin.at highlight / Semble save)
+// with its honest verb and a distinct-DID count. `capped` marks a count that hit
+// the lookup page cap and is a lower bound.
+export interface MentionLane {
+  lane: 'linkblog' | 'bluesky' | 'margin' | 'semble';
+  label: string;
+  verb: string;
+  noun: string;
+  icon: string;
+  count: number;
+  capped: boolean;
+}
+
+// The network-wide mention breakdown for one article URL (Phase 5). `total` is
+// the distinct-DID union across all lanes; `lanes` are non-empty lanes in
+// priority order (the lead lane is lanes[0]). Adornment only — degrades to
+// total 0 / empty lanes.
+export interface ArticleMentions {
+  url: string;
+  total: number;
+  lanes: MentionLane[];
+}
+
 // The user's linkblog publication metadata (site.standard.publication), as
 // returned by the backend. `exists` is false when the publication hasn't been
 // created yet (first share creates it lazily).

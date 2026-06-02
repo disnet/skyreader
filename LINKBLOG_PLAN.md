@@ -297,10 +297,18 @@ CREATE TABLE IF NOT EXISTS mention_cache (
 
 Keying by URL (not by feed) dedups across **both** users and feeds: the same article appearing in
 three feeds — or linked in a linkblog *and* present in an RSS feed — is one row. `lanes_json` keeps
-lanes in priority order so the serve path picks the lead without re-sorting. At serve time,
-left-join each item's normalized URL against `mention_cache` and attach the breakdown; a miss or a
-sub-threshold total renders nothing (silent degradation, same contract as Phase 3 —
-`constellation.ts`).
+lanes in priority order so the lead is `lanes[0]` without re-sorting. A miss or a sub-threshold
+total renders nothing (silent degradation, same contract as Phase 3).
+
+**Read path — a dedicated `/mentions` endpoint, not a feed-item join (changed from the original
+plan).** The original cut said "attach the breakdown to each feed item at serve time." That doesn't
+survive the client: the frontend's article ingest (`articleMerge.selectNewArticles`) **only inserts
+new rows and never updates existing ones**, so a count embedded at ingest would freeze at first
+sight — the opposite of "discussion accumulates over hours/days." So mentions are fetched **by URL,
+decoupled from the article**, exactly like Phase 3: `POST /mentions { urls[] }` → cached breakdown
+per URL (returns empty + triggers a decay-gated background enrich on a cold miss; never blocks). The
+client (`articleMentions.svelte.ts`) batches + dedups per-card calls and memoizes for the session,
+re-polling a cold miss once. Backend passthrough: `POST /api/v2/mentions` (`feeds-v2.ts`).
 
 #### Cadence is the hard part, not volume
 
@@ -324,10 +332,23 @@ URL on `checked_at` + item age so most ticks do nothing. Net cost drops from `N_
 
 Constellation matches the target **string exactly**. A feed's article URL almost never equals the
 URL someone pasted into Bluesky: tracking params (`?utm_*`, `?ref=`), trailing slash, scheme,
-`www`, AMP/mobile variants, feed GUID vs. canonical. Without a normalization pass (strip tracking
-params; canonicalize scheme/host/slash; optionally query a couple of variants) the feature returns
-false zeros for articles that have real discussion and feels broken. This is the actual engineering
-work of the phase, independent of where the result is cached.
+`www`, AMP/mobile variants, feed GUID vs. canonical. Without a normalization pass the feature
+returns false zeros for articles that have real discussion and feels broken. This is the actual
+engineering work of the phase, independent of where the result is cached.
+
+**Shipped (`url-normalize.ts`), and what the live data forced:** lowercase host, drop fragment +
+default port, strip a tracking-param allowlist, sort remaining params, trim a non-root trailing
+slash. Two things are deliberately **not** normalized, both verified against live Constellation —
+because it matches the exact shared string and a feed's article URL is normally the site's own
+canonical (which is also what people paste):
+
+- **Keep `www`.** Stripping it turned `https://www.theverge.com/` (22–30+ real Bluesky linkers)
+  into a *false zero* — the shared URL keeps the `www`. This was caught only by running the real
+  lookup, not the mocks.
+- **Keep the scheme** (http feeds stay http) — upgrading would mismatch linkers who pasted http.
+
+Single canonical form for v1 (no multi-variant probing yet); this is the one place to tune if
+matching proves lossy.
 
 #### Render & signal — lead lane, roll-up, honest verbs
 
@@ -348,30 +369,39 @@ work of the phase, independent of where the result is cached.
   anti-reference). Color stays reserved per DESIGN.md — neutral lane icons, muted-ink count, no
   badge fills.
 
-#### Work items
+#### Work items — shipped
 
 - `feed-proxy`:
-  - a **lane registry** (`{ id, label, verb, icon, collections: [{ nsid, path }] }[]`) — the single
-    hardcoded mapping; generalize `constellation.ts`.
-  - `mention_cache` table (per-lane `lanes_json` + `total_dids`) + cleanup branch alongside the
-    existing TTL sweep (`app.ts` cleanup).
-  - `getArticleLanes(url)`: `/links/all` to discover sources → bucket into lanes → union distinct
-    DIDs per lane and across all → return ordered non-empty lanes + total.
-  - URL-normalization helper; re-poll/decay gate wired into `warmStaleFeeds()`; serve-time join
-    attaching the breakdown to feed items.
-  - All four lane NSIDs/paths are now verified live (Linkblogs `site.standard.document`, Bluesky
-    `app.bsky.feed.post`, margin.at `at.margin.note.target.source`, Semble `network.cosmik.card`) —
-    the registry can be written directly. Encode each lane as `(collection, exact-path)` tuples and
-    exclude referrer/alt/bridgy noise paths (see the path-precision note above).
+  - **lane registry** `lanes.ts` (`{ id, label, verb, noun, icon, collections, excludePaths }[]`),
+    path-precise via `laneForSource(collection, path)`. All four NSIDs/paths verified live: Linkblogs
+    `site.standard.document`, Bluesky `app.bsky.feed.post` (excludes `.text` / `.embed.images[].alt` /
+    `.bridgyOriginalUrl`), margin.at `at.margin.note.target.source`, Semble `network.cosmik.card`.
+  - `url-normalize.ts` (see canonicalization note — keeps `www`/scheme).
+  - `mentions.ts`: `computeMentions(url)` (`/links/all` → bucket → union DIDs per lane + total),
+    `enrichMentions` (decay gate, `first_seen_at`-anchored hot→cool→settled curve, upsert),
+    `readCachedMentions` (no-network read + threshold + due flag). `mention_cache` table + cleanup
+    branch (`app.ts`).
+  - `POST /mentions` endpoint (batch, deduped, non-blocking background enrich). Warm-loop pre-warm
+    hook `warmFeedItemMentions` gated by `warmMentionsEnabled` (off in tests, on in prod via
+    `WARM_MENTIONS`).
+  - Tests `mentions.test.ts` (normalization, bucketing/noise-exclusion, per-lane + total DID union,
+    cache/threshold/decay) + a live smoke check against real Constellation.
+- `backend`: `FeedProxyClient.fetchArticleMentions` + `handleV2Mentions` (`feeds-v2.ts`), routed at
+  `POST /api/v2/mentions` (`index.ts`).
 - `frontend`:
-  - lead-lane + *"+N more"* line + threshold in `ArticleCard.svelte`; neutral lane icons (Linkblog /
-    Bluesky / margin / card) added to the Lucide icon set.
-  - expand reusing the Phase 3 social-context UI, grouped by lane; lazy people/notes for the
-    Linkblogs + Bluesky lanes only.
+  - `articleMentions.svelte.ts` — batched, deduped, session-memoized lazy store; one cold retry.
+  - `ArticleCard.svelte` — always-on lead-lane line (`✍ 3 linkblog notes`), `+N more` roll-up
+    (union math: `total − leadCount`), expand → per-lane breakdown (icon · count · label · honest
+    verb). `bluesky` butterfly added to `Icon.svelte`; margin/Semble/standard-site brand glyphs reused.
+  - `MentionLane` / `ArticleMentions` types; `api.fetchArticleMentions`.
 
 **Deferred follow-on — follows-aware lead lane.** The shared cache is unpersonalized, but the client
 could re-rank the lead toward a lane containing DIDs the user follows (Phase 6 follows data), e.g.
 *"2 people you follow noted this."* Off the shared path, client-side only; noted, not built.
+
+**Deferred follow-on — per-person expand.** The breakdown is counts only; the Linkblogs + Bluesky
+lanes could lazily resolve to handles + notes on open via the Phase 3 `alsoLinkedBy` path
+(`/social-context` already does this by `articleUrl`). Off the always-on path; noted, not built.
 
 ### Phase 6 — Linkblog discovery & onboarding
 
