@@ -79,8 +79,18 @@ describe('dedupeSubscriptionsByRkey', () => {
 describe('dedupeSubscriptionsByFeed', () => {
   it('keeps the oldest of two RSS rows that share a feed url', () => {
     const subs = [
-      sub({ id: 1, rkey: 'a', feedUrl: 'https://x.com/feed', createdAt: '2026-01-02T00:00:00Z' }),
-      sub({ id: 2, rkey: 'b', feedUrl: 'https://x.com/feed', createdAt: '2026-01-01T00:00:00Z' }),
+      sub({
+        id: 1,
+        rkey: 'a',
+        feedUrl: 'https://x.com/feed',
+        createdAt: '2026-01-02T00:00:00Z',
+      }),
+      sub({
+        id: 2,
+        rkey: 'b',
+        feedUrl: 'https://x.com/feed',
+        createdAt: '2026-01-01T00:00:00Z',
+      }),
     ];
     const { kept, dupeIds } = dedupeSubscriptionsByFeed(subs);
     expect(kept.map((s) => s.id)).toEqual([2]); // older createdAt wins
@@ -99,9 +109,19 @@ describe('dedupeSubscriptionsByFeed', () => {
   it('preserves original order of the kept rows', () => {
     const subs = [
       sub({ id: 1, rkey: 'a', feedUrl: 'https://a.com/feed' }),
-      sub({ id: 2, rkey: 'b', feedUrl: 'https://x.com/feed', createdAt: '2026-01-02T00:00:00Z' }),
+      sub({
+        id: 2,
+        rkey: 'b',
+        feedUrl: 'https://x.com/feed',
+        createdAt: '2026-01-02T00:00:00Z',
+      }),
       sub({ id: 3, rkey: 'c', feedUrl: 'https://b.com/feed' }),
-      sub({ id: 4, rkey: 'd', feedUrl: 'https://x.com/feed', createdAt: '2026-01-01T00:00:00Z' }),
+      sub({
+        id: 4,
+        rkey: 'd',
+        feedUrl: 'https://x.com/feed',
+        createdAt: '2026-01-01T00:00:00Z',
+      }),
     ];
     const { kept } = dedupeSubscriptionsByFeed(subs);
     expect(kept.map((s) => s.id)).toEqual([1, 3, 4]); // the older x.com row (id 4) survives in place
@@ -217,7 +237,9 @@ describe('subscriptionDedupKey', () => {
       sourceType: 'atproto.feed',
       subjectDid: 'did:plc:abc',
     });
-    const rss = subscriptionDedupKey({ feedUrl: 'https://example.com/feed.xml' });
+    const rss = subscriptionDedupKey({
+      feedUrl: 'https://example.com/feed.xml',
+    });
     expect(atproto).not.toBe(rss);
   });
 });

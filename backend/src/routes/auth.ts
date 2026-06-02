@@ -350,7 +350,9 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
             throw new Error(`PAR request failed: ${retryError}`);
           }
 
-          const retryParData = (await retryParResponse.json()) as { request_uri: string };
+          const retryParData = (await retryParResponse.json()) as {
+            request_uri: string;
+          };
           authUrl = `${authMeta.authorization_endpoint}?client_id=${encodeURIComponent(clientId)}&request_uri=${encodeURIComponent(retryParData.request_uri)}`;
         } else {
           throw new Error(`PAR request failed: ${errorText}`);
@@ -380,7 +382,9 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
   } catch (error) {
     console.error('Login error:', error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Login failed' }),
+      JSON.stringify({
+        error: error instanceof Error ? error.message : 'Login failed',
+      }),
       {
         status: 500,
         headers: { 'Content-Type': 'application/json' },

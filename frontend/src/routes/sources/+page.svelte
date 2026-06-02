@@ -190,7 +190,10 @@
 
   let filteredWebsiteCategories = $derived(
     websiteCategories
-      .map((cat) => ({ ...cat, websites: filterWebsitesBySearch(cat.websites) }))
+      .map((cat) => ({
+        ...cat,
+        websites: filterWebsitesBySearch(cat.websites),
+      }))
       .filter((cat) => cat.websites.length > 0)
   );
 
@@ -246,7 +249,9 @@
       feedUrl: pub.uri,
     });
     if (pub.iconUrl) {
-      await subscriptionsStore.updateLocal(subId, { customIconUrl: pub.iconUrl });
+      await subscriptionsStore.updateLocal(subId, {
+        customIconUrl: pub.iconUrl,
+      });
     }
   }
 
@@ -317,12 +322,16 @@
   });
 
   async function assignToFolder(folderName: string) {
-    await subscriptionsStore.bulkUpdateLocal([...selectedIds], { category: folderName });
+    await subscriptionsStore.bulkUpdateLocal([...selectedIds], {
+      category: folderName,
+    });
     selectedIds = new Set();
   }
 
   async function removeFromFolder() {
-    await subscriptionsStore.bulkUpdateLocal([...selectedIds], { category: null });
+    await subscriptionsStore.bulkUpdateLocal([...selectedIds], {
+      category: null,
+    });
     selectedIds = new Set();
   }
 

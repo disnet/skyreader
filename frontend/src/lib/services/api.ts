@@ -213,7 +213,12 @@ class ApiClient {
           throw new ScopeUpgradeError((body as { message?: string }).message);
         }
         if ((body as { error: string }).error === 'url_save_limit_reached') {
-          const b = body as { message: string; limit: number; current: number; resetsAt: string };
+          const b = body as {
+            message: string;
+            limit: number;
+            current: number;
+            resetsAt: string;
+          };
           throw new UrlSaveLimitError(b.message, b.limit, b.current, b.resetsAt);
         }
         throw new Error((body as { error: string }).error || `HTTP ${response.status}`);
@@ -458,7 +463,12 @@ class ApiClient {
   // Social context (Constellation) for link posts — recommend/quote counts +
   // "who else linked this article". Best-effort adornment; degrades to empty.
   async fetchSocialContext(
-    items: Array<{ key?: string; docUri?: string; articleUrl?: string; excludeDid?: string }>
+    items: Array<{
+      key?: string;
+      docUri?: string;
+      articleUrl?: string;
+      excludeDid?: string;
+    }>
   ): Promise<{ items: SocialContextResult[] }> {
     return this.fetch('/api/v2/social-context', {
       method: 'POST',
@@ -632,7 +642,12 @@ class ApiClient {
   }
 
   async getAllLabels(
-    options: { label?: string; labels?: string[]; itemType?: ItemLabelType; since?: number } = {}
+    options: {
+      label?: string;
+      labels?: string[];
+      itemType?: ItemLabelType;
+      since?: number;
+    } = {}
   ): Promise<
     Array<{
       itemKey: string;
@@ -910,7 +925,13 @@ class ApiClient {
 
   async upsertChannel(
     uuid: string,
-    data: { name: string; config: string; position: number; createdAt: number; updatedAt: number }
+    data: {
+      name: string;
+      config: string;
+      position: number;
+      createdAt: number;
+      updatedAt: number;
+    }
   ): Promise<{ success: boolean }> {
     return this.fetch(`/api/channels/${uuid}`, {
       method: 'PUT',

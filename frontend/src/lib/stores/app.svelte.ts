@@ -203,7 +203,10 @@ function createAppManager() {
       // oldest record and delete the rest from the PDS so the duplicate source
       // does not reappear.
       const { duplicateRkeys } = dedupeRemoteSubscriptionRecords(
-        [...remoteByRkey.entries()].map(([rkey, r]) => ({ rkey, value: r.value }))
+        [...remoteByRkey.entries()].map(([rkey, r]) => ({
+          rkey,
+          value: r.value,
+        }))
       );
       for (const rkey of duplicateRkeys) {
         remoteByRkey.delete(rkey);

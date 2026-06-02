@@ -732,10 +732,22 @@ export function getSavedSourceTypeSuggestions(
   // Only suggest source filters if the user saves from multiple source types
   if (bySource.size < 2) return [];
 
-  const sourceConfigs: { source: SavedSourceType; name: string; desc: string }[] = [
-    { source: 'feed', name: 'Saved from Feeds', desc: 'articles saved from your RSS feeds' },
+  const sourceConfigs: {
+    source: SavedSourceType;
+    name: string;
+    desc: string;
+  }[] = [
+    {
+      source: 'feed',
+      name: 'Saved from Feeds',
+      desc: 'articles saved from your RSS feeds',
+    },
     { source: 'url', name: 'Saved from Web', desc: 'pages saved by URL' },
-    { source: 'document', name: 'Saved Documents', desc: 'published documents you bookmarked' },
+    {
+      source: 'document',
+      name: 'Saved Documents',
+      desc: 'published documents you bookmarked',
+    },
   ];
 
   for (const cfg of sourceConfigs) {

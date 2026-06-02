@@ -75,7 +75,12 @@ describe('selectNewArticles', () => {
   it('stamps fetchedAt and carries item fields through', () => {
     const { newArticles } = selectNewArticles(
       [],
-      [{ subscriptionId: 7, items: [item('a', { author: 'Ada', imageUrl: 'img.png' })] }],
+      [
+        {
+          subscriptionId: 7,
+          items: [item('a', { author: 'Ada', imageUrl: 'img.png' })],
+        },
+      ],
       NOW
     );
     expect(newArticles[0]).toMatchObject({

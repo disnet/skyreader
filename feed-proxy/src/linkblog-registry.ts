@@ -38,17 +38,17 @@ const MAX_PAGES = 25; // hard cap (~5k authors) so a runaway cursor can't loop.
 const FETCH_TIMEOUT_MS = 10 * 1000;
 
 const CONSTELLATION_HEADERS = {
-	'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)',
+  'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)',
 };
 
 interface ConstellationLinksResponse {
-	linking_records?: Array<{ did: string; collection: string; rkey: string }>;
-	cursor?: string;
+  linking_records?: Array<{ did: string; collection: string; rkey: string }>;
+  cursor?: string;
 }
 
 interface RegistryCacheRow {
-	dids_json: string;
-	cached_at: number;
+  dids_json: string;
+  cached_at: number;
 }
 
 // Page through Constellation's backlinks for the marker, collecting distinct
@@ -56,39 +56,39 @@ interface RegistryCacheRow {
 // caller can fall back to a stale cache; a mid-pagination failure returns
 // whatever resolved so far (better a partial registry than none).
 async function fetchRegistryFromConstellation(): Promise<string[] | null> {
-	const seen = new Set<string>();
-	let cursor: string | undefined;
+  const seen = new Set<string>();
+  let cursor: string | undefined;
 
-	for (let page = 0; page < MAX_PAGES; page++) {
-		const params = new URLSearchParams({
-			target: MARKER_URL,
-			collection: PUBLICATION_COLLECTION,
-			path: MARKER_PATH,
-			limit: String(PAGE_LIMIT),
-		});
-		if (cursor) params.set('cursor', cursor);
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params = new URLSearchParams({
+      target: MARKER_URL,
+      collection: PUBLICATION_COLLECTION,
+      path: MARKER_PATH,
+      limit: String(PAGE_LIMIT),
+    });
+    if (cursor) params.set('cursor', cursor);
 
-		let data: ConstellationLinksResponse | null = null;
-		try {
-			const res = await fetch(`${CONSTELLATION_BASE}/links?${params}`, {
-				headers: CONSTELLATION_HEADERS,
-				signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-			});
-			if (res.ok) data = (await res.json()) as ConstellationLinksResponse;
-			else console.error(`[linkblog-registry] Constellation returned HTTP ${res.status}`);
-		} catch (error) {
-			console.error('[linkblog-registry] fetch error:', error);
-		}
-		if (!data) return seen.size > 0 ? [...seen] : null;
+    let data: ConstellationLinksResponse | null = null;
+    try {
+      const res = await fetch(`${CONSTELLATION_BASE}/links?${params}`, {
+        headers: CONSTELLATION_HEADERS,
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      if (res.ok) data = (await res.json()) as ConstellationLinksResponse;
+      else console.error(`[linkblog-registry] Constellation returned HTTP ${res.status}`);
+    } catch (error) {
+      console.error('[linkblog-registry] fetch error:', error);
+    }
+    if (!data) return seen.size > 0 ? [...seen] : null;
 
-		for (const rec of data.linking_records ?? []) {
-			if (rec.did) seen.add(rec.did);
-		}
-		if (!data.cursor || (data.linking_records?.length ?? 0) === 0) break;
-		cursor = data.cursor;
-	}
+    for (const rec of data.linking_records ?? []) {
+      if (rec.did) seen.add(rec.did);
+    }
+    if (!data.cursor || (data.linking_records?.length ?? 0) === 0) break;
+    cursor = data.cursor;
+  }
 
-	return [...seen];
+  return [...seen];
 }
 
 /**
@@ -98,29 +98,30 @@ async function fetchRegistryFromConstellation(): Promise<string[] | null> {
  * adornment, like the rest of the Constellation layer.
  */
 export async function getLinkblogRegistry(db: Database): Promise<string[]> {
-	const now = Date.now();
-	const cached = db
-		.query<RegistryCacheRow, [string]>(
-			'SELECT dids_json, cached_at FROM linkblog_registry_cache WHERE marker = ?'
-		)
-		.get(MARKER_URL);
-	if (cached) {
-		const parsed = JSON.parse(cached.dids_json) as string[];
-		// Populated registries are trusted for the full TTL; empty ones only briefly.
-		const ttl = parsed.length > 0 ? REGISTRY_TTL_MS : EMPTY_TTL_MS;
-		if (now - cached.cached_at < ttl) return parsed;
-	}
+  const now = Date.now();
+  const cached = db
+    .query<
+      RegistryCacheRow,
+      [string]
+    >('SELECT dids_json, cached_at FROM linkblog_registry_cache WHERE marker = ?')
+    .get(MARKER_URL);
+  if (cached) {
+    const parsed = JSON.parse(cached.dids_json) as string[];
+    // Populated registries are trusted for the full TTL; empty ones only briefly.
+    const ttl = parsed.length > 0 ? REGISTRY_TTL_MS : EMPTY_TTL_MS;
+    if (now - cached.cached_at < ttl) return parsed;
+  }
 
-	const dids = await fetchRegistryFromConstellation();
-	if (dids === null) {
-		// Constellation unreachable — serve stale if we have it, else empty.
-		return cached ? (JSON.parse(cached.dids_json) as string[]) : [];
-	}
+  const dids = await fetchRegistryFromConstellation();
+  if (dids === null) {
+    // Constellation unreachable — serve stale if we have it, else empty.
+    return cached ? (JSON.parse(cached.dids_json) as string[]) : [];
+  }
 
-	db.run(
-		`INSERT INTO linkblog_registry_cache (marker, dids_json, cached_at) VALUES (?, ?, ?)
+  db.run(
+    `INSERT INTO linkblog_registry_cache (marker, dids_json, cached_at) VALUES (?, ?, ?)
 		ON CONFLICT(marker) DO UPDATE SET dids_json = excluded.dids_json, cached_at = excluded.cached_at`,
-		[MARKER_URL, JSON.stringify(dids), now]
-	);
-	return dids;
+    [MARKER_URL, JSON.stringify(dids), now]
+  );
+  return dids;
 }

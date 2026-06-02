@@ -294,7 +294,9 @@
           <img src={auth.user.avatarUrl} alt="" class="avatar" />
         {/if}
         <div>
-          <p class="display-name">{auth.user.displayName || auth.user.handle}</p>
+          <p class="display-name">
+            {auth.user.displayName || auth.user.handle}
+          </p>
           <p class="handle">@{auth.user.handle}</p>
           <p class="did">{auth.user.did}</p>
         </div>

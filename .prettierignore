@@ -1,0 +1,10 @@
+node_modules/
+test-results/
+playwright-report/
+
+# Each package manages its own Prettier setup
+backend/
+frontend/
+admin/
+feed-proxy/
+cli/

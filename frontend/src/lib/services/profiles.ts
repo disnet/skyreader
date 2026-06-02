@@ -41,7 +41,10 @@ class ProfileService {
   async getProfiles(dids: string[]): Promise<Map<string, BlueskyProfile>> {
     const results = new Map<string, BlueskyProfile>();
     const toFetch: string[] = [];
-    const toAwait: Array<{ did: string; promise: Promise<BlueskyProfile | null> }> = [];
+    const toAwait: Array<{
+      did: string;
+      promise: Promise<BlueskyProfile | null>;
+    }> = [];
 
     // Check cache and pending requests first
     for (const did of dids) {

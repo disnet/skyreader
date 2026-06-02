@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Repository Structure
 
 This is a monorepo with 4 packages:
+
 - `backend/` - Cloudflare Workers API
 - `frontend/` - SvelteKit PWA
 - `admin/` - SvelteKit admin dashboard (Cloudflare Pages)
@@ -41,13 +42,13 @@ When writing user-facing copy about data ownership, portability, or AT Protocol,
 
 - The AT Protocol ecosystem is **"the Atmosphere"**; other AT Proto apps are **"Atmospheric apps."**
 - Syncing a user's data to their PDS is **"Atmospheric sync"** — phrase it as making their data
-  *portable across the Atmosphere*, not as a technical PDS operation.
+  _portable across the Atmosphere_, not as a technical PDS operation.
 - Frame the default vs. opt-in honestly: by default, subscription/feed-list data is stored
   **privately on the Skyreader servers**; turning on Atmospheric sync **also** stores it on the
   user's **atproto PDS**, making it backed up, portable to any Atmospheric app, and
   **publicly visible**. Always surface the public-visibility tradeoff.
 - `PDS` is fine as a concrete noun once the framing is established (e.g. "stored on your PDS"), but
-  don't *lead* with it — lead with the Atmosphere/portability idea. Saves and shares always live on
+  don't _lead_ with it — lead with the Atmosphere/portability idea. Saves and shares always live on
   the PDS; only the subscription/feed list is the opt-in choice.
 - Keep the voice **calm, terse, reading-first** (per PRODUCT.md). Prefer one short clause over a
   paragraph; let the user act, don't oversell.
@@ -55,6 +56,7 @@ When writing user-facing copy about data ownership, portability, or AT Protocol,
 ## Development Commands
 
 ### Full Local Development (with OAuth)
+
 ```bash
 ./scripts/dev-local.sh   # Starts feed proxy, backend, and frontend
 ```
@@ -62,6 +64,7 @@ When writing user-facing copy about data ownership, portability, or AT Protocol,
 This script runs D1 migrations, then starts the feed proxy (port 3000), backend Wrangler dev server (port 8787), and frontend Vite dev server (port 5173). The frontend proxies `/api` requests to the backend via Vite, avoiding CORS issues.
 
 **Prerequisites:**
+
 - [Bun](https://bun.sh) installed (for the feed proxy)
 - Install dependencies: `cd feed-proxy && bun install`
 - Create `backend/.dev.vars` with:
@@ -71,6 +74,7 @@ This script runs D1 migrations, then starts the feed proxy (port 3000), backend 
   ```
 
 **Resetting the local database:**
+
 ```bash
 rm -rf backend/.wrangler/state/v3/d1/
 ```
@@ -80,6 +84,7 @@ rm -rf backend/.wrangler/state/v3/d1/
 Local development uses AT Protocol's [localhost client exception](https://atproto.com/specs/oauth#localhost-client-development), which allows OAuth without hosting client metadata or using tunnels.
 
 ### Backend (`backend/`)
+
 ```bash
 npm run dev              # Start Wrangler dev server (port 8787)
 npm run test             # Run vitest tests
@@ -92,6 +97,7 @@ npx wrangler d1 execute skyreader --local --file=migrations/FILE.sql
 ```
 
 ### Frontend (`frontend/`)
+
 ```bash
 npm run dev              # Start Vite dev server (port 5173)
 npm run build            # Production build → build/
@@ -101,6 +107,7 @@ npm run check            # Type checking (svelte-check)
 **Note:** Access the frontend at `http://127.0.0.1:5173` for local development.
 
 ### Admin (`admin/`)
+
 ```bash
 npm run dev              # Start Vite dev server (port 5174)
 npm run build            # Production build → .svelte-kit/cloudflare/
@@ -110,6 +117,7 @@ npm run deploy           # Build and deploy to Cloudflare Pages
 ```
 
 ### E2E Tests (root)
+
 ```bash
 npm run test:e2e             # Run Playwright tests (starts servers automatically)
 npm run test:e2e:ui          # Interactive Playwright UI
@@ -119,10 +127,12 @@ npm run test:e2e:headed      # Run with visible browser
 Playwright spins up the backend (port 8787) and frontend (port 5173) via `webServer` config, or reuses already-running servers from `./scripts/dev-local.sh`.
 
 **Prerequisites:**
+
 - `backend/.dev.vars` must include `ALLOWED_ORIGINS=http://127.0.0.1:5173` and `E2E_TEST_MODE=true`
 - Install: `npm install && npx playwright install chromium` (from root)
 
 **Test structure:**
+
 ```
 e2e/
 ├── global-setup.ts          # Applies D1 migrations before test run
@@ -132,6 +142,7 @@ e2e/
 ```
 
 **Key patterns:**
+
 - **Auth bypass:** `seed.ts` inserts users/sessions/settings directly into D1. The `authedPage` fixture sets the `session_id` cookie and `skyreader-auth` localStorage.
 - **PDS disabled:** Seeded `user_settings` has `pds_sync_enabled=0` so tests don't need a real PDS.
 - **Valid TIDs:** Seeded subscription rkeys must match `/^[a-z0-9]{13,}$/` (AT Protocol TID format).
@@ -139,6 +150,7 @@ e2e/
 - **Cleanup:** Each test's `testUser` fixture automatically deletes its seeded data after the test.
 
 ### PWA / Service Worker Tests (root)
+
 ```bash
 npm run test:pwa             # Service worker + offline E2E (chromium + webkit)
 ```
@@ -160,6 +172,7 @@ AT Protocol (Bluesky PDS) + Fly.io Feed Proxy + Jetstream Firehose
 ```
 
 ### Backend Stack
+
 - **Runtime:** Cloudflare Workers
 - **Database:** D1 (SQLite) for all storage (sessions, feeds, shares, labels, etc.)
 - **Durable Objects:** JetstreamPoller (long-running firehose connection via alarms)
@@ -167,12 +180,14 @@ AT Protocol (Bluesky PDS) + Fly.io Feed Proxy + Jetstream Firehose
 - **Cron:** Every 1 min (ping JetstreamPoller DO, cleanup rate limits), hourly (cleanup expired sessions/OAuth states)
 
 ### Frontend Stack
+
 - **Framework:** SvelteKit 2.x with Svelte 5 runes
 - **State:** Rune stores in `.svelte.ts` files (not writable stores)
 - **Offline:** IndexedDB via Dexie.js + sync queue
 - **PWA:** Service worker for offline support
 
 ### Admin Stack
+
 - **Framework:** SvelteKit 2.x with Svelte 5 runes
 - **Runtime:** Cloudflare Pages
 - **Database:** D1 (SQLite) - reads the same database as the backend
@@ -181,6 +196,7 @@ AT Protocol (Bluesky PDS) + Fly.io Feed Proxy + Jetstream Firehose
 - **Deploy:** Cloudflare Pages via GitHub Actions (staging on push to main, production on release)
 
 ### Key Data Flow
+
 1. **Auth:** Handle → DID resolution → OAuth PKCE/DPoP → session token
 2. **Subscriptions:** Stored in user's PDS, cached locally in IndexedDB
 3. **Feed Updates:** Frontend requests feeds → backend proxies via Fly.io feed cache
@@ -189,6 +205,7 @@ AT Protocol (Bluesky PDS) + Fly.io Feed Proxy + Jetstream Firehose
 ## AT Protocol Integration
 
 Custom lexicons in `lexicons/app/skyreader/`:
+
 - `feed/subscription.json` - RSS subscription record
 - `feed/saved.json` - Saved article record
 - `social/share.json` - Shared article record

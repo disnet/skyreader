@@ -110,7 +110,10 @@ describe('GET /api/reading/positions', () => {
 
   it('returns a slim payload without item_url/item_title', async () => {
     const now = Math.floor(Date.now() / 1000);
-    await insertReadLabel('article-a', { updatedAt: now - 10, readAtMs: 1700000000000 });
+    await insertReadLabel('article-a', {
+      updatedAt: now - 10,
+      readAtMs: 1700000000000,
+    });
 
     const { status, body } = await getPositions('/api/reading/positions');
     expect(status).toBe(200);
@@ -128,9 +131,18 @@ describe('GET /api/reading/positions', () => {
   it('only returns article read labels (not starred/archived/social)', async () => {
     const now = Math.floor(Date.now() / 1000);
     await insertReadLabel('read-article', { updatedAt: now - 10 });
-    await insertReadLabel('starred-article', { updatedAt: now - 10, label: 'starred' });
-    await insertReadLabel('archived-article', { updatedAt: now - 10, label: 'archived' });
-    await insertReadLabel('read-share', { updatedAt: now - 10, itemType: 'share' });
+    await insertReadLabel('starred-article', {
+      updatedAt: now - 10,
+      label: 'starred',
+    });
+    await insertReadLabel('archived-article', {
+      updatedAt: now - 10,
+      label: 'archived',
+    });
+    await insertReadLabel('read-share', {
+      updatedAt: now - 10,
+      itemType: 'share',
+    });
 
     const { body } = await getPositions('/api/reading/positions');
     expect(body.positions.map((p) => p.item_guid)).toEqual(['read-article']);
@@ -140,7 +152,9 @@ describe('GET /api/reading/positions', () => {
     it('excludes reads older than the retention window', async () => {
       const now = Math.floor(Date.now() / 1000);
       await insertReadLabel('recent', { updatedAt: now - DAY_SECONDS });
-      await insertReadLabel('stale', { updatedAt: now - (WINDOW_SECONDS + DAY_SECONDS) });
+      await insertReadLabel('stale', {
+        updatedAt: now - (WINDOW_SECONDS + DAY_SECONDS),
+      });
 
       const { body } = await getPositions('/api/reading/positions');
       expect(body.positions.map((p) => p.item_guid)).toEqual(['recent']);

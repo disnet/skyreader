@@ -47,85 +47,82 @@ const COOL_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const COOL_RECHECK_MS = 12 * 60 * 60 * 1000;
 
 export interface MentionLane {
-	lane: LaneId;
-	label: string;
-	verb: string;
-	noun: string;
-	icon: string;
-	count: number;
-	// True when the lane's count hit the page cap and is a lower bound.
-	capped: boolean;
+  lane: LaneId;
+  label: string;
+  verb: string;
+  noun: string;
+  icon: string;
+  count: number;
+  // True when the lane's count hit the page cap and is a lower bound.
+  capped: boolean;
 }
 
 export interface ArticleMentions {
-	total: number;
-	lanes: MentionLane[];
+  total: number;
+  lanes: MentionLane[];
 }
 
 const EMPTY: ArticleMentions = { total: 0, lanes: [] };
 
 interface MentionCacheRow {
-	url_hash: string;
-	url: string;
-	total_dids: number;
-	lanes_json: string;
-	first_seen_at: number;
-	checked_at: number;
+  url_hash: string;
+  url: string;
+  total_dids: number;
+  lanes_json: string;
+  first_seen_at: number;
+  checked_at: number;
 }
 
 function hashUrl(url: string): string {
-	const hasher = new Bun.CryptoHasher('sha256');
-	hasher.update(url);
-	return hasher.digest('hex').slice(0, 16);
+  const hasher = new Bun.CryptoHasher('sha256');
+  hasher.update(url);
+  return hasher.digest('hex').slice(0, 16);
 }
 
 interface LinksAllResponse {
-	links?: Record<
-		string,
-		Record<string, { records?: number; distinct_dids?: number }>
-	>;
+  links?: Record<string, Record<string, { records?: number; distinct_dids?: number }>>;
 }
 
 interface LinksResponse {
-	linking_records?: Array<{ did: string; collection: string; rkey: string }>;
-	cursor?: string;
+  linking_records?: Array<{ did: string; collection: string; rkey: string }>;
+  cursor?: string;
 }
 
 async function constellationGet<T>(
-	path: string,
-	params: Record<string, string>,
+  path: string,
+  params: Record<string, string>
 ): Promise<T | null> {
-	try {
-		const qs = new URLSearchParams(params);
-		const res = await fetch(`${CONSTELLATION_BASE}${path}?${qs}`, {
-			headers: HEADERS,
-			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-		});
-		if (!res.ok) return null;
-		return (await res.json()) as T;
-	} catch (error) {
-		console.error(`[mentions] ${path} error:`, error);
-		return null;
-	}
+  try {
+    const qs = new URLSearchParams(params);
+    const res = await fetch(`${CONSTELLATION_BASE}${path}?${qs}`, {
+      headers: HEADERS,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch (error) {
+    console.error(`[mentions] ${path} error:`, error);
+    return null;
+  }
 }
 
 // Distinct DIDs that linked `target` via one (collection, path). Returns the DID
 // set plus whether it hit the page cap (so the count is a lower bound).
 async function fetchSourceDids(
-	target: string,
-	collection: string,
-	path: string,
+  target: string,
+  collection: string,
+  path: string
 ): Promise<{ dids: Set<string>; capped: boolean }> {
-	const data = await constellationGet<LinksResponse>('/links', {
-		target,
-		collection,
-		path,
-		limit: String(LINKS_PAGE_LIMIT),
-	});
-	const records = data?.linking_records ?? [];
-	const dids = new Set<string>();
-	for (const rec of records) dids.add(rec.did);
-	return { dids, capped: records.length >= LINKS_PAGE_LIMIT };
+  const data = await constellationGet<LinksResponse>('/links', {
+    target,
+    collection,
+    path,
+    limit: String(LINKS_PAGE_LIMIT),
+  });
+  const records = data?.linking_records ?? [];
+  const dids = new Set<string>();
+  for (const rec of records) dids.add(rec.did);
+  return { dids, capped: records.length >= LINKS_PAGE_LIMIT };
 }
 
 /**
@@ -133,97 +130,92 @@ async function fetchSourceDids(
  * `/links/all`, bucket them into lanes, union distinct DIDs per lane and across
  * all lanes. Returns lanes in registry (priority) order, non-empty only.
  */
-export async function computeMentions(
-	normUrl: string,
-): Promise<ArticleMentions> {
-	const all = await constellationGet<LinksAllResponse>('/links/all', {
-		target: normUrl,
-	});
-	if (!all?.links) return EMPTY;
+export async function computeMentions(normUrl: string): Promise<ArticleMentions> {
+  const all = await constellationGet<LinksAllResponse>('/links/all', {
+    target: normUrl,
+  });
+  if (!all?.links) return EMPTY;
 
-	// Collect the laned (collection, path) sources Constellation actually reports,
-	// grouped by lane, bounded so a pathological URL can't fan out unboundedly.
-	const sourcesByLane = new Map<
-		LaneId,
-		Array<{ collection: string; path: string }>
-	>();
-	let queryCount = 0;
-	for (const [collection, paths] of Object.entries(all.links)) {
-		for (const [path, stats] of Object.entries(paths)) {
-			if (!stats?.distinct_dids) continue;
-			const lane = laneForSource(collection, path);
-			if (!lane) continue;
-			if (queryCount >= MAX_SOURCE_QUERIES) break;
-			queryCount++;
-			const list = sourcesByLane.get(lane.id) ?? [];
-			list.push({ collection, path });
-			sourcesByLane.set(lane.id, list);
-		}
-	}
+  // Collect the laned (collection, path) sources Constellation actually reports,
+  // grouped by lane, bounded so a pathological URL can't fan out unboundedly.
+  const sourcesByLane = new Map<LaneId, Array<{ collection: string; path: string }>>();
+  let queryCount = 0;
+  for (const [collection, paths] of Object.entries(all.links)) {
+    for (const [path, stats] of Object.entries(paths)) {
+      if (!stats?.distinct_dids) continue;
+      const lane = laneForSource(collection, path);
+      if (!lane) continue;
+      if (queryCount >= MAX_SOURCE_QUERIES) break;
+      queryCount++;
+      const list = sourcesByLane.get(lane.id) ?? [];
+      list.push({ collection, path });
+      sourcesByLane.set(lane.id, list);
+    }
+  }
 
-	if (sourcesByLane.size === 0) return EMPTY;
+  if (sourcesByLane.size === 0) return EMPTY;
 
-	// Fetch every source's DID set in parallel, then union within and across lanes.
-	const flat = [...sourcesByLane.entries()].flatMap(([laneId, sources]) =>
-		sources.map((s) => ({ laneId, ...s })),
-	);
-	const resolved = await Promise.all(
-		flat.map((s) =>
-			fetchSourceDids(normUrl, s.collection, s.path).then((r) => ({
-				laneId: s.laneId,
-				...r,
-			})),
-		),
-	);
+  // Fetch every source's DID set in parallel, then union within and across lanes.
+  const flat = [...sourcesByLane.entries()].flatMap(([laneId, sources]) =>
+    sources.map((s) => ({ laneId, ...s }))
+  );
+  const resolved = await Promise.all(
+    flat.map((s) =>
+      fetchSourceDids(normUrl, s.collection, s.path).then((r) => ({
+        laneId: s.laneId,
+        ...r,
+      }))
+    )
+  );
 
-	const laneDids = new Map<LaneId, Set<string>>();
-	const laneCapped = new Map<LaneId, boolean>();
-	const totalDids = new Set<string>();
-	for (const r of resolved) {
-		const set = laneDids.get(r.laneId) ?? new Set<string>();
-		for (const did of r.dids) {
-			set.add(did);
-			totalDids.add(did);
-		}
-		laneDids.set(r.laneId, set);
-		if (r.capped) laneCapped.set(r.laneId, true);
-	}
+  const laneDids = new Map<LaneId, Set<string>>();
+  const laneCapped = new Map<LaneId, boolean>();
+  const totalDids = new Set<string>();
+  for (const r of resolved) {
+    const set = laneDids.get(r.laneId) ?? new Set<string>();
+    for (const did of r.dids) {
+      set.add(did);
+      totalDids.add(did);
+    }
+    laneDids.set(r.laneId, set);
+    if (r.capped) laneCapped.set(r.laneId, true);
+  }
 
-	// Emit in registry priority order so the lead lane is lanes[0].
-	const lanes: MentionLane[] = [];
-	for (const lane of LANES) {
-		const count = laneDids.get(lane.id)?.size ?? 0;
-		if (count === 0) continue;
-		lanes.push({
-			lane: lane.id,
-			label: lane.label,
-			verb: lane.verb,
-			noun: lane.noun,
-			icon: lane.icon,
-			count,
-			capped: laneCapped.get(lane.id) ?? false,
-		});
-	}
+  // Emit in registry priority order so the lead lane is lanes[0].
+  const lanes: MentionLane[] = [];
+  for (const lane of LANES) {
+    const count = laneDids.get(lane.id)?.size ?? 0;
+    if (count === 0) continue;
+    lanes.push({
+      lane: lane.id,
+      label: lane.label,
+      verb: lane.verb,
+      noun: lane.noun,
+      icon: lane.icon,
+      count,
+      capped: laneCapped.get(lane.id) ?? false,
+    });
+  }
 
-	return { total: totalDids.size, lanes };
+  return { total: totalDids.size, lanes };
 }
 
 // Whether a cached row is due for a re-poll given its age and last check.
 function isDue(row: MentionCacheRow, now: number): boolean {
-	const age = now - row.first_seen_at;
-	const sinceCheck = now - row.checked_at;
-	if (age < HOT_AGE_MS) return sinceCheck > HOT_RECHECK_MS;
-	if (age < COOL_AGE_MS) return sinceCheck > COOL_RECHECK_MS;
-	return false; // settled
+  const age = now - row.first_seen_at;
+  const sinceCheck = now - row.checked_at;
+  if (age < HOT_AGE_MS) return sinceCheck > HOT_RECHECK_MS;
+  if (age < COOL_AGE_MS) return sinceCheck > COOL_RECHECK_MS;
+  return false; // settled
 }
 
 function rowToMentions(row: MentionCacheRow): ArticleMentions {
-	try {
-		const lanes = JSON.parse(row.lanes_json) as MentionLane[];
-		return { total: row.total_dids, lanes };
-	} catch {
-		return EMPTY;
-	}
+  try {
+    const lanes = JSON.parse(row.lanes_json) as MentionLane[];
+    return { total: row.total_dids, lanes };
+  } catch {
+    return EMPTY;
+  }
 }
 
 /**
@@ -233,29 +225,25 @@ function rowToMentions(row: MentionCacheRow): ArticleMentions {
  * `normUrl` is null when the URL isn't a usable http(s) target.
  */
 export function readCachedMentions(
-	db: Database,
-	rawUrl: string,
-	now: number,
+  db: Database,
+  rawUrl: string,
+  now: number
 ): {
-	normUrl: string | null;
-	mentions: ArticleMentions;
-	shouldEnrich: boolean;
+  normUrl: string | null;
+  mentions: ArticleMentions;
+  shouldEnrich: boolean;
 } {
-	const normUrl = normalizeArticleUrl(rawUrl);
-	if (!normUrl) return { normUrl: null, mentions: EMPTY, shouldEnrich: false };
+  const normUrl = normalizeArticleUrl(rawUrl);
+  if (!normUrl) return { normUrl: null, mentions: EMPTY, shouldEnrich: false };
 
-	const row = db
-		.query<
-			MentionCacheRow,
-			[string]
-		>('SELECT * FROM mention_cache WHERE url_hash = ?')
-		.get(hashUrl(normUrl));
+  const row = db
+    .query<MentionCacheRow, [string]>('SELECT * FROM mention_cache WHERE url_hash = ?')
+    .get(hashUrl(normUrl));
 
-	if (!row) return { normUrl, mentions: EMPTY, shouldEnrich: true };
+  if (!row) return { normUrl, mentions: EMPTY, shouldEnrich: true };
 
-	const mentions =
-		row.total_dids >= MENTION_MIN_DIDS ? rowToMentions(row) : EMPTY;
-	return { normUrl, mentions, shouldEnrich: isDue(row, now) };
+  const mentions = row.total_dids >= MENTION_MIN_DIDS ? rowToMentions(row) : EMPTY;
+  return { normUrl, mentions, shouldEnrich: isDue(row, now) };
 }
 
 /**
@@ -264,42 +252,29 @@ export function readCachedMentions(
  * a settled/fresh row). Preserves `first_seen_at` across updates so the decay
  * curve is anchored to first sighting, not last check. Best-effort — never throws.
  */
-export async function enrichMentions(
-	db: Database,
-	normUrl: string,
-): Promise<void> {
-	const now = Date.now();
-	const existing = db
-		.query<
-			MentionCacheRow,
-			[string]
-		>('SELECT * FROM mention_cache WHERE url_hash = ?')
-		.get(hashUrl(normUrl));
-	if (existing && !isDue(existing, now)) return;
+export async function enrichMentions(db: Database, normUrl: string): Promise<void> {
+  const now = Date.now();
+  const existing = db
+    .query<MentionCacheRow, [string]>('SELECT * FROM mention_cache WHERE url_hash = ?')
+    .get(hashUrl(normUrl));
+  if (existing && !isDue(existing, now)) return;
 
-	let mentions: ArticleMentions;
-	try {
-		mentions = await computeMentions(normUrl);
-	} catch (error) {
-		console.error(`[mentions] enrich error for ${normUrl}:`, error);
-		return;
-	}
+  let mentions: ArticleMentions;
+  try {
+    mentions = await computeMentions(normUrl);
+  } catch (error) {
+    console.error(`[mentions] enrich error for ${normUrl}:`, error);
+    return;
+  }
 
-	const firstSeen = existing?.first_seen_at ?? now;
-	db.run(
-		`INSERT INTO mention_cache (url_hash, url, total_dids, lanes_json, first_seen_at, checked_at)
+  const firstSeen = existing?.first_seen_at ?? now;
+  db.run(
+    `INSERT INTO mention_cache (url_hash, url, total_dids, lanes_json, first_seen_at, checked_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(url_hash) DO UPDATE SET
 			total_dids = excluded.total_dids,
 			lanes_json = excluded.lanes_json,
 			checked_at = excluded.checked_at`,
-		[
-			hashUrl(normUrl),
-			normUrl,
-			mentions.total,
-			JSON.stringify(mentions.lanes),
-			firstSeen,
-			now,
-		],
-	);
+    [hashUrl(normUrl), normUrl, mentions.total, JSON.stringify(mentions.lanes), firstSeen, now]
+  );
 }

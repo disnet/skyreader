@@ -182,7 +182,9 @@ export async function handleCreateSaved(
   } catch (error) {
     console.error('Failed to save item:', error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Failed to save item' }),
+      JSON.stringify({
+        error: error instanceof Error ? error.message : 'Failed to save item',
+      }),
       {
         status: 502,
         headers: { 'Content-Type': 'application/json' },
@@ -513,7 +515,11 @@ export async function handleDeleteSavedByGuid(
       'SELECT rkey, record_uri, item_guid FROM saved_articles WHERE user_did = ? AND item_guid = ?'
     )
       .bind(session.did, guid)
-      .first<{ rkey: string; record_uri: string | null; item_guid: string | null }>();
+      .first<{
+        rkey: string;
+        record_uri: string | null;
+        item_guid: string | null;
+      }>();
 
     if (!row) {
       return new Response(JSON.stringify({ error: 'Not found' }), {

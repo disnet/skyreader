@@ -56,7 +56,11 @@ export function subscriptionDedupKey(input: {
   return `rss:${(input.feedUrl || '').toLowerCase()}`;
 }
 
-type FeedIdentity = { sourceType?: string; subjectDid?: string; feedUrl?: string };
+type FeedIdentity = {
+  sourceType?: string;
+  subjectDid?: string;
+  feedUrl?: string;
+};
 
 /**
  * Feed identity for a subscription, or null when it has none (an RSS row with

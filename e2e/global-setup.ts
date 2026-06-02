@@ -14,7 +14,7 @@ export default function globalSetup() {
   } catch (err: unknown) {
     const stderr =
       err && typeof err === 'object' && 'stderr' in err
-        ? (err as { stderr: Buffer }).stderr?.toString() ?? ''
+        ? ((err as { stderr: Buffer }).stderr?.toString() ?? '')
         : '';
     // If the error is about a duplicate column or table already existing,
     // the local DB already has the migrations applied — that's fine.

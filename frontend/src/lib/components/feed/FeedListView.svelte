@@ -131,7 +131,11 @@
       itemLabelsStore.markAsUnread(article.guid);
     } else {
       // Track item to keep it visible in unread filter for this session
-      feedViewStore.trackSeenThisSession({ type: 'article', item: article, key: article.guid });
+      feedViewStore.trackSeenThisSession({
+        type: 'article',
+        item: article,
+        key: article.guid,
+      });
       const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
       itemLabelsStore.markAsRead(sub?.rkey || '', article.guid, article.url, article.title);
     }
@@ -142,7 +146,11 @@
       itemLabelsStore.markSocialAsUnread(doc.recordUri);
     } else {
       // Track item to keep it visible in unread filter for this session
-      feedViewStore.trackSeenThisSession({ type: 'document', item: doc, key: doc.recordUri });
+      feedViewStore.trackSeenThisSession({
+        type: 'document',
+        item: doc,
+        key: doc.recordUri,
+      });
       itemLabelsStore.markSocialAsRead(
         'document',
         doc.recordUri,

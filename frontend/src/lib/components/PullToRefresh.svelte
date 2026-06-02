@@ -92,8 +92,12 @@
   onMount(() => {
     if (!wrapperEl) return;
 
-    wrapperEl.addEventListener('touchstart', handleTouchStart, { passive: true });
-    wrapperEl.addEventListener('touchmove', handleTouchMove, { passive: false });
+    wrapperEl.addEventListener('touchstart', handleTouchStart, {
+      passive: true,
+    });
+    wrapperEl.addEventListener('touchmove', handleTouchMove, {
+      passive: false,
+    });
     wrapperEl.addEventListener('touchend', handleTouchEnd, { passive: true });
 
     return () => {

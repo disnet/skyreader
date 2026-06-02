@@ -294,7 +294,11 @@ function createSubscriptionsStore() {
    */
   async function updateLocal(
     id: number,
-    updates: { customTitle?: string; customIconUrl?: string; category?: string | null }
+    updates: {
+      customTitle?: string;
+      customIconUrl?: string;
+      category?: string | null;
+    }
   ): Promise<void> {
     // Update IndexedDB immediately for instant UI
     await liveDb.updateSubscriptionLocal(id, updates);
@@ -322,7 +326,11 @@ function createSubscriptionsStore() {
    */
   async function bulkUpdateLocal(
     ids: number[],
-    updates: { customTitle?: string; customIconUrl?: string; category?: string | null }
+    updates: {
+      customTitle?: string;
+      customIconUrl?: string;
+      category?: string | null;
+    }
   ): Promise<void> {
     // Update IndexedDB immediately for instant UI
     await Promise.all(ids.map((id) => liveDb.updateSubscriptionLocal(id, updates)));

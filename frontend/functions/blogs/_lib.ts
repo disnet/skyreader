@@ -180,7 +180,11 @@ export async function fetchPublicationMeta(did: string): Promise<PublicationMeta
     const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${params}`);
     if (!res.ok) return null;
     const data = (await res.json()) as {
-      value?: { name?: string; description?: string; icon?: { ref?: { $link?: string } } };
+      value?: {
+        name?: string;
+        description?: string;
+        icon?: { ref?: { $link?: string } };
+      };
     };
     const value = data.value;
     if (!value) return null;
@@ -202,13 +206,17 @@ export async function fetchPublicationMeta(did: string): Promise<PublicationMeta
 // returns [] on any error so the page still renders.
 export async function fetchLinkblogDocuments(env: BlogEnv, did: string): Promise<ProxyDocument[]> {
   try {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
     if (env.FEED_PROXY_SECRET) headers['X-Proxy-Secret'] = env.FEED_PROXY_SECRET;
 
     const res = await fetch(`${env.FEED_PROXY_URL}/documents`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ authors: [{ did, siteUri: publicationUri(did) }] }),
+      body: JSON.stringify({
+        authors: [{ did, siteUri: publicationUri(did) }],
+      }),
     });
     if (!res.ok) return [];
 
@@ -284,12 +292,19 @@ export interface SocialContext {
 // it for a counts-only lookup (used on the index to keep SSR fast).
 export async function fetchSocialContext(
   env: BlogEnv,
-  items: Array<{ key: string; docUri?: string; articleUrl?: string; excludeDid?: string }>
+  items: Array<{
+    key: string;
+    docUri?: string;
+    articleUrl?: string;
+    excludeDid?: string;
+  }>
 ): Promise<Map<string, SocialContext>> {
   const out = new Map<string, SocialContext>();
   if (items.length === 0) return out;
   try {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
     if (env.FEED_PROXY_SECRET) headers['X-Proxy-Secret'] = env.FEED_PROXY_SECRET;
 
     const res = await fetch(`${env.FEED_PROXY_URL}/social-context`, {
@@ -450,7 +465,11 @@ export function blogTitle(profile: Profile | null, pub: PublicationMeta | null):
 export function formatDate(iso: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
-  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  return d.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
 }
 
 export function hostnameOf(url: string | undefined): string | null {

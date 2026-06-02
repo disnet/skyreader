@@ -85,7 +85,11 @@ describe('reconcileDocuments', () => {
   });
 
   it('does not touch other authors', () => {
-    const other = doc({ authorDid: 'did:plc:other', recordUri: 'other1', siteUri: PUB_A });
+    const other = doc({
+      authorDid: 'did:plc:other',
+      recordUri: 'other1',
+      siteUri: PUB_A,
+    });
     const result = reconcileDocuments([other], [ready(AUTHOR, undefined, [])]);
     expect(result.map((d) => d.recordUri)).toEqual(['other1']);
   });
@@ -145,7 +149,11 @@ describe('buildDocumentRequests', () => {
 
   it('keeps only atproto.documents subscriptions with a subjectDid', () => {
     const requests = buildDocumentRequests([
-      sub({ sourceType: 'atproto.documents', subjectDid: AUTHOR, feedUrl: PUB_A }),
+      sub({
+        sourceType: 'atproto.documents',
+        subjectDid: AUTHOR,
+        feedUrl: PUB_A,
+      }),
       sub({ feedUrl: 'https://example.com/rss.xml' }), // RSS — ignored
       sub({ sourceType: 'atproto.documents' }), // missing subjectDid — ignored
     ]);

@@ -321,9 +321,15 @@
     document.addEventListener('keydown', handleKeydown, true);
     // The reader is a DOM child of PullToRefresh, so touch events bubble up
     // and trigger pull-to-refresh even though the reader is a fixed overlay.
-    overlayEl?.addEventListener('touchstart', stopTouchPropagation, { passive: true });
-    overlayEl?.addEventListener('touchmove', stopTouchPropagation, { passive: true });
-    overlayEl?.addEventListener('touchend', stopTouchPropagation, { passive: true });
+    overlayEl?.addEventListener('touchstart', stopTouchPropagation, {
+      passive: true,
+    });
+    overlayEl?.addEventListener('touchmove', stopTouchPropagation, {
+      passive: true,
+    });
+    overlayEl?.addEventListener('touchend', stopTouchPropagation, {
+      passive: true,
+    });
   });
   onDestroy(() => {
     document.body.style.overflow = '';

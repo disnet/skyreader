@@ -3,13 +3,13 @@ import { getUser, getUserSubscriptions } from '$lib/queries/users';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ platform, params }) => {
-	const db = platform!.env.DB;
-	const did = decodeURIComponent(params.did);
+  const db = platform!.env.DB;
+  const did = decodeURIComponent(params.did);
 
-	const user = await getUser(db, did);
-	if (!user) throw error(404, 'User not found');
+  const user = await getUser(db, did);
+  if (!user) throw error(404, 'User not found');
 
-	const subscriptions = await getUserSubscriptions(db, did);
+  const subscriptions = await getUserSubscriptions(db, did);
 
-	return { user, subscriptions };
+  return { user, subscriptions };
 };

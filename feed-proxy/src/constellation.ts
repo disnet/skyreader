@@ -34,172 +34,183 @@ const FETCH_TIMEOUT_MS = 10 * 1000;
 
 // Identify ourselves honestly to Constellation (their request), per LINKBLOG_PLAN.
 const CONSTELLATION_HEADERS = {
-	'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)',
+  'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)',
 };
 
 export interface AlsoLinkedEntry {
-	did: string;
-	handle: string | null;
-	note: string | null;
-	recordUri: string;
+  did: string;
+  handle: string | null;
+  note: string | null;
+  recordUri: string;
 }
 
 export interface SocialContext {
-	recommendCount: number;
-	quoteCount: number;
-	alsoLinkedBy: AlsoLinkedEntry[];
+  recommendCount: number;
+  quoteCount: number;
+  alsoLinkedBy: AlsoLinkedEntry[];
 }
 
 export interface SocialContextQuery {
-	// The link post's own record AT URI — for recommend + quote counts.
-	docUri?: string;
-	// The external article URL the link post points at — for "also linked by".
-	articleUrl?: string;
-	// Omit this DID from "also linked by" (typically the link post's own author).
-	excludeDid?: string;
+  // The link post's own record AT URI — for recommend + quote counts.
+  docUri?: string;
+  // The external article URL the link post points at — for "also linked by".
+  articleUrl?: string;
+  // Omit this DID from "also linked by" (typically the link post's own author).
+  excludeDid?: string;
 }
 
 interface ConstellationCountResponse {
-	total?: number;
+  total?: number;
 }
 
 interface ConstellationLinksResponse {
-	total?: number;
-	linking_records?: Array<{ did: string; collection: string; rkey: string }>;
-	cursor?: string;
+  total?: number;
+  linking_records?: Array<{ did: string; collection: string; rkey: string }>;
+  cursor?: string;
 }
 
 interface CacheRow {
-	cache_key: string;
-	context_json: string;
-	cached_at: number;
+  cache_key: string;
+  context_json: string;
+  cached_at: number;
 }
 
-const EMPTY: SocialContext = { recommendCount: 0, quoteCount: 0, alsoLinkedBy: [] };
+const EMPTY: SocialContext = {
+  recommendCount: 0,
+  quoteCount: 0,
+  alsoLinkedBy: [],
+};
 
-async function constellationGet<T>(path: string, params: Record<string, string>): Promise<T | null> {
-	try {
-		const qs = new URLSearchParams(params);
-		const res = await fetch(`${CONSTELLATION_BASE}${path}?${qs}`, {
-			headers: CONSTELLATION_HEADERS,
-			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-		});
-		if (!res.ok) return null;
-		return (await res.json()) as T;
-	} catch (error) {
-		console.error(`[constellation] ${path} error:`, error);
-		return null;
-	}
+async function constellationGet<T>(
+  path: string,
+  params: Record<string, string>
+): Promise<T | null> {
+  try {
+    const qs = new URLSearchParams(params);
+    const res = await fetch(`${CONSTELLATION_BASE}${path}?${qs}`, {
+      headers: CONSTELLATION_HEADERS,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch (error) {
+    console.error(`[constellation] ${path} error:`, error);
+    return null;
+  }
 }
 
 // Distinct-DID count of recommends pointing at a link post's record.
 async function fetchRecommendCount(docUri: string): Promise<number> {
-	const data = await constellationGet<ConstellationCountResponse>('/links/count/distinct-dids', {
-		target: docUri,
-		collection: RECOMMEND_COLLECTION,
-		path: RECOMMEND_PATH,
-	});
-	return data?.total ?? 0;
+  const data = await constellationGet<ConstellationCountResponse>('/links/count/distinct-dids', {
+    target: docUri,
+    collection: RECOMMEND_COLLECTION,
+    path: RECOMMEND_PATH,
+  });
+  return data?.total ?? 0;
 }
 
 // Count of documents whose `links` ref points at this doc (quote-reshares of it).
 async function fetchQuoteCount(docUri: string): Promise<number> {
-	const data = await constellationGet<ConstellationCountResponse>('/links/count', {
-		target: docUri,
-		collection: DOCUMENT_COLLECTION,
-		path: LINKS_PATH,
-	});
-	return data?.total ?? 0;
+  const data = await constellationGet<ConstellationCountResponse>('/links/count', {
+    target: docUri,
+    collection: DOCUMENT_COLLECTION,
+    path: LINKS_PATH,
+  });
+  return data?.total ?? 0;
 }
 
 interface RawDocValue {
-	description?: string;
-	textContent?: string;
-	content?: unknown;
+  description?: string;
+  textContent?: string;
+  content?: unknown;
 }
 
 // Extract the note (commentary) from a link-post document record: the leading
 // pub.leaflet text block, falling back to description/textContent. Mirrors the
 // frontend's getLinkPostNote so "also linked by" notes read the same.
 function extractNote(value: RawDocValue): string | null {
-	const content = value.content as
-		| { pages?: Array<{ blocks?: Array<{ block?: { $type?: string; plaintext?: string } }> }> }
-		| undefined;
-	for (const page of content?.pages ?? []) {
-		for (const wrapper of page.blocks ?? []) {
-			if (wrapper.block?.$type === 'pub.leaflet.blocks.text') {
-				const text = wrapper.block.plaintext?.trim();
-				if (text) return text;
-			}
-		}
-	}
-	const fallback = (value.description || value.textContent || '').trim();
-	return fallback || null;
+  const content = value.content as
+    | {
+        pages?: Array<{
+          blocks?: Array<{ block?: { $type?: string; plaintext?: string } }>;
+        }>;
+      }
+    | undefined;
+  for (const page of content?.pages ?? []) {
+    for (const wrapper of page.blocks ?? []) {
+      if (wrapper.block?.$type === 'pub.leaflet.blocks.text') {
+        const text = wrapper.block.plaintext?.trim();
+        if (text) return text;
+      }
+    }
+  }
+  const fallback = (value.description || value.textContent || '').trim();
+  return fallback || null;
 }
 
 // Fetch a single linker's document record to pull its note, and resolve a handle.
 async function resolveAlsoLinked(
-	db: Database,
-	rec: { did: string; rkey: string }
+  db: Database,
+  rec: { did: string; rkey: string }
 ): Promise<AlsoLinkedEntry | null> {
-	const recordUri = `at://${rec.did}/${DOCUMENT_COLLECTION}/${rec.rkey}`;
-	const [pdsUrl, handle] = await Promise.all([
-		resolvePdsUrl(db, rec.did),
-		resolveHandle(db, rec.did),
-	]);
-	let note: string | null = null;
-	if (pdsUrl) {
-		try {
-			const qs = new URLSearchParams({
-				repo: rec.did,
-				collection: DOCUMENT_COLLECTION,
-				rkey: rec.rkey,
-			});
-			const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${qs}`, {
-				signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-			});
-			if (res.ok) {
-				const data = (await res.json()) as { value?: RawDocValue };
-				if (data.value) note = extractNote(data.value);
-			}
-		} catch (error) {
-			console.error(`[constellation] getRecord error for ${recordUri}:`, error);
-		}
-	}
-	return { did: rec.did, handle, note, recordUri };
+  const recordUri = `at://${rec.did}/${DOCUMENT_COLLECTION}/${rec.rkey}`;
+  const [pdsUrl, handle] = await Promise.all([
+    resolvePdsUrl(db, rec.did),
+    resolveHandle(db, rec.did),
+  ]);
+  let note: string | null = null;
+  if (pdsUrl) {
+    try {
+      const qs = new URLSearchParams({
+        repo: rec.did,
+        collection: DOCUMENT_COLLECTION,
+        rkey: rec.rkey,
+      });
+      const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${qs}`, {
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { value?: RawDocValue };
+        if (data.value) note = extractNote(data.value);
+      }
+    } catch (error) {
+      console.error(`[constellation] getRecord error for ${recordUri}:`, error);
+    }
+  }
+  return { did: rec.did, handle, note, recordUri };
 }
 
 // Other link posts across the Atmosphere pointing at the same external article.
 async function fetchAlsoLinkedBy(
-	db: Database,
-	articleUrl: string,
-	excludeDid?: string
+  db: Database,
+  articleUrl: string,
+  excludeDid?: string
 ): Promise<AlsoLinkedEntry[]> {
-	const data = await constellationGet<ConstellationLinksResponse>('/links', {
-		target: articleUrl,
-		collection: DOCUMENT_COLLECTION,
-		path: LINKS_PATH,
-		limit: String(MAX_ALSO_LINKED * 2), // over-fetch; we filter + dedup below
-	});
-	const records = data?.linking_records ?? [];
+  const data = await constellationGet<ConstellationLinksResponse>('/links', {
+    target: articleUrl,
+    collection: DOCUMENT_COLLECTION,
+    path: LINKS_PATH,
+    limit: String(MAX_ALSO_LINKED * 2), // over-fetch; we filter + dedup below
+  });
+  const records = data?.linking_records ?? [];
 
-	// One entry per distinct author (a user may have linked the article more than
-	// once), excluding the link post's own author, capped.
-	const seen = new Set<string>();
-	const picked: Array<{ did: string; rkey: string }> = [];
-	for (const rec of records) {
-		if (rec.did === excludeDid || seen.has(rec.did)) continue;
-		seen.add(rec.did);
-		picked.push({ did: rec.did, rkey: rec.rkey });
-		if (picked.length >= MAX_ALSO_LINKED) break;
-	}
+  // One entry per distinct author (a user may have linked the article more than
+  // once), excluding the link post's own author, capped.
+  const seen = new Set<string>();
+  const picked: Array<{ did: string; rkey: string }> = [];
+  for (const rec of records) {
+    if (rec.did === excludeDid || seen.has(rec.did)) continue;
+    seen.add(rec.did);
+    picked.push({ did: rec.did, rkey: rec.rkey });
+    if (picked.length >= MAX_ALSO_LINKED) break;
+  }
 
-	const resolved = await Promise.all(picked.map((rec) => resolveAlsoLinked(db, rec)));
-	return resolved.filter((e): e is AlsoLinkedEntry => e !== null);
+  const resolved = await Promise.all(picked.map((rec) => resolveAlsoLinked(db, rec)));
+  return resolved.filter((e): e is AlsoLinkedEntry => e !== null);
 }
 
 function cacheKey(query: SocialContextQuery): string {
-	return `${query.docUri || ''}|${query.articleUrl || ''}|${query.excludeDid || ''}`;
+  return `${query.docUri || ''}|${query.articleUrl || ''}|${query.excludeDid || ''}`;
 }
 
 /**
@@ -208,35 +219,36 @@ function cacheKey(query: SocialContextQuery): string {
  * partial Constellation/PDS outage still returns whatever resolved.
  */
 export async function getSocialContext(
-	db: Database,
-	query: SocialContextQuery
+  db: Database,
+  query: SocialContextQuery
 ): Promise<SocialContext> {
-	if (!query.docUri && !query.articleUrl) return EMPTY;
+  if (!query.docUri && !query.articleUrl) return EMPTY;
 
-	const key = cacheKey(query);
-	const now = Date.now();
-	const cached = db
-		.query<CacheRow, [string]>(
-			'SELECT cache_key, context_json, cached_at FROM constellation_cache WHERE cache_key = ?'
-		)
-		.get(key);
-	if (cached && now - cached.cached_at < CONTEXT_CACHE_TTL_MS) {
-		return JSON.parse(cached.context_json) as SocialContext;
-	}
+  const key = cacheKey(query);
+  const now = Date.now();
+  const cached = db
+    .query<
+      CacheRow,
+      [string]
+    >('SELECT cache_key, context_json, cached_at FROM constellation_cache WHERE cache_key = ?')
+    .get(key);
+  if (cached && now - cached.cached_at < CONTEXT_CACHE_TTL_MS) {
+    return JSON.parse(cached.context_json) as SocialContext;
+  }
 
-	const [recommendCount, quoteCount, alsoLinkedBy] = await Promise.all([
-		query.docUri ? fetchRecommendCount(query.docUri) : Promise.resolve(0),
-		query.docUri ? fetchQuoteCount(query.docUri) : Promise.resolve(0),
-		query.articleUrl
-			? fetchAlsoLinkedBy(db, query.articleUrl, query.excludeDid)
-			: Promise.resolve([] as AlsoLinkedEntry[]),
-	]);
+  const [recommendCount, quoteCount, alsoLinkedBy] = await Promise.all([
+    query.docUri ? fetchRecommendCount(query.docUri) : Promise.resolve(0),
+    query.docUri ? fetchQuoteCount(query.docUri) : Promise.resolve(0),
+    query.articleUrl
+      ? fetchAlsoLinkedBy(db, query.articleUrl, query.excludeDid)
+      : Promise.resolve([] as AlsoLinkedEntry[]),
+  ]);
 
-	const context: SocialContext = { recommendCount, quoteCount, alsoLinkedBy };
-	db.run(
-		`INSERT INTO constellation_cache (cache_key, context_json, cached_at) VALUES (?, ?, ?)
+  const context: SocialContext = { recommendCount, quoteCount, alsoLinkedBy };
+  db.run(
+    `INSERT INTO constellation_cache (cache_key, context_json, cached_at) VALUES (?, ?, ?)
 		ON CONFLICT(cache_key) DO UPDATE SET context_json = excluded.context_json, cached_at = excluded.cached_at`,
-		[key, JSON.stringify(context), now]
-	);
-	return context;
+    [key, JSON.stringify(context), now]
+  );
+  return context;
 }

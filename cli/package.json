@@ -13,6 +13,9 @@
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "check": "tsc --noEmit && prettier --check .",
+    "check:types": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -39,7 +42,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "prettier": "^3.4.2",
+    "prettier": "^3.8.1",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }

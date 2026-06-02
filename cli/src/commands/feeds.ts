@@ -35,7 +35,12 @@ interface BatchResponse {
 }
 
 interface SubscriptionRecord {
-  value: { feedUrl: string; title?: string; customTitle?: string; sourceType?: string };
+  value: {
+    feedUrl: string;
+    title?: string;
+    customTitle?: string;
+    sourceType?: string;
+  };
 }
 
 interface RecordsResponse {
@@ -57,12 +62,22 @@ export const feedsCommand = new Command('feeds')
   .option('--limit <n>', 'Max items per feed', '20')
   .option('--content', 'Include article content in output')
   .option('--unread', 'Only show unread articles')
-  .option('--since <date>', 'Only show articles published after this date (e.g. 2024-01-01, "3 days ago")')
+  .option(
+    '--since <date>',
+    'Only show articles published after this date (e.g. 2024-01-01, "3 days ago")'
+  )
   .option('--json', 'Output as JSON')
   .action(
     async (
       url: string | undefined,
-      opts: { all?: boolean; limit: string; content?: boolean; unread?: boolean; since?: string; json?: boolean }
+      opts: {
+        all?: boolean;
+        limit: string;
+        content?: boolean;
+        unread?: boolean;
+        since?: string;
+        json?: boolean;
+      }
     ) => {
       const client = getClient();
       const limit = parseInt(opts.limit, 10);
@@ -131,7 +146,10 @@ export const feedsCommand = new Command('feeds')
             if (feed.error) {
               filteredData.feeds[feedUrl] = feed;
             } else {
-              filteredData.feeds[feedUrl] = { ...feed, items: filterItems(feed.items, readGuids, sinceDate) };
+              filteredData.feeds[feedUrl] = {
+                ...feed,
+                items: filterItems(feed.items, readGuids, sinceDate),
+              };
             }
           }
           outputJson(filteredData);

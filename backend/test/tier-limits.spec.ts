@@ -9,7 +9,10 @@ describe('Tier Limits Config', () => {
   describe('getLimitsForTier', () => {
     it('returns free tier limits', () => {
       const limits = getLimitsForTier('free');
-      expect(limits).toEqual({ maxSubscriptions: 100, maxUrlSavesPerMonth: 100 });
+      expect(limits).toEqual({
+        maxSubscriptions: 100,
+        maxUrlSavesPerMonth: 100,
+      });
     });
 
     it('returns supporter tier limits', () => {
@@ -22,12 +25,18 @@ describe('Tier Limits Config', () => {
 
     it('falls back to free for unknown tier', () => {
       const limits = getLimitsForTier('unknown');
-      expect(limits).toEqual({ maxSubscriptions: 100, maxUrlSavesPerMonth: 100 });
+      expect(limits).toEqual({
+        maxSubscriptions: 100,
+        maxUrlSavesPerMonth: 100,
+      });
     });
 
     it('falls back to free for empty string', () => {
       const limits = getLimitsForTier('');
-      expect(limits).toEqual({ maxSubscriptions: 100, maxUrlSavesPerMonth: 100 });
+      expect(limits).toEqual({
+        maxSubscriptions: 100,
+        maxUrlSavesPerMonth: 100,
+      });
     });
   });
 
@@ -104,7 +113,10 @@ describe('User Tier Service', () => {
         .run();
 
       const limits = await getUserTierLimits(env, TEST_DID);
-      expect(limits).toEqual({ maxSubscriptions: 100, maxUrlSavesPerMonth: 100 });
+      expect(limits).toEqual({
+        maxSubscriptions: 100,
+        maxUrlSavesPerMonth: 100,
+      });
     });
 
     it('returns supporter limits for a supporter user', async () => {
@@ -123,7 +135,10 @@ describe('User Tier Service', () => {
 
     it('returns free limits for a non-existent user', async () => {
       const limits = await getUserTierLimits(env, 'did:plc:nonexistent');
-      expect(limits).toEqual({ maxSubscriptions: 100, maxUrlSavesPerMonth: 100 });
+      expect(limits).toEqual({
+        maxSubscriptions: 100,
+        maxUrlSavesPerMonth: 100,
+      });
     });
   });
 

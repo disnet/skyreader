@@ -4,39 +4,254 @@
   "title": "Design System: Skyreader",
   "extensions": {
     "colorMeta": {
-      "primary": { "role": "primary", "displayName": "Skyreader Blue", "canonical": "#0066cc", "tonalRamp": ["#001b33", "#002b52", "#003e75", "#005299", "#0066cc", "#3389d6", "#74b1e3", "#cce3f5"] },
-      "primary-dark": { "role": "primary", "displayName": "Pressed Blue", "canonical": "#0052a3", "tonalRamp": ["#001426", "#002247", "#003366", "#00427f", "#0052a3", "#2e7bc4", "#6fa9dd", "#c7e0f3"] },
-      "sky": { "role": "secondary", "displayName": "Sky Identity", "canonical": "#4a9fd4", "tonalRamp": ["#0f2e44", "#16475f", "#1f6388", "#2f82ac", "#4a9fd4", "#74b6df", "#a6d2ec", "#dceef8"] },
-      "highlight": { "role": "tertiary", "displayName": "Highlight Gold", "canonical": "#f5c518", "tonalRamp": ["#3d3104", "#5c4a06", "#7a630a", "#a8850d", "#d6a912", "#f5c518", "#f8d556", "#fdeeb0"] },
-      "bg": { "role": "neutral", "displayName": "Surface", "canonical": "#ffffff", "tonalRamp": ["#1a1a1a", "#333333", "#4d4d4d", "#737373", "#999999", "#bfbfbf", "#e0e0e0", "#ffffff"] },
-      "bg-secondary": { "role": "neutral", "displayName": "Sunken", "canonical": "#f5f5f5", "tonalRamp": ["#2a2a2a", "#404040", "#595959", "#808080", "#a6a6a6", "#cccccc", "#e8e8e8", "#f5f5f5"] },
-      "text": { "role": "neutral", "displayName": "Ink", "canonical": "#333333", "tonalRamp": ["#0d0d0d", "#1a1a1a", "#262626", "#333333", "#4d4d4d", "#737373", "#999999", "#cccccc"] },
-      "text-secondary": { "role": "neutral", "displayName": "Muted Ink", "canonical": "#666666", "tonalRamp": ["#1a1a1a", "#333333", "#4d4d4d", "#666666", "#808080", "#999999", "#b3b3b3", "#d9d9d9"] },
-      "border": { "role": "neutral", "displayName": "Divider", "canonical": "#e0e0e0", "tonalRamp": ["#404040", "#595959", "#737373", "#8c8c8c", "#a6a6a6", "#c0c0c0", "#e0e0e0", "#f2f2f2"] },
-      "success": { "role": "semantic", "displayName": "Success Green", "canonical": "#4caf50", "tonalRamp": ["#10300f", "#1a4a18", "#266b23", "#327f2f", "#4caf50", "#74c476", "#a4d9a6", "#d8efd9"] },
-      "warning": { "role": "semantic", "displayName": "Warning Amber", "canonical": "#ff9800", "tonalRamp": ["#3d2500", "#5c3800", "#7a4b00", "#a86600", "#d68000", "#ff9800", "#ffb74d", "#ffe0b2"] },
-      "error": { "role": "semantic", "displayName": "Error Red", "canonical": "#f44336", "tonalRamp": ["#3d0f0b", "#5c1712", "#7a1f18", "#a82a20", "#d6362a", "#f44336", "#f88078", "#fcc7c2"] }
+      "primary": {
+        "role": "primary",
+        "displayName": "Skyreader Blue",
+        "canonical": "#0066cc",
+        "tonalRamp": [
+          "#001b33",
+          "#002b52",
+          "#003e75",
+          "#005299",
+          "#0066cc",
+          "#3389d6",
+          "#74b1e3",
+          "#cce3f5"
+        ]
+      },
+      "primary-dark": {
+        "role": "primary",
+        "displayName": "Pressed Blue",
+        "canonical": "#0052a3",
+        "tonalRamp": [
+          "#001426",
+          "#002247",
+          "#003366",
+          "#00427f",
+          "#0052a3",
+          "#2e7bc4",
+          "#6fa9dd",
+          "#c7e0f3"
+        ]
+      },
+      "sky": {
+        "role": "secondary",
+        "displayName": "Sky Identity",
+        "canonical": "#4a9fd4",
+        "tonalRamp": [
+          "#0f2e44",
+          "#16475f",
+          "#1f6388",
+          "#2f82ac",
+          "#4a9fd4",
+          "#74b6df",
+          "#a6d2ec",
+          "#dceef8"
+        ]
+      },
+      "highlight": {
+        "role": "tertiary",
+        "displayName": "Highlight Gold",
+        "canonical": "#f5c518",
+        "tonalRamp": [
+          "#3d3104",
+          "#5c4a06",
+          "#7a630a",
+          "#a8850d",
+          "#d6a912",
+          "#f5c518",
+          "#f8d556",
+          "#fdeeb0"
+        ]
+      },
+      "bg": {
+        "role": "neutral",
+        "displayName": "Surface",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "#1a1a1a",
+          "#333333",
+          "#4d4d4d",
+          "#737373",
+          "#999999",
+          "#bfbfbf",
+          "#e0e0e0",
+          "#ffffff"
+        ]
+      },
+      "bg-secondary": {
+        "role": "neutral",
+        "displayName": "Sunken",
+        "canonical": "#f5f5f5",
+        "tonalRamp": [
+          "#2a2a2a",
+          "#404040",
+          "#595959",
+          "#808080",
+          "#a6a6a6",
+          "#cccccc",
+          "#e8e8e8",
+          "#f5f5f5"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#333333",
+        "tonalRamp": [
+          "#0d0d0d",
+          "#1a1a1a",
+          "#262626",
+          "#333333",
+          "#4d4d4d",
+          "#737373",
+          "#999999",
+          "#cccccc"
+        ]
+      },
+      "text-secondary": {
+        "role": "neutral",
+        "displayName": "Muted Ink",
+        "canonical": "#666666",
+        "tonalRamp": [
+          "#1a1a1a",
+          "#333333",
+          "#4d4d4d",
+          "#666666",
+          "#808080",
+          "#999999",
+          "#b3b3b3",
+          "#d9d9d9"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Divider",
+        "canonical": "#e0e0e0",
+        "tonalRamp": [
+          "#404040",
+          "#595959",
+          "#737373",
+          "#8c8c8c",
+          "#a6a6a6",
+          "#c0c0c0",
+          "#e0e0e0",
+          "#f2f2f2"
+        ]
+      },
+      "success": {
+        "role": "semantic",
+        "displayName": "Success Green",
+        "canonical": "#4caf50",
+        "tonalRamp": [
+          "#10300f",
+          "#1a4a18",
+          "#266b23",
+          "#327f2f",
+          "#4caf50",
+          "#74c476",
+          "#a4d9a6",
+          "#d8efd9"
+        ]
+      },
+      "warning": {
+        "role": "semantic",
+        "displayName": "Warning Amber",
+        "canonical": "#ff9800",
+        "tonalRamp": [
+          "#3d2500",
+          "#5c3800",
+          "#7a4b00",
+          "#a86600",
+          "#d68000",
+          "#ff9800",
+          "#ffb74d",
+          "#ffe0b2"
+        ]
+      },
+      "error": {
+        "role": "semantic",
+        "displayName": "Error Red",
+        "canonical": "#f44336",
+        "tonalRamp": [
+          "#3d0f0b",
+          "#5c1712",
+          "#7a1f18",
+          "#a82a20",
+          "#d6362a",
+          "#f44336",
+          "#f88078",
+          "#fcc7c2"
+        ]
+      }
     },
     "typographyMeta": {
-      "headline": { "displayName": "Headline", "purpose": "Page and major section titles. The largest type in the chrome (1.25rem ceiling)." },
-      "title": { "displayName": "Title", "purpose": "Article titles in list/card rows and modal headers." },
-      "body": { "displayName": "Body", "purpose": "Default UI text and controls." },
-      "article": { "displayName": "Article", "purpose": "The reading surface. Reader-controlled font family and size; measure capped 65-75ch." },
-      "label": { "displayName": "Label", "purpose": "Metadata, timestamps, feed names. Muted Ink, never below 4.5:1." }
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Page and major section titles. The largest type in the chrome (1.25rem ceiling)."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Article titles in list/card rows and modal headers."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default UI text and controls."
+      },
+      "article": {
+        "displayName": "Article",
+        "purpose": "The reading surface. Reader-controlled font family and size; measure capped 65-75ch."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Metadata, timestamps, feed names. Muted Ink, never below 4.5:1."
+      }
     },
     "shadows": [
-      { "name": "raised", "value": "0 2px 8px rgba(0,0,0,0.1)", "purpose": "Small floating elements: popover menus, tooltips, context menus. Dark mode bumps to 0.3." },
-      { "name": "floating", "value": "0 4px 16px rgba(0,0,0,0.15)", "purpose": "Mid-level overlays: dropdowns, toasts. Dark mode bumps to 0.4." },
-      { "name": "overlay", "value": "0 8px 32px rgba(0,0,0,0.25)", "purpose": "Modals and dialogs above a backdrop. Dark mode bumps to 0.5." },
-      { "name": "focus-ring", "value": "0 0 0 2px rgba(0,102,204,0.1)", "purpose": "Primary-tinted focus indicator on interactive elements." }
+      {
+        "name": "raised",
+        "value": "0 2px 8px rgba(0,0,0,0.1)",
+        "purpose": "Small floating elements: popover menus, tooltips, context menus. Dark mode bumps to 0.3."
+      },
+      {
+        "name": "floating",
+        "value": "0 4px 16px rgba(0,0,0,0.15)",
+        "purpose": "Mid-level overlays: dropdowns, toasts. Dark mode bumps to 0.4."
+      },
+      {
+        "name": "overlay",
+        "value": "0 8px 32px rgba(0,0,0,0.25)",
+        "purpose": "Modals and dialogs above a backdrop. Dark mode bumps to 0.5."
+      },
+      {
+        "name": "focus-ring",
+        "value": "0 0 0 2px rgba(0,102,204,0.1)",
+        "purpose": "Primary-tinted focus indicator on interactive elements."
+      }
     ],
     "motion": [
-      { "name": "ease-standard", "value": "ease", "purpose": "Default easing for state transitions." },
-      { "name": "duration-fast", "value": "0.15s", "purpose": "Color, opacity, and background state changes (hover, active)." },
-      { "name": "duration-base", "value": "0.2s", "purpose": "Button background shifts and larger state transitions." }
+      {
+        "name": "ease-standard",
+        "value": "ease",
+        "purpose": "Default easing for state transitions."
+      },
+      {
+        "name": "duration-fast",
+        "value": "0.15s",
+        "purpose": "Color, opacity, and background state changes (hover, active)."
+      },
+      {
+        "name": "duration-base",
+        "value": "0.2s",
+        "purpose": "Button background shifts and larger state transitions."
+      }
     ],
     "breakpoints": [
-      { "name": "mobile", "value": "768px", "purpose": "Below this the sidebar collapses to an overlay drawer and the bottom bar appears." }
+      {
+        "name": "mobile",
+        "value": "768px",
+        "purpose": "Below this the sidebar collapses to an overlay drawer and the bottom bar appears."
+      }
     ]
   },
   "components": [
@@ -100,11 +315,31 @@
       "Calm density: efficient for many feeds, never cramped."
     ],
     "rules": [
-      { "name": "The One Blue Rule", "body": "There is exactly one interaction blue: #0066cc (--color-primary). The values #2563eb, #3b82f6, and #0085ff in the current code are drift, not palette, and are scheduled for consolidation. Never introduce a new blue.", "section": "colors" },
-      { "name": "The Reserved Color Rule", "body": "Outside of the one blue and the semantic trio, the interface is neutral. Color is an event: an unread dot, a highlight, a sync state. No screen has more than one non-neutral hue competing for attention (excluding semantic state).", "section": "colors" },
-      { "name": "The One Voice Rule", "body": "The chrome uses a single typeface family. Hierarchy comes from weight (400 vs 600) and size, never from a second UI font. The only typographic variety the user sees is the one they chose for the article body.", "section": "typography" },
-      { "name": "The No-Shout Rule", "body": "UI headings top out around 1.25rem. There is no hero display type; oversized headings would be chrome competing with content.", "section": "typography" },
-      { "name": "The Flat-By-Default Rule", "body": "A surface at rest casts no shadow. If you are adding a box-shadow to a card, list row, or panel in the page flow, stop - use a border or a tonal background instead. Shadow signals that an element has left the page plane.", "section": "elevation" }
+      {
+        "name": "The One Blue Rule",
+        "body": "There is exactly one interaction blue: #0066cc (--color-primary). The values #2563eb, #3b82f6, and #0085ff in the current code are drift, not palette, and are scheduled for consolidation. Never introduce a new blue.",
+        "section": "colors"
+      },
+      {
+        "name": "The Reserved Color Rule",
+        "body": "Outside of the one blue and the semantic trio, the interface is neutral. Color is an event: an unread dot, a highlight, a sync state. No screen has more than one non-neutral hue competing for attention (excluding semantic state).",
+        "section": "colors"
+      },
+      {
+        "name": "The One Voice Rule",
+        "body": "The chrome uses a single typeface family. Hierarchy comes from weight (400 vs 600) and size, never from a second UI font. The only typographic variety the user sees is the one they chose for the article body.",
+        "section": "typography"
+      },
+      {
+        "name": "The No-Shout Rule",
+        "body": "UI headings top out around 1.25rem. There is no hero display type; oversized headings would be chrome competing with content.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-By-Default Rule",
+        "body": "A surface at rest casts no shadow. If you are adding a box-shadow to a card, list row, or panel in the page flow, stop - use a border or a tonal background instead. Shadow signals that an element has left the page plane.",
+        "section": "elevation"
+      }
     ],
     "dos": [
       "Do use exactly one interaction blue, #0066cc (--color-primary). Consolidate any #2563eb / #3b82f6 / #0085ff you encounter into the token.",

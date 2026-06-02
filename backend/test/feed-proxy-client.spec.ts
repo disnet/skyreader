@@ -55,10 +55,15 @@ describe('FeedProxyClient', () => {
   describe('JSON proxy responses', () => {
     it('returns discovered feeds on success', async () => {
       globalThis.fetch = vi.fn().mockResolvedValueOnce(
-        new Response(JSON.stringify({ feeds: ['https://www.cbc.ca/webfeed/rss/rss-topstories'] }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
+        new Response(
+          JSON.stringify({
+            feeds: ['https://www.cbc.ca/webfeed/rss/rss-topstories'],
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        )
       );
 
       const client = createClient();
@@ -157,7 +162,10 @@ describe('FeedProxyClient', () => {
 
       const client = createClient();
       const result = await client.fetchDocumentsBatch([
-        { did: 'did:plc:abc123', siteUri: 'at://did:plc:abc123/site.standard.publication/pub1' },
+        {
+          did: 'did:plc:abc123',
+          siteUri: 'at://did:plc:abc123/site.standard.publication/pub1',
+        },
       ]);
 
       expect(result).toEqual([entry]);

@@ -2,93 +2,93 @@
 name: Skyreader
 description: A calm, ownable RSS reader built on AT Protocol — reading-first, social without the timeline.
 colors:
-  primary: "#0066cc"
-  primary-dark: "#0052a3"
-  primary-tint: "#e8f4fc"
-  sky: "#4a9fd4"
-  highlight: "#f5c518"
-  bg: "#ffffff"
-  bg-secondary: "#f5f5f5"
-  text: "#333333"
-  text-secondary: "#666666"
-  border: "#e0e0e0"
-  success: "#4caf50"
-  warning: "#ff9800"
-  error: "#f44336"
+  primary: '#0066cc'
+  primary-dark: '#0052a3'
+  primary-tint: '#e8f4fc'
+  sky: '#4a9fd4'
+  highlight: '#f5c518'
+  bg: '#ffffff'
+  bg-secondary: '#f5f5f5'
+  text: '#333333'
+  text-secondary: '#666666'
+  border: '#e0e0e0'
+  success: '#4caf50'
+  warning: '#ff9800'
+  error: '#f44336'
 typography:
   headline:
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-    fontSize: "1.25rem"
+    fontSize: '1.25rem'
     fontWeight: 600
     lineHeight: 1.3
-    letterSpacing: "-0.01em"
+    letterSpacing: '-0.01em'
   title:
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-    fontSize: "1rem"
+    fontSize: '1rem'
     fontWeight: 600
     lineHeight: 1.4
-    letterSpacing: "normal"
+    letterSpacing: 'normal'
   body:
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-    fontSize: "1rem"
+    fontSize: '1rem'
     fontWeight: 400
     lineHeight: 1.5
-    letterSpacing: "normal"
+    letterSpacing: 'normal'
   article:
     fontFamily: "var(--article-font, Georgia, Cambria, 'Times New Roman', serif)"
-    fontSize: "1rem"
+    fontSize: '1rem'
     fontWeight: 400
     lineHeight: 1.6
-    letterSpacing: "normal"
+    letterSpacing: 'normal'
   label:
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-    fontSize: "0.875rem"
+    fontSize: '0.875rem'
     fontWeight: 500
     lineHeight: 1.4
-    letterSpacing: "normal"
+    letterSpacing: 'normal'
 rounded:
-  sm: "4px"
-  md: "6px"
-  lg: "8px"
-  xl: "12px"
-  pill: "999px"
+  sm: '4px'
+  md: '6px'
+  lg: '8px'
+  xl: '12px'
+  pill: '999px'
 spacing:
-  xs: "4px"
-  sm: "8px"
-  md: "16px"
-  lg: "24px"
-  xl: "48px"
+  xs: '4px'
+  sm: '8px'
+  md: '16px'
+  lg: '24px'
+  xl: '48px'
 components:
   button-primary:
-    backgroundColor: "{colors.primary}"
-    textColor: "#ffffff"
-    rounded: "{rounded.md}"
-    padding: "8px 16px"
+    backgroundColor: '{colors.primary}'
+    textColor: '#ffffff'
+    rounded: '{rounded.md}'
+    padding: '8px 16px'
   button-primary-hover:
-    backgroundColor: "{colors.primary-dark}"
-    textColor: "#ffffff"
-    rounded: "{rounded.md}"
-    padding: "8px 16px"
+    backgroundColor: '{colors.primary-dark}'
+    textColor: '#ffffff'
+    rounded: '{rounded.md}'
+    padding: '8px 16px'
   button-secondary:
-    backgroundColor: "{colors.bg-secondary}"
-    textColor: "{colors.text}"
-    rounded: "{rounded.md}"
-    padding: "8px 16px"
+    backgroundColor: '{colors.bg-secondary}'
+    textColor: '{colors.text}'
+    rounded: '{rounded.md}'
+    padding: '8px 16px'
   button-danger:
-    backgroundColor: "{colors.error}"
-    textColor: "#ffffff"
-    rounded: "{rounded.md}"
-    padding: "8px 16px"
+    backgroundColor: '{colors.error}'
+    textColor: '#ffffff'
+    rounded: '{rounded.md}'
+    padding: '8px 16px'
   card:
-    backgroundColor: "{colors.bg}"
-    textColor: "{colors.text}"
-    rounded: "{rounded.lg}"
-    padding: "16px"
+    backgroundColor: '{colors.bg}'
+    textColor: '{colors.text}'
+    rounded: '{rounded.lg}'
+    padding: '16px'
   input:
-    backgroundColor: "{colors.bg}"
-    textColor: "{colors.text}"
-    rounded: "{rounded.md}"
-    padding: "8px 12px"
+    backgroundColor: '{colors.bg}'
+    textColor: '{colors.text}'
+    rounded: '{rounded.md}'
+    padding: '8px 12px'
 ---
 
 # Design System: Skyreader
@@ -100,8 +100,8 @@ components:
 Skyreader is your personal, portable collection of reading — a well-kept shelf that happens to
 live on infrastructure you own. The design exists to make that library feel calm, ordered, and
 yours. Chrome is quiet and recedes; the text you came to read is the one element allowed to raise
-its voice. Every surface decision is measured against a single question from PRODUCT.md: *does this
-help or distract from reading?* When in doubt, it goes.
+its voice. Every surface decision is measured against a single question from PRODUCT.md: _does this
+help or distract from reading?_ When in doubt, it goes.
 
 The system is **flat, restrained, and content-forward**. Depth is conveyed through 1px borders and
 tonal background layering, not decoration — shadows appear only when something genuinely floats
@@ -116,6 +116,7 @@ legacy reader**; the warm-paper, serif-everything **cream/beige editorial clich�
 engagement-bait **algorithmic social feed**. Skyreader is a place to read, owned by the reader.
 
 **Key Characteristics:**
+
 - Flat by default; depth only where things overlap.
 - One blue. Color is rare and therefore meaningful.
 - Neutral, near-monochrome chrome so content is the only color event.
@@ -128,6 +129,7 @@ A near-monochrome neutral system with one disciplined blue for interaction and a
 semantic signals. The point of the restraint is that when color appears, it means something.
 
 ### Primary
+
 - **Skyreader Blue** (`#0066cc`): The single interaction color. Primary buttons, links, active
   navigation, focus rings, and the sidebar's selected state. This is the **only** blue in the
   interface — see The One Blue Rule.
@@ -138,17 +140,20 @@ semantic signals. The point of the restraint is that when color appears, it mean
   hue at low intensity so selection reads without a heavy fill.
 
 ### Secondary
+
 - **Sky Identity** (`#4a9fd4`): The "Sky" in Skyreader. Reserved for **brand/OS identity surfaces
   only** — the app icon, `theme-color`, and PWA mask-icon. It sets the lighter, airier brand note
   the OS shows around the installed app. It is **not** an in-app UI color; inside the app, the
   primary is `#0066cc`.
 
 ### Tertiary
+
 - **Highlight Gold** (`#f5c518`): The reader's text-highlight color, applied as a translucent
   `mark` background (25% at rest, 40% on hover) over article body text. The one warm accent in the
   system, and only ever in the reading surface.
 
 ### Neutral
+
 - **Surface** (`#ffffff` light / `#1a1a1a` dark): The base reading background. The article sits here.
 - **Sunken** (`#f5f5f5` light / `#2a2a2a` dark): Secondary surface for sidebars, secondary buttons,
   and recessed panels. Tonal layering, not shadow, separates it from Surface.
@@ -159,11 +164,13 @@ semantic signals. The point of the restraint is that when color appears, it mean
   The primary depth mechanism in a flat system.
 
 ### Semantic
+
 - **Success** (`#4caf50`): Sync-complete, confirmation toasts, online status.
 - **Warning** (`#ff9800`): Stale-feed and degraded-state signals.
 - **Error** (`#f44336`): Failed sync, destructive actions, validation errors.
 
 ### Named Rules
+
 **The One Blue Rule.** There is exactly one interaction blue: `#0066cc` (`--color-primary`). The
 values `#2563eb`, `#3b82f6`, `#0085ff`, and `#0085ff`-as-`--color-accent` that exist in the current
 code are **drift, not palette** — they are scheduled for consolidation into `--color-primary`. Never
@@ -189,6 +196,7 @@ five steps (xs `0.75rem` → xl `1.25rem`) via `data-article-font-size`.
 typographic personality that competes with the text the reader chose to format.
 
 ### Hierarchy
+
 - **Headline** (600, `1.25rem`, line-height 1.3, letter-spacing -0.01em): Page and major section
   titles. The largest type in the chrome — Skyreader does not shout with oversized display type.
 - **Title** (600, `1rem`, line-height 1.4): Article titles in list/card rows, modal headers.
@@ -199,9 +207,10 @@ typographic personality that competes with the text the reader chose to format.
   Muted Ink, never below 4.5:1.
 
 ### Named Rules
+
 **The One Voice Rule.** The chrome uses a single typeface family. Hierarchy comes from weight (400
 vs 600) and size, never from introducing a second UI font. The only typographic variety the user
-should see is the one *they* chose for the article body.
+should see is the one _they_ chose for the article body.
 
 **The No-Shout Rule.** UI headings top out around `1.25rem`. There is no hero display type; this is
 a reading app, and oversized headings would be chrome competing with content.
@@ -216,6 +225,7 @@ pull-to-refresh affordance. In dark mode the same shadows use higher opacity (0.
 because diffuse shadow reads weakly on dark surfaces.
 
 ### Shadow Vocabulary
+
 - **Raised** (`box-shadow: 0 2px 8px rgba(0,0,0,0.1)` light / `0.3` dark): Small floating elements —
   popover menus, tooltips, context menus.
 - **Floating** (`box-shadow: 0 4px 16px rgba(0,0,0,0.15)` light / `0.4` dark): Dropdowns, toasts,
@@ -226,6 +236,7 @@ because diffuse shadow reads weakly on dark surfaces.
   on interactive elements. A glow, not a shadow, but lives in the same vocabulary.
 
 ### Named Rules
+
 **The Flat-By-Default Rule.** A surface at rest casts no shadow. If you are adding a `box-shadow` to
 a card, list row, or panel that is part of the page flow, stop — use a border or a tonal background
 instead. Shadow is a signal that an element has left the page plane.
@@ -236,6 +247,7 @@ Components are **refined and restrained**: modest radii, quiet state changes, no
 bouncy motion. They are reliable and unobtrusive — the UI never competes with content.
 
 ### Buttons
+
 - **Shape:** Gently rounded, 6px radius (`{rounded.md}`). Padding `8px 16px`, weight 500, with an
   inline-flex layout and an 8px gap for optional icons.
 - **Primary:** Skyreader Blue (`#0066cc`) fill, white text. The single high-emphasis action per view.
@@ -245,6 +257,7 @@ bouncy motion. They are reliable and unobtrusive — the UI never competes with 
 - **Danger:** Error (`#f44336`) fill, white text — destructive actions only.
 
 ### Cards / Containers
+
 - **Corner Style:** 8px radius (`{rounded.lg}`).
 - **Background:** Surface (`#ffffff` / dark `#1a1a1a`).
 - **Shadow Strategy:** None at rest (see Elevation). Definition comes from a 1px Divider border.
@@ -254,6 +267,7 @@ bouncy motion. They are reliable and unobtrusive — the UI never competes with 
   the feed is a list of rows, not a grid of boxes.
 
 ### Inputs / Fields
+
 - **Style:** Full-width, 1px Divider stroke, Surface background, 6px radius, `8px 12px` padding.
 - **Focus:** Border shifts to Skyreader Blue (`#0066cc`); the default outline is removed in favor
   of the border shift (and, where present, the primary-tinted Focus Ring). Never remove focus
@@ -261,6 +275,7 @@ bouncy motion. They are reliable and unobtrusive — the UI never competes with 
 - **Error:** Error-colored helper text at `0.875rem` below the field.
 
 ### Navigation (Sidebar)
+
 - **Style:** A 320px (resizable) Sunken-background sidebar of feed sources and channels, organized
   into expandable sections.
 - **States:** Default rows in Ink/Muted Ink; hover gets a subtle Sunken shift; the **active** row
@@ -270,6 +285,7 @@ bouncy motion. They are reliable and unobtrusive — the UI never competes with 
   behind it. A bottom bar (`--bottom-bar-height: 3.5rem`) respects iOS safe-area insets.
 
 ### Reading View (Signature Surface)
+
 - The most precious surface in the app. Article body renders with reader-chosen `--article-font`
   and `--article-font-size`, measure capped at 65–75ch, line-height ≈1.6.
 - Text highlights use translucent Highlight Gold (`#f5c518`) `mark` backgrounds. This is the only
@@ -278,6 +294,7 @@ bouncy motion. They are reliable and unobtrusive — the UI never competes with 
 ## 6. Do's and Don'ts
 
 ### Do:
+
 - **Do** use exactly one interaction blue, `#0066cc` (`--color-primary`). Consolidate any
   `#2563eb` / `#3b82f6` / `#0085ff` you encounter into the token.
 - **Do** keep content surfaces flat and separate them with 1px Divider borders and Surface-vs-Sunken
@@ -292,6 +309,7 @@ bouncy motion. They are reliable and unobtrusive — the UI never competes with 
 - **Do** provide a `prefers-reduced-motion` fallback (crossfade or instant) for every transition.
 
 ### Don't:
+
 - **Don't** build a **generic SaaS dashboard**: no cards-everywhere grids, gradient accents, or
   hero-metric templates. This is a reading app.
 - **Don't** recreate a **cluttered legacy reader**: no dense toolbar walls or every-feature-visible

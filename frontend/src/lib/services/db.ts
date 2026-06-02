@@ -203,7 +203,11 @@ class SkyreaderDatabase extends Dexie {
             itemKey: pos.articleGuid,
             itemType: 'article',
             label: 'read',
-            props: { readAt: pos.readAt, itemUrl: pos.itemUrl, itemTitle: pos.itemTitle },
+            props: {
+              readAt: pos.readAt,
+              itemUrl: pos.itemUrl,
+              itemTitle: pos.itemTitle,
+            },
             createdAt: pos.readAt || now,
             updatedAt: now,
           });

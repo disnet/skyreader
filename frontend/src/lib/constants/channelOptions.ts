@@ -32,7 +32,11 @@ export type AutoRuleOption =
   | 'domain'
   | 'people';
 
-export const AUTO_RULE_OPTIONS: { value: AutoRuleOption; label: string; description: string }[] = [
+export const AUTO_RULE_OPTIONS: {
+  value: AutoRuleOption;
+  label: string;
+  description: string;
+}[] = [
   {
     value: 'frequency:high',
     label: 'Daily Digest',
@@ -109,7 +113,10 @@ export function autoRuleToOption(rule: ChannelAutoRule): AutoRuleOption {
 // --- Date & reading length options ---
 // Desktop and mobile use different labels for space reasons.
 
-export const DATE_PRESET_OPTIONS: { value: DateAddedPreset | ''; label: string }[] = [
+export const DATE_PRESET_OPTIONS: {
+  value: DateAddedPreset | '';
+  label: string;
+}[] = [
   { value: '', label: 'Any time' },
   { value: 'last-week', label: 'Last week' },
   { value: 'last-month', label: 'Last month' },
@@ -117,7 +124,10 @@ export const DATE_PRESET_OPTIONS: { value: DateAddedPreset | ''; label: string }
   { value: 'last-year', label: 'Last year' },
 ];
 
-export const DATE_PRESET_OPTIONS_SHORT: { value: DateAddedPreset | ''; label: string }[] = [
+export const DATE_PRESET_OPTIONS_SHORT: {
+  value: DateAddedPreset | '';
+  label: string;
+}[] = [
   { value: '', label: 'Any time' },
   { value: 'last-week', label: 'Week' },
   { value: 'last-month', label: 'Month' },
@@ -125,13 +135,19 @@ export const DATE_PRESET_OPTIONS_SHORT: { value: DateAddedPreset | ''; label: st
   { value: 'last-year', label: 'Year' },
 ];
 
-export const READING_LENGTH_OPTIONS: { value: ReadingLengthFilter; label: string }[] = [
+export const READING_LENGTH_OPTIONS: {
+  value: ReadingLengthFilter;
+  label: string;
+}[] = [
   { value: 'quick', label: 'Quick (< 5 min)' },
   { value: 'medium', label: 'Medium (5–15 min)' },
   { value: 'long', label: 'Long (15+ min)' },
 ];
 
-export const READING_LENGTH_OPTIONS_SHORT: { value: ReadingLengthFilter; label: string }[] = [
+export const READING_LENGTH_OPTIONS_SHORT: {
+  value: ReadingLengthFilter;
+  label: string;
+}[] = [
   { value: 'quick', label: 'Quick' },
   { value: 'medium', label: 'Medium' },
   { value: 'long', label: 'Long' },

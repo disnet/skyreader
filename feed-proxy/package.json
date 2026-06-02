@@ -5,7 +5,10 @@
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && prettier --check .",
+    "check:types": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test": "bun test",
     "test:watch": "bun test --watch"
   },
@@ -17,6 +20,7 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "prettier": "^3.8.1",
     "typescript": "^5.4.0"
   }
 }

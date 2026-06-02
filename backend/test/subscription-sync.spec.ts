@@ -180,7 +180,12 @@ describe('Subscription Sync', () => {
             headers: new Headers(),
             json: async () => ({
               commit: { cid: 'bafycommit', rev: 'rev1' },
-              results: [{ uri: `at://${TEST_DID}/${COLLECTION}/local-rkey`, cid: 'bafyreipushed' }],
+              results: [
+                {
+                  uri: `at://${TEST_DID}/${COLLECTION}/local-rkey`,
+                  cid: 'bafyreipushed',
+                },
+              ],
             }),
           };
         }
@@ -492,7 +497,12 @@ describe('Subscription Sync', () => {
             headers: new Headers(),
             json: async () => ({
               commit: { cid: 'bafycommit', rev: 'rev1' },
-              results: [{ uri: `at://${TEST_DID}/${COLLECTION}/local-a`, cid: 'bafyreipushed' }],
+              results: [
+                {
+                  uri: `at://${TEST_DID}/${COLLECTION}/local-a`,
+                  cid: 'bafyreipushed',
+                },
+              ],
             }),
           };
         }
