@@ -114,8 +114,6 @@ export interface ArticleCardViewProps {
   shareBusy?: boolean;
   showShareAction?: boolean;
   showActionBarIntegrations?: boolean;
-  isActionBarFloating?: boolean;
-  mobileControlsVisible?: boolean;
   overflowMenuOpen?: boolean;
   canFollowSource?: boolean;
   hasSaveToSemble?: boolean;
@@ -126,7 +124,6 @@ export interface ArticleCardViewProps {
   bodyEl?: HTMLElement;
   tagBtnRef?: HTMLButtonElement;
   overflowTriggerRef?: HTMLButtonElement;
-  actionBarSentinelRef?: HTMLDivElement;
 
   // ── Callbacks (view emits semantic events; container does store work) ──
   onHeaderClick?: () => void;
@@ -151,4 +148,7 @@ export interface ArticleCardViewProps {
   onApplyComment?: (note: string) => void;
   onOpenAuthor?: (did: string) => void;
   onCloseOverflow?: () => void;
+  /** Fires when the expanded action bar starts/stops floating over scrolling
+   *  content, so the container can lift the mobile bottom bar above it. */
+  onActionBarFloatingChange?: (floating: boolean) => void;
 }

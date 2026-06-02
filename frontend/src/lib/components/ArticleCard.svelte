@@ -562,26 +562,6 @@
   let useOverflowAnchor = $state(false);
   let tagAnchor = $derived(useOverflowAnchor ? overflowTriggerRef : tagBtnRef);
 
-  // Sticky detection: track whether the action bar is floating (stuck) vs at its natural position
-  let actionBarSentinelRef = $state<HTMLDivElement | undefined>(undefined);
-  let isActionBarFloating = $state(false);
-
-  $effect(() => {
-    if (!expanded || !actionBarSentinelRef) {
-      isActionBarFloating = false;
-      return;
-    }
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        // When the sentinel is visible, the action bar is at its natural position (not floating)
-        isActionBarFloating = !entry.isIntersecting;
-      },
-      { threshold: 0 }
-    );
-    observer.observe(actionBarSentinelRef);
-    return () => observer.disconnect();
-  });
-
   function handleOverflowTag() {
     overflowMenuOpen = false;
     // Anchor the TagMenu to the overflow trigger since the inline tag button is hidden
@@ -651,14 +631,15 @@
     };
   });
 
-  // Set up observer when article is expanded
+  // Set up observer when article is expanded. We track reading progress but do
+  // NOT auto-scroll to it: expanding a card inline should leave the viewport put
+  // (re-expanding an article with saved progress otherwise jumps the text down a
+  // little). Reading-position restore lives in the fullscreen reader instead.
   $effect(() => {
     if (expanded && bodyEl && hasContent) {
       // Wait for content to render
       tick().then(() => {
         paragraphTracking.setupObserver();
-        // Restore reading position after a brief delay for layout
-        setTimeout(() => paragraphTracking.restorePosition(), 100);
       });
     }
     return () => {
@@ -749,8 +730,6 @@
   {shareBusy}
   {showShareAction}
   {showActionBarIntegrations}
-  {isActionBarFloating}
-  mobileControlsVisible={feedViewStore.mobileControlsVisible}
   {overflowMenuOpen}
   {canFollowSource}
   hasSaveToSemble={Boolean(onSaveToSemble)}
@@ -759,7 +738,6 @@
   bind:bodyEl
   bind:tagBtnRef
   bind:overflowTriggerRef
-  bind:actionBarSentinelRef
   onHeaderClick={handleHeaderClick}
   onContentTap={handleContentTap}
   onToggleRead={() => onToggleRead?.()}
@@ -777,6 +755,7 @@
   onSaveToSemble={() => onSaveToSemble?.()}
   onSaveToMargin={() => onSaveToMargin?.()}
   onFollowSource={handleFollowSource}
+  onActionBarFloatingChange={(floating) => feedViewStore.setMobileActionBarFloating(floating)}
   onToggleLane={toggleLane}
   onCreateInLane={createInLane}
   onApplyComment={applyComment}

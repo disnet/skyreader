@@ -10,6 +10,9 @@
     onOpenFilterSheet: () => void;
     hasActiveFilters: boolean;
     hideFilterButton?: boolean;
+    /** When an expanded card's action bar is floating at the viewport bottom,
+     *  lift the bar above it so the two stack instead of overlapping. */
+    actionBarFloating?: boolean;
   }
 
   let {
@@ -20,6 +23,7 @@
     onOpenFilterSheet,
     hasActiveFilters,
     hideFilterButton = false,
+    actionBarFloating = false,
   }: Props = $props();
 
   let addMenuOpen = $state(false);
@@ -41,7 +45,7 @@
   });
 </script>
 
-<div class="mobile-bottom-bar" class:hidden={!controlsVisible}>
+<div class="mobile-bottom-bar" class:hidden={!controlsVisible} class:raised={actionBarFloating}>
   <button class="left-pill" onclick={onOpenFeedSwitcher} aria-label="Switch feed">
     <span class="left-pill-icon"><Icon name="layers" size={20} /></span>
     <span class="view-name">{currentTitle}</span>
@@ -136,7 +140,15 @@
     pointer-events: none;
     transition:
       transform 0.3s ease,
-      opacity 0.3s ease;
+      opacity 0.3s ease,
+      bottom 0.3s ease;
+  }
+
+  /* Lifted to sit just above the expanded card's floating action bar. The action
+     bar already carries the safe-area pad at the screen edge, so drop it here. */
+  .mobile-bottom-bar.raised {
+    bottom: calc(var(--action-bar-height) + env(safe-area-inset-bottom, 0px));
+    padding-bottom: 0.75rem;
   }
 
   .mobile-bottom-bar.hidden {

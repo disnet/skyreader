@@ -5,6 +5,7 @@
   import Icon from './Icon.svelte';
   import ShareCommentBox from '$lib/components/feed/ShareCommentBox.svelte';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
+  import { overlapShadow } from '$lib/actions/overlap-shadow';
   import type { ArticleCardViewProps } from './articleCardView.types';
 
   let {
@@ -50,8 +51,6 @@
     shareBusy = false,
     showShareAction = false,
     showActionBarIntegrations = false,
-    isActionBarFloating = false,
-    mobileControlsVisible = false,
     overflowMenuOpen = false,
     canFollowSource = false,
     hasSaveToSemble = false,
@@ -61,7 +60,6 @@
     bodyEl = $bindable(),
     tagBtnRef = $bindable(),
     overflowTriggerRef = $bindable(),
-    actionBarSentinelRef = $bindable(),
     // callbacks
     onHeaderClick,
     onContentTap,
@@ -85,6 +83,7 @@
     onApplyComment,
     onOpenAuthor,
     onCloseOverflow,
+    onActionBarFloatingChange,
   }: ArticleCardViewProps = $props();
 
   // The content tap: keep the pure DOM guards here (let real links / media play),
@@ -96,16 +95,36 @@
     onContentTap?.();
   }
 
-  // The Atmosphere panel is opened from a button in the action bar; it floats
-  // above the card as a scrollable overlay rather than pushing the body down.
+  // The Discussion section is toggled from a button in the action bar; it renders
+  // in flow as part of the card (just above the bar), not as an overlay.
   // Ephemeral display state, so it lives in the view.
   let atmosphereOpen = $state(false);
+
+  // Whether the sticky action bar is currently pinned over scrolling content
+  // (vs. resting at the card's natural bottom). Driven by the overlapShadow
+  // action on the sentinel below the bar — presentation behavior the view owns,
+  // so it stays testable from /dev/cards without the container.
+  let actionBarFloating = $state(false);
 
   // Headline numbers for the action-bar button: total references across lanes,
   // whether any lane hit its lookup cap, and whether one of them is the user's.
   const atmosphereTotal = $derived(laneRow.reduce((sum, l) => sum + l.count, 0));
   const atmosphereCapped = $derived(laneRow.some((l) => l.capped));
   const atmosphereMine = $derived(laneRow.some((l) => l.isMine));
+
+  // The action bar is the anchor: when the Discussion section opens (in flow,
+  // just above the bar), bring the bar to the bottom of the view so the article
+  // above is pushed up rather than the section landing offscreen below a sticky
+  // bar. A layout concern, so it lives here in the view.
+  let discussionEndRef = $state<HTMLElement>();
+  $effect(() => {
+    if (!atmosphereOpen || !discussionEndRef) return;
+    const anchor = discussionEndRef;
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ? 'auto'
+      : 'smooth';
+    requestAnimationFrame(() => anchor.scrollIntoView({ behavior: motion, block: 'end' }));
+  });
 </script>
 
 <article
@@ -273,11 +292,127 @@
       />
     {/if}
 
-    <div
-      class="article-actions-container"
-      class:scroll-hidden={expanded && isActionBarFloating && !mobileControlsVisible}
-      class:floating={isActionBarFloating}
-    >
+    <!-- Discussion section: a flat, in-flow part of the card that sits directly
+         above the action bar. Opening it scrolls the bar to the bottom of the
+         view (the bar is the anchor), so the article above is pushed up rather
+         than the section overlaying it. -->
+    {#if atmosphereOpen && laneRow.length > 0}
+      <div id="discussion-panel" class="atmosphere-panel" role="region" aria-label="Discussion">
+        <header class="atmosphere-panel-head">
+          <span class="atmosphere-panel-title">
+            <Icon name="activity" size={15} />
+            Discussion
+            {#if atmosphereTotal > 0}
+              <span class="atmosphere-panel-total"
+                >{atmosphereTotal}{atmosphereCapped ? '+' : ''}</span
+              >
+            {/if}
+          </span>
+          <button
+            type="button"
+            class="atmosphere-panel-close"
+            title="Close"
+            onclick={(e) => {
+              e.stopPropagation();
+              atmosphereOpen = false;
+            }}
+          >
+            <Icon name="x" size={16} />
+          </button>
+        </header>
+        <p class="atmosphere-panel-sub">Discussion across the Atmosphere.</p>
+        <div class="atmosphere-panel-scroll">
+          {#each laneRow as row (row.id)}
+            {@const isExpanded = expandedLane === row.id}
+            <div class="lane" class:expanded={isExpanded}>
+              <button
+                type="button"
+                class="lane-row"
+                class:mine={row.isMine}
+                aria-expanded={isExpanded}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  onToggleLane?.(row.id);
+                }}
+              >
+                <span class="lane-row-icon"><Icon name={row.icon} size={16} /></span>
+                <span class="lane-row-name">{row.label}</span>
+                {#if row.count > 0}
+                  <span class="lane-row-meta"
+                    ><span class="lane-row-count">{row.count}{row.capped ? '+' : ''}</span>
+                    {row.verb}</span
+                  >
+                {:else}
+                  <span class="lane-row-add">Add yours</span>
+                {/if}
+                <span class="lane-row-chevron"
+                  ><Icon name={isExpanded ? 'chevron-up' : 'chevron-down'} size={14} /></span
+                >
+              </button>
+
+              {#if isExpanded && expandedLaneMeta}
+                {@const meta = expandedLaneMeta}
+                <div class="lane-body">
+                  {#if expandedLaneItems?.loading}
+                    <div class="lane-status">Loading…</div>
+                  {:else if expandedLaneItems && expandedLaneItems.entries.length > 0}
+                    <ul class="lane-people">
+                      {#each expandedLaneItems.entries as entry (entry.did + (entry.url ?? ''))}
+                        <li class="lane-person">
+                          <div class="lane-person-row">
+                            <button
+                              type="button"
+                              class="lane-person-handle"
+                              onclick={(e) => {
+                                e.stopPropagation();
+                                onOpenAuthor?.(entry.did);
+                              }}>@{entry.handle ?? entry.did.slice(0, 18)}</button
+                            >
+                            {#if entry.url}
+                              <a
+                                class="lane-person-link"
+                                href={entry.url}
+                                target="_blank"
+                                rel="noopener"
+                                title="Open {meta.label}"
+                                onclick={(e) => e.stopPropagation()}
+                                ><Icon name="external-link" size={13} /></a
+                              >
+                            {/if}
+                          </div>
+                          {#if entry.note}<p class="lane-person-note">{entry.note}</p>{/if}
+                        </li>
+                      {/each}
+                    </ul>
+                  {:else if !expandedLaneItems?.loading}
+                    <div class="lane-status">
+                      {#if meta.canCreate}Be the first to {meta.verb} this.{:else}Nothing here yet.{/if}
+                    </div>
+                  {/if}
+
+                  {#if meta.canCreate}
+                    <button
+                      type="button"
+                      class="lane-create"
+                      class:done={meta.createIsEdit}
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        onCreateInLane?.(row.id);
+                      }}
+                    >
+                      <Icon name={meta.createIsEdit ? 'edit' : 'plus'} size={14} />
+                      <span>{meta.createLabel}</span>
+                    </button>
+                  {/if}
+                </div>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
+    <div class="article-actions-container" class:floating={actionBarFloating}>
       <div class="article-actions">
         <!-- Save button -->
         <button
@@ -309,159 +444,30 @@
             >
           </button>
         {/if}
-        <!-- Discussion: how this link travels across the Atmosphere. The button
-             carries the total reference count; tapping floats a scrollable panel
-             over the card (above the bar) rather than pushing the body down. -->
+        <!-- Discussion: toggles the in-flow Discussion section that sits just
+             above the action bar (rendered below). The button carries the total
+             reference count and reads active while the section is open. -->
         {#if laneRow.length > 0}
-          <div class="atmosphere-wrapper">
-            <button
-              class="action-btn atmosphere-btn"
-              class:active={atmosphereOpen}
-              class:has-mentions={atmosphereTotal > 0}
-              aria-haspopup="dialog"
-              aria-expanded={atmosphereOpen}
-              title={atmosphereTotal > 0
-                ? `${atmosphereTotal}${atmosphereCapped ? '+' : ''} across the Atmosphere`
-                : 'Add to the discussion'}
-              onclick={(e) => {
-                e.stopPropagation();
-                atmosphereOpen = !atmosphereOpen;
-              }}
-            >
-              <span class="action-icon"><Icon name="activity" size={16} /></span><span
-                class="action-label">Discussion</span
-              >{#if atmosphereTotal > 0}<span class="atmosphere-count" class:mine={atmosphereMine}
-                  >{atmosphereTotal}{atmosphereCapped ? '+' : ''}</span
-                >{/if}
-            </button>
-            {#if atmosphereOpen}
-              <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-              <div
-                class="atmosphere-backdrop"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  atmosphereOpen = false;
-                }}
-              ></div>
-              <div class="atmosphere-panel" role="dialog" aria-label="Discussion">
-                <header class="atmosphere-panel-head">
-                  <span class="atmosphere-panel-title">
-                    <Icon name="activity" size={15} />
-                    Discussion
-                    {#if atmosphereTotal > 0}
-                      <span class="atmosphere-panel-total"
-                        >{atmosphereTotal}{atmosphereCapped ? '+' : ''}</span
-                      >
-                    {/if}
-                  </span>
-                  <button
-                    type="button"
-                    class="atmosphere-panel-close"
-                    title="Close"
-                    onclick={(e) => {
-                      e.stopPropagation();
-                      atmosphereOpen = false;
-                    }}
-                  >
-                    <Icon name="x" size={16} />
-                  </button>
-                </header>
-                <p class="atmosphere-panel-sub">Discussion across the Atmosphere.</p>
-                <div class="atmosphere-panel-scroll">
-                  {#each laneRow as row (row.id)}
-                    {@const isExpanded = expandedLane === row.id}
-                    <div class="lane" class:expanded={isExpanded}>
-                      <button
-                        type="button"
-                        class="lane-row"
-                        class:mine={row.isMine}
-                        aria-expanded={isExpanded}
-                        onclick={(e) => {
-                          e.stopPropagation();
-                          onToggleLane?.(row.id);
-                        }}
-                      >
-                        <span class="lane-row-icon"><Icon name={row.icon} size={16} /></span>
-                        <span class="lane-row-name">{row.label}</span>
-                        {#if row.count > 0}
-                          <span class="lane-row-meta"
-                            ><span class="lane-row-count">{row.count}{row.capped ? '+' : ''}</span>
-                            {row.verb}</span
-                          >
-                        {:else}
-                          <span class="lane-row-add">Add yours</span>
-                        {/if}
-                        <span class="lane-row-chevron"
-                          ><Icon
-                            name={isExpanded ? 'chevron-up' : 'chevron-down'}
-                            size={14}
-                          /></span
-                        >
-                      </button>
-
-                      {#if isExpanded && expandedLaneMeta}
-                        {@const meta = expandedLaneMeta}
-                        <div class="lane-body">
-                          {#if expandedLaneItems?.loading}
-                            <div class="lane-status">Loading…</div>
-                          {:else if expandedLaneItems && expandedLaneItems.entries.length > 0}
-                            <ul class="lane-people">
-                              {#each expandedLaneItems.entries as entry (entry.did + (entry.url ?? ''))}
-                                <li class="lane-person">
-                                  <div class="lane-person-row">
-                                    <button
-                                      type="button"
-                                      class="lane-person-handle"
-                                      onclick={(e) => {
-                                        e.stopPropagation();
-                                        onOpenAuthor?.(entry.did);
-                                      }}>@{entry.handle ?? entry.did.slice(0, 18)}</button
-                                    >
-                                    {#if entry.url}
-                                      <a
-                                        class="lane-person-link"
-                                        href={entry.url}
-                                        target="_blank"
-                                        rel="noopener"
-                                        title="Open {meta.label}"
-                                        onclick={(e) => e.stopPropagation()}
-                                        ><Icon name="external-link" size={13} /></a
-                                      >
-                                    {/if}
-                                  </div>
-                                  {#if entry.note}<p class="lane-person-note">{entry.note}</p>{/if}
-                                </li>
-                              {/each}
-                            </ul>
-                          {:else if !expandedLaneItems?.loading}
-                            <div class="lane-status">
-                              {#if meta.canCreate}Be the first to {meta.verb} this.{:else}Nothing
-                                here yet.{/if}
-                            </div>
-                          {/if}
-
-                          {#if meta.canCreate}
-                            <button
-                              type="button"
-                              class="lane-create"
-                              class:done={meta.createIsEdit}
-                              onclick={(e) => {
-                                e.stopPropagation();
-                                onCreateInLane?.(row.id);
-                              }}
-                            >
-                              <Icon name={meta.createIsEdit ? 'edit' : 'plus'} size={14} />
-                              <span>{meta.createLabel}</span>
-                            </button>
-                          {/if}
-                        </div>
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-          </div>
+          <button
+            class="action-btn atmosphere-btn"
+            class:active={atmosphereOpen}
+            class:has-mentions={atmosphereTotal > 0}
+            aria-expanded={atmosphereOpen}
+            aria-controls="discussion-panel"
+            title={atmosphereTotal > 0
+              ? `${atmosphereTotal}${atmosphereCapped ? '+' : ''} across the Atmosphere`
+              : 'Add to the discussion'}
+            onclick={(e) => {
+              e.stopPropagation();
+              atmosphereOpen = !atmosphereOpen;
+            }}
+          >
+            <span class="action-icon"><Icon name="activity" size={16} /></span><span
+              class="action-label">Discussion</span
+            >{#if atmosphereTotal > 0}<span class="atmosphere-count" class:mine={atmosphereMine}
+                >{atmosphereTotal}{atmosphereCapped ? '+' : ''}</span
+              >{/if}
+          </button>
         {/if}
         {#if hasOpenFullscreen && hasContent}
           <button
@@ -649,7 +655,18 @@
         {/if}
       </div>
     </div>
-    {#if expanded}<div class="action-bar-sentinel" bind:this={actionBarSentinelRef}></div>{/if}
+    <!-- Scroll target: bringing this to the bottom of the view on open pins the
+         action bar to the bottom and pushes the article content up. -->
+    <div class="discussion-scroll-anchor" bind:this={discussionEndRef} aria-hidden="true"></div>
+    {#if expanded}<div
+        class="action-bar-sentinel"
+        use:overlapShadow={{
+          onChange: (v) => {
+            actionBarFloating = v;
+            onActionBarFloatingChange?.(v);
+          },
+        }}
+      ></div>{/if}
 
     {#if itemTagCount > 0}
       <div class="tag-chips">
@@ -816,15 +833,11 @@
     overflow: hidden;
   }
 
-  /* The Atmosphere button + overlay panel. The button lives in the action bar
-     and carries the total reference count; tapping floats a scrollable panel
-     above the card. Flat and neutral per DESIGN.md — shadow appears only because
-     the panel genuinely floats above the page. */
-  .atmosphere-wrapper {
-    position: relative;
-    display: inline-flex;
-  }
-
+  /* The Discussion button + in-flow section. The button lives in the action bar;
+     tapping reveals a flat section that sits directly above the bar as a genuine
+     part of the card (1px dividers top and bottom, no shadow, no radius — flat
+     per DESIGN.md). Opening it scrolls the bar to the bottom of the view so the
+     article above is pushed up (see the scroll effect in the script). */
   .atmosphere-btn.has-mentions {
     color: var(--color-text);
   }
@@ -855,68 +868,20 @@
     color: var(--color-primary);
   }
 
-  /* Click-catcher so a tap anywhere outside the panel dismisses it. */
-  .atmosphere-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 99;
-  }
-
+  /* Flat in-flow section, bracketed by 1px dividers so it reads as a card region
+     between the article and the action bar — not a thing floating over them. */
   .atmosphere-panel {
-    position: absolute;
-    bottom: calc(100% + 0.625rem);
-    left: 0;
-    z-index: 100;
-    width: min(24rem, calc(100vw - 2rem));
     display: flex;
     flex-direction: column;
-    background: var(--color-bg, #fff);
-    border: 1px solid var(--color-border, #e0e0e0);
-    border-radius: 12px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.16);
-    overflow: hidden;
-    transform-origin: bottom left;
-    animation: atmosphere-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+    margin-top: 0.25rem;
+    border-top: 1px solid var(--color-border, #e0e0e0);
+    border-bottom: 1px solid var(--color-border, #e0e0e0);
   }
 
-  @keyframes atmosphere-in {
-    from {
-      opacity: 0;
-      transform: translateY(0.5rem) scale(0.98);
-    }
-  }
-
-  /* On phones the anchored popover can't fit beside a centered action bar without
-     running off-screen, so it becomes a bottom sheet: full width, slides up from
-     the edge, with a light scrim. Avoids any horizontal clipping. */
-  @media (max-width: 600px) {
-    .atmosphere-backdrop {
-      background: rgba(0, 0, 0, 0.2);
-    }
-
-    .atmosphere-panel {
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      width: auto;
-      border-radius: 14px 14px 0 0;
-      border-bottom: none;
-      padding-bottom: env(safe-area-inset-bottom, 0px);
-      transform-origin: bottom center;
-      animation-name: atmosphere-sheet-in;
-    }
-
-    .atmosphere-panel-scroll {
-      max-height: 60vh;
-    }
-  }
-
-  @keyframes atmosphere-sheet-in {
-    from {
-      opacity: 0;
-      transform: translateY(100%);
-    }
+  /* 0-height scroll target just past the action bar (see the open effect). */
+  .discussion-scroll-anchor {
+    height: 0;
+    scroll-margin-bottom: 0.5rem;
   }
 
   .atmosphere-panel-head {
@@ -977,7 +942,7 @@
   }
 
   .atmosphere-panel-scroll {
-    max-height: min(60vh, 22rem);
+    max-height: min(55vh, 20rem);
     overflow-y: auto;
     border-top: 1px solid var(--color-border, #e0e0e0);
     overscroll-behavior: contain;
@@ -1155,18 +1120,6 @@
 
   .lane-create.done {
     color: var(--color-text-secondary);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .atmosphere-panel {
-      animation: none;
-    }
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .atmosphere-panel {
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-    }
   }
 
   .link-post-context {
@@ -1423,11 +1376,17 @@
     margin: 0.75rem 0;
   }
 
-  .article-body :global(p:first-child) {
+  /* Zero the leading/trailing margin of WHATEVER element starts/ends the body,
+     not just <p>. The truncated (selected) body is a BFC (flow-root via
+     line-clamp) so a first child's top margin is contained; the expanded body is
+     plain block, where that same margin collapses out and up. If the first child
+     is an <h2>/<figure>/<ul>/<blockquote> with a top margin, that mismatch makes
+     the text jump on expand. Forcing the edge margins to 0 keeps the top stable. */
+  .article-body :global(> :first-child) {
     margin-top: 0;
   }
 
-  .article-body :global(p:last-child) {
+  .article-body :global(> :last-child) {
     margin-bottom: 0;
   }
 
@@ -1487,17 +1446,97 @@
     }
   }
 
-  /* Expanded: sticky at bottom */
+  /* Expanded: the bar stays pinned to the bottom of the viewport while the card
+     bottom is still below the fold. It keeps its normal full-width layout in
+     every state — no pill morph.
+
+     The footer band is painted by ::before so it can bleed edge-to-edge (past
+     the card's 1rem padding) without changing the bar's box or its
+     container-query width. `isolation` makes that band paint above the article
+     scrolling beneath the sticky bar, but behind the controls. */
   .article-item.expanded .article-actions-container {
+    /* Gap between the floating bar and the viewport bottom, so the bar reads as a
+       rounded card edge that floats above the page rather than sitting flush. The
+       ::after mask is extended down by the same amount to fill the gap with page
+       background (mobile folds the safe-area inset into it). */
+    --float-below: 0.5rem;
     position: sticky;
-    bottom: 0;
+    bottom: var(--float-below);
     padding: 0.5rem 0;
+    isolation: isolate;
+    transition:
+      transform 0.3s ease,
+      opacity 0.3s ease;
   }
 
-  /* Floating state: centered pill */
-  .article-item.expanded .article-actions-container.floating {
-    justify-content: center;
-    padding: 1rem 0;
+  /* Transparent at rest, so the bar inherits the card's own background (incl.
+     the hover / highlight tint) and reads as flat — part of the card. While it
+     overlaps scrolling content ("floating") the band becomes a contrasting
+     edge-to-edge footer with a top hairline + depth shadow, so the article
+     clearly scrolls behind the bottom of the card. Both resolve back to flat
+     once the card's end is reached. */
+  .article-item.expanded .article-actions-container::before {
+    content: '';
+    position: absolute;
+    inset: 0 -1rem;
+    z-index: -1;
+    background: transparent;
+    box-shadow:
+      0 -1px 0 rgba(0, 0, 0, 0),
+      0 -8px 16px -10px rgba(0, 0, 0, 0);
+    transition:
+      background-color 0.2s ease,
+      box-shadow 0.2s ease;
+    pointer-events: none;
+  }
+
+  .article-item.expanded .article-actions-container.floating::before {
+    background: var(--color-bg-secondary, #f5f5f5);
+    /* Round the bottom to match the card's own 8px radius, so the floating bar
+       reads as the card's bottom edge rather than a control overlaying it. The
+       ::after mask below keeps scrolling content from peeking through the notch
+       the rounding leaves in each corner. */
+    border-radius: 0 0 8px 8px;
+    box-shadow:
+      0 -1px 0 var(--color-border, #e0e0e0),
+      0 -8px 16px -10px rgba(0, 0, 0, 0.18);
+  }
+
+  /* Page-background fill one layer behind the footer band. Where the band's
+     rounded corners cut away, this shows through — so the corner notch reveals
+     the page the card sits on, not the article scrolling underneath. It lives in
+     the same isolated stacking context as the band, so it still paints above the
+     scrolling content. */
+  .article-item.expanded .article-actions-container.floating::after {
+    content: '';
+    position: absolute;
+    /* Extends past the band's bottom by the float gap, so the page fills the
+       space below the bar (down to the viewport edge) and content can't peek
+       through it. */
+    inset: 0 -1rem calc(-1 * var(--float-below)) -1rem;
+    z-index: -2;
+    background: var(--color-bg, #ffffff);
+    pointer-events: none;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .article-item.expanded .article-actions-container.floating::before {
+      background: var(--color-bg-secondary, #2a2a2a);
+      box-shadow:
+        0 -1px 0 var(--color-border, #333),
+        0 -8px 16px -10px rgba(0, 0, 0, 0.6);
+    }
+
+    .article-item.expanded .article-actions-container.floating::after {
+      background: var(--color-bg, #1a1a1a);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .article-item.expanded .article-actions-container,
+    .article-item.expanded .article-actions-container::before {
+      transition: none;
+    }
   }
 
   /* Sentinel element for sticky detection */
@@ -1506,46 +1545,15 @@
     margin-top: -1px;
   }
 
-  /* On mobile, float above the MobileBottomBar and hide on scroll */
+  /* On mobile the floating bar reads as the card's bottom edge. It stays put
+     through scrolling — it's the card's own bottom, not a control that hides on
+     scroll. The MobileBottomBar lifts itself above this band (see its `raised`
+     state) rather than peeking out beneath it. Folding the safe-area inset into
+     the float gap floats the bar clear of the home indicator. */
   @media (max-width: 1000px) {
     .article-item.expanded .article-actions-container.floating {
-      bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px));
-      transition:
-        transform 0.3s ease,
-        opacity 0.3s ease;
+      --float-below: calc(0.5rem + env(safe-area-inset-bottom, 0px));
     }
-
-    .article-item.expanded .article-actions-container.scroll-hidden {
-      transform: translateY(100%);
-      opacity: 0;
-      pointer-events: none;
-    }
-  }
-
-  /* Floating pill styles only when action bar is stuck */
-  .article-item.expanded .article-actions-container.floating .article-actions {
-    justify-content: space-between;
-    width: auto;
-    gap: 0.875rem;
-    padding: 0.5rem 1rem;
-    background: rgba(255, 255, 255, 0.85);
-    backdrop-filter: blur(8px);
-    border-radius: 9999px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .article-item.expanded .article-actions-container.floating .article-actions {
-      background: rgba(40, 40, 40, 0.95);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-    }
-  }
-
-  /* Non-floating expanded state: full-width normal bar */
-  .article-item.expanded .article-actions-container:not(.floating) .article-actions {
-    justify-content: space-between;
-    width: 100%;
-    gap: 0.75rem;
   }
 
   .action-btn {
@@ -1736,7 +1744,11 @@
     display: none;
   }
 
-  /* Narrow: collapse Open & Tag into overflow too */
+  /* Narrow: collapse Open & Tag into overflow, and drop every label so the
+     remaining buttons (Save, Share, Discussion, Reader, overflow, More) go
+     icon-only instead of overflowing their row. The labeled set is ~480px wide,
+     so it won't fit a phone-width card — icon-only has to kick in here, not at
+     some much narrower width. */
   @container (max-width: 520px) {
     .action-btn.collapsible {
       display: none;
@@ -1748,10 +1760,6 @@
     .overflow-menu-item.narrow-only {
       display: flex;
     }
-  }
-
-  /* Very narrow: hide labels too */
-  @container (max-width: 300px) {
     .action-label {
       display: none;
     }
@@ -1835,7 +1843,7 @@
     }
   }
 
-  /* Mobile: bigger touch targets for expanded pill */
+  /* Mobile: bigger touch targets for the expanded action bar */
   @container card (max-width: 480px) {
     .article-item.expanded .article-actions {
       width: 100%;
@@ -1845,15 +1853,6 @@
 
     .article-item.expanded .action-btn {
       font-size: 1.125rem;
-    }
-
-    .article-item.expanded .action-icon :global(.icon) {
-      width: 20px;
-      height: 20px;
-    }
-
-    .article-item.expanded .action-label {
-      font-size: 0.9375rem;
     }
   }
 </style>

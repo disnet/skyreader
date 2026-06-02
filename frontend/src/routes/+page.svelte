@@ -46,9 +46,6 @@
   const scrollDirection = useScrollDirection({
     onHide: () => feedViewStore.setFilterToolbarOpen(false),
   });
-  $effect(() => {
-    feedViewStore.setMobileControlsVisible(scrollDirection.controlsVisible);
-  });
   let feedSwitcherOpen = $state(false);
   let filterSheetOpen = $state(false);
   let readerOpen = $state(false);
@@ -660,6 +657,7 @@
       <MobileBottomBar
         controlsVisible={scrollDirection.controlsVisible}
         currentTitle={pageTitle}
+        actionBarFloating={feedViewStore.mobileActionBarFloating}
         onScrollToTop={scrollToTop}
         onOpenFeedSwitcher={() => (feedSwitcherOpen = true)}
         onOpenFilterSheet={() => {

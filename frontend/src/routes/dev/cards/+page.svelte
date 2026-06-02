@@ -2,6 +2,11 @@
   // Visual harness for ArticleCardView — renders each mock state with no auth and
   // no backend. Iterate on the card design here, then it flows to the real app
   // through the same component. Dev-only (see ../+layout.ts).
+  //
+  // The card scrolls on the window (like the real feed), so the sticky action
+  // bar's depth shadow is exercised for real: scroll the page and watch the
+  // 'Expanded · long body' card's bar pin and settle. The overlapShadow action
+  // lives in the view, so no container is needed to drive it.
   import ArticleCardView from '$lib/components/ArticleCardView.svelte';
   import { fixtures } from './fixtures';
 
@@ -13,10 +18,16 @@
 <div class="harness">
   <header class="harness-bar">
     <h1>ArticleCardView</h1>
-    <label class="width-control">
-      Width: {width}px
-      <input type="range" min="260" max="900" step="10" bind:value={width} />
-    </label>
+    <div class="controls">
+      <label class="control">
+        Width: {width}px
+        <input type="range" min="260" max="900" step="10" bind:value={width} />
+      </label>
+    </div>
+    <p class="hint">
+      Scroll the page to pin the long card's action bar. Narrow the window below 1000px to test the
+      mobile floating-bar behavior.
+    </p>
   </header>
 
   <div class="cards" style="--card-width: {width}px">
@@ -43,13 +54,16 @@
   }
 
   .harness-bar {
-    display: flex;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: auto 1fr;
     align-items: baseline;
-    justify-content: space-between;
-    gap: 1rem;
-    flex-wrap: wrap;
-    margin-bottom: 1.5rem;
-    padding-bottom: 1rem;
+    gap: 0.5rem 1.5rem;
+    margin: -1.5rem -1.5rem 1.5rem;
+    padding: 1rem 1.5rem;
+    background: var(--color-bg, #fff);
     border-bottom: 1px solid var(--color-border, #e5e5e5);
   }
 
@@ -59,12 +73,26 @@
     margin: 0;
   }
 
-  .width-control {
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .control {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     font-size: 0.85rem;
     color: var(--color-text-secondary, #666);
+  }
+
+  .hint {
+    grid-column: 1 / -1;
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--color-text-secondary, #777);
   }
 
   .cards {
