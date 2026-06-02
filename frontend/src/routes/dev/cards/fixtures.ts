@@ -27,6 +27,20 @@ const BODY_HTML = `
   inside the prose so link-interception has a target when expanded.</p>
 `;
 
+// A body long enough to overflow the viewport, so the sticky action bar pins
+// and earns its depth shadow while you scroll the page. The 'Expanded · long
+// body' fixture uses it to exercise the overlapShadow action for real.
+const BODY_HTML_LONG =
+  BODY_HTML +
+  Array.from(
+    { length: 10 },
+    (_, i) =>
+      `<p>Paragraph ${i + 4}: more body copy to push the card past the fold. ` +
+      `The action bar stays pinned to the bottom of the viewport with a depth ` +
+      `shadow while this text scrolls beneath it, then settles flat once the ` +
+      `card's end comes into view.</p>`
+  ).join('\n');
+
 const base: ArticleCardViewProps = {
   itemUrl: 'https://arstechnica.com/example-article',
   itemTitle: 'A calm, focused reader for the open social web',
@@ -47,6 +61,19 @@ const base: ArticleCardViewProps = {
 };
 
 export const fixtures: CardFixture[] = [
+  {
+    name: 'Expanded · long body',
+    note: 'Scroll the page: the action bar pins to the viewport bottom with a depth shadow, then settles flat at the card end. Exercises the overlapShadow action for real.',
+    props: {
+      ...base,
+      expanded: true,
+      isOpen: true,
+      hasContent: true,
+      readTimeMinutes: 7,
+      sanitizedContent: BODY_HTML_LONG,
+      hasOpenFullscreen: true,
+    },
+  },
   {
     name: 'Unread · collapsed',
     note: 'Default list row — only the sticky header shows.',
@@ -87,7 +114,7 @@ export const fixtures: CardFixture[] = [
   },
   {
     name: 'Expanded · atmosphere',
-    note: 'Tap "Discussion" in the action bar to float the lane panel; Linkblogs is expanded with people.',
+    note: 'Tap "Discussion" in the action bar to open the in-flow section above the bar; Linkblogs is expanded with people.',
     props: {
       ...base,
       expanded: true,

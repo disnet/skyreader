@@ -109,12 +109,27 @@
     const key = feedViewStore.currentItems[index]?.key ?? null;
     if (key !== null && feedViewStore.expandedKey === key) {
       feedViewStore.collapse();
+      // Collapsing a long body removes a lot of height; if the card's top had
+      // scrolled above the viewport, that vanished height would leave you stranded
+      // far down the feed. Re-anchor the now-collapsed card to the top so you land
+      // back on what you were reading. Only correct upward — a card whose top is
+      // already in view stays put. Snap (not smooth) so it reads as a reset rather
+      // than a long fly-through when the expanded body was very tall.
+      await tick();
+      const el = articleElements[index];
+      if (el) {
+        const top = el.getBoundingClientRect().top;
+        const margin = 8;
+        if (top < margin) {
+          window.scrollBy({ top: top - margin, behavior: 'instant' });
+        }
+      }
     } else {
       feedViewStore.select(index);
       feedViewStore.expand(index);
+      // No scroll on expand: the body grows downward, so the card's top stays put.
+      // (Keyboard nav still calls the exported scrollToCenter explicitly.)
     }
-    await tick();
-    scrollToCenter(index);
   }
 
   function handleSelect(index: number) {

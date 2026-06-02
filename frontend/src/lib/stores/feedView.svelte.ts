@@ -187,8 +187,11 @@ function createFeedViewStore() {
   // Tag menu state (which item key should show the tag menu, null = closed)
   let tagMenuItemKey = $state<string | null>(null);
 
-  // Mobile scroll-hide state for floating controls
-  let mobileControlsVisible = $state(true);
+  // Whether the expanded card's action bar is currently floating (pinned to the
+  // viewport bottom, overlapping scrolling content). The mobile bottom bar reads
+  // this to stack itself above the action bar's reserved space instead of behind
+  // it. Only meaningful while an item is expanded; reset whenever expansion clears.
+  let mobileActionBarFloating = $state(false);
 
   // Toolbar filter state (unified source model)
   let filterToolbarOpen = $state(false);
@@ -870,12 +873,19 @@ function createFeedViewStore() {
     // 'shares' mode shows documents (not paginated) — nothing to load.
   }
 
+  // Single entry point for changing the expanded item, so the floating-action-bar
+  // signal always clears when nothing is expanded.
+  function setExpandedKey(key: string | null) {
+    expandedKey = key;
+    if (key === null) mobileActionBarFloating = false;
+  }
+
   function selectByKey(key: string | null) {
     if (key === selectedKey) return;
 
     if (key === null) {
       selectedKey = null;
-      expandedKey = null;
+      setExpandedKey(null);
       return;
     }
 
@@ -883,7 +893,7 @@ function createFeedViewStore() {
     if (!item) return;
 
     selectedKey = key;
-    expandedKey = null;
+    setExpandedKey(null);
 
     // Track the item to keep it visible in unread filter for this session
     if (item.type === 'article') {
@@ -921,21 +931,21 @@ function createFeedViewStore() {
 
   function deselect() {
     selectedKey = null;
-    expandedKey = null;
+    setExpandedKey(null);
     // Don't clear session sets - items should stay visible until view changes
   }
 
   function expand(index: number) {
-    expandedKey = currentItems[index]?.key ?? null;
+    setExpandedKey(currentItems[index]?.key ?? null);
   }
 
   function collapse() {
-    expandedKey = null;
+    setExpandedKey(null);
   }
 
   function resetSelection() {
     selectedKey = null;
-    expandedKey = null;
+    setExpandedKey(null);
     // Clear session sets when switching views/feeds
     readArticleGuidsThisSession = new Set();
     readDocumentUrisThisSession = new Set();
@@ -1166,11 +1176,12 @@ function createFeedViewStore() {
     setFilterToolbarOpen(open: boolean) {
       filterToolbarOpen = open;
     },
-    get mobileControlsVisible() {
-      return mobileControlsVisible;
+    get mobileActionBarFloating() {
+      return mobileActionBarFloating;
     },
-    setMobileControlsVisible(visible: boolean) {
-      mobileControlsVisible = visible;
+    setMobileActionBarFloating(floating: boolean) {
+      // Guard against stale reports from a card whose expansion already cleared.
+      mobileActionBarFloating = floating && expandedKey !== null;
     },
     setSourcePopoverOpen(open: boolean) {
       sourcePopoverOpen = open;
