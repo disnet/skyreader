@@ -380,6 +380,27 @@ matching proves lossy.
   anti-reference). Color stays reserved per DESIGN.md — neutral lane icons, muted-ink count, no
   badge fills.
 
+##### Render refinement — the Atmosphere row (shipped, supersedes the lead-lane line above)
+
+The first cut put an always-on lead-lane line on _every_ row (collapsed included) and expanded the
+roll-up vertically. In practice it added chrome to the scannable list and split "see who's talking"
+from "add your own" across the card. The shipped design folds both into one **Atmosphere row**:
+
+- **Only when the card is open.** The row is gone from the collapsed list entirely — collapsed rows
+  stay clean title lines ("the text is the product"). It renders below the article body, above the
+  action bar, for articles only (link posts keep the Phase 3 context block).
+- **All lanes in one inline row, no vertical roll-up.** Each lane is a pill — `[icon] [count]` when
+  others have referenced it, `[icon] [label]` when empty. No lead-lane / "+N more" chevron.
+- **Each lane does double duty (see + create).** Tapping a lane expands an accordion (one at a time)
+  that lazily resolves its **network references for all four lanes** — @handle · note · ↗ link-out
+  (the deferred "per-person expand," now built; see below). A **"+ create"** sits at the foot of the
+  expansion: note → the share flow, Margin/Semble → their save handlers, Bluesky → a compose intent.
+- **Create-capable lanes are always present when open** (note / Margin / Semble), even at zero
+  count, so the affordance is always reachable; Bluesky shows only when it has a count.
+- Semble/Margin therefore **move out of the buried overflow menu** into the lane row for articles
+  (documents keep the action-bar/overflow copies). Counts stay always-on + cheap (`articleMentions`);
+  people resolve only on expand.
+
 #### Work items — shipped
 
 - `feed-proxy`:
@@ -400,19 +421,34 @@ matching proves lossy.
 - `backend`: `FeedProxyClient.fetchArticleMentions` + `handleV2Mentions` (`feeds-v2.ts`), routed at
   `POST /api/v2/mentions` (`index.ts`).
 - `frontend`:
-  - `articleMentions.svelte.ts` — batched, deduped, session-memoized lazy store; one cold retry.
-  - `ArticleCard.svelte` — always-on lead-lane line (`✍ 3 linkblog notes`), `+N more` roll-up
-    (union math: `total − leadCount`), expand → per-lane breakdown (icon · count · label · honest
-    verb). `bluesky` butterfly added to `Icon.svelte`; margin/Semble/standard-site brand glyphs reused.
-  - `MentionLane` / `ArticleMentions` types; `api.fetchArticleMentions`.
+  - `articleMentions.svelte.ts` — batched, deduped, session-memoized lazy store (always-on counts).
+  - `mentionLaneItems.svelte.ts` — lazy, session-memoized per-`(url, lane)` store for the expand;
+    shared in-flight promise; silent degradation.
+  - `ArticleCard.svelte` — the **Atmosphere row** (see "Render refinement" above): only-when-open,
+    all lanes inline, accordion expand → per-lane people (@handle · note · ↗) + "+ create" footer.
+    Semble/Margin gated to document mode in the action bar/overflow. `bluesky` butterfly in
+    `Icon.svelte`; margin/Semble/standard-site brand glyphs reused.
+  - `MentionLane` / `ArticleMentions` / `MentionLaneEntry` types; `api.fetchArticleMentions` +
+    `api.fetchMentionLaneItems`.
 
-**Deferred follow-on — follows-aware lead lane.** The shared cache is unpersonalized, but the client
-could re-rank the lead toward a lane containing DIDs the user follows (Phase 6 follows data), e.g.
+**Per-person expand — shipped (all four lanes).** The expand lazily resolves the actual references
+for the opened lane via a new proxy path `POST /mention-lane` (`feed-proxy/src/mention-lane.ts`:
+`getMentionLaneItems` → `/links/all` discovery filtered to the lane → `/links` per source, dedup by
+author, cap 8 → per-collection note + link-out). Link-outs are lane-specific: Bluesky
+(`bsky.app/profile/<did>/post/<rkey>`) and Linkblogs (`skyreader.app/blogs/<did>/<rkey>`) build a
+stable permalink from did+rkey; margin.at / Semble degrade to handle + best-effort note (no known
+permalink yet). Cached in `constellation_cache` (`lane-items:<lane>|<normUrl>`, 5-min TTL, empties
+cached too). Backend passthrough `FeedProxyClient.fetchMentionLaneItems` + `handleV2MentionLane`
+(`POST /api/v2/mention-lane`). Tests `mention-lane.test.ts`.
+
+**Deferred follow-on — follows-aware ordering.** The shared cache is unpersonalized, but the client
+could re-rank lanes/people toward DIDs the user follows (Phase 6 follows data), e.g.
 _"2 people you follow noted this."_ Off the shared path, client-side only; noted, not built.
 
-**Deferred follow-on — per-person expand.** The breakdown is counts only; the Linkblogs + Bluesky
-lanes could lazily resolve to handles + notes on open via the Phase 3 `alsoLinkedBy` path
-(`/social-context` already does this by `articleUrl`). Off the always-on path; noted, not built.
+**Open follow-up — margin.at / Semble link-outs + note shapes.** The two _mark_ lanes resolve
+handle + a best-effort note but no permalink (their record shapes / public URL formats weren't
+verified live). Verify `at.margin.note` and `network.cosmik.card` shapes against real records and
+add real link-outs.
 
 ### Phase 6 — Linkblog discovery & onboarding
 

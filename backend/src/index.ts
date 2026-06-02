@@ -13,6 +13,7 @@ import {
   handleV2BatchDocumentFetch,
   handleV2SocialContext,
   handleV2Mentions,
+  handleV2MentionLane,
 } from './routes/feeds-v2';
 import { handleDetectContent } from './routes/social';
 import {
@@ -231,6 +232,10 @@ export default {
         case url.pathname === '/api/v2/mentions':
           if (!session) return unauthorizedResponse(headers);
           response = await handleV2Mentions(request, env);
+          break;
+        case url.pathname === '/api/v2/mention-lane':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleV2MentionLane(request, env);
           break;
 
         // Social routes

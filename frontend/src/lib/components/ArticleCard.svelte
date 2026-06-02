@@ -19,10 +19,12 @@
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { socialContextStore } from '$lib/stores/socialContext.svelte';
   import { articleMentionsStore } from '$lib/stores/articleMentions.svelte';
+  import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { profileService } from '$lib/services/profiles';
   import { auth } from '$lib/stores/auth.svelte';
   import Icon from './Icon.svelte';
+  import type { IconName } from './Icon.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
   import ShareCommentBox from '$lib/components/feed/ShareCommentBox.svelte';
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
@@ -281,11 +283,67 @@
     (socialContext?.alsoLinkedBy ?? []).filter((e) => e.did !== document?.authorDid)
   );
 
-  // ── Network-wide mentions (Phase 5) ─────────────────────────────────────────
-  // For a regular article, how is it being referenced across the Atmosphere —
-  // linkblog notes / Bluesky posts / margin.at highlights / Semble saves. Lazy +
-  // batched (the store dedups across all cards); adornment only, hidden when
-  // there's no signal. Not for documents/link posts (those use Phase 3 context).
+  // ── The Atmosphere row (Phase 5) ────────────────────────────────────────────
+  // For a regular article (only when open), one quiet row of source lanes — how
+  // this URL is referenced across the Atmosphere (linkblog notes / Bluesky posts
+  // / margin.at highlights / Semble saves). Each lane does double duty: it shows
+  // the count of others AND is the affordance to add your own. Tapping a lane
+  // expands its people; a "+ create" sits at the foot of the expansion. The
+  // create-capable lanes (note / Margin / Semble) appear even at zero so the
+  // affordance is always reachable; Bluesky shows only when it has a count.
+  // Counts are always-on + cheap (batched store); the people resolve lazily on
+  // expand. Documents/link posts use the Phase 3 context block instead.
+  type LaneId = 'linkblog' | 'bluesky' | 'margin' | 'semble';
+
+  const LANE_META: Record<
+    LaneId,
+    { icon: IconName; label: string; verb: string; noun: string; createLabel: string }
+  > = {
+    linkblog: {
+      icon: 'standard-site',
+      label: 'Linkblogs',
+      verb: 'noted',
+      noun: 'note',
+      createLabel: 'Write a note',
+    },
+    bluesky: {
+      icon: 'bluesky',
+      label: 'Bluesky',
+      verb: 'posted',
+      noun: 'post',
+      createLabel: 'Post on Bluesky',
+    },
+    margin: {
+      icon: 'margin',
+      label: 'margin.at',
+      verb: 'highlighted',
+      noun: 'highlight',
+      createLabel: 'Highlight in Margin',
+    },
+    semble: {
+      icon: 'semble',
+      label: 'Semble',
+      verb: 'saved',
+      noun: 'save',
+      createLabel: 'Save to Semble',
+    },
+  };
+  const LANE_ORDER: LaneId[] = ['linkblog', 'bluesky', 'margin', 'semble'];
+
+  // Whether the user can contribute to a lane from this card.
+  function laneCanCreate(id: LaneId): boolean {
+    switch (id) {
+      case 'linkblog':
+        return Boolean(auth.user) && Boolean(onShare);
+      case 'semble':
+        return Boolean(onSaveToSemble);
+      case 'margin':
+        return Boolean(onSaveToMargin);
+      case 'bluesky':
+        return true; // compose intent — always available
+    }
+  }
+
   $effect(() => {
     if (!isDocumentMode && article?.url) articleMentionsStore.fetch(article.url);
   });
@@ -293,24 +351,74 @@
     !isDocumentMode && article?.url ? articleMentionsStore.get(article.url) : undefined
   );
   let mentionLanes = $derived(articleMentions?.lanes ?? []);
-  let leadLane = $derived(mentionLanes[0]);
-  // Distinct people beyond the lead lane (union math: lead ⊆ total).
-  let mentionMore = $derived(
-    articleMentions && leadLane ? Math.max(0, articleMentions.total - leadLane.count) : 0
+  let mentionLaneMap = $derived(new Map(mentionLanes.map((l) => [l.lane as LaneId, l])));
+
+  // The lanes to render, in priority order: a lane shows when it has a count or
+  // offers a create affordance (Bluesky only when counted).
+  let laneRow = $derived.by(() => {
+    if (isDocumentMode) return [];
+    const rows: Array<{ id: LaneId; count: number; capped: boolean; canCreate: boolean }> = [];
+    for (const id of LANE_ORDER) {
+      const data = mentionLaneMap.get(id);
+      const count = data?.count ?? 0;
+      const canCreate = laneCanCreate(id);
+      if (id === 'bluesky' && count === 0) continue;
+      if (count === 0 && !canCreate) continue;
+      rows.push({ id, count, capped: data?.capped ?? false, canCreate });
+    }
+    return rows;
+  });
+
+  // Which lane is expanded to show its people (one at a time, accordion).
+  let expandedLane = $state<LaneId | null>(null);
+  let expandedLaneItems = $derived(
+    expandedLane && article?.url ? mentionLaneItemsStore.get(article.url, expandedLane) : undefined
   );
-  let showMentionBreakdown = $state(false);
 
-  // Lane → Icon.svelte glyph (typed; the proxy also sends an icon hint).
-  const LANE_ICON = {
-    linkblog: 'standard-site',
-    bluesky: 'bluesky',
-    margin: 'margin',
-    semble: 'semble',
-  } as const;
-
-  function mentionNoun(noun: string, count: number): string {
-    return count === 1 ? noun : `${noun}s`;
+  function toggleLane(id: LaneId) {
+    if (expandedLane === id) {
+      expandedLane = null;
+      return;
+    }
+    expandedLane = id;
+    // Only resolve people for lanes that actually have references — a zero-count
+    // lane (just a create affordance) has nobody to fetch.
+    const hasPeople = (mentionLaneMap.get(id)?.count ?? 0) > 0;
+    if (hasPeople && article?.url) mentionLaneItemsStore.load(article.url, id);
   }
+
+  // Contribute to a lane: note → the share flow (composer below), Margin/Semble
+  // → their save handlers, Bluesky → a compose intent in a new tab.
+  function createInLane(id: LaneId, e: MouseEvent) {
+    e.stopPropagation();
+    switch (id) {
+      case 'linkblog':
+        if (!currentlyShared) shareNow();
+        break;
+      case 'semble':
+        onSaveToSemble?.();
+        break;
+      case 'margin':
+        onSaveToMargin?.();
+        break;
+      case 'bluesky':
+        window.open(
+          `https://bsky.app/intent/compose?text=${encodeURIComponent(itemUrl)}`,
+          '_blank',
+          'noopener'
+        );
+        break;
+    }
+  }
+
+  function laneCreateLabel(id: LaneId): string {
+    if (id === 'linkblog' && currentlyShared) return 'Edit your note';
+    return LANE_META[id].createLabel;
+  }
+
+  // For articles, Semble/Margin live in the Atmosphere row; the action-bar and
+  // overflow copies are kept for documents (which have no Atmosphere row).
+  let showActionBarIntegrations = $derived(isDocumentMode);
 
   // Write a linkblog entry for the current document (repostUri = the doc's AT URI,
   // so a reshared link post credits the original).
@@ -708,51 +816,6 @@
     </div>
   </div>
 
-  <!-- Network-wide mentions (Phase 5): a quiet lead-lane line — the most
-       meaningful kind of reference with its honest noun — rolling the rest into
-       "+N more". Adornment only; absent until it lazily loads and silently
-       absent below the signal threshold or when the lookup is unavailable. -->
-  {#if leadLane}
-    <div class="article-mentions" class:expanded-breakdown={showMentionBreakdown}>
-      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-      <span
-        class="mentions-lead"
-        class:interactive={mentionMore > 0}
-        role={mentionMore > 0 ? 'button' : undefined}
-        tabindex={mentionMore > 0 ? -1 : undefined}
-        title={mentionMore > 0 ? 'See where this is referenced' : undefined}
-        onclick={(e) => {
-          if (mentionMore === 0) return;
-          e.stopPropagation();
-          showMentionBreakdown = !showMentionBreakdown;
-        }}
-      >
-        <Icon name={LANE_ICON[leadLane.lane]} size={12} />
-        <span class="mentions-text"
-          >{leadLane.count}{leadLane.capped ? '+' : ''}
-          {mentionNoun(leadLane.noun, leadLane.count)}</span
-        >
-        {#if mentionMore > 0}
-          <span class="mentions-more">· +{mentionMore} more</span>
-          <Icon name={showMentionBreakdown ? 'chevron-up' : 'chevron-down'} size={12} />
-        {/if}
-      </span>
-
-      {#if showMentionBreakdown}
-        <div class="mentions-breakdown">
-          {#each mentionLanes as lane (lane.lane)}
-            <div class="mentions-lane">
-              <Icon name={LANE_ICON[lane.lane]} size={13} />
-              <span class="mentions-lane-count">{lane.count}{lane.capped ? '+' : ''}</span>
-              <span class="mentions-lane-label">{lane.label}</span>
-              <span class="mentions-lane-verb">{lane.verb}</span>
-            </div>
-          {/each}
-        </div>
-      {/if}
-    </div>
-  {/if}
-
   {#if isOpen}
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <div class="article-content" onclick={handleContentClick}>
@@ -828,6 +891,98 @@
                 >{#if entry.note}<span class="context-note">“{entry.note}”</span>{/if}
               </span>
             {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- The Atmosphere row (Phase 5): for an open article, one quiet line of
+         source lanes. Each lane shows how many others referenced this URL that
+         way AND is the affordance to add yours; tapping expands the people, with
+         a "+ create" at the foot. Adornment — degrades to just the create lanes
+         when there's no signal, and silently to nothing offline. -->
+    {#if laneRow.length > 0}
+      <div class="atmosphere">
+        <div class="atmosphere-lanes">
+          {#each laneRow as row (row.id)}
+            <button
+              type="button"
+              class="lane-chip"
+              class:active={expandedLane === row.id}
+              class:mine={row.id === 'linkblog' && currentlyShared}
+              title={row.count > 0
+                ? `${row.count}${row.capped ? '+' : ''} ${LANE_META[row.id].verb} this · ${LANE_META[row.id].label}`
+                : `${LANE_META[row.id].label} — add yours`}
+              onclick={(e) => {
+                e.stopPropagation();
+                toggleLane(row.id);
+              }}
+            >
+              <Icon name={LANE_META[row.id].icon} size={14} />
+              {#if row.count > 0}
+                <span class="lane-count">{row.count}{row.capped ? '+' : ''}</span>
+              {:else}
+                <span class="lane-label">{LANE_META[row.id].label}</span>
+              {/if}
+              <Icon name={expandedLane === row.id ? 'chevron-up' : 'chevron-down'} size={12} />
+            </button>
+          {/each}
+        </div>
+
+        {#if expandedLane}
+          {@const meta = LANE_META[expandedLane]}
+          <div class="lane-detail">
+            {#if expandedLaneItems?.loading}
+              <div class="lane-detail-status">Loading…</div>
+            {:else if expandedLaneItems && expandedLaneItems.entries.length > 0}
+              <ul class="lane-people">
+                {#each expandedLaneItems.entries as entry (entry.did + (entry.url ?? ''))}
+                  <li class="lane-person">
+                    <button
+                      type="button"
+                      class="lane-person-handle"
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        sidebarStore.openAddFeedModalForDid(entry.did);
+                      }}>@{entry.handle ?? entry.did.slice(0, 18)}</button
+                    >
+                    {#if entry.note}<span class="lane-person-note">{entry.note}</span>{/if}
+                    {#if entry.url}
+                      <a
+                        class="lane-person-link"
+                        href={entry.url}
+                        target="_blank"
+                        rel="noopener"
+                        title="Open {meta.label}"
+                        onclick={(e) => e.stopPropagation()}
+                        ><Icon name="external-link" size={13} /></a
+                      >
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            {:else if !expandedLaneItems?.loading}
+              <!-- Loaded-empty, or a zero-count lane we never fetched: same hint. -->
+              <div class="lane-detail-status">
+                {#if laneCanCreate(expandedLane)}Be the first to {meta.verb} this.{:else}Nothing
+                  here yet.{/if}
+              </div>
+            {/if}
+
+            {#if laneCanCreate(expandedLane)}
+              <button
+                type="button"
+                class="lane-create"
+                class:done={expandedLane === 'linkblog' && currentlyShared}
+                onclick={(e) => createInLane(expandedLane!, e)}
+              >
+                <Icon
+                  name={expandedLane === 'linkblog' && currentlyShared ? 'edit' : 'plus'}
+                  size={14}
+                />
+                <span>{laneCreateLabel(expandedLane)}</span>
+              </button>
+            {/if}
           </div>
         {/if}
       </div>
@@ -915,14 +1070,14 @@
             >Tag{#if itemTagCount > 0}<span class="tag-count">({itemTagCount})</span>{/if}</span
           >
         </button>
-        {#if onSaveToSemble}
+        {#if showActionBarIntegrations && onSaveToSemble}
           <button class="action-btn collapsible-always" onclick={handleSaveToSemble}>
             <span class="action-icon"><Icon name="semble" size={16} /></span><span
               class="action-label">Semble</span
             >
           </button>
         {/if}
-        {#if onSaveToMargin}
+        {#if showActionBarIntegrations && onSaveToMargin}
           <button class="action-btn collapsible-always" onclick={handleSaveToMargin}>
             <span class="action-icon"><Icon name="margin" size={16} /></span><span
               class="action-label">Margin</span
@@ -932,7 +1087,7 @@
         <!-- Overflow menu: shown when inline buttons are collapsed -->
         <div
           class="overflow-menu-wrapper"
-          class:has-integrations={onSaveToSemble || onSaveToMargin}
+          class:has-integrations={showActionBarIntegrations && (onSaveToSemble || onSaveToMargin)}
         >
           <button
             class="action-btn overflow-trigger"
@@ -961,13 +1116,13 @@
                     ({itemTagCount}){/if}</span
                 >
               </button>
-              {#if onSaveToSemble}
+              {#if showActionBarIntegrations && onSaveToSemble}
                 <button class="overflow-menu-item" onclick={handleOverflowSemble}>
                   <Icon name="semble" size={16} />
                   <span>Save to Semble</span>
                 </button>
               {/if}
-              {#if onSaveToMargin}
+              {#if showActionBarIntegrations && onSaveToMargin}
                 <button class="overflow-menu-item" onclick={handleOverflowMargin}>
                   <Icon name="margin" size={16} />
                   <span>Save to Margin</span>
@@ -1195,70 +1350,151 @@
     overflow: hidden;
   }
 
-  /* Link-post social context line (Constellation). Quiet, text-first. */
-  /* Network-wide mentions (Phase 5) — a quiet lead line under the header. The
-     left indent lines the lane icon up under the source favicon. */
-  .article-mentions {
-    padding: 0.0625rem 0 0.1875rem 1.625rem;
-    font-size: 0.8125rem;
-    color: var(--color-text-secondary);
+  /* The Atmosphere row (Phase 5) — source lanes for an open article. One quiet
+     line of lane chips; each shows others' references and adds yours on expand.
+     Flat and neutral per DESIGN.md; the One Blue shows only on hover/active. The
+     left indent lines the lanes up under the source favicon. */
+  .atmosphere {
+    margin: 0.25rem 0 0.5rem;
+    padding-left: 1.625rem;
   }
 
-  .mentions-lead {
+  .atmosphere-lanes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+  }
+
+  .lane-chip {
     display: inline-flex;
     align-items: center;
     gap: 0.3125rem;
+    padding: 0.1875rem 0.5rem;
+    background: none;
+    border: 1px solid var(--color-border, #e0e0e0);
+    border-radius: 999px;
+    font: inherit;
+    font-size: 0.8125rem;
     color: var(--color-text-secondary);
-  }
-
-  .mentions-lead.interactive {
     cursor: pointer;
+    transition:
+      color 0.15s ease,
+      border-color 0.15s ease,
+      background-color 0.15s ease;
   }
 
-  .mentions-lead.interactive:hover {
+  .lane-chip:hover,
+  .lane-chip.active,
+  .lane-chip.mine {
     color: var(--color-primary);
+    border-color: var(--color-primary);
   }
 
-  .mentions-lead :global(.icon) {
+  .lane-chip.active {
+    background: var(--color-sidebar-active, rgba(0, 102, 204, 0.08));
+  }
+
+  .lane-chip :global(.icon) {
     flex-shrink: 0;
-    opacity: 0.85;
+    opacity: 0.9;
   }
 
-  .mentions-text {
+  /* The trailing chevron is a soft hint, not a control. */
+  .lane-chip > :global(.icon:last-child) {
+    opacity: 0.45;
+  }
+
+  .lane-count {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+
+  .lane-label {
     white-space: nowrap;
   }
 
-  .mentions-breakdown {
+  .lane-detail {
+    margin-top: 0.5rem;
+    padding-top: 0.125rem;
+    font-size: 0.8125rem;
+  }
+
+  .lane-detail-status {
+    color: var(--color-text-secondary);
+    padding: 0.125rem 0 0.375rem;
+  }
+
+  .lane-people {
+    list-style: none;
+    margin: 0 0 0.375rem;
+    padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
-    margin-top: 0.375rem;
+    gap: 0.3125rem;
   }
 
-  .mentions-lane {
+  .lane-person {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: 0.4375rem;
-    line-height: 1.3;
+    min-width: 0;
+    line-height: 1.4;
   }
 
-  .mentions-lane :global(.icon) {
+  .lane-person-handle {
     flex-shrink: 0;
-    opacity: 0.85;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: 0.8125rem;
+    color: var(--color-text-secondary);
+    cursor: pointer;
   }
 
-  .mentions-lane-count {
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
+  .lane-person-handle:hover {
+    color: var(--color-primary);
+    text-decoration: underline;
+  }
+
+  .lane-person-note {
+    flex: 1;
+    min-width: 0;
     color: var(--color-text);
-    min-width: 1.25rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .mentions-lane-label {
-    color: var(--color-text);
+  .lane-person-link {
+    flex-shrink: 0;
+    display: inline-flex;
+    color: var(--color-text-secondary);
   }
 
-  .mentions-lane-verb {
+  .lane-person-link:hover {
+    color: var(--color-primary);
+  }
+
+  /* The "add yours" affordance — a quiet One-Blue text button. */
+  .lane-create {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    background: none;
+    border: none;
+    padding: 0.25rem 0;
+    font: inherit;
+    font-size: 0.8125rem;
+    color: var(--color-primary, #0066cc);
+    cursor: pointer;
+  }
+
+  .lane-create:hover {
+    text-decoration: underline;
+  }
+
+  .lane-create.done {
     color: var(--color-text-secondary);
   }
 

@@ -12,6 +12,8 @@ import {
 import { getSocialContext, type SocialContext, type SocialContextQuery } from './constellation';
 import { getLinkblogRegistry } from './linkblog-registry';
 import { readCachedMentions, enrichMentions } from './mentions';
+import { getMentionLaneItems } from './mention-lane';
+import type { LaneId } from './lanes';
 import { normalizeArticleUrl } from './url-normalize';
 
 export interface AppConfig {
@@ -1700,6 +1702,34 @@ export function createApp(db: Database, config: AppConfig) {
     });
 
     return c.json({ items });
+  });
+
+  // "See existing items" for one mention lane (Phase 5). Resolves the people who
+  // referenced an article URL via that lane — handle, note, link out — lazily
+  // when the reader expands the lane. Adornment only: degrades to an empty list.
+  const KNOWN_LANES = new Set<LaneId>(['linkblog', 'bluesky', 'margin', 'semble']);
+  app.post('/mention-lane', async (c) => {
+    if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    let body: { url?: string; lane?: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Invalid JSON body' }, 400);
+    }
+
+    const { url, lane } = body;
+    if (!url || typeof url !== 'string') {
+      return c.json({ error: 'Missing url' }, 400);
+    }
+    if (!lane || !KNOWN_LANES.has(lane as LaneId)) {
+      return c.json({ error: 'Unknown lane' }, 400);
+    }
+
+    const entries = await getMentionLaneItems(db, url, lane as LaneId);
+    return c.json({ entries });
   });
 
   return { app, inFlight, inFlightDocs, warmStaleFeeds, warmStaleDocuments };

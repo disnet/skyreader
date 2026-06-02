@@ -605,6 +605,18 @@ export interface ArticleMentions {
   lanes: MentionLane[];
 }
 
+// One resolved reference inside a lane (Phase 5 "see existing items"): a person
+// who referenced this URL via that lane, with their note/snippet and a link out
+// to the actual post / card / highlight. Lazily resolved on lane expand — off
+// the always-on counts path, since it costs a per-record PDS fetch. `note` and
+// `url` are best-effort and degrade to null per lane / per record.
+export interface MentionLaneEntry {
+  did: string;
+  handle: string | null;
+  note: string | null;
+  url: string | null;
+}
+
 // The user's linkblog publication metadata (site.standard.publication), as
 // returned by the backend. `exists` is false when the publication hasn't been
 // created yet (first share creates it lazily).

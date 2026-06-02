@@ -10,6 +10,7 @@ import type {
   SembleCollection,
   SocialContextResult,
   ArticleMentions,
+  MentionLaneEntry,
   SocialDocument,
   User,
 } from '$lib/types';
@@ -483,6 +484,16 @@ class ApiClient {
     return this.fetch('/api/v2/mentions', {
       method: 'POST',
       body: JSON.stringify({ urls }),
+    });
+  }
+
+  // The people inside one lane (Phase 5 "see existing items") — who referenced
+  // this URL via that lane, with their note + a link out. Lazily fetched when a
+  // lane is expanded. Best-effort adornment; degrades to an empty list.
+  async fetchMentionLaneItems(url: string, lane: string): Promise<{ entries: MentionLaneEntry[] }> {
+    return this.fetch('/api/v2/mention-lane', {
+      method: 'POST',
+      body: JSON.stringify({ url, lane }),
     });
   }
 
