@@ -323,6 +323,13 @@
     pointer-events: none !important;
   }
 
+  /* The controls opt back into pointer events past the container's `none`; revoke
+     that when hidden so the translated-away header can't capture clicks. */
+  .feed-header-fixed.hidden .control-left,
+  .feed-header-fixed.hidden .control-right {
+    pointer-events: none;
+  }
+
   .feed-header-controls {
     display: flex;
     justify-content: space-between;

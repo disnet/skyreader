@@ -108,21 +108,22 @@
   async function handleExpand(index: number) {
     const key = feedViewStore.currentItems[index]?.key ?? null;
     if (key !== null && feedViewStore.expandedKey === key) {
-      feedViewStore.collapse();
       // Collapsing a long body removes a lot of height; if the card's top had
-      // scrolled above the viewport, that vanished height would leave you stranded
-      // far down the feed. Re-anchor the now-collapsed card to the top so you land
-      // back on what you were reading. Only correct upward — a card whose top is
-      // already in view stays put. Snap (not smooth) so it reads as a reset rather
-      // than a long fly-through when the expanded body was very tall.
+      // scrolled above the viewport, that vanished height would strand you far
+      // down the feed. Re-anchor the now-collapsed card to the top so you land
+      // back on what you were reading. Only when it had scrolled off the top —
+      // a card still in view stays put.
+      //
+      // Measure BEFORE collapsing, then use scrollIntoView (not a relative
+      // scrollBy) so the browser computes the final position atomically: on
+      // mobile a relative scroll races the body shrink and the URL-bar resize
+      // and can overshoot all the way to the page top. scroll-margin-top on the
+      // wrapper keeps it clear of the (desktop) fixed header.
+      const wasAboveViewport = (articleElements[index]?.getBoundingClientRect().top ?? 0) < 0;
+      feedViewStore.collapse();
       await tick();
-      const el = articleElements[index];
-      if (el) {
-        const top = el.getBoundingClientRect().top;
-        const margin = 8;
-        if (top < margin) {
-          window.scrollBy({ top: top - margin, behavior: 'instant' });
-        }
+      if (wasAboveViewport) {
+        articleElements[index]?.scrollIntoView({ block: 'start' });
       }
     } else {
       feedViewStore.select(index);
@@ -239,7 +240,7 @@
 
 <div class="article-list" class:hidden-behind-reader={readerItem !== null}>
   {#each feedViewStore.currentItems as displayItem, index (displayItem.key)}
-    <div bind:this={articleElements[index]}>
+    <div class="article-item-anchor" bind:this={articleElements[index]}>
       {#if displayItem.type === 'article'}
         {@const article = displayItem.item}
         {@const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId)}
@@ -321,6 +322,19 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+  }
+
+  /* When a collapse re-anchors a card to the top (see handleExpand), land it
+     below the fixed feed header — mirrors .feed-page's padding-top so the card
+     sits where the top of the list naturally would. */
+  .article-item-anchor {
+    scroll-margin-top: 3.5rem;
+  }
+
+  @media (max-width: 1000px) {
+    .article-item-anchor {
+      scroll-margin-top: 0.5rem;
+    }
   }
 
   .hidden-behind-reader {
