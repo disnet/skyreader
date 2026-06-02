@@ -22,6 +22,7 @@
     | 'list'
     | 'newspaper'
     | 'layers'
+    | 'activity'
     | 'external-link'
     | 'arrow-down'
     | 'arrow-up'
@@ -160,6 +161,8 @@
     />
     <path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65" />
     <path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65" />
+  {:else if name === 'activity'}
+    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
   {:else if name === 'external-link'}
     <path d="M15 3h6v6" />
     <path d="M10 14 21 3" />

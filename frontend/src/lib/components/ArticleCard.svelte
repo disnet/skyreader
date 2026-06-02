@@ -314,26 +314,28 @@
     }
   }
 
+  // Mentions are keyed off the unified itemUrl, so the Atmosphere row works in
+  // every mode: an article's URL, a link-post's external article, or a
+  // document's canonical URL.
   $effect(() => {
-    if (!isDocumentMode && article?.url) articleMentionsStore.fetch(article.url);
+    if (itemUrl) articleMentionsStore.fetch(itemUrl);
   });
-  let articleMentions = $derived(
-    !isDocumentMode && article?.url ? articleMentionsStore.get(article.url) : undefined
-  );
+  let articleMentions = $derived(itemUrl ? articleMentionsStore.get(itemUrl) : undefined);
   let mentionLanes = $derived(articleMentions?.lanes ?? []);
   let mentionLaneMap = $derived(new Map(mentionLanes.map((l) => [l.lane as LaneId, l])));
 
-  // The lanes to render, in priority order: a lane shows when it has a count or
-  // offers a create affordance (Bluesky only when counted).
+  // The lanes to render, in priority order. The Atmosphere button is a
+  // first-class affordance on every open card, so Bluesky — whose compose intent
+  // is always available — always appears, guaranteeing at least one lane. The
+  // other lanes show only when they have a count or a working create affordance,
+  // so we never render a dead "add yours" row the user can't act on.
   let laneRowBase = $derived.by(() => {
-    if (isDocumentMode) return [];
     const rows: Array<{ id: LaneId; count: number; capped: boolean; canCreate: boolean }> = [];
     for (const id of LANE_ORDER) {
       const data = mentionLaneMap.get(id);
       const count = data?.count ?? 0;
       const canCreate = laneCanCreate(id);
-      if (id === 'bluesky' && count === 0) continue;
-      if (count === 0 && !canCreate) continue;
+      if (id !== 'bluesky' && count === 0 && !canCreate) continue;
       rows.push({ id, count, capped: data?.capped ?? false, canCreate });
     }
     return rows;
@@ -358,7 +360,7 @@
   // Which lane is expanded to show its people (one at a time, accordion).
   let expandedLane = $state<LaneId | null>(null);
   let expandedLaneItems = $derived(
-    expandedLane && article?.url ? mentionLaneItemsStore.get(article.url, expandedLane) : undefined
+    expandedLane && itemUrl ? mentionLaneItemsStore.get(itemUrl, expandedLane) : undefined
   );
 
   // Resolved display data for the expanded lane's detail block.
@@ -384,7 +386,7 @@
     // Only resolve people for lanes that actually have references — a zero-count
     // lane (just a create affordance) has nobody to fetch.
     const hasPeople = (mentionLaneMap.get(id)?.count ?? 0) > 0;
-    if (hasPeople && article?.url) mentionLaneItemsStore.load(article.url, id);
+    if (hasPeople && itemUrl) mentionLaneItemsStore.load(itemUrl, id);
   }
 
   // Contribute to a lane: note → the share flow (composer below), Margin/Semble
