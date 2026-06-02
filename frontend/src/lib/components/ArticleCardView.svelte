@@ -95,6 +95,19 @@
     e.stopPropagation();
     onContentTap?.();
   }
+
+  // Atmosphere is collapsed to a quiet one-line summary by default; tapping it
+  // reveals the source lanes. Ephemeral display state, so it lives in the view.
+  let atmosphereOpen = $state(false);
+
+  const atmosphereSummary = $derived.by(() => {
+    const parts = laneRow
+      .filter((l) => l.count > 0)
+      .map((l) => `${l.count}${l.capped ? '+' : ''} ${l.label}`);
+    const canAdd = laneRow.some((l) => l.canCreate);
+    const mine = laneRow.some((l) => l.isMine);
+    return { parts, canAdd, mine, hasAny: parts.length > 0 };
+  });
 </script>
 
 <article
@@ -107,20 +120,6 @@
 >
   <div class="article-sticky-header">
     <div class="article-header-row">
-      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-      <span
-        class="read-toggle"
-        class:unread={!isRead}
-        title={isRead ? 'Mark unread' : 'Mark read'}
-        onclick={(e) => {
-          e.stopPropagation();
-          onToggleRead?.();
-        }}
-        role="button"
-        tabindex="-1"
-      >
-        <span class="read-dot"></span>
-      </span>
       <button class="article-header" onclick={() => onHeaderClick?.()}>
         <span class="title-line">
           {#if faviconUrl}
@@ -273,108 +272,121 @@
          way AND is the affordance to add yours; tapping expands the people. -->
     {#if laneRow.length > 0}
       <div class="atmosphere">
-        <div class="atmosphere-lanes">
-          {#each laneRow as row (row.id)}
+        {#if !atmosphereOpen}
+          <!-- Quiet summary: counts only, tap to reveal the lanes. -->
+          <button
+            type="button"
+            class="atmosphere-summary"
+            class:mine={atmosphereSummary.mine}
+            onclick={(e) => {
+              e.stopPropagation();
+              atmosphereOpen = true;
+            }}
+          >
+            <Icon name="layers" size={14} />
+            <span class="atmosphere-summary-text">
+              {#if atmosphereSummary.hasAny}{atmosphereSummary.parts.join(
+                  ' · '
+                )}{:else if atmosphereSummary.canAdd}Add to the Atmosphere{:else}Atmosphere{/if}
+            </span>
+            <Icon name="chevron-down" size={12} />
+          </button>
+        {:else}
+          <div class="atmosphere-lanes">
             <button
               type="button"
-              class="lane-chip"
-              class:active={expandedLane === row.id}
-              class:mine={row.isMine}
-              title={row.title}
+              class="lane-chip atmosphere-collapse"
+              title="Hide"
               onclick={(e) => {
                 e.stopPropagation();
-                onToggleLane?.(row.id);
+                atmosphereOpen = false;
               }}
             >
-              <Icon name={row.icon} size={14} />
-              {#if row.count > 0}
-                <span class="lane-count">{row.count}{row.capped ? '+' : ''}</span>
-              {:else}
-                <span class="lane-label">{row.label}</span>
-              {/if}
-              <Icon name={expandedLane === row.id ? 'chevron-up' : 'chevron-down'} size={12} />
+              <Icon name="layers" size={14} />
+              <Icon name="chevron-up" size={12} />
             </button>
-          {/each}
-        </div>
-
-        {#if expandedLane && expandedLaneMeta}
-          {@const lane = expandedLane}
-          {@const meta = expandedLaneMeta}
-          <div class="lane-detail">
-            {#if expandedLaneItems?.loading}
-              <div class="lane-detail-status">Loading…</div>
-            {:else if expandedLaneItems && expandedLaneItems.entries.length > 0}
-              <ul class="lane-people">
-                {#each expandedLaneItems.entries as entry (entry.did + (entry.url ?? ''))}
-                  <li class="lane-person">
-                    <button
-                      type="button"
-                      class="lane-person-handle"
-                      onclick={(e) => {
-                        e.stopPropagation();
-                        onOpenAuthor?.(entry.did);
-                      }}>@{entry.handle ?? entry.did.slice(0, 18)}</button
-                    >
-                    {#if entry.note}<span class="lane-person-note">{entry.note}</span>{/if}
-                    {#if entry.url}
-                      <a
-                        class="lane-person-link"
-                        href={entry.url}
-                        target="_blank"
-                        rel="noopener"
-                        title="Open {meta.label}"
-                        onclick={(e) => e.stopPropagation()}
-                        ><Icon name="external-link" size={13} /></a
-                      >
-                    {/if}
-                  </li>
-                {/each}
-              </ul>
-            {:else if !expandedLaneItems?.loading}
-              <!-- Loaded-empty, or a zero-count lane we never fetched: same hint. -->
-              <div class="lane-detail-status">
-                {#if meta.canCreate}Be the first to {meta.verb} this.{:else}Nothing here yet.{/if}
-              </div>
-            {/if}
-
-            {#if meta.canCreate}
+            {#each laneRow as row (row.id)}
               <button
                 type="button"
-                class="lane-create"
-                class:done={meta.createIsEdit}
+                class="lane-chip"
+                class:active={expandedLane === row.id}
+                class:mine={row.isMine}
+                title={row.title}
                 onclick={(e) => {
                   e.stopPropagation();
-                  onCreateInLane?.(lane);
+                  onToggleLane?.(row.id);
                 }}
               >
-                <Icon name={meta.createIsEdit ? 'edit' : 'plus'} size={14} />
-                <span>{meta.createLabel}</span>
+                <Icon name={row.icon} size={14} />
+                {#if row.count > 0}
+                  <span class="lane-count">{row.count}{row.capped ? '+' : ''}</span>
+                {:else}
+                  <span class="lane-label">{row.label}</span>
+                {/if}
+                <Icon name={expandedLane === row.id ? 'chevron-up' : 'chevron-down'} size={12} />
               </button>
-            {/if}
+            {/each}
           </div>
+
+          {#if expandedLane && expandedLaneMeta}
+            {@const lane = expandedLane}
+            {@const meta = expandedLaneMeta}
+            <div class="lane-detail">
+              {#if expandedLaneItems?.loading}
+                <div class="lane-detail-status">Loading…</div>
+              {:else if expandedLaneItems && expandedLaneItems.entries.length > 0}
+                <ul class="lane-people">
+                  {#each expandedLaneItems.entries as entry (entry.did + (entry.url ?? ''))}
+                    <li class="lane-person">
+                      <button
+                        type="button"
+                        class="lane-person-handle"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          onOpenAuthor?.(entry.did);
+                        }}>@{entry.handle ?? entry.did.slice(0, 18)}</button
+                      >
+                      {#if entry.note}<span class="lane-person-note">{entry.note}</span>{/if}
+                      {#if entry.url}
+                        <a
+                          class="lane-person-link"
+                          href={entry.url}
+                          target="_blank"
+                          rel="noopener"
+                          title="Open {meta.label}"
+                          onclick={(e) => e.stopPropagation()}
+                          ><Icon name="external-link" size={13} /></a
+                        >
+                      {/if}
+                    </li>
+                  {/each}
+                </ul>
+              {:else if !expandedLaneItems?.loading}
+                <!-- Loaded-empty, or a zero-count lane we never fetched: same hint. -->
+                <div class="lane-detail-status">
+                  {#if meta.canCreate}Be the first to {meta.verb} this.{:else}Nothing here yet.{/if}
+                </div>
+              {/if}
+
+              {#if meta.canCreate}
+                <button
+                  type="button"
+                  class="lane-create"
+                  class:done={meta.createIsEdit}
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    onCreateInLane?.(lane);
+                  }}
+                >
+                  <Icon name={meta.createIsEdit ? 'edit' : 'plus'} size={14} />
+                  <span>{meta.createLabel}</span>
+                </button>
+              {/if}
+            </div>
+          {/if}
         {/if}
       </div>
     {/if}
-
-    <!-- Mobile: meta line below content -->
-    <div class="article-meta-mobile">
-      {#if faviconUrl}
-        <img src={faviconUrl} alt="" class="favicon" />
-      {/if}
-      {#if feedTitle}
-        <a
-          href="/?feed={feedId}"
-          class="feed-title-link"
-          title={isDocumentMode ? 'standard.site' : 'RSS'}
-          onclick={(e) => e.stopPropagation()}
-          ><Icon name={isDocumentMode ? 'standard-site' : 'rss'} size={12} />{feedTitle}</a
-        >
-      {/if}
-      {#if readTimeMinutes > 0}
-        <span class="article-read-time"><Icon name="clock" size={12} /> {readTimeMinutes} min</span>
-      {/if}
-      <span class="article-date">{relativeDate}</span>
-    </div>
 
     <!-- Inline share-comment composer: present for as long as the item is shared. -->
     {#if currentlyShared}
@@ -429,7 +441,7 @@
             }}
           >
             <span class="action-icon"><Icon name="maximize" size={16} /></span><span
-              class="action-label">Full</span
+              class="action-label">Reader</span
             >
           </button>
         {/if}
@@ -504,6 +516,17 @@
             <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
             <div class="overflow-backdrop" onclick={() => onCloseOverflow?.()}></div>
             <div class="overflow-menu">
+              <button
+                class="overflow-menu-item"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  onToggleRead?.();
+                  onCloseOverflow?.();
+                }}
+              >
+                <Icon name={isRead ? 'circle' : 'circle-dot'} size={16} />
+                <span>{isRead ? 'Mark unread' : 'Mark read'}</span>
+              </button>
               <button
                 class="overflow-menu-item narrow-only"
                 onclick={(e) => {
@@ -610,6 +633,11 @@
 <style>
   .article-item {
     padding: 0 1rem;
+    /* The card is its own query container, so its layout responds to the column
+       width it's given (e.g. the /dev/cards width slider) rather than the
+       viewport. "card" is named so descendant @container rules can target it
+       explicitly past the nested action-bar container. */
+    container: card / inline-size;
   }
 
   .article-item:not(.selected):not(.expanded):hover {
@@ -770,6 +798,49 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.375rem;
+  }
+
+  /* Quiet one-line summary that stands in for the lane chips until tapped. */
+  .atmosphere-summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4375rem;
+    max-width: 100%;
+    padding: 0.25rem 0;
+    background: none;
+    border: none;
+    font: inherit;
+    font-size: 0.8125rem;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+
+  .atmosphere-summary:hover,
+  .atmosphere-summary.mine {
+    color: var(--color-primary);
+  }
+
+  .atmosphere-summary :global(.icon:first-child) {
+    flex-shrink: 0;
+    opacity: 0.8;
+  }
+
+  .atmosphere-summary :global(.icon:last-child) {
+    flex-shrink: 0;
+    opacity: 0.45;
+  }
+
+  .atmosphere-summary-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* The leading chip that folds the lanes back into the summary line. */
+  .atmosphere-collapse {
+    gap: 0.1875rem;
+    padding-inline: 0.375rem;
+    color: var(--color-text-secondary);
   }
 
   .lane-chip {
@@ -1006,45 +1077,6 @@
 
   .article-item.read .article-title {
     color: var(--color-text-secondary);
-  }
-
-  .read-toggle {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: none;
-    border: none;
-    padding: 2px 10px 2px 4px;
-    cursor: pointer;
-    flex-shrink: 0;
-    line-height: 0;
-    margin-top: calc(0.5rem + 3px);
-  }
-
-  .read-dot {
-    display: block;
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: transparent;
-    border: 1.5px solid var(--color-text-secondary);
-    transition:
-      background 0.15s ease,
-      border-color 0.15s ease;
-  }
-
-  .read-toggle:hover .read-dot {
-    border-color: var(--color-primary, #0066cc);
-    opacity: 0.7;
-  }
-
-  .read-toggle.unread .read-dot {
-    background: #5b9bd5;
-    border-color: #5b9bd5;
-  }
-
-  .read-toggle.unread:hover .read-dot {
-    opacity: 0.7;
   }
 
   .article-title-link {
@@ -1532,30 +1564,21 @@
     }
   }
 
-  /* Mobile meta bar — hidden by default, shown on mobile when article is open */
-  .article-meta-mobile {
-    display: none;
-  }
-
-  /* Mobile: two-line header — [icon] [title] on top, [source] [date] below */
-  @media (max-width: 600px) {
-    .read-toggle {
-      margin-top: calc(0.5rem + 5px);
-    }
-
+  /* Mobile: [icon] [title] on the first line, then one calm meta line below —
+     source · read-time · date. That meta line keeps the same fixed home whether
+     the card is collapsed or open (no jumping below the body on expand).
+     Keyed off the card's own width (the `card` container) so a narrow column
+     gets the mobile layout regardless of viewport. */
+  @container card (max-width: 600px) {
     .article-header {
       flex-wrap: wrap;
       gap: 0.25rem 0.5rem;
-      /* The title takes a full-width first line; the meta items (via-pill,
-         feed title, read-time, date) wrap to a second line. Center them on the
-         cross axis so the via-pill's avatar shares a centerline with the small
-         meta text instead of top-aligning. The title-line keeps its own
-         flex-start alignment internally. */
+      /* Center the wrapped meta items on the cross axis so the via-pill's avatar
+         shares a centerline with the small meta text. The title-line keeps its
+         own flex-start alignment internally. */
       align-items: center;
     }
 
-    /* Favicon + title become a full-width first line (as on desktop), so the
-       source mark + feed title + meta wrap to a second line below. */
     .title-line {
       display: flex;
       align-items: flex-start;
@@ -1568,6 +1591,17 @@
     .article-title {
       flex: 1 1 0;
       min-width: 0;
+    }
+
+    /* Collapsed rows show up to two lines of the headline rather than clipping
+       to one — more of the title, still a calm scan. */
+    .article-item:not(.selected):not(.expanded) .article-title {
+      white-space: normal;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
     }
 
     .feed-title-link,
@@ -1597,54 +1631,19 @@
       font-size: 0.75rem;
     }
 
-    /* When article is open, hide header meta and show mobile meta bar below content */
-    .article-item.open .article-header .favicon,
-    .article-item.open .article-header .feed-title-link,
-    .article-item.open .article-header .article-date,
-    .article-item.open .article-header .article-read-time {
-      display: none;
-    }
-
-    .article-item.open .article-meta-mobile {
-      display: flex;
-      align-items: center;
+    /* Touch: every action in the bar is a comfortable one-tap target. */
+    .article-actions {
       gap: 0.5rem;
-      padding: 0.25rem 0;
-      font-size: 0.75rem;
-      color: var(--color-text-secondary);
     }
 
-    .article-meta-mobile .favicon {
-      order: unset;
-      width: 16px;
-      height: 16px;
-      flex-shrink: 0;
-    }
-
-    .article-meta-mobile .feed-title-link {
-      order: unset;
-      flex: 0 1 auto;
-      min-width: 0;
-      font-size: 0.75rem;
-      max-width: none;
-      color: var(--color-text-secondary);
-      text-decoration: none;
-    }
-
-    .article-meta-mobile .article-date {
-      order: unset;
-      font-size: 0.75rem;
-    }
-
-    .article-meta-mobile .article-read-time {
-      order: unset;
-      display: inline;
-      font-size: 0.75rem;
+    .action-btn {
+      min-height: 44px;
+      padding-block: 0.25rem;
     }
   }
 
   /* Mobile: bigger touch targets for expanded pill */
-  @media (max-width: 480px) {
+  @container card (max-width: 480px) {
     .article-item.expanded .article-actions {
       width: 100%;
       gap: 1rem;

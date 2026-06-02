@@ -1,3 +1,0 @@
-[   19753ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5173/?token=uZE6qqenF8dQ' failed:  @ http://127.0.0.1:5173/@vite/client:744
-[   19754ms] [LOG] [vite] server connection lost. Polling for restart... @ http://127.0.0.1:5173/@vite/client:864
-[   19759ms] [ERROR] Creating a worker from 'blob:http://127.0.0.1:5173/3363b770-fc61-4d3b-9c6b-b3bc80e56705' violates the following Content Security Policy directive: "script-src 'self' 'unsafe-inline'". Note that 'worker-src' was not explicitly set, so 'script-src' is used as a fallback. The action has been blocked. @ http://127.0.0.1:5173/@vite/client:934
