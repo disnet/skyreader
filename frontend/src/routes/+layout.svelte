@@ -105,8 +105,11 @@
   // Lives in the layout so that reloading on any authenticated route
   // (e.g. /sources, /activity) still triggers initialization. The
   // appManager has an internal phase guard so re-entry is a no-op.
+  // Skip on /dev/* — those routes are isolated visual harnesses that run on
+  // mock data and must not hit the API (so they're noise-free even when a dev
+  // session is present).
   $effect(() => {
-    if (browser && auth.isAuthenticated) {
+    if (browser && auth.isAuthenticated && !$page.url.pathname.startsWith('/dev')) {
       appManager.initialize();
     }
   });
