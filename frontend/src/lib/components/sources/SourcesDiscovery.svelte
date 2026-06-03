@@ -52,7 +52,7 @@
   <h2 class="discovery-title">Find more</h2>
 
   <div class="block">
-    <h3 class="block-title">People you follow with linkblogs</h3>
+    <h3 class="block-title">People you know with Skyreader linkblogs</h3>
     <LinkblogDiscovery variant="friends" />
   </div>
 
@@ -100,7 +100,7 @@
   <LinkblogDiscovery
     variant="suggestions"
     limit={3}
-    heading="More linkblogs on Skyreader"
+    heading="More Skyreader linkblogs"
     bind:totalAvailable={moreLinkblogs}
   />
 
