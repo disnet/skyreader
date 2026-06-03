@@ -46,8 +46,6 @@
     isTruncated = false,
     currentlyShared = false,
     currentNote,
-    shareBusy = false,
-    showShareAction = false,
     showActionBarIntegrations = false,
     overflowMenuOpen = false,
     canFollowSource = false,
@@ -63,7 +61,6 @@
     onContentTap,
     onToggleRead,
     onToggleSave,
-    onShareWithNote,
     onRemoveShare,
     onOpenUrl,
     onOpenFullscreen,
@@ -118,9 +115,11 @@
   let panelOpen = $derived(atmosphereOpen && laneRow.length > 0);
 
   // The action bar is the anchor: when the Discussion section opens (in flow,
-  // just above the bar), bring the bar to the bottom of the view so the article
-  // above is pushed up rather than the section landing offscreen below a sticky
-  // bar. A layout concern, so it lives here in the view.
+  // just above the bar), reveal it if it landed below the fold. `block: 'nearest'`
+  // scrolls the minimum needed — nothing if the panel is already fully visible,
+  // just enough to bring its bottom into view otherwise — rather than always
+  // yanking the card's bottom flush to the viewport bottom. A layout concern, so
+  // it lives here in the view.
   let discussionEndRef = $state<HTMLElement>();
   $effect(() => {
     if (!atmosphereOpen || !discussionEndRef) return;
@@ -128,7 +127,7 @@
     const motion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
       ? 'auto'
       : 'smooth';
-    requestAnimationFrame(() => anchor.scrollIntoView({ behavior: motion, block: 'end' }));
+    requestAnimationFrame(() => anchor.scrollIntoView({ behavior: motion, block: 'nearest' }));
   });
 </script>
 
@@ -289,17 +288,21 @@
       </div>
     {/if}
 
-    <!-- Your note on a shared item, panel CLOSED: a standalone box below the card
-         so a shared note stays reachable without opening Discussion. When the
-         panel is open this same box moves into the panel's lead (below) instead,
-         so it's never rendered in two places at once. -->
-    {#if currentlyShared && !panelOpen}
-      <ShareCommentBox
-        initialNote={currentNote ?? ''}
-        placeholder="Add your note…"
-        onsubmit={(note) => onApplyComment?.(note)}
-        onremove={onRemoveShare ? () => onRemoveShare?.() : undefined}
-      />
+    <!-- Your note on a shared item: rendered once here, above the Discussion
+         section, whether or not the panel is open — so opening Discussion only
+         adds the lane tabs below and the note box never moves or restyles (its
+         own .atmosphere-lead slot keeps its metrics constant either way). The
+         note stays reachable without opening Discussion; sharing itself is the
+         Blogs lane's [+] now, so there's no separate share button. -->
+    {#if currentlyShared}
+      <div class="atmosphere-lead">
+        <ShareCommentBox
+          initialNote={currentNote ?? ''}
+          placeholder="Add your note…"
+          onsubmit={(note) => onApplyComment?.(note)}
+          onremove={onRemoveShare ? () => onRemoveShare?.() : undefined}
+        />
+      </div>
     {/if}
 
     <!-- Discussion section: a flat, in-flow part of the card that sits directly
@@ -309,134 +312,92 @@
          rather than the section overlaying it. -->
     {#if panelOpen}
       <div id="discussion-panel" class="atmosphere-panel" role="region" aria-label="Discussion">
-        <!-- The panel's lead, in one fixed slot so sharing swaps in place (no
-             layout shift): your note box once shared, else the one-tap share.
-             Sharing with no note is the obvious primary action — the button does
-             it outright, and the same slot then holds the "Add your note…" box. -->
-        {#if currentlyShared}
-          <div class="atmosphere-lead">
-            <ShareCommentBox
-              initialNote={currentNote ?? ''}
-              placeholder="Add your note…"
-              onsubmit={(note) => onApplyComment?.(note)}
-              onremove={onRemoveShare ? () => onRemoveShare?.() : undefined}
-            />
-          </div>
-        {:else if showShareAction}
-          <div class="atmosphere-share">
-            <button
-              type="button"
-              class="atmosphere-share-btn"
-              disabled={shareBusy}
-              onclick={(e) => {
-                e.stopPropagation();
-                onShareWithNote?.('');
-              }}
-            >
-              <Icon name="standard-site" size={16} />
-              <span>Share to your Skyreader linkblog</span>
-            </button>
-          </div>
-        {/if}
-        <div class="atmosphere-panel-scroll">
+        <!-- Lanes as a tab strip: each lane is a select-toggle chip carrying its
+             count, paired with its own [+] create. Picking a tab reveals that
+             lane's posts in the panel below; picking the active tab again closes
+             it. One lane open at a time (the active tab). -->
+        <div class="lane-tabs" role="tablist">
           {#each laneRow as row (row.id)}
-            {@const isExpanded = expandedLane === row.id}
+            {@const isActive = expandedLane === row.id}
             {@const expandable = row.count > 0}
-            <div class="lane" class:expanded={isExpanded}>
-              <div class="lane-row" class:mine={row.isMine}>
+            <div class="lane-tab" class:active={isActive} class:mine={row.isMine}>
+              <button
+                type="button"
+                class="lane-tab-main"
+                role="tab"
+                aria-selected={isActive}
+                disabled={!expandable}
+                title={row.title}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  onToggleLane?.(row.id);
+                }}
+              >
+                <span class="lane-tab-icon"><Icon name={row.icon} size={15} /></span>
+                <span class="lane-tab-label">{row.label}</span>
+                <span class="lane-tab-count">{row.count}{row.capped ? '+' : ''}</span>
+              </button>
+
+              {#if row.canCreate}
                 <button
                   type="button"
-                  class="lane-row-main"
-                  class:static={!expandable}
-                  aria-expanded={expandable ? isExpanded : undefined}
-                  disabled={!expandable}
+                  class="lane-tab-create"
+                  class:done={row.createIsEdit}
+                  title={row.createLabel}
+                  aria-label={row.createLabel}
                   onclick={(e) => {
                     e.stopPropagation();
-                    onToggleLane?.(row.id);
+                    onCreateInLane?.(row.id);
                   }}
                 >
-                  <span class="lane-row-icon"><Icon name={row.icon} size={16} /></span>
-                  <span class="lane-row-name">{row.label}</span>
+                  <Icon name={row.createIsEdit ? 'edit' : 'plus'} size={14} />
                 </button>
-
-                {#if row.canCreate}
-                  <button
-                    type="button"
-                    class="lane-row-create"
-                    class:done={row.createIsEdit}
-                    title={row.createLabel}
-                    onclick={(e) => {
-                      e.stopPropagation();
-                      onCreateInLane?.(row.id);
-                    }}
-                  >
-                    <Icon name={row.createIsEdit ? 'edit' : 'plus'} size={14} />
-                    <span>{row.createLabel}</span>
-                  </button>
-                {/if}
-
-                <button
-                  type="button"
-                  class="lane-row-meta-btn"
-                  class:static={!expandable}
-                  aria-expanded={expandable ? isExpanded : undefined}
-                  disabled={!expandable}
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    onToggleLane?.(row.id);
-                  }}
-                >
-                  <span class="lane-row-meta"
-                    ><span class="lane-row-count">{row.count}{row.capped ? '+' : ''}</span>
-                    <span class="lane-row-verb">{row.verb}</span></span
-                  >
-                  <span class="lane-row-chevron" class:placeholder={!expandable}
-                    ><Icon name={isExpanded ? 'chevron-up' : 'chevron-down'} size={14} /></span
-                  >
-                </button>
-              </div>
-
-              {#if isExpanded && expandable}
-                <div class="lane-body">
-                  {#if expandedLaneItems?.loading}
-                    <div class="lane-status">Loading…</div>
-                  {:else if expandedLaneItems && expandedLaneItems.entries.length > 0}
-                    <ul class="lane-people">
-                      {#each expandedLaneItems.entries as entry (entry.did + (entry.url ?? ''))}
-                        <li class="lane-person">
-                          <div class="lane-person-row">
-                            <button
-                              type="button"
-                              class="lane-person-handle"
-                              onclick={(e) => {
-                                e.stopPropagation();
-                                onOpenAuthor?.(entry.did);
-                              }}>@{entry.handle ?? entry.did.slice(0, 18)}</button
-                            >
-                            {#if entry.url}
-                              <a
-                                class="lane-person-link"
-                                href={entry.url}
-                                target="_blank"
-                                rel="noopener"
-                                title="Open {row.label}"
-                                onclick={(e) => e.stopPropagation()}
-                                ><Icon name="external-link" size={13} /></a
-                              >
-                            {/if}
-                          </div>
-                          {#if entry.note}<p class="lane-person-note">{entry.note}</p>{/if}
-                        </li>
-                      {/each}
-                    </ul>
-                  {:else if !expandedLaneItems?.loading}
-                    <div class="lane-status">Nothing here yet.</div>
-                  {/if}
-                </div>
               {/if}
             </div>
           {/each}
         </div>
+
+        {#if expandedLane}
+          {@const activeRow = laneRow.find((r) => r.id === expandedLane)}
+          {#if activeRow}
+            <div class="lane-panel" role="tabpanel">
+              {#if expandedLaneItems?.loading}
+                <div class="lane-status">Loading…</div>
+              {:else if expandedLaneItems && expandedLaneItems.entries.length > 0}
+                <ul class="lane-people">
+                  {#each expandedLaneItems.entries as entry (entry.did + (entry.url ?? ''))}
+                    <li class="lane-person">
+                      <div class="lane-person-row">
+                        <button
+                          type="button"
+                          class="lane-person-handle"
+                          onclick={(e) => {
+                            e.stopPropagation();
+                            onOpenAuthor?.(entry.did);
+                          }}>@{entry.handle ?? entry.did.slice(0, 18)}</button
+                        >
+                        {#if entry.url}
+                          <a
+                            class="lane-person-link"
+                            href={entry.url}
+                            target="_blank"
+                            rel="noopener"
+                            title="Open {activeRow.label}"
+                            onclick={(e) => e.stopPropagation()}
+                            ><Icon name="external-link" size={13} /></a
+                          >
+                        {/if}
+                      </div>
+                      {#if entry.note}<p class="lane-person-note">{entry.note}</p>{/if}
+                    </li>
+                  {/each}
+                </ul>
+              {:else if !expandedLaneItems?.loading}
+                <div class="lane-status">Nothing here yet.</div>
+              {/if}
+            </div>
+          {/if}
+        {/if}
       </div>
     {/if}
 
@@ -869,13 +830,11 @@
 
   /* Flat in-flow section that flows straight out of the article above it (no top
      divider) and aligns to the article's own content edge — a continuation of
-     the card, not a boxed-off region. A single bottom divider closes it off from
-     the action bar. */
+     the card, not a boxed-off region. */
   .atmosphere-panel {
     display: flex;
     flex-direction: column;
     margin-top: 0.25rem;
-    border-bottom: 1px solid var(--color-border, #e0e0e0);
   }
 
   /* 0-height scroll target just past the action bar (see the open effect). */
@@ -884,26 +843,15 @@
     scroll-margin-bottom: 0.5rem;
   }
 
-  /* The one-tap share that leads the panel (unshared): a clear primary CTA so
-     sharing with no note is the obvious default. Its own bottom divider sets it
-     off from the conversation below; the "Add your note…" box then appears above
-     the panel once shared, becoming the panel's lead in that state. */
-  /* Share button and your-note box are the two faces of the panel's lead. They
-     share one fixed slot (same min-height + divider) so sharing swaps button →
-     note in place with no layout shift; the note box grows past the floor once
-     the note wraps. Both vertically center their content within the slot. */
-  .atmosphere-share,
+  /* Your-note box, shown above the Discussion section once shared. A fixed slot
+     (min-height) keeps its metrics constant whether or not the panel is open, so
+     toggling Discussion never shifts the note; the box grows past the floor once
+     the note wraps. */
   .atmosphere-lead {
     display: flex;
     flex-direction: column;
     justify-content: center;
     min-height: 3.25rem;
-    border-bottom: 1px solid var(--color-border, #e0e0e0);
-  }
-
-  /* Keep the button at its content width, left-aligned, within the flex slot. */
-  .atmosphere-share {
-    align-items: flex-start;
   }
 
   /* The note box fills the slot width; drop its own top margin so the slot's
@@ -915,168 +863,128 @@
     padding-right: 0;
   }
 
-  .atmosphere-share-btn {
+  /* Tab strip: lanes laid out horizontally, wrapping on narrow cards. Each tab
+     is a select-toggle chip fused to its own [+] create, split by a divider so
+     the one chip reads as two actions. */
+  .lane-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    padding: 0.625rem 0;
+  }
+
+  .lane-tab {
+    display: inline-flex;
+    align-items: stretch;
+    border: 1px solid var(--color-border, #e0e0e0);
+    border-radius: 6px;
+    overflow: hidden;
+    transition: border-color 0.15s ease;
+  }
+
+  .lane-tab.active {
+    border-color: var(--color-primary);
+  }
+
+  .lane-tab-main {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.4375rem 0.875rem;
-    background: var(--color-primary, #0066cc);
-    color: #fff;
-    border: 1px solid transparent;
-    border-radius: 6px;
+    gap: 0.375rem;
+    padding: 0.3125rem 0.5rem;
+    background: none;
+    border: none;
     font: inherit;
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
     font-weight: 500;
+    color: var(--color-text);
     cursor: pointer;
-    transition: background-color 0.15s ease;
+    transition:
+      color 0.15s ease,
+      background-color 0.15s ease;
   }
 
-  .atmosphere-share-btn:hover:not(:disabled) {
-    background: var(--color-primary-dark, #0052a3);
-  }
-
-  .atmosphere-share-btn:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
-
-  .atmosphere-share-btn :global(.icon) {
-    flex-shrink: 0;
-  }
-
-  .atmosphere-panel-scroll {
-    max-height: min(55vh, 20rem);
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
-
-  .lane {
-    border-bottom: 1px solid var(--color-border, #e0e0e0);
-  }
-
-  .lane:last-child {
-    border-bottom: none;
-  }
-
-  .lane-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    transition: background-color 0.15s ease;
-  }
-
-  /* The two toggles (name + count) read as one row: hovering either, or the row
-     being open, tints the whole row — the create button keeps its own feedback. */
-  .lane.expanded .lane-row,
-  .lane-row:has(.lane-row-main:not(.static):hover),
-  .lane-row:has(.lane-row-meta-btn:not(.static):hover) {
+  .lane-tab-main:hover:not(:disabled) {
     background: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
   }
 
-  .lane-row-main {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    padding: 0.625rem 0;
-    background: none;
-    border: none;
-    font: inherit;
-    text-align: left;
-    color: var(--color-text);
-    cursor: pointer;
-  }
-
-  /* A countless lane has nothing to expand — the row is just its create button.
-     It's rendered disabled; keep the label at full strength (no browser graying). */
-  .lane-row-main.static {
-    cursor: default;
-    color: var(--color-text);
-    opacity: 1;
-  }
-
-  /* The count + chevron: its own toggle, pinned far right so counts line up down
-     the list regardless of whether a lane also has a create button. */
-  .lane-row-meta-btn {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.625rem 0;
-    background: none;
-    border: none;
-    font: inherit;
-    color: var(--color-text);
-    cursor: pointer;
-  }
-
-  /* A count of 0 still shows ("0 posted"), but quietly — nobody yet, nothing to
-     expand. The chevron keeps its slot (hidden) so the numbers stay aligned. */
-  .lane-row-meta-btn.static {
+  /* A countless lane has nothing to reveal — its tab is disabled, but the count
+     still shows (quietly) and the [+] create stays live. */
+  .lane-tab-main:disabled {
     cursor: default;
   }
 
-  .lane-row-meta-btn.static .lane-row-count {
-    color: var(--color-text-secondary);
-    font-weight: 500;
+  .lane-tab.active .lane-tab-main {
+    background: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
+    color: var(--color-primary);
   }
 
-  .lane-row-icon {
+  .lane-tab-icon {
     display: inline-flex;
     flex-shrink: 0;
     color: var(--color-text-secondary);
   }
 
-  .lane-row.mine .lane-row-icon {
+  .lane-tab.active .lane-tab-icon,
+  .lane-tab.mine .lane-tab-icon {
     color: var(--color-primary);
   }
 
-  .lane-row-name {
-    flex: 1;
-    min-width: 0;
-    font-size: 0.875rem;
-    font-weight: 500;
+  .lane-tab-label {
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
-  .lane-row-meta {
+  .lane-tab-count {
     flex-shrink: 0;
-    font-size: 0.8125rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
     color: var(--color-text-secondary);
   }
 
-  .lane-row-count {
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-    color: var(--color-text);
+  .lane-tab.active .lane-tab-count {
+    color: var(--color-primary);
   }
 
-  /* On narrow cards the verb is the first thing to go — the count and the lane's
-     own icon/name already carry the meaning — so the lane name keeps its room
-     instead of truncating next to an inline create button. */
+  /* On narrow cards the tab collapses to just its icon — the label and count
+     drop out (the icon still carries the lane, the title attr the rest), so the
+     full set of lanes fits without wrapping. The [+] create is already icon-only. */
   @media (max-width: 30rem) {
-    .lane-row-verb {
+    .lane-tab-label,
+    .lane-tab-count {
       display: none;
     }
   }
 
-  .lane-row-chevron {
+  .lane-tab-create {
     display: inline-flex;
-    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    padding: 0 0.4375rem;
+    background: none;
+    border: none;
+    border-left: 1px solid var(--color-border, #e0e0e0);
+    color: var(--color-primary, #0066cc);
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+  }
+
+  .lane-tab.active .lane-tab-create {
+    border-left-color: var(--color-primary);
+  }
+
+  .lane-tab-create:hover {
+    background: var(--color-sidebar-active, rgba(0, 102, 204, 0.08));
+  }
+
+  .lane-tab-create.done {
     color: var(--color-text-secondary);
-    opacity: 0.6;
   }
 
-  .lane-row-chevron.placeholder {
-    visibility: hidden;
-  }
-
-  /* People + create affordance, indented under the lane name (icon width + gap). */
-  .lane-body {
-    padding: 0 0 0.75rem 1.625rem;
+  /* The selected tab's posts: scrolls if long. */
+  .lane-panel {
+    max-height: min(45vh, 16rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0.25rem 0 0.75rem;
   }
 
   .lane-status {
@@ -1144,37 +1052,6 @@
     line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
-  }
-
-  /* The inline "add yours" affordance — a quiet outlined One-Blue button that
-     lives in the lane row itself, so contributing never requires an expand. */
-  .lane-row-create {
-    flex-shrink: 0;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3125rem;
-    padding: 0.25rem 0.5rem;
-    background: none;
-    border: 1px solid var(--color-border, #e0e0e0);
-    border-radius: 6px;
-    font: inherit;
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: var(--color-primary, #0066cc);
-    cursor: pointer;
-    white-space: nowrap;
-    transition:
-      border-color 0.15s ease,
-      background-color 0.15s ease;
-  }
-
-  .lane-row-create:hover {
-    border-color: var(--color-primary);
-    background: var(--color-sidebar-active, rgba(0, 102, 204, 0.08));
-  }
-
-  .lane-row-create.done {
-    color: var(--color-text-secondary);
   }
 
   .link-post-context {

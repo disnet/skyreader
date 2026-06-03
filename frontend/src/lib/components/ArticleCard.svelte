@@ -304,9 +304,9 @@
   function laneCanCreate(id: LaneId): boolean {
     switch (id) {
       case 'linkblog':
-        // Sharing is owned by the panel composer + persistent note box now, not
-        // the Linkblogs lane — the lane stays read-only (who else noted this).
-        return false;
+        // Sharing is the lane's own [+]: offered until you've shared, after which
+        // the persistent note box (panel lead) owns editing/removal instead.
+        return showShareAction && !currentlyShared;
       case 'semble':
         return Boolean(onSaveToSemble);
       case 'margin':
@@ -359,10 +359,10 @@
           ? `${r.count}${r.capped ? '+' : ''} ${LANE_META[r.id].verb} this · ${LANE_META[r.id].label}`
           : `${LANE_META[r.id].label} — add yours`,
       isMine: r.id === 'linkblog' && currentlyShared,
-      // The inline create button reads "Edit your note" once you've shared.
-      createLabel:
-        r.id === 'linkblog' && currentlyShared ? 'Edit your note' : LANE_META[r.id].createLabel,
-      createIsEdit: r.id === 'linkblog' && currentlyShared,
+      createLabel: LANE_META[r.id].createLabel,
+      // Once shared, the linkblog lane drops its [+] (canCreate=false) and the
+      // panel-lead note box owns editing — so the create button is never "edit".
+      createIsEdit: false,
     }))
   );
 
@@ -432,8 +432,6 @@
   }
 
   // ── Unified share + comment + remove (all surfaces) ─────────────────────────
-  let shareBusy = $derived(isQuoting);
-
   let currentlyShared = $derived.by(() => {
     if (isDocumentMode) return isQuoted;
     return isShared;
@@ -444,11 +442,12 @@
     return shareNote;
   });
 
-  // Whether the panel composer is offered: document sharing requires sign-in; a
-  // plain article share is gated by whether the page wired up onShare.
+  // Whether sharing is offered (the Blogs lane's [+]): document sharing requires
+  // sign-in; a plain article share is gated by whether the page wired up onShare.
   let showShareAction = $derived(isDocumentMode ? Boolean(auth.user) : Boolean(onShare));
 
-  // Fire the note-less share for the current mode.
+  // Fire the note-less share for the current mode (the Blogs lane [+]). Adding a
+  // note happens afterward via the persistent note box, once shared.
   async function shareNow() {
     if (isDocumentMode) {
       isQuoting = true;
@@ -460,24 +459,6 @@
       return;
     }
     onShare?.(undefined);
-  }
-
-  // Share with an optional note in one action, from the panel composer. An empty
-  // note shares without commentary (same as shareNow); a non-empty one attaches
-  // it as the share is created.
-  async function shareWithNote(note: string) {
-    if (shareBusy) return;
-    const trimmed = note.trim();
-    if (isDocumentMode) {
-      isQuoting = true;
-      try {
-        await handleQuote(trimmed);
-      } finally {
-        isQuoting = false;
-      }
-      return;
-    }
-    onShare?.(trimmed ? trimmed : undefined);
   }
 
   // Attach/update the note. The box stays visible after saving — it's persistent
@@ -728,8 +709,6 @@
   {isTruncated}
   {currentlyShared}
   {currentNote}
-  {shareBusy}
-  {showShareAction}
   {showActionBarIntegrations}
   {overflowMenuOpen}
   {canFollowSource}
@@ -743,7 +722,6 @@
   onContentTap={handleContentTap}
   onToggleRead={() => onToggleRead?.()}
   onToggleSave={() => onToggleSave?.()}
-  onShareWithNote={(note) => shareWithNote(note)}
   onRemoveShare={() => removeShare()}
   onOpenUrl={handleOpenUrl}
   onOpenFullscreen={() => onOpenFullscreen?.()}
