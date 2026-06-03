@@ -4,12 +4,14 @@
   import { syncStore } from '$lib/stores/sync.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { api, RateLimitError } from '$lib/services/api';
+  import SourcesDiscovery from '$lib/components/sources/SourcesDiscovery.svelte';
 
   interface Props {
     onAddFeed: () => void;
+    onAddHandle: () => void;
   }
 
-  let { onAddFeed }: Props = $props();
+  let { onAddFeed, onAddHandle }: Props = $props();
 
   let pdsSyncEnabled = $state(false);
   let isLoading = $state(true);
@@ -87,7 +89,16 @@
   <h2>Your library is empty</h2>
   <p class="lede">Subscribe to a few feeds.</p>
 
-  <button type="button" class="add-action" onclick={onAddFeed}>Add a feed</button>
+  <div class="add-actions">
+    <button type="button" class="add-action" onclick={onAddFeed}>Add an RSS feed</button>
+    <button type="button" class="add-action secondary" onclick={onAddHandle}>
+      Add an Atmosphere publication
+    </button>
+  </div>
+
+  <div class="discovery-wrap">
+    <SourcesDiscovery />
+  </div>
 
   <div class="portability">
     <h3>Take your subscriptions with you</h3>
@@ -140,8 +151,13 @@
     text-align: center;
     padding: 3rem 1rem;
     color: var(--color-text-secondary);
-    max-width: 46ch;
+    max-width: 34rem;
     margin: 0 auto;
+  }
+
+  .discovery-wrap {
+    margin-top: 2.5rem;
+    text-align: left;
   }
 
   .library-empty h2 {
@@ -155,6 +171,13 @@
     line-height: 1.5;
   }
 
+  .add-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+
   .add-action {
     display: inline-block;
     padding: 0.5rem 1rem;
@@ -163,19 +186,33 @@
     line-height: 1.4;
     color: #fff;
     background: var(--color-primary);
-    border: none;
+    border: 1px solid var(--color-primary);
     border-radius: var(--radius-md, 6px);
     cursor: pointer;
-    transition: background-color 0.2s ease;
+    transition:
+      background-color 0.2s ease,
+      border-color 0.2s ease;
   }
 
   .add-action:hover {
     background: var(--color-primary-dark);
+    border-color: var(--color-primary-dark);
   }
 
   .add-action:focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.35);
+  }
+
+  .add-action.secondary {
+    color: var(--color-primary);
+    background: transparent;
+    border-color: var(--color-border);
+  }
+
+  .add-action.secondary:hover {
+    background: var(--color-bg-secondary, rgba(0, 102, 204, 0.06));
+    border-color: var(--color-primary);
   }
 
   .portability {

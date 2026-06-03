@@ -653,7 +653,10 @@
             <EmptyState title="No articles" description="This feed has no articles" />
           {/if}
         {:else if subscriptionsStore.subscriptions.length === 0}
-          <LibraryEmptyState onAddFeed={() => sidebarStore.openAddFeedModal()} />
+          <LibraryEmptyState
+            onAddFeed={() => sidebarStore.openAddFeedModal()}
+            onAddHandle={() => sidebarStore.openAddHandleModal()}
+          />
         {:else if feedViewStore.showOnlyUnread}
           <EmptyState title="No unread articles" description="You're all caught up!" />
         {:else}

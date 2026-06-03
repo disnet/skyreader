@@ -182,7 +182,7 @@
           onclick={(e) => handleAction(() => sidebarStore.openAddHandleModal(), e)}
         >
           <span class="item-icon"><Icon name="users" size={16} /></span>
-          Follow @handle
+          Add Atmosphere account
         </button>
         <button
           class="menu-item"
