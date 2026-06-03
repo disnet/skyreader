@@ -47,7 +47,6 @@
     isTruncated = false,
     currentlyShared = false,
     currentNote,
-    shareLabel,
     shareBusy = false,
     showShareAction = false,
     showActionBarIntegrations = false,
@@ -65,7 +64,8 @@
     onContentTap,
     onToggleRead,
     onToggleSave,
-    onShareClick,
+    onShareWithNote,
+    onRemoveShare,
     onOpenUrl,
     onOpenFullscreen,
     onExpandToggle,
@@ -111,6 +111,12 @@
   const atmosphereTotal = $derived(laneRow.reduce((sum, l) => sum + l.count, 0));
   const atmosphereCapped = $derived(laneRow.some((l) => l.capped));
   const atmosphereMine = $derived(laneRow.some((l) => l.isMine));
+
+  // Is the Discussion panel actually rendered? The note box lives INSIDE the
+  // panel (as its lead) when open, so the share → note swap happens in place with
+  // no layout shift; when the panel is closed it falls back to a standalone box
+  // below the card so a shared note stays reachable.
+  let panelOpen = $derived(atmosphereOpen && laneRow.length > 0);
 
   // The action bar is the anchor: when the Discussion section opens (in flow,
   // just above the bar), bring the bar to the bottom of the view so the article
@@ -284,43 +290,55 @@
       </div>
     {/if}
 
-    <!-- Inline share-comment composer: present for as long as the item is shared. -->
-    {#if currentlyShared}
+    <!-- Your note on a shared item, panel CLOSED: a standalone box below the card
+         so a shared note stays reachable without opening Discussion. When the
+         panel is open this same box moves into the panel's lead (below) instead,
+         so it's never rendered in two places at once. -->
+    {#if currentlyShared && !panelOpen}
       <ShareCommentBox
         initialNote={currentNote ?? ''}
+        placeholder="Add your note…"
         onsubmit={(note) => onApplyComment?.(note)}
+        onremove={onRemoveShare ? () => onRemoveShare?.() : undefined}
       />
     {/if}
 
     <!-- Discussion section: a flat, in-flow part of the card that sits directly
-         above the action bar. Opening it scrolls the bar to the bottom of the
-         view (the bar is the anchor), so the article above is pushed up rather
-         than the section overlaying it. -->
-    {#if atmosphereOpen && laneRow.length > 0}
+         above the action bar (no header of its own — the action-bar Discussion
+         button is the title + toggle). Opening it scrolls the bar to the bottom
+         of the view (the bar is the anchor), so the article above is pushed up
+         rather than the section overlaying it. -->
+    {#if panelOpen}
       <div id="discussion-panel" class="atmosphere-panel" role="region" aria-label="Discussion">
-        <header class="atmosphere-panel-head">
-          <span class="atmosphere-panel-title">
-            <Icon name="activity" size={15} />
-            Discussion
-            {#if atmosphereTotal > 0}
-              <span class="atmosphere-panel-total"
-                >{atmosphereTotal}{atmosphereCapped ? '+' : ''}</span
-              >
-            {/if}
-          </span>
-          <button
-            type="button"
-            class="atmosphere-panel-close"
-            title="Close"
-            onclick={(e) => {
-              e.stopPropagation();
-              atmosphereOpen = false;
-            }}
-          >
-            <Icon name="x" size={16} />
-          </button>
-        </header>
-        <p class="atmosphere-panel-sub">Discussion across the Atmosphere.</p>
+        <!-- The panel's lead, in one fixed slot so sharing swaps in place (no
+             layout shift): your note box once shared, else the one-tap share.
+             Sharing with no note is the obvious primary action — the button does
+             it outright, and the same slot then holds the "Add your note…" box. -->
+        {#if currentlyShared}
+          <div class="atmosphere-lead">
+            <ShareCommentBox
+              initialNote={currentNote ?? ''}
+              placeholder="Add your note…"
+              onsubmit={(note) => onApplyComment?.(note)}
+              onremove={onRemoveShare ? () => onRemoveShare?.() : undefined}
+            />
+          </div>
+        {:else if showShareAction}
+          <div class="atmosphere-share">
+            <button
+              type="button"
+              class="atmosphere-share-btn"
+              disabled={shareBusy}
+              onclick={(e) => {
+                e.stopPropagation();
+                onShareWithNote?.('');
+              }}
+            >
+              <Icon name="standard-site" size={16} />
+              <span>Share to your Skyreader linkblog</span>
+            </button>
+          </div>
+        {/if}
         <div class="atmosphere-panel-scroll">
           {#each laneRow as row (row.id)}
             {@const isExpanded = expandedLane === row.id}
@@ -427,26 +445,11 @@
             class="action-label">Save</span
           >
         </button>
-        <!-- Share is a toggle: one tap shares (the comment box appears); again unshares. -->
-        {#if showShareAction}
-          <button
-            class="action-btn"
-            class:shared={currentlyShared}
-            onclick={(e) => {
-              e.stopPropagation();
-              onShareClick?.();
-            }}
-            disabled={shareBusy}
-            aria-pressed={currentlyShared}
-          >
-            <span class="action-icon"><Icon name="share" size={16} /></span><span
-              class="action-label">{shareLabel}</span
-            >
-          </button>
-        {/if}
-        <!-- Discussion: toggles the in-flow Discussion section that sits just
-             above the action bar (rendered below). The button carries the total
-             reference count and reads active while the section is open. -->
+        <!-- Discussion: the single social affordance. Sharing is folded in — it's
+             your note in the discussion — so there's no separate Share button.
+             Toggles the in-flow Discussion section just above the action bar; the
+             button carries the total reference count, reads active while open,
+             and tints when one of those references is yours. -->
         {#if laneRow.length > 0}
           <button
             class="action-btn atmosphere-btn"
@@ -854,13 +857,14 @@
     color: var(--color-primary);
   }
 
-  /* Flat in-flow section, bracketed by 1px dividers so it reads as a card region
-     between the article and the action bar — not a thing floating over them. */
+  /* Flat in-flow section that flows straight out of the article above it (no top
+     divider) and aligns to the article's own content edge — a continuation of
+     the card, not a boxed-off region. A single bottom divider closes it off from
+     the action bar. */
   .atmosphere-panel {
     display: flex;
     flex-direction: column;
     margin-top: 0.25rem;
-    border-top: 1px solid var(--color-border, #e0e0e0);
     border-bottom: 1px solid var(--color-border, #e0e0e0);
   }
 
@@ -870,67 +874,69 @@
     scroll-margin-bottom: 0.5rem;
   }
 
-  .atmosphere-panel-head {
+  /* The one-tap share that leads the panel (unshared): a clear primary CTA so
+     sharing with no note is the obvious default. Its own bottom divider sets it
+     off from the conversation below; the "Add your note…" box then appears above
+     the panel once shared, becoming the panel's lead in that state. */
+  /* Share button and your-note box are the two faces of the panel's lead. They
+     share one fixed slot (same min-height + divider) so sharing swaps button →
+     note in place with no layout shift; the note box grows past the floor once
+     the note wraps. Both vertically center their content within the slot. */
+  .atmosphere-share,
+  .atmosphere-lead {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    padding: 0.75rem 0.875rem 0;
-  }
-
-  .atmosphere-panel-title {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4375rem;
-    font-size: 0.9375rem;
-    font-weight: 600;
-    color: var(--color-text);
-  }
-
-  .atmosphere-panel-title :global(.icon) {
-    color: var(--color-text-secondary);
-  }
-
-  .atmosphere-panel-total {
-    padding: 0.0625rem 0.375rem;
-    border-radius: 999px;
-    background: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
-    color: var(--color-primary);
-    font-size: 0.75rem;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .atmosphere-panel-close {
-    display: inline-flex;
-    align-items: center;
+    flex-direction: column;
     justify-content: center;
-    width: 1.75rem;
-    height: 1.75rem;
-    margin: -0.25rem -0.25rem 0 0;
-    background: none;
-    border: none;
+    min-height: 3.25rem;
+    border-bottom: 1px solid var(--color-border, #e0e0e0);
+  }
+
+  /* Keep the button at its content width, left-aligned, within the flex slot. */
+  .atmosphere-share {
+    align-items: flex-start;
+  }
+
+  /* The note box fills the slot width; drop its own top margin so the slot's
+     centering is symmetric, and its horizontal padding so the note icon aligns
+     to the same content edge as the lanes and the article body. */
+  .atmosphere-lead :global(.comment-box) {
+    margin-top: 0;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .atmosphere-share-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4375rem 0.875rem;
+    background: var(--color-primary, #0066cc);
+    color: #fff;
+    border: 1px solid transparent;
     border-radius: 6px;
-    color: var(--color-text-secondary);
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 500;
     cursor: pointer;
+    transition: background-color 0.15s ease;
   }
 
-  .atmosphere-panel-close:hover {
-    background: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
-    color: var(--color-text);
+  .atmosphere-share-btn:hover:not(:disabled) {
+    background: var(--color-primary-dark, #0052a3);
   }
 
-  .atmosphere-panel-sub {
-    margin: 0.125rem 0 0;
-    padding: 0 0.875rem 0.625rem;
-    font-size: 0.8125rem;
-    color: var(--color-text-secondary);
+  .atmosphere-share-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  .atmosphere-share-btn :global(.icon) {
+    flex-shrink: 0;
   }
 
   .atmosphere-panel-scroll {
     max-height: min(55vh, 20rem);
     overflow-y: auto;
-    border-top: 1px solid var(--color-border, #e0e0e0);
     overscroll-behavior: contain;
   }
 
@@ -947,7 +953,7 @@
     align-items: center;
     gap: 0.625rem;
     width: 100%;
-    padding: 0.625rem 0.875rem;
+    padding: 0.625rem 0;
     background: none;
     border: none;
     font: inherit;
@@ -1008,9 +1014,9 @@
     opacity: 0.6;
   }
 
-  /* People + create affordance, indented under the lane name. */
+  /* People + create affordance, indented under the lane name (icon width + gap). */
   .lane-body {
-    padding: 0 0.875rem 0.75rem 2.5rem;
+    padding: 0 0 0.75rem 1.625rem;
   }
 
   .lane-status {
@@ -1576,7 +1582,6 @@
     color: #ffc107;
   }
 
-  .action-btn.shared,
   .action-btn.active {
     color: var(--color-primary, #0066cc);
   }

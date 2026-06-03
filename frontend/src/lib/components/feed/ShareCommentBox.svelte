@@ -13,9 +13,12 @@
     placeholder?: string;
     /** Called with the trimmed note. Empty string clears an existing note. */
     onsubmit: (note: string) => void;
+    /** When provided, a quiet Remove control unshares from inside the box. */
+    onremove?: () => void;
   }
 
-  let { initialNote = '', placeholder = 'Add note to share…', onsubmit }: Props = $props();
+  let { initialNote = '', placeholder = 'Add note to share…', onsubmit, onremove }: Props =
+    $props();
 
   const MAX = 3000;
 
@@ -81,6 +84,20 @@
     <div class="actions" class:hidden={!focused}>
       {#if nearLimit}
         <span class="counter" class:over={value.length >= MAX}>{MAX - value.length}</span>
+      {/if}
+      <!-- Unshare lives here on a shared item — the box is the only thing always
+           present once you've shared, so it owns Remove. -->
+      {#if onremove}
+        <button
+          type="button"
+          class="btn btn-ghost"
+          tabindex={focused ? 0 : -1}
+          aria-hidden={!focused}
+          onmousedown={(e) => e.preventDefault()}
+          onclick={() => onremove?.()}
+        >
+          Remove
+        </button>
       {/if}
       <!-- preventDefault on mousedown keeps focus on the textarea so this click
            lands before the blur that would otherwise hide the button. -->
@@ -208,6 +225,19 @@
   .btn-primary:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+
+  /* Quiet text button for Remove (unshare) — muted at rest, brought forward on
+     hover. Calm, not alarming: removing a share is reversible. */
+  .btn-ghost {
+    background: none;
+    color: var(--color-text-secondary);
+    font-weight: 500;
+  }
+
+  .btn-ghost:hover {
+    background: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+    color: var(--color-text);
   }
 
   @media (prefers-reduced-motion: reduce) {

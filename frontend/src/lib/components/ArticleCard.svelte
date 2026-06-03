@@ -304,7 +304,9 @@
   function laneCanCreate(id: LaneId): boolean {
     switch (id) {
       case 'linkblog':
-        return Boolean(auth.user) && Boolean(onShare);
+        // Sharing is owned by the panel composer + persistent note box now, not
+        // the Linkblogs lane — the lane stays read-only (who else noted this).
+        return false;
       case 'semble':
         return Boolean(onSaveToSemble);
       case 'margin':
@@ -335,7 +337,10 @@
       const data = mentionLaneMap.get(id);
       const count = data?.count ?? 0;
       const canCreate = laneCanCreate(id);
-      if (id !== 'bluesky' && count === 0 && !canCreate) continue;
+      // Keep the Linkblogs lane visible the moment you share, even before the
+      // mention is indexed (count still 0), so you see yourself in the discussion.
+      const keepMine = id === 'linkblog' && currentlyShared;
+      if (id !== 'bluesky' && count === 0 && !canCreate && !keepMine) continue;
       rows.push({ id, count, capped: data?.capped ?? false, canCreate });
     }
     return rows;
@@ -449,11 +454,9 @@
     return shareNote;
   });
 
-  let shareLabel = $derived(shareBusy ? '…' : currentlyShared ? 'Shared' : 'Share');
-
-  // Document sharing requires sign-in; a plain article share is gated by whether
-  // the page wired up onShare.
-  let showShareAction = $derived(isDocumentMode ? Boolean(auth.user) : true);
+  // Whether the panel composer is offered: document sharing requires sign-in; a
+  // plain article share is gated by whether the page wired up onShare.
+  let showShareAction = $derived(isDocumentMode ? Boolean(auth.user) : Boolean(onShare));
 
   // Fire the note-less share for the current mode.
   async function shareNow() {
@@ -469,12 +472,22 @@
     onShare?.(undefined);
   }
 
-  // Share button is a toggle: share when new (the comment box then appears),
-  // unshare when already shared (the box goes away with it).
-  function handleShareClick() {
+  // Share with an optional note in one action, from the panel composer. An empty
+  // note shares without commentary (same as shareNow); a non-empty one attaches
+  // it as the share is created.
+  async function shareWithNote(note: string) {
     if (shareBusy) return;
-    if (currentlyShared) removeShare();
-    else shareNow();
+    const trimmed = note.trim();
+    if (isDocumentMode) {
+      isQuoting = true;
+      try {
+        await handleQuote(trimmed);
+      } finally {
+        isQuoting = false;
+      }
+      return;
+    }
+    onShare?.(trimmed ? trimmed : undefined);
   }
 
   // Attach/update the note. The box stays visible after saving — it's persistent
@@ -488,7 +501,7 @@
     }
   }
 
-  // Remove the share entirely (toggling the Share button off).
+  // Remove the share entirely (the Remove control in the persistent note box).
   async function removeShare() {
     if (isDocumentMode) {
       if (quoteKey) await linkblogStore.unshare(quoteKey);
@@ -726,7 +739,6 @@
   {isTruncated}
   {currentlyShared}
   {currentNote}
-  {shareLabel}
   {shareBusy}
   {showShareAction}
   {showActionBarIntegrations}
@@ -742,7 +754,8 @@
   onContentTap={handleContentTap}
   onToggleRead={() => onToggleRead?.()}
   onToggleSave={() => onToggleSave?.()}
-  onShareClick={handleShareClick}
+  onShareWithNote={(note) => shareWithNote(note)}
+  onRemoveShare={() => removeShare()}
   onOpenUrl={handleOpenUrl}
   onOpenFullscreen={() => onOpenFullscreen?.()}
   onExpandToggle={() => onExpand?.()}
