@@ -24,6 +24,10 @@ export interface LaneRowVM {
   title: string;
   /** id === 'linkblog' && currentlyShared — the "this is mine" tint. */
   isMine: boolean;
+  /** Label for the inline create button (the specific action verb). */
+  createLabel: string;
+  /** linkblog + already-shared → the create affordance becomes "edit". */
+  createIsEdit: boolean;
 }
 
 export interface LanePersonVM {
@@ -36,16 +40,6 @@ export interface LanePersonVM {
 export interface ExpandedLaneItemsVM {
   loading: boolean;
   entries: LanePersonVM[];
-}
-
-/** Resolved display data for the currently-expanded lane's detail block. */
-export interface ExpandedLaneMetaVM {
-  label: string;
-  verb: string;
-  canCreate: boolean;
-  createLabel: string;
-  /** linkblog + already-shared → the create affordance becomes "edit". */
-  createIsEdit: boolean;
 }
 
 export interface AlsoLinkedEntryVM {
@@ -95,7 +89,6 @@ export interface ArticleCardViewProps {
   laneRow?: LaneRowVM[];
   expandedLane?: LaneId | null;
   expandedLaneItems?: ExpandedLaneItemsVM;
-  expandedLaneMeta?: ExpandedLaneMetaVM;
 
   itemTagCount: number;
   itemTags?: string[];

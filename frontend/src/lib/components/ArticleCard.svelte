@@ -30,7 +30,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import type { IconName } from './Icon.svelte';
   import ArticleCardView from './ArticleCardView.svelte';
-  import type { LaneId, ExpandedLaneMetaVM, LaneRowVM } from './articleCardView.types';
+  import type { LaneId, LaneRowVM } from './articleCardView.types';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -271,7 +271,7 @@
   > = {
     linkblog: {
       icon: 'standard-site',
-      label: 'Linkblogs',
+      label: 'Blogs',
       verb: 'noted',
       noun: 'note',
       createLabel: 'Write a note',
@@ -286,9 +286,9 @@
     margin: {
       icon: 'margin',
       label: 'margin.at',
-      verb: 'highlighted',
-      noun: 'highlight',
-      createLabel: 'Highlight in Margin',
+      verb: 'saved',
+      noun: 'save',
+      createLabel: 'Save to Margin',
     },
     semble: {
       icon: 'semble',
@@ -359,6 +359,10 @@
           ? `${r.count}${r.capped ? '+' : ''} ${LANE_META[r.id].verb} this · ${LANE_META[r.id].label}`
           : `${LANE_META[r.id].label} — add yours`,
       isMine: r.id === 'linkblog' && currentlyShared,
+      // The inline create button reads "Edit your note" once you've shared.
+      createLabel:
+        r.id === 'linkblog' && currentlyShared ? 'Edit your note' : LANE_META[r.id].createLabel,
+      createIsEdit: r.id === 'linkblog' && currentlyShared,
     }))
   );
 
@@ -367,20 +371,6 @@
   let expandedLaneItems = $derived(
     expandedLane && itemUrl ? mentionLaneItemsStore.get(itemUrl, expandedLane) : undefined
   );
-
-  // Resolved display data for the expanded lane's detail block.
-  let expandedLaneMetaVM = $derived.by((): ExpandedLaneMetaVM | undefined => {
-    if (!expandedLane) return undefined;
-    const m = LANE_META[expandedLane];
-    return {
-      label: m.label,
-      verb: m.verb,
-      canCreate: laneCanCreate(expandedLane),
-      createLabel:
-        expandedLane === 'linkblog' && currentlyShared ? 'Edit your note' : m.createLabel,
-      createIsEdit: expandedLane === 'linkblog' && currentlyShared,
-    };
-  });
 
   function toggleLane(id: LaneId) {
     if (expandedLane === id) {
@@ -727,7 +717,6 @@
   laneRow={laneRowVM}
   {expandedLane}
   {expandedLaneItems}
-  expandedLaneMeta={expandedLaneMetaVM}
   {itemTagCount}
   {itemTags}
   {isRead}
