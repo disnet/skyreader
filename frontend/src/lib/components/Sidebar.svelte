@@ -501,6 +501,16 @@
 
     <!-- Bottom nav -->
     <a
+      href="/linkblog"
+      class="nav-item nav-link"
+      class:active={$page.url.pathname === '/linkblog'}
+      onclick={() => sidebarStore.closeMobile()}
+    >
+      <span class="nav-icon"><Icon name="share" /></span>
+      <span class="nav-label">Your Linkblog</span>
+    </a>
+
+    <a
       href="/sources"
       class="nav-item nav-link"
       class:active={$page.url.pathname === '/sources'}

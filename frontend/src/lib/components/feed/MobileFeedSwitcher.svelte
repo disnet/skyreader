@@ -163,6 +163,12 @@
     const otherItems: NavItem[] = [
       {
         type: 'utility',
+        id: 'linkblog',
+        label: 'Your Linkblog',
+        icon: 'share' as IconName,
+      },
+      {
+        type: 'utility',
         id: 'sources',
         label: 'Manage Sources',
         icon: 'rss' as IconName,
