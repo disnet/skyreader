@@ -13,8 +13,9 @@ function freshDb(): Database {
   return db;
 }
 
-// Mock /links/all (source discovery) and /links (per-source DID lists). `linksAll`
-// is the raw `links` object; `didsBySource` maps 'collection|path' → DID list.
+// Mock /links/all (source discovery) and /links/distinct-dids (per-source deduped
+// DID lists). `linksAll` is the raw `links` object; `didsBySource` maps
+// 'collection|path' → DID list.
 function mockConstellation(
   linksAll: Record<string, Record<string, { distinct_dids: number }>>,
   didsBySource: Record<string, string[]>
@@ -24,15 +25,10 @@ function mockConstellation(
     if (url.pathname === '/links/all') {
       return new Response(JSON.stringify({ links: linksAll }));
     }
-    if (url.pathname === '/links') {
+    if (url.pathname === '/links/distinct-dids') {
       const key = `${url.searchParams.get('collection')}|${url.searchParams.get('path')}`;
       const dids = didsBySource[key] ?? [];
-      const linking_records = dids.map((did, i) => ({
-        did,
-        collection: url.searchParams.get('collection')!,
-        rkey: `rk${i}`,
-      }));
-      return new Response(JSON.stringify({ total: linking_records.length, linking_records }));
+      return new Response(JSON.stringify({ total: dids.length, linking_dids: dids }));
     }
     return new Response('{}', { status: 404 });
   }) as unknown as typeof fetch);
@@ -115,6 +111,57 @@ describe('computeMentions', () => {
     expect(result.lanes[1].count).toBe(1); // alice once, despite two paths
     // Total distinct people across lanes: alice, bob → 2 (alice not double-counted).
     expect(result.total).toBe(2);
+  });
+
+  it('counts distinct DIDs, not raw records — one chatty account never inflates a lane', async () => {
+    // Constellation's /links/distinct-dids dedups server-side: even if one account
+    // posted the URL many times, it reports that account once with an honest total.
+    const spy = spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/links/all') {
+        return new Response(
+          JSON.stringify({
+            links: { 'app.bsky.feed.post': { '.embed.external.uri': { distinct_dids: 2 } } },
+          })
+        );
+      }
+      if (url.pathname === '/links/distinct-dids') {
+        // total === page length → not capped; the chatty account is already deduped.
+        return new Response(
+          JSON.stringify({ total: 2, linking_dids: ['did:plc:loud', 'did:plc:quiet'] })
+        );
+      }
+      return new Response('{}', { status: 404 });
+    }) as unknown as typeof fetch);
+
+    const result = await computeMentions(ARTICLE);
+    expect(result.lanes[0].count).toBe(2);
+    expect(result.lanes[0].capped).toBe(false);
+    spy.mockRestore();
+  });
+
+  it('flags a lane as capped only when the true total outruns the fetched page', async () => {
+    const spy = spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/links/all') {
+        return new Response(
+          JSON.stringify({
+            links: { 'site.standard.document': { '.links[].uri': { distinct_dids: 250 } } },
+          })
+        );
+      }
+      if (url.pathname === '/links/distinct-dids') {
+        // 250 distinct DIDs exist but we only hold one page of identities.
+        const dids = Array.from({ length: 200 }, (_, i) => `did:plc:d${i}`);
+        return new Response(JSON.stringify({ total: 250, linking_dids: dids }));
+      }
+      return new Response('{}', { status: 404 });
+    }) as unknown as typeof fetch);
+
+    const result = await computeMentions(ARTICLE);
+    expect(result.lanes[0].count).toBe(200);
+    expect(result.lanes[0].capped).toBe(true);
+    spy.mockRestore();
   });
 
   it('ignores un-laned referrer collections entirely', async () => {

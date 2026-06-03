@@ -1654,7 +1654,7 @@ export function createApp(db: Database, config: AppConfig) {
         } catch (error) {
           // Best-effort: never fail the batch over one item.
           console.error('[social-context] item error:', error);
-          return { key, recommendCount: 0, quoteCount: 0, alsoLinkedBy: [] };
+          return { key, quoteCount: 0, alsoLinkedBy: [] };
         }
       })
     );

@@ -83,8 +83,11 @@ interface LinksAllResponse {
   links?: Record<string, Record<string, { records?: number; distinct_dids?: number }>>;
 }
 
-interface LinksResponse {
-  linking_records?: Array<{ did: string; collection: string; rkey: string }>;
+interface DistinctDidsResponse {
+  // The exact distinct-DID count for this (collection, path), independent of how
+  // many identities a single page returns.
+  total?: number;
+  linking_dids?: string[];
   cursor?: string;
 }
 
@@ -106,23 +109,28 @@ async function constellationGet<T>(
   }
 }
 
-// Distinct DIDs that linked `target` via one (collection, path). Returns the DID
-// set plus whether it hit the page cap (so the count is a lower bound).
+// Distinct DIDs that linked `target` via one (collection, path). Asks Constellation
+// for the *deduped* DID list directly (`/links/distinct-dids`) rather than raw
+// linking records: one account posting a URL 200 times is one DID, not a full
+// page. Returns the DID set plus whether the true count outruns the page we hold
+// (so the lane count is an honest lower bound — never a "200+" inflated by a
+// single chatty account, which the raw-record count would have produced).
 async function fetchSourceDids(
   target: string,
   collection: string,
   path: string
 ): Promise<{ dids: Set<string>; capped: boolean }> {
-  const data = await constellationGet<LinksResponse>('/links', {
+  const data = await constellationGet<DistinctDidsResponse>('/links/distinct-dids', {
     target,
     collection,
     path,
     limit: String(LINKS_PAGE_LIMIT),
   });
-  const records = data?.linking_records ?? [];
-  const dids = new Set<string>();
-  for (const rec of records) dids.add(rec.did);
-  return { dids, capped: records.length >= LINKS_PAGE_LIMIT };
+  const dids = new Set(data?.linking_dids ?? []);
+  // `total` is the full distinct-DID count; we only carry one page of identities
+  // for the union, so we've capped when the true total exceeds what we fetched.
+  const total = data?.total ?? dids.size;
+  return { dids, capped: total > dids.size };
 }
 
 /**

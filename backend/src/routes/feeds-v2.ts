@@ -410,7 +410,6 @@ export async function handleV2SocialContext(request: Request, env: Env): Promise
 
   const emptyFor = (item: SocialContextQuery): SocialContextResult => ({
     key: item.key || item.docUri || item.articleUrl || '',
-    recommendCount: 0,
     quoteCount: 0,
     alsoLinkedBy: [],
   });

@@ -592,7 +592,6 @@ export interface AlsoLinkedEntry {
 // all fields are best-effort and degrade to zero/empty.
 export interface SocialContextResult {
   key: string;
-  recommendCount: number;
   quoteCount: number;
   alsoLinkedBy: AlsoLinkedEntry[];
 }

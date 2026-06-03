@@ -748,9 +748,7 @@
   {authorDisplayName}
   {authorAvatar}
   authorDid={document?.authorDid}
-  socialContext={socialContext
-    ? { recommendCount: socialContext.recommendCount, quoteCount: socialContext.quoteCount }
-    : undefined}
+  socialContext={socialContext ? { quoteCount: socialContext.quoteCount } : undefined}
   {alsoLinkedBy}
   laneRow={laneRowVM}
   {expandedLane}

@@ -322,7 +322,7 @@ export const fixtures: CardFixture[] = [
           createIsEdit: false,
         },
       ],
-      socialContext: { recommendCount: 5, quoteCount: 2 },
+      socialContext: { quoteCount: 2 },
       alsoLinkedBy: [
         {
           recordUri: 'at://did:plc:dave/x/1',
