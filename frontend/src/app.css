@@ -18,11 +18,6 @@
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
   --safe-area-top: env(safe-area-inset-top, 0px);
   --bottom-bar-height: 3.5rem;
-  /* Height of the expanded card's floating action bar on mobile (excluding the
-     safe-area pad). The MobileBottomBar lifts by this when the bar is floating
-     so the two stack instead of overlapping. Matches ArticleCardView's mobile
-     action-bar metrics (container + row padding + 44px touch target). */
-  --action-bar-height: 4.75rem;
 
   /* Article font families */
   --font-sans-serif:

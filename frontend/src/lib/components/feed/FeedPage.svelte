@@ -558,7 +558,14 @@
 {#if !auth.isAuthenticated}
   <WelcomePage />
 {:else}
-  <div class="feed-page">
+  <!-- Lift any floating action bar above the fixed mobile nav while it's visible;
+       drops to 0 when the nav hides on scroll so the bar settles to the bottom. -->
+  <div
+    class="feed-page"
+    style:--mobile-nav-lift={mobileStore.isMobile && !readerOpen && scrollDirection.controlsVisible
+      ? 'var(--bottom-bar-height)'
+      : '0px'}
+  >
     {#if !readerOpen}
       <FeedPageHeader
         title={pageTitle}
@@ -689,7 +696,6 @@
       <MobileBottomBar
         controlsVisible={scrollDirection.controlsVisible}
         currentTitle={pageTitle}
-        actionBarFloating={feedViewStore.mobileActionBarFloating}
         onScrollToTop={scrollToTop}
         onOpenFeedSwitcher={() => (feedSwitcherOpen = true)}
         onOpenFilterSheet={() => {
