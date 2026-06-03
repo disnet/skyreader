@@ -34,7 +34,6 @@
     laneRow = [],
     expandedLane = null,
     expandedLaneItems,
-    expandedLaneMeta,
     itemTagCount,
     itemTags = [],
     // state
@@ -342,34 +341,62 @@
         <div class="atmosphere-panel-scroll">
           {#each laneRow as row (row.id)}
             {@const isExpanded = expandedLane === row.id}
+            {@const expandable = row.count > 0}
             <div class="lane" class:expanded={isExpanded}>
-              <button
-                type="button"
-                class="lane-row"
-                class:mine={row.isMine}
-                aria-expanded={isExpanded}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  onToggleLane?.(row.id);
-                }}
-              >
-                <span class="lane-row-icon"><Icon name={row.icon} size={16} /></span>
-                <span class="lane-row-name">{row.label}</span>
-                {#if row.count > 0}
+              <div class="lane-row" class:mine={row.isMine}>
+                <button
+                  type="button"
+                  class="lane-row-main"
+                  class:static={!expandable}
+                  aria-expanded={expandable ? isExpanded : undefined}
+                  disabled={!expandable}
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    onToggleLane?.(row.id);
+                  }}
+                >
+                  <span class="lane-row-icon"><Icon name={row.icon} size={16} /></span>
+                  <span class="lane-row-name">{row.label}</span>
+                </button>
+
+                {#if row.canCreate}
+                  <button
+                    type="button"
+                    class="lane-row-create"
+                    class:done={row.createIsEdit}
+                    title={row.createLabel}
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      onCreateInLane?.(row.id);
+                    }}
+                  >
+                    <Icon name={row.createIsEdit ? 'edit' : 'plus'} size={14} />
+                    <span>{row.createLabel}</span>
+                  </button>
+                {/if}
+
+                <button
+                  type="button"
+                  class="lane-row-meta-btn"
+                  class:static={!expandable}
+                  aria-expanded={expandable ? isExpanded : undefined}
+                  disabled={!expandable}
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    onToggleLane?.(row.id);
+                  }}
+                >
                   <span class="lane-row-meta"
                     ><span class="lane-row-count">{row.count}{row.capped ? '+' : ''}</span>
-                    {row.verb}</span
+                    <span class="lane-row-verb">{row.verb}</span></span
                   >
-                {:else}
-                  <span class="lane-row-add">Add yours</span>
-                {/if}
-                <span class="lane-row-chevron"
-                  ><Icon name={isExpanded ? 'chevron-up' : 'chevron-down'} size={14} /></span
-                >
-              </button>
+                  <span class="lane-row-chevron" class:placeholder={!expandable}
+                    ><Icon name={isExpanded ? 'chevron-up' : 'chevron-down'} size={14} /></span
+                  >
+                </button>
+              </div>
 
-              {#if isExpanded && expandedLaneMeta}
-                {@const meta = expandedLaneMeta}
+              {#if isExpanded && expandable}
                 <div class="lane-body">
                   {#if expandedLaneItems?.loading}
                     <div class="lane-status">Loading…</div>
@@ -392,7 +419,7 @@
                                 href={entry.url}
                                 target="_blank"
                                 rel="noopener"
-                                title="Open {meta.label}"
+                                title="Open {row.label}"
                                 onclick={(e) => e.stopPropagation()}
                                 ><Icon name="external-link" size={13} /></a
                               >
@@ -403,24 +430,7 @@
                       {/each}
                     </ul>
                   {:else if !expandedLaneItems?.loading}
-                    <div class="lane-status">
-                      {#if meta.canCreate}Be the first to {meta.verb} this.{:else}Nothing here yet.{/if}
-                    </div>
-                  {/if}
-
-                  {#if meta.canCreate}
-                    <button
-                      type="button"
-                      class="lane-create"
-                      class:done={meta.createIsEdit}
-                      onclick={(e) => {
-                        e.stopPropagation();
-                        onCreateInLane?.(row.id);
-                      }}
-                    >
-                      <Icon name={meta.createIsEdit ? 'edit' : 'plus'} size={14} />
-                      <span>{meta.createLabel}</span>
-                    </button>
+                    <div class="lane-status">Nothing here yet.</div>
                   {/if}
                 </div>
               {/if}
@@ -951,8 +961,24 @@
   .lane-row {
     display: flex;
     align-items: center;
+    gap: 0.5rem;
+    transition: background-color 0.15s ease;
+  }
+
+  /* The two toggles (name + count) read as one row: hovering either, or the row
+     being open, tints the whole row — the create button keeps its own feedback. */
+  .lane.expanded .lane-row,
+  .lane-row:has(.lane-row-main:not(.static):hover),
+  .lane-row:has(.lane-row-meta-btn:not(.static):hover) {
+    background: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
+  }
+
+  .lane-row-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
     gap: 0.625rem;
-    width: 100%;
     padding: 0.625rem 0;
     background: none;
     border: none;
@@ -960,12 +986,40 @@
     text-align: left;
     color: var(--color-text);
     cursor: pointer;
-    transition: background-color 0.15s ease;
   }
 
-  .lane-row:hover,
-  .lane.expanded .lane-row {
-    background: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
+  /* A countless lane has nothing to expand — the row is just its create button.
+     It's rendered disabled; keep the label at full strength (no browser graying). */
+  .lane-row-main.static {
+    cursor: default;
+    color: var(--color-text);
+    opacity: 1;
+  }
+
+  /* The count + chevron: its own toggle, pinned far right so counts line up down
+     the list regardless of whether a lane also has a create button. */
+  .lane-row-meta-btn {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.625rem 0;
+    background: none;
+    border: none;
+    font: inherit;
+    color: var(--color-text);
+    cursor: pointer;
+  }
+
+  /* A count of 0 still shows ("0 posted"), but quietly — nobody yet, nothing to
+     expand. The chevron keeps its slot (hidden) so the numbers stay aligned. */
+  .lane-row-meta-btn.static {
+    cursor: default;
+  }
+
+  .lane-row-meta-btn.static .lane-row-count {
+    color: var(--color-text-secondary);
+    font-weight: 500;
   }
 
   .lane-row-icon {
@@ -1000,11 +1054,13 @@
     color: var(--color-text);
   }
 
-  .lane-row-add {
-    flex-shrink: 0;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    color: var(--color-primary);
+  /* On narrow cards the verb is the first thing to go — the count and the lane's
+     own icon/name already carry the meaning — so the lane name keeps its room
+     instead of truncating next to an inline create button. */
+  @media (max-width: 30rem) {
+    .lane-row-verb {
+      display: none;
+    }
   }
 
   .lane-row-chevron {
@@ -1012,6 +1068,10 @@
     flex-shrink: 0;
     color: var(--color-text-secondary);
     opacity: 0.6;
+  }
+
+  .lane-row-chevron.placeholder {
+    visibility: hidden;
   }
 
   /* People + create affordance, indented under the lane name (icon width + gap). */
@@ -1086,31 +1146,34 @@
     overflow: hidden;
   }
 
-  /* The "add yours" affordance — a quiet outlined One-Blue button. */
-  .lane-create {
+  /* The inline "add yours" affordance — a quiet outlined One-Blue button that
+     lives in the lane row itself, so contributing never requires an expand. */
+  .lane-row-create {
+    flex-shrink: 0;
     display: inline-flex;
     align-items: center;
-    gap: 0.375rem;
-    padding: 0.3125rem 0.625rem;
+    gap: 0.3125rem;
+    padding: 0.25rem 0.5rem;
     background: none;
     border: 1px solid var(--color-border, #e0e0e0);
     border-radius: 6px;
     font: inherit;
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
     font-weight: 500;
     color: var(--color-primary, #0066cc);
     cursor: pointer;
+    white-space: nowrap;
     transition:
       border-color 0.15s ease,
       background-color 0.15s ease;
   }
 
-  .lane-create:hover {
+  .lane-row-create:hover {
     border-color: var(--color-primary);
     background: var(--color-sidebar-active, rgba(0, 102, 204, 0.08));
   }
 
-  .lane-create.done {
+  .lane-row-create.done {
     color: var(--color-text-secondary);
   }
 

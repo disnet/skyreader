@@ -89,7 +89,7 @@ describe('getMentionLaneItems', () => {
     });
   });
 
-  it('builds a linkblog permalink and pulls the leaflet note', async () => {
+  it('links a Skyreader linkblog doc to its blogs permalink and pulls the leaflet note', async () => {
     const db = freshDb();
     seedDid(db, 'did:plc:bob', 'bob.test');
 
@@ -98,12 +98,16 @@ describe('getMentionLaneItems', () => {
       { 'site.standard.document|.links[].uri': [{ did: 'did:plc:bob', rkey: 'doc1' }] },
       {
         doc1: {
+          site: 'at://did:plc:bob/site.standard.publication/skyreader-links',
+          path: '/doc1',
           content: {
             pages: [
               { blocks: [{ block: { $type: 'pub.leaflet.blocks.text', plaintext: 'my take' } }] },
             ],
           },
         },
+        // The skyreader-links publication resolves to the public blogs base URL.
+        'skyreader-links': { url: 'https://skyreader.app/blogs/did:plc:bob/' },
       }
     );
 
@@ -116,6 +120,65 @@ describe('getMentionLaneItems', () => {
         url: 'https://skyreader.app/blogs/did:plc:bob/doc1',
       },
     ]);
+  });
+
+  it('links a foreign standard.site doc to its own publication URL, not a Skyreader permalink', async () => {
+    const db = freshDb();
+    seedDid(db, 'did:plc:carol', 'carol.test');
+
+    mockConstellation(
+      { 'site.standard.document': { '.links[].uri': { distinct_dids: 1 } } },
+      { 'site.standard.document|.links[].uri': [{ did: 'did:plc:carol', rkey: 'essay' }] },
+      {
+        essay: {
+          site: 'at://did:plc:carol/site.standard.publication/my-blog',
+          path: '/essays/the-essay',
+          description: 'a foreign note',
+        },
+        // Carol's own publication resolves to her real blog base URL.
+        'my-blog': { url: 'https://carol.example/' },
+      }
+    );
+
+    const entries = await getMentionLaneItems(db, ARTICLE, 'linkblog');
+    expect(entries).toEqual([
+      {
+        did: 'did:plc:carol',
+        handle: 'carol.test',
+        note: 'a foreign note',
+        url: 'https://carol.example/essays/the-essay',
+      },
+    ]);
+  });
+
+  it('prefers the document description over the leaflet content snippet', async () => {
+    const db = freshDb();
+    seedDid(db, 'did:plc:dave', 'dave.test');
+
+    mockConstellation(
+      { 'site.standard.document': { '.links[].uri': { distinct_dids: 1 } } },
+      { 'site.standard.document|.links[].uri': [{ did: 'did:plc:dave', rkey: 'doc2' }] },
+      {
+        doc2: {
+          site: 'at://did:plc:dave/site.standard.publication/skyreader-links',
+          path: '/doc2',
+          description: 'the summary',
+          content: {
+            pages: [
+              {
+                blocks: [
+                  { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'the leaflet note' } },
+                ],
+              },
+            ],
+          },
+        },
+        'skyreader-links': { url: 'https://skyreader.app/blogs/did:plc:dave/' },
+      }
+    );
+
+    const entries = await getMentionLaneItems(db, ARTICLE, 'linkblog');
+    expect(entries[0].note).toBe('the summary');
   });
 
   it('returns empty for a lane with no sources, and caches the result', async () => {

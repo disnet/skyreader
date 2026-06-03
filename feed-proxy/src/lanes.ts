@@ -46,7 +46,7 @@ export interface Lane {
 export const LANES: Lane[] = [
   {
     id: 'linkblog',
-    label: 'Linkblogs',
+    label: 'Blogs',
     verb: 'noted',
     noun: 'linkblog note',
     icon: 'standard-site',
@@ -67,8 +67,8 @@ export const LANES: Lane[] = [
   {
     id: 'margin',
     label: 'margin.at',
-    verb: 'highlighted',
-    noun: 'margin.at highlight',
+    verb: 'saved',
+    noun: 'margin.at save',
     icon: 'margin',
     // at.margin.note → .target.source is the annotated page.
     collections: ['at.margin.note'],

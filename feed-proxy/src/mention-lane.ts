@@ -24,6 +24,11 @@ import { Database } from 'bun:sqlite';
 import { normalizeArticleUrl } from './url-normalize';
 import { laneForSource, type LaneId } from './lanes';
 import { resolveHandle, resolvePdsUrl } from './did-resolver';
+import { resolveSiteMeta, buildCanonicalUrl } from './standard-site';
+
+// The one-per-user Skyreader linkblog publication rkey (see backend
+// linkblog-sync). Used only as a link-out fallback for our own docs.
+const LINKBLOG_PUBLICATION_RKEY = 'skyreader-links';
 
 const CONSTELLATION_BASE = 'https://constellation.microcosm.blue';
 const HEADERS = { 'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)' };
@@ -108,9 +113,13 @@ function firstString(...vals: unknown[]): string | null {
   return null;
 }
 
-// The leading pub.leaflet text block of a site.standard.document, falling back
-// to its plain fields. Mirrors the frontend's link-post note extraction.
-function extractLeafletNote(value: Record<string, unknown>): string | null {
+// A short snippet for a blogs entry. Prefer the document's own `description` —
+// the canonical summary any standard.site post carries — then fall back to the
+// leading pub.leaflet text block (a Skyreader note, when there's no description)
+// and finally plain textContent.
+function extractDocumentSnippet(value: Record<string, unknown>): string | null {
+  const description = firstString(value.description);
+  if (description) return description;
   const content = value.content as
     | { pages?: Array<{ blocks?: Array<{ block?: { $type?: string; plaintext?: string } }> }> }
     | undefined;
@@ -122,7 +131,35 @@ function extractLeafletNote(value: Record<string, unknown>): string | null {
       }
     }
   }
-  return firstString(value.description, value.textContent);
+  return firstString(value.textContent);
+}
+
+// The document's own public URL — where the post actually lives — rather than a
+// Skyreader permalink. Resolve the publication's base URL and join the document
+// path, for any standard.site document. Skyreader's own linkblog docs resolve to
+// their skyreader.app/blogs/<did>/<rkey> page (their publication's `url` is that
+// base); a foreign document resolves to its own site. Falls back to the Skyreader
+// permalink only for our own docs whose publication didn't resolve — a foreign
+// doc with no resolvable site simply gets no link-out.
+async function resolveDocumentUrl(
+  db: Database,
+  did: string,
+  rkey: string,
+  value: Record<string, unknown>
+): Promise<string | null> {
+  const siteUri = typeof value.site === 'string' ? value.site : '';
+  const path = typeof value.path === 'string' ? value.path : '';
+  if (siteUri) {
+    const { baseUrl } = await resolveSiteMeta(db, siteUri);
+    if (baseUrl) {
+      const url = buildCanonicalUrl(baseUrl, path);
+      if (url) return url;
+    }
+  }
+  if (siteUri.endsWith(`/${LINKBLOG_PUBLICATION_RKEY}`)) {
+    return `https://skyreader.app/blogs/${did}/${rkey}`;
+  }
+  return null;
 }
 
 // Build a lane entry from one linking record: a stable link-out where the lane
@@ -145,9 +182,11 @@ async function resolveEntry(
       break;
     }
     case 'linkblog': {
-      url = `https://skyreader.app/blogs/${did}/${rkey}`;
       const value = await getRecordValue(db, did, collection, rkey);
-      if (value) note = extractLeafletNote(value);
+      if (value) {
+        note = extractDocumentSnippet(value);
+        url = await resolveDocumentUrl(db, did, rkey, value);
+      }
       break;
     }
     case 'margin': {
