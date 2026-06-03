@@ -294,6 +294,10 @@
     --source-accent: #9a694b;
   }
 
+  .feed-item.pill-linkblog {
+    --source-accent: var(--color-primary);
+  }
+
   .feed-item.pill-collection {
     --source-accent: #557f89;
   }

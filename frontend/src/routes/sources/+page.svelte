@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
-  import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import { articlesStore } from '$lib/stores/articles.svelte';
@@ -11,7 +10,6 @@
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { getSourceDisplay } from '$lib/utils/sourceDisplay';
   import Icon from '$lib/components/Icon.svelte';
-  import LinkblogDiscovery from '$lib/components/LinkblogDiscovery.svelte';
   import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
   import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
   import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
@@ -23,6 +21,8 @@
   import SourceGroupHeader from '$lib/components/sources/SourceGroupHeader.svelte';
   import SourcesToolbar from '$lib/components/sources/SourcesToolbar.svelte';
   import BulkActionBar from '$lib/components/sources/BulkActionBar.svelte';
+  import SourceSectionHeader from '$lib/components/sources/SourceSectionHeader.svelte';
+  import SourcesDiscovery from '$lib/components/sources/SourcesDiscovery.svelte';
   import type { Subscription, BlueskyProfile } from '$lib/types';
 
   interface DetectedPublication {
@@ -46,12 +46,38 @@
   let selectedIds = $state<Set<number>>(new Set());
   let profiles = $state<Map<string, BlueskyProfile>>(new Map());
   let detectedContent = $state<Map<string, DetectedContent>>(new Map());
-  let activeTab = $state<'people' | 'websites'>('people');
 
-  function switchTab(tab: 'people' | 'websites') {
-    activeTab = tab;
-    selectedIds = new Set();
+  // -- Section collapse (persisted) --
+  const COLLAPSE_KEY = 'skyreader:sources-collapsed';
+  let webCollapsed = $state(false);
+  let atmoCollapsed = $state(false);
+
+  function loadCollapse() {
+    try {
+      const raw = localStorage.getItem(COLLAPSE_KEY);
+      if (!raw) return;
+      const obj = JSON.parse(raw) as { web?: boolean; atmo?: boolean };
+      webCollapsed = !!obj.web;
+      atmoCollapsed = !!obj.atmo;
+    } catch {
+      // ignore
+    }
   }
+
+  function saveCollapse() {
+    try {
+      localStorage.setItem(
+        COLLAPSE_KEY,
+        JSON.stringify({ web: webCollapsed, atmo: atmoCollapsed })
+      );
+    } catch {
+      // ignore
+    }
+  }
+
+  // While searching, sections stay open so results are never hidden.
+  let webOpen = $derived(!webCollapsed || !!searchQuery);
+  let atmoOpen = $derived(!atmoCollapsed || !!searchQuery);
 
   const CONTENT_CACHE_KEY = 'skyreader:detected-content';
   type CachedContent = Omit<DetectedContent, 'loading'>;
@@ -81,16 +107,14 @@
     }
   }
 
-  // -- Person groups --
+  // -- The Atmosphere: AT Proto sources grouped by person --
   interface PersonGroup {
     did: string;
     profile: BlueskyProfile | null;
     subscriptions: Subscription[];
-    hasDocuments: boolean;
-    totalUnread: number;
   }
 
-  let peopleGroups = $derived.by((): PersonGroup[] => {
+  let atmosphereGroups = $derived.by((): PersonGroup[] => {
     const byDid = new Map<string, Subscription[]>();
     for (const sub of subscriptionsStore.subscriptions) {
       if (!sub.subjectDid) continue;
@@ -103,17 +127,10 @@
 
     const groups: PersonGroup[] = [];
     for (const [did, subs] of byDid) {
-      const hasDocuments = subs.some((s) => s.sourceType === 'atproto.documents');
-      const totalUnread = subs.reduce(
-        (sum, s) => sum + (s.id ? (unreadCounts.feedCounts.get(s.id) ?? 0) : 0),
-        0
-      );
       groups.push({
         did,
         profile: profiles.get(did) || null,
         subscriptions: subs,
-        hasDocuments,
-        totalUnread,
       });
     }
 
@@ -125,13 +142,13 @@
     return groups;
   });
 
+  // -- The Web: RSS feeds --
   let websites = $derived.by(() => {
     return [...subscriptionsStore.subscriptions]
       .filter((s) => !s.sourceType || s.sourceType === 'rss')
       .sort((a, b) => (a.customTitle || a.title).localeCompare(b.customTitle || b.title));
   });
 
-  // Group websites by category
   interface WebsiteCategoryGroup {
     name: string;
     websites: Subscription[];
@@ -156,12 +173,16 @@
   // -- Filtering --
   let filteredPeople = $derived(
     searchQuery
-      ? peopleGroups.filter((g) => {
+      ? atmosphereGroups.filter((g) => {
           const q = searchQuery.toLowerCase();
           const name = g.profile?.displayName || g.profile?.handle || g.did;
-          return name.toLowerCase().includes(q) || g.did.toLowerCase().includes(q);
+          return (
+            name.toLowerCase().includes(q) ||
+            g.did.toLowerCase().includes(q) ||
+            g.subscriptions.some((s) => (s.customTitle || s.title).toLowerCase().includes(q))
+          );
         })
-      : peopleGroups
+      : atmosphereGroups
   );
 
   let filteredWebsites = $derived(
@@ -199,19 +220,13 @@
 
   let filteredUncategorizedWebsites = $derived(filterWebsitesBySearch(uncategorizedWebsites));
 
-  // -- Selection --
+  let hasNoSources = $derived(websites.length === 0 && atmosphereGroups.length === 0);
+
+  // -- Selection (scoped to The Web — folders only apply to RSS) --
   let allVisibleIds = $derived.by(() => {
     const ids: number[] = [];
-    if (activeTab === 'people') {
-      for (const g of filteredPeople) {
-        for (const s of g.subscriptions) {
-          if (s.id) ids.push(s.id);
-        }
-      }
-    } else {
-      for (const s of filteredWebsites) {
-        if (s.id) ids.push(s.id);
-      }
+    for (const s of filteredWebsites) {
+      if (s.id) ids.push(s.id);
     }
     return ids;
   });
@@ -232,7 +247,7 @@
     selectedIds = next;
   }
 
-  // -- Subscribe/unsubscribe for AT Proto content streams --
+  // -- Atmosphere helpers --
   function getPersonHandle(group: PersonGroup): string {
     return group.profile?.handle || group.did;
   }
@@ -295,7 +310,7 @@
     return '';
   }
 
-  // -- Bulk operations --
+  // -- Bulk operations (The Web) --
   async function bulkDelete() {
     const count = selectionCount;
     if (!confirm(`Remove ${count} source${count > 1 ? 's' : ''}?`)) return;
@@ -335,61 +350,81 @@
     selectedIds = new Set();
   }
 
-  // -- Fetch profiles and detected content on mount --
-  onMount(async () => {
-    const dids = [
-      ...new Set(
-        subscriptionsStore.subscriptions.filter((s) => s.subjectDid).map((s) => s.subjectDid!)
-      ),
-    ];
+  onMount(() => {
+    loadCollapse();
+    // Seed detected-content from cache so unsubscribed publications show instantly.
+    detectedContent = new Map(
+      [...loadContentCache().entries()].map(([did, c]) => [did, { ...c, loading: false }])
+    );
+  });
+
+  // The AT Proto accounts we have subscriptions for. Subscriptions sync in
+  // after mount, so profile + content fetching must REACT to this set rather
+  // than snapshot it once — otherwise a fresh load (empty cache) never resolves
+  // names/avatars or detects more of a person's publications.
+  let atprotoDids = $derived([
+    ...new Set(
+      subscriptionsStore.subscriptions.filter((s) => s.subjectDid).map((s) => s.subjectDid!)
+    ),
+  ]);
+
+  // Plain (non-reactive) guards so the effect fires each request at most once.
+  const profilesRequested = new Set<string>();
+  const detectRequested = new Set<string>();
+
+  $effect(() => {
+    const dids = atprotoDids;
     if (dids.length === 0) return;
 
-    const cache = loadContentCache();
-    const initial = new Map<string, DetectedContent>();
-    for (const did of dids) {
-      const cached = cache.get(did);
-      if (cached) {
-        initial.set(did, { ...cached, loading: false });
-      }
+    const needProfiles = dids.filter((d) => !profilesRequested.has(d));
+    if (needProfiles.length > 0) {
+      needProfiles.forEach((d) => profilesRequested.add(d));
+      profileService.getProfiles(needProfiles).then((fetched) => {
+        const next = new Map(profiles);
+        for (const [k, v] of fetched) next.set(k, v);
+        profiles = next;
+      });
     }
-    detectedContent = initial;
-
-    const fetched = await profileService.getProfiles(dids);
-    profiles = fetched;
 
     for (const did of dids) {
+      if (detectRequested.has(did)) continue;
+      detectRequested.add(did);
+
       if (!detectedContent.has(did)) {
         const next = new Map(detectedContent);
-        next.set(did, {
-          publications: [],
-          loading: true,
-        });
+        next.set(did, { publications: [], loading: true });
         detectedContent = next;
       }
 
       api
         .detectContent(did)
         .then((result) => {
-          const content = {
-            publications: result.publications,
-          };
+          const content = { publications: result.publications };
           saveContentCache(did, content);
           const updated = new Map(detectedContent);
           updated.set(did, { ...content, loading: false });
           detectedContent = updated;
         })
         .catch(() => {
-          if (!detectedContent.has(did)) {
-            const updated = new Map(detectedContent);
-            updated.set(did, {
-              publications: [],
-              loading: false,
-            });
-            detectedContent = updated;
-          }
+          const updated = new Map(detectedContent);
+          updated.set(did, {
+            publications: detectedContent.get(did)?.publications ?? [],
+            loading: false,
+          });
+          detectedContent = updated;
         });
     }
   });
+
+  function toggleWeb() {
+    webCollapsed = !webCollapsed;
+    saveCollapse();
+  }
+
+  function toggleAtmo() {
+    atmoCollapsed = !atmoCollapsed;
+    saveCollapse();
+  }
 </script>
 
 <svelte:head>
@@ -418,215 +453,189 @@
     />
   {/if}
 
-  <!-- Tab bar -->
-  <div class="tab-bar">
-    <button class="tab" class:active={activeTab === 'people'} onclick={() => switchTab('people')}>
-      <Icon name="users" size={16} />
-      People
-      {#if peopleGroups.length > 0}
-        <span class="tab-count">{peopleGroups.length}</span>
-      {/if}
-    </button>
-    <button
-      class="tab"
-      class:active={activeTab === 'websites'}
-      onclick={() => switchTab('websites')}
-    >
-      <Icon name="globe" size={16} />
-      Websites
-      {#if websites.length > 0}
-        <span class="tab-count">{websites.length}</span>
-      {/if}
-    </button>
-  </div>
+  {#if hasNoSources && !searchQuery}
+    <!-- First run: no sources yet -->
+    <div class="onboarding">
+      <h2>Build your library</h2>
+      <p>
+        Follow RSS feeds, standard.site blogs, and the linkblogs of people you know on Bluesky.
+        Everything you follow lives in your PDS — portable across the Atmosphere.
+      </p>
+    </div>
+    <SourcesDiscovery />
+  {:else}
+    {#if !searchQuery}
+      <SourcesDiscovery />
+    {/if}
 
-  <!-- People tab -->
-  {#if activeTab === 'people'}
-    {#if filteredPeople.length > 0}
-      <a class="discover-link" href="/sources/discover">
-        <Icon name="users" size={14} />
-        Discover linkblogs to follow
-        <Icon name="chevron-right" size={14} />
-      </a>
-      <div class="select-all-row">
-        <label class="checkbox-label">
-          <input type="checkbox" checked={allSelected} onchange={toggleSelectAll} />
-          <span class="select-all-text">Select all</span>
-        </label>
-      </div>
+    <!-- THE ATMOSPHERE -->
+    <section class="sources-section">
+      <SourceSectionHeader
+        icon="users"
+        title="The Atmosphere"
+        subtitle="people you follow"
+        count={atmosphereGroups.length}
+        collapsed={!atmoOpen}
+        onToggle={toggleAtmo}
+      />
 
-      <div class="source-list">
-        {#each filteredPeople as group (group.did)}
-          {@const detected = detectedContent.get(group.did)}
-          {@const handle = getPersonHandle(group)}
-          {@const avatarUrl = group.profile?.avatar ?? null}
+      {#if atmoOpen}
+        {#if filteredPeople.length > 0}
+          <div class="source-list person-list">
+            {#each filteredPeople as group (group.did)}
+              {@const detected = detectedContent.get(group.did)}
+              {@const handle = getPersonHandle(group)}
+              {@const avatarUrl = group.profile?.avatar ?? null}
 
-          <SourceGroupHeader
-            {avatarUrl}
-            displayName={getPersonName(group)}
-            {handle}
-            totalUnread={group.totalUnread}
-            onRemoveAll={async () => {
-              if (confirm(`Remove all subscriptions for ${getPersonName(group)}?`)) {
-                await Promise.all(
-                  group.subscriptions
-                    .filter((s) => s.id != null)
-                    .map((s) => subscriptionsStore.remove(s.id!))
-                );
-              }
-            }}
-          />
+              <SourceGroupHeader
+                {avatarUrl}
+                displayName={getPersonName(group)}
+                {handle}
+                onRemoveAll={async () => {
+                  if (confirm(`Remove all subscriptions for ${getPersonName(group)}?`)) {
+                    await Promise.all(
+                      group.subscriptions
+                        .filter((s) => s.id != null)
+                        .map((s) => subscriptionsStore.remove(s.id!))
+                    );
+                  }
+                }}
+              />
 
-          <!-- Subscribed content streams -->
-          {#each group.subscriptions as sub (sub.rkey)}
-            {@const display = getSourceDisplay(sub.sourceType, sub.feedUrl)}
-            {@const subUnread = sub.id ? (unreadCounts.feedCounts.get(sub.id) ?? 0) : 0}
-            <SourceRow
-              iconUrl={sub.customIconUrl || avatarUrl}
-              iconRound={!sub.customIconUrl}
-              title={sub.customTitle || sub.title}
-              subtitle={'@' + handle}
-              sourceLabel={display.label}
-              pillClass={display.pillClass}
-              unreadCount={subUnread}
-              subscribed={true}
-              selected={sub.id != null && selectedIds.has(sub.id)}
-              fallbackIcon={display.iconName}
-              onToggleSelect={() => sub.id && toggleSelect(sub.id)}
-              onRemove={() => handleRemove(sub)}
-              onEdit={sub.sourceType === 'atproto.documents' ? () => handleEdit(sub) : null}
-            />
-          {/each}
-
-          <!-- Unsubscribed content streams -->
-          {#if detected && !detected.loading}
-            {#each detected.publications as pub (pub.uri)}
-              {#if !group.subscriptions.some((s) => s.sourceType === 'atproto.documents' && s.feedUrl === pub.uri)}
+              <!-- Subscribed streams (blog / linkblog) -->
+              {#each group.subscriptions as sub (sub.rkey)}
+                {@const display = getSourceDisplay(sub.sourceType, sub.feedUrl)}
                 <SourceRow
-                  iconUrl={pub.iconUrl || avatarUrl}
-                  iconRound={!pub.iconUrl}
-                  title={pub.name || pub.url}
-                  subtitle={pub.description || pub.url}
-                  sourceLabel="Publication"
-                  pillClass="pill-publication"
-                  subscribed={false}
-                  fallbackIcon="standard-site"
-                  onSubscribe={() => subscribePublication(group.did, pub)}
+                  iconUrl={sub.customIconUrl || avatarUrl}
+                  iconRound={!sub.customIconUrl}
+                  title={sub.customTitle || sub.title}
+                  subtitle={'@' + handle}
+                  subscribed={true}
+                  fallbackIcon={display.iconName}
+                  onRemove={() => handleRemove(sub)}
+                  onEdit={sub.sourceType === 'atproto.documents' ? () => handleEdit(sub) : null}
                 />
+              {/each}
+
+              <!-- Detected but not yet subscribed -->
+              {#if detected && !detected.loading}
+                {#each detected.publications as pub (pub.uri)}
+                  {#if !group.subscriptions.some((s) => s.sourceType === 'atproto.documents' && s.feedUrl === pub.uri)}
+                    {@const pubDisplay = getSourceDisplay('atproto.documents', pub.uri)}
+                    <SourceRow
+                      iconUrl={pub.iconUrl || avatarUrl}
+                      iconRound={!pub.iconUrl}
+                      title={pub.name || pub.url}
+                      subtitle={pub.description || pub.url}
+                      subscribed={false}
+                      fallbackIcon={pubDisplay.iconName}
+                      onSubscribe={() => subscribePublication(group.did, pub)}
+                    />
+                  {/if}
+                {/each}
+              {/if}
+
+              {#if detected?.loading}
+                <div class="content-type-loading">
+                  <span class="spinner-small"></span>
+                  <span>Detecting content…</span>
+                </div>
               {/if}
             {/each}
-          {/if}
+          </div>
+        {:else if searchQuery}
+          <p class="section-empty">No people match “{searchQuery}”.</p>
+        {:else}
+          <p class="section-empty">
+            You're not following anyone's blog or linkblog yet. Find people in Find more above.
+          </p>
+        {/if}
+      {/if}
+    </section>
 
-          {#if detected?.loading}
-            <div class="content-type-loading">
-              <span class="spinner-small"></span>
-              <span>Detecting content...</span>
+    <!-- THE WEB -->
+    <section class="sources-section">
+      <SourceSectionHeader
+        icon="globe"
+        title="The Web"
+        subtitle="RSS feeds"
+        count={websites.length}
+        collapsed={!webOpen}
+        onToggle={toggleWeb}
+      />
+
+      {#if webOpen}
+        {#if filteredWebsites.length > 0}
+          <div class="select-all-row">
+            <label class="checkbox-label">
+              <input type="checkbox" checked={allSelected} onchange={toggleSelectAll} />
+              <span class="select-all-text">Select all</span>
+            </label>
+          </div>
+
+          {#each filteredWebsiteCategories as cat (cat.name)}
+            <div class="category-section">
+              <h3 class="category-title">
+                <Icon name="folder" size={14} />
+                {cat.name}
+                <span class="group-count">{cat.websites.length}</span>
+              </h3>
+              <div class="source-list">
+                {#each cat.websites as sub (sub.id)}
+                  {@const status = sub.feedUrl ? feedStatusStore.getStatus(sub.feedUrl) : undefined}
+                  <SourceRow
+                    iconUrl={getFaviconUrl(sub)}
+                    title={sub.customTitle || sub.title}
+                    subtitle={getSubtitle(sub)}
+                    hasError={status?.status === 'error' || status?.status === 'circuit-open'}
+                    subscribed={true}
+                    selected={sub.id != null && selectedIds.has(sub.id)}
+                    fallbackIcon="rss"
+                    onToggleSelect={() => sub.id && toggleSelect(sub.id)}
+                    onEdit={() => handleEdit(sub)}
+                    onRefresh={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
+                    onRemove={() => handleRemove(sub)}
+                  />
+                {/each}
+              </div>
+            </div>
+          {/each}
+
+          {#if filteredUncategorizedWebsites.length > 0}
+            {#if filteredWebsiteCategories.length > 0}
+              <h3 class="category-title uncategorized-title">
+                Uncategorized
+                <span class="group-count">{filteredUncategorizedWebsites.length}</span>
+              </h3>
+            {/if}
+            <div class="source-list">
+              {#each filteredUncategorizedWebsites as sub (sub.id)}
+                {@const status = sub.feedUrl ? feedStatusStore.getStatus(sub.feedUrl) : undefined}
+                <SourceRow
+                  iconUrl={getFaviconUrl(sub)}
+                  title={sub.customTitle || sub.title}
+                  subtitle={getSubtitle(sub)}
+                  hasError={status?.status === 'error' || status?.status === 'circuit-open'}
+                  subscribed={true}
+                  selected={sub.id != null && selectedIds.has(sub.id)}
+                  fallbackIcon="rss"
+                  onToggleSelect={() => sub.id && toggleSelect(sub.id)}
+                  onEdit={() => handleEdit(sub)}
+                  onRefresh={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
+                  onRemove={() => handleRemove(sub)}
+                />
+              {/each}
             </div>
           {/if}
-        {/each}
-      </div>
-    {:else if searchQuery}
-      <div class="empty-state">
-        <p>No people match "{searchQuery}"</p>
-      </div>
-    {:else}
-      <div class="people-onboarding">
-        <p class="onboarding-lead">
-          Follow a @handle to get started — or follow the linkblogs of people you already know on
-          Bluesky:
-        </p>
-        <LinkblogDiscovery variant="friends" />
-        <a class="discover-link standalone" href="/sources/discover">
-          Browse all linkblogs
-          <Icon name="chevron-right" size={14} />
-        </a>
-      </div>
-    {/if}
-  {/if}
-
-  <!-- Websites tab -->
-  {#if activeTab === 'websites'}
-    {#if filteredWebsites.length > 0}
-      <div class="select-all-row">
-        <label class="checkbox-label">
-          <input type="checkbox" checked={allSelected} onchange={toggleSelectAll} />
-          <span class="select-all-text">Select all</span>
-        </label>
-      </div>
-
-      {#each filteredWebsiteCategories as cat (cat.name)}
-        <div class="category-section">
-          <h3 class="category-title">
-            <Icon name="folder" size={14} />
-            {cat.name}
-            <span class="group-count">{cat.websites.length}</span>
-          </h3>
-          <div class="source-list">
-            {#each cat.websites as sub (sub.id)}
-              {@const display = getSourceDisplay(sub.sourceType, sub.feedUrl)}
-              {@const feedCount = sub.id ? (unreadCounts.feedCounts.get(sub.id) ?? 0) : 0}
-              {@const status = sub.feedUrl ? feedStatusStore.getStatus(sub.feedUrl) : undefined}
-              <SourceRow
-                iconUrl={getFaviconUrl(sub)}
-                title={sub.customTitle || sub.title}
-                subtitle={getSubtitle(sub)}
-                sourceLabel={display.label}
-                pillClass={display.pillClass}
-                unreadCount={feedCount}
-                hasError={status?.status === 'error' || status?.status === 'circuit-open'}
-                subscribed={true}
-                selected={sub.id != null && selectedIds.has(sub.id)}
-                fallbackIcon="rss"
-                onToggleSelect={() => sub.id && toggleSelect(sub.id)}
-                onEdit={() => handleEdit(sub)}
-                onRefresh={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
-                onRemove={() => handleRemove(sub)}
-              />
-            {/each}
-          </div>
-        </div>
-      {/each}
-
-      {#if filteredUncategorizedWebsites.length > 0}
-        {#if filteredWebsiteCategories.length > 0}
-          <h3 class="category-title uncategorized-title">
-            Uncategorized
-            <span class="group-count">{filteredUncategorizedWebsites.length}</span>
-          </h3>
-        {/if}
-        <div class="source-list">
-          {#each filteredUncategorizedWebsites as sub (sub.id)}
-            {@const display = getSourceDisplay(sub.sourceType, sub.feedUrl)}
-            {@const feedCount = sub.id ? (unreadCounts.feedCounts.get(sub.id) ?? 0) : 0}
-            {@const status = sub.feedUrl ? feedStatusStore.getStatus(sub.feedUrl) : undefined}
-            <SourceRow
-              iconUrl={getFaviconUrl(sub)}
-              title={sub.customTitle || sub.title}
-              subtitle={getSubtitle(sub)}
-              sourceLabel={display.label}
-              pillClass={display.pillClass}
-              unreadCount={feedCount}
-              hasError={status?.status === 'error' || status?.status === 'circuit-open'}
-              subscribed={true}
-              selected={sub.id != null && selectedIds.has(sub.id)}
-              fallbackIcon="rss"
-              onToggleSelect={() => sub.id && toggleSelect(sub.id)}
-              onEdit={() => handleEdit(sub)}
-              onRefresh={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
-              onRemove={() => handleRemove(sub)}
-            />
-          {/each}
-        </div>
-      {/if}
-    {:else}
-      <div class="empty-state">
-        {#if searchQuery}
-          <p>No websites match "{searchQuery}"</p>
+        {:else if searchQuery}
+          <p class="section-empty">No feeds match “{searchQuery}”.</p>
         {:else}
-          <p>No websites yet. Add an RSS feed to get started.</p>
+          <p class="section-empty">
+            No RSS feeds yet. Use <strong>Add source → RSS feed</strong> to follow a blog or site.
+          </p>
         {/if}
-      </div>
-    {/if}
+      {/if}
+    </section>
   {/if}
 
   {#if mobileStore.isMobile}
@@ -679,53 +688,32 @@
     }
   }
 
-  .tab-bar {
-    display: flex;
-    gap: 0;
-    border-bottom: 1px solid var(--color-border);
+  .sources-section {
+    margin-bottom: 1.25rem;
+  }
+
+  .onboarding {
+    padding: 0.5rem 0.25rem 0;
     margin-bottom: 1rem;
   }
 
-  .tab {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    padding: 0.625rem 1rem;
+  .onboarding h2 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 0 0 0.375rem;
+  }
+
+  .onboarding p {
     font-size: 0.875rem;
-    font-weight: 500;
     color: var(--color-text-secondary);
-    background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    cursor: pointer;
-    transition:
-      color 0.15s,
-      border-color 0.15s;
-  }
-
-  .tab:hover {
-    color: var(--color-text-primary);
-  }
-
-  .tab.active {
-    color: var(--color-primary);
-    border-bottom-color: var(--color-primary);
-  }
-
-  .tab-count {
-    font-size: 0.75rem;
-    font-weight: 400;
-    color: var(--color-text-secondary);
-  }
-
-  .tab.active .tab-count {
-    color: var(--color-primary);
+    line-height: 1.5;
+    margin: 0;
+    max-width: 56ch;
   }
 
   .select-all-row {
-    padding: 0 0.25rem 0.5rem;
+    padding: 0.25rem 0.25rem 0.5rem;
   }
 
   .checkbox-label {
@@ -809,41 +797,15 @@
     }
   }
 
-  .empty-state {
-    text-align: center;
-    padding: 3rem 1rem;
-    color: var(--color-text-secondary);
-    font-size: 0.875rem;
-  }
-
-  .discover-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    color: var(--color-primary);
-    text-decoration: none;
-    padding: 0.5rem 0;
-  }
-
-  .discover-link:hover {
-    text-decoration: underline;
-  }
-
-  .discover-link.standalone {
-    margin-top: 0.75rem;
-  }
-
-  .people-onboarding {
-    padding: 0.5rem 0 2rem;
-  }
-
-  .onboarding-lead {
+  .section-empty {
     font-size: 0.875rem;
     color: var(--color-text-secondary);
     line-height: 1.5;
-    margin: 0 0 1rem;
-    max-width: 52ch;
+    margin: 0.25rem 0.25rem 0.5rem;
+  }
+
+  .section-empty strong {
+    font-weight: 600;
+    color: var(--color-text);
   }
 </style>

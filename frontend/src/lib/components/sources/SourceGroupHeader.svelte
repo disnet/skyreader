@@ -5,11 +5,10 @@
     avatarUrl: string | null;
     displayName: string;
     handle: string;
-    totalUnread: number;
     onRemoveAll: () => void;
   }
 
-  let { avatarUrl, displayName, handle, totalUnread, onRemoveAll }: Props = $props();
+  let { avatarUrl, displayName, handle, onRemoveAll }: Props = $props();
 </script>
 
 <div class="group-header">
@@ -24,9 +23,6 @@
     <span class="header-name">{displayName}</span>
     <span class="header-handle">@{handle}</span>
   </div>
-  {#if totalUnread > 0}
-    <span class="unread-badge">{totalUnread}</span>
-  {/if}
   <button class="remove-all-btn" onclick={onRemoveAll} title="Remove all">
     <Icon name="trash" size={14} />
   </button>
@@ -80,16 +76,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .unread-badge {
-    flex-shrink: 0;
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: var(--color-primary);
-    background: rgba(0, 102, 204, 0.1);
-    padding: 0.125rem 0.375rem;
-    border-radius: 10px;
   }
 
   .remove-all-btn {
