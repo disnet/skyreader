@@ -1181,7 +1181,7 @@
 
   .article-date {
     flex-shrink: 0;
-    font-size: 0.875rem;
+    font-size: 0.8rem;
     color: var(--color-text-secondary);
   }
 
