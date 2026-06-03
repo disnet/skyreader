@@ -5,7 +5,6 @@
  * firehose into a backlink graph, so we can ask network-wide questions about a
  * link post without running our own indexer:
  *
- *  - how many people recommended this linkblog entry      (a `recommend` count)
  *  - who quoted it                                          (a `repost` count)
  *  - who else across the Atmosphere linked the same article (with their notes)
  *
@@ -18,10 +17,7 @@ import { Database } from 'bun:sqlite';
 import { resolveHandle, resolvePdsUrl } from './did-resolver';
 
 const CONSTELLATION_BASE = 'https://constellation.microcosm.blue';
-const RECOMMEND_COLLECTION = 'site.standard.graph.recommend';
 const DOCUMENT_COLLECTION = 'site.standard.document';
-// JSON path of the at-uri the recommend record points at (its `document` field).
-const RECOMMEND_PATH = '.document';
 // JSON path of the external/at-uri ref in a link-post document's `links` array.
 const LINKS_PATH = '.links[].uri';
 
@@ -45,7 +41,6 @@ export interface AlsoLinkedEntry {
 }
 
 export interface SocialContext {
-  recommendCount: number;
   quoteCount: number;
   alsoLinkedBy: AlsoLinkedEntry[];
 }
@@ -76,7 +71,6 @@ interface CacheRow {
 }
 
 const EMPTY: SocialContext = {
-  recommendCount: 0,
   quoteCount: 0,
   alsoLinkedBy: [],
 };
@@ -97,16 +91,6 @@ async function constellationGet<T>(
     console.error(`[constellation] ${path} error:`, error);
     return null;
   }
-}
-
-// Distinct-DID count of recommends pointing at a link post's record.
-async function fetchRecommendCount(docUri: string): Promise<number> {
-  const data = await constellationGet<ConstellationCountResponse>('/links/count/distinct-dids', {
-    target: docUri,
-    collection: RECOMMEND_COLLECTION,
-    path: RECOMMEND_PATH,
-  });
-  return data?.total ?? 0;
 }
 
 // Count of documents whose `links` ref points at this doc (quote-reshares of it).
@@ -236,15 +220,14 @@ export async function getSocialContext(
     return JSON.parse(cached.context_json) as SocialContext;
   }
 
-  const [recommendCount, quoteCount, alsoLinkedBy] = await Promise.all([
-    query.docUri ? fetchRecommendCount(query.docUri) : Promise.resolve(0),
+  const [quoteCount, alsoLinkedBy] = await Promise.all([
     query.docUri ? fetchQuoteCount(query.docUri) : Promise.resolve(0),
     query.articleUrl
       ? fetchAlsoLinkedBy(db, query.articleUrl, query.excludeDid)
       : Promise.resolve([] as AlsoLinkedEntry[]),
   ]);
 
-  const context: SocialContext = { recommendCount, quoteCount, alsoLinkedBy };
+  const context: SocialContext = { quoteCount, alsoLinkedBy };
   db.run(
     `INSERT INTO constellation_cache (cache_key, context_json, cached_at) VALUES (?, ?, ?)
 		ON CONFLICT(cache_key) DO UPDATE SET context_json = excluded.context_json, cached_at = excluded.cached_at`,

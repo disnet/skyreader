@@ -50,7 +50,6 @@ export interface AlsoLinkedEntryVM {
 }
 
 export interface SocialContextVM {
-  recommendCount: number;
   quoteCount: number;
 }
 

@@ -111,7 +111,6 @@ export interface AlsoLinkedEntry {
 
 export interface SocialContextResult {
   key: string;
-  recommendCount: number;
   quoteCount: number;
   alsoLinkedBy: AlsoLinkedEntry[];
 }

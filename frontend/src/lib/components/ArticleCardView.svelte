@@ -256,17 +256,12 @@
 
     <!-- Link-post social context (Constellation): recommends, quotes, and who
          else across the Atmosphere linked this article. Adornment only. -->
-    {#if isLinkPostMode && socialContext && (socialContext.recommendCount > 0 || socialContext.quoteCount > 0 || alsoLinkedBy.length > 0)}
+    {#if isLinkPostMode && socialContext && (socialContext.quoteCount > 0 || alsoLinkedBy.length > 0)}
       <div class="link-post-context">
-        {#if socialContext.recommendCount > 0 || socialContext.quoteCount > 0}
+        {#if socialContext.quoteCount > 0}
           <span class="context-stat">
-            {#if socialContext.recommendCount > 0}{socialContext.recommendCount}
-              {socialContext.recommendCount === 1
-                ? 'recommend'
-                : 'recommends'}{/if}{#if socialContext.recommendCount > 0 && socialContext.quoteCount > 0}
-              ·
-            {/if}{#if socialContext.quoteCount > 0}{socialContext.quoteCount}
-              {socialContext.quoteCount === 1 ? 'quote' : 'quotes'}{/if}
+            {socialContext.quoteCount}
+            {socialContext.quoteCount === 1 ? 'quote' : 'quotes'}
           </span>
         {/if}
         {#if alsoLinkedBy.length > 0}

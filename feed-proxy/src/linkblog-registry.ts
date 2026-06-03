@@ -7,7 +7,7 @@
  * into a network-wide registry of *everyone with a Skyreader linkblog*. One
  * backlink query enumerates them all; no maintained indexer of our own.
  *
- *   GET /links?target=https://skyreader.app/linkblog
+ *   GET /links/distinct-dids?target=https://skyreader.app/linkblog
  *       &collection=site.standard.publication&path=.skyreaderLinkblog
  *
  * The result is a slowly-changing global list, identical for every user, so we
@@ -41,8 +41,8 @@ const CONSTELLATION_HEADERS = {
   'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)',
 };
 
-interface ConstellationLinksResponse {
-  linking_records?: Array<{ did: string; collection: string; rkey: string }>;
+interface ConstellationDistinctDidsResponse {
+  linking_dids?: string[];
   cursor?: string;
 }
 
@@ -51,10 +51,12 @@ interface RegistryCacheRow {
   cached_at: number;
 }
 
-// Page through Constellation's backlinks for the marker, collecting distinct
-// author DIDs. Returns null on a *total* failure (first page errored) so the
-// caller can fall back to a stale cache; a mid-pagination failure returns
-// whatever resolved so far (better a partial registry than none).
+// Page through Constellation's backlinks for the marker, collecting author DIDs.
+// We only ever want the distinct DIDs, so we ask Constellation to dedup them
+// server-side (`/links/distinct-dids`) instead of pulling full linking records
+// and discarding everything but `.did`. Returns null on a *total* failure (first
+// page errored) so the caller can fall back to a stale cache; a mid-pagination
+// failure returns whatever resolved so far (better a partial registry than none).
 async function fetchRegistryFromConstellation(): Promise<string[] | null> {
   const seen = new Set<string>();
   let cursor: string | undefined;
@@ -68,23 +70,23 @@ async function fetchRegistryFromConstellation(): Promise<string[] | null> {
     });
     if (cursor) params.set('cursor', cursor);
 
-    let data: ConstellationLinksResponse | null = null;
+    let data: ConstellationDistinctDidsResponse | null = null;
     try {
-      const res = await fetch(`${CONSTELLATION_BASE}/links?${params}`, {
+      const res = await fetch(`${CONSTELLATION_BASE}/links/distinct-dids?${params}`, {
         headers: CONSTELLATION_HEADERS,
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
-      if (res.ok) data = (await res.json()) as ConstellationLinksResponse;
+      if (res.ok) data = (await res.json()) as ConstellationDistinctDidsResponse;
       else console.error(`[linkblog-registry] Constellation returned HTTP ${res.status}`);
     } catch (error) {
       console.error('[linkblog-registry] fetch error:', error);
     }
     if (!data) return seen.size > 0 ? [...seen] : null;
 
-    for (const rec of data.linking_records ?? []) {
-      if (rec.did) seen.add(rec.did);
+    for (const did of data.linking_dids ?? []) {
+      if (did) seen.add(did);
     }
-    if (!data.cursor || (data.linking_records?.length ?? 0) === 0) break;
+    if (!data.cursor || (data.linking_dids?.length ?? 0) === 0) break;
     cursor = data.cursor;
   }
 
