@@ -1,15 +1,11 @@
 <script lang="ts">
   import Icon from '$lib/components/Icon.svelte';
-  import PopoverMenu from '$lib/components/PopoverMenu.svelte';
 
   interface Props {
     iconUrl: string | null;
     iconRound?: boolean;
     title: string;
     subtitle: string;
-    sourceLabel: string;
-    pillClass: string;
-    unreadCount?: number;
     hasError?: boolean;
     subscribed?: boolean;
     selected?: boolean;
@@ -26,9 +22,6 @@
     iconRound = false,
     title,
     subtitle,
-    sourceLabel,
-    pillClass,
-    unreadCount = 0,
     hasError = false,
     subscribed = true,
     selected = false,
@@ -40,10 +33,10 @@
     onSubscribe = null,
   }: Props = $props();
 
-  let menuItems = $derived.by(() => {
+  let actions = $derived.by(() => {
     const items: {
       label: string;
-      icon?: string;
+      icon: string;
       variant?: 'default' | 'danger';
       onclick: () => void;
     }[] = [];
@@ -83,21 +76,25 @@
     <span class="source-meta">{subtitle}</span>
   </div>
 
-  <span class="source-type-pill {pillClass}">{sourceLabel}</span>
-
   {#if subscribed && hasError}
     <span class="error-badge" title="Feed error">
       <Icon name="alert-triangle" size={14} />
     </span>
   {/if}
 
-  {#if subscribed && unreadCount > 0}
-    <span class="unread-badge">{unreadCount}</span>
-  {/if}
-
-  {#if menuItems.length > 0}
+  {#if actions.length > 0}
     <div class="source-actions">
-      <PopoverMenu items={menuItems} />
+      {#each actions as item (item.label)}
+        <button
+          class="action-btn"
+          class:danger={item.variant === 'danger'}
+          title={item.label}
+          aria-label={item.label}
+          onclick={item.onclick}
+        >
+          <Icon name={item.icon as any} size={16} />
+        </button>
+      {/each}
     </div>
   {/if}
 </div>
@@ -184,50 +181,6 @@
     white-space: nowrap;
   }
 
-  .source-type-pill {
-    flex-shrink: 0;
-    font-size: 0.6875rem;
-    font-weight: 500;
-    padding: 0.0625rem 0.375rem;
-    border-radius: 4px;
-    white-space: nowrap;
-  }
-
-  .pill-rss {
-    color: var(--color-text-secondary);
-    background: var(--color-bg-secondary, rgba(0, 0, 0, 0.04));
-  }
-
-  .pill-shares {
-    color: #16a34a;
-    background: rgba(22, 163, 74, 0.1);
-  }
-
-  .pill-documents {
-    color: #7c3aed;
-    background: rgba(124, 58, 237, 0.1);
-  }
-
-  .pill-publication {
-    color: #ea580c;
-    background: rgba(234, 88, 12, 0.1);
-  }
-
-  .pill-collection {
-    color: var(--color-text-secondary);
-    background: var(--color-bg-secondary, rgba(0, 0, 0, 0.04));
-  }
-
-  .unread-badge {
-    flex-shrink: 0;
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: var(--color-primary);
-    background: rgba(0, 102, 204, 0.1);
-    padding: 0.125rem 0.375rem;
-    border-radius: 10px;
-  }
-
   .error-badge {
     flex-shrink: 0;
     color: var(--color-error, #dc2626);
@@ -237,6 +190,9 @@
 
   .source-actions {
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.125rem;
     opacity: 0;
     transition: opacity 0.15s;
   }
@@ -245,13 +201,36 @@
     opacity: 1;
   }
 
+  .action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition:
+      background-color 0.15s,
+      color 0.15s;
+  }
+
+  .action-btn:hover {
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .action-btn.danger:hover {
+    background: rgba(244, 67, 54, 0.1);
+    color: var(--color-error);
+  }
+
   @media (max-width: 640px) {
     .source-actions {
       opacity: 1;
-    }
-
-    .source-type-pill {
-      display: none;
     }
   }
 

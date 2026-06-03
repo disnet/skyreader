@@ -48,7 +48,8 @@
     | 'newspaper'
     | 'rss'
     | 'file-text'
-    | 'folder';
+    | 'folder'
+    | 'users';
 
   type NavItem =
     | {
@@ -166,6 +167,12 @@
         id: 'linkblog',
         label: 'Your Linkblog',
         icon: 'share' as IconName,
+      },
+      {
+        type: 'utility',
+        id: 'discover',
+        label: 'Discover Linkblogs',
+        icon: 'users' as IconName,
       },
       {
         type: 'utility',
@@ -776,6 +783,10 @@
 
   .source-type-icon.pill-publication {
     --source-accent: #9a694b;
+  }
+
+  .source-type-icon.pill-linkblog {
+    --source-accent: var(--color-primary);
   }
 
   .source-type-icon.pill-collection {

@@ -6,14 +6,23 @@
   import Icon from './Icon.svelte';
 
   interface Props {
-    /** `friends` = only people you follow (onboarding); `full` = the whole registry. */
-    variant?: 'friends' | 'full';
+    /**
+     * `friends` = only people you follow (onboarding); `full` = the whole registry;
+     * `suggestions` = a capped list of registry linkbloggers you don't already follow.
+     */
+    variant?: 'friends' | 'full' | 'suggestions';
+    /** For `suggestions`: max people to show. */
+    limit?: number;
+    /** For `suggestions`: heading rendered above the list, only when there are results. */
+    heading?: string;
+    /** For `suggestions`: total eligible people before `limit` (so a parent can show "see all"). */
+    totalAvailable?: number;
   }
-  let { variant = 'friends' }: Props = $props();
+  let { variant = 'friends', limit, heading, totalAvailable = $bindable(0) }: Props = $props();
 
   onMount(() => {
-    if (variant === 'full') linkblogDiscoveryStore.loadDiscover();
-    else linkblogDiscoveryStore.loadFriends();
+    if (variant === 'friends') linkblogDiscoveryStore.loadFriends();
+    else linkblogDiscoveryStore.loadDiscover();
   });
 
   // Publications we already subscribe to — to render a "Following" state.
@@ -33,13 +42,28 @@
   let others = $derived(
     variant === 'full' ? linkblogDiscoveryStore.people.filter((p) => !p.isFollow) : []
   );
+  // For `suggestions`: registry linkbloggers you don't already follow on Bluesky
+  // (friends are surfaced separately) and aren't already subscribed to.
+  let eligible = $derived(
+    variant === 'suggestions'
+      ? linkblogDiscoveryStore.people.filter(
+          (p) => !p.isFollow && !subscribedPubUris.has(p.publicationUri)
+        )
+      : []
+  );
+  let suggestions = $derived(eligible.slice(0, limit ?? eligible.length));
+  $effect(() => {
+    totalAvailable = eligible.length;
+  });
   let loading = $derived(
-    variant === 'full'
-      ? linkblogDiscoveryStore.loadingPeople
-      : linkblogDiscoveryStore.loadingFriends
+    variant === 'friends'
+      ? linkblogDiscoveryStore.loadingFriends
+      : linkblogDiscoveryStore.loadingPeople
   );
   let loaded = $derived(
-    variant === 'full' ? linkblogDiscoveryStore.peopleLoaded : linkblogDiscoveryStore.friendsLoaded
+    variant === 'friends'
+      ? linkblogDiscoveryStore.friendsLoaded
+      : linkblogDiscoveryStore.peopleLoaded
   );
 
   // Per-person follow state (keyed by DID): in-flight + last error.
@@ -118,7 +142,19 @@
 {/snippet}
 
 <div class="linkblog-discovery">
-  {#if loading && !loaded}
+  {#if variant === 'suggestions'}
+    <!-- Quiet by design: render nothing while loading or when none are found. -->
+    {#if suggestions.length > 0}
+      {#if heading}
+        <h3 class="group-title">{heading}</h3>
+      {/if}
+      <ul class="person-list">
+        {#each suggestions as p (p.did)}
+          {@render personRow(p)}
+        {/each}
+      </ul>
+    {/if}
+  {:else if loading && !loaded}
     <p class="status">Looking for linkblogs…</p>
   {:else}
     {#if friends.length > 0}

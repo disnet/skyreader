@@ -6,6 +6,15 @@ export interface SourceDisplayInfo {
   pillClass: string;
 }
 
+// A Skyreader linkblog is a standard.site publication with this fixed rkey.
+// Distinguishing it from a generic publication lets us label the two kinds of
+// Atmosphere source apart (linkblog = curated links + notes; blog = writing).
+export const LINKBLOG_PUB_SUFFIX = 'site.standard.publication/skyreader-links';
+
+export function isLinkblogPublication(feedUrl?: string): boolean {
+  return !!feedUrl && feedUrl.endsWith(LINKBLOG_PUB_SUFFIX);
+}
+
 export function getSourceDisplay(
   sourceType: SubscriptionSourceType | undefined,
   feedUrl?: string
@@ -13,8 +22,15 @@ export function getSourceDisplay(
   switch (sourceType) {
     case 'atproto.documents':
       if (feedUrl) {
+        if (isLinkblogPublication(feedUrl)) {
+          return {
+            label: 'Linkblog',
+            iconName: 'link',
+            pillClass: 'pill-linkblog',
+          };
+        }
         return {
-          label: 'Publication',
+          label: 'Blog',
           iconName: 'standard-site',
           pillClass: 'pill-publication',
         };

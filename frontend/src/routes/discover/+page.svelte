@@ -25,7 +25,15 @@
   .discover-page {
     max-width: 640px;
     margin: 0 auto;
-    padding: 1.5rem 1rem 4rem;
+    /* Clear the floating page-header pill (matches the Sources page). */
+    padding: 3.5rem 1rem 4rem;
+  }
+
+  @media (max-width: 1000px) {
+    .discover-page {
+      padding-top: 0.5rem;
+      padding-bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 4rem);
+    }
   }
 
   .discover-header {
