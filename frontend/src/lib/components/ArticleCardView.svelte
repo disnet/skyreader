@@ -1409,7 +1409,7 @@
     display: flex;
     flex-direction: column;
     container-type: inline-size;
-    padding: 0.25rem 0 0.5rem;
+    padding: 0.125rem 0 0.25rem;
   }
 
   /* Inline style: flat row integrated into card bottom */
@@ -1420,7 +1420,7 @@
     justify-content: space-between;
     width: 100%;
     gap: 0.75rem;
-    padding: 0.375rem 0;
+    padding: 0.25rem 0;
   }
 
   /* Mute controls for non-highlighted articles in expanded view (desktop only) */
@@ -1454,7 +1454,7 @@
     --float-lift: 0px;
     position: sticky;
     bottom: calc(var(--float-below) + var(--float-lift));
-    padding: 0.5rem 0;
+    padding: 0.375rem 0;
     isolation: isolate;
     transition:
       transform 0.3s ease,
@@ -1553,6 +1553,16 @@
     .article-item.expanded .article-actions-container.floating {
       --float-below: calc(0.5rem + env(safe-area-inset-bottom, 0px));
       --float-lift: var(--mobile-nav-lift, 0px);
+    }
+
+    /* Tighter floating band on mobile, where screen space is scarce. The
+       non-floating bar already reads fine; only the pinned footer needs trimming. */
+    .article-item.expanded .article-actions-container.floating {
+      padding: 0.125rem 0;
+    }
+
+    .article-item.expanded .article-actions-container.floating .article-actions {
+      padding: 0;
     }
   }
 
