@@ -21,7 +21,7 @@ function createPreferencesStore() {
     articleFont: 'sans-serif',
     articleFontSize: 'md',
     scrollToMarkAsRead: false,
-    expandAllItems: false,
+    expandAllItems: true,
     sortOrder: 'newest',
   });
 
