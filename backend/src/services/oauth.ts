@@ -1,6 +1,7 @@
 import type { Env, OAuthState, Session } from '../types';
 import { createClientAssertion } from './client-auth';
 import { parseCookies, SESSION_COOKIE_NAME } from '../utils/cookies';
+import { ALL_POSSIBLE_SCOPES } from '../config/scopes';
 
 // Constants for refresh retry logic
 const MAX_REFRESH_FAILURES = 5;
@@ -583,6 +584,43 @@ function getBaseUrl(url: URL): string {
   return `${url.protocol}//${host}`;
 }
 
+// Build client_id for localhost development using AT Protocol's localhost exception.
+// The redirect_uri and scope embedded here are part of the client's virtual metadata,
+// so they MUST match byte-for-byte what was used at authorization time — otherwise the
+// auth server treats refresh as coming from a different client and rejects it.
+// See: https://atproto.com/specs/oauth#localhost-client-development
+export function buildLocalhostClientId(redirectUri: string, scope: string): string {
+  const params = new URLSearchParams({
+    redirect_uri: redirectUri,
+    scope: scope,
+  });
+  return `http://localhost?${params.toString()}`;
+}
+
+// Resolve the OAuth client_id (and whether to attach a private_key_jwt assertion) for a
+// request, mirroring the login/callback flow. Production sets CLIENT_SIGNING_KEY and is a
+// confidential client using the hosted client-metadata URL. Local dev has no signing key and
+// is a *public* client on a loopback host, using AT Protocol's localhost exception — no
+// assertion, with the client_id reconstructed from the same redirect_uri + scopes as auth.
+// Getting this wrong locally manifests as endless `session_refresh_pending` 503s, because
+// createClientAssertion() throws when CLIENT_SIGNING_KEY is unset.
+function resolveClientIdentity(env: Env, url: URL): { clientId: string; isPublicClient: boolean } {
+  const baseUrl = getBaseUrl(url);
+  const hasSigningKey = !!(env as Env & { CLIENT_SIGNING_KEY?: string }).CLIENT_SIGNING_KEY;
+  const isLoopback =
+    url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1';
+
+  if (!hasSigningKey && isLoopback) {
+    const redirectUri = `${baseUrl}/api/auth/callback`;
+    return {
+      clientId: buildLocalhostClientId(redirectUri, ALL_POSSIBLE_SCOPES),
+      isPublicClient: true,
+    };
+  }
+
+  return { clientId: `${baseUrl}/.well-known/client-metadata`, isPublicClient: false };
+}
+
 // Why a session resolution produced no usable session. This lets callers avoid
 // logging a user out over a momentary hiccup:
 //   'none'      - no credentials presented (no cookie / bearer). Not logged in.
@@ -863,13 +901,10 @@ async function refreshSession(
     // Get token endpoint
     const authMeta = await fetchAuthServerMetadata(session.pdsUrl);
 
-    // Construct client_id from request URL
+    // Resolve client identity from the request. In local dev this is a public client
+    // (localhost exception, no assertion); in production it's a confidential client.
     const url = new URL(request.url);
-    const baseUrl = getBaseUrl(url);
-    const clientId = `${baseUrl}/.well-known/client-metadata`;
-
-    // Create client assertion for confidential client authentication
-    const clientAssertion = await createClientAssertion(env, authMeta.issuer, clientId);
+    const { clientId, isPublicClient } = resolveClientIdentity(env, url);
 
     // Create DPoP proof for refresh request
     let dpopProof = await createDPoPProof(
@@ -883,9 +918,18 @@ async function refreshSession(
       grant_type: 'refresh_token',
       refresh_token: session.refreshToken,
       client_id: clientId,
-      client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-      client_assertion: clientAssertion,
     });
+
+    // Confidential clients (production) authenticate with a private_key_jwt assertion.
+    // Public clients (local dev) must NOT send one.
+    if (!isPublicClient) {
+      const clientAssertion = await createClientAssertion(env, authMeta.issuer, clientId);
+      refreshBody.set(
+        'client_assertion_type',
+        'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+      );
+      refreshBody.set('client_assertion', clientAssertion);
+    }
 
     let tokenResponse = await fetch(authMeta.token_endpoint, {
       method: 'POST',
@@ -909,9 +953,6 @@ async function refreshSession(
       const dpopNonce = tokenResponse.headers.get('DPoP-Nonce');
 
       if (errorData?.error === 'use_dpop_nonce' && dpopNonce) {
-        // Create new client assertion (must not reuse - each assertion needs unique jti)
-        const newClientAssertion = await createClientAssertion(env, authMeta.issuer, clientId);
-
         dpopProof = await createDPoPProof(
           privateKey,
           publicKeyJwk,
@@ -924,9 +965,18 @@ async function refreshSession(
           grant_type: 'refresh_token',
           refresh_token: session.refreshToken,
           client_id: clientId,
-          client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-          client_assertion: newClientAssertion,
         });
+
+        // Confidential clients re-sign a fresh assertion (must not reuse — each needs a
+        // unique jti); public clients (local dev) send none.
+        if (!isPublicClient) {
+          const newClientAssertion = await createClientAssertion(env, authMeta.issuer, clientId);
+          retryBody.set(
+            'client_assertion_type',
+            'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+          );
+          retryBody.set('client_assertion', newClientAssertion);
+        }
 
         tokenResponse = await fetch(authMeta.token_endpoint, {
           method: 'POST',
