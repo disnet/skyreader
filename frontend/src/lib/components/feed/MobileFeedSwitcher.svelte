@@ -171,7 +171,7 @@
       {
         type: 'utility',
         id: 'discover',
-        label: 'Discover Linkblogs',
+        label: 'Discover',
         icon: 'users' as IconName,
       },
       {

@@ -1,24 +1,37 @@
 <script lang="ts">
   import LinkblogDiscovery from '$lib/components/LinkblogDiscovery.svelte';
+  import FollowingPublications from '$lib/components/FollowingPublications.svelte';
   import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
 </script>
 
 <svelte:head>
-  <title>Discover Linkblogs - Skyreader</title>
+  <title>Discover - Skyreader</title>
 </svelte:head>
 
-<FeedPageHeader title="Discover Linkblogs" hideControls />
+<FeedPageHeader title="Discover" hideControls />
 
 <div class="discover-page">
   <header class="discover-header">
-    <h1>Discover linkblogs</h1>
+    <h1>Discover</h1>
     <p class="header-desc">
-      Linkblogs are portable — anyone on Skyreader gets one in their PDS. Follow the people you
-      already know from Bluesky, then explore others sharing across the Atmosphere.
+      Follow the people you already know from Bluesky, then explore others sharing across the
+      Atmosphere.
     </p>
   </header>
 
-  <LinkblogDiscovery variant="full" />
+  <section class="discover-section">
+    <h2 class="section-title">Linkblogs</h2>
+    <p class="section-desc">Linkblogs are portable — anyone on Skyreader gets one in their PDS.</p>
+    <LinkblogDiscovery variant="full" />
+  </section>
+
+  <section class="discover-section">
+    <h2 class="section-title">Publications from people you follow</h2>
+    <p class="section-desc">
+      Standard.site publications owned by the accounts you follow on Bluesky.
+    </p>
+    <FollowingPublications />
+  </section>
 </div>
 
 <style>
@@ -51,6 +64,28 @@
     color: var(--color-text-secondary);
     line-height: 1.5;
     margin: 0;
+    max-width: 52ch;
+  }
+
+  .discover-section {
+    margin-bottom: 2.5rem;
+  }
+
+  .discover-section:last-child {
+    margin-bottom: 0;
+  }
+
+  .section-title {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.25rem;
+  }
+
+  .section-desc {
+    font-size: 0.8125rem;
+    color: var(--color-text-secondary);
+    line-height: 1.5;
+    margin: 0 0 1rem;
     max-width: 52ch;
   }
 </style>

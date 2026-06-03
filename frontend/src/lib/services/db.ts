@@ -9,6 +9,7 @@ import type {
   ItemTags,
   ItemLabel,
   SavedItem,
+  FollowingPublication,
 } from '$lib/types';
 
 // Sync queue for offline operations
@@ -27,6 +28,19 @@ export interface SyncQueueEntry {
 export interface MetadataEntry {
   key: string; // primary key
   value: string; // JSON-serialized value
+}
+
+// A followed Bluesky account, cached locally so /discover can scan for their
+// standard.site publications without re-walking the follow graph each visit.
+export interface FollowCacheEntry {
+  did: string; // primary key
+  handle: string | null;
+  displayName?: string;
+  avatar?: string;
+  // Epoch ms this account's PDS was last scanned for publications (0 = never).
+  scannedAt: number;
+  // User chose to ignore this account in discovery — never scanned or shown.
+  hidden?: boolean;
 }
 
 // Cached Semble/Margin collection for the integration share picker.
@@ -54,6 +68,8 @@ class SkyreaderDatabase extends Dexie {
   itemLabels!: Table<ItemLabel>;
   saved!: Table<SavedItem>;
   integrationCollections!: Table<IntegrationCollectionCacheEntry>;
+  follows!: Table<FollowCacheEntry>;
+  followingPublications!: Table<FollowingPublication>;
 
   constructor() {
     super('skyreader');
@@ -367,6 +383,15 @@ class SkyreaderDatabase extends Dexie {
     this.version(33).stores({
       linkblogBoosts: null,
     });
+
+    // Client-side social-graph cache for /discover: the user's Bluesky follows
+    // (with a per-account last-scanned timestamp) and the standard.site
+    // publications discovered on them. Lets discovery run entirely in the
+    // browser and stay fast on repeat visits.
+    this.version(34).stores({
+      follows: 'did, scannedAt',
+      followingPublications: 'publicationUri, did',
+    });
   }
 }
 
@@ -387,6 +412,8 @@ export async function clearAllData(): Promise<void> {
     db.itemLabels.clear(),
     db.saved.clear(),
     db.integrationCollections.clear(),
+    db.follows.clear(),
+    db.followingPublications.clear(),
   ]);
 }
 

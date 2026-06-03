@@ -6,6 +6,7 @@
   import type { StandardSub } from '$lib/stores/standardSubs.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import LinkblogDiscovery from '$lib/components/LinkblogDiscovery.svelte';
+  import FollowingPublications from '$lib/components/FollowingPublications.svelte';
 
   onMount(() => {
     standardSubsStore.load();
@@ -35,6 +36,8 @@
 
   // Total registry linkbloggers eligible to suggest (before the inline cap) — drives "see all".
   let moreLinkblogs = $state(0);
+  // Total accounts you follow with standard.site publications (before the cap) — drives "see all".
+  let moreFollowingPubs = $state(0);
 
   let adding = $state<string | null>(null);
   async function add(sub: StandardSub) {
@@ -95,6 +98,20 @@
         </ul>
       {/if}
     </div>
+  {/if}
+
+  <FollowingPublications
+    variant="suggestions"
+    limit={3}
+    heading="Publications from people you follow"
+    bind:totalAvailable={moreFollowingPubs}
+  />
+
+  {#if moreFollowingPubs > 3}
+    <a class="see-all" href="/discover">
+      See all publications
+      <Icon name="chevron-right" size={15} />
+    </a>
   {/if}
 
   <LinkblogDiscovery
