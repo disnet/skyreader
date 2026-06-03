@@ -20,6 +20,14 @@ import {
   getSessionFromRequest,
 } from '../services/oauth';
 import { getClientJWKS, createClientAssertion } from '../services/client-auth';
+import { buildLocalhostClientId } from '../services/oauth';
+import {
+  GRANULAR_SCOPES,
+  SEMBLE_SCOPES,
+  MARGIN_SCOPES,
+  LINKBLOG_SCOPES,
+  ALL_POSSIBLE_SCOPES,
+} from '../config/scopes';
 import { getUserTier } from '../services/user-tier';
 import { getLimitsForTier } from '../config/tier-limits';
 import {
@@ -35,37 +43,10 @@ import {
 // Maximum number of users allowed during beta
 const MAX_USERS = 650;
 
-// Granular scopes for Skyreader's custom lexicons
-// Requests write access only to app.skyreader.* record collections
-export const GRANULAR_SCOPES = [
-  'atproto',
-  'repo:app.skyreader.feed.subscription',
-  'repo:app.skyreader.social.follow',
-  'repo:app.skyreader.feed.saved',
-].join(' ');
-
-// Integration-specific scopes (written to external app lexicons on user's PDS)
-export const SEMBLE_SCOPES = [
-  'repo:network.cosmik.card',
-  'repo:network.cosmik.collection',
-  'repo:network.cosmik.collectionLink',
-];
-export const MARGIN_SCOPES = [
-  'repo:at.margin.bookmark',
-  'repo:at.margin.collection',
-  'repo:at.margin.collectionItem',
-];
-
-// Linkblog scopes — sharing writes standard.site records to the user's PDS.
-export const LINKBLOG_SCOPES = ['repo:site.standard.publication', 'repo:site.standard.document'];
-
-// All possible scopes (base + all integrations) — used in client metadata
-export const ALL_POSSIBLE_SCOPES = [
-  GRANULAR_SCOPES,
-  ...SEMBLE_SCOPES,
-  ...MARGIN_SCOPES,
-  ...LINKBLOG_SCOPES,
-].join(' ');
+// Scope constants now live in config/scopes.ts (shared with the token-refresh
+// path). Re-exported here so existing importers (integrations, linkblog, saved)
+// keep working unchanged.
+export { GRANULAR_SCOPES, SEMBLE_SCOPES, MARGIN_SCOPES, LINKBLOG_SCOPES, ALL_POSSIBLE_SCOPES };
 
 // Check if granted scopes satisfy the required scopes
 export function hasRequiredScopes(
@@ -140,16 +121,6 @@ function getClientMode(env: Env, url: URL): 'confidential' | 'public' {
     'CLIENT_SIGNING_KEY is required for non-localhost deployments. ' +
       'Generate one with: npx tsx scripts/generate-client-key.ts'
   );
-}
-
-// Build client_id for localhost development using AT Protocol's localhost exception
-// See: https://atproto.com/specs/oauth#localhost-client-development
-function buildLocalhostClientId(redirectUri: string, scope: string): string {
-  const params = new URLSearchParams({
-    redirect_uri: redirectUri,
-    scope: scope,
-  });
-  return `http://localhost?${params.toString()}`;
 }
 
 // Validate returnUrl to prevent open redirect attacks

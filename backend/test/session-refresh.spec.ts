@@ -1,6 +1,7 @@
 import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import worker from '../src/index';
+import type { Env } from '../src/types';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
@@ -159,5 +160,104 @@ describe('auth gate: transient refresh failure (503, retryable)', () => {
     expect(res.status).toBe(200);
     // Cookie is cleared regardless of refresh state.
     expect(res.headers.get('Set-Cookie')).toContain('session_id=');
+  });
+});
+
+describe('token refresh: public client (local dev)', () => {
+  // Regression for endless `session_refresh_pending` 503s in local dev. Without
+  // CLIENT_SIGNING_KEY on a loopback host we're a PUBLIC client (localhost exception):
+  // the refresh must use the localhost client_id and send NO private_key_jwt assertion.
+  // Previously refreshSession always took the confidential path, so createClientAssertion()
+  // threw on every refresh and the token never got renewed.
+
+  // Insert a session with a real DPoP key so refreshSession can sign a DPoP proof.
+  async function insertSessionWithKey(sessionId: string, expiresAt: number) {
+    const keyPair = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+      'sign',
+      'verify',
+    ])) as CryptoKeyPair;
+    const privateJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+    await env.DB.prepare(
+      `INSERT INTO sessions
+         (session_id, did, handle, pds_url, access_token, refresh_token, dpop_private_key,
+          expires_at, refresh_failures, refresh_locked_until)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)`
+    )
+      .bind(
+        sessionId,
+        TEST_DID,
+        TEST_HANDLE,
+        PDS_URL,
+        'old-access-token',
+        'old-refresh-token',
+        JSON.stringify(privateJwk),
+        expiresAt
+      )
+      .run();
+  }
+
+  it('refreshes with the localhost client_id and no client_assertion', async () => {
+    // Local dev has no signing key -> public client. The test env sets one globally,
+    // so clear it for this case and restore afterward.
+    const savedKey = (env as Env & { CLIENT_SIGNING_KEY?: string }).CLIENT_SIGNING_KEY;
+    (env as Env & { CLIENT_SIGNING_KEY?: string }).CLIENT_SIGNING_KEY = undefined;
+
+    const tokenEndpoint = `${PDS_URL}/oauth/token`;
+    let capturedBody: URLSearchParams | null = null;
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr = typeof input === 'string' ? input : input.toString();
+        if (urlStr.endsWith('/.well-known/oauth-protected-resource')) {
+          return new Response(JSON.stringify({ authorization_servers: [PDS_URL] }), {
+            status: 200,
+          });
+        }
+        if (urlStr.endsWith('/.well-known/oauth-authorization-server')) {
+          return new Response(
+            JSON.stringify({
+              issuer: PDS_URL,
+              authorization_endpoint: `${PDS_URL}/oauth/authorize`,
+              token_endpoint: tokenEndpoint,
+            }),
+            { status: 200 }
+          );
+        }
+        if (urlStr === tokenEndpoint) {
+          capturedBody = new URLSearchParams(init?.body as string);
+          return new Response(
+            JSON.stringify({
+              access_token: 'fresh-access-token',
+              refresh_token: 'fresh-refresh-token',
+              expires_in: 3600,
+            }),
+            { status: 200 }
+          );
+        }
+        throw new Error(`unexpected fetch: ${urlStr}`);
+      })
+    );
+
+    // Token already expired -> a refresh is attempted inline on this request.
+    await insertSessionWithKey('public-refresh', Date.now() - 1000);
+    const res = await call('/api/auth/me', 'public-refresh');
+
+    (env as Env & { CLIENT_SIGNING_KEY?: string }).CLIENT_SIGNING_KEY = savedKey;
+
+    expect(res.status).toBe(200);
+    expect(capturedBody).not.toBeNull();
+    const body = capturedBody as unknown as URLSearchParams;
+    expect(body.get('grant_type')).toBe('refresh_token');
+    // Public client: localhost exception client_id, and crucially NO assertion.
+    expect(body.get('client_id')?.startsWith('http://localhost?')).toBe(true);
+    expect(body.get('client_assertion')).toBeNull();
+    expect(body.get('client_assertion_type')).toBeNull();
+
+    // The new token was persisted, so subsequent requests are healthy.
+    const row = await env.DB.prepare('SELECT access_token FROM sessions WHERE session_id = ?')
+      .bind('public-refresh')
+      .first<{ access_token: string }>();
+    expect(row?.access_token).toBe('fresh-access-token');
   });
 });
