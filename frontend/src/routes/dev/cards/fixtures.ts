@@ -57,7 +57,8 @@ const base: ArticleCardViewProps = {
   itemTagCount: 0,
   itemTags: [],
   isOpen: false,
-  shareLabel: 'Share',
+  // Articles can always share, so the Discussion panel leads with the composer.
+  showShareAction: true,
 };
 
 export const fixtures: CardFixture[] = [
@@ -114,7 +115,7 @@ export const fixtures: CardFixture[] = [
   },
   {
     name: 'Expanded · atmosphere',
-    note: 'Tap "Discussion" in the action bar to open the in-flow section above the bar; Linkblogs is expanded with people.',
+    note: 'Tap "Discussion" to open the panel: it leads with a one-tap "Share to your linkblog" button (no-note share is the obvious default), then the conversation lanes. Sharing reveals the "Add your note…" box below the card. Linkblogs is read-only (who else noted this).',
     props: {
       ...base,
       expanded: true,
@@ -128,7 +129,7 @@ export const fixtures: CardFixture[] = [
           id: 'linkblog',
           count: 3,
           capped: false,
-          canCreate: true,
+          canCreate: false,
           icon: 'standard-site',
           label: 'Linkblogs',
           verb: 'noted',
@@ -190,15 +191,15 @@ export const fixtures: CardFixture[] = [
       expandedLaneMeta: {
         label: 'Linkblogs',
         verb: 'noted',
-        canCreate: true,
+        canCreate: false,
         createLabel: 'Write a note',
         createIsEdit: false,
       },
     },
   },
   {
-    name: 'Shared · comment box',
-    note: 'Share is active; the inline ShareCommentBox persists.',
+    name: 'Shared · note box',
+    note: 'Once shared, your note persists below the card (open or not). The box owns Edit (focus it) and Remove (unshare). The Discussion button tints to show one of the references is yours.',
     props: {
       ...base,
       expanded: true,
@@ -209,7 +210,34 @@ export const fixtures: CardFixture[] = [
       hasOpenFullscreen: true,
       currentlyShared: true,
       currentNote: 'Sharing this for the framing in the second half.',
-      shareLabel: 'Shared',
+      onRemoveShare: () => {},
+      // Once shared you appear in the Linkblogs lane (isMine), and the Discussion
+      // button picks up the "mine" tint. The panel drops its composer in this
+      // state — your note lives in the persistent box above.
+      laneRow: [
+        {
+          id: 'linkblog',
+          count: 4,
+          capped: false,
+          canCreate: false,
+          icon: 'standard-site',
+          label: 'Linkblogs',
+          verb: 'noted',
+          title: '4 noted this · Linkblogs',
+          isMine: true,
+        },
+        {
+          id: 'bluesky',
+          count: 6,
+          capped: false,
+          canCreate: true,
+          icon: 'bluesky',
+          label: 'Bluesky',
+          verb: 'posted',
+          title: '6 posted this · Bluesky',
+          isMine: false,
+        },
+      ],
     },
   },
   {
@@ -242,7 +270,7 @@ export const fixtures: CardFixture[] = [
           id: 'linkblog',
           count: 4,
           capped: false,
-          canCreate: true,
+          canCreate: false,
           icon: 'standard-site',
           label: 'Linkblogs',
           verb: 'noted',
