@@ -220,6 +220,7 @@
       icon: 'bookmark',
     };
     const otherViews: NavItem[] = [
+      { type: 'utility', id: 'linkblog', label: 'Your Linkblog', icon: 'share' },
       { type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' },
       { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' },
     ];
@@ -351,6 +352,7 @@
     const pathname = $page.url.pathname;
 
     // Utility pages (separate routes)
+    if (pathname === '/linkblog') return { type: 'icon', name: 'share' };
     if (pathname === '/sources') return { type: 'icon', name: 'rss' };
     if (pathname === '/settings') return { type: 'icon', name: 'settings' };
 
@@ -407,6 +409,7 @@
     if (item.type === 'feed' && filter.type === 'feed' && filter.id === item.id) return true;
     if (item.type === 'filteredView' && filter.type === 'filteredView' && filter.id === item.id)
       return true;
+    if (item.type === 'utility' && $page.url.pathname === `/${item.id}`) return true;
     return false;
   }
 

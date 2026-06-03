@@ -22,7 +22,9 @@
   import { isOffprintContent, renderOffprintContent } from '$lib/utils/offprint-renderer';
   import { isGreengaleContent, renderGreengaleContent } from '$lib/utils/greengale-renderer';
   import { getExternalArticleLink, getLinkPostNote } from '$lib/utils/linkPost';
+  import { api } from '$lib/services/api';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
+  import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
   import { socialContextStore } from '$lib/stores/socialContext.svelte';
   import { articleMentionsStore } from '$lib/stores/articleMentions.svelte';
   import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
@@ -101,6 +103,29 @@
   // is the byline.
   let isLinkPostMode = $derived(isDocumentMode && Boolean(linkPostUrl));
 
+  // Is this one of the CURRENT user's own linkblog posts (e.g. on the "Your
+  // Linkblog" page)? If so, the Share button is a toggle that starts on, and the
+  // note is editable in place — both acting directly on this document by rkey,
+  // rather than via the URL-keyed reshare path.
+  const LINKBLOG_PUB_SUFFIX = 'site.standard.publication/skyreader-links';
+  let isOwnLinkblogPost = $derived(
+    isDocumentMode &&
+      !!document &&
+      !!auth.user &&
+      document.authorDid === auth.user.did &&
+      (document.siteUri?.endsWith(LINKBLOG_PUB_SUFFIX) ?? false)
+  );
+  // The rkey of this document's PDS record (last path segment of its AT URI).
+  let ownRkey = $derived(isOwnLinkblogPost ? (document?.recordUri.split('/').pop() ?? '') : '');
+
+  // Local note override for the user's own post, so an in-place edit reflects
+  // immediately without refetching the document.
+  let ownNoteEdited = $state(false);
+  let ownNoteOverride = $state<string | undefined>(undefined);
+  let ownNote = $derived(
+    ownNoteEdited ? ownNoteOverride : document ? getLinkPostNote(document) : undefined
+  );
+
   // Can the user follow this source? (not already subscribed)
   let canFollowSource = $derived.by(() => {
     if (!auth.user) return false;
@@ -151,7 +176,11 @@
   // The user's commentary on a link post, rendered as plain prose (not a
   // blockquote) — it's the author's own voice, and a quote box double-quotes
   // once notes get rich formatting.
-  let linkPostNote = $derived(isLinkPostMode && document ? getLinkPostNote(document) : undefined);
+  // For the user's own post the note is shown (and edited) in the note box above
+  // the action bar, so don't also render it as prose in the body.
+  let linkPostNote = $derived(
+    isLinkPostMode && document && !isOwnLinkblogPost ? getLinkPostNote(document) : undefined
+  );
   // The article excerpt + thumbnail for the link-card preview.
   let linkPostExcerpt = $derived(isLinkPostMode ? document?.description : undefined);
   let linkPostThumb = $derived(
@@ -433,11 +462,13 @@
 
   // ── Unified share + comment + remove (all surfaces) ─────────────────────────
   let currentlyShared = $derived.by(() => {
+    if (isOwnLinkblogPost) return true; // your own post is, by definition, shared
     if (isDocumentMode) return isQuoted;
     return isShared;
   });
 
   let currentNote = $derived.by(() => {
+    if (isOwnLinkblogPost) return ownNote;
     if (isDocumentMode) return isQuoted && quoteKey ? linkblogStore.getNote(quoteKey) : '';
     return shareNote;
   });
@@ -464,6 +495,19 @@
   // Attach/update the note. The box stays visible after saving — it's persistent
   // while shared.
   async function applyComment(note: string) {
+    if (isOwnLinkblogPost) {
+      if (!ownRkey) return;
+      const trimmed = note.trim();
+      // Reflect locally, then persist (empty string clears the note).
+      ownNoteOverride = trimmed || undefined;
+      ownNoteEdited = true;
+      try {
+        await api.updateLinkblogShareNote(ownRkey, trimmed);
+      } catch (e) {
+        console.error('Failed to update linkblog note:', e);
+      }
+      return;
+    }
     if (isDocumentMode) {
       if (isQuoted && quoteKey) linkblogStore.setNote(quoteKey, note);
       else await handleQuote(note);
@@ -472,8 +516,21 @@
     }
   }
 
-  // Remove the share entirely (the Remove control in the persistent note box).
+  // Remove the share entirely (the Remove control in the persistent note box, or
+  // the action-bar Share toggle after its inline confirm).
   async function removeShare() {
+    if (isOwnLinkblogPost) {
+      if (!ownRkey || !document) return;
+      const recordUri = document.recordUri;
+      try {
+        await api.deleteLinkblogShare(ownRkey);
+        myLinkblogStore.removeByRecordUri(recordUri);
+      } catch (e) {
+        console.error('Failed to delete linkblog post:', e);
+      }
+      onUnshare?.();
+      return;
+    }
     if (isDocumentMode) {
       if (quoteKey) await linkblogStore.unshare(quoteKey);
     } else {

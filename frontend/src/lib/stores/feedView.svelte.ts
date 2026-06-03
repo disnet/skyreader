@@ -2,6 +2,7 @@ import { articlesStore } from './articles.svelte';
 import { subscriptionsStore } from './subscriptions.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
 import { socialStore } from './social.svelte';
+import { myLinkblogStore } from './myLinkblog.svelte';
 import { savesStore } from './saves.svelte';
 import { preferences } from './preferences.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
@@ -225,6 +226,9 @@ function createFeedViewStore() {
   let contentTypeFilter = $state<'documents' | null>(null);
   let viewFilter = $state<string | null>(null);
   let categoryFilter = $state<string | null>(null);
+  // The current user's own linkblog ("Your Linkblog" page). Sources documents
+  // from myLinkblogStore rather than the followed-linkblog social feed.
+  let myLinkblogFilter = $state(false);
 
   // Derived: subscription IDs that belong to the selected category
   let categorySubscriptionIds = $derived.by(() => {
@@ -352,6 +356,7 @@ function createFeedViewStore() {
 
   // Derived: view mode
   let viewMode = $derived.by((): ViewMode => {
+    if (myLinkblogFilter) return 'shares'; // your own linkblog: documents only
     if (isSavedChannel) return 'articles'; // saved channels use their own rendering path
     if (activeFilteredView) return 'combined';
     if (sharerFilter || followingFilter) return 'shares';
@@ -468,6 +473,27 @@ function createFeedViewStore() {
   // Derived: filtered documents
   let displayedDocuments = $derived.by((): SocialDocument[] => {
     const fv = effectiveFilters;
+
+    // "Your Linkblog": the user's own shared documents, independent of the
+    // followed-linkblog social feed and the source/type toolbar filters.
+    if (myLinkblogFilter) {
+      let mine = [...myLinkblogStore.documents];
+      if (fv.readFilter === 'unread') {
+        mine = mine.filter(
+          (d) =>
+            !itemLabelsStore.isSocialRead(d.recordUri) ||
+            readDocumentUrisThisSession.has(d.recordUri)
+        );
+      } else if (fv.readFilter === 'read') {
+        mine = mine.filter((d) => itemLabelsStore.isSocialRead(d.recordUri));
+      }
+      mine.sort((a, b) => {
+        const dateA = new Date(a.publishedAt).getTime();
+        const dateB = new Date(b.publishedAt).getTime();
+        return fv.sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
+      });
+      return mine;
+    }
 
     // If documents are not shown by source filter, return empty
     if (!showDocuments) return [];
@@ -956,6 +982,25 @@ function createFeedViewStore() {
     readDocumentUrisThisSession = new Set();
   }
 
+  // Enter (or leave) the user's own linkblog view. Clears the other URL filters
+  // so the view is unambiguous and resets pagination/selection like setFilters.
+  function setMyLinkblogMode(on: boolean) {
+    myLinkblogFilter = on;
+    if (on) {
+      feedFilter = null;
+      savedFilter = null;
+      sharerFilter = null;
+      followingFilter = null;
+      feedsFilter = null;
+      contentTypeFilter = null;
+      viewFilter = null;
+      categoryFilter = null;
+      resetToolbarFilters();
+    }
+    loadedArticleCount = DEFAULT_PAGE_SIZE;
+    resetSelection();
+  }
+
   // Derived: all unique domains from saved items (for domain filter picker)
   let availableSavedDomains = $derived.by((): string[] => {
     if (!isSavedView) return [];
@@ -1094,6 +1139,10 @@ function createFeedViewStore() {
     get categoryFilter() {
       return categoryFilter;
     },
+    get myLinkblogFilter() {
+      return myLinkblogFilter;
+    },
+    setMyLinkblogMode,
     get activeFilteredView() {
       return activeFilteredView;
     },
@@ -1289,6 +1338,8 @@ function createFeedViewStore() {
       view?: string | null;
       category?: string | null;
     }) {
+      // Any URL-driven filter change exits the "Your Linkblog" view.
+      myLinkblogFilter = false;
       feedFilter = filters.feed;
       savedFilter = filters.saved;
       sharerFilter = filters.sharer;

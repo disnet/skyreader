@@ -116,6 +116,14 @@
   const shareRow = $derived(laneRow.find((l) => l.id === 'linkblog'));
   const canShare = $derived(Boolean(shareRow?.canCreate) || currentlyShared);
 
+  // Removing a share is a small destructive step (it deletes a PDS record), so
+  // the Share toggle asks for an inline confirm rather than removing on first
+  // click. Reset whenever the card closes or its shared state changes.
+  let confirmingRemove = $state(false);
+  $effect(() => {
+    if (!isOpen || !currentlyShared) confirmingRemove = false;
+  });
+
   // Is the Discussion panel actually rendered? The note box lives INSIDE the
   // panel (as its lead) when open, so the share → note swap happens in place with
   // no layout shift; when the panel is closed it falls back to a standalone box
@@ -428,20 +436,49 @@
              lane's [+]; already shared → remove the share. Reads active while
              shared (the Discussion note box still owns editing the note). -->
         {#if canShare}
-          <button
-            class="action-btn share-btn"
-            class:saved={currentlyShared}
-            title={currentlyShared ? 'Remove share' : shareRow?.createLabel}
-            onclick={(e) => {
-              e.stopPropagation();
-              if (currentlyShared) onRemoveShare?.();
-              else onCreateInLane?.('linkblog');
-            }}
-          >
-            <span class="action-icon"><Icon name="share" size={16} /></span><span
-              class="action-label">{currentlyShared ? 'Shared' : 'Share'}</span
+          <div class="share-btn-wrapper">
+            <button
+              class="action-btn share-btn"
+              class:saved={currentlyShared}
+              class:confirming={confirmingRemove}
+              title={currentlyShared ? 'Remove share' : shareRow?.createLabel}
+              onclick={(e) => {
+                e.stopPropagation();
+                if (currentlyShared) confirmingRemove = !confirmingRemove;
+                else onCreateInLane?.('linkblog');
+              }}
             >
-          </button>
+              <span class="action-icon"><Icon name="share" size={16} /></span><span
+                class="action-label">{currentlyShared ? 'Shared' : 'Share'}</span
+              >
+            </button>
+            {#if confirmingRemove}
+              <!-- Confirm popover above the button, so it works even when the
+                   action bar collapses to icon-only on small viewports. -->
+              <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+              <div class="overflow-backdrop" onclick={() => (confirmingRemove = false)}></div>
+              <div class="confirm-pop">
+                <p class="confirm-pop-title">Remove this share?</p>
+                <div class="confirm-pop-actions">
+                  <button
+                    class="confirm-pop-btn cancel"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      confirmingRemove = false;
+                    }}>Cancel</button
+                  >
+                  <button
+                    class="confirm-pop-btn danger"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      confirmingRemove = false;
+                      onRemoveShare?.();
+                    }}>Remove</button
+                  >
+                </div>
+              </div>
+            {/if}
+          </div>
         {/if}
         <!-- Discussion: the social hub. The total reference count rides the
              button, which reads active while open and tints when one of those
@@ -1682,6 +1719,80 @@
      bookmark fills, the share icon doesn't. */
   .action-btn.share-btn.saved .action-icon :global(.icon) {
     fill: none;
+  }
+
+  /* Confirm-remove popover, anchored above the Share button (mirrors the
+     overflow menu) so it never depends on inline space in the action bar. */
+  .share-btn-wrapper {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .confirm-pop {
+    position: absolute;
+    bottom: calc(100% + 0.5rem);
+    left: 0;
+    z-index: 100;
+    min-width: 12rem;
+    background: var(--color-bg, #fff);
+    border: 1px solid var(--color-border, #e5e7eb);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    padding: 0.625rem 0.75rem 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .confirm-pop-title {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--color-text);
+    white-space: nowrap;
+  }
+
+  .confirm-pop-actions {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+  }
+
+  .confirm-pop-btn {
+    padding: 0.3125rem 0.75rem;
+    font: inherit;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    border-radius: 6px;
+    cursor: pointer;
+    border: 1px solid var(--color-border, #e5e7eb);
+    background: none;
+    color: var(--color-text);
+  }
+
+  .confirm-pop-btn.cancel:hover {
+    background: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+  }
+
+  .confirm-pop-btn.danger {
+    background: var(--color-danger, #c0392b);
+    border-color: transparent;
+    color: #fff;
+  }
+
+  .confirm-pop-btn.danger:hover {
+    opacity: 0.9;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .confirm-pop {
+      background: var(--color-bg, #1a1a1a);
+      border-color: var(--color-border, #404040);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    }
+
+    .confirm-pop-btn.cancel:hover {
+      background: var(--color-bg-hover, rgba(255, 255, 255, 0.08));
+    }
   }
 
   .action-label {
