@@ -548,6 +548,22 @@ export interface LinkblogPerson {
   isFollow: boolean;
 }
 
+// A standard.site publication owned by someone you follow on Bluesky, surfaced
+// by /discover's "people you follow" scan. A single account may have several.
+export interface FollowingPublication {
+  did: string;
+  handle: string | null;
+  displayName?: string;
+  avatar?: string;
+  // The publication record to subscribe to (at://did/site.standard.publication/<rkey>).
+  publicationUri: string;
+  name: string;
+  description?: string;
+  iconUrl?: string;
+  // The publication's public website — used as the subscription's siteUrl.
+  url: string;
+}
+
 // A locally-tracked linkblog share (Phase 1). Sharing an article now writes a
 // site.standard.document to the user's skyreader-links publication; we keep a
 // local record keyed by the external article URL so the share button can show

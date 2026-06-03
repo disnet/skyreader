@@ -222,7 +222,7 @@
     };
     const otherViews: NavItem[] = [
       { type: 'utility', id: 'linkblog', label: 'Your Linkblog', icon: 'share' },
-      { type: 'utility', id: 'discover', label: 'Discover Linkblogs', icon: 'users' },
+      { type: 'utility', id: 'discover', label: 'Discover', icon: 'users' },
       { type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' },
       { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' },
     ];
