@@ -57,8 +57,6 @@ const base: ArticleCardViewProps = {
   itemTagCount: 0,
   itemTags: [],
   isOpen: false,
-  // Articles can always share, so the Discussion panel leads with the composer.
-  showShareAction: true,
 };
 
 export const fixtures: CardFixture[] = [
@@ -115,7 +113,7 @@ export const fixtures: CardFixture[] = [
   },
   {
     name: 'Expanded · atmosphere',
-    note: 'Tap "Discussion" to open the panel: it leads with a one-tap "Share to your linkblog" button (no-note share is the obvious default), then the conversation lanes. Sharing reveals the "Add your note…" box below the card. Linkblogs is read-only (who else noted this).',
+    note: 'Tap "Discussion" to open the panel: lanes are a tab strip, each chip fused to its own [+] create. The Blogs [+] shares to your linkblog (no-note share is the default); sharing then reveals the "Add your note…" box. Picking a tab reveals that lane\'s posts below.',
     props: {
       ...base,
       expanded: true,
@@ -129,7 +127,7 @@ export const fixtures: CardFixture[] = [
           id: 'linkblog',
           count: 3,
           capped: false,
-          canCreate: false,
+          canCreate: true,
           icon: 'standard-site',
           label: 'Blogs',
           verb: 'noted',
@@ -220,6 +218,7 @@ export const fixtures: CardFixture[] = [
           id: 'linkblog',
           count: 4,
           capped: false,
+          // Already shared: the lane drops its [+] (the note box owns editing).
           canCreate: false,
           icon: 'standard-site',
           label: 'Blogs',
@@ -264,7 +263,6 @@ export const fixtures: CardFixture[] = [
       linkPostNote: 'Still the clearest essay on what we traded away for scale.',
       linkPostExcerpt:
         'The tools that we used to build the social web were open, and the data was ours. Here is what changed, and why it matters more than ever.',
-      showShareAction: true,
       showActionBarIntegrations: true,
       hasSaveToSemble: true,
       hasSaveToMargin: true,
@@ -275,7 +273,7 @@ export const fixtures: CardFixture[] = [
           id: 'linkblog',
           count: 4,
           capped: false,
-          canCreate: false,
+          canCreate: true,
           icon: 'standard-site',
           label: 'Blogs',
           verb: 'noted',
@@ -357,7 +355,6 @@ export const fixtures: CardFixture[] = [
       displayFeedTitle: 'standard.site',
       feedTitle: 'standard.site',
       authorDid: 'did:plc:frank',
-      showShareAction: true,
       showActionBarIntegrations: true,
       hasSaveToSemble: true,
       hasSaveToMargin: true,

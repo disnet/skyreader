@@ -103,8 +103,6 @@ export interface ArticleCardViewProps {
   isTruncated?: boolean;
   currentlyShared?: boolean;
   currentNote?: string;
-  shareBusy?: boolean;
-  showShareAction?: boolean;
   showActionBarIntegrations?: boolean;
   overflowMenuOpen?: boolean;
   canFollowSource?: boolean;
@@ -122,8 +120,6 @@ export interface ArticleCardViewProps {
   onContentTap?: () => void;
   onToggleRead?: () => void;
   onToggleSave?: () => void;
-  /** Share (optionally with a note) in one action, from the panel composer. */
-  onShareWithNote?: (note: string) => void;
   /** Remove the share (unshare), from the persistent note box. */
   onRemoveShare?: () => void;
   onOpenUrl?: () => void;
