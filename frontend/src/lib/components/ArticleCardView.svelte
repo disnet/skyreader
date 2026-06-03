@@ -91,9 +91,10 @@
     onContentTap?.();
   }
 
-  // The Discussion section is toggled from a button in the action bar; it renders
-  // in flow as part of the card (just above the bar), not as an overlay.
-  // Ephemeral display state, so it lives in the view.
+  // The Discussion lanes are toggled from a button in the action bar. They render
+  // in flow inside the sticky footer (above the action row), so opening them grows
+  // the pinned footer upward rather than scrolling the card. Ephemeral display
+  // state, so it lives in the view.
   let atmosphereOpen = $state(false);
 
   // Whether the sticky action bar is currently pinned over scrolling content
@@ -124,27 +125,11 @@
     if (!isOpen || !currentlyShared) confirmingRemove = false;
   });
 
-  // Is the Discussion panel actually rendered? The note box lives INSIDE the
-  // panel (as its lead) when open, so the share → note swap happens in place with
-  // no layout shift; when the panel is closed it falls back to a standalone box
-  // below the card so a shared note stays reachable.
+  // Are the Discussion lanes rendered? Gated on the toggle plus having lanes to
+  // show. The shared-note box is NOT gated on this — it shows whenever the item is
+  // shared (just above the lanes), so the note stays put as Discussion opens and
+  // closes beneath it.
   let panelOpen = $derived(atmosphereOpen && laneRow.length > 0);
-
-  // The action bar is the anchor: when the Discussion section opens (in flow,
-  // just above the bar), reveal it if it landed below the fold. `block: 'nearest'`
-  // scrolls the minimum needed — nothing if the panel is already fully visible,
-  // just enough to bring its bottom into view otherwise — rather than always
-  // yanking the card's bottom flush to the viewport bottom. A layout concern, so
-  // it lives here in the view.
-  let discussionEndRef = $state<HTMLElement>();
-  $effect(() => {
-    if (!atmosphereOpen || !discussionEndRef) return;
-    const anchor = discussionEndRef;
-    const motion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      ? 'auto'
-      : 'smooth';
-    requestAnimationFrame(() => anchor.scrollIntoView({ behavior: motion, block: 'nearest' }));
-  });
 </script>
 
 <article
@@ -304,119 +289,123 @@
       </div>
     {/if}
 
-    <!-- Your note on a shared item: rendered once here, above the Discussion
-         section, whether or not the panel is open — so opening Discussion only
-         adds the lane tabs below and the note box never moves or restyles (its
-         own .atmosphere-lead slot keeps its metrics constant either way). The
-         note stays reachable without opening Discussion; sharing itself is the
-         Blogs lane's [+] now, so there's no separate share button. -->
-    {#if currentlyShared}
-      <div class="atmosphere-lead">
-        <ShareCommentBox
-          initialNote={currentNote ?? ''}
-          placeholder="Add a note to your share…"
-          onsubmit={(note) => onApplyComment?.(note)}
-        />
-      </div>
-    {/if}
+    <!-- The action bar's container is the sticky footer: when expanded it pins to
+         the bottom of the viewport while the article scrolls behind it, then
+         slides flat into the card's end once you reach the bottom. The Discussion
+         area (note + lanes) lives INSIDE it, above the action row, so it rides the
+         same sticky band — opening it grows the band upward from the bar (no
+         scroll), and while floating the whole stack reads as one footer:
 
-    <!-- Discussion section: a flat, in-flow part of the card that sits directly
-         above the action bar (no header of its own — the action-bar Discussion
-         button is the title + toggle). Opening it scrolls the bar to the bottom
-         of the view (the bar is the anchor), so the article above is pushed up
-         rather than the section overlaying it. -->
-    {#if panelOpen}
-      <div id="discussion-panel" class="atmosphere-panel" role="region" aria-label="Discussion">
-        <!-- Lanes as a tab strip: each lane is a select-toggle chip carrying its
-             count, paired with its own [+] create. Picking a tab reveals that
-             lane's posts in the panel below; picking the active tab again closes
-             it. One lane open at a time (the active tab). -->
-        <div class="lane-tabs" role="tablist">
-          {#each laneRow as row (row.id)}
-            {@const isActive = expandedLane === row.id}
-            {@const expandable = row.count > 0}
-            <div class="lane-tab" class:active={isActive} class:mine={row.isMine}>
-              <button
-                type="button"
-                class="lane-tab-main"
-                role="tab"
-                aria-selected={isActive}
-                disabled={!expandable}
-                title={row.title}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  onToggleLane?.(row.id);
-                }}
-              >
-                <span class="lane-tab-icon"><Icon name={row.icon} size={15} /></span>
-                <span class="lane-tab-label">{row.label}</span>
-                <span class="lane-tab-count">{row.count}{row.capped ? '+' : ''}</span>
-              </button>
-
-              {#if row.canCreate}
+           …article body
+           ── drop shadow ──
+           [ note ]
+           [ discussion lanes ]
+           [ action row ]
+    -->
+    <div class="article-actions-container" class:floating={actionBarFloating}>
+      {#if currentlyShared}
+        <!-- Your note on a shared item: always shown while shared (not gated on
+             the Discussion panel), so the note box is there to read or edit the
+             moment you share. A fixed slot (min-height) keeps its metrics constant
+             whether or not a lane is expanded below, so it never jumps. -->
+        <div class="atmosphere-lead">
+          <ShareCommentBox
+            initialNote={currentNote ?? ''}
+            placeholder="Add a note to your share…"
+            onsubmit={(note) => onApplyComment?.(note)}
+          />
+        </div>
+      {/if}
+      {#if panelOpen}
+        <div class="atmosphere-panel" id="discussion-panel" role="region" aria-label="Discussion">
+          <!-- Lanes as a tab strip: each lane is a select-toggle chip carrying
+                 its count, paired with its own [+] create. Picking a tab reveals
+                 that lane's posts in the panel below; picking the active tab again
+                 closes it. One lane open at a time (the active tab). -->
+          <div class="lane-tabs" role="tablist">
+            {#each laneRow as row (row.id)}
+              {@const isActive = expandedLane === row.id}
+              {@const expandable = row.count > 0}
+              <div class="lane-tab" class:active={isActive} class:mine={row.isMine}>
                 <button
                   type="button"
-                  class="lane-tab-create"
-                  class:done={row.createIsEdit}
-                  title={row.createLabel}
-                  aria-label={row.createLabel}
+                  class="lane-tab-main"
+                  role="tab"
+                  aria-selected={isActive}
+                  disabled={!expandable}
+                  title={row.title}
                   onclick={(e) => {
                     e.stopPropagation();
-                    onCreateInLane?.(row.id);
+                    onToggleLane?.(row.id);
                   }}
                 >
-                  <Icon name={row.createIsEdit ? 'edit' : 'plus'} size={14} />
+                  <span class="lane-tab-icon"><Icon name={row.icon} size={15} /></span>
+                  <span class="lane-tab-label">{row.label}</span>
+                  <span class="lane-tab-count">{row.count}{row.capped ? '+' : ''}</span>
                 </button>
-              {/if}
-            </div>
-          {/each}
-        </div>
 
-        {#if expandedLane}
-          {@const activeRow = laneRow.find((r) => r.id === expandedLane)}
-          {#if activeRow}
-            <div class="lane-panel" role="tabpanel">
-              {#if expandedLaneItems?.loading}
-                <div class="lane-status">Loading…</div>
-              {:else if expandedLaneItems && expandedLaneItems.entries.length > 0}
-                <ul class="lane-people">
-                  {#each expandedLaneItems.entries as entry (entry.did + (entry.url ?? ''))}
-                    <li class="lane-person">
-                      <div class="lane-person-row">
-                        <button
-                          type="button"
-                          class="lane-person-handle"
-                          onclick={(e) => {
-                            e.stopPropagation();
-                            onOpenAuthor?.(entry.did);
-                          }}>@{entry.handle ?? entry.did.slice(0, 18)}</button
-                        >
-                        {#if entry.url}
-                          <a
-                            class="lane-person-link"
-                            href={entry.url}
-                            target="_blank"
-                            rel="noopener"
-                            title="Open {activeRow.label}"
-                            onclick={(e) => e.stopPropagation()}
-                            ><Icon name="external-link" size={13} /></a
+                {#if row.canCreate}
+                  <button
+                    type="button"
+                    class="lane-tab-create"
+                    class:done={row.createIsEdit}
+                    title={row.createLabel}
+                    aria-label={row.createLabel}
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      onCreateInLane?.(row.id);
+                    }}
+                  >
+                    <Icon name={row.createIsEdit ? 'edit' : 'plus'} size={14} />
+                  </button>
+                {/if}
+              </div>
+            {/each}
+          </div>
+
+          {#if expandedLane}
+            {@const activeRow = laneRow.find((r) => r.id === expandedLane)}
+            {#if activeRow}
+              <div class="lane-panel" role="tabpanel">
+                {#if expandedLaneItems?.loading}
+                  <div class="lane-status">Loading…</div>
+                {:else if expandedLaneItems && expandedLaneItems.entries.length > 0}
+                  <ul class="lane-people">
+                    {#each expandedLaneItems.entries as entry (entry.did + (entry.url ?? ''))}
+                      <li class="lane-person">
+                        <div class="lane-person-row">
+                          <button
+                            type="button"
+                            class="lane-person-handle"
+                            onclick={(e) => {
+                              e.stopPropagation();
+                              onOpenAuthor?.(entry.did);
+                            }}>@{entry.handle ?? entry.did.slice(0, 18)}</button
                           >
-                        {/if}
-                      </div>
-                      {#if entry.note}<p class="lane-person-note">{entry.note}</p>{/if}
-                    </li>
-                  {/each}
-                </ul>
-              {:else if !expandedLaneItems?.loading}
-                <div class="lane-status">Nothing here yet.</div>
-              {/if}
-            </div>
+                          {#if entry.url}
+                            <a
+                              class="lane-person-link"
+                              href={entry.url}
+                              target="_blank"
+                              rel="noopener"
+                              title="Open {activeRow.label}"
+                              onclick={(e) => e.stopPropagation()}
+                              ><Icon name="external-link" size={13} /></a
+                            >
+                          {/if}
+                        </div>
+                        {#if entry.note}<p class="lane-person-note">{entry.note}</p>{/if}
+                      </li>
+                    {/each}
+                  </ul>
+                {:else if !expandedLaneItems?.loading}
+                  <div class="lane-status">Nothing here yet.</div>
+                {/if}
+              </div>
+            {/if}
           {/if}
-        {/if}
-      </div>
-    {/if}
-
-    <div class="article-actions-container" class:floating={actionBarFloating}>
+        </div>
+      {/if}
       <div class="article-actions">
         <!-- Save button -->
         <button
@@ -677,9 +666,6 @@
         {/if}
       </div>
     </div>
-    <!-- Scroll target: bringing this to the bottom of the view on open pins the
-         action bar to the bottom and pushes the article content up. -->
-    <div class="discussion-scroll-anchor" bind:this={discussionEndRef} aria-hidden="true"></div>
     {#if expanded}<div
         class="action-bar-sentinel"
         use:overlapShadow={{
@@ -890,24 +876,21 @@
     color: var(--color-primary);
   }
 
-  /* Flat in-flow section that flows straight out of the article above it (no top
-     divider) and aligns to the article's own content edge — a continuation of
-     the card, not a boxed-off region. */
+  /* The note box and lanes are in-flow children of the sticky action-bar
+     container, stacked above the action row. Because they share the container they
+     ride the same sticky band — aligned to the article's content edge (no surface
+     of their own), with the band's ::before painting the opaque footer + top drop
+     shadow over them while floating, so note + lanes + bar read as one pinned
+     footer. The note box shows whenever shared; the lanes only when Discussion is
+     toggled. */
   .atmosphere-panel {
     display: flex;
     flex-direction: column;
   }
 
-  /* 0-height scroll target just past the action bar (see the open effect). */
-  .discussion-scroll-anchor {
-    height: 0;
-    scroll-margin-bottom: 0.5rem;
-  }
-
-  /* Your-note box, shown above the Discussion section once shared. A fixed slot
-     (min-height) keeps its metrics constant whether or not the panel is open, so
-     toggling Discussion never shifts the note; the box grows past the floor once
-     the note wraps. */
+  /* Your-note box, the Discussion area's lead once shared. A fixed slot
+     (min-height) keeps its metrics constant whether or not a lane is expanded
+     below, so the note never shifts; the box grows past the floor once it wraps. */
   .atmosphere-lead {
     display: flex;
     flex-direction: column;
@@ -1421,6 +1404,7 @@
 
   .article-actions-container {
     display: flex;
+    flex-direction: column;
     container-type: inline-size;
     padding: 0.25rem 0 0.5rem;
   }
