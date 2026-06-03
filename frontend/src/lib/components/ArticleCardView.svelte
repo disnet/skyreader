@@ -1180,7 +1180,13 @@
     width: 16px;
     height: 16px;
     flex-shrink: 0;
-    margin-top: 3px;
+    /* Center the 16px favicon within the first line of the title. The title
+       inherits line-height 1.5 at var(--article-font-size), so matching those
+       metrics here makes 1lh resolve to that line box — keeping alignment
+       correct as the user changes article font size (instead of a fixed nudge). */
+    font-size: var(--article-font-size);
+    line-height: 1.5;
+    margin-top: calc((1lh - 16px) / 2);
   }
 
   .article-title {
