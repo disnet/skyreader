@@ -13,12 +13,9 @@
     placeholder?: string;
     /** Called with the trimmed note. Empty string clears an existing note. */
     onsubmit: (note: string) => void;
-    /** When provided, a quiet Remove control unshares from inside the box. */
-    onremove?: () => void;
   }
 
-  let { initialNote = '', placeholder = 'Add note to share…', onsubmit, onremove }: Props =
-    $props();
+  let { initialNote = '', placeholder = 'Add note to share…', onsubmit }: Props = $props();
 
   const MAX = 3000;
 
@@ -85,20 +82,6 @@
       {#if nearLimit}
         <span class="counter" class:over={value.length >= MAX}>{MAX - value.length}</span>
       {/if}
-      <!-- Unshare lives here on a shared item — the box is the only thing always
-           present once you've shared, so it owns Remove. -->
-      {#if onremove}
-        <button
-          type="button"
-          class="btn btn-ghost"
-          tabindex={focused ? 0 : -1}
-          aria-hidden={!focused}
-          onmousedown={(e) => e.preventDefault()}
-          onclick={() => onremove?.()}
-        >
-          Remove
-        </button>
-      {/if}
       <!-- preventDefault on mousedown keeps focus on the textarea so this click
            lands before the blur that would otherwise hide the button. -->
       <button
@@ -106,11 +89,15 @@
         class="btn btn-primary"
         tabindex={focused ? 0 : -1}
         aria-hidden={!focused}
+        aria-label="Save"
         onmousedown={(e) => e.preventDefault()}
         onclick={submit}
         disabled={!dirty}
       >
-        Save
+        <!-- Mobile collapses the label to the check icon to keep the row compact;
+             desktop keeps the word. -->
+        <Icon name="check" size={16} />
+        <span class="btn-text">Save</span>
       </button>
     </div>
   </div>
@@ -162,9 +149,17 @@
     color: var(--color-text-secondary);
   }
 
+  @media (max-width: 600px) {
+    /* 16px keeps iOS Safari from auto-zooming when the field takes focus. */
+    .note-input {
+      font-size: 16px;
+    }
+  }
+
   .note-input::placeholder {
-    /* Held to the same contrast bar as body text, not a decorative light gray. */
+    /* Muted prompt — it should recede behind the note you're about to write. */
     color: var(--color-text-secondary);
+    opacity: 0.6;
   }
 
   .actions {
@@ -201,6 +196,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    gap: 0.25rem;
     padding: 0.3125rem 0.875rem;
     font-size: 0.875rem;
     font-weight: 500;
@@ -211,6 +207,21 @@
       background-color 0.15s,
       color 0.15s,
       border-color 0.15s;
+  }
+
+  /* Desktop shows the word; the check icon is the mobile-only form. */
+  .btn :global(.icon) {
+    display: none;
+  }
+
+  @media (max-width: 1000px) {
+    .btn :global(.icon) {
+      display: block;
+    }
+
+    .btn-text {
+      display: none;
+    }
   }
 
   .btn-primary {
@@ -225,19 +236,6 @@
   .btn-primary:disabled {
     opacity: 0.5;
     cursor: default;
-  }
-
-  /* Quiet text button for Remove (unshare) — muted at rest, brought forward on
-     hover. Calm, not alarming: removing a share is reversible. */
-  .btn-ghost {
-    background: none;
-    color: var(--color-text-secondary);
-    font-weight: 500;
-  }
-
-  .btn-ghost:hover {
-    background: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
-    color: var(--color-text);
   }
 
   @media (prefers-reduced-motion: reduce) {

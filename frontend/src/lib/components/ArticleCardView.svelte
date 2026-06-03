@@ -108,6 +108,14 @@
   const atmosphereCapped = $derived(laneRow.some((l) => l.capped));
   const atmosphereMine = $derived(laneRow.some((l) => l.isMine));
 
+  // The action-bar Share button is a toggle for the Blogs lane: when not yet
+  // shared it runs the same create path as the lane's [+] (createInLane), and
+  // once shared it removes the share (the same as the note box's Remove). It
+  // shows whenever sharing is possible at all — the lane offers a create OR the
+  // item is already shared — so pressing it never makes the button vanish.
+  const shareRow = $derived(laneRow.find((l) => l.id === 'linkblog'));
+  const canShare = $derived(Boolean(shareRow?.canCreate) || currentlyShared);
+
   // Is the Discussion panel actually rendered? The note box lives INSIDE the
   // panel (as its lead) when open, so the share → note swap happens in place with
   // no layout shift; when the panel is closed it falls back to a standalone box
@@ -298,9 +306,8 @@
       <div class="atmosphere-lead">
         <ShareCommentBox
           initialNote={currentNote ?? ''}
-          placeholder="Add your note…"
+          placeholder="Add a note to your share…"
           onsubmit={(note) => onApplyComment?.(note)}
-          onremove={onRemoveShare ? () => onRemoveShare?.() : undefined}
         />
       </div>
     {/if}
@@ -416,11 +423,29 @@
             class="action-label">Save</span
           >
         </button>
-        <!-- Discussion: the single social affordance. Sharing is folded in — it's
-             your note in the discussion — so there's no separate Share button.
-             Toggles the in-flow Discussion section just above the action bar; the
-             button carries the total reference count, reads active while open,
-             and tints when one of those references is yours. -->
+        <!-- Share: a toggle for the Blogs lane, surfaced in the bar so sharing is
+             one tap from the card. Not shared → the same create path as the
+             lane's [+]; already shared → remove the share. Reads active while
+             shared (the Discussion note box still owns editing the note). -->
+        {#if canShare}
+          <button
+            class="action-btn share-btn"
+            class:saved={currentlyShared}
+            title={currentlyShared ? 'Remove share' : shareRow?.createLabel}
+            onclick={(e) => {
+              e.stopPropagation();
+              if (currentlyShared) onRemoveShare?.();
+              else onCreateInLane?.('linkblog');
+            }}
+          >
+            <span class="action-icon"><Icon name="share" size={16} /></span><span
+              class="action-label">{currentlyShared ? 'Shared' : 'Share'}</span
+            >
+          </button>
+        {/if}
+        <!-- Discussion: the social hub. The total reference count rides the
+             button, which reads active while open and tints when one of those
+             references is yours. -->
         {#if laneRow.length > 0}
           <button
             class="action-btn atmosphere-btn"
@@ -834,7 +859,6 @@
   .atmosphere-panel {
     display: flex;
     flex-direction: column;
-    margin-top: 0.25rem;
   }
 
   /* 0-height scroll target just past the action bar (see the open effect). */
@@ -1652,6 +1676,12 @@
 
   .action-btn.saved .action-icon :global(.icon) {
     fill: currentColor;
+  }
+
+  /* The Share toggle borrows the saved-state yellow but stays stroke-only — the
+     bookmark fills, the share icon doesn't. */
+  .action-btn.share-btn.saved .action-icon :global(.icon) {
+    fill: none;
   }
 
   .action-label {
