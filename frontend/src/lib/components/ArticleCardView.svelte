@@ -988,12 +988,11 @@
     color: var(--color-primary);
   }
 
-  /* On narrow cards the tab collapses to just its icon — the label and count
-     drop out (the icon still carries the lane, the title attr the rest), so the
-     full set of lanes fits without wrapping. The [+] create is already icon-only. */
+  /* On narrow cards the tab collapses to its icon + count — the label drops out
+     (the icon carries the lane, the title attr the name), but the count stays so
+     the discussion volume reads at a glance. The [+] create is already icon-only. */
   @media (max-width: 30rem) {
-    .lane-tab-label,
-    .lane-tab-count {
+    .lane-tab-label {
       display: none;
     }
   }
