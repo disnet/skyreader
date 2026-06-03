@@ -139,7 +139,4 @@ export interface ArticleCardViewProps {
   onApplyComment?: (note: string) => void;
   onOpenAuthor?: (did: string) => void;
   onCloseOverflow?: () => void;
-  /** Fires when the expanded action bar starts/stops floating over scrolling
-   *  content, so the container can lift the mobile bottom bar above it. */
-  onActionBarFloatingChange?: (floating: boolean) => void;
 }

@@ -188,12 +188,6 @@ function createFeedViewStore() {
   // Tag menu state (which item key should show the tag menu, null = closed)
   let tagMenuItemKey = $state<string | null>(null);
 
-  // Whether the expanded card's action bar is currently floating (pinned to the
-  // viewport bottom, overlapping scrolling content). The mobile bottom bar reads
-  // this to stack itself above the action bar's reserved space instead of behind
-  // it. Only meaningful while an item is expanded; reset whenever expansion clears.
-  let mobileActionBarFloating = $state(false);
-
   // Toolbar filter state (unified source model)
   let filterToolbarOpen = $state(false);
   let sourcePopoverOpen = $state(false);
@@ -899,11 +893,9 @@ function createFeedViewStore() {
     // 'shares' mode shows documents (not paginated) — nothing to load.
   }
 
-  // Single entry point for changing the expanded item, so the floating-action-bar
-  // signal always clears when nothing is expanded.
+  // Single entry point for changing the expanded item.
   function setExpandedKey(key: string | null) {
     expandedKey = key;
-    if (key === null) mobileActionBarFloating = false;
   }
 
   function selectByKey(key: string | null) {
@@ -1224,13 +1216,6 @@ function createFeedViewStore() {
     },
     setFilterToolbarOpen(open: boolean) {
       filterToolbarOpen = open;
-    },
-    get mobileActionBarFloating() {
-      return mobileActionBarFloating;
-    },
-    setMobileActionBarFloating(floating: boolean) {
-      // Guard against stale reports from a card whose expansion already cleared.
-      mobileActionBarFloating = floating && expandedKey !== null;
     },
     setSourcePopoverOpen(open: boolean) {
       sourcePopoverOpen = open;

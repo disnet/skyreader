@@ -79,7 +79,6 @@
     onApplyComment,
     onOpenAuthor,
     onCloseOverflow,
-    onActionBarFloatingChange,
   }: ArticleCardViewProps = $props();
 
   // The content tap: keep the pure DOM guards here (let real links / media play),
@@ -671,7 +670,6 @@
         use:overlapShadow={{
           onChange: (v) => {
             actionBarFloating = v;
-            onActionBarFloatingChange?.(v);
           },
         }}
       ></div>{/if}
@@ -1445,13 +1443,17 @@
        ::after mask is extended down by the same amount to fill the gap with page
        background (mobile folds the safe-area inset into it). */
     --float-below: 0.5rem;
+    /* Extra lift so the floating bar clears the fixed mobile nav and stacks above
+       it. 0 on desktop and while the nav is hidden; set on mobile (see below). */
+    --float-lift: 0px;
     position: sticky;
-    bottom: var(--float-below);
+    bottom: calc(var(--float-below) + var(--float-lift));
     padding: 0.5rem 0;
     isolation: isolate;
     transition:
       transform 0.3s ease,
-      opacity 0.3s ease;
+      opacity 0.3s ease,
+      bottom 0.3s ease;
   }
 
   /* Transparent at rest, so the bar inherits the card's own background (incl.
@@ -1495,10 +1497,14 @@
   .article-item.expanded .article-actions-container.floating::after {
     content: '';
     position: absolute;
-    /* Extends past the band's bottom by the float gap, so the page fills the
-       space below the bar (down to the viewport edge) and content can't peek
-       through it. */
-    inset: 0 -1rem calc(-1 * var(--float-below)) -1rem;
+    /* Extends past the band's bottom by the gap + the nav's full height, so the
+       page fills everything below the bar down to (and past) the viewport edge —
+       masking the article text scrolling behind the fixed nav so it can't peek
+       through the nav's translucent pills. Uses the constant --bottom-bar-height
+       rather than the animating --float-lift on purpose: the bar's `bottom`
+       transitions over 0.3s, so a fill that retracted in lockstep would briefly
+       expose text mid-animation. A constant (over-)extension always covers. */
+    inset: 0 -1rem calc(-1 * (var(--float-below) + var(--bottom-bar-height))) -1rem;
     z-index: -2;
     background: var(--color-bg, #ffffff);
     pointer-events: none;
@@ -1532,12 +1538,15 @@
 
   /* On mobile the floating bar reads as the card's bottom edge. It stays put
      through scrolling — it's the card's own bottom, not a control that hides on
-     scroll. The MobileBottomBar lifts itself above this band (see its `raised`
-     state) rather than peeking out beneath it. Folding the safe-area inset into
-     the float gap floats the bar clear of the home indicator. */
+     scroll. It lifts above the fixed MobileBottomBar (which keeps its normal spot
+     flush to the viewport edge) by the nav's height, so the two stack instead of
+     overlapping; `--mobile-nav-lift` drops back to 0 when the nav hides, letting
+     the bar settle to the bottom. Folding the safe-area inset into the float gap
+     floats the bar clear of the home indicator when the nav is gone. */
   @media (max-width: 1000px) {
     .article-item.expanded .article-actions-container.floating {
       --float-below: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+      --float-lift: var(--mobile-nav-lift, 0px);
     }
   }
 

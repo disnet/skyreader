@@ -792,7 +792,6 @@
   onSaveToSemble={() => onSaveToSemble?.()}
   onSaveToMargin={() => onSaveToMargin?.()}
   onFollowSource={handleFollowSource}
-  onActionBarFloatingChange={(floating) => feedViewStore.setMobileActionBarFloating(floating)}
   onToggleLane={toggleLane}
   onCreateInLane={createInLane}
   onApplyComment={applyComment}
