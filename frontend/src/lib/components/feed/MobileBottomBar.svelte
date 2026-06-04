@@ -166,8 +166,8 @@
     pointer-events: auto;
     border: none;
     color: var(--color-text);
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     max-width: 60%;
     min-width: 0;
   }
@@ -267,7 +267,7 @@
     background: none;
     border: none;
     color: var(--color-text);
-    font-size: 0.9375rem;
+    font-size: var(--text-lg);
     text-align: left;
     transition: background 0.1s;
   }

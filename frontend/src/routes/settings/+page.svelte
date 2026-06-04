@@ -26,10 +26,11 @@
     return () => viewTitleStore.set('');
   });
 
-  const fontOptions: { value: ArticleFont; label: string }[] = [
-    { value: 'sans-serif', label: 'Sans Serif' },
-    { value: 'serif', label: 'Serif' },
-    { value: 'mono', label: 'Monospace' },
+  const fontOptions: { value: ArticleFont; label: string; family: string }[] = [
+    { value: 'sans-serif', label: 'Sans Serif', family: 'sans-serif' },
+    { value: 'serif', label: 'Serif', family: 'serif' },
+    { value: 'mono', label: 'Monospace', family: 'monospace' },
+    { value: 'literata', label: 'Literata', family: 'Literata, serif' },
   ];
 
   const fontSizeOptions: { value: ArticleFontSize; label: string }[] = [
@@ -479,10 +480,7 @@
             class:selected={preferences.articleFont === option.value}
             onclick={() => preferences.setArticleFont(option.value)}
           >
-            <span
-              class="font-preview"
-              style:font-family={option.value === 'mono' ? 'monospace' : option.value}>Aa</span
-            >
+            <span class="font-preview" style:font-family={option.family}>Aa</span>
             <span class="font-label">{option.label}</span>
           </button>
         {/each}
@@ -613,7 +611,7 @@
   }
 
   section h2 {
-    font-size: 1.125rem;
+    font-size: var(--text-xl);
     margin-bottom: 1rem;
     padding-bottom: 0.5rem;
     border-bottom: 1px solid var(--color-border);
@@ -632,7 +630,7 @@
   }
 
   .display-name {
-    font-weight: 600;
+    font-weight: var(--weight-semibold);
   }
 
   .handle {
@@ -640,7 +638,7 @@
   }
 
   .did {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     word-break: break-all;
   }
@@ -651,10 +649,10 @@
 
   .plan-name {
     display: inline-block;
-    font-weight: 600;
-    font-size: 0.875rem;
+    font-weight: var(--weight-semibold);
+    font-size: var(--text-md);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: var(--tracking-wider);
     padding: 0.25rem 0.625rem;
     border-radius: 4px;
     background: var(--color-bg-secondary);
@@ -663,7 +661,7 @@
 
   .plan-upgrade {
     margin-top: 1rem;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
   }
 
@@ -691,7 +689,7 @@
   .limit-label {
     display: flex;
     justify-content: space-between;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   .limit-numbers {
@@ -737,9 +735,9 @@
   }
 
   .setting-row label {
-    font-weight: 500;
+    font-weight: var(--weight-medium);
     color: var(--color-text-secondary);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   .font-options {
@@ -772,12 +770,15 @@
   }
 
   .font-preview {
-    font-size: 1.5rem;
-    line-height: 1;
+    font-size: var(--text-3xl);
+    line-height: var(--leading-none);
+    /* Normalize visual size across families by x-height so the Literata
+       preview matches the others — see AppearanceToolbar. */
+    font-size-adjust: 0.52;
   }
 
   .font-label {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
@@ -814,23 +815,23 @@
   }
 
   .font-size-preview {
-    line-height: 1;
+    line-height: var(--leading-none);
   }
 
   .font-size-preview[data-size='xs'] {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   .font-size-preview[data-size='sm'] {
-    font-size: 1rem;
+    font-size: var(--text-base);
   }
 
   .font-size-preview[data-size='md'] {
-    font-size: 1.125rem;
+    font-size: var(--text-xl);
   }
 
   .font-size-preview[data-size='lg'] {
-    font-size: 1.25rem;
+    font-size: var(--text-2xl);
   }
 
   .font-size-preview[data-size='xl'] {
@@ -851,7 +852,7 @@
   }
 
   .setting-description {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
     margin: 0.5rem 0 0 0;
   }
@@ -871,7 +872,7 @@
     margin-top: 1rem;
     padding-top: 1rem;
     border-top: 1px solid var(--color-border);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   .about-links a {
@@ -914,20 +915,20 @@
   }
 
   .sync-time {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
     margin: 0.25rem 0;
   }
 
   .sync-error {
     color: var(--color-danger);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     margin-top: 0.5rem;
   }
 
   .sync-success {
     color: var(--color-success, #22c55e);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     margin-top: 0.5rem;
   }
 
@@ -937,7 +938,7 @@
 
   .linkblog-field label {
     display: block;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     margin-bottom: 0.375rem;
     color: var(--color-text-secondary);
   }

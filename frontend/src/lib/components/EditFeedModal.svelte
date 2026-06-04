@@ -207,8 +207,8 @@
   }
 
   .form-group label {
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     color: var(--color-text);
   }
 
@@ -216,7 +216,7 @@
     padding: 0.5rem 0.75rem;
     border: 1px solid var(--color-border);
     border-radius: 6px;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     background: var(--color-bg);
     color: var(--color-text);
   }
@@ -244,7 +244,7 @@
     border-radius: 6px;
     background: var(--color-bg-secondary);
     color: var(--color-text-secondary);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     cursor: pointer;
     white-space: nowrap;
   }
@@ -255,7 +255,7 @@
   }
 
   .help-text {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     margin: 0;
   }
@@ -275,19 +275,19 @@
   }
 
   .info-label {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
-    font-weight: 500;
+    font-weight: var(--weight-medium);
   }
 
   .info-value {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text);
   }
 
   .info-value.url {
     word-break: break-all;
-    font-size: 0.8rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
   }
 
@@ -301,7 +301,7 @@
   }
 
   .preview-label {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
   }
 
@@ -343,7 +343,7 @@
   }
 
   .preview-error {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-error);
     margin-left: 0.5rem;
   }
@@ -357,7 +357,7 @@
 
   .error-message {
     color: var(--color-error);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     margin: 0;
   }
 
@@ -372,8 +372,8 @@
   .btn-secondary {
     padding: 0.5rem 1rem;
     border-radius: 6px;
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     cursor: pointer;
     transition: all 0.15s;
   }

@@ -74,12 +74,12 @@
   }
 
   .category h3 {
-    font-size: 0.875rem;
-    font-weight: 600;
+    font-size: var(--text-md);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
     margin: 0 0 0.75rem 0;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: var(--tracking-wider);
   }
 
   .shortcut-list {
@@ -102,7 +102,7 @@
     height: 1.5rem;
     padding: 0 0.375rem;
     font-family: var(--font-mono, monospace);
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     background: var(--color-bg-secondary);
     border: 1px solid var(--color-border);
     border-radius: 4px;
@@ -110,7 +110,7 @@
   }
 
   .shortcut span {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text);
   }
 

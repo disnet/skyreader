@@ -84,7 +84,7 @@
   .subtitle {
     color: var(--color-text-secondary);
     margin: 0.25rem 0 0;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   .header-actions {

@@ -1,6 +1,6 @@
 import { browser } from '$app/environment';
 
-export type ArticleFont = 'sans-serif' | 'serif' | 'mono';
+export type ArticleFont = 'sans-serif' | 'serif' | 'mono' | 'literata';
 export type ArticleFontSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 export type BaseSortOrder = 'newest' | 'oldest';
 
@@ -18,7 +18,7 @@ const STORAGE_KEY = 'skyreader-preferences';
 
 function createPreferencesStore() {
   let state = $state<PreferencesState>({
-    articleFont: 'sans-serif',
+    articleFont: 'serif',
     articleFontSize: 'md',
     scrollToMarkAsRead: false,
     expandAllItems: true,

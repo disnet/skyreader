@@ -687,7 +687,7 @@
     border-radius: 8px;
     background: var(--color-bg);
     color: var(--color-text);
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     outline: none;
     box-sizing: border-box;
     transition: border-color 0.15s;
@@ -696,7 +696,7 @@
   .add-feed-input::placeholder {
     color: var(--color-text-secondary);
     opacity: 0.7;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
   }
 
   .add-feed-input:focus {
@@ -724,7 +724,7 @@
   }
 
   .inline-error {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-error, #e53e3e);
     padding: 0.125rem 0.5rem;
     margin-top: 0.125rem;
@@ -752,14 +752,14 @@
     gap: 0.375rem;
     padding: 0.625rem 0.5rem;
     color: var(--color-text-secondary);
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
   }
 
   .dropdown-label {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     padding: 0.375rem 0.625rem 0.125rem;
-    font-weight: 500;
+    font-weight: var(--weight-medium);
   }
 
   .standard-label {
@@ -821,15 +821,15 @@
   }
 
   .actor-name {
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .actor-handle {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -851,15 +851,15 @@
   }
 
   .standard-sub-name {
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .standard-sub-url {
-    font-size: 0.6875rem;
+    font-size: var(--text-2xs);
     color: var(--color-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -872,8 +872,8 @@
     border-radius: 4px;
     background: var(--color-accent, #0085ff);
     color: white;
-    font-size: 0.6875rem;
-    font-weight: 500;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-medium);
     cursor: pointer;
     flex-shrink: 0;
     transition: opacity 0.15s;
@@ -890,7 +890,7 @@
 
   /* Feed URL items */
   .feed-url {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -919,7 +919,7 @@
     border: none;
     cursor: pointer;
     color: var(--color-text-secondary);
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     padding: 0.125rem 0.25rem;
     border-radius: 4px;
   }
@@ -944,7 +944,7 @@
   }
 
   .actor-handle-sm {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -964,7 +964,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.625rem;
+    font-size: var(--text-3xs);
     margin-top: 1px;
     transition:
       background-color 0.15s,
@@ -986,12 +986,12 @@
   }
 
   .content-name {
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
   }
 
   .content-desc {
-    font-size: 0.6875rem;
+    font-size: var(--text-2xs);
     color: var(--color-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1007,7 +1007,7 @@
 
   .no-content {
     padding: 0.625rem 0.5rem;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     text-align: center;
   }
@@ -1021,7 +1021,7 @@
   }
 
   .sub-badge {
-    font-size: 0.625rem;
+    font-size: var(--text-3xs);
     color: var(--color-text-secondary);
     background: var(--color-bg-secondary);
     padding: 0.0625rem 0.375rem;
@@ -1036,8 +1036,8 @@
     border-radius: 6px;
     background: var(--color-accent, #0085ff);
     color: white;
-    font-size: 0.75rem;
-    font-weight: 500;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
     cursor: pointer;
     transition: opacity 0.15s;
   }

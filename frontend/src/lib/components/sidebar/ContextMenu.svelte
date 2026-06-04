@@ -115,7 +115,7 @@
     text-align: left;
     cursor: pointer;
     border-radius: 4px;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text);
   }
 

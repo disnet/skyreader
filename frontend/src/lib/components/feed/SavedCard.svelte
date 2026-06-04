@@ -380,8 +380,8 @@
     align-items: center;
     gap: 0.375rem;
     padding: 0 1rem;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     color: var(--color-text-secondary);
     white-space: nowrap;
   }
@@ -426,12 +426,12 @@
   }
 
   .bookmark-title {
-    font-size: 0.9375rem;
-    font-weight: 500;
+    font-size: var(--text-lg);
+    font-weight: var(--weight-medium);
     color: var(--color-text);
     margin: 0;
     padding-right: 2rem;
-    line-height: 1.4;
+    line-height: var(--leading-snug);
     overflow: hidden;
     text-overflow: ellipsis;
     display: -webkit-box;
@@ -441,10 +441,10 @@
   }
 
   .bookmark-summary {
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
     margin: 0.25rem 0 0;
-    line-height: 1.5;
+    line-height: var(--leading-normal);
     overflow: hidden;
     text-overflow: ellipsis;
     display: -webkit-box;
@@ -459,7 +459,7 @@
     align-items: center;
     gap: 0.375rem;
     margin-top: 0.375rem;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
@@ -475,11 +475,11 @@
   }
 
   .meta-feed {
-    font-weight: 500;
+    font-weight: var(--weight-medium);
   }
 
   .meta-type-badge {
-    font-weight: 500;
+    font-weight: var(--weight-medium);
     color: var(--color-primary, #2563eb);
   }
 
@@ -493,8 +493,8 @@
     display: inline-flex;
     align-items: center;
     padding: 0.0625rem 0.375rem;
-    font-size: 0.6875rem;
-    font-weight: 500;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-medium);
     background: rgba(37, 99, 235, 0.08);
     color: var(--color-primary, #2563eb);
     border-radius: 999px;

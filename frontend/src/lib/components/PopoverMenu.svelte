@@ -190,8 +190,8 @@
   }
 
   .dots {
-    font-size: 1.25rem;
-    line-height: 1;
+    font-size: var(--text-2xl);
+    line-height: var(--leading-none);
   }
 
   .menu-dropdown {
@@ -214,7 +214,7 @@
     border: none;
     background: transparent;
     color: var(--color-text);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     text-align: left;
     cursor: pointer;
     transition: background-color 0.15s;

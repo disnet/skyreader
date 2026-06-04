@@ -735,8 +735,8 @@
     border-radius: 999px;
     cursor: pointer;
     color: var(--color-text-secondary);
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     transition: all 0.2s ease;
   }
 
@@ -766,8 +766,8 @@
     padding: 0.4rem 0.6rem;
     cursor: pointer;
     color: var(--color-text-secondary);
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     border-radius: 999px;
     transition: all 0.2s ease;
   }
@@ -806,11 +806,11 @@
     align-items: center;
     justify-content: space-between;
     padding: 0.375rem 0.5rem 0.125rem;
-    font-size: 0.6875rem;
-    font-weight: 600;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: var(--tracking-wider);
     border-top: 1px solid var(--color-border);
   }
 
@@ -818,8 +818,8 @@
     background: none;
     border: none;
     padding: 0;
-    font-size: 0.625rem;
-    font-weight: 500;
+    font-size: var(--text-3xs);
+    font-weight: var(--weight-medium);
     color: var(--color-primary, #2563eb);
     cursor: pointer;
     text-transform: none;
@@ -836,7 +836,7 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.25rem 0.375rem;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     cursor: pointer;
     border-radius: 4px;
   }
@@ -868,7 +868,7 @@
     padding: 0.3rem 0.5rem;
     border: 1px solid var(--color-border, #e0e0e0);
     border-radius: 4px;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     background: var(--color-bg, #fff);
     color: var(--color-text);
     outline: none;
@@ -885,7 +885,7 @@
 
   .no-results {
     padding: 0.375rem 0.5rem;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary, #999);
     text-align: center;
   }
@@ -957,7 +957,7 @@
     padding: 0.3rem 0.5rem;
     border: 1px solid var(--color-primary, #2563eb);
     border-radius: 999px;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     background: var(--color-bg, #fff);
     color: var(--color-text);
     outline: none;
@@ -1025,7 +1025,7 @@
     border: none;
     background: none;
     color: var(--color-text-primary, #e0e0e0);
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     text-align: left;
     border-radius: 0.25rem;
     cursor: pointer;

@@ -68,8 +68,8 @@
   }
 
   .harness-bar h1 {
-    font-size: 1.1rem;
-    font-weight: 600;
+    font-size: var(--text-xl);
+    font-weight: var(--weight-semibold);
     margin: 0;
   }
 
@@ -84,14 +84,14 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    font-size: 0.85rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary, #666);
   }
 
   .hint {
     grid-column: 1 / -1;
     margin: 0;
-    font-size: 0.8rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary, #777);
   }
 
@@ -115,12 +115,12 @@
   }
 
   .case-name {
-    font-size: 0.8rem;
-    font-weight: 600;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
   }
 
   .case-note {
-    font-size: 0.8rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary, #777);
   }
 

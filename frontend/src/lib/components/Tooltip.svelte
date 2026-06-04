@@ -111,11 +111,11 @@
     border: 1px solid var(--color-text-secondary);
     background: none;
     cursor: pointer;
-    font-size: 0.5625rem;
-    font-weight: 600;
+    font-size: var(--text-3xs);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
     padding: 0;
-    line-height: 1;
+    line-height: var(--leading-none);
     flex-shrink: 0;
     opacity: 0.6;
     transition: opacity 0.15s;
@@ -134,8 +134,8 @@
     border: 1px solid var(--color-border);
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    font-size: 0.75rem;
-    line-height: 1.4;
+    font-size: var(--text-xs);
+    line-height: var(--leading-snug);
     z-index: 9999;
   }
 

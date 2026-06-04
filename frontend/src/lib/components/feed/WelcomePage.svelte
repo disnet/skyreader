@@ -41,10 +41,10 @@
   .beta-badge {
     position: relative;
     padding: 4px 12px;
-    font-size: 0.7rem;
-    font-weight: 700;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-bold);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--tracking-wider);
     color: white;
     background: linear-gradient(180deg, #ff6b6b 0%, #ee2222 50%, #cc0000 100%);
     border-radius: 4px;
@@ -69,7 +69,7 @@
   }
 
   .welcome p {
-    font-size: 1.25rem;
+    font-size: var(--text-2xl);
     color: var(--color-text-secondary);
     margin-bottom: 2rem;
   }
@@ -106,7 +106,7 @@
     color: #fff;
     border-radius: 4px;
     text-decoration: none;
-    font-weight: 500;
+    font-weight: var(--weight-medium);
   }
 
   .btn-primary:hover {

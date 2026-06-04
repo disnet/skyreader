@@ -701,16 +701,16 @@
   }
 
   .onboarding h2 {
-    font-size: 1.125rem;
-    font-weight: 600;
-    letter-spacing: -0.01em;
+    font-size: var(--text-xl);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-tight);
     margin: 0 0 0.375rem;
   }
 
   .onboarding p {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
-    line-height: 1.5;
+    line-height: var(--leading-normal);
     margin: 0;
     max-width: 56ch;
   }
@@ -724,7 +724,7 @@
     align-items: center;
     gap: 0.5rem;
     cursor: pointer;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
@@ -733,7 +733,7 @@
   }
 
   .group-count {
-    font-weight: 400;
+    font-weight: var(--weight-regular);
   }
 
   .source-list {
@@ -764,8 +764,8 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
     margin: 0.75rem 0 0.375rem;
     padding: 0 0.25rem;
@@ -780,7 +780,7 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.5rem 0.75rem;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     background: var(--color-bg);
   }
@@ -801,14 +801,14 @@
   }
 
   .section-empty {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
-    line-height: 1.5;
+    line-height: var(--leading-normal);
     margin: 0.25rem 0.25rem 0.5rem;
   }
 
   .section-empty strong {
-    font-weight: 600;
+    font-weight: var(--weight-semibold);
     color: var(--color-text);
   }
 </style>

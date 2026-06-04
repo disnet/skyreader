@@ -275,7 +275,7 @@
 
   .modal-desc {
     margin: 0;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
   }
 
@@ -291,7 +291,7 @@
     border-radius: 8px;
     background: var(--color-bg);
     color: var(--color-text);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     outline: none;
     box-sizing: border-box;
   }
@@ -306,8 +306,8 @@
     border-radius: 8px;
     background: var(--color-accent, #0085ff);
     color: white;
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     cursor: pointer;
     flex-shrink: 0;
     transition: opacity 0.15s;
@@ -385,13 +385,13 @@
     border-radius: 999px;
     background: var(--color-accent, #0085ff);
     color: white;
-    font-size: 0.6875rem;
-    font-weight: 600;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-semibold);
     vertical-align: middle;
   }
 
   .result-sub {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
@@ -402,15 +402,15 @@
   }
 
   .result-name {
-    font-weight: 500;
-    font-size: 0.875rem;
+    font-weight: var(--weight-medium);
+    font-size: var(--text-md);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .feed-url {
-    font-weight: 400;
+    font-weight: var(--weight-regular);
     word-break: break-all;
     white-space: normal;
   }
@@ -421,7 +421,7 @@
     border: none;
     background: transparent;
     color: var(--color-text-secondary);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     cursor: pointer;
   }
 
@@ -430,11 +430,11 @@
   }
 
   .section-label {
-    font-size: 0.8125rem;
-    font-weight: 600;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
     text-transform: uppercase;
-    letter-spacing: 0.03em;
+    letter-spacing: var(--tracking-wide);
     margin: 0;
   }
 
@@ -446,13 +446,13 @@
 
   .error-message {
     color: var(--color-error);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     margin-top: 0.5rem;
   }
 
   @media (max-width: 600px) {
     .search-input {
-      font-size: 16px;
+      font-size: var(--text-base);
     }
   }
 </style>

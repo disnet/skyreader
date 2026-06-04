@@ -208,7 +208,7 @@
     background: none;
     border: none;
     cursor: pointer;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text);
     width: 100%;
     text-align: left;
@@ -230,8 +230,8 @@
     height: 18px;
     border: 1.5px solid var(--color-border, #d1d5db);
     border-radius: 3px;
-    font-size: 0.6875rem;
-    font-weight: 600;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
     flex-shrink: 0;
   }
@@ -280,7 +280,7 @@
     padding: 0.25rem 0.5rem;
     border: 1px solid var(--color-border, #e5e7eb);
     border-radius: 4px;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     background: var(--color-bg, #fff);
     color: var(--color-text);
     outline: none;

@@ -189,7 +189,7 @@
     width: 100%;
     padding: 0.75rem 1rem;
     padding-right: 2.5rem;
-    font-size: 1rem;
+    font-size: var(--text-base);
     border: 1px solid var(--color-border);
     border-radius: 8px;
     background: var(--color-bg);
@@ -282,17 +282,17 @@
   }
 
   .following-badge {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     padding: 0.125rem 0.5rem;
     background: var(--color-sidebar-active);
     color: var(--color-primary);
     border-radius: 9999px;
-    font-weight: 500;
+    font-weight: var(--weight-medium);
   }
 
   @media (max-width: 600px) {
     .search-input {
-      font-size: 16px; /* Prevents iOS zoom on focus */
+      font-size: var(--text-base); /* Prevents iOS zoom on focus */
     }
   }
 </style>

@@ -206,8 +206,8 @@
   }
 
   .context-title {
-    font-size: 0.875rem;
-    font-weight: 600;
+    font-size: var(--text-md);
+    font-weight: var(--weight-semibold);
     color: var(--color-text);
     line-height: 1.35;
     /* Two-line clamp keeps the context compact. */
@@ -219,7 +219,7 @@
   }
 
   .context-host {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -232,7 +232,7 @@
     min-height: 3.5rem;
     padding: 0.5rem 0.625rem;
     font: inherit;
-    font-size: 0.9375rem;
+    font-size: var(--text-lg);
     line-height: 1.45;
     color: var(--color-text);
     background: var(--color-bg);
@@ -259,7 +259,7 @@
 
   .hint {
     margin: 0;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
@@ -283,8 +283,8 @@
     justify-content: center;
     gap: 0.375rem;
     padding: 0.5rem 0.875rem;
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     border: 1px solid transparent;
     border-radius: 6px;
     cursor: pointer;

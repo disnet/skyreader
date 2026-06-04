@@ -178,9 +178,9 @@
     padding: 0.125rem 0.25rem 0.125rem 0.5rem;
     background: var(--color-bg-secondary, rgba(0, 0, 0, 0.06));
     border-radius: 4px;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text);
-    line-height: 1.4;
+    line-height: var(--leading-snug);
   }
 
   .chip-remove {
@@ -194,8 +194,8 @@
     background: none;
     cursor: pointer;
     color: var(--color-text-secondary);
-    font-size: 0.875rem;
-    line-height: 1;
+    font-size: var(--text-md);
+    line-height: var(--leading-none);
     border-radius: 3px;
   }
 
@@ -211,7 +211,7 @@
     background: none;
     outline: none;
     font: inherit;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text);
     padding: 0.125rem 0;
   }
@@ -239,7 +239,7 @@
 
   .chip-suggestion {
     padding: 0.375rem 0.5rem;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     border-radius: 4px;
     cursor: pointer;
     color: var(--color-text);
@@ -250,7 +250,7 @@
   }
 
   .form-hint {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     margin-top: 0.25rem;
   }

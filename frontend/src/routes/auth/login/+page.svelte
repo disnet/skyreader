@@ -234,7 +234,7 @@
   }
 
   .login-card h1 {
-    font-size: 1.5rem;
+    font-size: var(--text-3xl);
     margin: 0;
   }
 
@@ -252,7 +252,7 @@
   .form-group label {
     display: block;
     margin-bottom: 0.5rem;
-    font-weight: 500;
+    font-weight: var(--weight-medium);
   }
 
   .input-wrapper {
@@ -265,7 +265,7 @@
     padding-right: 2.5rem;
     border: 1px solid var(--color-border);
     border-radius: 4px;
-    font-size: 1rem;
+    font-size: var(--text-base);
     box-sizing: border-box;
     background: var(--color-bg);
     color: var(--color-text);
@@ -362,14 +362,14 @@
   }
 
   .name {
-    font-weight: 500;
+    font-weight: var(--weight-medium);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .handle {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -382,7 +382,7 @@
     padding: 0.75rem;
     border-radius: 4px;
     margin-bottom: 1rem;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   .btn-primary {
@@ -392,7 +392,7 @@
     color: white;
     border: none;
     border-radius: 4px;
-    font-size: 1rem;
+    font-size: var(--text-base);
     cursor: pointer;
   }
 
@@ -410,7 +410,7 @@
     margin-top: 1.5rem;
     color: var(--color-text-secondary);
     text-decoration: none;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   .back-link:hover {

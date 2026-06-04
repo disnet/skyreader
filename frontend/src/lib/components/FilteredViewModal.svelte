@@ -793,8 +793,8 @@
 
   .form-group label[for],
   .form-label {
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     color: var(--color-text);
   }
 
@@ -802,7 +802,7 @@
     padding: 0.5rem 0.75rem;
     border: 1px solid var(--color-border);
     border-radius: 6px;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     background: var(--color-bg);
     color: var(--color-text);
   }
@@ -853,13 +853,13 @@
   }
 
   .mode-title {
-    font-size: 0.875rem;
-    font-weight: 600;
+    font-size: var(--text-md);
+    font-weight: var(--weight-semibold);
     color: var(--color-text);
   }
 
   .mode-desc {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
@@ -894,15 +894,15 @@
   }
 
   .rule-card-label {
-    font-size: 0.8125rem;
-    font-weight: 600;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
     color: var(--color-text);
   }
 
   .rule-card-desc {
-    font-size: 0.6875rem;
+    font-size: var(--text-2xs);
     color: var(--color-text-secondary);
-    line-height: 1.3;
+    line-height: var(--leading-tight);
   }
 
   .advanced-section {
@@ -922,7 +922,7 @@
     padding: 0.375rem 0.5rem;
     border: 1px solid var(--color-border);
     border-radius: 6px;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     background: var(--color-bg);
     color: var(--color-text);
     text-align: center;
@@ -935,12 +935,12 @@
   }
 
   .input-suffix {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
   }
 
   .match-preview {
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
     padding: 0.5rem 0.75rem;
     border-radius: 6px;
@@ -964,18 +964,18 @@
     display: flex;
     align-items: center;
     gap: 0.375rem;
-    font-size: 0.875rem;
-    font-weight: 400;
+    font-size: var(--text-md);
+    font-weight: var(--weight-regular);
     color: var(--color-text);
     cursor: pointer;
   }
 
   .source-group-header {
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: var(--tracking-wider);
     margin-top: 0.5rem;
   }
 
@@ -984,7 +984,7 @@
     padding: 0.375rem 0.5rem;
     border: 1px solid var(--color-border);
     border-radius: 4px;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     background: var(--color-bg);
     color: var(--color-text);
     outline: none;
@@ -1002,7 +1002,7 @@
 
   .no-results {
     padding: 0.375rem;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary, #999);
     text-align: center;
   }
@@ -1035,11 +1035,11 @@
     border-radius: 0.5rem;
     background: var(--surface-primary, #1a1a1a);
     color: var(--text-primary, #e0e0e0);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   .form-hint {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
@@ -1050,7 +1050,7 @@
     padding: 0.25rem 0.375rem;
     border-radius: 4px;
     cursor: pointer;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   .checklist-item:hover {
@@ -1072,7 +1072,7 @@
 
   .error-message {
     color: var(--color-error);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     margin: 0;
   }
 
@@ -1087,8 +1087,8 @@
   .btn-secondary {
     padding: 0.5rem 1rem;
     border-radius: 6px;
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -1130,7 +1130,7 @@
     border-radius: 6px;
     background: none;
     color: var(--color-text-secondary);
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     cursor: pointer;
     transition: color 0.15s;
   }

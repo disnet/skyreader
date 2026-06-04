@@ -340,14 +340,14 @@
   }
 
   .status {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
     margin: 0.5rem 0;
   }
 
   .group-title {
-    font-size: 0.8125rem;
-    font-weight: 600;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
     margin: 0 0 0.375rem;
   }
@@ -362,7 +362,7 @@
   }
 
   .count {
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
     margin: 0;
   }
@@ -387,7 +387,7 @@
     width: 14rem;
     max-width: 100%;
     font: inherit;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text);
     background: transparent;
     border: none;
@@ -448,8 +448,8 @@
   }
 
   .avatar-fallback {
-    font-size: 1rem;
-    font-weight: 600;
+    font-size: var(--text-base);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
   }
 
@@ -458,13 +458,13 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    line-height: 1.3;
+    line-height: var(--leading-tight);
     text-decoration: none;
   }
 
   .name {
-    font-size: 0.9375rem;
-    font-weight: 600;
+    font-size: var(--text-lg);
+    font-weight: var(--weight-semibold);
     color: var(--color-text);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -476,7 +476,7 @@
   }
 
   .handle {
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -490,8 +490,8 @@
     gap: 0.25rem;
     padding: 0.375rem 0.5rem;
     font: inherit;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     color: var(--color-text-secondary);
     background: transparent;
     border: none;
@@ -542,8 +542,8 @@
   }
 
   .pub-icon-fallback {
-    font-size: 0.8125rem;
-    font-weight: 600;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
   }
 
@@ -552,12 +552,12 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    line-height: 1.3;
+    line-height: var(--leading-tight);
   }
 
   .pub-name {
-    font-size: 0.875rem;
-    font-weight: 600;
+    font-size: var(--text-md);
+    font-weight: var(--weight-semibold);
     color: var(--color-text);
     text-decoration: none;
     overflow: hidden;
@@ -570,7 +570,7 @@
   }
 
   .pub-desc {
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -578,7 +578,7 @@
   }
 
   .follow-error {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-danger, #c0392b);
     margin-top: 0.125rem;
   }
@@ -590,8 +590,8 @@
     gap: 0.25rem;
     padding: 0.375rem 0.75rem;
     font: inherit;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     color: #fff;
     background: var(--color-primary);
     border: none;
@@ -614,8 +614,8 @@
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     color: var(--color-text-secondary);
     padding: 0.375rem 0.5rem;
   }
@@ -649,8 +649,8 @@
     gap: 0.375rem;
     padding: 0.25rem 0;
     font: inherit;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     color: var(--color-text-secondary);
     background: transparent;
     border: none;
@@ -684,8 +684,8 @@
     gap: 0.375rem;
     padding: 0.375rem 0.75rem;
     font: inherit;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     color: var(--color-text);
     background: transparent;
     border: 1px solid var(--color-border);

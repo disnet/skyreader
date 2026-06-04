@@ -37,7 +37,7 @@
     gap: 0.5rem;
     padding: 0.5rem 0.75rem;
     border-radius: 8px;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     background: var(--color-bg, #fff);
     border: 1px solid var(--color-border, #e5e7eb);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -54,8 +54,8 @@
   }
 
   .icon {
-    font-size: 0.875rem;
-    line-height: 1;
+    font-size: var(--text-md);
+    line-height: var(--leading-none);
   }
 
   .toast-success .icon {

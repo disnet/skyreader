@@ -296,7 +296,7 @@
 
   .error {
     color: var(--color-error);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   .preview-header {
@@ -311,7 +311,7 @@
     color: var(--color-warning-text, #92400e);
     padding: 0.75rem;
     border-radius: 4px;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     margin-bottom: 1rem;
   }
 
@@ -334,7 +334,7 @@
     border: none;
     color: var(--color-primary);
     cursor: pointer;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     padding: 0;
   }
 
@@ -384,24 +384,24 @@
   }
 
   .feed-title {
-    font-weight: 500;
+    font-weight: var(--weight-medium);
     word-break: break-word;
   }
 
   .feed-category {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
   .duplicate-badge {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-warning, #b45309);
     font-style: italic;
   }
 
   .parse-errors {
     margin-top: 1rem;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
   }
 
@@ -427,7 +427,7 @@
   .progress-text {
     text-align: center;
     color: var(--color-text-secondary);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   h3 {
@@ -442,12 +442,12 @@
   }
 
   .results dt {
-    font-weight: 500;
+    font-weight: var(--weight-medium);
   }
 
   .failed-list {
     margin-top: 1rem;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   .failed-list ul {
@@ -459,7 +459,7 @@
   .btn {
     padding: 0.5rem 1rem;
     border-radius: 4px;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     cursor: pointer;
     border: none;
   }

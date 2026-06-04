@@ -221,7 +221,7 @@
     width: 100%;
     padding: 0.375rem 0.5rem;
     padding-left: 1.75rem;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     border: 1px solid var(--color-border);
     border-radius: 6px;
     background: var(--color-bg);
@@ -262,7 +262,7 @@
   .error-message {
     margin-top: 0.25rem;
     padding: 0.25rem 0.5rem;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-error, #f44336);
     background: rgba(244, 67, 54, 0.1);
     border-radius: 4px;
@@ -294,7 +294,7 @@
 
   .dropdown-header {
     padding: 0.5rem;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     border-bottom: 1px solid var(--color-border);
   }
@@ -309,7 +309,7 @@
     cursor: pointer;
     color: var(--color-text);
     font: inherit;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     word-break: break-all;
     transition: background-color 0.1s;
   }
