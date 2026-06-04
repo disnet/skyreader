@@ -1384,7 +1384,12 @@
 
   .article-header {
     display: flex;
-    align-items: flex-start;
+    /* Baseline, not flex-start: the title is --text-base while the meta
+       (Shared by / feed / date) is the smaller --text-sm, so their line boxes
+       differ. Aligning baselines puts all the text on one line; flex-start
+       would let the smaller meta ride ~4px high. The favicon opts back out
+       below (it centers on the title line instead). */
+    align-items: baseline;
     gap: 6px;
     flex: 1;
     min-width: 0;
@@ -1407,19 +1412,26 @@
     width: 16px;
     height: 16px;
     flex-shrink: 0;
-    /* Center the 16px favicon within the first line of the title. The title
-       inherits line-height 1.5 at var(--article-font-size), so matching those
-       metrics here makes 1lh resolve to that line box — keeping alignment
-       correct as the user changes article font size (instead of a fixed nudge). */
-    font-size: var(--article-font-size);
+    /* Opt out of the header's baseline alignment and center the 16px favicon
+       within the first line of the title instead. The title is a fixed
+       --text-base at line-height 1.5, so matching those metrics here makes 1lh
+       resolve to that line box — centering stays correct even when the title
+       wraps to multiple lines. */
+    align-self: flex-start;
+    font-size: var(--text-base);
     line-height: var(--leading-normal);
     margin-top: calc((1lh - 16px) / 2);
   }
 
+  /* The title is chrome, not reading content: it shares the header row with the
+     fixed-size meta (Shared by / date / feed / read-time, all --text-sm), so it
+     stays a fixed UI size rather than tracking the user's article-font choice —
+     otherwise a bumped article size desyncs the title from its own meta row.
+     Reading customization applies to the body (.article-body / .link-post-*). */
   .article-title {
     flex: 1;
-    font-family: var(--article-font);
-    font-size: var(--article-font-size);
+    font-family: var(--font-sans-serif);
+    font-size: var(--text-base);
     font-weight: var(--weight-regular);
     color: var(--color-text);
     overflow: hidden;
