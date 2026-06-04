@@ -64,7 +64,7 @@ describe('getMentionLaneItems', () => {
         'app.bsky.feed.post': {
           '.embed.external.uri': { distinct_dids: 1 },
           '.facets[].features[app.bsky.richtext.facet#link].uri': { distinct_dids: 1 },
-          '.text': { distinct_dids: 1 }, // noise lane-excluded; must be ignored
+          '.text': { distinct_dids: 1 }, // bare-text share source — no linkers seeded here
         },
         // Another lane's source for the same URL — must not leak into bluesky.
         'site.standard.document': { '.links[].uri': { distinct_dids: 1 } },

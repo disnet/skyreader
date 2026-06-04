@@ -28,11 +28,6 @@ const CONSTELLATION_BASE = 'https://constellation.microcosm.blue';
 const HEADERS = { 'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)' };
 const FETCH_TIMEOUT_MS = 10 * 1000;
 
-// Minimum distinct DIDs before a URL counts as a signal worth surfacing. We
-// still cache below-threshold rows (so the decay gate, not repeated queries,
-// governs re-polling) but serve them as empty.
-export const MENTION_MIN_DIDS = 2;
-
 // DIDs paged per (collection, path). One page is exact for the common small
 // count; very popular URLs cap here and render as '<n>+'.
 const LINKS_PAGE_LIMIT = 200;
@@ -250,7 +245,9 @@ export function readCachedMentions(
 
   if (!row) return { normUrl, mentions: EMPTY, shouldEnrich: true };
 
-  const mentions = row.total_dids >= MENTION_MIN_DIDS ? rowToMentions(row) : EMPTY;
+  // Surface every real reference, down to a single linker — a row with zero DIDs
+  // naturally renders empty (no lanes), so no threshold is needed to suppress it.
+  const mentions = rowToMentions(row);
   return { normUrl, mentions, shouldEnrich: isDue(row, now) };
 }
 
