@@ -21,7 +21,7 @@
  * Phase 3 context bundle; same short TTL since the index is firehose-fresh).
  */
 import { Database } from 'bun:sqlite';
-import { normalizeArticleUrl } from './url-normalize';
+import { normalizeArticleUrl, constellationTargets } from './url-normalize';
 import { laneForSource, type LaneId } from './lanes';
 import { resolveHandle, resolvePdsUrl } from './did-resolver';
 import { resolveSiteMeta, buildCanonicalUrl, parseAtUri } from './standard-site';
@@ -340,14 +340,19 @@ export async function getMentionLaneItems(
     }
   }
 
-  // Discover which (collection, path) sources exist for this URL, keep only
-  // those that bucket into the requested lane.
-  const all = await constellationGet<LinksAllResponse>('/links/all', { target: normUrl });
-  const sources: Array<{ collection: string; path: string }> = [];
-  for (const [collection, paths] of Object.entries(all?.links ?? {})) {
-    for (const [path, stats] of Object.entries(paths)) {
-      if (!stats?.distinct_dids) continue;
-      if (laneForSource(collection, path)?.id === laneId) sources.push({ collection, path });
+  // Discover which (collection, path) sources exist for this URL — across both
+  // trailing-slash forms, since Constellation matches the target string exactly
+  // (see constellationTargets) — keeping only those that bucket into the
+  // requested lane, with the target form that actually carries the links.
+  const sources: Array<{ target: string; collection: string; path: string }> = [];
+  for (const target of constellationTargets(normUrl)) {
+    const all = await constellationGet<LinksAllResponse>('/links/all', { target });
+    for (const [collection, paths] of Object.entries(all?.links ?? {})) {
+      for (const [path, stats] of Object.entries(paths)) {
+        if (!stats?.distinct_dids) continue;
+        if (laneForSource(collection, path)?.id === laneId)
+          sources.push({ target, collection, path });
+      }
     }
   }
   if (sources.length === 0) {
@@ -364,7 +369,7 @@ export async function getMentionLaneItems(
   for (const src of sources) {
     if (picked.length >= MAX_ENTRIES) break;
     const data = await constellationGet<LinksResponse>('/links', {
-      target: normUrl,
+      target: src.target,
       collection: src.collection,
       path: src.path,
       limit: String(LINKS_PAGE_LIMIT),

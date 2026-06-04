@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach, spyOn } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { initDatabase } from './app';
 import { computeMentions, enrichMentions, readCachedMentions } from './mentions';
-import { normalizeArticleUrl } from './url-normalize';
+import { normalizeArticleUrl, constellationTargets } from './url-normalize';
 import { laneForSource } from './lanes';
 
 const ARTICLE = 'https://example.com/the-article';
@@ -54,6 +54,26 @@ describe('normalizeArticleUrl', () => {
   it('returns null for non-http(s) and garbage', () => {
     expect(normalizeArticleUrl('at://did:plc:x/app/rk')).toBeNull();
     expect(normalizeArticleUrl('not a url')).toBeNull();
+  });
+});
+
+describe('constellationTargets', () => {
+  it('probes both trailing-slash forms of a non-root URL', () => {
+    expect(constellationTargets('https://www.example.com/post')).toEqual([
+      'https://www.example.com/post',
+      'https://www.example.com/post/',
+    ]);
+  });
+
+  it('keeps the query string after the slash', () => {
+    expect(constellationTargets('https://example.com/a?id=7')).toEqual([
+      'https://example.com/a?id=7',
+      'https://example.com/a/?id=7',
+    ]);
+  });
+
+  it('does not vary the bare root', () => {
+    expect(constellationTargets('https://example.com/')).toEqual(['https://example.com/']);
   });
 });
 
@@ -163,6 +183,35 @@ describe('computeMentions', () => {
     const result = await computeMentions(ARTICLE);
     expect(result.lanes[0].count).toBe(200);
     expect(result.lanes[0].capped).toBe(true);
+    spy.mockRestore();
+  });
+
+  it('finds a slash-canonical URL whose links only exist on the trailing-slash form', async () => {
+    // The feed/cache key is slash-trimmed, but the real Semble/Bluesky links all
+    // target `.../the-article/`. Querying only the no-slash form is a false zero;
+    // probing both forms must surface them. (Regression: inkandswitch notebook.)
+    const spy = spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      const target = url.searchParams.get('target');
+      const hasSlash = target?.endsWith('/the-article/');
+      if (url.pathname === '/links/all') {
+        return new Response(
+          JSON.stringify({
+            links: hasSlash
+              ? { 'network.cosmik.card': { '.content.url': { distinct_dids: 1 } } }
+              : {},
+          })
+        );
+      }
+      if (url.pathname === '/links/distinct-dids') {
+        return new Response(JSON.stringify({ total: 1, linking_dids: ['did:plc:saver'] }));
+      }
+      return new Response('{}', { status: 404 });
+    }) as unknown as typeof fetch);
+
+    const result = await computeMentions(ARTICLE);
+    expect(result.total).toBe(1);
+    expect(result.lanes.map((l) => l.lane)).toEqual(['semble']);
     spy.mockRestore();
   });
 

@@ -21,7 +21,7 @@
  * Constellation never blocks the read.
  */
 import { Database } from 'bun:sqlite';
-import { normalizeArticleUrl } from './url-normalize';
+import { normalizeArticleUrl, constellationTargets } from './url-normalize';
 import { LANES, laneForSource, type LaneId } from './lanes';
 
 const CONSTELLATION_BASE = 'https://constellation.microcosm.blue';
@@ -35,11 +35,18 @@ const LINKS_PAGE_LIMIT = 200;
 const MAX_SOURCE_QUERIES = 12;
 
 // Decay curve — when a cached row is due for a re-poll, by URL age since first
-// sighting. After the cool window it's 'settled' and never re-queried.
+// sighting. Discussion accumulates fast then trickles: a fresh article is hot,
+// cools over a week, then settles. But the tail is never truly zero — people
+// still occasionally post an old article to Bluesky or save it to Semble — so a
+// settled row keeps a slow re-check rather than freezing forever. That stays
+// cheap because re-checks are *demand-gated*: a settled row is only re-polled
+// when someone actually opens the article (the read path), at most once per
+// SETTLED_RECHECK_MS, deduped — not a sweep of every old URL.
 const HOT_AGE_MS = 48 * 60 * 60 * 1000;
 const HOT_RECHECK_MS = 60 * 60 * 1000;
 const COOL_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const COOL_RECHECK_MS = 12 * 60 * 60 * 1000;
+const SETTLED_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface MentionLane {
   lane: LaneId;
@@ -134,37 +141,35 @@ async function fetchSourceDids(
  * all lanes. Returns lanes in registry (priority) order, non-empty only.
  */
 export async function computeMentions(normUrl: string): Promise<ArticleMentions> {
-  const all = await constellationGet<LinksAllResponse>('/links/all', {
-    target: normUrl,
-  });
-  if (!all?.links) return EMPTY;
-
-  // Collect the laned (collection, path) sources Constellation actually reports,
-  // grouped by lane, bounded so a pathological URL can't fan out unboundedly.
-  const sourcesByLane = new Map<LaneId, Array<{ collection: string; path: string }>>();
+  // Probe both trailing-slash forms (Constellation matches the target string
+  // exactly) and carry the matching target with each source so we fetch its DIDs
+  // against the form that actually has links. See constellationTargets.
+  const sources: Array<{ target: string; laneId: LaneId; collection: string; path: string }> = [];
   let queryCount = 0;
-  for (const [collection, paths] of Object.entries(all.links)) {
-    for (const [path, stats] of Object.entries(paths)) {
-      if (!stats?.distinct_dids) continue;
-      const lane = laneForSource(collection, path);
-      if (!lane) continue;
-      if (queryCount >= MAX_SOURCE_QUERIES) break;
-      queryCount++;
-      const list = sourcesByLane.get(lane.id) ?? [];
-      list.push({ collection, path });
-      sourcesByLane.set(lane.id, list);
+  for (const target of constellationTargets(normUrl)) {
+    const all = await constellationGet<LinksAllResponse>('/links/all', { target });
+    if (!all?.links) continue;
+    // Collect the laned (collection, path) sources Constellation actually reports,
+    // bounded so a pathological URL can't fan out unboundedly.
+    for (const [collection, paths] of Object.entries(all.links)) {
+      for (const [path, stats] of Object.entries(paths)) {
+        if (!stats?.distinct_dids) continue;
+        const lane = laneForSource(collection, path);
+        if (!lane) continue;
+        if (queryCount >= MAX_SOURCE_QUERIES) break;
+        queryCount++;
+        sources.push({ target, laneId: lane.id, collection, path });
+      }
     }
   }
 
-  if (sourcesByLane.size === 0) return EMPTY;
+  if (sources.length === 0) return EMPTY;
 
-  // Fetch every source's DID set in parallel, then union within and across lanes.
-  const flat = [...sourcesByLane.entries()].flatMap(([laneId, sources]) =>
-    sources.map((s) => ({ laneId, ...s }))
-  );
+  // Fetch every source's DID set in parallel, then union within and across lanes
+  // (and across both target forms — one person who linked both is still one DID).
   const resolved = await Promise.all(
-    flat.map((s) =>
-      fetchSourceDids(normUrl, s.collection, s.path).then((r) => ({
+    sources.map((s) =>
+      fetchSourceDids(s.target, s.collection, s.path).then((r) => ({
         laneId: s.laneId,
         ...r,
       }))
@@ -209,7 +214,7 @@ function isDue(row: MentionCacheRow, now: number): boolean {
   const sinceCheck = now - row.checked_at;
   if (age < HOT_AGE_MS) return sinceCheck > HOT_RECHECK_MS;
   if (age < COOL_AGE_MS) return sinceCheck > COOL_RECHECK_MS;
-  return false; // settled
+  return sinceCheck > SETTLED_RECHECK_MS; // settled: slow, read-gated re-poll
 }
 
 function rowToMentions(row: MentionCacheRow): ArticleMentions {
