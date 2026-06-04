@@ -364,34 +364,86 @@
                 {#if expandedLaneItems?.loading}
                   <div class="lane-status">Loading…</div>
                 {:else if expandedLaneItems && expandedLaneItems.entries.length > 0}
-                  <ul class="lane-people">
-                    {#each expandedLaneItems.entries as entry (entry.did + (entry.url ?? ''))}
-                      <li class="lane-person">
-                        <div class="lane-person-row">
-                          <button
-                            type="button"
-                            class="lane-person-handle"
-                            onclick={(e) => {
-                              e.stopPropagation();
-                              onOpenAuthor?.(entry.did);
-                            }}>@{entry.handle ?? entry.did.slice(0, 18)}</button
-                          >
-                          {#if entry.url}
-                            <a
-                              class="lane-person-link"
-                              href={entry.url}
-                              target="_blank"
-                              rel="noopener"
-                              title="Open {activeRow.label}"
-                              onclick={(e) => e.stopPropagation()}
-                              ><Icon name="external-link" size={13} /></a
+                  {#if expandedLane === 'semble'}
+                    <!-- Saves aren't notes — show them as a wrapping flow of
+                         "<who> saved to <collection>" units rather than a list. -->
+                    <div class="lane-saves">
+                      {#each expandedLaneItems.entries as entry (entry.did)}
+                        {@const who = '@' + (entry.handle ?? entry.did.slice(0, 18))}
+                        {#if entry.collections?.length}
+                          {#each entry.collections as col (col.name + (col.url ?? ''))}
+                            <span class="lane-save">
+                              <button
+                                type="button"
+                                class="lane-save-handle"
+                                onclick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenAuthor?.(entry.did);
+                                }}>{who}</button
+                              >
+                              <span class="lane-save-verb">saved to</span>
+                              {#if col.url}
+                                <a
+                                  class="lane-save-collection"
+                                  href={col.url}
+                                  target="_blank"
+                                  rel="noopener"
+                                  title="Open “{col.name}” on Semble"
+                                  onclick={(e) => e.stopPropagation()}
+                                  ><Icon name="folder" size={11} />{col.name}</a
+                                >
+                              {:else}
+                                <span class="lane-save-collection"
+                                  ><Icon name="folder" size={11} />{col.name}</span
+                                >
+                              {/if}
+                            </span>
+                          {/each}
+                        {:else}
+                          <span class="lane-save">
+                            <button
+                              type="button"
+                              class="lane-save-handle"
+                              onclick={(e) => {
+                                e.stopPropagation();
+                                onOpenAuthor?.(entry.did);
+                              }}>{who}</button
                             >
-                          {/if}
-                        </div>
-                        {#if entry.note}<p class="lane-person-note">{entry.note}</p>{/if}
-                      </li>
-                    {/each}
-                  </ul>
+                            <span class="lane-save-verb">saved this</span>
+                          </span>
+                        {/if}
+                      {/each}
+                    </div>
+                  {:else}
+                    <ul class="lane-people">
+                      {#each expandedLaneItems.entries as entry (entry.did + (entry.url ?? ''))}
+                        <li class="lane-person">
+                          <div class="lane-person-row">
+                            <button
+                              type="button"
+                              class="lane-person-handle"
+                              onclick={(e) => {
+                                e.stopPropagation();
+                                onOpenAuthor?.(entry.did);
+                              }}>@{entry.handle ?? entry.did.slice(0, 18)}</button
+                            >
+                            {#if entry.url}
+                              <a
+                                class="lane-person-link"
+                                href={entry.url}
+                                target="_blank"
+                                rel="noopener"
+                                title="Open {activeRow.label}"
+                                onclick={(e) => e.stopPropagation()}
+                                ><Icon name="external-link" size={13} /></a
+                              >
+                            {/if}
+                          </div>
+                          {#if entry.note}<p class="lane-person-note">{entry.note}</p>{/if}
+                        </li>
+                      {/each}
+                    </ul>
+                  {/if}
                 {:else if !expandedLaneItems?.loading}
                   <div class="lane-status">Nothing here yet.</div>
                 {/if}
@@ -1088,6 +1140,71 @@
     line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+  }
+
+  /* Semble lane: saves aren't notes, so they read as a wrapping flow of
+     "<who> saved to <collection>" chips — each on its own subtle fill to set it
+     apart — rather than the per-person note list. */
+  .lane-saves {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    margin: 0 0 0.5rem;
+    font-size: 0.8125rem;
+    line-height: 1.4;
+  }
+
+  .lane-save {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem;
+    max-width: 100%;
+    padding: 0.1875rem 0.5rem;
+    background: var(--color-bg-secondary);
+    border-radius: 0.5rem;
+  }
+
+  .lane-save-handle {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-weight: 600;
+    color: var(--color-text);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .lane-save-handle:hover {
+    color: var(--color-primary);
+    text-decoration: underline;
+  }
+
+  .lane-save-verb {
+    color: var(--color-text-secondary);
+  }
+
+  .lane-save-collection {
+    font-weight: 500;
+    color: var(--color-text);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .lane-save-collection :global(.icon) {
+    vertical-align: -1px;
+    margin-right: 0.1875rem;
+    opacity: 0.7;
+  }
+
+  a.lane-save-collection:hover {
+    color: var(--color-primary);
+    text-decoration: underline;
+  }
+
+  a.lane-save-collection:hover :global(.icon) {
+    opacity: 1;
   }
 
   .link-post-context {
