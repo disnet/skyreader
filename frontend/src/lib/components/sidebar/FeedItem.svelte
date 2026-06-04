@@ -255,12 +255,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   .nav-count {
     flex-shrink: 0;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
@@ -362,8 +362,8 @@
     background: var(--color-warning, #ff9800);
     color: white;
     border-radius: 50%;
-    font-size: 0.75rem;
-    font-weight: bold;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-bold);
     cursor: help;
   }
 
@@ -386,9 +386,9 @@
     border: none;
     cursor: pointer;
     color: var(--color-text-secondary);
-    font-size: 1rem;
+    font-size: var(--text-base);
     padding: 0;
-    line-height: 1;
+    line-height: var(--leading-none);
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
   }
@@ -421,9 +421,9 @@
     border: none;
     cursor: pointer;
     color: var(--color-text-secondary);
-    font-size: 1rem;
+    font-size: var(--text-base);
     padding: 0;
-    line-height: 1;
+    line-height: var(--leading-none);
     opacity: 0;
     transition: opacity 0.15s;
     flex-shrink: 0;

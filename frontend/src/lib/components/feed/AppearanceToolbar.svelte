@@ -6,6 +6,7 @@
     { value: 'sans-serif', label: 'Sans', family: 'sans-serif' },
     { value: 'serif', label: 'Serif', family: 'serif' },
     { value: 'mono', label: 'Mono', family: 'monospace' },
+    { value: 'literata', label: 'Literata', family: 'Literata, serif' },
   ];
 
   const sizeLabels: Record<string, string> = {
@@ -26,10 +27,11 @@
         <button
           class="segment-btn"
           class:active={preferences.articleFont === option.value}
+          aria-pressed={preferences.articleFont === option.value}
           onclick={() => preferences.setArticleFont(option.value)}
-          title={option.label}
+          title="{option.label} font"
         >
-          <span class="font-preview" style:font-family={option.family}>Aa</span>
+          <span class="font-name" style:font-family={option.family}>{option.label}</span>
         </button>
       {/each}
     </div>
@@ -82,11 +84,11 @@
   }
 
   .group-label {
-    font-size: 0.6875rem;
-    font-weight: 600;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
     text-transform: uppercase;
-    letter-spacing: 0.03em;
+    letter-spacing: var(--tracking-wide);
     padding-left: 0.375rem;
     white-space: nowrap;
   }
@@ -111,13 +113,14 @@
     justify-content: center;
     background: none;
     border: none;
-    padding: 0.35rem 0.5rem;
+    padding: 0.35rem 0.7rem;
     cursor: pointer;
     color: var(--color-text-secondary);
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-weight: var(--weight-medium);
     border-radius: 999px;
-    transition: all 0.2s ease;
+    transition:
+      background-color 0.2s ease,
+      color 0.2s ease;
   }
 
   .segment-btn.active {
@@ -129,9 +132,20 @@
     color: var(--color-text);
   }
 
-  .font-preview {
-    font-size: 0.875rem;
-    line-height: 1;
+  .font-name {
+    font-size: var(--text-sm);
+    line-height: var(--leading-none);
+    white-space: nowrap;
+    /* Each label is set in its own typeface so the name doubles as a live
+       preview. Normalize across families by x-height: Literata renders
+       larger per em than the system fonts and would otherwise tower over
+       "Sans"; ~0.52 keeps the system sans at its natural size and conforms
+       serif/mono/Literata to it. */
+    font-size-adjust: 0.52;
+  }
+
+  .segment-btn.active .font-name {
+    font-weight: var(--weight-semibold);
   }
 
   .size-controls {
@@ -164,8 +178,8 @@
   }
 
   .size-label {
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
     color: var(--color-text);
     min-width: 1.25rem;
     text-align: center;
@@ -181,7 +195,14 @@
   /* Mobile */
   @media (max-width: 640px) {
     .segment-btn {
-      padding: 0.35rem 0.4rem;
+      padding: 0.35rem 0.55rem;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .segment-btn,
+    .size-btn {
+      transition: none;
     }
   }
 

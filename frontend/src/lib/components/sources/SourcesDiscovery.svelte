@@ -139,9 +139,9 @@
   }
 
   .discovery-title {
-    font-size: 0.9375rem;
-    font-weight: 600;
-    letter-spacing: -0.01em;
+    font-size: var(--text-lg);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-tight);
     margin: 0 0 0.75rem;
   }
 
@@ -153,14 +153,14 @@
     display: flex;
     align-items: center;
     gap: 0.35rem;
-    font-size: 0.8125rem;
-    font-weight: 600;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
     margin: 0 0 0.375rem;
   }
 
   .status {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
     margin: 0.25rem 0;
   }
@@ -206,19 +206,19 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    line-height: 1.3;
+    line-height: var(--leading-tight);
   }
 
   .sub-name {
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .sub-url {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -232,8 +232,8 @@
     gap: 0.25rem;
     padding: 0.375rem 0.75rem;
     font: inherit;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     color: #fff;
     background: var(--color-primary);
     border: none;
@@ -256,8 +256,8 @@
     align-items: center;
     gap: 0.25rem;
     margin-top: 0.75rem;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     color: var(--color-primary);
     text-decoration: none;
   }

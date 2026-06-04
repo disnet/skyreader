@@ -168,14 +168,14 @@
   }
 
   .library-empty h2 {
-    font-size: 1.25rem;
+    font-size: var(--text-2xl);
     margin-bottom: 0.5rem;
     color: var(--color-text);
   }
 
   .lede {
     margin-bottom: 1.5rem;
-    line-height: 1.5;
+    line-height: var(--leading-normal);
   }
 
   .add-actions {
@@ -189,8 +189,8 @@
     display: inline-block;
     padding: 0.5rem 1rem;
     font: inherit;
-    font-weight: 500;
-    line-height: 1.4;
+    font-weight: var(--weight-medium);
+    line-height: var(--leading-snug);
     color: #fff;
     background: var(--color-primary);
     border: 1px solid var(--color-primary);
@@ -230,15 +230,15 @@
   }
 
   .portability h3 {
-    font-size: 0.875rem;
-    font-weight: 600;
+    font-size: var(--text-md);
+    font-weight: var(--weight-semibold);
     color: var(--color-text);
     margin-bottom: 0.5rem;
   }
 
   .portability p {
-    font-size: 0.875rem;
-    line-height: 1.5;
+    font-size: var(--text-md);
+    line-height: var(--leading-normal);
     margin-bottom: 1rem;
   }
 
@@ -246,7 +246,7 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text);
     cursor: pointer;
   }
@@ -264,7 +264,7 @@
   }
 
   .status {
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     margin: 0.5rem 0 0;
   }
 
@@ -277,7 +277,7 @@
   }
 
   .footnote {
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     margin: 0.75rem 0 0;
     color: var(--color-text-secondary);
   }

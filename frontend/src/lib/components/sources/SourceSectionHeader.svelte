@@ -52,14 +52,14 @@
   }
 
   .section-title {
-    font-size: 0.9375rem;
-    font-weight: 600;
-    letter-spacing: -0.01em;
+    font-size: var(--text-lg);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-tight);
   }
 
   .section-count {
-    font-size: 0.75rem;
-    font-weight: 500;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
     color: var(--color-text-secondary);
     background: var(--color-bg-secondary, rgba(0, 0, 0, 0.05));
     padding: 0.0625rem 0.375rem;
@@ -69,7 +69,7 @@
   }
 
   .section-subtitle {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     margin-left: auto;
     white-space: nowrap;

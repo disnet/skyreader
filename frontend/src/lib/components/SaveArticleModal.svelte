@@ -115,7 +115,7 @@
     padding: 0.625rem 0.75rem;
     border: 1px solid var(--color-border, #ddd);
     border-radius: 6px;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     background: var(--color-bg, #fff);
     color: var(--color-text);
     outline: none;
@@ -138,8 +138,8 @@
     color: white;
     border: none;
     border-radius: 6px;
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     cursor: pointer;
   }
 
@@ -154,12 +154,12 @@
 
   .error {
     margin: 0;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-error, #dc2626);
   }
 
   .scope-upgrade {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   .scope-upgrade p {
@@ -178,8 +178,8 @@
     color: white;
     border: none;
     border-radius: 6px;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     text-decoration: none;
     cursor: pointer;
   }
@@ -189,14 +189,14 @@
     background: none;
     border: 1px solid var(--color-border, #ddd);
     border-radius: 6px;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
     cursor: pointer;
   }
 
   @media (max-width: 600px) {
     .url-input {
-      font-size: 16px; /* Prevents iOS zoom on focus */
+      font-size: var(--text-base); /* Prevents iOS zoom on focus */
     }
   }
 </style>

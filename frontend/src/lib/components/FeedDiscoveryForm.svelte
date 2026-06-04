@@ -119,7 +119,7 @@
   .discovered-feeds p {
     margin-bottom: 0.5rem;
     color: var(--color-text-secondary);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   .feed-option {
@@ -127,7 +127,7 @@
     width: 100%;
     text-align: left;
     margin-top: 0.5rem;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     word-break: break-all;
   }
 </style>

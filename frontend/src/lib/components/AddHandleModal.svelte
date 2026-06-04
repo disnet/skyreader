@@ -703,7 +703,7 @@
 
   .modal-desc {
     margin: 0;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
   }
 
@@ -719,7 +719,7 @@
     border-radius: 8px;
     background: var(--color-bg);
     color: var(--color-text);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     outline: none;
     box-sizing: border-box;
   }
@@ -730,7 +730,7 @@
 
   .search-status {
     color: var(--color-text-secondary);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     text-align: center;
     padding: 0.5rem 0;
   }
@@ -789,15 +789,15 @@
   }
 
   .result-name {
-    font-weight: 500;
-    font-size: 0.875rem;
+    font-weight: var(--weight-medium);
+    font-size: var(--text-md);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .result-handle {
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -810,7 +810,7 @@
     border: none;
     background: transparent;
     color: var(--color-text-secondary);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     cursor: pointer;
   }
 
@@ -851,14 +851,14 @@
   }
 
   .selected-name {
-    font-weight: 500;
+    font-weight: var(--weight-medium);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .selected-handle {
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
   }
 
@@ -895,7 +895,7 @@
     gap: 0.5rem;
     padding: 1.5rem 0;
     color: var(--color-text-secondary);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   .spinner {
@@ -925,7 +925,7 @@
     margin: 0;
     padding: 1rem 0;
     text-align: center;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
   }
 
@@ -961,7 +961,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     margin-top: 1px;
     transition:
       background-color 0.15s,
@@ -1006,12 +1006,12 @@
   }
 
   .content-name {
-    font-weight: 500;
-    font-size: 0.875rem;
+    font-weight: var(--weight-medium);
+    font-size: var(--text-md);
   }
 
   .content-url {
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1019,12 +1019,12 @@
   }
 
   .content-desc {
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
   }
 
   .subscribed-badge {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     background: var(--color-bg-secondary);
     padding: 0.125rem 0.5rem;
@@ -1034,7 +1034,7 @@
   }
 
   .unsubscribing-badge {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-error);
     background: color-mix(in srgb, var(--color-error) 10%, transparent);
     padding: 0.125rem 0.5rem;
@@ -1050,8 +1050,8 @@
     border-radius: 8px;
     background: var(--color-accent, #0085ff);
     color: white;
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     cursor: pointer;
     transition: opacity 0.15s;
   }
@@ -1073,16 +1073,16 @@
 
   .error-message {
     color: var(--color-error);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     margin-top: 0.5rem;
   }
 
   .section-label {
-    font-size: 0.8125rem;
-    font-weight: 600;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
     text-transform: uppercase;
-    letter-spacing: 0.03em;
+    letter-spacing: var(--tracking-wide);
     margin: 0;
   }
 
@@ -1126,8 +1126,8 @@
     border-radius: 6px;
     background: var(--color-accent, #0085ff);
     color: white;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     cursor: pointer;
     flex-shrink: 0;
     transition: opacity 0.15s;
@@ -1151,15 +1151,15 @@
   }
 
   .standard-sub-name {
-    font-size: 0.9375rem;
-    font-weight: 500;
+    font-size: var(--text-lg);
+    font-weight: var(--weight-medium);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .standard-sub-url {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1167,7 +1167,7 @@
   }
 
   .standard-sub-desc {
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
     display: -webkit-box;
     -webkit-line-clamp: 1;
@@ -1177,7 +1177,7 @@
 
   @media (max-width: 600px) {
     .search-input {
-      font-size: 16px;
+      font-size: var(--text-base);
     }
   }
 </style>

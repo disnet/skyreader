@@ -480,15 +480,15 @@
   }
 
   h1 {
-    font-size: 1.25rem;
-    font-weight: 600;
+    font-size: var(--text-2xl);
+    font-weight: var(--weight-semibold);
     margin: 0 0 0.5rem;
   }
 
   .header-desc {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
-    line-height: 1.5;
+    line-height: var(--leading-normal);
     margin: 0;
   }
 
@@ -497,15 +497,15 @@
   }
 
   .section-title {
-    font-size: 0.9375rem;
-    font-weight: 600;
+    font-size: var(--text-lg);
+    font-weight: var(--weight-semibold);
     margin: 0 0 0.25rem;
   }
 
   .section-desc {
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
-    line-height: 1.5;
+    line-height: var(--leading-normal);
     margin: 0 0 1rem;
   }
 
@@ -551,17 +551,17 @@
   }
 
   .card-header h3 {
-    font-size: 0.9375rem;
-    font-weight: 600;
+    font-size: var(--text-lg);
+    font-weight: var(--weight-semibold);
     margin: 0;
     flex: 1;
   }
 
   .card-badge {
-    font-size: 0.625rem;
-    font-weight: 600;
+    font-size: var(--text-3xs);
+    font-weight: var(--weight-semibold);
     text-transform: uppercase;
-    letter-spacing: 0.03em;
+    letter-spacing: var(--tracking-wide);
     padding: 0.125rem 0.375rem;
     border-radius: 4px;
     flex-shrink: 0;
@@ -578,9 +578,9 @@
   }
 
   .card-desc {
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text);
-    line-height: 1.5;
+    line-height: var(--leading-normal);
     margin: 0 0 0.375rem;
   }
 
@@ -600,8 +600,8 @@
     border: none;
     border-radius: 8px;
     cursor: pointer;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     transition: opacity 0.15s;
   }
 
@@ -615,7 +615,7 @@
     border: 1px solid var(--color-border);
     border-radius: 8px;
     cursor: pointer;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
   }
 
@@ -673,8 +673,8 @@
     pointer-events: auto;
     border: none;
     color: var(--color-text);
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     max-width: 80%;
   }
 

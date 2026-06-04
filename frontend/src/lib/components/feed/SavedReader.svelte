@@ -70,6 +70,7 @@
     { value: 'sans-serif', label: 'Sans', family: 'sans-serif' },
     { value: 'serif', label: 'Serif', family: 'serif' },
     { value: 'mono', label: 'Mono', family: 'monospace' },
+    { value: 'literata', label: 'Literata', family: 'Literata, serif' },
   ];
 
   const sizeLabels: Record<string, string> = {
@@ -855,12 +856,12 @@
     padding: 0;
     cursor: pointer;
     color: var(--color-text-secondary);
-    font-size: 1rem;
+    font-size: var(--text-base);
   }
 
   .action-label {
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
   }
 
   .action-btn:hover,
@@ -1027,11 +1028,11 @@
   }
 
   .group-label {
-    font-size: 0.6875rem;
-    font-weight: 600;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
     text-transform: uppercase;
-    letter-spacing: 0.03em;
+    letter-spacing: var(--tracking-wide);
     padding-left: 0.375rem;
     white-space: nowrap;
   }
@@ -1059,8 +1060,8 @@
     padding: 0.35rem 0.5rem;
     cursor: pointer;
     color: var(--color-text-secondary);
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     border-radius: 999px;
     transition: all 0.2s ease;
   }
@@ -1075,8 +1076,11 @@
   }
 
   .font-preview {
-    font-size: 0.875rem;
-    line-height: 1;
+    font-size: var(--text-md);
+    line-height: var(--leading-none);
+    /* Normalize visual size across families by x-height — see
+       AppearanceToolbar; keeps the four preview buttons equal height. */
+    font-size-adjust: 0.52;
   }
 
   .size-controls {
@@ -1109,8 +1113,8 @@
   }
 
   .size-label {
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
     color: var(--color-text);
     min-width: 1.25rem;
     text-align: center;
@@ -1121,9 +1125,9 @@
   }
 
   .reader-title {
-    font-size: 1.75rem;
-    font-weight: 700;
-    line-height: 1.3;
+    font-size: var(--text-4xl);
+    font-weight: var(--weight-bold);
+    line-height: var(--leading-tight);
     color: var(--color-text);
     margin: 0 0 0.75rem;
   }
@@ -1133,7 +1137,7 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
   }
 
@@ -1144,7 +1148,7 @@
   }
 
   .reader-feed {
-    font-weight: 500;
+    font-weight: var(--weight-medium);
     color: var(--color-text-secondary);
     text-decoration: none;
   }
@@ -1170,8 +1174,8 @@
     display: inline-flex;
     align-items: center;
     padding: 0.125rem 0.5rem;
-    font-size: 0.75rem;
-    font-weight: 500;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
     background: rgba(37, 99, 235, 0.08);
     color: var(--color-primary, #2563eb);
     border-radius: 999px;
@@ -1226,7 +1230,7 @@
     padding: 1rem;
     border-radius: 6px;
     overflow-x: auto;
-    font-size: 0.85rem;
+    font-size: var(--text-md);
   }
 
   .reader-body :global(blockquote) {
@@ -1249,7 +1253,7 @@
   .reader-body :global(h3),
   .reader-body :global(h4) {
     margin: 1.5rem 0 0.75rem;
-    line-height: 1.3;
+    line-height: var(--leading-tight);
   }
 
   .reader-body :global(ul),
@@ -1320,11 +1324,11 @@
   }
 
   .style-sheet-label {
-    font-size: 0.6875rem;
-    font-weight: 600;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: var(--tracking-wider);
     padding-left: 0.25rem;
   }
 
@@ -1349,7 +1353,7 @@
   }
 
   .style-sheet-content .toolbar-wrapper :global(.font-preview) {
-    font-size: 1.125rem;
+    font-size: var(--text-xl);
   }
 
   .style-sheet-content .toolbar-wrapper :global(.size-btn) {
@@ -1362,13 +1366,13 @@
   }
 
   .style-sheet-content .toolbar-wrapper :global(.size-label) {
-    font-size: 0.9375rem;
+    font-size: var(--text-lg);
     min-width: 1.75rem;
   }
 
   .style-sheet-content .toolbar-wrapper :global(.group-label) {
     display: block;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
   }
 
   .style-sheet-actions {
@@ -1388,7 +1392,7 @@
     border: none;
     border-bottom: 1px solid var(--color-border);
     color: var(--color-text);
-    font-size: 0.9375rem;
+    font-size: var(--text-lg);
     text-align: left;
     width: 100%;
     transition: background 0.1s;

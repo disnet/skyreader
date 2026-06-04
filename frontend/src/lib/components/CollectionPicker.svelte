@@ -190,7 +190,7 @@
   .picker-error,
   .picker-offline {
     padding: 0.75rem;
-    font-size: 0.85rem;
+    font-size: var(--text-md);
     border-radius: 6px;
     margin-bottom: 0.5rem;
   }
@@ -234,13 +234,13 @@
     border: none;
     outline: none;
     background: transparent;
-    font-size: 0.9rem;
+    font-size: var(--text-lg);
     color: var(--color-text);
     min-width: 0;
   }
 
   .refreshing-badge {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     flex-shrink: 0;
   }
@@ -293,15 +293,15 @@
   }
 
   .collection-name {
-    font-weight: 500;
-    font-size: 0.9rem;
+    font-weight: var(--weight-medium);
+    font-size: var(--text-lg);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .collection-desc {
-    font-size: 0.8rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -325,14 +325,14 @@
     padding: 1.5rem 0.5rem;
     text-align: center;
     color: var(--color-text-secondary);
-    font-size: 0.85rem;
+    font-size: var(--text-md);
   }
 
   .btn {
     padding: 0.5rem 1rem;
     border-radius: 6px;
-    font-size: 0.9rem;
-    font-weight: 500;
+    font-size: var(--text-lg);
+    font-weight: var(--weight-medium);
     cursor: pointer;
     border: 1px solid transparent;
   }

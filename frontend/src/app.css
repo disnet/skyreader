@@ -1,3 +1,52 @@
+/* ── Literata ────────────────────────────────────────────────
+   Opt-in reading serif for the article surface. Screen-optimized
+   (TypeTogether, SIL OFL), self-hosted, variable weight 200–900 +
+   optical-size axis. Only downloads when the reader selects it;
+   `swap` so the chosen font appears even on a cold cache, and the
+   latin-ext faces fetch only when accented glyphs actually appear. */
+@font-face {
+  font-family: 'Literata';
+  font-style: normal;
+  font-weight: 200 900;
+  font-display: swap;
+  src: url('/fonts/literata-latin-wght-normal.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Literata';
+  font-style: italic;
+  font-weight: 200 900;
+  font-display: swap;
+  src: url('/fonts/literata-latin-wght-italic.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Literata';
+  font-style: normal;
+  font-weight: 200 900;
+  font-display: swap;
+  src: url('/fonts/literata-latin-ext-wght-normal.woff2') format('woff2');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF, U+FB00-FB06;
+}
+@font-face {
+  font-family: 'Literata';
+  font-style: italic;
+  font-weight: 200 900;
+  font-display: swap;
+  src: url('/fonts/literata-latin-ext-wght-italic.woff2') format('woff2');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF, U+FB00-FB06;
+}
+
 :root {
   --color-primary: #0066cc;
   --color-primary-dark: #0052a3;
@@ -19,17 +68,66 @@
   --safe-area-top: env(safe-area-inset-top, 0px);
   --bottom-bar-height: 3.5rem;
 
-  /* Article font families */
+  /* Article font families (reader-selectable). The sans stack also
+     drives the chrome — deliberately native: instant, no FOUT on the
+     flaky connections this PWA targets. The serif stack prefers the
+     screen-grade serifs that ship on Apple platforms (Charter, Iowan)
+     before falling back to Georgia. Literata is the one opt-in web
+     font, defined in the @font-face block above. */
   --font-sans-serif:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-  --font-serif: Georgia, Cambria, 'Times New Roman', Times, serif;
+  --font-serif:
+    Charter, 'Bitstream Charter', 'Iowan Old Style', Georgia, Cambria, 'Times New Roman', serif;
+  --font-literata: Literata, 'Iowan Old Style', Charter, Georgia, Cambria, serif;
   --font-mono:
     ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
-  --article-font: var(--font-sans-serif);
+  /* Default reading font: serif, matching the preferences store default
+     so first paint (before the data-article-font attribute is applied)
+     doesn't flash sans → serif. */
+  --article-font: var(--font-serif);
   --article-font-size: 1rem;
+  /* Let variable fonts (Literata) pick their optical-size master by
+     size; inherited and a no-op for static fonts. */
+  font-optical-sizing: auto;
+
+  /* ── Type scale ──────────────────────────────────────────────
+     Fixed rem, one UI family (system sans), hierarchy from size +
+     weight. Dense band (11–15px) is tightly stepped for a reader
+     that tracks many feeds; chrome headings top out at --text-2xl
+     (1.25rem) per the No-Shout rule — larger steps are for the
+     reader's article title and roomy public pages only. */
+  --text-3xs: 0.625rem; /* 10px — counters, micro badges */
+  --text-2xs: 0.6875rem; /* 11px — eyebrow labels, badge counts */
+  --text-xs: 0.75rem; /* 12px — captions, timestamps, fine print */
+  --text-sm: 0.8125rem; /* 13px — dense secondary UI / metadata (workhorse) */
+  --text-md: 0.875rem; /* 14px — default control + label text */
+  --text-lg: 0.9375rem; /* 15px — emphasized UI text, list titles */
+  --text-base: 1rem; /* 16px — body / reading-adjacent UI text */
+  --text-xl: 1.125rem; /* 18px — lead text, large titles */
+  --text-2xl: 1.25rem; /* 20px — headline / chrome ceiling */
+  --text-3xl: 1.5rem; /* 24px — section heads on roomy surfaces */
+  --text-4xl: 1.75rem; /* 28px — reader article title, empty-state hero */
+
+  /* Weights — one family, hierarchy by weight */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* Line height */
+  --leading-none: 1; /* icon-aligned single-line controls */
+  --leading-tight: 1.3; /* headings */
+  --leading-snug: 1.4; /* compact multi-line labels */
+  --leading-normal: 1.5; /* default UI text */
+  --leading-relaxed: 1.6; /* longer prose blocks */
+
+  /* Letter spacing */
+  --tracking-tight: -0.01em; /* large headings */
+  --tracking-wide: 0.03em; /* small-caps labels */
+  --tracking-wider: 0.05em; /* uppercase micro-labels */
 
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-  line-height: 1.5;
+  line-height: var(--leading-normal);
   color: var(--color-text);
   background: var(--color-bg);
 }
@@ -86,7 +184,7 @@ textarea {
   padding: 0.5rem 1rem;
   border-radius: 6px;
   border: none;
-  font-weight: 500;
+  font-weight: var(--weight-medium);
   transition: background-color 0.2s;
 }
 
@@ -141,7 +239,7 @@ textarea {
 
 .error {
   color: var(--color-error);
-  font-size: 0.875rem;
+  font-size: var(--text-md);
   margin-top: 0.25rem;
 }
 
@@ -181,6 +279,10 @@ body.sidebar-open-mobile {
 
 :root[data-article-font='mono'] {
   --article-font: var(--font-mono);
+}
+
+:root[data-article-font='literata'] {
+  --article-font: var(--font-literata);
 }
 
 /* Article font size preference */

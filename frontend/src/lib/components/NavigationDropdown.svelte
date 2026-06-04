@@ -925,8 +925,8 @@
   }
 
   .trigger-title {
-    font-size: 1rem;
-    font-weight: 600;
+    font-size: var(--text-base);
+    font-weight: var(--weight-semibold);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1085,7 +1085,7 @@
     border: 1px solid var(--color-border);
     border-radius: 6px;
     font: inherit;
-    font-size: 1rem; /* 16px prevents iOS auto-zoom */
+    font-size: var(--text-base); /* 16px prevents iOS auto-zoom */
     background: var(--color-bg-secondary);
     color: var(--color-text);
   }
@@ -1114,8 +1114,8 @@
     border: none;
     text-align: left;
     font: inherit;
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     color: var(--color-text-secondary);
     cursor: default;
   }
@@ -1155,7 +1155,7 @@
     cursor: pointer;
     text-align: left;
     font: inherit;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text);
     transition: background-color 0.1s;
   }
@@ -1209,7 +1209,7 @@
 
   .item-count {
     flex-shrink: 0;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
@@ -1221,7 +1221,7 @@
     padding: 1rem 0.75rem;
     text-align: center;
     color: var(--color-text-secondary);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   @media (prefers-color-scheme: dark) {
@@ -1254,7 +1254,7 @@
     border: 1px solid var(--color-border);
     border-radius: 6px;
     font: inherit;
-    font-size: 1rem;
+    font-size: var(--text-base);
     background: var(--color-bg-secondary);
     color: var(--color-text);
   }
@@ -1304,8 +1304,8 @@
     border: none;
     text-align: left;
     font: inherit;
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     color: var(--color-text-secondary);
     cursor: default;
     -webkit-tap-highlight-color: transparent;
@@ -1346,7 +1346,7 @@
     cursor: pointer;
     text-align: left;
     font: inherit;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text);
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
@@ -1398,7 +1398,7 @@
 
   :global(.mobile-portal .item-count) {
     flex-shrink: 0;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
@@ -1410,7 +1410,7 @@
     padding: 1rem 0.75rem;
     text-align: center;
     color: var(--color-text-secondary);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   /* Match add button size to close button in mobile */
@@ -1437,7 +1437,7 @@
     cursor: pointer;
     color: var(--color-text-secondary);
     padding: 0;
-    line-height: 1;
+    line-height: var(--leading-none);
     opacity: 0;
     transition: opacity 0.15s;
     flex-shrink: 0;
@@ -1472,7 +1472,7 @@
     cursor: pointer;
     color: var(--color-text-secondary);
     padding: 0;
-    line-height: 1;
+    line-height: var(--leading-none);
     opacity: 1;
     flex-shrink: 0;
     -webkit-tap-highlight-color: transparent;
@@ -1487,7 +1487,7 @@
     flex: 1;
     min-width: 0;
     font: inherit;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     padding: 0.125rem 0.25rem;
     border: 1px solid var(--color-primary);
     border-radius: 4px;
@@ -1500,7 +1500,7 @@
     flex: 1;
     min-width: 0;
     font: inherit;
-    font-size: 1rem;
+    font-size: var(--text-base);
     padding: 0.125rem 0.25rem;
     border: 1px solid var(--color-primary);
     border-radius: 4px;
@@ -1542,7 +1542,7 @@
     text-align: left;
     cursor: pointer;
     border-radius: 4px;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text);
   }
 

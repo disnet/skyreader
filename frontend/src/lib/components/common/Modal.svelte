@@ -105,17 +105,17 @@
   }
 
   .modal-header h2 {
-    font-size: 1.25rem;
+    font-size: var(--text-2xl);
     margin: 0;
   }
 
   .close-btn {
     background: none;
     border: none;
-    font-size: 1.5rem;
+    font-size: var(--text-3xl);
     color: var(--color-text-secondary);
     padding: 0;
-    line-height: 1;
+    line-height: var(--leading-none);
     cursor: pointer;
   }
 

@@ -69,8 +69,8 @@
     background: var(--color-warning, #ff9800);
     color: white;
     border-radius: 50%;
-    font-size: 0.75rem;
-    font-weight: bold;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-bold);
     flex-shrink: 0;
   }
 
@@ -79,29 +79,29 @@
   }
 
   .error-title {
-    font-weight: 600;
-    font-size: 0.875rem;
+    font-weight: var(--weight-semibold);
+    font-size: var(--text-md);
     color: var(--color-text);
   }
 
   .error-description {
     margin: 0;
     padding: 0.75rem 1rem;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
-    line-height: 1.5;
+    line-height: var(--leading-normal);
   }
 
   .error-meta {
     margin: 0;
     padding: 0 1rem 0.5rem;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-tertiary, var(--color-text-secondary));
   }
 
   .error-raw {
     padding: 0 1rem 0.75rem;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
   }
 
   .error-raw summary {
@@ -120,8 +120,8 @@
 
   .error-code {
     font-family: monospace;
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
     color: var(--color-text);
     margin-bottom: 0.25rem;
   }
@@ -132,7 +132,7 @@
     background: var(--color-bg-secondary);
     border-radius: 4px;
     font-family: monospace;
-    font-size: 0.6875rem;
+    font-size: var(--text-2xs);
     color: var(--color-text-secondary);
     word-break: break-all;
     white-space: pre-wrap;

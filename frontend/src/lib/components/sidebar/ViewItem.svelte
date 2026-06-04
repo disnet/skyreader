@@ -158,12 +158,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   .nav-count {
     flex-shrink: 0;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
@@ -187,9 +187,9 @@
     border: none;
     cursor: pointer;
     color: var(--color-text-secondary);
-    font-size: 1rem;
+    font-size: var(--text-base);
     padding: 0;
-    line-height: 1;
+    line-height: var(--leading-none);
     opacity: 0;
     transition: opacity 0.15s;
     flex-shrink: 0;
@@ -218,7 +218,7 @@
     flex: 1;
     min-width: 0;
     font: inherit;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     padding: 0.125rem 0.25rem;
     border: 1px solid var(--color-primary);
     border-radius: 4px;

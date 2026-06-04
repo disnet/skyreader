@@ -386,7 +386,7 @@
     background: var(--color-bg);
     border: 1px solid var(--color-border);
     border-radius: 6px;
-    font-size: 1.25rem;
+    font-size: var(--text-2xl);
     cursor: pointer;
     padding: 0.5rem 0.75rem;
     color: var(--color-text);
@@ -397,8 +397,8 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    font-weight: 700;
-    font-size: 1.25rem;
+    font-weight: var(--weight-bold);
+    font-size: var(--text-2xl);
     color: var(--color-primary, #0066cc);
     text-decoration: none;
   }
@@ -411,7 +411,7 @@
   .feedback-link {
     color: var(--color-text-secondary, #666);
     text-decoration: none;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     margin-left: auto;
   }
 
@@ -451,14 +451,14 @@
     align-items: center;
     justify-content: center;
     height: 100vh;
-    font-size: 1.25rem;
+    font-size: var(--text-2xl);
     color: var(--color-text-secondary, #666);
   }
 
   .app-footer {
     padding: 1.5rem 1rem;
     text-align: center;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
     border-top: 1px solid var(--color-border);
     max-width: 1200px;
@@ -492,7 +492,7 @@
     align-items: center;
     justify-content: center;
     gap: 1rem;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     text-align: center;
     border-radius: 999px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
@@ -507,8 +507,8 @@
     border-radius: 999px;
     padding: 0.25rem 0.75rem;
     cursor: pointer;
-    font-size: 0.8125rem;
-    font-weight: 600;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
     white-space: nowrap;
   }
 
@@ -525,7 +525,7 @@
     align-items: center;
     justify-content: center;
     gap: 1rem;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     text-align: center;
     position: sticky;
     top: 0;
@@ -534,7 +534,7 @@
 
   .scope-upgrade-banner .reauth-link {
     color: inherit;
-    font-weight: 600;
+    font-weight: var(--weight-semibold);
     text-decoration: underline;
     background: none;
     border: none;
@@ -551,7 +551,7 @@
     border-radius: 4px;
     padding: 0.25rem 0.5rem;
     cursor: pointer;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     white-space: nowrap;
   }
 

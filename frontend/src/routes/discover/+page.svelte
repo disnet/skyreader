@@ -54,15 +54,15 @@
   }
 
   h1 {
-    font-size: 1.25rem;
-    font-weight: 600;
+    font-size: var(--text-2xl);
+    font-weight: var(--weight-semibold);
     margin: 0 0 0.5rem;
   }
 
   .header-desc {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
-    line-height: 1.5;
+    line-height: var(--leading-normal);
     margin: 0;
     max-width: 52ch;
   }
@@ -76,15 +76,15 @@
   }
 
   .section-title {
-    font-size: 1rem;
-    font-weight: 600;
+    font-size: var(--text-base);
+    font-weight: var(--weight-semibold);
     margin: 0 0 0.25rem;
   }
 
   .section-desc {
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
-    line-height: 1.5;
+    line-height: var(--leading-normal);
     margin: 0 0 1rem;
     max-width: 52ch;
   }

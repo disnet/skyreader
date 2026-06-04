@@ -811,7 +811,7 @@
     gap: 0.3125rem;
     flex-shrink: 0;
     max-width: 11rem;
-    font-size: 0.8rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
     cursor: pointer;
   }
@@ -885,7 +885,7 @@
     display: flex;
     align-items: center;
     gap: 0.375rem;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
@@ -896,14 +896,14 @@
   }
 
   .link-card-title {
-    font-weight: 600;
+    font-weight: var(--weight-semibold);
     color: var(--color-text);
     line-height: 1.35;
   }
 
   .link-card-excerpt {
-    font-size: 0.875rem;
-    line-height: 1.5;
+    font-size: var(--text-md);
+    line-height: var(--leading-normal);
     color: var(--color-text-secondary);
     display: -webkit-box;
     -webkit-line-clamp: 3;
@@ -930,10 +930,10 @@
     border-radius: 999px;
     background: var(--color-bg-secondary, #f0f0f0);
     color: var(--color-text-secondary);
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
     font-variant-numeric: tabular-nums;
-    line-height: 1.5;
+    line-height: var(--leading-normal);
     text-align: center;
     transition:
       color 0.15s ease,
@@ -1009,8 +1009,8 @@
     background: none;
     border: none;
     font: inherit;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     color: var(--color-text);
     cursor: pointer;
     transition:
@@ -1051,7 +1051,7 @@
   .lane-tab-count {
     flex-shrink: 0;
     font-variant-numeric: tabular-nums;
-    font-weight: 600;
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
   }
 
@@ -1103,7 +1103,7 @@
 
   .lane-status {
     padding: 0.125rem 0 0.5rem;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
   }
 
@@ -1132,8 +1132,8 @@
     border: none;
     padding: 0;
     font: inherit;
-    font-size: 0.8125rem;
-    font-weight: 600;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
     color: var(--color-text);
     cursor: pointer;
     overflow: hidden;
@@ -1158,7 +1158,7 @@
 
   .lane-person-note {
     margin: 0.125rem 0 0;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     line-height: 1.45;
     color: var(--color-text-secondary);
     display: -webkit-box;
@@ -1176,8 +1176,8 @@
     flex-wrap: wrap;
     gap: 0.375rem;
     margin: 0 0 0.5rem;
-    font-size: 0.8125rem;
-    line-height: 1.4;
+    font-size: var(--text-sm);
+    line-height: var(--leading-snug);
   }
 
   .lane-save {
@@ -1196,7 +1196,7 @@
     border: none;
     padding: 0;
     font: inherit;
-    font-weight: 600;
+    font-weight: var(--weight-semibold);
     color: var(--color-text);
     cursor: pointer;
     white-space: nowrap;
@@ -1212,7 +1212,7 @@
   }
 
   .lane-save-collection {
-    font-weight: 500;
+    font-weight: var(--weight-medium);
     color: var(--color-text);
     text-decoration: none;
     white-space: nowrap;
@@ -1246,7 +1246,7 @@
     padding: 0.4375rem 0.5rem;
     background: var(--color-bg-secondary);
     border-radius: 0.5rem;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     line-height: 1.45;
   }
 
@@ -1286,7 +1286,7 @@
     margin: 0 0 0.75rem;
     padding-top: 0.625rem;
     border-top: 1px solid var(--color-border, #e8e8e8);
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
   }
 
@@ -1299,7 +1299,7 @@
     flex-wrap: wrap;
     align-items: baseline;
     gap: 0.375rem;
-    line-height: 1.4;
+    line-height: var(--leading-snug);
   }
 
   .context-also-label {
@@ -1369,7 +1369,7 @@
        metrics here makes 1lh resolve to that line box — keeping alignment
        correct as the user changes article font size (instead of a fixed nudge). */
     font-size: var(--article-font-size);
-    line-height: 1.5;
+    line-height: var(--leading-normal);
     margin-top: calc((1lh - 16px) / 2);
   }
 
@@ -1377,7 +1377,7 @@
     flex: 1;
     font-family: var(--article-font);
     font-size: var(--article-font-size);
-    font-weight: 400;
+    font-weight: var(--weight-regular);
     color: var(--color-text);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1412,13 +1412,13 @@
 
   .article-date {
     flex-shrink: 0;
-    font-size: 0.8rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
   }
 
   .article-read-time {
     flex-shrink: 0;
-    font-size: 0.8rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
   }
 
@@ -1441,7 +1441,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.8rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
     text-decoration: none;
   }
@@ -1532,7 +1532,7 @@
     padding: 0.75rem;
     border-radius: 4px;
     overflow-x: auto;
-    font-size: 0.8rem;
+    font-size: var(--text-sm);
   }
 
   .article-body :global(blockquote) {
@@ -1756,7 +1756,7 @@
     white-space: nowrap;
     background: none;
     border: none;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
     padding: 0.25rem 0;
     cursor: pointer;
@@ -1804,8 +1804,8 @@
     display: inline-flex;
     align-items: center;
     padding: 0.125rem 0.5rem;
-    font-size: 0.6875rem;
-    font-weight: 500;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-medium);
     background: rgba(37, 99, 235, 0.08);
     color: var(--color-primary, #2563eb);
     border-radius: 999px;
@@ -1851,7 +1851,7 @@
     background: none;
     border: none;
     font: inherit;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text);
     cursor: pointer;
     border-radius: 6px;
@@ -1938,7 +1938,7 @@
 
   .confirm-pop-title {
     margin: 0;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text);
     white-space: nowrap;
   }
@@ -1952,8 +1952,8 @@
   .confirm-pop-btn {
     padding: 0.3125rem 0.75rem;
     font: inherit;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     border-radius: 6px;
     cursor: pointer;
     border: 1px solid var(--color-border, #e5e7eb);
@@ -1989,7 +1989,7 @@
 
   .action-label {
     margin-left: 0.25rem;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   /* Always-collapsed items (integrations) — hidden inline, shown in overflow */
@@ -2071,14 +2071,14 @@
       order: 2;
       flex: 0 1 auto;
       min-width: 0;
-      font-size: 0.75rem;
+      font-size: var(--text-xs);
       max-width: none;
     }
 
     .article-read-time {
       order: 3;
       display: inline;
-      font-size: 0.75rem;
+      font-size: var(--text-xs);
     }
 
     .article-read-time::before,
@@ -2090,7 +2090,7 @@
 
     .article-date {
       order: 4;
-      font-size: 0.75rem;
+      font-size: var(--text-xs);
     }
 
     /* Touch: every action in the bar is a comfortable one-tap target. */
@@ -2113,7 +2113,7 @@
     }
 
     .article-item.expanded .action-btn {
-      font-size: 1.125rem;
+      font-size: var(--text-xl);
     }
   }
 </style>

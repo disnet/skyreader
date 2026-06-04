@@ -137,8 +137,8 @@
     background: transparent;
     color: var(--color-text);
     font: inherit;
-    font-size: 0.9375rem;
-    line-height: 1.5;
+    font-size: var(--text-lg);
+    line-height: var(--leading-normal);
     /* Comfortable measure for short commentary. */
     max-width: 60ch;
     transition: color 0.15s;
@@ -152,7 +152,7 @@
   @media (max-width: 600px) {
     /* 16px keeps iOS Safari from auto-zooming when the field takes focus. */
     .note-input {
-      font-size: 16px;
+      font-size: var(--text-base);
     }
   }
 
@@ -183,7 +183,7 @@
   }
 
   .counter {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     font-variant-numeric: tabular-nums;
     color: var(--color-text-secondary);
   }
@@ -198,8 +198,8 @@
     justify-content: center;
     gap: 0.25rem;
     padding: 0.3125rem 0.875rem;
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     border: 1px solid transparent;
     border-radius: 6px;
     cursor: pointer;

@@ -125,7 +125,7 @@
 
   .link-url {
     padding: 0.375rem 0.75rem;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -146,7 +146,7 @@
     background: none;
     border: none;
     cursor: pointer;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text);
     width: 100%;
     text-align: left;

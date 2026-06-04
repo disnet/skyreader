@@ -51,7 +51,7 @@
   }
 
   .error-card h1 {
-    font-size: 1.5rem;
+    font-size: var(--text-3xl);
     margin-bottom: 1rem;
     color: var(--color-error);
   }

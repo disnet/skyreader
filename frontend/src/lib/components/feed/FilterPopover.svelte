@@ -146,8 +146,8 @@
     border-radius: 999px;
     cursor: pointer;
     color: var(--color-text-secondary);
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     transition: all 0.2s ease;
   }
 

@@ -53,7 +53,7 @@
   }
 
   .intro-desc {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
     line-height: 1.55;
     margin: 0;
@@ -62,7 +62,7 @@
 
   .intro-desc strong {
     color: var(--color-text);
-    font-weight: 600;
+    font-weight: var(--weight-semibold);
   }
 
   .public-link {
@@ -77,7 +77,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-primary);
     text-decoration: none;
     padding: 0.375rem 0.625rem;
@@ -101,7 +101,7 @@
     align-items: center;
     gap: 0.3rem;
     font: inherit;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
     background: none;
     border: 1px solid var(--color-border);

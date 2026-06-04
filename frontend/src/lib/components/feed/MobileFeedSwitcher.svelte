@@ -554,7 +554,7 @@
     border: none;
     background: none;
     color: var(--color-text);
-    font-size: 1rem;
+    font-size: var(--text-base);
     outline: none;
   }
 
@@ -573,11 +573,11 @@
     align-items: center;
     justify-content: space-between;
     padding: 0.75rem 1rem 0.375rem;
-    font-size: 0.6875rem;
-    font-weight: 600;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: var(--tracking-wider);
   }
 
   .channel-add-btn {
@@ -610,7 +610,7 @@
     border-radius: 8px;
     margin: 0 0.5rem;
     color: var(--color-text);
-    font-size: 0.9375rem;
+    font-size: var(--text-lg);
     text-align: left;
     width: calc(100% - 1rem);
     transition: background 0.15s;
@@ -623,7 +623,7 @@
   .nav-item.active {
     background: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
     color: var(--color-primary);
-    font-weight: 500;
+    font-weight: var(--weight-medium);
   }
 
   .nav-item.indent {
@@ -632,8 +632,8 @@
 
   .nav-item.category-item {
     color: var(--color-text-secondary);
-    font-size: 0.875rem;
-    font-weight: 600;
+    font-size: var(--text-md);
+    font-weight: var(--weight-semibold);
     padding-top: 0.5rem;
     padding-bottom: 0.5rem;
   }
@@ -686,7 +686,7 @@
   .nav-item-row.active {
     background: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
     color: var(--color-primary);
-    font-weight: 500;
+    font-weight: var(--weight-medium);
   }
 
   .nav-item-row.active .item-icon {
@@ -704,7 +704,7 @@
     border: none;
     color: inherit;
     font: inherit;
-    font-size: 0.9375rem;
+    font-size: var(--text-lg);
     text-align: left;
   }
 
@@ -747,8 +747,8 @@
   }
 
   .item-count {
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
     background: var(--color-bg-secondary, #f5f5f5);
     padding: 0.125rem 0.5rem;
@@ -833,7 +833,7 @@
   .more-suggestions-link {
     text-decoration: none;
     color: var(--color-text-secondary);
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
   }
 
   .channel-edit-btn {
@@ -859,7 +859,7 @@
     padding: 1.5rem;
     text-align: center;
     color: var(--color-text-secondary);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   @media (prefers-color-scheme: dark) {

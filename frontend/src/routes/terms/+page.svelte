@@ -129,13 +129,13 @@
   }
 
   h1 {
-    font-size: 1.75rem;
+    font-size: var(--text-4xl);
     margin-bottom: 0.5rem;
     color: var(--color-text);
   }
 
   .last-updated {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
     margin-bottom: 2rem;
   }
@@ -145,7 +145,7 @@
   }
 
   h2 {
-    font-size: 1.125rem;
+    font-size: var(--text-xl);
     margin-bottom: 0.75rem;
     color: var(--color-text);
     border-bottom: 1px solid var(--color-border);
@@ -165,7 +165,7 @@
 
   li {
     margin-bottom: 0.5rem;
-    line-height: 1.5;
+    line-height: var(--leading-normal);
     color: var(--color-text);
   }
 

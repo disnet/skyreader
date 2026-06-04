@@ -105,7 +105,7 @@
   }
 
   .name {
-    font-weight: 500;
+    font-weight: var(--weight-medium);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -115,7 +115,7 @@
   }
 
   .handle {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;

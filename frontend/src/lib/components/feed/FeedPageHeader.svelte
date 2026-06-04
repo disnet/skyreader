@@ -397,7 +397,7 @@
   }
 
   .last-updated {
-    font-size: 0.6875rem;
+    font-size: var(--text-2xs);
     color: var(--color-text-muted, var(--color-text-secondary));
     display: flex;
     align-items: center;
@@ -410,10 +410,10 @@
   }
 
   .offline-badge {
-    font-size: 0.625rem;
-    font-weight: 600;
+    font-size: var(--text-3xs);
+    font-weight: var(--weight-semibold);
     text-transform: uppercase;
-    letter-spacing: 0.03em;
+    letter-spacing: var(--tracking-wide);
     color: var(--color-warning-text, #92400e);
     background: var(--color-warning-bg, #fef3c7);
     padding: 0.125rem 0.375rem;
@@ -427,8 +427,8 @@
     padding: 0.125rem;
     cursor: pointer;
     color: inherit;
-    font-size: 1rem;
-    line-height: 1;
+    font-size: var(--text-base);
+    line-height: var(--leading-none);
     opacity: 0.8;
     transition: opacity 0.15s;
   }
@@ -490,8 +490,8 @@
   }
 
   .btn-label {
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
   }
 
   .toggle-divider {
@@ -537,7 +537,7 @@
     }
 
     .refresh-btn {
-      font-size: 1.25rem;
+      font-size: var(--text-2xl);
       padding: 0.25rem;
     }
 

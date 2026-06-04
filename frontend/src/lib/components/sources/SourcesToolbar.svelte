@@ -104,7 +104,7 @@
     border: none;
     background: none;
     font: inherit;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text);
     outline: none;
   }
@@ -128,8 +128,8 @@
     background: var(--color-primary);
     color: #fff;
     cursor: pointer;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     white-space: nowrap;
     transition: background-color 0.2s;
   }
@@ -177,16 +177,16 @@
   .item-text {
     display: flex;
     flex-direction: column;
-    line-height: 1.3;
+    line-height: var(--leading-tight);
   }
 
   .item-label {
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
   }
 
   .item-hint {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 

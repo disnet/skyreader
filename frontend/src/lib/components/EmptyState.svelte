@@ -42,7 +42,7 @@
   }
 
   .empty-state h2 {
-    font-size: 1.25rem;
+    font-size: var(--text-2xl);
     margin-bottom: 0.5rem;
     color: var(--color-text);
   }
@@ -52,15 +52,15 @@
     max-width: 42ch;
     margin-left: auto;
     margin-right: auto;
-    line-height: 1.5;
+    line-height: var(--leading-normal);
   }
 
   .empty-action {
     display: inline-block;
     padding: 0.5rem 1rem;
     font: inherit;
-    font-weight: 500;
-    line-height: 1.4;
+    font-weight: var(--weight-medium);
+    line-height: var(--leading-snug);
     color: #fff;
     background: var(--color-primary);
     border: none;

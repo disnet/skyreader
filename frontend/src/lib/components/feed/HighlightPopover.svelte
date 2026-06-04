@@ -128,7 +128,7 @@
     background: none;
     border-radius: 4px;
     cursor: pointer;
-    font-size: 12px;
+    font-size: var(--text-xs);
     color: var(--color-text, #1a1a1a);
     white-space: nowrap;
   }

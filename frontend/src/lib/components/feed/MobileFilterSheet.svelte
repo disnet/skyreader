@@ -955,8 +955,8 @@
     border-radius: 6px;
     background: none;
     color: var(--color-text-secondary);
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     transition: all 0.15s;
   }
 
@@ -988,11 +988,11 @@
     display: flex;
     align-items: center;
     gap: 0.375rem;
-    font-size: 0.6875rem;
-    font-weight: 600;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: var(--tracking-wider);
     padding-left: 0.25rem;
   }
 
@@ -1016,8 +1016,8 @@
     border: 1px solid transparent;
     border-radius: 8px;
     color: var(--color-text-secondary);
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     transition: all 0.15s;
   }
 
@@ -1033,12 +1033,12 @@
 
   .toggle-btn.chip {
     flex: 0 0 auto;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     padding: 0.375rem 0.75rem;
   }
 
   .toggle-btn.small {
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     padding: 0.5rem;
   }
 
@@ -1065,7 +1065,7 @@
   }
 
   .toolbar-wrapper :global(.font-preview) {
-    font-size: 1.125rem;
+    font-size: var(--text-xl);
   }
 
   .toolbar-wrapper :global(.size-btn) {
@@ -1078,13 +1078,13 @@
   }
 
   .toolbar-wrapper :global(.size-label) {
-    font-size: 0.9375rem;
+    font-size: var(--text-lg);
     min-width: 1.75rem;
   }
 
   .toolbar-wrapper :global(.group-label) {
     display: block;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
   }
 
   .source-search {
@@ -1093,7 +1093,7 @@
     border-radius: 8px;
     background: var(--color-bg);
     color: var(--color-text);
-    font-size: 1rem;
+    font-size: var(--text-base);
     outline: none;
   }
 
@@ -1120,7 +1120,7 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.5rem 0.75rem;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     cursor: pointer;
     border-bottom: 1px solid var(--color-border);
   }
@@ -1145,14 +1145,14 @@
   .no-results {
     padding: 0.75rem;
     text-align: center;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
   }
 
   .section-hint {
     margin: 0;
     padding-left: 0.25rem;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
@@ -1166,8 +1166,8 @@
     border: none;
     border-radius: 8px;
     color: var(--color-text);
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     width: 100%;
   }
 
@@ -1183,7 +1183,7 @@
     border-radius: 8px;
     background: var(--color-bg);
     color: var(--color-text);
-    font-size: 1rem;
+    font-size: var(--text-base);
     outline: none;
   }
 
@@ -1226,15 +1226,15 @@
   }
 
   .rule-card-label {
-    font-size: 0.8125rem;
-    font-weight: 600;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
     color: var(--color-text);
   }
 
   .rule-card-desc {
-    font-size: 0.6875rem;
+    font-size: var(--text-2xs);
     color: var(--color-text-secondary);
-    line-height: 1.3;
+    line-height: var(--leading-tight);
   }
 
   .inline-input {
@@ -1248,7 +1248,7 @@
     padding: 0.5rem;
     border: 1px solid var(--color-border);
     border-radius: 8px;
-    font-size: 1rem;
+    font-size: var(--text-base);
     background: var(--color-bg);
     color: var(--color-text);
     text-align: center;
@@ -1260,12 +1260,12 @@
   }
 
   .input-suffix {
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
   }
 
   .match-preview {
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
     padding: 0.5rem 0.75rem;
     border-radius: 8px;
@@ -1281,7 +1281,7 @@
 
   .ch-error {
     color: var(--color-error);
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     margin: 0;
   }
 
@@ -1299,8 +1299,8 @@
     border: none;
     border-radius: 8px;
     color: white;
-    font-size: 0.9375rem;
-    font-weight: 500;
+    font-size: var(--text-lg);
+    font-weight: var(--weight-medium);
     width: 100%;
   }
 
@@ -1319,7 +1319,7 @@
     border-radius: 8px;
     background: none;
     color: var(--color-text-secondary);
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     cursor: pointer;
   }
 

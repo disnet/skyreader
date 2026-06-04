@@ -63,15 +63,15 @@
   }
 
   .header-name {
-    font-size: 0.8125rem;
-    font-weight: 600;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .header-handle {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;

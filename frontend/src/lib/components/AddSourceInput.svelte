@@ -254,7 +254,7 @@
     border: none;
     background: none;
     font: inherit;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text);
     outline: none;
     padding: 0.125rem 0;
@@ -295,7 +295,7 @@
     border: none;
     background: transparent;
     color: var(--color-text);
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     text-align: left;
     cursor: pointer;
     transition: background-color 0.15s;

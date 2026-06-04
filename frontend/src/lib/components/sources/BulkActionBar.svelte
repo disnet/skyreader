@@ -142,7 +142,7 @@
     color: #fff;
     border-radius: 10px;
     margin-bottom: 1rem;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     position: fixed;
     bottom: 1.5rem;
     left: calc(var(--sidebar-width, 320px) + (100% - var(--sidebar-width, 320px)) / 2);
@@ -153,7 +153,7 @@
   }
 
   .bulk-count {
-    font-weight: 500;
+    font-weight: var(--weight-medium);
   }
 
   .bulk-actions {
@@ -172,7 +172,7 @@
     background: none;
     color: #fff;
     cursor: pointer;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
   }
 
   .bulk-btn:hover {
@@ -224,7 +224,7 @@
     background: none;
     text-align: left;
     cursor: pointer;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text);
     border-radius: 4px;
   }
@@ -269,7 +269,7 @@
     padding: 0.25rem 0.5rem;
     border: 1px solid var(--color-border);
     border-radius: 4px;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     background: var(--color-bg);
     color: var(--color-text);
     outline: none;
@@ -289,7 +289,7 @@
     background: var(--color-primary);
     color: #fff;
     cursor: pointer;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
   }
 
   .new-folder-confirm:disabled {

@@ -775,18 +775,18 @@
   }
 
   .username {
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .tier-badge {
-    font-size: 0.625rem;
-    font-weight: 600;
+    font-size: var(--text-3xs);
+    font-weight: var(--weight-semibold);
     text-transform: uppercase;
-    letter-spacing: 0.03em;
+    letter-spacing: var(--tracking-wide);
     padding: 0.1rem 0.35rem;
     border-radius: 4px;
     background-color: var(--color-primary, #3b82f6);
@@ -943,12 +943,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
   }
 
   .nav-count {
     flex-shrink: 0;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
@@ -964,7 +964,7 @@
 
   .empty-section {
     padding: 0.5rem 0.75rem;
-    font-size: 0.8125rem;
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
     font-style: italic;
   }
@@ -988,7 +988,7 @@
     padding: 0;
     color: var(--color-text-secondary);
     font: inherit;
-    font-size: 0.875rem;
+    font-size: var(--text-md);
     text-align: left;
     transition: color 0.15s;
   }
@@ -1014,7 +1014,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-weight: 500;
+    font-weight: var(--weight-medium);
   }
 
   .more-suggestions-link {
@@ -1022,7 +1022,7 @@
     align-items: center;
     gap: 0.375rem;
     padding: 0.25rem 0.75rem;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     text-decoration: none;
     transition: color 0.15s;
@@ -1098,8 +1098,8 @@
     padding: 0.125rem 0.25rem;
     border-radius: 6px;
     font: inherit;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     color: var(--color-text-secondary);
     transition:
       color 0.15s,
@@ -1124,7 +1124,7 @@
 
   .category-count {
     flex-shrink: 0;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
     padding-right: 0.25rem;
   }
