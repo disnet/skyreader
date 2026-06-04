@@ -13,6 +13,7 @@ import {
   clampText,
   escapeHtml,
   externalArticleUrl,
+  feedUrlFor,
   fetchLinkblogDocuments,
   fetchPublicationMeta,
   fetchSocialContext,
@@ -132,6 +133,7 @@ export async function onRequestGet(context: BlogContext): Promise<Response> {
       description: summary || undefined,
       image: safeHttpUrl(pub?.icon || profile?.avatar) ?? undefined,
       url: `${origin}/blogs/${encodeURIComponent(did)}/${encodeURIComponent(rkey)}`,
+      feedUrl: feedUrlFor(origin, did),
     },
     body
   );

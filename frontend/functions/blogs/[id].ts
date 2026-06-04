@@ -10,11 +10,13 @@ import {
   ProxyDocument,
   PublicationMeta,
   SocialContext,
+  apiBaseFor,
   articleExcerpt,
   blogTitle,
   clampText,
   escapeHtml,
   externalArticleUrl,
+  feedUrlFor,
   fetchLinkblogDocuments,
   fetchPublicationMeta,
   fetchSocialContext,
@@ -24,8 +26,10 @@ import {
   htmlResponse,
   isDid,
   linkPostNote,
+  publicationUri,
   renderPage,
   renderSocialCounts,
+  renderSubscribeScript,
   resolveHandleToDid,
   rkeyFromUri,
   safeHttpUrl,
@@ -77,7 +81,8 @@ function renderIndex(
   profile: Profile | null,
   pub: PublicationMeta | null,
   docs: ProxyDocument[],
-  social: Map<string, SocialContext>
+  social: Map<string, SocialContext>,
+  apiBase: string
 ): string {
   const title = blogTitle(profile, pub);
   const icon = safeHttpUrl(pub?.icon || profile?.avatar);
@@ -97,12 +102,40 @@ function renderIndex(
   if (countLabel) bylineParts.push(escapeHtml(countLabel));
   const byline = bylineParts.join(' · ');
 
+  // Two ways to subscribe. "Atmosphere" subscribes inline — it writes a portable
+  // site.standard.graph.subscription to the visitor's PDS (redirecting to login
+  // first if needed); "RSS" is the open-standard feed any reader can follow. The
+  // Atmosphere control is a <button> wired up by renderSubscribeScript.
+  const atmosphereBtn = `<button id="atmo-sub" type="button" class="sub-link sub-action" data-state="idle" title="Subscribe in the Atmosphere">
+    <svg class="ico-follow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+    <svg class="ico-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+    <span class="sub-label">Atmosphere</span>
+  </button>`;
+  const rssLink = `<a class="sub-link" href="${escapeHtml(feedUrlFor(origin, did))}" title="Subscribe via RSS">
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.18 17.82a2.18 2.18 0 1 0 0 4.36 2.18 2.18 0 0 0 0-4.36zM4 11.13v3.05a6.82 6.82 0 0 1 6.82 6.82h3.05A9.87 9.87 0 0 0 4 11.13zm0-6.63v3.05c7.16 0 12.96 5.8 12.96 12.95H20C20 11.07 12.84 4.5 4 4.5z"/></svg>
+    <span>RSS</span>
+  </a>`;
+  // Space is reserved (visibility:hidden); the subscribe script adds .show once
+  // subscribed so revealing it doesn't shift the masthead. The href deep-links to
+  // this linkblog's feed: ?feed=<publicationUri> is a stable, cross-user key the
+  // app resolves to the visitor's local subscription (FeedPage canonicalizes it to
+  // the numeric id on load).
+  const openHref = `/?feed=${encodeURIComponent(publicationUri(did))}`;
+  const openLink = `<a id="atmo-open" class="open-app" href="${escapeHtml(openHref)}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+    <span>Open in Skyreader</span>
+  </a>`;
+
   const header = `<header>
   <div class="pubhead">
     ${icon ? `<img class="pubicon" src="${escapeHtml(icon)}" alt="" />` : ''}
     <div class="pubmeta">
       <h1>${escapeHtml(title)}</h1>
       ${byline ? `<p class="byline">${byline}</p>` : ''}
+    </div>
+    <div class="pubactions">
+      <span class="pubactions-label">Subscribe via:</span>
+      ${atmosphereBtn}${rssLink}${openLink}
     </div>
   </div>
   ${description ? `<p class="pubdesc">${escapeHtml(description)}</p>` : ''}
@@ -119,7 +152,9 @@ function renderIndex(
 
   const foot = `<footer class="foot">A linkblog on <a href="${escapeHtml(origin)}">Skyreader</a>, stored in the Atmosphere.</footer>`;
 
-  return header + list + foot;
+  const script = renderSubscribeScript(apiBase, publicationUri(did));
+
+  return header + list + foot + script;
 }
 
 export async function onRequestGet(context: BlogContext): Promise<Response> {
@@ -155,13 +190,14 @@ export async function onRequestGet(context: BlogContext): Promise<Response> {
   );
 
   const title = blogTitle(profile, pub);
-  const body = renderIndex(origin, did, profile, pub, docs, social);
+  const body = renderIndex(origin, did, profile, pub, docs, social, apiBaseFor(origin, env));
   const html = renderPage(
     {
       title,
       description: pub?.description || `Links shared by ${profile?.displayName || did}.`,
       image: safeHttpUrl(pub?.icon || profile?.avatar) ?? undefined,
       url: `${origin}/blogs/${encodeURIComponent(did)}`,
+      feedUrl: feedUrlFor(origin, did),
     },
     body
   );

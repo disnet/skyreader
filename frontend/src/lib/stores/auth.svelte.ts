@@ -67,6 +67,18 @@ function createAuthStore() {
     }
   }
 
+  // Prime the display cache WITHOUT flipping auth state. Used by the OAuth
+  // callback when bouncing straight back to a public page (e.g. a linkblog):
+  // keeping the 'skyreader-auth' marker lets a later app visit restore the
+  // session, but we must NOT set state.user here — that would mount the
+  // authenticated app chrome (sidebar + appManager.initialize) for a frame
+  // before the redirect, flashing the full app on the way out.
+  function cacheUser(user: User) {
+    if (browser) {
+      localStorage.setItem('skyreader-auth', JSON.stringify({ user }));
+    }
+  }
+
   async function logout() {
     try {
       await api.logout();
@@ -132,6 +144,7 @@ function createAuthStore() {
       state.scopeUpgradeRequired = false;
     },
     setUser,
+    cacheUser,
     verifySession,
     logout,
     setError,

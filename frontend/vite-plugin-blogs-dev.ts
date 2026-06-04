@@ -62,6 +62,10 @@ export function blogsDevPlugin(): Plugin {
         if (segs.length === 1) {
           modPath = '/functions/blogs/[id].ts';
           params = { id: segs[0] };
+        } else if (segs.length === 2 && segs[1] === 'feed.xml') {
+          // Static route wins over [rkey] in production; mirror that here.
+          modPath = '/functions/blogs/[id]/feed.xml.ts';
+          params = { id: segs[0] };
         } else if (segs.length === 2) {
           modPath = '/functions/blogs/[id]/[rkey].ts';
           params = { id: segs[0], rkey: segs[1] };
