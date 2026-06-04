@@ -630,6 +630,16 @@ export interface MentionLaneEntry {
   handle: string | null;
   note: string | null;
   url: string | null;
+  // Named Semble collection(s) the saver filed the card into, each with a link
+  // to its public Semble page where resolvable. Semble lane only; empty
+  // elsewhere. Adornment — degrades to an empty list.
+  collections: SembleCollectionRef[];
+}
+
+// One named Semble collection a card was filed into (see MentionLaneEntry).
+export interface SembleCollectionRef {
+  name: string;
+  url: string | null;
 }
 
 // The user's linkblog publication metadata (site.standard.publication), as

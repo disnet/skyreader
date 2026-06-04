@@ -24,7 +24,7 @@ import { Database } from 'bun:sqlite';
 import { normalizeArticleUrl } from './url-normalize';
 import { laneForSource, type LaneId } from './lanes';
 import { resolveHandle, resolvePdsUrl } from './did-resolver';
-import { resolveSiteMeta, buildCanonicalUrl } from './standard-site';
+import { resolveSiteMeta, buildCanonicalUrl, parseAtUri } from './standard-site';
 
 // The one-per-user Skyreader linkblog publication rkey (see backend
 // linkblog-sync). Used only as a link-out fallback for our own docs.
@@ -41,11 +41,27 @@ const MAX_ENTRIES = 8;
 // Over-fetch linking records before dedup-by-author so the cap is met after dups.
 const LINKS_PAGE_LIMIT = 30;
 
+// Semble's public web app. A card's saver links to their profile; a collection
+// resolves to /profile/<handle>/collections/<rkey> (the live collection view —
+// the per-card page is not built yet, so we never link a bare card).
+const SEMBLE_WEB_BASE = 'https://semble.so';
+// Most cards sit in 0-2 collections; cap the per-card fan-out either way.
+const MAX_SEMBLE_COLLECTIONS = 3;
+
+// A named Semble collection a card was filed into, with a link to its public
+// page where resolvable. Semble-only; empty for every other lane.
+export interface SembleCollection {
+  name: string;
+  url: string | null;
+}
+
 export interface MentionLaneEntry {
   did: string;
   handle: string | null;
   note: string | null;
   url: string | null;
+  // Which Semble collection(s) the saver filed this card into (Semble lane only).
+  collections: SembleCollection[];
 }
 
 interface LinksAllResponse {
@@ -162,6 +178,44 @@ async function resolveDocumentUrl(
   return null;
 }
 
+// The named collection(s) a Semble card was filed into. Constellation backlinks
+// the card's AT-URI through `network.cosmik.collectionLink.card.uri`; each link
+// points at a `network.cosmik.collection` we resolve to a name + public URL.
+// Collaborative collections can live in another repo, so the owner DID comes
+// from the collection AT-URI, not the saver. Best-effort and bounded — any
+// failure just yields fewer chips.
+async function resolveSembleCollections(
+  db: Database,
+  cardUri: string
+): Promise<SembleCollection[]> {
+  const data = await constellationGet<LinksResponse>('/links', {
+    target: cardUri,
+    collection: 'network.cosmik.collectionLink',
+    path: '.card.uri',
+    limit: '20',
+  });
+  const out: SembleCollection[] = [];
+  const seen = new Set<string>();
+  for (const rec of data?.linking_records ?? []) {
+    if (out.length >= MAX_SEMBLE_COLLECTIONS) break;
+    const link = await getRecordValue(db, rec.did, rec.collection, rec.rkey);
+    const collectionUri = firstString((link?.collection as { uri?: unknown })?.uri);
+    if (!collectionUri || seen.has(collectionUri)) continue;
+    seen.add(collectionUri);
+    const parsed = parseAtUri(collectionUri);
+    if (!parsed) continue;
+    const value = await getRecordValue(db, parsed.did, parsed.collection, parsed.rkey);
+    const name = firstString(value?.name);
+    if (!name) continue;
+    const ownerHandle = await resolveHandle(db, parsed.did);
+    const url = ownerHandle
+      ? `${SEMBLE_WEB_BASE}/profile/${ownerHandle}/collections/${parsed.rkey}`
+      : null;
+    out.push({ name, url });
+  }
+  return out;
+}
+
 // Build a lane entry from one linking record: a stable link-out where the lane
 // has one, plus a note pulled from the record (best-effort, lane-specific).
 async function resolveEntry(
@@ -173,6 +227,7 @@ async function resolveEntry(
   const handle = await resolveHandle(db, did);
   let url: string | null = null;
   let note: string | null = null;
+  let collections: SembleCollection[] = [];
 
   switch (laneId) {
     case 'bluesky': {
@@ -199,17 +254,21 @@ async function resolveEntry(
       break;
     }
     case 'semble': {
-      // Cosmik card — surface its title/note; no stable permalink known.
+      // Cosmik card — surface its title/note, link the saver to their Semble
+      // profile (the per-card page isn't built), and resolve which named
+      // collection(s) they filed it into.
+      if (handle) url = `${SEMBLE_WEB_BASE}/profile/${handle}`;
       const value = await getRecordValue(db, did, collection, rkey);
       if (value) {
         const content = value.content as Record<string, unknown> | undefined;
         note = firstString(content?.title, content?.note, value.title, value.note);
       }
+      collections = await resolveSembleCollections(db, `at://${did}/${collection}/${rkey}`);
       break;
     }
   }
 
-  return { did, handle, note, url };
+  return { did, handle, note, url, collections };
 }
 
 function cacheKey(laneId: LaneId, normUrl: string): string {

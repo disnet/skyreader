@@ -150,6 +150,8 @@ export interface MentionLaneEntryResult {
   handle: string | null;
   note: string | null;
   url: string | null;
+  // Named Semble collection(s) the saver filed the card into (Semble lane only).
+  collections: { name: string; url: string | null }[];
 }
 
 interface RawMentionLaneResponse {

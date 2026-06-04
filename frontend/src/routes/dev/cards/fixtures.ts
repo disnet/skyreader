@@ -185,12 +185,83 @@ export const fixtures: CardFixture[] = [
             handle: 'alice.bsky.social',
             note: 'Best take on this I have read all year.',
             url: 'https://example.com/alice',
+            collections: [],
           },
           {
             did: 'did:plc:bob',
             handle: 'bob.example.com',
             note: null,
             url: 'https://example.com/bob',
+            collections: [],
+          },
+        ],
+      },
+    },
+  },
+  {
+    name: 'Semble · saves',
+    note: 'The Semble lane: saves aren\'t notes, so they render as a wrapping flow of "<who> saved to <collection>" pills instead of the per-person list. A saver in several collections produces one pill each; a saver with none reads "<who> saved this". Collection names link out to Semble.',
+    props: {
+      ...base,
+      expanded: true,
+      isOpen: true,
+      hasContent: true,
+      readTimeMinutes: 4,
+      sanitizedContent: BODY_HTML,
+      hasOpenFullscreen: true,
+      laneRow: [
+        {
+          id: 'semble',
+          count: 4,
+          capped: false,
+          canCreate: true,
+          icon: 'semble',
+          label: 'Semble',
+          verb: 'saved',
+          title: '4 saved this · Semble',
+          isMine: false,
+          createLabel: 'Save to Semble',
+          createIsEdit: false,
+        },
+      ],
+      expandedLane: 'semble',
+      expandedLaneItems: {
+        loading: false,
+        entries: [
+          {
+            did: 'did:plc:alice',
+            handle: 'alice.bsky.social',
+            note: null,
+            url: 'https://semble.so/profile/alice.bsky.social',
+            collections: [
+              {
+                name: 'AI & the open web',
+                url: 'https://semble.so/profile/alice.bsky.social/collections/3kreadlist',
+              },
+            ],
+          },
+          {
+            did: 'did:plc:bob',
+            handle: 'bob.example.com',
+            note: null,
+            url: 'https://semble.so/profile/bob.example.com',
+            collections: [
+              {
+                name: 'Reading queue',
+                url: 'https://semble.so/profile/bob.example.com/collections/3kqueue',
+              },
+              {
+                name: 'Protocol design',
+                url: 'https://semble.so/profile/bob.example.com/collections/3kproto',
+              },
+            ],
+          },
+          {
+            did: 'did:plc:carol',
+            handle: 'carol.test',
+            note: null,
+            url: 'https://semble.so/profile/carol.test',
+            collections: [],
           },
         ],
       },

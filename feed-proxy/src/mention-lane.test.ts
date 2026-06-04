@@ -86,6 +86,7 @@ describe('getMentionLaneItems', () => {
       handle: 'alice.test',
       note: 'great read',
       url: 'https://bsky.app/profile/did:plc:alice/post/post1',
+      collections: [],
     });
   });
 
@@ -118,6 +119,7 @@ describe('getMentionLaneItems', () => {
         handle: 'bob.test',
         note: 'my take',
         url: 'https://skyreader.app/blogs/did:plc:bob/doc1',
+        collections: [],
       },
     ]);
   });
@@ -147,6 +149,7 @@ describe('getMentionLaneItems', () => {
         handle: 'carol.test',
         note: 'a foreign note',
         url: 'https://carol.example/essays/the-essay',
+        collections: [],
       },
     ]);
   });
@@ -179,6 +182,38 @@ describe('getMentionLaneItems', () => {
 
     const entries = await getMentionLaneItems(db, ARTICLE, 'linkblog');
     expect(entries[0].note).toBe('the summary');
+  });
+
+  it('resolves a Semble lane: profile link-out + the collection(s) the card was filed into', async () => {
+    const db = freshDb();
+    seedDid(db, 'did:plc:eve', 'eve.test');
+
+    mockConstellation(
+      { 'network.cosmik.card': { '.content.url': { distinct_dids: 1 } } },
+      {
+        'network.cosmik.card|.content.url': [{ did: 'did:plc:eve', rkey: 'card1' }],
+        // The card's collectionLink backlinks — eve filed it into one collection.
+        'network.cosmik.collectionLink|.card.uri': [{ did: 'did:plc:eve', rkey: 'link1' }],
+      },
+      {
+        card1: { content: { title: 'A saved card' } },
+        link1: { collection: { uri: 'at://did:plc:eve/network.cosmik.collection/col1' } },
+        col1: { name: 'Reading List' },
+      }
+    );
+
+    const entries = await getMentionLaneItems(db, ARTICLE, 'semble');
+    expect(entries).toEqual([
+      {
+        did: 'did:plc:eve',
+        handle: 'eve.test',
+        note: 'A saved card',
+        url: 'https://semble.so/profile/eve.test',
+        collections: [
+          { name: 'Reading List', url: 'https://semble.so/profile/eve.test/collections/col1' },
+        ],
+      },
+    ]);
   });
 
   it('returns empty for a lane with no sources, and caches the result', async () => {
