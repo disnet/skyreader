@@ -217,6 +217,28 @@
     untrack(() => feedViewStore.setFilters(filters));
   });
 
+  // Canonicalize a linkblog deep link. "Open in Skyreader" on a public linkblog
+  // points at /?feed=<publicationUri> (or /?feed=<did>) — a stable, cross-user
+  // identifier the page can emit without knowing the visitor's local DB. Once
+  // subscriptions hydrate, swap it for the numeric subscription id so the sidebar
+  // highlights and subsequent in-app navigation match every other feed link.
+  $effect(() => {
+    if (mode === 'linkblog') return;
+    const feed = $page.url.searchParams.get('feed');
+    if (!feed || /^\d+$/.test(feed)) return;
+    const subs = subscriptionsStore.subscriptions;
+    const match = feed.startsWith('at://')
+      ? subs.find((s) => s.sourceType === 'atproto.documents' && s.feedUrl === feed)
+      : feed.startsWith('did:')
+        ? subs.find((s) => s.sourceType === 'atproto.documents' && s.subjectDid === feed)
+        : undefined;
+    if (match?.id != null) {
+      const url = new URL($page.url);
+      url.searchParams.set('feed', String(match.id));
+      goto(url.pathname + url.search, { replaceState: true, keepFocus: true, noScroll: true });
+    }
+  });
+
   // Tab visibility state
   let lastVisibleTime = $state(Date.now());
   const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes

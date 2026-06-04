@@ -511,6 +511,28 @@ class ApiClient {
     });
   }
 
+  // Subscribe via the Atmosphere — writes/reads/deletes only the portable
+  // site.standard.graph.subscription record (no Skyreader subscription).
+  async getAtmosphereSubscription(publication: string): Promise<{ subscribed: boolean }> {
+    return this.fetch(
+      `/api/atmosphere/subscription?publication=${encodeURIComponent(publication)}`
+    );
+  }
+
+  async subscribeAtmosphere(publication: string): Promise<{ subscribed: boolean; uri?: string }> {
+    return this.fetch('/api/atmosphere/subscription', {
+      method: 'POST',
+      body: JSON.stringify({ publication }),
+    });
+  }
+
+  async unsubscribeAtmosphere(publication: string): Promise<{ subscribed: boolean }> {
+    return this.fetch('/api/atmosphere/subscription', {
+      method: 'DELETE',
+      body: JSON.stringify({ publication }),
+    });
+  }
+
   // Unified social read positions (new API)
   async getSocialReadPositions(type?: 'document'): Promise<{
     positions: Array<{

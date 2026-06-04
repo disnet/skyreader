@@ -4,8 +4,15 @@ import { warmProxyCache, warmProxyCacheBatch } from './feeds-v2';
 import { backfillDocumentsForUser } from './social';
 import { getUserSettings } from './settings';
 import { pushSubscriptionToPds, deleteSubscriptionFromPds } from '../services/subscription-sync';
+import {
+  linkblogPublicationUri,
+  writeAtmosphereSubscription,
+  deleteAtmosphereSubscription,
+} from '../services/atmosphere-subscription';
 import { createPDSClient, type WriteOp } from '../services/pds-client';
 import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
+import { generateTid } from '../utils/tid';
+import { fetchProfiles } from '../services/bsky-appview';
 import { getUserTierLimits } from '../services/user-tier';
 
 /**
@@ -65,6 +72,37 @@ async function maybePushToPds(
     }
   } catch (error) {
     console.error('[PDS Sync] Error pushing subscription:', error);
+  }
+}
+
+/**
+ * Write/delete the portable "subscribe via the Atmosphere" record
+ * (site.standard.graph.subscription) when a subscription is a linkblog follow.
+ * Gated behind Atmospheric sync, mirroring how the feed list is treated as the
+ * opt-in, publicly-visible part. Best-effort + background: a failure here never
+ * blocks the follow itself (the skyreader subscription is the source of truth).
+ */
+async function maybeSyncAtmosphereSubscription(
+  session: Session,
+  pdsSyncEnabled: boolean,
+  op: 'create' | 'delete',
+  sourceType: string | undefined | null,
+  feedUrl: string | undefined | null
+): Promise<void> {
+  if (!pdsSyncEnabled) return;
+  const publicationUri = linkblogPublicationUri(sourceType, feedUrl);
+  if (!publicationUri) return;
+
+  try {
+    const result =
+      op === 'create'
+        ? await writeAtmosphereSubscription(session, publicationUri)
+        : await deleteAtmosphereSubscription(session, publicationUri);
+    if (!result.success) {
+      console.error(`[Atmosphere] Failed to ${op} subscription record: ${result.error}`);
+    }
+  } catch (error) {
+    console.error(`[Atmosphere] Error during ${op} of subscription record:`, error);
   }
 }
 
@@ -363,6 +401,136 @@ function isValidUrl(url: string): boolean {
   }
 }
 
+// ── Atmosphere subscribe → local reader subscription ─────────────────────────
+//
+// "Subscribe via the Atmosphere" (atmosphere.ts) writes the portable
+// site.standard.graph.subscription to the visitor's PDS. For a signed-in
+// Skyreader user we ALSO create the matching local `atproto.documents`
+// subscription so the linkblog actually lands in their reader (and the
+// "Open in Skyreader" deep link, which resolves a publication URI to a local
+// subscription, has something to resolve to). The local row is created
+// unconditionally — decoupled from Atmospheric sync — while the optional mirror
+// of the app.skyreader.feed.subscription record to the PDS stays gated on
+// pds_sync, exactly like an in-app follow.
+
+// The did:… author of an at:// publication URI (at://<did>/<collection>/<rkey>).
+function didFromAtUri(uri: string): string | null {
+  const match = uri.match(/^at:\/\/([^/]+)\//);
+  return match && match[1].startsWith('did:') ? match[1] : null;
+}
+
+// The user's existing atproto.documents subscription for an author, if any. Dedup
+// is by (user, subjectDid) — the same key subscription-sync uses — so we never
+// double-add a linkblog already followed in-app or via a prior button click.
+async function findDocumentSubscription(
+  env: Env,
+  userDid: string,
+  subjectDid: string
+): Promise<{ record_uri: string } | null> {
+  return env.DB.prepare(
+    `SELECT record_uri FROM subscriptions_cache
+     WHERE user_did = ? AND source_type = 'atproto.documents' AND subject_did = ?`
+  )
+    .bind(userDid, subjectDid)
+    .first<{ record_uri: string }>();
+}
+
+// Create the local reader subscription for a linkblog publication if the user
+// doesn't already follow that author. Idempotent and non-fatal: any failure here
+// must not undo the portable subscribe the caller already wrote.
+export async function ensureLocalDocumentSubscription(
+  env: Env,
+  session: Session,
+  ctx: ExecutionContext,
+  publicationUri: string
+): Promise<void> {
+  const subjectDid = didFromAtUri(publicationUri);
+  if (!subjectDid) return;
+
+  // Already following this author (button or in-app) — nothing to do.
+  const existing = await findDocumentSubscription(env, session.did, subjectDid);
+  if (existing) return;
+
+  // Don't push a reader past their tier's cap; the Atmosphere follow still
+  // succeeded, it just won't show up in the reader.
+  try {
+    const limits = await getUserTierLimits(env, session.did);
+    const count = await countUserSubscriptions(env, session.did);
+    if (count >= limits.maxSubscriptions) {
+      console.log('[Atmosphere] At subscription limit; skipping local reader subscription');
+      return;
+    }
+  } catch (err) {
+    console.error('[Atmosphere] Failed to check subscription limit:', err);
+  }
+
+  // Derive a human-readable title up front; with a null title the reader UI falls
+  // back to showing the raw publication AT-URI. Mirrors the in-app linkblog
+  // follow's "<name>'s links" (linkblogDiscovery.subscribe), resolved from the
+  // author's public profile. Best-effort: a failed lookup yields a plain label.
+  const profile = (await fetchProfiles([subjectDid])).get(subjectDid);
+  const owner = profile?.displayName?.trim() || (profile?.handle ? `@${profile.handle}` : '');
+  const title = owner ? `${owner}'s links` : 'Linkblog';
+
+  const rkey = generateTid();
+  const recordUri = `at://${session.did}/app.skyreader.feed.subscription/${rkey}`;
+  await env.DB.prepare(
+    `INSERT OR REPLACE INTO subscriptions_cache
+     (user_did, record_uri, feed_url, title, category, created_at, source_type, subject_did, custom_title, custom_icon_url)
+     VALUES (?, ?, ?, ?, NULL, unixepoch(), 'atproto.documents', ?, NULL, NULL)`
+  )
+    .bind(session.did, recordUri, publicationUri, title, subjectDid)
+    .run();
+
+  // Pull the author's existing link posts so the feed isn't empty on first open.
+  ctx.waitUntil(backfillDocumentsForUser(env, subjectDid));
+
+  // Mirror to the user's PDS subscription list when Atmospheric sync is on, so the
+  // reader follow behaves exactly like an in-app one (best-effort, background).
+  const settings = await getUserSettings(env, session.did);
+  ctx.waitUntil(
+    maybePushToPds(
+      session,
+      settings.pdsSyncEnabled,
+      rkey,
+      publicationUri,
+      title,
+      undefined,
+      'atproto.documents',
+      subjectDid
+    )
+  );
+}
+
+// Remove the local reader subscription that mirrors a linkblog follow, keeping the
+// public button's subscribe/unsubscribe symmetric. Non-fatal.
+export async function removeLocalDocumentSubscription(
+  env: Env,
+  session: Session,
+  publicationUri: string
+): Promise<void> {
+  const subjectDid = didFromAtUri(publicationUri);
+  if (!subjectDid) return;
+
+  const existing = await findDocumentSubscription(env, session.did, subjectDid);
+  if (!existing) return;
+
+  const rkey = existing.record_uri.split('/').pop();
+  if (!rkey) return;
+
+  // Delete the PDS record first (when sync is on) so a sync can't re-import it,
+  // then drop the local row.
+  const settings = await getUserSettings(env, session.did);
+  try {
+    await deleteFromPdsIfEnabled(session, settings.pdsSyncEnabled, rkey);
+  } catch (err) {
+    console.error('[Atmosphere] Failed to delete reader subscription from PDS:', err);
+  }
+  await env.DB.prepare('DELETE FROM subscriptions_cache WHERE user_did = ? AND record_uri = ?')
+    .bind(session.did, existing.record_uri)
+    .run();
+}
+
 // POST /api/subscriptions - Create a single subscription
 export async function handleCreateSubscription(
   request: Request,
@@ -550,6 +718,18 @@ export async function handleCreateSubscription(
       )
     );
 
+    // A linkblog follow also writes a portable site.standard.graph.subscription
+    // so the follow is visible across the Atmosphere (gated on Atmospheric sync).
+    ctx.waitUntil(
+      maybeSyncAtmosphereSubscription(
+        session,
+        settings.pdsSyncEnabled,
+        'create',
+        sourceType,
+        feedUrl
+      )
+    );
+
     return new Response(
       JSON.stringify({
         rkey,
@@ -609,10 +789,30 @@ export async function handleDeleteSubscription(
   }
 
   try {
+    // Look up the row first so we know whether this was a linkblog follow (and
+    // thus whether to remove its portable Atmosphere subscription record).
+    const row = await env.DB.prepare(
+      'SELECT feed_url, source_type FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
+    )
+      .bind(session.did, `%/${rkey}`)
+      .first<{ feed_url: string | null; source_type: string | null }>();
+
     // Delete from PDS before removing the local cache/returning so the next sync cannot
     // re-import the record.
     const settings = await getUserSettings(env, session.did);
     await deleteFromPdsIfEnabled(session, settings.pdsSyncEnabled, rkey);
+
+    // Mirror the removal to the portable Atmosphere subscription (best-effort,
+    // background — a different collection, so no re-import race to await for).
+    ctx.waitUntil(
+      maybeSyncAtmosphereSubscription(
+        session,
+        settings.pdsSyncEnabled,
+        'delete',
+        row?.source_type,
+        row?.feed_url
+      )
+    );
 
     await env.DB.prepare('DELETE FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?')
       .bind(session.did, `%/${rkey}`)

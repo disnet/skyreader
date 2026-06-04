@@ -25,6 +25,7 @@ import {
   handleDiscover,
   handleDiscoverFriends,
 } from './routes/linkblog';
+import { handleAtmosphereSubscription } from './routes/atmosphere';
 import {
   handleCreateSubscription,
   handleDeleteSubscription,
@@ -290,6 +291,14 @@ export default {
           } else {
             response = await handleUpdatePublication(request, env);
           }
+          break;
+
+        // Subscribe via the Atmosphere — writes the portable
+        // site.standard.graph.subscription record, and (for a signed-in user)
+        // also creates the matching local reader subscription.
+        case url.pathname === '/api/atmosphere/subscription':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleAtmosphereSubscription(request, env, ctx);
           break;
 
         // Subscriptions endpoints (new)

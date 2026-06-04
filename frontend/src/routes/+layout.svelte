@@ -262,7 +262,11 @@
 {/if}
 
 <div class="app">
-  {#if !auth.isLoading}
+  {#if $page.url.pathname === '/auth/callback'}
+    <!-- The OAuth callback is a transient bounce page; render it bare so no app
+         (or marketing) chrome flashes before it redirects on. -->
+    {@render children()}
+  {:else if !auth.isLoading}
     {#if auth.isAuthenticated}
       <div class="app-container">
         <Sidebar />

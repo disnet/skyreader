@@ -344,6 +344,25 @@ function createFeedViewStore() {
   // Derived: the subscription selected by feedFilter (if any)
   let feedFilterSubscription = $derived.by(() => {
     if (!feedFilter) return null;
+    // Deep-link forms (from "Open in Skyreader" on a public linkblog): a
+    // publication AT URI or a bare DID resolves to the matching atproto.documents
+    // subscription. Resolved here (rather than only by numeric id) so the feed
+    // renders even before FeedPage canonicalizes the URL, and so it lands once
+    // subscriptions hydrate from IndexedDB.
+    if (feedFilter.startsWith('at://')) {
+      return (
+        subscriptionsStore.subscriptions.find(
+          (s) => s.sourceType === 'atproto.documents' && s.feedUrl === feedFilter
+        ) ?? null
+      );
+    }
+    if (feedFilter.startsWith('did:')) {
+      return (
+        subscriptionsStore.subscriptions.find(
+          (s) => s.sourceType === 'atproto.documents' && s.subjectDid === feedFilter
+        ) ?? null
+      );
+    }
     const id = parseInt(feedFilter);
     return subscriptionsStore.getById(id) ?? null;
   });

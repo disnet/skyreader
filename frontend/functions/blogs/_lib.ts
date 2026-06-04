@@ -15,6 +15,9 @@ export const LINKBLOG_RKEY = 'skyreader-links';
 export interface BlogEnv {
   FEED_PROXY_URL: string;
   FEED_PROXY_SECRET?: string;
+  // Backend API origin for the inline "Subscribe in the Atmosphere" button.
+  // Optional — falls back to a hostname-derived default (see apiBaseFor).
+  PUBLIC_API_URL?: string;
 }
 
 // The Pages Functions invocation context, typed just enough for our handlers.
@@ -81,6 +84,135 @@ export function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// Escape for XML text/attributes (RSS). Same five entities as HTML, but apos is
+// spelled `&apos;` (the XML predefined name).
+export function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+// Wrap HTML markup so it can live inside an RSS <description> verbatim (readers
+// render the HTML). CDATA keeps the angle brackets literal; we only have to guard
+// the one sequence that would close the section early.
+export function cdata(html: string): string {
+  return `<![CDATA[${html.replace(/]]>/g, ']]&gt;')}]]>`;
+}
+
+// RFC-822 date for RSS <pubDate>/<lastBuildDate>. Empty for an unparseable input.
+export function toRfc822(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toUTCString();
+}
+
+// Canonical RSS feed URL for a linkblog (the DID form, mirroring the permalink
+// encoding). Also the href used for feed autodiscovery on the HTML pages.
+export function feedUrlFor(origin: string, did: string): string {
+  return `${origin}/blogs/${encodeURIComponent(did)}/feed.xml`;
+}
+
+// Backend API origin for the inline subscribe button. Prefer an explicit env
+// override; otherwise derive from the page host (prod/staging map to their
+// api.* subdomain; local dev returns '' so the fetch is relative and rides the
+// Vite /api proxy).
+export function apiBaseFor(origin: string, env: BlogEnv): string {
+  if (env.PUBLIC_API_URL) return env.PUBLIC_API_URL.replace(/\/+$/, '');
+  let host = '';
+  try {
+    host = new URL(origin).hostname;
+  } catch {
+    return '';
+  }
+  if (host === 'skyreader.app') return 'https://api.skyreader.app';
+  if (host.endsWith('.skyreader.app')) return 'https://api-staging.skyreader.app';
+  return '';
+}
+
+// The inline "Subscribe in the Atmosphere" behavior for the public page. Vanilla
+// JS (the page has no framework): on click it writes/removes the user's portable
+// site.standard.graph.subscription via the backend, redirecting to login first if
+// the visitor isn't authenticated (and resuming via ?subscribe=1 on return). The
+// CSP middleware injects a nonce into this <script>, so it runs under
+// strict-dynamic. apiBase/publication are server-trusted, but we still JSON-encode
+// and neutralize `<` defensively.
+//
+// On load we reflect the visitor's existing subscription state, but ONLY when
+// they're signed into Skyreader in this browser — the app persists a
+// 'skyreader-auth' marker in localStorage, which is same-origin with this page.
+// Gating on it keeps us from firing a credentialed request (and logging a 401)
+// for every anonymous viewer of a public page. The probe is passive: a stale
+// session just 401s and we leave the button idle (never a redirect to login —
+// only an explicit click does that). The POST is idempotent, so a re-subscribe is
+// harmless.
+export function renderSubscribeScript(apiBase: string, publicationUri: string): string {
+  const cfg = JSON.stringify({ apiBase, publication: publicationUri }).replace(/</g, '\\u003c');
+  return `<script>(function(){
+  var cfg = ${cfg};
+  var btn = document.getElementById('atmo-sub');
+  if (!btn) return;
+  var openLink = document.getElementById('atmo-open');
+  // The visible label stays "Atmosphere" (consistent with the "RSS" option) —
+  // state is conveyed by the icon swap, the dimming, and the title.
+  var titles = { idle: 'Subscribe in the Atmosphere', busy: 'Working\\u2026', subscribed: 'Subscribed \\u2014 click to remove' };
+  function set(s){
+    btn.dataset.state = s;
+    btn.title = titles[s] || titles.idle;
+    if (openLink) openLink.classList.toggle('show', s === 'subscribed');
+  }
+  function call(method){
+    return fetch(cfg.apiBase + '/api/atmosphere/subscription', {
+      method: method,
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ publication: cfg.publication })
+    });
+  }
+  function login(){ location.href = '/auth/login?returnUrl=' + encodeURIComponent(location.pathname + '?subscribe=1'); }
+  function write(method, ok){
+    set('busy');
+    call(method).then(function(res){
+      if (res.status === 401 || res.status === 403) { login(); return; }
+      if (!res.ok) throw new Error('failed');
+      set(ok);
+    }).catch(function(){ set(method === 'POST' ? 'idle' : 'subscribed'); });
+  }
+  btn.addEventListener('click', function(e){
+    e.preventDefault();
+    var s = btn.dataset.state;
+    if (s === 'busy') return;
+    if (s === 'subscribed') write('DELETE', 'idle');
+    else write('POST', 'subscribed');
+  });
+  // Reflect existing state on load — only for a signed-in visitor (see note above).
+  // No 'busy' flash: we stay idle and flip to 'subscribed' only on a confirmed yes,
+  // so the common anonymous/unsubscribed case never flickers.
+  function probe(){
+    var authed = false;
+    try { authed = !!localStorage.getItem('skyreader-auth'); } catch(e){}
+    if (!authed) return;
+    fetch(cfg.apiBase + '/api/atmosphere/subscription?publication=' + encodeURIComponent(cfg.publication), {
+      credentials: 'include'
+    }).then(function(res){ return res.ok ? res.json() : null; })
+      .then(function(data){ if (data && data.subscribed) set('subscribed'); })
+      .catch(function(){});
+  }
+  // Resume an intent that bounced through login.
+  var sp = new URLSearchParams(location.search);
+  if (sp.get('subscribe') === '1') {
+    sp.delete('subscribe');
+    var qs = sp.toString();
+    history.replaceState(null, '', location.pathname + (qs ? '?' + qs : ''));
+    write('POST', 'subscribed');
+  } else {
+    probe();
+  }
+})();</script>`;
 }
 
 // ── Identity resolution ──────────────────────────────────────────────────────
@@ -445,6 +577,28 @@ const STYLES = `
   .pubhead { display: flex; align-items: center; gap: 1rem; }
   .pubicon { width: 52px; height: 52px; border-radius: 14px; object-fit: cover; flex: none; box-shadow: inset 0 0 0 1px var(--icon-ring); background: var(--line-soft); }
   .pubmeta { min-width: 0; }
+  /* Subscribe affordances — a quiet "Subscribe via:" label over the two options
+     (Atmosphere, RSS), as a tidy left-aligned mini-column pinned to the
+     masthead's trailing edge. Flat-by-default; the options are the One Blue. */
+  .pubactions { margin-left: auto; align-self: flex-start; flex: none; display: flex; flex-direction: column; align-items: flex-start; gap: 0.25rem; font-size: 0.8125rem; }
+  .pubactions-label { color: var(--muted); }
+  .sub-link { display: inline-flex; align-items: center; gap: 0.375rem; color: var(--blue); font-weight: 600; }
+  .sub-link:hover { text-decoration: none; opacity: 0.82; }
+  .sub-link svg { width: 15px; height: 15px; display: block; }
+  /* The Atmosphere option is a <button> (it subscribes inline) — strip the chrome
+     so it reads as the same quiet link as RSS. Only reset the font family (NOT the
+     size: a font shorthand reset would override .sub-link and render at body size). */
+  .sub-action { background: none; border: 0; padding: 0; margin: 0; font-family: inherit; font-size: inherit; line-height: inherit; cursor: pointer; }
+  .sub-action .ico-check { display: none; }
+  .sub-action[data-state="subscribed"] .ico-follow { display: none; }
+  .sub-action[data-state="subscribed"] .ico-check { display: block; }
+  .sub-action[data-state="busy"] { opacity: 0.55; cursor: default; }
+  /* Revealed (toggled to .show) once subscribed. Kept in flow but visibility-hidden
+     so revealing it doesn't reflow the masthead (no layout shift). */
+  .open-app { display: inline-flex; align-items: center; gap: 0.375rem; color: var(--muted); font-weight: 500; visibility: hidden; }
+  .open-app.show { visibility: visible; }
+  .open-app:hover { color: var(--blue); text-decoration: none; }
+  .open-app svg { width: 15px; height: 15px; display: block; }
   .pubhead h1 { font-size: 1.625rem; line-height: 1.18; margin: 0; letter-spacing: -0.022em; font-weight: 700; text-wrap: balance; }
   .byline { color: var(--muted); font-size: 0.9375rem; margin: 0.25rem 0 0; }
   .byline a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--line); }
@@ -519,12 +673,17 @@ export interface PageHead {
   description?: string;
   image?: string;
   url: string;
+  // When set, emits an RSS autodiscovery <link> so browsers/readers find the feed.
+  feedUrl?: string;
 }
 
 export function renderPage(head: PageHead, bodyHtml: string): string {
   const desc = head.description ? escapeHtml(head.description) : '';
   const ogImage = head.image
     ? `<meta property="og:image" content="${escapeHtml(head.image)}" />`
+    : '';
+  const feedLink = head.feedUrl
+    ? `<link rel="alternate" type="application/rss+xml" title="${escapeHtml(head.title)}" href="${escapeHtml(head.feedUrl)}" />`
     : '';
   return `<!doctype html>
 <html lang="en">
@@ -539,6 +698,7 @@ ${desc ? `<meta property="og:description" content="${desc}" />` : ''}
 <meta property="og:url" content="${escapeHtml(head.url)}" />
 ${ogImage}
 <meta name="twitter:card" content="summary" />
+${feedLink}
 <style>${STYLES}</style>
 </head>
 <body>
@@ -553,6 +713,17 @@ export function htmlResponse(html: string, status = 200): Response {
   return new Response(html, {
     status,
     headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  });
+}
+
+export function rssResponse(xml: string, status = 200): Response {
+  return new Response(xml, {
+    status,
+    headers: {
+      'Content-Type': 'application/rss+xml; charset=utf-8',
+      // Short edge cache — a linkblog updates rarely, and readers poll often.
+      'Cache-Control': 'public, max-age=300',
+    },
   });
 }
 

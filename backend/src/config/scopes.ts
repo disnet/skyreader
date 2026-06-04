@@ -27,10 +27,17 @@ export const MARGIN_SCOPES = [
 // Linkblog scopes — sharing writes standard.site records to the user's PDS.
 export const LINKBLOG_SCOPES = ['repo:site.standard.publication', 'repo:site.standard.document'];
 
+// Atmosphere subscription scope — "subscribe via the Atmosphere" writes a
+// portable site.standard.graph.subscription follow edge to the user's PDS.
+// Kept separate from LINKBLOG_SCOPES (which is also used as a required-scope
+// check for sharing) so adding it doesn't retroactively over-restrict shares.
+export const ATMOSPHERE_SCOPES = ['repo:site.standard.graph.subscription'];
+
 // All possible scopes (base + all integrations) — used in client metadata
 export const ALL_POSSIBLE_SCOPES = [
   GRANULAR_SCOPES,
   ...SEMBLE_SCOPES,
   ...MARGIN_SCOPES,
   ...LINKBLOG_SCOPES,
+  ...ATMOSPHERE_SCOPES,
 ].join(' ');

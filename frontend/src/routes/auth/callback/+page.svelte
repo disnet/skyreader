@@ -9,6 +9,25 @@
   onMount(async () => {
     const returnUrl = $page.url.searchParams.get('returnUrl') || '/';
 
+    // Returning to a public linkblog (served by Cloudflare Pages Functions, not
+    // the SvelteKit router). Bounce straight back without booting the app: the
+    // session cookie is already set, so the linkblog page's ?subscribe=1 resume
+    // completes the follow. We cache the user for a later app visit but must NOT
+    // call auth.setUser() — flipping isAuthenticated here would mount the app
+    // sidebar + kick off appManager.initialize() for a frame, flashing full app
+    // chrome before the redirect. replace() keeps this transient page out of
+    // history (no callback URL to land on via Back).
+    if (returnUrl.startsWith('/blogs/')) {
+      try {
+        const user = await api.getMe();
+        auth.cacheUser(user);
+      } catch {
+        // Non-fatal: the session cookie still works; the marker just isn't primed.
+      }
+      window.location.replace(returnUrl);
+      return;
+    }
+
     try {
       // Session cookie was set by the OAuth callback redirect
       // Fetch user info to verify session and get user data

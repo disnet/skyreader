@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { page } from '$app/stores';
   import { api } from '$lib/services/api';
   import { searchBlueskyActors, type BlueskySearchResult } from '$lib/services/blueskySearch';
   import Logo from '$lib/assets/logo.svg';
@@ -129,7 +130,10 @@
 
     isLoading = true;
     try {
-      const { authUrl } = await api.login(trimmedHandle);
+      // Carry ?returnUrl through OAuth so deep links (e.g. /follow) resume after
+      // login. The backend validates it against open-redirects.
+      const returnUrl = $page.url.searchParams.get('returnUrl') || undefined;
+      const { authUrl } = await api.login(trimmedHandle, returnUrl);
       window.location.href = authUrl;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to start login';
