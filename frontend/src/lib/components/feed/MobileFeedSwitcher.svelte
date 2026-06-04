@@ -165,7 +165,7 @@
       {
         type: 'utility',
         id: 'linkblog',
-        label: 'Your Linkblog',
+        label: 'Linkblog',
         icon: 'share' as IconName,
       },
       {

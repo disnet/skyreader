@@ -285,7 +285,7 @@
 
   // Get page title based on filter
   let pageTitle = $derived.by(() => {
-    if (mode === 'linkblog') return 'Your Linkblog';
+    if (mode === 'linkblog') return 'Linkblog';
     if (feedViewStore.viewFilter) {
       const fv = feedViewStore.activeFilteredView;
       return fv?.name || 'Channel';

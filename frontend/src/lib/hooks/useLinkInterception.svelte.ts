@@ -64,6 +64,12 @@ export function useLinkInterception(params: LinkInterceptionParams) {
     menuState = null;
   }
 
+  // Open the same menu for a link outside the intercepted content area (e.g. a
+  // link post's URL chip), reusing the one popup the article body uses.
+  function openMenu(state: LinkMenuState) {
+    menuState = state;
+  }
+
   onDestroy(detach);
 
   return {
@@ -71,6 +77,7 @@ export function useLinkInterception(params: LinkInterceptionParams) {
       return menuState;
     },
     closeMenu,
+    openMenu,
     attach,
     detach,
   };

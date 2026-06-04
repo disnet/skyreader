@@ -17,6 +17,7 @@
   import { formatRelativeDate } from '$lib/utils/date';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { sanitizeHtml } from '$lib/utils/sanitize';
+  import { marked } from 'marked';
   import { isLeafletContent, renderLeafletContent } from '$lib/utils/leaflet-renderer';
   import { isPcktBlogContent, renderPcktBlogContent } from '$lib/utils/pckt-blog-renderer';
   import { isOffprintContent, renderOffprintContent } from '$lib/utils/offprint-renderer';
@@ -173,13 +174,21 @@
     return undefined;
   });
 
-  // The user's commentary on a link post, rendered as plain prose (not a
-  // blockquote) — it's the author's own voice, and a quote box double-quotes
-  // once notes get rich formatting.
-  // For the user's own post the note is shown (and edited) in the note box above
-  // the action bar, so don't also render it as prose in the body.
+  // The user's commentary on a link post, in the author's own voice. For the
+  // user's own post the note is shown (and edited) in the note box above the
+  // action bar, so don't also render it as prose in the body.
   let linkPostNote = $derived(
     isLinkPostMode && document && !isOwnLinkblogPost ? getLinkPostNote(document) : undefined
+  );
+  // Notes are authored as Markdown — parse to HTML (GFM, soft line breaks
+  // preserved) and sanitize before the view renders it. Inline links open in a
+  // new tab via the same afterSanitize hook used for article bodies.
+  let linkPostNoteHtml = $derived(
+    linkPostNote
+      ? sanitizeHtml(
+          marked.parse(linkPostNote, { gfm: true, breaks: true, async: false }) as string
+        )
+      : undefined
   );
   // The article excerpt + thumbnail for the link-card preview.
   let linkPostExcerpt = $derived(isLinkPostMode ? document?.description : undefined);
@@ -742,6 +751,7 @@
   {isDocumentMode}
   {isLinkPostMode}
   {linkPostNote}
+  {linkPostNoteHtml}
   {linkPostExcerpt}
   {linkPostThumb}
   {authorHandle}
@@ -780,6 +790,8 @@
   onRemoveShare={() => removeShare()}
   onOpenUrl={handleOpenUrl}
   onOpenFullscreen={() => onOpenFullscreen?.()}
+  onOpenLinkMenu={(rect) =>
+    linkInterception.openMenu({ url: itemUrl, linkText: itemTitle, anchorRect: rect })}
   onExpandToggle={() => onExpand?.()}
   onTagClick={handleTagClick}
   onOverflowClick={handleOverflowClick}

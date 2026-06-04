@@ -23,6 +23,7 @@
     isDocumentMode,
     isLinkPostMode,
     linkPostNote,
+    linkPostNoteHtml,
     linkPostExcerpt,
     linkPostThumb,
     authorHandle,
@@ -64,6 +65,7 @@
     onRemoveShare,
     onOpenUrl,
     onOpenFullscreen,
+    onOpenLinkMenu,
     onExpandToggle,
     onTagClick,
     onOverflowClick,
@@ -80,6 +82,10 @@
     onOpenAuthor,
     onCloseOverflow,
   }: ArticleCardViewProps = $props();
+
+  // The external URL shown beneath a link post's quote, trimmed of its scheme and
+  // any trailing slash so it reads as a clean address rather than a raw href.
+  const linkDisplayUrl = $derived((itemUrl ?? '').replace(/^https?:\/\//, '').replace(/\/+$/, ''));
 
   // The content tap: keep the pure DOM guards here (let real links / media play),
   // then hand off the expand-vs-select decision to the container via onContentTap.
@@ -214,31 +220,27 @@
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <div class="article-content" onclick={handleContentClick}>
       {#if isLinkPostMode}
-        <!-- A link post: the author's note as prose, then the external article as
-             a card. Tapping the card opens the in-app reader (fetched on demand). -->
-        {#if linkPostNote}
-          <p class="link-post-note">{linkPostNote}</p>
+        <!-- A link post: the author's note as prose, then the linked article as a
+             quoted snippet of its own context, then the address. Tapping the URL
+             opens the in-app reader (fetched on demand). -->
+        {#if linkPostNoteHtml}
+          <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+          <div class="link-post-note">{@html linkPostNoteHtml}</div>
+        {/if}
+        {#if linkPostExcerpt}
+          <blockquote class="link-post-quote">{linkPostExcerpt}</blockquote>
         {/if}
         <button
-          class="link-card"
+          class="link-post-url"
+          title={itemUrl}
           onclick={(e) => {
             e.stopPropagation();
-            onOpenFullscreen?.();
+            onOpenLinkMenu?.(e.currentTarget.getBoundingClientRect());
           }}
         >
-          {#if linkPostThumb}
-            <img src={linkPostThumb} alt="" class="link-card-thumb" />
-          {/if}
-          <span class="link-card-body">
-            <span class="link-card-site">
-              {#if faviconUrl}<img src={faviconUrl} alt="" class="link-card-favicon" />{/if}
-              {#if displayFeedTitle}{displayFeedTitle}{/if}
-            </span>
-            <span class="link-card-title">{itemTitle}</span>
-            {#if linkPostExcerpt}
-              <span class="link-card-excerpt">{linkPostExcerpt}</span>
-            {/if}
-          </span>
+          {#if faviconUrl}<img src={faviconUrl} alt="" class="link-post-url-favicon" />{/if}
+          <span class="link-post-url-text">{linkDisplayUrl}</span>
+          <Icon name="external-link" size={13} />
         </button>
       {:else if hasContent}
         <div class="article-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
@@ -840,6 +842,8 @@
   }
 
   /* Link-post body: the note as prose, then the article as a tappable card. */
+  /* The author's note, rendered from Markdown. Block children (paragraphs,
+     lists) collapse their outer margins so the note reads as one tight block. */
   .link-post-note {
     font-family: var(--article-font);
     font-size: var(--article-font-size);
@@ -849,67 +853,106 @@
     overflow-wrap: break-word;
   }
 
-  .link-card {
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    text-align: left;
-    background: none;
-    border: 1px solid var(--color-border, #e5e5e5);
-    border-radius: 8px;
-    overflow: hidden;
-    cursor: pointer;
-    padding: 0;
-    font: inherit;
+  .link-post-note :global(> :first-child) {
+    margin-top: 0;
   }
 
-  .link-card:hover {
-    border-color: var(--color-primary, #0066cc);
+  .link-post-note :global(> :last-child) {
+    margin-bottom: 0;
   }
 
-  .link-card-thumb {
-    width: 100%;
-    max-height: 180px;
-    object-fit: cover;
+  .link-post-note :global(p) {
+    margin: 0 0 0.75rem;
   }
 
-  .link-card-body {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    padding: 0.75rem;
-    min-width: 0;
+  .link-post-note :global(a) {
+    color: var(--color-primary, #0066cc);
   }
 
-  .link-card-site {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    font-size: var(--text-xs);
+  .link-post-note :global(ul),
+  .link-post-note :global(ol) {
+    margin: 0 0 0.75rem;
+    padding-left: 1.5rem;
+  }
+
+  .link-post-note :global(li) {
+    margin: 0.125rem 0;
+  }
+
+  .link-post-note :global(blockquote) {
+    margin: 0 0 0.75rem;
+    padding-left: 0.875rem;
+    border-left: 3px solid var(--color-border, #e5e5e5);
     color: var(--color-text-secondary);
   }
 
-  .link-card-favicon {
+  .link-post-note :global(code) {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.9em;
+    background: var(--color-surface-2, #f3f3f3);
+    padding: 0.1em 0.3em;
+    border-radius: 4px;
+  }
+
+  .link-post-note :global(pre) {
+    margin: 0 0 0.75rem;
+    padding: 0.75rem;
+    overflow-x: auto;
+    background: var(--color-surface-2, #f3f3f3);
+    border-radius: 6px;
+  }
+
+  .link-post-note :global(pre code) {
+    background: none;
+    padding: 0;
+  }
+
+  /* The linked article's own context, quoted. A quiet left rule and secondary
+     text keep it subordinate to the author's note above — it's the article
+     speaking, not the linkblogger. */
+  .link-post-quote {
+    margin: 0 0 1rem;
+    padding: 0.125rem 0 0.125rem 1rem;
+    border-left: 3px solid var(--color-border, #e5e5e5);
+    font-family: var(--article-font);
+    font-size: var(--article-font-size);
+    line-height: 1.6;
+    color: var(--color-text-secondary);
+    overflow-wrap: break-word;
+  }
+
+  /* The address, as a plain link rather than a card. One Blue, favicon for
+     provenance, external-link glyph to signal it opens the article. */
+  .link-post-url {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    max-width: 100%;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: var(--text-sm);
+    color: var(--color-primary, #0066cc);
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .link-post-url:hover .link-post-url-text {
+    text-decoration: underline;
+  }
+
+  .link-post-url-favicon {
     width: 14px;
     height: 14px;
     flex-shrink: 0;
   }
 
-  .link-card-title {
-    font-weight: var(--weight-semibold);
-    color: var(--color-text);
-    line-height: 1.35;
-  }
-
-  .link-card-excerpt {
-    font-size: var(--text-md);
-    line-height: var(--leading-normal);
-    color: var(--color-text-secondary);
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    line-clamp: 3;
-    -webkit-box-orient: vertical;
+  .link-post-url-text {
     overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
   }
 
   /* The Discussion button + in-flow section. The button lives in the action bar;
