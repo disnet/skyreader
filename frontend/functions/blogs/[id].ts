@@ -10,7 +10,9 @@ import {
   ProxyDocument,
   PublicationMeta,
   SocialContext,
+  articleExcerpt,
   blogTitle,
+  clampText,
   escapeHtml,
   externalArticleUrl,
   fetchLinkblogDocuments,
@@ -29,35 +31,44 @@ import {
   safeHttpUrl,
 } from './_lib';
 
-// The entry body: the user's note (a link post's whole point), falling back to the
-// article excerpt for a plain document.
-function entryBody(doc: ProxyDocument): string {
-  const text = (linkPostNote(doc) || doc.description || doc.textContent || '').trim();
-  if (text.length <= 280) return text;
-  return text.slice(0, 277).trimEnd() + '…';
-}
-
 function renderEntry(did: string, doc: ProxyDocument, ctx: SocialContext | undefined): string {
   const rkey = rkeyFromUri(doc.recordUri);
   const permalink = rkey ? `/blogs/${encodeURIComponent(did)}/${encodeURIComponent(rkey)}` : null;
   const title = escapeHtml(doc.title || 'Untitled');
+  // The title anchor stretches over the whole row (its ::after covers the <li>),
+  // so the entire entry is one calm tap target to the permalink.
   const titleHtml = permalink ? `<a href="${permalink}">${title}</a>` : title;
-  const body = entryBody(doc);
+
+  // Two distinct things: the user's own note (their voice, plain text) and a
+  // snippet quoted from the article (the article's voice). Rendered separately so
+  // it's always clear which is which; the excerpt is dropped when it just repeats
+  // the note.
+  const note = linkPostNote(doc).trim();
+  const excerpt = articleExcerpt(doc);
+  const noteHtml = note ? `<p class="entry-note">${escapeHtml(clampText(note, 280))}</p>` : '';
+  const quoteHtml =
+    excerpt && excerpt !== note
+      ? `<blockquote class="entry-quote"><p>${escapeHtml(clampText(excerpt, 200))}</p></blockquote>`
+      : '';
+
   // The shared article's host (link post), falling back to the doc's own URL.
   const host = hostnameOf(externalArticleUrl(doc) || doc.canonicalUrl);
-  const date = formatDate(doc.publishedAt || doc.createdAt);
+  // Share time (when this went on the linkblog), not the article's publish date.
+  const date = formatDate(doc.createdAt || doc.publishedAt);
 
   const meta: string[] = [];
   if (host) meta.push(`<span class="src">${escapeHtml(host)}</span>`);
   if (date) meta.push(`<span>${escapeHtml(date)}</span>`);
   const social = renderSocialCounts(ctx);
   if (social) meta.push(social);
+  const metaHtml = meta.join('<span class="sep" aria-hidden="true">·</span>');
 
-  return `<article class="entry">
-  <h2>${titleHtml}</h2>
-  ${body ? `<p>${escapeHtml(body)}</p>` : ''}
-  ${meta.length ? `<div class="meta">${meta.join('')}</div>` : ''}
-</article>`;
+  return `<li class="entry">
+  <h2 class="entry-title">${titleHtml}</h2>
+  ${noteHtml}
+  ${quoteHtml}
+  ${meta.length ? `<div class="meta">${metaHtml}</div>` : ''}
+</li>`;
 }
 
 function renderIndex(
@@ -73,21 +84,38 @@ function renderIndex(
   const handle = profile?.handle;
   const description = pub?.description;
 
+  // Byline: "by @handle · 42 links" — author credit plus a quiet sense of the
+  // shelf's depth. Either half stands alone if the other is missing.
+  const count = docs.length;
+  const countLabel = count > 0 ? `${count} ${count === 1 ? 'link' : 'links'}` : '';
+  const bylineParts: string[] = [];
+  if (handle) {
+    bylineParts.push(
+      `by <a href="https://bsky.app/profile/${escapeHtml(handle)}">@${escapeHtml(handle)}</a>`
+    );
+  }
+  if (countLabel) bylineParts.push(escapeHtml(countLabel));
+  const byline = bylineParts.join(' · ');
+
   const header = `<header>
   <div class="pubhead">
-    ${icon ? `<img src="${escapeHtml(icon)}" alt="" />` : ''}
-    <div>
+    ${icon ? `<img class="pubicon" src="${escapeHtml(icon)}" alt="" />` : ''}
+    <div class="pubmeta">
       <h1>${escapeHtml(title)}</h1>
-      ${handle ? `<p class="byline">by <a href="https://bsky.app/profile/${escapeHtml(handle)}">@${escapeHtml(handle)}</a></p>` : ''}
+      ${byline ? `<p class="byline">${byline}</p>` : ''}
     </div>
   </div>
   ${description ? `<p class="pubdesc">${escapeHtml(description)}</p>` : ''}
 </header>
 <hr class="divider" />`;
 
+  const who = profile?.displayName || (handle ? `@${handle}` : 'This reader');
   const list = docs.length
-    ? docs.map((d) => renderEntry(did, d, social.get(d.recordUri))).join('\n')
-    : `<p class="empty">No links yet.</p>`;
+    ? `<ol class="entries">${docs.map((d) => renderEntry(did, d, social.get(d.recordUri))).join('\n')}</ol>`
+    : `<div class="empty">
+      <p class="empty-title">No links yet</p>
+      <p class="empty-sub">When ${escapeHtml(who)} shares an article, it shows up here.</p>
+    </div>`;
 
   const foot = `<footer class="foot">A linkblog on <a href="${escapeHtml(origin)}">Skyreader</a>, stored in the Atmosphere.</footer>`;
 

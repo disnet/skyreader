@@ -8,7 +8,9 @@ import {
   ProxyDocument,
   PublicationMeta,
   SocialContext,
+  articleExcerpt,
   blogTitle,
+  clampText,
   escapeHtml,
   externalArticleUrl,
   fetchLinkblogDocuments,
@@ -28,11 +30,6 @@ import {
   safeHttpUrl,
 } from '../_lib';
 
-// The user's note (a link post's commentary), falling back to the article excerpt.
-function entryNote(doc: ProxyDocument): string {
-  return (linkPostNote(doc) || doc.description || doc.textContent || '').trim();
-}
-
 function renderEntryPage(
   origin: string,
   did: string,
@@ -43,26 +40,38 @@ function renderEntryPage(
 ): string {
   const blogName = blogTitle(profile, pub);
   const title = escapeHtml(doc.title || 'Untitled');
-  const note = entryNote(doc);
+  // The user's note (their voice, plain text — newlines preserved) and a snippet
+  // quoted from the article (the article's voice), kept visually distinct.
+  const note = linkPostNote(doc).trim();
+  const excerpt = articleExcerpt(doc);
   // The shared article (link post), falling back to the doc's own URL.
   const articleUrl = safeHttpUrl(externalArticleUrl(doc) || doc.canonicalUrl);
   const host = hostnameOf(articleUrl ?? undefined);
-  const date = formatDate(doc.publishedAt || doc.createdAt);
+  // Share time (when this went on the linkblog), not the article's publish date.
+  const date = formatDate(doc.createdAt || doc.publishedAt);
 
   const meta: string[] = [];
   if (host) meta.push(`<span class="src">${escapeHtml(host)}</span>`);
   if (date) meta.push(`<span>${escapeHtml(date)}</span>`);
   const social = renderSocialCounts(ctx);
   if (social) meta.push(social);
+  const metaHtml = meta.join('<span class="sep" aria-hidden="true">·</span>');
   const readMore = articleUrl
-    ? `<a class="readmore" href="${escapeHtml(articleUrl)}" rel="noopener noreferrer">Read the full article${host ? ` on ${escapeHtml(host)}` : ''} →</a>`
+    ? `<a class="readmore" href="${escapeHtml(articleUrl)}" rel="noopener noreferrer">Read the full article${host ? ` on ${escapeHtml(host)}` : ''} <span class="arrow" aria-hidden="true">→</span></a>`
     : '';
 
-  return `<a class="back" href="/blogs/${encodeURIComponent(did)}">← ${escapeHtml(blogName)}</a>
-<article class="entry" style="border-bottom:0;padding-top:0;">
-  <h2 style="font-size:1.5rem;">${title}</h2>
-  ${meta.length ? `<div class="meta">${meta.join('')}</div>` : ''}
-  ${note ? `<p style="margin-top:1.25rem;">${escapeHtml(note)}</p>` : ''}
+  const noteHtml = note ? `<p class="entry-note-lg">${escapeHtml(note)}</p>` : '';
+  const quoteHtml =
+    excerpt && excerpt !== note
+      ? `<blockquote class="entry-quote"><p>${escapeHtml(clampText(excerpt, 600))}</p></blockquote>`
+      : '';
+
+  return `<a class="back" href="/blogs/${encodeURIComponent(did)}"><span aria-hidden="true">←</span> ${escapeHtml(blogName)}</a>
+<article class="entry-page">
+  <h1 class="entry-title-lg">${title}</h1>
+  ${meta.length ? `<div class="meta">${metaHtml}</div>` : ''}
+  ${noteHtml}
+  ${quoteHtml}
   ${readMore}
   ${renderAlsoLinkedBy(ctx)}
 </article>
@@ -115,11 +124,12 @@ export async function onRequestGet(context: BlogContext): Promise<Response> {
   ]);
 
   const body = renderEntryPage(origin, did, profile, pub, doc, social.get(doc.recordUri));
-  const note = entryNote(doc);
+  // OG description: prefer the user's note, fall back to the article snippet.
+  const summary = (linkPostNote(doc).trim() || articleExcerpt(doc)).slice(0, 280);
   const html = renderPage(
     {
       title: `${doc.title || 'Untitled'} · ${blogTitle(profile, pub)}`,
-      description: note ? note.slice(0, 280) : undefined,
+      description: summary || undefined,
       image: safeHttpUrl(pub?.icon || profile?.avatar) ?? undefined,
       url: `${origin}/blogs/${encodeURIComponent(did)}/${encodeURIComponent(rkey)}`,
     },

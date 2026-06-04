@@ -223,7 +223,15 @@ export async function fetchLinkblogDocuments(env: BlogEnv, did: string): Promise
     const data = (await res.json()) as {
       authors?: Array<{ documents?: ProxyDocument[]; status?: string }>;
     };
-    return data.authors?.[0]?.documents ?? [];
+    const docs = data.authors?.[0]?.documents ?? [];
+    // A linkblog reads newest-shared-first. Order by when each link was shared
+    // (the record's `createdAt`), not by the article's own publish date — the
+    // proxy sorts its generic document feed by `publishedAt`, which would float
+    // an old article shared today to the wrong place.
+    docs.sort(
+      (a, b) => (new Date(b.createdAt).getTime() || 0) - (new Date(a.createdAt).getTime() || 0)
+    );
+    return docs;
   } catch {
     return [];
   }
@@ -260,6 +268,22 @@ export function linkPostNote(doc: ProxyDocument): string {
     }
   }
   return '';
+}
+
+// A snippet of the shared article itself (its first paragraph or so), stored at
+// share time as the document's `description`. This is the article's words — quote
+// it as the article, distinct from the user's note. Empty for documents with no
+// stored excerpt.
+export function articleExcerpt(doc: ProxyDocument): string {
+  return (doc.description || '').trim();
+}
+
+// Truncate to a max length on a word-ish boundary, preserving any newlines within
+// the kept slice (callers render notes with white-space: pre-wrap).
+export function clampText(text: string, max: number): string {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  return t.slice(0, max - 1).trimEnd() + '…';
 }
 
 // The external article a link post points at: the first http(s) `links` entry.
@@ -355,7 +379,7 @@ export function renderAlsoLinkedBy(ctx: SocialContext | undefined): string {
     })
     .join('');
   return `<div class="alsolinked">
-  <span class="alsolabel">Also linked across the Atmosphere</span>
+  <span class="alsolabel">Also linked</span>
   <ul>${items}</ul>
 </div>`;
 }
@@ -363,15 +387,40 @@ export function renderAlsoLinkedBy(ctx: SocialContext | undefined): string {
 // ── Rendering ────────────────────────────────────────────────────────────────
 
 // One Blue (#0066cc), system sans, true-white body, flat by default — per
-// DESIGN.md. The page is reading-first: generous measure, quiet chrome.
+// DESIGN.md. The page is reading-first: generous measure, quiet chrome, and a
+// hairline-and-whitespace rhythm rather than cards. Light + dark both clear the
+// 4.5:1 contrast bar independently (PRODUCT.md): muted text never drifts into the
+// decorative light gray that the old --faint token used. The interaction blue
+// lightens in dark mode — the only documented tint of the One Blue — so links
+// stay legible on the dark surface.
 const STYLES = `
   :root {
     --blue: #0066cc;
-    --ink: #16181c;
-    --muted: #6b7280;
-    --faint: #9aa1ab;
+    --ink: #1a1d21;
+    --ink-soft: #3c424b;
+    --muted: #5c636e;
     --line: #e6e8eb;
+    --line-soft: #eef0f2;
     --bg: #ffffff;
+    --quote-bg: #f5f6f8;
+    --tint: rgba(0, 102, 204, 0.055);
+    --tint-strong: rgba(0, 102, 204, 0.14);
+    --icon-ring: rgba(0, 0, 0, 0.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --blue: #5aa3f0;
+      --ink: #e7e9ec;
+      --ink-soft: #c2c7ce;
+      --muted: #9aa1ab;
+      --line: #2a2e35;
+      --line-soft: #23272d;
+      --bg: #16181c;
+      --quote-bg: #1d2025;
+      --tint: rgba(90, 163, 240, 0.10);
+      --tint-strong: rgba(90, 163, 240, 0.22);
+      --icon-ring: rgba(255, 255, 255, 0.08);
+    }
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
@@ -382,36 +431,87 @@ const STYLES = `
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     line-height: 1.55;
     font-size: 17px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
+  ::selection { background: var(--tint-strong); }
   a { color: var(--blue); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  .wrap { max-width: 40rem; margin: 0 auto; padding: 3rem 1.25rem 5rem; }
-  .pubhead { display: flex; align-items: center; gap: 0.875rem; margin-bottom: 0.5rem; }
-  .pubhead img { width: 48px; height: 48px; border-radius: 12px; object-fit: cover; flex: none; }
-  .pubhead h1 { font-size: 1.5rem; line-height: 1.2; margin: 0; letter-spacing: -0.01em; }
-  .byline { color: var(--muted); font-size: 0.9375rem; margin: 0; }
-  .byline a { color: var(--muted); }
-  .pubdesc { color: var(--ink); margin: 1rem 0 0; }
-  .divider { border: 0; border-top: 1px solid var(--line); margin: 2rem 0; }
-  .entry { padding: 1.5rem 0; border-bottom: 1px solid var(--line); }
-  .entry:last-child { border-bottom: 0; }
-  .entry h2 { font-size: 1.1875rem; line-height: 1.3; margin: 0 0 0.375rem; letter-spacing: -0.005em; }
-  .entry h2 a { color: var(--ink); }
-  .entry h2 a:hover { color: var(--blue); }
-  .entry p { margin: 0.375rem 0 0; color: var(--ink); }
-  .meta { font-size: 0.8125rem; color: var(--faint); margin-top: 0.625rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
-  .meta .src { color: var(--muted); }
+  a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 3px; text-decoration: none; }
+  img { max-width: 100%; }
+  .wrap { max-width: 40rem; margin: 0 auto; padding: 3.5rem 1.25rem 5rem; }
+
+  /* Masthead */
+  .pubhead { display: flex; align-items: center; gap: 1rem; }
+  .pubicon { width: 52px; height: 52px; border-radius: 14px; object-fit: cover; flex: none; box-shadow: inset 0 0 0 1px var(--icon-ring); background: var(--line-soft); }
+  .pubmeta { min-width: 0; }
+  .pubhead h1 { font-size: 1.625rem; line-height: 1.18; margin: 0; letter-spacing: -0.022em; font-weight: 700; text-wrap: balance; }
+  .byline { color: var(--muted); font-size: 0.9375rem; margin: 0.25rem 0 0; }
+  .byline a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--line); }
+  .byline a:hover { color: var(--ink); text-decoration-color: currentColor; }
+  .pubdesc { color: var(--ink-soft); margin: 1.125rem 0 0; font-size: 1.0625rem; line-height: 1.55; text-wrap: pretty; }
+  .divider { border: 0; border-top: 1px solid var(--line); margin: 2rem 0 0.5rem; }
+
+  /* Entry list (link-post shelf) */
+  .entries { list-style: none; margin: 0; padding: 0; }
+  /* No dividers between entries — whitespace alone separates them. */
+  .entry { position: relative; padding: 1.5rem 1rem; margin: 0 -1rem; transition: background 0.18s ease; }
+  .entry:hover { background: var(--tint); }
+  .entry-title { font-size: 1.1875rem; line-height: 1.32; margin: 0; letter-spacing: -0.012em; font-weight: 600; text-wrap: balance; }
+  .entry-title a { color: var(--ink); }
+  .entry-title a::after { content: ""; position: absolute; inset: 0; }
+  .entry:hover .entry-title a { color: var(--blue); }
+  .entry-title a:focus-visible { outline: none; }
+  .entry:has(.entry-title a:focus-visible) { outline: 2px solid var(--blue); outline-offset: 2px; }
+  /* The user's note — their own words. Plain text, so newlines are preserved. */
+  .entry-note { margin: 0.5rem 0 0; color: var(--ink); white-space: pre-wrap; overflow-wrap: break-word; }
+  /* A snippet quoted FROM the article (not the user). The recessed surface and the
+     opening quotation mark mark it as a quotation; a side-stripe accent border is
+     deliberately avoided per the design system. */
+  .entry-quote { position: relative; margin: 0.75rem 0 0; padding: 0.625rem 0.875rem 0.625rem 2rem; background: var(--quote-bg); border-radius: 10px; color: var(--ink-soft); font-size: 0.9375rem; line-height: 1.55; }
+  .entry-quote::before { content: "\\201C"; position: absolute; left: 0.6rem; top: 0.35rem; font-size: 1.5rem; line-height: 1; color: var(--muted); }
+  .entry-quote p { margin: 0; }
+  .meta { font-size: 0.8125rem; color: var(--muted); margin-top: 0.75rem; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .meta .src { color: var(--ink-soft); font-weight: 500; }
+  .meta .sep { color: var(--line); }
   .meta .social { color: var(--muted); }
-  .alsolinked { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--line); font-size: 0.9375rem; }
-  .alsolabel { display: block; color: var(--muted); font-size: 0.8125rem; margin-bottom: 0.5rem; }
-  .alsolinked ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.375rem; }
+
+  /* Permalink entry */
+  .back { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.875rem; margin-bottom: 1.75rem; color: var(--muted); }
+  .back:hover { color: var(--ink); text-decoration: none; }
+  .entry-page { }
+  .entry-page .entry-title-lg { font-size: 1.625rem; line-height: 1.22; margin: 0 0 0.625rem; letter-spacing: -0.02em; font-weight: 700; text-wrap: balance; }
+  .entry-page .entry-note-lg { margin: 1.375rem 0 0; font-size: 1.0625rem; line-height: 1.6; color: var(--ink); white-space: pre-wrap; overflow-wrap: break-word; }
+  .entry-page .entry-quote { margin: 1.375rem 0 0; }
+  .readmore { display: inline-flex; align-items: center; gap: 0.4rem; margin-top: 1.625rem; font-weight: 600; }
+  .readmore .arrow { transition: transform 0.18s ease; }
+  .readmore:hover { text-decoration: none; }
+  .readmore:hover .arrow { transform: translateX(3px); }
+
+  /* Also-linked-by */
+  .alsolinked { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--line); font-size: 0.9375rem; }
+  .alsolabel { display: block; color: var(--muted); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; margin-bottom: 0.75rem; }
+  .alsolinked ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
   .alsolinked li { color: var(--ink); }
   .alsonote { color: var(--muted); }
-  .empty { color: var(--muted); padding: 2.5rem 0; text-align: center; }
-  .back { display: inline-block; font-size: 0.875rem; margin-bottom: 1.5rem; color: var(--muted); }
-  .readmore { display: inline-block; margin-top: 1.25rem; font-weight: 500; }
-  .foot { margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid var(--line); font-size: 0.8125rem; color: var(--faint); }
-  .foot a { color: var(--faint); }
+
+  /* Empty + footer */
+  .empty { padding: 3rem 0; text-align: center; }
+  .empty-title { color: var(--ink); font-weight: 600; margin: 0; font-size: 1.0625rem; }
+  .empty-sub { color: var(--muted); margin: 0.375rem 0 0; }
+  .foot { margin-top: 3.5rem; padding-top: 1.5rem; border-top: 1px solid var(--line); font-size: 0.8125rem; color: var(--muted); }
+  .foot a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--line); }
+  .foot a:hover { color: var(--ink); text-decoration-color: currentColor; }
+
+  @media (max-width: 30rem) {
+    .wrap { padding: 2.25rem 1.125rem 4rem; }
+    .pubhead h1 { font-size: 1.4375rem; }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    body { animation: pagein 0.42s cubic-bezier(0.22, 1, 0.36, 1) both; }
+    @keyframes pagein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  }
 `;
 
 export interface PageHead {

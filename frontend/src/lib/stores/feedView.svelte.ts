@@ -471,7 +471,14 @@ function createFeedViewStore() {
     // "Your Linkblog": the user's own shared documents, independent of the
     // followed-linkblog social feed and the source/type toolbar filters.
     if (myLinkblogFilter) {
-      let mine = [...myLinkblogStore.documents];
+      // A linkblog reads by share time, not the article's publish date. Remap
+      // publishedAt → createdAt (the record's share time) so both the sort below
+      // and the downstream card date reflect when each link was shared. Scoped to
+      // this view; the followed-linkblog feed is unaffected.
+      let mine = myLinkblogStore.documents.map((d) => ({
+        ...d,
+        publishedAt: d.createdAt || d.publishedAt,
+      }));
       if (fv.readFilter === 'unread') {
         mine = mine.filter(
           (d) =>
