@@ -92,3 +92,31 @@ export function normalizeArticleUrl(input: string): string | null {
 
   return url.toString();
 }
+
+/**
+ * The trailing-slash variants of a normalized URL to probe in Constellation.
+ *
+ * Constellation matches the target **string exactly**, but `/foo` and `/foo/`
+ * are the same page on essentially every server and people share both forms —
+ * the site's own canonical varies (inkandswitch and many doc sites canonicalize
+ * *with* a slash; lots of blogs without). `normalizeArticleUrl` collapses to the
+ * no-slash key for a stable cache id, so a slash-canonical article would read as
+ * a false zero if we only queried that one form. Probe both and union the DIDs
+ * (a person who linked both forms is still one person), keeping the no-slash form
+ * as the canonical cache key.
+ *
+ * Returns 1 target for the bare root (already its only sensible form), else 2.
+ */
+export function constellationTargets(normUrl: string): string[] {
+  let url: URL;
+  try {
+    url = new URL(normUrl);
+  } catch {
+    return [normUrl];
+  }
+  if (url.pathname === '/') return [normUrl];
+  // normUrl is already slash-trimmed, so appending one always yields a distinct
+  // variant (the query string, if any, stays after the path).
+  url.pathname = `${url.pathname}/`;
+  return [normUrl, url.toString()];
+}

@@ -1749,8 +1749,9 @@ export function cleanupCache(db: Database): number {
   const constellationResult = db.run('DELETE FROM constellation_cache WHERE cached_at < ?', [
     now - 24 * 60 * 60 * 1000,
   ]);
-  // Mention rows settle (stop being re-checked) after ~7 days; drop them well
-  // past that so the article is old and rarely read by the time it's evicted.
+  // Evict by last check, not age: a settled row that's still read keeps getting
+  // re-checked (its checked_at stays fresh), so this only drops rows nobody has
+  // opened in 30 days — old AND unread by the time they're evicted.
   const mentionResult = db.run('DELETE FROM mention_cache WHERE checked_at < ?', [
     now - 30 * 24 * 60 * 60 * 1000,
   ]);
