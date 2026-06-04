@@ -19,7 +19,7 @@ const PUBLICATION_NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000;
 // How many documents (most recent) to keep per author. Bounds payload + work; a
 // reader rarely scrolls deeper than this, and older docs are still reachable by
 // raising this cap later.
-const MAX_DOCUMENTS_PER_AUTHOR = 100;
+export const MAX_DOCUMENTS_PER_AUTHOR = 100;
 const MAX_LIST_PAGES = 5; // listRecords pages of 100 → up to 500 scanned
 const FETCH_TIMEOUT_MS = 30 * 1000;
 
@@ -58,7 +58,7 @@ interface BlobRef {
   mimeType?: string;
 }
 
-interface DocumentRecord {
+export interface DocumentRecord {
   $type?: string;
   site?: string;
   title?: string;
@@ -211,6 +211,59 @@ function toISO(value: string | undefined, fallback: string): string {
 }
 
 /**
+ * Map a single raw `site.standard.document` record into a `ProxyDocument`,
+ * resolving its publication's base URL + icon (SQLite-cached via
+ * `resolveSiteMeta`). Shared by the backfill list path
+ * (`fetchDocumentsForAuthor`) and the Jetstream firehose splice path so both
+ * produce byte-identical document shapes.
+ */
+export async function recordToProxyDocument(
+  db: Database,
+  authorDid: string,
+  recordUri: string,
+  recordCid: string,
+  doc: DocumentRecord
+): Promise<ProxyDocument> {
+  const fetchedAtISO = new Date().toISOString();
+  const siteUri = doc.site || '';
+  const meta = await resolveSiteMeta(db, siteUri);
+
+  const canonicalUrl = meta.baseUrl
+    ? buildCanonicalUrl(meta.baseUrl, doc.path || '')
+    : doc.path || '';
+
+  // Surface external resource refs (the shared article URL for link posts),
+  // keeping only entries with a real uri.
+  const links = Array.isArray(doc.links)
+    ? doc.links
+        .filter((l): l is { uri: string; rel?: string } => typeof l?.uri === 'string' && !!l.uri)
+        .map((l) => ({ uri: l.uri, ...(l.rel ? { rel: l.rel } : {}) }))
+    : [];
+
+  return {
+    authorDid,
+    recordUri,
+    recordCid,
+    siteUri,
+    title: doc.title || '',
+    publishedAt: toISO(doc.publishedAt, fetchedAtISO),
+    path: doc.path || undefined,
+    description: doc.description || undefined,
+    coverImageCid: doc.coverImage?.ref?.$link || undefined,
+    textContent: doc.textContent || undefined,
+    bskyPostUri: doc.bskyPostRef?.uri || undefined,
+    tags: doc.tags && doc.tags.length > 0 ? doc.tags : undefined,
+    updatedAt: doc.updatedAt ? toISO(doc.updatedAt, fetchedAtISO) : undefined,
+    canonicalUrl: canonicalUrl || undefined,
+    content: doc.content ?? undefined,
+    indexedAt: fetchedAtISO,
+    createdAt: toISO(doc.createdAt, toISO(doc.publishedAt, fetchedAtISO)),
+    siteIcon: meta.icon || undefined,
+    links: links.length > 0 ? links : undefined,
+  };
+}
+
+/**
  * Fetch a publisher's recent `site.standard.document` records and map them to
  * `ProxyDocument`s (canonical URL + icon resolved). Returns the full unfiltered
  * list (newest first) so a single cached entry per author serves subscribers of
@@ -227,7 +280,6 @@ export async function fetchDocumentsForAuthor(
     throw new Error(`Could not resolve PDS for ${authorDid}`);
   }
 
-  const fetchedAtISO = new Date().toISOString();
   const raw: Array<{ uri: string; cid: string; value: DocumentRecord }> = [];
   let cursor: string | undefined;
 
@@ -252,53 +304,14 @@ export async function fetchDocumentsForAuthor(
     cursor = data.cursor;
   }
 
-  // Resolve each distinct publication once, then build documents.
-  const siteMetaCache = new Map<string, { baseUrl: string | null; icon: string | null }>();
+  // Map each record to a resolved ProxyDocument. resolveSiteMeta (inside
+  // recordToProxyDocument) is SQLite-cached, so repeated publications in the
+  // batch are cheap point-reads after the first.
   const documents: ProxyDocument[] = [];
-
   for (const record of raw.slice(0, MAX_DOCUMENTS_PER_AUTHOR)) {
-    const doc = record.value;
-    const siteUri = doc.site || '';
-
-    let meta = siteMetaCache.get(siteUri);
-    if (!meta) {
-      meta = await resolveSiteMeta(db, siteUri);
-      siteMetaCache.set(siteUri, meta);
-    }
-
-    const canonicalUrl = meta.baseUrl
-      ? buildCanonicalUrl(meta.baseUrl, doc.path || '')
-      : doc.path || '';
-
-    // Surface external resource refs (the shared article URL for link posts),
-    // keeping only entries with a real uri.
-    const links = Array.isArray(doc.links)
-      ? doc.links
-          .filter((l): l is { uri: string; rel?: string } => typeof l?.uri === 'string' && !!l.uri)
-          .map((l) => ({ uri: l.uri, ...(l.rel ? { rel: l.rel } : {}) }))
-      : [];
-
-    documents.push({
-      authorDid,
-      recordUri: record.uri,
-      recordCid: record.cid,
-      siteUri,
-      title: doc.title || '',
-      publishedAt: toISO(doc.publishedAt, fetchedAtISO),
-      path: doc.path || undefined,
-      description: doc.description || undefined,
-      coverImageCid: doc.coverImage?.ref?.$link || undefined,
-      textContent: doc.textContent || undefined,
-      bskyPostUri: doc.bskyPostRef?.uri || undefined,
-      tags: doc.tags && doc.tags.length > 0 ? doc.tags : undefined,
-      updatedAt: doc.updatedAt ? toISO(doc.updatedAt, fetchedAtISO) : undefined,
-      canonicalUrl: canonicalUrl || undefined,
-      content: doc.content ?? undefined,
-      indexedAt: fetchedAtISO,
-      createdAt: toISO(doc.createdAt, toISO(doc.publishedAt, fetchedAtISO)),
-      siteIcon: meta.icon || undefined,
-      links: links.length > 0 ? links : undefined,
-    });
+    documents.push(
+      await recordToProxyDocument(db, authorDid, record.uri, record.cid, record.value)
+    );
   }
 
   // Newest first, matching the feed/timeline ordering.
