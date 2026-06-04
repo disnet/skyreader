@@ -1,5 +1,6 @@
 import { db, getMetadata, setMetadata } from '$lib/services/db';
 import { fetchFollowsPage, scanPublications, type FollowLite } from '$lib/services/socialGraph';
+import { fetchAllDocuments } from '$lib/services/feedFetcher';
 import { auth } from './auth.svelte';
 import { subscriptionsStore } from './subscriptions.svelte';
 import type { FollowingPublication } from '$lib/types';
@@ -316,6 +317,9 @@ function createFollowingPublicationsStore() {
     if (icon) {
       await subscriptionsStore.updateLocal(id, { customIconUrl: icon });
     }
+    // Fetch this publication's documents now so its feed isn't empty until the
+    // next full refresh (also refreshed on the regular cycle).
+    void fetchAllDocuments(subscriptionsStore.subscriptions);
   }
 
   return {
