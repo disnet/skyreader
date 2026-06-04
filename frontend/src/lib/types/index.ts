@@ -634,6 +634,11 @@ export interface MentionLaneEntry {
   // to its public Semble page where resolvable. Semble lane only; empty
   // elsewhere. Adornment — degrades to an empty list.
   collections: SembleCollectionRef[];
+  // margin.at lane only: the annotation's motivation as a past-tense verb
+  // ('highlighted' / 'commented' / …), and the highlighted passage it targets
+  // (distinct from the user's comment in `note`). Null for other lanes.
+  verb: string | null;
+  quote: string | null;
 }
 
 // One named Semble collection a card was filed into (see MentionLaneEntry).
