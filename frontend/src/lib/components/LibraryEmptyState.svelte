@@ -5,6 +5,7 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { api, RateLimitError } from '$lib/services/api';
   import SourcesDiscovery from '$lib/components/sources/SourcesDiscovery.svelte';
+  import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
 
   interface Props {
     onAddFeed: () => void;
@@ -13,6 +14,7 @@
 
   let { onAddFeed, onAddHandle }: Props = $props();
 
+  let showImportModal = $state(false);
   let pdsSyncEnabled = $state(false);
   let isLoading = $state(true);
   let isToggling = $state(false);
@@ -94,6 +96,9 @@
     <button type="button" class="add-action secondary" onclick={onAddHandle}>
       Add an Atmosphere publication
     </button>
+    <button type="button" class="add-action secondary" onclick={() => (showImportModal = true)}>
+      Import OPML
+    </button>
   </div>
 
   <div class="discovery-wrap">
@@ -145,6 +150,8 @@
     {/if}
   </div>
 </div>
+
+<ImportOPMLModal open={showImportModal} onclose={() => (showImportModal = false)} />
 
 <style>
   .library-empty {
