@@ -80,6 +80,8 @@ export interface ArticleCardViewProps {
   isLinkPostMode: boolean;
 
   linkPostNote?: string;
+  /** The note rendered from Markdown to sanitized HTML, for {@html}. */
+  linkPostNoteHtml?: string;
   linkPostExcerpt?: string;
   linkPostThumb?: string;
 
@@ -129,6 +131,9 @@ export interface ArticleCardViewProps {
   onRemoveShare?: () => void;
   onOpenUrl?: () => void;
   onOpenFullscreen?: () => void;
+  /** Open the link context menu (open externally / save to reader) for a link
+   *  post's URL, anchored to the clicked chip's rect. */
+  onOpenLinkMenu?: (anchorRect: DOMRect) => void;
   onExpandToggle?: () => void;
   onTagClick?: () => void;
   onOverflowClick?: () => void;

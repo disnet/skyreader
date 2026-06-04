@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-  <title>Your Linkblog - Skyreader</title>
+  <title>Linkblog - Skyreader</title>
 </svelte:head>
 
 <FeedPage mode="linkblog" />

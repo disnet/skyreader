@@ -507,7 +507,7 @@
       onclick={() => sidebarStore.closeMobile()}
     >
       <span class="nav-icon"><Icon name="share" /></span>
-      <span class="nav-label">Your Linkblog</span>
+      <span class="nav-label">Linkblog</span>
     </a>
 
     <a
