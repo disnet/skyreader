@@ -235,7 +235,10 @@ describe('getMentionLaneItems', () => {
         note1: {
           motivation: 'highlighting',
           body: { value: 'this is the part that matters' },
-          target: { source: ARTICLE, selector: { type: 'TextQuoteSelector', exact: 'the owned library' } },
+          target: {
+            source: ARTICLE,
+            selector: { type: 'TextQuoteSelector', exact: 'the owned library' },
+          },
         },
       }
     );

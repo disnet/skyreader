@@ -9,6 +9,7 @@ import {
   filterSinceUris,
   type ProxyDocument,
 } from './standard-site';
+import type { FirehoseStatus } from './jetstream';
 import { getSocialContext, type SocialContext, type SocialContextQuery } from './constellation';
 import { getLinkblogRegistry } from './linkblog-registry';
 import { readCachedMentions, enrichMentions } from './mentions';
@@ -36,6 +37,12 @@ export interface AppConfig {
   // Pre-warm Phase 5 mention counts for a refreshed feed's items (extra
   // Constellation load). Off by default; enabled in production via index.ts.
   warmMentionsEnabled?: boolean;
+  // Live status of the Jetstream document firehose. When it's healthy and
+  // watching an author, the /documents serve path trusts the cache regardless of
+  // age (the stream keeps it current) instead of triggering an age-based re-list.
+  // Defaults to "unhealthy / nothing subscribed" so behavior is unchanged when
+  // the firehose isn't wired in.
+  getFirehoseStatus?: () => FirehoseStatus;
 }
 
 export interface CacheRow {
@@ -394,6 +401,16 @@ export function initDatabase(db: Database): void {
     `CREATE INDEX IF NOT EXISTS idx_document_cache_last_requested_at ON document_cache(last_requested_at)`
   );
 
+  // Small key/value store for sync bookkeeping (e.g. the Jetstream document
+  // firehose cursor), so the stream resumes across restarts without replaying
+  // from the beginning.
+  db.run(`
+		CREATE TABLE IF NOT EXISTS sync_state (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		)
+	`);
+
   // Network-wide article mentions (Phase 5), keyed by the *normalized* article
   // URL so the same article dedups across every user and every feed it appears
   // in. `total_dids` is the distinct-DID union across all lanes (the threshold +
@@ -415,6 +432,10 @@ export function initDatabase(db: Database): void {
 
 export function createApp(db: Database, config: AppConfig) {
   const { proxySecret, cacheTtlMs, staleTtlMs, defaultLimit } = config;
+  // Default: firehose absent → unhealthy, nothing subscribed (serve path keeps
+  // its existing age-based refresh behavior).
+  const getFirehoseStatus =
+    config.getFirehoseStatus ?? (() => ({ healthy: false, isSubscribed: () => false }));
 
   // Track in-flight fetches to avoid duplicate requests
   const inFlight = new Map<string, Promise<ParsedFeed | null>>();
@@ -1551,7 +1572,12 @@ export function createApp(db: Database, config: AppConfig) {
           }
 
           if (!isErrorPlaceholder) {
-            if (age < cacheTtlMs) {
+            const firehose = getFirehoseStatus();
+            if (firehose.healthy && firehose.isSubscribed(did)) {
+              // The firehose is keeping this author current, so age no longer
+              // implies staleness — serve the cache and skip the re-list.
+              documents = stale;
+            } else if (age < cacheTtlMs) {
               documents = stale;
             } else if (age < staleTtlMs) {
               documents = stale;

@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'fs';
 import { createApp, initDatabase, cleanupCache } from './app';
+import { DocumentFirehose } from './jetstream';
 
 // Config
 const PROXY_SECRET = process.env.PROXY_SECRET;
@@ -26,6 +27,13 @@ const WARM_CONCURRENCY = parseInt(process.env.WARM_CONCURRENCY || '8', 10);
 // Constellation load); on by default in production, disable with WARM_MENTIONS=false.
 const WARM_MENTIONS_ENABLED = (process.env.WARM_MENTIONS ?? 'true') !== 'false';
 
+// Jetstream document firehose: keeps standard.site documents fresh via the AT
+// Proto firehose (push) instead of re-listing every active author (pull). The
+// pull path stays for cold-start backfill and as the firehose-down fallback.
+const JETSTREAM_ENABLED = (process.env.JETSTREAM_ENABLED ?? 'true') !== 'false';
+const JETSTREAM_URL = process.env.JETSTREAM_URL || undefined;
+const JETSTREAM_RECONCILE_MS = parseInt(process.env.JETSTREAM_RECONCILE_SECONDS || '60', 10) * 1000;
+
 // Ensure data directory exists
 try {
   mkdirSync(DATA_DIR, { recursive: true });
@@ -40,6 +48,10 @@ initDatabase(db);
 console.log(`[Proxy] Initialized database at ${DATA_DIR}/cache.db`);
 console.log(`[Proxy] TTL: ${CACHE_TTL_MS / 1000}s fresh, ${STALE_TTL_MS / 1000}s stale`);
 
+// The document firehose is created just below, but createApp's serve path needs
+// its status now — close over the binding so the accessor reads it lazily.
+let firehose: DocumentFirehose | null = null;
+
 // Create app
 const { app, warmStaleFeeds, warmStaleDocuments } = createApp(db, {
   proxySecret: PROXY_SECRET,
@@ -51,7 +63,17 @@ const { app, warmStaleFeeds, warmStaleDocuments } = createApp(db, {
   warmBatchCap: WARM_BATCH_CAP,
   warmConcurrency: WARM_CONCURRENCY,
   warmMentionsEnabled: WARM_MENTIONS_ENABLED,
+  getFirehoseStatus: () => firehose?.status() ?? { healthy: false, isSubscribed: () => false },
 });
+
+// Document firehose: push-based freshness for standard.site documents.
+firehose = new DocumentFirehose(db, {
+  enabled: JETSTREAM_ENABLED,
+  url: JETSTREAM_URL,
+  reconcileMs: JETSTREAM_RECONCILE_MS,
+  activeWindowMs: WARM_ACTIVE_WINDOW_MS,
+});
+firehose.start();
 
 // Run cleanup on startup and every hour
 const initialCleanup = cleanupCache(db);
@@ -80,7 +102,10 @@ if (WARM_ENABLED) {
     // Skip if the previous tick is still draining (slow upstreams) to avoid pile-up.
     if (warmRunning) return;
     warmRunning = true;
-    Promise.all([warmStaleFeeds(), warmStaleDocuments()])
+    // Documents are kept fresh by the Jetstream firehose; only fall back to the
+    // pull-based re-list when the firehose is down (RSS always warms via pull).
+    const warmDocs = firehose?.isHealthy() ? Promise.resolve(0) : warmStaleDocuments();
+    Promise.all([warmStaleFeeds(), warmDocs])
       .then(([feeds, docs]) => {
         if (feeds > 0) console.log(`[Proxy] Warmer refreshed ${feeds} feed(s)`);
         if (docs > 0) console.log(`[Proxy] Warmer refreshed ${docs} author document set(s)`);
@@ -92,6 +117,15 @@ if (WARM_ENABLED) {
   }, WARM_INTERVAL_MS);
 } else {
   console.log('[Proxy] Warmer: disabled');
+}
+
+// Flush the firehose cursor + close its socket cleanly on shutdown so we resume
+// where we left off instead of replaying.
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(signal, () => {
+    firehose?.stop();
+    process.exit(0);
+  });
 }
 
 const port = parseInt(process.env.PORT || '3000', 10);
