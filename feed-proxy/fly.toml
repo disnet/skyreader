@@ -1,6 +1,17 @@
 app = "skyreader-feed-proxy"
 primary_region = "sjc"
 
+# SINGLETON INVARIANT — run exactly ONE machine. This app is not horizontally
+# scalable as written: the cache is a SQLite DB on the per-machine `proxy_data`
+# volume (volumes can't be shared between machines), and the Jetstream firehose,
+# the self-warming loop, and the in-memory request-coalescing maps are all
+# in-process singletons. A second machine would get its own empty volume + its
+# own firehose + its own warm loop, with no shared coalescing — i.e. a split-brain
+# cache, duplicate upstream fetches, and responses that differ by which machine
+# you hit. Scale VERTICALLY via the [vm] block below, never by `fly scale count`.
+# Keep only one machine provisioned; auto_start/stop below toggle that one machine,
+# they do not create new ones.
+
 [build]
 
 [mounts]
@@ -36,3 +47,10 @@ primary_region = "sjc"
   WARM_ACTIVE_WINDOW_SECONDS = "1209600"
   WARM_BATCH_CAP = "200"
   WARM_CONCURRENCY = "8"
+  # /extract concurrency cap. /extract fetches up to 10 MB of HTML and builds a
+  # full DOM (Defuddle) — several × the raw bytes in memory — so unbounded
+  # concurrency is the realistic OOM path on this 512 MB machine. Excess callers
+  # queue up to EXTRACT_QUEUE_MAX, then are shed with a 503. Raise alongside [vm]
+  # memory if extractions start shedding under normal load.
+  EXTRACT_CONCURRENCY = "4"
+  EXTRACT_QUEUE_MAX = "20"

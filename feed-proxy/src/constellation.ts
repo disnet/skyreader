@@ -15,8 +15,8 @@
  */
 import { Database } from 'bun:sqlite';
 import { resolveHandle, resolvePdsUrl } from './did-resolver';
+import { constellationGet } from './constellation-client';
 
-const CONSTELLATION_BASE = 'https://constellation.microcosm.blue';
 const DOCUMENT_COLLECTION = 'site.standard.document';
 // JSON path of the external/at-uri ref in a link-post document's `links` array.
 const LINKS_PATH = '.links[].uri';
@@ -27,11 +27,6 @@ const CONTEXT_CACHE_TTL_MS = 5 * 60 * 1000;
 // work. A handful is plenty for the context line.
 const MAX_ALSO_LINKED = 6;
 const FETCH_TIMEOUT_MS = 10 * 1000;
-
-// Identify ourselves honestly to Constellation (their request), per LINKBLOG_PLAN.
-const CONSTELLATION_HEADERS = {
-  'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)',
-};
 
 export interface AlsoLinkedEntry {
   did: string;
@@ -74,24 +69,6 @@ const EMPTY: SocialContext = {
   quoteCount: 0,
   alsoLinkedBy: [],
 };
-
-async function constellationGet<T>(
-  path: string,
-  params: Record<string, string>
-): Promise<T | null> {
-  try {
-    const qs = new URLSearchParams(params);
-    const res = await fetch(`${CONSTELLATION_BASE}${path}?${qs}`, {
-      headers: CONSTELLATION_HEADERS,
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch (error) {
-    console.error(`[constellation] ${path} error:`, error);
-    return null;
-  }
-}
 
 // Count of documents whose `links` ref points at this doc (quote-reshares of it).
 async function fetchQuoteCount(docUri: string): Promise<number> {
