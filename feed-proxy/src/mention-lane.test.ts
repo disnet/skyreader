@@ -87,6 +87,8 @@ describe('getMentionLaneItems', () => {
       note: 'great read',
       url: 'https://bsky.app/profile/did:plc:alice/post/post1',
       collections: [],
+      verb: null,
+      quote: null,
     });
   });
 
@@ -120,6 +122,8 @@ describe('getMentionLaneItems', () => {
         note: 'my take',
         url: 'https://skyreader.app/blogs/did:plc:bob/doc1',
         collections: [],
+        verb: null,
+        quote: null,
       },
     ]);
   });
@@ -150,6 +154,8 @@ describe('getMentionLaneItems', () => {
         note: 'a foreign note',
         url: 'https://carol.example/essays/the-essay',
         collections: [],
+        verb: null,
+        quote: null,
       },
     ]);
   });
@@ -212,6 +218,38 @@ describe('getMentionLaneItems', () => {
         collections: [
           { name: 'Reading List', url: 'https://semble.so/profile/eve.test/collections/col1' },
         ],
+        verb: null,
+        quote: null,
+      },
+    ]);
+  });
+
+  it('resolves a margin lane: motivation verb + highlighted passage + comment', async () => {
+    const db = freshDb();
+    seedDid(db, 'did:plc:frank', 'frank.test');
+
+    mockConstellation(
+      { 'at.margin.note': { '.target.source': { distinct_dids: 1 } } },
+      { 'at.margin.note|.target.source': [{ did: 'did:plc:frank', rkey: 'note1' }] },
+      {
+        note1: {
+          motivation: 'highlighting',
+          body: { value: 'this is the part that matters' },
+          target: { source: ARTICLE, selector: { type: 'TextQuoteSelector', exact: 'the owned library' } },
+        },
+      }
+    );
+
+    const entries = await getMentionLaneItems(db, ARTICLE, 'margin');
+    expect(entries).toEqual([
+      {
+        did: 'did:plc:frank',
+        handle: 'frank.test',
+        note: 'this is the part that matters',
+        url: null,
+        collections: [],
+        verb: 'highlighted',
+        quote: 'the owned library',
       },
     ]);
   });

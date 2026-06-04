@@ -62,6 +62,32 @@ export interface MentionLaneEntry {
   url: string | null;
   // Which Semble collection(s) the saver filed this card into (Semble lane only).
   collections: SembleCollection[];
+  // The per-entry action verb (margin.at lane only) — the note's W3C motivation
+  // as past tense ('highlighted' / 'commented' / …). Null for other lanes.
+  verb: string | null;
+  // The highlighted passage a margin.at note targets (its TextQuoteSelector),
+  // distinct from the user's own comment in `note`. Null elsewhere.
+  quote: string | null;
+}
+
+// margin.at note motivations (W3C Web Annotation) → an honest past-tense verb.
+// Unknown / missing motivation degrades to a neutral 'annotated'.
+const MARGIN_MOTIVATION_VERBS: Record<string, string> = {
+  highlighting: 'highlighted',
+  commenting: 'commented',
+  bookmarking: 'bookmarked',
+  tagging: 'tagged',
+  describing: 'described',
+  linking: 'linked',
+  replying: 'replied',
+  editing: 'edited',
+  questioning: 'questioned',
+  assessing: 'assessed',
+};
+
+function marginVerb(motivation: unknown): string {
+  const m = typeof motivation === 'string' ? motivation : '';
+  return MARGIN_MOTIVATION_VERBS[m] ?? 'annotated';
 }
 
 interface LinksAllResponse {
@@ -228,6 +254,8 @@ async function resolveEntry(
   let url: string | null = null;
   let note: string | null = null;
   let collections: SembleCollection[] = [];
+  let verb: string | null = null;
+  let quote: string | null = null;
 
   switch (laneId) {
     case 'bluesky': {
@@ -245,11 +273,19 @@ async function resolveEntry(
       break;
     }
     case 'margin': {
-      // No stable public permalink known; surface the annotation text if present.
+      // at.margin.note — a W3C-style web annotation. Surface its motivation as
+      // the honest per-note verb, the highlighted passage (TextQuoteSelector
+      // `.target.selector.exact`) as the quote, and the user's own words
+      // (`.body.value`) as the comment. No stable public permalink, so no
+      // link-out.
       const value = await getRecordValue(db, did, collection, rkey);
       if (value) {
+        verb = marginVerb(value.motivation);
         const body = value.body as Record<string, unknown> | undefined;
-        note = firstString(value.text, value.comment, body?.value, body?.text);
+        note = firstString(body?.value, value.text, value.comment, body?.text);
+        const target = value.target as Record<string, unknown> | undefined;
+        const selector = target?.selector as Record<string, unknown> | undefined;
+        quote = firstString(selector?.exact);
       }
       break;
     }
@@ -268,7 +304,7 @@ async function resolveEntry(
     }
   }
 
-  return { did, handle, note, url, collections };
+  return { did, handle, note, url, collections, verb, quote };
 }
 
 function cacheKey(laneId: LaneId, normUrl: string): string {

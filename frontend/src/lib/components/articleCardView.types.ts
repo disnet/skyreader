@@ -37,6 +37,10 @@ export interface LanePersonVM {
   url: string | null;
   /** Named Semble collection(s) the saver filed the card into (Semble lane only). */
   collections: { name: string; url: string | null }[];
+  /** margin.at lane only: motivation as a past-tense verb ('highlighted' / …). */
+  verb: string | null;
+  /** margin.at lane only: the highlighted passage, distinct from the `note` comment. */
+  quote: string | null;
 }
 
 export interface ExpandedLaneItemsVM {

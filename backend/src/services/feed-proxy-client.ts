@@ -152,6 +152,10 @@ export interface MentionLaneEntryResult {
   url: string | null;
   // Named Semble collection(s) the saver filed the card into (Semble lane only).
   collections: { name: string; url: string | null }[];
+  // margin.at lane only: the note's motivation as a past-tense verb, and the
+  // highlighted passage it targets (distinct from the comment in `note`).
+  verb: string | null;
+  quote: string | null;
 }
 
 interface RawMentionLaneResponse {

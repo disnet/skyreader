@@ -414,6 +414,32 @@
                         {/if}
                       {/each}
                     </div>
+                  {:else if expandedLane === 'margin'}
+                    <!-- Annotations, not bare links: each is its own card with
+                         the motivation verb and the highlighted passage / comment. -->
+                    <div class="lane-annotations">
+                      {#each expandedLaneItems.entries as entry (entry.did + (entry.url ?? ''))}
+                        <div class="lane-annotation">
+                          <div class="lane-annotation-head">
+                            <button
+                              type="button"
+                              class="lane-save-handle"
+                              onclick={(e) => {
+                                e.stopPropagation();
+                                onOpenAuthor?.(entry.did);
+                              }}>@{entry.handle ?? entry.did.slice(0, 18)}</button
+                            >
+                            <span class="lane-save-verb">{entry.verb ?? 'annotated'}</span>
+                          </div>
+                          {#if entry.quote}
+                            <p class="lane-annotation-quote">{entry.quote}</p>
+                          {/if}
+                          {#if entry.note}
+                            <p class="lane-annotation-comment">{entry.note}</p>
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
                   {:else}
                     <ul class="lane-people">
                       {#each expandedLaneItems.entries as entry (entry.did + (entry.url ?? ''))}
@@ -1205,6 +1231,52 @@
 
   a.lane-save-collection:hover :global(.icon) {
     opacity: 1;
+  }
+
+  /* margin.at lane: each annotation is its own subtly-filled card — a
+     "<who> <motivation>" head, then the highlighted passage and/or comment. */
+  .lane-annotations {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    margin: 0 0 0.5rem;
+  }
+
+  .lane-annotation {
+    padding: 0.4375rem 0.5rem;
+    background: var(--color-bg-secondary);
+    border-radius: 0.5rem;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+  }
+
+  .lane-annotation-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.25rem;
+  }
+
+  .lane-annotation-quote {
+    margin: 0.3125rem 0 0;
+    padding-left: 0.5rem;
+    border-left: 2px solid var(--color-border);
+    color: var(--color-text);
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .lane-annotation-comment {
+    margin: 0.3125rem 0 0;
+    color: var(--color-text-secondary);
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .link-post-context {
