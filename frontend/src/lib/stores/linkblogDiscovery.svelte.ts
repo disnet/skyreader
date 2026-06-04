@@ -1,4 +1,5 @@
 import { api } from '$lib/services/api';
+import { fetchAllDocuments } from '$lib/services/feedFetcher';
 import { subscriptionsStore } from './subscriptions.svelte';
 import type { LinkblogPerson } from '$lib/types';
 
@@ -66,6 +67,9 @@ function createLinkblogDiscoveryStore() {
         customIconUrl: person.avatar,
       });
     }
+    // Fetch this linkblog's documents now so its feed isn't empty until the next
+    // full refresh (also refreshed on the regular cycle).
+    void fetchAllDocuments(subscriptionsStore.subscriptions);
   }
 
   return {

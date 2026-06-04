@@ -3,7 +3,7 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
-  import { fetchSingleFeed } from '$lib/services/feedFetcher';
+  import { fetchSingleFeed, fetchAllDocuments } from '$lib/services/feedFetcher';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { profileService } from '$lib/services/profiles';
   import { api } from '$lib/services/api';
@@ -268,6 +268,9 @@
         customIconUrl: pub.iconUrl,
       });
     }
+    // Fetch this publication's documents now so its feed isn't empty until the
+    // next full refresh (also refreshed on the regular cycle).
+    void fetchAllDocuments(subscriptionsStore.subscriptions);
   }
 
   // -- Actions --

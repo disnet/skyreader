@@ -6,6 +6,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { searchBlueskyActors, type BlueskySearchResult } from '$lib/services/blueskySearch';
   import { api } from '$lib/services/api';
+  import { fetchAllDocuments } from '$lib/services/feedFetcher';
   import { profileService } from '$lib/services/profiles';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
@@ -388,6 +389,9 @@
       });
 
       socialStore.loadFeed(true);
+      // Fetch this publication's documents now so they appear immediately
+      // (also refreshed on the regular cycle).
+      void fetchAllDocuments(subscriptionsStore.subscriptions);
       handleClose();
       goto(`/?feed=${subId}`);
       sidebarStore.closeMobile();
@@ -469,6 +473,9 @@
       }
 
       socialStore.loadFeed(true);
+      // Fetch the new publications' documents now so they appear immediately
+      // (also refreshed on the regular cycle).
+      void fetchAllDocuments(subscriptionsStore.subscriptions);
       handleClose();
 
       if (firstAddedId) {
