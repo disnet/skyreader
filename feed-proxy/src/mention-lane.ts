@@ -25,13 +25,12 @@ import { normalizeArticleUrl, constellationTargets } from './url-normalize';
 import { laneForSource, type LaneId } from './lanes';
 import { resolveHandle, resolvePdsUrl } from './did-resolver';
 import { resolveSiteMeta, buildCanonicalUrl, parseAtUri } from './standard-site';
+import { constellationGet } from './constellation-client';
 
 // The one-per-user Skyreader linkblog publication rkey (see backend
 // linkblog-sync). Used only as a link-out fallback for our own docs.
 const LINKBLOG_PUBLICATION_RKEY = 'skyreader-links';
 
-const CONSTELLATION_BASE = 'https://constellation.microcosm.blue';
-const HEADERS = { 'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)' };
 const FETCH_TIMEOUT_MS = 10 * 1000;
 
 // Firehose-fresh index → keep the assembled list only briefly.
@@ -102,24 +101,6 @@ interface CacheRow {
   cache_key: string;
   context_json: string;
   cached_at: number;
-}
-
-async function constellationGet<T>(
-  path: string,
-  params: Record<string, string>
-): Promise<T | null> {
-  try {
-    const qs = new URLSearchParams(params);
-    const res = await fetch(`${CONSTELLATION_BASE}${path}?${qs}`, {
-      headers: HEADERS,
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch (error) {
-    console.error(`[mention-lane] ${path} error:`, error);
-    return null;
-  }
 }
 
 // Fetch a single record value from the author's PDS (for its note/snippet).

@@ -23,10 +23,7 @@
 import { Database } from 'bun:sqlite';
 import { normalizeArticleUrl, constellationTargets } from './url-normalize';
 import { LANES, laneForSource, type LaneId } from './lanes';
-
-const CONSTELLATION_BASE = 'https://constellation.microcosm.blue';
-const HEADERS = { 'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)' };
-const FETCH_TIMEOUT_MS = 10 * 1000;
+import { constellationGet } from './constellation-client';
 
 // DIDs paged per (collection, path). One page is exact for the common small
 // count; very popular URLs cap here and render as '<n>+'.
@@ -91,24 +88,6 @@ interface DistinctDidsResponse {
   total?: number;
   linking_dids?: string[];
   cursor?: string;
-}
-
-async function constellationGet<T>(
-  path: string,
-  params: Record<string, string>
-): Promise<T | null> {
-  try {
-    const qs = new URLSearchParams(params);
-    const res = await fetch(`${CONSTELLATION_BASE}${path}?${qs}`, {
-      headers: HEADERS,
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch (error) {
-    console.error(`[mentions] ${path} error:`, error);
-    return null;
-  }
 }
 
 // Distinct DIDs that linked `target` via one (collection, path). Asks Constellation

@@ -13,9 +13,10 @@ import type { FirehoseStatus } from './jetstream';
 import { getSocialContext, type SocialContext, type SocialContextQuery } from './constellation';
 import { getLinkblogRegistry } from './linkblog-registry';
 import { readCachedMentions, enrichMentions } from './mentions';
-import { getMentionLaneItems } from './mention-lane';
+import { getMentionLaneItems, type MentionLaneEntry } from './mention-lane';
 import type { LaneId } from './lanes';
 import { normalizeArticleUrl } from './url-normalize';
+import { Semaphore, OverloadError } from './semaphore';
 
 export interface AppConfig {
   proxySecret?: string;
@@ -37,6 +38,11 @@ export interface AppConfig {
   // Pre-warm Phase 5 mention counts for a refreshed feed's items (extra
   // Constellation load). Off by default; enabled in production via index.ts.
   warmMentionsEnabled?: boolean;
+  // Max concurrent /extract fetch+DOM-build operations (the proxy's heaviest,
+  // most memory-hungry request). Excess callers queue up to extractQueueMax, then
+  // are shed with a 503 rather than risking OOM on the single machine.
+  extractConcurrency?: number;
+  extractQueueMax?: number;
   // Live status of the Jetstream document firehose. When it's healthy and
   // watching an author, the /documents serve path trusts the cache regardless of
   // age (the stream keeps it current) instead of triggering an age-based re-list.
@@ -86,6 +92,15 @@ interface DocumentRequestEntry {
   siteUri?: string;
   since_uris?: string[];
 }
+
+// Outcome of feed discovery, shared between concurrent callers (coalesced) and
+// mapped to an HTTP response by the route. A clean upstream block is its own kind
+// so the route can answer 200 (the proxy worked; the site refused us) rather than
+// 502 (our gateway failed).
+type DiscoverResult =
+  | { kind: 'ok'; feeds: string[]; standardSites: string[] }
+  | { kind: 'blocked'; error: string }
+  | { kind: 'error'; error: string };
 
 const FETCH_HEADERS = {
   // Don't impersonate Googlebot (e.g. "like FeedFetcher-Google"): CDNs such as
@@ -430,6 +445,128 @@ export function initDatabase(db: Database): void {
   db.run(`CREATE INDEX IF NOT EXISTS idx_mention_cache_checked_at ON mention_cache(checked_at)`);
 }
 
+// Discover RSS/Atom feeds and advertised standard.site URIs for a site URL.
+// Pure work (no db); the route coalesces concurrent calls and maps the result to
+// an HTTP response. Never throws — failures return an 'error'/'blocked' kind.
+async function runDiscover(siteUrl: string): Promise<DiscoverResult> {
+  try {
+    const response = await fetch(siteUrl, {
+      headers: FETCH_HEADERS,
+      redirect: 'follow',
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const { error, blocked } = describeFetchFailure(response.status, siteUrl);
+      return blocked ? { kind: 'blocked', error } : { kind: 'error', error };
+    }
+
+    const contentType = response.headers.get('Content-Type') || '';
+    const text = await readResponseWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
+
+    // If it's already a feed, return the URL
+    if (
+      contentType.includes('xml') ||
+      contentType.includes('rss') ||
+      contentType.includes('atom')
+    ) {
+      return { kind: 'ok', feeds: [siteUrl], standardSites: [] };
+    }
+
+    // Parse HTML to find link tags
+    const feeds: string[] = [];
+    const maxFeedsFromHtml = 10;
+    const linkRegex =
+      /<link[^>]*type=["'](application\/rss\+xml|application\/atom\+xml)["'][^>]*>/gi;
+    let match;
+
+    while ((match = linkRegex.exec(text)) !== null && feeds.length < maxFeedsFromHtml) {
+      const hrefMatch = match[0].match(/href=["']([^"']+)["']/i);
+      if (hrefMatch) {
+        let feedUrl = hrefMatch[1];
+        // Handle relative URLs
+        if (!feedUrl.startsWith('http')) {
+          const baseUrl = new URL(siteUrl);
+          feedUrl = new URL(feedUrl, baseUrl).toString();
+        }
+        feeds.push(feedUrl);
+      }
+    }
+
+    // Detect standard.site (AT Protocol) advertisements. Sites expose these as
+    // <link> tags whose href is an at:// URI pointing to either a
+    // site.standard.document record (article pages) or a site.standard.publication
+    // record (publication homepages), e.g.
+    // <link rel="site.standard.publication" href="at://did/site.standard.publication/rkey">.
+    // The at:// href (regardless of rel) is the reliable signal.
+    const standardSites: string[] = [];
+    const maxStandardSites = 5;
+    const linkTagRegex = /<link\b[^>]*>/gi;
+    let linkTag;
+    while (
+      (linkTag = linkTagRegex.exec(text)) !== null &&
+      standardSites.length < maxStandardSites
+    ) {
+      const href = linkTag[0].match(/href=["']([^"']+)["']/i)?.[1];
+      if (
+        href &&
+        href.startsWith('at://') &&
+        (href.includes('/site.standard.document/') ||
+          href.includes('/site.standard.publication/')) &&
+        !standardSites.includes(href)
+      ) {
+        standardSites.push(href);
+      }
+    }
+
+    // Try common feed paths if no links found (stop after first match)
+    if (feeds.length === 0) {
+      const commonPaths = ['/feed', '/rss', '/atom.xml', '/feed.xml', '/rss.xml', '/index.xml'];
+      const baseUrl = new URL(siteUrl);
+      const maxProbes = 3;
+      let probeCount = 0;
+
+      for (const path of commonPaths) {
+        if (feeds.length > 0 || probeCount >= maxProbes) break;
+        probeCount++;
+
+        try {
+          const testUrl = new URL(path, baseUrl).toString();
+          const testResponse = await fetch(testUrl, {
+            method: 'HEAD',
+            headers: FETCH_HEADERS,
+            redirect: 'follow',
+            signal: AbortSignal.timeout(5000),
+          });
+
+          if (testResponse.ok) {
+            const testContentType = testResponse.headers.get('Content-Type') || '';
+            if (
+              testContentType.includes('xml') ||
+              testContentType.includes('rss') ||
+              testContentType.includes('atom')
+            ) {
+              feeds.push(testUrl);
+            }
+          }
+        } catch {
+          // Ignore errors for common path probing
+        }
+      }
+    }
+
+    return { kind: 'ok', feeds, standardSites };
+  } catch (error) {
+    const isTimeout = error instanceof Error && error.name === 'TimeoutError';
+    const msg = isTimeout
+      ? `Timeout after ${FETCH_TIMEOUT_MS / 1000}s`
+      : error instanceof Error
+        ? error.message
+        : 'Unknown error';
+    return { kind: 'error', error: msg };
+  }
+}
+
 export function createApp(db: Database, config: AppConfig) {
   const { proxySecret, cacheTtlMs, staleTtlMs, defaultLimit } = config;
   // Default: firehose absent → unhealthy, nothing subscribed (serve path keeps
@@ -447,6 +584,20 @@ export function createApp(db: Database, config: AppConfig) {
   const inFlightContext = new Map<string, Promise<SocialContext>>();
   // Collapse concurrent mention enrichments for the same normalized URL.
   const inFlightMentions = new Map<string, Promise<void>>();
+  // Collapse concurrent feed-discovery probes for the same site URL (uncached:
+  // each call fetches the site + HEAD-probes common paths).
+  const inFlightDiscover = new Map<string, Promise<DiscoverResult>>();
+  // Collapse concurrent lane expansions for the same (url, lane): each does a
+  // full Constellation + per-author PDS fan-out before the result is cached.
+  const inFlightLane = new Map<string, Promise<MentionLaneEntry[]>>();
+
+  // Bound the heaviest request (fetch + Defuddle DOM build). Per-URL coalescing
+  // (inFlightExtract) dedups identical extractions; this caps the number of
+  // *distinct* heavy extractions in flight so a burst can't OOM the machine.
+  const extractSemaphore = new Semaphore(
+    config.extractConcurrency ?? 4,
+    config.extractQueueMax ?? 20
+  );
 
   // Fire-and-forget background enrichment of an article's mention breakdown,
   // deduped per normalized URL. The decay gate inside enrichMentions makes most
@@ -706,6 +857,14 @@ export function createApp(db: Database, config: AppConfig) {
   const warmConcurrency = config.warmConcurrency ?? 8;
   const warmMentionsEnabled = config.warmMentionsEnabled ?? false;
 
+  // Surface silent warm-loop saturation: when a tick fills the batch cap there
+  // may be more feeds/authors due for refresh than we can cover, so the oldest
+  // can go stale before their turn. Warn (throttled) with the real backlog so the
+  // degradation isn't invisible — the fix is raising the cap/concurrency.
+  const WARM_SATURATION_WARN_THROTTLE_MS = 5 * 60 * 1000;
+  let lastFeedSaturationWarn = 0;
+  let lastDocSaturationWarn = 0;
+
   // Proactively re-fetch feeds that are about to go stale so user requests land
   // on a fresh cache (a HIT) instead of triggering a blocking upstream fetch.
   // Reuses the on-demand fetch path (and its circuit breaker / conditional
@@ -725,6 +884,29 @@ export function createApp(db: Database, config: AppConfig) {
       .all(now - warmRefreshThresholdMs, now, now - warmActiveWindowMs, warmBatchCap);
 
     if (rows.length === 0) return 0;
+
+    if (
+      rows.length >= warmBatchCap &&
+      now - lastFeedSaturationWarn > WARM_SATURATION_WARN_THROTTLE_MS
+    ) {
+      lastFeedSaturationWarn = now;
+      const eligible = db
+        .query<{ count: number }, [number, number, number]>(
+          `SELECT COUNT(*) as count FROM cache
+					WHERE fetched_at < ?
+						AND (next_retry_at IS NULL OR next_retry_at < ?)
+						AND last_requested_at IS NOT NULL
+						AND last_requested_at > ?`
+        )
+        .get(now - warmRefreshThresholdMs, now, now - warmActiveWindowMs);
+      const total = eligible?.count ?? rows.length;
+      if (total > warmBatchCap) {
+        console.warn(
+          `[Proxy] Warmer saturated: ${total} feeds due for refresh but cap is ${warmBatchCap}; ` +
+            `${total - warmBatchCap} wait this tick and may go stale. Raise WARM_BATCH_CAP/WARM_CONCURRENCY.`
+        );
+      }
+    }
 
     const queue = [...rows];
     let refreshed = 0;
@@ -854,6 +1036,29 @@ export function createApp(db: Database, config: AppConfig) {
 
     if (rows.length === 0) return 0;
 
+    if (
+      rows.length >= warmBatchCap &&
+      now - lastDocSaturationWarn > WARM_SATURATION_WARN_THROTTLE_MS
+    ) {
+      lastDocSaturationWarn = now;
+      const eligible = db
+        .query<{ count: number }, [number, number, number]>(
+          `SELECT COUNT(*) as count FROM document_cache
+					WHERE fetched_at < ?
+						AND (next_retry_at IS NULL OR next_retry_at < ?)
+						AND last_requested_at IS NOT NULL
+						AND last_requested_at > ?`
+        )
+        .get(now - warmRefreshThresholdMs, now, now - warmActiveWindowMs);
+      const total = eligible?.count ?? rows.length;
+      if (total > warmBatchCap) {
+        console.warn(
+          `[Proxy] Warmer saturated: ${total} author document sets due for refresh but cap is ${warmBatchCap}; ` +
+            `${total - warmBatchCap} wait this tick and may go stale. Raise WARM_BATCH_CAP/WARM_CONCURRENCY.`
+        );
+      }
+    }
+
     const queue = [...rows];
     let refreshed = 0;
 
@@ -932,6 +1137,7 @@ export function createApp(db: Database, config: AppConfig) {
       fresh: fresh?.count || 0,
       stale: stale?.count || 0,
       inFlight: inFlight.size,
+      extract: { inUse: extractSemaphore.inUse, queued: extractSemaphore.queued },
       cacheTtlSeconds: cacheTtlMs / 1000,
       staleTtlSeconds: staleTtlMs / 1000,
       errors: {
@@ -1092,125 +1298,25 @@ export function createApp(db: Database, config: AppConfig) {
       return c.json({ error: 'Invalid url' }, 400);
     }
 
-    try {
-      const response = await fetch(siteUrl, {
-        headers: FETCH_HEADERS,
-        redirect: 'follow',
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
-
-      if (!response.ok) {
-        const { error, blocked } = describeFetchFailure(response.status, siteUrl);
-        // A clean upstream block is a successful determination on our side
-        // (the proxy worked; the site refused us), so don't return 502 — that
-        // reads like our gateway failed. Other upstream failures stay 502.
-        return c.json({ error, blocked }, blocked ? 200 : 502);
-      }
-
-      const contentType = response.headers.get('Content-Type') || '';
-      const text = await readResponseWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
-
-      // If it's already a feed, return the URL
-      if (
-        contentType.includes('xml') ||
-        contentType.includes('rss') ||
-        contentType.includes('atom')
-      ) {
-        return c.json({ feeds: [siteUrl], standardSites: [] });
-      }
-
-      // Parse HTML to find link tags
-      const feeds: string[] = [];
-      const maxFeedsFromHtml = 10;
-      const linkRegex =
-        /<link[^>]*type=["'](application\/rss\+xml|application\/atom\+xml)["'][^>]*>/gi;
-      let match;
-
-      while ((match = linkRegex.exec(text)) !== null && feeds.length < maxFeedsFromHtml) {
-        const hrefMatch = match[0].match(/href=["']([^"']+)["']/i);
-        if (hrefMatch) {
-          let feedUrl = hrefMatch[1];
-          // Handle relative URLs
-          if (!feedUrl.startsWith('http')) {
-            const baseUrl = new URL(siteUrl);
-            feedUrl = new URL(feedUrl, baseUrl).toString();
-          }
-          feeds.push(feedUrl);
-        }
-      }
-
-      // Detect standard.site (AT Protocol) advertisements. Sites expose these as
-      // <link> tags whose href is an at:// URI pointing to either a
-      // site.standard.document record (article pages) or a site.standard.publication
-      // record (publication homepages), e.g.
-      // <link rel="site.standard.publication" href="at://did/site.standard.publication/rkey">.
-      // The at:// href (regardless of rel) is the reliable signal.
-      const standardSites: string[] = [];
-      const maxStandardSites = 5;
-      const linkTagRegex = /<link\b[^>]*>/gi;
-      let linkTag;
-      while (
-        (linkTag = linkTagRegex.exec(text)) !== null &&
-        standardSites.length < maxStandardSites
-      ) {
-        const href = linkTag[0].match(/href=["']([^"']+)["']/i)?.[1];
-        if (
-          href &&
-          href.startsWith('at://') &&
-          (href.includes('/site.standard.document/') ||
-            href.includes('/site.standard.publication/')) &&
-          !standardSites.includes(href)
-        ) {
-          standardSites.push(href);
-        }
-      }
-
-      // Try common feed paths if no links found (stop after first match)
-      if (feeds.length === 0) {
-        const commonPaths = ['/feed', '/rss', '/atom.xml', '/feed.xml', '/rss.xml', '/index.xml'];
-        const baseUrl = new URL(siteUrl);
-        const maxProbes = 3;
-        let probeCount = 0;
-
-        for (const path of commonPaths) {
-          if (feeds.length > 0 || probeCount >= maxProbes) break;
-          probeCount++;
-
-          try {
-            const testUrl = new URL(path, baseUrl).toString();
-            const testResponse = await fetch(testUrl, {
-              method: 'HEAD',
-              headers: FETCH_HEADERS,
-              redirect: 'follow',
-              signal: AbortSignal.timeout(5000),
-            });
-
-            if (testResponse.ok) {
-              const testContentType = testResponse.headers.get('Content-Type') || '';
-              if (
-                testContentType.includes('xml') ||
-                testContentType.includes('rss') ||
-                testContentType.includes('atom')
-              ) {
-                feeds.push(testUrl);
-              }
-            }
-          } catch {
-            // Ignore errors for common path probing
-          }
-        }
-      }
-
-      return c.json({ feeds, standardSites });
-    } catch (error) {
-      const isTimeout = error instanceof Error && error.name === 'TimeoutError';
-      const msg = isTimeout
-        ? `Timeout after ${FETCH_TIMEOUT_MS / 1000}s`
-        : error instanceof Error
-          ? error.message
-          : 'Unknown error';
-      return c.json({ error: msg }, 502);
+    // Coalesce concurrent discovers of the same site: each does an uncached site
+    // fetch plus up to 3 HEAD probes, so duplicate in-flight calls share one run.
+    let pending = inFlightDiscover.get(siteUrl);
+    if (!pending) {
+      pending = runDiscover(siteUrl).finally(() => inFlightDiscover.delete(siteUrl));
+      inFlightDiscover.set(siteUrl, pending);
     }
+    const result = await pending;
+
+    if (result.kind === 'ok') {
+      return c.json({ feeds: result.feeds, standardSites: result.standardSites });
+    }
+    if (result.kind === 'blocked') {
+      // A clean upstream block is a successful determination on our side (the
+      // proxy worked; the site refused us), so answer 200 — not 502, which reads
+      // like our gateway failed.
+      return c.json({ error: result.error, blocked: true }, 200);
+    }
+    return c.json({ error: result.error, blocked: false }, 502);
   });
 
   // Fetch a URL and return cleaned, extracted article content (Defuddle).
@@ -1262,29 +1368,38 @@ export function createApp(db: Database, config: AppConfig) {
     const isLeader = !pending;
     if (!pending) {
       pending = (async () => {
-        const response = await fetch(url, {
-          headers: {
-            ...FETCH_HEADERS,
-            Accept: 'text/html, application/xhtml+xml, */*',
-          },
-          redirect: 'follow',
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-        });
+        // Acquire a permit before the fetch + DOM build (the heavy part). Throws
+        // OverloadError when the queue is full — followers awaiting this promise
+        // see the same shed, which is correct: they'd do identical heavy work.
+        // acquire() is outside the try so a failed acquire never calls release().
+        await extractSemaphore.acquire();
+        try {
+          const response = await fetch(url, {
+            headers: {
+              ...FETCH_HEADERS,
+              Accept: 'text/html, application/xhtml+xml, */*',
+            },
+            redirect: 'follow',
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          });
 
-        if (!response.ok) {
-          const { error, blocked } = describeFetchFailure(response.status, url);
-          throw new FetchHtmlError(error, 502, blocked);
+          if (!response.ok) {
+            const { error, blocked } = describeFetchFailure(response.status, url);
+            throw new FetchHtmlError(error, 502, blocked);
+          }
+
+          const html = await readResponseWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
+          const extracted = await extractArticle(html, url);
+
+          db.run(
+            'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at) VALUES (?, ?, ?, ?)',
+            [urlHash, url, JSON.stringify(extracted), Date.now()]
+          );
+
+          return extracted;
+        } finally {
+          extractSemaphore.release();
         }
-
-        const html = await readResponseWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
-        const extracted = await extractArticle(html, url);
-
-        db.run(
-          'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at) VALUES (?, ?, ?, ?)',
-          [urlHash, url, JSON.stringify(extracted), Date.now()]
-        );
-
-        return extracted;
       })();
       inFlightExtract.set(urlHash, pending);
     }
@@ -1294,6 +1409,12 @@ export function createApp(db: Database, config: AppConfig) {
       c.header('X-Cache', isLeader ? 'MISS' : 'COALESCED');
       return c.json(extracted);
     } catch (error) {
+      if (error instanceof OverloadError) {
+        // Load shed: extraction capacity is saturated. Ask the caller to retry.
+        return c.json({ error: 'Extraction capacity reached, retry shortly' }, 503, {
+          'Retry-After': '5',
+        });
+      }
       if (error instanceof FetchHtmlError) {
         return c.json({ error: error.message, blocked: error.blocked }, 502);
       }
@@ -1754,7 +1875,17 @@ export function createApp(db: Database, config: AppConfig) {
       return c.json({ error: 'Unknown lane' }, 400);
     }
 
-    const entries = await getMentionLaneItems(db, url, lane as LaneId);
+    // Coalesce concurrent expansions of the same (url, lane): each runs a full
+    // Constellation + per-author PDS fan-out before the result lands in the cache.
+    const laneKey = `${url}|${lane}`;
+    let pending = inFlightLane.get(laneKey);
+    if (!pending) {
+      pending = getMentionLaneItems(db, url, lane as LaneId).finally(() =>
+        inFlightLane.delete(laneKey)
+      );
+      inFlightLane.set(laneKey, pending);
+    }
+    const entries = await pending;
     return c.json({ entries });
   });
 

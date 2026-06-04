@@ -27,6 +27,12 @@ const WARM_CONCURRENCY = parseInt(process.env.WARM_CONCURRENCY || '8', 10);
 // Constellation load); on by default in production, disable with WARM_MENTIONS=false.
 const WARM_MENTIONS_ENABLED = (process.env.WARM_MENTIONS ?? 'true') !== 'false';
 
+// /extract is the heaviest request (fetch + Defuddle DOM build). Cap concurrent
+// extractions so a burst of distinct heavy articles can't OOM the 512MB machine;
+// excess callers queue, then are shed with a 503 once the queue fills.
+const EXTRACT_CONCURRENCY = parseInt(process.env.EXTRACT_CONCURRENCY || '4', 10);
+const EXTRACT_QUEUE_MAX = parseInt(process.env.EXTRACT_QUEUE_MAX || '20', 10);
+
 // Jetstream document firehose: keeps standard.site documents fresh via the AT
 // Proto firehose (push) instead of re-listing every active author (pull). The
 // pull path stays for cold-start backfill and as the firehose-down fallback.
@@ -63,6 +69,8 @@ const { app, warmStaleFeeds, warmStaleDocuments } = createApp(db, {
   warmBatchCap: WARM_BATCH_CAP,
   warmConcurrency: WARM_CONCURRENCY,
   warmMentionsEnabled: WARM_MENTIONS_ENABLED,
+  extractConcurrency: EXTRACT_CONCURRENCY,
+  extractQueueMax: EXTRACT_QUEUE_MAX,
   getFirehoseStatus: () => firehose?.status() ?? { healthy: false, isSubscribed: () => false },
 });
 
