@@ -22,14 +22,6 @@ export function waitForControl(page: Page, timeoutMs = 15000) {
   }, timeoutMs);
 }
 
-/** True if the in-app.html recovery overlay ("Something went wrong") is visible. */
-export function recoveryVisible(page: Page) {
-  return page.evaluate(() => {
-    const r = document.getElementById('skyreader-recovery');
-    return r ? getComputedStyle(r).display !== 'none' : false;
-  });
-}
-
 /** True if the app shell rendered something (not a blank page). */
 export async function shellRendered(page: Page) {
   try {
