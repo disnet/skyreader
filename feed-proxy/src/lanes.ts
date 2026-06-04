@@ -10,7 +10,7 @@
  *
  * The whitelist is **path-precise, not collection-precise**: verified live,
  * `/links/all` surfaces pure noise even inside a laned collection — a Bluesky
- * post's `.text` / `.embed.images[].alt` / `.bridgyOriginalUrl`, and whole
+ * post's `.embed.images[].alt` / `.bridgyOriginalUrl`, and whole
  * collections that merely log the URL as an HTTP *referrer* (a game's
  * `net.anisota.beta.game.session.sessionContext.referrer`, 300+ DIDs, nobody
  * discussing anything). A lane counts a path only if its collection is laned
@@ -61,8 +61,10 @@ export const LANES: Lane[] = [
     noun: 'Bluesky post',
     icon: 'bluesky',
     collections: ['app.bsky.feed.post'],
-    // Real links live in the embed/facet paths; these three are incidental.
-    excludePaths: ['.text', '.embed.images[].alt', '.bridgyOriginalUrl'],
+    // Count facet/embed links *and* bare-text URLs (`.text`) — typing a link into
+    // a post is a real share. Still drop genuine incidentals: alt text and the
+    // Bridgy round-trip metadata.
+    excludePaths: ['.embed.images[].alt', '.bridgyOriginalUrl'],
   },
   {
     id: 'margin',

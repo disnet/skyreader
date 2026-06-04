@@ -63,8 +63,9 @@ describe('laneForSource', () => {
     expect(laneForSource('app.bsky.feed.post', '.embed.external.uri')?.id).toBe('bluesky');
     expect(laneForSource('at.margin.note', '.target.source')?.id).toBe('margin');
     expect(laneForSource('network.cosmik.card', '.content.url')?.id).toBe('semble');
-    // Bluesky noise paths are excluded even though the collection is laned.
-    expect(laneForSource('app.bsky.feed.post', '.text')).toBeNull();
+    // A bare-text URL share counts toward Bluesky.
+    expect(laneForSource('app.bsky.feed.post', '.text')?.id).toBe('bluesky');
+    // Genuine incidentals stay excluded even though the collection is laned.
     expect(laneForSource('app.bsky.feed.post', '.embed.images[].alt')).toBeNull();
   });
 
@@ -81,7 +82,8 @@ describe('computeMentions', () => {
 
   it('unions DIDs per lane (no double-count) and across lanes for the total', async () => {
     // Alice links via Bluesky embed AND facet (same person, two paths) → 1, not 2.
-    // Bob notes it on his linkblog. Alice also notes it → lane overlap.
+    // Carol shares it as bare text (`.text` is now a counted source). Bob notes it
+    // on his linkblog; Alice also notes it → lane overlap.
     mockConstellation(
       {
         'app.bsky.feed.post': {
@@ -89,7 +91,7 @@ describe('computeMentions', () => {
           '.facets[].features[app.bsky.richtext.facet#link].uri': {
             distinct_dids: 1,
           },
-          '.text': { distinct_dids: 1 }, // noise — excluded
+          '.text': { distinct_dids: 1 }, // bare-text share — counted
         },
         'site.standard.document': { '.links[].uri': { distinct_dids: 2 } },
       },
@@ -98,7 +100,7 @@ describe('computeMentions', () => {
         'app.bsky.feed.post|.facets[].features[app.bsky.richtext.facet#link].uri': [
           'did:plc:alice',
         ],
-        'app.bsky.feed.post|.text': ['did:plc:troll'], // must never be fetched/counted
+        'app.bsky.feed.post|.text': ['did:plc:carol'],
         'site.standard.document|.links[].uri': ['did:plc:alice', 'did:plc:bob'],
       }
     );
@@ -108,9 +110,9 @@ describe('computeMentions', () => {
     // Lead lane is Linkblogs (priority order), then Bluesky.
     expect(result.lanes.map((l) => l.lane)).toEqual(['linkblog', 'bluesky']);
     expect(result.lanes[0].count).toBe(2); // alice + bob
-    expect(result.lanes[1].count).toBe(1); // alice once, despite two paths
-    // Total distinct people across lanes: alice, bob → 2 (alice not double-counted).
-    expect(result.total).toBe(2);
+    expect(result.lanes[1].count).toBe(2); // alice (once, despite two paths) + carol
+    // Total distinct people across lanes: alice, bob, carol → 3 (alice not double-counted).
+    expect(result.total).toBe(3);
   });
 
   it('counts distinct DIDs, not raw records — one chatty account never inflates a lane', async () => {
@@ -206,7 +208,7 @@ describe('enrichMentions + readCachedMentions', () => {
     expect(warm.shouldEnrich).toBe(false);
   });
 
-  it('hides a below-threshold count but still caches the row', async () => {
+  it('surfaces a single linker (no minimum-DID threshold)', async () => {
     const db = freshDb();
     mockConstellation(
       { 'site.standard.document': { '.links[].uri': { distinct_dids: 1 } } },
@@ -215,9 +217,11 @@ describe('enrichMentions + readCachedMentions', () => {
     await enrichMentions(db, normalizeArticleUrl(ARTICLE)!);
 
     const read = readCachedMentions(db, ARTICLE, Date.now());
-    // One linker is below MENTION_MIN_DIDS → served as empty...
-    expect(read.mentions.total).toBe(0);
-    // ...but a row exists, so it isn't treated as a cold miss needing enrichment.
+    // One linker is real signal — surfaced, not suppressed.
+    expect(read.mentions.total).toBe(1);
+    expect(read.mentions.lanes[0].lane).toBe('linkblog');
+    expect(read.mentions.lanes[0].count).toBe(1);
+    // A row exists, so it isn't treated as a cold miss needing enrichment.
     expect(read.shouldEnrich).toBe(false);
   });
 });
