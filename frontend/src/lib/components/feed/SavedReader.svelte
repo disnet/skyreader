@@ -56,10 +56,12 @@
   let overflowRef = $state<HTMLDivElement | null>(null);
   let tagBtnRef = $state<HTMLButtonElement | null>(null);
   let controlsVisible = $state(true);
+  let scrolled = $state(false);
   let lastScrollY = $state(0);
   let suppressScrollHide = $state(false);
   let overlayEl: HTMLElement | undefined = $state();
   let readerBodyEl: HTMLElement | undefined = $state();
+  let headerRef = $state<HTMLElement | undefined>(undefined);
 
   let itemKey = $derived(readerItem.key);
   let itemTags = $derived(itemLabelsStore.getTagsForItem(itemKey));
@@ -83,6 +85,12 @@
 
   function handleScroll() {
     if (!overlayEl) return;
+    // Scroll-aware divider: the desktop header blends into the page at the top
+    // and grows its hairline divider once content scrolls underneath it. (The
+    // header stays pinned — only the mobile bottom bar hides on scroll.)
+    const next = overlayEl.scrollTop > 4;
+    if (next !== scrolled) scrolled = next;
+
     if (suppressScrollHide) return;
     const currentY = overlayEl.scrollTop;
     const delta = currentY - lastScrollY;
@@ -90,7 +98,6 @@
     if (Math.abs(delta) < 3) return;
     if (delta > 0 && currentY > 60) {
       controlsVisible = false;
-      styleMenuOpen = false;
     } else if (delta < -10) {
       // Require meaningful upward scroll to show controls
       controlsVisible = true;
@@ -317,9 +324,19 @@
     e.stopPropagation();
   }
 
+  // Dismiss the inline desktop style row when clicking outside the header
+  // (it stays pinned, so it mirrors the feed nav's click-outside behavior).
+  function handleClickOutside(e: MouseEvent) {
+    if (!styleMenuOpen) return;
+    if (headerRef && !headerRef.contains(e.target as Node)) {
+      styleMenuOpen = false;
+    }
+  }
+
   onMount(() => {
     document.body.style.overflow = 'hidden';
     document.addEventListener('keydown', handleKeydown, true);
+    document.addEventListener('click', handleClickOutside);
     // The reader is a DOM child of PullToRefresh, so touch events bubble up
     // and trigger pull-to-refresh even though the reader is a fixed overlay.
     overlayEl?.addEventListener('touchstart', stopTouchPropagation, {
@@ -335,6 +352,7 @@
   onDestroy(() => {
     document.body.style.overflow = '';
     document.removeEventListener('keydown', handleKeydown, true);
+    document.removeEventListener('click', handleClickOutside);
     overlayEl?.removeEventListener('touchstart', stopTouchPropagation);
     overlayEl?.removeEventListener('touchmove', stopTouchPropagation);
     overlayEl?.removeEventListener('touchend', stopTouchPropagation);
@@ -414,12 +432,14 @@
 </script>
 
 <div class="reader-overlay" bind:this={overlayEl} onscroll={handleScroll}>
-  <div class="reader-container">
-    <!-- Desktop: top header -->
-    <header class="reader-header desktop-only" class:hidden={!controlsVisible}>
+  <!-- Desktop: top header — a full-width flat bar (matches the feed header's
+       800px band) so the chrome doesn't shift when opening the reader. The
+       article below lives in its own narrower reading column. -->
+  <header class="reader-header desktop-only" class:scrolled bind:this={headerRef}>
+    <div class="reader-header-bar">
       <div class="reader-actions-left">
         <button class="action-btn" onclick={onClose} title="Back (Escape)">
-          <Icon name="arrow-left" size={18} />
+          <Icon name="arrow-left" size={16} />
           <span class="action-label">Back</span>
         </button>
       </div>
@@ -431,7 +451,7 @@
           onclick={() => (styleMenuOpen = !styleMenuOpen)}
           title="Style"
         >
-          <Icon name="type" size={18} />
+          <Icon name="type" size={16} />
           <span class="action-label">Style</span>
         </button>
 
@@ -443,7 +463,7 @@
             onclick={() => onArchive()}
             title={isArchived ? 'Move to inbox' : 'Archive (e)'}
           >
-            <Icon name={isArchived ? 'inbox' : 'archive'} size={18} />
+            <Icon name={isArchived ? 'inbox' : 'archive'} size={16} />
             <span class="action-label">{isArchived ? 'Inbox' : 'Archive'}</span>
           </button>
         {/if}
@@ -455,7 +475,7 @@
             onclick={() => onToggleSave!()}
             title={isSaved ? 'Unsave' : 'Save (s)'}
           >
-            <Icon name="bookmark" size={18} />
+            <Icon name="bookmark" size={16} />
             <span class="action-label">{isSaved ? 'Unsave' : 'Save'}</span>
           </button>
         {/if}
@@ -467,7 +487,7 @@
             onclick={(e) => triggerShare(e.currentTarget as HTMLElement)}
             title={shareLabel}
           >
-            <Icon name="share" size={18} />
+            <Icon name="share" size={16} />
             <span class="action-label">{shareLabel}</span>
           </button>
         {/if}
@@ -479,7 +499,7 @@
           onclick={() => (tagMenuOpen = !tagMenuOpen)}
           title="Tag (t)"
         >
-          <Icon name="tag" size={18} />
+          <Icon name="tag" size={16} />
           <span class="action-label">Tag{itemTags.length > 0 ? ` (${itemTags.length})` : ''}</span>
         </button>
 
@@ -487,26 +507,77 @@
           <PopoverMenu items={overflowItems} />
         </div>
       </div>
+    </div>
 
-      {#if tagMenuOpen}
-        <TagMenu
-          {itemKey}
-          itemType={labelItemType}
-          anchorEl={tagBtnRef}
-          onClose={() => (tagMenuOpen = false)}
-        />
-      {/if}
+    <!-- Inline style row: a flat extension of the header bar (not a floating
+           pill), shown beneath the controls when Style is toggled. -->
+    {#if styleMenuOpen}
+      <div class="reader-style-row">
+        <div class="style-toolbar">
+          <div class="toolbar-group">
+            <span class="group-label">Font</span>
+            <div class="segment-group" role="group" aria-label="Font style">
+              {#each fontOptions as option}
+                <button
+                  class="segment-btn"
+                  class:active={preferences.articleFont === option.value}
+                  onclick={() => preferences.setArticleFont(option.value)}
+                  title={option.label}
+                >
+                  <span class="font-preview" style:font-family={option.family}>Aa</span>
+                </button>
+              {/each}
+            </div>
+          </div>
 
-      <ShareNoteComposer
-        open={shareComposerOpen}
-        anchorEl={shareAnchorEl}
-        articleTitle={shareComposerTitle}
-        articleHost={shareComposerHost}
-        onsubmit={handleShareSubmit}
-        onclose={() => (shareComposerOpen = false)}
+          <span class="toolbar-divider"></span>
+
+          <div class="toolbar-group">
+            <span class="group-label">Size</span>
+            <div class="size-controls" role="group" aria-label="Font size">
+              <button
+                class="size-btn"
+                onclick={() => preferences.decreaseFontSize()}
+                disabled={preferences.articleFontSize === 'xs'}
+                title="Decrease font size"
+              >
+                <Icon name="minus" size={14} />
+              </button>
+              <span class="size-label">{sizeLabels[preferences.articleFontSize]}</span>
+              <button
+                class="size-btn"
+                onclick={() => preferences.increaseFontSize()}
+                disabled={preferences.articleFontSize === 'xl'}
+                title="Increase font size"
+              >
+                <Icon name="plus" size={14} />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    {#if tagMenuOpen}
+      <TagMenu
+        {itemKey}
+        itemType={labelItemType}
+        anchorEl={tagBtnRef}
+        onClose={() => (tagMenuOpen = false)}
       />
-    </header>
+    {/if}
 
+    <ShareNoteComposer
+      open={shareComposerOpen}
+      anchorEl={shareAnchorEl}
+      articleTitle={shareComposerTitle}
+      articleHost={shareComposerHost}
+      onsubmit={handleShareSubmit}
+      onclose={() => (shareComposerOpen = false)}
+    />
+  </header>
+
+  <div class="reader-container">
     <!-- Mobile: bottom bar -->
     <div class="reader-bottom-bar mobile-only" class:hidden={!controlsVisible}>
       <button class="bottom-btn" onclick={onClose} title="Back (Escape)">
@@ -698,55 +769,6 @@
       {/key}
     {/if}
 
-    {#if styleMenuOpen}
-      <div class="style-toolbar-fixed">
-        <div class="style-toolbar-inner">
-          <div class="style-toolbar">
-            <div class="toolbar-group">
-              <span class="group-label">Font</span>
-              <div class="segment-group" role="group" aria-label="Font style">
-                {#each fontOptions as option}
-                  <button
-                    class="segment-btn"
-                    class:active={preferences.articleFont === option.value}
-                    onclick={() => preferences.setArticleFont(option.value)}
-                    title={option.label}
-                  >
-                    <span class="font-preview" style:font-family={option.family}>Aa</span>
-                  </button>
-                {/each}
-              </div>
-            </div>
-
-            <span class="toolbar-divider"></span>
-
-            <div class="toolbar-group">
-              <span class="group-label">Size</span>
-              <div class="size-controls" role="group" aria-label="Font size">
-                <button
-                  class="size-btn"
-                  onclick={() => preferences.decreaseFontSize()}
-                  disabled={preferences.articleFontSize === 'xs'}
-                  title="Decrease font size"
-                >
-                  <Icon name="minus" size={14} />
-                </button>
-                <span class="size-label">{sizeLabels[preferences.articleFontSize]}</span>
-                <button
-                  class="size-btn"
-                  onclick={() => preferences.increaseFontSize()}
-                  disabled={preferences.articleFontSize === 'xl'}
-                  title="Increase font size"
-                >
-                  <Icon name="plus" size={14} />
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    {/if}
-
     <article class="reader-article">
       <div class="reader-article-header">
         <h1 class="reader-title">{title}</h1>
@@ -807,30 +829,83 @@
     overscroll-behavior: contain;
   }
 
-  .reader-container {
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 0 1.5rem 4rem;
+  /* The overlay covers the full viewport (opaque bg over the sidebar), but on
+     desktop its content is padded past the sidebar so the reading column centers
+     in the same band as the feed column — otherwise it centers on the whole
+     window and sits ~half-a-sidebar to the left of where the feed list was. */
+  @media (min-width: 1001px) {
+    .reader-overlay {
+      padding-left: var(--sidebar-width, 320px);
+    }
   }
 
+  /* Same 800px band and 1rem inset as the feed body (.feed-page-body + the
+     card's `padding: 0 1rem`), so the reading column lines up with the feed
+     list and the header controls above it. */
+  .reader-container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 0 1rem 4rem;
+  }
+
+  /* A flat, solid header bar pinned to the top of the overlay. It spans the full
+     width and re-centers its controls in an 800px band — identical geometry to
+     the feed header (.feed-header-fixed / .feed-header-controls) so the chrome
+     doesn't shift when opening the reader. Flat-by-default: one 1px divider, no
+     blur, no shadow. */
   .reader-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    padding: 0.75rem 0;
     position: sticky;
     top: 0;
     z-index: 10;
-    margin-bottom: 1.5rem;
-    transition:
-      transform 0.25s ease,
-      opacity 0.25s ease;
+    /* Column flex so the bar and the inline style row stack vertically and each
+       stretches to the full width. (The .desktop-only class also sets
+       display:flex; this makes the direction explicit — without it the bar
+       becomes a shrink-wrapped row item and its space-between collapses.) */
+    display: flex;
+    flex-direction: column;
+    background: var(--color-bg, #ffffff);
+    margin-bottom: 0.5rem;
   }
 
-  .reader-header.hidden {
-    transform: translateY(-100%);
+  /* The divider spans only the 800px control band, centered — matching the feed
+     header. Scroll-aware: hidden at the top (the bar blends into the page) and
+     fades in once content scrolls underneath. */
+  .reader-header::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    margin-inline: auto;
+    max-width: 800px;
+    height: 1px;
+    background: var(--color-border);
     opacity: 0;
-    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+
+  .reader-header.scrolled::after {
+    opacity: 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reader-header::after {
+      transition: none;
+    }
+  }
+
+  .reader-header-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    /* width:100% is load-bearing: as a flex item in the column-flex header, the
+       `margin: 0 auto` centering would otherwise disable stretch and shrink the
+       bar to its content width, collapsing space-between (Back + actions bunch
+       together). An explicit width gives it the full 800px to spread across. */
+    width: 100%;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 0.625rem 1rem;
   }
 
   .reader-actions-left,
@@ -838,25 +913,25 @@
     display: flex;
     flex-wrap: nowrap;
     align-items: center;
-    gap: 0.875rem;
-    padding: 0.5rem 1rem;
-    background: rgba(255, 255, 255, 0.85);
-    backdrop-filter: blur(8px);
-    border-radius: 9999px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    gap: 0.5rem;
   }
 
+  /* Matches the feed header's .view-toggle button: padded, 6px radius, grey
+     hover/active rather than a floating pill. */
   .action-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 0.375rem;
+    gap: 0.35rem;
     background: none;
     border: none;
-    padding: 0;
+    padding: 0.4rem 0.6rem;
+    border-radius: 6px;
     cursor: pointer;
     color: var(--color-text-secondary);
-    font-size: var(--text-base);
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
   }
 
   .action-label {
@@ -864,9 +939,13 @@
     font-weight: var(--weight-medium);
   }
 
-  .action-btn:hover,
+  .action-btn:hover:not(.active) {
+    color: var(--color-text);
+  }
+
   .action-btn.active {
-    color: var(--color-primary, #0066cc);
+    background: var(--color-bg-secondary, #f5f5f5);
+    color: var(--color-text);
   }
 
   .overflow-menu-wrapper {
@@ -877,22 +956,23 @@
   .overflow-menu-wrapper :global(.menu-trigger) {
     width: auto;
     height: auto;
-    padding: 0;
-    border-radius: 0;
+    padding: 0.4rem;
+    border-radius: 6px;
     background: none;
     color: var(--color-text-secondary);
   }
 
   .overflow-menu-wrapper :global(.menu-trigger:hover) {
-    background: none;
-    color: var(--color-primary, #0066cc);
+    background: var(--color-bg-secondary, #f5f5f5);
+    color: var(--color-text);
   }
 
   .action-separator {
     width: 1px;
+    height: 1rem;
     background: var(--color-border, #e5e7eb);
-    align-self: stretch;
-    margin: -0.25rem 0;
+    opacity: 0.5;
+    flex-shrink: 0;
   }
 
   /* Mobile bottom bar */
@@ -983,42 +1063,24 @@
     .desktop-only {
       display: none !important;
     }
-
-    /* Hide floating style toolbar on mobile (uses BottomSheet instead) */
-    .style-toolbar-fixed {
-      display: none;
-    }
   }
 
-  .style-toolbar-fixed {
-    position: fixed;
-    top: 4rem;
-    left: 0;
-    right: 0;
-    z-index: 11;
-    display: flex;
-    justify-content: center;
-    pointer-events: none;
-  }
-
-  .style-toolbar-inner {
+  /* Inline style row: a flat extension of the header bar, right-aligned beneath
+     the controls within the same 800px band. No floating pill — it sits in
+     normal flow and pushes the article down (closes on click-outside). */
+  .reader-style-row {
     display: flex;
     justify-content: flex-end;
+    max-width: 800px;
+    margin: 0 auto;
     width: 100%;
-    max-width: 720px;
-    padding: 0 1.5rem;
+    padding: 0 1rem 0.625rem;
   }
 
   .style-toolbar {
     display: flex;
     align-items: center;
     gap: 0.125rem;
-    padding: 0.25rem;
-    background: rgba(255, 255, 255, 0.85);
-    backdrop-filter: blur(8px);
-    border-radius: 999px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    pointer-events: auto;
   }
 
   .toolbar-group {
@@ -1048,7 +1110,6 @@
   .segment-group {
     display: flex;
     gap: 1px;
-    border-radius: 999px;
   }
 
   .segment-btn {
@@ -1062,8 +1123,10 @@
     color: var(--color-text-secondary);
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);
-    border-radius: 999px;
-    transition: all 0.2s ease;
+    border-radius: 6px;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
   }
 
   .segment-btn.active {
@@ -1096,10 +1159,12 @@
     background: none;
     border: none;
     padding: 0.3rem;
-    border-radius: 999px;
+    border-radius: 6px;
     cursor: pointer;
     color: var(--color-text-secondary);
-    transition: all 0.2s ease;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
   }
 
   .size-btn:hover:not(:disabled) {
@@ -1280,16 +1345,6 @@
   }
 
   @media (prefers-color-scheme: dark) {
-    .reader-actions-left,
-    .reader-actions-right {
-      background: rgba(40, 40, 40, 0.95);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-    }
-
-    .style-toolbar {
-      background: rgba(40, 40, 40, 0.95);
-    }
-
     .toolbar-divider {
       background: rgba(255, 255, 255, 0.2);
     }
@@ -1303,9 +1358,15 @@
     }
   }
 
-  @media (max-width: 900px) {
+  /* On narrower desktops, drop the action labels to icons — matches the feed
+     header's 1100px breakpoint so both collapse at the same width. */
+  @media (max-width: 1100px) {
     .action-label {
       display: none;
+    }
+
+    .action-btn {
+      padding: 0.4rem;
     }
   }
 
