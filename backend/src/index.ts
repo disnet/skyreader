@@ -33,6 +33,8 @@ import {
   handleBulkCreateSubscriptions,
   handleBulkDeleteSubscriptions,
   handleBulkUpdateSubscriptions,
+  handleListParkedSubscriptions,
+  handleSetSubscriptionActive,
 } from './routes/subscriptions';
 import {
   handleGetSocialReadPositions,
@@ -317,6 +319,18 @@ export default {
         case url.pathname === '/api/subscriptions/bulk-delete':
           if (!session) return unauthorizedResponse(headers);
           response = await handleBulkDeleteSubscriptions(request, env, ctx);
+          break;
+        case url.pathname === '/api/subscriptions/parked':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleListParkedSubscriptions(request, env);
+          break;
+        case url.pathname.endsWith('/activate') && url.pathname.startsWith('/api/subscriptions/'):
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleSetSubscriptionActive(request, env, true);
+          break;
+        case url.pathname.endsWith('/park') && url.pathname.startsWith('/api/subscriptions/'):
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleSetSubscriptionActive(request, env, false);
           break;
         case url.pathname.startsWith('/api/subscriptions/'):
           if (!session) return unauthorizedResponse(headers);

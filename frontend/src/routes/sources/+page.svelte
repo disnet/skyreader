@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+  import { appManager } from '$lib/stores/app.svelte';
   import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { fetchSingleFeed, fetchAllDocuments } from '$lib/services/feedFetcher';
@@ -46,6 +47,19 @@
   let selectedIds = $state<Set<number>>(new Set());
   let profiles = $state<Map<string, BlueskyProfile>>(new Map());
   let detectedContent = $state<Map<string, DetectedContent>>(new Map());
+
+  // -- Parked feeds: PDS records over the plan's active capacity. Saved to the
+  // account and portable, just not serviced or shown in the reader until the user
+  // reactivates one (which requires a free active slot). --
+  interface ParkedRecord {
+    rkey: string;
+    title: string;
+    subtitle: string;
+    iconUrl: string | null;
+    fallbackIcon: string;
+  }
+  let parkedFeeds = $state<ParkedRecord[]>([]);
+  let parkedError = $state<string | null>(null);
 
   // -- Section collapse (persisted) --
   const COLLAPSE_KEY = 'skyreader:sources-collapsed';
@@ -372,12 +386,85 @@
     selectedIds = new Set();
   }
 
+  // -- Parked feeds --
+  async function loadParked() {
+    try {
+      const res = await api.getParkedSubscriptions();
+      parkedFeeds = res.records.map((r) => {
+        const v = r.value;
+        const isAtProto = (v.sourceType || '').startsWith('atproto.');
+        const display = getSourceDisplay(v.sourceType as Subscription['sourceType'], v.feedUrl);
+        let subtitle = '';
+        if (!isAtProto) {
+          try {
+            subtitle = new URL(v.feedUrl).hostname;
+          } catch {
+            subtitle = v.feedUrl;
+          }
+        } else {
+          subtitle = isLinkblogPublication(v.feedUrl)
+            ? 'linkblog'
+            : formatPublicationUrl(v.feedUrl);
+        }
+        return {
+          rkey: r.uri.split('/').pop() || '',
+          title: v.customTitle || v.title || v.feedUrl,
+          subtitle,
+          iconUrl: v.customIconUrl || null,
+          fallbackIcon: display.iconName,
+        };
+      });
+    } catch (e) {
+      console.error('Failed to load parked feeds:', e);
+    }
+  }
+
+  async function reactivate(rec: ParkedRecord) {
+    parkedError = null;
+    try {
+      await api.activateSubscription(rec.rkey);
+      parkedFeeds = parkedFeeds.filter((p) => p.rkey !== rec.rkey);
+      // Now returned by /api/records/list — pull it into the reader and warm it.
+      await appManager.syncSubscriptions();
+      void fetchAllDocuments(subscriptionsStore.subscriptions);
+    } catch (e) {
+      parkedError =
+        e instanceof Error && e.message.toLowerCase().includes('limit')
+          ? `You're at your ${subscriptionsStore.maxSubscriptions}-feed active limit. Park a feed to free a slot.`
+          : 'Could not reactivate this feed.';
+    }
+  }
+
+  // Park an active feed: flips it to parked (kept + portable, just not serviced)
+  // and drops it from the reader on resync. Non-destructive — unlike Remove, the
+  // PDS record stays, so it can be reactivated later without re-adding.
+  async function park(sub: Subscription) {
+    try {
+      await api.parkSubscription(sub.rkey);
+      await appManager.syncSubscriptions();
+      await loadParked();
+    } catch (e) {
+      console.error('Failed to park feed:', e);
+    }
+  }
+
+  async function removeParked(rec: ParkedRecord) {
+    if (!confirm(`Remove "${rec.title}"? This deletes it from your account.`)) return;
+    try {
+      await api.deleteSubscription(rec.rkey);
+      parkedFeeds = parkedFeeds.filter((p) => p.rkey !== rec.rkey);
+    } catch (e) {
+      console.error('Failed to remove parked feed:', e);
+    }
+  }
+
   onMount(() => {
     loadCollapse();
     // Seed detected-content from cache so unsubscribed publications show instantly.
     detectedContent = new Map(
       [...loadContentCache().entries()].map(([did, c]) => [did, { ...c, loading: false }])
     );
+    void loadParked();
   });
 
   // The AT Proto accounts we have subscriptions for. Subscriptions sync in
@@ -535,6 +622,7 @@
                   subscribed={true}
                   fallbackIcon={display.iconName}
                   onRemove={() => handleRemove(sub)}
+                  onPark={() => park(sub)}
                   onEdit={sub.sourceType === 'atproto.documents' ? () => handleEdit(sub) : null}
                 />
               {/each}
@@ -644,6 +732,7 @@
                   onToggleSelect={() => sub.id && toggleSelect(sub.id)}
                   onEdit={() => handleEdit(sub)}
                   onRefresh={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
+                  onPark={() => park(sub)}
                   onRemove={() => handleRemove(sub)}
                 />
               {/each}
@@ -657,6 +746,39 @@
           </p>
         {/if}
       {/if}
+    </section>
+  {/if}
+
+  <!-- PARKED — feeds over the active limit; saved + portable, just not serviced.
+       Shown independent of the active-sources empty state and search. -->
+  {#if parkedFeeds.length > 0}
+    <section class="sources-section">
+      <h2 class="parked-heading">
+        <Icon name="archive" size={16} />
+        Parked
+        <span class="group-count">{parkedFeeds.length}</span>
+      </h2>
+      <p class="section-empty">
+        Over your {subscriptionsStore.maxSubscriptions}-feed active limit. These stay saved to your
+        account and on your PDS — reactivate one to read it (park or remove an active feed first if
+        you're full).
+      </p>
+      {#if parkedError}
+        <p class="parked-error">{parkedError}</p>
+      {/if}
+      <div class="source-list">
+        {#each parkedFeeds as rec (rec.rkey)}
+          <SourceRow
+            iconUrl={rec.iconUrl}
+            title={rec.title}
+            subtitle={rec.subtitle}
+            subscribed={false}
+            fallbackIcon={rec.fallbackIcon}
+            onReactivate={() => reactivate(rec)}
+            onRemove={() => removeParked(rec)}
+          />
+        {/each}
+      </div>
     </section>
   {/if}
 
@@ -817,6 +939,24 @@
     to {
       transform: rotate(360deg);
     }
+  }
+
+  .parked-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: var(--text-md);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-tight);
+    color: var(--color-text);
+    margin: 0 0 0.375rem;
+    padding: 0 0.25rem;
+  }
+
+  .parked-error {
+    font-size: var(--text-xs);
+    color: var(--color-error, #dc2626);
+    margin: 0 0.25rem 0.5rem;
   }
 
   .section-empty {

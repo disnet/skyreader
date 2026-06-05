@@ -42,8 +42,11 @@ export async function handleRecordsList(request: Request, env: Env): Promise<Res
     }> = [];
 
     if (collection === 'app.skyreader.feed.subscription') {
+      // Active subs only — parked feeds (over the plan's active capacity) are not
+      // serviced or shown in the reader. The manage UI lists them separately via
+      // /api/subscriptions/parked.
       const result = await env.DB.prepare(
-        'SELECT record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url, category FROM subscriptions_cache WHERE user_did = ?'
+        'SELECT record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url, category FROM subscriptions_cache WHERE user_did = ? AND active = 1'
       )
         .bind(session.did)
         .all<SubscriptionRow>();

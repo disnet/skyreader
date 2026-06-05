@@ -768,9 +768,12 @@ export class JetstreamPoller implements DurableObject {
    * Used for filtering document events.
    */
   private async getFollowedDids(): Promise<Set<string>> {
+    // Active follows only — a parked atproto.documents sub (over the plan's
+    // active capacity) isn't serviced, so we don't track its author's firehose
+    // events. If every follower of a DID has it parked, we stop tracking it.
     const result = await this.env.DB.prepare(
       `SELECT DISTINCT subject_did as did FROM subscriptions_cache
-       WHERE source_type = 'atproto.documents' AND subject_did IS NOT NULL`
+       WHERE source_type = 'atproto.documents' AND subject_did IS NOT NULL AND active = 1`
     ).all<{ did: string }>();
 
     return new Set(result.results.map((r) => r.did));

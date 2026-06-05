@@ -11,6 +11,7 @@ describe('Tier Limits Config', () => {
       const limits = getLimitsForTier('free');
       expect(limits).toEqual({
         maxSubscriptions: 100,
+        maxMirroredSubscriptions: 1000,
         maxUrlSavesPerMonth: 100,
       });
     });
@@ -19,6 +20,7 @@ describe('Tier Limits Config', () => {
       const limits = getLimitsForTier('supporter');
       expect(limits).toEqual({
         maxSubscriptions: 1000,
+        maxMirroredSubscriptions: 5000,
         maxUrlSavesPerMonth: 1000,
       });
     });
@@ -27,6 +29,7 @@ describe('Tier Limits Config', () => {
       const limits = getLimitsForTier('unknown');
       expect(limits).toEqual({
         maxSubscriptions: 100,
+        maxMirroredSubscriptions: 1000,
         maxUrlSavesPerMonth: 100,
       });
     });
@@ -35,6 +38,7 @@ describe('Tier Limits Config', () => {
       const limits = getLimitsForTier('');
       expect(limits).toEqual({
         maxSubscriptions: 100,
+        maxMirroredSubscriptions: 1000,
         maxUrlSavesPerMonth: 100,
       });
     });
@@ -115,6 +119,7 @@ describe('User Tier Service', () => {
       const limits = await getUserTierLimits(env, TEST_DID);
       expect(limits).toEqual({
         maxSubscriptions: 100,
+        maxMirroredSubscriptions: 1000,
         maxUrlSavesPerMonth: 100,
       });
     });
@@ -129,6 +134,7 @@ describe('User Tier Service', () => {
       const limits = await getUserTierLimits(env, TEST_DID);
       expect(limits).toEqual({
         maxSubscriptions: 1000,
+        maxMirroredSubscriptions: 5000,
         maxUrlSavesPerMonth: 1000,
       });
     });
@@ -137,6 +143,7 @@ describe('User Tier Service', () => {
       const limits = await getUserTierLimits(env, 'did:plc:nonexistent');
       expect(limits).toEqual({
         maxSubscriptions: 100,
+        maxMirroredSubscriptions: 1000,
         maxUrlSavesPerMonth: 100,
       });
     });

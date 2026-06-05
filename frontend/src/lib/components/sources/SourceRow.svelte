@@ -15,6 +15,8 @@
     onRefresh?: (() => void) | null;
     onRemove?: (() => void) | null;
     onSubscribe?: (() => void) | null;
+    onPark?: (() => void) | null;
+    onReactivate?: (() => void) | null;
   }
 
   let {
@@ -31,6 +33,8 @@
     onRefresh = null,
     onRemove = null,
     onSubscribe = null,
+    onPark = null,
+    onReactivate = null,
   }: Props = $props();
 
   let actions = $derived.by(() => {
@@ -41,8 +45,10 @@
       onclick: () => void;
     }[] = [];
     if (onSubscribe) items.push({ label: 'Subscribe', icon: 'plus', onclick: onSubscribe });
+    if (onReactivate) items.push({ label: 'Reactivate', icon: 'inbox', onclick: onReactivate });
     if (onEdit) items.push({ label: 'Edit', icon: 'edit', onclick: onEdit });
     if (onRefresh) items.push({ label: 'Refresh', icon: 'refresh-cw', onclick: onRefresh });
+    if (onPark) items.push({ label: 'Park', icon: 'archive', onclick: onPark });
     if (onRemove)
       items.push({
         label: 'Remove',

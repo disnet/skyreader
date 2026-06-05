@@ -25,7 +25,8 @@
     added: 0,
     skipped: 0,
     failed: [] as string[],
-    truncated: 0,
+    parked: 0,
+    dropped: 0,
   });
   let fileInput: HTMLInputElement | undefined = $state();
 
@@ -44,7 +45,7 @@
     selectedUrls = new Set();
     existingUrls = new Set();
     progress = { current: 0, total: 0 };
-    results = { added: 0, skipped: 0, failed: [], truncated: 0 };
+    results = { added: 0, skipped: 0, failed: [], parked: 0, dropped: 0 };
     if (fileInput) fileInput.value = '';
   }
 
@@ -113,7 +114,8 @@
       added: result.added.length,
       skipped: result.skipped.length,
       failed: result.failed.map((f) => f.url),
-      truncated: result.truncated,
+      parked: result.parked,
+      dropped: result.dropped,
     };
 
     modalState = 'complete';
@@ -168,11 +170,18 @@
     </div>
     {#if willExceedLimit}
       <div class="limit-warning">
-        You can only add {availableSlots} more feed{availableSlots === 1 ? '' : 's'} (limit: {subscriptionsStore.maxSubscriptions}).
+        Your plan services {subscriptionsStore.maxSubscriptions} active feed{subscriptionsStore.maxSubscriptions ===
+        1
+          ? ''
+          : 's'}{availableSlots > 0
+          ? ` (${availableSlots} slot${availableSlots === 1 ? '' : 's'} left)`
+          : ''}.
         {#if availableSlots > 0}
-          The first {availableSlots} will be imported.
+          The first {availableSlots} fill them; the rest are parked — saved to your account, just not
+          shown until you reactivate one.
         {:else}
-          Remove some existing feeds to import new ones.
+          All of these will be parked — saved to your account, just not shown until you free an
+          active slot.
         {/if}
         {#if auth.user?.tier !== 'supporter'}
           <a
@@ -232,9 +241,13 @@
         <dt>Skipped (duplicates)</dt>
         <dd>{results.skipped}</dd>
       {/if}
-      {#if results.truncated > 0}
-        <dt>Not imported (limit reached)</dt>
-        <dd>{results.truncated}</dd>
+      {#if results.parked > 0}
+        <dt>Parked (over active limit)</dt>
+        <dd>{results.parked}</dd>
+      {/if}
+      {#if results.dropped > 0}
+        <dt>Not imported (over mirror limit)</dt>
+        <dd>{results.dropped}</dd>
       {/if}
       {#if results.failed.length > 0}
         <dt>Failed</dt>

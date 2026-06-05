@@ -63,6 +63,15 @@ async function getSubscriptionCount(did: string): Promise<number> {
   return result?.count ?? 0;
 }
 
+async function getActiveCount(did: string): Promise<number> {
+  const result = await env.DB.prepare(
+    'SELECT COUNT(*) as count FROM subscriptions_cache WHERE user_did = ? AND active = 1'
+  )
+    .bind(did)
+    .first<{ count: number }>();
+  return result?.count ?? 0;
+}
+
 describe('Tier-Aware Enforcement', () => {
   let originalFetch: typeof fetch;
 
@@ -78,7 +87,7 @@ describe('Tier-Aware Enforcement', () => {
   });
 
   describe('subscription sync limits per tier', () => {
-    it('free user: caps pull at 100 subscriptions', async () => {
+    it('free user: parks the overflow past 100 active rather than dropping it', async () => {
       const session = createTestSession();
 
       // Create free user
@@ -88,7 +97,7 @@ describe('Tier-Aware Enforcement', () => {
         .bind(TEST_DID, 'test.bsky.social', 'https://test.pds.example')
         .run();
 
-      // Add 95 local subscriptions
+      // Add 95 local subscriptions (active by default)
       for (let i = 0; i < 95; i++) {
         await insertLocalSubscription(TEST_DID, i);
       }
@@ -127,10 +136,11 @@ describe('Tier-Aware Enforcement', () => {
       const result = await syncSubscriptions(session, env);
 
       expect(result.success).toBe(true);
-      // Should only pull 5 to reach the free limit of 100
-      expect(result.pulledFromPds).toBe(5);
-      expect(result.skipped).toBe(5);
-      expect(await getSubscriptionCount(TEST_DID)).toBe(100);
+      // All 10 pulled: 5 fill the active slots, 5 are parked. Nothing dropped.
+      expect(result.pulledFromPds).toBe(10);
+      expect(result.skipped).toBe(0);
+      expect(await getSubscriptionCount(TEST_DID)).toBe(105);
+      expect(await getActiveCount(TEST_DID)).toBe(100);
     });
 
     it('supporter user: allows pull beyond 100 subscriptions', async () => {
@@ -212,9 +222,13 @@ describe('Tier-Aware Enforcement', () => {
       const result = await syncSubscriptions(session, env);
 
       expect(result.success).toBe(true);
-      expect(result.warnings.length).toBeGreaterThan(0);
-      expect(result.warnings[0]).toContain('150 subscriptions');
-      expect(result.warnings[0]).toContain('only 100 can be synced');
+      // 100 active, 50 parked — the warning names the parked overflow.
+      const parkedWarning = result.warnings.find((w) => w.includes('parked'));
+      expect(parkedWarning).toBeDefined();
+      expect(parkedWarning).toContain('50 feeds');
+      expect(parkedWarning).toContain('active limit of 100');
+      expect(await getActiveCount(TEST_DID)).toBe(100);
+      expect(await getSubscriptionCount(TEST_DID)).toBe(150);
     });
 
     it('supporter user: no warning for 150 PDS subscriptions', async () => {
@@ -247,7 +261,10 @@ describe('Tier-Aware Enforcement', () => {
       expect(result.pulledFromPds).toBe(150);
     });
 
-    it('tier change is reflected immediately on next sync', async () => {
+    it('tier upgrade auto-reactivates parked feeds on the next sync', async () => {
+      // Raising the active limit (via upgrade) frees slots; the next sync's
+      // auto-fill pass promotes the oldest parked rows back to active so the
+      // headroom doesn't sit empty waiting on manual reactivation.
       const session = createTestSession();
 
       // Start as free user
@@ -293,24 +310,27 @@ describe('Tier-Aware Enforcement', () => {
         throw new Error(`Unexpected fetch: ${url}`);
       });
 
-      // First sync as free: only pulls 2 of 5
+      // First sync as free: all 5 pulled, but only 2 fit the active limit — 3 parked.
       const result1 = await syncSubscriptions(session, env);
       expect(result1.success).toBe(true);
-      expect(result1.pulledFromPds).toBe(2);
-      expect(result1.skipped).toBe(3);
-      expect(await getSubscriptionCount(TEST_DID)).toBe(100);
+      expect(result1.pulledFromPds).toBe(5);
+      expect(result1.reactivated).toBe(0);
+      expect(await getSubscriptionCount(TEST_DID)).toBe(103);
+      expect(await getActiveCount(TEST_DID)).toBe(100);
 
       // Upgrade to supporter
       await env.DB.prepare('UPDATE users SET tier = ? WHERE did = ?')
         .bind('supporter', TEST_DID)
         .run();
 
-      // Second sync as supporter: pulls the remaining 3
+      // Second sync as supporter: nothing new to pull, but the now-freed slots
+      // auto-reactivate the 3 parked rows — total unchanged, all active.
       const result2 = await syncSubscriptions(session, env);
       expect(result2.success).toBe(true);
-      expect(result2.pulledFromPds).toBe(3);
-      expect(result2.skipped).toBe(0);
+      expect(result2.pulledFromPds).toBe(0);
+      expect(result2.reactivated).toBe(3);
       expect(await getSubscriptionCount(TEST_DID)).toBe(103);
+      expect(await getActiveCount(TEST_DID)).toBe(103);
     });
   });
 });
