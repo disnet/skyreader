@@ -1,0 +1,66 @@
+import { describe, it, expect } from 'bun:test';
+import { extractContentText } from './document-content';
+
+describe('extractContentText', () => {
+  it('reads the leading text block of leaflet content', () => {
+    const content = {
+      $type: 'pub.leaflet.content',
+      pages: [
+        {
+          blocks: [
+            { block: { $type: 'pub.leaflet.blocks.image', image: {} } },
+            { block: { $type: 'pub.leaflet.blocks.text', plaintext: '  my leaflet take  ' } },
+          ],
+        },
+      ],
+    };
+    expect(extractContentText(content)).toBe('my leaflet take');
+  });
+
+  it('reads the leading text block of pckt content (flat items)', () => {
+    const content = {
+      $type: 'blog.pckt.content',
+      items: [
+        { $type: 'blog.pckt.block.heading', plaintext: 'A title' },
+        { $type: 'blog.pckt.block.text', plaintext: 'my pckt take' },
+      ],
+    };
+    expect(extractContentText(content)).toBe('my pckt take');
+  });
+
+  it('reads the leading text block of offprint content (flat items)', () => {
+    const content = {
+      $type: 'app.offprint.content',
+      items: [{ $type: 'app.offprint.block.text', plaintext: 'my offprint take' }],
+    };
+    expect(extractContentText(content)).toBe('my offprint take');
+  });
+
+  it('descends into pckt/offprint container blocks for a lead quote/list', () => {
+    const content = {
+      $type: 'app.offprint.content',
+      items: [
+        {
+          $type: 'app.offprint.block.blockquote',
+          content: [{ $type: 'app.offprint.block.text', plaintext: 'quoted lead' }],
+        },
+      ],
+    };
+    expect(extractContentText(content)).toBe('quoted lead');
+  });
+
+  it('reads the first meaningful line of greengale markdown, stripping markers', () => {
+    const content = {
+      $type: 'app.greengale.document',
+      markdown: '\n# Heading\n\nThe actual body line.\n',
+    };
+    expect(extractContentText(content)).toBe('Heading');
+  });
+
+  it('returns null for unknown / missing content', () => {
+    expect(extractContentText(undefined)).toBeNull();
+    expect(extractContentText(null)).toBeNull();
+    expect(extractContentText({ $type: 'app.unknown.content', items: [] })).toBeNull();
+    expect(extractContentText({ pages: [] })).toBeNull(); // no $type discriminator
+  });
+});
