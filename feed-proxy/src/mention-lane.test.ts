@@ -104,6 +104,7 @@ describe('getMentionLaneItems', () => {
           site: 'at://did:plc:bob/site.standard.publication/skyreader-links',
           path: '/doc1',
           content: {
+            $type: 'pub.leaflet.content',
             pages: [
               { blocks: [{ block: { $type: 'pub.leaflet.blocks.text', plaintext: 'my take' } }] },
             ],
@@ -173,6 +174,7 @@ describe('getMentionLaneItems', () => {
           path: '/doc2',
           description: 'the summary',
           content: {
+            $type: 'pub.leaflet.content',
             pages: [
               {
                 blocks: [

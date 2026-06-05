@@ -26,6 +26,7 @@ import { laneForSource, type LaneId } from './lanes';
 import { resolveHandle, resolvePdsUrl } from './did-resolver';
 import { resolveSiteMeta, buildCanonicalUrl, parseAtUri } from './standard-site';
 import { constellationGet } from './constellation-client';
+import { extractContentText } from './document-content';
 
 // The one-per-user Skyreader linkblog publication rkey (see backend
 // linkblog-sync). Used only as a link-out fallback for our own docs.
@@ -138,23 +139,14 @@ function firstString(...vals: unknown[]): string | null {
 
 // A short snippet for a blogs entry. Prefer the document's own `description` —
 // the canonical summary any standard.site post carries — then fall back to the
-// leading pub.leaflet text block (a Skyreader note, when there's no description)
-// and finally plain textContent.
+// leading body text block (a Skyreader/leaflet/pckt/offprint note, when there's
+// no description) and finally plain textContent. The body walk is format-aware
+// (extractContentText) so a pckt or offprint post yields its note too, not just
+// leaflet ones.
 function extractDocumentSnippet(value: Record<string, unknown>): string | null {
   const description = firstString(value.description);
   if (description) return description;
-  const content = value.content as
-    | { pages?: Array<{ blocks?: Array<{ block?: { $type?: string; plaintext?: string } }> }> }
-    | undefined;
-  for (const page of content?.pages ?? []) {
-    for (const wrapper of page.blocks ?? []) {
-      if (wrapper.block?.$type === 'pub.leaflet.blocks.text') {
-        const text = wrapper.block.plaintext?.trim();
-        if (text) return text;
-      }
-    }
-  }
-  return firstString(value.textContent);
+  return firstString(extractContentText(value.content), value.textContent);
 }
 
 // The document's own public URL — where the post actually lives — rather than a

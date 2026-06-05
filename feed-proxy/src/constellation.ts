@@ -16,6 +16,7 @@
 import { Database } from 'bun:sqlite';
 import { resolveHandle, resolvePdsUrl } from './did-resolver';
 import { constellationGet } from './constellation-client';
+import { extractContentText } from './document-content';
 
 const DOCUMENT_COLLECTION = 'site.standard.document';
 // JSON path of the external/at-uri ref in a link-post document's `links` array.
@@ -87,24 +88,12 @@ interface RawDocValue {
 }
 
 // Extract the note (commentary) from a link-post document record: the leading
-// pub.leaflet text block, falling back to description/textContent. Mirrors the
-// frontend's getLinkPostNote so "also linked by" notes read the same.
+// body text block, falling back to description/textContent. The body walk is
+// format-aware (leaflet/pckt/offprint/greengale) so "also linked by" notes read
+// the same regardless of which Atmospheric app published the post.
 function extractNote(value: RawDocValue): string | null {
-  const content = value.content as
-    | {
-        pages?: Array<{
-          blocks?: Array<{ block?: { $type?: string; plaintext?: string } }>;
-        }>;
-      }
-    | undefined;
-  for (const page of content?.pages ?? []) {
-    for (const wrapper of page.blocks ?? []) {
-      if (wrapper.block?.$type === 'pub.leaflet.blocks.text') {
-        const text = wrapper.block.plaintext?.trim();
-        if (text) return text;
-      }
-    }
-  }
+  const text = extractContentText(value.content);
+  if (text) return text;
   const fallback = (value.description || value.textContent || '').trim();
   return fallback || null;
 }
