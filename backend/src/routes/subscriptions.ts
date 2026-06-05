@@ -127,6 +127,35 @@ async function deleteFromPdsIfEnabled(
 }
 
 /**
+ * Remove the portable Atmosphere subscription (the site.standard.graph.subscription
+ * edge) for a deleted linkblog follow. Awaited and fail-loud, unlike the
+ * fire-and-forget create path.
+ *
+ * When Atmospheric subscription sync is on, reconcile reads a still-present graph
+ * edge as a live follow and re-imports the publication — so a silently-failed edge
+ * removal would resurrect the very sub the user just deleted. Throwing here aborts
+ * the local delete before it happens; the subscription then self-heals back to a
+ * consistent "still followed" state (the next sync re-pushes the app.skyreader
+ * record) and the user can retry. No-op for non-publication subs or when PDS sync
+ * is off.
+ */
+async function deleteAtmosphereSubscriptionIfEnabled(
+  session: Session,
+  pdsSyncEnabled: boolean,
+  sourceType: string | undefined | null,
+  feedUrl: string | undefined | null
+): Promise<void> {
+  if (!pdsSyncEnabled) return;
+  const publicationUri = linkblogPublicationUri(sourceType, feedUrl);
+  if (!publicationUri) return;
+
+  const result = await deleteAtmosphereSubscription(session, publicationUri);
+  if (!result.success) {
+    throw new Error(`Failed to delete Atmosphere subscription record: ${result.error}`);
+  }
+}
+
+/**
  * Helper to bulk push subscriptions to PDS in background (fire and forget)
  * Lists existing PDS records first to build proper create/update/skip operations
  */
@@ -419,19 +448,21 @@ function didFromAtUri(uri: string): string | null {
   return match && match[1].startsWith('did:') ? match[1] : null;
 }
 
-// The user's existing atproto.documents subscription for an author, if any. Dedup
-// is by (user, subjectDid) — the same key subscription-sync uses — so we never
+// The user's existing atproto.documents subscription for a publication, if any.
+// Dedup is by (user, subjectDid, publicationUri) — matching subscription-sync's
+// key — so two publications owned by one author DID stay distinct, while we never
 // double-add a linkblog already followed in-app or via a prior button click.
 async function findDocumentSubscription(
   env: Env,
   userDid: string,
-  subjectDid: string
+  subjectDid: string,
+  publicationUri: string
 ): Promise<{ record_uri: string } | null> {
   return env.DB.prepare(
     `SELECT record_uri FROM subscriptions_cache
-     WHERE user_did = ? AND source_type = 'atproto.documents' AND subject_did = ?`
+     WHERE user_did = ? AND source_type = 'atproto.documents' AND subject_did = ? AND feed_url = ?`
   )
-    .bind(userDid, subjectDid)
+    .bind(userDid, subjectDid, publicationUri)
     .first<{ record_uri: string }>();
 }
 
@@ -447,8 +478,8 @@ export async function ensureLocalDocumentSubscription(
   const subjectDid = didFromAtUri(publicationUri);
   if (!subjectDid) return;
 
-  // Already following this author (button or in-app) — nothing to do.
-  const existing = await findDocumentSubscription(env, session.did, subjectDid);
+  // Already following this publication (button or in-app) — nothing to do.
+  const existing = await findDocumentSubscription(env, session.did, subjectDid, publicationUri);
   if (existing) return;
 
   // Don't push a reader past their tier's cap; the Atmosphere follow still
@@ -512,7 +543,7 @@ export async function removeLocalDocumentSubscription(
   const subjectDid = didFromAtUri(publicationUri);
   if (!subjectDid) return;
 
-  const existing = await findDocumentSubscription(env, session.did, subjectDid);
+  const existing = await findDocumentSubscription(env, session.did, subjectDid, publicationUri);
   if (!existing) return;
 
   const rkey = existing.record_uri.split('/').pop();
@@ -797,22 +828,25 @@ export async function handleDeleteSubscription(
       .bind(session.did, `%/${rkey}`)
       .first<{ feed_url: string | null; source_type: string | null }>();
 
+    const settings = await getUserSettings(env, session.did);
+
+    // Remove the portable Atmosphere subscription (graph edge) first. Awaited and
+    // fail-loud: if Atmospheric subscription sync is on, reconcile treats a graph
+    // edge that's still present as a live follow and would re-import the
+    // publication we're unsubscribing from. Removing the edge before the local
+    // delete closes that resurrection window; if it fails we abort here (the
+    // helper throws) rather than leaving a zombie follow behind. Non-publication /
+    // sync-off deletes are a no-op.
+    await deleteAtmosphereSubscriptionIfEnabled(
+      session,
+      settings.pdsSyncEnabled,
+      row?.source_type,
+      row?.feed_url
+    );
+
     // Delete from PDS before removing the local cache/returning so the next sync cannot
     // re-import the record.
-    const settings = await getUserSettings(env, session.did);
     await deleteFromPdsIfEnabled(session, settings.pdsSyncEnabled, rkey);
-
-    // Mirror the removal to the portable Atmosphere subscription (best-effort,
-    // background — a different collection, so no re-import race to await for).
-    ctx.waitUntil(
-      maybeSyncAtmosphereSubscription(
-        session,
-        settings.pdsSyncEnabled,
-        'delete',
-        row?.source_type,
-        row?.feed_url
-      )
-    );
 
     await env.DB.prepare('DELETE FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?')
       .bind(session.did, `%/${rkey}`)

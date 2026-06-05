@@ -23,8 +23,8 @@
 <section class="linkblog-intro">
   <p class="intro-desc">
     Every article you share becomes a post in your own <strong>standard.site</strong> publication — stored
-    in your PDS, portable across the Atmosphere, and public by design. Read it in any Atmospheric app,
-    or share the page below.
+    in your PDS, and portable across the Atmosphere. Read it in any Atmospheric app, or share the page
+    below.
   </p>
 
   {#if publicUrl}

@@ -2,7 +2,13 @@ import { db, getMetadata, setMetadata } from '$lib/services/db';
 import { safeAdd, safeUpdate } from '$lib/services/safeDb.svelte';
 import { api } from '$lib/services/api';
 import type { FilteredView, Channel } from '$lib/types';
-import { migrateLegacyView, isRssSource } from '$lib/utils/sourceKeys';
+import {
+  migrateLegacyView,
+  isRssSource,
+  isDocumentsSource,
+  parseSourceKey,
+  documentsSourceKey,
+} from '$lib/utils/sourceKeys';
 import { toConfig, fromRemote, computeSyncOperations } from '$lib/utils/channelSync';
 
 const PENDING_DELETES_KEY = 'channelsPendingDelete';
@@ -93,6 +99,51 @@ function createFilteredViewsStore() {
           if (!rkey) return key; // can't resolve, keep as-is
           changed = true;
           return `rss~${rkey}`;
+        });
+        if (changed) {
+          const updates: Partial<FilteredView> = {
+            sourceKeys: newKeys,
+            updatedAt: Date.now(),
+          };
+          Object.assign(view, updates);
+          if (view.id != null) {
+            await safeUpdate(db.filteredViews, view.id, updates);
+          }
+        }
+      }
+    }
+
+    // One-time migration: convert documents source keys from the legacy
+    // {did}~documents form to {rkey}~documents, so two publications owned by one
+    // author become distinct sources. Only DIDs with exactly one documents
+    // subscription are migrated — an ambiguous DID (now multiple publications)
+    // stays in legacy whole-author form, which resolveDocScopes still honors.
+    const didToRkey = new Map<string, string>();
+    const didDocSubCount = new Map<string, number>();
+    for (const s of subscriptions) {
+      if (s.sourceType === 'atproto.documents' && s.subjectDid && s.rkey) {
+        didDocSubCount.set(s.subjectDid, (didDocSubCount.get(s.subjectDid) || 0) + 1);
+        didToRkey.set(s.subjectDid, s.rkey);
+      }
+    }
+    const hasLegacyDocKeys = all.some((v) =>
+      v.sourceKeys?.some(
+        (key) => isDocumentsSource(key) && parseSourceKey(key).id.startsWith('did:')
+      )
+    );
+    if (hasLegacyDocKeys) {
+      for (const view of all) {
+        if (!view.sourceKeys?.length) continue;
+        let changed = false;
+        const newKeys = view.sourceKeys.map((key) => {
+          if (!isDocumentsSource(key)) return key;
+          const id = parseSourceKey(key).id;
+          if (!id.startsWith('did:')) return key; // already rkey-based
+          if ((didDocSubCount.get(id) || 0) !== 1) return key; // ambiguous — keep legacy
+          const rkey = didToRkey.get(id);
+          if (!rkey) return key; // unresolvable — keep legacy (back-compat resolves it)
+          changed = true;
+          return documentsSourceKey(rkey);
         });
         if (changed) {
           const updates: Partial<FilteredView> = {

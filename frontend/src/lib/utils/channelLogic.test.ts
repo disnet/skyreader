@@ -154,7 +154,7 @@ describe('computeSourceKeys', () => {
         }),
       ];
       const keys = computeSourceKeys({ type: 'category', value: 'Social' }, subs, []);
-      expect(keys).toEqual(['did:plc:a~documents', 'did:plc:b~documents']);
+      expect(keys).toEqual(['rkey-1~documents', 'rkey-2~documents']);
     });
 
     it('skips subscriptions without rkey', () => {
@@ -223,7 +223,7 @@ describe('computeSourceKeys', () => {
         makeSub({ id: 3 }), // RSS, no subjectDid
       ];
       const keys = computeSourceKeys({ type: 'people' }, subs, []);
-      expect(keys).toEqual(['did:plc:a~documents', 'did:plc:b~documents']);
+      expect(keys).toEqual(['rkey-1~documents', 'rkey-2~documents']);
     });
 
     it('skips subscriptions without subjectDid', () => {
@@ -329,7 +329,7 @@ describe('computeSourceKeys', () => {
         }),
       ];
       const keys = computeSourceKeys({ type: 'recent', withinDays: 14 }, subs, []);
-      expect(keys).toEqual(['rss~rkey-1', 'did:plc:a~documents']);
+      expect(keys).toEqual(['rss~rkey-1', 'rkey-3~documents']);
     });
   });
 });

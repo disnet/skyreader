@@ -9,6 +9,8 @@ import {
   getSourceDid,
   subscriptionSourceKey,
   migrateLegacyView,
+  resolveDocScopes,
+  docInAnyScope,
 } from './sourceKeys';
 import type { Subscription } from '$lib/types';
 
@@ -20,8 +22,8 @@ describe('source key construction', () => {
     expect(rssSourceKey('abc')).toBe('rss~abc');
   });
 
-  it('creates documents source keys', () => {
-    expect(documentsSourceKey('did:plc:abc123')).toBe('did:plc:abc123~documents');
+  it('creates documents source keys from a subscription rkey', () => {
+    expect(documentsSourceKey('3l7e5x2b7ik2c')).toBe('3l7e5x2b7ik2c~documents');
   });
 });
 
@@ -96,7 +98,7 @@ describe('subscriptionSourceKey', () => {
     expect(subscriptionSourceKey({ ...baseSub, id: 1, sourceType: 'rss' })).toBe('rss~abc');
   });
 
-  it('returns documents key for atproto.documents', () => {
+  it('returns documents key (by rkey) for atproto.documents', () => {
     expect(
       subscriptionSourceKey({
         ...baseSub,
@@ -104,21 +106,87 @@ describe('subscriptionSourceKey', () => {
         sourceType: 'atproto.documents',
         subjectDid: 'did:plc:x',
       })
-    ).toBe('did:plc:x~documents');
+    ).toBe('abc~documents');
   });
 
   it('returns null when rkey is missing', () => {
     expect(subscriptionSourceKey({ ...baseSub, rkey: '' })).toBeNull();
   });
 
-  it('returns null for atproto types without subjectDid', () => {
+  it('keys atproto.documents by rkey even without subjectDid (scope resolved later)', () => {
     expect(
       subscriptionSourceKey({
         ...baseSub,
         id: 1,
         sourceType: 'atproto.documents',
       })
-    ).toBeNull();
+    ).toBe('abc~documents');
+  });
+});
+
+// ─── Documents scope resolution ────────────────────────────────────────
+
+describe('resolveDocScopes / docInAnyScope', () => {
+  // Two publications owned by one author DID, plus a third author.
+  const subs = [
+    {
+      rkey: 'rk-blog',
+      sourceType: 'atproto.documents' as const,
+      subjectDid: 'did:plc:a',
+      feedUrl: 'at://did:plc:a/site.standard.publication/blog',
+    },
+    {
+      rkey: 'rk-links',
+      sourceType: 'atproto.documents' as const,
+      subjectDid: 'did:plc:a',
+      feedUrl: 'at://did:plc:a/site.standard.publication/links',
+    },
+    {
+      rkey: 'rk-b',
+      sourceType: 'atproto.documents' as const,
+      subjectDid: 'did:plc:b',
+      feedUrl: '',
+    },
+  ];
+
+  it('resolves an rkey key to its publication scope', () => {
+    expect(resolveDocScopes(['rk-blog~documents'], subs)).toEqual([
+      { did: 'did:plc:a', pub: 'at://did:plc:a/site.standard.publication/blog' },
+    ]);
+  });
+
+  it('keeps two publications of one author distinct', () => {
+    const blog = {
+      authorDid: 'did:plc:a',
+      siteUri: 'at://did:plc:a/site.standard.publication/blog',
+    };
+    const links = {
+      authorDid: 'did:plc:a',
+      siteUri: 'at://did:plc:a/site.standard.publication/links',
+    };
+    const blogScope = resolveDocScopes(['rk-blog~documents'], subs);
+    expect(docInAnyScope(blog, blogScope)).toBe(true);
+    expect(docInAnyScope(links, blogScope)).toBe(false);
+  });
+
+  it('treats a legacy {did}~documents key as the whole author', () => {
+    const scopes = resolveDocScopes(['did:plc:a~documents'], subs);
+    expect(scopes).toEqual([{ did: 'did:plc:a' }]);
+    const links = {
+      authorDid: 'did:plc:a',
+      siteUri: 'at://did:plc:a/site.standard.publication/links',
+    };
+    expect(docInAnyScope(links, scopes)).toBe(true);
+  });
+
+  it('covers all of an author when the subscription has no publication scope', () => {
+    const scopes = resolveDocScopes(['rk-b~documents'], subs);
+    expect(scopes).toEqual([{ did: 'did:plc:b', pub: undefined }]);
+    expect(docInAnyScope({ authorDid: 'did:plc:b', siteUri: 'whatever' }, scopes)).toBe(true);
+  });
+
+  it('ignores non-documents keys and unresolvable rkeys', () => {
+    expect(resolveDocScopes(['rss~rk-blog', 'rk-missing~documents'], subs)).toEqual([]);
   });
 });
 

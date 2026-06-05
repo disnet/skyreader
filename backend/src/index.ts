@@ -480,7 +480,7 @@ export default {
         // Sync routes
         case url.pathname === '/api/sync/full':
           if (!session) return unauthorizedResponse(headers);
-          response = await handleFullSync(request, env);
+          response = await handleFullSync(request, env, ctx);
           break;
         case url.pathname === '/api/sync/subscriptions':
           if (!session) return unauthorizedResponse(headers);

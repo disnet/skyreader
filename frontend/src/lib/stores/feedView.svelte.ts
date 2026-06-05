@@ -22,7 +22,8 @@ import {
   isRssSource,
   isDocumentsSource,
   getRssSubscriptionRkey,
-  getSourceDid,
+  resolveDocScopes,
+  docInAnyScope,
   migrateLegacyView,
 } from '$lib/utils/sourceKeys';
 
@@ -63,23 +64,6 @@ function deriveAllowedRssIds(fv: EffectiveFilters): Set<number> | null {
     }
   }
   return ids;
-}
-
-/**
- * Derive allowed DIDs for a given account source kind.
- * Returns null if all DIDs are allowed for that kind.
- */
-function deriveAllowedDids(
-  fv: EffectiveFilters,
-  kindTest: (key: string) => boolean
-): Set<string> | null {
-  if (fv.sourceMode === 'all') return null;
-
-  const dids = new Set<string>();
-  for (const key of fv.sourceKeys) {
-    if (kindTest(key)) dids.add(getSourceDid(key));
-  }
-  return dids;
 }
 
 /**
@@ -536,21 +520,27 @@ function createFeedViewStore() {
       filtered = filtered.filter((d) => d.authorDid === sharerFilter);
     }
 
-    // Apply source-based DID filtering for documents
-    const allowedDids = deriveAllowedDids(fv, isDocumentsSource);
-    if (allowedDids !== null) {
-      filtered = filtered.filter((d) => allowedDids.has(d.authorDid));
+    // Apply source-based filtering for documents — scoped to (author, publication)
+    // so two publications owned by one author are independently includable.
+    if (fv.sourceMode !== 'all') {
+      const scopes = resolveDocScopes(fv.sourceKeys, subscriptionsStore.subscriptions);
+      filtered = filtered.filter((d) => docInAnyScope(d, scopes));
     }
 
     // Filter by category: only show documents from subscriptions in the category
     if (categorySubscriptionIds) {
-      const categoryDids = new Set<string>();
-      for (const sub of subscriptionsStore.subscriptions) {
-        if (sub.category === categoryFilter && sub.subjectDid) {
-          categoryDids.add(sub.subjectDid);
-        }
-      }
-      filtered = filtered.filter((d) => categoryDids.has(d.authorDid));
+      const categoryScopes = subscriptionsStore.subscriptions
+        .filter(
+          (sub) =>
+            sub.category === categoryFilter &&
+            sub.sourceType === 'atproto.documents' &&
+            sub.subjectDid
+        )
+        .map((sub) => ({
+          did: sub.subjectDid as string,
+          pub: sub.feedUrl?.startsWith('at://') ? sub.feedUrl : undefined,
+        }));
+      filtered = filtered.filter((d) => docInAnyScope(d, categoryScopes));
     }
 
     // Apply read filter

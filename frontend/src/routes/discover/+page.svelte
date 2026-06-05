@@ -13,15 +13,10 @@
 <div class="discover-page">
   <header class="discover-header">
     <h1>Discover</h1>
-    <p class="header-desc">
-      Follow the people you already know from Bluesky, then explore others sharing across the
-      Atmosphere.
-    </p>
   </header>
 
   <section class="discover-section">
     <h2 class="section-title">Linkblogs</h2>
-    <p class="section-desc">Linkblogs are portable — anyone on Skyreader gets one in their PDS.</p>
     <LinkblogDiscovery variant="full" />
   </section>
 

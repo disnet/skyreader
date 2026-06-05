@@ -17,7 +17,8 @@ import {
   isRssSource,
   isDocumentsSource,
   getRssSubscriptionRkey,
-  getSourceDid,
+  resolveDocScopes,
+  docInAnyScope,
 } from '$lib/utils/sourceKeys';
 
 /**
@@ -239,14 +240,17 @@ function createUnreadCountsStore() {
         }
       }
 
-      // Count unread documents — sum from pre-computed per-author map
+      // Count unread documents. 'all' sums the pre-computed per-author map; an
+      // include filter counts per (author, publication) scope so two publications
+      // owned by one author aren't conflated.
       if (showDocs) {
         if (sourceMode === 'all') {
           for (const c of sharerDocCounts.values()) count += c;
         } else {
-          const allowedDids = new Set(sourceKeys.filter(isDocumentsSource).map(getSourceDid));
-          for (const did of allowedDids) {
-            count += sharerDocCounts.get(did) || 0;
+          const scopes = resolveDocScopes(sourceKeys, subscriptionsStore.subscriptions);
+          for (const doc of socialStore.documents) {
+            if (itemLabelsStore.isSocialRead(doc.recordUri)) continue;
+            if (docInAnyScope(doc, scopes)) count++;
           }
         }
       }
