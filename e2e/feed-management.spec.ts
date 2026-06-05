@@ -19,7 +19,6 @@ test.describe('Feed Management', () => {
 
     // Navigate to the sources page via SPA navigation (preserves store state)
     await authedPage.locator('.nav-label', { hasText: 'Manage Sources' }).click();
-    await authedPage.locator('button.tab', { hasText: 'Websites' }).click();
     await expect(authedPage.locator('.source-title', { hasText: 'xkcd' })).toBeVisible({
       timeout: 30_000,
     });
@@ -33,7 +32,6 @@ test.describe('Feed Management', () => {
 
     await authedPage.reload();
     await authedPage.locator('.nav-label', { hasText: 'Manage Sources' }).click();
-    await authedPage.locator('button.tab', { hasText: 'Websites' }).click();
 
     const sourceRow = authedPage.locator('.source-row', {
       has: authedPage.locator('.source-title', { hasText: 'Delete Test Feed' }),
@@ -43,9 +41,8 @@ test.describe('Feed Management', () => {
     // Accept the confirm dialog that pops up on Remove
     authedPage.on('dialog', (dialog) => dialog.accept());
 
-    // Open the row's popover menu and click Remove
-    await sourceRow.locator('button.menu-trigger').click({ force: true });
-    await authedPage.locator('.menu-item.danger', { hasText: 'Remove' }).click();
+    // Click the row's inline Remove action button
+    await sourceRow.locator('button.action-btn.danger[aria-label="Remove"]').click();
 
     // Row should disappear
     await expect(sourceRow).not.toBeVisible({ timeout: 10_000 });
@@ -86,7 +83,6 @@ test.describe('Feed Management', () => {
 
     await authedPage.reload();
     await authedPage.locator('.nav-label', { hasText: 'Manage Sources' }).click();
-    await authedPage.locator('button.tab', { hasText: 'Websites' }).click();
 
     await expect(authedPage.locator('.source-title', { hasText: 'Multi Feed One' })).toBeVisible({
       timeout: 15_000,
