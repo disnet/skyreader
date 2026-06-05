@@ -137,11 +137,17 @@
     line-height: var(--leading-none);
     white-space: nowrap;
     /* Each label is set in its own typeface so the name doubles as a live
-       preview. Normalize across families by x-height: Literata renders
-       larger per em than the system fonts and would otherwise tower over
-       "Sans"; ~0.52 keeps the system sans at its natural size and conforms
-       serif/mono/Literata to it. */
+       preview. Two normalizations keep the row visually even:
+       1. Size — font-size-adjust pins every family to the system sans's
+          x-height ratio (~0.52); Literata otherwise renders larger per em
+          and towers over "Sans".
+       2. Vertical position — trim the line box to cap-height/baseline so all
+          four sit on a shared baseline. Without this, Literata's tall font
+          ascent metric (~17 vs sans ~13 at this size) floats it above the
+          others even when sizes match. Degrades to the untrimmed box on
+          browsers without text-box (e.g. Firefox). */
     font-size-adjust: 0.52;
+    text-box: trim-both cap alphabetic;
   }
 
   .segment-btn.active .font-name {
