@@ -34,6 +34,7 @@ interface LocalSubscription {
   subject_did: string | null;
   custom_title: string | null;
   custom_icon_url: string | null;
+  active: number;
 }
 
 /**
@@ -45,6 +46,8 @@ export interface SyncResult {
   pulledFromPds: number;
   pushedToPds: number;
   skipped: number;
+  /** Parked rows promoted back to active because the active limit had headroom */
+  reactivated: number;
   warnings: string[];
   /** If true, there are more records to push - call sync again */
   hasMore?: boolean;
@@ -88,6 +91,7 @@ export async function syncSubscriptions(session: Session, env: Env): Promise<Syn
     pulledFromPds: 0,
     pushedToPds: 0,
     skipped: 0,
+    reactivated: 0,
     warnings: [],
   };
 
@@ -117,27 +121,21 @@ export async function syncSubscriptions(session: Session, env: Env): Promise<Syn
     // Get tier-aware limits
     const limits = await getUserTierLimits(env, session.did);
     const maxSubscriptions = limits.maxSubscriptions;
+    const maxMirrored = limits.maxMirroredSubscriptions;
 
-    // Check if PDS has more than limit
-    if (pdsRecords.length > maxSubscriptions) {
-      result.warnings.push(
-        `Your PDS has ${pdsRecords.length} subscriptions, but only ${maxSubscriptions} can be synced. ` +
-          `The oldest ${pdsRecords.length - maxSubscriptions} will not be synced.`
-      );
-    }
-
-    // Sort by createdAt and take first maxSubscriptions
-    const sortedPdsRecords = [...pdsRecords]
-      .sort((a, b) => {
-        const dateA = new Date(a.value.createdAt || 0).getTime();
-        const dateB = new Date(b.value.createdAt || 0).getTime();
-        return dateA - dateB;
-      })
-      .slice(0, maxSubscriptions);
+    // Pull the FULL PDS set — never drop records the user owns. Oldest-first so
+    // that when the set exceeds the plan's active capacity, the oldest feeds fill
+    // the active slots and the newest overflow is parked (mirrored locally but not
+    // serviced). createdAt order keeps which-feeds-are-active stable across syncs.
+    const sortedPdsRecords = [...pdsRecords].sort((a, b) => {
+      const dateA = new Date(a.value.createdAt || 0).getTime();
+      const dateB = new Date(b.value.createdAt || 0).getTime();
+      return dateA - dateB;
+    });
 
     // Step 2: Fetch all local subscriptions
     const localResult = await env.DB.prepare(
-      `SELECT record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url
+      `SELECT record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url, active
 			 FROM subscriptions_cache
 			 WHERE user_did = ?`
     )
@@ -200,7 +198,20 @@ export async function syncSubscriptions(session: Session, env: Env): Promise<Syn
       customTitle: string | null;
       customIconUrl: string | null;
       category: string | null;
+      active: number;
     }> = [];
+
+    // Active-capacity bookkeeping. Existing active local rows already consume
+    // slots; new pulls fill the remainder oldest-first, then overflow is parked
+    // (active=0): saved locally + still on the PDS, just not serviced or shown.
+    let activeCount = localSubscriptions.filter((s) => s.active === 1).length;
+    let parkedOnPull = 0;
+    // Mirror-cap bookkeeping. Parking is unlimited only up to the plan's mirror
+    // ceiling; past it we stop materializing rows entirely (the record still lives
+    // on the PDS and re-appears if the user frees room or upgrades). Oldest-first
+    // ordering means the dropped overflow is always the newest records.
+    let totalLocal = localSubscriptions.length;
+    let droppedOverCap = 0;
 
     for (const pdsRecord of sortedPdsRecords) {
       const key = subscriptionKey(
@@ -210,29 +221,56 @@ export async function syncSubscriptions(session: Session, env: Env): Promise<Syn
       );
       if (!key) continue;
 
-      // Check if we already have this subscription locally
-      if (!localByKey.has(key)) {
-        // Check subscription limit before adding
-        if (localSubscriptions.length + toAddLocally.length >= maxSubscriptions) {
-          result.skipped++;
-          continue;
-        }
+      // Already have this subscription locally — leave its active state untouched
+      // (never silently demote something the reader is already showing).
+      if (localByKey.has(key)) continue;
 
-        const rkey = extractRkey(pdsRecord.uri);
-        toAddLocally.push({
-          rkey,
-          feedUrl: pdsRecord.value.feedUrl || '',
-          title: pdsRecord.value.title || null,
-          createdAt: pdsRecord.value.createdAt
-            ? Math.floor(new Date(pdsRecord.value.createdAt).getTime() / 1000)
-            : Math.floor(Date.now() / 1000),
-          sourceType: pdsRecord.value.sourceType || null,
-          subjectDid: pdsRecord.value.subjectDid || null,
-          customTitle: pdsRecord.value.customTitle || null,
-          customIconUrl: pdsRecord.value.customIconUrl || null,
-          category: pdsRecord.value.category || null,
-        });
+      // Hard mirror cap — don't materialize more than the plan's ceiling.
+      if (totalLocal >= maxMirrored) {
+        droppedOverCap++;
+        result.skipped++;
+        continue;
       }
+
+      const active = activeCount < maxSubscriptions ? 1 : 0;
+      if (active) {
+        activeCount++;
+      } else {
+        parkedOnPull++;
+      }
+      totalLocal++;
+
+      const rkey = extractRkey(pdsRecord.uri);
+      toAddLocally.push({
+        rkey,
+        feedUrl: pdsRecord.value.feedUrl || '',
+        title: pdsRecord.value.title || null,
+        createdAt: pdsRecord.value.createdAt
+          ? Math.floor(new Date(pdsRecord.value.createdAt).getTime() / 1000)
+          : Math.floor(Date.now() / 1000),
+        sourceType: pdsRecord.value.sourceType || null,
+        subjectDid: pdsRecord.value.subjectDid || null,
+        customTitle: pdsRecord.value.customTitle || null,
+        customIconUrl: pdsRecord.value.customIconUrl || null,
+        category: pdsRecord.value.category || null,
+        active,
+      });
+    }
+
+    if (parkedOnPull > 0) {
+      result.warnings.push(
+        `${parkedOnPull} feed${parkedOnPull === 1 ? '' : 's'} over your plan's active limit of ${maxSubscriptions} ` +
+          `${parkedOnPull === 1 ? 'was' : 'were'} parked — still saved to your account, just not shown. ` +
+          `Reactivate from Manage feeds.`
+      );
+    }
+
+    if (droppedOverCap > 0) {
+      result.warnings.push(
+        `${droppedOverCap} feed${droppedOverCap === 1 ? '' : 's'} over your plan's mirror limit of ${maxMirrored} ` +
+          `${droppedOverCap === 1 ? 'was' : 'were'} not synced to this device. ` +
+          `${droppedOverCap === 1 ? 'It is' : 'They are'} still on your PDS.`
+      );
     }
 
     // Insert pulled records into local D1
@@ -247,8 +285,8 @@ export async function syncSubscriptions(session: Session, env: Env): Promise<Syn
         const recordUri = buildRecordUri(session.did, COLLECTION, sub.rkey);
         return env.DB.prepare(
           `INSERT OR IGNORE INTO subscriptions_cache
-					 (user_did, record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url, category)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					 (user_did, record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url, category, active)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           session.did,
           recordUri,
@@ -259,13 +297,50 @@ export async function syncSubscriptions(session: Session, env: Env): Promise<Syn
           sub.subjectDid,
           sub.customTitle,
           sub.customIconUrl,
-          sub.category
+          sub.category,
+          sub.active
         );
       });
 
       await env.DB.batch(statements);
       result.pulledFromPds = toAddLocally.length;
       console.log(`[SubscriptionSync] Successfully inserted ${toAddLocally.length} subscriptions`);
+    }
+
+    // Step 3b: Auto-fill freed active slots. Parking is sticky, but capacity does
+    // change — a tier upgrade raises maxSubscriptions, and removing/parking active
+    // feeds frees slots. Rather than leaving those slots empty until the user
+    // manually reactivates, promote the oldest parked rows (createdAt order, the
+    // same order parking fills) back to active to fill the headroom. Re-query the
+    // live active count so concurrent syncs / ignored inserts can't drift it.
+    const activeRow = await env.DB.prepare(
+      'SELECT COUNT(*) as count FROM subscriptions_cache WHERE user_did = ? AND active = 1'
+    )
+      .bind(session.did)
+      .first<{ count: number }>();
+    const liveActive = activeRow?.count || 0;
+    if (liveActive < maxSubscriptions) {
+      const slack = maxSubscriptions - liveActive;
+      const parkedRows = await env.DB.prepare(
+        `SELECT record_uri FROM subscriptions_cache
+         WHERE user_did = ? AND active = 0
+         ORDER BY created_at ASC, record_uri ASC
+         LIMIT ?`
+      )
+        .bind(session.did, slack)
+        .all<{ record_uri: string }>();
+      const toPromote = parkedRows.results || [];
+      if (toPromote.length > 0) {
+        await env.DB.batch(
+          toPromote.map((row) =>
+            env.DB.prepare(
+              'UPDATE subscriptions_cache SET active = 1 WHERE user_did = ? AND record_uri = ?'
+            ).bind(session.did, row.record_uri)
+          )
+        );
+        result.reactivated = toPromote.length;
+        console.log(`[SubscriptionSync] Reactivated ${toPromote.length} parked subscription(s)`);
+      }
     }
 
     // Step 4: Push to PDS - add local records that don't exist in PDS (by feedUrl)

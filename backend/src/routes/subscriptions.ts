@@ -411,7 +411,22 @@ interface BulkDeleteSubscriptionsRequest {
   rkeys: string[];
 }
 
-async function countUserSubscriptions(env: Env, did: string): Promise<number> {
+// Counts only ACTIVE subscriptions — the ones Skyreader services (polls + shows).
+// The tier limit governs servicing cost, so parked rows (PDS records mirrored
+// locally but over the plan's active capacity) don't count against it.
+async function countActiveSubscriptions(env: Env, did: string): Promise<number> {
+  const result = await env.DB.prepare(
+    'SELECT COUNT(*) as count FROM subscriptions_cache WHERE user_did = ? AND active = 1'
+  )
+    .bind(did)
+    .first<{ count: number }>();
+
+  return result?.count || 0;
+}
+
+// Counts ALL local rows (active + parked). Gates the mirror cap, which bounds how
+// many rows we'll materialize per user regardless of how big their PDS set is.
+async function countAllSubscriptions(env: Env, did: string): Promise<number> {
   const result = await env.DB.prepare(
     'SELECT COUNT(*) as count FROM subscriptions_cache WHERE user_did = ?'
   )
@@ -482,15 +497,23 @@ export async function ensureLocalDocumentSubscription(
   const existing = await findDocumentSubscription(env, session.did, subjectDid, publicationUri);
   if (existing) return;
 
-  // Don't push a reader past their tier's cap; the Atmosphere follow still
-  // succeeded, it just won't show up in the reader.
+  // Over the plan's active capacity → mirror the follow as PARKED (saved + on the
+  // PDS, just not serviced or shown) rather than skipping it. Skipping created no
+  // local row at all, so the follow stayed invisible until a later full sync
+  // parked it; doing it here surfaces it in Manage feeds → Parked immediately.
+  let active = 1;
   try {
     const limits = await getUserTierLimits(env, session.did);
-    const count = await countUserSubscriptions(env, session.did);
-    if (count >= limits.maxSubscriptions) {
-      console.log('[Atmosphere] At subscription limit; skipping local reader subscription');
+    // Past the mirror ceiling we don't materialize a row at all — the portable
+    // subscribe the caller wrote still lives on the PDS and will sync in once the
+    // user frees room. Parking is only "unlimited" up to this cap.
+    const total = await countAllSubscriptions(env, session.did);
+    if (total >= limits.maxMirroredSubscriptions) {
+      console.log('[Atmosphere] At mirror cap; skipping local reader subscription');
       return;
     }
+    const count = await countActiveSubscriptions(env, session.did);
+    if (count >= limits.maxSubscriptions) active = 0;
   } catch (err) {
     console.error('[Atmosphere] Failed to check subscription limit:', err);
   }
@@ -507,14 +530,17 @@ export async function ensureLocalDocumentSubscription(
   const recordUri = `at://${session.did}/app.skyreader.feed.subscription/${rkey}`;
   await env.DB.prepare(
     `INSERT OR REPLACE INTO subscriptions_cache
-     (user_did, record_uri, feed_url, title, category, created_at, source_type, subject_did, custom_title, custom_icon_url)
-     VALUES (?, ?, ?, ?, NULL, unixepoch(), 'atproto.documents', ?, NULL, NULL)`
+     (user_did, record_uri, feed_url, title, category, created_at, source_type, subject_did, custom_title, custom_icon_url, active)
+     VALUES (?, ?, ?, ?, NULL, unixepoch(), 'atproto.documents', ?, NULL, NULL, ?)`
   )
-    .bind(session.did, recordUri, publicationUri, title, subjectDid)
+    .bind(session.did, recordUri, publicationUri, title, subjectDid, active)
     .run();
 
   // Pull the author's existing link posts so the feed isn't empty on first open.
-  ctx.waitUntil(backfillDocumentsForUser(env, subjectDid));
+  // Parked feeds aren't serviced or shown, so don't spend a backfill on them.
+  if (active) {
+    ctx.waitUntil(backfillDocumentsForUser(env, subjectDid));
+  }
 
   // Mirror to the user's PDS subscription list when Atmospheric sync is on, so the
   // reader follow behaves exactly like an in-app one (best-effort, background).
@@ -671,12 +697,12 @@ export async function handleCreateSubscription(
   // Check subscription limit
   try {
     const limits = await getUserTierLimits(env, session.did);
-    const currentCount = await countUserSubscriptions(env, session.did);
+    const currentCount = await countActiveSubscriptions(env, session.did);
     if (currentCount >= limits.maxSubscriptions) {
       return new Response(
         JSON.stringify({
           error: 'subscription_limit_reached',
-          message: `You have reached the maximum of ${limits.maxSubscriptions} feed subscriptions.`,
+          message: `You have reached the maximum of ${limits.maxSubscriptions} active feeds. Park a feed to free a slot.`,
           limit: limits.maxSubscriptions,
           current: currentCount,
         }),
@@ -1051,31 +1077,43 @@ export async function handleBulkCreateSubscriptions(
     }
   }
 
-  // Check subscription limit
+  // Tier-aware import: rather than rejecting an over-limit batch wholesale, fill
+  // the remaining active slots (in import order) and PARK the overflow — saved +
+  // mirrored to the PDS, just not serviced — so we never drop feeds the user chose
+  // to import. `activeBudget` is how many of this batch can be active; the rest
+  // come in parked (active=0). On a count failure, fall back to all-active.
+  let activeBudget = subscriptions.length;
+  // How many of this batch we can mirror at all (active + parked) before hitting
+  // the plan's mirror ceiling. The overflow past this is dropped — not stored
+  // locally — though it still lives on the user's PDS. Falls back to "all" on a
+  // count failure so a transient error never silently drops a user's import.
+  let mirrorBudget = subscriptions.length;
   try {
     const limits = await getUserTierLimits(env, session.did);
-    const currentCount = await countUserSubscriptions(env, session.did);
-    const totalAfterImport = currentCount + subscriptions.length;
-
-    if (totalAfterImport > limits.maxSubscriptions) {
-      const available = Math.max(0, limits.maxSubscriptions - currentCount);
-      return new Response(
-        JSON.stringify({
-          error: 'subscription_limit_exceeded',
-          message: `Adding ${subscriptions.length} feeds would exceed the maximum of ${limits.maxSubscriptions}.`,
-          limit: limits.maxSubscriptions,
-          current: currentCount,
-          requested: subscriptions.length,
-          available,
-        }),
-        {
-          status: 403,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      );
-    }
+    const currentActive = await countActiveSubscriptions(env, session.did);
+    const currentTotal = await countAllSubscriptions(env, session.did);
+    activeBudget = Math.max(0, limits.maxSubscriptions - currentActive);
+    mirrorBudget = Math.max(0, limits.maxMirroredSubscriptions - currentTotal);
   } catch (countError) {
     console.error('Failed to check subscription count:', countError);
+  }
+
+  // Dedupe against feeds the user already has — ACTIVE or PARKED. The reader's
+  // client list only knows active subs, so a re-import could otherwise create a
+  // second (parked) row for a feed that's already parked. Skip any incoming feed
+  // whose URL already exists; the existing row and its PDS record stay untouched.
+  const existingFeedUrls = new Set<string>();
+  try {
+    const existing = await env.DB.prepare(
+      'SELECT feed_url FROM subscriptions_cache WHERE user_did = ?'
+    )
+      .bind(session.did)
+      .all<{ feed_url: string }>();
+    for (const row of existing.results || []) {
+      if (row.feed_url) existingFeedUrls.add(row.feed_url.toLowerCase());
+    }
+  } catch (dedupeError) {
+    console.error('Failed to load existing feeds for dedupe:', dedupeError);
   }
 
   try {
@@ -1083,22 +1121,59 @@ export async function handleBulkCreateSubscriptions(
     const batchStatements: ReturnType<typeof env.DB.prepare>[] = [];
     const feedsToFetch: string[] = [];
     const results: Array<{ rkey: string; uri: string }> = [];
+    // rkeys parked because the batch exceeded the plan's active capacity. Returned
+    // to the client so it doesn't add them to the reader's local cache as active.
+    const parked: string[] = [];
+    // rkeys skipped as duplicates of a feed the user already has (active or parked).
+    const skipped: string[] = [];
+    // rkeys dropped because the batch would exceed the plan's mirror ceiling —
+    // not stored locally or pushed to the PDS by this import (but if the feed was
+    // already on the PDS it stays there). Returned so the client can report them.
+    const dropped: string[] = [];
+    // Inserted subs (active + parked, minus skipped dupes) — only these get pushed
+    // to the PDS, so a re-import doesn't create duplicate PDS records.
+    const inserted: Array<{ rkey: string; feedUrl: string; title?: string }> = [];
 
+    let activeAdded = 0;
+    let mirroredAdded = 0;
     for (const sub of subscriptions) {
+      const feedKey = sub.feedUrl.toLowerCase();
+      // Already have it (active or parked), or a dupe within this same batch.
+      if (existingFeedUrls.has(feedKey)) {
+        skipped.push(sub.rkey);
+        continue;
+      }
+      existingFeedUrls.add(feedKey);
+
+      // Past the mirror ceiling — don't materialize a row for it at all.
+      if (mirroredAdded >= mirrorBudget) {
+        dropped.push(sub.rkey);
+        continue;
+      }
+      mirroredAdded++;
+
+      const active = activeAdded < activeBudget ? 1 : 0;
       const recordUri = `at://${session.did}/${collection}/${sub.rkey}`;
       results.push({ rkey: sub.rkey, uri: recordUri });
+      inserted.push({ rkey: sub.rkey, feedUrl: sub.feedUrl, title: sub.title });
 
       batchStatements.push(
         env.DB.prepare(
           `
 					INSERT OR REPLACE INTO subscriptions_cache
-					(user_did, record_uri, feed_url, title, category, created_at)
-					VALUES (?, ?, ?, ?, ?, unixepoch())
+					(user_did, record_uri, feed_url, title, category, created_at, active)
+					VALUES (?, ?, ?, ?, ?, unixepoch(), ?)
 					`
-        ).bind(session.did, recordUri, sub.feedUrl, sub.title || null, sub.category || null)
+        ).bind(session.did, recordUri, sub.feedUrl, sub.title || null, sub.category || null, active)
       );
 
-      feedsToFetch.push(sub.feedUrl);
+      // Only warm feeds we'll actually service/show; parked feeds stay cold.
+      if (active) {
+        feedsToFetch.push(sub.feedUrl);
+        activeAdded++;
+      } else {
+        parked.push(sub.rkey);
+      }
     }
 
     // Execute all D1 operations in a single batch
@@ -1123,21 +1198,12 @@ export async function handleBulkCreateSubscriptions(
       console.log(`${feedsToFetch.length - MAX_FEEDS_TO_WARM} feeds will be warmed by cron`);
     }
 
-    // Push to PDS in background if sync is enabled
+    // Push to PDS in background if sync is enabled — inserted rows only, so a
+    // re-import of an already-owned feed can't write a duplicate PDS record.
     const settings = await getUserSettings(env, session.did);
-    ctx.waitUntil(
-      maybeBulkPushToPds(
-        session,
-        settings.pdsSyncEnabled,
-        subscriptions.map((sub) => ({
-          rkey: sub.rkey,
-          feedUrl: sub.feedUrl,
-          title: sub.title,
-        }))
-      )
-    );
+    ctx.waitUntil(maybeBulkPushToPds(session, settings.pdsSyncEnabled, inserted));
 
-    return new Response(JSON.stringify({ results }), {
+    return new Response(JSON.stringify({ results, parked, skipped, dropped }), {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error) {
@@ -1374,6 +1440,171 @@ export async function handleBulkDeleteSubscriptions(
     console.error('Bulk delete subscriptions error:', error);
     const errorMessage =
       error instanceof Error ? `${error.name}: ${error.message}` : 'Failed to delete subscriptions';
+    return new Response(JSON.stringify({ error: errorMessage }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// GET /api/subscriptions/parked - List parked (inactive) subscriptions.
+//
+// These are PDS records mirrored locally but held over the user's active
+// capacity — present and portable, just not serviced. The reader's normal list
+// (/api/records/list) returns active subs only; this endpoint backs the manage
+// surface where the user sees and reactivates parked feeds.
+export async function handleListParkedSubscriptions(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  try {
+    const result = await env.DB.prepare(
+      `SELECT record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url, category
+       FROM subscriptions_cache
+       WHERE user_did = ? AND active = 0
+       ORDER BY created_at ASC`
+    )
+      .bind(session.did)
+      .all<{
+        record_uri: string;
+        feed_url: string;
+        title: string | null;
+        created_at: number;
+        source_type: string | null;
+        subject_did: string | null;
+        custom_title: string | null;
+        custom_icon_url: string | null;
+        category: string | null;
+      }>();
+
+    const records = (result.results || []).map((row) => {
+      // created_at is unix seconds, but a prior Jetstream bug stored ms; detect both.
+      const createdAtMs = row.created_at > 10_000_000_000 ? row.created_at : row.created_at * 1000;
+      return {
+        uri: row.record_uri,
+        cid: '',
+        value: {
+          $type: 'app.skyreader.feed.subscription',
+          feedUrl: row.feed_url,
+          title: row.title,
+          createdAt: new Date(createdAtMs).toISOString(),
+          sourceType: row.source_type || undefined,
+          subjectDid: row.subject_did || undefined,
+          customTitle: row.custom_title || undefined,
+          customIconUrl: row.custom_icon_url || undefined,
+          category: row.category || undefined,
+        },
+      };
+    });
+
+    return new Response(JSON.stringify({ records }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('List parked subscriptions error:', error);
+    const errorMessage =
+      error instanceof Error ? error.message : 'Failed to list parked subscriptions';
+    return new Response(JSON.stringify({ error: errorMessage }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// POST /api/subscriptions/:rkey/activate - Reactivate a parked subscription.
+// POST /api/subscriptions/:rkey/park     - Park an active subscription.
+//
+// Parking/activating only flips local servicing state; the PDS record is never
+// touched (active is not a PDS field). Activating enforces the tier's active cap
+// so the reader can't be pushed past what the plan services — the user parks one
+// feed to make room for another. Idempotent: a no-op flip just returns success.
+export async function handleSetSubscriptionActive(
+  request: Request,
+  env: Env,
+  active: boolean
+): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Path is /api/subscriptions/:rkey/(activate|park) — rkey is the second-to-last segment.
+  const pathParts = new URL(request.url).pathname.split('/');
+  const rkey = pathParts[pathParts.length - 2];
+
+  if (!rkey || !isValidRkey(rkey)) {
+    return invalidRkeyResponse();
+  }
+
+  try {
+    const existing = await env.DB.prepare(
+      'SELECT active FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
+    )
+      .bind(session.did, `%/${rkey}`)
+      .first<{ active: number }>();
+
+    if (!existing) {
+      return new Response(JSON.stringify({ error: 'Subscription not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Already in the desired state — nothing to do.
+    if (!!existing.active === active) {
+      return new Response(JSON.stringify({ success: true, active }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Activating: don't push the reader past the plan's active capacity.
+    if (active) {
+      const limits = await getUserTierLimits(env, session.did);
+      const currentCount = await countActiveSubscriptions(env, session.did);
+      if (currentCount >= limits.maxSubscriptions) {
+        return new Response(
+          JSON.stringify({
+            error: 'subscription_limit_reached',
+            message: `You have reached the maximum of ${limits.maxSubscriptions} active feeds. Park a feed to free a slot.`,
+            limit: limits.maxSubscriptions,
+            current: currentCount,
+          }),
+          {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      }
+    }
+
+    await env.DB.prepare(
+      'UPDATE subscriptions_cache SET active = ? WHERE user_did = ? AND record_uri LIKE ?'
+    )
+      .bind(active ? 1 : 0, session.did, `%/${rkey}`)
+      .run();
+
+    return new Response(JSON.stringify({ success: true, active }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Set subscription active error:', error);
+    const errorMessage =
+      error instanceof Error ? `${error.name}: ${error.message}` : 'Failed to update subscription';
     return new Response(JSON.stringify({ error: errorMessage }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },

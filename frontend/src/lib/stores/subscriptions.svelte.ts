@@ -158,12 +158,14 @@ function createSubscriptionsStore() {
     added: number[];
     skipped: string[];
     failed: Array<{ url: string; error: string }>;
-    truncated: number;
+    parked: number;
+    dropped: number;
   }> {
     const added: number[] = [];
     const skipped: string[] = [];
     const failed: Array<{ url: string; error: string }> = [];
-    let truncated = 0;
+    let parked = 0;
+    let dropped = 0;
     const source = options?.source || 'manual';
 
     // Get existing feed URLs for duplicate detection
@@ -181,15 +183,11 @@ function createSubscriptionsStore() {
       return true;
     });
 
-    // Check subscription limit and truncate if needed
-    const availableSlots = maxSubscriptions - count;
-    if (feedsToAdd.length > availableSlots) {
-      truncated = feedsToAdd.length - availableSlots;
-      feedsToAdd = feedsToAdd.slice(0, availableSlots);
-    }
-
+    // Don't drop overflow client-side — send the whole set and let the backend
+    // fill the active slots and PARK the rest (saved + portable, not serviced).
+    // Parked rkeys come back in the response so we can skip them locally below.
     if (feedsToAdd.length === 0) {
-      return { added, skipped, failed, truncated };
+      return { added, skipped, failed, parked, dropped };
     }
 
     onProgress?.(0, feedsToAdd.length);
@@ -215,12 +213,28 @@ function createSubscriptionsStore() {
         source,
       }));
 
-      await api.bulkCreateSubscriptions(subscriptionsToCreate);
+      const res = await api.bulkCreateSubscriptions(subscriptionsToCreate);
+      const parkedRkeys = new Set(res.parked ?? []);
+      const skippedRkeys = new Set(res.skipped ?? []);
+      const droppedRkeys = new Set(res.dropped ?? []);
+      parked = parkedRkeys.size;
+      dropped = droppedRkeys.size;
 
       onProgress?.(Math.floor(feedsToAdd.length / 2), feedsToAdd.length);
 
-      // Store locally after successful backend sync
+      // Store locally after successful backend sync — but skip parked overflow and
+      // backend-deduped rows. Parked feeds live on the server + PDS and surface in
+      // Manage feeds → Parked; skipped ones are dupes of a feed the user already
+      // has (e.g. one that's currently parked, so it isn't in the active list we
+      // deduped against above). Writing either to the reader's cache would be wrong.
       for (const { rkey, feed } of localRecords) {
+        if (skippedRkeys.has(rkey)) {
+          skipped.push(feed.feedUrl);
+          continue;
+        }
+        // Parked lives on the server + PDS (Manage feeds → Parked); dropped wasn't
+        // stored at all (over the mirror ceiling). Neither belongs in the reader.
+        if (parkedRkeys.has(rkey) || droppedRkeys.has(rkey)) continue;
         const subscription: Omit<Subscription, 'id'> = {
           rkey,
           feedUrl: feed.feedUrl,
@@ -255,7 +269,7 @@ function createSubscriptionsStore() {
 
     onProgress?.(feedsToAdd.length, feedsToAdd.length);
 
-    return { added, skipped, failed, truncated };
+    return { added, skipped, failed, parked, dropped };
   }
 
   /**

@@ -396,7 +396,17 @@ class ApiClient {
       category?: string;
       source?: string;
     }>
-  ): Promise<{ results: Array<{ rkey: string; uri: string }> }> {
+    // `parked` lists rkeys held over the plan's active capacity — mirrored to the
+    // account + PDS but not serviced. `skipped` lists rkeys dropped as duplicates
+    // of a feed the user already has (active or parked). `dropped` lists rkeys over
+    // the plan's mirror ceiling — not stored at all (but still on the PDS). Callers
+    // should not add any of these to the reader's local cache.
+  ): Promise<{
+    results: Array<{ rkey: string; uri: string }>;
+    parked?: string[];
+    skipped?: string[];
+    dropped?: string[];
+  }> {
     return this.fetch('/api/subscriptions/bulk', {
       method: 'POST',
       body: JSON.stringify({ subscriptions }),
@@ -422,6 +432,38 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify({ rkeys }),
     });
+  }
+
+  // Parked feeds — PDS records over the plan's active capacity. Mirrored to the
+  // account but not serviced or shown in the reader; listed/reactivated here.
+  async getParkedSubscriptions(): Promise<{
+    records: Array<{
+      uri: string;
+      cid: string;
+      value: {
+        $type: string;
+        feedUrl: string;
+        title: string | null;
+        createdAt: string;
+        sourceType?: string;
+        subjectDid?: string;
+        customTitle?: string;
+        customIconUrl?: string;
+        category?: string;
+      };
+    }>;
+  }> {
+    return this.fetch('/api/subscriptions/parked');
+  }
+
+  // Flip a subscription's local servicing state. Activating can 403 with
+  // `subscription_limit_reached` when the plan's active slots are full.
+  async activateSubscription(rkey: string): Promise<{ success: boolean; active: boolean }> {
+    return this.fetch(`/api/subscriptions/${rkey}/activate`, { method: 'POST' });
+  }
+
+  async parkSubscription(rkey: string): Promise<{ success: boolean; active: boolean }> {
+    return this.fetch(`/api/subscriptions/${rkey}/park`, { method: 'POST' });
   }
 
   // Linkblog — sharing as a portable site.standard.document (Phase 1)

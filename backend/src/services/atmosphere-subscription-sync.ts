@@ -196,26 +196,45 @@ export async function reconcileAtmosphereSubscriptions(
       if (isPublicationUri(sub.feed_url)) localByPub.set(sub.feed_url, sub);
     }
 
-    // Tier-aware headroom for imports.
+    // Tier-aware headroom for imports — counts ACTIVE subs only, since the limit
+    // governs servicing (parked rows are unlimited mirrors). `liveCount` tracks
+    // active subscriptions as we import.
     const limits = await getUserTierLimits(env, session.did);
+    const activeSubsRow = await env.DB.prepare(
+      'SELECT COUNT(*) as count FROM subscriptions_cache WHERE user_did = ? AND active = 1'
+    )
+      .bind(session.did)
+      .first<{ count: number }>();
+    let liveCount = activeSubsRow?.count || 0;
+
+    // Total mirrored rows (active + parked) for the mirror cap — parking is only
+    // unlimited up to this ceiling; past it we stop importing graph edges entirely
+    // (they stay on the PDS and re-import once the user frees room).
     const totalSubsRow = await env.DB.prepare(
       'SELECT COUNT(*) as count FROM subscriptions_cache WHERE user_did = ?'
     )
       .bind(session.did)
       .first<{ count: number }>();
-    let liveCount = totalSubsRow?.count || 0;
+    let totalCount = totalSubsRow?.count || 0;
+    const maxMirrored = limits.maxMirroredSubscriptions;
 
     // Step 3: import graph edges that aren't local yet. Authors to warm are
     // collected (deduped) and backfilled after the loop, bounded by MAX_BACKFILLS.
     const authorsToBackfill = new Set<string>();
+    let parkedOnImport = 0;
+    let droppedOverCap = 0;
     for (const pubUri of graphPubs) {
       if (localByPub.has(pubUri)) continue;
       if (ops >= MAX_OPS) {
         result.hasMore = true;
         break;
       }
-      if (liveCount >= limits.maxSubscriptions) {
-        result.skipped++;
+
+      // Hard mirror cap — stop materializing rows past the plan's ceiling. More
+      // edges may remain, so flag hasMore for a future reconcile if room frees up.
+      if (totalCount >= maxMirrored) {
+        droppedOverCap++;
+        result.hasMore = true;
         continue;
       }
 
@@ -223,14 +242,20 @@ export async function reconcileAtmosphereSubscriptions(
       if (!meta) continue; // unparseable URI — skip
       const title = await titleFor(meta);
 
+      // Over the plan's active capacity → import the follow PARKED (saved +
+      // mirrored, not serviced) rather than skipping it. Skipping left the graph
+      // edge with no local row, so every reconcile re-examined it; parking once
+      // records it and surfaces it in Manage feeds for reactivation.
+      const active = liveCount < limits.maxSubscriptions ? 1 : 0;
+
       const rkey = generateTid();
       const recordUri = `at://${session.did}/${SUBSCRIPTION_NSID}/${rkey}`;
       const insert = await env.DB.prepare(
         `INSERT OR IGNORE INTO subscriptions_cache
-           (user_did, record_uri, feed_url, title, category, created_at, source_type, subject_did, custom_title, custom_icon_url, atmosphere_synced)
-         VALUES (?, ?, ?, ?, NULL, unixepoch(), 'atproto.documents', ?, NULL, NULL, unixepoch())`
+           (user_did, record_uri, feed_url, title, category, created_at, source_type, subject_did, custom_title, custom_icon_url, atmosphere_synced, active)
+         VALUES (?, ?, ?, ?, NULL, unixepoch(), 'atproto.documents', ?, NULL, NULL, unixepoch(), ?)`
       )
-        .bind(session.did, recordUri, pubUri, title, meta.subjectDid)
+        .bind(session.did, recordUri, pubUri, title, meta.subjectDid, active)
         .run();
 
       // A concurrent reconcile (other tab/device) may have inserted this same
@@ -252,11 +277,33 @@ export async function reconcileAtmosphereSubscriptions(
           meta.subjectDid
         ).then(() => {})
       );
-      authorsToBackfill.add(meta.subjectDid);
 
-      liveCount++;
+      totalCount++;
+      if (active) {
+        // Only warm feeds we'll actually show.
+        authorsToBackfill.add(meta.subjectDid);
+        liveCount++;
+      } else {
+        parkedOnImport++;
+      }
       result.imported++;
       ops++;
+    }
+
+    if (parkedOnImport > 0) {
+      result.warnings.push(
+        `${parkedOnImport} followed linkblog${parkedOnImport === 1 ? '' : 's'} over your plan's ` +
+          `active limit of ${limits.maxSubscriptions} ${parkedOnImport === 1 ? 'was' : 'were'} parked. ` +
+          `Reactivate from Manage feeds.`
+      );
+    }
+
+    if (droppedOverCap > 0) {
+      result.warnings.push(
+        `${droppedOverCap} followed linkblog${droppedOverCap === 1 ? '' : 's'} over your plan's ` +
+          `mirror limit of ${maxMirrored} ${droppedOverCap === 1 ? 'was' : 'were'} not imported. ` +
+          `${droppedOverCap === 1 ? 'It stays' : 'They stay'} in your Atmosphere graph.`
+      );
     }
 
     // Warm the imported feeds so they aren't empty on first open — deduped by

@@ -287,24 +287,38 @@ describe('Subscription Sync', () => {
       const result = await syncSubscriptions(session, env);
 
       expect(result.success).toBe(true);
-      // Should only pull 5 to reach 100 limit
-      expect(result.pulledFromPds).toBe(5);
-      expect(result.skipped).toBe(5);
+      // All 10 are pulled — the 5 over the 100 active limit are PARKED, not dropped.
+      expect(result.pulledFromPds).toBe(10);
+      expect(result.skipped).toBe(0);
 
-      // Verify total is 100
+      // Total is 105 (95 + 10): nothing the user owns is dropped under the mirror cap.
       const count = await env.DB.prepare(
         `SELECT COUNT(*) as count FROM subscriptions_cache WHERE user_did = ?`
       )
         .bind(TEST_DID)
         .first<{ count: number }>();
+      expect(count?.count).toBe(105);
 
-      expect(count?.count).toBe(100);
+      // Exactly 100 active (the cap), 5 parked.
+      const active = await env.DB.prepare(
+        `SELECT COUNT(*) as count FROM subscriptions_cache WHERE user_did = ? AND active = 1`
+      )
+        .bind(TEST_DID)
+        .first<{ count: number }>();
+      expect(active?.count).toBe(100);
+
+      const parked = await env.DB.prepare(
+        `SELECT COUNT(*) as count FROM subscriptions_cache WHERE user_did = ? AND active = 0`
+      )
+        .bind(TEST_DID)
+        .first<{ count: number }>();
+      expect(parked?.count).toBe(5);
     });
 
-    it('adds warning when PDS has more than MAX_SUBSCRIPTIONS', async () => {
+    it('parks (not drops) the overflow when PDS exceeds the active limit', async () => {
       const session = createTestSession();
 
-      // PDS has 150 subscriptions
+      // PDS has 150 subscriptions, no local rows yet.
       const pdsRecords = Array.from({ length: 150 }, (_, i) =>
         createPdsSubscriptionRecord(`rkey-${i}`, `https://example.com/feed-${i}.xml`, `Feed ${i}`)
       );
@@ -318,9 +332,26 @@ describe('Subscription Sync', () => {
       const result = await syncSubscriptions(session, env);
 
       expect(result.success).toBe(true);
-      expect(result.warnings.length).toBeGreaterThan(0);
-      expect(result.warnings[0]).toContain('150 subscriptions');
-      expect(result.warnings[0]).toContain('only 100 can be synced');
+      // Everything is pulled — 100 active, 50 parked. Well under the 1000 mirror cap.
+      expect(result.pulledFromPds).toBe(150);
+      const parkedWarning = result.warnings.find((w) => w.includes('parked'));
+      expect(parkedWarning).toBeDefined();
+      expect(parkedWarning).toContain('50 feeds');
+      expect(parkedWarning).toContain('active limit of 100');
+
+      const active = await env.DB.prepare(
+        `SELECT COUNT(*) as count FROM subscriptions_cache WHERE user_did = ? AND active = 1`
+      )
+        .bind(TEST_DID)
+        .first<{ count: number }>();
+      expect(active?.count).toBe(100);
+
+      const total = await env.DB.prepare(
+        `SELECT COUNT(*) as count FROM subscriptions_cache WHERE user_did = ?`
+      )
+        .bind(TEST_DID)
+        .first<{ count: number }>();
+      expect(total?.count).toBe(150);
     });
   });
 

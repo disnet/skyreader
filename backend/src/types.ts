@@ -1,8 +1,15 @@
 // Re-export the global Env interface from worker-configuration.d.ts
 export interface Env extends globalThis.Env {
   // Set to 'true' only in `.dev.vars` for local/CI e2e runs; gates the test-only
-  // D1 exec endpoint (see routes/test-utils.ts). Never set in production.
-  E2E_TEST_MODE?: string;
+  // D1 exec endpoint (see routes/test-utils.ts). Never set in production, so the
+  // value is checked (`=== 'true'`) rather than trusted to exist.
+  //
+  // Typed as a required `string` — not `string | undefined` — to match what
+  // `wrangler types` emits. When `.dev.vars` defines E2E_TEST_MODE, the generated
+  // globalThis.Env declares it `string`, and an extending interface can't widen
+  // a required property to optional (TS2430). Declaring it here covers the case
+  // where the generated types were produced without the var present.
+  E2E_TEST_MODE: string;
 }
 
 export interface User {
