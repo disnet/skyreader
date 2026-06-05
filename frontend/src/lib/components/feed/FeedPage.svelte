@@ -48,10 +48,10 @@
   // through the same feed UI as the main feed.
   let { mode = 'feed' }: { mode?: 'feed' | 'linkblog' } = $props();
 
-  // Scroll-hide state (shared by desktop header + mobile bottom bar)
-  const scrollDirection = useScrollDirection({
-    onHide: () => feedViewStore.setFilterToolbarOpen(false),
-  });
+  // Scroll-hide state — drives the mobile bottom bar's hide-on-scroll. The
+  // desktop header stays pinned, so its inline filter/style rows are left open
+  // while scrolling (they close on click-outside) rather than snapping shut.
+  const scrollDirection = useScrollDirection();
   let feedSwitcherOpen = $state(false);
   let filterSheetOpen = $state(false);
   let readerOpen = $state(false);
@@ -595,7 +595,6 @@
         expandAllItems={preferences.expandAllItems}
         lastRefreshAt={appManager.lastRefreshAt}
         isRefreshing={appManager.isRefreshing}
-        controlsVisible={scrollDirection.controlsVisible}
         onToggleExpandAll={(value) => {
           preferences.setExpandAllItems(value);
           if (!value) {
@@ -617,105 +616,110 @@
       />
     {/if}
 
-    {#if mode === 'linkblog'}
-      <LinkblogIntro />
-    {/if}
+    <div class="feed-page-body">
+      {#if mode === 'linkblog'}
+        <LinkblogIntro />
+      {/if}
 
-    <PullToRefresh
-      onRefresh={handleRefreshWithToast}
-      disabled={!syncStore.isOnline || appManager.isRefreshing}
-    >
-      {#if (appManager.isHydrating || appManager.isRefreshing || (mode === 'linkblog' && myLinkblogStore.loading && !myLinkblogStore.loaded)) && feedViewStore.currentItems.length === 0}
-        <LoadingState />
-      {:else if !isSavedView && feedViewStore.currentItems.length === 0}
-        {#if mode === 'linkblog'}
-          {#if feedViewStore.showOnlyUnread}
-            <EmptyState title="No unread posts" description="You're all caught up." />
+      <PullToRefresh
+        onRefresh={handleRefreshWithToast}
+        disabled={!syncStore.isOnline || appManager.isRefreshing}
+      >
+        {#if (appManager.isHydrating || appManager.isRefreshing || (mode === 'linkblog' && myLinkblogStore.loading && !myLinkblogStore.loaded)) && feedViewStore.currentItems.length === 0}
+          <LoadingState />
+        {:else if !isSavedView && feedViewStore.currentItems.length === 0}
+          {#if mode === 'linkblog'}
+            {#if feedViewStore.showOnlyUnread}
+              <EmptyState title="No unread posts" description="You're all caught up." />
+            {:else}
+              <EmptyState
+                title="No shares yet"
+                description="Share an article from your feed and it'll appear here — and on your public page."
+              />
+            {/if}
+          {:else if feedViewStore.viewFilter}
+            <EmptyState
+              title="No matching items"
+              description="This filtered view has no items matching its criteria"
+              actionHref="/"
+              actionText="Show everything"
+            />
+          {:else if feedViewStore.followingFilter}
+            {#if feedViewStore.showOnlyUnread}
+              <EmptyState
+                title="No unread posts"
+                description="You're all caught up on people you follow"
+              />
+            {:else}
+              <EmptyState
+                title="No posts"
+                description="People you follow haven't posted to their linkblogs yet"
+              />
+            {/if}
+          {:else if feedViewStore.sharerFilter}
+            {#if feedViewStore.showOnlyUnread}
+              <EmptyState
+                title="No unread posts"
+                description="You're all caught up on this person"
+              />
+            {:else}
+              <EmptyState
+                title="No posts from this person"
+                description="This person hasn't posted to their linkblog yet"
+              />
+            {/if}
+          {:else if feedViewStore.feedFilter}
+            {#if feedViewStore.showOnlyUnread}
+              <EmptyState
+                title="No unread articles"
+                description="You're all caught up on this feed"
+              />
+            {:else}
+              <EmptyState title="No articles" description="This feed has no articles" />
+            {/if}
+          {:else if subscriptionsStore.subscriptions.length === 0}
+            <LibraryEmptyState
+              onAddFeed={() => sidebarStore.openAddFeedModal()}
+              onAddHandle={() => sidebarStore.openAddHandleModal()}
+            />
+          {:else if feedViewStore.showOnlyUnread}
+            <EmptyState title="No unread articles" description="You're all caught up!" />
           {:else}
             <EmptyState
-              title="No shares yet"
-              description="Share an article from your feed and it'll appear here — and on your public page."
+              title="No articles"
+              description="Your feeds haven't published anything yet. Check back later."
             />
           {/if}
-        {:else if feedViewStore.viewFilter}
-          <EmptyState
-            title="No matching items"
-            description="This filtered view has no items matching its criteria"
-            actionHref="/"
-            actionText="Show everything"
+        {:else if isSavedView}
+          <SavedListView
+            bind:this={savedListView}
+            onReaderChange={(open) => (readerOpen = open)}
+            onSaveToSemble={handleSaveToSemble}
+            onSaveToMargin={handleSaveToMargin}
           />
-        {:else if feedViewStore.followingFilter}
-          {#if feedViewStore.showOnlyUnread}
-            <EmptyState
-              title="No unread posts"
-              description="You're all caught up on people you follow"
-            />
-          {:else}
-            <EmptyState
-              title="No posts"
-              description="People you follow haven't posted to their linkblogs yet"
-            />
-          {/if}
-        {:else if feedViewStore.sharerFilter}
-          {#if feedViewStore.showOnlyUnread}
-            <EmptyState title="No unread posts" description="You're all caught up on this person" />
-          {:else}
-            <EmptyState
-              title="No posts from this person"
-              description="This person hasn't posted to their linkblog yet"
-            />
-          {/if}
-        {:else if feedViewStore.feedFilter}
-          {#if feedViewStore.showOnlyUnread}
-            <EmptyState
-              title="No unread articles"
-              description="You're all caught up on this feed"
-            />
-          {:else}
-            <EmptyState title="No articles" description="This feed has no articles" />
-          {/if}
-        {:else if subscriptionsStore.subscriptions.length === 0}
-          <LibraryEmptyState
-            onAddFeed={() => sidebarStore.openAddFeedModal()}
-            onAddHandle={() => sidebarStore.openAddHandleModal()}
-          />
-        {:else if feedViewStore.showOnlyUnread}
-          <EmptyState title="No unread articles" description="You're all caught up!" />
         {:else}
-          <EmptyState
-            title="No articles"
-            description="Your feeds haven't published anything yet. Check back later."
+          <FeedListView
+            bind:this={feedListView}
+            onToggleSave={(article) =>
+              itemLabelsStore.toggleSave(article.guid, 'article', article.url, article.title, {
+                type: 'article',
+                guid: article.guid,
+                url: article.url,
+                title: article.title,
+                author: article.author,
+                summary: article.summary,
+                imageUrl: article.imageUrl,
+                publishedAt: article.publishedAt,
+              })}
+            onShare={(article, _sub, note) => linkblogStore.shareLink(article, note)}
+            onUnshare={(url) => linkblogStore.unshare(url)}
+            onReaderChange={(open) => (readerOpen = open)}
+            onSaveToSemble={handleSaveToSemble}
+            onSaveToMargin={handleSaveToMargin}
           />
         {/if}
-      {:else if isSavedView}
-        <SavedListView
-          bind:this={savedListView}
-          onReaderChange={(open) => (readerOpen = open)}
-          onSaveToSemble={handleSaveToSemble}
-          onSaveToMargin={handleSaveToMargin}
-        />
-      {:else}
-        <FeedListView
-          bind:this={feedListView}
-          onToggleSave={(article) =>
-            itemLabelsStore.toggleSave(article.guid, 'article', article.url, article.title, {
-              type: 'article',
-              guid: article.guid,
-              url: article.url,
-              title: article.title,
-              author: article.author,
-              summary: article.summary,
-              imageUrl: article.imageUrl,
-              publishedAt: article.publishedAt,
-            })}
-          onShare={(article, _sub, note) => linkblogStore.shareLink(article, note)}
-          onUnshare={(url) => linkblogStore.unshare(url)}
-          onReaderChange={(open) => (readerOpen = open)}
-          onSaveToSemble={handleSaveToSemble}
-          onSaveToMargin={handleSaveToMargin}
-        />
-      {/if}
-    </PullToRefresh>
+      </PullToRefresh>
+    </div>
 
     {#if mobileStore.isMobile && !readerOpen}
       <MobileBottomBar
@@ -784,10 +788,24 @@
 {/if}
 
 <style>
+  /* Full main-area width so the sticky header bar can span edge-to-edge; the
+     reading content is re-centered by .feed-page-body below. */
   .feed-page {
+    width: 100%;
+  }
+
+  .feed-page-body {
     max-width: 800px;
     margin: 0 auto;
-    padding-top: 3.5rem;
+  }
+
+  /* Breathing room below the sticky divider so the first card — especially when
+     highlighted — doesn't sit flush against the line. (Desktop only; the mobile
+     layout has no header divider.) */
+  @media (min-width: 1001px) {
+    .feed-page-body {
+      padding-top: 0.5rem;
+    }
   }
 
   @media (max-width: 1000px) {

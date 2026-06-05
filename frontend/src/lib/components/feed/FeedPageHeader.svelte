@@ -16,7 +16,6 @@
     expandAllItems?: boolean;
     lastRefreshAt?: number | null;
     isRefreshing?: boolean;
-    controlsVisible?: boolean;
     onToggleExpandAll?: (value: boolean) => void;
     onRefresh?: () => void;
     onMarkAllAsRead?: () => void;
@@ -33,7 +32,6 @@
     expandAllItems = false,
     lastRefreshAt,
     isRefreshing = false,
-    controlsVisible = true,
     onToggleExpandAll,
     onRefresh,
     onMarkAllAsRead,
@@ -48,12 +46,13 @@
   let tick = $state(0);
   let intervalId: ReturnType<typeof setInterval> | null = null;
 
-  // Close toolbars when controls hide
-  $effect(() => {
-    if (!controlsVisible) {
-      styleToolbarOpen = false;
-    }
-  });
+  // Scroll-aware divider: the header blends into the page at the top and only
+  // grows its divider once content scrolls underneath it.
+  let scrolled = $state(false);
+  function handleWindowScroll() {
+    const next = window.scrollY > 4;
+    if (next !== scrolled) scrolled = next;
+  }
 
   // Debounce refresh button
   let lastRefreshClick = 0;
@@ -72,11 +71,14 @@
       tick++;
     }, 60000);
     document.addEventListener('click', handleClickOutside);
+    window.addEventListener('scroll', handleWindowScroll, { passive: true });
+    handleWindowScroll();
   });
 
   onDestroy(() => {
     if (intervalId) clearInterval(intervalId);
     document.removeEventListener('click', handleClickOutside);
+    window.removeEventListener('scroll', handleWindowScroll);
   });
 
   // Use tick to force re-evaluation (void to suppress unused warning)
@@ -136,7 +138,7 @@
   });
 </script>
 
-<div class="feed-header-fixed" class:hidden={!controlsVisible} bind:this={headerRef}>
+<div class="feed-header-fixed" class:scrolled bind:this={headerRef}>
   <div class="feed-header-controls">
     <div class="control-left feed-title-group" class:dropdown-open={dropdownOpen}>
       <NavigationDropdown currentTitle={title} />
@@ -304,45 +306,52 @@
 </div>
 
 <style>
+  /* A flat, solid header bar pinned to the top of the content area. It spans the
+     full main-column width (next to the sidebar) and stays in normal flow as a
+     sticky element, so its inline filter/style rows push the list down instead of
+     floating over it. Flat-by-default: one 1px divider, no blur, no shadow. */
   .feed-header-fixed {
-    position: fixed;
+    position: sticky;
     top: 0;
-    left: var(--sidebar-width, 260px);
-    right: 0;
-    pointer-events: none;
     z-index: 10;
-    padding: 0 1rem;
-    transition:
-      transform 0.3s ease,
-      opacity 0.3s ease;
+    background: var(--color-bg);
   }
 
-  .feed-header-fixed.hidden {
-    transform: translateY(-100%);
+  /* The divider spans only the reading column, not the full bar width — so it
+     never trails off into the blank gutters on either side of the content.
+     Scroll-aware: hidden while the page is at the top (the bar blends into the
+     white page) and fades in once content scrolls underneath. */
+  .feed-header-fixed::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    margin-inline: auto;
+    max-width: 800px;
+    height: 1px;
+    background: var(--color-border);
     opacity: 0;
-    pointer-events: none !important;
+    transition: opacity 0.2s ease;
   }
 
-  /* The controls opt back into pointer events past the container's `none`; revoke
-     that when hidden so the translated-away header can't capture clicks. */
-  .feed-header-fixed.hidden .control-left,
-  .feed-header-fixed.hidden .control-right {
-    pointer-events: none;
+  .feed-header-fixed.scrolled::after {
+    opacity: 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .feed-header-fixed::after {
+      transition: none;
+    }
   }
 
   .feed-header-controls {
     display: flex;
     justify-content: space-between;
-    align-items: stretch;
+    align-items: center;
     gap: 0.75rem;
     max-width: 800px;
     margin: 0 auto;
-    padding: 0.75rem 0;
-  }
-
-  .control-left,
-  .control-right {
-    pointer-events: auto;
+    padding: 0.625rem 1rem;
   }
 
   .control-left {
@@ -352,7 +361,7 @@
 
   .control-right {
     display: flex;
-    align-items: stretch;
+    align-items: center;
     gap: 0.5rem;
     flex-shrink: 0;
   }
@@ -361,11 +370,6 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    background: rgba(255, 255, 255, 0.85);
-    backdrop-filter: blur(8px);
-    border-radius: 999px;
-    padding: 0.25rem 0.75rem;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     min-width: 0;
     max-width: 100%;
   }
@@ -382,17 +386,22 @@
     flex-shrink: 0;
   }
 
+  /* Below 1000px the mobile bottom bar takes over. */
   @media (max-width: 1000px) {
     .feed-header-fixed {
-      left: 0;
       display: none;
     }
   }
 
-  @media (max-width: 480px) {
-    .last-updated-text,
-    .divider {
+  /* On narrower desktops, drop the control labels to icons so the bar never
+     crowds against the title group. */
+  @media (max-width: 1100px) {
+    .btn-label {
       display: none;
+    }
+
+    .view-toggle button {
+      padding: 0.4rem;
     }
   }
 
@@ -459,11 +468,6 @@
     display: flex;
     align-items: center;
     gap: 0.125rem;
-    background: rgba(255, 255, 255, 0.85);
-    backdrop-filter: blur(8px);
-    border-radius: 999px;
-    padding: 0.25rem;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   }
 
   .view-toggle button {
@@ -474,10 +478,12 @@
     background: none;
     border: none;
     padding: 0.4rem 0.6rem;
-    border-radius: 999px;
+    border-radius: 6px;
     cursor: pointer;
     color: var(--color-text-secondary);
-    transition: all 0.2s ease;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
   }
 
   .view-toggle button.active {
@@ -507,59 +513,27 @@
     position: relative;
   }
 
-  /* Filter toolbar row */
+  /* Secondary control row (filters / appearance), inline beneath the main bar.
+     The child toolbars carry a floating glass-pill style for mobile/reader use;
+     strip it here so they read as a flat extension of the solid bar. */
   .filter-toolbar-row {
     max-width: 800px;
     margin: 0 auto;
-    padding-bottom: 0.5rem;
+    padding: 0 1rem 0.625rem;
     display: flex;
     justify-content: flex-end;
   }
 
-  @media (max-width: 900px) {
-    .btn-label {
-      display: none;
-    }
-
-    .view-toggle button {
-      padding: 0.4rem;
-    }
-  }
-
-  @media (max-width: 480px) {
-    .view-toggle button {
-      padding: 0.5rem;
-    }
-
-    .view-toggle button :global(.icon) {
-      width: 20px;
-      height: 20px;
-    }
-
-    .refresh-btn {
-      font-size: var(--text-2xl);
-      padding: 0.25rem;
-    }
-
-    .filter-toolbar-row {
-      justify-content: flex-end;
-    }
+  .filter-toolbar-row :global(.filter-toolbar),
+  .filter-toolbar-row :global(.appearance-toolbar) {
+    background: transparent;
+    backdrop-filter: none;
+    box-shadow: none;
+    border-radius: 0;
+    padding: 0;
   }
 
   @media (prefers-color-scheme: dark) {
-    .feed-title-group,
-    .view-toggle {
-      background: rgba(40, 40, 40, 0.95);
-    }
-
-    .toggle-divider {
-      background: rgba(255, 255, 255, 0.2);
-    }
-
-    .view-toggle button.active {
-      background: rgba(255, 255, 255, 0.15);
-    }
-
     .offline-badge {
       color: #fbbf24;
       background: rgba(251, 191, 36, 0.15);
