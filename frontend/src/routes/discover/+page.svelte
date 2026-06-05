@@ -16,7 +16,7 @@
   </header>
 
   <section class="discover-section">
-    <h2 class="section-title">Linkblogs</h2>
+    <h2 class="section-title">Skyreader Linkblogs</h2>
     <LinkblogDiscovery variant="full" />
   </section>
 
