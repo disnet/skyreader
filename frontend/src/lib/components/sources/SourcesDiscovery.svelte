@@ -46,6 +46,11 @@
     if (!failedIcons.has(uri)) failedIcons = new Set(failedIcons).add(uri);
   }
 
+  // Strip protocol/trailing slash so a publication URL reads cleanly inline.
+  function formatPublicationUrl(url: string): string {
+    return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+  }
+
   // Total registry linkbloggers eligible to suggest (before the inline cap) — drives "see all".
   let moreLinkblogs = $state(0);
   // Total accounts you follow with standard.site publications (before the cap) — drives "see all".
@@ -112,7 +117,7 @@
               {/if}
               <div class="sub-info">
                 <span class="sub-name">{sub.publication.name}</span>
-                <span class="sub-url">{sub.publication.url}</span>
+                <span class="sub-url">{formatPublicationUrl(sub.publication.url)}</span>
               </div>
               <button class="add-btn" disabled={adding === sub.uri} onclick={() => add(sub)}>
                 {#if adding === sub.uri}

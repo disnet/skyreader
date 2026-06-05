@@ -59,8 +59,6 @@
     <label class="row-checkbox">
       <input type="checkbox" checked={selected} onchange={onToggleSelect} />
     </label>
-  {:else if !subscribed}
-    <div class="checkbox-spacer"></div>
   {/if}
 
   <div class="source-icon" class:round={iconRound}>
@@ -130,11 +128,6 @@
 
   .row-checkbox input {
     cursor: pointer;
-  }
-
-  .checkbox-spacer {
-    width: 16px;
-    flex-shrink: 0;
   }
 
   .source-icon {

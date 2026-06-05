@@ -97,9 +97,19 @@
   let eligibleAccounts = $derived(
     variant === 'suggestions' ? groupByAccount(followingPublicationsStore.publications, true) : []
   );
-  let suggestions = $derived(eligibleAccounts.slice(0, limit ?? eligibleAccounts.length));
+  // Suggestions render as flat, flush publication rows (one per publication) so
+  // they line up with the sibling linkblog suggestions in the "Find more" card —
+  // the grouped/indented layout is reserved for the full /discover view.
+  let suggestionPubs = $derived.by(() => {
+    const out: { account: AccountGroup; pub: FollowingPublication }[] = [];
+    for (const g of eligibleAccounts) {
+      for (const p of g.publications) out.push({ account: g, pub: p });
+    }
+    return out;
+  });
+  let visibleSuggestions = $derived(suggestionPubs.slice(0, limit ?? suggestionPubs.length));
   $effect(() => {
-    totalAvailable = eligibleAccounts.length;
+    totalAvailable = suggestionPubs.length;
   });
 
   // Per-publication follow state (keyed by URI): in-flight + last error.
@@ -139,6 +149,11 @@
     return (p.name?.trim() || '?').charAt(0).toUpperCase();
   }
 
+  // Strip protocol/trailing slash so a publication URL reads cleanly inline.
+  function formatPublicationUrl(url: string): string {
+    return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+  }
+
   async function follow(p: FollowingPublication) {
     if (pending[p.publicationUri]) return;
     pending = { ...pending, [p.publicationUri]: true };
@@ -159,6 +174,51 @@
     }
   }
 </script>
+
+{#snippet suggestionRow(account: AccountGroup, p: FollowingPublication)}
+  {@const subscribed = subscribedPubUris.has(p.publicationUri)}
+  <li class="suggestion">
+    <a
+      class="avatar"
+      href={profileUrl(account)}
+      target="_blank"
+      rel="noopener"
+      tabindex="-1"
+      aria-hidden="true"
+    >
+      {#if account.avatar}
+        <img src={account.avatar} alt="" loading="lazy" />
+      {:else}
+        <span class="avatar-fallback">{accountInitial(account)}</span>
+      {/if}
+    </a>
+    <div class="who">
+      {#if p.url}
+        <a class="name" href={p.url} target="_blank" rel="noopener">{p.name}</a>
+      {:else}
+        <span class="name">{p.name}</span>
+      {/if}
+      <span class="handle">
+        {p.url ? formatPublicationUrl(p.url) : account.handle ? `@${account.handle}` : ''}
+      </span>
+      {#if failed[p.publicationUri]}
+        <span class="follow-error">{failed[p.publicationUri]}</span>
+      {/if}
+    </div>
+    {#if subscribed}
+      <span class="following"><Icon name="check" size={14} /> Following</span>
+    {:else}
+      <button class="follow-btn" disabled={pending[p.publicationUri]} onclick={() => follow(p)}>
+        {#if pending[p.publicationUri]}
+          <span class="spinner"></span>
+        {:else}
+          <Icon name="plus" size={14} />
+        {/if}
+        Follow
+      </button>
+    {/if}
+  </li>
+{/snippet}
 
 {#snippet accountBlock(g: AccountGroup, canHide: boolean)}
   <li class="account">
@@ -214,6 +274,9 @@
             {#if p.description}
               <span class="pub-desc">{p.description}</span>
             {/if}
+            {#if p.url}
+              <span class="pub-url">{formatPublicationUrl(p.url)}</span>
+            {/if}
             {#if failed[p.publicationUri]}
               <span class="follow-error">{failed[p.publicationUri]}</span>
             {/if}
@@ -243,13 +306,13 @@
 <div class="following-publications">
   {#if variant === 'suggestions'}
     <!-- Quiet by design: render nothing while loading or when none are found. -->
-    {#if suggestions.length > 0}
+    {#if visibleSuggestions.length > 0}
       {#if heading}
         <h3 class="group-title">{heading}</h3>
       {/if}
-      <ul class="account-list">
-        {#each suggestions as g (g.did)}
-          {@render accountBlock(g, false)}
+      <ul class="suggestion-list">
+        {#each visibleSuggestions as s (s.pub.publicationUri)}
+          {@render suggestionRow(s.account, s.pub)}
         {/each}
       </ul>
     {/if}
@@ -414,6 +477,27 @@
     flex-direction: column;
   }
 
+  /* Suggestions: flat, flush rows that align with the sibling linkblog block. */
+  .suggestion-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .suggestion {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.625rem 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .suggestion:last-child {
+    border-bottom: none;
+  }
+
   .account {
     padding: 0.875rem 0;
     border-bottom: 1px solid var(--color-border);
@@ -567,6 +651,14 @@
 
   a.pub-name:hover {
     text-decoration: underline;
+  }
+
+  .pub-url {
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .pub-desc {
