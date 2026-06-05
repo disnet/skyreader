@@ -69,7 +69,7 @@ export interface PDSError {
  * Result of a PDS operation
  */
 export type PDSResult<T> =
-  | { success: true; data: T }
+  | { success: true; data: T; truncated?: boolean }
   | { success: false; error: string; retryable: boolean };
 
 /**
@@ -270,10 +270,15 @@ export class PDSClient {
       pageCount++;
 
       if (!result.data.cursor || result.data.records.length === 0) {
+        cursor = undefined;
         break;
       }
       cursor = result.data.cursor;
     }
+
+    // A cursor still pending here means we stopped on a safety cap, not because
+    // the collection was exhausted — i.e. the returned list is incomplete.
+    const truncated = cursor !== undefined;
 
     if (pageCount >= MAX_PAGES) {
       console.warn(
@@ -288,7 +293,7 @@ export class PDSClient {
       );
     }
 
-    return { success: true, data: allRecords };
+    return { success: true, data: allRecords, truncated };
   }
 
   /**

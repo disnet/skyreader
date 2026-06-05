@@ -18,6 +18,7 @@
   import { downloadOPML } from '$lib/utils/opml-exporter';
   import { api, RateLimitError } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
+  import { standardSubsStore } from '$lib/stores/standardSubs.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
   import type { LinkblogPublication } from '$lib/types';
 
@@ -46,9 +47,11 @@
 
   // PDS Sync state
   let pdsSyncEnabled = $state(false);
+  let atmosphereSubSyncEnabled = $state(false);
   let lastSyncSubscriptions = $state<number | null>(null);
   let isSyncLoading = $state(false);
   let isSyncing = $state(false);
+  let isTogglingAtmosphereSubs = $state(false);
   let syncError = $state<string | null>(null);
   let syncSuccess = $state<string | null>(null);
 
@@ -123,6 +126,7 @@
     try {
       const settings = await api.getSettings();
       pdsSyncEnabled = settings.pdsSyncEnabled;
+      atmosphereSubSyncEnabled = settings.atmosphereSubSyncEnabled;
       lastSyncSubscriptions = settings.lastPdsSyncSubscriptions;
     } catch (error) {
       console.error('Failed to load sync settings:', error);
@@ -160,6 +164,60 @@
     }
   }
 
+  // Sub-toggle: import standard.site follows and keep them reconciled. Coupled to
+  // Atmospheric sync (the graph edges are the public mirror), so it's only offered
+  // while pdsSyncEnabled. Enabling is all-or-nothing with a one-time confirm.
+  async function handleToggleAtmosphereSubSync(event: Event) {
+    const target = event.currentTarget as HTMLInputElement;
+    const newValue = target.checked;
+
+    syncError = null;
+    syncSuccess = null;
+
+    if (!syncStore.isOnline) {
+      syncError = 'You are offline. Connect to the internet to change sync settings.';
+      atmosphereSubSyncEnabled = !newValue;
+      return;
+    }
+
+    if (newValue) {
+      // First run: surface how many follows we're about to bring in.
+      isTogglingAtmosphereSubs = true;
+      try {
+        await standardSubsStore.load();
+      } finally {
+        isTogglingAtmosphereSubs = false;
+      }
+      const count = standardSubsStore.subs.length;
+      const message =
+        count > 0
+          ? `Bring your ${count} standard.site subscription${count === 1 ? '' : 's'} into Skyreader and keep them in sync? Follows you make anywhere in the Atmosphere will show up here, and vice versa. Your subscription list stays public on your PDS.`
+          : `Keep your standard.site subscriptions in sync with Skyreader? Follows you make anywhere in the Atmosphere will show up here, and vice versa. Your subscription list stays public on your PDS.`;
+      if (!confirm(message)) {
+        atmosphereSubSyncEnabled = false;
+        return;
+      }
+    }
+
+    isTogglingAtmosphereSubs = true;
+    try {
+      const settings = await api.updateSettings({ atmosphereSubSyncEnabled: newValue });
+      atmosphereSubSyncEnabled = settings.atmosphereSubSyncEnabled;
+
+      // Enabling: run a sync now so the import happens immediately (handleSync
+      // triggers fullSync, which reconciles when the flag is on).
+      if (newValue) {
+        await handleSync();
+      }
+    } catch (error) {
+      console.error('Failed to update Atmosphere subscription sync:', error);
+      syncError = error instanceof Error ? error.message : 'Failed to update setting';
+      atmosphereSubSyncEnabled = !newValue;
+    } finally {
+      isTogglingAtmosphereSubs = false;
+    }
+  }
+
   function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -179,6 +237,8 @@
     // Track totals across multiple sync calls (for batched hasMore syncs)
     let totalPulled = 0;
     let totalPushed = 0;
+    let totalImported = 0;
+    let totalRemoved = 0;
     let allWarnings: string[] = [];
     let batchCount = 0;
     const maxBatches = 50; // Safety limit to prevent infinite loops
@@ -216,15 +276,24 @@
         // Accumulate totals
         totalPulled += result.subscriptions?.pulledFromPds || 0;
         totalPushed += result.subscriptions?.pushedToPds || 0;
+        totalImported += result.atmosphere?.imported || 0;
+        totalRemoved += result.atmosphere?.removed || 0;
 
         // Collect warnings
-        allWarnings = [...allWarnings, ...(result.subscriptions?.warnings || [])];
+        allWarnings = [
+          ...allWarnings,
+          ...(result.subscriptions?.warnings || []),
+          ...(result.atmosphere?.warnings || []),
+        ];
 
         // Check if there's more to sync
         hasMore = result.hasMore || false;
       }
 
       syncSuccess = `Sync complete: ${totalPulled} pulled, ${totalPushed} pushed`;
+      if (totalImported > 0 || totalRemoved > 0) {
+        syncSuccess += `. Atmosphere: ${totalImported} imported, ${totalRemoved} removed`;
+      }
       if (batchCount > 1) {
         syncSuccess += ` (${batchCount} batches)`;
       }
@@ -396,6 +465,22 @@
       </div>
 
       {#if pdsSyncEnabled}
+        <div class="sync-toggle-section sub-toggle">
+          <label class="toggle-setting">
+            <input
+              type="checkbox"
+              checked={atmosphereSubSyncEnabled}
+              disabled={isTogglingAtmosphereSubs || isSyncing}
+              onchange={handleToggleAtmosphereSubSync}
+            />
+            <span>Sync my standard.site subscriptions</span>
+          </label>
+          <p class="setting-description">
+            Pull in the publications you follow elsewhere in the Atmosphere, and keep them in step
+            with Skyreader — follow or unfollow in either place and the other follows along.
+          </p>
+        </div>
+
         <div class="sync-status">
           <p class="sync-time">
             Subscriptions last synced: {formatSyncTime(lastSyncSubscriptions)}
@@ -905,6 +990,14 @@
     margin-top: 1rem;
     padding-top: 1rem;
     border-top: 1px solid var(--color-border);
+  }
+
+  /* Nested under the Atmospheric sync toggle — indented, no divider line. */
+  .sync-toggle-section.sub-toggle {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    padding-left: 1.5rem;
+    border-top: none;
   }
 
   .sync-status {

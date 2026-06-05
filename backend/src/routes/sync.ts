@@ -5,10 +5,16 @@ import {
   syncSubscriptions,
   type SyncResult as SubscriptionSyncResult,
 } from '../services/subscription-sync';
+import {
+  reconcileAtmosphereSubscriptions,
+  type AtmosphereSyncResult,
+} from '../services/atmosphere-subscription-sync';
 
 export interface FullSyncResult {
   success: boolean;
   subscriptions?: SubscriptionSyncResult;
+  /** Present when Atmospheric subscription sync is enabled. */
+  atmosphere?: AtmosphereSyncResult;
   error?: string;
   /** If true, there's more work to do - call sync again */
   hasMore?: boolean;
@@ -16,11 +22,16 @@ export interface FullSyncResult {
 
 export interface SyncStatusResponse {
   pdsSyncEnabled: boolean;
+  atmosphereSubSyncEnabled: boolean;
   lastSyncSubscriptions: number | null;
 }
 
 // POST /api/sync/full - Full sync (subscriptions only)
-export async function handleFullSync(request: Request, env: Env): Promise<Response> {
+export async function handleFullSync(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405,
@@ -67,6 +78,19 @@ export async function handleFullSync(request: Request, env: Env): Promise<Respon
     }
 
     result.success = subResult.success;
+
+    // Reconcile standard.site follows ↔ Skyreader, when opted in. Rides the same
+    // Atmospheric-sync switch (graph edges are the public, opt-in mirror).
+    if (settings.atmosphereSubSyncEnabled) {
+      const atmoResult = await reconcileAtmosphereSubscriptions(session, env, ctx);
+      result.atmosphere = atmoResult;
+      if (atmoResult.hasMore) {
+        result.hasMore = true;
+      }
+      // A reconcile failure shouldn't flip an otherwise-successful subscription
+      // sync to failed (it's best-effort and self-heals next run); surface it via
+      // the atmosphere field instead.
+    }
 
     return new Response(JSON.stringify(result), {
       headers: { 'Content-Type': 'application/json' },
@@ -158,6 +182,7 @@ export async function handleSyncStatus(request: Request, env: Env): Promise<Resp
 
     const response: SyncStatusResponse = {
       pdsSyncEnabled: settings.pdsSyncEnabled,
+      atmosphereSubSyncEnabled: settings.atmosphereSubSyncEnabled,
       lastSyncSubscriptions: settings.lastPdsSyncSubscriptions,
     };
 

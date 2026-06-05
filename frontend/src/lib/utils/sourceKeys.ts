@@ -1,5 +1,10 @@
 // Source key utilities for unified source filter model
-// Format: "rss~{rkey}", "{did}~documents"
+// Format: "rss~{rkey}", "{rkey}~documents"
+//
+// A documents source is keyed by the subscription rkey (like RSS), so two
+// publications owned by the same author DID are distinct sources. Legacy keys
+// used the author DID ("{did}~documents") and are still resolved for
+// back-compat — distinguishable because a DID carries the `did:` prefix.
 
 const SEP = '~';
 
@@ -9,8 +14,8 @@ export function rssSourceKey(rkey: string): string {
   return `rss${SEP}${rkey}`;
 }
 
-export function documentsSourceKey(did: string): string {
-  return `${did}${SEP}documents`;
+export function documentsSourceKey(rkey: string): string {
+  return `${rkey}${SEP}documents`;
 }
 
 // --- Parsing ---
@@ -63,10 +68,63 @@ export function subscriptionSourceKey(sub: Subscription): string | null {
   if (!sub.sourceType || sub.sourceType === 'rss') {
     return rssSourceKey(sub.rkey);
   }
-  if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
-    return documentsSourceKey(sub.subjectDid);
+  if (sub.sourceType === 'atproto.documents') {
+    return documentsSourceKey(sub.rkey);
   }
   return null;
+}
+
+// --- Documents scope resolution ---
+//
+// A documents source key resolves to one or more (author DID, publication)
+// scopes used to decide which documents belong to it. The publication scope is
+// the subscription's feedUrl when it's an `at://…publication` URI (otherwise the
+// subscription covers all of that author's documents).
+
+export interface DocScope {
+  did: string;
+  /** Publication AT-URI scope, or undefined for all of the author's documents. */
+  pub?: string;
+}
+
+type DocScopeSub = Pick<Subscription, 'rkey' | 'sourceType' | 'subjectDid' | 'feedUrl'>;
+
+function subToDocScope(sub: DocScopeSub): DocScope | null {
+  if (!sub.subjectDid) return null;
+  return {
+    did: sub.subjectDid,
+    pub: sub.feedUrl && sub.feedUrl.startsWith('at://') ? sub.feedUrl : undefined,
+  };
+}
+
+/**
+ * Resolve documents source keys to the (author, publication) scopes they cover.
+ * - `{rkey}~documents` → that subscription's scope (publication-precise).
+ * - legacy `{did}~documents` → the whole author (all their publications).
+ * Non-documents keys are ignored.
+ */
+export function resolveDocScopes(sourceKeys: string[], subscriptions: DocScopeSub[]): DocScope[] {
+  const scopes: DocScope[] = [];
+  for (const key of sourceKeys) {
+    if (!isDocumentsSource(key)) continue;
+    const id = parseSourceKey(key).id;
+    if (id.startsWith('did:')) {
+      scopes.push({ did: id }); // legacy whole-author key
+      continue;
+    }
+    const sub = subscriptions.find((s) => s.rkey === id && s.sourceType === 'atproto.documents');
+    const scope = sub ? subToDocScope(sub) : null;
+    if (scope) scopes.push(scope);
+  }
+  return scopes;
+}
+
+/** Whether a document falls within any of the given scopes. */
+export function docInAnyScope(
+  doc: { authorDid: string; siteUri?: string },
+  scopes: DocScope[]
+): boolean {
+  return scopes.some((s) => doc.authorDid === s.did && (!s.pub || doc.siteUri === s.pub));
 }
 
 // --- Account source kinds (for UI iteration) ---

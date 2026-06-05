@@ -3,6 +3,13 @@ import { getSessionFromRequest } from '../services/oauth';
 
 export interface UserSettings {
   pdsSyncEnabled: boolean;
+  /**
+   * Import standard.site subscriptions (site.standard.graph.subscription) and
+   * keep them reconciled with Skyreader. Only effective when pdsSyncEnabled is
+   * also on — the graph edge is the public, opt-in mirror, so this rides the
+   * same Atmospheric-sync switch.
+   */
+  atmosphereSubSyncEnabled: boolean;
   lastPdsSyncSubscriptions: number | null;
   lastPdsSyncReadPositions: number | null;
   createdAt: number;
@@ -12,6 +19,7 @@ export interface UserSettings {
 interface UserSettingsRow {
   user_did: string;
   pds_sync_enabled: number;
+  atmosphere_sub_sync_enabled: number | null;
   last_pds_sync_subscriptions: number | null;
   last_pds_sync_read_positions: number | null;
   created_at: number;
@@ -22,6 +30,7 @@ function rowToSettings(row: UserSettingsRow | null): UserSettings {
   if (!row) {
     return {
       pdsSyncEnabled: false,
+      atmosphereSubSyncEnabled: false,
       lastPdsSyncSubscriptions: null,
       lastPdsSyncReadPositions: null,
       createdAt: Math.floor(Date.now() / 1000),
@@ -30,6 +39,7 @@ function rowToSettings(row: UserSettingsRow | null): UserSettings {
   }
   return {
     pdsSyncEnabled: row.pds_sync_enabled === 1,
+    atmosphereSubSyncEnabled: row.atmosphere_sub_sync_enabled === 1,
     lastPdsSyncSubscriptions: row.last_pds_sync_subscriptions,
     lastPdsSyncReadPositions: row.last_pds_sync_read_positions,
     createdAt: row.created_at,
@@ -81,9 +91,12 @@ export async function handleUpdateSettings(request: Request, env: Env): Promise<
     });
   }
 
-  let body: { pdsSyncEnabled?: boolean };
+  let body: { pdsSyncEnabled?: boolean; atmosphereSubSyncEnabled?: boolean };
   try {
-    body = (await request.json()) as { pdsSyncEnabled?: boolean };
+    body = (await request.json()) as {
+      pdsSyncEnabled?: boolean;
+      atmosphereSubSyncEnabled?: boolean;
+    };
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
       status: 400,
@@ -92,15 +105,21 @@ export async function handleUpdateSettings(request: Request, env: Env): Promise<
   }
 
   try {
-    // Upsert the settings
+    // Upsert the settings. Each column is only written when present in the body
+    // (COALESCE keeps the existing value for an omitted/null bind).
     await env.DB.prepare(
-      `INSERT INTO user_settings (user_did, pds_sync_enabled, updated_at)
-			 VALUES (?, ?, unixepoch())
+      `INSERT INTO user_settings (user_did, pds_sync_enabled, atmosphere_sub_sync_enabled, updated_at)
+			 VALUES (?, ?, ?, unixepoch())
 			 ON CONFLICT(user_did) DO UPDATE SET
 			   pds_sync_enabled = COALESCE(excluded.pds_sync_enabled, pds_sync_enabled),
+			   atmosphere_sub_sync_enabled = COALESCE(excluded.atmosphere_sub_sync_enabled, atmosphere_sub_sync_enabled),
 			   updated_at = unixepoch()`
     )
-      .bind(session.did, body.pdsSyncEnabled !== undefined ? (body.pdsSyncEnabled ? 1 : 0) : null)
+      .bind(
+        session.did,
+        body.pdsSyncEnabled !== undefined ? (body.pdsSyncEnabled ? 1 : 0) : null,
+        body.atmosphereSubSyncEnabled !== undefined ? (body.atmosphereSubSyncEnabled ? 1 : 0) : null
+      )
       .run();
 
     // Fetch the updated settings

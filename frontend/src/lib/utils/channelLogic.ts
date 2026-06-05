@@ -115,7 +115,7 @@ export function computeSourceKeys(
           if (!sub.sourceType || sub.sourceType === 'rss') {
             keys.push(rssSourceKey(sub.rkey));
           } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
-            keys.push(documentsSourceKey(sub.subjectDid));
+            keys.push(documentsSourceKey(sub.rkey));
           }
         }
       }
@@ -129,7 +129,7 @@ export function computeSourceKeys(
           if (!sub.sourceType || sub.sourceType === 'rss') {
             keys.push(rssSourceKey(sub.rkey));
           } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
-            keys.push(documentsSourceKey(sub.subjectDid));
+            keys.push(documentsSourceKey(sub.rkey));
           }
         }
       }
@@ -154,9 +154,9 @@ export function computeSourceKeys(
     }
     case 'people': {
       for (const sub of subscriptions) {
-        if (!sub.subjectDid) continue;
+        if (!sub.rkey || !sub.subjectDid) continue;
         if (sub.sourceType === 'atproto.documents') {
-          keys.push(documentsSourceKey(sub.subjectDid));
+          keys.push(documentsSourceKey(sub.rkey));
         }
       }
       break;
@@ -196,7 +196,7 @@ export function computeSourceKeys(
           if (!sub.sourceType || sub.sourceType === 'rss') {
             keys.push(rssSourceKey(sub.rkey));
           } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
-            keys.push(documentsSourceKey(sub.subjectDid));
+            keys.push(documentsSourceKey(sub.rkey));
           }
         }
       }
@@ -362,8 +362,8 @@ export function getPeopleSuggestion(ctx: SuggestionContext): ChannelSuggestion[]
   const sourceKeys: string[] = [];
   const seenDids = new Set<string>();
   for (const sub of atprotoSubs) {
-    if (!sub.subjectDid) continue;
-    sourceKeys.push(documentsSourceKey(sub.subjectDid));
+    if (!sub.rkey || !sub.subjectDid) continue;
+    sourceKeys.push(documentsSourceKey(sub.rkey));
     seenDids.add(sub.subjectDid);
   }
   if (isAlreadyCovered(sourceKeys, [], ctx.views)) return [];
@@ -576,7 +576,7 @@ export function getRecentSuggestion(
     if (!sub.sourceType || sub.sourceType === 'rss') {
       recentKeys.push(rssSourceKey(sub.rkey));
     } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
-      recentKeys.push(documentsSourceKey(sub.subjectDid));
+      recentKeys.push(documentsSourceKey(sub.rkey));
     }
   }
 

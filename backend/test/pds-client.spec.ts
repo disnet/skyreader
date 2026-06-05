@@ -142,6 +142,8 @@ describe('PDSClient', () => {
         expect(result.data).toHaveLength(3);
         expect(result.data[0].value).toEqual({ n: 1 });
         expect(result.data[2].value).toEqual({ n: 3 });
+        // Exhausted the collection (last page had no cursor) → not truncated.
+        expect(result.truncated).toBeFalsy();
       }
 
       expect(globalThis.fetch).toHaveBeenCalledTimes(2);
@@ -170,6 +172,8 @@ describe('PDSClient', () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data).toHaveLength(3); // 1 record per page x 3 pages
+        // Stopped on the page cap while a cursor was still pending → truncated.
+        expect(result.truncated).toBe(true);
       }
 
       expect(globalThis.fetch).toHaveBeenCalledTimes(3);
@@ -200,6 +204,8 @@ describe('PDSClient', () => {
         // Should have fetched 3 pages (100 + 100 + 100 = 300, but stops at 250+ check)
         expect(result.data.length).toBeLessThanOrEqual(300);
         expect(result.data.length).toBeGreaterThanOrEqual(250);
+        // Stopped on the record cap with a cursor still pending → truncated.
+        expect(result.truncated).toBe(true);
       }
     });
 
@@ -219,6 +225,10 @@ describe('PDSClient', () => {
       const result = await client.listAllRecords('app.test.collection');
 
       expect(result.success).toBe(true);
+      if (result.success) {
+        // Empty cursor means the collection is exhausted → not truncated.
+        expect(result.truncated).toBeFalsy();
+      }
       expect(globalThis.fetch).toHaveBeenCalledOnce();
     });
 
@@ -240,6 +250,8 @@ describe('PDSClient', () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data).toHaveLength(0);
+        // An empty page ends the listing cleanly → not truncated.
+        expect(result.truncated).toBeFalsy();
       }
       expect(globalThis.fetch).toHaveBeenCalledOnce();
     });

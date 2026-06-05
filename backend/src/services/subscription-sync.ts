@@ -147,10 +147,12 @@ export async function syncSubscriptions(session: Session, env: Env): Promise<Syn
     const localSubscriptions = localResult.results || [];
     console.log(`[SubscriptionSync] Found ${localSubscriptions.length} local subscriptions`);
 
-    // Build a unique key for deduplication: feedUrl for RSS, sourceType+subjectDid for AT Proto
+    // Build a unique key for deduplication. RSS dedups by feedUrl; AT Proto by
+    // sourceType + subjectDid + feedUrl, where feedUrl is the publication AT-URI —
+    // so two publications owned by the same author DID are distinct subscriptions.
     function subscriptionKey(feedUrl?: string, sourceType?: string, subjectDid?: string): string {
       if (sourceType && sourceType.startsWith('atproto.') && subjectDid) {
-        return `${sourceType}:${subjectDid}`;
+        return `${sourceType}:${subjectDid}:${feedUrl || ''}`;
       }
       return feedUrl || '';
     }

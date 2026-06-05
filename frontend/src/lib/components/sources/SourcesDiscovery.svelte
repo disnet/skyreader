@@ -4,12 +4,24 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import type { StandardSub } from '$lib/stores/standardSubs.svelte';
+  import { api } from '$lib/services/api';
   import Icon from '$lib/components/Icon.svelte';
   import LinkblogDiscovery from '$lib/components/LinkblogDiscovery.svelte';
   import FollowingPublications from '$lib/components/FollowingPublications.svelte';
 
-  onMount(() => {
+  // When Atmospheric subscription sync is on, standard.site follows are imported
+  // and reconciled automatically — so we show a synced summary instead of a list
+  // of per-item "Add" buttons.
+  let atmosphereSubSyncEnabled = $state(false);
+
+  onMount(async () => {
     standardSubsStore.load();
+    try {
+      const settings = await api.getSettings();
+      atmosphereSubSyncEnabled = settings.atmosphereSubSyncEnabled;
+    } catch {
+      // Non-fatal: fall back to the manual suggestion list.
+    }
   });
 
   // DIDs we already have an Atmosphere subscription for — hide those suggestions.
@@ -59,7 +71,24 @@
     <LinkblogDiscovery variant="friends" />
   </div>
 
-  {#if standardSubsStore.loading || suggestedStandardSubs.length > 0}
+  {#if atmosphereSubSyncEnabled}
+    <div class="block">
+      <h3 class="block-title">
+        <Icon name="standard-site" size={13} /> Your standard.site subscriptions
+      </h3>
+      <p class="status synced">
+        <Icon name="check" size={14} />
+        {#if standardSubsStore.loaded}
+          Syncing automatically — {standardSubsStore.subs.length} publication{standardSubsStore.subs
+            .length === 1
+            ? ''
+            : 's'} from the Atmosphere.
+        {:else}
+          Syncing automatically from the Atmosphere.
+        {/if}
+      </p>
+    </div>
+  {:else if standardSubsStore.loading || suggestedStandardSubs.length > 0}
     <div class="block">
       <h3 class="block-title">
         <Icon name="standard-site" size={13} /> Your standard.site subscriptions
@@ -163,6 +192,12 @@
     font-size: var(--text-md);
     color: var(--color-text-secondary);
     margin: 0.25rem 0;
+  }
+
+  .status.synced {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
   }
 
   .sub-list {

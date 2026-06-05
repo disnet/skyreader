@@ -749,6 +749,7 @@ class ApiClient {
   // Settings
   async getSettings(): Promise<{
     pdsSyncEnabled: boolean;
+    atmosphereSubSyncEnabled: boolean;
     lastPdsSyncSubscriptions: number | null;
     lastPdsSyncReadPositions: number | null;
     createdAt: number;
@@ -757,8 +758,12 @@ class ApiClient {
     return this.fetch('/api/settings');
   }
 
-  async updateSettings(settings: { pdsSyncEnabled?: boolean }): Promise<{
+  async updateSettings(settings: {
+    pdsSyncEnabled?: boolean;
+    atmosphereSubSyncEnabled?: boolean;
+  }): Promise<{
     pdsSyncEnabled: boolean;
+    atmosphereSubSyncEnabled: boolean;
     lastPdsSyncSubscriptions: number | null;
     lastPdsSyncReadPositions: number | null;
     createdAt: number;
@@ -912,6 +917,16 @@ class ApiClient {
       warnings: string[];
       hasMore?: boolean;
     };
+    atmosphere?: {
+      success: boolean;
+      imported: number;
+      removed: number;
+      pushed: number;
+      skipped: number;
+      warnings: string[];
+      hasMore?: boolean;
+      error?: string;
+    };
     error?: string;
     hasMore?: boolean;
   }> {
@@ -920,6 +935,7 @@ class ApiClient {
 
   async getSyncStatus(): Promise<{
     pdsSyncEnabled: boolean;
+    atmosphereSubSyncEnabled: boolean;
     lastSyncSubscriptions: number | null;
   }> {
     return this.fetch('/api/sync/status');
