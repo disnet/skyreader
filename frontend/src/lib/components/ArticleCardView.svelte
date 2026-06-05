@@ -706,7 +706,7 @@
                   }}
                 >
                   <Icon name="plus" size={16} />
-                  <span>Follow source</span>
+                  <span>Add source</span>
                 </button>
               {/if}
             </div>

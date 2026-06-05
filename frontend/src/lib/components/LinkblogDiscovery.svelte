@@ -127,7 +127,7 @@
       {/if}
     </div>
     {#if subscribed}
-      <span class="following"><Icon name="check" size={14} /> Following</span>
+      <span class="following"><Icon name="check" size={14} /> Added</span>
     {:else}
       <button class="follow-btn" disabled={pending[p.did]} onclick={() => follow(p)}>
         {#if pending[p.did]}
@@ -135,7 +135,7 @@
         {:else}
           <Icon name="plus" size={14} />
         {/if}
-        Follow
+        Add
       </button>
     {/if}
   </li>
