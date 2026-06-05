@@ -9,12 +9,9 @@ function sourceRowByTitle(page: Page, title: string): Locator {
   });
 }
 
-/** Open the edit modal for a source row via its popover menu. */
-async function openEditModal(page: Page, row: Locator) {
-  await row.locator('button.menu-trigger').click({ force: true });
-  const editItem = page.locator('.menu-item', { hasText: 'Edit' });
-  await expect(editItem).toBeVisible({ timeout: 5_000 });
-  await editItem.click();
+/** Open the edit modal for a source row via its inline Edit action button. */
+async function openEditModal(_page: Page, row: Locator) {
+  await row.locator('button.action-btn[aria-label="Edit"]').click();
 }
 
 test.describe('Custom Fields', () => {
@@ -26,7 +23,6 @@ test.describe('Custom Fields', () => {
 
     await authedPage.reload();
     await authedPage.locator('.nav-label', { hasText: 'Manage Sources' }).click();
-    await authedPage.locator('button.tab', { hasText: 'Websites' }).click();
 
     const row = sourceRowByTitle(authedPage, FEED_TITLE);
     await expect(row).toBeVisible({ timeout: 15_000 });
@@ -68,7 +64,6 @@ test.describe('Custom Fields', () => {
     await authedPage.reload();
     await authedPage.locator('.nav-label', { hasText: 'Everything' }).click();
     await authedPage.locator('.nav-label', { hasText: 'Manage Sources' }).click();
-    await authedPage.locator('button.tab', { hasText: 'Websites' }).click();
     await expect(sourceRowByTitle(authedPage, customTitle)).toBeVisible({
       timeout: 15_000,
     });
@@ -83,7 +78,6 @@ test.describe('Custom Fields', () => {
 
     await authedPage.reload();
     await authedPage.locator('.nav-label', { hasText: 'Manage Sources' }).click();
-    await authedPage.locator('button.tab', { hasText: 'Websites' }).click();
 
     const row = sourceRowByTitle(authedPage, 'Old Custom Title');
     await expect(row).toBeVisible({ timeout: 15_000 });
@@ -114,7 +108,6 @@ test.describe('Custom Fields', () => {
 
     await authedPage.reload();
     await authedPage.locator('.nav-label', { hasText: 'Manage Sources' }).click();
-    await authedPage.locator('button.tab', { hasText: 'Websites' }).click();
 
     const row = sourceRowByTitle(authedPage, FEED_TITLE);
     await expect(row).toBeVisible({ timeout: 15_000 });
