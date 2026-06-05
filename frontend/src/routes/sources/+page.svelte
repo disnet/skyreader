@@ -8,7 +8,7 @@
   import { profileService } from '$lib/services/profiles';
   import { api } from '$lib/services/api';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
-  import { getSourceDisplay } from '$lib/utils/sourceDisplay';
+  import { getSourceDisplay, isLinkblogPublication } from '$lib/utils/sourceDisplay';
   import Icon from '$lib/components/Icon.svelte';
   import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
   import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
@@ -313,6 +313,25 @@
     return '';
   }
 
+  // Strip protocol/trailing slash so a publication URL reads cleanly inline.
+  function formatPublicationUrl(url: string): string {
+    return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+  }
+
+  // Subtitle for a subscribed Atmosphere source. standard.site blogs surface
+  // their publication URL (it identifies the blog); everything else shows the
+  // owner's handle.
+  function getAtmosphereSubtitle(sub: Subscription, handle: string): string {
+    if (
+      sub.sourceType === 'atproto.documents' &&
+      !isLinkblogPublication(sub.feedUrl) &&
+      sub.siteUrl
+    ) {
+      return formatPublicationUrl(sub.siteUrl);
+    }
+    return '@' + handle;
+  }
+
   // -- Bulk operations (The Web) --
   async function bulkDelete() {
     const count = selectionCount;
@@ -512,7 +531,7 @@
                   iconUrl={sub.customIconUrl || avatarUrl}
                   iconRound={!sub.customIconUrl}
                   title={sub.customTitle || sub.title}
-                  subtitle={'@' + handle}
+                  subtitle={getAtmosphereSubtitle(sub, handle)}
                   subscribed={true}
                   fallbackIcon={display.iconName}
                   onRemove={() => handleRemove(sub)}
@@ -529,7 +548,7 @@
                       iconUrl={pub.iconUrl || avatarUrl}
                       iconRound={!pub.iconUrl}
                       title={pub.name || pub.url}
-                      subtitle={pub.description || pub.url}
+                      subtitle={formatPublicationUrl(pub.url)}
                       subscribed={false}
                       fallbackIcon={pubDisplay.iconName}
                       onSubscribe={() => subscribePublication(group.did, pub)}
