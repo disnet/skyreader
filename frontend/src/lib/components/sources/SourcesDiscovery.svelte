@@ -9,16 +9,16 @@
   import LinkblogDiscovery from '$lib/components/LinkblogDiscovery.svelte';
   import FollowingPublications from '$lib/components/FollowingPublications.svelte';
 
-  // When Atmospheric subscription sync is on, standard.site follows are imported
-  // and reconciled automatically — so we show a synced summary instead of a list
-  // of per-item "Add" buttons.
-  let atmosphereSubSyncEnabled = $state(false);
+  // When Atmospheric sync is on, standard.site follows are imported and
+  // reconciled automatically — so we show a synced summary instead of a list of
+  // per-item "Add" buttons.
+  let pdsSyncEnabled = $state(false);
 
   onMount(async () => {
     standardSubsStore.load();
     try {
       const settings = await api.getSettings();
-      atmosphereSubSyncEnabled = settings.atmosphereSubSyncEnabled;
+      pdsSyncEnabled = settings.pdsSyncEnabled;
     } catch {
       // Non-fatal: fall back to the manual suggestion list.
     }
@@ -76,7 +76,7 @@
     <LinkblogDiscovery variant="friends" />
   </div>
 
-  {#if atmosphereSubSyncEnabled}
+  {#if pdsSyncEnabled}
     <div class="block">
       <h3 class="block-title">
         <Icon name="standard-site" size={13} /> Your standard.site subscriptions

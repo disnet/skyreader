@@ -3,7 +3,6 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { standardSubsStore } from '$lib/stores/standardSubs.svelte';
   import { api, RateLimitError } from '$lib/services/api';
   import SourcesDiscovery from '$lib/components/sources/SourcesDiscovery.svelte';
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
@@ -17,10 +16,8 @@
 
   let showImportModal = $state(false);
   let pdsSyncEnabled = $state(false);
-  let atmosphereSubSyncEnabled = $state(false);
   let isLoading = $state(true);
   let isToggling = $state(false);
-  let isTogglingAtmosphereSubs = $state(false);
   let error = $state<string | null>(null);
 
   onMount(async () => {
@@ -31,7 +28,6 @@
     try {
       const settings = await api.getSettings();
       pdsSyncEnabled = settings.pdsSyncEnabled;
-      atmosphereSubSyncEnabled = settings.atmosphereSubSyncEnabled;
     } catch (e) {
       console.error('Failed to load sync settings:', e);
     } finally {
@@ -93,59 +89,6 @@
       isToggling = false;
     }
   }
-
-  // Sub-toggle: import standard.site follows and keep them reconciled. Coupled to
-  // Atmospheric sync (the graph edges are the public mirror), so it's only offered
-  // while pdsSyncEnabled. Enabling is all-or-nothing with a one-time confirm.
-  async function handleToggleAtmosphereSubSync(event: Event) {
-    const target = event.currentTarget as HTMLInputElement;
-    const newValue = target.checked;
-
-    error = null;
-
-    if (!syncStore.isOnline) {
-      error = 'You are offline. Connect to the internet to change this.';
-      atmosphereSubSyncEnabled = !newValue;
-      return;
-    }
-
-    if (newValue) {
-      // First run: surface how many follows we're about to bring in.
-      isTogglingAtmosphereSubs = true;
-      try {
-        await standardSubsStore.load();
-      } finally {
-        isTogglingAtmosphereSubs = false;
-      }
-      const count = standardSubsStore.subs.length;
-      const message =
-        count > 0
-          ? `Bring your ${count} standard.site subscription${count === 1 ? '' : 's'} into Skyreader and keep them in sync? Follows you make anywhere in the Atmosphere will show up here, and vice versa. Your subscription list stays public on your PDS.`
-          : `Keep your standard.site subscriptions in sync with Skyreader? Follows you make anywhere in the Atmosphere will show up here, and vice versa. Your subscription list stays public on your PDS.`;
-      if (!confirm(message)) {
-        atmosphereSubSyncEnabled = false;
-        return;
-      }
-    }
-
-    isTogglingAtmosphereSubs = true;
-    try {
-      const settings = await api.updateSettings({ atmosphereSubSyncEnabled: newValue });
-      atmosphereSubSyncEnabled = settings.atmosphereSubSyncEnabled;
-
-      // Enabling: run a sync now so the import happens immediately (fullSync
-      // reconciles when the flag is on).
-      if (newValue) {
-        await runFullSync();
-      }
-    } catch (e) {
-      console.error('Failed to update Atmosphere subscription sync:', e);
-      error = e instanceof Error ? e.message : 'Failed to update setting';
-      atmosphereSubSyncEnabled = !newValue;
-    } finally {
-      isTogglingAtmosphereSubs = false;
-    }
-  }
 </script>
 
 <div class="library-empty">
@@ -166,8 +109,8 @@
     <h3>Take your subscriptions with you</h3>
     <p>
       By default your feed list is stored privately on the Skyreader servers. Turn on Atmospheric
-      sync to also store your subscriptions on your atproto PDS. Enabling Atmospheric sync makes
-      your subscriptions portable to other Atmospheric apps. Your subscription list becomes
+      sync to also store your subscriptions on your atproto PDS — portable to other Atmospheric
+      apps, and kept in step with your standard.site subscriptions. Your subscription list becomes
       <strong>publicly visible</strong> when synced.
     </p>
 
@@ -197,27 +140,6 @@
             >
           {/if}
         </p>
-      {/if}
-
-      {#if pdsSyncEnabled}
-        <div class="sub-toggle">
-          <label class="toggle" class:disabled={isTogglingAtmosphereSubs}>
-            <input
-              type="checkbox"
-              checked={atmosphereSubSyncEnabled}
-              disabled={isTogglingAtmosphereSubs}
-              onchange={handleToggleAtmosphereSubSync}
-            />
-            <span>Sync my standard.site subscriptions</span>
-          </label>
-          <p class="sub-desc">
-            Pull in the publications you follow elsewhere in the Atmosphere, and keep them in step
-            with Skyreader — follow or unfollow in either place and the other follows along.
-          </p>
-          {#if isTogglingAtmosphereSubs}
-            <p class="status">Syncing…</p>
-          {/if}
-        </div>
       {/if}
 
       {#if error}
@@ -343,19 +265,6 @@
     height: 1rem;
     accent-color: var(--color-primary);
     cursor: inherit;
-  }
-
-  .sub-toggle {
-    margin-top: 1rem;
-    padding-left: 1.5rem;
-    border-left: 2px solid var(--color-border);
-  }
-
-  .sub-desc {
-    font-size: var(--text-sm);
-    line-height: var(--leading-normal);
-    color: var(--color-text-secondary);
-    margin: 0.5rem 0 0;
   }
 
   .status {

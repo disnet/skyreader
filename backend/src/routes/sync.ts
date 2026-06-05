@@ -22,7 +22,6 @@ export interface FullSyncResult {
 
 export interface SyncStatusResponse {
   pdsSyncEnabled: boolean;
-  atmosphereSubSyncEnabled: boolean;
   lastSyncSubscriptions: number | null;
 }
 
@@ -79,18 +78,17 @@ export async function handleFullSync(
 
     result.success = subResult.success;
 
-    // Reconcile standard.site follows ↔ Skyreader, when opted in. Rides the same
-    // Atmospheric-sync switch (graph edges are the public, opt-in mirror).
-    if (settings.atmosphereSubSyncEnabled) {
-      const atmoResult = await reconcileAtmosphereSubscriptions(session, env, ctx);
-      result.atmosphere = atmoResult;
-      if (atmoResult.hasMore) {
-        result.hasMore = true;
-      }
-      // A reconcile failure shouldn't flip an otherwise-successful subscription
-      // sync to failed (it's best-effort and self-heals next run); surface it via
-      // the atmosphere field instead.
+    // Reconcile standard.site follows ↔ Skyreader. This rides the same
+    // Atmospheric-sync switch (the graph edges are the public mirror), so it
+    // always runs while PDS sync is on — no separate opt-in.
+    const atmoResult = await reconcileAtmosphereSubscriptions(session, env, ctx);
+    result.atmosphere = atmoResult;
+    if (atmoResult.hasMore) {
+      result.hasMore = true;
     }
+    // A reconcile failure shouldn't flip an otherwise-successful subscription
+    // sync to failed (it's best-effort and self-heals next run); surface it via
+    // the atmosphere field instead.
 
     return new Response(JSON.stringify(result), {
       headers: { 'Content-Type': 'application/json' },
@@ -182,7 +180,6 @@ export async function handleSyncStatus(request: Request, env: Env): Promise<Resp
 
     const response: SyncStatusResponse = {
       pdsSyncEnabled: settings.pdsSyncEnabled,
-      atmosphereSubSyncEnabled: settings.atmosphereSubSyncEnabled,
       lastSyncSubscriptions: settings.lastPdsSyncSubscriptions,
     };
 
