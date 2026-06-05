@@ -20,7 +20,8 @@
 //      ✗     │   ✓   │  set   │ deleted elsewhere → remove local sub + PDS record
 //      ✗     │   ✓   │  null  │ local-only → write the graph edge, mark synced
 //
-// Gated by the caller on pds_sync_enabled AND atmosphere_sub_sync_enabled.
+// Gated by the caller on pds_sync_enabled (Atmospheric sync) — there's no
+// separate opt-in; reconcile always runs while that switch is on.
 // Only effective for `atproto.documents` subs whose feedUrl is a publication
 // URI — RSS and collection subs have no graph equivalent and are never touched.
 
