@@ -55,7 +55,11 @@ export function blogsDevPlugin(): Plugin {
 
         const rest = pathname.slice('/blogs/'.length).replace(/\/+$/, '');
         if (!rest) return next();
-        const segs = rest.split('/').map((s) => decodeURIComponent(s));
+        // Pass raw (still-encoded) segments as params — Cloudflare Pages does the
+        // same in production, and the handlers decode via decodeParam(). Decoding
+        // here would diverge from prod and mask encoding bugs (e.g. the did%3A…
+        // redirect target failing the isDid() check).
+        const segs = rest.split('/');
 
         let modPath: string;
         let params: Record<string, string>;

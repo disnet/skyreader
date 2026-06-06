@@ -13,6 +13,7 @@ import {
   articleExcerpt,
   blogTitle,
   cdata,
+  decodeParam,
   escapeHtml,
   escapeXml,
   externalArticleUrl,
@@ -23,6 +24,7 @@ import {
   hostnameOf,
   isDid,
   linkPostNote,
+  redirect,
   resolveHandleToDid,
   rkeyFromUri,
   rssResponse,
@@ -111,7 +113,7 @@ ${items}
 export async function onRequestGet(context: BlogContext): Promise<Response> {
   const { request, env, params } = context;
   const origin = new URL(request.url).origin;
-  const id = Array.isArray(params.id) ? params.id[0] : params.id;
+  const id = decodeParam(params.id);
 
   if (!id) {
     return rssResponse(emptyFeed(origin), 404);
@@ -123,7 +125,7 @@ export async function onRequestGet(context: BlogContext): Promise<Response> {
     if (!did) {
       return rssResponse(emptyFeed(origin), 404);
     }
-    return Response.redirect(feedUrlFor(origin, did), 301);
+    return redirect(feedUrlFor(origin, did));
   }
 
   const did = id;

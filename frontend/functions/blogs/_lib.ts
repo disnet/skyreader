@@ -67,6 +67,23 @@ export function isDid(value: string): boolean {
   return value.startsWith('did:');
 }
 
+// Read a route param, decoding it. Cloudflare Pages passes path params
+// percent-encoded (unlike the dev shim, which used to pre-decode). A handle
+// redirect lands on /blogs/<encodeURIComponent(did)> — i.e. did%3Aplc%3A… — so
+// without this the handler would read id="did%3A…", fail the isDid() check, treat
+// the DID as a handle, and 404. Decoding here mirrors the encodeURIComponent used
+// when building these URLs. Falls back to the raw value on malformed input;
+// returns '' for a missing param so the existing `!id` guards still fire.
+export function decodeParam(value: string | string[] | undefined): string {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (!raw) return '';
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 export function publicationUri(did: string): string {
   return `at://${did}/${PUBLICATION_COLLECTION}/${LINKBLOG_RKEY}`;
 }
@@ -713,6 +730,23 @@ export function htmlResponse(html: string, status = 200): Response {
   return new Response(html, {
     status,
     headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  });
+}
+
+// A 301 handle → canonical-DID redirect with a bounded cache lifetime. Handles
+// are mutable (that's exactly why we redirect to the stable DID), so the redirect
+// is cacheable for speed but must re-validate periodically: an indefinitely
+// cached 301 would pin a handle to a DID it may no longer resolve to. One hour
+// balances fast repeat visits against handle-reassignment propagation. (Built by
+// hand rather than via Response.redirect() so we can set Cache-Control — that
+// helper returns a response with immutable headers.)
+export function redirect(location: string, maxAge = 3600): Response {
+  return new Response(null, {
+    status: 301,
+    headers: {
+      Location: location,
+      'Cache-Control': `public, max-age=${maxAge}`,
+    },
   });
 }
 
