@@ -2,7 +2,7 @@
 //
 // An RSS 2.0 feed of the linkblog, so it can be followed from any reader.
 // Server-rendered on skyreader.app (Cloudflare Pages Function). DIDs are the
-// canonical form; a handle redirects (301) to its DID feed so subscriptions stay
+// canonical form; a handle redirects (302) to its DID feed so subscriptions stay
 // stable across handle changes.
 
 import {

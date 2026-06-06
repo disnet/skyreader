@@ -733,16 +733,19 @@ export function htmlResponse(html: string, status = 200): Response {
   });
 }
 
-// A 301 handle → canonical-DID redirect with a bounded cache lifetime. Handles
-// are mutable (that's exactly why we redirect to the stable DID), so the redirect
-// is cacheable for speed but must re-validate periodically: an indefinitely
-// cached 301 would pin a handle to a DID it may no longer resolve to. One hour
-// balances fast repeat visits against handle-reassignment propagation. (Built by
-// hand rather than via Response.redirect() so we can set Cache-Control — that
-// helper returns a response with immutable headers.)
+// A handle → canonical-DID redirect with a bounded cache lifetime. Deliberately a
+// 302, not a 301: handles are mutable (that's exactly why we redirect to the
+// stable DID), so the mapping is temporary. A 301 is treated as permanent and
+// cached indefinitely by browsers — even ignoring Cache-Control — which both pins
+// a handle to a DID it may no longer resolve to and risks a sticky redirect loop
+// if a stale cached 301 ever disagrees with current routing. The 302 stays
+// cacheable for speed (one hour balances fast repeat visits against
+// handle-reassignment propagation) but is always re-validated, never permanent.
+// Built by hand rather than via Response.redirect() so we can set Cache-Control —
+// that helper returns a response with immutable headers.
 export function redirect(location: string, maxAge = 3600): Response {
   return new Response(null, {
-    status: 301,
+    status: 302,
     headers: {
       Location: location,
       'Cache-Control': `public, max-age=${maxAge}`,
