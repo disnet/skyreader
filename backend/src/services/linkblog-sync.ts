@@ -3,7 +3,7 @@
 // Sharing an article creates a `site.standard.document` in the user's dedicated
 // `skyreader-links` publication — a real, portable linkblog in their PDS,
 // readable by any Atmospheric app and rendered publicly at
-// <FRONTEND_URL>/blogs/<did>/. The publication is created lazily on first share.
+// <LINKBLOG_PUBLIC_URL>/<did>/. The publication is created lazily on first share.
 //
 // See LINKBLOG_PLAN.md. This replaces the old app.skyreader.social.share write.
 
@@ -59,9 +59,12 @@ export function publicationUri(did: string): string {
 
 // The canonical public base for a user's linkblog. DID-based so it survives
 // handle changes (see Phase 0). Trailing slash per the standard.site `url` field.
+// Lives on the standalone linkblog site (linkblogs.skyreader.app), not the app
+// origin — older records pointed at <FRONTEND_URL>/blogs/<did>/ and are redirected
+// there (see frontend/static/_redirects) until backfilled.
 export function linkblogBaseUrl(env: Env, did: string): string {
-  const base = (env.FRONTEND_URL || 'https://skyreader.app').replace(/\/+$/, '');
-  return `${base}/blogs/${did}/`;
+  const base = (env.LINKBLOG_PUBLIC_URL || 'https://linkblogs.skyreader.app').replace(/\/+$/, '');
+  return `${base}/${did}/`;
 }
 
 function defaultPublicationName(session: Session): string {
@@ -135,15 +138,25 @@ export async function ensureLinkblogPublication(
   );
 
   if (existing.success) {
-    // Lazy backfill: stamp the discovery marker onto publications created before
-    // it existed, so they become discoverable via Constellation. Non-destructive
-    // (preserves all user-customized fields) and runs at most once per user —
-    // subsequent shares find the marker already present and skip the extra write.
+    // Lazy backfill on each share — non-destructive (preserves user-customized
+    // fields), at most one extra write per user since the next share finds nothing
+    // to fix. Two things get healed here:
+    //  1. The discovery marker, stamped onto publications created before it existed
+    //     so they become discoverable via Constellation.
+    //  2. The `url`, migrated to the current LINKBLOG_PUBLIC_URL when an older
+    //     record still points at the previous origin (e.g. skyreader.app/blogs/…).
+    //     We own the url field (not user-editable), so overwriting to canonical is
+    //     safe. Stale records keep working via frontend/static/_redirects until a
+    //     user's next share repoints them here.
     const value = existing.data.value;
-    if (value.skyreaderLinkblog !== LINKBLOG_MARKER_URL) {
+    const expectedUrl = linkblogBaseUrl(env, session.did);
+    const needsMarker = value.skyreaderLinkblog !== LINKBLOG_MARKER_URL;
+    const needsUrl = value.url !== expectedUrl;
+    if (needsMarker || needsUrl) {
       const updated: PublicationRecord = {
         ...value,
         $type: PUBLICATION_COLLECTION,
+        url: expectedUrl,
         skyreaderLinkblog: LINKBLOG_MARKER_URL,
       };
       const put = await pdsClient.putRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY, updated);

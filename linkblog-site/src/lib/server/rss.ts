@@ -1,40 +1,58 @@
-// Public linkblog RSS feed — GET /blogs/<did-or-handle>/feed.xml
-//
-// An RSS 2.0 feed of the linkblog, so it can be followed from any reader.
-// Server-rendered on skyreader.app (Cloudflare Pages Function). DIDs are the
-// canonical form; a handle redirects (302) to its DID feed so subscriptions stay
-// stable across handle changes.
+// RSS 2.0 rendering for a linkblog feed. This is the one place we hand-build
+// markup (XML, which isn't auto-escaped), so it keeps its own escaping helpers.
 
 import {
-  BlogContext,
-  Profile,
-  ProxyDocument,
-  PublicationMeta,
   articleExcerpt,
   blogTitle,
-  cdata,
-  decodeParam,
-  escapeHtml,
-  escapeXml,
+  blogUrlFor,
+  entryUrlFor,
   externalArticleUrl,
   feedUrlFor,
-  fetchLinkblogDocuments,
-  fetchPublicationMeta,
-  getProfile,
   hostnameOf,
-  isDid,
   linkPostNote,
-  redirect,
-  resolveHandleToDid,
   rkeyFromUri,
-  rssResponse,
   safeHttpUrl,
-  toRfc822,
-} from '../_lib';
+} from '$lib/fields';
+import type { ProxyDocument, Profile, PublicationMeta } from '$lib/types';
 
-// Each entry's HTML body: the user's note, an article excerpt (when distinct),
-// and a link out to the source. Mirrors what the index/permalink pages show, so a
-// reader sees the same thing whether they visit the page or subscribe.
+// Escape for XML text/attributes. Same five entities as HTML, but apos is spelled
+// `&apos;` (the XML predefined name).
+export function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+// Escape text destined for HTML markup carried inside an RSS <description> CDATA.
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Wrap HTML markup so it can live inside an RSS <description> verbatim (readers
+// render the HTML). CDATA keeps the angle brackets literal; we only have to guard
+// the one sequence that would close the section early.
+export function cdata(html: string): string {
+  return `<![CDATA[${html.replace(/]]>/g, ']]&gt;')}]]>`;
+}
+
+// RFC-822 date for RSS <pubDate>/<lastBuildDate>. Empty for an unparseable input.
+export function toRfc822(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toUTCString();
+}
+
+// Each entry's HTML body: the user's note, an article excerpt (when distinct), and
+// a link out to the source. Mirrors the index/permalink pages so a reader sees the
+// same thing whether they visit the page or subscribe.
 function entryHtml(doc: ProxyDocument): string {
   const note = linkPostNote(doc).trim();
   const excerpt = articleExcerpt(doc);
@@ -54,11 +72,9 @@ function entryHtml(doc: ProxyDocument): string {
 
 function renderItem(origin: string, did: string, doc: ProxyDocument): string {
   const rkey = rkeyFromUri(doc.recordUri);
-  // The permalink (stable, on Skyreader) is the canonical link for the item; the
+  // The permalink (stable, on this site) is the canonical link for the item; the
   // source article lives in the body. The guid is the immutable record URI.
-  const permalink = rkey
-    ? `${origin}/blogs/${encodeURIComponent(did)}/${encodeURIComponent(rkey)}`
-    : `${origin}/blogs/${encodeURIComponent(did)}`;
+  const permalink = rkey ? entryUrlFor(origin, did, rkey) : blogUrlFor(origin, did);
   const pubDate = toRfc822(doc.createdAt || doc.publishedAt);
 
   const tags = [
@@ -72,7 +88,7 @@ function renderItem(origin: string, did: string, doc: ProxyDocument): string {
   return `<item>\n  ${tags.join('\n  ')}\n</item>`;
 }
 
-function renderFeed(
+export function renderFeed(
   origin: string,
   did: string,
   profile: Profile | null,
@@ -80,7 +96,7 @@ function renderFeed(
   docs: ProxyDocument[]
 ): string {
   const title = blogTitle(profile, pub);
-  const link = `${origin}/blogs/${encodeURIComponent(did)}`;
+  const link = blogUrlFor(origin, did);
   const self = feedUrlFor(origin, did);
   const description =
     pub?.description || `Links shared by ${profile?.displayName || profile?.handle || did}.`;
@@ -110,42 +126,12 @@ ${items}
 </rss>`;
 }
 
-export async function onRequestGet(context: BlogContext): Promise<Response> {
-  const { request, env, params } = context;
-  const origin = new URL(request.url).origin;
-  const id = decodeParam(params.id);
-
-  if (!id) {
-    return rssResponse(emptyFeed(origin), 404);
-  }
-
-  // Handle → DID: redirect to the canonical DID feed so subscriptions stay stable.
-  if (!isDid(id)) {
-    const did = await resolveHandleToDid(id);
-    if (!did) {
-      return rssResponse(emptyFeed(origin), 404);
-    }
-    return redirect(feedUrlFor(origin, did));
-  }
-
-  const did = id;
-  const [profile, pub, docs] = await Promise.all([
-    getProfile(did),
-    fetchPublicationMeta(did),
-    fetchLinkblogDocuments(env, did),
-  ]);
-
-  // Cap the feed length — readers only need the recent window.
-  const xml = renderFeed(origin, did, profile, pub, docs.slice(0, 50));
-  return rssResponse(xml);
-}
-
-function emptyFeed(origin: string): string {
+export function emptyFeed(origin: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
 <channel>
 <title>Not found · Skyreader</title>
-<link>${escapeXml(origin)}/blogs</link>
+<link>${escapeXml(origin)}</link>
 <description>We couldn't find that linkblog.</description>
 </channel>
 </rss>`;

@@ -6,18 +6,40 @@
   import { api } from '$lib/services/api';
   import { registerPeriodicSync } from '$lib/services/backgroundRefresh';
 
+  // A returnUrl pointing at a trusted Skyreader origin (e.g. the public linkblog
+  // site at linkblogs.skyreader.app). The backend already validated it against
+  // ALLOWED_ORIGINS before redirecting here; this is a defense-in-depth re-check
+  // before we hand off via a full cross-origin navigation. Relative paths (the
+  // common in-app case) throw in `new URL` and fall through to the SPA router.
+  function isTrustedExternalReturn(url: string): boolean {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return false;
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    const h = parsed.hostname;
+    return (
+      h === 'skyreader.app' ||
+      h.endsWith('.skyreader.app') ||
+      h === '127.0.0.1' ||
+      h === 'localhost'
+    );
+  }
+
   onMount(async () => {
     const returnUrl = $page.url.searchParams.get('returnUrl') || '/';
 
-    // Returning to a public linkblog (served by Cloudflare Pages Functions, not
-    // the SvelteKit router). Bounce straight back without booting the app: the
+    // Returning to a public linkblog on its own origin (linkblogs.skyreader.app),
+    // not the SvelteKit router. Bounce straight back without booting the app: the
     // session cookie is already set, so the linkblog page's ?subscribe=1 resume
     // completes the follow. We cache the user for a later app visit but must NOT
     // call auth.setUser() — flipping isAuthenticated here would mount the app
     // sidebar + kick off appManager.initialize() for a frame, flashing full app
     // chrome before the redirect. replace() keeps this transient page out of
     // history (no callback URL to land on via Back).
-    if (returnUrl.startsWith('/blogs/')) {
+    if (isTrustedExternalReturn(returnUrl)) {
       try {
         const user = await api.getMe();
         auth.cacheUser(user);

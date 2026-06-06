@@ -1,0 +1,101 @@
+name: Deploy Linkblog Site
+
+on:
+  push:
+    branches: [main]
+    paths: ['linkblog-site/**']
+  release:
+    types: [published]
+
+concurrency:
+  group: linkblog-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: linkblog-site
+
+jobs:
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: linkblog-site/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run type check
+        run: npm run check
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: typecheck
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: linkblog-site/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # No build-time API binding: the subscribe button's API/app origins are
+      # derived from the request host at runtime (apiBaseFor/appUrlFor).
+      - name: Build
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages (staging)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy --project-name=skyreader-linkblog-staging --commit-dirty=true
+          workingDirectory: linkblog-site
+
+  deploy-production:
+    name: Deploy to Production
+    needs: typecheck
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: linkblog-site/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages (production)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy --project-name=skyreader-linkblog --branch=main --commit-dirty=true
+          workingDirectory: linkblog-site

@@ -1,0 +1,20 @@
+name = "skyreader-linkblog-site"
+compatibility_date = "2025-11-12"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = ".svelte-kit/cloudflare"
+
+[vars]
+FEED_PROXY_URL = "https://skyreader-feed-proxy.fly.dev"
+# API_URL / APP_URL are derived from the request host at runtime (see
+# apiBaseFor/appUrlFor); set them only to override for a non-standard host.
+
+# Public read-only linkblog renderer (linkblogs.skyreader.app).
+# Server-side it talks to the Fly.io feed proxy; the browser-side subscribe
+# button talks to the backend API (api.skyreader.app), wired via CSP connect-src
+# in svelte.config.js and apiBaseFor() at request time.
+#
+# Set these per-environment in the Cloudflare Pages dashboard (or via
+# `wrangler pages secret put` for the secret):
+#   FEED_PROXY_URL     e.g. https://skyreader-feed-proxy.fly.dev
+#   FEED_PROXY_SECRET  (secret) optional X-Proxy-Secret for the proxy
+#   PUBLIC_API_URL     optional override for the subscribe button's API origin

@@ -1,0 +1,6 @@
+# Public linkblogs moved to their own origin (linkblogs.skyreader.app), where
+# they're served by a standalone SvelteKit app instead of Pages Functions.
+# Old canonical links — skyreader.app/blogs/<did>[/<rkey>|/feed.xml] — and any
+# stale publication.url records still pointing here redirect to the new origin.
+# The path shape is identical minus the /blogs prefix, so :splat maps 1:1.
+/blogs/* https://linkblogs.skyreader.app/:splat 302

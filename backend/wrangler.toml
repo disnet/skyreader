@@ -45,8 +45,14 @@ database_id = "YOUR_D1_DATABASE_ID"
 # Environment variables
 [vars]
 FRONTEND_URL = "https://skyreader.app"
-ALLOWED_ORIGINS = "https://skyreader.app,https://staging.skyreader.app,https://staging-prod.skyreader.app"
+# linkblogs.skyreader.app is the standalone public linkblog site. It's listed here
+# so its cross-origin (same-site) subscribe fetches pass CORS, and so a returnUrl
+# back to it survives isValidReturnUrl after login.
+ALLOWED_ORIGINS = "https://skyreader.app,https://staging.skyreader.app,https://staging-prod.skyreader.app,https://linkblogs.skyreader.app"
 FEED_PROXY_URL = "https://skyreader-feed-proxy.fly.dev"
+# Public base for users' linkblogs, baked into their site.standard.publication
+# record's `url` field (DID-based so it survives handle changes).
+LINKBLOG_PUBLIC_URL = "https://linkblogs.skyreader.app"
 
 # Production routes
 routes = [{ pattern = "api.skyreader.app", custom_domain = true }]
@@ -63,7 +69,7 @@ vars = { FRONTEND_URL = "http://127.0.0.1:5173" }
 # Staging environment
 [env.staging]
 name = "skyreader-api-staging"
-vars = { FRONTEND_URL = "https://staging.skyreader.app", ALLOWED_ORIGINS = "https://staging.skyreader.app", FEED_PROXY_URL = "https://skyreader-feed-proxy.fly.dev" }
+vars = { FRONTEND_URL = "https://staging.skyreader.app", ALLOWED_ORIGINS = "https://staging.skyreader.app,https://staging-linkblogs.skyreader.app", FEED_PROXY_URL = "https://skyreader-feed-proxy.fly.dev", LINKBLOG_PUBLIC_URL = "https://staging-linkblogs.skyreader.app" }
 routes = [{ pattern = "api-staging.skyreader.app", custom_domain = true }]
 
 [env.staging.durable_objects]
