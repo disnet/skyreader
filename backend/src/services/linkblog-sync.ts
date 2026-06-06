@@ -116,7 +116,11 @@ export async function getPublicationMeta(session: Session, env: Env): Promise<Pu
   const value = result.data.value;
   return {
     uri: publicationUri(session.did),
-    url: value.url || url,
+    // Report the current canonical public URL, not the record's stored `value.url`
+    // — older records still point at the previous origin (skyreader.app/blogs/…)
+    // until lazy-backfilled, and the UI should always show where the linkblog
+    // actually lives now (the stored field self-corrects on the user's next share).
+    url,
     name: value.name || defaultPublicationName(session),
     description: value.description,
     iconUrl: iconUrlFromBlob(session.did, value.icon),

@@ -3,8 +3,9 @@
 // Loads the current user's own portable linkblog: the `skyreader-links`
 // publication metadata plus the `site.standard.document` records the user has
 // shared, pulled (newest-first) from the feed proxy scoped to that publication.
-// This is the same pull path the public /blogs/<id> page uses, so it reflects
-// what's actually in the user's PDS — not just this session's optimistic shares.
+// This is the same pull path the public linkblog site (linkblogs.skyreader.app)
+// uses, so it reflects what's actually in the user's PDS — not just this session's
+// optimistic shares.
 
 import { api } from '$lib/services/api';
 import { auth } from '$lib/stores/auth.svelte';
@@ -51,14 +52,15 @@ function createMyLinkblogStore() {
   }
 
   // The public, logged-out page for this linkblog. The publication's canonical
-  // `url` is DID-based and stable; we present the prettier handle alias
-  // (/blogs/<handle>/) on the same origin. Falls back to the canonical URL.
+  // `url` is DID-based and stable (now <linkblogs origin>/<did>/); we present the
+  // prettier handle alias (<linkblogs origin>/<handle>/, which 302-redirects to
+  // the DID) on the same origin. Falls back to the canonical URL.
   function publicUrl(): string | null {
     const user = auth.user;
     if (!publication || !user) return null;
     try {
       const origin = new URL(publication.url).origin;
-      return `${origin}/blogs/${user.handle}/`;
+      return `${origin}/${user.handle}/`;
     } catch {
       return publication.url;
     }
