@@ -11,6 +11,7 @@ import {
   articleExcerpt,
   blogTitle,
   clampText,
+  decodeParam,
   escapeHtml,
   externalArticleUrl,
   feedUrlFor,
@@ -24,6 +25,7 @@ import {
   isDid,
   linkPostNote,
   renderAlsoLinkedBy,
+  redirect,
   renderPage,
   renderSocialCounts,
   resolveHandleToDid,
@@ -82,8 +84,8 @@ function renderEntryPage(
 export async function onRequestGet(context: BlogContext): Promise<Response> {
   const { request, env, params } = context;
   const origin = new URL(request.url).origin;
-  const id = Array.isArray(params.id) ? params.id[0] : params.id;
-  const rkey = Array.isArray(params.rkey) ? params.rkey[0] : params.rkey;
+  const id = decodeParam(params.id);
+  const rkey = decodeParam(params.rkey);
 
   if (!id || !rkey) {
     return htmlResponse(notFoundPage(origin), 404);
@@ -95,10 +97,7 @@ export async function onRequestGet(context: BlogContext): Promise<Response> {
     if (!did) {
       return htmlResponse(notFoundPage(origin), 404);
     }
-    return Response.redirect(
-      `${origin}/blogs/${encodeURIComponent(did)}/${encodeURIComponent(rkey)}`,
-      301
-    );
+    return redirect(`${origin}/blogs/${encodeURIComponent(did)}/${encodeURIComponent(rkey)}`);
   }
 
   const did = id;
