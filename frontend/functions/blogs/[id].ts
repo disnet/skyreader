@@ -1,7 +1,7 @@
 // Public linkblog index — GET /blogs/<did-or-handle>
 //
 // Server-rendered on skyreader.app (Cloudflare Pages Function). DIDs are the
-// canonical form; a handle redirects (301) to its DID so links stay stable
+// canonical form; a handle redirects (302) to its DID so links stay stable
 // across handle changes.
 
 import {
