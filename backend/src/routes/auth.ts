@@ -124,14 +124,23 @@ function getClientMode(env: Env, url: URL): 'confidential' | 'public' {
 }
 
 // Validate returnUrl to prevent open redirect attacks
-function isValidReturnUrl(url: string): boolean {
-  // Must start with / (relative path)
-  if (!url.startsWith('/')) return false;
-  // Must not contain // (prevents protocol-relative URLs like //evil.com)
-  if (url.includes('//')) return false;
-  // Must not contain backslash (prevents backslash tricks like /\evil.com)
-  if (url.includes('\\')) return false;
-  return true;
+function isValidReturnUrl(url: string, allowedOrigins: string[] = []): boolean {
+  // Safe relative path (the common in-app case):
+  //  - starts with /          (relative)
+  //  - no //                  (blocks protocol-relative //evil.com)
+  //  - no backslash           (blocks /\evil.com tricks)
+  if (url.startsWith('/') && !url.includes('//') && !url.includes('\\')) return true;
+
+  // Absolute URL to a trusted origin — e.g. the standalone linkblog site, which
+  // lives on its own subdomain and can't be expressed as a relative path. Gated
+  // by the same ALLOWED_ORIGINS list CORS uses, so it's not an open redirect.
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    return allowedOrigins.includes(parsed.origin);
+  } catch {
+    return false;
+  }
 }
 
 // Get the list of allowed frontend origins
@@ -189,7 +198,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
   const rawReturnUrl = url.searchParams.get('returnUrl') || '/';
 
   // Validate returnUrl to prevent open redirect attacks
-  const returnUrl = isValidReturnUrl(rawReturnUrl) ? rawReturnUrl : '/';
+  const returnUrl = isValidReturnUrl(rawReturnUrl, getAllowedOrigins(env)) ? rawReturnUrl : '/';
 
   // Capture the frontend URL from the request origin for redirect after OAuth
   const frontendUrl = getValidatedFrontendUrl(request, env);
@@ -690,7 +699,7 @@ export async function handleAuthCallback(
     // Redirect to frontend with cookie set (no exchange code needed)
     // Validate returnUrl again in case stored state was tampered with
     const rawReturnUrl = oauthState.returnUrl || '/';
-    const returnUrl = isValidReturnUrl(rawReturnUrl) ? rawReturnUrl : '/';
+    const returnUrl = isValidReturnUrl(rawReturnUrl, getAllowedOrigins(env)) ? rawReturnUrl : '/';
     const redirectUrl = `${oauthState.frontendUrl}/auth/callback?returnUrl=${encodeURIComponent(returnUrl)}`;
 
     return new Response(null, {
