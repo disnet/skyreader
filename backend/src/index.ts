@@ -36,13 +36,6 @@ import {
   handleListParkedSubscriptions,
   handleSetSubscriptionActive,
 } from './routes/subscriptions';
-import {
-  handleGetSocialReadPositions,
-  handleMarkSocialItemAsRead,
-  handleMarkSocialItemAsUnread,
-  handleBulkMarkSocialItemsAsRead,
-} from './routes/social-reading';
-
 import { handleRecordsList } from './routes/records';
 import {
   handleGetReadPositions,
@@ -218,7 +211,7 @@ export default {
           break;
         case url.pathname === '/api/v2/feeds/batch':
           if (!session) return unauthorizedResponse(headers);
-          response = await handleV2BatchFeedFetch(request, env);
+          response = await handleV2BatchFeedFetch(request, env, session);
           break;
         case url.pathname === '/api/v2/feeds/discover':
           if (!session) return unauthorizedResponse(headers);
@@ -226,7 +219,7 @@ export default {
           break;
         case url.pathname === '/api/v2/documents/batch':
           if (!session) return unauthorizedResponse(headers);
-          response = await handleV2BatchDocumentFetch(request, env);
+          response = await handleV2BatchDocumentFetch(request, env, session);
           break;
         case url.pathname === '/api/v2/social-context':
           if (!session) return unauthorizedResponse(headers);
@@ -246,24 +239,6 @@ export default {
           if (!session) return unauthorizedResponse(headers);
           response = await handleDetectContent(request, env);
           break;
-        // Unified social reading routes (new)
-        case url.pathname === '/api/social/read-positions':
-          if (!session) return unauthorizedResponse(headers);
-          if (request.method === 'GET') {
-            response = await handleGetSocialReadPositions(request, env);
-          } else {
-            response = await handleMarkSocialItemAsRead(request, env);
-          }
-          break;
-        case url.pathname === '/api/social/read-positions/bulk':
-          if (!session) return unauthorizedResponse(headers);
-          response = await handleBulkMarkSocialItemsAsRead(request, env);
-          break;
-        case url.pathname.startsWith('/api/social/read-positions/'):
-          if (!session) return unauthorizedResponse(headers);
-          response = await handleMarkSocialItemAsUnread(request, env);
-          break;
-
         // Linkblog discovery — find friends with linkblogs / browse all (Phase 6)
         case url.pathname === '/api/linkblog/discover/friends':
           if (!session) return unauthorizedResponse(headers);
@@ -609,10 +584,12 @@ export default {
           console.error('[Cron] D1 WRITE ERROR deleting expired sessions:', error);
         }
 
-        // Purge old label tombstones (soft-deleted archived/tagged rows). The
-        // retention must outlast any realistic delta-cursor staleness so a
-        // client offline for a while still replays the deletion; 90 days mirrors
-        // the read-position window. deleted_at is unix seconds.
+        // Purge old label tombstones (soft-deleted archived/tagged AND read
+        // rows — un-read is now a soft-delete that rides the forward read delta).
+        // The retention must outlast any realistic delta-cursor staleness so a
+        // client offline for a while still replays the deletion; 90 days. The
+        // sweep is label- and type-agnostic, so read tombstones are covered with
+        // no change. deleted_at is unix seconds.
         try {
           const tombstoneCutoff = Math.floor(now / 1000) - 90 * 24 * 60 * 60;
           const tombstoneResult = await env.DB.prepare(

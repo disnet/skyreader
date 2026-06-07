@@ -1,4 +1,4 @@
-import type { Env, FeedItem } from '../types';
+import type { Env, FeedItem, Session } from '../types';
 import { FeedProxyClient, FeedProxyError } from '../services/feed-proxy-client';
 import type {
   ProxyDocumentEntry,
@@ -7,6 +7,7 @@ import type {
   ArticleMentionsResult,
 } from '../services/feed-proxy-client';
 import { resolveStandardSite } from '../utils/canonical-url';
+import { getReadKeys } from './reading';
 
 interface V2FeedResponse {
   title: string;
@@ -32,6 +33,10 @@ interface V2BatchFeedResult {
 
 interface V2BatchResponse {
   feeds: Record<string, V2BatchFeedResult>;
+  // Server time (unix seconds) the response was annotated. The client seeds its
+  // forward-read-delta cursor from this on its first annotated fetch, so the
+  // delta starts from bootstrap with no client/server clock skew.
+  readCursor?: number;
 }
 
 /**
@@ -129,7 +134,11 @@ export async function handleV2FeedFetch(request: Request, env: Env): Promise<Res
  *   }>
  * }
  */
-export async function handleV2BatchFeedFetch(request: Request, env: Env): Promise<Response> {
+export async function handleV2BatchFeedFetch(
+  request: Request,
+  env: Env,
+  session: Session
+): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405,
@@ -231,7 +240,28 @@ export async function handleV2BatchFeedFetch(request: Request, env: Env): Promis
       }
     }
 
-    const response: V2BatchResponse = { feeds: responseFeeds };
+    // Inline read annotation: the proxy response just gave us every returned
+    // GUID, so a single per-user read join stamps `read` onto each item before
+    // the per-user (uncached) response goes back. Read state arrives with the
+    // articles it belongs to — no separate read fetch, no time window. The shared
+    // Fly.io proxy cache is untouched (it's keyed by URL, one layer down).
+    const readCursor = Math.floor(Date.now() / 1000);
+    const allGuids: string[] = [];
+    for (const feed of validFeeds) {
+      const result = responseFeeds[feed.url];
+      if (result?.status === 'ready') {
+        for (const item of result.items) allGuids.push(item.guid);
+      }
+    }
+    const readGuids = await getReadKeys(env, session.did, 'article', allGuids);
+    for (const feed of validFeeds) {
+      const result = responseFeeds[feed.url];
+      if (result?.status === 'ready') {
+        for (const item of result.items) item.read = readGuids.has(item.guid);
+      }
+    }
+
+    const response: V2BatchResponse = { feeds: responseFeeds, readCursor };
 
     return new Response(JSON.stringify(response), {
       headers: { 'Content-Type': 'application/json' },
@@ -259,6 +289,8 @@ export async function handleV2BatchFeedFetch(request: Request, env: Env): Promis
 
 interface V2BatchDocumentResponse {
   authors: ProxyDocumentEntry[];
+  // See V2BatchResponse.readCursor — documents ride the identical read delta.
+  readCursor?: number;
 }
 
 /**
@@ -277,7 +309,11 @@ interface V2BatchDocumentResponse {
  *   }>
  * }
  */
-export async function handleV2BatchDocumentFetch(request: Request, env: Env): Promise<Response> {
+export async function handleV2BatchDocumentFetch(
+  request: Request,
+  env: Env,
+  session: Session
+): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405,
@@ -350,7 +386,24 @@ export async function handleV2BatchDocumentFetch(request: Request, env: Env): Pr
     const proxyEntries = await client.fetchDocumentsBatch(valid);
     authors.push(...proxyEntries);
 
-    const response: V2BatchDocumentResponse = { authors };
+    // Inline read annotation, identical to the feed path but keyed by recordUri
+    // and item_type='document' (decision 3: documents share the unified read
+    // store). Stamps `read` onto each document in the per-user response.
+    const readCursor = Math.floor(Date.now() / 1000);
+    const allUris: string[] = [];
+    for (const entry of authors) {
+      if (entry.status === 'ready') {
+        for (const doc of entry.documents) allUris.push(doc.recordUri);
+      }
+    }
+    const readUris = await getReadKeys(env, session.did, 'document', allUris);
+    for (const entry of authors) {
+      if (entry.status === 'ready') {
+        for (const doc of entry.documents) doc.read = readUris.has(doc.recordUri);
+      }
+    }
+
+    const response: V2BatchDocumentResponse = { authors, readCursor };
     return new Response(JSON.stringify(response), {
       headers: { 'Content-Type': 'application/json' },
     });

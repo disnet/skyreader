@@ -43,21 +43,20 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 
 ### Routes
 
-| File                           | Purpose                                               |
-| ------------------------------ | ----------------------------------------------------- |
-| `src/routes/auth.ts`           | OAuth flow (login, callback, logout, client metadata) |
-| `src/routes/feeds-v2.ts`       | RSS fetching via Fly.io proxy                         |
-| `src/routes/social.ts`         | Social feed, popular, grouped, detect-content         |
-| `src/routes/social-reading.ts` | Social item read positions (unified + legacy)         |
-| `src/routes/shares.ts`         | User shares CRUD (with PDS sync)                      |
-| `src/routes/subscriptions.ts`  | Subscription CRUD (with PDS sync)                     |
-| `src/routes/records.ts`        | PDS record listing                                    |
-| `src/routes/reading.ts`        | Article read positions                                |
-| `src/routes/labels.ts`         | Unified item labels (read/starred/archived/tags)      |
-| `src/routes/saved.ts`          | Saved articles CRUD                                   |
-| `src/routes/settings.ts`       | User settings                                         |
-| `src/routes/sync.ts`           | PDS full sync, subscription sync, sync status         |
-| `src/routes/lexicons.ts`       | Serve lexicon schemas at /.well-known/lexicons        |
+| File                          | Purpose                                               |
+| ----------------------------- | ----------------------------------------------------- |
+| `src/routes/auth.ts`          | OAuth flow (login, callback, logout, client metadata) |
+| `src/routes/feeds-v2.ts`      | RSS fetching via Fly.io proxy                         |
+| `src/routes/social.ts`        | Social feed, popular, grouped, detect-content         |
+| `src/routes/shares.ts`        | User shares CRUD (with PDS sync)                      |
+| `src/routes/subscriptions.ts` | Subscription CRUD (with PDS sync)                     |
+| `src/routes/records.ts`       | PDS record listing                                    |
+| `src/routes/reading.ts`       | Article + document read positions (forward delta)     |
+| `src/routes/labels.ts`        | Unified item labels (read/starred/archived/tags)      |
+| `src/routes/saved.ts`         | Saved articles CRUD                                   |
+| `src/routes/settings.ts`      | User settings                                         |
+| `src/routes/sync.ts`          | PDS full sync, subscription sync, sync status         |
+| `src/routes/lexicons.ts`      | Serve lexicon schemas at /.well-known/lexicons        |
 
 ### Services
 
@@ -95,7 +94,8 @@ Key tables:
 - `documents` - `site.standard.document` records from follows
 - `item_labels_cache` - Unified labels (read/starred/archived/tags)
 - `saved_articles` - Saved/bookmarked articles
-- `social_read_positions_cache` - Social read tracking
+- `social_read_positions_cache` - Legacy social read tracking (superseded; document
+  reads now live in `item_labels_cache` as `item_type='document'`/`label='read'`)
 - `user_settings` - User preferences
 - `rate_limits` - Per-user rate limiting
 - `sync_state` - Jetstream cursor and other sync state

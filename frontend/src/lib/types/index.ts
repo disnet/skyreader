@@ -524,6 +524,9 @@ export interface SocialDocument {
   // External resource refs (RFC-8288-style). A linkblog "link post" carries the
   // shared article's https URL here (rel: 'related'); see utils/linkPost.ts.
   links?: Array<{ uri: string; rel?: string }>;
+  // Per-user read state stamped onto the document batch response by the backend
+  // (inline read annotation, keyed by recordUri). Consumed additively on merge.
+  read?: boolean;
 }
 
 // Profile info fetched from Bluesky
@@ -677,6 +680,10 @@ export interface FeedItem {
   summary?: string;
   imageUrl?: string;
   publishedAt: string;
+  // Per-user read state stamped onto the batch fetch response by the backend
+  // (inline read annotation). Consumed additively on merge, then discarded — it
+  // is not an Article column. Absent on un-annotated responses.
+  read?: boolean;
 }
 
 // Combined feed item for unified "all" view

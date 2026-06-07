@@ -45,8 +45,6 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   '/api/shares/my': STANDARD_LIMIT,
   '/api/social/following': STANDARD_LIMIT,
   '/api/social/popular': STANDARD_LIMIT,
-  '/api/social/read-positions': STANDARD_LIMIT,
-  '/api/social/read-positions/bulk': STANDARD_LIMIT,
   '/api/leaflet/settings': STANDARD_LIMIT,
   '/api/leaflet/subscriptions': STANDARD_LIMIT,
 

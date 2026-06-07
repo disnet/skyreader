@@ -53,6 +53,9 @@ export interface FeedItem {
   summary?: string;
   imageUrl?: string;
   publishedAt: string;
+  // Stamped by the authed batch fetch handler (feeds-v2.ts) from a per-user read
+  // join. Not a stored feed field — only present on annotated responses.
+  read?: boolean;
 }
 
 export interface ParsedFeed {

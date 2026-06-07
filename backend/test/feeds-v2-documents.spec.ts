@@ -1,11 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleV2BatchDocumentFetch } from '../src/routes/feeds-v2';
-import type { Env } from '../src/types';
+import type { Env, Session } from '../src/types';
 
 const ENV = {
   FEED_PROXY_URL: 'https://proxy.example',
   FEED_PROXY_SECRET: 'test-secret',
 } as Env;
+
+// Read annotation needs a session; these tests use empty document sets, so the
+// read join short-circuits (no keys) and never touches env.DB.
+const SESSION = { did: 'did:plc:tester' } as Session;
 
 const URL = 'https://api.example/api/v2/documents/batch';
 
@@ -37,20 +41,21 @@ describe('handleV2BatchDocumentFetch', () => {
   });
 
   it('rejects non-POST requests', async () => {
-    const res = await handleV2BatchDocumentFetch(request(undefined, 'GET'), ENV);
+    const res = await handleV2BatchDocumentFetch(request(undefined, 'GET'), ENV, SESSION);
     expect(res.status).toBe(405);
   });
 
   it('rejects an invalid JSON body', async () => {
     const res = await handleV2BatchDocumentFetch(
       new Request(URL, { method: 'POST', body: 'not json' }),
-      ENV
+      ENV,
+      SESSION
     );
     expect(res.status).toBe(400);
   });
 
   it('rejects a missing documents array', async () => {
-    const res = await handleV2BatchDocumentFetch(request({}), ENV);
+    const res = await handleV2BatchDocumentFetch(request({}), ENV, SESSION);
     expect(res.status).toBe(400);
   });
 
@@ -58,7 +63,7 @@ describe('handleV2BatchDocumentFetch', () => {
     const documents = Array.from({ length: 51 }, (_, i) => ({
       did: `did:plc:${i}`,
     }));
-    const res = await handleV2BatchDocumentFetch(request({ documents }), ENV);
+    const res = await handleV2BatchDocumentFetch(request({ documents }), ENV, SESSION);
     expect(res.status).toBe(400);
   });
 
@@ -68,7 +73,8 @@ describe('handleV2BatchDocumentFetch', () => {
 
     const res = await handleV2BatchDocumentFetch(
       request({ documents: [{ did: 'not-a-did' }, { did: '' }] }),
-      ENV
+      ENV,
+      SESSION
     );
     const json = (await res.json()) as {
       authors: Array<{ status: string; error?: string }>;
@@ -95,7 +101,8 @@ describe('handleV2BatchDocumentFetch', () => {
       request({
         documents: [{ did: 'did:plc:abc', siteUri: proxyEntry.siteUri }],
       }),
-      ENV
+      ENV,
+      SESSION
     );
     const json = (await res.json()) as { authors: unknown[] };
 
@@ -116,7 +123,8 @@ describe('handleV2BatchDocumentFetch', () => {
 
     const res = await handleV2BatchDocumentFetch(
       request({ documents: [{ did: 'did:plc:ok' }, { did: 'garbage' }] }),
-      ENV
+      ENV,
+      SESSION
     );
     const json = (await res.json()) as {
       authors: Array<{ did: string; status: string; error?: string }>;
@@ -140,7 +148,8 @@ describe('handleV2BatchDocumentFetch', () => {
 
     const res = await handleV2BatchDocumentFetch(
       request({ documents: [{ did: 'did:plc:a' }, { did: 'did:plc:b' }] }),
-      ENV
+      ENV,
+      SESSION
     );
     const json = (await res.json()) as {
       authors: Array<{ did: string; status: string; error?: string }>;

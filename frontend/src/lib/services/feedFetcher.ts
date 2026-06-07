@@ -2,6 +2,7 @@ import { api } from './api';
 import { liveDb } from './liveDb.svelte';
 import { feedStatusStore, type V2FeedResult } from '$lib/stores/feedStatus.svelte';
 import { socialStore } from '$lib/stores/social.svelte';
+import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { buildDocumentRequests, collectDocumentBatches } from './documentSync';
 import type { Subscription } from '$lib/types';
 
@@ -128,13 +129,17 @@ export async function fetchAllFeeds(
     isFirstBatch = false;
 
     try {
-      const { feeds } = await api.fetchFeedsBatchV2(
+      const { feeds, readCursor } = await api.fetchFeedsBatchV2(
         batch.map((req) => ({
           url: req.url,
           since_guids: req.since_guids,
           limit: req.limit,
         }))
       );
+
+      // Seed the forward-read-delta cursor from the first annotated batch (server
+      // time at annotation), so the delta starts from bootstrap with no skew.
+      if (readCursor) await itemLabelsStore.seedReadCursor(readCursor);
 
       // Process results. Articles are collected and merged once per batch
       // (rather than once per feed) so the in-memory article array is rebuilt
@@ -143,6 +148,10 @@ export async function fetchAllFeeds(
         subscriptionId: number;
         items: V2FeedResult['items'];
       }> = [];
+
+      // Read state stamped onto the response by the backend (inline annotation).
+      // Applied additively after merge — read state arrives with its articles.
+      const readGuids: string[] = [];
 
       for (const req of batch) {
         const feedResult = feeds[req.url] as V2FeedResult | undefined;
@@ -180,6 +189,9 @@ export async function fetchAllFeeds(
             subscriptionId: req.subscriptionId,
             items: feedResult.items,
           });
+          for (const item of feedResult.items) {
+            if (item.read) readGuids.push(item.guid);
+          }
         }
 
         result.successfulFeeds++;
@@ -188,6 +200,12 @@ export async function fetchAllFeeds(
       // Merge this batch's articles in one pass
       if (toMerge.length > 0) {
         result.newArticles += await liveDb.mergeArticlesBatch(toMerge, savedGuids);
+      }
+
+      // Apply annotated read state additively (after merge, so the labels attach
+      // to articles already in the store).
+      if (readGuids.length > 0) {
+        await itemLabelsStore.applyAnnotatedReads(readGuids, 'article');
       }
     } catch (e) {
       // Batch request failed - mark all feeds in batch as error
@@ -224,12 +242,27 @@ export async function fetchAllDocuments(subscriptions: Subscription[]): Promise<
   // Collect every batch's results, then reconcile once. Applying per-batch would
   // clear + rewrite the whole IndexedDB table on each batch (O(batches × total));
   // a single apply at the end is one rewrite regardless of how many batches.
-  const allAuthors = await collectDocumentBatches(requests, DOCUMENT_BATCH_SIZE, (batch) =>
-    api.fetchDocumentsBatchV2(batch)
-  );
+  let readCursor: number | undefined;
+  const allAuthors = await collectDocumentBatches(requests, DOCUMENT_BATCH_SIZE, async (batch) => {
+    const res = await api.fetchDocumentsBatchV2(batch);
+    if (readCursor === undefined && res.readCursor) readCursor = res.readCursor;
+    return res;
+  });
 
   if (allAuthors.length > 0) {
     await socialStore.applyDocumentResults(allAuthors);
+
+    // Apply annotated document read state additively, mirroring the article path.
+    if (readCursor) await itemLabelsStore.seedReadCursor(readCursor);
+    const readUris: string[] = [];
+    for (const author of allAuthors) {
+      for (const doc of author.documents) {
+        if (doc.read) readUris.push(doc.recordUri);
+      }
+    }
+    if (readUris.length > 0) {
+      await itemLabelsStore.applyAnnotatedReads(readUris, 'document');
+    }
   }
 }
 

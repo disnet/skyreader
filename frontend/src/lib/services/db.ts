@@ -2,7 +2,6 @@ import Dexie, { type Table } from 'dexie';
 import type {
   Subscription,
   Article,
-  SocialReadPosition,
   SocialDocument,
   LinkblogShare,
   FilteredView,
@@ -58,7 +57,6 @@ export interface IntegrationCollectionCacheEntry {
 class SkyreaderDatabase extends Dexie {
   subscriptions!: Table<Subscription>;
   articles!: Table<Article>;
-  socialReadPositions!: Table<SocialReadPosition>;
   socialDocuments!: Table<SocialDocument>;
   linkblogShares!: Table<LinkblogShare>;
   syncQueue!: Table<SyncQueueEntry>;
@@ -392,6 +390,14 @@ class SkyreaderDatabase extends Dexie {
       follows: 'did, scannedAt',
       followingPublications: 'publicationUri, did',
     });
+
+    // Read-state refactor: document reads are unified onto the itemLabels table
+    // (item_type='document', label='read'), so the standalone socialReadPositions
+    // mirror is dead. Drop it. Existing document reads also live in itemLabels and
+    // are re-hydrated by the forward read delta, so nothing is lost.
+    this.version(35).stores({
+      socialReadPositions: null,
+    });
   }
 }
 
@@ -402,7 +408,6 @@ export async function clearAllData(): Promise<void> {
   await Promise.all([
     db.subscriptions.clear(),
     db.articles.clear(),
-    db.socialReadPositions.clear(),
     db.socialDocuments.clear(),
     db.linkblogShares.clear(),
     db.syncQueue.clear(),

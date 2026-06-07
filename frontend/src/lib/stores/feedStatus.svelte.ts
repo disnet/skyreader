@@ -82,6 +82,8 @@ export interface V2FeedResult {
     summary?: string;
     imageUrl?: string;
     publishedAt: string;
+    // Per-user read state stamped by the backend (inline read annotation).
+    read?: boolean;
   }>;
   status: 'ready' | 'error';
   error?: string;
