@@ -10,11 +10,7 @@
     type ArticleFontSize,
   } from '$lib/stores/preferences.svelte';
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
-  import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
-  import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
-  import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
-  import BottomSheet from '$lib/components/common/BottomSheet.svelte';
-  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
+  import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
   import { downloadOPML } from '$lib/utils/opml-exporter';
   import { api, RateLimitError } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
@@ -42,7 +38,6 @@
   ];
 
   let showImportModal = $state(false);
-  let feedSwitcherOpen = $state(false);
 
   // PDS Sync state
   let pdsSyncEnabled = $state(false);
@@ -295,7 +290,7 @@
   }
 </script>
 
-<FeedPageHeader title="Settings" hideControls />
+<StaticPageChrome title="Settings" />
 
 <div class="settings-page">
   {#if auth.user}
@@ -581,26 +576,6 @@
       {/if}
     </button>
   </section>
-
-  {#if mobileStore.isMobile}
-    <MobileBottomBar
-      controlsVisible={true}
-      currentTitle="Settings"
-      onScrollToTop={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-      onOpenFeedSwitcher={() => (feedSwitcherOpen = true)}
-      onOpenFilterSheet={() => {}}
-      hasActiveFilters={false}
-      hideFilterButton
-    />
-
-    <BottomSheet
-      open={feedSwitcherOpen}
-      onclose={() => (feedSwitcherOpen = false)}
-      title="Switch Feed"
-    >
-      <MobileFeedSwitcher onclose={() => (feedSwitcherOpen = false)} currentTitle="Settings" />
-    </BottomSheet>
-  {/if}
 </div>
 
 <ImportOPMLModal open={showImportModal} onclose={() => (showImportModal = false)} />

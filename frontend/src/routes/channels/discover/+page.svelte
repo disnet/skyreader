@@ -7,11 +7,9 @@
   } from '$lib/stores/savedChannelSuggestions.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
-  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { DOMAIN_CLUSTERS } from '$lib/utils/channelLogic';
   import Icon from '$lib/components/Icon.svelte';
-  import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
-  import BottomSheet from '$lib/components/common/BottomSheet.svelte';
+  import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
   import type { ChannelSuggestion } from '$lib/stores/channelSuggestions.svelte';
   import type {
     ChannelAutoRule,
@@ -19,8 +17,6 @@
     ReadingLengthFilter,
     SortOrder,
   } from '$lib/types';
-
-  let feedSwitcherOpen = $state(false);
 
   async function acceptSuggestion(suggestion: ChannelSuggestion) {
     const id = await filteredViewsStore.create({
@@ -233,6 +229,8 @@
 <svelte:head>
   <title>Discover Channels - Skyreader</title>
 </svelte:head>
+
+<StaticPageChrome title="Discover Channels" />
 
 <div class="discover-page">
   <header class="discover-header">
@@ -448,26 +446,6 @@
   </section>
 </div>
 
-{#if mobileStore.isMobile}
-  <div class="mobile-bottom-bar">
-    <button class="switcher-pill" onclick={() => (feedSwitcherOpen = true)}>
-      <span class="pill-icon"><Icon name="layers" size={20} /></span>
-      <span class="pill-label">Discover Channels</span>
-    </button>
-  </div>
-
-  <BottomSheet
-    open={feedSwitcherOpen}
-    onclose={() => (feedSwitcherOpen = false)}
-    title="Switch Feed"
-  >
-    <MobileFeedSwitcher
-      onclose={() => (feedSwitcherOpen = false)}
-      currentTitle="Discover Channels"
-    />
-  </BottomSheet>
-{/if}
-
 <style>
   .discover-page {
     max-width: 720px;
@@ -649,60 +627,6 @@
     }
   }
 
-  /* Mobile bottom bar */
-  .mobile-bottom-bar {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    padding: 0.75rem 1rem;
-    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
-    z-index: 10;
-    pointer-events: none;
-  }
-
-  .switcher-pill {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    background: rgba(255, 255, 255, 0.85);
-    backdrop-filter: blur(8px);
-    border-radius: 999px;
-    padding: 0.25rem 0.75rem 0.25rem 0.5rem;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
-    pointer-events: auto;
-    border: none;
-    color: var(--color-text);
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
-    max-width: 80%;
-  }
-
-  .switcher-pill:active {
-    background: rgba(240, 240, 240, 0.95);
-  }
-
-  .pill-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.6rem;
-    color: var(--color-text-secondary);
-    flex-shrink: 0;
-  }
-
-  .pill-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  @media (min-width: 1001px) {
-    .mobile-bottom-bar {
-      display: none;
-    }
-  }
-
   @media (prefers-color-scheme: dark) {
     .channel-card.available {
       background: rgba(0, 102, 204, 0.06);
@@ -714,14 +638,6 @@
 
     .callout {
       background: var(--color-bg-secondary, rgba(255, 255, 255, 0.04));
-    }
-
-    .switcher-pill {
-      background: rgba(40, 40, 40, 0.95);
-    }
-
-    .switcher-pill:active {
-      background: rgba(55, 55, 55, 0.95);
     }
   }
 </style>
