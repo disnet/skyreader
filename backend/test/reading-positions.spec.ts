@@ -363,10 +363,7 @@ describe('POST /api/reading write path (documents, resurrect, skip)', () => {
     });
 
     const res = await postJson('/api/reading/mark-read-bulk', {
-      items: [
-        { itemGuid: 'live-guid' },
-        { itemGuid: 'tombstoned-guid', rkey: 'new-rkey' },
-      ],
+      items: [{ itemGuid: 'live-guid' }, { itemGuid: 'tombstoned-guid', rkey: 'new-rkey' }],
     });
     expect(res.status).toBe(200);
     // Only the tombstoned item is "new" (the live one is filtered out by the
@@ -439,10 +436,7 @@ describe('getReadKeys (annotation join)', () => {
     await insertReadLabel('at://doc-read', { updatedAt: now, itemType: 'document' });
     await insertReadLabel('article-read', { updatedAt: now, itemType: 'article' });
 
-    const docKeys = await getReadKeys(env, TEST_DID, 'document', [
-      'at://doc-read',
-      'article-read',
-    ]);
+    const docKeys = await getReadKeys(env, TEST_DID, 'document', ['at://doc-read', 'article-read']);
     expect([...docKeys]).toEqual(['at://doc-read']);
   });
 
@@ -532,7 +526,11 @@ describe('inline read annotation (batch fetch handlers)', () => {
       })
     );
 
-    const res = await handleV2BatchFeedFetch(batchRequest('/api/v2/feeds/batch', { feeds: [{ url }] }), env, SESSION);
+    const res = await handleV2BatchFeedFetch(
+      batchRequest('/api/v2/feeds/batch', { feeds: [{ url }] }),
+      env,
+      SESSION
+    );
     const json = (await res.json()) as {
       feeds: Record<string, { items: Array<{ guid: string; read?: boolean }> }>;
       readCursor?: number;
