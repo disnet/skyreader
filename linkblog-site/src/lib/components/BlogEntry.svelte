@@ -8,6 +8,7 @@
     hostnameOf,
     linkPostNote,
     rkeyFromUri,
+    safeHttpUrl,
     socialCountsText,
   } from '$lib/fields';
   import type { ProxyDocument, SocialContext } from '$lib/types';
@@ -29,17 +30,23 @@
   // when it just repeats the note.
   const note = $derived(linkPostNote(doc).trim());
   const excerpt = $derived(articleExcerpt(doc));
-  const host = $derived(hostnameOf(externalArticleUrl(doc) || doc.canonicalUrl));
+  const articleUrl = $derived(safeHttpUrl(externalArticleUrl(doc) || doc.canonicalUrl));
+  // Daring-Fireball-style: the headline links out to the source article; the date
+  // (in the meta row) is the subtle permalink to the commentary. Note-only posts
+  // with no source fall back to the permalink as the headline link.
+  const headlineHref = $derived(articleUrl ?? permalink);
+  const host = $derived(hostnameOf(articleUrl ?? undefined));
   const date = $derived(formatDate(doc.createdAt || doc.publishedAt));
   const social = $derived(socialCountsText(ctx));
 </script>
 
 <li class="entry">
-  <!-- The title anchor stretches over the whole row (its ::after covers the <li>),
-       so the entire entry is one calm tap target to the permalink. -->
+  <!-- The headline anchor stretches over the whole row (its ::after covers the
+       <li>), so the entire entry is one calm tap target to the source article. The
+       date in the meta row is raised above it as the permalink to the commentary. -->
   <h2 class="entry-title">
-    {#if permalink}
-      <a href={permalink}>{doc.title || 'Untitled'}</a>
+    {#if headlineHref}
+      <a href={headlineHref}>{doc.title || 'Untitled'}</a>
     {:else}
       {doc.title || 'Untitled'}
     {/if}
@@ -50,5 +57,5 @@
   {#if excerpt && excerpt !== note}
     <blockquote class="entry-quote"><p>{clampText(excerpt, 200)}</p></blockquote>
   {/if}
-  <Meta {host} {date} {social} />
+  <Meta {host} {date} {permalink} {social} />
 </li>
