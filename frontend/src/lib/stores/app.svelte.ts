@@ -125,7 +125,7 @@ function createAppManager() {
     let newArticles = 0;
 
     try {
-      // Sync subscriptions, read positions, social data, and channels in parallel
+      // Sync subscriptions and load read state, social data, and channels in parallel
       const [syncResult] = await Promise.all([
         syncSubscriptions(),
         itemLabelsStore.load(),
