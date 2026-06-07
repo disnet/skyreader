@@ -857,25 +857,6 @@ function createFeedViewStore() {
   });
 
   // Actions
-  async function loadArticles() {
-    // Reset pagination
-    loadedArticleCount = DEFAULT_PAGE_SIZE;
-
-    // For unread view, load more articles until we have enough unread ones
-    if (showOnlyUnread && !isSavedView) {
-      const targetCount = DEFAULT_PAGE_SIZE;
-      const maxCount = DEFAULT_PAGE_SIZE * 10;
-
-      while (loadedArticleCount < maxCount) {
-        const unreadCount = displayedArticles.length;
-        if (unreadCount >= targetCount || loadedArticleCount >= filteredArticles.length) {
-          break;
-        }
-        loadedArticleCount += DEFAULT_PAGE_SIZE;
-      }
-    }
-  }
-
   async function loadMore() {
     const mode = viewMode;
 
@@ -1210,7 +1191,6 @@ function createFeedViewStore() {
     },
 
     // Actions
-    loadArticles,
     loadMore,
     select,
     selectByKey,
