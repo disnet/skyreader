@@ -77,6 +77,9 @@ export interface ProxyDocument {
   indexedAt?: string;
   createdAt: string;
   siteIcon?: string;
+  // Stamped by handleV2BatchDocumentFetch from a per-user read join (item_type
+  // 'document'). Not returned by the proxy itself — annotation only.
+  read?: boolean;
 }
 
 export interface ProxyDocumentEntry {

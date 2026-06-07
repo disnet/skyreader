@@ -283,6 +283,9 @@ class ApiClient {
         lastFetchedAt?: number;
       }
     >;
+    // Server time (unix seconds) the response was read-annotated. The client
+    // seeds its forward-read-delta cursor from this on its first annotated fetch.
+    readCursor?: number;
   }> {
     return this.fetch('/api/v2/feeds/batch', {
       method: 'POST',
@@ -302,6 +305,8 @@ class ApiClient {
       errorCount?: number;
       nextRetryAt?: number;
     }>;
+    // See fetchFeedsBatchV2 — documents ride the identical read delta.
+    readCursor?: number;
   }> {
     return this.fetch('/api/v2/documents/batch', {
       method: 'POST',
@@ -575,58 +580,6 @@ class ApiClient {
     });
   }
 
-  // Unified social read positions (new API)
-  async getSocialReadPositions(type?: 'document'): Promise<{
-    positions: Array<{
-      rkey: string;
-      type: 'document';
-      itemUri: string;
-      authorDid: string;
-      itemUrl: string | null;
-      itemTitle: string | null;
-      readAt: string;
-    }>;
-  }> {
-    const params = type ? `?type=${type}` : '';
-    return this.fetch(`/api/social/read-positions${params}`);
-  }
-
-  async markSocialItemAsRead(data: {
-    type: 'document';
-    rkey: string;
-    itemUri: string;
-    authorDid: string;
-    itemUrl?: string;
-    itemTitle?: string;
-  }): Promise<{ rkey: string; uri: string }> {
-    return this.fetch('/api/social/read-positions', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async markSocialItemsAsReadBulk(
-    items: Array<{
-      type: 'document';
-      rkey: string;
-      itemUri: string;
-      authorDid: string;
-      itemUrl?: string;
-      itemTitle?: string;
-    }>
-  ): Promise<{ success: boolean; marked: number }> {
-    return this.fetch('/api/social/read-positions/bulk', {
-      method: 'POST',
-      body: JSON.stringify({ items }),
-    });
-  }
-
-  async markSocialItemAsUnread(rkey: string): Promise<{ success: boolean }> {
-    return this.fetch(`/api/social/read-positions/${rkey}`, {
-      method: 'DELETE',
-    });
-  }
-
   // List records (still used for syncFromBackend)
   async listRecords<T>(collection: string): Promise<{
     records: Array<{ uri: string; cid: string; value: T }>;
@@ -634,14 +587,19 @@ class ApiClient {
     return this.fetch(`/api/records/list?collection=${encodeURIComponent(collection)}`);
   }
 
-  // Reading (read positions)
-  // Pass `since` (a previously returned cursor) for an incremental delta fetch;
-  // omit it for a full windowed fetch. Returns the new cursor to send next time.
+  // Reading (forward read delta)
+  // Pass `since` (a previously returned cursor) for an incremental delta fetch.
+  // The response carries every `read` row changed since the cursor — live rows
+  // AND tombstones (deleted=true) — across articles and documents. Bootstrap read
+  // state arrives via inline annotation on the fetch response, not here, so this
+  // is always a delta. Returns the new cursor to send next time.
   async getReadPositions(since?: number): Promise<{
     positions: Array<{
       item_guid: string;
-      read_at: number;
-      rkey: string;
+      item_type: 'article' | 'document';
+      read_at: number | string | null;
+      rkey: string | null;
+      deleted: boolean;
     }>;
     cursor: number;
   }> {
@@ -651,8 +609,11 @@ class ApiClient {
 
   async markAsRead(data: {
     itemGuid: string;
+    itemType?: 'article' | 'document';
     itemUrl?: string;
     itemTitle?: string;
+    rkey?: string;
+    authorDid?: string;
   }): Promise<{ success: boolean; rkey?: string; alreadyRead?: boolean }> {
     return this.fetch('/api/reading/mark-read', {
       method: 'POST',
@@ -670,8 +631,11 @@ class ApiClient {
   async markAsReadBulk(
     items: Array<{
       itemGuid: string;
+      itemType?: 'article' | 'document';
       itemUrl?: string;
       itemTitle?: string;
+      rkey?: string;
+      authorDid?: string;
     }>
   ): Promise<{ success: boolean; marked: number; skipped: number }> {
     return this.fetch('/api/reading/mark-read-bulk', {

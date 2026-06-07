@@ -1,5 +1,6 @@
 import { db, type SyncQueueEntry } from './db';
 import { api } from './api';
+import { toUnifiedReadItem } from './readSync';
 
 const MAX_RETRIES = 5;
 
@@ -294,23 +295,12 @@ class SyncQueue {
       }
 
       try {
-        const bulkItems = batch.map((item) => {
-          const payload = JSON.parse(item.payload) as SocialReadingPayload;
-          return {
-            type: payload.type,
-            rkey: payload.rkey,
-            itemUri: payload.itemUri,
-            authorDid: payload.authorDid,
-            itemUrl:
-              payload.itemUrl &&
-              (payload.itemUrl.startsWith('http://') || payload.itemUrl.startsWith('https://'))
-                ? payload.itemUrl
-                : undefined,
-            itemTitle: payload.itemTitle || undefined,
-          };
-        });
+        const bulkItems = batch.map((item) =>
+          toUnifiedReadItem(JSON.parse(item.payload) as SocialReadingPayload)
+        );
 
-        await api.markSocialItemsAsReadBulk(bulkItems);
+        // Document reads are unified onto the article read path (/api/reading).
+        await api.markAsReadBulk(bulkItems);
 
         // Success — delete all from queue
         for (const item of batch) {
@@ -420,21 +410,11 @@ class SyncQueue {
   ): Promise<void> {
     switch (operation) {
       case 'create':
-        await api.markSocialItemAsRead({
-          type: payload.type,
-          rkey: payload.rkey,
-          itemUri: payload.itemUri,
-          authorDid: payload.authorDid,
-          itemUrl:
-            payload.itemUrl &&
-            (payload.itemUrl.startsWith('http://') || payload.itemUrl.startsWith('https://'))
-              ? payload.itemUrl
-              : undefined,
-          itemTitle: payload.itemTitle || undefined,
-        });
+        // Document reads are unified onto the article read path (/api/reading).
+        await api.markAsRead(toUnifiedReadItem(payload));
         break;
       case 'delete':
-        await api.markSocialItemAsUnread(payload.rkey);
+        await api.markAsUnread(payload.itemUri);
         break;
     }
   }

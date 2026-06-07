@@ -1,6 +1,7 @@
 import { api } from '$lib/services/api';
 import { db, getMetadata, setMetadata } from '$lib/services/db';
-import { safePut, safeAdd, safeBulkPut } from '$lib/services/safeDb.svelte';
+import { safePut, safeBulkPut } from '$lib/services/safeDb.svelte';
+import { planReadDelta, planAnnotatedReads, advanceCursor } from '$lib/services/readDelta';
 import {
   syncQueue,
   type ReadingPayload,
@@ -10,22 +11,9 @@ import {
 import { syncStore } from './sync.svelte';
 import { savesStore } from './saves.svelte';
 import { generateTid } from '$lib/utils/tid';
-import { staleReadLabelsInWindow } from './readPositionReconcile';
-import type {
-  ItemLabel,
-  ItemLabelType,
-  SocialItemType,
-  SocialReadPosition,
-  Highlight,
-} from '$lib/types';
+import type { ItemLabel, ItemLabelType, SocialItemType, Highlight } from '$lib/types';
 
 const BULK_BATCH_SIZE = 500;
-
-// Retention window for read-position reconciliation. Must match
-// READ_POSITIONS_WINDOW_SECONDS in the backend's reading route: a full sync only
-// reconciles (deletes) read labels within this window, since the server only
-// returns reads this recent. Older local read state is preserved untouched.
-const READ_POSITIONS_WINDOW_MS = 2 * 365 * 24 * 60 * 60 * 1000; // 2 years
 
 // Re-export for consumers that used this type from reading store
 export interface SavedArticle {
@@ -40,16 +28,21 @@ function createItemLabelsStore() {
   let labelMap = $state<Map<string, ItemLabel>>(new Map());
   // Secondary index: itemKey → Set of labels
   let labelsByItem = $state<Map<string, Set<string>>>(new Map());
-  // Social read positions: itemUri → SocialReadPosition (for backend sync compatibility)
-  let socialPositions = $state<Map<string, SocialReadPosition>>(new Map());
   let isLoading = $state(true);
   let hasLoaded = false;
 
-  // Read-position delta-sync cursor (max updated_at seen, in unix seconds) and a
-  // session flag: the first sync reconciles a full windowed snapshot, later
-  // refreshes fetch only what changed since the cursor.
+  // Forward-read-delta cursor (max updated_at seen, in unix seconds), persisted
+  // across sessions in IndexedDB (same pattern as the managed-labels cursor).
+  // Bootstrap read state arrives via inline annotation on the fetch response, so
+  // there is no full/windowed snapshot: the cursor is *seeded* from the batch
+  // fetch's `readCursor`, then every refresh fetches only the read changes since
+  // it (live rows + tombstones), for both articles and documents. A client with
+  // no seeded cursor yet skips the delta (annotation covers it) until the next
+  // refresh, by which point the batch fetch has seeded it.
+  const READ_CURSOR_KEY = 'readPositionsCursor';
   let readPositionsCursor = 0;
-  let readPositionsFullSynced = false;
+  let readPositionsCursorLoaded = false;
+  let readPositionsCursorHasValue = false;
 
   // Managed-labels (tagged/archived/readProgress) delta-sync cursor (max
   // updated_at seen, in unix seconds). Unlike read positions, this cursor is
@@ -71,6 +64,23 @@ function createItemLabelsStore() {
   }> = [];
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   const DEBOUNCE_MS = 300;
+
+  // In-flight document mark-reads (itemUri), held from the moment the local read
+  // label is added until its push to the server resolves. Documents push
+  // immediately rather than through the debounce buffer above, so this is their
+  // analog of pendingMarkRead for the forward-delta optimistic-race guard: a
+  // stale tombstone on the delta must not clear a fresh local document read whose
+  // push is still in flight.
+  const pendingDocumentMarkRead = new Set<string>();
+
+  // True while a just-marked local read for `key` is still being pushed (article
+  // debounce buffer or in-flight document push). The forward delta skips
+  // tombstone removals for such keys so it can't clear a read mid-flight.
+  function isMarkReadInFlight(key: string): boolean {
+    return (
+      pendingDocumentMarkRead.has(key) || pendingMarkRead.some((item) => item.articleGuid === key)
+    );
+  }
 
   // --- Internal helpers ---
 
@@ -193,11 +203,7 @@ function createItemLabelsStore() {
     // 2. Fetch from backend and reconcile (skip when offline)
     if (syncStore.isOnline) {
       try {
-        await Promise.all([
-          loadReadPositionsFromBackend(),
-          loadSocialReadPositionsFromBackend(),
-          loadManagedLabelsFromBackend(),
-        ]);
+        await Promise.all([loadReadDeltaFromBackend(), loadManagedLabelsFromBackend()]);
         hasLoaded = true;
       } catch (e) {
         console.error('Failed to load labels from backend:', e);
@@ -213,138 +219,105 @@ function createItemLabelsStore() {
     isLoading = false;
   }
 
-  async function loadReadPositionsFromBackend() {
-    // First sync of the session does a full (windowed) reconcile to pick up
-    // un-reads made on other devices; subsequent refreshes fetch only the delta
-    // since our cursor, which keeps the common refresh tiny regardless of how
-    // many articles the account has ever read.
-    const isFull = !readPositionsFullSynced;
-    const { positions, cursor } = await api.getReadPositions(
-      isFull ? undefined : readPositionsCursor
-    );
-    const now = Date.now();
-
-    if (isFull) {
-      // Reconcile deletions, but only WITHIN the retention window — the backend
-      // only returns recent reads, so anything absent-and-recent was un-read
-      // elsewhere, while absent-and-old is simply outside the window and must be
-      // preserved (older local read state, never re-sent by the server).
-      const serverGuids = new Set(positions.map((p) => p.item_guid));
-      const windowStart = now - READ_POSITIONS_WINDOW_MS;
-      const toRemove = staleReadLabelsInWindow(labelMap.values(), serverGuids, windowStart);
-      for (const [itemKey, label] of toRemove) {
-        removeFromState(itemKey, label);
+  // Seed the forward-read-delta cursor from the batch fetch's `readCursor` (server
+  // time at annotation). Idempotent: only seeds if no cursor is set yet, so the
+  // first annotated fetch establishes the delta's starting point with no clock
+  // skew, and later fetches don't rewind it. Called by feedFetcher after a batch.
+  async function seedReadCursor(cursor: number) {
+    if (!cursor) return;
+    if (!readPositionsCursorLoaded) {
+      const persisted = await getMetadata<number>(READ_CURSOR_KEY);
+      if (typeof persisted === 'number') {
+        readPositionsCursor = persisted;
+        readPositionsCursorHasValue = true;
       }
-      try {
-        for (const [itemKey, label] of toRemove) {
-          await db.itemLabels.where('[itemKey+label]').equals([itemKey, label]).delete();
-        }
-      } catch (e) {
-        console.error('Failed to remove stale read positions from cache:', e);
-      }
+      readPositionsCursorLoaded = true;
     }
-
-    // Upsert positions from backend (both full and delta).
-    const dbOps: ItemLabel[] = [];
-    for (const p of positions) {
-      const readLabel: ItemLabel = {
-        itemKey: p.item_guid,
-        itemType: 'article',
-        label: 'read',
-        props: { readAt: p.read_at },
-        createdAt: p.read_at || now,
-        updatedAt: now,
-      };
-      addToState(readLabel);
-      dbOps.push(readLabel);
-    }
-
-    triggerReactivity();
-
+    if (readPositionsCursorHasValue) return;
+    readPositionsCursor = cursor;
+    readPositionsCursorHasValue = true;
     try {
-      if (dbOps.length > 0) {
-        await safeBulkPut(db.itemLabels, dbOps);
-      }
+      await setMetadata(READ_CURSOR_KEY, readPositionsCursor);
     } catch (e) {
-      console.error('Failed to sync read positions to cache:', e);
+      console.error('Failed to persist read cursor:', e);
     }
-
-    if (cursor) readPositionsCursor = cursor;
-    readPositionsFullSynced = true;
   }
 
-  async function loadSocialReadPositionsFromBackend() {
-    const { positions } = await api.getSocialReadPositions();
-    const now = Date.now();
+  // Apply inline read annotation from a fetch response: mark the given keys read,
+  // additively. Set only — never clears. Freshly-fetched items have no prior local
+  // label to protect, and clears are the forward delta's job (cross-device
+  // un-read), so additive merge stays race-free with a just-marked-read item.
+  async function applyAnnotatedReads(keys: string[], itemType: ItemLabelType) {
+    if (keys.length === 0) return;
+    const dbOps = planAnnotatedReads(keys, itemType, {
+      hasRead: (key) => hasLabel(key, 'read'),
+      now: Date.now(),
+    });
+    if (dbOps.length === 0) return;
+    for (const readLabel of dbOps) addToState(readLabel);
+    triggerReactivity();
+    try {
+      await safeBulkPut(db.itemLabels, dbOps);
+    } catch (e) {
+      console.error('Failed to persist annotated reads to cache:', e);
+    }
+  }
 
-    // Clear old social read labels
-    const toRemove: Array<[string, string]> = [];
-    for (const [, lbl] of labelMap) {
-      if (lbl.itemType === 'document' && lbl.label === 'read') {
-        toRemove.push([lbl.itemKey, lbl.label]);
+  // Forward read delta: fetch every `read` change since our cursor — live rows
+  // and tombstones — for both articles and documents, and apply them. Live rows
+  // are added; tombstoned rows are removed (cross-device un-read), except for any
+  // item with an in-flight local mark-read (optimistic-race guard: a stale
+  // tombstone must not clear a fresh local read whose push is still in flight —
+  // see isMarkReadInFlight, which covers both articles and documents). Closes the
+  // only gap annotation can't: an already-cached item read or un-read on another
+  // device, which this device won't re-fetch.
+  async function loadReadDeltaFromBackend() {
+    if (!readPositionsCursorLoaded) {
+      const persisted = await getMetadata<number>(READ_CURSOR_KEY);
+      if (typeof persisted === 'number') {
+        readPositionsCursor = persisted;
+        readPositionsCursorHasValue = true;
       }
-    }
-    for (const [itemKey, label] of toRemove) {
-      removeFromState(itemKey, label);
+      readPositionsCursorLoaded = true;
     }
 
-    // Rebuild social positions map and add labels
-    const newSocialPositions = new Map<string, SocialReadPosition>();
-    const dbOps: ItemLabel[] = [];
+    // No cursor yet → annotation covers bootstrap; the batch fetch will seed the
+    // cursor this cycle, and the next refresh runs the delta from there.
+    if (!readPositionsCursorHasValue) return;
 
-    for (const p of positions) {
-      const itemType: ItemLabelType = 'document';
-      const readLabel: ItemLabel = {
-        itemKey: p.itemUri,
-        itemType,
-        label: 'read',
-        props: {
-          readAt: p.readAt,
-          rkey: p.rkey,
-          authorDid: p.authorDid,
-          itemUrl: p.itemUrl || undefined,
-          itemTitle: p.itemTitle || undefined,
-        },
-        createdAt: now,
-        updatedAt: now,
-      };
-      addToState(readLabel);
-      dbOps.push(readLabel);
+    const { positions, cursor } = await api.getReadPositions(readPositionsCursor);
 
-      newSocialPositions.set(p.itemUri, {
-        rkey: p.rkey,
-        type: p.type,
-        itemUri: p.itemUri,
-        authorDid: p.authorDid,
-        itemUrl: p.itemUrl || '',
-        itemTitle: p.itemTitle || undefined,
-        readAt: p.readAt,
-      });
-    }
+    // Reconcile the delta into adds/removes — the optimistic-race guard (skip
+    // tombstone removals for in-flight local reads) lives in planReadDelta.
+    const { puts: dbPuts, deletes: dbDeletes } = planReadDelta(positions, {
+      isInFlight: isMarkReadInFlight,
+      now: Date.now(),
+    });
 
-    socialPositions = newSocialPositions;
+    for (const readLabel of dbPuts) addToState(readLabel);
+    for (const [itemKey, label] of dbDeletes) removeFromState(itemKey, label);
+
     triggerReactivity();
 
-    // Sync to IndexedDB
     try {
-      const oldLabels = await db.itemLabels
-        .where('label')
-        .equals('read')
-        .filter((l) => l.itemType === 'document')
-        .toArray();
-      for (const l of oldLabels) {
-        await db.itemLabels.where('[itemKey+label]').equals([l.itemKey, l.label]).delete();
+      for (const [itemKey, label] of dbDeletes) {
+        await db.itemLabels.where('[itemKey+label]').equals([itemKey, label]).delete();
       }
-      if (dbOps.length > 0) {
-        await safeBulkPut(db.itemLabels, dbOps);
-      }
-      // Also sync socialReadPositions table for backward compat
-      await db.socialReadPositions.clear();
-      for (const p of newSocialPositions.values()) {
-        await safeAdd(db.socialReadPositions, p);
+      if (dbPuts.length > 0) {
+        await safeBulkPut(db.itemLabels, dbPuts);
       }
     } catch (e) {
-      console.error('Failed to sync social read positions to cache:', e);
+      console.error('Failed to sync read delta to cache:', e);
+    }
+
+    const nextCursor = advanceCursor(readPositionsCursor, cursor);
+    if (nextCursor !== null) {
+      readPositionsCursor = nextCursor;
+      try {
+        await setMetadata(READ_CURSOR_KEY, readPositionsCursor);
+      } catch (e) {
+        console.error('Failed to persist read cursor:', e);
+      }
     }
   }
 
@@ -551,6 +524,20 @@ function createItemLabelsStore() {
       });
     }
 
+    return map;
+  });
+
+  // Document read state, keyed by recordUri. Derived from labelMap so it stays
+  // reactive (document reads now live in the unified label store, not a separate
+  // map). Consumers (unreadCounts) only depend on this for reactivity + presence;
+  // the actual read check is isSocialRead → hasLabel.
+  let socialPositions = $derived.by(() => {
+    const map = new Map<string, { readAt: unknown }>();
+    for (const [, lbl] of labelMap) {
+      if (lbl.itemType !== 'document') continue;
+      if (lbl.label !== 'read') continue;
+      map.set(lbl.itemKey, { readAt: lbl.props.readAt });
+    }
     return map;
   });
 
@@ -1037,22 +1024,11 @@ function createItemLabelsStore() {
     };
 
     addToState(readLabel);
+    // Guard the optimistic local read against a concurrent forward delta until
+    // its push resolves (see isMarkReadInFlight / loadReadDeltaFromBackend).
+    pendingDocumentMarkRead.add(itemUri);
     triggerReactivity();
     await safePut(db.itemLabels, readLabel);
-
-    // Also update socialPositions for backward compat
-    const position: SocialReadPosition = {
-      rkey,
-      type,
-      itemUri,
-      authorDid,
-      itemUrl,
-      itemTitle,
-      readAt: nowIso,
-    };
-    socialPositions.set(itemUri, position);
-    socialPositions = new Map(socialPositions);
-    await safeAdd(db.socialReadPositions, position);
 
     const payload: SocialReadingPayload = {
       type,
@@ -1066,22 +1042,29 @@ function createItemLabelsStore() {
       itemTitle: itemTitle || undefined,
     };
 
-    if (syncStore.isOnline) {
-      try {
-        await api.markSocialItemAsRead({
-          type,
-          rkey,
-          itemUri,
-          authorDid,
-          itemUrl: payload.itemUrl,
-          itemTitle: payload.itemTitle,
-        });
-      } catch (e) {
-        console.error('Failed to mark social item as read, queueing for retry:', e);
+    // Document reads are unified onto the article read path: the same
+    // /api/reading writers, parameterized by itemType. The sync-queue
+    // 'socialReading' collection routes to those writers too.
+    try {
+      if (syncStore.isOnline) {
+        try {
+          await api.markAsRead({
+            itemGuid: itemUri,
+            itemType: 'document',
+            rkey,
+            authorDid,
+            itemUrl: payload.itemUrl,
+            itemTitle: payload.itemTitle,
+          });
+        } catch (e) {
+          console.error('Failed to mark social item as read, queueing for retry:', e);
+          await syncQueue.enqueue('create', 'socialReading', itemUri, payload);
+        }
+      } else {
         await syncQueue.enqueue('create', 'socialReading', itemUri, payload);
       }
-    } else {
-      await syncQueue.enqueue('create', 'socialReading', itemUri, payload);
+    } finally {
+      pendingDocumentMarkRead.delete(itemUri);
     }
   }
 
@@ -1124,21 +1107,12 @@ function createItemLabelsStore() {
       };
       addToState(readLabel);
       dbOps.push(readLabel);
-
-      const position: SocialReadPosition = {
-        rkey: item.rkey,
-        type: item.type,
-        itemUri: item.itemUri,
-        authorDid: item.authorDid,
-        itemUrl: item.itemUrl,
-        itemTitle: item.itemTitle,
-        readAt: nowIso,
-      };
-      socialPositions.set(item.itemUri, position);
     }
 
+    // Guard each optimistic local read against a concurrent forward delta until
+    // the bulk push resolves (see isMarkReadInFlight / loadReadDeltaFromBackend).
+    for (const item of itemsWithRkeys) pendingDocumentMarkRead.add(item.itemUri);
     triggerReactivity();
-    socialPositions = new Map(socialPositions);
 
     if (dbOps.length > 0) {
       await safeBulkPut(db.itemLabels, dbOps);
@@ -1157,13 +1131,34 @@ function createItemLabelsStore() {
       itemTitle: item.itemTitle || undefined,
     }));
 
-    if (syncStore.isOnline) {
-      try {
-        for (let i = 0; i < apiItems.length; i += BULK_BATCH_SIZE) {
-          await api.markSocialItemsAsReadBulk(apiItems.slice(i, i + BULK_BATCH_SIZE));
+    try {
+      if (syncStore.isOnline) {
+        try {
+          for (let i = 0; i < apiItems.length; i += BULK_BATCH_SIZE) {
+            // Unified read path: documents bulk-mark through /api/reading too.
+            await api.markAsReadBulk(
+              apiItems.slice(i, i + BULK_BATCH_SIZE).map((item) => ({
+                itemGuid: item.itemUri,
+                itemType: 'document' as const,
+                rkey: item.rkey,
+                authorDid: item.authorDid,
+                itemUrl: item.itemUrl,
+                itemTitle: item.itemTitle,
+              }))
+            );
+          }
+        } catch (e) {
+          console.error('Failed to bulk mark social items as read, queueing for retry:', e);
+          for (const item of apiItems) {
+            await syncQueue.enqueue(
+              'create',
+              'socialReading',
+              item.itemUri,
+              item as SocialReadingPayload
+            );
+          }
         }
-      } catch (e) {
-        console.error('Failed to bulk mark social items as read, queueing for retry:', e);
+      } else {
         for (const item of apiItems) {
           await syncQueue.enqueue(
             'create',
@@ -1173,15 +1168,8 @@ function createItemLabelsStore() {
           );
         }
       }
-    } else {
-      for (const item of apiItems) {
-        await syncQueue.enqueue(
-          'create',
-          'socialReading',
-          item.itemUri,
-          item as SocialReadingPayload
-        );
-      }
+    } finally {
+      for (const item of itemsWithRkeys) pendingDocumentMarkRead.delete(item.itemUri);
     }
   }
 
@@ -1189,9 +1177,8 @@ function createItemLabelsStore() {
     const readLabel = getLabel(itemUri, 'read');
     if (!readLabel) return;
 
-    const rkey = readLabel.props.rkey as string;
-    const type = readLabel.itemType as SocialItemType;
-    const authorDid = readLabel.props.authorDid as string;
+    const rkey = (readLabel.props.rkey as string) || '';
+    const authorDid = (readLabel.props.authorDid as string) || '';
 
     removeFromState(itemUri, 'read');
     triggerReactivity();
@@ -1202,17 +1189,6 @@ function createItemLabelsStore() {
       console.error('Failed to remove social read label from DB:', e);
     }
 
-    // Remove from socialPositions
-    const position = socialPositions.get(itemUri);
-    socialPositions.delete(itemUri);
-    socialPositions = new Map(socialPositions);
-
-    if (position?.id) {
-      await db.socialReadPositions.delete(position.id);
-    }
-
-    if (!rkey) return;
-
     const payload: SocialReadingPayload = {
       type: 'document',
       rkey,
@@ -1220,9 +1196,12 @@ function createItemLabelsStore() {
       authorDid,
     };
 
+    // Unified unread: keyed by itemUri (item_key), so it goes through the same
+    // soft-delete writer as articles. The backend tombstones the row so the
+    // un-read carries on the forward read delta to other devices.
     if (syncStore.isOnline) {
       try {
-        await api.markSocialItemAsUnread(rkey);
+        await api.markAsUnread(itemUri);
       } catch (e) {
         console.error('Failed to mark social item as unread, queueing for retry:', e);
         await syncQueue.enqueue('delete', 'socialReading', itemUri, payload);
@@ -1435,6 +1414,9 @@ function createItemLabelsStore() {
     },
     // Lifecycle
     load,
+    // Inline read annotation (called by feedFetcher after a batch fetch)
+    seedReadCursor,
+    applyAnnotatedReads,
     // Article read
     isRead,
     markAsRead,
