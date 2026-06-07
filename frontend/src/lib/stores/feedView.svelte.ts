@@ -563,42 +563,23 @@ function createFeedViewStore() {
     return filtered;
   });
 
-  // Derived: combined view (articles + documents merged by date)
-  // When there are more articles to load, documents are limited to the date range
-  // of currently loaded articles. This prevents old documents (e.g. from a year ago)
-  // from dominating the tail of the list while there are plenty of unloaded articles
-  // that should fill the gap. As more articles load, the date range expands and more
-  // documents become visible.
-  let displayedCombined = $derived.by((): CombinedFeedItem[] => {
+  // Derived: full combined view (articles + documents merged by date),
+  // pre-pagination. Merging the complete sets and sorting once means the
+  // newest items win regardless of type — no date-window heuristic needed to
+  // keep old documents out of the tail. Recomputes only when the underlying
+  // articles/documents/sort change, not on every scroll.
+  let combinedAll = $derived.by((): CombinedFeedItem[] => {
     if (viewMode !== 'combined') return [];
 
-    const fv = effectiveFilters;
-    const sortOrder = fv.sortOrder;
-    const hasMoreArticlesToLoad = loadedArticleCount < filteredArticles.length;
-
-    let documentsToInclude = displayedDocuments;
-
-    if (hasMoreArticlesToLoad && displayedArticles.length > 0) {
-      // Find the oldest displayed article's date based on sort order.
-      // filteredArticles (and thus displayedArticles) are sorted newest-first by default.
-      const oldestArticle =
-        sortOrder === 'newest'
-          ? displayedArticles[displayedArticles.length - 1]
-          : displayedArticles[0];
-      const cutoffTime = new Date(oldestArticle.publishedAt).getTime();
-
-      documentsToInclude = displayedDocuments.filter(
-        (d) => new Date(d.publishedAt).getTime() >= cutoffTime
-      );
-    }
+    const sortOrder = effectiveFilters.sortOrder;
 
     const combined: CombinedFeedItem[] = [
-      ...displayedArticles.map((item) => ({
+      ...filteredArticles.map((item) => ({
         type: 'article' as const,
         item,
         date: item.publishedAt,
       })),
-      ...documentsToInclude.map((item) => ({
+      ...displayedDocuments.map((item) => ({
         type: 'document' as const,
         item,
         date: item.publishedAt,
@@ -611,6 +592,13 @@ function createFeedViewStore() {
     });
     return combined;
   });
+
+  // Derived: paginated combined view. Slicing the merged list (rather than
+  // paginating articles and documents separately) caps the visible list at
+  // loadedArticleCount total — otherwise an account with many linkblog
+  // documents would render hundreds of rows at once. Infinite scroll grows
+  // loadedArticleCount, revealing older items of either type.
+  let displayedCombined = $derived(combinedAll.slice(0, loadedArticleCount));
 
   // Derived: full merged-and-filtered saved-items list (pre-pagination).
   // Exposed separately from currentItems so the saved-view rendering path can
@@ -856,7 +844,7 @@ function createFeedViewStore() {
   let hasMore = $derived.by(() => {
     const mode = viewMode;
     if (isSavedView) return loadedArticleCount < savedItemsAll.length;
-    if (mode === 'combined') return loadedArticleCount < filteredArticles.length;
+    if (mode === 'combined') return loadedArticleCount < combinedAll.length;
     // 'shares' mode shows documents, which aren't cursor-paginated.
     if (mode === 'shares') return false;
     return loadedArticleCount < filteredArticles.length;
@@ -901,7 +889,14 @@ function createFeedViewStore() {
       return;
     }
 
-    if (mode === 'combined' || mode === 'articles') {
+    if (mode === 'combined') {
+      if (loadedArticleCount < combinedAll.length) {
+        loadedArticleCount += DEFAULT_PAGE_SIZE;
+      }
+      return;
+    }
+
+    if (mode === 'articles') {
       if (loadedArticleCount < filteredArticles.length) {
         loadedArticleCount += DEFAULT_PAGE_SIZE;
       }
