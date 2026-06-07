@@ -829,19 +829,14 @@
     overscroll-behavior: contain;
   }
 
-  /* The overlay covers the full viewport (opaque bg over the sidebar), but on
-     desktop its content is padded past the sidebar so the reading column centers
-     in the same band as the feed column — otherwise it centers on the whole
-     window and sits ~half-a-sidebar to the left of where the feed list was. */
-  @media (min-width: 1001px) {
-    .reader-overlay {
-      padding-left: var(--sidebar-width, 320px);
-    }
-  }
+  /* The overlay is an opaque full-screen layer that covers the sidebar, so the
+     reading column centers in the whole viewport — its inner bands all use
+     `max-width: 800px; margin: 0 auto`. (Don't pad past the sidebar width here:
+     the sidebar isn't visible in reading mode, so that just shifts the column
+     off-center to the right.) */
 
   /* Same 800px band and 1rem inset as the feed body (.feed-page-body + the
-     card's `padding: 0 1rem`), so the reading column lines up with the feed
-     list and the header controls above it. */
+     card's `padding: 0 1rem`). */
   .reader-container {
     max-width: 800px;
     margin: 0 auto;
