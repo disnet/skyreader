@@ -155,7 +155,7 @@ For staging, create a separate database with `npx wrangler d1 create skyreader-s
 
 ## Lexicon Schemas
 
-Located in `lexicons/app/skyreader/`:
+Located in `backend/lexicons/app/skyreader/`:
 
 ```
 feed/subscription.json      - RSS feed subscription
@@ -170,15 +170,4 @@ feed/saved.json             - Saved article
   - title, description, author, domain, image
   - contentType, fullContent, wordCount
   - publishedAt, savedAt (required)
-
-social/share.json           - Shared article
-  - itemUrl (required)
-  - itemTitle
-  - note (user commentary)
-  - createdAt (required)
-
-social/shareReadPosition.json - Share read position
-  - shareUri (required, at-uri)
-  - shareAuthorDid, itemUrl, itemTitle
-  - readAt (required)
 ```

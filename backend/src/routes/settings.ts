@@ -10,7 +10,6 @@ export interface UserSettings {
    */
   pdsSyncEnabled: boolean;
   lastPdsSyncSubscriptions: number | null;
-  lastPdsSyncReadPositions: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -19,7 +18,6 @@ interface UserSettingsRow {
   user_did: string;
   pds_sync_enabled: number;
   last_pds_sync_subscriptions: number | null;
-  last_pds_sync_read_positions: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -29,7 +27,6 @@ function rowToSettings(row: UserSettingsRow | null): UserSettings {
     return {
       pdsSyncEnabled: false,
       lastPdsSyncSubscriptions: null,
-      lastPdsSyncReadPositions: null,
       createdAt: Math.floor(Date.now() / 1000),
       updatedAt: Math.floor(Date.now() / 1000),
     };
@@ -37,7 +34,6 @@ function rowToSettings(row: UserSettingsRow | null): UserSettings {
   return {
     pdsSyncEnabled: row.pds_sync_enabled === 1,
     lastPdsSyncSubscriptions: row.last_pds_sync_subscriptions,
-    lastPdsSyncReadPositions: row.last_pds_sync_read_positions,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -141,13 +137,13 @@ export async function getUserSettings(env: Env, did: string): Promise<UserSettin
 }
 
 /**
- * Update sync timestamp for a collection
- * Uses separate prepared statements to avoid dynamic SQL interpolation
+ * Update the subscription sync timestamp.
+ * Uses a prepared statement to avoid dynamic SQL interpolation.
  */
 export async function updateSyncTimestamp(
   env: Env,
   did: string,
-  collection: 'subscriptions' | 'read_positions'
+  collection: 'subscriptions'
 ): Promise<void> {
   if (collection === 'subscriptions') {
     await env.DB.prepare(
@@ -155,16 +151,6 @@ export async function updateSyncTimestamp(
 			 VALUES (?, unixepoch(), unixepoch())
 			 ON CONFLICT(user_did) DO UPDATE SET
 			   last_pds_sync_subscriptions = unixepoch(),
-			   updated_at = unixepoch()`
-    )
-      .bind(did)
-      .run();
-  } else if (collection === 'read_positions') {
-    await env.DB.prepare(
-      `INSERT INTO user_settings (user_did, last_pds_sync_read_positions, updated_at)
-			 VALUES (?, unixepoch(), unixepoch())
-			 ON CONFLICT(user_did) DO UPDATE SET
-			   last_pds_sync_read_positions = unixepoch(),
 			   updated_at = unixepoch()`
     )
       .bind(did)

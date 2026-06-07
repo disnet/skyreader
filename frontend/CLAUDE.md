@@ -141,7 +141,7 @@ VITE_API_URL=https://your-backend.workers.dev
 
 ## Lexicon Schemas
 
-Located in `lexicons/app/skyreader/`:
+Located in `frontend/lexicons/app/skyreader/`:
 
 ```
 feed/subscription.json  - RSS feed subscription
@@ -151,16 +151,19 @@ feed/subscription.json  - RSS feed subscription
   - tags[]
   - createdAt (required)
 
-feed/readPosition.json  - Reading progress
-  - itemGuid (required)
-  - itemUrl
-  - readAt (required)
-  - starred
+feed/saved.json         - Saved article
+  - url (required)
+  - title, description, author, domain, image
+  - contentType, fullContent, wordCount
+  - publishedAt, savedAt (required)
 
-social/share.json       - Shared article
+feed/highlight.json     - Article highlights (W3C TextQuoteSelector)
   - itemUrl (required)
-  - itemTitle
-  - note (user commentary)
+  - highlights[] (required)
+  - createdAt (required)
+
+social/follow.json      - In-app follow relationship
+  - subject (required, DID of followed user)
   - createdAt (required)
 ```
 

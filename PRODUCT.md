@@ -9,7 +9,7 @@ product
 Skyreader's primary users are the **Bluesky / AT Protocol social crowd**: people who came for
 data ownership and portable identity, and who treat sharing what they read as a first-class part
 of the experience. They already have a Bluesky handle, understand (or appreciate) that their
-subscriptions, read state, and shares live in their own PDS rather than a company's database, and
+subscriptions and shares live in their own PDS rather than a company's database, and
 they expect the social layer — shares from people they follow, their own commentary, read
 positions — to be present, not bolted on.
 
@@ -21,7 +21,7 @@ algorithm deciding for me._
 ## Product Purpose
 
 Skyreader is a decentralized RSS reader built on AT Protocol. It exists to give readers a fast,
-ownable alternative to algorithmic feeds: subscriptions, saved articles, read state, and social
+ownable alternative to algorithmic feeds: subscriptions, saved articles, and social
 shares are stored in the user's Personal Data Server, making the entire reading life portable
 across any AT Protocol client. It layers social sharing (shares, notes, read positions from
 followed accounts) on top of a chronological, user-controlled reading experience.

@@ -759,7 +759,6 @@ class ApiClient {
   async getSettings(): Promise<{
     pdsSyncEnabled: boolean;
     lastPdsSyncSubscriptions: number | null;
-    lastPdsSyncReadPositions: number | null;
     createdAt: number;
     updatedAt: number;
   }> {
@@ -769,7 +768,6 @@ class ApiClient {
   async updateSettings(settings: { pdsSyncEnabled?: boolean }): Promise<{
     pdsSyncEnabled: boolean;
     lastPdsSyncSubscriptions: number | null;
-    lastPdsSyncReadPositions: number | null;
     createdAt: number;
     updatedAt: number;
   }> {

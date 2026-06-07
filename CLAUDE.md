@@ -16,7 +16,7 @@ Each package has its own CLAUDE.md with detailed guidance.
 
 ## What is Skyreader?
 
-A decentralized RSS reader built on AT Protocol (Bluesky). User data (subscriptions, read state, shares) is stored in their Personal Data Server (PDS), making it portable. Features offline support, real-time updates, and social sharing of articles.
+A decentralized RSS reader built on AT Protocol (Bluesky). User data (subscriptions, saved articles, shares) is stored in their Personal Data Server (PDS), making it portable. Read state lives server-side in D1, not the PDS. Features offline support, real-time updates, and social sharing of articles.
 
 ## Design Context
 
@@ -205,11 +205,12 @@ AT Protocol (Bluesky PDS) + Fly.io Feed Proxy + Jetstream Firehose
 
 ## AT Protocol Integration
 
-Custom lexicons in `lexicons/app/skyreader/`:
+Custom lexicons live per-package under `<package>/lexicons/app/skyreader/` (e.g.
+`frontend/lexicons/app/skyreader/feed/subscription.json`, `backend/lexicons/app/skyreader/...`):
 
 - `feed/subscription.json` - RSS subscription record
 - `feed/saved.json` - Saved article record
-- `social/share.json` - Shared article record
-- `social/shareReadPosition.json` - Share read position
+- `feed/highlight.json` - Article highlight record (frontend)
+- `social/follow.json` - In-app follow relationship (frontend)
 
 Records are synced bidirectionally between the app and user's PDS.
