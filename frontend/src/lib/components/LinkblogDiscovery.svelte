@@ -105,7 +105,7 @@
   <li class="person">
     <a
       class="avatar"
-      href={`/blogs/${p.did}/`}
+      href={p.blogUrl}
       target="_blank"
       rel="noopener"
       tabindex="-1"
@@ -118,7 +118,7 @@
       {/if}
     </a>
     <div class="who">
-      <a class="name" href={`/blogs/${p.did}/`} target="_blank" rel="noopener">{displayName(p)}</a>
+      <a class="name" href={p.blogUrl} target="_blank" rel="noopener">{displayName(p)}</a>
       {#if p.handle}
         <span class="handle">@{p.handle}</span>
       {/if}
