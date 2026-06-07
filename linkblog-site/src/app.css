@@ -301,6 +301,18 @@ img {
 .meta .social {
   color: var(--muted);
 }
+/* The date doubles as the (subtle) permalink to the commentary. It must sit above
+   the headline's stretched ::after overlay to stay clickable, and stays quiet until
+   hovered so the headline keeps the visual weight. */
+.meta a {
+  position: relative;
+  z-index: 1;
+  color: inherit;
+}
+.meta a:hover {
+  color: var(--blue);
+  text-decoration: none;
+}
 
 /* Permalink entry */
 .back {
@@ -322,6 +334,15 @@ img {
   letter-spacing: -0.02em;
   font-weight: 700;
   text-wrap: balance;
+}
+/* The headline links out to the source article (matching the index + RSS). Keep the
+   ink color so it reads as a heading, not a stock link. */
+.entry-page .entry-title-lg a {
+  color: var(--ink);
+}
+.entry-page .entry-title-lg a:hover {
+  color: var(--blue);
+  text-decoration: none;
 }
 .entry-page .entry-note-lg {
   margin: 1.375rem 0 0;

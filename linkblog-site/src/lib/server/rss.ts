@@ -50,10 +50,12 @@ export function toRfc822(iso: string): string {
   return d.toUTCString();
 }
 
-// Each entry's HTML body: the user's note, an article excerpt (when distinct), and
-// a link out to the source. Mirrors the index/permalink pages so a reader sees the
-// same thing whether they visit the page or subscribe.
-function entryHtml(doc: ProxyDocument): string {
+// Each entry's HTML body: the user's note, an article excerpt (when distinct), a
+// link out to the source, and a subtle permalink back to the commentary. Mirrors
+// the index/permalink pages so a reader sees the same thing whether they visit the
+// page or subscribe. The item <link> points at the source (see renderItem), so the
+// permalink is the one thing only the body can carry.
+function entryHtml(doc: ProxyDocument, permalink: string): string {
   const note = linkPostNote(doc).trim();
   const excerpt = articleExcerpt(doc);
   const articleUrl = safeHttpUrl(externalArticleUrl(doc) || doc.canonicalUrl);
@@ -67,22 +69,26 @@ function entryHtml(doc: ProxyDocument): string {
       `<p><a href="${escapeHtml(articleUrl)}">Read the full article${host ? ` on ${escapeHtml(host)}` : ''}</a></p>`
     );
   }
+  parts.push(`<p><a href="${escapeHtml(permalink)}">Permalink</a></p>`);
   return parts.join('\n');
 }
 
 function renderItem(origin: string, did: string, doc: ProxyDocument): string {
   const rkey = rkeyFromUri(doc.recordUri);
-  // The permalink (stable, on this site) is the canonical link for the item; the
-  // source article lives in the body. The guid is the immutable record URI.
+  // Daring-Fireball-style linkblog: the item <link> points at the source article
+  // being commented on (the headline IS the outbound link). A subtle permalink to
+  // the commentary on this site lives in the body, and the guid is the immutable
+  // record URI. Note-only posts (no source) fall back to the permalink.
   const permalink = rkey ? entryUrlFor(origin, did, rkey) : blogUrlFor(origin, did);
+  const itemLink = safeHttpUrl(externalArticleUrl(doc) || doc.canonicalUrl) || permalink;
   const pubDate = toRfc822(doc.createdAt || doc.publishedAt);
 
   const tags = [
     `<title>${escapeXml(doc.title || 'Untitled')}</title>`,
-    `<link>${escapeXml(permalink)}</link>`,
+    `<link>${escapeXml(itemLink)}</link>`,
     `<guid isPermaLink="false">${escapeXml(doc.recordUri)}</guid>`,
     pubDate ? `<pubDate>${escapeXml(pubDate)}</pubDate>` : '',
-    `<description>${cdata(entryHtml(doc))}</description>`,
+    `<description>${cdata(entryHtml(doc, permalink))}</description>`,
   ].filter(Boolean);
 
   return `<item>\n  ${tags.join('\n  ')}\n</item>`;

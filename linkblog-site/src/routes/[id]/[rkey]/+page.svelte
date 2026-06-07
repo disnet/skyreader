@@ -52,7 +52,9 @@
 
 <a class="back" href={backHref}><span aria-hidden="true">←</span> {blogName}</a>
 <article class="entry-page">
-  <h1 class="entry-title-lg">{title}</h1>
+  <h1 class="entry-title-lg">
+    {#if articleUrl}<a href={articleUrl}>{title}</a>{:else}{title}{/if}
+  </h1>
   <Meta {host} {date} {social} />
   {#if note}
     <p class="entry-note-lg">{note}</p>
