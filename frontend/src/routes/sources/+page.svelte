@@ -8,13 +8,9 @@
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { profileService } from '$lib/services/profiles';
   import { api } from '$lib/services/api';
-  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { getSourceDisplay, isLinkblogPublication } from '$lib/utils/sourceDisplay';
   import Icon from '$lib/components/Icon.svelte';
-  import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
-  import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
-  import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
-  import BottomSheet from '$lib/components/common/BottomSheet.svelte';
+  import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
   import EditFeedModal from '$lib/components/EditFeedModal.svelte';
   import AddFeedModal from '$lib/components/AddFeedModal.svelte';
   import AddHandleModal from '$lib/components/AddHandleModal.svelte';
@@ -40,7 +36,6 @@
   }
 
   // -- State --
-  let feedSwitcherOpen = $state(false);
   let searchQuery = $state('');
   let editingSubscription = $state<Subscription | null>(null);
   let editModalOpen = $state(false);
@@ -540,7 +535,7 @@
   <title>Sources - Skyreader</title>
 </svelte:head>
 
-<FeedPageHeader title="Manage Sources" hideControls />
+<StaticPageChrome title="Manage Sources" />
 
 <div class="sources-page">
   <SourcesToolbar
@@ -780,29 +775,6 @@
         {/each}
       </div>
     </section>
-  {/if}
-
-  {#if mobileStore.isMobile}
-    <MobileBottomBar
-      controlsVisible={true}
-      currentTitle="Manage Sources"
-      onScrollToTop={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-      onOpenFeedSwitcher={() => (feedSwitcherOpen = true)}
-      onOpenFilterSheet={() => {}}
-      hasActiveFilters={false}
-      hideFilterButton
-    />
-
-    <BottomSheet
-      open={feedSwitcherOpen}
-      onclose={() => (feedSwitcherOpen = false)}
-      title="Switch Feed"
-    >
-      <MobileFeedSwitcher
-        onclose={() => (feedSwitcherOpen = false)}
-        currentTitle="Manage Sources"
-      />
-    </BottomSheet>
   {/if}
 </div>
 

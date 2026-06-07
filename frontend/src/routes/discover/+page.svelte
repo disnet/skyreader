@@ -1,14 +1,14 @@
 <script lang="ts">
   import LinkblogDiscovery from '$lib/components/LinkblogDiscovery.svelte';
   import FollowingPublications from '$lib/components/FollowingPublications.svelte';
-  import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
+  import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
 </script>
 
 <svelte:head>
   <title>Discover - Skyreader</title>
 </svelte:head>
 
-<FeedPageHeader title="Discover" hideControls />
+<StaticPageChrome title="Discover" />
 
 <div class="discover-page">
   <header class="discover-header">
