@@ -304,6 +304,9 @@ class ApiClient {
       error?: string;
       errorCount?: number;
       nextRetryAt?: number;
+      // True when `documents` is the author's complete set (fit under the proxy's
+      // per-author cap) — lets a client treat an absent record as deleted.
+      complete?: boolean;
     }>;
     // See fetchFeedsBatchV2 — documents ride the identical read delta.
     readCursor?: number;

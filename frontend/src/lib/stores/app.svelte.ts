@@ -132,8 +132,9 @@ function createAppManager() {
         socialStore.loadFeed(true),
         filteredViewsStore.syncWithBackend(),
         // Pull the user's own linkblog so share-state reconciles across devices.
-        // Forced each refresh so a share made elsewhere lights up the button here.
-        myLinkblogStore.load(true),
+        // Forced each refresh so a share made elsewhere lights up the button here;
+        // then reconcile prunes any local share the (complete) pull says is gone.
+        myLinkblogStore.load(true).then(() => linkblogStore.reconcile()),
       ]);
 
       // One-time migration: push existing local custom fields to backend
