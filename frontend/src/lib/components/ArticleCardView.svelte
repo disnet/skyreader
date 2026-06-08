@@ -481,17 +481,20 @@
         </div>
       {/if}
       <div class="article-actions">
-        <!-- Save button -->
+        <!-- Save button. Label tracks state ("Save" → "Saved") and the bookmark
+             fills green, so the confirmation persists rather than relying on a
+             subtle color shift the user might miss. -->
         <button
           class="action-btn"
           class:saved={isSaved}
+          title={isSaved ? 'Saved to read later. Tap to remove' : 'Save to read later'}
           onclick={(e) => {
             e.stopPropagation();
             onToggleSave?.();
           }}
         >
           <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
-            class="action-label">Save</span
+            class="action-label">{isSaved ? 'Saved' : 'Save'}</span
           >
         </button>
         <!-- Share: a toggle for the Blogs lane, surfaced in the bar so sharing is
@@ -504,7 +507,9 @@
               class="action-btn share-btn"
               class:saved={currentlyShared}
               class:confirming={confirmingRemove}
-              title={currentlyShared ? 'Remove share' : shareRow?.createLabel}
+              title={currentlyShared
+                ? 'Shared to your linkblog. Tap to remove'
+                : (shareRow?.createLabel ?? 'Share to your linkblog')}
               onclick={(e) => {
                 e.stopPropagation();
                 if (currentlyShared) confirmingRemove = !confirmingRemove;
@@ -1822,12 +1827,14 @@
     color: var(--color-primary, #0066cc);
   }
 
+  /* Saved/Shared is a confirmed, positive state — success green (not the warning
+     amber it used to borrow), so "I've done the thing" reads at a glance. */
   .action-btn.saved {
-    color: #ffc107;
+    color: var(--color-success, #4caf50);
   }
 
   .action-btn.saved:hover {
-    color: #ffc107;
+    color: var(--color-success, #4caf50);
   }
 
   .action-btn.active {

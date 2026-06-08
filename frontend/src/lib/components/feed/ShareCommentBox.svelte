@@ -27,6 +27,10 @@
   // Compared against the live prop so Save disables again right after a save.
   let dirty = $derived(trimmed !== initialNote.trim());
   let nearLimit = $derived(value.length > MAX - 200);
+  // A saved, at-rest note: show a persistent "Saved" confirmation in place of the
+  // (now hidden) Save control. Submitting blurs the field, so without this the
+  // checkmark would just vanish — leaving the user unsure the note landed.
+  let showSaved = $derived(!dirty && trimmed.length > 0);
 
   function autosize() {
     const el = textareaEl;
@@ -76,29 +80,36 @@
       onfocus={() => (focused = true)}
       onblur={() => (focused = false)}
     ></textarea>
-    <!-- Always rendered so it reserves its space — focusing reveals it via
-         opacity/visibility, never a layout shift. -->
-    <div class="actions" class:hidden={!focused}>
-      {#if nearLimit}
-        <span class="counter" class:over={value.length >= MAX}>{MAX - value.length}</span>
+    <!-- Always rendered so it reserves its space — focusing (or a saved note at
+         rest) reveals it via opacity/visibility, never a layout shift. -->
+    <div class="actions" class:hidden={!focused && !showSaved}>
+      {#if focused}
+        {#if nearLimit}
+          <span class="counter" class:over={value.length >= MAX}>{MAX - value.length}</span>
+        {/if}
+        <!-- preventDefault on mousedown keeps focus on the textarea so this click
+             lands before the blur that would otherwise hide the button. -->
+        <button
+          type="button"
+          class="btn btn-primary"
+          aria-label="Save"
+          onmousedown={(e) => e.preventDefault()}
+          onclick={submit}
+          disabled={!dirty}
+        >
+          <!-- Mobile collapses the label to the check icon to keep the row compact;
+               desktop keeps the word. -->
+          <Icon name="check" size={16} />
+          <span class="btn-text">Save</span>
+        </button>
+      {:else if showSaved}
+        <!-- Persistent confirmation: the note landed. Stays until the user edits
+             again, so the feedback doesn't blink out the moment they tap save. -->
+        <span class="saved-pill" aria-live="polite">
+          <Icon name="check" size={14} />
+          <span class="saved-text">Saved</span>
+        </span>
       {/if}
-      <!-- preventDefault on mousedown keeps focus on the textarea so this click
-           lands before the blur that would otherwise hide the button. -->
-      <button
-        type="button"
-        class="btn btn-primary"
-        tabindex={focused ? 0 : -1}
-        aria-hidden={!focused}
-        aria-label="Save"
-        onmousedown={(e) => e.preventDefault()}
-        onclick={submit}
-        disabled={!dirty}
-      >
-        <!-- Mobile collapses the label to the check icon to keep the row compact;
-             desktop keeps the word. -->
-        <Icon name="check" size={16} />
-        <span class="btn-text">Save</span>
-      </button>
     </div>
   </div>
 </section>
@@ -236,6 +247,20 @@
   .btn-primary:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+
+  /* At-rest confirmation that a note is saved — success green, quiet weight. */
+  .saved-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
+    color: var(--color-success, #4caf50);
+  }
+
+  .saved-pill :global(.icon) {
+    flex-shrink: 0;
   }
 
   @media (prefers-reduced-motion: reduce) {
