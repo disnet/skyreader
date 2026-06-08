@@ -884,11 +884,20 @@
     margin: 0.125rem 0;
   }
 
+  /* A Markdown quote inside the note — the article's own words, seeded into the
+     editable note when sharing. Matches the standalone .link-post-quote so the
+     quote reads the same however it got there: quiet left rule, secondary text,
+     subordinate to the commentary around it. */
   .link-post-note :global(blockquote) {
     margin: 0 0 0.75rem;
-    padding-left: 0.875rem;
+    padding: 0.125rem 0 0.125rem 1rem;
     border-left: 3px solid var(--color-border, #e5e5e5);
     color: var(--color-text-secondary);
+  }
+
+  /* The quote's own paragraphs shouldn't add trailing space inside the rule. */
+  .link-post-note :global(blockquote > :last-child) {
+    margin-bottom: 0;
   }
 
   .link-post-note :global(code) {

@@ -250,12 +250,44 @@ img {
   outline: 2px solid var(--blue);
   outline-offset: 2px;
 }
-/* The user's note — their own words. Plain text, so newlines are preserved. */
+/* The user's note — their own words, the controlled body of the share. Rendered
+   from a restricted Markdown subset (blockquotes only), so it holds <p>/<blockquote>
+   blocks rather than raw text. */
 .entry-note {
   margin: 0.5rem 0 0;
   color: var(--ink);
-  white-space: pre-wrap;
   overflow-wrap: break-word;
+}
+/* Collapse the rendered blocks' own margins; space between top-level blocks comes
+   from the adjacency rule so the note reads as one tight unit. */
+.entry-note :is(p, blockquote),
+.entry-note-lg :is(p, blockquote) {
+  margin: 0;
+}
+.entry-note > * + *,
+.entry-note-lg > * + * {
+  margin-top: 0.6em;
+}
+/* A quote INSIDE the note — the article's words, quoted by the reader. Same
+   recessed treatment as the standalone .entry-quote (a side-stripe accent border
+   is deliberately avoided per the design system). */
+.entry-note blockquote,
+.entry-note-lg blockquote {
+  position: relative;
+  padding: 0.5rem 0.875rem 0.5rem 2rem;
+  background: var(--quote-bg);
+  border-radius: 10px;
+  color: var(--ink-soft);
+}
+.entry-note blockquote::before,
+.entry-note-lg blockquote::before {
+  content: '\201C';
+  position: absolute;
+  left: 0.6rem;
+  top: 0.3rem;
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--muted);
 }
 /* A snippet quoted FROM the article (not the user). The recessed surface and the
    opening quotation mark mark it as a quotation; a side-stripe accent border is
@@ -349,7 +381,6 @@ img {
   font-size: 1.0625rem;
   line-height: 1.6;
   color: var(--ink);
-  white-space: pre-wrap;
   overflow-wrap: break-word;
 }
 .entry-page .entry-quote {

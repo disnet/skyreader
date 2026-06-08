@@ -22,7 +22,12 @@
   import { isPcktBlogContent, renderPcktBlogContent } from '$lib/utils/pckt-blog-renderer';
   import { isOffprintContent, renderOffprintContent } from '$lib/utils/offprint-renderer';
   import { isGreengaleContent, renderGreengaleContent } from '$lib/utils/greengale-renderer';
-  import { getExternalArticleLink, getLinkPostNote } from '$lib/utils/linkPost';
+  import {
+    getExternalArticleLink,
+    getLinkPostNote,
+    formatQuoteSeed,
+    noteHasBlockquote,
+  } from '$lib/utils/linkPost';
   import { api } from '$lib/services/api';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
@@ -174,12 +179,16 @@
     return undefined;
   });
 
+  // The link post's note, regardless of authorship — used both to render the
+  // body (for others' posts) and to decide whether the quote already lives in
+  // the note (see linkPostExcerpt).
+  let rawLinkPostNote = $derived(
+    isLinkPostMode && document ? getLinkPostNote(document) : undefined
+  );
   // The user's commentary on a link post, in the author's own voice. For the
   // user's own post the note is shown (and edited) in the note box above the
   // action bar, so don't also render it as prose in the body.
-  let linkPostNote = $derived(
-    isLinkPostMode && document && !isOwnLinkblogPost ? getLinkPostNote(document) : undefined
-  );
+  let linkPostNote = $derived(!isOwnLinkblogPost ? rawLinkPostNote : undefined);
   // Notes are authored as Markdown — parse to HTML (GFM, soft line breaks
   // preserved) and sanitize before the view renders it. Inline links open in a
   // new tab via the same afterSanitize hook used for article bodies.
@@ -190,8 +199,13 @@
         )
       : undefined
   );
-  // The article excerpt + thumbnail for the link-card preview.
-  let linkPostExcerpt = $derived(isLinkPostMode ? document?.description : undefined);
+  // The article excerpt, shown as a standalone quote — but only when the note
+  // doesn't already carry the quote as Markdown. New shares seed the quote into
+  // the editable note (rendered via linkPostNoteHtml), so showing the excerpt
+  // here too would duplicate it; legacy notes (commentary only) keep it.
+  let linkPostExcerpt = $derived(
+    isLinkPostMode && !noteHasBlockquote(rawLinkPostNote) ? document?.description : undefined
+  );
   let linkPostThumb = $derived(
     isLinkPostMode && document?.coverImageCid
       ? `https://cdn.bsky.app/img/feed_thumbnail/plain/${document.authorDid}/${document.coverImageCid}@jpeg`
@@ -486,19 +500,27 @@
   // sign-in; a plain article share is gated by whether the page wired up onShare.
   let showShareAction = $derived(isDocumentMode ? Boolean(auth.user) : Boolean(onShare));
 
-  // Fire the note-less share for the current mode (the Blogs lane [+]). Adding a
-  // note happens afterward via the persistent note box, once shared.
+  // The article's own excerpt, formatted as an editable Markdown quote to seed a
+  // new share with — the user trims, rewrites, or deletes it from the note box.
+  let shareQuoteSource = $derived(
+    isDocumentMode ? document?.description : (article?.summary ?? localArticle?.summary)
+  );
+  let seededQuote = $derived(formatQuoteSeed(shareQuoteSource));
+
+  // Fire the share for the current mode (the Blogs lane [+]), seeding the note
+  // with the article's quote so it lands in the persistent note box ready to
+  // edit or remove. Submitting from the feed is one tap; refinement happens there.
   async function shareNow() {
     if (isDocumentMode) {
       isQuoting = true;
       try {
-        await handleQuote('');
+        await handleQuote(seededQuote ?? '');
       } finally {
         isQuoting = false;
       }
       return;
     }
-    onShare?.(undefined);
+    onShare?.(seededQuote);
   }
 
   // Attach/update the note. The box stays visible after saving — it's persistent
@@ -510,6 +532,9 @@
       // Reflect locally, then persist (empty string clears the note).
       ownNoteOverride = trimmed || undefined;
       ownNoteEdited = true;
+      // Also update the listed document so the edit survives a remount and the
+      // overlay/My-Linkblog page reflect it ahead of the next pull.
+      if (document) myLinkblogStore.setNote(document.recordUri, trimmed);
       try {
         await api.updateLinkblogShareNote(ownRkey, trimmed);
       } catch (e) {

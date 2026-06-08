@@ -255,6 +255,23 @@ interface DocumentRecord {
   content?: unknown;
 }
 
+// The article excerpt stored on a record's website link-card block. The card is
+// the durable home of the excerpt now that the top-level `description` is reserved
+// as the legacy-quote marker, so the note-update path reads it back from here to
+// rebuild the card without dropping it.
+function websiteCardExcerpt(content: unknown): string {
+  const c = content as { pages?: Array<{ blocks?: Array<{ block?: Record<string, unknown> }> }> };
+  for (const page of c?.pages ?? []) {
+    for (const wrapper of page.blocks ?? []) {
+      if (wrapper.block?.$type === 'pub.leaflet.blocks.website') {
+        const desc = wrapper.block.description;
+        if (typeof desc === 'string') return desc;
+      }
+    }
+  }
+  return '';
+}
+
 // Build the rich, interoperable body: the user's note as a text block, then the
 // shared article as a website link-card. The card carries the external URL so
 // any pub.leaflet-aware reader (incl. Skyreader's own renderer in Phase 2) can
@@ -303,7 +320,13 @@ export function buildLinkblogDocument(
     path: `/${rkey}`,
     publishedAt: input.articlePublishedAt || now,
     createdAt: now,
-    description: excerpt || undefined,
+    // The quote now lives inside the editable note (the leading text block), so
+    // new shares no longer write a top-level `description`. Its presence is the
+    // legacy marker the renderers use to keep showing the old standalone quote;
+    // an absent description means "the note owns the body." The excerpt still
+    // rides along in the website link-card block (buildLeafletContent) for
+    // interop, and in `textContent` for search/durability.
+    description: undefined,
     textContent,
     tags: input.tags && input.tags.length > 0 ? input.tags : undefined,
     links,
@@ -348,9 +371,12 @@ export async function updateLinkblogShareNote(
 
   const rec = existing.data.value;
   // Reconstruct the article link-card inputs from the stored record so the
-  // rebuilt content keeps the same external link, title, and excerpt.
+  // rebuilt content keeps the same external link, title, and excerpt. The excerpt
+  // comes from the website card (its durable home); `rec.description` is the
+  // fallback for legacy records that still carry it at the top level. `...rec`
+  // preserves that legacy `description` as-is — we never add one to a new record.
   const articleUrl = rec.links?.find((l) => l.rel === 'related')?.uri || '';
-  const excerpt = rec.description || '';
+  const excerpt = websiteCardExcerpt(rec.content) || rec.description || '';
   const trimmedNote = note.trim();
 
   const updated: DocumentRecord = {

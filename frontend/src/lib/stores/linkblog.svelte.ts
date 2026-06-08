@@ -160,7 +160,6 @@ function createLinkblogStore() {
         siteUri: result.publication,
         articleUrl: article.url,
         articleTitle: article.title,
-        excerpt: article.summary,
         publishedAt: article.publishedAt,
         note,
         createdAt: now,
@@ -198,6 +197,10 @@ function createLinkblogStore() {
     if (existing.id !== undefined) {
       await db.linkblogShares.update(existing.id, { note: next });
     }
+    // Keep the user's own linkblog list (and the overlay derived from it) in sync
+    // — without this, a note edited after sharing stays stale on /linkblog until
+    // the next pull replaces the optimistic document.
+    if (existing.recordUri) myLinkblogStore.setNote(existing.recordUri, next ?? '');
 
     try {
       await api.updateLinkblogShareNote(existing.rkey, next ?? '');
@@ -212,6 +215,7 @@ function createLinkblogStore() {
           await db.linkblogShares.update(cur.id, { note: prevNote });
         }
       }
+      if (existing.recordUri) myLinkblogStore.setNote(existing.recordUri, prevNote ?? '');
     }
   }
 

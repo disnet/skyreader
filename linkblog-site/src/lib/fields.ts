@@ -107,15 +107,82 @@ export function linkPostNote(doc: ProxyDocument): string {
   return '';
 }
 
-// A snippet of the shared article itself (its first paragraph or so), stored at
-// share time as the document's `description`. This is the article's words — quote
-// it as the article, distinct from the user's note.
+// A snippet of the shared article itself (its first paragraph or so). LEGACY
+// shares stored it as the document's top-level `description`, rendered as a quote
+// distinct from the note. New shares fold the quote into the editable note instead
+// and leave `description` unset — so a present description marks a legacy record,
+// and we keep rendering its standalone quote for those (see the entry components).
 export function articleExcerpt(doc: ProxyDocument): string {
   return (doc.description || '').trim();
 }
 
+// Escape text for safe interpolation into the HTML we generate in renderBodyHtml.
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Render a link-post note (the user-controlled body) to safe HTML with a HEAVILY
+// restricted Markdown subset: blockquotes only. Everything else is plain text.
+//
+// The body is untrusted PDS content on this public origin, so every character is
+// HTML-escaped first and the ONLY tags emitted are <p>/<blockquote>/<br> that we
+// generate — there's no path for raw HTML (or any other Markdown) to survive.
+// Lines beginning with `>` open or extend a blockquote (consecutive ones fold into
+// one); blank lines separate paragraphs; single newlines become <br>.
+export function renderBodyHtml(body: string): string {
+  const lines = body.replace(/\r\n?/g, '\n').split('\n');
+  const out: string[] = [];
+  let para: string[] = [];
+  let quote: string[] = [];
+
+  const flushPara = () => {
+    if (para.length) {
+      out.push(`<p>${para.map(escapeHtml).join('<br>')}</p>`);
+      para = [];
+    }
+  };
+  const flushQuote = () => {
+    if (quote.length) {
+      out.push(`<blockquote><p>${quote.map(escapeHtml).join('<br>')}</p></blockquote>`);
+      quote = [];
+    }
+  };
+
+  for (const line of lines) {
+    const m = /^[ \t]*>[ \t]?(.*)$/.exec(line);
+    if (m) {
+      flushPara();
+      quote.push(m[1]);
+    } else if (line.trim() === '') {
+      flushPara();
+      flushQuote();
+    } else {
+      flushQuote();
+      para.push(line);
+    }
+  }
+  flushPara();
+  flushQuote();
+  return out.join('');
+}
+
+// The note as plain text (blockquote markers stripped), for meta descriptions and
+// social previews where Markdown syntax would just leak `>` characters.
+export function plainBody(body: string): string {
+  return body
+    .replace(/^[ \t]*>[ \t]?/gm, '')
+    .replace(/\n{2,}/g, ' ')
+    .replace(/\n/g, ' ')
+    .trim();
+}
+
 // Truncate to a max length on a word-ish boundary, preserving any newlines within
-// the kept slice (notes render with white-space: pre-wrap).
+// the kept slice (renderBodyHtml turns them into <br>/paragraph breaks).
 export function clampText(text: string, max: number): string {
   const t = text.trim();
   if (t.length <= max) return t;

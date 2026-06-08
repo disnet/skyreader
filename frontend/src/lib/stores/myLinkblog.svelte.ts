@@ -80,7 +80,6 @@ function createMyLinkblogStore() {
     siteUri: string;
     articleUrl: string;
     articleTitle?: string;
-    excerpt?: string;
     publishedAt?: string;
     note?: string;
     createdAt: string;
@@ -95,7 +94,10 @@ function createMyLinkblogStore() {
       title: input.articleTitle || input.articleUrl,
       publishedAt: input.publishedAt || input.createdAt,
       createdAt: input.createdAt,
-      description: input.excerpt,
+      // New shares carry the quote inside the note (the body), not a top-level
+      // `description` — leaving it unset so this optimistic doc renders exactly
+      // like the pulled one (no standalone legacy quote, just the note body).
+      description: undefined,
       links: [{ uri: input.articleUrl, rel: 'related' }],
       content: note
         ? {
@@ -111,6 +113,47 @@ function createMyLinkblogStore() {
     };
     optimisticUris.add(doc.recordUri);
     documents = [doc, ...documents.filter((d) => getExternalArticleLink(d) !== input.articleUrl)];
+  }
+
+  // Rebuild a document's pub.leaflet body with a new note as the leading text
+  // block, preserving any other blocks (the website link-card). Mirrors the shape
+  // getLinkPostNote reads. Returns undefined when the note is empty AND there are
+  // no other blocks (a bare share).
+  function rebuildContentWithNote(existing: unknown, note: string): unknown {
+    const pages =
+      (existing as { pages?: Array<{ blocks?: Array<{ block?: { $type?: string } }> }> })?.pages ??
+      [];
+    const blocks: Array<{ block: unknown }> = [];
+    if (note) blocks.push({ block: { $type: 'pub.leaflet.blocks.text', plaintext: note } });
+    for (const page of pages) {
+      for (const wrapper of page.blocks ?? []) {
+        // Preserve every non-text block (the website link-card); the note above
+        // replaces the original leading text block.
+        if (wrapper.block && wrapper.block.$type !== 'pub.leaflet.blocks.text') {
+          blocks.push({ block: wrapper.block });
+        }
+      }
+    }
+    if (blocks.length === 0) return undefined;
+    return {
+      $type: 'pub.leaflet.content',
+      pages: [{ $type: 'pub.leaflet.pages.linearDocument', blocks }],
+    };
+  }
+
+  // Update the note on an already-listed document (keyed by record URI), so the
+  // "My Linkblog" page and the cross-device overlay reflect a note edit right
+  // away — the edit paths PATCH the PDS but the pull that would otherwise refresh
+  // this list lags behind. No-op if the document isn't currently listed.
+  function setNote(recordUri: string, note: string) {
+    const idx = documents.findIndex((d) => d.recordUri === recordUri);
+    if (idx === -1) return;
+    const doc = documents[idx];
+    const next: SocialDocument = {
+      ...doc,
+      content: rebuildContentWithNote(doc.content, note.trim()),
+    };
+    documents = [...documents.slice(0, idx), next, ...documents.slice(idx + 1)];
   }
 
   // Drop an optimistic (or loaded) share by the external article URL it points
@@ -165,6 +208,7 @@ function createMyLinkblogStore() {
     publicUrl,
     removeByRecordUri,
     addOptimistic,
+    setNote,
     removeByArticleUrl,
   };
 }

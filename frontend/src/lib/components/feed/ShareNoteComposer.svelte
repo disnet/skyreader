@@ -9,6 +9,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
+  import { formatQuoteSeed } from '$lib/utils/linkPost';
 
   interface Props {
     open: boolean;
@@ -17,6 +18,12 @@
     articleTitle: string;
     /** Hostname of the shared article, shown as quiet context. */
     articleHost?: string;
+    /**
+     * The article's excerpt. When present, the note is seeded with it as an
+     * editable Markdown quote (`> …`) the user can keep, modify, or delete
+     * before posting. Their own commentary goes below it.
+     */
+    quote?: string;
     /** Quiet one-line hint under the field. Defaults to the linkblog-share copy. */
     hintText?: string;
     /** Called with the trimmed note (undefined when left empty = bare share). */
@@ -29,6 +36,7 @@
     anchorEl,
     articleTitle,
     articleHost,
+    quote,
     hintText = 'Posts to your linkblog.',
     onsubmit,
     onclose,
@@ -38,13 +46,19 @@
   let popoverEl = $state<HTMLDivElement | null>(null);
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
 
-  // Reset + focus each time the composer opens.
+  // Seed (with the editable quote) + focus each time the composer opens. The
+  // cursor lands after the quote so the user types their note beneath it.
   $effect(() => {
     if (open) {
-      note = '';
+      const seed = formatQuoteSeed(quote);
+      note = seed ? `${seed}\n\n` : '';
       requestAnimationFrame(() => {
         positionPopover();
-        textareaEl?.focus();
+        const el = textareaEl;
+        if (!el) return;
+        el.focus();
+        const end = el.value.length;
+        el.setSelectionRange(end, end);
       });
     }
   });

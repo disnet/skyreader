@@ -54,3 +54,49 @@ export function getLinkPostNote(doc: SocialDocument): string | undefined {
   }
   return undefined;
 }
+
+/** The seeded quote is capped so it reads as a quotable snippet, not the whole
+ *  article — the user can always trim it further before posting. */
+const QUOTE_SEED_MAX_CHARS = 500;
+
+const NAMED_ENTITIES: Record<string, string> = {
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#39;': "'",
+  '&apos;': "'",
+  '&nbsp;': ' ',
+};
+
+/**
+ * Format an article excerpt as a one-line Markdown blockquote (`> …`), ready to
+ * seed a share composer. Strips any HTML the excerpt carries, decodes the common
+ * entities, collapses whitespace to a clean snippet, and caps the length.
+ * Returns undefined when there's no usable excerpt (so callers can fall back to
+ * a bare, quote-less share).
+ */
+export function formatQuoteSeed(excerpt: string | null | undefined): string | undefined {
+  if (!excerpt) return undefined;
+  const text = excerpt
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&amp;|&lt;|&gt;|&quot;|&#39;|&apos;|&nbsp;/g, (m) => NAMED_ENTITIES[m] ?? m)
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return undefined;
+  const snippet =
+    text.length > QUOTE_SEED_MAX_CHARS
+      ? text.slice(0, QUOTE_SEED_MAX_CHARS - 1).trimEnd() + '…'
+      : text;
+  return `> ${snippet}`;
+}
+
+/**
+ * Whether a note already carries a Markdown blockquote (a line starting with
+ * `>`). When it does, the note itself renders the quote, so the card suppresses
+ * the standalone excerpt blockquote to avoid showing the quote twice. Legacy
+ * notes (commentary only) have none, and keep their separate excerpt quote.
+ */
+export function noteHasBlockquote(note: string | null | undefined): boolean {
+  return note ? /^[ \t]*>/m.test(note) : false;
+}
