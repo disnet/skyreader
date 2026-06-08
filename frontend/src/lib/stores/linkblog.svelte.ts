@@ -15,6 +15,7 @@ import { api } from '$lib/services/api';
 import { db } from '$lib/services/db';
 import { safeAdd } from '$lib/services/safeDb.svelte';
 import { generateTid } from '$lib/utils/tid';
+import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
 import type { Article, LinkblogShare } from '$lib/types';
 
 function createLinkblogStore() {
@@ -86,6 +87,18 @@ function createLinkblogStore() {
           await db.linkblogShares.update(stored.id, { recordUri: result.uri });
         }
       }
+      // Surface the share on the user's own linkblog right away, ahead of the
+      // pull path's indexing lag (the "it wasn't there yet" gap).
+      myLinkblogStore.addOptimistic({
+        recordUri: result.uri,
+        siteUri: result.publication,
+        articleUrl: article.url,
+        articleTitle: article.title,
+        excerpt: article.summary,
+        publishedAt: article.publishedAt,
+        note,
+        createdAt: now,
+      });
     } catch (e) {
       // Roll back the optimistic insert — the share didn't land.
       console.error('Failed to write linkblog share:', e);
@@ -95,6 +108,7 @@ function createLinkblogStore() {
       if (stored?.id !== undefined) {
         await db.linkblogShares.delete(stored.id);
       }
+      myLinkblogStore.removeByArticleUrl(article.url);
       // Already handled: optimistic state rolled back, and a scope-upgrade
       // failure surfaces the global "log in again" banner via the api client.
       // Don't rethrow — this runs from an onclick handler.
@@ -145,6 +159,7 @@ function createLinkblogStore() {
     if (existing.id !== undefined) {
       await db.linkblogShares.delete(existing.id);
     }
+    myLinkblogStore.removeByArticleUrl(articleUrl);
 
     try {
       await api.deleteLinkblogShare(existing.rkey);
@@ -156,7 +171,8 @@ function createLinkblogStore() {
       const id = await safeAdd(db.linkblogShares, restored);
       shares.set(articleUrl, id !== undefined ? { ...restored, id } : restored);
       shares = new Map(shares);
-      // Not rethrown — restored optimistically; see note in shareLink.
+      // The pull path will re-surface the still-present PDS document on the next
+      // linkblog load; no optimistic re-insert needed here.
     }
   }
 

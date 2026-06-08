@@ -9,6 +9,7 @@
 
 import { api } from '$lib/services/api';
 import { auth } from '$lib/stores/auth.svelte';
+import { getExternalArticleLink } from '$lib/utils/linkPost';
 import type { LinkblogPublication, SocialDocument } from '$lib/types';
 
 const PUBLICATION_COLLECTION = 'site.standard.publication';
@@ -24,6 +25,10 @@ function createMyLinkblogStore() {
   let loading = $state(false);
   let loaded = $state(false);
   let error = $state<string | null>(null);
+  // recordUris of locally-inserted optimistic shares the pull path hasn't
+  // surfaced yet. Kept across loads (the proxy lags the PDS write by an indexing
+  // round-trip) and retired once the real document arrives.
+  let optimisticUris = new Set<string>();
 
   async function load(force = false) {
     if ((loaded || loading) && !force) return;
@@ -39,7 +44,16 @@ function createMyLinkblogStore() {
       ]);
       publication = pub;
       const author = batch.authors[0];
-      documents = author?.status === 'ready' ? author.documents : [];
+      const fetched = author?.status === 'ready' ? author.documents : [];
+      // Carry forward optimistic shares the pull path hasn't indexed yet, deduped
+      // by external article link, so a just-shared link doesn't vanish on the
+      // first load of the linkblog view. Retire ones that have now arrived.
+      const fetchedLinks = new Set(fetched.map((d) => getExternalArticleLink(d)).filter(Boolean));
+      const stillPending = documents.filter(
+        (d) => optimisticUris.has(d.recordUri) && !fetchedLinks.has(getExternalArticleLink(d))
+      );
+      optimisticUris = new Set(stillPending.map((d) => d.recordUri));
+      documents = [...stillPending, ...fetched];
       if (author?.status === 'error') {
         error = author.error ?? 'Could not load your linkblog.';
       }
@@ -49,6 +63,57 @@ function createMyLinkblogStore() {
     } finally {
       loading = false;
     }
+  }
+
+  // Front-insert a just-shared link so it shows on the user's own linkblog
+  // immediately, ahead of the PDS → indexer → proxy round-trip. Built to match
+  // what the link-post card reads: the external URL in `links`, the note as the
+  // leading leaflet text block. Deduped by article URL.
+  function addOptimistic(input: {
+    recordUri: string;
+    siteUri: string;
+    articleUrl: string;
+    articleTitle?: string;
+    excerpt?: string;
+    publishedAt?: string;
+    note?: string;
+    createdAt: string;
+  }) {
+    const did = auth.user?.did;
+    if (!did) return;
+    const note = input.note?.trim();
+    const doc: SocialDocument = {
+      authorDid: did,
+      recordUri: input.recordUri,
+      siteUri: input.siteUri,
+      title: input.articleTitle || input.articleUrl,
+      publishedAt: input.publishedAt || input.createdAt,
+      createdAt: input.createdAt,
+      description: input.excerpt,
+      links: [{ uri: input.articleUrl, rel: 'related' }],
+      content: note
+        ? {
+            $type: 'pub.leaflet.content',
+            pages: [
+              {
+                $type: 'pub.leaflet.pages.linearDocument',
+                blocks: [{ block: { $type: 'pub.leaflet.blocks.text', plaintext: note } }],
+              },
+            ],
+          }
+        : undefined,
+    };
+    optimisticUris.add(doc.recordUri);
+    documents = [doc, ...documents.filter((d) => getExternalArticleLink(d) !== input.articleUrl)];
+  }
+
+  // Drop an optimistic (or loaded) share by the external article URL it points
+  // at — used to keep the view in sync when a share is undone.
+  function removeByArticleUrl(articleUrl: string) {
+    documents = documents.filter((d) => getExternalArticleLink(d) !== articleUrl);
+    optimisticUris = new Set(
+      [...optimisticUris].filter((uri) => documents.some((d) => d.recordUri === uri))
+    );
   }
 
   // The public, logged-out page for this linkblog. The publication's canonical
@@ -90,6 +155,8 @@ function createMyLinkblogStore() {
     load,
     publicUrl,
     removeByRecordUri,
+    addOptimistic,
+    removeByArticleUrl,
   };
 }
 
