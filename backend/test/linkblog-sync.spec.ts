@@ -35,18 +35,21 @@ describe('buildLinkblogDocument', () => {
     expect(doc.links).toEqual([{ uri: 'https://example.com/the-article', rel: 'related' }]);
   });
 
-  it('stores the excerpt as durable fallback copy', () => {
-    expect(doc.description).toBe('A generous first-paragraph excerpt.');
+  it('reserves the top-level description (the legacy-quote marker) and keeps the excerpt durable', () => {
+    // The quote now lives inside the editable note, so new records leave the
+    // top-level `description` unset — its presence marks a legacy record. The
+    // excerpt stays durable in `textContent` (search) and on the website card.
+    expect(doc.description).toBeUndefined();
     expect(doc.textContent).toContain('Worth reading.');
     expect(doc.textContent).toContain('A generous first-paragraph excerpt.');
   });
 
-  it('builds a pub.leaflet body with a note text block and a website link-card', () => {
+  it('builds a pub.leaflet body with a note text block and a website link-card carrying the excerpt', () => {
     const content = doc.content as {
       $type: string;
       pages: Array<{
         blocks: Array<{
-          block: { $type: string; url?: string; plaintext?: string };
+          block: { $type: string; url?: string; plaintext?: string; description?: string };
         }>;
       }>;
     };
@@ -56,6 +59,8 @@ describe('buildLinkblogDocument', () => {
     const website = blocks.find((b) => b.$type === 'pub.leaflet.blocks.website');
     expect(text?.plaintext).toBe('Worth reading.');
     expect(website?.url).toBe('https://example.com/the-article');
+    // The website card is the excerpt's durable home now that `description` is reserved.
+    expect(website?.description).toBe('A generous first-paragraph excerpt.');
   });
 
   it('falls back to the URL as title and omits empty note block', () => {

@@ -572,6 +572,7 @@
       anchorEl={shareAnchorEl}
       articleTitle={shareComposerTitle}
       articleHost={shareComposerHost}
+      quote={shareArticle?.summary}
       onsubmit={handleShareSubmit}
       onclose={() => (shareComposerOpen = false)}
     />

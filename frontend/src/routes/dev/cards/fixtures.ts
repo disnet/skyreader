@@ -482,6 +482,34 @@ export const fixtures: CardFixture[] = [
     },
   },
   {
+    name: 'Link post · in-note quote',
+    note: 'The new model: the article quote lives inside the note as a Markdown blockquote (seeded at share time, editable). No separate excerpt quote — the note owns the body.',
+    props: {
+      ...base,
+      itemTitle: 'The Web We Lost',
+      isDocumentMode: true,
+      isLinkPostMode: true,
+      selected: true,
+      isOpen: true,
+      displayFeedTitle: 'anildash.com',
+      feedTitle: undefined,
+      authorDid: 'did:plc:carol',
+      authorHandle: 'carol.bsky.social',
+      authorDisplayName: 'Carol Reads',
+      authorAvatar: BLUESKY_FAVICON,
+      // What marked() produces for: "Still the clearest essay on what we traded
+      // away for scale.\n\n> The tools we used to build the social web were open,
+      // and the data was ours."
+      linkPostNoteHtml:
+        '<p>Still the clearest essay on what we traded away for scale.</p>\n<blockquote>\n<p>The tools we used to build the social web were open, and the data was ours. Here is what changed, and why it matters more than ever.</p>\n</blockquote>',
+      linkPostExcerpt: undefined,
+      showActionBarIntegrations: true,
+      hasSaveToSemble: true,
+      hasSaveToMargin: true,
+      laneRow: [],
+    },
+  },
+  {
     name: 'Document',
     note: 'A published standard.site document. Fresh — no mentions yet, so only Bluesky anchors the panel ("Add yours"); the Discussion button still shows.',
     props: {

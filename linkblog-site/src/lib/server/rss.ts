@@ -10,6 +10,7 @@ import {
   feedUrlFor,
   hostnameOf,
   linkPostNote,
+  renderBodyHtml,
   rkeyFromUri,
   safeHttpUrl,
 } from '$lib/fields';
@@ -62,7 +63,10 @@ function entryHtml(doc: ProxyDocument, permalink: string): string {
   const host = hostnameOf(articleUrl ?? undefined);
 
   const parts: string[] = [];
-  if (note) parts.push(`<p>${escapeHtml(note)}</p>`);
+  // The note is the user-controlled body — restricted Markdown (blockquotes only),
+  // already escaped to safe HTML by renderBodyHtml.
+  if (note) parts.push(renderBodyHtml(note));
+  // Legacy records still carry a separate top-level excerpt; render it as before.
   if (excerpt && excerpt !== note) parts.push(`<blockquote>${escapeHtml(excerpt)}</blockquote>`);
   if (articleUrl) {
     parts.push(

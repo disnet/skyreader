@@ -10,6 +10,8 @@
     formatDate,
     hostnameOf,
     linkPostNote,
+    plainBody,
+    renderBodyHtml,
     rkeyFromUri,
     safeHttpUrl,
     socialCountsText,
@@ -35,7 +37,7 @@
   const pageUrl = $derived(entryUrlFor(data.origin, data.did, rkey));
   const feedUrl = $derived(feedUrlFor(data.origin, data.did));
   const icon = $derived(safeHttpUrl(data.pub?.icon || data.profile?.avatar));
-  const summary = $derived((note || excerpt).slice(0, 280));
+  const summary = $derived(plainBody(note || excerpt).slice(0, 280));
 </script>
 
 <svelte:head>
@@ -57,9 +59,14 @@
   </h1>
   <Meta {host} {date} {social} />
   {#if note}
-    <p class="entry-note-lg">{note}</p>
+    <!-- The user-controlled body: restricted Markdown (blockquotes only), rendered
+         to escaped, self-generated HTML (see renderBodyHtml). -->
+    <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+    <div class="entry-note-lg">{@html renderBodyHtml(note)}</div>
   {/if}
   {#if excerpt && excerpt !== note}
+    <!-- Legacy standalone quote: only records that predate the in-note quote still
+         carry a top-level description. -->
     <blockquote class="entry-quote"><p>{clampText(excerpt, 600)}</p></blockquote>
   {/if}
   {#if articleUrl}

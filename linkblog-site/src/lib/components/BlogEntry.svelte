@@ -7,6 +7,7 @@
     formatDate,
     hostnameOf,
     linkPostNote,
+    renderBodyHtml,
     rkeyFromUri,
     safeHttpUrl,
     socialCountsText,
@@ -52,9 +53,12 @@
     {/if}
   </h2>
   {#if note}
-    <p class="entry-note">{clampText(note, 280)}</p>
+    <!-- Restricted Markdown (blockquotes only); the clamp keeps the preview short. -->
+    <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+    <div class="entry-note">{@html renderBodyHtml(clampText(note, 280))}</div>
   {/if}
   {#if excerpt && excerpt !== note}
+    <!-- Legacy standalone quote (records predating the in-note quote). -->
     <blockquote class="entry-quote"><p>{clampText(excerpt, 200)}</p></blockquote>
   {/if}
   <Meta {host} {date} {permalink} {social} />
