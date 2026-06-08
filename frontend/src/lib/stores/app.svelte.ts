@@ -1,6 +1,7 @@
 import { liveDb } from '$lib/services/liveDb.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
 import { linkblogStore } from './linkblog.svelte';
+import { myLinkblogStore } from './myLinkblog.svelte';
 import { socialStore } from './social.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
 import { feedStatusStore } from './feedStatus.svelte';
@@ -130,6 +131,9 @@ function createAppManager() {
         itemLabelsStore.load(),
         socialStore.loadFeed(true),
         filteredViewsStore.syncWithBackend(),
+        // Pull the user's own linkblog so share-state reconciles across devices.
+        // Forced each refresh so a share made elsewhere lights up the button here.
+        myLinkblogStore.load(true),
       ]);
 
       // One-time migration: push existing local custom fields to backend

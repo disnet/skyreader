@@ -1,4 +1,4 @@
-// Linkblog write path (Phase 1).
+// Linkblog write path + cross-device reconciliation.
 //
 // Sharing an article writes a site.standard.document to the user's portable
 // `skyreader-links` publication (backend: /api/linkblog/share). This store keeps
@@ -6,22 +6,39 @@
 // article URL — so the share button reflects shared state and supports
 // un-sharing. State is persisted to IndexedDB so it survives reloads.
 //
-// In Phase 1 the in-app feed doesn't yet read these documents back (that's
-// Phase 2's pull-model work), so this local set is the source of truth for the
-// button. It can drift if the user shares from another device; Phase 2 adds
-// authoritative reconciliation once the proxy surfaces the document `links`.
+// The local set alone is device-scoped: a share made on another device wouldn't
+// light up here. So shared-state is the UNION of the local set and an
+// authoritative overlay derived from the user's own pulled linkblog documents
+// (`myLinkblogStore`, which now surfaces each link post's external `links`). The
+// overlay rebuilds from the server on every linkblog load, so a share made — or
+// undone — elsewhere reconciles in. Local mutations that need an rkey to act on
+// (note edit, un-share) first materialize the overlay entry into the local set.
 
 import { api } from '$lib/services/api';
 import { db } from '$lib/services/db';
 import { safeAdd } from '$lib/services/safeDb.svelte';
 import { generateTid } from '$lib/utils/tid';
 import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
+import { getExternalArticleLink, getLinkPostNote } from '$lib/utils/linkPost';
 import type { Article, LinkblogShare } from '$lib/types';
 
 function createLinkblogStore() {
   // Keyed by external article URL (the linkblog dedup key).
   let shares = $state<Map<string, LinkblogShare>>(new Map());
   let hasLoaded = false;
+
+  // Authoritative cross-device overlay: the user's own link posts pulled from the
+  // proxy, keyed by the external article URL. Rebuilds whenever myLinkblogStore's
+  // documents change, so it reflects shares made on any device.
+  const serverShares = $derived.by(() => {
+    const map = new Map<string, { recordUri: string; note?: string; title?: string }>();
+    for (const doc of myLinkblogStore.documents) {
+      const url = getExternalArticleLink(doc);
+      if (url)
+        map.set(url, { recordUri: doc.recordUri, note: getLinkPostNote(doc), title: doc.title });
+    }
+    return map;
+  });
 
   async function load() {
     if (hasLoaded) return;
@@ -35,11 +52,37 @@ function createLinkblogStore() {
   }
 
   function isShared(articleUrl: string): boolean {
-    return shares.has(articleUrl);
+    return shares.has(articleUrl) || serverShares.has(articleUrl);
   }
 
   function getNote(articleUrl: string): string | undefined {
-    return shares.get(articleUrl)?.note;
+    // Local note wins (it carries this device's just-made edits); fall back to the
+    // authoritative overlay for shares made elsewhere.
+    return shares.get(articleUrl)?.note ?? serverShares.get(articleUrl)?.note;
+  }
+
+  // Hydrate a local share entry from the authoritative overlay so device-local
+  // mutations have an rkey/recordUri to act on. Needed when the share was made on
+  // another device and only exists in the pulled documents. Idempotent.
+  async function materializeFromOverlay(articleUrl: string): Promise<LinkblogShare | undefined> {
+    const existing = shares.get(articleUrl);
+    if (existing) return existing;
+    const server = serverShares.get(articleUrl);
+    const rkey = server?.recordUri.split('/').pop();
+    if (!server || !rkey) return undefined;
+    const entry: LinkblogShare = {
+      rkey,
+      recordUri: server.recordUri,
+      articleUrl,
+      articleTitle: server.title,
+      note: server.note,
+      createdAt: new Date().toISOString(),
+    };
+    const id = await safeAdd(db.linkblogShares, entry);
+    const stored = id !== undefined ? { ...entry, id } : entry;
+    shares.set(articleUrl, stored);
+    shares = new Map(shares);
+    return stored;
   }
 
   // Share an article to the linkblog. Optimistically marks it shared, writes the
@@ -47,7 +90,9 @@ function createLinkblogStore() {
   // Pass `repostUri` (an at:// link post URI) to make this a quote-reshare — the
   // entry still lives in the user's own linkblog, keyed by the article URL.
   async function shareLink(article: Article, note?: string, repostUri?: string) {
-    if (!article.url || shares.has(article.url)) return;
+    // Guard against both a local duplicate and one already shared on another
+    // device (surfaced via the overlay) — re-sharing would create a second copy.
+    if (!article.url || shares.has(article.url) || serverShares.has(article.url)) return;
 
     const rkey = generateTid();
     const now = new Date().toISOString();
@@ -117,9 +162,9 @@ function createLinkblogStore() {
 
   // Set (or clear, with '') the note on an already-shared article. Optimistically
   // updates local state + cache, PATCHes the PDS document, and rolls back on
-  // failure. No-op if the article isn't shared yet.
+  // failure. No-op if the article isn't shared yet (locally or on another device).
   async function setNote(articleUrl: string, note: string) {
-    const existing = shares.get(articleUrl);
+    const existing = await materializeFromOverlay(articleUrl);
     if (!existing) return;
 
     const next = note.trim() || undefined;
@@ -150,7 +195,8 @@ function createLinkblogStore() {
   }
 
   async function unshare(articleUrl: string) {
-    const existing = shares.get(articleUrl);
+    // Materialize a cross-device share so we have its rkey to delete.
+    const existing = await materializeFromOverlay(articleUrl);
     if (!existing) return;
 
     // Optimistic remove
