@@ -275,6 +275,21 @@ describe('POST /documents', () => {
     expect(all.authors[0].documents.map((d) => d.title)).toEqual(['Freestanding', 'C', 'A']);
   });
 
+  it('marks the result complete when the author is under the per-author cap', async () => {
+    const { app } = createTestApp();
+    fetchMock = mockAtprotoFetch({
+      docs: [docRecord('a', { site: PUB_URI, title: 'A', publishedAt: '2024-01-01T00:00:00Z' })],
+    });
+
+    const json = (await (await postDocuments(app, [{ did: AUTHOR, siteUri: PUB_URI }])).json()) as {
+      authors: Array<{ status: string; complete?: boolean }>;
+    };
+    // A small set fit under the cap → the whole document set was returned, so a
+    // client may treat any locally-known-but-absent share as deleted.
+    expect(json.authors[0].status).toBe('ready');
+    expect(json.authors[0].complete).toBe(true);
+  });
+
   it('serves a second request from cache (single upstream fetch round)', async () => {
     const { app } = createTestApp();
     fetchMock = mockAtprotoFetch({

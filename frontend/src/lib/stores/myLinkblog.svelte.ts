@@ -25,6 +25,10 @@ function createMyLinkblogStore() {
   let loading = $state(false);
   let loaded = $state(false);
   let error = $state<string | null>(null);
+  // Whether the last successful pull returned the user's COMPLETE document set
+  // (fit under the proxy's per-author cap). When true, a share absent from the
+  // pull was deleted — not merely beyond the cap — so consumers can safely prune.
+  let lastPullComplete = $state(false);
   // recordUris of locally-inserted optimistic shares the pull path hasn't
   // surfaced yet. Kept across loads (the proxy lags the PDS write by an indexing
   // round-trip) and retired once the real document arrives.
@@ -54,12 +58,14 @@ function createMyLinkblogStore() {
       );
       optimisticUris = new Set(stillPending.map((d) => d.recordUri));
       documents = [...stillPending, ...fetched];
+      lastPullComplete = author?.status === 'ready' && author.complete === true;
       if (author?.status === 'error') {
         error = author.error ?? 'Could not load your linkblog.';
       }
       loaded = true;
     } catch (e) {
       error = e instanceof Error ? e.message : 'Could not load your linkblog.';
+      lastPullComplete = false;
     } finally {
       loading = false;
     }
@@ -151,6 +157,9 @@ function createMyLinkblogStore() {
     },
     get error() {
       return error;
+    },
+    get lastPullComplete() {
+      return lastPullComplete;
     },
     load,
     publicUrl,

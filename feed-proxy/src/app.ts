@@ -7,6 +7,7 @@ import {
   fetchDocumentsForAuthor,
   filterByPublication,
   filterSinceUris,
+  MAX_DOCUMENTS_PER_AUTHOR,
   type ProxyDocument,
 } from './standard-site';
 import type { FirehoseStatus } from './jetstream';
@@ -1650,6 +1651,9 @@ export function createApp(db: Database, config: AppConfig) {
       error?: string;
       errorCount?: number;
       nextRetryAt?: number;
+      // True when `documents` is the author's complete set (under the per-author
+      // cap), so a client can treat an absent record as deleted, not just capped.
+      complete?: boolean;
     }
 
     const results: DocumentResult[] = await Promise.all(
@@ -1729,7 +1733,18 @@ export function createApp(db: Database, config: AppConfig) {
         const scoped = filterByPublication(documents, siteUri);
         const trimmed = filterSinceUris(scoped, new Set(entry.since_uris || []));
 
-        return { did, siteUri, documents: trimmed, status: 'ready' };
+        // `complete`: the author's full document list fit under the per-author
+        // cap, so this is the WHOLE set (the firehose splice also trims to the
+        // cap, so length < cap reliably means nothing was dropped). Computed on
+        // the pre-filter list so it's meaningful even after publication scoping.
+        // Lets a client treat an absent record as deleted rather than just capped.
+        return {
+          did,
+          siteUri,
+          documents: trimmed,
+          status: 'ready',
+          complete: documents.length < MAX_DOCUMENTS_PER_AUTHOR,
+        };
       })
     );
 

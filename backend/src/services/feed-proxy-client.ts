@@ -90,6 +90,10 @@ export interface ProxyDocumentEntry {
   error?: string;
   errorCount?: number;
   nextRetryAt?: number;
+  // True when `documents` is the author's complete document set (fit under the
+  // proxy's per-author cap), so an absent record can be treated as deleted rather
+  // than merely beyond the cap. Absent/false → set may be truncated.
+  complete?: boolean;
 }
 
 interface RawDocumentBatchResponse {

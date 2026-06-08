@@ -61,6 +61,27 @@ function createLinkblogStore() {
     return shares.get(articleUrl)?.note ?? serverShares.get(articleUrl)?.note;
   }
 
+  // Prune local shares that the authoritative pull says no longer exist — the
+  // cross-device "deleted" signal. Only runs when the pull was COMPLETE (the
+  // user's whole document set fit under the proxy cap), so an absent record means
+  // deleted, not merely beyond the cap. Scoped to CONFIRMED shares (those with a
+  // recordUri): a local-only optimistic share still in flight has no server
+  // identity yet and must not be pruned.
+  async function reconcile() {
+    if (!myLinkblogStore.lastPullComplete) return;
+    const live = serverShares;
+    const stale: LinkblogShare[] = [];
+    for (const entry of shares.values()) {
+      if (entry.recordUri && !live.has(entry.articleUrl)) stale.push(entry);
+    }
+    if (stale.length === 0) return;
+    for (const entry of stale) {
+      shares.delete(entry.articleUrl);
+      if (entry.id !== undefined) await db.linkblogShares.delete(entry.id);
+    }
+    shares = new Map(shares);
+  }
+
   // Hydrate a local share entry from the authoritative overlay so device-local
   // mutations have an rkey/recordUri to act on. Needed when the share was made on
   // another device and only exists in the pulled documents. Idempotent.
@@ -224,6 +245,7 @@ function createLinkblogStore() {
 
   return {
     load,
+    reconcile,
     isShared,
     getNote,
     shareLink,
