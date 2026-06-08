@@ -16,7 +16,12 @@ const HTML_ENTITY_PATTERNS: Array<[RegExp, string]> = [
 const NUMERIC_ENTITY_PATTERN = /&#(\d+);/g;
 const HEX_ENTITY_PATTERN = /&#x([0-9a-f]+);/gi;
 
-const MAX_ITEMS_TO_PARSE = 30;
+// Cap on items extracted per parse. Sized above DEFAULT_LIMIT (100) so a feed's
+// first observation seeds up to 100 items of history, and below the per-feed
+// retention cap (feed_items K=200) so retention still accumulates across parses.
+// Widening this widens the no-miss invariant: no item is missed as long as the
+// source publishes <= MAX_ITEMS_TO_PARSE items per warm-refresh interval.
+const MAX_ITEMS_TO_PARSE = 100;
 
 const parser = new XMLParser({
   ignoreAttributes: false,

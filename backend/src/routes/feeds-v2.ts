@@ -16,6 +16,9 @@ interface V2FeedResponse {
   imageUrl?: string;
   items: FeedItem[];
   fetchedAt: number;
+  cursor?: number;
+  generation?: string;
+  hasMore?: boolean;
 }
 
 interface V2BatchFeedResult {
@@ -29,6 +32,12 @@ interface V2BatchFeedResult {
   errorCount?: number;
   nextRetryAt?: number;
   lastFetchedAt?: number;
+  // Durable-log cursor contract, threaded straight from the proxy. The client
+  // stores cursor+generation per subscription and sends since_seq back; hasMore
+  // drives its drain loop. (See RETENTION_SYNC_PLAN.md.)
+  cursor?: number;
+  generation?: string;
+  hasMore?: boolean;
 }
 
 interface V2BatchResponse {
@@ -53,6 +62,8 @@ export async function handleV2FeedFetch(request: Request, env: Env): Promise<Res
   const url = new URL(request.url);
   const feedUrl = url.searchParams.get('url');
   const sinceGuidsParam = url.searchParams.get('since_guids');
+  const sinceSeqParam = url.searchParams.get('since_seq');
+  const generationParam = url.searchParams.get('generation');
   const limitParam = url.searchParams.get('limit');
 
   if (!feedUrl) {
@@ -74,10 +85,15 @@ export async function handleV2FeedFetch(request: Request, env: Env): Promise<Res
 
   const sinceGuids = sinceGuidsParam ? sinceGuidsParam.split(',').filter(Boolean) : undefined;
   const limit = limitParam ? parseInt(limitParam, 10) : undefined;
+  const sinceSeq =
+    sinceSeqParam !== null && Number.isInteger(Number(sinceSeqParam))
+      ? Number(sinceSeqParam)
+      : undefined;
+  const generation = generationParam ?? undefined;
 
   try {
     const client = new FeedProxyClient(env);
-    const feed = await client.fetchFeed(feedUrl, sinceGuids, limit);
+    const feed = await client.fetchFeed(feedUrl, sinceGuids, limit, sinceSeq, generation);
 
     const response: V2FeedResponse = {
       title: feed.title,
@@ -86,6 +102,9 @@ export async function handleV2FeedFetch(request: Request, env: Env): Promise<Res
       imageUrl: feed.imageUrl,
       items: feed.items,
       fetchedAt: feed.fetchedAt,
+      cursor: feed.cursor,
+      generation: feed.generation,
+      hasMore: feed.hasMore,
     };
 
     return new Response(JSON.stringify(response), {
@@ -150,6 +169,8 @@ export async function handleV2BatchFeedFetch(
     feeds?: Array<{
       url: string;
       since_guids?: string[];
+      since_seq?: number;
+      generation?: string;
       limit?: number;
     }>;
   };
@@ -229,6 +250,9 @@ export async function handleV2BatchFeedFetch(
           errorCount: proxyFeed.errorCount,
           nextRetryAt: proxyFeed.nextRetryAt,
           lastFetchedAt: proxyFeed.lastFetchedAt,
+          cursor: proxyFeed.cursor,
+          generation: proxyFeed.generation,
+          hasMore: proxyFeed.hasMore,
         };
       } else {
         responseFeeds[feed.url] = {

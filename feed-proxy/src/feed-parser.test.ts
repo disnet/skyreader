@@ -482,9 +482,9 @@ describe('parseFeed', () => {
   });
 
   describe('item limits', () => {
-    it('limits items to MAX_ITEMS_TO_PARSE (30)', () => {
+    it('limits items to MAX_ITEMS_TO_PARSE (100)', () => {
       const items = Array.from(
-        { length: 50 },
+        { length: 120 },
         (_, i) => `
         <item>
           <title>Post ${i + 1}</title>
@@ -505,9 +505,9 @@ describe('parseFeed', () => {
 
       const result = parseFeed(rss, 'https://example.com/feed.xml');
 
-      expect(result.items).toHaveLength(30);
+      expect(result.items).toHaveLength(100);
       expect(result.items[0].title).toBe('Post 1');
-      expect(result.items[29].title).toBe('Post 30');
+      expect(result.items[99].title).toBe('Post 100');
     });
   });
 });

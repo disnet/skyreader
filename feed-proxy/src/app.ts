@@ -314,6 +314,198 @@ export function parseSinceGuids(param: string | undefined): Set<string> {
   );
 }
 
+// Parse a client cursor (`since_seq`). Returns undefined for absent/garbage so
+// the caller falls through to the since_guids/cold-start path. Accepts 0 (a valid
+// "drain from the very beginning" cursor).
+export function parseSinceSeq(param: string | number | undefined): number | undefined {
+  if (param === undefined || param === null || param === '') return undefined;
+  const n = typeof param === 'number' ? param : parseInt(param, 10);
+  return Number.isInteger(n) && n >= 0 ? n : undefined;
+}
+
+// --- Durable item log: read/write helpers ------------------------------------
+
+// Per-feed retention cap (the hard bound on growth). Total storage <= K × active
+// feeds. Sized above MAX_ITEMS_TO_PARSE (100) so retention accumulates across
+// parses, and it also defuses GUID-mutating feeds (they churn within budget).
+export const FEED_ITEMS_CAP = 200;
+
+// Stable hash of an item's mutable content, used to detect edits without
+// re-delivering. Always populated on insert — a NULL content_hash would make the
+// edit-in-place predicate (`<>`, NULL-unsafe) silently never match.
+export function itemContentHash(item: FeedItem): string {
+  const hasher = new Bun.CryptoHasher('sha256');
+  hasher.update(`${item.title}|${item.url}|${item.content ?? ''}|${item.summary ?? ''}`);
+  return hasher.digest('hex').slice(0, 16);
+}
+
+// Persist a parse's items into the durable log, then enforce the per-feed cap.
+// Feeds are newest-first, so insert oldest→newest to keep seq order aligned with
+// feed order. A re-seen GUID updates item_json/content_hash in place (seq
+// unchanged → not re-delivered); an unchanged GUID is a no-op.
+export function writeFeedItems(
+  db: Database,
+  urlHash: string,
+  items: FeedItem[],
+  now: number
+): void {
+  if (items.length === 0) return;
+
+  const insert = db.query(
+    `INSERT INTO feed_items (url_hash, guid, item_json, published_at, first_seen_at, content_hash)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(url_hash, guid) DO UPDATE SET
+			 item_json    = excluded.item_json,
+			 content_hash = excluded.content_hash
+		 WHERE feed_items.content_hash <> excluded.content_hash`
+  );
+
+  // One transaction for the whole parse (up to MAX_ITEMS_TO_PARSE inserts + the cap
+  // delete) instead of an implicit commit per statement — a single fsync rather
+  // than ~100 every warm-refresh per feed. Single-writer SQLite makes it safe.
+  const writeBatch = db.transaction(() => {
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i];
+      const ms = new Date(item.publishedAt).getTime();
+      insert.run(
+        urlHash,
+        item.guid,
+        JSON.stringify(item),
+        Number.isNaN(ms) ? null : ms,
+        now,
+        itemContentHash(item)
+      );
+    }
+
+    // Cheaper-than-anti-join cap: compute the (K+1)-th-newest seq once, range-delete
+    // below it. The OFFSET subquery yields nothing when the feed has <= K rows, so
+    // `seq <= NULL` matches nothing — a no-op.
+    db.run(
+      `DELETE FROM feed_items
+			 WHERE url_hash = ?
+				 AND seq <= (SELECT seq FROM feed_items WHERE url_hash = ? ORDER BY seq DESC LIMIT 1 OFFSET ?)`,
+      [urlHash, urlHash, FEED_ITEMS_CAP]
+    );
+  });
+
+  writeBatch();
+}
+
+export interface FeedItemsQuery {
+  // The live DB generation. Compared against the client's stored generation; a
+  // mismatch (or an absent client generation) forces a cold start.
+  generation: string;
+  clientGeneration?: string;
+  // Client cursor for the incremental "catch everything since last visit" path.
+  sinceSeq?: number;
+  // Compat / migration path: the client's newest GUIDs (resolved to a boundary
+  // seq) when it has no cursor yet.
+  sinceGuids?: Set<string>;
+  limit: number;
+}
+
+export interface FeedItemsResult {
+  items: FeedItem[];
+  // Max seq the client has now seen for this feed — it stores this and sends it
+  // back as since_seq. Derived from the returned rows (never a separate MAX(seq),
+  // which would race the warm loop and skip rows permanently). `null` signals the
+  // result did NOT come from the durable log (blob fallback, see readFeedItems):
+  // the caller must then omit cursor+generation so the client stays on the
+  // since_guids path rather than storing a bogus cursor.
+  cursor: number | null;
+  hasMore: boolean;
+}
+
+// Read the durable log for one feed. Implements the three cases from the plan:
+// incremental (drain oldest-unseen first), since_guids compat (resolve a boundary
+// seq, then drain), and cold start (newest slice, jump cursor past it).
+export function queryFeedItems(db: Database, urlHash: string, q: FeedItemsQuery): FeedItemsResult {
+  const parse = (rows: Array<{ item_json: string; seq: number }>): FeedItem[] =>
+    rows.map((r) => JSON.parse(r.item_json) as FeedItem);
+
+  // Drain forward from a known boundary seq (shared by the incremental and
+  // since_guids paths): oldest-unseen first so a backlog larger than `limit` is
+  // paged across polls, never skipped.
+  const drainFrom = (boundary: number): FeedItemsResult => {
+    const rows = db
+      .query<
+        { item_json: string; seq: number },
+        [string, number, number]
+      >(`SELECT item_json, seq FROM feed_items WHERE url_hash = ? AND seq > ? ORDER BY seq ASC LIMIT ?`)
+      .all(urlHash, boundary, q.limit);
+    const cursor = rows.length > 0 ? rows[rows.length - 1].seq : boundary;
+    let hasMore = false;
+    if (rows.length >= q.limit) {
+      const more = db
+        .query<
+          { seq: number },
+          [string, number]
+        >(`SELECT seq FROM feed_items WHERE url_hash = ? AND seq > ? LIMIT 1`)
+        .get(urlHash, cursor);
+      hasMore = more != null;
+    }
+    return { items: parse(rows), cursor, hasMore };
+  };
+
+  // Cold start: newest `limit`, jump cursor to the max among the returned rows
+  // (NOT a separate MAX(seq), which races the warm loop). Older retained items are
+  // intentionally not delivered — catch-up is for returning readers, not new ones.
+  const coldStart = (): FeedItemsResult => {
+    const rows = db
+      .query<
+        { item_json: string; seq: number },
+        [string, number]
+      >(`SELECT item_json, seq FROM feed_items WHERE url_hash = ? ORDER BY seq DESC LIMIT ?`)
+      .all(urlHash, q.limit);
+    const cursor = rows.length > 0 ? rows[0].seq : 0;
+    // Returned newest-first; client merges by GUID and re-sorts by date anyway.
+    return { items: parse(rows), cursor, hasMore: false };
+  };
+
+  // Incremental: a cursor whose generation still matches the live DB.
+  if (q.sinceSeq !== undefined && q.clientGeneration === q.generation) {
+    // Volume-snapshot-restore guard. The generation token catches a full wipe
+    // (empty DB → new token), but NOT a restore-to-an-older-state: the DB returns
+    // with the *same* persisted generation yet *rewound* seqs. A client holding a
+    // cursor above the restored max would then hit `seq > cursor` → silently
+    // nothing, until each feed organically re-accumulates past the old cursor —
+    // the exact failure the cursor exists to kill. But a client cursor can never
+    // legitimately exceed the global high-water mark in `sqlite_sequence` (it only
+    // ever lags the live max). So if it does, the DB was restored under us: cold-
+    // start this client instead of silently starving it. Self-healing per-client —
+    // we deliberately do NOT re-mint the generation, which would needlessly cold-
+    // start clients whose (lower) cursors are still valid. The high-water row is
+    // absent until the first insert; treat that as 0 so a wiped-but-same-generation
+    // table (seqs reset to 1) also cold-starts any client carrying a stale cursor.
+    const hw = db
+      .query<{ seq: number }, []>(`SELECT seq FROM sqlite_sequence WHERE name = 'feed_items'`)
+      .get();
+    if (q.sinceSeq <= (hw?.seq ?? 0)) {
+      return drainFrom(q.sinceSeq);
+    }
+    // else fall through to cold start
+  }
+
+  // Compat: resolve the client's newest GUIDs to a boundary seq, then drain.
+  // Bounded over-delivery only (out-of-order publishes), never loss — fine for a
+  // transitional path. No match → treat as cold start.
+  if (q.sinceGuids && q.sinceGuids.size > 0) {
+    const guids = [...q.sinceGuids];
+    const placeholders = guids.map(() => '?').join(',');
+    const boundary = db
+      .query<
+        { boundary: number | null },
+        string[]
+      >(`SELECT MAX(seq) AS boundary FROM feed_items WHERE url_hash = ? AND guid IN (${placeholders})`)
+      .get(urlHash, ...guids);
+    if (boundary?.boundary != null) {
+      return drainFrom(boundary.boundary);
+    }
+  }
+
+  return coldStart();
+}
+
 export function initDatabase(db: Database): void {
   db.run('PRAGMA journal_mode = WAL');
   db.run(`
@@ -355,6 +547,27 @@ export function initDatabase(db: Database): void {
     db.run(`ALTER TABLE cache ADD COLUMN last_requested_at INTEGER`);
   }
   db.run(`CREATE INDEX IF NOT EXISTS idx_cache_last_requested_at ON cache(last_requested_at)`);
+
+  // Durable item log. Unlike `cache` (which mirrors the source feed and is
+  // replaced wholesale on each parse), this *retains* every item the proxy has
+  // observed, bounded by a per-feed row cap, so a returning reader catches items
+  // that aged out of the source between polls. `seq` (AUTOINCREMENT rowid) is a
+  // global monotonic cursor never reused after deletes — a client cursor can only
+  // ever lag the live max, never exceed it (within a DB lifetime).
+  db.run(`
+		CREATE TABLE IF NOT EXISTS feed_items (
+			seq           INTEGER PRIMARY KEY AUTOINCREMENT,
+			url_hash      TEXT    NOT NULL,
+			guid          TEXT    NOT NULL,
+			item_json     TEXT    NOT NULL,
+			published_at  INTEGER,
+			first_seen_at INTEGER NOT NULL,
+			content_hash  TEXT,
+			UNIQUE(url_hash, guid)
+		)
+	`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_feed_items_feed_seq ON feed_items(url_hash, seq)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_feed_items_first_seen ON feed_items(first_seen_at)`);
 
   // Extracted article content (Defuddle output), keyed by source URL. Separate
   // from the feed cache: article content is effectively immutable per URL, so it
@@ -450,6 +663,15 @@ export function initDatabase(db: Database): void {
 			value TEXT NOT NULL
 		)
 	`);
+
+  // Generation token for the durable item log (volume-wipe guard). Minted once,
+  // returned in every feed response; the client stores it with its cursors and
+  // cold-starts on mismatch. A fresh DB (e.g. a wiped Fly volume) restarts
+  // `sqlite_sequence` at 1, so a distinct random token signals "discard cursors".
+  // (Restore-to-older-state is NOT covered — bump this in any restore runbook.)
+  db.run(`INSERT OR IGNORE INTO sync_state (key, value) VALUES ('items_generation', ?)`, [
+    crypto.randomUUID(),
+  ]);
 
   // Network-wide article mentions (Phase 5), keyed by the *normalized* article
   // URL so the same article dedups across every user and every feed it appears
@@ -592,6 +814,15 @@ async function runDiscover(siteUrl: string): Promise<DiscoverResult> {
 
 export function createApp(db: Database, config: AppConfig) {
   const { proxySecret, cacheTtlMs, staleTtlMs, defaultLimit } = config;
+
+  // The durable-log generation token, read once (minted in initDatabase). Stable
+  // for the process lifetime; returned in every feed response so clients can
+  // detect a DB recreation and discard stale cursors.
+  const itemsGeneration =
+    db
+      .query<{ value: string }, []>(`SELECT value FROM sync_state WHERE key = 'items_generation'`)
+      .get()?.value ?? '';
+
   // Default: firehose absent → unhealthy, nothing subscribed (serve path keeps
   // its existing age-based refresh behavior).
   const getFirehoseStatus =
@@ -795,6 +1026,12 @@ export function createApp(db: Database, config: AppConfig) {
 					next_retry_at = NULL`,
         [urlHash, url, parsedJson, etag, lastModified, now, now, now]
       );
+
+      // Retain the parsed items in the durable log (write → cap). Every parse
+      // path funnels through here — fresh MISS, REVALIDATED, and the warm-loop
+      // refresh — so retention accumulates continuously while the feed is warm.
+      // (The 304 path above writes nothing new, preserving existing seqs.)
+      writeFeedItems(db, urlHash, parsed.items, now);
 
       return parsed;
     } catch (error) {
@@ -1104,6 +1341,32 @@ export function createApp(db: Database, config: AppConfig) {
     return refreshed;
   }
 
+  // Read items from the durable log, falling back to the parsed blob when the log
+  // has nothing for this feed yet. The fallback covers two transitional cases:
+  // a legacy `cache` row predating retention, and a stale blob served on a failed
+  // refresh before any successful retain. It only fires when feed_items has *no*
+  // rows for the feed (a drained-to-empty cursor legitimately returns 0). Once a
+  // successful parse populates feed_items, the cursor path takes over for good.
+  function readFeedItems(urlHash: string, feed: ParsedFeed, q: FeedItemsQuery): FeedItemsResult {
+    const result = queryFeedItems(db, urlHash, q);
+    if (result.items.length === 0 && feed.items.length > 0) {
+      const exists = db
+        .query<{ x: number }, [string]>('SELECT 1 AS x FROM feed_items WHERE url_hash = ? LIMIT 1')
+        .get(urlHash);
+      if (!exists) {
+        // Serving the pre-retention blob: feed_items genuinely has no rows for
+        // this feed yet (legacy cache row, or a stale blob served on a failed
+        // refresh before any successful retain). Return cursor=null so the
+        // response omits cursor+generation and the client keeps using since_guids
+        // — emitting a cursor here (0, from the empty cold start) would make the
+        // client store {cursor:0} and next poll drain the whole feed redundantly.
+        const fb = filterItems(feed.items, q.sinceGuids ?? new Set(), q.limit);
+        return { items: fb.items, cursor: null, hasMore: false };
+      }
+    }
+    return result;
+  }
+
   const app = new Hono();
 
   // Report any error that escapes a route handler to Sentry, then answer 500.
@@ -1192,6 +1455,8 @@ export function createApp(db: Database, config: AppConfig) {
 
     const feedUrl = c.req.query('url');
     const sinceGuidsParam = c.req.query('since_guids');
+    const sinceSeqParam = c.req.query('since_seq');
+    const generationParam = c.req.query('generation');
     const limitParam = c.req.query('limit');
 
     if (!feedUrl) {
@@ -1205,6 +1470,7 @@ export function createApp(db: Database, config: AppConfig) {
     }
 
     const sinceGuids = parseSinceGuids(sinceGuidsParam);
+    const sinceSeq = parseSinceSeq(sinceSeqParam);
     const limit = limitParam
       ? Math.min(parseInt(limitParam, 10) || defaultLimit, 500)
       : defaultLimit;
@@ -1279,26 +1545,35 @@ export function createApp(db: Database, config: AppConfig) {
       );
     }
 
-    const filterResult = filterItems(feed.items, sinceGuids, limit);
-
-    let filterHeader: string;
-    if (filterResult.filter === 'MATCHED') {
-      filterHeader = `MATCHED:${filterResult.matchedGuid}`;
-    } else {
-      filterHeader = filterResult.filter;
-    }
+    // Items now come from the durable log via the monotonic cursor, not the
+    // parsed blob. `feed` (just fetched/served above) supplies feed-level
+    // metadata and guarantees feed_items is populated for a fresh feed.
+    const itemsResult = readFeedItems(urlHash, feed, {
+      generation: itemsGeneration,
+      clientGeneration: generationParam,
+      sinceSeq,
+      sinceGuids,
+      limit,
+    });
 
     const filteredFeed: ParsedFeed = {
       ...feed,
-      items: filterResult.items,
+      items: itemsResult.items,
     };
+
+    // cursor === null means the blob fallback served this (feed_items not yet
+    // populated): omit cursor+generation entirely so the client stays on the
+    // since_guids path instead of storing a bogus cursor.
+    const fromLog = itemsResult.cursor !== null;
 
     const headers: Record<string, string> = {
       'X-Cache': cacheStatus!,
-      'X-Filter': filterHeader,
-      'X-Total-Items': String(feed.items.length),
-      'X-Returned-Items': String(filterResult.items.length),
+      'X-Returned-Items': String(itemsResult.items.length),
+      'X-Has-More': String(itemsResult.hasMore),
     };
+    if (fromLog) {
+      headers['X-Cursor'] = String(itemsResult.cursor);
+    }
 
     if (cached) {
       headers['X-Cache-Age'] = String(Math.floor((now - cached.fetched_at) / 1000));
@@ -1308,9 +1583,10 @@ export function createApp(db: Database, config: AppConfig) {
       {
         feed: filteredFeed,
         cache: cacheStatus!,
-        filter: filterHeader,
-        totalItems: feed.items.length,
-        returnedItems: filterResult.items.length,
+        cursor: itemsResult.cursor ?? undefined,
+        generation: fromLog ? itemsGeneration : undefined,
+        hasMore: itemsResult.hasMore,
+        returnedItems: itemsResult.items.length,
       },
       200,
       headers
@@ -1479,17 +1755,25 @@ export function createApp(db: Database, config: AppConfig) {
       feeds?: Array<{
         url: string;
         since_guids?: string[];
+        since_seq?: number;
+        generation?: string;
         limit?: number;
       }>;
       limit?: number;
+      // DB-wide cursor generation, if the client stores it once rather than
+      // per-feed; a per-feed `generation` overrides it.
+      generation?: string;
     }
 
     const body = await c.req.json<BulkRequest>();
     const globalLimit = body.limit ?? defaultLimit;
+    const globalGeneration = body.generation;
 
     let feedRequests: Array<{
       url: string;
       sinceGuids: Set<string>;
+      sinceSeq?: number;
+      clientGeneration?: string;
       limit: number;
     }>;
 
@@ -1497,6 +1781,8 @@ export function createApp(db: Database, config: AppConfig) {
       feedRequests = body.feeds.map((f) => ({
         url: f.url,
         sinceGuids: new Set(f.since_guids || []),
+        sinceSeq: parseSinceSeq(f.since_seq),
+        clientGeneration: f.generation ?? globalGeneration,
         limit: f.limit ?? globalLimit,
       }));
     } else if (body.urls && Array.isArray(body.urls)) {
@@ -1522,8 +1808,9 @@ export function createApp(db: Database, config: AppConfig) {
     interface FeedResult {
       feed: ParsedFeed | null;
       cache: string;
-      filter: string;
-      totalItems?: number;
+      cursor?: number;
+      generation?: string;
+      hasMore?: boolean;
       returnedItems?: number;
       error?: string;
       errorCount?: number;
@@ -1533,14 +1820,13 @@ export function createApp(db: Database, config: AppConfig) {
     const results: Record<string, FeedResult> = {};
 
     await Promise.all(
-      feedRequests.map(async ({ url: feedUrl, sinceGuids, limit }) => {
+      feedRequests.map(async ({ url: feedUrl, sinceGuids, sinceSeq, clientGeneration, limit }) => {
         try {
           new URL(feedUrl);
         } catch {
           results[feedUrl] = {
             feed: null,
             cache: 'INVALID',
-            filter: 'NONE',
             error: 'Invalid URL',
           };
           return;
@@ -1568,7 +1854,6 @@ export function createApp(db: Database, config: AppConfig) {
             results[feedUrl] = {
               feed: null,
               cache: 'ERROR',
-              filter: 'NONE',
               error: cached.last_error || 'Failed to fetch',
               errorCount: cached.error_count,
               nextRetryAt: cached.next_retry_at ?? undefined,
@@ -1602,7 +1887,6 @@ export function createApp(db: Database, config: AppConfig) {
           results[feedUrl] = {
             feed: null,
             cache: 'ERROR',
-            filter: 'NONE',
             error: errorCache?.last_error || 'Failed to fetch',
             errorCount: errorCache?.error_count || 0,
             nextRetryAt: errorCache?.next_retry_at || undefined,
@@ -1610,29 +1894,34 @@ export function createApp(db: Database, config: AppConfig) {
           return;
         }
 
-        const filterResult = filterItems(feed.items, sinceGuids, limit);
-
-        let filterStatus: string;
-        if (filterResult.filter === 'MATCHED') {
-          filterStatus = `MATCHED:${filterResult.matchedGuid}`;
-        } else {
-          filterStatus = filterResult.filter;
-        }
+        // Items from the durable log via the cursor (see GET /feed).
+        const itemsResult = readFeedItems(urlHash, feed, {
+          generation: itemsGeneration,
+          clientGeneration,
+          sinceSeq,
+          sinceGuids,
+          limit,
+        });
 
         // Re-fetch cached row to get latest error state
         const latestCache = db
           .query<CacheRow, [string]>('SELECT * FROM cache WHERE url_hash = ?')
           .get(urlHash);
 
+        // cursor === null → blob fallback served this; omit cursor+generation so
+        // the client stays on since_guids (see GET /feed).
+        const fromLog = itemsResult.cursor !== null;
+
         const result: FeedResult = {
           feed: {
             ...feed,
-            items: filterResult.items,
+            items: itemsResult.items,
           },
           cache: cacheStatus!,
-          filter: filterStatus,
-          totalItems: feed.items.length,
-          returnedItems: filterResult.items.length,
+          cursor: itemsResult.cursor ?? undefined,
+          generation: fromLog ? itemsGeneration : undefined,
+          hasMore: itemsResult.hasMore,
+          returnedItems: itemsResult.items.length,
         };
 
         // Include error info if present
@@ -1688,6 +1977,14 @@ export function createApp(db: Database, config: AppConfig) {
       // True when `documents` is the author's complete set (under the per-author
       // cap), so a client can treat an absent record as deleted, not just capped.
       complete?: boolean;
+      // Same incremental contract as feeds, so the client has one mental model and
+      // one drain loop. Phase 1 is contract-shape only: storage stays the
+      // per-author blob (full live set every poll), so hasMore is always false —
+      // there's no older slice to drain to until PDS deep-paging lands. `cursor`
+      // is inert for now (no feed_items seq); `generation` is shared with feeds.
+      cursor?: number;
+      generation?: string;
+      hasMore?: boolean;
     }
 
     const results: DocumentResult[] = await Promise.all(
@@ -1778,6 +2075,9 @@ export function createApp(db: Database, config: AppConfig) {
           documents: trimmed,
           status: 'ready',
           complete: documents.length < MAX_DOCUMENTS_PER_AUTHOR,
+          cursor: 0,
+          generation: itemsGeneration,
+          hasMore: false,
         };
       })
     );
@@ -1944,6 +2244,14 @@ export function createApp(db: Database, config: AppConfig) {
 export function cleanupCache(db: Database): number {
   const now = Date.now();
   const threshold = now - 7 * 24 * 60 * 60 * 1000; // 7 days
+  // Cascade: drop the durable items of any feed about to be evicted, *before* the
+  // cache row goes (the delete keys off cache.fetched_at). Once the feed is cold
+  // the retained items are unreachable anyway, and this bounds feed_items growth
+  // to the active working set.
+  db.run(
+    'DELETE FROM feed_items WHERE url_hash IN (SELECT url_hash FROM cache WHERE fetched_at < ?)',
+    [threshold]
+  );
   const result = db.run('DELETE FROM cache WHERE fetched_at < ?', [threshold]);
   const extractResult = db.run('DELETE FROM extract_cache WHERE cached_at < ?', [
     now - EXTRACT_CACHE_TTL_MS,
