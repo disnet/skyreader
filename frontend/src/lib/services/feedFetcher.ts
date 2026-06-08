@@ -1,5 +1,6 @@
 import { api } from './api';
 import { liveDb } from './liveDb.svelte';
+import { db, type FeedCursorEntry } from './db';
 import { feedStatusStore, type V2FeedResult } from '$lib/stores/feedStatus.svelte';
 import { socialStore } from '$lib/stores/social.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -15,13 +16,18 @@ const BATCH_SIZE = 50;
 const FIRST_BATCH_SIZE = 8;
 const GUIDS_PER_FEED = 10;
 
-// On a cold fetch (no cached GUIDs for a feed) the proxy returns its full
-// backlog — up to ~100 items per feed. With many subscriptions that's a lot
-// of data to download and write to IndexedDB before the first paint, most of
-// which the user will never scroll to. Cap the initial backlog; subsequent
-// incremental syncs (which send since_guids) return only new items and ignore
-// this limit, so steady-state behaviour is unchanged.
+// On a cold fetch (no stored cursor for a feed) the proxy cold-starts and serves
+// a recent slice. With many subscriptions that's a lot of data to download and
+// write to IndexedDB before the first paint, most of which the user will never
+// scroll to. Cap the cold backlog; once a cursor is stored, incremental polls
+// send `since_seq` and return only what's new, so steady state is unchanged.
 const COLD_START_LIMIT = 30;
+
+// Max consecutive drain rounds per sync. A returning reader whose backlog exceeds
+// one `limit`-sized page gets paged across rounds (rather than one page per sync
+// interval), but we bound the work so a pathological backlog can't spin forever —
+// it just continues on the next sync. Logged when hit (no silent truncation).
+const MAX_DRAIN_ROUNDS = 5;
 
 /**
  * Check if a subscription's title should be updated from feed metadata.
@@ -84,14 +90,24 @@ export async function fetchAllFeeds(
   // Skip network requests when offline - cached articles are already loaded
   if (typeof navigator !== 'undefined' && !navigator.onLine) return result;
 
-  // Build feed requests with since_guids
-  const feedRequests: Array<{
+  // Load stored durable-log cursors once (one row per subscription we've polled).
+  const cursors = new Map<number, FeedCursorEntry>();
+  for (const c of await db.feedCursors.toArray()) cursors.set(c.subscriptionId, c);
+
+  interface FeedRequest {
     url: string;
     since_guids?: string[];
+    since_seq?: number;
+    generation?: string;
     limit?: number;
     subscriptionId: number;
-  }> = [];
+  }
 
+  // Build the initial requests. A subscription with a stored cursor drains
+  // incrementally via since_seq; one without cold-starts (sending recent GUIDs as
+  // the migration boundary so a pre-cursor client still gets an incremental first
+  // poll, else capping the cold backlog).
+  const feedRequests: FeedRequest[] = [];
   for (const sub of subscriptions) {
     if (!sub.id || !sub.feedUrl) continue;
 
@@ -103,36 +119,46 @@ export async function fetchAllFeeds(
       continue;
     }
 
-    const recentGuids = liveDb.getRecentGuids(sub.id, GUIDS_PER_FEED);
-    const hasGuids = recentGuids.length > 0;
-    feedRequests.push({
-      url: sub.feedUrl,
-      since_guids: hasGuids ? recentGuids : undefined,
-      // Cap the backlog only on a cold fetch; with since_guids the proxy
-      // returns just the new items and ignores limit anyway.
-      limit: hasGuids ? undefined : COLD_START_LIMIT,
-      subscriptionId: sub.id,
-    });
+    const cursor = cursors.get(sub.id);
+    if (cursor) {
+      feedRequests.push({
+        url: sub.feedUrl,
+        since_seq: cursor.cursor,
+        generation: cursor.generation,
+        subscriptionId: sub.id,
+      });
+    } else {
+      const recentGuids = liveDb.getRecentGuids(sub.id, GUIDS_PER_FEED);
+      const hasGuids = recentGuids.length > 0;
+      feedRequests.push({
+        url: sub.feedUrl,
+        since_guids: hasGuids ? recentGuids : undefined,
+        limit: hasGuids ? undefined : COLD_START_LIMIT,
+        subscriptionId: sub.id,
+      });
+    }
   }
 
   if (feedRequests.length === 0) return result;
 
-  // Process in batches. Each batch is merged (and repaints the UI) as it lands,
-  // so use a small first batch to get content on screen fast, then ramp to full
-  // batches for throughput on the rest.
-  let offset = 0;
-  let isFirstBatch = true;
-  while (offset < feedRequests.length) {
-    const batchSize = isFirstBatch ? FIRST_BATCH_SIZE : BATCH_SIZE;
-    const batch = feedRequests.slice(offset, offset + batchSize);
-    offset += batchSize;
-    isFirstBatch = false;
+  // Feeds whose backlog wasn't fully drained this round (hasMore), re-polled after
+  // the initial pass. Only populated for batches whose merge succeeded.
+  let drainQueue: Array<{ url: string; subscriptionId: number }> = [];
+  // Cursor advances accumulate here (committed per-batch only after a successful
+  // merge) and persist to Dexie once at the end.
+  const cursorUpdates = new Map<number, FeedCursorEntry>();
 
+  // Fetch a batch, merge its articles, advance cursors, and collect any feed that
+  // still has backlog. `countStatus` is true only on the initial pass so drain
+  // re-polls don't double-count successfulFeeds/failedFeeds in the result.
+  async function processBatch(batch: FeedRequest[], countStatus: boolean): Promise<void> {
     try {
       const { feeds, readCursor } = await api.fetchFeedsBatchV2(
         batch.map((req) => ({
           url: req.url,
           since_guids: req.since_guids,
+          since_seq: req.since_seq,
+          generation: req.generation,
           limit: req.limit,
         }))
       );
@@ -141,17 +167,22 @@ export async function fetchAllFeeds(
       // time at annotation), so the delta starts from bootstrap with no skew.
       if (readCursor) await itemLabelsStore.seedReadCursor(readCursor);
 
-      // Process results. Articles are collected and merged once per batch
-      // (rather than once per feed) so the in-memory article array is rebuilt
-      // and re-sorted a single time — a big win on cold start with many feeds.
-      const toMerge: Array<{
-        subscriptionId: number;
-        items: V2FeedResult['items'];
-      }> = [];
+      // Articles are collected and merged once per batch (rather than once per
+      // feed) so the in-memory article array is rebuilt and re-sorted a single
+      // time — a big win on cold start with many feeds.
+      const toMerge: Array<{ subscriptionId: number; items: V2FeedResult['items'] }> = [];
 
       // Read state stamped onto the response by the backend (inline annotation).
       // Applied additively after merge — read state arrives with its articles.
       const readGuids: string[] = [];
+
+      // Cursor advances and drain re-polls for this batch are collected here and
+      // committed to the shared state only AFTER the merge succeeds. Advancing a
+      // cursor past items we failed to persist would skip them permanently on the
+      // next poll (the proxy serves seq > cursor), so the cursor must never move
+      // ahead of what actually landed in IndexedDB.
+      const batchCursors: FeedCursorEntry[] = [];
+      const batchDrain: Array<{ url: string; subscriptionId: number }> = [];
 
       for (const req of batch) {
         const feedResult = feeds[req.url] as V2FeedResult | undefined;
@@ -159,7 +190,7 @@ export async function fetchAllFeeds(
         if (!feedResult) {
           // No result for this feed (shouldn't happen)
           feedStatusStore.markError(req.url, 'No response from server');
-          result.failedFeeds++;
+          if (countStatus) result.failedFeeds++;
           continue;
         }
 
@@ -167,12 +198,12 @@ export async function fetchAllFeeds(
         feedStatusStore.updateFromV2Result(req.url, feedResult);
 
         if (feedResult.status === 'error') {
-          result.failedFeeds++;
+          if (countStatus) result.failedFeeds++;
           continue;
         }
 
-        // Update subscription title/siteUrl from feed metadata
-        if (feedResult.title) {
+        // Update subscription title/siteUrl from feed metadata (initial pass only)
+        if (countStatus && feedResult.title) {
           const sub = liveDb.getSubscriptionById(req.subscriptionId);
           if (sub && shouldUpdateTitle(sub.title, sub.feedUrl, feedResult.title)) {
             await liveDb.updateSubscription(req.subscriptionId, {
@@ -183,21 +214,38 @@ export async function fetchAllFeeds(
           }
         }
 
+        // Stage the cursor advance (committed below, only if the merge succeeds).
+        // The proxy handles generation internally (cold-starting on mismatch and
+        // returning a fresh token), so we simply overwrite with whatever it hands
+        // back — no client-side reset logic.
+        if (feedResult.cursor != null && feedResult.generation) {
+          batchCursors.push({
+            subscriptionId: req.subscriptionId,
+            cursor: feedResult.cursor,
+            generation: feedResult.generation,
+          });
+        }
+
         // Queue new articles for a single batched merge below
         if (feedResult.items && feedResult.items.length > 0) {
-          toMerge.push({
-            subscriptionId: req.subscriptionId,
-            items: feedResult.items,
-          });
+          toMerge.push({ subscriptionId: req.subscriptionId, items: feedResult.items });
           for (const item of feedResult.items) {
             if (item.read) readGuids.push(item.guid);
           }
         }
 
-        result.successfulFeeds++;
+        // Backlog not fully drained → stage a re-poll (committed below with the cursor).
+        if (feedResult.hasMore) {
+          batchDrain.push({ url: req.url, subscriptionId: req.subscriptionId });
+        }
+
+        if (countStatus) result.successfulFeeds++;
       }
 
-      // Merge this batch's articles in one pass
+      // Merge this batch's articles in one pass. This is the durable write; if it
+      // throws (e.g. IndexedDB quota / aborted transaction) we fall to the catch
+      // and the staged cursor advances below are NOT committed, so the next poll
+      // re-requests these items from the old cursor rather than skipping them.
       if (toMerge.length > 0) {
         result.newArticles += await liveDb.mergeArticlesBatch(toMerge, savedGuids);
       }
@@ -207,14 +255,64 @@ export async function fetchAllFeeds(
       if (readGuids.length > 0) {
         await itemLabelsStore.applyAnnotatedReads(readGuids, 'article');
       }
+
+      // Merge succeeded — now it's safe to advance cursors and enqueue drains.
+      for (const c of batchCursors) cursorUpdates.set(c.subscriptionId, c);
+      for (const d of batchDrain) drainQueue.push(d);
     } catch (e) {
       // Batch request failed - mark all feeds in batch as error
       const errorMessage = e instanceof Error ? e.message : 'Batch request failed';
       for (const req of batch) {
         feedStatusStore.markError(req.url, errorMessage);
-        result.failedFeeds++;
+        if (countStatus) result.failedFeeds++;
       }
     }
+  }
+
+  // Initial pass. Each batch is merged (and repaints the UI) as it lands, so use
+  // a small first batch to get content on screen fast, then ramp to full batches.
+  let offset = 0;
+  let isFirstBatch = true;
+  while (offset < feedRequests.length) {
+    const batchSize = isFirstBatch ? FIRST_BATCH_SIZE : BATCH_SIZE;
+    const batch = feedRequests.slice(offset, offset + batchSize);
+    offset += batchSize;
+    isFirstBatch = false;
+    await processBatch(batch, true);
+  }
+
+  // Drain loop: re-poll feeds that still had backlog, using their freshly-advanced
+  // cursors, until none report more or we hit the round cap.
+  let round = 0;
+  while (drainQueue.length > 0 && round < MAX_DRAIN_ROUNDS) {
+    round++;
+    const thisRound = drainQueue;
+    drainQueue = []; // processBatch repopulates with feeds still draining
+    const reqs: FeedRequest[] = [];
+    for (const q of thisRound) {
+      const c = cursorUpdates.get(q.subscriptionId) ?? cursors.get(q.subscriptionId);
+      if (c) {
+        reqs.push({
+          url: q.url,
+          since_seq: c.cursor,
+          generation: c.generation,
+          subscriptionId: q.subscriptionId,
+        });
+      }
+    }
+    for (let i = 0; i < reqs.length; i += BATCH_SIZE) {
+      await processBatch(reqs.slice(i, i + BATCH_SIZE), false);
+    }
+  }
+  if (drainQueue.length > 0) {
+    console.warn(
+      `[feedFetcher] Drain cap (${MAX_DRAIN_ROUNDS} rounds) reached; ${drainQueue.length} feed(s) still have backlog and will continue on the next sync.`
+    );
+  }
+
+  // Persist all cursor advances in one write.
+  if (cursorUpdates.size > 0) {
+    await db.feedCursors.bulkPut([...cursorUpdates.values()]);
   }
 
   return result;

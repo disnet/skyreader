@@ -90,6 +90,11 @@ export interface V2FeedResult {
   errorCount?: number;
   nextRetryAt?: number;
   lastFetchedAt?: number;
+  // Durable-log cursor contract (RETENTION_SYNC_PLAN.md): max seq seen, the DB
+  // generation token, and whether the feed's backlog still has more to drain.
+  cursor?: number;
+  generation?: string;
+  hasMore?: boolean;
 }
 
 function createFeedStatusStore() {

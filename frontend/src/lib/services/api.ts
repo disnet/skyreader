@@ -266,7 +266,13 @@ class ApiClient {
   }
 
   async fetchFeedsBatchV2(
-    feeds: Array<{ url: string; since_guids?: string[]; limit?: number }>
+    feeds: Array<{
+      url: string;
+      since_guids?: string[];
+      since_seq?: number;
+      generation?: string;
+      limit?: number;
+    }>
   ): Promise<{
     feeds: Record<
       string,
@@ -281,6 +287,10 @@ class ApiClient {
         errorCount?: number;
         nextRetryAt?: number;
         lastFetchedAt?: number;
+        // Durable-log cursor contract (RETENTION_SYNC_PLAN.md).
+        cursor?: number;
+        generation?: string;
+        hasMore?: boolean;
       }
     >;
     // Server time (unix seconds) the response was read-annotated. The client

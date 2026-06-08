@@ -8,6 +8,7 @@ import {
   classifyError,
   describeFetchFailure,
   calculateBackoff,
+  FEED_ITEMS_CAP,
   type AppConfig,
   type CacheRow,
 } from './app';
@@ -179,9 +180,12 @@ describe('Integration Tests', () => {
       expect(json.feed.items).toHaveLength(3);
       expect(json.feed.items[0].guid).toBe('guid-3');
       expect(json.cache).toBe('MISS');
-      expect(json.filter).toBe('LIMITED');
+      expect(typeof json.cursor).toBe('number');
+      expect(json.cursor).toBeGreaterThan(0);
+      expect(typeof json.generation).toBe('string');
+      expect(json.generation.length).toBeGreaterThan(0);
+      expect(json.hasMore).toBe(false);
       expect(res.headers.get('X-Cache')).toBe('MISS');
-      expect(res.headers.get('X-Filter')).toBe('LIMITED');
     });
 
     it('returns cached feed on second request', async () => {
@@ -215,11 +219,10 @@ describe('Integration Tests', () => {
       expect(res.status).toBe(200);
       expect(json.feed.items).toHaveLength(1); // Only guid-3 (newer than guid-2)
       expect(json.feed.items[0].guid).toBe('guid-3');
-      expect(json.filter).toBe('MATCHED:guid-2');
-      expect(json.totalItems).toBe(3);
       expect(json.returnedItems).toBe(1);
-      expect(res.headers.get('X-Filter')).toBe('MATCHED:guid-2');
-      expect(res.headers.get('X-Total-Items')).toBe('3');
+      // since_guids resolves to a boundary seq, then drains forward by cursor.
+      expect(json.cursor).toBeGreaterThan(0);
+      expect(json.hasMore).toBe(false);
       expect(res.headers.get('X-Returned-Items')).toBe('1');
     });
 
@@ -440,7 +443,7 @@ describe('Integration Tests', () => {
 
       expect(res.status).toBe(200);
       expect(json.feeds['https://example.com/feed1.xml'].returnedItems).toBe(1);
-      expect(json.feeds['https://example.com/feed1.xml'].filter).toBe('MATCHED:guid-2');
+      expect(json.feeds['https://example.com/feed1.xml'].feed.items[0].guid).toBe('guid-3');
       expect(json.feeds['https://example.com/feed2.xml'].returnedItems).toBe(1);
     });
 
@@ -552,8 +555,8 @@ describe('Integration Tests', () => {
     });
   });
 
-  describe('filterItems', () => {
-    it('returns FULL when no GUID matches', async () => {
+  describe('since_guids cursor compat', () => {
+    it('cold-starts (returns the recent slice) when no GUID matches', async () => {
       const { app } = createTestApp();
       fetchMock = mockFetchOnce(SAMPLE_RSS);
 
@@ -563,11 +566,12 @@ describe('Integration Tests', () => {
       );
       const json = await res.json();
 
-      expect(json.filter).toBe('FULL');
-      expect(res.headers.get('X-Filter')).toBe('FULL');
+      // Unmatched GUIDs resolve to no boundary → cold start (all 3 items).
+      expect(json.feed.items).toHaveLength(3);
+      expect(json.cursor).toBeGreaterThan(0);
     });
 
-    it('returns empty array when latest GUID matches', async () => {
+    it('returns empty array when the newest GUID is the boundary', async () => {
       const { app } = createTestApp();
       fetchMock = mockFetchOnce(SAMPLE_RSS);
 
@@ -576,9 +580,9 @@ describe('Integration Tests', () => {
       });
       const json = await res.json();
 
-      expect(json.filter).toBe('MATCHED:guid-3');
+      // guid-3 is the newest → boundary is the max seq → nothing newer to drain.
       expect(json.feed.items).toHaveLength(0);
-      expect(res.headers.get('X-Filter')).toBe('MATCHED:guid-3');
+      expect(json.hasMore).toBe(false);
     });
   });
 
@@ -2330,5 +2334,291 @@ describe('Self-warming loop', () => {
     const row = db.query<CacheRow, [string]>('SELECT * FROM cache WHERE url = ?').get(url);
     expect(row!.last_requested_at).not.toBeNull();
     expect(row!.last_requested_at!).toBeGreaterThanOrEqual(now - 1000);
+  });
+});
+
+describe('Durable item retention (feed_items cursor)', () => {
+  let fetchMock: ReturnType<typeof spyOn>;
+
+  afterEach(() => {
+    fetchMock?.mockRestore();
+  });
+
+  const URL = 'https://example.com/retain.xml';
+
+  // Build a newest-first RSS feed from a list of { guid, content? }. Mirrors how
+  // a real source serves its current live window — items not listed are "dropped".
+  function rss(items: Array<{ guid: string; content?: string }>): string {
+    const body = items
+      .map(
+        (it) =>
+          `<item><title>${it.guid}</title><link>https://example.com/${it.guid}</link>` +
+          `<guid>${it.guid}</guid>` +
+          (it.content ? `<description>${it.content}</description>` : '') +
+          `</item>`
+      )
+      .join('');
+    return `<?xml version="1.0"?><rss version="2.0"><channel><title>Retain</title><link>https://example.com</link>${body}</channel></rss>`;
+  }
+
+  async function poll(
+    app: ReturnType<typeof createTestApp>['app'],
+    params: Record<string, string | number> = {}
+  ) {
+    const qs = new URLSearchParams({ url: URL });
+    for (const [k, v] of Object.entries(params)) qs.set(k, String(v));
+    const res = await app.request(`/feed?${qs}`, {
+      headers: { 'X-Proxy-Secret': 'test-secret' },
+    });
+    return res.json() as Promise<{
+      feed: { items: Array<{ guid: string; summary?: string }> };
+      cache: string;
+      cursor: number;
+      generation: string;
+      hasMore: boolean;
+    }>;
+  }
+
+  // Force the warm loop to consider the feed due for refresh on the next tick.
+  function ageOut(db: Database) {
+    db.run('UPDATE cache SET fetched_at = 0');
+  }
+
+  function feedItemGuids(db: Database): Array<{ seq: number; guid: string }> {
+    return db
+      .query<
+        { seq: number; guid: string },
+        [string]
+      >('SELECT seq, guid FROM feed_items WHERE url_hash = ? ORDER BY seq ASC')
+      .all(hashUrl(URL));
+  }
+
+  it('HEADLINE: delivers an item the warm loop observed but the source later dropped', async () => {
+    const { db, app, warmStaleFeeds } = createTestApp({ warmRefreshThresholdMs: 1 });
+    let current = rss([{ guid: 'A' }]);
+    fetchMock = mockFetch(() => new Response(current));
+
+    // Poll 1 (cold): client sees A.
+    const first = await poll(app);
+    expect(first.feed.items.map((i) => i.guid)).toEqual(['A']);
+    const cursor = first.cursor;
+    const generation = first.generation;
+
+    // Source publishes B (A still live); warm loop observes both.
+    current = rss([{ guid: 'B' }, { guid: 'A' }]);
+    ageOut(db);
+    await warmStaleFeeds();
+
+    // Source drops A and B from its live window, publishes C; warm loop observes.
+    current = rss([{ guid: 'C' }]);
+    ageOut(db);
+    await warmStaleFeeds();
+
+    // Poll 2 (incremental): B was dropped from the source entirely, but the proxy
+    // retained it — the client still catches it, plus C. A is <= cursor (seen).
+    const second = await poll(app, { since_seq: cursor, generation });
+    const guids = second.feed.items.map((i) => i.guid);
+    expect(guids).toContain('B');
+    expect(guids).toContain('C');
+    expect(guids).not.toContain('A');
+  });
+
+  it('keeps seq monotonic across re-parses and does not re-deliver a re-seen GUID', async () => {
+    const { db, app, warmStaleFeeds } = createTestApp({ warmRefreshThresholdMs: 1 });
+    const current = rss([{ guid: 'c' }, { guid: 'b' }, { guid: 'a' }]);
+    fetchMock = mockFetch(() => new Response(current));
+
+    const first = await poll(app);
+    const before = feedItemGuids(db);
+    expect(before.map((r) => r.guid)).toEqual(['a', 'b', 'c']); // oldest→newest seq
+
+    // Re-parse identical content via the warm loop.
+    ageOut(db);
+    await warmStaleFeeds();
+
+    const after = feedItemGuids(db);
+    expect(after).toEqual(before); // same seqs, same rows — no churn
+
+    // Incremental poll from the first cursor returns nothing new.
+    const second = await poll(app, { since_seq: first.cursor, generation: first.generation });
+    expect(second.feed.items).toHaveLength(0);
+    expect(second.hasMore).toBe(false);
+  });
+
+  it('updates an edited item in place (seq unchanged) and does not re-deliver it', async () => {
+    const { db, app, warmStaleFeeds } = createTestApp({ warmRefreshThresholdMs: 1 });
+    let current = rss([{ guid: 'a', content: 'v1' }]);
+    fetchMock = mockFetch(() => new Response(current));
+
+    const first = await poll(app);
+    expect(first.feed.items[0].summary).toBe('v1');
+    const seqBefore = feedItemGuids(db)[0].seq;
+
+    // Same GUID, changed content.
+    current = rss([{ guid: 'a', content: 'v2' }]);
+    ageOut(db);
+    await warmStaleFeeds();
+
+    const rows = feedItemGuids(db);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].seq).toBe(seqBefore); // seq preserved
+
+    // Not re-delivered to a client at the old cursor (edit doesn't move the seq).
+    const second = await poll(app, { since_seq: first.cursor, generation: first.generation });
+    expect(second.feed.items).toHaveLength(0);
+
+    // But a fresh (cold) read reflects the new content.
+    const cold = await poll(app, { generation: 'different-gen' });
+    expect(cold.feed.items[0].summary).toBe('v2');
+  });
+
+  it('cold-starts on a generation mismatch instead of draining', async () => {
+    const { app } = createTestApp();
+    fetchMock = mockFetch(() => new Response(rss([{ guid: 'a' }, { guid: 'b' }, { guid: 'c' }])));
+
+    const first = await poll(app);
+    expect(first.feed.items).toHaveLength(3);
+
+    // A stale cursor with a mismatched generation → cold start (recent slice),
+    // not an empty drain.
+    const mismatch = await poll(app, { since_seq: first.cursor, generation: 'stale-gen' });
+    expect(mismatch.feed.items).toHaveLength(3);
+    expect(mismatch.hasMore).toBe(false);
+  });
+
+  it('cold start returns the newest slice and jumps the cursor past it (no backlog dump)', async () => {
+    const { db, app, warmStaleFeeds } = createTestApp({ warmRefreshThresholdMs: 1 });
+    // Accumulate 5 retained items across two observations.
+    let current = rss([{ guid: 'b' }, { guid: 'a' }]);
+    fetchMock = mockFetch(() => new Response(current));
+    await poll(app);
+    current = rss([{ guid: 'e' }, { guid: 'd' }, { guid: 'c' }]);
+    ageOut(db);
+    await warmStaleFeeds();
+    expect(feedItemGuids(db)).toHaveLength(5);
+
+    // Cold start with limit=2 → newest 2, cursor at their max. Older retained
+    // items are intentionally NOT delivered to a brand-new client.
+    const cold = await poll(app, { limit: 2 });
+    expect(cold.feed.items).toHaveLength(2);
+    const seen = cold.feed.items.map((i) => i.guid);
+    expect(seen).toContain('e');
+    expect(seen).toContain('d');
+
+    // A follow-up incremental poll from that cursor delivers nothing older.
+    const next = await poll(app, { since_seq: cold.cursor, generation: cold.generation });
+    expect(next.feed.items).toHaveLength(0);
+  });
+
+  it('drains a backlog across successive polls with no skips and hasMore signalling', async () => {
+    const { db, app, warmStaleFeeds } = createTestApp({ warmRefreshThresholdMs: 1 });
+    // Client first sees only item 1 (cursor parks at seq1).
+    let current = rss([{ guid: '1' }]);
+    fetchMock = mockFetch(() => new Response(current));
+    const first = await poll(app);
+    expect(first.feed.items.map((i) => i.guid)).toEqual(['1']);
+
+    // Four more items accumulate while the client is away.
+    current = rss([{ guid: '5' }, { guid: '4' }, { guid: '3' }, { guid: '2' }, { guid: '1' }]);
+    ageOut(db);
+    await warmStaleFeeds();
+
+    // Drain in pages of 2: [2,3] (hasMore), then [4,5] (done). No item skipped.
+    const page1 = await poll(app, {
+      since_seq: first.cursor,
+      generation: first.generation,
+      limit: 2,
+    });
+    expect(page1.feed.items.map((i) => i.guid)).toEqual(['2', '3']);
+    expect(page1.hasMore).toBe(true);
+
+    const page2 = await poll(app, {
+      since_seq: page1.cursor,
+      generation: page1.generation,
+      limit: 2,
+    });
+    expect(page2.feed.items.map((i) => i.guid)).toEqual(['4', '5']);
+    expect(page2.hasMore).toBe(false);
+  });
+
+  it('trims each feed to the newest K (per-feed cap), bounding a GUID-mutating feed', async () => {
+    const { db, app, warmStaleFeeds } = createTestApp({ warmRefreshThresholdMs: 1 });
+    const batch = (prefix: string) =>
+      rss(Array.from({ length: 100 }, (_, i) => ({ guid: `${prefix}-${99 - i}` })));
+
+    // Three batches of 100 unique GUIDs each = 300 observed; cap holds at K.
+    let current = batch('a');
+    fetchMock = mockFetch(() => new Response(current));
+    await poll(app);
+    current = batch('b');
+    ageOut(db);
+    await warmStaleFeeds();
+    current = batch('c');
+    ageOut(db);
+    await warmStaleFeeds();
+
+    const count = db
+      .query<{ c: number }, [string]>('SELECT COUNT(*) AS c FROM feed_items WHERE url_hash = ?')
+      .get(hashUrl(URL))!.c;
+    expect(count).toBe(FEED_ITEMS_CAP);
+
+    // Oldest batch is gone; the newest batch survives in full.
+    const guids = new Set(feedItemGuids(db).map((r) => r.guid));
+    expect(guids.has('a-0')).toBe(false);
+    expect(guids.has('c-0')).toBe(true);
+    expect(guids.has('c-99')).toBe(true);
+  });
+
+  it('cascades feed_items deletion when cleanupCache evicts a cold feed', async () => {
+    const { db, app } = createTestApp();
+    fetchMock = mockFetch(() => new Response(rss([{ guid: 'a' }, { guid: 'b' }])));
+    await poll(app);
+    expect(feedItemGuids(db).length).toBe(2);
+
+    // Age the cache row past the 7-day cleanup threshold.
+    db.run('UPDATE cache SET fetched_at = ?', [Date.now() - 8 * 24 * 60 * 60 * 1000]);
+    cleanupCache(db);
+
+    expect(feedItemGuids(db).length).toBe(0);
+  });
+
+  it('cold-starts a cursor that exceeds the live high-water (volume-restore guard)', async () => {
+    const { app } = createTestApp();
+    fetchMock = mockFetch(() => new Response(rss([{ guid: 'a' }, { guid: 'b' }, { guid: 'c' }])));
+
+    const first = await poll(app);
+    expect(first.feed.items).toHaveLength(3);
+
+    // Simulate a volume-snapshot restore to an OLDER state: the generation token
+    // is unchanged (it's persisted), but the client holds a cursor from the
+    // since-rewound future — above the restored high-water mark. A cursor can
+    // never legitimately exceed sqlite_sequence's high-water, so the proxy treats
+    // it as the restore case and cold-starts. Without the guard, `seq > cursor`
+    // would return nothing forever, silently starving this client.
+    const restored = await poll(app, {
+      since_seq: first.cursor + 1000,
+      generation: first.generation,
+    });
+    expect(restored.feed.items.map((i) => i.guid).sort()).toEqual(['a', 'b', 'c']);
+    expect(restored.hasMore).toBe(false);
+  });
+
+  it('omits cursor+generation when serving the pre-retention blob fallback', async () => {
+    const { db, app } = createTestApp();
+    fetchMock = mockFetch(() => new Response(rss([{ guid: 'a' }, { guid: 'b' }])));
+
+    // First poll populates both the cache blob and the durable log.
+    await poll(app);
+    // Simulate a legacy cache row with no durable-log rows (a pre-retention cache,
+    // or a stale blob served before any successful retain).
+    db.run('DELETE FROM feed_items WHERE url_hash = ?', [hashUrl(URL)]);
+
+    // Next poll is a cache HIT (no re-parse), so the read falls back to the blob.
+    const res = await poll(app);
+    expect(res.feed.items.map((i) => i.guid)).toEqual(['a', 'b']);
+    // Crucially: no cursor/generation, so a client stays on the since_guids path
+    // instead of storing a bogus cursor (0) and re-draining the whole feed.
+    expect(res.cursor).toBeUndefined();
+    expect(res.generation).toBeUndefined();
   });
 });

@@ -42,6 +42,17 @@ export interface FollowCacheEntry {
   hidden?: boolean;
 }
 
+// Per-subscription durable-log cursor (RETENTION_SYNC_PLAN.md). The proxy returns
+// a monotonic `cursor` (max seq seen) + a DB `generation` token with each feed
+// result; we store them and send `cursor` back as `since_seq` so the next poll
+// drains everything published since. On a `generation` change (proxy DB wiped)
+// the proxy cold-starts and hands back a fresh cursor, which we simply overwrite.
+export interface FeedCursorEntry {
+  subscriptionId: number; // primary key
+  generation: string;
+  cursor: number;
+}
+
 // Cached Semble/Margin collection for the integration share picker.
 // Keyed by [integration+uri] so the same Dexie table can hold both integrations.
 export interface IntegrationCollectionCacheEntry {
@@ -68,6 +79,7 @@ class SkyreaderDatabase extends Dexie {
   integrationCollections!: Table<IntegrationCollectionCacheEntry>;
   follows!: Table<FollowCacheEntry>;
   followingPublications!: Table<FollowingPublication>;
+  feedCursors!: Table<FeedCursorEntry>;
 
   constructor() {
     super('skyreader');
@@ -398,6 +410,13 @@ class SkyreaderDatabase extends Dexie {
     this.version(35).stores({
       socialReadPositions: null,
     });
+
+    // Durable item retention (RETENTION_SYNC_PLAN.md): per-subscription cursor
+    // into the proxy's feed_items log, replacing the recent-GUIDs incremental
+    // mechanism. Keyed by subscriptionId.
+    this.version(36).stores({
+      feedCursors: 'subscriptionId',
+    });
   }
 }
 
@@ -419,6 +438,7 @@ export async function clearAllData(): Promise<void> {
     db.integrationCollections.clear(),
     db.follows.clear(),
     db.followingPublications.clear(),
+    db.feedCursors.clear(),
   ]);
 }
 

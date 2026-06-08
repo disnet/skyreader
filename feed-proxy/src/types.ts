@@ -18,29 +18,17 @@ export interface ParsedFeed {
   fetchedAt: number;
 }
 
-export interface FeedRow {
-  url: string;
-  title: string | null;
-  site_url: string | null;
-  description: string | null;
-  image_url: string | null;
-  etag: string | null;
-  last_modified: string | null;
-  last_fetched_at: number;
-  error_count: number;
-  last_error: string | null;
-}
-
-export interface ItemRow {
-  id: string;
-  feed_url: string;
+// A durable, retained feed item in the `feed_items` log. `seq` is a global
+// monotonic cursor (SQLite AUTOINCREMENT rowid, never reused); the client drains
+// everything with `seq > sinceSeq` since its last visit. One row per
+// (url_hash, guid); a re-published item updates `item_json`/`content_hash` in
+// place, keeping its seq (no re-delivery).
+export interface FeedItemRow {
+  seq: number;
+  url_hash: string;
   guid: string;
-  url: string;
-  title: string;
-  author: string | null;
-  summary: string | null;
-  content: string | null;
-  image_url: string | null;
-  published_at: number;
-  fetched_at: number;
+  item_json: string;
+  published_at: number | null;
+  first_seen_at: number;
+  content_hash: string | null;
 }

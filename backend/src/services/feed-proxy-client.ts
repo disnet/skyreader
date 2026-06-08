@@ -34,6 +34,13 @@ export interface ProxyFeedResponse {
   imageUrl?: string;
   items: FeedItem[];
   fetchedAt: number;
+  // Durable-log cursor contract (see RETENTION_SYNC_PLAN.md). `cursor` is the max
+  // seq the client has now seen for this feed; it stores it and sends it back as
+  // `since_seq`. `generation` guards against a proxy DB wipe (cold-start on
+  // mismatch). `hasMore` means the feed's backlog wasn't fully drained this poll.
+  cursor?: number;
+  generation?: string;
+  hasMore?: boolean;
 }
 
 export interface ProxyBatchFeedEntry {
@@ -47,6 +54,10 @@ export interface ProxyBatchFeedEntry {
   errorCount?: number;
   nextRetryAt?: number;
   lastFetchedAt?: number;
+  // See ProxyFeedResponse — the per-feed cursor contract.
+  cursor?: number;
+  generation?: string;
+  hasMore?: boolean;
 }
 
 export interface ProxyBatchResponse {
@@ -94,6 +105,12 @@ export interface ProxyDocumentEntry {
   // proxy's per-author cap), so an absent record can be treated as deleted rather
   // than merely beyond the cap. Absent/false → set may be truncated.
   complete?: boolean;
+  // Unified cursor contract (documents emit the same shape as feeds for one
+  // client mental model). Phase 1: storage stays the per-author blob, so
+  // `hasMore` is always false and `cursor` is inert.
+  cursor?: number;
+  generation?: string;
+  hasMore?: boolean;
 }
 
 interface RawDocumentBatchResponse {
@@ -180,7 +197,9 @@ interface RawFeedResponse {
     items: FeedItem[];
   } | null;
   cache?: string;
-  filter?: string;
+  cursor?: number;
+  generation?: string;
+  hasMore?: boolean;
   error?: string;
   errorCount?: number;
   nextRetryAt?: number;
@@ -201,6 +220,9 @@ interface RawBatchResponse {
       errorCount?: number;
       nextRetryAt?: number;
       cache?: string;
+      cursor?: number;
+      generation?: string;
+      hasMore?: boolean;
     }
   >;
 }
@@ -251,7 +273,9 @@ export class FeedProxyClient {
   async fetchFeed(
     feedUrl: string,
     sinceGuids?: string[],
-    limit?: number
+    limit?: number,
+    sinceSeq?: number,
+    generation?: string
   ): Promise<ProxyFeedResponse> {
     const params = new URLSearchParams({ url: feedUrl });
 
@@ -261,6 +285,13 @@ export class FeedProxyClient {
 
     if (limit) {
       params.set('limit', limit.toString());
+    }
+
+    if (sinceSeq !== undefined) {
+      params.set('since_seq', String(sinceSeq));
+    }
+    if (generation) {
+      params.set('generation', generation);
     }
 
     const raw = await this.fetch<RawFeedResponse>(`/feed?${params}`);
@@ -283,6 +314,9 @@ export class FeedProxyClient {
       imageUrl: raw.feed.imageUrl,
       items: raw.feed.items,
       fetchedAt: Date.now(),
+      cursor: raw.cursor,
+      generation: raw.generation,
+      hasMore: raw.hasMore,
     };
   }
 
@@ -315,6 +349,8 @@ export class FeedProxyClient {
     feeds: Array<{
       url: string;
       since_guids?: string[];
+      since_seq?: number;
+      generation?: string;
       limit?: number;
     }>
   ): Promise<ProxyBatchResponse> {
@@ -350,6 +386,9 @@ export class FeedProxyClient {
           items: entry.feed.items,
           status: 'ready',
           lastFetchedAt: Date.now(),
+          cursor: entry.cursor,
+          generation: entry.generation,
+          hasMore: entry.hasMore,
         };
       }
     }
