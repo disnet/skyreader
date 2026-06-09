@@ -216,13 +216,16 @@ function parseRdfFeed(rdf: any, feedUrl: string): ParsedFeed {
   };
 }
 
-function getTextRaw(node: any): string | undefined {
+function getTextRaw(node: any): { value: string; cdata: boolean } | undefined {
   if (node === undefined || node === null) return undefined;
-  if (typeof node === 'string') return node;
-  if (typeof node === 'number') return String(node);
+  if (typeof node === 'string') return { value: node, cdata: false };
+  if (typeof node === 'number') return { value: String(node), cdata: false };
   if (Array.isArray(node)) return node.length > 0 ? getTextRaw(node[0]) : undefined;
   if (typeof node === 'object') {
-    if (node['#cdata'] !== undefined) return getTextRaw(node['#cdata']);
+    if (node['#cdata'] !== undefined) {
+      const inner = getTextRaw(node['#cdata']);
+      return inner !== undefined ? { value: inner.value, cdata: true } : undefined;
+    }
     if (node['#text'] !== undefined) return getTextRaw(node['#text']);
     for (const key of Object.keys(node)) {
       const val = getTextRaw(node[key]);
@@ -234,7 +237,13 @@ function getTextRaw(node: any): string | undefined {
 
 function getText(node: any): string | undefined {
   const raw = getTextRaw(node);
-  return raw !== undefined ? decodeHtmlEntities(raw) : undefined;
+  if (raw === undefined) return undefined;
+  // CDATA content is literal — feeds wrap raw HTML in CDATA, where entity
+  // sequences (e.g. `&lt;select&gt;` inside a <code> sample) are already in
+  // their final, displayable form. Decoding them would turn escaped markup
+  // into real elements (e.g. a literal `<select>` dropdown). Only entity-
+  // encoded text nodes (processEntities is off) need XML entity decoding.
+  return raw.cdata ? raw.value : decodeHtmlEntities(raw.value);
 }
 
 function getAtomLink(links: any, rel: string): string | undefined {

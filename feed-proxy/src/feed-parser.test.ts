@@ -80,6 +80,29 @@ describe('parseFeed', () => {
       expect(result.items[0].summary).toBe('<p>Content with HTML</p>');
     });
 
+    it('preserves entity-encoded markup inside CDATA content (does not turn &lt;select&gt; into a real element)', () => {
+      // Real-world case: WebKit's WordPress feed wraps raw HTML in CDATA, where
+      // code samples use entities like &lt;select&gt; to display literal markup.
+      // These must stay encoded, not be decoded into actual <select> elements.
+      const rss = `<?xml version="1.0"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Test Blog</title>
+    <link>https://example.com</link>
+    <item>
+      <title>Post</title>
+      <link>https://example.com/post</link>
+      <guid>select-post</guid>
+      <content:encoded><![CDATA[<p>Style any <code>&lt;select&gt;</code> element.</p>]]></content:encoded>
+    </item>
+  </channel>
+</rss>`;
+
+      const result = parseFeed(rss, 'https://example.com/feed.xml');
+
+      expect(result.items[0].content).toBe('<p>Style any <code>&lt;select&gt;</code> element.</p>');
+    });
+
     it('extracts content:encoded over description', () => {
       const rss = `<?xml version="1.0"?>
 <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
