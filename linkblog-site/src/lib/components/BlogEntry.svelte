@@ -6,6 +6,7 @@
     externalArticleUrl,
     formatDate,
     hostnameOf,
+    linkPostMentions,
     linkPostNote,
     renderBodyHtml,
     rkeyFromUri,
@@ -30,6 +31,7 @@
   // snippet quoted from the article (the article's voice). The excerpt is dropped
   // when it just repeats the note.
   const note = $derived(linkPostNote(doc).trim());
+  const mentions = $derived(linkPostMentions(doc));
   const excerpt = $derived(articleExcerpt(doc));
   const articleUrl = $derived(safeHttpUrl(externalArticleUrl(doc) || doc.canonicalUrl));
   // Daring-Fireball-style: the headline links out to the source article; the date
@@ -53,9 +55,10 @@
     {/if}
   </h2>
   {#if note}
-    <!-- Restricted Markdown (blockquotes only); the clamp keeps the preview short. -->
+    <!-- Restricted Markdown (blockquotes only) + @mention links; the 280-char clamp
+         keeps the preview short. -->
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-    <div class="entry-note">{@html renderBodyHtml(clampText(note, 280))}</div>
+    <div class="entry-note">{@html renderBodyHtml(note, mentions, 280)}</div>
   {/if}
   {#if excerpt && excerpt !== note}
     <!-- Legacy standalone quote (records predating the in-note quote). -->

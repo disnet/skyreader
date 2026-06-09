@@ -9,6 +9,7 @@
     feedUrlFor,
     formatDate,
     hostnameOf,
+    linkPostMentions,
     linkPostNote,
     plainBody,
     renderBodyHtml,
@@ -26,6 +27,7 @@
   const blogName = $derived(blogTitle(data.profile, data.pub));
   const title = $derived(doc.title || 'Untitled');
   const note = $derived(linkPostNote(doc).trim());
+  const mentions = $derived(linkPostMentions(doc));
   const excerpt = $derived(articleExcerpt(doc));
   const articleUrl = $derived(safeHttpUrl(externalArticleUrl(doc) || doc.canonicalUrl));
   const host = $derived(hostnameOf(articleUrl ?? undefined));
@@ -59,10 +61,10 @@
   </h1>
   <Meta {host} {date} {social} />
   {#if note}
-    <!-- The user-controlled body: restricted Markdown (blockquotes only), rendered
-         to escaped, self-generated HTML (see renderBodyHtml). -->
+    <!-- The user-controlled body: restricted Markdown (blockquotes only) + @mention
+         links, rendered to escaped, self-generated HTML (see renderBodyHtml). -->
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-    <div class="entry-note-lg">{@html renderBodyHtml(note)}</div>
+    <div class="entry-note-lg">{@html renderBodyHtml(note, mentions)}</div>
   {/if}
   {#if excerpt && excerpt !== note}
     <!-- Legacy standalone quote: only records that predate the in-note quote still
