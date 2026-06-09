@@ -115,10 +115,13 @@ function applyFacets(plaintext: string, facets?: LeafletFacet[]): string {
           }
           break;
         case 'pub.leaflet.richtext.facet#mention':
+        case 'pub.leaflet.richtext.facet#didMention':
         case 'app.bsky.richtext.facet#mention':
           if (feature.did) {
-            // Link to Bluesky profile
-            wrappedText = `<a href="https://bsky.app/profile/${escapeHtml(feature.did)}" target="_blank" rel="noopener">${wrappedText}</a>`;
+            // In-app, a mention opens the add-feed dialog for the DID (see
+            // ArticleCardView's content click handler); the bsky href is the
+            // fallback wherever that handler isn't present (e.g. the reader).
+            wrappedText = `<a class="mention" data-mention-did="${escapeHtml(feature.did)}" href="https://bsky.app/profile/${escapeHtml(feature.did)}" target="_blank" rel="noopener">${wrappedText}</a>`;
           }
           break;
       }

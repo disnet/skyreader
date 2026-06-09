@@ -25,6 +25,8 @@
   import {
     getExternalArticleLink,
     getLinkPostNote,
+    getLinkPostNoteMentions,
+    linkifyNoteMentions,
     formatQuoteSeed,
     noteHasBlockquote,
   } from '$lib/utils/linkPost';
@@ -189,13 +191,20 @@
   // user's own post the note is shown (and edited) in the note box above the
   // action bar, so don't also render it as prose in the body.
   let linkPostNote = $derived(!isOwnLinkblogPost ? rawLinkPostNote : undefined);
-  // Notes are authored as Markdown — parse to HTML (GFM, soft line breaks
-  // preserved) and sanitize before the view renders it. Inline links open in a
-  // new tab via the same afterSanitize hook used for article bodies.
+  // @mention facets on the note, used to linkify handles to Bluesky profiles.
+  let linkPostMentions = $derived(document ? getLinkPostNoteMentions(document) : []);
+  // Notes are authored as Markdown — splice profile links over any @mention facets,
+  // then parse to HTML (GFM, soft line breaks preserved) and sanitize before the view
+  // renders it. Inline links open in a new tab via the same afterSanitize hook used
+  // for article bodies.
   let linkPostNoteHtml = $derived(
     linkPostNote
       ? sanitizeHtml(
-          marked.parse(linkPostNote, { gfm: true, breaks: true, async: false }) as string
+          marked.parse(linkifyNoteMentions(linkPostNote, linkPostMentions), {
+            gfm: true,
+            breaks: true,
+            async: false,
+          }) as string
         )
       : undefined
   );
@@ -831,6 +840,7 @@
   onCreateInLane={createInLane}
   onApplyComment={applyComment}
   onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
+  onMentionClick={(did) => sidebarStore.openAddFeedModalForDid(did)}
   onCloseOverflow={() => (overflowMenuOpen = false)}
 />
 

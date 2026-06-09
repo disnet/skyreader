@@ -81,6 +81,7 @@
     onCreateInLane,
     onApplyComment,
     onOpenAuthor,
+    onMentionClick,
     onCloseOverflow,
   }: ArticleCardViewProps = $props();
 
@@ -91,6 +92,18 @@
   // The content tap: keep the pure DOM guards here (let real links / media play),
   // then hand off the expand-vs-select decision to the container via onContentTap.
   function handleContentClick(e: MouseEvent) {
+    // A @mention opens the add-feed dialog for that account (to subscribe to their
+    // publications) instead of following its bsky-profile href fallback.
+    const mention = (e.target as HTMLElement).closest<HTMLElement>('a[data-mention-did]');
+    if (mention) {
+      const did = mention.dataset.mentionDid;
+      if (did) {
+        e.preventDefault();
+        e.stopPropagation();
+        onMentionClick?.(did);
+        return;
+      }
+    }
     if ((e.target as HTMLElement).closest('a')) return;
     if ((e.target as HTMLElement).closest('video, audio, iframe')) return;
     e.stopPropagation();

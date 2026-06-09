@@ -148,5 +148,7 @@ export interface ArticleCardViewProps {
   onCreateInLane?: (id: LaneId) => void;
   onApplyComment?: (note: string) => void;
   onOpenAuthor?: (did: string) => void;
+  // A @mention in the note/body was clicked — open the add-feed dialog for the DID.
+  onMentionClick?: (did: string) => void;
   onCloseOverflow?: () => void;
 }
