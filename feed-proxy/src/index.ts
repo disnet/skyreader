@@ -1,3 +1,6 @@
+// Must be first: initializes Sentry before any other module loads so its global
+// error handlers and instrumentation are in place when the app boots.
+import { Sentry } from './instrument';
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'fs';
 import { createApp, initDatabase, cleanupCache } from './app';
@@ -118,7 +121,10 @@ if (WARM_ENABLED) {
         if (feeds > 0) console.log(`[Proxy] Warmer refreshed ${feeds} feed(s)`);
         if (docs > 0) console.log(`[Proxy] Warmer refreshed ${docs} author document set(s)`);
       })
-      .catch((err) => console.error('[Proxy] Warmer error:', err))
+      .catch((err) => {
+        console.error('[Proxy] Warmer error:', err);
+        Sentry.captureException(err, { tags: { source: 'warmer' } });
+      })
       .finally(() => {
         warmRunning = false;
       });

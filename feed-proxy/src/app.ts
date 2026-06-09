@@ -18,6 +18,7 @@ import { getMentionLaneItems, type MentionLaneEntry } from './mention-lane';
 import type { LaneId } from './lanes';
 import { normalizeArticleUrl } from './url-normalize';
 import { Semaphore, OverloadError } from './semaphore';
+import { Sentry } from './instrument';
 
 export interface AppConfig {
   proxySecret?: string;
@@ -1084,6 +1085,20 @@ export function createApp(db: Database, config: AppConfig) {
   }
 
   const app = new Hono();
+
+  // Report any error that escapes a route handler to Sentry, then answer 500.
+  // Routes handle their own expected failures (upstream 502s, 503 load-shed,
+  // 4xx validation) and return before this fires; this catches the unexpected —
+  // a thrown bug, an unhandled rejection inside a handler — so it surfaces in
+  // Sentry instead of vanishing into a bare 500. No-op send when Sentry is off.
+  app.onError((err, c) => {
+    console.error(`[Proxy] Unhandled error on ${c.req.method} ${c.req.path}:`, err);
+    Sentry.captureException(err, {
+      tags: { source: 'route' },
+      extra: { method: c.req.method, path: c.req.path },
+    });
+    return c.json({ error: 'Internal server error' }, 500);
+  });
 
   // Health check (no auth)
   app.get('/health', (c) => {
