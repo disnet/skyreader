@@ -9,6 +9,7 @@ import {
   externalArticleUrl,
   feedUrlFor,
   hostnameOf,
+  linkPostMentions,
   linkPostNote,
   renderBodyHtml,
   rkeyFromUri,
@@ -58,14 +59,15 @@ export function toRfc822(iso: string): string {
 // permalink is the one thing only the body can carry.
 function entryHtml(doc: ProxyDocument, permalink: string): string {
   const note = linkPostNote(doc).trim();
+  const mentions = linkPostMentions(doc);
   const excerpt = articleExcerpt(doc);
   const articleUrl = safeHttpUrl(externalArticleUrl(doc) || doc.canonicalUrl);
   const host = hostnameOf(articleUrl ?? undefined);
 
   const parts: string[] = [];
-  // The note is the user-controlled body — restricted Markdown (blockquotes only),
-  // already escaped to safe HTML by renderBodyHtml.
-  if (note) parts.push(renderBodyHtml(note));
+  // The note is the user-controlled body — restricted Markdown (blockquotes only)
+  // plus @mention links, already escaped to safe HTML by renderBodyHtml.
+  if (note) parts.push(renderBodyHtml(note, mentions));
   // Legacy records still carry a separate top-level excerpt; render it as before.
   if (excerpt && excerpt !== note) parts.push(`<blockquote>${escapeHtml(excerpt)}</blockquote>`);
   if (articleUrl) {

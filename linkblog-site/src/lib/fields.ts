@@ -76,9 +76,18 @@ export function appUrlFor(origin: string, publicAppUrl?: string): string {
 
 // ── Link-post fields ─────────────────────────────────────────────────────────
 
+interface LeafletFacetFeature {
+  $type?: string;
+  did?: string;
+}
+interface LeafletFacet {
+  index?: { byteStart?: number; byteEnd?: number };
+  features?: LeafletFacetFeature[];
+}
 interface LeafletTextBlock {
   $type?: string;
   plaintext?: string;
+  facets?: LeafletFacet[];
 }
 interface LeafletPage {
   blocks?: Array<{ block?: LeafletTextBlock }>;
@@ -88,23 +97,66 @@ interface LeafletContent {
   pages?: LeafletPage[];
 }
 
-// The user's commentary on a link post: the plaintext of the first
-// `pub.leaflet.blocks.text` block (Skyreader writes the note as the leading text
-// block, before the website card). Returns '' when there's no note — the
-// document's `description`/`textContent` hold the article excerpt, not the note.
-export function linkPostNote(doc: ProxyDocument): string {
+// A resolved @mention in a note: the UTF-8 byte range of the `@handle` token within
+// the note plaintext, plus the DID it points at. Skyreader writes these as
+// `pub.leaflet.richtext.facet#didMention` facets on the note's text block (see the
+// backend's mention-facets); we render them as links to the mentioned account.
+export interface MentionFacet {
+  byteStart: number;
+  byteEnd: number;
+  did: string;
+}
+
+// Facet $types we treat as an @mention. Our own writer emits `#didMention`; the
+// others are accepted for interop with bsky/leaflet-native records.
+const MENTION_FACET_TYPES = new Set([
+  'pub.leaflet.richtext.facet#didMention',
+  'pub.leaflet.richtext.facet#mention',
+  'app.bsky.richtext.facet#mention',
+]);
+
+// The first `pub.leaflet.blocks.text` block with non-blank text — the note block.
+// Skyreader writes the note as the leading text block, before the website card.
+function firstNoteBlock(doc: ProxyDocument): LeafletTextBlock | null {
   const content = doc.content as LeafletContent | undefined;
   if (content && content.$type === 'pub.leaflet.content') {
     for (const page of content.pages ?? []) {
       for (const wrapper of page.blocks ?? []) {
-        if (wrapper.block?.$type === 'pub.leaflet.blocks.text') {
-          const text = wrapper.block.plaintext?.trim();
-          if (text) return text;
+        if (wrapper.block?.$type === 'pub.leaflet.blocks.text' && wrapper.block.plaintext?.trim()) {
+          return wrapper.block;
         }
       }
     }
   }
-  return '';
+  return null;
+}
+
+// The user's commentary on a link post: the note block's plaintext (trimmed).
+// Returns '' when there's no note — the document's `description`/`textContent` hold
+// the article excerpt, not the note. The backend stores this plaintext already
+// trimmed, so the mention facets' byte offsets line up with this string (see
+// linkPostMentions).
+export function linkPostNote(doc: ProxyDocument): string {
+  return firstNoteBlock(doc)?.plaintext?.trim() ?? '';
+}
+
+// The resolved @mention facets on the note, byte-indexed into linkPostNote(doc).
+export function linkPostMentions(doc: ProxyDocument): MentionFacet[] {
+  const facets = firstNoteBlock(doc)?.facets;
+  if (!Array.isArray(facets)) return [];
+  const out: MentionFacet[] = [];
+  for (const f of facets) {
+    const byteStart = f?.index?.byteStart;
+    const byteEnd = f?.index?.byteEnd;
+    if (typeof byteStart !== 'number' || typeof byteEnd !== 'number' || byteEnd <= byteStart) {
+      continue;
+    }
+    const did = (f.features ?? []).find(
+      (ft) => ft && MENTION_FACET_TYPES.has(ft.$type ?? '') && ft.did?.startsWith('did:')
+    )?.did;
+    if (did) out.push({ byteStart, byteEnd, did });
+  }
+  return out;
 }
 
 // A snippet of the shared article itself (its first paragraph or so). LEGACY
@@ -126,45 +178,111 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
+const utf8Encoder = new TextEncoder();
+const utf8Decoder = new TextDecoder();
+
+function byteLength(value: string): number {
+  return utf8Encoder.encode(value).length;
+}
+
+// Render a mention's `@handle` label as a link to the account on Bluesky. The DID is
+// validated (`did:` prefix) and percent-encoded into the path, so it can't break out
+// of the href; `label` is the already-escaped handle text taken from the note.
+function mentionLink(did: string, label: string): string {
+  if (!did.startsWith('did:')) return label;
+  return `<a href="https://bsky.app/profile/${encodeURIComponent(did)}" target="_blank" rel="noopener nofollow">${label}</a>`;
+}
+
+// Escape `text` to safe HTML, turning any mention facets that fall within it into
+// links. `text` is a slice of the note plaintext starting at `baseByteOffset` (its
+// UTF-8 byte offset within the full note); facets carry absolute byte offsets, so we
+// shift them into the slice. Facets straddling the slice edge (e.g. cut by a clamp)
+// are skipped, leaving plain escaped text.
+function applyMentionFacets(text: string, baseByteOffset: number, facets: MentionFacet[]): string {
+  const bytes = utf8Encoder.encode(text);
+  const sliceEnd = baseByteOffset + bytes.length;
+  const within = facets
+    .filter((f) => f.byteStart >= baseByteOffset && f.byteEnd <= sliceEnd)
+    .sort((a, b) => a.byteStart - b.byteStart);
+  if (within.length === 0) return escapeHtml(text);
+
+  let html = '';
+  let cursor = 0; // byte cursor within `bytes`
+  for (const f of within) {
+    const start = f.byteStart - baseByteOffset;
+    const end = f.byteEnd - baseByteOffset;
+    if (start < cursor) continue; // overlapping facet — skip
+    html += escapeHtml(utf8Decoder.decode(bytes.slice(cursor, start)));
+    html += mentionLink(f.did, escapeHtml(utf8Decoder.decode(bytes.slice(start, end))));
+    cursor = end;
+  }
+  html += escapeHtml(utf8Decoder.decode(bytes.slice(cursor)));
+  return html;
+}
+
 // Render a link-post note (the user-controlled body) to safe HTML with a HEAVILY
-// restricted Markdown subset: blockquotes only. Everything else is plain text.
+// restricted Markdown subset: blockquotes only, plus @mention links from `facets`.
+// Pass `max` to clamp long previews (mentions past the cut are dropped).
 //
 // The body is untrusted PDS content on this public origin, so every character is
-// HTML-escaped first and the ONLY tags emitted are <p>/<blockquote>/<br> that we
-// generate — there's no path for raw HTML (or any other Markdown) to survive.
-// Lines beginning with `>` open or extend a blockquote (consecutive ones fold into
-// one); blank lines separate paragraphs; single newlines become <br>.
-export function renderBodyHtml(body: string): string {
-  const lines = body.replace(/\r\n?/g, '\n').split('\n');
+// HTML-escaped and the ONLY tags emitted are the <p>/<blockquote>/<br> we generate
+// and <a> links built from validated mention DIDs — there's no path for raw HTML (or
+// any other Markdown) to survive. Lines beginning with `>` open or extend a
+// blockquote (consecutive ones fold into one); blank lines separate paragraphs;
+// single newlines become <br>.
+export function renderBodyHtml(body: string, facets: MentionFacet[] = [], max?: number): string {
+  let text = body;
+  let mentions = facets;
+  if (max != null && text.length > max) {
+    const kept = text.slice(0, max - 1).trimEnd();
+    const keptBytes = byteLength(kept);
+    mentions = facets.filter((f) => f.byteEnd <= keptBytes);
+    text = kept + '…';
+  }
+
   const out: string[] = [];
   let para: string[] = [];
   let quote: string[] = [];
 
   const flushPara = () => {
     if (para.length) {
-      out.push(`<p>${para.map(escapeHtml).join('<br>')}</p>`);
+      out.push(`<p>${para.join('<br>')}</p>`);
       para = [];
     }
   };
   const flushQuote = () => {
     if (quote.length) {
-      out.push(`<blockquote><p>${quote.map(escapeHtml).join('<br>')}</p></blockquote>`);
+      out.push(`<blockquote><p>${quote.join('<br>')}</p></blockquote>`);
       quote = [];
     }
   };
 
-  for (const line of lines) {
+  // Walk lines while tracking each line's UTF-8 byte offset, so the facets (absolute
+  // byte ranges) map onto the right line. A trailing \r (from \r\n) is dropped for
+  // display but still counted toward the offset.
+  let byteOffset = 0;
+  for (const rawLine of text.split('\n')) {
+    let line = rawLine;
+    let crBytes = 0;
+    if (line.endsWith('\r')) {
+      line = line.slice(0, -1);
+      crBytes = 1;
+    }
     const m = /^[ \t]*>[ \t]?(.*)$/.exec(line);
     if (m) {
       flushPara();
-      quote.push(m[1]);
+      // The blockquote marker is stripped, so the quoted content starts that many
+      // bytes into the line.
+      const contentByteStart = byteOffset + (byteLength(line) - byteLength(m[1]));
+      quote.push(applyMentionFacets(m[1], contentByteStart, mentions));
     } else if (line.trim() === '') {
       flushPara();
       flushQuote();
     } else {
       flushQuote();
-      para.push(line);
+      para.push(applyMentionFacets(line, byteOffset, mentions));
     }
+    byteOffset += byteLength(line) + crBytes + 1; // + the consumed \n
   }
   flushPara();
   flushQuote();
