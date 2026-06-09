@@ -33,6 +33,8 @@
   } from '$lib/components/CollectionPicker.svelte';
 
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
+  import NotificationList from '$lib/components/NotificationList.svelte';
+  import { notificationsStore } from '$lib/stores/notifications.svelte';
   import { useScrollDirection } from '$lib/hooks/useScrollDirection.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
@@ -54,6 +56,7 @@
   const scrollDirection = useScrollDirection();
   let feedSwitcherOpen = $state(false);
   let filterSheetOpen = $state(false);
+  let notifSheetOpen = $state(false);
   let readerOpen = $state(false);
   let filterSheetInitialTab = $state<'filters' | 'channel'>('filters');
   let editingChannelId = $state<number | null>(null);
@@ -727,6 +730,12 @@
         currentTitle={pageTitle}
         onScrollToTop={scrollToTop}
         onOpenFeedSwitcher={() => (feedSwitcherOpen = true)}
+        onOpenNotifications={() => {
+          notifSheetOpen = true;
+          // Load the enriched list; the badge already polled the source list. Items
+          // stay highlighted while the sheet is open, then mark seen on close.
+          void notificationsStore.load();
+        }}
         onOpenFilterSheet={() => {
           filterSheetInitialTab = 'filters';
           editingChannelId = feedViewStore.activeFilteredView?.id ?? null;
@@ -747,6 +756,17 @@
           onEditChannel={handleEditChannel}
           onCreateChannel={handleCreateChannel}
         />
+      </BottomSheet>
+
+      <BottomSheet
+        open={notifSheetOpen}
+        onclose={() => {
+          notifSheetOpen = false;
+          void notificationsStore.markAllSeen();
+        }}
+        title="Notifications"
+      >
+        <NotificationList onItemClick={() => (notifSheetOpen = false)} />
       </BottomSheet>
 
       <BottomSheet
