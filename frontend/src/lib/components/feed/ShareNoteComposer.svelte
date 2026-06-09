@@ -8,6 +8,7 @@
   import { onMount, onDestroy } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
+  import MentionAutocomplete from './MentionAutocomplete.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { formatQuoteSeed } from '$lib/utils/linkPost';
 
@@ -140,6 +141,7 @@
           placeholder="Add a note… (optional)"
           onkeydown={handleKeydown}
         ></textarea>
+        <MentionAutocomplete {textareaEl} bind:value={note} />
         <p class="hint">{hintText}</p>
         <div class="actions">
           <button class="btn btn-ghost" onclick={onclose}>Cancel</button>
@@ -173,6 +175,7 @@
         placeholder="Add a note… (optional)"
         onkeydown={handleKeydown}
       ></textarea>
+      <MentionAutocomplete {textareaEl} bind:value={note} />
       <div class="footer">
         <span class="hint">{hintText}</span>
         <div class="actions">

@@ -11,6 +11,7 @@
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { keyboardStore } from '$lib/stores/keyboard.svelte';
+  import { notificationsStore } from '$lib/stores/notifications.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import KeyboardShortcutsModal from '$lib/components/KeyboardShortcutsModal.svelte';
   import Toast from '$lib/components/Toast.svelte';
@@ -219,6 +220,19 @@
       action: () => preferences.resetFontSize(),
       condition: () => auth.isAuthenticated,
     });
+  });
+
+  // Own the @mention badge-polling lifecycle at the shell, tied to auth. Both the
+  // desktop sidebar bell and the mobile bottom-bar bell are pure consumers; if
+  // either component owned start/stop, unmounting it (e.g. the mobile bar when the
+  // reader opens) would tear down polling for the other. start() is idempotent;
+  // stop() also clears per-account state, so it doubles as logout cleanup.
+  $effect(() => {
+    if (!browser) return;
+    if (auth.isAuthenticated) {
+      notificationsStore.start();
+      return () => notificationsStore.stop();
+    }
   });
 
   // Apply article font preference to document

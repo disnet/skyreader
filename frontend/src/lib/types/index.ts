@@ -650,6 +650,25 @@ export interface SembleCollectionRef {
   url: string | null;
 }
 
+// An in-app notification (currently only @mention-on-a-share). `actor*` fields
+// are the sharer who mentioned you; `sourceUri` is the mentioning
+// site.standard.document; `title` is the shared article's title. Sourced
+// client-side from Constellation (see services/mentions.ts); `id` is the
+// stable source URI.
+export interface SkyNotification {
+  id: string;
+  type: 'mention' | string;
+  actorDid: string;
+  actorHandle: string | null;
+  actorDisplayName: string | null;
+  actorAvatar: string | null;
+  sourceUri: string;
+  canonicalUrl: string | null;
+  title: string | null;
+  createdAt: number;
+  seen: boolean;
+}
+
 // The user's linkblog publication metadata (site.standard.publication), as
 // returned by the backend. `exists` is false when the publication hasn't been
 // created yet (first share creates it lazily).

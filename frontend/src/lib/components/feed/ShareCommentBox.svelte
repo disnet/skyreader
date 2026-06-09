@@ -5,6 +5,7 @@
   // page flow (no popover, no shadow). At rest the note reads muted; focusing
   // brings it forward and reveals the Save control inline on the right.
   import Icon from '$lib/components/Icon.svelte';
+  import MentionAutocomplete from './MentionAutocomplete.svelte';
 
   interface Props {
     /** Existing note to seed the field with (empty for a fresh share). */
@@ -80,6 +81,7 @@
       onfocus={() => (focused = true)}
       onblur={() => (focused = false)}
     ></textarea>
+    <MentionAutocomplete {textareaEl} bind:value />
     <!-- Always rendered so it reserves its space — focusing (or a saved note at
          rest) reveals it via opacity/visibility, never a layout shift. -->
     <div class="actions" class:hidden={!focused && !showSaved}>

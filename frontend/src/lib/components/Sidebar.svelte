@@ -26,6 +26,7 @@
   import ContextMenu from './sidebar/ContextMenu.svelte';
   import FeedItem from './sidebar/FeedItem.svelte';
   import Icon from './Icon.svelte';
+  import NotificationBell from './NotificationBell.svelte';
   import Tooltip from './Tooltip.svelte';
   import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
@@ -310,6 +311,7 @@
         <span class="tier-badge">{auth.user.tier}</span>
       {/if}
     </a>
+    <NotificationBell />
     <AddSourceInput />
   </div>
 

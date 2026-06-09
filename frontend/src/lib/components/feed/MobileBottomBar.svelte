@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from '$lib/components/Icon.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
+  import { notificationsStore } from '$lib/stores/notifications.svelte';
 
   interface Props {
     controlsVisible: boolean;
@@ -8,6 +9,7 @@
     onScrollToTop: () => void;
     onOpenFeedSwitcher: () => void;
     onOpenFilterSheet: () => void;
+    onOpenNotifications: () => void;
     hasActiveFilters: boolean;
     hideFilterButton?: boolean;
   }
@@ -18,6 +20,7 @@
     onScrollToTop,
     onOpenFeedSwitcher,
     onOpenFilterSheet,
+    onOpenNotifications,
     hasActiveFilters,
     hideFilterButton = false,
   }: Props = $props();
@@ -94,6 +97,22 @@
         </div>
       {/if}
     </div>
+    <span class="bar-divider"></span>
+    <button
+      class="bar-btn"
+      onclick={onOpenNotifications}
+      aria-label={notificationsStore.unreadCount > 0
+        ? `Notifications, ${notificationsStore.unreadCount} unread`
+        : 'Notifications'}
+      title="Notifications"
+    >
+      <Icon name="bell" size={20} />
+      {#if notificationsStore.unreadCount > 0}
+        <span class="notif-count"
+          >{notificationsStore.unreadCount > 99 ? '99+' : notificationsStore.unreadCount}</span
+        >
+      {/if}
+    </button>
     {#if !hideFilterButton}
       <span class="bar-divider"></span>
       <button
@@ -238,6 +257,22 @@
     height: 6px;
     background: var(--color-primary, #0066cc);
     border-radius: 50%;
+  }
+
+  .notif-count {
+    position: absolute;
+    top: 0.15rem;
+    right: 0.1rem;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 3px;
+    border-radius: 999px;
+    background: var(--color-primary, #0066cc);
+    color: #fff;
+    font-size: 9px;
+    font-weight: var(--weight-semibold);
+    line-height: 15px;
+    text-align: center;
   }
 
   /* Add menu */

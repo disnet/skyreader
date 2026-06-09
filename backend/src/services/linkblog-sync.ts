@@ -9,6 +9,58 @@
 
 import type { Env, Session } from '../types';
 import { createPDSClient, type PDSResult, type PutRecordResponse } from './pds-client';
+import { resolveHandle } from './oauth';
+import { parseHandleTokens, buildMentionFacet, type MentionFacet } from '../utils/mention-facets';
+
+// Cap on the number of distinct handles we resolve per note. Each unique handle
+// costs up to a few sequential network round-trips (resolveHandle), all on the
+// Worker write path, so an unbounded note could blow the per-request subrequest
+// limit and stall the share write. Handles past the cap stay plain text.
+const MAX_RESOLVED_HANDLES = 15;
+
+// Upper bound on note length we scan for mentions. HANDLE_RE has nested
+// quantifiers, so matching against an adversarially-large note is ~O(n²)
+// backtracking on the Worker write path. Real notes are short; anything past
+// this just won't have its tail scanned for @mentions (the note text itself is
+// still stored verbatim by the caller). Comfortably above the excerpt cap.
+const MAX_NOTE_SCAN_CHARS = 4000;
+
+// Parse `@handle.tld` tokens in a note, resolve each unique handle to a DID, and
+// return the didMention facets (byte-indexed into the trimmed note plaintext).
+// Best-effort: an unresolvable handle just stays plain text. Resolving here (the
+// async write path) keeps the content builders pure/sync. The mention is encoded
+// for ANY resolvable handle — interop is universal. Surfacing it in-app is fully
+// client-side: the recipient's browser discovers it via Constellation's backlink
+// index (see frontend services/mentions.ts); there is no server-side notifier.
+async function resolveNoteMentions(note: string | undefined): Promise<MentionFacet[]> {
+  const text = note?.trim();
+  if (!text) return [];
+  // Bound the regex input (see MAX_NOTE_SCAN_CHARS). Byte offsets stay valid
+  // because we only ever slice off the tail, never shift the prefix.
+  const scanText = text.length > MAX_NOTE_SCAN_CHARS ? text.slice(0, MAX_NOTE_SCAN_CHARS) : text;
+  const tokens = parseHandleTokens(scanText);
+  if (tokens.length === 0) return [];
+
+  const uniqueHandles = [...new Set(tokens.map((t) => t.handle))].slice(0, MAX_RESOLVED_HANDLES);
+  const resolved = new Map<string, string>();
+  await Promise.all(
+    uniqueHandles.map(async (handle) => {
+      try {
+        const did = await resolveHandle(handle);
+        if (did && did.startsWith('did:')) resolved.set(handle, did);
+      } catch {
+        /* unresolvable handle stays plain text */
+      }
+    })
+  );
+
+  const facets: MentionFacet[] = [];
+  for (const t of tokens) {
+    const did = resolved.get(t.handle);
+    if (did) facets.push(buildMentionFacet(t.byteStart, t.byteEnd, did));
+  }
+  return facets;
+}
 
 export const PUBLICATION_COLLECTION = 'site.standard.publication';
 export const DOCUMENT_COLLECTION = 'site.standard.document';
@@ -276,14 +328,20 @@ function websiteCardExcerpt(content: unknown): string {
 // shared article as a website link-card. The card carries the external URL so
 // any pub.leaflet-aware reader (incl. Skyreader's own renderer in Phase 2) can
 // render and open it; the top-level `links` field is the machine-readable ref.
-function buildLeafletContent(input: LinkblogShareInput, excerpt: string): unknown {
+function buildLeafletContent(
+  input: LinkblogShareInput,
+  excerpt: string,
+  noteFacets?: MentionFacet[]
+): unknown {
   const blocks: Array<{ block: unknown }> = [];
 
   const note = input.note?.trim();
   if (note) {
-    blocks.push({
-      block: { $type: 'pub.leaflet.blocks.text', plaintext: note },
-    });
+    const block: Record<string, unknown> = { $type: 'pub.leaflet.blocks.text', plaintext: note };
+    // Attach didMention facets so the note's @mentions are legible to any
+    // pub.leaflet-aware reader/notifier (Leaflet incl.) and to Constellation.
+    if (noteFacets && noteFacets.length > 0) block.facets = noteFacets;
+    blocks.push({ block });
   }
 
   const website: Record<string, unknown> = {
@@ -303,7 +361,8 @@ function buildLeafletContent(input: LinkblogShareInput, excerpt: string): unknow
 export function buildLinkblogDocument(
   did: string,
   rkey: string,
-  input: LinkblogShareInput
+  input: LinkblogShareInput,
+  mentionFacets?: MentionFacet[]
 ): DocumentRecord {
   const now = new Date().toISOString();
   const excerpt = input.excerpt ? truncate(input.excerpt, MAX_EXCERPT_CHARS) : '';
@@ -330,7 +389,7 @@ export function buildLinkblogDocument(
     textContent,
     tags: input.tags && input.tags.length > 0 ? input.tags : undefined,
     links,
-    content: buildLeafletContent(input, excerpt),
+    content: buildLeafletContent(input, excerpt, mentionFacets),
   };
 }
 
@@ -345,7 +404,8 @@ export async function writeLinkblogShare(
   const ensured = await ensureLinkblogPublication(session, env);
   if (!ensured.success) return ensured;
 
-  const record = buildLinkblogDocument(session.did, rkey, input);
+  const mentionFacets = await resolveNoteMentions(input.note);
+  const record = buildLinkblogDocument(session.did, rkey, input, mentionFacets);
   return createPDSClient(session).putRecord(DOCUMENT_COLLECTION, rkey, record);
 }
 
@@ -378,6 +438,9 @@ export async function updateLinkblogShareNote(
   const articleUrl = rec.links?.find((l) => l.rel === 'related')?.uri || '';
   const excerpt = websiteCardExcerpt(rec.content) || rec.description || '';
   const trimmedNote = note.trim();
+  // Re-resolve mentions on edit so added/removed @handles re-encode; recipients
+  // pick up the change on their next Constellation poll.
+  const mentionFacets = await resolveNoteMentions(trimmedNote);
 
   const updated: DocumentRecord = {
     ...rec,
@@ -385,7 +448,8 @@ export async function updateLinkblogShareNote(
     textContent: [trimmedNote, excerpt].filter(Boolean).join('\n\n') || undefined,
     content: buildLeafletContent(
       { articleUrl, articleTitle: rec.title, excerpt, note: trimmedNote },
-      excerpt
+      excerpt,
+      mentionFacets
     ),
   };
 
