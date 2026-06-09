@@ -8,6 +8,23 @@ import { DocumentFirehose } from './jetstream';
 
 // Config
 const PROXY_SECRET = process.env.PROXY_SECRET;
+
+// Fail closed: every route's auth check is `if (proxySecret && header !== secret)`,
+// so a missing secret silently disables auth and turns this into an open SSRF /
+// extraction proxy. In production (Fly sets FLY_APP_NAME) refuse to start without it
+// rather than booting wide open; locally/CI it's an intentional, loud-warned no-op.
+if (!PROXY_SECRET) {
+  if (process.env.FLY_APP_NAME) {
+    console.error(
+      '[Proxy] FATAL: PROXY_SECRET is not set in production. Refusing to start to avoid running as an open proxy.'
+    );
+    process.exit(1);
+  }
+  console.warn(
+    '[Proxy] WARNING: PROXY_SECRET not set — request authentication is DISABLED (local/dev only).'
+  );
+}
+
 const DATA_DIR = process.env.DATA_DIR || './data';
 const CACHE_TTL_MS = parseInt(process.env.CACHE_TTL_SECONDS || '900', 10) * 1000; // 15 min default
 const STALE_TTL_MS = parseInt(process.env.STALE_TTL_SECONDS || '3600', 10) * 1000; // 1 hour default

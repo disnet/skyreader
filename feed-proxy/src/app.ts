@@ -18,6 +18,7 @@ import { getMentionLaneItems, type MentionLaneEntry } from './mention-lane';
 import type { LaneId } from './lanes';
 import { normalizeArticleUrl } from './url-normalize';
 import { Semaphore, OverloadError } from './semaphore';
+import { safeFetch } from './ssrf-guard';
 import { Sentry } from './instrument';
 
 export interface AppConfig {
@@ -231,7 +232,11 @@ class FetchHtmlError extends Error {
 }
 
 async function readResponseWithLimit(response: Response, maxBytes: number): Promise<string> {
-  // Check Content-Length header first for fast rejection
+  // Content-Length is only a fast-reject hint: when the body is gzip/deflate-encoded
+  // it reports the COMPRESSED size, so a tiny compressed body can still expand to
+  // gigabytes (a decompression / "gzip bomb" OOM vector). We therefore also bound
+  // the DECOMPRESSED bytes as we stream them, aborting the moment we cross the limit
+  // instead of buffering the whole expanded body via arrayBuffer() first.
   const contentLength = response.headers.get('Content-Length');
   if (contentLength) {
     const size = parseInt(contentLength, 10);
@@ -240,13 +245,31 @@ async function readResponseWithLimit(response: Response, maxBytes: number): Prom
     }
   }
 
-  // Read body and check size
-  const buffer = await response.arrayBuffer();
-  if (buffer.byteLength > maxBytes) {
-    throw new ResponseTooLargeError(buffer.byteLength, maxBytes);
-  }
+  const body = response.body;
+  if (!body) return '';
 
-  return new TextDecoder().decode(buffer);
+  // fetch transparently decompresses gzip/deflate, so the reader yields decompressed
+  // bytes — counting them here catches a bomb after ~maxBytes, not after full expansion.
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let out = '';
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        throw new ResponseTooLargeError(total, maxBytes);
+      }
+      out += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    // Release the connection promptly whether we finished or bailed early.
+    reader.cancel().catch(() => {});
+  }
+  out += decoder.decode();
+  return out;
 }
 
 export function calculateBackoff(errorCount: number): number {
@@ -452,9 +475,8 @@ export function initDatabase(db: Database): void {
 // an HTTP response. Never throws — failures return an 'error'/'blocked' kind.
 async function runDiscover(siteUrl: string): Promise<DiscoverResult> {
   try {
-    const response = await fetch(siteUrl, {
+    const response = await safeFetch(siteUrl, {
       headers: FETCH_HEADERS,
-      redirect: 'follow',
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
 
@@ -534,10 +556,9 @@ async function runDiscover(siteUrl: string): Promise<DiscoverResult> {
 
         try {
           const testUrl = new URL(path, baseUrl).toString();
-          const testResponse = await fetch(testUrl, {
+          const testResponse = await safeFetch(testUrl, {
             method: 'HEAD',
             headers: FETCH_HEADERS,
-            redirect: 'follow',
             signal: AbortSignal.timeout(5000),
           });
 
@@ -644,9 +665,8 @@ export function createApp(db: Database, config: AppConfig) {
     if (cached?.last_modified) headers['If-Modified-Since'] = cached.last_modified;
 
     try {
-      const response = await fetch(url, {
+      const response = await safeFetch(url, {
         headers,
-        redirect: 'follow',
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
 
@@ -1390,12 +1410,11 @@ export function createApp(db: Database, config: AppConfig) {
         // acquire() is outside the try so a failed acquire never calls release().
         await extractSemaphore.acquire();
         try {
-          const response = await fetch(url, {
+          const response = await safeFetch(url, {
             headers: {
               ...FETCH_HEADERS,
               Accept: 'text/html, application/xhtml+xml, */*',
             },
-            redirect: 'follow',
             signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
           });
 

@@ -181,6 +181,12 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
   const sanitized = DOMPurify.sanitize(html, {
     ADD_TAGS: ['iframe'],
     ADD_ATTR: ['allow', 'allowfullscreen', 'frameborder', 'referrerpolicy', 'scrolling'],
+    // Block attacker-supplied CSS: a feed can otherwise inject a <style> block or
+    // inline style= to overlay/hide the app shell (clickjacking / content spoofing,
+    // since the prod CSP allows 'unsafe-inline' styles). We rely on our own classes
+    // for layout, never on styles carried in feed HTML.
+    FORBID_TAGS: ['style'],
+    FORBID_ATTR: ['style'],
   });
 
   // Remove hook to avoid affecting other calls

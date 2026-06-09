@@ -15,6 +15,7 @@
  */
 import { Database } from 'bun:sqlite';
 import { resolveHandle, resolvePdsUrl } from './did-resolver';
+import { safeFetch } from './ssrf-guard';
 import { constellationGet } from './constellation-client';
 import { extractContentText } from './document-content';
 
@@ -116,7 +117,7 @@ async function resolveAlsoLinked(
         collection: DOCUMENT_COLLECTION,
         rkey: rec.rkey,
       });
-      const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${qs}`, {
+      const res = await safeFetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${qs}`, {
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (res.ok) {
