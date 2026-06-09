@@ -492,20 +492,10 @@ export class JetstreamPoller implements DurableObject {
     const recordUri = `at://${did}/${commit.collection}/${rkey}`;
 
     if ((operation === 'create' || operation === 'update') && record && cid) {
-      // Ensure user exists first (for FK constraint)
-      try {
-        await this.env.DB.prepare(
-          `
-					INSERT OR IGNORE INTO users (did, handle, pds_url, created_at, updated_at)
-					VALUES (?, ?, '', unixepoch(), unixepoch())
-					`
-        )
-          .bind(did, did)
-          .run();
-      } catch (dbError) {
-        console.error(`[JetstreamPoller] D1 WRITE ERROR inserting user for ${did}:`, dbError);
-        throw dbError;
-      }
+      // NB: no placeholder `users` row is inserted for the author. `documents`
+      // has no FK to `users` (migration 0030), and the sibling backfill path
+      // (routes/social.ts) already inserts documents without one. Inserting a
+      // registered_at-NULL row here only polluted `users`.
 
       // Resolve canonical_url from site + path
       const siteUri = record.site || '';
