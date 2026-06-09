@@ -226,3 +226,37 @@ describe('DocumentFirehose reconcile / active-author set', () => {
     expect(fh.computeActiveDids(now)).toHaveLength(10_000);
   });
 });
+
+describe('DocumentFirehose.isHealthy', () => {
+  // A subscription filtered to our DIDs + one collection can be legitimately
+  // silent for minutes, so liveness rides on frame activity (our ping → pong),
+  // not on whether documents are flowing. An open-but-stale socket is unhealthy.
+  test('healthy only while connected AND a frame arrived recently', () => {
+    const db = makeDb();
+    const fh = new DocumentFirehose(db, { enabled: true });
+    const internals = fh as unknown as { connected: boolean; lastActivityAt: number };
+
+    // Not connected → unhealthy regardless of activity.
+    internals.connected = false;
+    internals.lastActivityAt = Date.now();
+    expect(fh.isHealthy()).toBe(false);
+
+    // Connected with a recent frame → healthy.
+    internals.connected = true;
+    internals.lastActivityAt = Date.now();
+    expect(fh.isHealthy()).toBe(true);
+
+    // Connected but no frame for >90s (stalled/half-open) → unhealthy.
+    internals.lastActivityAt = Date.now() - 91_000;
+    expect(fh.isHealthy()).toBe(false);
+  });
+
+  test('disabled is never healthy', () => {
+    const db = makeDb();
+    const fh = new DocumentFirehose(db, { enabled: false });
+    const internals = fh as unknown as { connected: boolean; lastActivityAt: number };
+    internals.connected = true;
+    internals.lastActivityAt = Date.now();
+    expect(fh.isHealthy()).toBe(false);
+  });
+});

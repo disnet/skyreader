@@ -33,6 +33,15 @@ const CURSOR_KEY = 'jetstream_cursor_documents';
 // let the rest fall back to age-based refresh.
 const MAX_WANTED_DIDS = 10_000;
 const RECONNECT_MAX_MS = 30_000;
+// WebSocket-level liveness. The subscription is filtered to our DIDs + one
+// collection, so at low volume a perfectly healthy stream can be silent for
+// minutes — document arrival can't prove the socket is alive. Instead we ping
+// the server on a fixed cadence and watch for *any* returned frame; RFC 6455
+// guarantees a pong, so this works even when no documents are flowing.
+const PING_INTERVAL_MS = 30_000;
+// Treat the socket as dead if no frame (pong/message/ping) arrives within this
+// window (≈3 missed pings). Drives both isHealthy() and a forced reconnect.
+const PING_TIMEOUT_MS = 90_000;
 
 /** Status accessor handed to the serve path so it can trust the cache for
  *  authors the firehose is actively keeping fresh. */
@@ -85,9 +94,13 @@ export class DocumentFirehose {
   private subscribedDids = new Set<string>();
   private lastCursor: string | null = null;
   private lastEventAt = 0;
+  // Timestamp of the last frame of *any* kind (message/ping/pong) on the live
+  // socket — the liveness signal, distinct from lastEventAt (matching docs only).
+  private lastActivityAt = 0;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
   // Serialize message processing so events for the same record apply in order
   // (the async publication resolution would otherwise let them interleave).
   private queue: Promise<void> = Promise.resolve();
@@ -136,7 +149,11 @@ export class DocumentFirehose {
   }
 
   isHealthy(): boolean {
-    return this.enabled && this.connected;
+    if (!this.enabled || !this.connected) return false;
+    // A still-open socket isn't proof of liveness — require a recent frame. Our
+    // pings guarantee a pong every PING_INTERVAL_MS on a live connection, so a
+    // quiet stream stays healthy while a stalled/half-open one does not.
+    return Date.now() - this.lastActivityAt < PING_TIMEOUT_MS;
   }
 
   isSubscribed(did: string): boolean {
@@ -291,16 +308,28 @@ export class DocumentFirehose {
     ws.addEventListener('open', () => {
       this.connected = true;
       this.reconnectAttempts = 0;
-      this.lastEventAt = Date.now();
+      const now = Date.now();
+      this.lastEventAt = now;
+      this.lastActivityAt = now;
       console.log(`[Firehose] connected, watching ${this.subscribedDids.size} author(s)`);
+      this.startPingTimer(ws);
     });
 
     ws.addEventListener('message', (event: MessageEvent) => {
+      this.lastActivityAt = Date.now();
       const data = event.data as string;
       // Chain onto the queue so events apply strictly in arrival order.
       this.queue = this.queue
         .then(() => this.handleMessage(data))
         .catch((err) => console.error('[Firehose] handler error:', err));
+    });
+
+    // Any control frame proves the socket is alive even when no documents flow.
+    ws.addEventListener('ping', () => {
+      this.lastActivityAt = Date.now();
+    });
+    ws.addEventListener('pong', () => {
+      this.lastActivityAt = Date.now();
     });
 
     ws.addEventListener('close', () => {
@@ -309,6 +338,7 @@ export class DocumentFirehose {
       if (this.ws !== ws) return;
       this.ws = null;
       this.connected = false;
+      this.clearPingTimer();
       this.flushCursor();
       this.scheduleReconnect();
     });
@@ -339,12 +369,48 @@ export class DocumentFirehose {
     }
   }
 
+  /** Ping the server every PING_INTERVAL_MS and force a reconnect if no frame
+   *  has come back within PING_TIMEOUT_MS — the only liveness signal that holds
+   *  up when the (DID-filtered) stream is legitimately silent. */
+  private startPingTimer(ws: WebSocket): void {
+    this.clearPingTimer();
+    this.pingTimer = setInterval(() => {
+      if (this.ws !== ws) {
+        this.clearPingTimer();
+        return;
+      }
+      const idle = Date.now() - this.lastActivityAt;
+      if (idle > PING_TIMEOUT_MS) {
+        console.warn(
+          `[Firehose] no frames for ${Math.round(idle / 1000)}s; socket stalled, reconnecting`
+        );
+        this.reconnect();
+        return;
+      }
+      try {
+        // `.ping()` is a Bun WebSocket extension, absent from the DOM lib type.
+        (ws as WebSocket & { ping: () => void }).ping();
+      } catch (err) {
+        console.error('[Firehose] ping failed:', err);
+        this.reconnect();
+      }
+    }, PING_INTERVAL_MS);
+  }
+
+  private clearPingTimer(): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+  }
+
   private reconnect(): void {
     this.closeSocket();
     this.connect();
   }
 
   private closeSocket(): void {
+    this.clearPingTimer();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
