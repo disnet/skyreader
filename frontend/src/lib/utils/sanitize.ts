@@ -43,6 +43,26 @@ export function allowedIframeSrc(src: string | null, base: URL | null): string |
 }
 
 /**
+ * Returns `url` only if it is a navigable http(s) absolute URL, else undefined.
+ *
+ * Use at any `<a href>` sink fed by untrusted data — publication/document URLs
+ * come straight from authors' PDS records, so a malicious author can supply a
+ * `javascript:` / `data:` scheme that would execute on click. Binding the result
+ * to `href` (which renders nothing for undefined) neutralizes that vector while
+ * leaving real links intact.
+ */
+export function safeHref(url: string | null | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    const { protocol } = new URL(url);
+    if (protocol === 'http:' || protocol === 'https:') return url;
+  } catch {
+    /* not a valid absolute URL */
+  }
+  return undefined;
+}
+
+/**
  * Sanitizes HTML content, rewrites relative URLs to be absolute
  * based on the article's source URL, and opens all links in new tab.
  */

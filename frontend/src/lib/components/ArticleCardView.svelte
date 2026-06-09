@@ -7,6 +7,7 @@
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { overlapShadow } from '$lib/actions/overlap-shadow';
   import type { ArticleCardViewProps } from './articleCardView.types';
+  import { safeHref } from '$lib/utils/sanitize';
 
   let {
     // data
@@ -155,7 +156,7 @@
           <span class="article-title">
             {#if isOpen}
               <a
-                href={itemUrl}
+                href={safeHref(itemUrl)}
                 target="_blank"
                 rel="noopener"
                 class="article-title-link"
@@ -458,7 +459,7 @@
                             {#if entry.url}
                               <a
                                 class="lane-person-link"
-                                href={entry.url}
+                                href={safeHref(entry.url)}
                                 target="_blank"
                                 rel="noopener"
                                 title="Open {activeRow.label}"

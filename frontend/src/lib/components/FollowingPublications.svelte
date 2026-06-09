@@ -3,6 +3,7 @@
   import { followingPublicationsStore } from '$lib/stores/followingPublications.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import type { FollowingPublication } from '$lib/types';
+  import { safeHref } from '$lib/utils/sanitize';
   import Icon from './Icon.svelte';
 
   interface Props {
@@ -194,7 +195,7 @@
     </a>
     <div class="who">
       {#if p.url}
-        <a class="name" href={p.url} target="_blank" rel="noopener">{p.name}</a>
+        <a class="name" href={safeHref(p.url)} target="_blank" rel="noopener">{p.name}</a>
       {:else}
         <span class="name">{p.name}</span>
       {/if}
@@ -267,7 +268,7 @@
           </span>
           <div class="pub-meta">
             {#if p.url}
-              <a class="pub-name" href={p.url} target="_blank" rel="noopener">{p.name}</a>
+              <a class="pub-name" href={safeHref(p.url)} target="_blank" rel="noopener">{p.name}</a>
             {:else}
               <span class="pub-name">{p.name}</span>
             {/if}
