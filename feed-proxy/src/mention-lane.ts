@@ -24,6 +24,7 @@ import { Database } from 'bun:sqlite';
 import { normalizeArticleUrl, constellationTargets } from './url-normalize';
 import { laneForSource, type LaneId } from './lanes';
 import { resolveHandle, resolvePdsUrl } from './did-resolver';
+import { safeFetch } from './ssrf-guard';
 import { resolveSiteMeta, buildCanonicalUrl, parseAtUri } from './standard-site';
 import { constellationGet } from './constellation-client';
 import { extractContentText } from './document-content';
@@ -115,7 +116,7 @@ async function getRecordValue(
   if (!pdsUrl) return null;
   try {
     const qs = new URLSearchParams({ repo: did, collection, rkey });
-    const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${qs}`, {
+    const res = await safeFetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${qs}`, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!res.ok) return null;

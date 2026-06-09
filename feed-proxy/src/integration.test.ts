@@ -756,7 +756,7 @@ describe('Integration Tests', () => {
     });
 
     it('resets error count on successful fetch', async () => {
-      const { db, app } = createTestApp({
+      const { db, app, inFlight } = createTestApp({
         cacheTtlMs: 1, // Very short TTL so cache is immediately stale
         staleTtlMs: 60 * 60 * 1000,
       });
@@ -791,6 +791,10 @@ describe('Integration Tests', () => {
       await app.request(`/feed?url=${feedUrl}`, {
         headers: { 'X-Proxy-Secret': 'test-secret' },
       });
+
+      // Stale cache is served immediately and refreshed in the background; wait for
+      // that refresh to settle before asserting the reset error tracking.
+      await Promise.all(inFlight.values());
 
       const cached = db
         .query<CacheRow, [string]>('SELECT * FROM cache WHERE url_hash = ?')

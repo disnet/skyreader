@@ -9,6 +9,7 @@
  * cache both in one fetch; `resolveHandle` reuses the cached row when present.
  */
 import { Database } from 'bun:sqlite';
+import { assertPublicUrl, safeFetch } from './ssrf-guard';
 
 // PLC directory for did:plc resolution
 const PLC_DIRECTORY = 'https://plc.directory';
@@ -34,11 +35,21 @@ interface ResolvedDid {
   handle: string | null;
 }
 
-function pdsFromDoc(doc: DidDocument): string | null {
+async function pdsFromDoc(doc: DidDocument): Promise<string | null> {
   const pdsService = doc.service?.find(
     (s) => s.id === '#atproto_pds' || s.type === 'AtprotoPersonalDataServer'
   );
-  return pdsService?.serviceEndpoint || null;
+  const endpoint = pdsService?.serviceEndpoint || null;
+  if (!endpoint) return null;
+  // The serviceEndpoint is self-asserted by the DID owner (fully attacker-controlled
+  // for did:web), so a malicious DID can point it at an internal/loopback host. Reject
+  // any endpoint that isn't a public http(s) URL before we ever cache or fetch it.
+  try {
+    await assertPublicUrl(endpoint);
+  } catch {
+    return null;
+  }
+  return endpoint;
 }
 
 // The handle is the first `at://`-prefixed entry in `alsoKnownAs`, sans scheme.
@@ -56,15 +67,18 @@ async function resolveDidUncached(did: string): Promise<ResolvedDid> {
   try {
     let doc: DidDocument | null = null;
     if (did.startsWith('did:plc:')) {
+      // Fixed, trusted host; a did:plc is base32 (no path-breaking chars).
       const response = await fetch(`${PLC_DIRECTORY}/${did}`);
       if (response.ok) doc = (await response.json()) as DidDocument;
     } else if (did.startsWith('did:web:')) {
+      // The domain comes from the (caller-supplied) DID, so the well-known fetch is
+      // SSRF-guarded — a did:web host can otherwise be loopback / internal.
       const domain = did.replace('did:web:', '');
-      const response = await fetch(`https://${domain}/.well-known/did.json`);
+      const response = await safeFetch(`https://${domain}/.well-known/did.json`);
       if (response.ok) doc = (await response.json()) as DidDocument;
     }
     if (!doc) return { pdsUrl: null, handle: null };
-    return { pdsUrl: pdsFromDoc(doc), handle: handleFromDoc(doc) };
+    return { pdsUrl: await pdsFromDoc(doc), handle: handleFromDoc(doc) };
   } catch (error) {
     console.error(`[did-resolver] Failed to resolve ${did}:`, error);
     return { pdsUrl: null, handle: null };

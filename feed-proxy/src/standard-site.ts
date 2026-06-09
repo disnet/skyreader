@@ -9,6 +9,7 @@
  */
 import { Database } from 'bun:sqlite';
 import { resolvePdsUrl } from './did-resolver';
+import { safeFetch } from './ssrf-guard';
 
 // Publication records (base URL + icon) change rarely; cache for a day.
 const PUBLICATION_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -134,7 +135,7 @@ async function fetchRecord<T>(
 ): Promise<T | null> {
   try {
     const params = new URLSearchParams({ repo: did, collection, rkey });
-    const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${params}`, {
+    const res = await safeFetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${params}`, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!res.ok) return null;
@@ -291,7 +292,7 @@ export async function fetchDocumentsForAuthor(
     });
     if (cursor) params.set('cursor', cursor);
 
-    const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.listRecords?${params}`, {
+    const res = await safeFetch(`${pdsUrl}/xrpc/com.atproto.repo.listRecords?${params}`, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!res.ok) {
