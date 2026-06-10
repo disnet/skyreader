@@ -57,6 +57,26 @@ describe('extractContentText', () => {
     expect(extractContentText(content)).toBe('Heading');
   });
 
+  it('reads the first meaningful line of markpub markdown under text.markdown', () => {
+    const content = {
+      $type: 'at.markpub.markdown',
+      flavor: 'gfm',
+      text: {
+        $type: 'at.markpub.text',
+        markdown: '# Title\n\nThe markpub body line.\n',
+      },
+    };
+    expect(extractContentText(content)).toBe('Title');
+  });
+
+  it('returns null for a markpub record with no inline markdown', () => {
+    const content = {
+      $type: 'at.markpub.markdown',
+      text: { $type: 'at.markpub.text', textBlob: { ref: { $link: 'bafy' } } },
+    };
+    expect(extractContentText(content)).toBeNull();
+  });
+
   it('returns null for unknown / missing content', () => {
     expect(extractContentText(undefined)).toBeNull();
     expect(extractContentText(null)).toBeNull();

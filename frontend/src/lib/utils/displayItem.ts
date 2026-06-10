@@ -5,12 +5,14 @@ import { isLeafletContent, renderLeafletContent } from '$lib/utils/leaflet-rende
 import { isPcktBlogContent, renderPcktBlogContent } from '$lib/utils/pckt-blog-renderer';
 import { isOffprintContent, renderOffprintContent } from '$lib/utils/offprint-renderer';
 import { isGreengaleContent, renderGreengaleContent } from '$lib/utils/greengale-renderer';
+import { isMarkpubContent, renderMarkpubContent } from '$lib/utils/markpub-renderer';
 import { getDocumentEffectiveUrl } from '$lib/utils/linkPost';
 import type {
   LeafletContent,
   PcktBlogContent,
   OffprintContent,
   GreengaleContent,
+  MarkpubContent,
 } from '$lib/types';
 
 export interface NormalizedDisplayItem {
@@ -86,6 +88,9 @@ export function getDisplayContent(item: FeedDisplayItem): string {
     }
     if (doc.content && isGreengaleContent(doc.content)) {
       return renderGreengaleContent(doc.content as GreengaleContent, doc.authorDid);
+    }
+    if (doc.content && isMarkpubContent(doc.content)) {
+      return renderMarkpubContent(doc.content as MarkpubContent);
     }
     return doc.textContent || doc.description || '';
   }
