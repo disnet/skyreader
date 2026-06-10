@@ -115,11 +115,18 @@ type DiscoverResult =
   | { kind: 'blocked'; error: string }
   | { kind: 'error'; error: string };
 
+// Our honest fetcher identity, used for the first attempt of every upstream fetch.
+// We don't impersonate Googlebot ("like FeedFetcher-Google"): CDNs such as Akamai
+// (used by cbc.ca) verify Google crawlers by reverse-DNS and 403 any non-Google IP
+// that claims to be one. But the honest UA is itself a problem on those same CDNs —
+// their bot managers gate on the UA's *shape* (a parenthetical comment, an embedded
+// URL, or the token "bot" all read as non-browser), so this string is frequently
+// blocked. When it's refused we transparently retry with BROWSER_FALLBACK_UA; see
+// fetchWithBotFallback.
+const HONEST_UA = 'Skyreader/1.0 (+https://skyreader.app)';
+
 const FETCH_HEADERS = {
-  // Don't impersonate Googlebot (e.g. "like FeedFetcher-Google"): CDNs such as
-  // Akamai (used by cbc.ca) verify Google crawlers by reverse-DNS and 403 any
-  // non-Google IP that claims to be one. Identify honestly with a contact URL.
-  'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)',
+  'User-Agent': HONEST_UA,
   Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
   'Accept-Language': 'en-US,en;q=0.9',
   'Accept-Encoding': 'gzip, deflate',
@@ -190,6 +197,59 @@ const MAX_RESPONSE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 // Extracted article content is effectively immutable per URL; cache it for a long
 // time so repeat (and cross-user) saves of the same article are free.
 const EXTRACT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+// A real desktop-Chrome User-Agent, used only as a fallback when HONEST_UA is
+// refused. Verified against cbc.ca (Akamai): a browser UA returns 200 straight
+// through Bun's fetch, so it's the UA string alone — not the TLS/JA3 fingerprint —
+// that these CDNs gate on, which is why swapping just this header is sufficient.
+const BROWSER_FALLBACK_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+// First-attempt timeout for the honest-UA probe. Hostile CDNs often don't 403 —
+// they silently black-hole the connection so the fetch hangs to the full timeout.
+// Capping the honest probe well below FETCH_TIMEOUT_MS means a black-hole costs
+// ~this long, not 30s, before we retry with a browser UA. Kept comfortably above a
+// healthy feed's latency so normal-but-slow feeds aren't needlessly retried.
+const HONEST_UA_PROBE_TIMEOUT_MS = 10 * 1000; // 10 seconds
+
+// Fetch an upstream URL identifying honestly (HONEST_UA), transparently retrying
+// once with a browser UA when the honest attempt is blocked — either an explicit
+// 403 or a silent black-hole (timeout / connection error on the short probe).
+// `headers` carries the caller's headers (incl. HONEST_UA and any conditional-
+// request headers); only the User-Agent and per-attempt timeout differ between the
+// two attempts. Returns the final Response unchanged for the caller to classify; if
+// the browser-UA attempt also fails, its error propagates (and is classified as a
+// network/timeout error exactly as before this fallback existed).
+export async function fetchWithBotFallback(
+  url: string,
+  headers: Record<string, string>,
+  opts: { probeTimeoutMs?: number; fetchTimeoutMs?: number } = {}
+): Promise<Response> {
+  const probeTimeoutMs = opts.probeTimeoutMs ?? HONEST_UA_PROBE_TIMEOUT_MS;
+  const fetchTimeoutMs = opts.fetchTimeoutMs ?? FETCH_TIMEOUT_MS;
+
+  // Attempt 1: honest UA, short timeout.
+  try {
+    const res = await safeFetch(url, {
+      headers,
+      signal: AbortSignal.timeout(probeTimeoutMs),
+    });
+    // Only a 403 is treated as a block worth retrying; every other status
+    // (200/304/404/5xx) is a real answer the caller should handle as-is.
+    if (!isBlockedStatus(res.status)) return res;
+    await res.body?.cancel().catch(() => {});
+  } catch {
+    // Timeout / connection error on the honest attempt: possibly a silent block,
+    // possibly a genuinely slow or down feed — indistinguishable here, so fall
+    // through to the browser-UA attempt and let it settle the outcome.
+  }
+
+  // Attempt 2: browser UA, full timeout.
+  return safeFetch(url, {
+    headers: { ...headers, 'User-Agent': BROWSER_FALLBACK_UA },
+    signal: AbortSignal.timeout(fetchTimeoutMs),
+  });
+}
 
 export interface ExtractedArticle {
   title: string | null;
@@ -714,10 +774,7 @@ export function initDatabase(db: Database): void {
 // an HTTP response. Never throws — failures return an 'error'/'blocked' kind.
 async function runDiscover(siteUrl: string): Promise<DiscoverResult> {
   try {
-    const response = await safeFetch(siteUrl, {
-      headers: FETCH_HEADERS,
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
+    const response = await fetchWithBotFallback(siteUrl, FETCH_HEADERS);
 
     if (!response.ok) {
       const { error, blocked } = describeFetchFailure(response.status, siteUrl);
@@ -914,10 +971,7 @@ export function createApp(db: Database, config: AppConfig) {
     if (cached?.last_modified) headers['If-Modified-Since'] = cached.last_modified;
 
     try {
-      const response = await safeFetch(url, {
-        headers,
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
+      const response = await fetchWithBotFallback(url, headers);
 
       if (response.status === 304 && cached) {
         // Success: reset error tracking
