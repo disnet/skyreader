@@ -47,6 +47,13 @@ export interface Article {
   imageUrl?: string;
   publishedAt: string;
   fetchedAt: number;
+  // Precomputed body stats. The full `content` HTML is dropped from the
+  // in-memory copy of an article (see toLightArticle) to keep the heap small —
+  // it stays in IndexedDB and is lazy-loaded on expand. These numbers let the
+  // length/word-count features (sort-by-length, "long reads", read time) keep
+  // working without holding every body in memory. Absent on un-lightened rows.
+  contentLength?: number;
+  wordCount?: number;
 }
 
 export interface ReadPosition {
@@ -514,6 +521,11 @@ export interface SocialDocument {
   coverImageCid?: string;
   textContent?: string;
   bskyPostUri?: string;
+  // Precomputed word count. The flat `textContent` is dropped from the in-memory
+  // copy (see toLightDocument) — it duplicates the structured `content` body and
+  // is only used for word count + an unrecognized-format render fallback. This
+  // keeps the count available without holding every body's text in memory.
+  wordCount?: number;
   tags?: string[];
   updatedAt?: string;
   canonicalUrl?: string;

@@ -7,6 +7,17 @@ import { syncStore } from './sync.svelte';
 import { extractArticle } from '$lib/services/extract';
 import type { SavedItem } from '$lib/types';
 
+// The extracted webpage body is the largest field on a saved item and is only
+// read in the fullscreen reader (the card preview uses `description`; read time
+// uses the stored `wordCount`). Drop it from the in-memory list so the store
+// doesn't hold every body at once — the full text stays in IndexedDB and is
+// pulled back per-item by getContent() when the reader opens.
+function toLightSaved(item: SavedItem): SavedItem {
+  if (item.content == null) return item;
+  const { content: _content, ...rest } = item;
+  return { ...rest, content: null };
+}
+
 function createSavesStore() {
   let articles = $state<SavedItem[]>([]);
   let loading = $state(false);
@@ -36,19 +47,21 @@ function createSavesStore() {
     loading = true;
     error = null;
     try {
-      // Load from local cache first
+      // Load from local cache first. The in-memory list is kept "light" (no
+      // body); IndexedDB retains the full rows.
       const cached = await db.saved.orderBy('rkey').reverse().toArray();
       if (cached.length > 0) {
-        articles = cached;
+        articles = cached.map(toLightSaved);
         rebuildMaps();
       }
 
       // Then fetch from backend
       const response = await api.getSaved();
-      articles = response.articles;
+      articles = response.articles.map(toLightSaved);
       rebuildMaps();
 
-      // Update local cache
+      // Update local cache — persist the full rows (with bodies) so getContent
+      // can read them back on demand.
       await db.saved.clear();
       if (response.articles.length > 0) {
         await safeBulkPut(db.saved, response.articles);
@@ -98,8 +111,9 @@ function createSavesStore() {
         source: 'url',
       };
 
-      // Add to local state and cache
-      articles = [savedItem, ...articles];
+      // Insert a light copy into memory immediately, then persist the full row
+      // (with body) to IndexedDB — getContent reads it back on reader open.
+      articles = [toLightSaved(savedItem), ...articles];
       rebuildMaps();
       await safePut(db.saved, savedItem);
 
@@ -373,6 +387,17 @@ function createSavesStore() {
     return savedByGuid.get(guid);
   }
 
+  // Read a saved item's full body back from IndexedDB by rkey. The in-memory
+  // list drops bodies (see toLightSaved); the reader calls this on open.
+  async function getContent(rkey: string): Promise<string | null> {
+    try {
+      const row = await db.saved.get(rkey);
+      return row?.content ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   return {
     get articles() {
       return articles;
@@ -402,6 +427,7 @@ function createSavesStore() {
     getByUri,
     getByUrl,
     getByGuid,
+    getContent,
   };
 }
 

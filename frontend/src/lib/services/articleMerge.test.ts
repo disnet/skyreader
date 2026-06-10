@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   selectNewArticles,
   computeArticleLimitDeletions,
+  computeContentStats,
+  toLightArticle,
   MAX_ARTICLES_PER_FEED,
 } from './articleMerge';
 import type { Article, FeedItem } from '$lib/types';
@@ -172,5 +174,59 @@ describe('computeArticleLimitDeletions', () => {
     const articles = feedArticles(1, MAX_ARTICLES_PER_FEED + 2);
     const { ids } = computeArticleLimitDeletions(articles, new Set([1]), new Set());
     expect(ids).toHaveLength(2);
+  });
+});
+
+describe('computeContentStats', () => {
+  it('counts chars and words from content', () => {
+    expect(computeContentStats('one two three')).toEqual({ contentLength: 13, wordCount: 3 });
+  });
+
+  it('prefers content over summary (matching historical precedence)', () => {
+    expect(computeContentStats('full body text', 'short')).toEqual({
+      contentLength: 14,
+      wordCount: 3,
+    });
+  });
+
+  it('falls back to summary when content is absent', () => {
+    expect(computeContentStats(undefined, 'a b')).toEqual({ contentLength: 3, wordCount: 2 });
+  });
+
+  it('returns zeros for empty/whitespace', () => {
+    expect(computeContentStats('', '')).toEqual({ contentLength: 0, wordCount: 0 });
+    expect(computeContentStats('   ')).toEqual({ contentLength: 3, wordCount: 0 });
+  });
+});
+
+describe('toLightArticle', () => {
+  it('drops content, keeps summary, and attaches stats', () => {
+    const full = article(1, 'g1', {
+      id: 7,
+      content: '<p>hello world body</p>',
+      summary: 'a summary',
+    });
+    const light = toLightArticle(full);
+
+    expect(light.content).toBeUndefined();
+    expect(light.summary).toBe('a summary');
+    // metadata preserved
+    expect(light.id).toBe(7);
+    expect(light.guid).toBe('g1');
+    expect(light.subscriptionId).toBe(1);
+    // stats reflect the original content, not the summary. Word count uses the
+    // same naive whitespace split as the historical inline code (HTML tags stay
+    // attached to adjacent words), so "<p>hello world body</p>" is 3 words.
+    expect(light.contentLength).toBe('<p>hello world body</p>'.length);
+    expect(light.wordCount).toBe(3);
+  });
+
+  it('is idempotent — re-lightening recomputes the same stats', () => {
+    const once = toLightArticle(article(1, 'g1', { content: 'x y z', summary: 'fallback' }));
+    const twice = toLightArticle(once);
+    // after the first pass content is gone, so stats fall back to summary
+    expect(twice.contentLength).toBe('fallback'.length);
+    expect(twice.wordCount).toBe(1);
+    expect(twice.content).toBeUndefined();
   });
 });

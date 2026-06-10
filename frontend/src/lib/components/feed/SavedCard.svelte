@@ -103,6 +103,8 @@
     if (displayItem.type === 'article') {
       content = displayItem.item.content || displayItem.item.summary || '';
     } else if (displayItem.type === 'document') {
+      if (displayItem.item.wordCount)
+        return Math.max(1, Math.round(displayItem.item.wordCount / 200));
       content = displayItem.item.textContent || displayItem.item.description || '';
     } else if (displayItem.type === 'saved') {
       if (displayItem.item.wordCount)

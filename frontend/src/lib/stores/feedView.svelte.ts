@@ -105,10 +105,14 @@ function getItemPublishedDate(item: FeedDisplayItem): number {
 export function getItemWordCount(item: FeedDisplayItem): number | null {
   if (item.type === 'saved') return item.item.wordCount;
   if (item.type === 'article') {
+    // Prefer the precomputed count — the body is stripped from in-memory rows.
+    if (item.item.wordCount != null) return item.item.wordCount || null;
     const text = item.item.content || item.item.summary || '';
     return text ? text.split(/\s+/).length : null;
   }
   if (item.type === 'document') {
+    // Prefer the precomputed count — textContent is stripped from in-memory rows.
+    if (item.item.wordCount != null) return item.item.wordCount || null;
     const text = item.item.textContent || item.item.description || '';
     return text ? text.split(/\s+/).length : null;
   }

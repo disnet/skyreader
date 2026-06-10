@@ -24,6 +24,11 @@ const OFFLINE_RETRY_MS = 4000;
 // lengthening backoff (5s, then 10s) before giving up until the card remounts.
 const COLD_RETRY_MS = 5000;
 const MAX_COLD_RETRIES = 2;
+// Cap the session memo so a long scroll session can't grow it without bound.
+// Each entry holds the per-lane mention breakdown for one URL; 1000 cards' worth
+// is plenty to keep the visible window + recent history warm. Oldest-inserted
+// entries are evicted first (plain FIFO — good enough for an adornment cache).
+const MAX_CACHE_ENTRIES = 1000;
 
 function createArticleMentionsStore() {
   let cache = $state<Map<string, ArticleMentions>>(new Map());
@@ -61,6 +66,9 @@ function createArticleMentionsStore() {
       const res = await api.fetchArticleMentions(batch);
       const next = new Map(cache);
       for (const item of res.items ?? []) {
+        // Re-insert at the tail so a just-seen URL counts as freshest for the
+        // FIFO eviction below (delete-then-set moves it to the end).
+        next.delete(item.url);
         next.set(item.url, item);
         // A zero may be genuine or just not-yet-enriched; retry a couple times
         // with a lengthening backoff to outlast a slow background enrichment.
@@ -71,6 +79,15 @@ function createArticleMentionsStore() {
             setTimeout(() => requeue(item.url), COLD_RETRY_MS * (attempts + 1));
           }
         }
+      }
+      // Evict oldest entries past the cap. Drop their bookkeeping too so the URL
+      // can be re-requested (and re-enriched) if it scrolls back into view.
+      while (next.size > MAX_CACHE_ENTRIES) {
+        const oldest = next.keys().next().value as string | undefined;
+        if (oldest === undefined) break;
+        next.delete(oldest);
+        requested.delete(oldest);
+        coldRetries.delete(oldest);
       }
       cache = next;
     } catch (e) {
