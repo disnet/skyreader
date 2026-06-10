@@ -283,6 +283,112 @@ describe('Integration Tests', () => {
       expect(json.feed.title).toBe('Cached Blog');
     });
 
+    it('backfills the durable log from the blob when feed_items is empty', async () => {
+      // Regression: a feed first cached before retention existed has a cache row
+      // but no feed_items rows. The write path only runs on a 200 parse, so a feed
+      // served from cache (HIT — no upstream fetch at all) or that 304s never
+      // populates the log. That pins the client to the blob fallback (cursor=null),
+      // so it keeps sending since_guids and never advances to the seq cursor — the
+      // feed effectively re-delivers its whole self every poll. readFeedItems must
+      // seed the log from the blob and return a real cursor, even on a pure HIT.
+      const { db, app } = createTestApp({
+        cacheTtlMs: 15 * 60 * 1000, // fresh → cache HIT, no upstream fetch
+        staleTtlMs: 60 * 60 * 1000,
+      });
+
+      const feedUrl = 'https://example.com/legacy.xml';
+      const urlHash = hashUrl(feedUrl);
+
+      const cachedFeed = {
+        title: 'Legacy Blog',
+        items: [
+          { guid: 'a', url: '', title: 'A', publishedAt: new Date().toISOString() },
+          { guid: 'b', url: '', title: 'B', publishedAt: new Date().toISOString() },
+        ],
+        fetchedAt: Date.now(),
+      };
+      // Fresh cache row WITHOUT any feed_items rows (the pre-retention state).
+      db.run(
+        `INSERT INTO cache (url_hash, url, parsed_json, cached_at, fetched_at) VALUES (?, ?, ?, ?, ?)`,
+        [urlHash, feedUrl, JSON.stringify(cachedFeed), Date.now(), Date.now()]
+      );
+
+      const before = db
+        .query<{ c: number }, [string]>('SELECT COUNT(*) AS c FROM feed_items WHERE url_hash = ?')
+        .get(urlHash);
+      expect(before?.c).toBe(0);
+
+      // No upstream fetch should happen on a HIT; fail loudly if it does.
+      fetchMock = mockFetch(() => {
+        throw new Error('unexpected upstream fetch on cache HIT');
+      });
+
+      const res = await app.request(`/feed?url=${feedUrl}`, {
+        headers: { 'X-Proxy-Secret': 'test-secret' },
+      });
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.cache).toBe('HIT');
+      // feed_items is now seeded, so the response carries a real cursor instead
+      // of omitting it (which kept the client on since_guids).
+      const after = db
+        .query<{ c: number }, [string]>('SELECT COUNT(*) AS c FROM feed_items WHERE url_hash = ?')
+        .get(urlHash);
+      expect(after?.c).toBe(2);
+      expect(json.cursor).toBeGreaterThan(0);
+      expect(json.generation).toBeTruthy();
+    });
+
+    it('a since_guids poll backfills then drains to the cursor on the next poll', async () => {
+      // End-to-end of the stuck-feed fix: poll 1 arrives with since_guids (client
+      // has no cursor) against a HIT-cached feed whose log is empty. It must seed
+      // the log and hand back a cursor; poll 2 (now on since_seq) must return
+      // nothing new rather than the whole feed again.
+      const { db, app } = createTestApp();
+
+      const feedUrl = 'https://example.com/legacy2.xml';
+      const urlHash = hashUrl(feedUrl);
+
+      const cachedFeed = {
+        title: 'Legacy Blog',
+        items: [
+          { guid: 'a', url: '', title: 'A', publishedAt: new Date().toISOString() },
+          { guid: 'b', url: '', title: 'B', publishedAt: new Date().toISOString() },
+          { guid: 'c', url: '', title: 'C', publishedAt: new Date().toISOString() },
+        ],
+        fetchedAt: Date.now(),
+      };
+      db.run(
+        `INSERT INTO cache (url_hash, url, parsed_json, cached_at, fetched_at) VALUES (?, ?, ?, ?, ?)`,
+        [urlHash, feedUrl, JSON.stringify(cachedFeed), Date.now(), Date.now()]
+      );
+      fetchMock = mockFetch(() => {
+        throw new Error('unexpected upstream fetch on cache HIT');
+      });
+
+      const poll = async (body: object) => {
+        const res = await app.request('/feeds', {
+          method: 'POST',
+          headers: { 'X-Proxy-Secret': 'test-secret', 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        return (await res.json()).feeds[feedUrl];
+      };
+
+      // Poll 1: client sends its newest GUID, no cursor yet.
+      const p1 = await poll({ feeds: [{ url: feedUrl, since_guids: ['c'] }] });
+      expect(p1.cursor).toBeGreaterThan(0);
+      expect(p1.generation).toBeTruthy();
+
+      // Poll 2: now on the cursor — the feed is fully drained, nothing new.
+      const p2 = await poll({
+        feeds: [{ url: feedUrl, since_seq: p1.cursor, generation: p1.generation }],
+      });
+      expect(p2.feed.items.length).toBe(0);
+      expect(p2.cursor).toBe(p1.cursor);
+    });
+
     it('returns 502 with error details when feed fetch fails', async () => {
       const { app } = createTestApp();
       fetchMock = mockFetch(() => new Response('Server Error', { status: 500 }));
@@ -2603,7 +2709,7 @@ describe('Durable item retention (feed_items cursor)', () => {
     expect(restored.hasMore).toBe(false);
   });
 
-  it('omits cursor+generation when serving the pre-retention blob fallback', async () => {
+  it('backfills the durable log from the blob and returns a cursor (no since_guids pin)', async () => {
     const { db, app } = createTestApp();
     fetchMock = mockFetch(() => new Response(rss([{ guid: 'a' }, { guid: 'b' }])));
 
@@ -2612,13 +2718,21 @@ describe('Durable item retention (feed_items cursor)', () => {
     // Simulate a legacy cache row with no durable-log rows (a pre-retention cache,
     // or a stale blob served before any successful retain).
     db.run('DELETE FROM feed_items WHERE url_hash = ?', [hashUrl(URL)]);
+    expect(feedItemGuids(db).length).toBe(0);
 
-    // Next poll is a cache HIT (no re-parse), so the read falls back to the blob.
+    // Next poll is a cache HIT (no re-parse). The read must seed the durable log
+    // from the blob and hand back a real cursor — otherwise the client is pinned
+    // to the blob fallback (cursor=null) and keeps re-draining the whole feed via
+    // since_guids forever.
     const res = await poll(app);
     expect(res.feed.items.map((i) => i.guid)).toEqual(['a', 'b']);
-    // Crucially: no cursor/generation, so a client stays on the since_guids path
-    // instead of storing a bogus cursor (0) and re-draining the whole feed.
-    expect(res.cursor).toBeUndefined();
-    expect(res.generation).toBeUndefined();
+    expect(feedItemGuids(db).length).toBe(2);
+    expect(res.cursor).toBeGreaterThan(0);
+    expect(res.generation).toBeTruthy();
+
+    // And the cursor actually advances the client off the backlog: a follow-up
+    // poll on that cursor returns nothing new.
+    const next = await poll(app, { since_seq: res.cursor, generation: res.generation });
+    expect(next.feed.items).toHaveLength(0);
   });
 });
