@@ -5,6 +5,7 @@ import { feedStatusStore, type V2FeedResult } from '$lib/stores/feedStatus.svelt
 import { socialStore } from '$lib/stores/social.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { buildDocumentRequests, collectDocumentBatches } from './documentSync';
+import { loadDigests, saveDigests, scopeKey } from './documentDigests';
 import type { Subscription } from '$lib/types';
 
 // Max authors per /documents request (matches the proxy/backend cap).
@@ -325,8 +326,10 @@ export async function fetchAllFeeds(
  *
  * Each subscription maps to an author DID (`subjectDid`) scoped to a publication
  * (`feedUrl`: an at://...publication URI, or empty for all of the author's
- * documents). The full current list is fetched (no since-trim) so upstream edits
- * and deletes self-heal.
+ * documents). Each request echoes the per-scope content digest the client last
+ * saw (`since_digest`); an unchanged scope returns a bodyless `unchanged` result
+ * and re-downloads nothing, while a changed scope returns the full current set
+ * (full-replace reconcile, so upstream edits and deletes self-heal).
  *
  * @param subscriptions - All subscriptions; non-document ones are ignored.
  */
@@ -334,7 +337,8 @@ export async function fetchAllDocuments(subscriptions: Subscription[]): Promise<
   // Skip network requests when offline - cached documents are already loaded.
   if (typeof navigator !== 'undefined' && !navigator.onLine) return;
 
-  const requests = buildDocumentRequests(subscriptions);
+  const digests = loadDigests();
+  const requests = buildDocumentRequests(subscriptions, digests);
   if (requests.length === 0) return;
 
   // Collect every batch's results, then reconcile once. Applying per-batch would
@@ -348,12 +352,27 @@ export async function fetchAllDocuments(subscriptions: Subscription[]): Promise<
   });
 
   if (allAuthors.length > 0) {
+    // Store the new per-scope digest from each changed (`ready`) scope so the next
+    // poll can short-circuit. `unchanged`/`error` scopes keep the stored digest.
+    let digestsChanged = false;
+    for (const author of allAuthors) {
+      if (author.status === 'ready' && author.digest) {
+        digests[scopeKey(author.did, author.siteUri)] = author.digest;
+        digestsChanged = true;
+      }
+    }
+    if (digestsChanged) saveDigests(digests);
+
+    // `unchanged` results are filtered out by reconcileDocuments' `status==='ready'`
+    // check, so an empty-bodied scope never clears its documents.
     await socialStore.applyDocumentResults(allAuthors);
 
     // Apply annotated document read state additively, mirroring the article path.
+    // Only `ready` entries carry documents; `unchanged`/`error` have none.
     if (readCursor) await itemLabelsStore.seedReadCursor(readCursor);
     const readUris: string[] = [];
     for (const author of allAuthors) {
+      if (author.status !== 'ready' || !author.documents) continue;
       for (const doc of author.documents) {
         if (doc.read) readUris.push(doc.recordUri);
       }

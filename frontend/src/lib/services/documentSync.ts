@@ -1,4 +1,5 @@
 import type { SocialDocument, Subscription } from '$lib/types';
+import { scopeKey } from './documentDigests';
 
 /**
  * Pure helpers for syncing standard.site documents from the proxy batch endpoint
@@ -11,14 +12,20 @@ import type { SocialDocument, Subscription } from '$lib/types';
 export interface DocumentRequest {
   did: string;
   siteUri?: string;
+  // The per-scope digest the client last stored; absent on first-ever sync (cold
+  // start). A server-side match returns a bodyless `unchanged` result.
+  since_digest?: string;
 }
 
 /** A proxy result for one (author, publication scope). */
 export interface DocumentScopeResult {
   did: string;
   siteUri?: string;
-  documents: SocialDocument[];
-  status: 'ready' | 'error';
+  // Present only on `ready` (a digest miss / cold start). Absent on `unchanged`.
+  documents?: SocialDocument[];
+  status: 'ready' | 'unchanged' | 'error';
+  // Per-scope content hash to store and echo as `since_digest` next poll.
+  digest?: string;
 }
 
 /**
@@ -57,10 +64,13 @@ export function reconcileDocuments(
 
   let next = current;
   for (const r of ready) {
-    // Drop everything currently in this scope, then add the fresh set.
+    // Drop everything currently in this scope, then add the fresh set. (A `ready`
+    // result always carries `documents`; `?? []` only satisfies the optional type
+    // — an `unchanged` result, which has no documents, never reaches here because
+    // it is filtered out by status above.)
     next = [
       ...next.filter((d) => !(d.authorDid === r.did && docInScope(d, r.siteUri))),
-      ...r.documents,
+      ...(r.documents ?? []),
     ];
   }
 
@@ -75,13 +85,18 @@ export function reconcileDocuments(
  * from `feedUrl` (an at://...publication URI, or empty for all of the author's
  * documents).
  */
-export function buildDocumentRequests(subscriptions: Subscription[]): DocumentRequest[] {
+export function buildDocumentRequests(
+  subscriptions: Subscription[],
+  digests: Record<string, string> = {}
+): DocumentRequest[] {
   return subscriptions
     .filter((sub) => sub.sourceType === 'atproto.documents' && sub.subjectDid)
-    .map((sub) => ({
-      did: sub.subjectDid as string,
-      siteUri: sub.feedUrl || undefined,
-    }));
+    .map((sub) => {
+      const did = sub.subjectDid as string;
+      const siteUri = sub.feedUrl || undefined;
+      const since_digest = digests[scopeKey(did, siteUri)];
+      return { did, siteUri, ...(since_digest ? { since_digest } : {}) };
+    });
 }
 
 /**

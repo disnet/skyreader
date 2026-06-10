@@ -7,6 +7,7 @@ import {
   type DocumentScopeResult,
   type DocumentRequest,
 } from './documentSync';
+import { scopeKey } from './documentDigests';
 import type { SocialDocument, Subscription } from '$lib/types';
 
 const AUTHOR = 'did:plc:author';
@@ -133,6 +134,16 @@ describe('reconcileDocuments', () => {
     );
     expect(result.map((d) => d.recordUri)).toEqual(['new', 'mid', 'old']);
   });
+
+  it('ignores an unchanged result: keeps the scope intact (never clears it)', () => {
+    const current = [doc({ recordUri: 'held', siteUri: PUB_A })];
+    // A bodyless `unchanged` result (no documents) must not reach the drop-then-add
+    // loop and wipe the scope — the status filter excludes it.
+    const result = reconcileDocuments(current, [
+      { did: AUTHOR, siteUri: PUB_A, status: 'unchanged' },
+    ]);
+    expect(result.map((d) => d.recordUri)).toEqual(['held']);
+  });
 });
 
 describe('buildDocumentRequests', () => {
@@ -165,6 +176,22 @@ describe('buildDocumentRequests', () => {
       sub({ sourceType: 'atproto.documents', subjectDid: AUTHOR, feedUrl: '' }),
     ]);
     expect(requests).toEqual([{ did: AUTHOR, siteUri: undefined }]);
+  });
+
+  it('attaches a stored since_digest per scope, omitting it when absent', () => {
+    const digests = { [scopeKey(AUTHOR, PUB_A)]: 'digest-a' };
+    const requests = buildDocumentRequests(
+      [
+        sub({ sourceType: 'atproto.documents', subjectDid: AUTHOR, feedUrl: PUB_A }),
+        sub({ sourceType: 'atproto.documents', subjectDid: AUTHOR, feedUrl: PUB_B }),
+      ],
+      digests
+    );
+    expect(requests).toEqual([
+      { did: AUTHOR, siteUri: PUB_A, since_digest: 'digest-a' },
+      // No stored digest for PUB_B → cold start, since_digest omitted.
+      { did: AUTHOR, siteUri: PUB_B },
+    ]);
   });
 });
 

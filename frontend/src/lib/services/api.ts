@@ -304,16 +304,19 @@ class ApiClient {
   }
 
   async fetchDocumentsBatchV2(
-    documents: Array<{ did: string; siteUri?: string; since_uris?: string[] }>
+    documents: Array<{ did: string; siteUri?: string; since_digest?: string }>
   ): Promise<{
     authors: Array<{
       did: string;
       siteUri?: string;
-      documents: SocialDocument[];
-      status: 'ready' | 'error';
+      // Present only on `ready`; absent on `unchanged` (bodyless) and `error`.
+      documents?: SocialDocument[];
+      status: 'ready' | 'unchanged' | 'error';
       error?: string;
       errorCount?: number;
       nextRetryAt?: number;
+      // Per-scope content hash to store and echo as `since_digest` next poll.
+      digest?: string;
       // True when `documents` is the author's complete set (fit under the proxy's
       // per-author cap) — lets a client treat an absent record as deleted.
       complete?: boolean;

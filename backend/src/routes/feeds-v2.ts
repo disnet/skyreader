@@ -328,8 +328,8 @@ interface V2BatchDocumentResponse {
  * {
  *   documents: Array<{
  *     did: string;            // publisher DID (subjectDid of an atproto.documents sub)
- *     siteUri?: string;       // at://...publication, or omit for all
- *     since_uris?: string[];  // recordUris the client already has (incremental trim)
+ *     siteUri?: string;        // at://...publication, or omit for all
+ *     since_digest?: string;   // per-scope content digest the client last saw
  *   }>
  * }
  */
@@ -346,7 +346,7 @@ export async function handleV2BatchDocumentFetch(
   }
 
   let body: {
-    documents?: Array<{ did: string; siteUri?: string; since_uris?: string[] }>;
+    documents?: Array<{ did: string; siteUri?: string; since_digest?: string }>;
   };
 
   try {
@@ -413,16 +413,18 @@ export async function handleV2BatchDocumentFetch(
     // Inline read annotation, identical to the feed path but keyed by recordUri
     // and item_type='document' (decision 3: documents share the unified read
     // store). Stamps `read` onto each document in the per-user response.
+    // Only `ready` entries carry documents (`unchanged` is bodyless, `error`
+    // empty), so the read join sees a URI list to stamp only for changed scopes.
     const readCursor = Math.floor(Date.now() / 1000);
     const allUris: string[] = [];
     for (const entry of authors) {
-      if (entry.status === 'ready') {
+      if (entry.status === 'ready' && entry.documents) {
         for (const doc of entry.documents) allUris.push(doc.recordUri);
       }
     }
     const readUris = await getReadKeys(env, session.did, 'document', allUris);
     for (const entry of authors) {
-      if (entry.status === 'ready') {
+      if (entry.status === 'ready' && entry.documents) {
         for (const doc of entry.documents) doc.read = readUris.has(doc.recordUri);
       }
     }
