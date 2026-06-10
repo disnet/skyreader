@@ -212,21 +212,88 @@ const BROWSER_FALLBACK_UA =
 // healthy feed's latency so normal-but-slow feeds aren't needlessly retried.
 const HONEST_UA_PROBE_TIMEOUT_MS = 10 * 1000; // 10 seconds
 
+// Per-host memory of UA-blocking. A host behind a bot-managing CDN refuses
+// HONEST_UA on *every* fetch — and the silent-black-hole case costs a full
+// HONEST_UA_PROBE_TIMEOUT_MS each time before we fall back. Once we've learned a
+// host blocks us, we skip the doomed honest probe and go straight to the browser
+// UA, so that 10s penalty is paid at most once per TTL instead of on every refresh.
+// Keyed by hostname (bot policy is per-host, not per-path). In-memory and
+// per-machine: a restart just re-learns on the next fetch. Entries expire so a host
+// that drops its bot wall is eventually re-probed honestly, and the map is size-
+// capped so it can't grow without bound.
+const HOST_BLOCK_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const HOST_BLOCK_MAX_ENTRIES = 1000;
+const uaBlockedHosts = new Map<string, number>(); // host -> expires-at (epoch ms)
+
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function isHostUaBlocked(host: string | null, now: number): boolean {
+  if (!host) return false;
+  const expires = uaBlockedHosts.get(host);
+  if (expires === undefined) return false;
+  if (now >= expires) {
+    uaBlockedHosts.delete(host); // lazy expiry on access
+    return false;
+  }
+  return true;
+}
+
+function rememberHostUaBlocked(host: string | null, now: number): void {
+  if (!host) return;
+  // Re-insert to refresh both the TTL and the insertion-order recency used for
+  // eviction. When at capacity, drop the oldest-inserted entry (Map preserves
+  // insertion order, so the first key is the oldest).
+  uaBlockedHosts.delete(host);
+  if (uaBlockedHosts.size >= HOST_BLOCK_MAX_ENTRIES) {
+    const oldest = uaBlockedHosts.keys().next().value;
+    if (oldest !== undefined) uaBlockedHosts.delete(oldest);
+  }
+  uaBlockedHosts.set(host, now + HOST_BLOCK_TTL_MS);
+}
+
+// Test seam: clear the learned-block memory between cases (module-level state).
+export function __resetUaBlockMemoryForTests(): void {
+  uaBlockedHosts.clear();
+}
+
 // Fetch an upstream URL identifying honestly (HONEST_UA), transparently retrying
 // once with a browser UA when the honest attempt is blocked — either an explicit
-// 403 or a silent black-hole (timeout / connection error on the short probe).
-// `headers` carries the caller's headers (incl. HONEST_UA and any conditional-
-// request headers); only the User-Agent and per-attempt timeout differ between the
-// two attempts. Returns the final Response unchanged for the caller to classify; if
-// the browser-UA attempt also fails, its error propagates (and is classified as a
-// network/timeout error exactly as before this fallback existed).
+// 403 or a silent black-hole (timeout / connection error on the short probe). A
+// host learned to block the honest UA skips the honest probe entirely on later
+// fetches (see uaBlockedHosts). `headers` carries the caller's headers (incl.
+// HONEST_UA and any conditional-request headers); only the User-Agent and
+// per-attempt timeout differ between the two attempts. Returns the final Response
+// unchanged for the caller to classify; if the browser-UA attempt also fails, its
+// error propagates (and is classified as a network/timeout error exactly as before
+// this fallback existed). `opts.now` is an injectable clock for deterministic tests.
 export async function fetchWithBotFallback(
   url: string,
   headers: Record<string, string>,
-  opts: { probeTimeoutMs?: number; fetchTimeoutMs?: number } = {}
+  opts: { probeTimeoutMs?: number; fetchTimeoutMs?: number; now?: number } = {}
 ): Promise<Response> {
   const probeTimeoutMs = opts.probeTimeoutMs ?? HONEST_UA_PROBE_TIMEOUT_MS;
   const fetchTimeoutMs = opts.fetchTimeoutMs ?? FETCH_TIMEOUT_MS;
+  const now = opts.now ?? Date.now();
+  const host = hostOf(url);
+
+  // Browser-UA fetch — both the fallback and the fast path for known UA-blockers.
+  const browserFetch = (): Promise<Response> =>
+    safeFetch(url, {
+      headers: { ...headers, 'User-Agent': BROWSER_FALLBACK_UA },
+      signal: AbortSignal.timeout(fetchTimeoutMs),
+    });
+
+  // Known UA-blocker: skip the doomed honest probe (it would just burn
+  // probeTimeoutMs) and go straight to the browser UA.
+  if (isHostUaBlocked(host, now)) {
+    return browserFetch();
+  }
 
   // Attempt 1: honest UA, short timeout.
   try {
@@ -236,7 +303,12 @@ export async function fetchWithBotFallback(
     });
     // Only a 403 is treated as a block worth retrying; every other status
     // (200/304/404/5xx) is a real answer the caller should handle as-is.
-    if (!isBlockedStatus(res.status)) return res;
+    if (!isBlockedStatus(res.status)) {
+      // Honest UA works for this host — drop any stale block memory (e.g. a TTL
+      // just expired and the host has since dropped its bot wall).
+      uaBlockedHosts.delete(host ?? '');
+      return res;
+    }
     await res.body?.cancel().catch(() => {});
   } catch {
     // Timeout / connection error on the honest attempt: possibly a silent block,
@@ -244,11 +316,16 @@ export async function fetchWithBotFallback(
     // through to the browser-UA attempt and let it settle the outcome.
   }
 
-  // Attempt 2: browser UA, full timeout.
-  return safeFetch(url, {
-    headers: { ...headers, 'User-Agent': BROWSER_FALLBACK_UA },
-    signal: AbortSignal.timeout(fetchTimeoutMs),
-  });
+  // Attempt 2: browser UA, full timeout. Remember the host blocks the honest UA
+  // only when the browser UA actually gets through (any non-403 HTTP response): if
+  // the browser UA is also refused, the host is likely IP-blocked or down rather
+  // than UA-gating, and poisoning future honest attempts would be wrong. If the
+  // browser attempt throws, the error propagates and nothing is remembered.
+  const res = await browserFetch();
+  if (!isBlockedStatus(res.status)) {
+    rememberHostUaBlocked(host, now);
+  }
+  return res;
 }
 
 export interface ExtractedArticle {
