@@ -1360,14 +1360,17 @@ export function createApp(db: Database, config: AppConfig) {
         .query<{ x: number }, [string]>('SELECT 1 AS x FROM feed_items WHERE url_hash = ? LIMIT 1')
         .get(urlHash);
       if (!exists) {
-        // Serving the pre-retention blob: feed_items genuinely has no rows for
-        // this feed yet (legacy cache row, or a stale blob served on a failed
-        // refresh before any successful retain). Return cursor=null so the
-        // response omits cursor+generation and the client keeps using since_guids
-        // — emitting a cursor here (0, from the empty cold start) would make the
-        // client store {cursor:0} and next poll drain the whole feed redundantly.
-        const fb = filterItems(feed.items, q.sinceGuids ?? new Set(), q.limit);
-        return { items: fb.items, cursor: null, hasMore: false };
+        // feed_items genuinely has no rows for this feed yet (a legacy cache row
+        // predating retention, or a stale blob served on a failed refresh before
+        // any successful retain). The normal write path only runs on a 200 parse,
+        // so a feed that only ever cache-HITs or 304s would never populate the log
+        // — pinning the client to this fallback (cursor=null) forever, so it keeps
+        // sending since_guids and never advances to the seq cursor. Seed the log
+        // from the blob right here (this is the universal read choke point, hit by
+        // every cache status), then re-run the query so the response carries a real
+        // cursor and the durable-log path takes over from the next poll on.
+        writeFeedItems(db, urlHash, feed.items, Date.now());
+        return queryFeedItems(db, urlHash, q);
       }
     }
     return result;
