@@ -6,7 +6,7 @@ import type { ParsedFeed, FeedItem } from './types';
 import {
   fetchDocumentsForAuthor,
   filterByPublication,
-  filterSinceUris,
+  digestScope,
   MAX_DOCUMENTS_PER_AUTHOR,
   type ProxyDocument,
 } from './standard-site';
@@ -93,6 +93,12 @@ export interface DocumentCacheRow {
 interface DocumentRequestEntry {
   did: string;
   siteUri?: string;
+  // The per-scope content digest the client last saw. When it matches the proxy's
+  // freshly-computed digest, the scope is unchanged and the response is bodyless.
+  since_digest?: string;
+  // Legacy incremental-trim field. The current client sends `since_digest`
+  // instead; kept accepted-but-ignored so an un-upgraded client (which sends
+  // neither) still receives the full blob. Retire once nothing sends it.
   since_uris?: string[];
 }
 
@@ -1969,22 +1975,24 @@ export function createApp(db: Database, config: AppConfig) {
     interface DocumentResult {
       did: string;
       siteUri?: string;
-      documents: ProxyDocument[];
-      status: 'ready' | 'error';
+      // Present only on `ready` (the full scoped set). Omitted on `unchanged`
+      // (bodyless) and `error`.
+      documents?: ProxyDocument[];
+      // `unchanged`: the client's `since_digest` matched the current scope digest,
+      // so it already holds the set — nothing to apply. `ready`: digest miss / cold
+      // start → full scoped set + the new digest to store. `error`: non-
+      // authoritative blob → keep what you hold and retry.
+      status: 'ready' | 'unchanged' | 'error';
       error?: string;
       errorCount?: number;
       nextRetryAt?: number;
+      // Per-scope content hash, sent on a `ready` result for the client to echo as
+      // `since_digest` next poll.
+      digest?: string;
       // True when `documents` is the author's complete set (under the per-author
-      // cap), so a client can treat an absent record as deleted, not just capped.
+      // cap), so a consumer that fetches without a digest (the own-linkblog pull)
+      // can treat an absent record as deleted, not just capped.
       complete?: boolean;
-      // Same incremental contract as feeds, so the client has one mental model and
-      // one drain loop. Phase 1 is contract-shape only: storage stays the
-      // per-author blob (full live set every poll), so hasMore is always false —
-      // there's no older slice to drain to until PDS deep-paging lands. `cursor`
-      // is inert for now (no feed_items seq); `generation` is shared with feeds.
-      cursor?: number;
-      generation?: string;
-      hasMore?: boolean;
     }
 
     const results: DocumentResult[] = await Promise.all(
@@ -2062,22 +2070,29 @@ export function createApp(db: Database, config: AppConfig) {
         }
 
         const scoped = filterByPublication(documents, siteUri);
-        const trimmed = filterSinceUris(scoped, new Set(entry.since_uris || []));
+        const digest = digestScope(scoped);
 
-        // `complete`: the author's full document list fit under the per-author
-        // cap, so this is the WHOLE set (the firehose splice also trims to the
-        // cap, so length < cap reliably means nothing was dropped). Computed on
-        // the pre-filter list so it's meaningful even after publication scoping.
-        // Lets a client treat an absent record as deleted rather than just capped.
+        // 304-style short-circuit: an unchanged scope returns a bodyless result.
+        // The client already holds this set and the digest it sent, so it applies
+        // nothing. `unchanged` is a distinct status (not a flag on `ready`) so the
+        // client's existing `status === 'ready'` apply filter excludes it for free
+        // — an empty-bodied `ready` can never reach the reconcile and clear a scope.
+        if (entry.since_digest && entry.since_digest === digest) {
+          return { did, siteUri, status: 'unchanged' };
+        }
+
+        // Miss (or cold start): ship the full scoped set + the new digest to store.
+        // `complete`: the author's full document list fit under the per-author cap,
+        // so this is the WHOLE set (the firehose splice also trims to the cap, so
+        // length < cap reliably means nothing was dropped). Computed on the
+        // pre-filter list so it's meaningful even after publication scoping.
         return {
           did,
           siteUri,
-          documents: trimmed,
+          documents: scoped,
           status: 'ready',
+          digest,
           complete: documents.length < MAX_DOCUMENTS_PER_AUTHOR,
-          cursor: 0,
-          generation: itemsGeneration,
-          hasMore: false,
         };
       })
     );

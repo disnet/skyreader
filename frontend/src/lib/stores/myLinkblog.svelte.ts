@@ -10,6 +10,7 @@
 import { api } from '$lib/services/api';
 import { auth } from '$lib/stores/auth.svelte';
 import { getExternalArticleLink } from '$lib/utils/linkPost';
+import { loadDigests, saveDigests, scopeKey } from '$lib/services/documentDigests';
 import type { LinkblogPublication, SocialDocument } from '$lib/types';
 
 const PUBLICATION_COLLECTION = 'site.standard.publication';
@@ -42,13 +43,37 @@ function createMyLinkblogStore() {
     loading = true;
     error = null;
     try {
+      const siteUri = publicationUri(user.did);
+      // Echo the per-scope content digest so an unchanged linkblog short-circuits
+      // (bodyless `unchanged`) instead of re-downloading the full set every forced
+      // refresh. Only send it when we already hold an in-memory set to keep on a
+      // match: this list is memory-only (no IndexedDB hydration), so it resets to []
+      // on a page reload — sending a digest on that first empty load would let an
+      // `unchanged` response render the linkblog blank. With a non-empty set in
+      // hand, `unchanged` safely means "keep exactly what's shown."
+      const digests = loadDigests();
+      const key = scopeKey(user.did, siteUri);
+      const since_digest = documents.length > 0 ? digests[key] : undefined;
+
       const [pub, batch] = await Promise.all([
         api.getLinkblogPublication().catch(() => null),
-        api.fetchDocumentsBatchV2([{ did: user.did, siteUri: publicationUri(user.did) }]),
+        api.fetchDocumentsBatchV2([
+          { did: user.did, siteUri, ...(since_digest ? { since_digest } : {}) },
+        ]),
       ]);
       publication = pub;
       const author = batch.authors[0];
-      const fetched = author?.status === 'ready' ? author.documents : [];
+
+      // Unchanged: nothing changed upstream since the digest we sent, so keep the
+      // current documents, their optimistic carry-forward, and `lastPullComplete`
+      // exactly as-is. (Reached only when documents was non-empty, so there is a
+      // real set to preserve.)
+      if (author?.status === 'unchanged') {
+        loaded = true;
+        return;
+      }
+
+      const fetched = author?.status === 'ready' ? (author.documents ?? []) : [];
       // Carry forward optimistic shares the pull path hasn't indexed yet, deduped
       // by external article link, so a just-shared link doesn't vanish on the
       // first load of the linkblog view. Retire ones that have now arrived.
@@ -59,6 +84,13 @@ function createMyLinkblogStore() {
       optimisticUris = new Set(stillPending.map((d) => d.recordUri));
       documents = [...stillPending, ...fetched];
       lastPullComplete = author?.status === 'ready' && author.complete === true;
+      // Store the new digest for this scope so the next forced refresh can
+      // short-circuit. Kept regardless of `complete`: a capped set still hashes its
+      // live window, and `lastPullComplete` is preserved verbatim on `unchanged`.
+      if (author?.status === 'ready' && author.digest) {
+        digests[key] = author.digest;
+        saveDigests(digests);
+      }
       if (author?.status === 'error') {
         error = author.error ?? 'Could not load your linkblog.';
       }

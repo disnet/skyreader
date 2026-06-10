@@ -8,6 +8,7 @@
  * (mirroring the old D1 `publications_cache`).
  */
 import { Database } from 'bun:sqlite';
+import { createHash } from 'node:crypto';
 import { resolvePdsUrl } from './did-resolver';
 import { safeFetch } from './ssrf-guard';
 
@@ -328,6 +329,28 @@ export async function fetchDocumentsForAuthor(
 export function filterByPublication(documents: ProxyDocument[], siteUri?: string): ProxyDocument[] {
   if (!siteUri) return documents;
   return documents.filter((d) => d.siteUri === siteUri);
+}
+
+/**
+ * Content digest for one publication scope: a cheap stable hash over the scoped
+ * blob's sorted `(recordUri, recordCid)` pairs. `recordCid` changes on every edit
+ * and `recordUri` identifies the doc, so this single value captures every new,
+ * edited, and deleted document in the scope:
+ *
+ * - a NEW doc adds a pair → digest changes;
+ * - an EDITED doc changes a recordCid → digest changes;
+ * - a DELETED / cap-evicted doc removes a pair → digest changes;
+ * - an UNCHANGED scope → identical sorted pairs → identical digest.
+ *
+ * The cid lives entirely server-side here; the client only ever stores the opaque
+ * digest string. The load-bearing property is that the cid is *identical for
+ * byte-identical content across a refetch* (CIDs are content-addressed over
+ * deterministic DAG-CBOR), so a no-op refresh yields the same digest — otherwise
+ * every poll would be a miss and the payload win would silently evaporate.
+ */
+export function digestScope(documents: ProxyDocument[]): string {
+  const pairs = documents.map((d) => `${d.recordUri}\t${d.recordCid}`).sort();
+  return createHash('sha256').update(pairs.join('\n')).digest('hex');
 }
 
 /**

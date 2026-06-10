@@ -5,6 +5,7 @@ import {
   buildCanonicalUrl,
   filterByPublication,
   filterSinceUris,
+  digestScope,
   parseAtUri,
   resolveSiteMeta,
   type ProxyDocument,
@@ -183,6 +184,40 @@ describe('standard-site helpers', () => {
     expect(filterSinceUris(docs, new Set(['b'])).map((d) => d.recordUri)).toEqual(['c']);
     expect(filterSinceUris(docs, new Set()).length).toBe(3);
   });
+
+  describe('digestScope', () => {
+    const pair = (recordUri: string, recordCid: string) =>
+      ({ recordUri, recordCid }) as ProxyDocument;
+
+    it('is identical for the same set regardless of order', () => {
+      const a = [pair('u1', 'c1'), pair('u2', 'c2')];
+      const b = [pair('u2', 'c2'), pair('u1', 'c1')];
+      expect(digestScope(a)).toBe(digestScope(b));
+    });
+
+    it('changes when a NEW document is added', () => {
+      const before = [pair('u1', 'c1')];
+      const after = [pair('u1', 'c1'), pair('u2', 'c2')];
+      expect(digestScope(after)).not.toBe(digestScope(before));
+    });
+
+    it('changes when a document is EDITED (recordCid moves)', () => {
+      const before = [pair('u1', 'c1')];
+      const after = [pair('u1', 'c2')];
+      expect(digestScope(after)).not.toBe(digestScope(before));
+    });
+
+    it('changes when a document is DELETED (pair removed)', () => {
+      const before = [pair('u1', 'c1'), pair('u2', 'c2')];
+      const after = [pair('u1', 'c1')];
+      expect(digestScope(after)).not.toBe(digestScope(before));
+    });
+
+    it('is stable across repeated calls (deterministic hash)', () => {
+      const docs = [pair('u1', 'c1'), pair('u2', 'c2')];
+      expect(digestScope(docs)).toBe(digestScope([...docs]));
+    });
+  });
 });
 
 describe('POST /documents', () => {
@@ -325,6 +360,157 @@ describe('POST /documents', () => {
     const { app } = createTestApp();
     const res = await postDocuments(app, []);
     expect(res.status).toBe(400);
+  });
+
+  // --- per-scope digest short-circuit ---------------------------------------
+
+  it('cold start returns the full set plus a digest (no since_digest)', async () => {
+    const { app } = createTestApp();
+    fetchMock = mockAtprotoFetch({
+      docs: [docRecord('a', { site: PUB_URI, title: 'A', publishedAt: '2024-01-01T00:00:00Z' })],
+    });
+
+    const json = (await (await postDocuments(app, [{ did: AUTHOR, siteUri: PUB_URI }])).json()) as {
+      authors: Array<{ status: string; documents?: ProxyDocument[]; digest?: string }>;
+    };
+    const entry = json.authors[0];
+    expect(entry.status).toBe('ready');
+    expect(entry.documents?.length).toBe(1);
+    expect(typeof entry.digest).toBe('string');
+    expect(entry.digest!.length).toBeGreaterThan(0);
+  });
+
+  it('returns status:unchanged with no body when since_digest matches', async () => {
+    const { app } = createTestApp();
+    fetchMock = mockAtprotoFetch({
+      docs: [docRecord('a', { site: PUB_URI, title: 'A', publishedAt: '2024-01-01T00:00:00Z' })],
+    });
+
+    const first = (await (
+      await postDocuments(app, [{ did: AUTHOR, siteUri: PUB_URI }])
+    ).json()) as {
+      authors: Array<{ digest?: string }>;
+    };
+    const digest = first.authors[0].digest!;
+
+    const second = (await (
+      await postDocuments(app, [{ did: AUTHOR, siteUri: PUB_URI, since_digest: digest }])
+    ).json()) as {
+      authors: Array<{ status: string; documents?: ProxyDocument[]; digest?: string }>;
+    };
+    const entry = second.authors[0];
+    expect(entry.status).toBe('unchanged');
+    expect(entry.documents).toBeUndefined();
+    expect(entry.digest).toBeUndefined();
+  });
+
+  it('stays unchanged across a forced refetch with no upstream change (stable recordCid)', async () => {
+    // Low TTL so the second request forces a real re-list rather than a cache hit.
+    const { db, app } = createTestApp({ cacheTtlMs: 1, staleTtlMs: 1 });
+    fetchMock = mockAtprotoFetch({
+      docs: [docRecord('a', { site: PUB_URI, title: 'A', publishedAt: '2024-01-01T00:00:00Z' })],
+    });
+
+    const first = (await (
+      await postDocuments(app, [{ did: AUTHOR, siteUri: PUB_URI }])
+    ).json()) as {
+      authors: Array<{ digest?: string }>;
+    };
+    const digest = first.authors[0].digest!;
+
+    // Age the cache past the stale window so the next poll re-pulls and rewrites
+    // the blob; the upstream content (and so each recordCid) is identical.
+    db.run('UPDATE document_cache SET fetched_at = ? WHERE did = ?', [Date.now() - 60_000, AUTHOR]);
+
+    const second = (await (
+      await postDocuments(app, [{ did: AUTHOR, siteUri: PUB_URI, since_digest: digest }])
+    ).json()) as { authors: Array<{ status: string }> };
+    // A refetch happened, but the recomputed digest is identical → still unchanged.
+    expect(second.authors[0].status).toBe('unchanged');
+  });
+
+  it('returns the full set with a new digest when a doc is added across a refetch', async () => {
+    const { db, app } = createTestApp({ cacheTtlMs: 1, staleTtlMs: 1 });
+    fetchMock = mockAtprotoFetch({
+      docs: [docRecord('a', { site: PUB_URI, title: 'A', publishedAt: '2024-01-01T00:00:00Z' })],
+    });
+
+    const first = (await (
+      await postDocuments(app, [{ did: AUTHOR, siteUri: PUB_URI }])
+    ).json()) as {
+      authors: Array<{ digest?: string }>;
+    };
+    const digest = first.authors[0].digest!;
+
+    // Upstream now publishes a second doc; force a refetch.
+    fetchMock.mockRestore();
+    fetchMock = mockAtprotoFetch({
+      docs: [
+        docRecord('a', { site: PUB_URI, title: 'A', publishedAt: '2024-01-01T00:00:00Z' }),
+        docRecord('b', { site: PUB_URI, title: 'B', publishedAt: '2024-02-01T00:00:00Z' }),
+      ],
+    });
+    db.run('UPDATE document_cache SET fetched_at = ? WHERE did = ?', [Date.now() - 60_000, AUTHOR]);
+
+    const second = (await (
+      await postDocuments(app, [{ did: AUTHOR, siteUri: PUB_URI, since_digest: digest }])
+    ).json()) as {
+      authors: Array<{ status: string; documents?: ProxyDocument[]; digest?: string }>;
+    };
+    const entry = second.authors[0];
+    expect(entry.status).toBe('ready');
+    expect(entry.documents?.map((d) => d.title)).toEqual(['B', 'A']);
+    expect(entry.digest).not.toBe(digest);
+  });
+
+  it('keeps digests per publication scope (no cross-scope leakage)', async () => {
+    const PUB_Q = 'at://did:plc:author123/site.standard.publication/pubQ';
+    const { app } = createTestApp();
+    fetchMock = mockAtprotoFetch({
+      docs: [
+        docRecord('p1', { site: PUB_URI, title: 'P1', publishedAt: '2024-01-01T00:00:00Z' }),
+        docRecord('q1', { site: PUB_Q, title: 'Q1', publishedAt: '2024-01-02T00:00:00Z' }),
+      ],
+    });
+
+    const p = (await (await postDocuments(app, [{ did: AUTHOR, siteUri: PUB_URI }])).json()) as {
+      authors: Array<{ digest?: string }>;
+    };
+    const q = (await (await postDocuments(app, [{ did: AUTHOR, siteUri: PUB_Q }])).json()) as {
+      authors: Array<{ digest?: string }>;
+    };
+    // Different scopes hash different sets → different digests; P's digest must not
+    // satisfy Q's request.
+    expect(p.authors[0].digest).not.toBe(q.authors[0].digest);
+    const qWithP = (await (
+      await postDocuments(app, [{ did: AUTHOR, siteUri: PUB_Q, since_digest: p.authors[0].digest }])
+    ).json()) as { authors: Array<{ status: string }> };
+    expect(qWithP.authors[0].status).toBe('ready');
+  });
+
+  it('returns status:error (never unchanged) when the blob is non-authoritative', async () => {
+    const { app } = createTestApp();
+    fetchMock = mockAtprotoFetch({ listStatus: 500 });
+
+    // Even with a since_digest in hand, an un-backfillable blob must not
+    // short-circuit to unchanged or serve an empty full-replace.
+    const json = (await (
+      await postDocuments(app, [{ did: AUTHOR, siteUri: PUB_URI, since_digest: 'whatever' }])
+    ).json()) as { authors: Array<{ status: string }> };
+    expect(json.authors[0].status).toBe('error');
+  });
+
+  it('serves the full blob for a legacy client sending neither since_digest nor since_uris', async () => {
+    const { app } = createTestApp();
+    fetchMock = mockAtprotoFetch({
+      docs: [docRecord('a', { site: PUB_URI, title: 'A', publishedAt: '2024-01-01T00:00:00Z' })],
+    });
+
+    const json = (await (await postDocuments(app, [{ did: AUTHOR, siteUri: PUB_URI }])).json()) as {
+      authors: Array<{ status: string; documents?: ProxyDocument[] }>;
+    };
+    expect(json.authors[0].status).toBe('ready');
+    expect(json.authors[0].documents?.length).toBe(1);
   });
 });
 

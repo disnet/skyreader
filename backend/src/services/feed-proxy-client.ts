@@ -96,21 +96,23 @@ export interface ProxyDocument {
 export interface ProxyDocumentEntry {
   did: string;
   siteUri?: string;
-  documents: ProxyDocument[];
-  status: 'ready' | 'error';
+  // Present only on `ready`. Omitted on `unchanged` (the client already holds the
+  // scope) and `error`.
+  documents?: ProxyDocument[];
+  // `unchanged`: the client's `since_digest` matched the proxy's current scope
+  // digest — nothing changed, nothing to apply. `ready`: digest miss / cold start
+  // → full scoped set + new `digest`. `error`: non-authoritative blob.
+  status: 'ready' | 'unchanged' | 'error';
   error?: string;
   errorCount?: number;
   nextRetryAt?: number;
+  // Per-scope content hash, returned on `ready` for the client to echo as
+  // `since_digest` next poll.
+  digest?: string;
   // True when `documents` is the author's complete document set (fit under the
   // proxy's per-author cap), so an absent record can be treated as deleted rather
   // than merely beyond the cap. Absent/false → set may be truncated.
   complete?: boolean;
-  // Unified cursor contract (documents emit the same shape as feeds for one
-  // client mental model). Phase 1: storage stays the per-author blob, so
-  // `hasMore` is always false and `cursor` is inert.
-  cursor?: number;
-  generation?: string;
-  hasMore?: boolean;
 }
 
 interface RawDocumentBatchResponse {
@@ -400,16 +402,17 @@ export class FeedProxyClient {
    * Fetch standard.site documents for multiple authors in a single request.
    *
    * Each entry is an author DID, optionally scoped to a publication (`siteUri`:
-   * an `at://...publication/rkey`, or omitted for all), and optionally trimmed
-   * to documents the client hasn't seen (`since_uris`).
+   * an `at://...publication/rkey`, or omitted for all), and optionally carrying
+   * the per-scope content digest the client last saw (`since_digest`) — a match
+   * returns a bodyless `unchanged` entry.
    * Returns the proxy's per-author entries verbatim (already in SocialDocument
-   * shape).
+   * shape on a `ready` result).
    */
   async fetchDocumentsBatch(
     authors: Array<{
       did: string;
       siteUri?: string;
-      since_uris?: string[];
+      since_digest?: string;
     }>
   ): Promise<ProxyDocumentEntry[]> {
     const raw = await this.fetch<RawDocumentBatchResponse>('/documents', {
