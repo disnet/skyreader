@@ -13,6 +13,7 @@
     PcktBlogContent,
     OffprintContent,
     GreengaleContent,
+    MarkpubContent,
   } from '$lib/types';
   import { formatRelativeDate } from '$lib/utils/date';
   import { getFaviconUrl } from '$lib/utils/favicon';
@@ -22,6 +23,7 @@
   import { isPcktBlogContent, renderPcktBlogContent } from '$lib/utils/pckt-blog-renderer';
   import { isOffprintContent, renderOffprintContent } from '$lib/utils/offprint-renderer';
   import { isGreengaleContent, renderGreengaleContent } from '$lib/utils/greengale-renderer';
+  import { isMarkpubContent, renderMarkpubContent } from '$lib/utils/markpub-renderer';
   import {
     getExternalArticleLink,
     getLinkPostNote,
@@ -268,6 +270,11 @@
     // For documents with structured Greengale content, render it
     if (document?.content && isGreengaleContent(document.content)) {
       return renderGreengaleContent(document.content as GreengaleContent, document.authorDid);
+    }
+
+    // For documents with markpub (at.markpub.markdown) content, render it
+    if (document?.content && isMarkpubContent(document.content)) {
+      return renderMarkpubContent(document.content as MarkpubContent);
     }
 
     // Fall back to flat text content or description. textContent is stripped from

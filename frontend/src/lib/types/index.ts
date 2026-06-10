@@ -509,6 +509,26 @@ export interface GreengaleContent {
   blobs?: GreengaleBlobRef[];
 }
 
+// markpub content (https://markpub.at/) — an interop wrapper for embedding
+// Markdown into a standard.site document. The body lives at `text.markdown`;
+// `textBlob`/`facets` are optional overlays Skyreader doesn't currently consume.
+export interface MarkpubText {
+  $type?: 'at.markpub.text';
+  markdown: string;
+  textBlob?: { ref?: { $link: string }; mimeType?: string; size?: number };
+  facets?: unknown[];
+  lenses?: unknown[];
+}
+
+export interface MarkpubContent {
+  $type: 'at.markpub.markdown';
+  text: MarkpubText;
+  flavor?: 'gfm' | 'commonmark' | string;
+  renderingRules?: string;
+  extensions?: string[];
+  frontMatter?: unknown[];
+}
+
 export interface SocialDocument {
   id?: number;
   authorDid: string;
@@ -529,7 +549,13 @@ export interface SocialDocument {
   tags?: string[];
   updatedAt?: string;
   canonicalUrl?: string;
-  content?: LeafletContent | PcktBlogContent | OffprintContent | GreengaleContent | unknown; // Open union for future content types
+  content?:
+    | LeafletContent
+    | PcktBlogContent
+    | OffprintContent
+    | GreengaleContent
+    | MarkpubContent
+    | unknown; // Open union for future content types
   indexedAt?: string;
   createdAt: string;
   siteIcon?: string;

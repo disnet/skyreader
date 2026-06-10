@@ -3,11 +3,11 @@
  *
  * standard.site is an interop container: the `content` embed can be authored in
  * any of several block formats — Skyreader/leaflet (`pub.leaflet.content`),
- * pckt.blog (`blog.pckt.content`), offprint (`app.offprint.content`), or
- * greengale (`app.greengale.document`, plain markdown). Each nests its text
- * differently (leaflet under `pages[].blocks[].block`, pckt/offprint under a flat
- * `items[]` with container blocks holding inner `.content[]`, greengale as one
- * markdown string).
+ * pckt.blog (`blog.pckt.content`), offprint (`app.offprint.content`), greengale
+ * (`app.greengale.document`, plain markdown), or markpub (`at.markpub.markdown`).
+ * Each nests its text differently (leaflet under `pages[].blocks[].block`,
+ * pckt/offprint under a flat `items[]` with container blocks holding inner
+ * `.content[]`, greengale as one markdown string, markpub under `text.markdown`).
  *
  * The discussion control pulls a short note/snippet from these records (the
  * linker's commentary). It used to walk only the leaflet shape, so a pckt or
@@ -59,6 +59,17 @@ function firstTextInBlocks(blocks: unknown, depth: number): string | null {
   return null;
 }
 
+// The first non-empty markdown line, stripped of leading heading/quote/list
+// markers. Shared by the markdown-bodied formats (greengale, markpub).
+function firstMarkdownLine(markdown: unknown): string | null {
+  if (typeof markdown !== 'string') return null;
+  for (const line of markdown.split('\n')) {
+    const cleaned = line.replace(/^\s*(#{1,6}\s+|>\s?|[-*+]\s+)/, '').trim();
+    if (cleaned) return cleaned;
+  }
+  return null;
+}
+
 /**
  * The leading body text of a standard.site document's `content` embed, across
  * every supported authoring format. Returns null when the format is unknown or
@@ -82,13 +93,13 @@ export function extractContentText(content: unknown): string | null {
       return firstTextInBlocks((content as { items?: unknown }).items, 0);
     case 'app.greengale.document': {
       const markdown = (content as { markdown?: string }).markdown;
-      if (typeof markdown !== 'string') return null;
-      // First non-empty line, stripped of leading markdown heading/quote markers.
-      for (const line of markdown.split('\n')) {
-        const cleaned = line.replace(/^\s*(#{1,6}\s+|>\s?|[-*+]\s+)/, '').trim();
-        if (cleaned) return cleaned;
-      }
-      return null;
+      return firstMarkdownLine(markdown);
+    }
+    case 'at.markpub.markdown': {
+      // markpub (https://markpub.at/) nests its body one level deeper, under
+      // `text.markdown`.
+      const markdown = (content as { text?: { markdown?: string } }).text?.markdown;
+      return firstMarkdownLine(markdown);
     }
     default:
       return null;

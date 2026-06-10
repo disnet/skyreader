@@ -90,7 +90,7 @@ interface RawDocValue {
 
 // Extract the note (commentary) from a link-post document record: the leading
 // body text block, falling back to description/textContent. The body walk is
-// format-aware (leaflet/pckt/offprint/greengale) so "also linked by" notes read
+// format-aware (leaflet/pckt/offprint/greengale/markpub) so "also linked by" notes read
 // the same regardless of which Atmospheric app published the post.
 function extractNote(value: RawDocValue): string | null {
   const text = extractContentText(value.content);
