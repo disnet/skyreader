@@ -1,9 +1,11 @@
 <script lang="ts">
   import type { Article } from '$lib/types';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
-  import { normalizeDisplayItem, getAuthorLabel } from '$lib/utils/displayItem';
+  import { normalizeDisplayItem, getAuthorLabel, getDisplayContent } from '$lib/utils/displayItem';
   import { getExternalArticleLink } from '$lib/utils/linkPost';
   import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
+  import { savesStore } from '$lib/stores/saves.svelte';
+  import { socialStore } from '$lib/stores/social.svelte';
   import { sanitizeHtml } from '$lib/utils/sanitize';
   import { formatRelativeDate } from '$lib/utils/date';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
@@ -137,9 +139,55 @@
       : undefined
   );
 
+  // Saved items keep only metadata in memory (the body was stripped to keep the
+  // saved store small); pull the full text back from IndexedDB by rkey when the
+  // reader opens. Resets and refetches whenever the reader item changes.
+  let lazySavedContent = $state<string | null>(null);
+  $effect(() => {
+    lazySavedContent = null;
+    if (readerItem.type !== 'saved' || !readerItem.item.rkey) return;
+    const rkey = readerItem.item.rkey;
+    let cancelled = false;
+    savesStore.getContent(rkey).then((c) => {
+      if (!cancelled) lazySavedContent = c;
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  // A document's flat text, lazy-loaded for stripped social-feed docs whose body
+  // isn't recognized structured content (rare). Resets per reader item.
+  let lazyDocText = $state<string | null>(null);
+  $effect(() => {
+    lazyDocText = null;
+    if (readerItem.type !== 'document' || readerItem.item.textContent) return;
+    const recordUri = readerItem.item.recordUri;
+    let cancelled = false;
+    socialStore.getTextContent(recordUri).then((t) => {
+      if (!cancelled) lazyDocText = t;
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+
   let displayContent = $derived.by(() => {
     // In the reader we show the external article itself — not the sharer's note.
     if (linkPostArticle?.content) return linkPostArticle.content;
+    // Prefer the lazily-loaded body for saved items; normalized.displayContent
+    // falls back to the description until it arrives.
+    if (readerItem.type === 'saved' && lazySavedContent) return lazySavedContent;
+    // For a stripped document, re-render with the lazily-loaded textContent fed
+    // back in — structured `content` still wins inside getDisplayContent, so this
+    // only changes the unrecognized-format fallback (description → full text).
+    if (readerItem.type === 'document' && lazyDocText && !readerItem.item.textContent) {
+      return getDisplayContent({
+        type: 'document',
+        item: { ...readerItem.item, textContent: lazyDocText },
+        key: readerItem.key,
+      });
+    }
     return normalized.displayContent;
   });
 

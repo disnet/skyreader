@@ -15,6 +15,40 @@ function feedKey(subscriptionId: number, guid: string): string {
 }
 
 /**
+ * Derive the cheap body stats (char length + word count) from an article's
+ * content/summary. Matches the historical `content || summary` precedence so
+ * the values are identical to what the inline computations produced before the
+ * content was stripped from memory.
+ */
+export function computeContentStats(
+  content?: string,
+  summary?: string
+): { contentLength: number; wordCount: number } {
+  const text = content || summary || '';
+  const trimmed = text.trim();
+  return {
+    contentLength: text.length,
+    wordCount: trimmed ? trimmed.split(/\s+/).length : 0,
+  };
+}
+
+/**
+ * Return a memory-light copy of an article: the full `content` HTML is dropped
+ * and replaced by precomputed `contentLength`/`wordCount`. `summary` (the short
+ * RSS description) is kept — it's small and still used for previews, share
+ * quotes, and the save path. The full body remains in IndexedDB and is
+ * lazy-loaded on expand (see ArticleCard). Idempotent: re-lightening a row that
+ * already has stats and no content just recomputes the same numbers.
+ */
+export function toLightArticle(a: Article): Article {
+  const { contentLength, wordCount } = computeContentStats(a.content, a.summary);
+  // Explicitly drop `content` rather than spread-and-overwrite so the large
+  // string isn't retained by the new object.
+  const { content: _content, ...rest } = a;
+  return { ...rest, contentLength, wordCount };
+}
+
+/**
  * Select the items not already present and convert them to Articles.
  *
  * Dedupes against `existing` and against earlier items in the same call (a feed

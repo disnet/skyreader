@@ -82,10 +82,11 @@ export function getAvgContentLengthByFeed(articles: Article[]): Map<number, numb
   const totals = new Map<number, { sum: number; count: number }>();
 
   for (const article of articles) {
-    const text = article.content || article.summary;
-    if (!text) continue;
+    // Prefer the precomputed length — the body is stripped from in-memory rows.
+    const len = article.contentLength ?? (article.content || article.summary || '').length;
+    if (!len) continue;
     const existing = totals.get(article.subscriptionId) || { sum: 0, count: 0 };
-    existing.sum += text.length;
+    existing.sum += len;
     existing.count++;
     totals.set(article.subscriptionId, existing);
   }
@@ -528,10 +529,11 @@ export function getLongReadsSuggestion(ctx: SuggestionContext): ChannelSuggestio
 
   const totals = new Map<number, { sum: number; count: number }>();
   for (const article of ctx.articles) {
-    const text = article.content || article.summary;
-    if (!text) continue;
+    // Prefer the precomputed length — the body is stripped from in-memory rows.
+    const len = article.contentLength ?? (article.content || article.summary || '').length;
+    if (!len) continue;
     const existing = totals.get(article.subscriptionId) || { sum: 0, count: 0 };
-    existing.sum += text.length;
+    existing.sum += len;
     existing.count++;
     totals.set(article.subscriptionId, existing);
   }

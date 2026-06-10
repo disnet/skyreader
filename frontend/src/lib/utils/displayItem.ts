@@ -69,7 +69,7 @@ function getPublishedAt(item: FeedDisplayItem): string {
   return '';
 }
 
-function getDisplayContent(item: FeedDisplayItem): string {
+export function getDisplayContent(item: FeedDisplayItem): string {
   if (item.type === 'article') {
     return item.item.content || item.item.summary || '';
   }

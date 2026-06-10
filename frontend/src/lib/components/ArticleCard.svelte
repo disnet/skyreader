@@ -31,6 +31,8 @@
     noteHasBlockquote,
   } from '$lib/utils/linkPost';
   import { api } from '$lib/services/api';
+  import { db } from '$lib/services/db';
+  import { socialStore } from '$lib/stores/social.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
   import { socialContextStore } from '$lib/stores/socialContext.svelte';
@@ -221,6 +223,16 @@
       : undefined
   );
 
+  // The full article body, lazy-loaded from IndexedDB when the card opens. The
+  // in-memory article carries only metadata (the body is stripped to keep the
+  // heap small), so we fetch it on demand rather than holding every body live.
+  let lazyContent = $state<string | null>(null);
+
+  // A document's flat text, lazy-loaded on open. Only used for documents whose
+  // content format isn't recognized by the structured renderers below (the
+  // common case renders structured `content` and never touches this).
+  let lazyDocText = $state<string | null>(null);
+
   // Content handling - article has priority, then share content, then localArticle, then document
   let displayContent = $derived.by(() => {
     // Link posts don't inline the full article (that bounces through the
@@ -228,8 +240,12 @@
     // note + link-card markup below, so there's no HTML content here.
     if (isLinkPostMode) return '';
 
-    // For articles, use existing logic
+    // For articles, use existing logic. The in-memory article is "light" (its
+    // body was stripped to keep the heap small), so `article.content` is
+    // normally absent; lazyContent holds the full body once it's read back from
+    // IndexedDB on expand. Summary is the fallback/preview shown meanwhile.
     if (article?.content) return article.content;
+    if (lazyContent) return lazyContent;
     if (article?.summary) return article.summary;
     if (localArticle?.content) return localArticle.content;
     if (localArticle?.summary) return localArticle.summary;
@@ -254,8 +270,11 @@
       return renderGreengaleContent(document.content as GreengaleContent, document.authorDid);
     }
 
-    // Fall back to flat text content or description
+    // Fall back to flat text content or description. textContent is stripped from
+    // in-memory documents (see toLightDocument); lazyDocText holds it once read
+    // back from IndexedDB on open.
     if (document?.textContent) return document.textContent;
+    if (lazyDocText) return lazyDocText;
     if (document?.description) return document.description;
 
     return '';
@@ -586,6 +605,50 @@
   }
 
   let isOpen = $derived(selected || expanded);
+
+  // Pull the full body into memory the first time the card opens. The list hands
+  // us a light article (no `content`), so read it back from IndexedDB — by id,
+  // or by guid for rows merged this session that don't have an id yet. The body
+  // never lives in the shared in-memory array; it's held only here, per open card.
+  $effect(() => {
+    if (!isOpen || !article || article.content || lazyContent != null) return;
+    const { id, guid, subscriptionId } = article;
+    let cancelled = false;
+    (async () => {
+      try {
+        let row = id != null ? await db.articles.get(id) : undefined;
+        if (!row && guid) {
+          row = await db.articles
+            .where('guid')
+            .equals(guid)
+            .filter((a) => a.subscriptionId === subscriptionId)
+            .first();
+        }
+        if (!cancelled) lazyContent = row?.content ?? '';
+      } catch {
+        if (!cancelled) lazyContent = '';
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  // Same lazy-load for a document's flat text (stripped from memory). Only
+  // fetched when the document carries no in-memory textContent — i.e. a
+  // stripped social-feed doc — and read back by recordUri.
+  $effect(() => {
+    if (!isOpen || !document || document.textContent || lazyDocText != null) return;
+    const recordUri = document.recordUri;
+    let cancelled = false;
+    socialStore.getTextContent(recordUri).then((t) => {
+      if (!cancelled) lazyDocText = t;
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+
   let hasContent = $derived(Boolean(displayContent));
   let sanitizedContent = $derived(sanitizeHtml(displayContent, itemUrl));
 

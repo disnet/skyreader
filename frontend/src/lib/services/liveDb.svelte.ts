@@ -1,7 +1,7 @@
 import { db } from './db';
 import { safeAdd, safeUpdate, safeBulkAdd } from './safeDb.svelte';
 import { dedupeSubscriptionsByRkey, dedupeSubscriptionsByFeed } from './subscriptionDedup';
-import { selectNewArticles, computeArticleLimitDeletions } from './articleMerge';
+import { selectNewArticles, computeArticleLimitDeletions, toLightArticle } from './articleMerge';
 import type { Subscription, Article, FeedItem } from '$lib/types';
 
 /**
@@ -82,8 +82,12 @@ class LiveDatabase {
    */
   async loadArticles(): Promise<Article[]> {
     try {
-      // Load articles sorted by publishedAt descending
-      this._articles = await db.articles.orderBy('publishedAt').reverse().toArray();
+      // Load articles sorted by publishedAt descending. Strip each body to a
+      // light copy (metadata + precomputed stats) — the full content stays in
+      // IndexedDB and is lazy-loaded on expand, keeping the heap from holding
+      // every article's HTML at once.
+      const full = await db.articles.orderBy('publishedAt').reverse().toArray();
+      this._articles = full.map(toLightArticle);
       this._articlesLoaded = true;
       this.articlesVersion++;
       return this._articles;
@@ -229,11 +233,12 @@ class LiveDatabase {
     const { newArticles, affected } = selectNewArticles(this._articles, feeds, Date.now());
     if (newArticles.length === 0) return 0;
 
-    // One bulk insert.
+    // One bulk insert — the full body is persisted to IndexedDB here.
     await safeBulkAdd(db.articles, newArticles);
 
-    // One in-memory rebuild + sort (newest first).
-    this._articles = [...this._articles, ...newArticles].sort(
+    // One in-memory rebuild + sort (newest first). The in-memory array holds
+    // light copies (no body) — the full content went to IndexedDB just above.
+    this._articles = [...this._articles, ...newArticles.map(toLightArticle)].sort(
       (a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
     );
 
