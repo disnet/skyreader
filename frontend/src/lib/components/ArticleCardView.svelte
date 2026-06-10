@@ -161,6 +161,20 @@
 >
   <div class="article-sticky-header">
     <div class="article-header-row">
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <span
+        class="read-toggle"
+        class:unread={!isRead}
+        title={isRead ? 'Mark unread' : 'Mark read'}
+        onclick={(e) => {
+          e.stopPropagation();
+          onToggleRead?.();
+        }}
+        role="button"
+        tabindex="-1"
+      >
+        <span class="read-dot"></span>
+      </span>
       <button class="article-header" onclick={() => onHeaderClick?.()}>
         <span class="title-line">
           {#if faviconUrl}
@@ -657,17 +671,6 @@
             <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
             <div class="overflow-backdrop" onclick={() => onCloseOverflow?.()}></div>
             <div class="overflow-menu">
-              <button
-                class="overflow-menu-item"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  onToggleRead?.();
-                  onCloseOverflow?.();
-                }}
-              >
-                <Icon name={isRead ? 'circle' : 'check'} size={16} />
-                <span>{isRead ? 'Mark unread' : 'Mark read'}</span>
-              </button>
               <button
                 class="overflow-menu-item"
                 class:tagged={itemTagCount > 0}
@@ -1471,6 +1474,45 @@
     color: var(--color-text-secondary);
   }
 
+  .read-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    padding: 2px 10px 2px 4px;
+    cursor: pointer;
+    flex-shrink: 0;
+    line-height: 0;
+    margin-top: calc(0.5rem + 3px);
+  }
+
+  .read-dot {
+    display: block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: transparent;
+    border: 1.5px solid var(--color-text-secondary);
+    transition:
+      background 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .read-toggle:hover .read-dot {
+    border-color: var(--color-primary, #0066cc);
+    opacity: 0.7;
+  }
+
+  .read-toggle.unread .read-dot {
+    background: #5b9bd5;
+    border-color: #5b9bd5;
+  }
+
+  .read-toggle.unread:hover .read-dot {
+    opacity: 0.7;
+  }
+
   .article-title-link {
     color: var(--color-primary, #0066cc);
     text-decoration: none;
@@ -2117,6 +2159,10 @@
      Keyed off the card's own width (the `card` container) so a narrow column
      gets the mobile layout regardless of viewport. */
   @container card (max-width: 600px) {
+    .read-toggle {
+      margin-top: calc(0.5rem + 5px);
+    }
+
     .article-header {
       flex-wrap: wrap;
       gap: 0.25rem 0.5rem;
