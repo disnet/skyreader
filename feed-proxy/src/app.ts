@@ -26,6 +26,10 @@ export interface AppConfig {
   cacheTtlMs: number;
   staleTtlMs: number;
   defaultLimit: number;
+  // Max time a single feed/author may block a batch on an inline upstream fetch
+  // before we serve stale (or nothing) and let the fetch finish in the
+  // background. Optional; defaults to BATCH_INLINE_FETCH_BUDGET_MS in createApp.
+  batchInlineFetchBudgetMs?: number;
   // Self-warming loop (optional; defaults applied in createApp).
   // Refresh any cached feed older than this so user requests always land in the
   // fresh window (a HIT) instead of triggering a blocking upstream fetch.
@@ -175,6 +179,13 @@ const MAX_DELAY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const PERMANENT_ERROR_DELAY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_RECOVERABLE_ERRORS = 5;
 const FETCH_TIMEOUT_MS = 30 * 1000; // 30 seconds
+// How long a single feed may block a /feeds batch on an inline upstream fetch
+// (cache miss / past-stale). The batch fans out with Promise.all and waits for
+// the slowest feed, so without this cap one new-or-cold feed drags the whole
+// response toward FETCH_TIMEOUT_MS. On budget expiry we leave the fetch running
+// in the background (it warms the cache for the next poll) and return what we
+// have. Much shorter than FETCH_TIMEOUT_MS on purpose.
+const BATCH_INLINE_FETCH_BUDGET_MS = 6 * 1000; // 6 seconds
 const MAX_RESPONSE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 // Extracted article content is effectively immutable per URL; cache it for a long
 // time so repeat (and cross-user) saves of the same article are free.
@@ -820,6 +831,7 @@ async function runDiscover(siteUrl: string): Promise<DiscoverResult> {
 
 export function createApp(db: Database, config: AppConfig) {
   const { proxySecret, cacheTtlMs, staleTtlMs, defaultLimit } = config;
+  const batchInlineFetchBudgetMs = config.batchInlineFetchBudgetMs ?? BATCH_INLINE_FETCH_BUDGET_MS;
 
   // The durable-log generation token, read once (minted in initDatabase). Stable
   // for the process lifetime; returned in every feed response so clients can
@@ -1094,14 +1106,49 @@ export function createApp(db: Database, config: AppConfig) {
     }
   }
 
-  function triggerBackgroundRefresh(url: string, urlHash: string, cached?: CacheRow): void {
-    if (inFlight.has(urlHash)) return;
+  // Start (or join) a coalesced fetch for this feed and return the shared
+  // in-flight promise. Concurrent callers for the same urlHash reuse one
+  // upstream fetch instead of each firing their own. fetchParseAndCache never
+  // throws and writes its own cache side effects, so the returned promise is
+  // safe to either await or leave running.
+  function startCoalescedFetch(
+    url: string,
+    urlHash: string,
+    cached?: CacheRow
+  ): Promise<ParsedFeed | null> {
+    const existing = inFlight.get(urlHash);
+    if (existing) return existing;
 
     const promise = fetchParseAndCache(url, urlHash, cached).finally(() => {
       inFlight.delete(urlHash);
     });
 
     inFlight.set(urlHash, promise);
+    return promise;
+  }
+
+  function triggerBackgroundRefresh(url: string, urlHash: string, cached?: CacheRow): void {
+    startCoalescedFetch(url, urlHash, cached);
+  }
+
+  // Resolve to the promise's value, or to null if it doesn't settle within ms.
+  // The underlying promise keeps running after a timeout — callers rely on that
+  // to let a background fetch warm the cache. The timer is always cleared so we
+  // don't leak it once the promise settles.
+  function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+    return new Promise<T | null>((resolve) => {
+      const timer = setTimeout(() => resolve(null), ms);
+      promise.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        () => {
+          clearTimeout(timer);
+          resolve(null);
+        }
+      );
+    });
   }
 
   // Mark that a client just asked for this feed, so the warm loop knows it's
@@ -1271,12 +1318,27 @@ export function createApp(db: Database, config: AppConfig) {
     }
   }
 
-  function triggerBackgroundDocumentRefresh(did: string, cached?: DocumentCacheRow): void {
-    if (inFlightDocs.has(did)) return;
+  // Start (or join) a coalesced document fetch for this author and return the
+  // shared in-flight promise. Mirrors startCoalescedFetch for feeds: concurrent
+  // callers for the same DID reuse one upstream list instead of each firing
+  // their own. Safe to await or leave running.
+  function startCoalescedDocumentFetch(
+    did: string,
+    cached?: DocumentCacheRow
+  ): Promise<ProxyDocument[] | null> {
+    const existing = inFlightDocs.get(did);
+    if (existing) return existing;
+
     const promise = fetchAndCacheDocuments(did, cached).finally(() => {
       inFlightDocs.delete(did);
     });
+
     inFlightDocs.set(did, promise);
+    return promise;
+  }
+
+  function triggerBackgroundDocumentRefresh(did: string, cached?: DocumentCacheRow): void {
+    startCoalescedDocumentFetch(did, cached);
   }
 
   function recordDocumentRequest(did: string, now: number): void {
@@ -1884,8 +1946,29 @@ export function createApp(db: Database, config: AppConfig) {
         }
 
         if (!feed) {
-          feed = await fetchParseAndCache(feedUrl, urlHash, cached ?? undefined);
-          cacheStatus = feed ? 'MISS' : 'ERROR';
+          // Inline fetch needed (no cache row, or content past staleTtl). Cap how
+          // long this one feed may block the batch: race the coalesced fetch
+          // against a short budget. If it lands in time, serve it fresh. If not,
+          // the fetch keeps running in the background (warming the cache for the
+          // next poll) and we serve prior content as STALE when we have any —
+          // otherwise we fall through to the no-content path below, which returns
+          // a benign result (no error backoff is set for a fetch that's still in
+          // flight). Routing through startCoalescedFetch also dedupes concurrent
+          // batches that all miss on the same feed.
+          const fetchPromise = startCoalescedFetch(feedUrl, urlHash, cached ?? undefined);
+          feed = await raceWithTimeout(fetchPromise, batchInlineFetchBudgetMs);
+          if (feed) {
+            cacheStatus = 'MISS';
+          } else if (cached) {
+            // Budget expired but we have prior content (past-stale) — serve it
+            // rather than blocking, as long as it's real content not an error
+            // placeholder. The background fetch will refresh it.
+            const staleFeed = JSON.parse(cached.parsed_json) as ParsedFeed;
+            if (staleFeed.items.length > 0 || staleFeed.title !== '') {
+              feed = staleFeed;
+              cacheStatus = 'STALE';
+            }
+          }
         }
 
         if (!feed) {
@@ -2054,7 +2137,19 @@ export function createApp(db: Database, config: AppConfig) {
         }
 
         if (!documents) {
-          documents = await fetchAndCacheDocuments(did, cached ?? undefined);
+          // Same bound as /feeds: cap how long one author may block the batch on
+          // an inline upstream list. Race the coalesced fetch against the budget;
+          // on expiry the fetch keeps running in the background (warming the
+          // cache) and we serve prior documents if we have any, else fall through
+          // to the no-content path below (no error backoff for an in-flight
+          // fetch). startCoalescedDocumentFetch also dedupes concurrent batches
+          // missing on the same DID.
+          const fetchPromise = startCoalescedDocumentFetch(did, cached ?? undefined);
+          documents = await raceWithTimeout(fetchPromise, batchInlineFetchBudgetMs);
+          if (!documents && cached?.documents_json) {
+            const stale = JSON.parse(cached.documents_json) as ProxyDocument[];
+            if (stale.length > 0) documents = stale;
+          }
         }
 
         if (!documents) {
