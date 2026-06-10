@@ -576,6 +576,150 @@ describe('Integration Tests', () => {
     });
   });
 
+  describe('POST /feeds — batch latency bound', () => {
+    // A promise we resolve on demand, to model an upstream feed that hangs well
+    // past the inline budget. While it's pending the batch can only return by
+    // hitting the budget — so each of these tests would hang (and fail) if the
+    // cap were removed and the handler awaited the full 30s fetch.
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((r) => {
+        resolve = r;
+      });
+      return { promise, resolve };
+    }
+
+    it('caps how long one slow feed blocks the batch, and never blocks a fast feed', async () => {
+      const { app, inFlight } = createTestApp({ batchInlineFetchBudgetMs: 50 });
+
+      const slowUrl = 'https://example.com/slow.xml';
+      const fastUrl = 'https://example.com/fast.xml';
+      const slow = deferred<void>();
+
+      fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+        if (String(input).includes('slow')) await slow.promise; // hangs > budget
+        return new Response(SAMPLE_RSS);
+      }) as unknown as typeof fetch);
+
+      const res = await app.request('/feeds', {
+        method: 'POST',
+        headers: { 'X-Proxy-Secret': 'test-secret', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls: [slowUrl, fastUrl] }),
+      });
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+
+      // The fast feed is unaffected by its slow neighbour in the same batch.
+      expect(json.feeds[fastUrl].feed.title).toBe('Test Blog');
+      expect(json.feeds[fastUrl].cache).toBe('MISS');
+
+      // The slow feed returns no content yet — but crucially with NO error
+      // backoff poisoned (errorCount 0, no nextRetryAt), so it self-heals next
+      // poll rather than entering a retry delay.
+      expect(json.feeds[slowUrl].feed).toBeNull();
+      expect(json.feeds[slowUrl].nextRetryAt).toBeUndefined();
+      expect(json.feeds[slowUrl].errorCount ?? 0).toBe(0);
+
+      // The fetch is still running in the background and warms the cache: once
+      // it finishes, the next poll for that feed is a plain HIT.
+      const bg = inFlight.get(hashUrl(slowUrl));
+      expect(bg).toBeDefined();
+      slow.resolve();
+      await bg;
+
+      const res2 = await app.request('/feeds', {
+        method: 'POST',
+        headers: { 'X-Proxy-Secret': 'test-secret', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls: [slowUrl] }),
+      });
+      const json2 = await res2.json();
+      expect(json2.feeds[slowUrl].feed.title).toBe('Test Blog');
+      expect(json2.feeds[slowUrl].cache).toBe('HIT');
+    });
+
+    it('serves past-stale content (not a hang) when the refresh exceeds the budget', async () => {
+      const { db, app, inFlight } = createTestApp({
+        batchInlineFetchBudgetMs: 50,
+        cacheTtlMs: 1000,
+        staleTtlMs: 2000,
+      });
+
+      const url = 'https://example.com/stale-slow.xml';
+      const urlHash = hashUrl(url);
+      const slow = deferred<void>();
+
+      // Prior content fetched long enough ago to be past staleTtl, so the serve
+      // path falls through to an inline refresh instead of returning it directly.
+      const old = {
+        title: 'Old Title',
+        items: [
+          { guid: 'old-1', url: '', title: 'Old Post', publishedAt: new Date().toISOString() },
+        ],
+        fetchedAt: Date.now() - 10_000,
+      };
+      db.run(
+        `INSERT INTO cache (url_hash, url, parsed_json, cached_at, fetched_at) VALUES (?, ?, ?, ?, ?)`,
+        [urlHash, url, JSON.stringify(old), Date.now() - 10_000, Date.now() - 10_000]
+      );
+
+      fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async () => {
+        await slow.promise;
+        return new Response(SAMPLE_RSS);
+      }) as unknown as typeof fetch);
+
+      const res = await app.request('/feeds', {
+        method: 'POST',
+        headers: { 'X-Proxy-Secret': 'test-secret', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls: [url] }),
+      });
+      const json = await res.json();
+
+      // Budget expired, but we have prior content — serve it as STALE rather
+      // than blocking on the refresh.
+      expect(res.status).toBe(200);
+      expect(json.feeds[url].cache).toBe('STALE');
+      expect(json.feeds[url].feed.title).toBe('Old Title');
+
+      const bg = inFlight.get(urlHash);
+      expect(bg).toBeDefined();
+      slow.resolve();
+      await bg;
+    });
+
+    it('coalesces concurrent batches missing the same feed onto one upstream fetch', async () => {
+      const { app, inFlight } = createTestApp({ batchInlineFetchBudgetMs: 50 });
+
+      const url = 'https://example.com/coalesce.xml';
+      const slow = deferred<void>();
+      let upstreamCalls = 0;
+
+      fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async () => {
+        upstreamCalls++;
+        await slow.promise;
+        return new Response(SAMPLE_RSS);
+      }) as unknown as typeof fetch);
+
+      const headers = { 'X-Proxy-Secret': 'test-secret', 'Content-Type': 'application/json' };
+      const body = JSON.stringify({ urls: [url] });
+      const [r1, r2] = await Promise.all([
+        app.request('/feeds', { method: 'POST', headers, body }),
+        app.request('/feeds', { method: 'POST', headers, body }),
+      ]);
+
+      expect(r1.status).toBe(200);
+      expect(r2.status).toBe(200);
+      // Both batches missed the same cold feed but shared a single upstream
+      // fetch via the in-flight map (the inline path used to bypass it).
+      expect(upstreamCalls).toBe(1);
+
+      const bg = inFlight.get(hashUrl(url));
+      expect(bg).toBeDefined();
+      slow.resolve();
+      await bg;
+    });
+  });
+
   describe('Cache behavior', () => {
     it('serves stale cache while refreshing', async () => {
       const { db, app, inFlight } = createTestApp({

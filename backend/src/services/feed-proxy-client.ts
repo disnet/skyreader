@@ -1,5 +1,13 @@
 import type { Env, FeedItem } from '../types';
 
+// Default ceiling on a single proxy round-trip. Generous because endpoints like
+// /extract legitimately fetch + parse large pages.
+const DEFAULT_PROXY_TIMEOUT_MS = 25_000;
+// Tighter ceiling for the batch endpoints: the proxy bounds each feed/author to
+// BATCH_INLINE_FETCH_BUDGET_MS (6s) and fans out concurrently, so a healthy
+// batch returns in well under this. Exceeding it means the proxy is wedged.
+const BATCH_PROXY_TIMEOUT_MS = 12_000;
+
 export class FeedProxyError extends Error {
   errorCount?: number;
   nextRetryAt?: number;
@@ -238,17 +246,37 @@ export class FeedProxyClient {
     this.proxySecret = env.FEED_PROXY_SECRET;
   }
 
-  private async fetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  private async fetch<T>(
+    path: string,
+    options: RequestInit = {},
+    timeoutMs: number = DEFAULT_PROXY_TIMEOUT_MS
+  ): Promise<T> {
     const url = `${this.proxyUrl}${path}`;
 
     const headers = new Headers(options.headers);
     headers.set('X-Proxy-Secret', this.proxySecret);
     headers.set('Content-Type', 'application/json');
 
-    const response = await fetch(url, {
-      ...options,
-      headers,
-    });
+    // Hard ceiling on a single proxy round-trip. The proxy self-bounds each feed
+    // in a batch (BATCH_INLINE_FETCH_BUDGET_MS), so under normal load it answers
+    // in a few seconds; this only fires when the proxy itself is wedged (event
+    // loop blocked, CPU-pegged), turning an open-ended hang into a clean error
+    // instead of stalling the user until the Worker's own limit.
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'TimeoutError') {
+        throw new FeedProxyError(
+          `The feed service didn't respond in time (after ${Math.round(timeoutMs / 1000)}s). It may be under load — try again shortly.`
+        );
+      }
+      throw err;
+    }
 
     // The proxy app returns JSON for its own errors, but infrastructure in
     // front of it (Fly.io edge, gateway timeouts) can return a plain-text body
@@ -356,10 +384,14 @@ export class FeedProxyClient {
       limit?: number;
     }>
   ): Promise<ProxyBatchResponse> {
-    const raw = await this.fetch<RawBatchResponse & { error?: string }>('/feeds', {
-      method: 'POST',
-      body: JSON.stringify({ feeds }),
-    });
+    const raw = await this.fetch<RawBatchResponse & { error?: string }>(
+      '/feeds',
+      {
+        method: 'POST',
+        body: JSON.stringify({ feeds }),
+      },
+      BATCH_PROXY_TIMEOUT_MS
+    );
 
     // Check if proxy returned an error response (e.g., 401 Unauthorized)
     if (!raw.feeds) {
@@ -415,10 +447,14 @@ export class FeedProxyClient {
       since_digest?: string;
     }>
   ): Promise<ProxyDocumentEntry[]> {
-    const raw = await this.fetch<RawDocumentBatchResponse>('/documents', {
-      method: 'POST',
-      body: JSON.stringify({ authors }),
-    });
+    const raw = await this.fetch<RawDocumentBatchResponse>(
+      '/documents',
+      {
+        method: 'POST',
+        body: JSON.stringify({ authors }),
+      },
+      BATCH_PROXY_TIMEOUT_MS
+    );
 
     if (!raw.authors) {
       throw new FeedProxyError(raw.error || 'Invalid response from feed proxy');
