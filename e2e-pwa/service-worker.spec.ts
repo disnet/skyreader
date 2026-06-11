@@ -59,4 +59,34 @@ test.describe('service worker lifecycle', () => {
       `shell references chunks absent from precache: ${result.missing?.join(', ')}`
     ).toEqual([]);
   });
+
+  test('serves stale immutable chunks from retained caches', async ({ page }) => {
+    await page.goto('/');
+    await waitForControl(page);
+
+    const result = await page.evaluate(async () => {
+      const staleUrl = '/_app/immutable/chunks/stale-client-test.js';
+      const body = 'export const staleClientTest = true;';
+      const cache = await caches.open('workbox-precache-stale-client-test');
+      await cache.put(
+        staleUrl,
+        new Response(body, {
+          headers: { 'content-type': 'application/javascript' },
+        })
+      );
+
+      const response = await fetch(staleUrl);
+      return {
+        ok: response.ok,
+        status: response.status,
+        body: await response.text(),
+      };
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      status: 200,
+      body: 'export const staleClientTest = true;',
+    });
+  });
 });

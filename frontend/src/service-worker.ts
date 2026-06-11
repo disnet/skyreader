@@ -9,12 +9,7 @@
 // shell and the chunks it imports always come from the same build, eliminating
 // the version-skew that caused blank screens / "Something went wrong" on iOS.
 
-import {
-  precacheAndRoute,
-  cleanupOutdatedCaches,
-  createHandlerBoundToURL,
-  type PrecacheEntry,
-} from 'workbox-precaching';
+import { precacheAndRoute, createHandlerBoundToURL, type PrecacheEntry } from 'workbox-precaching';
 import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { NetworkFirst } from 'workbox-strategies';
 import { clientsClaim } from 'workbox-core';
@@ -32,13 +27,35 @@ const LAST_REFRESH_KEY = 'lastRefreshAt';
 // Precaching — the full build, cached atomically on install.
 // ---------------------------------------------------------------------------
 
-// Drop caches from previous (Workbox) builds so we don't accumulate stale chunks.
-cleanupOutdatedCaches();
+// Keep previous Workbox precaches around. A newly activated worker can control
+// tabs that still have the previous app graph in memory, and those tabs may
+// lazily import old hashed chunks. Deleting the old precache at activation makes
+// those valid stale-client requests fail under the service worker.
+
+// Serve immutable build assets from any retained cache before Workbox's precache
+// route runs. This lets stale clients resolve old hashed chunks, and turns a bad
+// cache state into a plain network fetch instead of a Workbox precache exception.
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin || !url.pathname.startsWith('/_app/immutable/')) {
+    return;
+  }
+
+  event.respondWith(caches.match(event.request).then((cached) => cached ?? fetch(event.request)));
+});
 
 // Precache + serve every build asset cache-first. If any asset fails to fetch
 // during install, the install fails and the OLD worker keeps serving its complete
 // set — we never end up half-installed with missing chunks.
 precacheAndRoute(self.__WB_MANIFEST);
+
+// Activate the newly installed worker as soon as its complete precache is ready.
+// This is important for recovery: a broken active worker may prevent the app from
+// booting far enough to show an update prompt. The immutable fallback above keeps
+// old running clients able to load their previous hashed chunks after activation.
+self.addEventListener('install', () => {
+  self.skipWaiting();
+});
 
 // ---------------------------------------------------------------------------
 // Navigation — always serve the precached app shell (app-shell model).
@@ -81,17 +98,12 @@ registerRoute(
   })
 );
 
-// Take control of open clients as soon as we activate. Combined with the
-// 'prompt' update flow (skipWaiting only on the SKIP_WAITING message below),
-// this means: first install controls immediately; updates wait for the user.
+// Take control of open clients as soon as we activate.
 clientsClaim();
 
 // ---------------------------------------------------------------------------
-// Custom message handler — explicit, user-driven update activation.
+// Custom message handler — keep compatibility with the app's update button.
 // ---------------------------------------------------------------------------
-//
-// useRegisterSW(...).updateServiceWorker(true) in the app posts {type:'SKIP_WAITING'}
-// to the waiting worker; we activate only then so we never swap code mid-session.
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();

@@ -28,8 +28,9 @@ export default defineConfig({
       scope: '/',
       buildBase: '/',
 
-      // 'prompt' => a new SW installs and WAITS; we surface an update banner and only
-      // activate it when the user clicks Update (updateServiceWorker(true) posts SKIP_WAITING).
+      // Keep the app-side registration in prompt mode so the update banner path still
+      // works, but the worker itself calls skipWaiting after a complete precache. That
+      // lets a service-worker fix recover clients even when the old app cannot boot.
       registerType: 'prompt',
 
       // We register the SW ourselves via useRegisterSW() inside the app bundle, so the
