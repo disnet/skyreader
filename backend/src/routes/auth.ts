@@ -41,7 +41,7 @@ import {
 } from '../utils/cookies';
 
 // Maximum number of users allowed during beta
-const MAX_USERS = 650;
+const MAX_USERS = 1000;
 
 // Scope constants now live in config/scopes.ts (shared with the token-refresh
 // path). Re-exported here so existing importers (integrations, linkblog, saved)
