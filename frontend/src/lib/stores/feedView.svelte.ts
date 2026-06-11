@@ -814,6 +814,16 @@ function createFeedViewStore() {
     return displayedArticles;
   });
 
+  // Entry-wise map equality, so the hydration effect only republishes (and thus
+  // re-derives currentItems) when a body actually appears/changes/drops.
+  function sameBodies(a: Map<string, string>, b: Map<string, string>): boolean {
+    if (a.size !== b.size) return false;
+    for (const [k, v] of a) {
+      if (b.get(k) !== v) return false;
+    }
+    return true;
+  }
+
   // This is a module-level singleton store, so a bare $effect would be orphaned
   // (no component owns it). $effect.root gives the hydration its own scope; the
   // scope lives for the app's lifetime, so its cleanup is intentionally dropped.
@@ -835,10 +845,16 @@ function createFeedViewStore() {
           if (cancelled) return;
           for (const [guid, body] of fetched) next.set(guid, body);
         }
-        // Publish only when the set actually changed (new bodies fetched, or
-        // stale out-of-window entries dropped) so we don't churn currentItems.
+        // Publish only when the map's entries actually changed. We must compare
+        // by content, NOT by `missing.length` — articles that have only a summary
+        // (no stored body) are never returned by getArticleBodies, so they stay
+        // "missing" on every pass. Keying the publish off `missing.length > 0`
+        // would then reassign `articleBodies` every run, and since this effect
+        // reads `articleBodies` (via .get above), each reassign re-triggers it —
+        // a tight infinite loop that starves rendering (most visible in Expanded
+        // view, where ~50 open cards re-render every iteration and never settle).
         if (cancelled) return;
-        if (missing.length > 0 || next.size !== articleBodies.size) {
+        if (!sameBodies(next, articleBodies)) {
           articleBodies = next;
         }
       })();
