@@ -35,8 +35,11 @@ const LAST_REFRESH_KEY = 'lastRefreshAt';
 // Drop caches left by older Workbox cache-name formats. Note this does NOT
 // delete the previous build's chunks — all builds share one precache, and
 // precacheAndRoute's own activate handler purges entries missing from the
-// current manifest. A still-open old page that lazy-imports a purged chunk gets
-// a 404 → vite:preloadError → the one-shot reload in hooks.client.ts recovers it.
+// current manifest. A still-open old page that lazy-imports a purged chunk falls
+// through to the network, where the deploy pipeline keeps recent builds' immutable
+// assets servable (scripts/retain-immutable-assets.mjs). If the asset is gone
+// anyway (retention expired/skipped), the 404 → vite:preloadError → one-shot
+// reload in hooks.client.ts recovers the page.
 cleanupOutdatedCaches();
 
 // Precache + serve every build asset cache-first. If any asset fails to fetch

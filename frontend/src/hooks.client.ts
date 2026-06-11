@@ -1,8 +1,11 @@
 // Recover from stale dynamic-import failures after a deploy / service-worker update.
 //
 // When a new build ships, an old, still-running page can issue a dynamic import()
-// for a hashed chunk that no longer exists on the host. Because these are Vite
-// preload imports (not router-managed), the failure surfaces as an uncaught
+// for a hashed chunk from its own (now previous) build. The deploy pipeline keeps
+// recent builds' immutable assets servable (scripts/retain-immutable-assets.mjs),
+// so that import normally still succeeds from the network — this handler is the
+// backstop for when it doesn't (retention expired or skipped). Because these are
+// Vite preload imports (not router-managed), the failure surfaces as an uncaught
 // promise rejection — Vite dispatches `vite:preloadError` for it — and the app
 // gets stuck until a manual hard refresh.
 //
