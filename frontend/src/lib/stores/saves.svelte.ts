@@ -130,6 +130,7 @@ function createSavesStore() {
   async function saveArticle(article: {
     url: string;
     guid: string;
+    subscriptionId?: number;
     title?: string;
     author?: string;
     summary?: string;
@@ -142,7 +143,29 @@ function createSavesStore() {
       const rkey = generateTid();
       const now = new Date().toISOString();
 
-      // Optimistically add to local state
+      // Instant/offline fallback body: pull the RSS body back from IndexedDB.
+      // The in-memory feed list is kept "light" (content stripped — see
+      // toLightArticle), so the body isn't on the article passed in; db.articles
+      // still holds the full row. The RSS body is often just an excerpt, so when
+      // online we replace it below with a clean full-text extraction.
+      let rssBody: string | null = null;
+      if (article.subscriptionId != null) {
+        try {
+          const row = await db.articles
+            .where('guid')
+            .equals(article.guid)
+            .filter((r) => r.subscriptionId === article.subscriptionId)
+            .first();
+          rssBody = row?.content ?? null;
+        } catch {
+          // Best effort — fall back to no stored body.
+        }
+      }
+
+      // Optimistically add to local state with the RSS body so the save appears
+      // immediately and stays readable offline; the extracted body upgrades it
+      // below. Insert a light copy into memory; persist the full row (with body)
+      // to IndexedDB so getContent reads it back when the reader opens.
       const savedItem: SavedItem = {
         rkey,
         uri: '', // Will be set by backend
@@ -150,7 +173,7 @@ function createSavesStore() {
         title: article.title || null,
         author: article.author || null,
         description: article.summary || null,
-        content: null,
+        content: rssBody,
         contentType: 'article',
         domain: null,
         image: article.imageUrl || null,
@@ -161,29 +184,52 @@ function createSavesStore() {
         itemGuid: article.guid,
       };
 
-      articles = [savedItem, ...articles];
+      articles = [toLightSaved(savedItem), ...articles];
       rebuildMaps();
       await safePut(db.saved, savedItem);
 
       if (syncStore.isOnline) {
         try {
+          // Prefer a clean, full-text extraction of the article (same source as
+          // URL saves) over the RSS body. Fall back to the RSS body if
+          // extraction fails or returns nothing.
+          let content = rssBody;
+          let wordCount: number | null = null;
+          let domain: string | null = null;
+          try {
+            const extracted = await extractArticle(article.url);
+            if (extracted.content) {
+              content = extracted.content;
+              wordCount = extracted.wordCount || null;
+              domain = extracted.domain || null;
+            }
+          } catch (err) {
+            console.warn('Article extraction failed, using feed body:', err);
+          }
+
           const result = await api.saveFromUrl(article.url, rkey, {
             fromFeed: true,
             itemGuid: article.guid,
             title: article.title,
             author: article.author,
             description: article.summary,
+            content: content ?? undefined,
             image: article.imageUrl,
             publishedAt: article.publishedAt,
+            domain: domain ?? undefined,
+            wordCount: wordCount ?? undefined,
           });
 
-          // Update with server response
+          // Update with extracted content + server response
           const updated: SavedItem = {
             ...savedItem,
+            content,
+            wordCount,
+            domain: domain ?? savedItem.domain,
             uri: result.uri,
             rkey: result.rkey,
           };
-          articles = articles.map((a) => (a.rkey === rkey ? updated : a));
+          articles = articles.map((a) => (a.rkey === rkey ? toLightSaved(updated) : a));
           rebuildMaps();
           await safePut(db.saved, updated);
 
@@ -199,13 +245,16 @@ function createSavesStore() {
             title: article.title,
             author: article.author,
             description: article.summary,
+            content: rssBody ?? undefined,
             image: article.imageUrl,
             publishedAt: article.publishedAt,
           } as SavedPayload);
           return savedItem;
         }
       } else {
-        // Offline: queue the API call
+        // Offline: queue the API call with the RSS body. Extraction needs the
+        // network, and the queue replays the save directly via the API (not this
+        // path), so offline saves keep the RSS body rather than the extracted one.
         await syncQueue.enqueue('create', 'saved', article.guid, {
           rkey,
           url: article.url,
@@ -214,6 +263,7 @@ function createSavesStore() {
           title: article.title,
           author: article.author,
           description: article.summary,
+          content: rssBody ?? undefined,
           image: article.imageUrl,
           publishedAt: article.publishedAt,
         } as SavedPayload);

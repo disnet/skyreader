@@ -699,6 +699,7 @@ function createItemLabelsStore() {
     | {
         type: 'article';
         guid: string;
+        subscriptionId?: number;
         url: string;
         title?: string;
         author?: string;
