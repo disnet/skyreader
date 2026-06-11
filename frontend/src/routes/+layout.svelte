@@ -57,9 +57,9 @@
   }
 
   // Service worker registration + update detection, handled by @vite-pwa/sveltekit's
-  // workbox-window wrapper. `needRefresh` becomes true when a new SW has installed and
-  // is WAITING (registerType: 'prompt' — it does not auto-activate). This replaces the
-  // previous hand-rolled getVersion/controllerchange logic, which was prone to skew.
+  // workbox-window wrapper. The worker now self-activates after a complete precache so
+  // a broken active worker can't strand users before this layout boots; keep the update
+  // button wiring as a compatibility path if a browser still reports a waiting worker.
   // In dev there's no SW (devOptions.enabled = false), so this is an inert no-op.
   //
   // useRegisterSW() is NOT SSR-safe in this version: it synchronously calls register(),
@@ -87,7 +87,7 @@
 
   function applyUpdate() {
     updating = true;
-    // Posts SKIP_WAITING to the waiting worker and reloads once it activates.
+    // Posts SKIP_WAITING to a waiting worker if one exists.
     updateServiceWorker(true);
   }
 
