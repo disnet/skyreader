@@ -98,6 +98,38 @@ class LiveDatabase {
   }
 
   /**
+   * Read full article bodies back from IndexedDB for a set of "light" rows. The
+   * in-memory copies have their `content` stripped (see loadArticles), so the
+   * feed view calls this to hydrate the bodies of just the on-screen window —
+   * by id when the row has one, else by guid for rows merged this session that
+   * don't have a db id yet. Returns a map keyed by guid (unique per displayed
+   * article — the feed dedupes on guid). Rows with no stored body are omitted.
+   */
+  async getArticleBodies(
+    rows: Array<Pick<Article, 'id' | 'guid' | 'subscriptionId'>>
+  ): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    await Promise.all(
+      rows.map(async (a) => {
+        try {
+          let row = a.id != null ? await db.articles.get(a.id) : undefined;
+          if (!row && a.guid) {
+            row = await db.articles
+              .where('guid')
+              .equals(a.guid)
+              .filter((r) => r.subscriptionId === a.subscriptionId)
+              .first();
+          }
+          if (row?.content) out.set(a.guid, row.content);
+        } catch {
+          // Skip — the card falls back to its summary for this item.
+        }
+      })
+    );
+    return out;
+  }
+
+  /**
    * Add a new subscription to both IndexedDB and memory
    */
   async addSubscription(subscription: Omit<Subscription, 'id'>): Promise<number> {

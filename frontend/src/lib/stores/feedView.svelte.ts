@@ -792,6 +792,71 @@ function createFeedViewStore() {
   });
 
   // Derived: unified current items for the active view mode
+  // --- Window body hydration -------------------------------------------------
+  // The in-memory article array is "light": each row's full `content` HTML is
+  // stripped to keep the heap small (see liveDb / toLightArticle), so an inline
+  // card would otherwise fall back to the short RSS summary. Pull the full body
+  // back from IndexedDB for just the items in the rendered window (the paginated
+  // slice) and splice it onto the article the card receives, so the feed shows
+  // the real article. Bounded to the window — we never hold every feed's body at
+  // once. Keyed by guid (unique per displayed article — filteredArticles dedupes
+  // on guid).
+  let articleBodies = $state<Map<string, string>>(new Map());
+
+  // The article rows currently in the rendered window, across the modes that
+  // show article cards. Deliberately does NOT read articleBodies, so the
+  // hydration effect below can write articleBodies without a reactive cycle.
+  let windowArticles = $derived.by((): Article[] => {
+    if (isSavedView || viewMode === 'shares') return [];
+    if (viewMode === 'combined') {
+      return displayedCombined.flatMap((i) => (i.type === 'article' ? [i.item] : []));
+    }
+    return displayedArticles;
+  });
+
+  // This is a module-level singleton store, so a bare $effect would be orphaned
+  // (no component owns it). $effect.root gives the hydration its own scope; the
+  // scope lives for the app's lifetime, so its cleanup is intentionally dropped.
+  $effect.root(() => {
+    $effect(() => {
+      const rows = windowArticles;
+      let cancelled = false;
+      (async () => {
+        // Carry forward bodies still in the window; fetch the ones we don't have.
+        const next = new Map<string, string>();
+        const missing: Article[] = [];
+        for (const a of rows) {
+          const have = articleBodies.get(a.guid);
+          if (have !== undefined) next.set(a.guid, have);
+          else missing.push(a);
+        }
+        if (missing.length > 0) {
+          const fetched = await liveDb.getArticleBodies(missing);
+          if (cancelled) return;
+          for (const [guid, body] of fetched) next.set(guid, body);
+        }
+        // Publish only when the set actually changed (new bodies fetched, or
+        // stale out-of-window entries dropped) so we don't churn currentItems.
+        if (cancelled) return;
+        if (missing.length > 0 || next.size !== articleBodies.size) {
+          articleBodies = next;
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    });
+  });
+
+  // Splice the lazily-loaded body onto a light article for display. Returns the
+  // same object untouched when the body isn't loaded yet, so the card shows the
+  // summary until it arrives (one extra paint, no missing content).
+  function withArticleBody(a: Article): Article {
+    if (a.content) return a;
+    const body = articleBodies.get(a.guid);
+    return body ? { ...a, content: body } : a;
+  }
+
   let currentItems = $derived.by((): FeedDisplayItem[] => {
     const mode = viewMode;
     let items: FeedDisplayItem[];
@@ -807,7 +872,7 @@ function createFeedViewStore() {
         if (item.type === 'article') {
           return {
             type: 'article' as const,
-            item: item.item,
+            item: withArticleBody(item.item),
             key: item.item.guid,
           };
         } else {
@@ -829,7 +894,7 @@ function createFeedViewStore() {
       // articles mode
       items = displayedArticles.map((item) => ({
         type: 'article' as const,
-        item,
+        item: withArticleBody(item),
         key: item.guid,
       }));
     }
