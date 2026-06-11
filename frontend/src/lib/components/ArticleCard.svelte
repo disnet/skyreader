@@ -686,6 +686,14 @@
   let isTruncated = $state(false);
 
   $effect(() => {
+    // Read the rendered content so this re-measures whenever the body's HTML
+    // changes, not only on open. The body is "light" until its full text is
+    // hydrated in after first paint (see displayContent); in Expand view every
+    // card is `selected` from the start, so without this dependency the effect
+    // would measure the short pre-hydration body once, latch isTruncated=false,
+    // and leave the "More" button wrongly disabled. List view dodged this only
+    // because a card isn't `selected` until clicked — i.e. after hydration.
+    sanitizedContent;
     if (selected && !expanded && bodyEl) {
       // Check if content overflows the line clamp
       isTruncated = bodyEl.scrollHeight > bodyEl.clientHeight;
