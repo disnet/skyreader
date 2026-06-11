@@ -64,6 +64,13 @@ jobs:
         env:
           VITE_API_URL: https://api-staging.skyreader.app
 
+      # Merge recently-served /_app/immutable/* assets from the live site into this
+      # build so still-open old tabs can keep lazy-loading their chunks after deploy.
+      - name: Retain previous deploys' immutable assets
+        run: node scripts/retain-immutable-assets.mjs build https://staging.skyreader.app
+        env:
+          RETAIN_MAX_AGE_DAYS: 7
+
       - name: Deploy to Cloudflare Pages (staging)
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
         with:
@@ -97,6 +104,12 @@ jobs:
         env:
           VITE_API_URL: https://api.skyreader.app
 
+      # See deploy-staging — keep old immutable chunks servable for open tabs.
+      - name: Retain previous deploys' immutable assets
+        run: node scripts/retain-immutable-assets.mjs build https://staging-prod.skyreader.app
+        env:
+          RETAIN_MAX_AGE_DAYS: 7
+
       - name: Deploy to Cloudflare Pages (staging-prod)
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
         with:
@@ -129,6 +142,12 @@ jobs:
         run: npm run build
         env:
           VITE_API_URL: https://api.skyreader.app
+
+      # Merge recently-served /_app/immutable/* assets from the live site into this
+      # build so still-open old tabs (e.g. long-lived iOS PWAs) keep lazy-loading
+      # their chunks after deploy. Default retention: 30 days since last shipped.
+      - name: Retain previous deploys' immutable assets
+        run: node scripts/retain-immutable-assets.mjs build https://skyreader.app
 
       - name: Deploy to Cloudflare Pages (production)
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
