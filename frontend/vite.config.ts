@@ -28,9 +28,13 @@ export default defineConfig({
       scope: '/',
       buildBase: '/',
 
-      // Keep the app-side registration in prompt mode so the update banner path still
-      // works, but the worker itself calls skipWaiting after a complete precache. That
-      // lets a service-worker fix recover clients even when the old app cannot boot.
+      // The worker self-activates (skipWaiting in install + clientsClaim) so a fix can
+      // reach clients even when the old app can't boot. 'prompt' here only means the
+      // register module won't reload the page on its own; the update banner is driven
+      // by a controllerchange listener in +layout.svelte (the workbox-window 'waiting'
+      // event the prompt flow normally uses never fires when skipWaiting runs in
+      // install), and onNeedReload routes the library's external-update path to that
+      // same banner instead of an immediate reload.
       registerType: 'prompt',
 
       // We register the SW ourselves via useRegisterSW() inside the app bundle, so the

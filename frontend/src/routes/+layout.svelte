@@ -57,9 +57,15 @@
   }
 
   // Service worker registration + update detection, handled by @vite-pwa/sveltekit's
-  // workbox-window wrapper. The worker now self-activates after a complete precache so
-  // a broken active worker can't strand users before this layout boots; keep the update
-  // button wiring as a compatibility path if a browser still reports a waiting worker.
+  // workbox-window wrapper. The worker self-activates after a complete precache
+  // (skipWaiting in install + clientsClaim), so a broken active worker can't strand
+  // users before this layout boots. That also means workbox-window's 'waiting' event
+  // — the usual prompt-mode banner signal — never fires (it requires a worker to sit
+  // in the waiting state for 200ms). The one signal that fires on EVERY update,
+  // including ones found at load time and the Nth deploy onto a long-lived iOS PWA,
+  // is `controllerchange`: the new worker claiming this page. So the banner hangs
+  // off controllerchange, and applying the update is just a reload — the new shell
+  // and chunks come from the already-active worker's precache.
   // In dev there's no SW (devOptions.enabled = false), so this is an inert no-op.
   //
   // useRegisterSW() is NOT SSR-safe in this version: it synchronously calls register(),
@@ -67,9 +73,14 @@
   // adapter-static prerenders the SPA shell at build time, so guard on `browser` and
   // fall back to inert stores during prerender — otherwise the build crashes.
   let needRefresh: Writable<boolean> = writable(false);
-  let updateServiceWorker: (reloadPage?: boolean) => Promise<void> = async () => {};
   if (browser) {
-    ({ needRefresh, updateServiceWorker } = useRegisterSW({
+    ({ needRefresh } = useRegisterSW({
+      // The library's prompt path (taken when an update is classified "external")
+      // auto-reloads on controllerchange unless onNeedReload is supplied. Route it
+      // to the banner instead of yanking a mid-read reload.
+      onNeedReload() {
+        needRefresh.set(true);
+      },
       onRegisteredSW(_swScriptUrl, registration) {
         if (!registration) return;
         // Poll for a newer SW hourly, and whenever the tab regains focus —
@@ -83,12 +94,24 @@
         console.error('Service worker registration failed:', error);
       },
     }));
+
+    if ('serviceWorker' in navigator) {
+      // True on a normal load of an installed PWA; false on first-ever visit, where
+      // the initial worker's clientsClaim() fires controllerchange but the page is
+      // already running the build that worker precached — no banner needed.
+      let hadController = Boolean(navigator.serviceWorker.controller);
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (hadController) needRefresh.set(true);
+        hadController = true;
+      });
+    }
   }
 
   function applyUpdate() {
     updating = true;
-    // Posts SKIP_WAITING to a waiting worker if one exists.
-    updateServiceWorker(true);
+    // The new worker is already active and controlling; reloading serves the new
+    // shell + chunks from its precache.
+    window.location.reload();
   }
 
   // Dev only: tear down any service worker left registered by a previous production

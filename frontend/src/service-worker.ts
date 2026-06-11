@@ -9,7 +9,12 @@
 // shell and the chunks it imports always come from the same build, eliminating
 // the version-skew that caused blank screens / "Something went wrong" on iOS.
 
-import { precacheAndRoute, createHandlerBoundToURL, type PrecacheEntry } from 'workbox-precaching';
+import {
+  precacheAndRoute,
+  cleanupOutdatedCaches,
+  createHandlerBoundToURL,
+  type PrecacheEntry,
+} from 'workbox-precaching';
 import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { NetworkFirst } from 'workbox-strategies';
 import { clientsClaim } from 'workbox-core';
@@ -27,22 +32,12 @@ const LAST_REFRESH_KEY = 'lastRefreshAt';
 // Precaching — the full build, cached atomically on install.
 // ---------------------------------------------------------------------------
 
-// Keep previous Workbox precaches around. A newly activated worker can control
-// tabs that still have the previous app graph in memory, and those tabs may
-// lazily import old hashed chunks. Deleting the old precache at activation makes
-// those valid stale-client requests fail under the service worker.
-
-// Serve immutable build assets from any retained cache before Workbox's precache
-// route runs. This lets stale clients resolve old hashed chunks, and turns a bad
-// cache state into a plain network fetch instead of a Workbox precache exception.
-self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-  if (url.origin !== self.location.origin || !url.pathname.startsWith('/_app/immutable/')) {
-    return;
-  }
-
-  event.respondWith(caches.match(event.request).then((cached) => cached ?? fetch(event.request)));
-});
+// Drop caches left by older Workbox cache-name formats. Note this does NOT
+// delete the previous build's chunks — all builds share one precache, and
+// precacheAndRoute's own activate handler purges entries missing from the
+// current manifest. A still-open old page that lazy-imports a purged chunk gets
+// a 404 → vite:preloadError → the one-shot reload in hooks.client.ts recovers it.
+cleanupOutdatedCaches();
 
 // Precache + serve every build asset cache-first. If any asset fails to fetch
 // during install, the install fails and the OLD worker keeps serving its complete
@@ -51,8 +46,11 @@ precacheAndRoute(self.__WB_MANIFEST);
 
 // Activate the newly installed worker as soon as its complete precache is ready.
 // This is important for recovery: a broken active worker may prevent the app from
-// booting far enough to show an update prompt. The immutable fallback above keeps
-// old running clients able to load their previous hashed chunks after activation.
+// booting far enough to act on an update at all, and a waiting worker only
+// activates once every client closes. With clientsClaim() below, activation fires
+// controllerchange in open pages — that's the signal the layout uses to show the
+// update banner (the workbox-window 'waiting' event never fires when skipWaiting
+// runs in install, so a waiting-based prompt would never appear).
 self.addEventListener('install', () => {
   self.skipWaiting();
 });
@@ -98,12 +96,15 @@ registerRoute(
   })
 );
 
-// Take control of open clients as soon as we activate.
+// Take control of open clients as soon as we activate (fires controllerchange
+// in every open page — the layout's update-banner signal).
 clientsClaim();
 
 // ---------------------------------------------------------------------------
-// Custom message handler — keep compatibility with the app's update button.
+// Custom message handler — inert compatibility shim.
 // ---------------------------------------------------------------------------
+// With skipWaiting() in install there is never a waiting worker, so this should
+// never fire; kept so an older app bundle posting SKIP_WAITING stays harmless.
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
