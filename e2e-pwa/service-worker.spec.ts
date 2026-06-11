@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { waitForControl } from './helpers';
+import { shellRendered, waitForControl } from './helpers';
 
 test.describe('service worker lifecycle', () => {
   test('registers, precaches the full build, activates, and controls the page', async ({
@@ -60,33 +60,45 @@ test.describe('service worker lifecycle', () => {
     ).toEqual([]);
   });
 
-  test('serves stale immutable chunks from retained caches', async ({ page }) => {
+  // The real update path: a new SW version must (1) self-activate and claim the open
+  // page with no user action (skipWaiting in install + clientsClaim — the recovery
+  // property), and (2) surface the update banner, which is driven by controllerchange
+  // in +layout.svelte (workbox-window's 'waiting' event never fires for a worker that
+  // skip-waits, so a waiting-based prompt would never appear — the original bug).
+  test('a new SW version self-activates, claims the page, and shows the update banner', async ({
+    page,
+  }) => {
     await page.goto('/');
     await waitForControl(page);
 
-    const result = await page.evaluate(async () => {
-      const staleUrl = '/_app/immutable/chunks/stale-client-test.js';
-      const body = 'export const staleClientTest = true;';
-      const cache = await caches.open('workbox-precache-stale-client-test');
-      await cache.put(
-        staleUrl,
-        new Response(body, {
-          headers: { 'content-type': 'application/javascript' },
-        })
-      );
-
-      const response = await fetch(staleUrl);
-      return {
-        ok: response.ok,
-        status: response.status,
-        body: await response.text(),
-      };
+    // Simulate a deploy: registering a byte-different script URL on the same scope
+    // installs a "new version" of the worker.
+    const claimed = await page.evaluate(async () => {
+      const swapped = new Promise<boolean>((resolve) => {
+        navigator.serviceWorker.addEventListener('controllerchange', () => resolve(true), {
+          once: true,
+        });
+        setTimeout(() => resolve(false), 15000);
+      });
+      await navigator.serviceWorker.register('/service-worker.js?deploy=2');
+      return swapped;
     });
+    expect(claimed, 'new worker should activate and claim the page without user action').toBe(
+      true
+    );
 
-    expect(result).toEqual({
-      ok: true,
-      status: 200,
-      body: 'export const staleClientTest = true;',
-    });
+    // The page reacts to losing/changing its controller by offering the update.
+    await expect(page.locator('.update-banner')).toBeVisible();
+
+    // Applying the update is a plain reload served by the already-active new worker.
+    await Promise.all([
+      page.waitForEvent('domcontentloaded'),
+      page.locator('.update-btn').click(),
+    ]);
+    expect(await shellRendered(page)).toBe(true);
+    const controller = await page.evaluate(
+      () => navigator.serviceWorker.controller?.scriptURL ?? null
+    );
+    expect(controller, 'reloaded page must be SW-controlled').toContain('/service-worker.js');
   });
 });

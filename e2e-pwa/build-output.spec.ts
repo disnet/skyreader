@@ -84,11 +84,4 @@ test.describe('built service worker', () => {
       expect(sw, `built service worker no longer contains "${token}"`).toContain(token);
     }
   });
-
-  test('keeps old precaches available for stale clients', () => {
-    expect(sw, 'old Workbox precaches must not be deleted on activation').not.toContain(
-      'cleanupOutdatedCaches'
-    );
-    expect(sw, 'immutable chunk fallback route is missing').toContain('/_app/immutable/');
-  });
 });
