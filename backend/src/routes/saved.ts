@@ -234,10 +234,12 @@ async function handleMetadataSave(
     }
   }
 
-  // Cache in D1
+  // Cache in D1. The full article body (when the client supplies it for a feed
+  // save) is stored here, not in the PDS record — same split as URL saves — so
+  // the saved item stays readable after the source article ages out of the feed.
   await env.DB.prepare(
-    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content_type, domain, image, published_at, saved_at, created_at, source, item_guid)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source, item_guid)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       session.did,
@@ -247,9 +249,11 @@ async function handleMetadataSave(
       body.title || null,
       body.author || null,
       body.description || null,
+      body.content || null,
       contentType,
       body.domain || null,
       body.image || null,
+      body.wordCount || null,
       publishedAt ? new Date(publishedAt).getTime() : null,
       now,
       now,
@@ -266,11 +270,11 @@ async function handleMetadataSave(
       title: body.title || null,
       author: body.author || null,
       description: body.description || null,
-      content: null,
+      content: body.content || null,
       contentType,
       domain: body.domain || null,
       image: body.image || null,
-      wordCount: null,
+      wordCount: body.wordCount || null,
       publishedAt,
       savedAt,
       source,

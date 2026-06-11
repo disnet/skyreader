@@ -6,6 +6,7 @@
   import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
+  import { db } from '$lib/services/db';
   import { sanitizeHtml } from '$lib/utils/sanitize';
   import { formatRelativeDate } from '$lib/utils/date';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
@@ -156,6 +157,50 @@
     };
   });
 
+  // An article's full body, lazy-loaded for saved feed articles shown via the
+  // 'article' path (a save whose source article is still in the feed renders as
+  // type 'article', not 'saved'). Prefer the saved copy's stored body — that's
+  // the full extracted text captured at save time, whereas the feed's own RSS
+  // body is often just an excerpt. Fall back to the feed body in IndexedDB (the
+  // in-memory article is "light", its content stripped — see toLightArticle).
+  let lazyArticleContent = $state<string | null>(null);
+  $effect(() => {
+    lazyArticleContent = null;
+    if (readerItem.type !== 'article') return;
+    const { id, guid, subscriptionId, content: inMemoryContent } = readerItem.item;
+    let cancelled = false;
+    (async () => {
+      try {
+        const saved = savesStore.getByGuid(guid);
+        if (saved?.rkey) {
+          const savedBody = await savesStore.getContent(saved.rkey);
+          if (savedBody) {
+            if (!cancelled) lazyArticleContent = savedBody;
+            return;
+          }
+        }
+        // Not saved (or no stored body): use the in-memory body if present, else
+        // read the feed body back from IndexedDB by id, or by guid for rows
+        // merged this session that don't have an id yet.
+        if (inMemoryContent) return;
+        let row = id != null ? await db.articles.get(id) : undefined;
+        if (!row && guid) {
+          row = await db.articles
+            .where('guid')
+            .equals(guid)
+            .filter((a) => a.subscriptionId === subscriptionId)
+            .first();
+        }
+        if (!cancelled) lazyArticleContent = row?.content ?? '';
+      } catch {
+        if (!cancelled) lazyArticleContent = '';
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  });
+
   // A document's flat text, lazy-loaded for stripped social-feed docs whose body
   // isn't recognized structured content (rare). Resets per reader item.
   let lazyDocText = $state<string | null>(null);
@@ -178,6 +223,9 @@
     // Prefer the lazily-loaded body for saved items; normalized.displayContent
     // falls back to the description until it arrives.
     if (readerItem.type === 'saved' && lazySavedContent) return lazySavedContent;
+    // Same for a saved feed article rendered via the 'article' path — its body
+    // was stripped from memory and is read back from IndexedDB above.
+    if (readerItem.type === 'article' && lazyArticleContent) return lazyArticleContent;
     // For a stripped document, re-render with the lazily-loaded textContent fed
     // back in — structured `content` still wins inside getDisplayContent, so this
     // only changes the unrecognized-format fallback (description → full text).

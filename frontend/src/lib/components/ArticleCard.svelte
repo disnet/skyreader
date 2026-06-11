@@ -18,6 +18,7 @@
   import { formatRelativeDate } from '$lib/utils/date';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { sanitizeHtml } from '$lib/utils/sanitize';
+  import { decodeEntities } from '$lib/utils/entities';
   import { marked } from 'marked';
   import { isLeafletContent, renderLeafletContent } from '$lib/utils/leaflet-renderer';
   import { isPcktBlogContent, renderPcktBlogContent } from '$lib/utils/pckt-blog-renderer';
@@ -162,7 +163,9 @@
   let itemUrl = $derived(
     article?.url || linkPostUrl || document?.canonicalUrl || document?.path || ''
   );
-  let itemTitle = $derived(article?.title || document?.title || itemUrl);
+  let itemTitle = $derived(
+    decodeEntities(article?.title) || decodeEntities(document?.title) || itemUrl
+  );
   let itemPublishedAt = $derived(article?.publishedAt || document?.publishedAt || '');
   let itemGuid = $derived(article?.guid || document?.recordUri || itemUrl);
   let displaySiteUrl = $derived(siteUrl || document?.siteUri || itemUrl);

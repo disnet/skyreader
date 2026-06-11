@@ -7,6 +7,7 @@ import { isOffprintContent, renderOffprintContent } from '$lib/utils/offprint-re
 import { isGreengaleContent, renderGreengaleContent } from '$lib/utils/greengale-renderer';
 import { isMarkpubContent, renderMarkpubContent } from '$lib/utils/markpub-renderer';
 import { getDocumentEffectiveUrl } from '$lib/utils/linkPost';
+import { decodeEntities } from '$lib/utils/entities';
 import type {
   LeafletContent,
   PcktBlogContent,
@@ -50,9 +51,9 @@ export function normalizeDisplayItem(
 }
 
 function getTitle(item: FeedDisplayItem): string {
-  if (item.type === 'article') return item.item.title || item.item.url;
-  if (item.type === 'document') return item.item.title || item.item.recordUri;
-  if (item.type === 'saved') return item.item.title || item.item.url;
+  if (item.type === 'article') return decodeEntities(item.item.title) || item.item.url;
+  if (item.type === 'document') return decodeEntities(item.item.title) || item.item.recordUri;
+  if (item.type === 'saved') return decodeEntities(item.item.title) || item.item.url;
   return '';
 }
 

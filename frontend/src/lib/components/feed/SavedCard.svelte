@@ -5,6 +5,9 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
+  import { savesStore } from '$lib/stores/saves.svelte';
+  import { db } from '$lib/services/db';
+  import { decodeEntities } from '$lib/utils/entities';
   import Icon from '$lib/components/Icon.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
@@ -34,10 +37,12 @@
   let itemType = $derived(displayItem.type);
 
   let title = $derived.by(() => {
-    if (displayItem.type === 'article') return displayItem.item.title || displayItem.item.url;
+    if (displayItem.type === 'article')
+      return decodeEntities(displayItem.item.title) || displayItem.item.url;
     if (displayItem.type === 'document')
-      return displayItem.item.title || displayItem.item.recordUri;
-    if (displayItem.type === 'saved') return displayItem.item.title || displayItem.item.url;
+      return decodeEntities(displayItem.item.title) || displayItem.item.recordUri;
+    if (displayItem.type === 'saved')
+      return decodeEntities(displayItem.item.title) || displayItem.item.url;
     return '';
   });
 
@@ -116,17 +121,88 @@
     return Math.max(1, Math.round(wordCount / 200));
   });
 
-  // Strip HTML for summary display
-  let summaryText = $derived.by(() => {
-    let raw = '';
-    if (displayItem.type === 'article') {
-      raw = displayItem.item.summary || displayItem.item.content || '';
-    } else if (displayItem.type === 'document') {
-      raw = displayItem.item.description || displayItem.item.textContent || '';
-    } else if (displayItem.type === 'saved') {
-      raw = displayItem.item.description || displayItem.item.content || '';
+  // Strip tags and decode entities to plain text. DOMParser handles numeric
+  // entities (e.g. `&#8220;`) that a naive tag-strip would leave visible.
+  function htmlToText(html: string): string {
+    if (!html) return '';
+    // Keep block boundaries from gluing words together (textContent has no
+    // separators), then let DOMParser decode entities (incl. numeric like
+    // `&#8220;`) that a bare tag-strip would leave visible.
+    const spaced = html.replace(
+      /<\/?(p|div|h[1-6]|li|ul|ol|blockquote|section|article|header|footer|tr|br)\b[^>]*>/gi,
+      '$& '
+    );
+    try {
+      const doc = new DOMParser().parseFromString(spaced, 'text/html');
+      return (doc.body.textContent || '').replace(/\s+/g, ' ').trim();
+    } catch {
+      return spaced
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
     }
-    const text = raw.replace(/<[^>]*>/g, '').trim();
+  }
+
+  // The preview from the item's own metadata (RSS description / summary).
+  let metaSummary = $derived.by(() => {
+    let raw = '';
+    if (displayItem.type === 'article') raw = displayItem.item.summary || '';
+    else if (displayItem.type === 'document')
+      raw = displayItem.item.description || displayItem.item.textContent || '';
+    else if (displayItem.type === 'saved') raw = displayItem.item.description || '';
+    return htmlToText(raw);
+  });
+
+  // Lazy fallback: some feeds ship items with no description at all, which left
+  // the card blank even when the full body exists. Derive a preview from the
+  // body (kept out of memory) — preferring the saved copy's stored full text,
+  // then the feed body in IndexedDB. Only runs when there's no metadata summary.
+  let lazyBodyExcerpt = $state('');
+  $effect(() => {
+    lazyBodyExcerpt = '';
+    if (metaSummary || displayItem.type === 'document') return;
+
+    // Capture identity up-front, while the union is still narrowed.
+    let savedRkey: string | undefined;
+    let articleRef: { id?: number; guid: string; subscriptionId: number } | undefined;
+    if (displayItem.type === 'saved') {
+      savedRkey = displayItem.item.rkey;
+    } else {
+      const a = displayItem.item;
+      savedRkey = a.guid ? savesStore.getByGuid(a.guid)?.rkey : undefined;
+      articleRef = { id: a.id, guid: a.guid, subscriptionId: a.subscriptionId };
+    }
+
+    let cancelled = false;
+    (async () => {
+      let body = '';
+      try {
+        // Prefer the saved copy's stored full text.
+        if (savedRkey) body = (await savesStore.getContent(savedRkey)) || '';
+        // Else the feed body in IndexedDB (in-memory article is "light").
+        if (!body && articleRef) {
+          let row = articleRef.id != null ? await db.articles.get(articleRef.id) : undefined;
+          if (!row && articleRef.guid) {
+            row = await db.articles
+              .where('guid')
+              .equals(articleRef.guid)
+              .filter((a) => a.subscriptionId === articleRef!.subscriptionId)
+              .first();
+          }
+          body = row?.content || '';
+        }
+      } catch {
+        // Best effort — leave the excerpt empty.
+      }
+      if (!cancelled) lazyBodyExcerpt = htmlToText(body);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  let summaryText = $derived.by(() => {
+    const text = metaSummary || lazyBodyExcerpt;
     return text.length > 200 ? text.slice(0, 200) + '...' : text;
   });
 

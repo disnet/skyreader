@@ -707,6 +707,7 @@
               itemLabelsStore.toggleSave(article.guid, 'article', article.url, article.title, {
                 type: 'article',
                 guid: article.guid,
+                subscriptionId: article.subscriptionId,
                 url: article.url,
                 title: article.title,
                 author: article.author,
