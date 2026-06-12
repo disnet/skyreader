@@ -1350,6 +1350,46 @@ function createItemLabelsStore() {
     return highlights.length > 0;
   }
 
+  // A logical item can be addressed by more than one key: a saved feed article is
+  // keyed by its guid on the feed card/reader, but by the save's AT-URI in the
+  // saved-list reader, and labels can land under either (or arrive from another
+  // device). Bridge guid<->uri through savesStore so highlight reads/grouping see
+  // the same item regardless of which key the caller holds. Returns the input key
+  // alone when nothing bridges it.
+  function bridgedKeys(itemKey: string): string[] {
+    for (const bm of savesStore.articles) {
+      if (bm.itemGuid === itemKey || bm.uri === itemKey) {
+        const keys: string[] = [];
+        if (bm.itemGuid) keys.push(bm.itemGuid);
+        if (bm.uri && bm.uri !== bm.itemGuid) keys.push(bm.uri);
+        if (keys.length > 0) return keys;
+      }
+    }
+    return [itemKey];
+  }
+
+  // Canonical key for grouping/deduping an item's highlights — the guid when a
+  // save bridges to one, else the key itself. Keeps highlights made on the feed
+  // card (guid) and in the saved-list reader (uri) under one identity.
+  function canonicalHighlightKey(itemKey: string): string {
+    return bridgedKeys(itemKey)[0];
+  }
+
+  // Highlights for a logical item, unioned across every key that can address it
+  // (see bridgedKeys) and deduped by id. Use this for any cross-key read — the
+  // share composer, etc. — instead of getHighlights against a single key.
+  function getHighlightsForItem(itemKey: string): Highlight[] {
+    const keys = bridgedKeys(itemKey);
+    if (keys.length === 1) return getHighlights(keys[0]);
+    const byId = new Map<string, Highlight>();
+    for (const key of keys) {
+      for (const h of getHighlights(key)) {
+        if (!byId.has(h.id)) byId.set(h.id, h);
+      }
+    }
+    return [...byId.values()];
+  }
+
   /**
    * Push the current highlights array for an item to the backend so it syncs
    * across devices. Mirrors syncTaggedLabel / syncArchiveToBackend: direct API
@@ -1619,6 +1659,8 @@ function createItemLabelsStore() {
       return allHighlights;
     },
     getHighlights,
+    getHighlightsForItem,
+    canonicalHighlightKey,
     hasHighlights,
     addHighlight,
     removeHighlight,
