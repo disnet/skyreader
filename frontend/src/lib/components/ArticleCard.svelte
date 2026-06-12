@@ -809,6 +809,7 @@
   {isTruncated}
   {currentlyShared}
   {currentNote}
+  highlights={itemLabelsStore.getHighlights(itemGuid)}
   {showActionBarIntegrations}
   {overflowMenuOpen}
   {canFollowSource}

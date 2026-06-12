@@ -14,6 +14,7 @@
   import ShareCommentBox from '$lib/components/feed/ShareCommentBox.svelte';
   import { safeHref } from '$lib/utils/sanitize';
   import type { Snippet } from 'svelte';
+  import type { Highlight } from '$lib/types';
   import type { LaneId, LaneRowVM, ExpandedLaneItemsVM } from '../articleCardView.types';
 
   let {
@@ -22,6 +23,7 @@
     expandedLaneItems,
     currentlyShared = false,
     currentNote,
+    highlights = [],
     /** Render the lane tabs + expanded panel. The note box is independent of this. */
     lanesOpen = true,
     notePlaceholder = 'Add a note to your share…',
@@ -39,6 +41,8 @@
     expandedLaneItems?: ExpandedLaneItemsVM;
     currentlyShared?: boolean;
     currentNote?: string;
+    /** Highlights on the shared article, offered as quick blockquotes in the note. */
+    highlights?: Highlight[];
     lanesOpen?: boolean;
     notePlaceholder?: string;
     panelId?: string;
@@ -59,6 +63,7 @@
     <ShareCommentBox
       initialNote={currentNote ?? ''}
       placeholder={notePlaceholder}
+      {highlights}
       onsubmit={(note) => onApplyComment?.(note)}
     />
   </div>

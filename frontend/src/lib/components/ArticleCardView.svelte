@@ -48,6 +48,7 @@
     isTruncated = false,
     currentlyShared = false,
     currentNote,
+    highlights = [],
     showActionBarIntegrations = false,
     overflowMenuOpen = false,
     canFollowSource = false,
@@ -344,6 +345,7 @@
         {expandedLaneItems}
         {currentlyShared}
         {currentNote}
+        {highlights}
         lanesOpen={panelOpen}
         panelId="discussion-panel"
         {onToggleLane}

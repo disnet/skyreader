@@ -1,4 +1,5 @@
 import type { IconName } from './Icon.svelte';
+import type { Highlight } from '$lib/types';
 
 /**
  * View-model types for the PURE presentational `ArticleCardView.svelte`.
@@ -110,6 +111,8 @@ export interface ArticleCardViewProps {
   isTruncated?: boolean;
   currentlyShared?: boolean;
   currentNote?: string;
+  /** Highlights on the article, offered as quick blockquotes in the share note. */
+  highlights?: Highlight[];
   showActionBarIntegrations?: boolean;
   overflowMenuOpen?: boolean;
   canFollowSource?: boolean;
