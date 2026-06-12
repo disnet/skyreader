@@ -39,13 +39,11 @@
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
   import { socialContextStore } from '$lib/stores/socialContext.svelte';
-  import { articleMentionsStore } from '$lib/stores/articleMentions.svelte';
-  import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
   import { profileService } from '$lib/services/profiles';
   import { auth } from '$lib/stores/auth.svelte';
-  import type { IconName } from './Icon.svelte';
   import ArticleCardView from './ArticleCardView.svelte';
-  import type { LaneId, LaneRowVM } from './articleCardView.types';
+  import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
+  import type { LaneId } from './articleCardView.types';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -354,41 +352,10 @@
   // ── The Atmosphere row (Phase 5) ────────────────────────────────────────────
   // For a regular article (only when open), one quiet row of source lanes — how
   // this URL is referenced across the Atmosphere. Each lane does double duty: it
-  // shows the count of others AND is the affordance to add your own.
-  const LANE_META: Record<
-    LaneId,
-    { icon: IconName; label: string; verb: string; noun: string; createLabel: string }
-  > = {
-    linkblog: {
-      icon: 'standard-site',
-      label: 'Blogs',
-      verb: 'noted',
-      noun: 'note',
-      createLabel: 'Write a note',
-    },
-    bluesky: {
-      icon: 'bluesky',
-      label: 'Bluesky',
-      verb: 'posted',
-      noun: 'post',
-      createLabel: 'Post on Bluesky',
-    },
-    margin: {
-      icon: 'margin',
-      label: 'margin.at',
-      verb: 'saved',
-      noun: 'save',
-      createLabel: 'Save to Margin',
-    },
-    semble: {
-      icon: 'semble',
-      label: 'Semble',
-      verb: 'saved',
-      noun: 'save',
-      createLabel: 'Save to Semble',
-    },
-  };
-  const LANE_ORDER: LaneId[] = ['linkblog', 'bluesky', 'margin', 'semble'];
+  // shows the count of others AND is the affordance to add your own. The lane data
+  // (counts, people, expand state, the row VM) is shared with the reader via
+  // useAtmosphere; only what a lane's "create" affordance can do here, and what it
+  // does, is mode-specific and stays in this container.
 
   // Whether the user can contribute to a lane from this card.
   function laneCanCreate(id: LaneId): boolean {
@@ -409,70 +376,11 @@
   // Mentions are keyed off the unified itemUrl, so the Atmosphere row works in
   // every mode: an article's URL, a link-post's external article, or a
   // document's canonical URL.
-  $effect(() => {
-    if (itemUrl) articleMentionsStore.fetch(itemUrl);
+  const atmosphere = useAtmosphere({
+    itemUrl: () => itemUrl,
+    isShared: () => currentlyShared,
+    canCreate: laneCanCreate,
   });
-  let articleMentions = $derived(itemUrl ? articleMentionsStore.get(itemUrl) : undefined);
-  let mentionLanes = $derived(articleMentions?.lanes ?? []);
-  let mentionLaneMap = $derived(new Map(mentionLanes.map((l) => [l.lane as LaneId, l])));
-
-  // The lanes to render, in priority order. The Atmosphere button is a
-  // first-class affordance on every open card, so Bluesky — whose compose intent
-  // is always available — always appears, guaranteeing at least one lane. The
-  // other lanes show only when they have a count or a working create affordance,
-  // so we never render a dead "add yours" row the user can't act on.
-  let laneRowBase = $derived.by(() => {
-    const rows: Array<{ id: LaneId; count: number; capped: boolean; canCreate: boolean }> = [];
-    for (const id of LANE_ORDER) {
-      const data = mentionLaneMap.get(id);
-      const count = data?.count ?? 0;
-      const canCreate = laneCanCreate(id);
-      // Keep the Linkblogs lane visible the moment you share, even before the
-      // mention is indexed (count still 0), so you see yourself in the discussion.
-      const keepMine = id === 'linkblog' && currentlyShared;
-      if (id !== 'bluesky' && count === 0 && !canCreate && !keepMine) continue;
-      rows.push({ id, count, capped: data?.capped ?? false, canCreate });
-    }
-    return rows;
-  });
-
-  // Fold LANE_META + tooltip + "mine" tint into each row so the view renders
-  // straight from data (no LANE_META lookups in the presentational layer).
-  let laneRowVM = $derived<LaneRowVM[]>(
-    laneRowBase.map((r) => ({
-      ...r,
-      icon: LANE_META[r.id].icon,
-      label: LANE_META[r.id].label,
-      verb: LANE_META[r.id].verb,
-      title:
-        r.count > 0
-          ? `${r.count}${r.capped ? '+' : ''} ${LANE_META[r.id].verb} this · ${LANE_META[r.id].label}`
-          : `${LANE_META[r.id].label} — add yours`,
-      isMine: r.id === 'linkblog' && currentlyShared,
-      createLabel: LANE_META[r.id].createLabel,
-      // Once shared, the linkblog lane drops its [+] (canCreate=false) and the
-      // panel-lead note box owns editing — so the create button is never "edit".
-      createIsEdit: false,
-    }))
-  );
-
-  // Which lane is expanded to show its people (one at a time, accordion).
-  let expandedLane = $state<LaneId | null>(null);
-  let expandedLaneItems = $derived(
-    expandedLane && itemUrl ? mentionLaneItemsStore.get(itemUrl, expandedLane) : undefined
-  );
-
-  function toggleLane(id: LaneId) {
-    if (expandedLane === id) {
-      expandedLane = null;
-      return;
-    }
-    expandedLane = id;
-    // Only resolve people for lanes that actually have references — a zero-count
-    // lane (just a create affordance) has nobody to fetch.
-    const hasPeople = (mentionLaneMap.get(id)?.count ?? 0) > 0;
-    if (hasPeople && itemUrl) mentionLaneItemsStore.load(itemUrl, id);
-  }
 
   // Contribute to a lane: note → the share flow (composer below), Margin/Semble
   // → their save handlers, Bluesky → a compose intent in a new tab.
@@ -875,9 +783,9 @@
   authorDid={document?.authorDid}
   socialContext={socialContext ? { quoteCount: socialContext.quoteCount } : undefined}
   {alsoLinkedBy}
-  laneRow={laneRowVM}
-  {expandedLane}
-  {expandedLaneItems}
+  laneRow={atmosphere.laneRow}
+  expandedLane={atmosphere.expandedLane}
+  expandedLaneItems={atmosphere.expandedLaneItems}
   {itemTagCount}
   {itemTags}
   {isRead}
@@ -917,7 +825,7 @@
   onSaveToSemble={() => onSaveToSemble?.()}
   onSaveToMargin={() => onSaveToMargin?.()}
   onFollowSource={handleFollowSource}
-  onToggleLane={toggleLane}
+  onToggleLane={atmosphere.toggleLane}
   onCreateInLane={createInLane}
   onApplyComment={applyComment}
   onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
