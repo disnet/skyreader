@@ -200,15 +200,6 @@
     }
   }
 
-  function handleReaderShare(note?: string) {
-    if (!readerItem) return;
-    if (readerItem.type === 'article') {
-      const article = readerItem.item;
-      const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
-      if (sub) onShare(article, sub, note);
-    }
-  }
-
   export function getArticleElements(): HTMLElement[] {
     return articleElements;
   }
@@ -231,8 +222,6 @@
     {readerItem}
     onClose={closeReader}
     onToggleSave={handleReaderSave}
-    onShare={readerItem.type === 'article' ? handleReaderShare : undefined}
-    useNoteComposer={true}
     onSaveToSemble={onSaveToSemble ? handleReaderSemble : undefined}
     onSaveToMargin={onSaveToMargin ? handleReaderMargin : undefined}
   />

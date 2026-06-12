@@ -6,6 +6,10 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { linkblogStore } from '$lib/stores/linkblog.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
+  import { formatQuoteSeed } from '$lib/utils/linkPost';
+  import type { Article } from '$lib/types';
   import { db } from '$lib/services/db';
   import { decodeEntities } from '$lib/utils/entities';
   import Icon from '$lib/components/Icon.svelte';
@@ -287,6 +291,62 @@
 
   let labelItemType = $derived.by((): 'article' | 'document' | 'saved' => displayItem.type);
 
+  // Sharing to your linkblog, keyed on the item's URL — the same path the feed
+  // card and reader use. Discussion counts stay a reader-only concern; the saved
+  // list keeps just the share toggle, so the row stays quiet.
+  let isShared = $derived(Boolean(url) && linkblogStore.isShared(url));
+  let canShare = $derived(Boolean(auth.user) && Boolean(url));
+
+  // The article record to share, built from whichever item type this card shows.
+  // A document carries its recordUri as repostUri so a reshare credits the original.
+  function buildShareTarget(): { article: Article; repostUri?: string } | null {
+    if (!url) return null;
+    if (displayItem.type === 'article') return { article: displayItem.item };
+    if (displayItem.type === 'saved') {
+      const s = displayItem.item;
+      return {
+        article: {
+          subscriptionId: 0,
+          guid: s.url,
+          url: s.url,
+          title: s.title ?? s.url,
+          author: s.author ?? undefined,
+          summary: s.description ?? undefined,
+          imageUrl: s.image ?? undefined,
+          publishedAt: s.publishedAt ?? s.savedAt,
+          fetchedAt: Date.now(),
+        },
+      };
+    }
+    const d = displayItem.item;
+    const image = d.coverImageCid
+      ? `https://cdn.bsky.app/img/feed_fullsize/plain/${d.authorDid}/${d.coverImageCid}@jpeg`
+      : undefined;
+    return {
+      article: {
+        subscriptionId: 0,
+        guid: url,
+        url,
+        title: d.title || url,
+        summary: d.description ?? undefined,
+        imageUrl: image,
+        publishedAt: d.publishedAt,
+        fetchedAt: Date.now(),
+      },
+      repostUri: d.recordUri,
+    };
+  }
+
+  async function toggleShare() {
+    if (isShared) {
+      await linkblogStore.unshare(url);
+      return;
+    }
+    const t = buildShareTarget();
+    if (!t) return;
+    await linkblogStore.shareLink(t.article, formatQuoteSeed(t.article.summary) ?? '', t.repostUri);
+  }
+
   let popoverMenuItems = $derived.by(() => {
     const items: {
       label: string;
@@ -310,6 +370,16 @@
         },
       },
     ];
+    if (canShare) {
+      items.push({
+        label: isShared ? 'Remove from linkblog' : 'Share to your linkblog',
+        icon: 'share',
+        active: isShared,
+        onclick: () => {
+          void toggleShare();
+        },
+      });
+    }
     if (onSaveToSemble) {
       items.push({
         label: 'Save to Semble',
