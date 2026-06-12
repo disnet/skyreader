@@ -123,7 +123,7 @@
             onClose();
           }}
         >
-          <Icon name="highlighter" size={14} />
+          <Icon name="highlighter" size={16} />
           Save private
         </button>
         {#if onHighlightToMargin}
@@ -134,7 +134,7 @@
               onClose();
             }}
           >
-            <Icon name="margin" size={14} />
+            <Icon name="margin" size={16} />
             Save to Margin
           </button>
         {/if}
@@ -146,14 +146,14 @@
             onClose();
           }}
         >
-          <Icon name="check" size={14} />
+          <Icon name="check" size={16} />
           Save note
         </button>
       {/if}
     </div>
   {:else if mode === 'create'}
     <button
-      class="popover-btn icon-only"
+      class="popover-btn icon-only highlight"
       use:tooltip={'Save private highlight'}
       aria-label="Save private highlight"
       onclick={() => {
@@ -161,7 +161,7 @@
         onClose();
       }}
     >
-      <Icon name="highlighter" size={16} />
+      <Icon name="highlighter" size={20} />
     </button>
     {#if onHighlightToMargin}
       <button
@@ -173,7 +173,7 @@
           onClose();
         }}
       >
-        <Icon name="margin" size={16} />
+        <Icon name="margin" size={20} />
       </button>
     {/if}
     <button
@@ -182,7 +182,7 @@
       aria-label="Add a note"
       onclick={openNoteEditor}
     >
-      <Icon name="message-circle" size={16} />
+      <Icon name="message-circle" size={20} />
     </button>
   {:else}
     <button
@@ -194,7 +194,7 @@
         onClose();
       }}
     >
-      <Icon name="x" size={16} />
+      <Icon name="x" size={20} />
     </button>
     {#if onSaveToMargin}
       {#if marginSaved}
@@ -203,7 +203,7 @@
           use:tooltip={'Saved to Margin'}
           aria-label="Saved to Margin"
         >
-          <Icon name="check" size={16} />
+          <Icon name="check" size={20} />
         </span>
       {:else}
         <button
@@ -215,7 +215,7 @@
             onClose();
           }}
         >
-          <Icon name="margin" size={16} />
+          <Icon name="margin" size={20} />
         </button>
       {/if}
     {/if}
@@ -226,7 +226,7 @@
         aria-label={existingNote ? 'Edit note' : 'Add a note'}
         onclick={openNoteEditor}
       >
-        <Icon name="message-circle" size={16} />
+        <Icon name="message-circle" size={20} />
       </button>
     {/if}
   {/if}
@@ -234,58 +234,110 @@
 
 <style>
   .highlight-popover {
+    /* Sizing knobs — bumped up for touch via the coarse-pointer query below. */
+    --btn-size: 2.25rem; /* 36px */
+    --btn-radius: 0.5rem; /* 8px */
+    --icon-size: 1.125rem; /* 18px */
+
     display: flex;
-    gap: 2px;
-    background: var(--color-surface, #fff);
-    border: 1px solid var(--color-border, #e2e8f0);
-    border-radius: 6px;
-    padding: 2px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    gap: 0.125rem;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 0.75rem;
+    padding: 0.25rem;
+    /* Floating tier — this element genuinely sits above the page. */
+    box-shadow:
+      0 4px 16px rgba(0, 0, 0, 0.15),
+      0 1px 2px rgba(0, 0, 0, 0.08);
+    transform-origin: top center;
+    animation: popover-in 140ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   .highlight-popover.note-view {
     flex-direction: column;
-    gap: 6px;
-    padding: 8px;
-    width: 260px;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    width: 17.5rem;
+  }
+
+  @keyframes popover-in {
+    from {
+      opacity: 0;
+      transform: scale(0.94) translateY(0.125rem);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
   }
 
   .popover-btn {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 4px 8px;
+    justify-content: center;
+    gap: 0.375rem;
     border: none;
     background: none;
-    border-radius: 4px;
+    border-radius: var(--btn-radius);
     cursor: pointer;
-    font-size: var(--text-xs);
-    color: var(--color-text, #1a1a1a);
+    color: var(--color-text-secondary);
     white-space: nowrap;
+    transition:
+      background-color 120ms ease,
+      color 120ms ease,
+      transform 100ms ease;
+  }
+
+  .popover-btn :global(svg) {
+    width: var(--icon-size);
+    height: var(--icon-size);
   }
 
   .popover-btn:hover {
-    background: var(--color-hover, #f1f5f9);
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .popover-btn:active {
+    transform: scale(0.92);
+  }
+
+  .popover-btn:focus-visible {
+    outline: none;
+    color: var(--color-text);
+    box-shadow: 0 0 0 2px var(--color-primary);
   }
 
   .popover-btn.icon-only,
   .popover-status.icon-only {
-    padding: 6px;
+    width: var(--btn-size);
+    height: var(--btn-size);
+    padding: 0;
+  }
+
+  /* The highlighter previews its own action: a wash of the highlight gold. */
+  .popover-btn.highlight:hover {
+    background: rgba(245, 197, 24, 0.22);
+    color: var(--color-text);
   }
 
   .popover-btn.remove:hover {
-    background: #fef2f2;
-    color: #dc2626;
+    background: rgba(244, 67, 54, 0.12);
+    color: #f44336;
   }
 
   .popover-status {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 4px 8px;
-    font-size: var(--text-xs);
-    color: var(--color-text-muted, #64748b);
-    white-space: nowrap;
+    justify-content: center;
+    width: var(--btn-size);
+    height: var(--btn-size);
+    color: #4caf50;
+  }
+
+  .popover-status :global(svg) {
+    width: var(--icon-size);
+    height: var(--icon-size);
   }
 
   .note-input {
@@ -293,53 +345,122 @@
     box-sizing: border-box;
     /* No drag handle; iOS won't zoom on focus at >=16px font-size. */
     resize: none;
-    min-height: 60px;
-    padding: 6px 8px;
-    border: 1px solid var(--color-border, #e2e8f0);
-    border-radius: 4px;
+    min-height: 4rem;
+    padding: 0.5rem 0.625rem;
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
     font: inherit;
     font-size: 16px;
-    color: var(--color-text, #1a1a1a);
-    background: var(--color-bg, #fff);
+    line-height: 1.5;
+    color: var(--color-text);
+    background: var(--color-bg);
+    transition:
+      border-color 120ms ease,
+      box-shadow 120ms ease;
   }
 
   .note-input:focus {
     outline: none;
-    border-color: var(--color-primary, #0066cc);
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.18);
   }
 
   .note-actions {
     display: flex;
-    gap: 4px;
-    justify-content: flex-end;
+    gap: 0.375rem;
+    justify-content: stretch;
   }
 
   .note-btn {
-    display: flex;
+    flex: 1;
+    display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 5px 10px;
-    border: 1px solid var(--color-border, #e2e8f0);
-    background: var(--color-surface, #fff);
-    border-radius: 4px;
+    justify-content: center;
+    gap: 0.375rem;
+    min-height: 2.25rem;
+    padding: 0.4375rem 0.75rem;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg);
+    border-radius: 0.5rem;
     cursor: pointer;
-    font-size: var(--text-xs);
-    color: var(--color-text, #1a1a1a);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--color-text);
     white-space: nowrap;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      transform 100ms ease;
   }
 
   .note-btn:hover {
-    background: var(--color-hover, #f1f5f9);
+    background: var(--color-bg-secondary);
+    border-color: var(--color-text-secondary);
+  }
+
+  .note-btn:active {
+    transform: scale(0.98);
+  }
+
+  .note-btn:focus-visible {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.18);
   }
 
   .note-btn.primary {
-    border-color: var(--color-primary, #0066cc);
-    color: var(--color-primary, #0066cc);
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #fff;
+  }
+
+  .note-btn.primary:hover {
+    background: var(--color-primary-dark);
+    border-color: var(--color-primary-dark);
+  }
+
+  /* Touch devices: grow to a comfortable >=44px target and roomier icons. */
+  @media (pointer: coarse) {
+    .highlight-popover {
+      --btn-size: 2.75rem; /* 44px — the touch-target floor, no larger */
+      --btn-radius: 0.625rem; /* 10px */
+      --icon-size: 1.25rem; /* 20px */
+      gap: 0.1875rem;
+      padding: 0.25rem;
+      border-radius: 0.875rem;
+    }
+
+    .note-btn {
+      min-height: 2.75rem;
+    }
   }
 
   @media (prefers-color-scheme: dark) {
+    .highlight-popover {
+      box-shadow:
+        0 4px 16px rgba(0, 0, 0, 0.5),
+        0 1px 2px rgba(0, 0, 0, 0.4);
+    }
+
     .note-input {
-      background: var(--color-bg-secondary, #2a2a2a);
+      background: var(--color-bg-secondary);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .highlight-popover {
+      animation: none;
+    }
+
+    .popover-btn,
+    .note-btn,
+    .note-input {
+      transition: none;
+    }
+
+    .popover-btn:active,
+    .note-btn:active {
+      transform: none;
     }
   }
 </style>
