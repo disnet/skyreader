@@ -9,6 +9,7 @@
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
   import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
   import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
+  import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import NotificationList from '$lib/components/NotificationList.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -20,7 +21,11 @@
   import { notificationsStore } from '$lib/stores/notifications.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { useScrollDirection } from '$lib/hooks/useScrollDirection.svelte';
-  import { saveHighlightToMargin, deleteHighlight } from '$lib/services/marginHighlights';
+  import {
+    saveHighlightToMargin,
+    deleteHighlight,
+    updateHighlightNoteOnMargin,
+  } from '$lib/services/marginHighlights';
   import { formatRelativeTime } from '$lib/utils/date';
   import { decodeEntities } from '$lib/utils/entities';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
@@ -208,6 +213,33 @@
     void saveHighlightToMargin(group.itemKey, row.highlight, group.url, group.title);
   }
 
+  // Note editor — a floating popover anchored to the "add a note" button, opened
+  // straight into its note view. Mirrors the reader's note-editing UX.
+  let noteEditor = $state<{
+    group: HighlightGroup;
+    row: HighlightRow;
+    anchorRect: DOMRect;
+  } | null>(null);
+
+  function openNoteEditor(event: MouseEvent, group: HighlightGroup, row: HighlightRow) {
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    noteEditor = { group, row, anchorRect: rect };
+  }
+
+  function handleSaveNote(note: string) {
+    if (!noteEditor) return;
+    const { group, row } = noteEditor;
+    noteEditor = null;
+    void (async () => {
+      await itemLabelsStore.setHighlightNote(group.itemKey, row.id, note);
+      // Re-read so we act on the persisted note + current Margin linkage.
+      const updated = itemLabelsStore.getHighlights(group.itemKey).find((h) => h.id === row.id);
+      if (updated?.marginRkey) {
+        await updateHighlightNoteOnMargin(group.itemKey, updated, group.url, group.title);
+      }
+    })();
+  }
+
   // --- Mobile chrome (floating bottom bar + sheets), matching the feed page ---
   const scrollDirection = useScrollDirection();
   let feedSwitcherOpen = $state(false);
@@ -283,6 +315,14 @@
                       {/if}
                     </span>
                     <span class="row-actions">
+                      <button
+                        class="action-btn"
+                        onclick={(e) => openNoteEditor(e, group, row)}
+                        title={row.note ? 'Edit note' : 'Add a note'}
+                        aria-label={row.note ? 'Edit note' : 'Add a note'}
+                      >
+                        <Icon name="message-circle" size={15} />
+                      </button>
                       {#if !row.isMargin}
                         <button
                           class="action-btn"
@@ -361,6 +401,17 @@
 
 {#if readerItem}
   <SavedReader {readerItem} onClose={closeReader} />
+{/if}
+
+{#if noteEditor}
+  <HighlightPopover
+    mode="view"
+    initialView="note"
+    anchorRect={noteEditor.anchorRect}
+    existingNote={noteEditor.row.note ?? ''}
+    onSaveNote={handleSaveNote}
+    onClose={() => (noteEditor = null)}
+  />
 {/if}
 
 <style>

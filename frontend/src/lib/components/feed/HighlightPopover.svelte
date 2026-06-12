@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick } from 'svelte';
+  import { onMount, onDestroy, tick, untrack } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import { positionFloating } from '$lib/utils/floating';
@@ -14,6 +14,10 @@
     onSaveNote?: (note: string) => void;
     existingNote?: string;
     marginSaved?: boolean;
+    // Which sub-view to open into: 'toolbar' (action buttons, the default) or
+    // 'note' (jump straight into the note editor — used by callers that have a
+    // dedicated "add a note" control).
+    initialView?: 'toolbar' | 'note';
     onClose: () => void;
   }
 
@@ -27,14 +31,17 @@
     onSaveNote,
     existingNote = '',
     marginSaved = false,
+    initialView = 'toolbar',
     onClose,
   }: Props = $props();
 
   let menuEl = $state<HTMLDivElement | null>(null);
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
   // 'toolbar' shows the action buttons; 'note' shows the floating text box.
-  let view = $state<'toolbar' | 'note'>('toolbar');
-  let noteText = $state('');
+  // These seed from props once at mount; later prop changes shouldn't reset the
+  // open view or clobber what the user is typing, so the reads are untracked.
+  let view = $state<'toolbar' | 'note'>(untrack(() => initialView));
+  let noteText = $state(untrack(() => (initialView === 'note' ? (existingNote ?? '') : '')));
   let scrollArmed = false;
   let scrollArmTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -78,6 +85,15 @@
     document.addEventListener('touchstart', handleClickOutside, true);
     document.addEventListener('scroll', handleScroll, true);
     requestAnimationFrame(positionMenu);
+    // When opened straight into the note editor, focus the textarea once it has
+    // rendered so the user can type immediately.
+    if (view === 'note') {
+      tick().then(() => {
+        positionMenu();
+        textareaEl?.focus();
+        textareaEl?.select();
+      });
+    }
     // Delay arming the scroll-to-close so residual scroll momentum
     // (e.g. from trackpad inertia) doesn't immediately dismiss the popover
     scrollArmTimer = setTimeout(() => {
