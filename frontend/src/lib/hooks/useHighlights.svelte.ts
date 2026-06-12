@@ -15,6 +15,16 @@ function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
 }
 
+function makeHighlight(selector: TextQuoteSelector, note?: string): Highlight {
+  const trimmed = note?.trim();
+  return {
+    id: generateId(),
+    selector,
+    createdAt: Date.now(),
+    ...(trimmed ? { note: trimmed } : {}),
+  };
+}
+
 interface HighlightParams {
   contentEl: () => HTMLElement | undefined;
   itemKey: () => string;
@@ -176,12 +186,7 @@ export function useHighlights(params: HighlightParams) {
 
     // Create a highlight for the whole paragraph
     const selector = createSelectorForElement(blockEl, container);
-    const highlight: Highlight = {
-      id: generateId(),
-      selector,
-      createdAt: Date.now(),
-    };
-    itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
+    itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), makeHighlight(selector));
     requestAnimationFrame(applyHighlights);
     return true;
   }
@@ -254,12 +259,7 @@ export function useHighlights(params: HighlightParams) {
     if (!pendingTouchSelector) return;
     const selector = pendingTouchSelector;
     pendingTouchSelector = null;
-    const highlight: Highlight = {
-      id: generateId(),
-      selector,
-      createdAt: Date.now(),
-    };
-    itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
+    itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), makeHighlight(selector));
     requestAnimationFrame(applyHighlights);
   }
 
@@ -310,38 +310,21 @@ export function useHighlights(params: HighlightParams) {
     };
   }
 
-  function createHighlightFromPopover(note?: string) {
+  /** Create a highlight from the current selection, optionally pushing it to Margin. */
+  function createHighlightFromPopover(note?: string, toMargin = false) {
     if (!popoverState?.pendingSelector) return;
 
-    const trimmed = note?.trim();
-    const highlight: Highlight = {
-      id: generateId(),
-      selector: popoverState.pendingSelector,
-      createdAt: Date.now(),
-      ...(trimmed ? { note: trimmed } : {}),
-    };
+    const highlight = makeHighlight(popoverState.pendingSelector, note);
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
     window.getSelection()?.removeAllRanges();
     popoverState = null;
     requestAnimationFrame(applyHighlights);
+    if (toMargin) void saveHighlightToMargin(highlight);
   }
 
   /** Create a highlight from the current selection and push it to Margin. */
   function createHighlightFromPopoverToMargin(note?: string) {
-    if (!popoverState?.pendingSelector) return;
-
-    const trimmed = note?.trim();
-    const highlight: Highlight = {
-      id: generateId(),
-      selector: popoverState.pendingSelector,
-      createdAt: Date.now(),
-      ...(trimmed ? { note: trimmed } : {}),
-    };
-    itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
-    window.getSelection()?.removeAllRanges();
-    popoverState = null;
-    requestAnimationFrame(applyHighlights);
-    void saveHighlightToMargin(highlight);
+    createHighlightFromPopover(note, true);
   }
 
   /** Save (or clear) the note on the highlight currently targeted by the popover. */
@@ -454,12 +437,7 @@ export function useHighlights(params: HighlightParams) {
       itemLabelsStore.removeHighlight(params.itemKey(), existingHighlight.id);
     } else {
       const selector = createSelectorForElement(para, container);
-      const highlight: Highlight = {
-        id: generateId(),
-        selector,
-        createdAt: Date.now(),
-      };
-      itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
+      itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), makeHighlight(selector));
     }
     requestAnimationFrame(applyHighlights);
   }

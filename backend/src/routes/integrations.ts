@@ -446,9 +446,15 @@ export async function handleUpdateMarginNote(request: Request, env: Env): Promis
     });
   }
 
-  const record = buildMarginNoteRecord(body, new Date().toISOString());
-
   const pdsClient = createPDSClient(session);
+
+  // Preserve the record's original creation time — a note edit reuses the rkey
+  // and must not rewrite when the highlight was first made. Fall back to now if
+  // the existing record is missing or carries no createdAt.
+  const existing = await pdsClient.getRecord<{ createdAt?: string }>('at.margin.note', rkey);
+  const createdAt = (existing.success && existing.data.value.createdAt) || new Date().toISOString();
+  const record = buildMarginNoteRecord(body, createdAt);
+
   const result = await pdsClient.putRecord('at.margin.note', rkey, record);
 
   if (!result.success) {

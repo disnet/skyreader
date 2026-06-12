@@ -6,6 +6,7 @@
   // brings it forward and reveals the Save control inline on the right.
   import Icon from '$lib/components/Icon.svelte';
   import MentionAutocomplete from './MentionAutocomplete.svelte';
+  import { positionFloating } from '$lib/utils/floating';
   import type { Highlight } from '$lib/types';
 
   interface Props {
@@ -61,38 +62,19 @@
     requestAnimationFrame(autosize);
   });
 
-  // The highlights popup floats off the page plane (position: fixed), so it must
-  // be measured against the viewport rather than trusting CSS anchoring: pick the
-  // side with more room (flip above/below), cap its height to the space there,
-  // and clamp horizontally so it never spills past either edge.
+  // The highlights popup floats off the page plane (position: fixed), so it's
+  // positioned against the viewport: pick the side with more room (flip above/
+  // below), cap its height to the space there, and right-align to the button
+  // without spilling past either edge.
   function positionQuotesPopup() {
-    const btn = quotesBtnEl;
-    const pop = quotesPopupEl;
-    if (!btn || !pop) return;
-    const rect = btn.getBoundingClientRect();
-    const gap = 6;
-    const margin = 8;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-
-    const spaceAbove = rect.top - gap - margin;
-    const spaceBelow = vh - rect.bottom - gap - margin;
-    const placeAbove = spaceAbove >= spaceBelow;
-    pop.style.maxHeight = `${Math.floor(Math.max(120, placeAbove ? spaceAbove : spaceBelow))}px`;
-
-    // Measure after the height cap so the flip math uses the real rendered size.
-    const popRect = pop.getBoundingClientRect();
-    const top = placeAbove
-      ? Math.max(margin, rect.top - gap - popRect.height)
-      : Math.min(rect.bottom + gap, vh - popRect.height - margin);
-
-    // Right-align to the button, then pull back inside both viewport edges.
-    let left = rect.right - popRect.width;
-    left = Math.min(left, vw - popRect.width - margin);
-    left = Math.max(margin, left);
-
-    pop.style.top = `${top}px`;
-    pop.style.left = `${left}px`;
+    if (!quotesBtnEl || !quotesPopupEl) return;
+    positionFloating(quotesBtnEl.getBoundingClientRect(), quotesPopupEl, {
+      gap: 6,
+      edge: 8,
+      align: 'end',
+      capHeight: true,
+      minHeight: 120,
+    });
   }
 
   // Position on open and keep it pinned while the page scrolls or resizes.

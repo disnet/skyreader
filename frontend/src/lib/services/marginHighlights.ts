@@ -56,10 +56,12 @@ export async function saveHighlightToMargin(
   }
 
   if (!syncStore.isOnline) {
-    await syncQueue.enqueue('create', 'integration', marginDedupKey(itemKey, highlight.id), {
-      ...notePayload(itemKey, highlight, source, title),
-      source,
-    });
+    await syncQueue.enqueue(
+      'create',
+      'integration',
+      marginDedupKey(itemKey, highlight.id),
+      notePayload(itemKey, highlight, source, title)
+    );
     const id = toastStore.add('Queued save to Margin');
     toastStore.update(id, 'success');
     return true;
@@ -87,10 +89,12 @@ export async function saveHighlightToMargin(
       return false;
     }
     console.error('Failed to save highlight to Margin, queueing:', err);
-    await syncQueue.enqueue('create', 'integration', marginDedupKey(itemKey, highlight.id), {
-      ...notePayload(itemKey, highlight, source, title),
-      source,
-    });
+    await syncQueue.enqueue(
+      'create',
+      'integration',
+      marginDedupKey(itemKey, highlight.id),
+      notePayload(itemKey, highlight, source, title)
+    );
     toastStore.update(id, 'success', 'Queued save to Margin');
     return true;
   }
