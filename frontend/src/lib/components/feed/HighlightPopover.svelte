@@ -2,6 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { tooltip } from '$lib/actions/tooltip';
+  import { positionFloating } from '$lib/utils/floating';
 
   interface Props {
     mode: 'create' | 'remove';
@@ -44,24 +45,7 @@
 
   function positionMenu() {
     if (!menuEl) return;
-    const menuRect = menuEl.getBoundingClientRect();
-    const gap = 4;
-
-    let top: number;
-    if (anchorRect.bottom + gap + menuRect.height > window.innerHeight) {
-      top = Math.max(gap, anchorRect.top - gap - menuRect.height);
-    } else {
-      top = anchorRect.bottom + gap;
-    }
-
-    let left = Math.min(
-      anchorRect.left + anchorRect.width / 2 - menuRect.width / 2,
-      window.innerWidth - menuRect.width - gap
-    );
-    left = Math.max(gap, left);
-
-    menuEl.style.top = `${top}px`;
-    menuEl.style.left = `${left}px`;
+    positionFloating(anchorRect, menuEl, { gap: 4, align: 'center' });
   }
 
   async function openNoteEditor() {
