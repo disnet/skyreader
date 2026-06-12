@@ -809,7 +809,7 @@
   {isTruncated}
   {currentlyShared}
   {currentNote}
-  highlights={itemLabelsStore.getHighlights(itemGuid)}
+  highlights={itemLabelsStore.getHighlightsForItem(itemGuid)}
   {showActionBarIntegrations}
   {overflowMenuOpen}
   {canFollowSource}

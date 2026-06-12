@@ -94,21 +94,23 @@
     const byKey = new Map<string, HighlightGroup>();
 
     for (const { itemKey, itemType, highlight } of itemLabelsStore.allHighlights) {
-      let group = byKey.get(itemKey);
+      // Collapse a saved item's guid- and uri-keyed highlights into one group.
+      const groupKey = itemLabelsStore.canonicalHighlightKey(itemKey);
+      let group = byKey.get(groupKey);
       if (!group) {
         let title = '';
         let url: string | null = null;
         let displayItem: FeedDisplayItem | null = null;
 
         if (itemType === 'article') {
-          const a = articlesByGuid.get(itemKey);
+          const a = articlesByGuid.get(groupKey);
           if (a) {
             title = a.title;
             url = a.url;
             displayItem = { type: 'article', item: a, key: a.guid };
           }
         } else if (itemType === 'document') {
-          const d = documentsByUri.get(itemKey);
+          const d = documentsByUri.get(groupKey);
           if (d) {
             title = d.title;
             url = d.canonicalUrl ?? null;
@@ -118,7 +120,7 @@
 
         // Fall back to a saved copy (carries title/url, and can open in the reader).
         if (!displayItem) {
-          const s = savedByKey.get(itemKey);
+          const s = savedByKey.get(groupKey);
           if (s) {
             title = title || s.title || '';
             url = url || s.url || null;
@@ -127,7 +129,7 @@
         }
 
         group = {
-          itemKey,
+          itemKey: groupKey,
           itemType,
           title: decodeEntities(title) || 'Untitled',
           url,
@@ -136,7 +138,7 @@
           rows: [],
           latest: 0,
         };
-        byKey.set(itemKey, group);
+        byKey.set(groupKey, group);
       }
 
       group.rows.push({
