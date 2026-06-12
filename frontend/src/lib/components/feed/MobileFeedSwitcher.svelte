@@ -49,7 +49,8 @@
     | 'rss'
     | 'file-text'
     | 'folder'
-    | 'users';
+    | 'users'
+    | 'highlighter';
 
   type NavItem =
     | {
@@ -167,6 +168,12 @@
         id: 'linkblog',
         label: 'Linkblog',
         icon: 'share' as IconName,
+      },
+      {
+        type: 'utility',
+        id: 'highlights',
+        label: 'Highlights',
+        icon: 'highlighter' as IconName,
       },
       {
         type: 'utility',

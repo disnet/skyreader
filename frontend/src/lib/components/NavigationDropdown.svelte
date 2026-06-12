@@ -151,7 +151,8 @@
     | 'filter'
     | 'layers'
     | 'folder'
-    | 'users';
+    | 'users'
+    | 'highlighter';
 
   // Navigation item type
   type NavItem =
@@ -222,6 +223,7 @@
     };
     const otherViews: NavItem[] = [
       { type: 'utility', id: 'linkblog', label: 'Linkblog', icon: 'share' },
+      { type: 'utility', id: 'highlights', label: 'Highlights', icon: 'highlighter' },
       { type: 'utility', id: 'discover', label: 'Discover', icon: 'users' },
       { type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' },
       { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' },
@@ -355,6 +357,7 @@
 
     // Utility pages (separate routes)
     if (pathname === '/linkblog') return { type: 'icon', name: 'share' };
+    if (pathname === '/highlights') return { type: 'icon', name: 'highlighter' };
     if (pathname === '/discover') return { type: 'icon', name: 'users' };
     if (pathname === '/sources') return { type: 'icon', name: 'rss' };
     if (pathname === '/settings') return { type: 'icon', name: 'settings' };
