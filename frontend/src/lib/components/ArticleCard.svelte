@@ -709,6 +709,11 @@
   // (re-expanding an article with saved progress otherwise jumps the text down a
   // little). Reading-position restore lives in the fullscreen reader instead.
   $effect(() => {
+    // Re-detect when the body settles: displayContent starts as a short fallback
+    // and grows once the full body lazy-loads from IndexedDB, so the observer must
+    // re-bind against the final paragraphs (hasContent alone stays true the whole
+    // time and wouldn't re-trigger).
+    void displayContent;
     if (expanded && bodyEl && hasContent) {
       // Wait for content to render
       tick().then(() => {

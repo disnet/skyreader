@@ -1,10 +1,8 @@
 <script lang="ts">
   // Harness for presentational feed surfaces — filter popover, highlight popover,
-  // read-progress marker, share-note box, and the welcome screen. No auth, no
-  // backend (see ../+layout.ts).
+  // share-note box, and the welcome screen. No auth, no backend (see ../+layout.ts).
   import FilterPopover from '$lib/components/feed/FilterPopover.svelte';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
-  import ReadProgressMarker from '$lib/components/feed/ReadProgressMarker.svelte';
   import ShareCommentBox from '$lib/components/feed/ShareCommentBox.svelte';
   import WelcomePage from '$lib/components/feed/WelcomePage.svelte';
   import Showcase from '../_harness/Showcase.svelte';
@@ -18,10 +16,6 @@
   function openHighlight(e: MouseEvent, mode: 'create' | 'remove') {
     highlight = { mode, rect: (e.currentTarget as HTMLElement).getBoundingClientRect() };
   }
-
-  // ReadProgressMarker position — drive it with a slider so you can watch it move.
-  let progressTop = $state(20);
-  const progressHeight = 12;
 </script>
 
 <Showcase
@@ -92,26 +86,6 @@
   {/if}
 
   <Case
-    name="ReadProgressMarker"
-    note="Absolute marker pinned to the reading column's left gutter — drag the slider to move it."
-    frame
-    pad
-  >
-    <label class="control">
-      top: {progressTop}%
-      <input type="range" min="0" max="88" step="1" bind:value={progressTop} />
-    </label>
-    <div class="reading-column">
-      <ReadProgressMarker topPercent={progressTop} heightPercent={progressHeight} visible={true} />
-      {#each Array(8) as _, i (i)}
-        <p class="reading-line">
-          Body line {i + 1} — the marker tracks the reader's current position down this column.
-        </p>
-      {/each}
-    </div>
-  </Case>
-
-  <Case
     name="ShareCommentBox · empty"
     note="Fresh share — placeholder, Save hidden until focused & dirty."
     frame
@@ -175,26 +149,5 @@
     color: inherit;
     text-decoration: none;
     border-radius: 2px;
-  }
-
-  .control {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary, #666);
-    margin-bottom: 1rem;
-  }
-
-  .reading-column {
-    position: relative;
-    padding-left: 24px;
-    max-width: 52ch;
-  }
-
-  .reading-line {
-    margin: 0 0 0.85rem;
-    color: var(--color-text, #222);
-    line-height: 1.6;
   }
 </style>
