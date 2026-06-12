@@ -29,6 +29,7 @@
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
+  import NotePeek from '$lib/components/feed/NotePeek.svelte';
   import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { tick, onMount, onDestroy } from 'svelte';
@@ -1009,6 +1010,10 @@
     marginSaved={highlightsHook.popoverHighlightSavedToMargin}
     onClose={highlightsHook.closePopover}
   />
+{/if}
+
+{#if highlightsHook.notePeek}
+  <NotePeek note={highlightsHook.notePeek.note} anchorRect={highlightsHook.notePeek.anchorRect} />
 {/if}
 
 <style>

@@ -54,6 +54,7 @@
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
+  import NotePeek from '$lib/components/feed/NotePeek.svelte';
   import type { ItemTags, ItemLabelType } from '$lib/types';
   import { tick } from 'svelte';
 
@@ -885,5 +886,9 @@
       marginSaved={highlights.popoverHighlightSavedToMargin}
       onClose={highlights.closePopover}
     />
+  {/if}
+
+  {#if highlights.notePeek}
+    <NotePeek note={highlights.notePeek.note} anchorRect={highlights.notePeek.anchorRect} />
   {/if}
 {/if}

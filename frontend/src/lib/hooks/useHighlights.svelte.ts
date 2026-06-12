@@ -11,6 +11,18 @@ import type { ItemLabelType, Highlight, TextQuoteSelector } from '$lib/types';
 const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
 const INTERACTIVE_MEDIA_SELECTOR = 'video, audio, iframe, embed, object';
 
+// The inline note marker appended after a highlight that carries a note. A small
+// comment glyph (Lucide message-circle), tinted into the highlight gold so it
+// reads as part of the highlight rather than new chrome. Injected as raw DOM
+// (the marks themselves are too), so the icon is inlined rather than rendered
+// via the Icon component. Styled in SavedReader's `.highlight-note-marker`.
+const NOTE_MARKER_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg>';
+
+function canHover(): boolean {
+  return typeof window !== 'undefined' && !!window.matchMedia?.('(hover: hover)').matches;
+}
+
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
 }
@@ -36,13 +48,20 @@ interface HighlightParams {
 }
 
 export function useHighlights(params: HighlightParams) {
-  // State exposed for the component to render the popover
+  // State exposed for the component to render the popover. `view` mode is the
+  // read-first surface for a highlight's note (note text + Edit/Remove), opened
+  // by clicking the inline note marker; `create`/`remove` are the selection and
+  // existing-highlight toolbars.
   let popoverState = $state<{
-    mode: 'create' | 'remove';
+    mode: 'create' | 'remove' | 'view';
     anchorRect: DOMRect;
     pendingSelector?: TextQuoteSelector;
     highlightId?: string;
   } | null>(null);
+
+  // Desktop-only hover peek: a read-only preview of a note when the pointer
+  // rests on its marker. Never set on touch (gated by `canHover`).
+  let notePeek = $state<{ anchorRect: DOMRect; note: string } | null>(null);
 
   let currentEl: HTMLElement | null = null;
   let dblclickHandler: ((e: MouseEvent) => void) | null = null;
@@ -50,7 +69,10 @@ export function useHighlights(params: HighlightParams) {
   let clickHandler: ((e: MouseEvent) => void) | null = null;
   let touchendHandler: ((e: TouchEvent) => void) | null = null;
   let selectionchangeHandler: (() => void) | null = null;
+  let mouseoverHandler: ((e: MouseEvent) => void) | null = null;
+  let mouseoutHandler: ((e: MouseEvent) => void) | null = null;
   let appliedMarks: HTMLElement[] = [];
+  let appliedNoteMarkers: HTMLElement[] = [];
 
   // Touch bookkeeping. Mobile browsers don't emit `dblclick`/`mouseup` for
   // tap-to-highlight or touch text selection, so we synthesize both. A
@@ -72,8 +94,26 @@ export function useHighlights(params: HighlightParams) {
     for (const highlight of highlights) {
       const range = findTextInDOM(highlight.selector, el);
       if (!range) continue;
+      const before = appliedMarks.length;
       wrapRange(range, highlight.id);
+      // A note gets an inline marker after the highlight's final mark.
+      if (highlight.note) {
+        const lastMark = appliedMarks[appliedMarks.length - 1];
+        if (lastMark && appliedMarks.length > before) insertNoteMarker(lastMark, highlight.id);
+      }
     }
+  }
+
+  /** Append the inline comment-glyph marker immediately after a highlight's last mark. */
+  function insertNoteMarker(afterMark: HTMLElement, highlightId: string) {
+    const marker = document.createElement('button');
+    marker.type = 'button';
+    marker.className = 'highlight-note-marker';
+    marker.dataset.highlightId = highlightId;
+    marker.setAttribute('aria-label', 'Show note');
+    marker.innerHTML = NOTE_MARKER_SVG;
+    afterMark.after(marker);
+    appliedNoteMarkers.push(marker);
   }
 
   function wrapRange(range: Range, highlightId: string) {
@@ -143,6 +183,10 @@ export function useHighlights(params: HighlightParams) {
   }
 
   function clearMarks() {
+    // Remove note markers first so the subsequent `normalize()` can merge the
+    // text nodes the markers were sitting between.
+    for (const marker of appliedNoteMarkers) marker.remove();
+    appliedNoteMarkers = [];
     for (const mark of appliedMarks) {
       const parent = mark.parentNode;
       if (!parent) continue;
@@ -293,6 +337,23 @@ export function useHighlights(params: HighlightParams) {
   function handleClick(e: MouseEvent) {
     const target = e.target as HTMLElement;
     if (target.closest(INTERACTIVE_MEDIA_SELECTOR)) return;
+
+    // The inline note marker opens the read-first note popover.
+    const marker = target.closest('.highlight-note-marker') as HTMLElement | null;
+    if (marker) {
+      const highlightId = marker.dataset.highlightId;
+      if (!highlightId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      notePeek = null;
+      popoverState = {
+        mode: 'view',
+        anchorRect: marker.getBoundingClientRect(),
+        highlightId,
+      };
+      return;
+    }
+
     const mark = target.closest('mark.highlight') as HTMLElement | null;
     if (!mark) return;
 
@@ -308,6 +369,32 @@ export function useHighlights(params: HighlightParams) {
       anchorRect: rect,
       highlightId,
     };
+  }
+
+  /**
+   * Desktop hover peek. Resting the pointer on a note marker shows a read-only
+   * preview; the peek carries no controls (so there's no hover-bridge to cross)
+   * — clicking the marker opens the actionable popover instead.
+   */
+  function handleMouseOver(e: MouseEvent) {
+    if (!canHover()) return;
+    const marker = (e.target as HTMLElement).closest?.(
+      '.highlight-note-marker'
+    ) as HTMLElement | null;
+    if (!marker) return;
+    const highlightId = marker.dataset.highlightId;
+    const hl = itemLabelsStore.getHighlights(params.itemKey()).find((h) => h.id === highlightId);
+    if (!hl?.note) return;
+    notePeek = { anchorRect: marker.getBoundingClientRect(), note: hl.note };
+  }
+
+  function handleMouseOut(e: MouseEvent) {
+    if (!notePeek) return;
+    const marker = (e.target as HTMLElement).closest?.('.highlight-note-marker');
+    if (!marker) return;
+    const related = e.relatedTarget as Node | null;
+    if (related && marker.contains(related)) return;
+    notePeek = null;
   }
 
   /** Create a highlight from the current selection, optionally pushing it to Margin. */
@@ -335,6 +422,9 @@ export function useHighlights(params: HighlightParams) {
     popoverState = null;
     void (async () => {
       await itemLabelsStore.setHighlightNote(itemKey, highlightId, note);
+      // Re-apply so the inline note marker appears (note added) or disappears
+      // (note cleared) to match the new state.
+      requestAnimationFrame(applyHighlights);
       const updated = itemLabelsStore.getHighlights(itemKey).find((h) => h.id === highlightId);
       if (updated?.marginRkey) {
         await updateNoteOnMargin(updated);
@@ -453,12 +543,16 @@ export function useHighlights(params: HighlightParams) {
     clickHandler = handleClick;
     touchendHandler = handleTouchEnd;
     selectionchangeHandler = handleSelectionChange;
+    mouseoverHandler = handleMouseOver;
+    mouseoutHandler = handleMouseOut;
 
     el.addEventListener('dblclick', dblclickHandler);
     // Listen on document so we catch mouseup even when the user
     // drag-selects past the edge of the content element
     document.addEventListener('mouseup', mouseupHandler);
     el.addEventListener('click', clickHandler);
+    el.addEventListener('mouseover', mouseoverHandler);
+    el.addEventListener('mouseout', mouseoutHandler);
     // Touch: synthesize double-tap (paragraph) since mobile browsers don't fire
     // dblclick. Non-passive so we can suppress the default double-tap gesture.
     el.addEventListener('touchend', touchendHandler, { passive: false });
@@ -475,6 +569,8 @@ export function useHighlights(params: HighlightParams) {
       if (mouseupHandler) document.removeEventListener('mouseup', mouseupHandler);
       if (clickHandler) currentEl.removeEventListener('click', clickHandler);
       if (touchendHandler) currentEl.removeEventListener('touchend', touchendHandler);
+      if (mouseoverHandler) currentEl.removeEventListener('mouseover', mouseoverHandler);
+      if (mouseoutHandler) currentEl.removeEventListener('mouseout', mouseoutHandler);
     }
     if (selectionchangeHandler)
       document.removeEventListener('selectionchange', selectionchangeHandler);
@@ -485,8 +581,11 @@ export function useHighlights(params: HighlightParams) {
     clickHandler = null;
     touchendHandler = null;
     selectionchangeHandler = null;
+    mouseoverHandler = null;
+    mouseoutHandler = null;
     pendingTouchSelector = null;
     popoverState = null;
+    notePeek = null;
   }
 
   onDestroy(detach);
@@ -494,6 +593,12 @@ export function useHighlights(params: HighlightParams) {
   return {
     get popoverState() {
       return popoverState;
+    },
+    get notePeek() {
+      return notePeek;
+    },
+    closeNotePeek() {
+      notePeek = null;
     },
     attach,
     detach,
