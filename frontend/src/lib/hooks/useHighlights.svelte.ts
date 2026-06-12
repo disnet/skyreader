@@ -1,6 +1,10 @@
 import { onDestroy } from 'svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { createSelector, createSelectorForElement, findTextInDOM } from '$lib/utils/textSelector';
+import { api, ScopeUpgradeError } from '$lib/services/api';
+import { syncQueue, type MarginNotePayload } from '$lib/services/sync-queue';
+import { syncStore } from '$lib/stores/sync.svelte';
+import { toastStore } from '$lib/stores/toast.svelte';
 import type { ItemLabelType, Highlight, TextQuoteSelector } from '$lib/types';
 
 const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
@@ -15,6 +19,9 @@ interface HighlightParams {
   itemKey: () => string;
   itemType: () => ItemLabelType;
   enabled: () => boolean;
+  // Article URL/title, used as the target when saving a highlight to Margin.
+  itemUrl?: () => string | undefined;
+  itemTitle?: () => string | undefined;
 }
 
 export function useHighlights(params: HighlightParams) {
@@ -144,6 +151,7 @@ export function useHighlights(params: HighlightParams) {
 
     if (existingHighlight) {
       // Toggle off: remove the highlight
+      void removeFromMargin(existingHighlight);
       itemLabelsStore.removeHighlight(params.itemKey(), existingHighlight.id);
       requestAnimationFrame(applyHighlights);
       return;
@@ -221,15 +229,153 @@ export function useHighlights(params: HighlightParams) {
     requestAnimationFrame(applyHighlights);
   }
 
+  /** Create a highlight from the current selection and push it to Margin. */
+  function createHighlightFromPopoverToMargin() {
+    if (!popoverState?.pendingSelector) return;
+
+    const highlight: Highlight = {
+      id: generateId(),
+      selector: popoverState.pendingSelector,
+      createdAt: Date.now(),
+    };
+    itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
+    window.getSelection()?.removeAllRanges();
+    popoverState = null;
+    requestAnimationFrame(applyHighlights);
+    void saveHighlightToMargin(highlight);
+  }
+
   function removeHighlightFromPopover() {
     if (!popoverState?.highlightId) return;
-    itemLabelsStore.removeHighlight(params.itemKey(), popoverState.highlightId);
+    const highlightId = popoverState.highlightId;
+    const existing = itemLabelsStore
+      .getHighlights(params.itemKey())
+      .find((h) => h.id === highlightId);
+    if (existing) void removeFromMargin(existing);
+    itemLabelsStore.removeHighlight(params.itemKey(), highlightId);
     popoverState = null;
     requestAnimationFrame(applyHighlights);
   }
 
   function closePopover() {
     popoverState = null;
+  }
+
+  // --- Margin (at.margin.note) sync ---
+
+  function marginDedupKey(highlightId: string): string {
+    return `margin-note:${params.itemKey()}:${highlightId}`;
+  }
+
+  function notePayload(highlight: Highlight, rkey?: string): MarginNotePayload {
+    return {
+      kind: 'note',
+      itemKey: params.itemKey(),
+      highlightId: highlight.id,
+      source: params.itemUrl?.() ?? '',
+      title: params.itemTitle?.(),
+      exact: highlight.selector.exact,
+      prefix: highlight.selector.prefix,
+      suffix: highlight.selector.suffix,
+      ...(rkey ? { rkey } : {}),
+    };
+  }
+
+  /** Push a single highlight to the user's Margin (at.margin.note). */
+  async function saveHighlightToMargin(highlight: Highlight) {
+    if (highlight.marginUri) return; // already saved
+    const source = params.itemUrl?.();
+    if (!source) {
+      const id = toastStore.add('No article URL to save to Margin');
+      toastStore.update(id, 'error');
+      return;
+    }
+
+    const itemKey = params.itemKey();
+    if (!syncStore.isOnline) {
+      await syncQueue.enqueue('create', 'integration', marginDedupKey(highlight.id), {
+        ...notePayload(highlight),
+        source,
+      });
+      const id = toastStore.add('Queued save to Margin');
+      toastStore.update(id, 'success');
+      return;
+    }
+
+    const id = toastStore.add('Saving to Margin...');
+    try {
+      const result = await api.createMarginNote({
+        source,
+        title: params.itemTitle?.(),
+        exact: highlight.selector.exact,
+        prefix: highlight.selector.prefix,
+        suffix: highlight.selector.suffix,
+      });
+      await itemLabelsStore.setHighlightMargin(itemKey, highlight.id, {
+        uri: result.uri,
+        rkey: result.rkey,
+      });
+      requestAnimationFrame(applyHighlights);
+      toastStore.update(id, 'success', 'Saved to Margin');
+    } catch (err) {
+      if (err instanceof ScopeUpgradeError) {
+        toastStore.update(id, 'error', 'Log in again to grant Margin permissions');
+        return;
+      }
+      console.error('Failed to save highlight to Margin, queueing:', err);
+      await syncQueue.enqueue('create', 'integration', marginDedupKey(highlight.id), {
+        ...notePayload(highlight),
+        source,
+      });
+      toastStore.update(id, 'success', 'Queued save to Margin');
+    }
+  }
+
+  /** Delete the Margin note backing a highlight (called when the highlight is removed). */
+  async function removeFromMargin(highlight: Highlight) {
+    // Drop any still-queued (unsynced) save so it never creates an orphan note.
+    await syncQueue.cancelPending('integration', marginDedupKey(highlight.id));
+    if (!highlight.marginRkey) return; // never synced — nothing on the PDS
+
+    if (!syncStore.isOnline) {
+      await syncQueue.enqueue(
+        'delete',
+        'integration',
+        marginDedupKey(highlight.id),
+        notePayload(highlight, highlight.marginRkey)
+      );
+      return;
+    }
+    try {
+      await api.deleteMarginNote(highlight.marginRkey);
+    } catch (err) {
+      console.error('Failed to delete Margin note, queueing:', err);
+      await syncQueue.enqueue(
+        'delete',
+        'integration',
+        marginDedupKey(highlight.id),
+        notePayload(highlight, highlight.marginRkey)
+      );
+    }
+  }
+
+  /** True when the highlight currently targeted by the popover is saved to Margin. */
+  function isPopoverHighlightSavedToMargin(): boolean {
+    if (!popoverState?.highlightId) return false;
+    const hl = itemLabelsStore
+      .getHighlights(params.itemKey())
+      .find((h) => h.id === popoverState!.highlightId);
+    return !!hl?.marginUri;
+  }
+
+  /** Save-on-Margin action for the popover's currently-targeted highlight. */
+  function savePopoverHighlightToMargin() {
+    if (!popoverState?.highlightId) return;
+    const hl = itemLabelsStore
+      .getHighlights(params.itemKey())
+      .find((h) => h.id === popoverState!.highlightId);
+    popoverState = null;
+    if (hl) void saveHighlightToMargin(hl);
   }
 
   /** Toggle highlight on the paragraph at the given index (for keyboard shortcut) */
@@ -248,6 +394,7 @@ export function useHighlights(params: HighlightParams) {
     const existingHighlight = highlights.find((h) => h.selector.exact === paragraphText);
 
     if (existingHighlight) {
+      void removeFromMargin(existingHighlight);
       itemLabelsStore.removeHighlight(params.itemKey(), existingHighlight.id);
     } else {
       const selector = createSelectorForElement(para, container);
@@ -305,8 +452,13 @@ export function useHighlights(params: HighlightParams) {
     detach,
     applyHighlights,
     createHighlightFromPopover,
+    createHighlightFromPopoverToMargin,
     removeHighlightFromPopover,
     closePopover,
     toggleParagraphHighlight,
+    savePopoverHighlightToMargin,
+    get popoverHighlightSavedToMargin() {
+      return isPopoverHighlightSavedToMargin();
+    },
   };
 }

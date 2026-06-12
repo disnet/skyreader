@@ -64,6 +64,8 @@ import {
   handleListSembleCollections,
   handleCreateMarginBookmark,
   handleListMarginCollections,
+  handleCreateMarginNote,
+  handleDeleteMarginNote,
 } from './routes/integrations';
 import { handleFullSync, handleSyncSubscriptions, handleSyncStatus } from './routes/sync';
 import {
@@ -434,6 +436,28 @@ export default {
         case url.pathname === '/api/integrations/margin/collections':
           if (!session) return unauthorizedResponse(headers);
           response = await handleListMarginCollections(request, env);
+          break;
+        case url.pathname === '/api/integrations/margin/notes':
+          if (!session) return unauthorizedResponse(headers);
+          if (request.method !== 'POST') {
+            response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+              status: 405,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          } else {
+            response = await handleCreateMarginNote(request, env);
+          }
+          break;
+        case url.pathname.startsWith('/api/integrations/margin/notes/'):
+          if (!session) return unauthorizedResponse(headers);
+          if (request.method !== 'DELETE') {
+            response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+              status: 405,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          } else {
+            response = await handleDeleteMarginNote(request, env);
+          }
           break;
 
         // Channels routes

@@ -1347,6 +1347,42 @@ function createItemLabelsStore() {
     }
   }
 
+  /**
+   * Record (or clear) the Margin sync state for a single highlight. Local-only
+   * (like all highlight storage) — persists the at.margin.note uri/rkey so the
+   * UI can show "saved" state and later delete the note.
+   */
+  async function setHighlightMargin(
+    itemKey: string,
+    highlightId: string,
+    margin: { uri: string; rkey: string } | null
+  ) {
+    const existing = getLabel(itemKey, 'highlights');
+    if (!existing) return;
+
+    const currentHighlights = (existing.props.highlights as Highlight[]) || [];
+    let changed = false;
+    const newHighlights = currentHighlights.map((h) => {
+      if (h.id !== highlightId) return h;
+      changed = true;
+      if (margin) {
+        return { ...h, marginUri: margin.uri, marginRkey: margin.rkey };
+      }
+      const { marginUri: _u, marginRkey: _r, ...rest } = h;
+      return rest;
+    });
+    if (!changed) return;
+
+    const label: ItemLabel = {
+      ...existing,
+      props: { highlights: newHighlights },
+      updatedAt: Date.now(),
+    };
+    addToState(label);
+    triggerReactivity();
+    await safePut(db.itemLabels, label);
+  }
+
   // --- Derived helpers ---
 
   function getSavedArticles(): SavedArticle[] {
@@ -1452,6 +1488,7 @@ function createItemLabelsStore() {
     hasHighlights,
     addHighlight,
     removeHighlight,
+    setHighlightMargin,
     // Derived helpers
     getSavedArticles,
     getSavedItemKeys,

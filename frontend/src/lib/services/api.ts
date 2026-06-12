@@ -837,6 +837,25 @@ class ApiClient {
     return this.fetch('/api/integrations/margin/collections');
   }
 
+  async createMarginNote(data: {
+    source: string;
+    title?: string;
+    exact: string;
+    prefix?: string;
+    suffix?: string;
+  }): Promise<{ uri: string; cid: string; rkey: string }> {
+    return this.fetch('/api/integrations/margin/notes', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteMarginNote(rkey: string): Promise<{ success: boolean }> {
+    return this.fetch(`/api/integrations/margin/notes/${encodeURIComponent(rkey)}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Extract article content via the proxy (fetch + Defuddle, cached proxy-side).
   // Routes through this.fetch so it shares the 503-retry / 401-logout handling
   // (previously a raw fetch here logged users out on any 401, bypassing that logic).

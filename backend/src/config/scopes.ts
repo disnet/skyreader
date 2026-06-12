@@ -20,6 +20,7 @@ export const SEMBLE_SCOPES = [
 ];
 export const MARGIN_SCOPES = [
   'repo:at.margin.bookmark',
+  'repo:at.margin.note',
   'repo:at.margin.collection',
   'repo:at.margin.collectionItem',
 ];

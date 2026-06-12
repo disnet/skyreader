@@ -285,6 +285,35 @@ body.sidebar-open-mobile {
   --article-font: var(--font-literata);
 }
 
+/* Hover/focus tooltip bubble (see lib/actions/tooltip.ts). Body-portaled, so it
+   lives here as a global rather than scoped to a component. */
+.app-tooltip {
+  position: fixed;
+  z-index: 9999;
+  padding: 4px 8px;
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.app-tooltip--visible {
+  opacity: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+  .app-tooltip {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+}
+
 /* Article font size preference */
 :root[data-article-font-size='xs'] {
   --article-font-size: 0.75rem;
