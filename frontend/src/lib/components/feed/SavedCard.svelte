@@ -106,22 +106,63 @@
   let isArchived = $derived(itemLabelsStore.isArchived(itemKey));
   let tags = $derived(itemLabelsStore.getTagsForItem(itemKey));
 
-  // Estimate read time from content (~200 words/min)
-  let readTimeMinutes = $derived.by(() => {
-    let content = '';
-    if (displayItem.type === 'article') {
-      content = displayItem.item.content || displayItem.item.summary || '';
-    } else if (displayItem.type === 'document') {
-      if (displayItem.item.wordCount)
-        return Math.max(1, Math.round(displayItem.item.wordCount / 200));
-      content = displayItem.item.textContent || displayItem.item.description || '';
-    } else if (displayItem.type === 'saved') {
-      if (displayItem.item.wordCount)
-        return Math.max(1, Math.round(displayItem.item.wordCount / 200));
-      content = displayItem.item.content || displayItem.item.description || '';
+  // Saved "light" items carry `content: null` in memory, so when their stored
+  // wordCount is missing we pull the body back from IndexedDB to count it rather
+  // than falling back to the short RSS `description` (which produced a misleading
+  // "1 min"). Only runs for saved items that lack a precomputed wordCount; most
+  // self-heal via the store's backfill before this is ever needed.
+  let lazyWordCount = $state<number | null>(null);
+  $effect(() => {
+    if (displayItem.type !== 'saved' || displayItem.item.wordCount) {
+      lazyWordCount = null;
+      return;
     }
-    const text = content.replace(/<[^>]*>/g, '');
-    const wordCount = text.split(/\s+/).filter(Boolean).length;
+    const rkey = displayItem.item.rkey;
+    let cancelled = false;
+    (async () => {
+      let body = '';
+      try {
+        body = (await savesStore.getContent(rkey)) || '';
+      } catch {
+        // Best effort — leave the count unknown and hide the chip.
+      }
+      if (cancelled) return;
+      const text = body.replace(/<[^>]*>/g, '');
+      const count = text.split(/\s+/).filter(Boolean).length;
+      lazyWordCount = count || null;
+    })();
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  // Estimate read time from word count (~200 words/min). Returns null — and the
+  // chip is hidden — when there's genuinely no text to estimate from, which beats
+  // showing a misleading "1 min".
+  let readTimeMinutes = $derived.by((): number | null => {
+    let wordCount: number | null = null;
+    if (displayItem.type === 'article') {
+      wordCount = displayItem.item.wordCount ?? null;
+      if (wordCount == null) {
+        const text = (displayItem.item.content || displayItem.item.summary || '').replace(
+          /<[^>]*>/g,
+          ''
+        );
+        wordCount = text.split(/\s+/).filter(Boolean).length || null;
+      }
+    } else if (displayItem.type === 'document') {
+      wordCount = displayItem.item.wordCount ?? null;
+      if (wordCount == null) {
+        const text = (displayItem.item.textContent || displayItem.item.description || '').replace(
+          /<[^>]*>/g,
+          ''
+        );
+        wordCount = text.split(/\s+/).filter(Boolean).length || null;
+      }
+    } else if (displayItem.type === 'saved') {
+      wordCount = displayItem.item.wordCount ?? lazyWordCount;
+    }
+    if (wordCount == null) return null;
     return Math.max(1, Math.round(wordCount / 200));
   });
 
@@ -468,10 +509,12 @@
           {#if displayItem.type === 'article' && displayItem.item.author}
             <span class="meta-author">{displayItem.item.author}</span>
           {/if}
-          <span class="meta-read-time">
-            <Icon name="clock" size={12} />
-            {readTimeMinutes} min
-          </span>
+          {#if readTimeMinutes}
+            <span class="meta-read-time">
+              <Icon name="clock" size={12} />
+              {readTimeMinutes} min
+            </span>
+          {/if}
           <span class="meta-date">{formatRelativeDate(publishedAt)}</span>
           {#each tags as tag, i}
             {#if i === 0}<span class="meta-dot" aria-hidden="true">·</span>{/if}

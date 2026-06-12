@@ -909,6 +909,15 @@ class ApiClient {
     return this.fetch('/api/saved');
   }
 
+  // Patch mutable fields on an existing saved item (currently just the
+  // precomputed word count, used to backfill old saves that lack one).
+  async updateSaved(rkey: string, fields: { wordCount?: number }): Promise<{ success: boolean }> {
+    return this.fetch(`/api/saved/${rkey}`, {
+      method: 'PATCH',
+      body: JSON.stringify(fields),
+    });
+  }
+
   async deleteSaved(rkey: string): Promise<{ success: boolean }> {
     return this.fetch(`/api/saved/${rkey}`, {
       method: 'DELETE',
