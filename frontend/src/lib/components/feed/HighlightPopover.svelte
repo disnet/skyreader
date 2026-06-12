@@ -1,16 +1,29 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import { tooltip } from '$lib/actions/tooltip';
 
   interface Props {
     mode: 'create' | 'remove';
     anchorRect: DOMRect;
     onHighlight?: () => void;
+    onHighlightToMargin?: () => void;
     onRemove?: () => void;
+    onSaveToMargin?: () => void;
+    marginSaved?: boolean;
     onClose: () => void;
   }
 
-  let { mode, anchorRect, onHighlight, onRemove, onClose }: Props = $props();
+  let {
+    mode,
+    anchorRect,
+    onHighlight,
+    onHighlightToMargin,
+    onRemove,
+    onSaveToMargin,
+    marginSaved = false,
+    onClose,
+  }: Props = $props();
 
   let menuEl = $state<HTMLDivElement | null>(null);
   let scrollArmed = false;
@@ -85,26 +98,64 @@
 >
   {#if mode === 'create'}
     <button
-      class="popover-btn"
+      class="popover-btn icon-only"
+      use:tooltip={'Save private highlight'}
+      aria-label="Save private highlight"
       onclick={() => {
         onHighlight?.();
         onClose();
       }}
     >
-      <Icon name="highlighter" size={14} />
-      <span>Highlight</span>
+      <Icon name="highlighter" size={16} />
     </button>
+    {#if onHighlightToMargin}
+      <button
+        class="popover-btn icon-only"
+        use:tooltip={'Save public margin highlight'}
+        aria-label="Save public margin highlight"
+        onclick={() => {
+          onHighlightToMargin?.();
+          onClose();
+        }}
+      >
+        <Icon name="margin" size={16} />
+      </button>
+    {/if}
   {:else}
     <button
-      class="popover-btn remove"
+      class="popover-btn icon-only remove"
+      use:tooltip={'Remove highlight'}
+      aria-label="Remove highlight"
       onclick={() => {
         onRemove?.();
         onClose();
       }}
     >
-      <Icon name="x" size={14} />
-      <span>Remove</span>
+      <Icon name="x" size={16} />
     </button>
+    {#if onSaveToMargin}
+      {#if marginSaved}
+        <span
+          class="popover-status icon-only"
+          use:tooltip={'Saved to Margin'}
+          aria-label="Saved to Margin"
+        >
+          <Icon name="check" size={16} />
+        </span>
+      {:else}
+        <button
+          class="popover-btn icon-only"
+          use:tooltip={'Save public margin highlight'}
+          aria-label="Save public margin highlight"
+          onclick={() => {
+            onSaveToMargin?.();
+            onClose();
+          }}
+        >
+          <Icon name="margin" size={16} />
+        </button>
+      {/if}
+    {/if}
   {/if}
 </div>
 
@@ -137,8 +188,23 @@
     background: var(--color-hover, #f1f5f9);
   }
 
+  .popover-btn.icon-only,
+  .popover-status.icon-only {
+    padding: 6px;
+  }
+
   .popover-btn.remove:hover {
     background: #fef2f2;
     color: #dc2626;
+  }
+
+  .popover-status {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted, #64748b);
+    white-space: nowrap;
   }
 </style>

@@ -322,12 +322,15 @@
   // (don't act on link/media clicks) and forwards a single semantic tap here.
   function handleContentTap() {
     if (expanded) return;
-    if (selected && !expanded && isTruncated) {
+    if (selected && isTruncated) {
       // Content is truncated, expand it (this also selects)
       onExpand?.();
-    } else {
+    } else if (!selected) {
       onSelect?.();
     }
+    // selected && !truncated: the full body is already shown inline. Do nothing —
+    // a tap (including the click that ends a drag-select) must not collapse the
+    // card, otherwise you can't select text in a short article.
   }
 
   // ── Resharing a document (Phase 7) ──────────────────────────────────────────
@@ -676,7 +679,9 @@
     contentEl: () => bodyEl,
     itemKey: () => itemGuid,
     itemType: () => itemTagType as ItemLabelType,
-    enabled: () => expanded && hasContent,
+    enabled: () => isOpen && hasContent,
+    itemUrl: () => itemUrl,
+    itemTitle: () => itemTitle,
   });
 
   // Attach link interception when content is visible
@@ -691,10 +696,12 @@
     };
   });
 
-  // Attach highlights when article is expanded (must read `expanded` synchronously
-  // so Svelte's $effect tracks it — reads inside tick().then() are not tracked)
+  // Attach highlights whenever the card is open (selected preview or expanded) so
+  // text can be selected/highlighted and existing highlights render — not only
+  // when expanded. Read `isOpen` synchronously so Svelte's $effect tracks it
+  // (reads inside tick().then() are not tracked).
   $effect(() => {
-    if (expanded && bodyEl && hasContent) {
+    if (isOpen && bodyEl && hasContent) {
       tick().then(() => {
         highlights.attach();
       });
@@ -869,7 +876,10 @@
       mode={highlights.popoverState.mode}
       anchorRect={highlights.popoverState.anchorRect}
       onHighlight={highlights.createHighlightFromPopover}
+      onHighlightToMargin={highlights.createHighlightFromPopoverToMargin}
       onRemove={highlights.removeHighlightFromPopover}
+      onSaveToMargin={highlights.savePopoverHighlightToMargin}
+      marginSaved={highlights.popoverHighlightSavedToMargin}
       onClose={highlights.closePopover}
     />
   {/if}

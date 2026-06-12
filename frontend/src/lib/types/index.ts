@@ -881,4 +881,7 @@ export interface Highlight {
   id: string;
   selector: TextQuoteSelector;
   createdAt: number; // epoch ms
+  // Set once the highlight has been pushed to Margin (at.margin.note on the user's PDS).
+  marginUri?: string;
+  marginRkey?: string;
 }

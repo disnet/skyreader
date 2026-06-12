@@ -59,12 +59,27 @@ export interface IntegrationPayload {
   collectionCid?: string;
 }
 
+// Saving a highlight to Margin (at.margin.note). Routed through the `integration`
+// collection but distinguished from bookmark/card payloads by `kind: 'note'`.
+export interface MarginNotePayload {
+  kind: 'note';
+  itemKey: string;
+  highlightId: string;
+  source: string;
+  title?: string;
+  exact: string;
+  prefix?: string;
+  suffix?: string;
+  rkey?: string; // present for deletes of already-synced notes
+}
+
 type SyncPayload =
   | ReadingPayload
   | SocialReadingPayload
   | LabelPayload
   | SavedPayload
-  | IntegrationPayload;
+  | IntegrationPayload
+  | MarginNotePayload;
 
 class SyncQueue {
   private processing = false;
@@ -115,6 +130,19 @@ class SyncQueue {
     }
 
     await this.notifyPendingCount();
+  }
+
+  /**
+   * Drop a pending queued entry matching collection+key, if one exists.
+   * Used to cancel an unsynced create (e.g. a Margin note save queued offline)
+   * when the user undoes the action before it syncs.
+   */
+  async cancelPending(collection: SyncCollection, key: string): Promise<void> {
+    const existing = await db.syncQueue.where('[collection+key]').equals([collection, key]).first();
+    if (existing) {
+      await db.syncQueue.delete(existing.id!);
+      await this.notifyPendingCount();
+    }
   }
 
   /**
@@ -381,9 +409,18 @@ class SyncQueue {
       case 'saved':
         await this.executeSavedOperation(entry.operation, payload as SavedPayload);
         break;
-      case 'integration':
-        await this.executeIntegrationOperation(entry.operation, payload as IntegrationPayload);
+      case 'integration': {
+        const integrationPayload = payload as IntegrationPayload | MarginNotePayload;
+        if ('kind' in integrationPayload && integrationPayload.kind === 'note') {
+          await this.executeMarginNoteOperation(entry.operation, integrationPayload);
+        } else {
+          await this.executeIntegrationOperation(
+            entry.operation,
+            integrationPayload as IntegrationPayload
+          );
+        }
         break;
+      }
     }
   }
 
@@ -468,6 +505,32 @@ class SyncQueue {
         }
         break;
     }
+  }
+
+  /** Save/delete a Margin highlight note (at.margin.note). */
+  private async executeMarginNoteOperation(
+    operation: SyncOperation,
+    payload: MarginNotePayload
+  ): Promise<void> {
+    if (operation === 'delete') {
+      if (payload.rkey) await api.deleteMarginNote(payload.rkey);
+      return;
+    }
+    if (operation !== 'create') return;
+    const result = await api.createMarginNote({
+      source: payload.source,
+      title: payload.title,
+      exact: payload.exact,
+      prefix: payload.prefix,
+      suffix: payload.suffix,
+    });
+    // Write the returned note uri/rkey back onto the highlight. Dynamic import
+    // avoids a static cycle (itemLabels imports this module).
+    const { itemLabelsStore } = await import('$lib/stores/itemLabels.svelte');
+    await itemLabelsStore.setHighlightMargin(payload.itemKey, payload.highlightId, {
+      uri: result.uri,
+      rkey: result.rkey,
+    });
   }
 
   private async executeIntegrationOperation(

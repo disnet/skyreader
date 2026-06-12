@@ -106,6 +106,14 @@
     }
     if ((e.target as HTMLElement).closest('a')) return;
     if ((e.target as HTMLElement).closest('video, audio, iframe')) return;
+    // A click that ends a drag-select shouldn't expand/collapse the card — let
+    // the text selection stand so it can be highlighted (matters most for short
+    // articles that show inline and would otherwise collapse on the same click).
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed && selection.toString().trim().length > 0) {
+      e.stopPropagation();
+      return;
+    }
     e.stopPropagation();
     onContentTap?.();
   }
@@ -1081,7 +1089,9 @@
 
   .article-content {
     padding: 0;
-    cursor: pointer;
+    /* Text cursor: the body is selectable/highlightable, not a single click
+       target. Expanding is done via the explicit "More" affordance. */
+    cursor: text;
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
   }

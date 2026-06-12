@@ -557,6 +557,8 @@
     itemKey: () => itemKey,
     itemType: () => labelItemType,
     enabled: () => true,
+    itemUrl: () => itemUrl,
+    itemTitle: () => title,
   });
 
   // Set up observer when the reader body is mounted — and re-run it whenever the
@@ -992,7 +994,10 @@
     mode={highlightsHook.popoverState.mode}
     anchorRect={highlightsHook.popoverState.anchorRect}
     onHighlight={highlightsHook.createHighlightFromPopover}
+    onHighlightToMargin={highlightsHook.createHighlightFromPopoverToMargin}
     onRemove={highlightsHook.removeHighlightFromPopover}
+    onSaveToMargin={highlightsHook.savePopoverHighlightToMargin}
+    marginSaved={highlightsHook.popoverHighlightSavedToMargin}
     onClose={highlightsHook.closePopover}
   />
 {/if}

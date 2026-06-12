@@ -320,6 +320,117 @@ export async function handleCreateMarginBookmark(request: Request, env: Env): Pr
 }
 
 /**
+ * POST /api/integrations/margin/notes — create an at.margin.note (highlight) on PDS
+ */
+export async function handleCreateMarginNote(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const checkResult = checkIntegrationScopes(session, 'margin');
+  if (checkResult) return checkResult;
+
+  let body: {
+    source: string;
+    title?: string;
+    exact: string;
+    prefix?: string;
+    suffix?: string;
+  };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  if (!body.source || !body.exact) {
+    return new Response(JSON.stringify({ error: 'source and exact are required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const rkey = generateTID();
+  const now = new Date().toISOString();
+  const record = {
+    $type: 'at.margin.note',
+    motivation: 'highlighting',
+    target: {
+      source: body.source,
+      ...(body.title ? { title: body.title } : {}),
+      selector: {
+        type: 'TextQuoteSelector',
+        exact: body.exact,
+        ...(body.prefix ? { prefix: body.prefix } : {}),
+        ...(body.suffix ? { suffix: body.suffix } : {}),
+      },
+    },
+    generator: { name: 'Skyreader', homepage: 'https://skyreader.app' },
+    createdAt: now,
+  };
+
+  const pdsClient = createPDSClient(session);
+  const result = await pdsClient.putRecord('at.margin.note', rkey, record);
+
+  if (!result.success) {
+    return new Response(JSON.stringify({ error: result.error }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  return new Response(JSON.stringify({ uri: result.data.uri, cid: result.data.cid, rkey }), {
+    status: 201,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+/**
+ * DELETE /api/integrations/margin/notes/:rkey — delete an at.margin.note from PDS
+ */
+export async function handleDeleteMarginNote(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const checkResult = checkIntegrationScopes(session, 'margin');
+  if (checkResult) return checkResult;
+
+  const rkey = new URL(request.url).pathname.split('/').pop();
+  if (!rkey) {
+    return new Response(JSON.stringify({ error: 'rkey is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const pdsClient = createPDSClient(session);
+  const result = await pdsClient.deleteRecord('at.margin.note', rkey);
+
+  if (!result.success) {
+    return new Response(JSON.stringify({ error: result.error }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+/**
  * GET /api/integrations/margin/collections — list user's at.margin.collection records
  */
 export async function handleListMarginCollections(request: Request, env: Env): Promise<Response> {
