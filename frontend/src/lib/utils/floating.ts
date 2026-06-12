@@ -38,11 +38,23 @@ export function positionFloating(
   const edge = opts.edge ?? gap;
   const align = opts.align ?? 'center';
   const placement = opts.capHeight ? 'larger-side' : (opts.placement ?? 'below-first');
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
 
-  const spaceAbove = anchor.top - gap - edge;
-  const spaceBelow = vh - anchor.bottom - gap - edge;
+  // Measure against the *visual* viewport, not the layout viewport. On mobile
+  // the on-screen keyboard overlays the layout viewport without shrinking
+  // window.innerHeight, so an anchor near the bottom still "has room below" and
+  // the element gets placed behind the keyboard. visualViewport.height excludes
+  // the keyboard; offsetTop/Left handle pinch-zoom panning. Anchor rects and
+  // position:fixed are both in layout-viewport coords, which the offsets map into.
+  const vv = window.visualViewport;
+  const viewTop = vv?.offsetTop ?? 0;
+  const viewLeft = vv?.offsetLeft ?? 0;
+  const vw = vv?.width ?? window.innerWidth;
+  const vh = vv?.height ?? window.innerHeight;
+  const viewBottom = viewTop + vh;
+  const viewRight = viewLeft + vw;
+
+  const spaceAbove = anchor.top - viewTop - gap - edge;
+  const spaceBelow = viewBottom - anchor.bottom - gap - edge;
   let placeAbove = spaceAbove >= spaceBelow;
 
   // Cap height to the chosen side before measuring, so the flip math below uses
@@ -61,17 +73,23 @@ export function positionFloating(
 
   // 'below-first' only flips above when the element would overflow the bottom.
   if (placement === 'below-first') {
-    placeAbove = anchor.bottom + gap + height > vh;
+    placeAbove = anchor.bottom + gap + height > viewBottom;
   }
 
   let top: number;
   if (placeAbove) {
-    top = Math.max(edge, anchor.top - gap - height);
+    top = anchor.top - gap - height;
   } else if (placement === 'larger-side') {
-    top = Math.min(anchor.bottom + gap, vh - height - edge);
+    top = anchor.bottom + gap;
   } else {
     top = anchor.bottom + gap;
   }
+  // Clamp into the visible band. The lower clamp matters when the anchor sits
+  // *below* the visible area (e.g. it's behind the just-raised keyboard): placing
+  // "above" it still overflows, so pull the element up to rest just above the
+  // keyboard. Mirrors the horizontal clamp below.
+  top = Math.min(top, viewBottom - height - edge);
+  top = Math.max(viewTop + edge, top);
 
   let left: number;
   if (align === 'end') {
@@ -81,8 +99,8 @@ export function positionFloating(
   } else {
     left = anchor.left + anchor.width / 2 - width / 2;
   }
-  left = Math.min(left, vw - width - edge);
-  left = Math.max(edge, left);
+  left = Math.min(left, viewRight - width - edge);
+  left = Math.max(viewLeft + edge, left);
 
   el.style.top = `${top}px`;
   el.style.left = `${left}px`;

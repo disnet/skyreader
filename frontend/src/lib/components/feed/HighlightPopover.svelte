@@ -55,6 +55,14 @@
     positionFloating(anchorRect, menuEl, { gap: 4, align: 'center' });
   }
 
+  // The on-screen keyboard (raised by focusing the note editor) shrinks the
+  // visual viewport. Re-run positioning as it animates in so the popover lifts
+  // above the keyboard instead of being left behind it — visualViewport.height
+  // only settles after focus, well after the initial positionMenu() call.
+  function handleViewportChange() {
+    positionMenu();
+  }
+
   async function openNoteEditor() {
     noteText = existingNote ?? '';
     view = 'note';
@@ -84,6 +92,8 @@
     document.addEventListener('mousedown', handleClickOutside, true);
     document.addEventListener('touchstart', handleClickOutside, true);
     document.addEventListener('scroll', handleScroll, true);
+    window.visualViewport?.addEventListener('resize', handleViewportChange);
+    window.visualViewport?.addEventListener('scroll', handleViewportChange);
     requestAnimationFrame(positionMenu);
     // When opened straight into the note editor, focus the textarea once it has
     // rendered so the user can type immediately.
@@ -107,6 +117,8 @@
     document.removeEventListener('mousedown', handleClickOutside, true);
     document.removeEventListener('touchstart', handleClickOutside, true);
     document.removeEventListener('scroll', handleScroll, true);
+    window.visualViewport?.removeEventListener('resize', handleViewportChange);
+    window.visualViewport?.removeEventListener('scroll', handleViewportChange);
   });
 </script>
 
