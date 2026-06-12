@@ -5,7 +5,7 @@
   import { positionFloating } from '$lib/utils/floating';
 
   interface Props {
-    mode: 'create' | 'remove';
+    mode: 'create' | 'remove' | 'view';
     anchorRect: DOMRect;
     onHighlight?: (note?: string) => void;
     onHighlightToMargin?: (note?: string) => void;
@@ -97,6 +97,7 @@
 <div
   class="highlight-popover"
   class:note-view={view === 'note'}
+  class:read-view={view === 'toolbar' && mode === 'view'}
   style="position: fixed; z-index: 200;"
   bind:this={menuEl}
   onclick={(e) => e.stopPropagation()}
@@ -184,6 +185,24 @@
     >
       <Icon name="message-circle" size={20} />
     </button>
+  {:else if mode === 'view'}
+    <p class="note-read">{existingNote}</p>
+    <div class="note-actions">
+      <button class="note-btn" onclick={openNoteEditor}>
+        <Icon name="edit" size={16} />
+        Edit note
+      </button>
+      <button
+        class="note-btn danger"
+        onclick={() => {
+          onRemove?.();
+          onClose();
+        }}
+      >
+        <Icon name="trash" size={16} />
+        Remove
+      </button>
+    </div>
   {:else}
     <button
       class="popover-btn icon-only remove"
@@ -253,11 +272,25 @@
     animation: popover-in 140ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  .highlight-popover.note-view {
+  .highlight-popover.note-view,
+  .highlight-popover.read-view {
     flex-direction: column;
     gap: 0.5rem;
     padding: 0.5rem;
     width: 17.5rem;
+  }
+
+  .note-read {
+    margin: 0;
+    padding: 0.125rem 0.25rem;
+    max-height: 12rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    color: var(--color-text);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
   }
 
   @keyframes popover-in {
@@ -417,6 +450,15 @@
   .note-btn.primary:hover {
     background: var(--color-primary-dark);
     border-color: var(--color-primary-dark);
+  }
+
+  .note-btn.danger {
+    color: var(--color-error);
+  }
+
+  .note-btn.danger:hover {
+    background: rgba(244, 67, 54, 0.12);
+    border-color: var(--color-error);
   }
 
   /* Touch devices: grow to a comfortable >=44px target and roomier icons. */

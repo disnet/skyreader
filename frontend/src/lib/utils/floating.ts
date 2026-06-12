@@ -52,31 +52,36 @@ export function positionFloating(
     el.style.maxHeight = `${Math.floor(room)}px`;
   }
 
-  const rect = el.getBoundingClientRect();
+  // Measure with offsetWidth/Height, not getBoundingClientRect — the latter
+  // includes any live CSS transform, so an element measured mid-entry-animation
+  // (e.g. a popover scaling in) reports a smaller size, gets clamped against it,
+  // then grows past the viewport edge. offset* gives the final layout size.
+  const width = el.offsetWidth;
+  const height = el.offsetHeight;
 
   // 'below-first' only flips above when the element would overflow the bottom.
   if (placement === 'below-first') {
-    placeAbove = anchor.bottom + gap + rect.height > vh;
+    placeAbove = anchor.bottom + gap + height > vh;
   }
 
   let top: number;
   if (placeAbove) {
-    top = Math.max(edge, anchor.top - gap - rect.height);
+    top = Math.max(edge, anchor.top - gap - height);
   } else if (placement === 'larger-side') {
-    top = Math.min(anchor.bottom + gap, vh - rect.height - edge);
+    top = Math.min(anchor.bottom + gap, vh - height - edge);
   } else {
     top = anchor.bottom + gap;
   }
 
   let left: number;
   if (align === 'end') {
-    left = anchor.right - rect.width;
+    left = anchor.right - width;
   } else if (align === 'start') {
     left = anchor.left;
   } else {
-    left = anchor.left + anchor.width / 2 - rect.width / 2;
+    left = anchor.left + anchor.width / 2 - width / 2;
   }
-  left = Math.min(left, vw - rect.width - edge);
+  left = Math.min(left, vw - width - edge);
   left = Math.max(edge, left);
 
   el.style.top = `${top}px`;
