@@ -494,6 +494,22 @@ function createItemLabelsStore() {
     return tags.some((t) => itemTags.includes(t));
   }
 
+  // All highlights across every item, flattened to one entry per highlight.
+  // Drives the standalone Highlights view; stays reactive off labelMap.
+  let allHighlights = $derived.by(
+    (): Array<{ itemKey: string; itemType: ItemLabelType; highlight: Highlight }> => {
+      const out: Array<{ itemKey: string; itemType: ItemLabelType; highlight: Highlight }> = [];
+      for (const [, lbl] of labelMap) {
+        if (lbl.label !== 'highlights') continue;
+        const highlights = (lbl.props.highlights as Highlight[]) || [];
+        for (const highlight of highlights) {
+          out.push({ itemKey: lbl.itemKey, itemType: lbl.itemType as ItemLabelType, highlight });
+        }
+      }
+      return out;
+    }
+  );
+
   // All unique tags across all items
   let allTags = $derived.by((): string[] => {
     const tagSet = new Set<string>();
@@ -1484,6 +1500,9 @@ function createItemLabelsStore() {
     getReadProgress,
     setReadProgress,
     // Highlights
+    get allHighlights() {
+      return allHighlights;
+    },
     getHighlights,
     hasHighlights,
     addHighlight,

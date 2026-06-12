@@ -513,6 +513,16 @@
     </a>
 
     <a
+      href="/highlights"
+      class="nav-item nav-link"
+      class:active={$page.url.pathname === '/highlights'}
+      onclick={() => sidebarStore.closeMobile()}
+    >
+      <span class="nav-icon"><Icon name="highlighter" /></span>
+      <span class="nav-label">Highlights</span>
+    </a>
+
+    <a
       href="/discover"
       class="nav-item nav-link"
       class:active={$page.url.pathname === '/discover'}

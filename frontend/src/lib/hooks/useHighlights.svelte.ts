@@ -1,10 +1,10 @@
 import { onDestroy } from 'svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { createSelector, createSelectorForElement, findTextInDOM } from '$lib/utils/textSelector';
-import { api, ScopeUpgradeError } from '$lib/services/api';
-import { syncQueue, type MarginNotePayload } from '$lib/services/sync-queue';
-import { syncStore } from '$lib/stores/sync.svelte';
-import { toastStore } from '$lib/stores/toast.svelte';
+import {
+  saveHighlightToMargin as saveToMargin,
+  removeHighlightFromMargin,
+} from '$lib/services/marginHighlights';
 import type { ItemLabelType, Highlight, TextQuoteSelector } from '$lib/types';
 
 const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
@@ -262,101 +262,24 @@ export function useHighlights(params: HighlightParams) {
   }
 
   // --- Margin (at.margin.note) sync ---
-
-  function marginDedupKey(highlightId: string): string {
-    return `margin-note:${params.itemKey()}:${highlightId}`;
-  }
-
-  function notePayload(highlight: Highlight, rkey?: string): MarginNotePayload {
-    return {
-      kind: 'note',
-      itemKey: params.itemKey(),
-      highlightId: highlight.id,
-      source: params.itemUrl?.() ?? '',
-      title: params.itemTitle?.(),
-      exact: highlight.selector.exact,
-      prefix: highlight.selector.prefix,
-      suffix: highlight.selector.suffix,
-      ...(rkey ? { rkey } : {}),
-    };
-  }
+  // The actual write/queue logic lives in the shared marginHighlights service so
+  // this reader path and the standalone Highlights view stay in lockstep; the
+  // wrappers here just re-apply the on-page marks after a save.
 
   /** Push a single highlight to the user's Margin (at.margin.note). */
   async function saveHighlightToMargin(highlight: Highlight) {
-    if (highlight.marginUri) return; // already saved
-    const source = params.itemUrl?.();
-    if (!source) {
-      const id = toastStore.add('No article URL to save to Margin');
-      toastStore.update(id, 'error');
-      return;
-    }
-
-    const itemKey = params.itemKey();
-    if (!syncStore.isOnline) {
-      await syncQueue.enqueue('create', 'integration', marginDedupKey(highlight.id), {
-        ...notePayload(highlight),
-        source,
-      });
-      const id = toastStore.add('Queued save to Margin');
-      toastStore.update(id, 'success');
-      return;
-    }
-
-    const id = toastStore.add('Saving to Margin...');
-    try {
-      const result = await api.createMarginNote({
-        source,
-        title: params.itemTitle?.(),
-        exact: highlight.selector.exact,
-        prefix: highlight.selector.prefix,
-        suffix: highlight.selector.suffix,
-      });
-      await itemLabelsStore.setHighlightMargin(itemKey, highlight.id, {
-        uri: result.uri,
-        rkey: result.rkey,
-      });
-      requestAnimationFrame(applyHighlights);
-      toastStore.update(id, 'success', 'Saved to Margin');
-    } catch (err) {
-      if (err instanceof ScopeUpgradeError) {
-        toastStore.update(id, 'error', 'Log in again to grant Margin permissions');
-        return;
-      }
-      console.error('Failed to save highlight to Margin, queueing:', err);
-      await syncQueue.enqueue('create', 'integration', marginDedupKey(highlight.id), {
-        ...notePayload(highlight),
-        source,
-      });
-      toastStore.update(id, 'success', 'Queued save to Margin');
-    }
+    const ok = await saveToMargin(
+      params.itemKey(),
+      highlight,
+      params.itemUrl?.(),
+      params.itemTitle?.()
+    );
+    if (ok) requestAnimationFrame(applyHighlights);
   }
 
   /** Delete the Margin note backing a highlight (called when the highlight is removed). */
   async function removeFromMargin(highlight: Highlight) {
-    // Drop any still-queued (unsynced) save so it never creates an orphan note.
-    await syncQueue.cancelPending('integration', marginDedupKey(highlight.id));
-    if (!highlight.marginRkey) return; // never synced — nothing on the PDS
-
-    if (!syncStore.isOnline) {
-      await syncQueue.enqueue(
-        'delete',
-        'integration',
-        marginDedupKey(highlight.id),
-        notePayload(highlight, highlight.marginRkey)
-      );
-      return;
-    }
-    try {
-      await api.deleteMarginNote(highlight.marginRkey);
-    } catch (err) {
-      console.error('Failed to delete Margin note, queueing:', err);
-      await syncQueue.enqueue(
-        'delete',
-        'integration',
-        marginDedupKey(highlight.id),
-        notePayload(highlight, highlight.marginRkey)
-      );
-    }
+    await removeHighlightFromMargin(params.itemKey(), highlight);
   }
 
   /** True when the highlight currently targeted by the popover is saved to Margin. */
