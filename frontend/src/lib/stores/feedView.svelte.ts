@@ -999,7 +999,12 @@ function createFeedViewStore() {
       readDocumentUrisThisSession = new Set(readDocumentUrisThisSession);
     }
 
-    // Mark as read when selecting (after updating selection state)
+    // Mark as read when selecting (after updating selection state).
+    // The saved list never auto-marks read by browsing — selection there only
+    // drives the highlight/keyboard cursor; read state changes via explicit
+    // toggle. (Selection in the saved view is also reached by mere hover, so
+    // auto-marking would mark items read just by sweeping the mouse.)
+    if (isSavedView) return;
     if (item.type === 'article') {
       const article = item.item;
       const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);

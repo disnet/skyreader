@@ -163,8 +163,15 @@
   // then the feed body in IndexedDB. Only runs when there's no metadata summary.
   let lazyBodyExcerpt = $state('');
   $effect(() => {
-    lazyBodyExcerpt = '';
-    if (metaSummary || displayItem.type === 'document') return;
+    // Don't clear eagerly here: this effect re-runs whenever `displayItem` gets
+    // a fresh object reference (e.g. hovering a saved item marks it read, which
+    // re-derives the list). Synchronously blanking the excerpt and then async-
+    // reloading it caused a visible flash. Keep the prior value and only swap in
+    // the reloaded text once it resolves — for the same item it's identical.
+    if (metaSummary || displayItem.type === 'document') {
+      lazyBodyExcerpt = '';
+      return;
+    }
 
     // Capture identity up-front, while the union is still narrowed.
     let savedRkey: string | undefined;
