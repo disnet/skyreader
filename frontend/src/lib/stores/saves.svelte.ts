@@ -5,7 +5,18 @@ import { generateTid } from '$lib/utils/tid';
 import { syncQueue, type SavedPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
 import { extractArticle } from '$lib/services/extract';
+import { computeContentStats } from '$lib/services/articleMerge';
 import type { SavedItem } from '$lib/types';
+
+// Derive a word count from the best available body text, returning null when
+// there's nothing to count. Used so a saved item's read time never silently
+// falls back to "1 min" from the short RSS description — every save path that
+// has any body computes a real count locally even when the extractor/proxy
+// didn't supply one.
+function wordCountFrom(...texts: (string | null | undefined)[]): number | null {
+  const body = texts.find((t) => t && t.trim().length > 0) || undefined;
+  return computeContentStats(body).wordCount || null;
+}
 
 // The extracted webpage body is the largest field on a saved item and is only
 // read in the fullscreen reader (the card preview uses `description`; read time
@@ -57,6 +68,23 @@ function createSavesStore() {
 
       // Then fetch from backend
       const response = await api.getSaved();
+
+      // Self-heal old saves that have a body but no stored word count (pre-fix
+      // saves, failed extractions, offline replays). Without this they fall back
+      // to counting the short RSS description and show a misleading "1 min".
+      // Compute locally, persist to IndexedDB, and PATCH the backend so the fix
+      // sticks across reloads and devices instead of recomputing every load.
+      const backfilled: SavedItem[] = [];
+      for (const a of response.articles) {
+        if (a.wordCount == null && a.content) {
+          const wc = wordCountFrom(a.content);
+          if (wc != null) {
+            a.wordCount = wc;
+            backfilled.push(a);
+          }
+        }
+      }
+
       articles = response.articles.map(toLightSaved);
       rebuildMaps();
 
@@ -65,6 +93,16 @@ function createSavesStore() {
       await db.saved.clear();
       if (response.articles.length > 0) {
         await safeBulkPut(db.saved, response.articles);
+      }
+
+      if (backfilled.length > 0 && syncStore.isOnline) {
+        void Promise.all(
+          backfilled.map((a) =>
+            api.updateSaved(a.rkey, { wordCount: a.wordCount! }).catch((err) => {
+              console.warn('Failed to backfill saved word count:', err);
+            })
+          )
+        );
       }
     } catch (err) {
       console.error('Failed to load saved items:', err);
@@ -83,6 +121,11 @@ function createSavesStore() {
       // Fetch HTML via proxy and extract content client-side
       const extracted = await extractArticle(url);
 
+      // Prefer the extractor's word count, but never leave it null when a body
+      // exists — count locally so the read time is right even if the proxy
+      // omitted it.
+      const wordCount = extracted.wordCount || wordCountFrom(extracted.content);
+
       const result = await api.saveFromUrl(url, rkey, {
         title: extracted.title || undefined,
         author: extracted.author || undefined,
@@ -91,7 +134,7 @@ function createSavesStore() {
         domain: extracted.domain || undefined,
         image: extracted.image || undefined,
         publishedAt: extracted.published || undefined,
-        wordCount: extracted.wordCount || undefined,
+        wordCount: wordCount || undefined,
       });
 
       const savedItem: SavedItem = {
@@ -105,7 +148,7 @@ function createSavesStore() {
         contentType: 'webpage',
         domain: extracted.domain,
         image: extracted.image,
-        wordCount: extracted.wordCount,
+        wordCount,
         publishedAt: extracted.published,
         savedAt: result.savedAt,
         source: 'url',
@@ -177,7 +220,10 @@ function createSavesStore() {
         contentType: 'article',
         domain: null,
         image: article.imageUrl || null,
-        wordCount: null,
+        // Count the RSS body up-front so the read time is right immediately —
+        // including offline, where extraction never runs. Upgraded below with
+        // the extracted body's count when online.
+        wordCount: wordCountFrom(rssBody),
         publishedAt: article.publishedAt || null,
         savedAt: now,
         source: 'feed',
@@ -206,6 +252,11 @@ function createSavesStore() {
           } catch (err) {
             console.warn('Article extraction failed, using feed body:', err);
           }
+
+          // Never leave the count null when a body exists: extraction may have
+          // failed (content stayed the RSS body) or returned a body with no
+          // count. Count whatever body we ended up with.
+          if (wordCount == null) wordCount = wordCountFrom(content);
 
           const result = await api.saveFromUrl(article.url, rkey, {
             fromFeed: true,
@@ -246,6 +297,7 @@ function createSavesStore() {
             author: article.author,
             description: article.summary,
             content: rssBody ?? undefined,
+            wordCount: wordCountFrom(rssBody) ?? undefined,
             image: article.imageUrl,
             publishedAt: article.publishedAt,
           } as SavedPayload);
@@ -264,6 +316,7 @@ function createSavesStore() {
           author: article.author,
           description: article.summary,
           content: rssBody ?? undefined,
+          wordCount: wordCountFrom(rssBody) ?? undefined,
           image: article.imageUrl,
           publishedAt: article.publishedAt,
         } as SavedPayload);

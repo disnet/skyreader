@@ -412,6 +412,82 @@ export async function handleGetSaved(request: Request, env: Env): Promise<Respon
   }
 }
 
+// PATCH /api/saved/:rkey — update mutable fields on a saved item.
+// Currently only the precomputed word count, used by the frontend to backfill
+// old saves that were stored without one (so the read time stops falling back
+// to the short description and showing a misleading "1 min"). D1-only: the
+// word count is a derived display value and isn't part of the PDS record's
+// canonical data, so there's no PDS write here.
+export async function handleUpdateSaved(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'PATCH') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const url = new URL(request.url);
+  const rkey = url.pathname.split('/').pop();
+  if (!rkey || !isValidRkey(rkey)) {
+    return invalidRkeyResponse();
+  }
+
+  let body: { wordCount?: number };
+  try {
+    body = (await request.json()) as { wordCount?: number };
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  if (
+    body.wordCount == null ||
+    typeof body.wordCount !== 'number' ||
+    !Number.isFinite(body.wordCount) ||
+    body.wordCount < 0
+  ) {
+    return new Response(JSON.stringify({ error: 'Missing or invalid wordCount' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  try {
+    const result = await env.DB.prepare(
+      'UPDATE saved_articles SET word_count = ? WHERE user_did = ? AND rkey = ?'
+    )
+      .bind(Math.round(body.wordCount), session.did, rkey)
+      .run();
+
+    if (!result.meta.changes) {
+      return new Response(JSON.stringify({ error: 'Not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Failed to update saved item:', error);
+    return new Response(JSON.stringify({ error: 'Failed to update saved item' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
 // DELETE /api/saved/:rkey — delete a saved item
 export async function handleDeleteSaved(
   request: Request,

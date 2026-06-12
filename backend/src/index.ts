@@ -53,6 +53,7 @@ import {
 import {
   handleCreateSaved,
   handleGetSaved,
+  handleUpdateSaved,
   handleDeleteSaved,
   handleDeleteSavedByGuid,
 } from './routes/saved';
@@ -387,7 +388,11 @@ export default {
           break;
         case url.pathname.startsWith('/api/saved/'):
           if (!session) return unauthorizedResponse(headers);
-          response = await handleDeleteSaved(request, env, ctx);
+          if (request.method === 'PATCH') {
+            response = await handleUpdateSaved(request, env);
+          } else {
+            response = await handleDeleteSaved(request, env, ctx);
+          }
           break;
 
         // Settings routes

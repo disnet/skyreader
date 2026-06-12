@@ -40,6 +40,7 @@ export interface SavedPayload {
   author?: string;
   description?: string;
   content?: string;
+  wordCount?: number;
   image?: string;
   publishedAt?: string;
   domain?: string;
@@ -453,6 +454,7 @@ class SyncQueue {
           author: payload.author,
           description: payload.description,
           content: payload.content,
+          wordCount: payload.wordCount,
           image: payload.image,
           publishedAt: payload.publishedAt,
           domain: payload.domain,
