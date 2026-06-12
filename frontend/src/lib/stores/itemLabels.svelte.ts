@@ -1480,6 +1480,40 @@ function createItemLabelsStore() {
     void syncHighlightsToBackend(itemKey, existing.itemType, newHighlights);
   }
 
+  /**
+   * Set (or clear) the note attached to a single highlight, then persist and
+   * sync. Pass an empty/whitespace note to drop the field entirely. The Margin
+   * note record (if any) is updated separately by the caller.
+   */
+  async function setHighlightNote(itemKey: string, highlightId: string, note: string | undefined) {
+    const existing = getLabel(itemKey, 'highlights');
+    if (!existing) return;
+
+    const trimmed = note?.trim();
+    const currentHighlights = (existing.props.highlights as Highlight[]) || [];
+    let changed = false;
+    const newHighlights = currentHighlights.map((h) => {
+      if (h.id !== highlightId) return h;
+      changed = true;
+      if (trimmed) {
+        return { ...h, note: trimmed };
+      }
+      const { note: _n, ...rest } = h;
+      return rest;
+    });
+    if (!changed) return;
+
+    const label: ItemLabel = {
+      ...existing,
+      props: { highlights: newHighlights },
+      updatedAt: Date.now(),
+    };
+    addToState(label);
+    triggerReactivity();
+    await safePut(db.itemLabels, label);
+    void syncHighlightsToBackend(itemKey, existing.itemType, newHighlights);
+  }
+
   // --- Derived helpers ---
 
   function getSavedArticles(): SavedArticle[] {
@@ -1589,6 +1623,7 @@ function createItemLabelsStore() {
     addHighlight,
     removeHighlight,
     setHighlightMargin,
+    setHighlightNote,
     // Derived helpers
     getSavedArticles,
     getSavedItemKeys,

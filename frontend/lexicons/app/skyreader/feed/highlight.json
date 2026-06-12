@@ -26,6 +26,12 @@
       "properties": {
         "id": { "type": "string", "maxLength": 64 },
         "selector": { "type": "ref", "ref": "#defs/textQuoteSelector" },
+        "note": {
+          "type": "string",
+          "maxLength": 3000,
+          "maxGraphemes": 1000,
+          "description": "Optional note/comment attached to the highlight"
+        },
         "createdAt": { "type": "string", "format": "datetime" }
       }
     },

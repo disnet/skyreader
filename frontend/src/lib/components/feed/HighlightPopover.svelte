@@ -1,15 +1,17 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { tooltip } from '$lib/actions/tooltip';
 
   interface Props {
     mode: 'create' | 'remove';
     anchorRect: DOMRect;
-    onHighlight?: () => void;
-    onHighlightToMargin?: () => void;
+    onHighlight?: (note?: string) => void;
+    onHighlightToMargin?: (note?: string) => void;
     onRemove?: () => void;
     onSaveToMargin?: () => void;
+    onSaveNote?: (note: string) => void;
+    existingNote?: string;
     marginSaved?: boolean;
     onClose: () => void;
   }
@@ -21,16 +23,23 @@
     onHighlightToMargin,
     onRemove,
     onSaveToMargin,
+    onSaveNote,
+    existingNote = '',
     marginSaved = false,
     onClose,
   }: Props = $props();
 
   let menuEl = $state<HTMLDivElement | null>(null);
+  let textareaEl = $state<HTMLTextAreaElement | null>(null);
+  // 'toolbar' shows the action buttons; 'note' shows the floating text box.
+  let view = $state<'toolbar' | 'note'>('toolbar');
+  let noteText = $state('');
   let scrollArmed = false;
   let scrollArmTimer: ReturnType<typeof setTimeout> | undefined;
 
   function handleScroll() {
-    if (scrollArmed) onClose();
+    // Don't dismiss while the user is editing a note (e.g. mobile keyboard scroll).
+    if (scrollArmed && view === 'toolbar') onClose();
   }
 
   function positionMenu() {
@@ -53,6 +62,16 @@
 
     menuEl.style.top = `${top}px`;
     menuEl.style.left = `${left}px`;
+  }
+
+  async function openNoteEditor() {
+    noteText = existingNote ?? '';
+    view = 'note';
+    // Let the larger note box render, then reposition and focus.
+    await tick();
+    positionMenu();
+    textareaEl?.focus();
+    textareaEl?.select();
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -93,12 +112,62 @@
 
 <div
   class="highlight-popover"
+  class:note-view={view === 'note'}
   style="position: fixed; z-index: 200;"
   bind:this={menuEl}
   onclick={(e) => e.stopPropagation()}
   onmousedown={(e) => e.stopPropagation()}
 >
-  {#if mode === 'create'}
+  {#if view === 'note'}
+    <textarea
+      class="note-input"
+      bind:this={textareaEl}
+      bind:value={noteText}
+      placeholder="Add a note…"
+      rows="3"
+      onkeydown={(e) => {
+        // Keep typing from triggering reader keyboard shortcuts.
+        if (e.key !== 'Escape') e.stopPropagation();
+      }}
+    ></textarea>
+    <div class="note-actions">
+      {#if mode === 'create'}
+        <button
+          class="note-btn"
+          onclick={() => {
+            onHighlight?.(noteText);
+            onClose();
+          }}
+        >
+          <Icon name="highlighter" size={14} />
+          Save private
+        </button>
+        {#if onHighlightToMargin}
+          <button
+            class="note-btn"
+            onclick={() => {
+              onHighlightToMargin?.(noteText);
+              onClose();
+            }}
+          >
+            <Icon name="margin" size={14} />
+            Save to Margin
+          </button>
+        {/if}
+      {:else}
+        <button
+          class="note-btn primary"
+          onclick={() => {
+            onSaveNote?.(noteText);
+            onClose();
+          }}
+        >
+          <Icon name="check" size={14} />
+          Save note
+        </button>
+      {/if}
+    </div>
+  {:else if mode === 'create'}
     <button
       class="popover-btn icon-only"
       use:tooltip={'Save private highlight'}
@@ -123,6 +192,14 @@
         <Icon name="margin" size={16} />
       </button>
     {/if}
+    <button
+      class="popover-btn icon-only"
+      use:tooltip={'Add a note'}
+      aria-label="Add a note"
+      onclick={openNoteEditor}
+    >
+      <Icon name="message-circle" size={16} />
+    </button>
   {:else}
     <button
       class="popover-btn icon-only remove"
@@ -158,6 +235,16 @@
         </button>
       {/if}
     {/if}
+    {#if onSaveNote}
+      <button
+        class="popover-btn icon-only"
+        use:tooltip={existingNote ? 'Edit note' : 'Add a note'}
+        aria-label={existingNote ? 'Edit note' : 'Add a note'}
+        onclick={openNoteEditor}
+      >
+        <Icon name="message-circle" size={16} />
+      </button>
+    {/if}
   {/if}
 </div>
 
@@ -170,6 +257,13 @@
     border-radius: 6px;
     padding: 2px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+
+  .highlight-popover.note-view {
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    width: 260px;
   }
 
   .popover-btn {
@@ -208,5 +302,60 @@
     font-size: var(--text-xs);
     color: var(--color-text-muted, #64748b);
     white-space: nowrap;
+  }
+
+  .note-input {
+    width: 100%;
+    box-sizing: border-box;
+    /* No drag handle; iOS won't zoom on focus at >=16px font-size. */
+    resize: none;
+    min-height: 60px;
+    padding: 6px 8px;
+    border: 1px solid var(--color-border, #e2e8f0);
+    border-radius: 4px;
+    font: inherit;
+    font-size: 16px;
+    color: var(--color-text, #1a1a1a);
+    background: var(--color-bg, #fff);
+  }
+
+  .note-input:focus {
+    outline: none;
+    border-color: var(--color-primary, #0066cc);
+  }
+
+  .note-actions {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+  }
+
+  .note-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    border: 1px solid var(--color-border, #e2e8f0);
+    background: var(--color-surface, #fff);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: var(--text-xs);
+    color: var(--color-text, #1a1a1a);
+    white-space: nowrap;
+  }
+
+  .note-btn:hover {
+    background: var(--color-hover, #f1f5f9);
+  }
+
+  .note-btn.primary {
+    border-color: var(--color-primary, #0066cc);
+    color: var(--color-primary, #0066cc);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .note-input {
+      background: var(--color-bg-secondary, #2a2a2a);
+    }
   }
 </style>
