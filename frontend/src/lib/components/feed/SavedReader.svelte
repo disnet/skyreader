@@ -260,6 +260,22 @@
 
   let isArchived = $derived(itemLabelsStore.isArchived(itemKey));
   let isSaved = $derived(itemLabelsStore.isSaved(itemKey));
+
+  // Highlights offered to the share composer as quick blockquotes. A bookmark's
+  // display key is its AT-URI (bm.uri), but highlights — like every label — can
+  // also be stored against the article guid (made on the feed card or synced
+  // from another device; see SavedListView's archive dual-keying). So union both
+  // keys, deduped by id, or the Quotes button silently misses guid-keyed ones.
+  let shareHighlights = $derived.by(() => {
+    const primary = itemLabelsStore.getHighlights(itemKey);
+    if (readerItem.type !== 'saved') return primary;
+    const guid = readerItem.item.itemGuid;
+    if (!guid || guid === itemKey) return primary;
+    const byGuid = itemLabelsStore.getHighlights(guid);
+    if (byGuid.length === 0) return primary;
+    const seen = new Set(primary.map((h) => h.id));
+    return [...primary, ...byGuid.filter((h) => !seen.has(h.id))];
+  });
   // ── Sharing + Discussion (the Atmosphere) ──────────────────────────────────
   // Driven straight off linkblogStore, keyed on the item's URL — the same source
   // of truth the feed card uses — so the share, its note, and the lane counts
@@ -970,6 +986,7 @@
           expandedLaneItems={atmosphere.expandedLaneItems}
           currentlyShared={sharedNow}
           currentNote={currentShareNote}
+          highlights={shareHighlights}
           lanesOpen={true}
           panelId="reader-discussion-panel"
           onToggleLane={atmosphere.toggleLane}
