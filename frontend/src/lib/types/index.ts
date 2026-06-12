@@ -881,6 +881,9 @@ export interface Highlight {
   id: string;
   selector: TextQuoteSelector;
   createdAt: number; // epoch ms
+  // Optional note/comment the user attached to the highlight. Synced as a W3C
+  // comment body on the Margin note when the highlight is pushed to the PDS.
+  note?: string;
   // Set once the highlight has been pushed to Margin (at.margin.note on the user's PDS).
   marginUri?: string;
   marginRkey?: string;

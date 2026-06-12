@@ -4,6 +4,7 @@ import { createSelector, createSelectorForElement, findTextInDOM } from '$lib/ut
 import {
   saveHighlightToMargin as saveToMargin,
   removeHighlightFromMargin,
+  updateHighlightNoteOnMargin,
 } from '$lib/services/marginHighlights';
 import type { ItemLabelType, Highlight, TextQuoteSelector } from '$lib/types';
 
@@ -309,13 +310,15 @@ export function useHighlights(params: HighlightParams) {
     };
   }
 
-  function createHighlightFromPopover() {
+  function createHighlightFromPopover(note?: string) {
     if (!popoverState?.pendingSelector) return;
 
+    const trimmed = note?.trim();
     const highlight: Highlight = {
       id: generateId(),
       selector: popoverState.pendingSelector,
       createdAt: Date.now(),
+      ...(trimmed ? { note: trimmed } : {}),
     };
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
     window.getSelection()?.removeAllRanges();
@@ -324,19 +327,36 @@ export function useHighlights(params: HighlightParams) {
   }
 
   /** Create a highlight from the current selection and push it to Margin. */
-  function createHighlightFromPopoverToMargin() {
+  function createHighlightFromPopoverToMargin(note?: string) {
     if (!popoverState?.pendingSelector) return;
 
+    const trimmed = note?.trim();
     const highlight: Highlight = {
       id: generateId(),
       selector: popoverState.pendingSelector,
       createdAt: Date.now(),
+      ...(trimmed ? { note: trimmed } : {}),
     };
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
     window.getSelection()?.removeAllRanges();
     popoverState = null;
     requestAnimationFrame(applyHighlights);
     void saveHighlightToMargin(highlight);
+  }
+
+  /** Save (or clear) the note on the highlight currently targeted by the popover. */
+  function saveNoteFromPopover(note: string) {
+    if (!popoverState?.highlightId) return;
+    const itemKey = params.itemKey();
+    const highlightId = popoverState.highlightId;
+    popoverState = null;
+    void (async () => {
+      await itemLabelsStore.setHighlightNote(itemKey, highlightId, note);
+      const updated = itemLabelsStore.getHighlights(itemKey).find((h) => h.id === highlightId);
+      if (updated?.marginRkey) {
+        await updateNoteOnMargin(updated);
+      }
+    })();
   }
 
   function removeHighlightFromPopover() {
@@ -376,6 +396,16 @@ export function useHighlights(params: HighlightParams) {
     await removeHighlightFromMargin(params.itemKey(), highlight);
   }
 
+  /** Push an edited note onto the highlight's existing Margin note (same rkey). */
+  async function updateNoteOnMargin(highlight: Highlight) {
+    await updateHighlightNoteOnMargin(
+      params.itemKey(),
+      highlight,
+      params.itemUrl?.(),
+      params.itemTitle?.()
+    );
+  }
+
   /** True when the highlight currently targeted by the popover is saved to Margin. */
   function isPopoverHighlightSavedToMargin(): boolean {
     if (!popoverState?.highlightId) return false;
@@ -383,6 +413,15 @@ export function useHighlights(params: HighlightParams) {
       .getHighlights(params.itemKey())
       .find((h) => h.id === popoverState!.highlightId);
     return !!hl?.marginUri;
+  }
+
+  /** The current note on the highlight targeted by the popover (for prefill). */
+  function popoverHighlightNote(): string {
+    if (!popoverState?.highlightId) return '';
+    const hl = itemLabelsStore
+      .getHighlights(params.itemKey())
+      .find((h) => h.id === popoverState!.highlightId);
+    return hl?.note ?? '';
   }
 
   /** Save-on-Margin action for the popover's currently-targeted highlight. */
@@ -483,12 +522,16 @@ export function useHighlights(params: HighlightParams) {
     applyHighlights,
     createHighlightFromPopover,
     createHighlightFromPopoverToMargin,
+    saveNoteFromPopover,
     removeHighlightFromPopover,
     closePopover,
     toggleParagraphHighlight,
     savePopoverHighlightToMargin,
     get popoverHighlightSavedToMargin() {
       return isPopoverHighlightSavedToMargin();
+    },
+    get popoverHighlightNote() {
+      return popoverHighlightNote();
     },
   };
 }

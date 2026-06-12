@@ -843,9 +843,27 @@ class ApiClient {
     exact: string;
     prefix?: string;
     suffix?: string;
+    note?: string;
   }): Promise<{ uri: string; cid: string; rkey: string }> {
     return this.fetch('/api/integrations/margin/notes', {
       method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateMarginNote(
+    rkey: string,
+    data: {
+      source: string;
+      title?: string;
+      exact: string;
+      prefix?: string;
+      suffix?: string;
+      note?: string;
+    }
+  ): Promise<{ uri: string; cid: string; rkey: string }> {
+    return this.fetch(`/api/integrations/margin/notes/${encodeURIComponent(rkey)}`, {
+      method: 'PUT',
       body: JSON.stringify(data),
     });
   }

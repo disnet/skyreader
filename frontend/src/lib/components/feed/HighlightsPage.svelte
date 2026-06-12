@@ -48,6 +48,7 @@
   interface HighlightRow {
     id: string;
     text: string;
+    note?: string;
     createdAt: number;
     isMargin: boolean;
     highlight: Highlight;
@@ -141,6 +142,7 @@
       group.rows.push({
         id: highlight.id,
         text: highlight.selector.exact,
+        note: highlight.note,
         createdAt: highlight.createdAt,
         isMargin: Boolean(highlight.marginUri),
         highlight,
@@ -258,6 +260,9 @@
                   <button class="quote-btn" onclick={() => openGroup(group)} title="Open article">
                     <mark>{row.text}</mark>
                   </button>
+                  {#if row.note}
+                    <p class="row-note">{row.note}</p>
+                  {/if}
                   <div class="row-footer">
                     <span class="row-meta">
                       <span class="time">{formatRelativeTime(row.createdAt)}</span>
@@ -517,6 +522,15 @@
     line-clamp: 6;
     -webkit-box-orient: vertical;
     overflow: hidden;
+  }
+
+  .row-note {
+    margin: 0.375rem 0 0;
+    padding-left: 0.875rem;
+    font-size: var(--text-sm);
+    line-height: var(--leading-relaxed, 1.6);
+    color: var(--color-text-secondary, #555);
+    white-space: pre-wrap;
   }
 
   .row-footer {

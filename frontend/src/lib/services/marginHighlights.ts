@@ -31,6 +31,7 @@ function notePayload(
     exact: highlight.selector.exact,
     prefix: highlight.selector.prefix,
     suffix: highlight.selector.suffix,
+    note: highlight.note,
     ...(rkey ? { rkey } : {}),
   };
 }
@@ -72,6 +73,7 @@ export async function saveHighlightToMargin(
       exact: highlight.selector.exact,
       prefix: highlight.selector.prefix,
       suffix: highlight.selector.suffix,
+      note: highlight.note,
     });
     await itemLabelsStore.setHighlightMargin(itemKey, highlight.id, {
       uri: result.uri,
@@ -127,6 +129,53 @@ export async function removeHighlightFromMargin(
       marginDedupKey(itemKey, highlight.id),
       notePayload(itemKey, highlight, highlight.marginUri ?? '', undefined, highlight.marginRkey)
     );
+  }
+}
+
+/**
+ * Update the note body on an already-synced Margin note (same rkey). The passed
+ * highlight must carry the new `note` value. No-op if the highlight was never
+ * pushed to Margin. Falls back to the offline sync queue. Returns true once the
+ * update is applied (or queued).
+ */
+export async function updateHighlightNoteOnMargin(
+  itemKey: string,
+  highlight: Highlight,
+  source: string | null | undefined,
+  title?: string
+): Promise<boolean> {
+  if (!highlight.marginRkey) return true; // not on the PDS — nothing to update
+  if (!source) return false;
+
+  if (!syncStore.isOnline) {
+    await syncQueue.enqueue(
+      'update',
+      'integration',
+      marginDedupKey(itemKey, highlight.id),
+      notePayload(itemKey, highlight, source, title, highlight.marginRkey)
+    );
+    return true;
+  }
+
+  try {
+    await api.updateMarginNote(highlight.marginRkey, {
+      source,
+      title,
+      exact: highlight.selector.exact,
+      prefix: highlight.selector.prefix,
+      suffix: highlight.selector.suffix,
+      note: highlight.note,
+    });
+    return true;
+  } catch (err) {
+    console.error('Failed to update Margin note, queueing:', err);
+    await syncQueue.enqueue(
+      'update',
+      'integration',
+      marginDedupKey(itemKey, highlight.id),
+      notePayload(itemKey, highlight, source, title, highlight.marginRkey)
+    );
+    return true;
   }
 }
 

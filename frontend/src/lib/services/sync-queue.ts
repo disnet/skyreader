@@ -70,7 +70,8 @@ export interface MarginNotePayload {
   exact: string;
   prefix?: string;
   suffix?: string;
-  rkey?: string; // present for deletes of already-synced notes
+  note?: string;
+  rkey?: string; // present for updates/deletes of already-synced notes
 }
 
 type SyncPayload =
@@ -516,6 +517,20 @@ class SyncQueue {
       if (payload.rkey) await api.deleteMarginNote(payload.rkey);
       return;
     }
+    if (operation === 'update') {
+      // Editing the note on an already-synced highlight: update in place by rkey.
+      if (payload.rkey) {
+        await api.updateMarginNote(payload.rkey, {
+          source: payload.source,
+          title: payload.title,
+          exact: payload.exact,
+          prefix: payload.prefix,
+          suffix: payload.suffix,
+          note: payload.note,
+        });
+      }
+      return;
+    }
     if (operation !== 'create') return;
     const result = await api.createMarginNote({
       source: payload.source,
@@ -523,6 +538,7 @@ class SyncQueue {
       exact: payload.exact,
       prefix: payload.prefix,
       suffix: payload.suffix,
+      note: payload.note,
     });
     // Write the returned note uri/rkey back onto the highlight. Dynamic import
     // avoids a static cycle (itemLabels imports this module).

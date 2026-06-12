@@ -319,6 +319,41 @@ export async function handleCreateMarginBookmark(request: Request, env: Env): Pr
   );
 }
 
+interface MarginNoteBody {
+  source: string;
+  title?: string;
+  exact: string;
+  prefix?: string;
+  suffix?: string;
+  note?: string;
+}
+
+/**
+ * Build an at.margin.note record. When a `note` is present it's carried as the
+ * annotation's comment body — Margin expects a `{ value, format }` shape — so
+ * the note stays portable across the Atmosphere.
+ */
+function buildMarginNoteRecord(body: MarginNoteBody, createdAt: string) {
+  const note = body.note?.trim();
+  return {
+    $type: 'at.margin.note',
+    motivation: 'highlighting',
+    target: {
+      source: body.source,
+      ...(body.title ? { title: body.title } : {}),
+      selector: {
+        type: 'TextQuoteSelector',
+        exact: body.exact,
+        ...(body.prefix ? { prefix: body.prefix } : {}),
+        ...(body.suffix ? { suffix: body.suffix } : {}),
+      },
+    },
+    ...(note ? { body: { value: note, format: 'text/plain' } } : {}),
+    generator: { name: 'Skyreader', homepage: 'https://skyreader.app' },
+    createdAt,
+  };
+}
+
 /**
  * POST /api/integrations/margin/notes — create an at.margin.note (highlight) on PDS
  */
@@ -334,15 +369,9 @@ export async function handleCreateMarginNote(request: Request, env: Env): Promis
   const checkResult = checkIntegrationScopes(session, 'margin');
   if (checkResult) return checkResult;
 
-  let body: {
-    source: string;
-    title?: string;
-    exact: string;
-    prefix?: string;
-    suffix?: string;
-  };
+  let body: MarginNoteBody;
   try {
-    body = (await request.json()) as typeof body;
+    body = (await request.json()) as MarginNoteBody;
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
       status: 400,
@@ -358,23 +387,7 @@ export async function handleCreateMarginNote(request: Request, env: Env): Promis
   }
 
   const rkey = generateTID();
-  const now = new Date().toISOString();
-  const record = {
-    $type: 'at.margin.note',
-    motivation: 'highlighting',
-    target: {
-      source: body.source,
-      ...(body.title ? { title: body.title } : {}),
-      selector: {
-        type: 'TextQuoteSelector',
-        exact: body.exact,
-        ...(body.prefix ? { prefix: body.prefix } : {}),
-        ...(body.suffix ? { suffix: body.suffix } : {}),
-      },
-    },
-    generator: { name: 'Skyreader', homepage: 'https://skyreader.app' },
-    createdAt: now,
-  };
+  const record = buildMarginNoteRecord(body, new Date().toISOString());
 
   const pdsClient = createPDSClient(session);
   const result = await pdsClient.putRecord('at.margin.note', rkey, record);
@@ -388,6 +401,64 @@ export async function handleCreateMarginNote(request: Request, env: Env): Promis
 
   return new Response(JSON.stringify({ uri: result.data.uri, cid: result.data.cid, rkey }), {
     status: 201,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+/**
+ * PUT /api/integrations/margin/notes/:rkey — update an existing at.margin.note
+ * (e.g. to add/edit/clear its note body), reusing the same rkey.
+ */
+export async function handleUpdateMarginNote(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const checkResult = checkIntegrationScopes(session, 'margin');
+  if (checkResult) return checkResult;
+
+  const rkey = new URL(request.url).pathname.split('/').pop();
+  if (!rkey) {
+    return new Response(JSON.stringify({ error: 'rkey is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  let body: MarginNoteBody;
+  try {
+    body = (await request.json()) as MarginNoteBody;
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  if (!body.source || !body.exact) {
+    return new Response(JSON.stringify({ error: 'source and exact are required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const record = buildMarginNoteRecord(body, new Date().toISOString());
+
+  const pdsClient = createPDSClient(session);
+  const result = await pdsClient.putRecord('at.margin.note', rkey, record);
+
+  if (!result.success) {
+    return new Response(JSON.stringify({ error: result.error }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  return new Response(JSON.stringify({ uri: result.data.uri, cid: result.data.cid, rkey }), {
     headers: { 'Content-Type': 'application/json' },
   });
 }

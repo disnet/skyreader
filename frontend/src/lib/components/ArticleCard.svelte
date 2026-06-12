@@ -879,6 +879,8 @@
       onHighlightToMargin={highlights.createHighlightFromPopoverToMargin}
       onRemove={highlights.removeHighlightFromPopover}
       onSaveToMargin={highlights.savePopoverHighlightToMargin}
+      onSaveNote={highlights.saveNoteFromPopover}
+      existingNote={highlights.popoverHighlightNote}
       marginSaved={highlights.popoverHighlightSavedToMargin}
       onClose={highlights.closePopover}
     />
