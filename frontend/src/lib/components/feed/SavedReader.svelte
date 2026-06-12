@@ -559,17 +559,31 @@
     enabled: () => true,
   });
 
-  // Set up observer when reader body is mounted
+  // Set up observer when the reader body is mounted — and re-run it whenever the
+  // rendered content changes. Saved/article bodies load lazily (see the lazy*
+  // effects above), so the first frame shows only the short description fallback;
+  // depending on `sanitizedContent` here re-detects paragraphs against the full
+  // body once it lands. `restoredForKey` gates the position restore to once per
+  // item, but keeps retrying while a restore comes back `'partial'` (the saved
+  // paragraph isn't in the detected set yet because the body is still loading).
+  let restoredForKey: string | null = null;
   $effect(() => {
+    void sanitizedContent; // re-run when the lazily-loaded body settles
+    const key = itemKey;
     if (readerBodyEl && overlayEl) {
       tick().then(() => {
         paragraphTracking.setupObserver();
         linkInterception.attach();
         highlightsHook.attach();
+        if (restoredForKey === key) return;
         setTimeout(() => {
+          if (restoredForKey === key) return;
           suppressScrollHide = true;
-          const restored = paragraphTracking.restorePosition();
-          if (restored) {
+          const result = paragraphTracking.restorePosition();
+          // 'exact'/'none' are terminal; 'partial' means retry on the next
+          // content settle (the full body hasn't arrived yet).
+          if (result !== 'partial') restoredForKey = key;
+          if (result !== 'none') {
             // Wait for smooth scroll to finish before re-enabling header hide
             setTimeout(() => {
               if (overlayEl) lastScrollY = overlayEl.scrollTop;

@@ -110,7 +110,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     const el = document.createElement('div');
     el.style.cssText =
       'position:absolute;left:-8px;right:-8px;pointer-events:none;border-radius:4px;' +
-      'background:color-mix(in srgb, var(--color-primary,#3b82f6) 4%, transparent);' +
+      'background:color-mix(in srgb, var(--color-primary,#0066cc) 4%, transparent);' +
       'transition:top 0.25s ease,height 0.25s ease,opacity 0.25s ease;' +
       'opacity:0;z-index:0;';
     container.style.position = 'relative';
@@ -209,14 +209,25 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     }
   }
 
-  function restorePosition(): boolean {
+  /**
+   * Restore the saved reading position.
+   * - `'exact'`   — the saved paragraph exists in the detected set and we scrolled to it.
+   * - `'partial'` — there is a saved position but the body isn't fully loaded yet, so the
+   *                 index clamped short; the caller should retry once more content arrives.
+   * - `'none'`    — nothing to restore.
+   *
+   * Saved-article and feed-article bodies load lazily (the in-memory copy is stripped),
+   * so the first detect pass often sees only the short description fallback. Reporting
+   * `'partial'` lets the reader re-restore when the full body lands instead of stranding
+   * the user at the top.
+   */
+  function restorePosition(): 'exact' | 'partial' | 'none' {
     const saved = itemLabelsStore.getReadProgress(params.itemKey());
-    if (saved && saved.paragraphIndex > 0 && paragraphs.length > 0) {
-      const targetIdx = Math.min(saved.paragraphIndex, paragraphs.length - 1);
-      scrollToParagraph(targetIdx);
-      return true;
-    }
-    return false;
+    if (!saved || saved.paragraphIndex <= 0 || paragraphs.length === 0) return 'none';
+    const exact = saved.paragraphIndex <= paragraphs.length - 1;
+    const targetIdx = Math.min(saved.paragraphIndex, paragraphs.length - 1);
+    scrollToParagraph(targetIdx);
+    return exact ? 'exact' : 'partial';
   }
 
   function cleanup() {
