@@ -441,7 +441,7 @@ function createItemLabelsStore() {
       const serverHls = (raw.props?.highlights as Highlight[]) || [];
       const serverCutoffMs = raw.updatedAt * 1000;
       const byId = new Map<string, Highlight>(serverHls.map((h) => [h.id, h]));
-      for (const h of getHighlights(raw.itemKey)) {
+      for (const h of rawHighlights(raw.itemKey)) {
         if (!byId.has(h.id) && h.createdAt > serverCutoffMs) byId.set(h.id, h);
       }
       const merged = [...byId.values()];
@@ -1337,57 +1337,37 @@ function createItemLabelsStore() {
 
   // --- Highlight mutations ---
 
+  // A logical item can be addressed by more than one key: a saved feed article is
+  // keyed by its guid on the feed card/reader, but by the save's AT-URI in the
+  // saved-list reader. We store every highlight under ONE canonical key — the
+  // guid when a save bridges to one, else the key itself — so a single item never
+  // splits into two rows. This resolves any incoming key (guid or uri) to that
+  // canonical key; an item with no save (or no guid) resolves to itself.
+  // Depends on savesStore being loaded: a highlight created before saves hydrate
+  // resolves to its uri and is folded back under the guid by a later write.
+  function canonicalKey(itemKey: string): string {
+    for (const bm of savesStore.articles) {
+      if (bm.itemGuid === itemKey || bm.uri === itemKey) {
+        return bm.itemGuid || bm.uri;
+      }
+    }
+    return itemKey;
+  }
+
+  // Exact-key read. Used by reconcile (which reconciles each server row by its
+  // own key) and internally by the mutations after they've canonicalized.
+  function rawHighlights(key: string): Highlight[] {
+    const lbl = getLabel(key, 'highlights');
+    return lbl ? (lbl.props.highlights as Highlight[]) || [] : [];
+  }
+
+  // Public read: callers may hold a guid or a uri — always serve the canonical set.
   function getHighlights(itemKey: string): Highlight[] {
-    const lbl = getLabel(itemKey, 'highlights');
-    if (!lbl) return [];
-    return (lbl.props.highlights as Highlight[]) || [];
+    return rawHighlights(canonicalKey(itemKey));
   }
 
   function hasHighlights(itemKey: string): boolean {
-    const lbl = getLabel(itemKey, 'highlights');
-    if (!lbl) return false;
-    const highlights = (lbl.props.highlights as Highlight[]) || [];
-    return highlights.length > 0;
-  }
-
-  // A logical item can be addressed by more than one key: a saved feed article is
-  // keyed by its guid on the feed card/reader, but by the save's AT-URI in the
-  // saved-list reader, and labels can land under either (or arrive from another
-  // device). Bridge guid<->uri through savesStore so highlight reads/grouping see
-  // the same item regardless of which key the caller holds. Returns the input key
-  // alone when nothing bridges it.
-  function bridgedKeys(itemKey: string): string[] {
-    for (const bm of savesStore.articles) {
-      if (bm.itemGuid === itemKey || bm.uri === itemKey) {
-        const keys: string[] = [];
-        if (bm.itemGuid) keys.push(bm.itemGuid);
-        if (bm.uri && bm.uri !== bm.itemGuid) keys.push(bm.uri);
-        if (keys.length > 0) return keys;
-      }
-    }
-    return [itemKey];
-  }
-
-  // Canonical key for grouping/deduping an item's highlights — the guid when a
-  // save bridges to one, else the key itself. Keeps highlights made on the feed
-  // card (guid) and in the saved-list reader (uri) under one identity.
-  function canonicalHighlightKey(itemKey: string): string {
-    return bridgedKeys(itemKey)[0];
-  }
-
-  // Highlights for a logical item, unioned across every key that can address it
-  // (see bridgedKeys) and deduped by id. Use this for any cross-key read — the
-  // share composer, etc. — instead of getHighlights against a single key.
-  function getHighlightsForItem(itemKey: string): Highlight[] {
-    const keys = bridgedKeys(itemKey);
-    if (keys.length === 1) return getHighlights(keys[0]);
-    const byId = new Map<string, Highlight>();
-    for (const key of keys) {
-      for (const h of getHighlights(key)) {
-        if (!byId.has(h.id)) byId.set(h.id, h);
-      }
-    }
-    return [...byId.values()];
+    return getHighlights(itemKey).length > 0;
   }
 
   /**
@@ -1433,6 +1413,7 @@ function createItemLabelsStore() {
   }
 
   async function addHighlight(itemKey: string, itemType: ItemLabelType, highlight: Highlight) {
+    itemKey = canonicalKey(itemKey);
     const existing = getLabel(itemKey, 'highlights');
     const currentHighlights = existing ? (existing.props.highlights as Highlight[]) || [] : [];
     const newHighlights = [...currentHighlights, highlight];
@@ -1453,6 +1434,7 @@ function createItemLabelsStore() {
   }
 
   async function removeHighlight(itemKey: string, highlightId: string) {
+    itemKey = canonicalKey(itemKey);
     const existing = getLabel(itemKey, 'highlights');
     if (!existing) return;
 
@@ -1491,6 +1473,7 @@ function createItemLabelsStore() {
     highlightId: string,
     margin: { uri: string; rkey: string } | null
   ) {
+    itemKey = canonicalKey(itemKey);
     const existing = getLabel(itemKey, 'highlights');
     if (!existing) return;
 
@@ -1526,6 +1509,7 @@ function createItemLabelsStore() {
    * note record (if any) is updated separately by the caller.
    */
   async function setHighlightNote(itemKey: string, highlightId: string, note: string | undefined) {
+    itemKey = canonicalKey(itemKey);
     const existing = getLabel(itemKey, 'highlights');
     if (!existing) return;
 
@@ -1659,8 +1643,7 @@ function createItemLabelsStore() {
       return allHighlights;
     },
     getHighlights,
-    getHighlightsForItem,
-    canonicalHighlightKey,
+    canonicalKey,
     hasHighlights,
     addHighlight,
     removeHighlight,

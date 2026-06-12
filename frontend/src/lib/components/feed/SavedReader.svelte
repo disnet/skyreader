@@ -262,11 +262,10 @@
   let isSaved = $derived(itemLabelsStore.isSaved(itemKey));
 
   // Highlights offered to the share composer as quick blockquotes. A saved item's
-  // display key is its AT-URI, but highlights can also be stored against the
-  // article guid (made on the feed card or synced from another device), so read
-  // across both via the store's guid<->uri bridge — otherwise the Quotes button
-  // silently misses guid-keyed ones.
-  let shareHighlights = $derived(itemLabelsStore.getHighlightsForItem(itemKey));
+  // display key is its AT-URI, but highlights are stored under the canonical guid;
+  // getHighlights resolves either key, so this sees them regardless of which the
+  // reader holds.
+  let shareHighlights = $derived(itemLabelsStore.getHighlights(itemKey));
   // ── Sharing + Discussion (the Atmosphere) ──────────────────────────────────
   // Driven straight off linkblogStore, keyed on the item's URL — the same source
   // of truth the feed card uses — so the share, its note, and the lane counts
