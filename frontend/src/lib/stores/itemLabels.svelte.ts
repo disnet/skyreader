@@ -322,9 +322,10 @@ function createItemLabelsStore() {
   }
 
   // The backend-managed (non-read) label types stored in item_labels_cache.
-  // 'read' positions live in dedicated tables/endpoints; 'highlights' are
-  // local-only. Everything else here is fetched in a single pass.
-  const MANAGED_LABELS = ['tagged', 'archived', 'readProgress'] as const;
+  // 'read' positions live in dedicated tables/endpoints. Everything else here
+  // is fetched in a single pass. 'highlights' carries a Highlight[] array and
+  // is merged by id (union) rather than overwritten — see the loop below.
+  const MANAGED_LABELS = ['tagged', 'archived', 'readProgress', 'highlights'] as const;
 
   // Fetch managed labels in ONE paginated stream and reconcile each type,
   // instead of issuing a separate (paginated) /api/labels request per type.
@@ -421,6 +422,39 @@ function createItemLabelsStore() {
         itemType: (raw.itemType as ItemLabelType) || 'article',
         label: 'readProgress',
         props: raw.props || {},
+        createdAt: raw.createdAt,
+        updatedAt: raw.updatedAt,
+      };
+      addToState(lbl);
+      dbOps.push(lbl);
+    }
+    // Highlights are a Highlight[] array, so we union with the local set by id
+    // instead of overwriting — a highlight added on another device must never
+    // clobber one added here. We use each highlight's own createdAt (epoch ms,
+    // vs the row's updatedAt in unix seconds) to tell "the server hasn't seen
+    // my new highlight yet" (keep it) from "this was deleted remotely after I
+    // cached it" (drop it). Note: removing a SINGLE highlight from a multi-
+    // highlight item may not propagate to a device that already cached it, since
+    // union re-adds it; full clears do propagate via the deletedAt tombstone
+    // above. Per-highlight tombstones would close that gap but are out of scope.
+    for (const raw of byLabel.get('highlights') || []) {
+      const serverHls = (raw.props?.highlights as Highlight[]) || [];
+      const serverCutoffMs = raw.updatedAt * 1000;
+      const byId = new Map<string, Highlight>(serverHls.map((h) => [h.id, h]));
+      for (const h of getHighlights(raw.itemKey)) {
+        if (!byId.has(h.id) && h.createdAt > serverCutoffMs) byId.set(h.id, h);
+      }
+      const merged = [...byId.values()];
+      if (merged.length === 0) {
+        removeFromState(raw.itemKey, 'highlights');
+        removed.push([raw.itemKey, 'highlights']);
+        continue;
+      }
+      const lbl: ItemLabel = {
+        itemKey: raw.itemKey,
+        itemType: (raw.itemType as ItemLabelType) || 'article',
+        label: 'highlights',
+        props: { highlights: merged },
         createdAt: raw.createdAt,
         updatedAt: raw.updatedAt,
       };
@@ -1316,6 +1350,48 @@ function createItemLabelsStore() {
     return highlights.length > 0;
   }
 
+  /**
+   * Push the current highlights array for an item to the backend so it syncs
+   * across devices. Mirrors syncTaggedLabel / syncArchiveToBackend: direct API
+   * call when online, fall back to the sync queue (collection 'label') on
+   * failure or when offline. An empty array deletes the label (tombstone).
+   */
+  async function syncHighlightsToBackend(
+    itemKey: string,
+    itemType: ItemLabelType,
+    highlights: Highlight[]
+  ) {
+    const payload: LabelPayload = {
+      itemKey,
+      itemType,
+      label: 'highlights',
+      props: { highlights },
+    };
+    if (highlights.length === 0) {
+      if (syncStore.isOnline) {
+        try {
+          await api.deleteLabel(itemKey, 'highlights');
+        } catch (e) {
+          console.error('Failed to delete highlights label, queueing for retry:', e);
+          await syncQueue.enqueue('delete', 'label', `${itemKey}\0highlights`, payload);
+        }
+      } else {
+        await syncQueue.enqueue('delete', 'label', `${itemKey}\0highlights`, payload);
+      }
+    } else {
+      if (syncStore.isOnline) {
+        try {
+          await api.addLabel({ itemKey, itemType, label: 'highlights', props: { highlights } });
+        } catch (e) {
+          console.error('Failed to sync highlights label, queueing for retry:', e);
+          await syncQueue.enqueue('create', 'label', `${itemKey}\0highlights`, payload);
+        }
+      } else {
+        await syncQueue.enqueue('create', 'label', `${itemKey}\0highlights`, payload);
+      }
+    }
+  }
+
   async function addHighlight(itemKey: string, itemType: ItemLabelType, highlight: Highlight) {
     const existing = getLabel(itemKey, 'highlights');
     const currentHighlights = existing ? (existing.props.highlights as Highlight[]) || [] : [];
@@ -1333,6 +1409,7 @@ function createItemLabelsStore() {
     addToState(label);
     triggerReactivity();
     await safePut(db.itemLabels, label);
+    void syncHighlightsToBackend(itemKey, label.itemType, newHighlights);
   }
 
   async function removeHighlight(itemKey: string, highlightId: string) {
@@ -1361,12 +1438,13 @@ function createItemLabelsStore() {
       triggerReactivity();
       await safePut(db.itemLabels, label);
     }
+    void syncHighlightsToBackend(itemKey, existing.itemType, newHighlights);
   }
 
   /**
-   * Record (or clear) the Margin sync state for a single highlight. Local-only
-   * (like all highlight storage) — persists the at.margin.note uri/rkey so the
-   * UI can show "saved" state and later delete the note.
+   * Record (or clear) the Margin sync state for a single highlight — persists
+   * the at.margin.note uri/rkey so the UI can show "saved" state and later
+   * delete the note. Synced to the backend with the rest of the highlights.
    */
   async function setHighlightMargin(
     itemKey: string,
@@ -1397,6 +1475,9 @@ function createItemLabelsStore() {
     addToState(label);
     triggerReactivity();
     await safePut(db.itemLabels, label);
+    // Margin notes are global (one at.margin.note per highlight), so propagate
+    // the learned uri/rkey to other devices via the same highlights label.
+    void syncHighlightsToBackend(itemKey, existing.itemType, newHighlights);
   }
 
   // --- Derived helpers ---

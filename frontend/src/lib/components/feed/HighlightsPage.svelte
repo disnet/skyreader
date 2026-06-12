@@ -22,6 +22,7 @@
   import { useScrollDirection } from '$lib/hooks/useScrollDirection.svelte';
   import { saveHighlightToMargin, deleteHighlight } from '$lib/services/marginHighlights';
   import { formatRelativeTime } from '$lib/utils/date';
+  import { decodeEntities } from '$lib/utils/entities';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import type { Highlight, ItemLabelType, SavedItem } from '$lib/types';
 
@@ -127,7 +128,7 @@
         group = {
           itemKey,
           itemType,
-          title: title || 'Untitled',
+          title: decodeEntities(title) || 'Untitled',
           url,
           domain: domainFromUrl(url),
           displayItem,
