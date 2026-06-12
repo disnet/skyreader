@@ -37,7 +37,20 @@ export function useHighlights(params: HighlightParams) {
   let dblclickHandler: ((e: MouseEvent) => void) | null = null;
   let mouseupHandler: ((e: MouseEvent) => void) | null = null;
   let clickHandler: ((e: MouseEvent) => void) | null = null;
+  let touchendHandler: ((e: TouchEvent) => void) | null = null;
+  let selectionchangeHandler: (() => void) | null = null;
   let appliedMarks: HTMLElement[] = [];
+
+  // Touch bookkeeping. Mobile browsers don't emit `dblclick`/`mouseup` for
+  // tap-to-highlight or touch text selection, so we synthesize both. A
+  // double-tap highlights the paragraph. For text selection we keep the native
+  // selection (so iOS's Copy/Look Up menu still works) and stash the selector;
+  // the private highlight is created once the user clears the selection.
+  let lastTapTime = 0;
+  let lastTapX = 0;
+  let lastTapY = 0;
+  let sawTouch = false;
+  let pendingTouchSelector: TextQuoteSelector | null = null;
 
   function applyHighlights() {
     clearMarks();
@@ -131,18 +144,21 @@ export function useHighlights(params: HighlightParams) {
     appliedMarks = [];
   }
 
-  function handleDblClick(e: MouseEvent) {
-    if (!params.enabled()) return;
-
-    const target = e.target as HTMLElement;
+  /**
+   * Toggle a whole-paragraph highlight for the block element containing `target`.
+   * Shared by desktop double-click and mobile double-tap. Returns true when a
+   * highlight was created or removed (so callers can suppress default gestures).
+   */
+  function highlightParagraph(target: HTMLElement | null): boolean {
+    if (!target) return false;
     // Don't intercept interactive content.
-    if (target.closest(`a, ${INTERACTIVE_MEDIA_SELECTOR}`)) return;
+    if (target.closest(`a, ${INTERACTIVE_MEDIA_SELECTOR}`)) return false;
 
     const blockEl = target.closest(BLOCK_SELECTORS) as HTMLElement | null;
-    if (!blockEl) return;
+    if (!blockEl) return false;
 
     const container = params.contentEl();
-    if (!container) return;
+    if (!container || !container.contains(blockEl)) return false;
 
     // Check if this paragraph already has a highlight
     const highlights = itemLabelsStore.getHighlights(params.itemKey());
@@ -154,11 +170,89 @@ export function useHighlights(params: HighlightParams) {
       void removeFromMargin(existingHighlight);
       itemLabelsStore.removeHighlight(params.itemKey(), existingHighlight.id);
       requestAnimationFrame(applyHighlights);
-      return;
+      return true;
     }
 
     // Create a highlight for the whole paragraph
     const selector = createSelectorForElement(blockEl, container);
+    const highlight: Highlight = {
+      id: generateId(),
+      selector,
+      createdAt: Date.now(),
+    };
+    itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
+    requestAnimationFrame(applyHighlights);
+    return true;
+  }
+
+  function handleDblClick(e: MouseEvent) {
+    if (!params.enabled()) return;
+    highlightParagraph(e.target as HTMLElement);
+  }
+
+  function handleTouchEnd(e: TouchEvent) {
+    if (!params.enabled()) return;
+    // Only single-finger gestures participate.
+    if (e.changedTouches.length !== 1) return;
+    sawTouch = true;
+
+    const touch = e.changedTouches[0];
+    const now = Date.now();
+    const dt = now - lastTapTime;
+    const dx = Math.abs(touch.clientX - lastTapX);
+    const dy = Math.abs(touch.clientY - lastTapY);
+
+    // Double-tap: highlight the whole paragraph (checked first, since a
+    // double-tap also selects a word).
+    if (lastTapTime && dt < 300 && dx < 30 && dy < 30) {
+      pendingTouchSelector = null;
+      const target =
+        (e.target as HTMLElement | null) ??
+        (document.elementFromPoint(touch.clientX, touch.clientY) as HTMLElement | null);
+      if (highlightParagraph(target)) {
+        e.preventDefault();
+        window.getSelection()?.removeAllRanges();
+      }
+      lastTapTime = 0;
+      return;
+    }
+
+    // Otherwise remember the tap so the next one can complete a double-tap.
+    // Text selections are tracked via `selectionchange`, not here.
+    lastTapTime = now;
+    lastTapX = touch.clientX;
+    lastTapY = touch.clientY;
+  }
+
+  /**
+   * Touch selection lifecycle. We never clear the user's selection ourselves —
+   * that would dismiss iOS's native Copy/Look Up menu. Instead we stash the
+   * selector while a selection is live, then create a private highlight when the
+   * user clears it (selection collapses).
+   */
+  function handleSelectionChange() {
+    if (!sawTouch || !params.enabled()) return;
+
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed && selection.rangeCount) {
+      const range = selection.getRangeAt(0);
+      const container = params.contentEl();
+      if (container && container.contains(range.commonAncestorContainer)) {
+        const selectedText = range.toString().trim();
+        if (selectedText.length >= 3) {
+          pendingTouchSelector = createSelector(range, container);
+          return;
+        }
+      }
+      // Selection is outside our content or too short — nothing to highlight.
+      pendingTouchSelector = null;
+      return;
+    }
+
+    // Selection collapsed: realize the pending highlight, if any.
+    if (!pendingTouchSelector) return;
+    const selector = pendingTouchSelector;
+    pendingTouchSelector = null;
     const highlight: Highlight = {
       id: generateId(),
       selector,
@@ -340,12 +434,19 @@ export function useHighlights(params: HighlightParams) {
     dblclickHandler = handleDblClick;
     mouseupHandler = handleMouseUp;
     clickHandler = handleClick;
+    touchendHandler = handleTouchEnd;
+    selectionchangeHandler = handleSelectionChange;
 
     el.addEventListener('dblclick', dblclickHandler);
     // Listen on document so we catch mouseup even when the user
     // drag-selects past the edge of the content element
     document.addEventListener('mouseup', mouseupHandler);
     el.addEventListener('click', clickHandler);
+    // Touch: synthesize double-tap (paragraph) since mobile browsers don't fire
+    // dblclick. Non-passive so we can suppress the default double-tap gesture.
+    el.addEventListener('touchend', touchendHandler, { passive: false });
+    // Touch selections are realized into highlights when the user clears them.
+    document.addEventListener('selectionchange', selectionchangeHandler);
 
     // Apply existing highlights
     applyHighlights();
@@ -356,12 +457,18 @@ export function useHighlights(params: HighlightParams) {
       if (dblclickHandler) currentEl.removeEventListener('dblclick', dblclickHandler);
       if (mouseupHandler) document.removeEventListener('mouseup', mouseupHandler);
       if (clickHandler) currentEl.removeEventListener('click', clickHandler);
+      if (touchendHandler) currentEl.removeEventListener('touchend', touchendHandler);
     }
+    if (selectionchangeHandler)
+      document.removeEventListener('selectionchange', selectionchangeHandler);
     clearMarks();
     currentEl = null;
     dblclickHandler = null;
     mouseupHandler = null;
     clickHandler = null;
+    touchendHandler = null;
+    selectionchangeHandler = null;
+    pendingTouchSelector = null;
     popoverState = null;
   }
 

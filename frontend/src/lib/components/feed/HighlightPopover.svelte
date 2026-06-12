@@ -63,7 +63,7 @@
     }
   }
 
-  function handleClickOutside(e: MouseEvent) {
+  function handleClickOutside(e: MouseEvent | TouchEvent) {
     if (menuEl && !menuEl.contains(e.target as Node)) {
       onClose();
     }
@@ -72,6 +72,7 @@
   onMount(() => {
     document.addEventListener('keydown', handleKeydown, true);
     document.addEventListener('mousedown', handleClickOutside, true);
+    document.addEventListener('touchstart', handleClickOutside, true);
     document.addEventListener('scroll', handleScroll, true);
     requestAnimationFrame(positionMenu);
     // Delay arming the scroll-to-close so residual scroll momentum
@@ -85,6 +86,7 @@
     clearTimeout(scrollArmTimer);
     document.removeEventListener('keydown', handleKeydown, true);
     document.removeEventListener('mousedown', handleClickOutside, true);
+    document.removeEventListener('touchstart', handleClickOutside, true);
     document.removeEventListener('scroll', handleScroll, true);
   });
 </script>

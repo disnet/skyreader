@@ -1438,6 +1438,10 @@
     line-height: 1.8;
     color: var(--color-text);
     overflow-wrap: break-word;
+    /* Disable iOS double-tap-to-zoom so double-tap reaches the highlight
+       handler (mirrors .article-content in the card view). */
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
 
   .reader-body :global(img) {
