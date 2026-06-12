@@ -92,10 +92,15 @@
   // Group every highlight under its source item, newest-source first.
   let groups = $derived.by((): HighlightGroup[] => {
     const byKey = new Map<string, HighlightGroup>();
+    // Highlights are written under one canonical key, but a row can briefly land
+    // under the uri before saves hydrate; group by canonical key and skip ids
+    // already seen so such a transient duplicate never renders twice.
+    const seenIds = new Set<string>();
 
     for (const { itemKey, itemType, highlight } of itemLabelsStore.allHighlights) {
-      // Collapse a saved item's guid- and uri-keyed highlights into one group.
-      const groupKey = itemLabelsStore.canonicalHighlightKey(itemKey);
+      if (seenIds.has(highlight.id)) continue;
+      seenIds.add(highlight.id);
+      const groupKey = itemLabelsStore.canonicalKey(itemKey);
       let group = byKey.get(groupKey);
       if (!group) {
         let title = '';
