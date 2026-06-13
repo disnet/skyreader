@@ -71,6 +71,15 @@
   let readerBodyEl: HTMLElement | undefined = $state();
   let headerRef = $state<HTMLElement | undefined>(undefined);
 
+  // Reading-progress indicator: a thin top bar that fills left-to-right as the
+  // reader scrolls through the article body. Scroll-driven (not paragraph-driven)
+  // for smooth frame-by-frame motion; measured against the body's end rather than
+  // raw scrollHeight so it hits ~100% at the end of the text, not the bottom of
+  // the discussion section below it.
+  let readingProgress = $state(0); // 0–1
+  let progressVisible = $state(false);
+  let progressRaf: number | null = null;
+
   let itemKey = $derived(readerItem.key);
   let itemTags = $derived(itemLabelsStore.getTagsForItem(itemKey));
 
@@ -91,8 +100,41 @@
     xl: 'XL',
   };
 
+  // Compute reading progress as scrollTop / (article-body-end − clientHeight),
+  // clamped to 0–1. The overlay scrolls past the body into the discussion +
+  // bottom padding, so measuring against the body's bottom edge makes the bar
+  // reach ~100% at the end of the text. If the article fits on screen (or isn't
+  // meaningfully scrollable), hide the bar rather than pinning it at 100%.
+  function updateReadingProgress() {
+    if (!overlayEl || !readerBodyEl) return;
+    const clientHeight = overlayEl.clientHeight;
+    const scrollTop = overlayEl.scrollTop;
+    // Body bottom in the overlay's scroll coordinate space.
+    const bodyBottom =
+      readerBodyEl.getBoundingClientRect().bottom -
+      overlayEl.getBoundingClientRect().top +
+      scrollTop;
+    const denom = bodyBottom - clientHeight;
+    if (denom <= 8) {
+      progressVisible = false;
+      readingProgress = 0;
+      return;
+    }
+    progressVisible = true;
+    readingProgress = Math.min(1, Math.max(0, scrollTop / denom));
+  }
+
+  function scheduleProgressUpdate() {
+    if (progressRaf != null) return;
+    progressRaf = requestAnimationFrame(() => {
+      progressRaf = null;
+      updateReadingProgress();
+    });
+  }
+
   function handleScroll() {
     if (!overlayEl) return;
+    scheduleProgressUpdate();
     // Scroll-aware divider: the desktop header blends into the page at the top
     // and grows its hairline divider once content scrolls underneath it. (The
     // header stays pinned — only the mobile bottom bar hides on scroll.)
@@ -542,6 +584,10 @@
   });
   onDestroy(() => {
     document.body.style.overflow = '';
+    if (progressRaf != null) {
+      cancelAnimationFrame(progressRaf);
+      progressRaf = null;
+    }
     document.removeEventListener('keydown', handleKeydown, true);
     document.removeEventListener('click', handleClickOutside);
     overlayEl?.removeEventListener('touchstart', stopTouchPropagation);
@@ -590,6 +636,9 @@
         paragraphTracking.setupObserver();
         linkInterception.attach();
         highlightsHook.attach();
+        // Re-measure now that the (possibly lazily-loaded) body has settled, so
+        // the bar reflects the current scroll position immediately.
+        updateReadingProgress();
         if (restoredForKey === key) return;
         setTimeout(() => {
           if (restoredForKey === key) return;
@@ -603,6 +652,7 @@
             setTimeout(() => {
               if (overlayEl) lastScrollY = overlayEl.scrollTop;
               suppressScrollHide = false;
+              updateReadingProgress();
             }, 600);
           } else {
             suppressScrollHide = false;
@@ -639,6 +689,22 @@
 </script>
 
 <div class="reader-overlay" bind:this={overlayEl} onscroll={handleScroll}>
+  <!-- Reading-progress bar: a thin One-Blue fill pinned to the very top edge of
+       the overlay (over the header's empty top padding), filling as the reader
+       moves through the article body. Stays put when the header hides on
+       scroll; clears the notch via safe-area inset on mobile. -->
+  <div
+    class="reading-progress"
+    class:visible={progressVisible}
+    role="progressbar"
+    aria-label="Reading progress"
+    aria-valuemin={0}
+    aria-valuemax={100}
+    aria-valuenow={Math.round(readingProgress * 100)}
+  >
+    <div class="reading-progress-fill" style:transform={`scaleX(${readingProgress})`}></div>
+  </div>
+
   <!-- Desktop: top header — a full-width flat bar (matches the feed header's
        800px band) so the chrome doesn't shift when opening the reader. The
        article below lives in its own narrower reading column. -->
@@ -1038,6 +1104,42 @@
     background: var(--color-bg, #ffffff);
     overflow-y: auto;
     overscroll-behavior: contain;
+  }
+
+  /* Reading-progress bar. Fixed to the top edge, above the sticky header (z 10)
+     but below RefreshProgressBar (z 500) so the refresh bar wins on the rare
+     overlap. Flat-by-default: transparent track, One Blue fill, no shadow.
+     Calm: a 2px hairline that fades in only once the article is scrollable. */
+  .reading-progress {
+    position: fixed;
+    top: env(safe-area-inset-top, 0px);
+    left: 0;
+    right: 0;
+    height: 2px;
+    z-index: 200;
+    background: transparent;
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+  }
+
+  .reading-progress.visible {
+    opacity: 1;
+  }
+
+  .reading-progress-fill {
+    height: 100%;
+    background: var(--color-primary, #0066cc);
+    transform-origin: left;
+    /* No transition — scroll drives the fill frame-by-frame for smooth motion. */
+    will-change: transform;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reading-progress {
+      transition: none;
+    }
   }
 
   /* The overlay is an opaque full-screen layer that covers the sidebar, so the
