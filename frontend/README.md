@@ -1,6 +1,6 @@
 # Skyreader Frontend
 
-SvelteKit PWA for [Skyreader](https://skyreader.app), a decentralized RSS reader built on the AT Protocol.
+SvelteKit PWA for [Skyreader](https://skyreader.app), a reading app that helps you make sense of what you read — built on the open AT Protocol.
 
 ## Overview
 

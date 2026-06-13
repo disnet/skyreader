@@ -1,6 +1,11 @@
 # Skyreader
 
-A decentralized RSS reader built on AT Protocol (Bluesky).
+A reading app that helps you make sense of what you read. Subscribe to everything — RSS,
+newsletters, social, YouTube, the Atmosphere — read it in one calm place, and turn it into
+understanding with highlights, margin notes, and a linkblog. Built on the open AT Protocol, so
+your reading life stays portable and yours.
+
+> **Read everything from everywhere. Make sense of it all.**
 
 ## Repository Structure
 

@@ -550,7 +550,7 @@
 
   <section class="card">
     <h2>About</h2>
-    <p>Skyreader is a decentralized RSS reader built on the AT Protocol.</p>
+    <p>Skyreader is a reading app that helps you make sense of what you read.</p>
     <p>
       Your data is stored in your Personal Data Server (PDS), making it portable and under your
       control.

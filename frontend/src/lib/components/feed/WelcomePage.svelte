@@ -6,11 +6,12 @@
     <h1>Welcome to Skyreader</h1>
     <span class="beta-badge">BETA</span>
   </div>
-  <p>A decentralized RSS reader built on the AT Protocol.</p>
+  <p>A reading app that helps you make sense of what you read.</p>
 
   <ul class="features">
-    <li>Share articles with your followers</li>
-    <li>Works offline with automatic sync</li>
+    <li>Read everything from everywhere — RSS, newsletters, social, YouTube</li>
+    <li>Highlight, take notes, and share to your linkblog</li>
+    <li>Works offline; your reading life stays portable and yours</li>
   </ul>
   <div class="cta">
     <a href="/auth/login" class="btn btn-primary">Login with Bluesky</a>

@@ -1,6 +1,6 @@
 ---
 name: Skyreader
-description: A calm, ownable RSS reader built on AT Protocol — reading-first, social without the timeline.
+description: A calm reading app that helps you make sense of everything you read — reading-first, social without the timeline, portable by foundation.
 colors:
   primary: '#0066cc'
   primary-dark: '#0052a3'
@@ -95,13 +95,15 @@ components:
 
 ## 1. Overview
 
-**Creative North Star: "The Owned Library"**
+**Creative North Star: "The Reading Room"**
 
-Skyreader is your personal, portable collection of reading — a well-kept shelf that happens to
-live on infrastructure you own. The design exists to make that library feel calm, ordered, and
-yours. Chrome is quiet and recedes; the text you came to read is the one element allowed to raise
-its voice. Every surface decision is measured against a single question from PRODUCT.md: _does this
-help or distract from reading?_ When in doubt, it goes.
+Skyreader is a quiet place to read deeply and think clearly — open to the people you trust, closed
+to the algorithm. Everything you follow comes into one calm room; the design exists to make reading
+it, and making sense of it, feel unhurried and ordered. Chrome is quiet and recedes; the text you
+came to read is the one element allowed to raise its voice. Every surface decision is measured
+against a single question from PRODUCT.md: _does this help or distract from reading?_ When in doubt,
+it goes. (The room is also _yours_ — it lives on infrastructure you own — but that's the foundation
+under the calm, not something the design needs to shout.)
 
 The system is **flat, restrained, and content-forward**. Depth is conveyed through 1px borders and
 tonal background layering, not decoration — shadows appear only when something genuinely floats
@@ -113,7 +115,8 @@ respects `prefers-reduced-motion` on every transition.
 This system explicitly **rejects** four things, carried verbatim from PRODUCT.md's anti-references:
 the cards-everywhere, gradient-accent **generic SaaS dashboard**; the dense-toolbar **cluttered
 legacy reader**; the warm-paper, serif-everything **cream/beige editorial cliché**; and the
-engagement-bait **algorithmic social feed**. Skyreader is a place to read, owned by the reader.
+engagement-bait **algorithmic social feed**. Skyreader is a place to read and think, built to
+outlast any one app.
 
 **Key Characteristics:**
 

@@ -1,6 +1,6 @@
 # Skyreader Backend
 
-Cloudflare Workers API for [Skyreader](https://skyreader.app), a decentralized RSS reader built on the AT Protocol.
+Cloudflare Workers API for [Skyreader](https://skyreader.app), a reading app that helps you make sense of what you read — built on the open AT Protocol.
 
 ## Overview
 
