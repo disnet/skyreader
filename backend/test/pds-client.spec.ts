@@ -1,3 +1,4 @@
+import { env } from 'cloudflare:test';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PDSClient, createPDSClient } from '../src/services/pds-client';
 import type { Session } from '../src/types';
@@ -480,6 +481,235 @@ describe('PDSClient', () => {
       const session = createTestSession();
       const client = createPDSClient(session);
       expect(client).toBeInstanceOf(PDSClient);
+    });
+  });
+
+  // Regression coverage for the PDS-migration bug: a session whose pds_url no
+  // longer matches the DID document must recover automatically (re-resolve the
+  // host from the DID doc, persist it, and retry) with no manual sync toggle.
+  describe('stale endpoint recovery (PDS migration)', () => {
+    const RECOVERY_DID = 'did:plc:migrationuser';
+    const OLD_PDS = 'https://old.pds.example';
+    const NEW_PDS = 'https://new.pds.example';
+    const SESSION_ID = 'recovery-session-1';
+
+    function plcDoc(did: string, pds: string) {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => ({
+          id: did,
+          service: [
+            { id: '#atproto_pds', type: 'AtprotoPersonalDataServer', serviceEndpoint: pds },
+          ],
+        }),
+        text: async () => '',
+      };
+    }
+
+    function authRejected() {
+      return {
+        ok: false,
+        status: 401,
+        headers: new Headers(),
+        text: async () => JSON.stringify({ error: 'invalid_token', message: 'Token invalid' }),
+      };
+    }
+
+    function emptyRecords() {
+      return {
+        ok: true,
+        headers: new Headers(),
+        json: async () => ({ records: [] }),
+      };
+    }
+
+    async function seedSession(pdsUrl: string) {
+      await env.DB.prepare(
+        `INSERT OR IGNORE INTO users (did, handle, pds_url, created_at)
+         VALUES (?, ?, ?, unixepoch())`
+      )
+        .bind(RECOVERY_DID, 'migration.bsky.social', pdsUrl)
+        .run();
+      await env.DB.prepare(
+        `INSERT INTO sessions (session_id, did, handle, pds_url, access_token, refresh_token, dpop_private_key, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+        .bind(
+          SESSION_ID,
+          RECOVERY_DID,
+          'migration.bsky.social',
+          pdsUrl,
+          'tok',
+          'refresh',
+          JSON.stringify(TEST_DPOP_KEY),
+          Date.now() + 3600000
+        )
+        .run();
+    }
+
+    beforeEach(async () => {
+      await env.DB.prepare('DELETE FROM sessions WHERE session_id = ?').bind(SESSION_ID).run();
+      await env.DB.prepare('DELETE FROM did_pds_cache WHERE did = ?').bind(RECOVERY_DID).run();
+      await env.DB.prepare('DELETE FROM users WHERE did = ?').bind(RECOVERY_DID).run();
+    });
+
+    function recoverySession(): Session {
+      return createTestSession({ did: RECOVERY_DID, pdsUrl: OLD_PDS });
+    }
+
+    it('re-resolves, persists, and retries when the host moved and tokens still work', async () => {
+      await seedSession(OLD_PDS);
+
+      const calls: string[] = [];
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL) => {
+        const u = url.toString();
+        calls.push(u);
+        if (u.startsWith(`${OLD_PDS}/xrpc/`)) return authRejected();
+        if (u.startsWith('https://plc.directory/')) return plcDoc(RECOVERY_DID, NEW_PDS);
+        if (u.startsWith(`${NEW_PDS}/xrpc/`)) return emptyRecords();
+        throw new Error(`Unexpected fetch: ${u}`);
+      });
+
+      const client = createPDSClient(recoverySession(), { env, sessionId: SESSION_ID });
+      const result = await client.listRecords('app.skyreader.feed.subscription');
+
+      expect(result.success).toBe(true);
+
+      // Old host hit, DID re-resolved, new host hit — in that order.
+      expect(calls.some((c) => c.startsWith(`${OLD_PDS}/xrpc/`))).toBe(true);
+      expect(calls.some((c) => c.startsWith('https://plc.directory/'))).toBe(true);
+      expect(calls.some((c) => c.startsWith(`${NEW_PDS}/xrpc/`))).toBe(true);
+
+      // New host persisted to the session row.
+      const row = await env.DB.prepare('SELECT pds_url FROM sessions WHERE session_id = ?')
+        .bind(SESSION_ID)
+        .first<{ pds_url: string }>();
+      expect(row?.pds_url).toBe(NEW_PDS);
+
+      // And to the DID cache.
+      const cache = await env.DB.prepare('SELECT pds_url FROM did_pds_cache WHERE did = ?')
+        .bind(RECOVERY_DID)
+        .first<{ pds_url: string }>();
+      expect(cache?.pds_url).toBe(NEW_PDS);
+    });
+
+    it('signals needsReauth (and does not loop) when the new host still rejects tokens', async () => {
+      await seedSession(OLD_PDS);
+
+      let newHostCalls = 0;
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL) => {
+        const u = url.toString();
+        if (u.startsWith(`${OLD_PDS}/xrpc/`)) return authRejected();
+        if (u.startsWith('https://plc.directory/')) return plcDoc(RECOVERY_DID, NEW_PDS);
+        if (u.startsWith(`${NEW_PDS}/xrpc/`)) {
+          newHostCalls++;
+          return authRejected();
+        }
+        throw new Error(`Unexpected fetch: ${u}`);
+      });
+
+      const client = createPDSClient(recoverySession(), { env, sessionId: SESSION_ID });
+      const result = await client.listRecords('app.skyreader.feed.subscription');
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.needsReauth).toBe(true);
+      }
+      // Exactly one retry against the new host — no re-resolve loop.
+      expect(newHostCalls).toBe(1);
+    });
+
+    it('does not re-resolve on a transient 5xx (host is fine)', async () => {
+      await seedSession(OLD_PDS);
+
+      const calls: string[] = [];
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL) => {
+        const u = url.toString();
+        calls.push(u);
+        if (u.startsWith(`${OLD_PDS}/xrpc/`)) {
+          return { ok: false, status: 503, headers: new Headers(), text: async () => 'down' };
+        }
+        throw new Error(`Unexpected fetch: ${u}`);
+      });
+
+      const client = createPDSClient(recoverySession(), { env, sessionId: SESSION_ID });
+      const result = await client.listRecords('app.skyreader.feed.subscription');
+
+      expect(result.success).toBe(false);
+      if (!result.success) expect(result.retryable).toBe(true);
+      // No DID re-resolution attempted.
+      expect(calls.some((c) => c.startsWith('https://plc.directory/'))).toBe(false);
+      const row = await env.DB.prepare('SELECT pds_url FROM sessions WHERE session_id = ?')
+        .bind(SESSION_ID)
+        .first<{ pds_url: string }>();
+      expect(row?.pds_url).toBe(OLD_PDS);
+    });
+
+    it('does not re-resolve on a not-found (RecordNotFound)', async () => {
+      await seedSession(OLD_PDS);
+
+      const calls: string[] = [];
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL) => {
+        const u = url.toString();
+        calls.push(u);
+        if (u.startsWith(`${OLD_PDS}/xrpc/`)) {
+          return {
+            ok: false,
+            status: 400,
+            headers: new Headers(),
+            text: async () => JSON.stringify({ error: 'RecordNotFound' }),
+          };
+        }
+        throw new Error(`Unexpected fetch: ${u}`);
+      });
+
+      const client = createPDSClient(recoverySession(), { env, sessionId: SESSION_ID });
+      const result = await client.getRecord('app.skyreader.feed.subscription', 'rkey');
+
+      expect(result.success).toBe(false);
+      expect(calls.some((c) => c.startsWith('https://plc.directory/'))).toBe(false);
+    });
+
+    it('does not retry when the re-resolved host is unchanged', async () => {
+      await seedSession(OLD_PDS);
+
+      let oldHostCalls = 0;
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL) => {
+        const u = url.toString();
+        if (u.startsWith(`${OLD_PDS}/xrpc/`)) {
+          oldHostCalls++;
+          return authRejected();
+        }
+        // DID doc still points at the OLD host (not actually a migration).
+        if (u.startsWith('https://plc.directory/')) return plcDoc(RECOVERY_DID, OLD_PDS);
+        throw new Error(`Unexpected fetch: ${u}`);
+      });
+
+      const client = createPDSClient(recoverySession(), { env, sessionId: SESSION_ID });
+      const result = await client.listRecords('app.skyreader.feed.subscription');
+
+      expect(result.success).toBe(false);
+      if (!result.success) expect(result.needsReauth).toBeFalsy();
+      // Only the original attempt — no pointless retry against the same host.
+      expect(oldHostCalls).toBe(1);
+    });
+
+    it('leaves failures untouched when no recovery context is supplied', async () => {
+      const calls: string[] = [];
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL) => {
+        const u = url.toString();
+        calls.push(u);
+        if (u.startsWith(`${OLD_PDS}/xrpc/`)) return authRejected();
+        throw new Error(`Unexpected fetch: ${u}`);
+      });
+
+      const client = createPDSClient(recoverySession()); // no recovery context
+      const result = await client.listRecords('app.skyreader.feed.subscription');
+
+      expect(result.success).toBe(false);
+      expect(calls.some((c) => c.startsWith('https://plc.directory/'))).toBe(false);
     });
   });
 });

@@ -205,6 +205,11 @@
           throw error;
         }
 
+        if (result.needsReauth) {
+          syncError = 'Your data moved to a new PDS. Sign in again to reconnect Atmospheric sync.';
+          return;
+        }
+
         if (!result.success) {
           syncError = result.error || 'Sync failed';
           return;

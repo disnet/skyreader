@@ -51,6 +51,11 @@ export interface SyncResult {
   warnings: string[];
   /** If true, there are more records to push - call sync again */
   hasMore?: boolean;
+  /**
+   * Set when the PDS host moved (migration) but the existing tokens were
+   * rejected by the new host — the user must reconnect their account.
+   */
+  needsReauth?: boolean;
 }
 
 // Batch size for applyWrites - 200 is the documented limit but large batches
@@ -85,7 +90,11 @@ function buildRecordUri(did: string, collection: string, rkey: string): string {
  * 4. For each local record not in PDS: push to PDS
  * 5. For conflicts: keep both (merge by feedUrl)
  */
-export async function syncSubscriptions(session: Session, env: Env): Promise<SyncResult> {
+export async function syncSubscriptions(
+  session: Session,
+  env: Env,
+  sessionId?: string
+): Promise<SyncResult> {
   const result: SyncResult = {
     success: true,
     pulledFromPds: 0,
@@ -95,7 +104,9 @@ export async function syncSubscriptions(session: Session, env: Env): Promise<Syn
     warnings: [],
   };
 
-  const pdsClient = createPDSClient(session);
+  // With a sessionId, the client can self-heal a stale PDS host (PDS migration)
+  // by re-resolving from the DID doc and persisting the new host to the session.
+  const pdsClient = createPDSClient(session, sessionId ? { env, sessionId } : undefined);
 
   try {
     // Step 1: Fetch records from PDS (limited to avoid subrequest limit)
@@ -109,6 +120,7 @@ export async function syncSubscriptions(session: Session, env: Env): Promise<Syn
         ...result,
         success: false,
         error: `Failed to fetch from PDS: ${pdsResult.error}`,
+        needsReauth: pdsResult.needsReauth,
       };
     }
 

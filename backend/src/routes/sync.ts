@@ -1,5 +1,5 @@
 import type { Env } from '../types';
-import { getSessionFromRequest } from '../services/oauth';
+import { getSessionFromRequest, getSessionIdFromRequest } from '../services/oauth';
 import { getUserSettings, updateSyncTimestamp } from './settings';
 import {
   syncSubscriptions,
@@ -18,6 +18,11 @@ export interface FullSyncResult {
   error?: string;
   /** If true, there's more work to do - call sync again */
   hasMore?: boolean;
+  /**
+   * Set when the user's PDS moved (migration) and their tokens no longer work
+   * against the new host — they must reconnect their account to resume sync.
+   */
+  needsReauth?: boolean;
 }
 
 export interface SyncStatusResponse {
@@ -64,8 +69,10 @@ export async function handleFullSync(
   const result: FullSyncResult = { success: true };
 
   try {
-    // Sync subscriptions
-    const subResult = await syncSubscriptions(session, env);
+    // Sync subscriptions. Pass the session id so the PDS client can self-heal a
+    // stale host after a PDS migration (re-resolve + persist + retry).
+    const sessionId = getSessionIdFromRequest(request) ?? undefined;
+    const subResult = await syncSubscriptions(session, env, sessionId);
     result.subscriptions = subResult;
 
     if (subResult.success) {
@@ -74,6 +81,10 @@ export async function handleFullSync(
 
     if (subResult.hasMore) {
       result.hasMore = true;
+    }
+
+    if (subResult.needsReauth) {
+      result.needsReauth = true;
     }
 
     result.success = subResult.success;
@@ -141,7 +152,8 @@ export async function handleSyncSubscriptions(request: Request, env: Env): Promi
   }
 
   try {
-    const result = await syncSubscriptions(session, env);
+    const sessionId = getSessionIdFromRequest(request) ?? undefined;
+    const result = await syncSubscriptions(session, env, sessionId);
 
     if (result.success) {
       await updateSyncTimestamp(env, session.did, 'subscriptions');
