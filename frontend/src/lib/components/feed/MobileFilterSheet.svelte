@@ -507,7 +507,7 @@
       <div class="sheet-section">
         <div class="section-label">
           <Icon name="arrow-down" size={12} />
-          Sort & Read
+          {feedViewStore.myLinkblogFilter ? 'Sort' : 'Sort & Read'}
         </div>
         <div class="toggle-row">
           <button class="toggle-btn" onclick={() => feedViewStore.toggleSortOrder()}>
@@ -517,22 +517,25 @@
             />
             {feedViewStore.currentSortOrder === 'newest' ? 'Newest' : 'Oldest'}
           </button>
-          <button
-            class="toggle-btn"
-            class:active={feedViewStore.showOnlyUnread}
-            onclick={() => feedViewStore.setShowOnlyUnread(true)}
-          >
-            <Icon name="circle-dot" size={16} />
-            Unread
-          </button>
-          <button
-            class="toggle-btn"
-            class:active={!feedViewStore.showOnlyUnread}
-            onclick={() => feedViewStore.setShowOnlyUnread(false)}
-          >
-            <Icon name="inbox" size={16} />
-            All
-          </button>
+          <!-- Your own linkblog always shows everything, so no read/unread toggle. -->
+          {#if !feedViewStore.myLinkblogFilter}
+            <button
+              class="toggle-btn"
+              class:active={feedViewStore.showOnlyUnread}
+              onclick={() => feedViewStore.setShowOnlyUnread(true)}
+            >
+              <Icon name="circle-dot" size={16} />
+              Unread
+            </button>
+            <button
+              class="toggle-btn"
+              class:active={!feedViewStore.showOnlyUnread}
+              onclick={() => feedViewStore.setShowOnlyUnread(false)}
+            >
+              <Icon name="inbox" size={16} />
+              All
+            </button>
+          {/if}
         </div>
       </div>
     {/if}

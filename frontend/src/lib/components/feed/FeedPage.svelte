@@ -632,14 +632,11 @@
           <LoadingState />
         {:else if !isSavedView && feedViewStore.currentItems.length === 0}
           {#if mode === 'linkblog'}
-            {#if feedViewStore.showOnlyUnread}
-              <EmptyState title="No unread posts" description="You're all caught up." />
-            {:else}
-              <EmptyState
-                title="No shares yet"
-                description="Share an article from your feed and it'll appear here — and on your public page."
-              />
-            {/if}
+            <!-- Linkblog always shows all shares, so there's no "no unread" case. -->
+            <EmptyState
+              title="No shares yet"
+              description="Share an article from your feed and it'll appear here — and on your public page."
+            />
           {:else if feedViewStore.viewFilter}
             <EmptyState
               title="No matching items"

@@ -289,28 +289,31 @@
       </button>
     {/if}
 
-    <span class="toolbar-divider"></span>
+    <!-- Your own linkblog always shows everything, so no read/unread toggle. -->
+    {#if !feedViewStore.myLinkblogFilter}
+      <span class="toolbar-divider"></span>
 
-    <div class="segment-group" role="group" aria-label="Read filter">
-      <button
-        class="segment-btn"
-        class:active={feedViewStore.showOnlyUnread}
-        onclick={() => feedViewStore.setShowOnlyUnread(true)}
-        title="Unread"
-      >
-        <Icon name="circle-dot" size={16} />
-        <span class="segment-label">Unread</span>
-      </button>
-      <button
-        class="segment-btn"
-        class:active={!feedViewStore.showOnlyUnread}
-        onclick={() => feedViewStore.setShowOnlyUnread(false)}
-        title="All"
-      >
-        <Icon name="inbox" size={16} />
-        <span class="segment-label">All</span>
-      </button>
-    </div>
+      <div class="segment-group" role="group" aria-label="Read filter">
+        <button
+          class="segment-btn"
+          class:active={feedViewStore.showOnlyUnread}
+          onclick={() => feedViewStore.setShowOnlyUnread(true)}
+          title="Unread"
+        >
+          <Icon name="circle-dot" size={16} />
+          <span class="segment-label">Unread</span>
+        </button>
+        <button
+          class="segment-btn"
+          class:active={!feedViewStore.showOnlyUnread}
+          onclick={() => feedViewStore.setShowOnlyUnread(false)}
+          title="All"
+        >
+          <Icon name="inbox" size={16} />
+          <span class="segment-label">All</span>
+        </button>
+      </div>
+    {/if}
   </div>
 
   {#if isEditingView && onEditChannel}
