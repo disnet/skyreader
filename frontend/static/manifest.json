@@ -1,7 +1,7 @@
 {
   "name": "Skyreader",
   "short_name": "Skyreader",
-  "description": "A decentralized RSS reader built on AT Protocol",
+  "description": "Read everything from everywhere, and make sense of it all.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

@@ -16,18 +16,22 @@ Each package has its own CLAUDE.md with detailed guidance.
 
 ## What is Skyreader?
 
-A decentralized RSS reader built on AT Protocol (Bluesky). User data (subscriptions, saved articles, shares) is stored in their Personal Data Server (PDS), making it portable. Read state lives server-side in D1, not the PDS. Features offline support, real-time updates, and social sharing of articles.
+A reading app that helps you make sense of what you read. It brings everything you follow — RSS, newsletters, social posts, YouTube, the Atmosphere — into one calm place, gives you a focused surface to read and annotate it, and helps it become understanding through highlights, margin notes, a linkblog, and integrations with sensemaking tools (Semble, Margin).
+
+It's built on the AT Protocol (Bluesky): subscriptions, saved articles, and shares live in the user's Personal Data Server (PDS), so a reader's reading life is portable and outlives any one app. That ownership is the **foundation, not the headline** — lead with reading, not protocol jargon. Read state lives server-side in D1, not the PDS. Features offline support (PWA + IndexedDB), real-time updates, and calm social sharing via linkblogs.
 
 ## Design Context
 
 Two root files capture product strategy and the visual system. Read them before designing or
 restyling any frontend surface.
 
-- **`PRODUCT.md`** — strategic context (register: `product`). Primary user is the Bluesky/AT
-  Protocol social crowd; personality is **calm, focused, quiet** (reading-first). Carries the
-  anti-references and 5 design principles, the core one being **"the text is the product."**
+- **`PRODUCT.md`** — strategic context (register: `product`). Primary user is **anyone who reads to
+  understand** (the Bluesky/atproto crowd a welcome subset, not the gate); the spine is reading →
+  sensemaking, with ownership as the foundation, not the headline. Personality is **calm, focused,
+  quiet** (reading-first). Carries the anti-references and 6 design principles, the core one being
+  **"the text is the product"** (followed by **"reading should add up"**).
 - **`DESIGN.md`** — the visual system in Stitch six-section format, with normative YAML token
-  frontmatter. North Star: **"The Owned Library."** Key rules: **One Blue** (`#0066cc` is the only
+  frontmatter. North Star: **"The Reading Room."** Key rules: **One Blue** (`#0066cc` is the only
   interaction blue; `#2563eb` / `#3b82f6` / `#0085ff` are drift to consolidate), **Flat-By-Default**
   (shadows only on overlapping/floating elements), one UI typeface (system sans), true-white body
   (never warm paper). `.impeccable/design.json` is the machine-readable sidecar (tonal ramps,

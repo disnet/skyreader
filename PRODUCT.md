@@ -6,29 +6,37 @@ product
 
 ## Users
 
-Skyreader's primary users are the **Bluesky / AT Protocol social crowd**: people who came for
-data ownership and portable identity, and who treat sharing what they read as a first-class part
-of the experience. They already have a Bluesky handle, understand (or appreciate) that their
-subscriptions and shares live in their own PDS rather than a company's database, and
-they expect the social layer — shares from people they follow, their own commentary, read
-positions — to be present, not bolted on.
+Skyreader's primary users are **people who read to understand** — anyone who follows many sources,
+reads deeply, and wants what they read to add up to something rather than scroll past. They
+subscribe widely (RSS, newsletters, social posts, YouTube, the Atmosphere), they highlight and take
+notes, and they share what they read with a comment because engaging with the material is how they
+think it through. A meaningful subset come from the Bluesky / AT Protocol world and value that their
+reading lives on infrastructure they own — but that's a reason to _trust_ Skyreader, not the reason
+they come.
 
 Their context: reading on a phone during downtime and on a laptop at a desk, often offline or on
 flaky connections (the app is a PWA with IndexedDB + a sync queue for exactly this). The job to be
-done is _keep up with the feeds and people I care about, on infrastructure I own, without an
-algorithm deciding for me._
+done is _bring everything I read into one calm place, and help the good stuff become part of how I
+think — without an algorithm deciding for me._
 
 ## Product Purpose
 
-Skyreader is a decentralized RSS reader built on AT Protocol. It exists to give readers a fast,
-ownable alternative to algorithmic feeds: subscriptions, saved articles, and social
-shares are stored in the user's Personal Data Server, making the entire reading life portable
-across any AT Protocol client. It layers social sharing (shares, notes, read positions from
-followed accounts) on top of a chronological, user-controlled reading experience.
+Skyreader is a reading app that helps you make sense of what you read. It brings everything you
+follow — RSS, newsletters, social posts, YouTube, the Atmosphere — into one calm, chronological
+place; gives you a focused surface to actually read and annotate it; and helps the good stuff become
+part of how you think. That last step is the point: highlights and margin notes, a linkblog where
+sharing-with-a-comment deepens your engagement, the linkblogs of people you trust, and integrations
+with sensemaking tools like Semble and Margin.
 
-Success looks like a reader people open daily and trust — the reading stays calm and frictionless,
-the social layer feels alive without becoming a timeline, and the data-ownership promise is real
-and visible without forcing the user to think about lexicons and DIDs to read an article.
+It is built on the AT Protocol — the open "Atmosphere" — so subscriptions, saves, and shares are
+portable and outlive any single app. That ownership is the **foundation, not the pitch**: it's what
+makes investing your reading life here safe, the way an open library outlasts any one librarian. It
+should reassure, never be the price of entry.
+
+Success looks like a reader people open daily and trust: reading stays calm and frictionless, the
+social layer feels alive without becoming a timeline, and what you read accumulates into
+understanding instead of evaporating — all without forcing anyone to think about lexicons and DIDs
+to read an article.
 
 ## Brand Personality
 
@@ -37,8 +45,9 @@ reading come forward. Voice is plain and unhurried — direct sentences, no hype
 points by default. Personality comes from restraint and precision, not decoration: generous
 whitespace, confident typography, and a quiet confidence that the product knows what it's for.
 
-The emotional goal is _ownership and ease_ — the sense of a well-kept personal library that
-belongs to you, where catching up feels relaxing rather than like clearing a backlog under duress.
+The emotional goal is _clarity and ease_ — the calm of a quiet reading room where everything you
+follow comes together and the good ideas stick, rather than the anxiety of a backlog or the noise
+of a feed. Ownership underwrites that calm: it's yours, so it's safe to settle in.
 
 ## Anti-references
 
@@ -57,15 +66,20 @@ belongs to you, where catching up feels relaxing rather than like clearing a bac
 1. **The text is the product.** Every chrome decision is measured against whether it helps or
    distracts from reading. When in doubt, remove it. The reading view is the most precious surface
    in the app and gets the most restraint.
-2. **Ownership, made calm not loud.** The AT Protocol / PDS story is a core differentiator, but the
-   user shouldn't need to understand DIDs or lexicons to read. Surface ownership and portability
-   where it reassures (sync status, "this lives in your PDS"), hide the machinery everywhere else.
-3. **Social is present, not a feed.** Shares, notes, and read positions from followed accounts
+2. **Reading should add up.** The work isn't done when the article is read — it's done when it
+   becomes part of how the reader thinks. Highlighting, annotating, sharing-with-a-note, and handing
+   off to sensemaking tools are first-class, designed to make engagement easy rather than a chore.
+   What a reader collects should feel like it accumulates into understanding, not a graveyard of saves.
+3. **Ownership is the foundation, not the headline.** Reading lives on infrastructure the user owns
+   (AT Protocol / the Atmosphere), which makes it portable and durable — and that's exactly why no
+   one should need to understand DIDs or lexicons to read. Surface portability where it reassures
+   (sync status, "this lives in your PDS"); lead with reading everywhere else, and hide the machinery.
+4. **Social is present, not a feed.** Shares, notes, and read positions from followed accounts
    enrich the reading experience; they never become an algorithmic timeline. Social cues are quiet,
    chronological, and human-scaled.
-4. **Offline is a first-class state, not an error.** Flaky connections are the normal case. Offline,
+5. **Offline is a first-class state, not an error.** Flaky connections are the normal case. Offline,
    syncing, and stale states are designed deliberately — never a jarring failure overlay.
-5. **Density with breathing room.** Serve people tracking many feeds: scannable, keyboard-friendly,
+6. **Density with breathing room.** Serve people tracking many feeds: scannable, keyboard-friendly,
    efficient lists — but with enough whitespace and rhythm that scanning feels calm, not cramped.
 
 ## Accessibility & Inclusion

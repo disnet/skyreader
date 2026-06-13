@@ -277,7 +277,10 @@
 
 <svelte:head>
   <title>{pageTitle}</title>
-  <meta name="description" content="A decentralized RSS reader built on AT Protocol" />
+  <meta
+    name="description"
+    content="A reading app that helps you make sense of what you read — everything from everywhere in one calm place."
+  />
   <link rel="icon" type="image/svg+xml" href={Logo} />
   <link rel="manifest" href="/manifest.json" />
   <meta name="theme-color" content="#4A9FD4" />
