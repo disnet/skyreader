@@ -54,11 +54,11 @@ describe('API routes', () => {
       expect(await response.json()).toEqual({ error: 'Unauthorized' });
     });
 
-    it('GET /api/auth/login returns 400 without handle', async () => {
+    it('GET /api/auth/login returns 400 without handle or pds', async () => {
       const response = await SELF.fetch('http://localhost/api/auth/login');
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual({
-        error: 'Missing handle parameter',
+        error: 'Missing handle or pds parameter',
       });
     });
   });
