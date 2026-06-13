@@ -482,19 +482,13 @@ function createFeedViewStore() {
       // publishedAt → createdAt (the record's share time) so both the sort below
       // and the downstream card date reflect when each link was shared. Scoped to
       // this view; the followed-linkblog feed is unaffected.
-      let mine = myLinkblogStore.documents.map((d) => ({
+      // Your own linkblog always shows every share regardless of read state — a
+      // read/unread filter on your own publication is confusing. No readFilter
+      // applied here; the toolbar's read-filter toggle is hidden for this view.
+      const mine = myLinkblogStore.documents.map((d) => ({
         ...d,
         publishedAt: d.createdAt || d.publishedAt,
       }));
-      if (fv.readFilter === 'unread') {
-        mine = mine.filter(
-          (d) =>
-            !itemLabelsStore.isSocialRead(d.recordUri) ||
-            readDocumentUrisThisSession.has(d.recordUri)
-        );
-      } else if (fv.readFilter === 'read') {
-        mine = mine.filter((d) => itemLabelsStore.isSocialRead(d.recordUri));
-      }
       mine.sort((a, b) => {
         const dateA = new Date(a.publishedAt).getTime();
         const dateB = new Date(b.publishedAt).getTime();
