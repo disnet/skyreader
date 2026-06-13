@@ -58,6 +58,9 @@
   let overflowRef = $state<HTMLDivElement | null>(null);
   let tagBtnRef = $state<HTMLButtonElement | null>(null);
   let controlsVisible = $state(true);
+  // Desktop header hides on scroll-down, but stays put while a header-anchored
+  // menu (Style/Tag) is open so its popover doesn't slide off-screen.
+  let headerHidden = $derived(!controlsVisible && !styleMenuOpen && !tagMenuOpen);
   let scrolled = $state(false);
   let lastScrollY = $state(0);
   let suppressScrollHide = $state(false);
@@ -636,7 +639,12 @@
   <!-- Desktop: top header — a full-width flat bar (matches the feed header's
        800px band) so the chrome doesn't shift when opening the reader. The
        article below lives in its own narrower reading column. -->
-  <header class="reader-header desktop-only" class:scrolled bind:this={headerRef}>
+  <header
+    class="reader-header desktop-only"
+    class:scrolled
+    class:hidden={headerHidden}
+    bind:this={headerRef}
+  >
     <div class="reader-header-bar">
       <div class="reader-actions-left">
         <button class="action-btn" onclick={onClose} title="Back (Escape)">
@@ -1060,6 +1068,14 @@
     flex-direction: column;
     background: var(--color-bg, #ffffff);
     margin-bottom: 0.5rem;
+    /* Hide on scroll-down / reveal on scroll-up — matches the mobile bottom
+       bar's motion. The header is position:sticky overlaying content, so
+       translating it off-screen reclaims vertical space without reflow. */
+    transition: transform 0.25s ease;
+  }
+
+  .reader-header.hidden {
+    transform: translateY(-100%);
   }
 
   /* The divider spans only the 800px control band, centered — matching the feed
@@ -1084,6 +1100,10 @@
 
   @media (prefers-reduced-motion: reduce) {
     .reader-header::after {
+      transition: none;
+    }
+
+    .reader-header {
       transition: none;
     }
   }
