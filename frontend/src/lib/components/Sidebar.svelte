@@ -767,8 +767,10 @@
     transition: background-color 0.15s;
   }
 
-  .user-info:hover {
-    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+  @media (hover: hover) {
+    .user-info:hover {
+      background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+    }
   }
 
   .avatar {
@@ -856,8 +858,10 @@
     transition: background-color 0.15s;
   }
 
-  .nav-row:hover {
-    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+  @media (hover: hover) {
+    .nav-row:hover {
+      background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+    }
   }
 
   .nav-row.active {
@@ -901,21 +905,27 @@
   }
 
   .row-add-btn {
-    opacity: 0;
+    opacity: 0.6;
     transition: opacity 0.15s;
   }
 
-  .nav-row:hover .row-add-btn {
-    opacity: 0.6;
-  }
+  @media (hover: hover) {
+    .row-add-btn {
+      opacity: 0;
+    }
 
-  .row-add-btn:hover {
-    opacity: 1 !important;
-    color: var(--color-primary);
-  }
+    .nav-row:hover .row-add-btn {
+      opacity: 0.6;
+    }
 
-  .row-disclosure-btn:hover {
-    color: var(--color-text);
+    .row-add-btn:hover {
+      opacity: 1 !important;
+      color: var(--color-primary);
+    }
+
+    .row-disclosure-btn:hover {
+      color: var(--color-text);
+    }
   }
 
   .nav-row.active .row-disclosure-btn {
@@ -929,8 +939,10 @@
     gap: 2px;
   }
 
-  .nav-item:hover {
-    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+  @media (hover: hover) {
+    .nav-item:hover {
+      background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+    }
   }
 
   .nav-link {
@@ -1005,8 +1017,10 @@
     transition: color 0.15s;
   }
 
-  .suggestion-accept:hover {
-    color: var(--color-primary);
+  @media (hover: hover) {
+    .suggestion-accept:hover {
+      color: var(--color-primary);
+    }
   }
 
   .suggestion-icon {
@@ -1040,8 +1054,10 @@
     transition: color 0.15s;
   }
 
-  .more-suggestions-link:hover {
-    color: var(--color-primary);
+  @media (hover: hover) {
+    .more-suggestions-link:hover {
+      color: var(--color-primary);
+    }
   }
 
   .suggestion-dismiss {
@@ -1056,18 +1072,24 @@
     cursor: pointer;
     color: var(--color-text-secondary);
     padding: 0;
-    opacity: 0;
+    opacity: 0.6;
     transition: opacity 0.15s;
     border-radius: 4px;
   }
 
-  .suggestion-item:hover .suggestion-dismiss {
-    opacity: 0.6;
-  }
+  @media (hover: hover) {
+    .suggestion-dismiss {
+      opacity: 0;
+    }
 
-  .suggestion-dismiss:hover {
-    opacity: 1 !important;
-    color: var(--color-text);
+    .suggestion-item:hover .suggestion-dismiss {
+      opacity: 0.6;
+    }
+
+    .suggestion-dismiss:hover {
+      opacity: 1 !important;
+      color: var(--color-text);
+    }
   }
 
   .category-group {
@@ -1118,9 +1140,11 @@
       background-color 0.15s;
   }
 
-  .category-name-btn:hover {
-    color: var(--color-text);
-    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+  @media (hover: hover) {
+    .category-name-btn:hover {
+      color: var(--color-text);
+      background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+    }
   }
 
   .category-name-btn.active {
@@ -1166,7 +1190,7 @@
     }
   }
 
-  @media (prefers-color-scheme: dark) {
+  @media (hover: hover) and (prefers-color-scheme: dark) {
     .nav-item:hover {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
     }
@@ -1174,7 +1198,9 @@
     .nav-row:hover {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
     }
+  }
 
+  @media (prefers-color-scheme: dark) {
     .nav-group.expanded {
       background-color: rgba(255, 255, 255, 0.025);
     }
