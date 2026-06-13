@@ -488,6 +488,36 @@ export async function storeSession(env: Env, sessionId: string, session: Session
     .run();
 }
 
+// Persist a re-resolved PDS host onto an existing session. storeSession's
+// ON CONFLICT clause deliberately only refreshes tokens/expiry and does NOT
+// touch pds_url, so a host that moved after a PDS migration must be written
+// explicitly here (see PDSClient's stale-endpoint recovery).
+export async function updateSessionPdsUrl(
+  env: Env,
+  sessionId: string,
+  pdsUrl: string
+): Promise<void> {
+  await env.DB.prepare('UPDATE sessions SET pds_url = ? WHERE session_id = ?')
+    .bind(pdsUrl, sessionId)
+    .run();
+}
+
+// Extract the session id from a request's cookie or Authorization header, using
+// the same precedence as resolveSessionFromRequest. Returns null if neither is
+// present. Useful when a caller needs the id itself (not just the session) to
+// persist a migrated PDS host back to the row.
+export function getSessionIdFromRequest(request: Request): string | null {
+  const cookies = parseCookies(request.headers.get('Cookie'));
+  const fromCookie = cookies.get(SESSION_COOKIE_NAME);
+  if (fromCookie) return fromCookie;
+
+  const authHeader = request.headers.get('Authorization');
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.substring(7);
+  }
+  return null;
+}
+
 // Get session from D1 (returns session even if expired, to allow refresh)
 async function getSessionWithRefreshState(
   env: Env,

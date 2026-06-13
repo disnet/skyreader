@@ -563,4 +563,132 @@ describe('Subscription Sync', () => {
       );
     });
   });
+
+  // The reported bug: after a PDS migration the session's pds_url is stale and
+  // sync silently stops. Syncing (the same call the Settings toggle makes) must
+  // recover on its own — no off/on toggle required.
+  describe('PDS migration recovery', () => {
+    const OLD_PDS = 'https://old.pds.example';
+    const NEW_PDS = 'https://new.pds.example';
+    const MIGRATE_SESSION = 'migrate-session-1';
+
+    function plcDoc(pds: string) {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => ({
+          id: TEST_DID,
+          service: [
+            { id: '#atproto_pds', type: 'AtprotoPersonalDataServer', serviceEndpoint: pds },
+          ],
+        }),
+        text: async () => '',
+      };
+    }
+
+    it('recovers a stale endpoint and syncs without a manual toggle', async () => {
+      // Session still points at the old PDS host.
+      await env.DB.prepare(
+        `INSERT INTO sessions (session_id, did, handle, pds_url, access_token, refresh_token, dpop_private_key, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+        .bind(
+          MIGRATE_SESSION,
+          TEST_DID,
+          'test.bsky.social',
+          OLD_PDS,
+          'tok',
+          'refresh',
+          JSON.stringify(TEST_DPOP_KEY),
+          Date.now() + 3600000
+        )
+        .run();
+      await env.DB.prepare('DELETE FROM did_pds_cache WHERE did = ?').bind(TEST_DID).run();
+
+      const pdsRecords = [
+        createPdsSubscriptionRecord('rkey1', 'https://example.com/feed1.xml', 'Feed 1'),
+      ];
+
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL) => {
+        const u = url.toString();
+        // Old host rejects the now-stale credentials/host.
+        if (u.startsWith(`${OLD_PDS}/xrpc/`)) {
+          return {
+            ok: false,
+            status: 403,
+            headers: new Headers(),
+            text: async () => JSON.stringify({ error: 'AccountDeactivated' }),
+          };
+        }
+        // DID doc now points at the new host.
+        if (u.startsWith('https://plc.directory/')) return plcDoc(NEW_PDS);
+        // New host serves the user's records.
+        if (u.startsWith(`${NEW_PDS}/xrpc/`)) {
+          return { ok: true, headers: new Headers(), json: async () => ({ records: pdsRecords }) };
+        }
+        throw new Error(`Unexpected fetch: ${u}`);
+      });
+
+      const session = createTestSession({ pdsUrl: OLD_PDS });
+      const result = await syncSubscriptions(session, env, MIGRATE_SESSION);
+
+      expect(result.success).toBe(true);
+      expect(result.needsReauth).toBeFalsy();
+      expect(result.pulledFromPds).toBe(1);
+
+      // Session host was migrated and persisted.
+      const row = await env.DB.prepare('SELECT pds_url FROM sessions WHERE session_id = ?')
+        .bind(MIGRATE_SESSION)
+        .first<{ pds_url: string }>();
+      expect(row?.pds_url).toBe(NEW_PDS);
+
+      // The pulled record landed locally.
+      const local = await env.DB.prepare(
+        'SELECT feed_url FROM subscriptions_cache WHERE user_did = ?'
+      )
+        .bind(TEST_DID)
+        .all<{ feed_url: string }>();
+      expect(local.results?.map((r) => r.feed_url)).toContain('https://example.com/feed1.xml');
+    });
+
+    it('reports needsReauth when the migrated host still rejects the tokens', async () => {
+      await env.DB.prepare(
+        `INSERT INTO sessions (session_id, did, handle, pds_url, access_token, refresh_token, dpop_private_key, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+        .bind(
+          MIGRATE_SESSION,
+          TEST_DID,
+          'test.bsky.social',
+          OLD_PDS,
+          'tok',
+          'refresh',
+          JSON.stringify(TEST_DPOP_KEY),
+          Date.now() + 3600000
+        )
+        .run();
+      await env.DB.prepare('DELETE FROM did_pds_cache WHERE did = ?').bind(TEST_DID).run();
+
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL) => {
+        const u = url.toString();
+        if (u.startsWith(`${OLD_PDS}/xrpc/`) || u.startsWith(`${NEW_PDS}/xrpc/`)) {
+          return {
+            ok: false,
+            status: 401,
+            headers: new Headers(),
+            text: async () => JSON.stringify({ error: 'invalid_token' }),
+          };
+        }
+        if (u.startsWith('https://plc.directory/')) return plcDoc(NEW_PDS);
+        throw new Error(`Unexpected fetch: ${u}`);
+      });
+
+      const session = createTestSession({ pdsUrl: OLD_PDS });
+      const result = await syncSubscriptions(session, env, MIGRATE_SESSION);
+
+      expect(result.success).toBe(false);
+      expect(result.needsReauth).toBe(true);
+    });
+  });
 });

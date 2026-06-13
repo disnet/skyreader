@@ -1,5 +1,11 @@
-import type { Session } from '../types';
-import { importPrivateKey, createDPoPProof } from './oauth';
+import type { Env, Session } from '../types';
+import {
+  importPrivateKey,
+  createDPoPProof,
+  getPdsFromDid,
+  invalidatePdsCache,
+  updateSessionPdsUrl,
+} from './oauth';
 
 /**
  * Response type for listRecords API
@@ -70,7 +76,21 @@ export interface PDSError {
  */
 export type PDSResult<T> =
   | { success: true; data: T; truncated?: boolean }
-  | { success: false; error: string; retryable: boolean };
+  // `needsReauth` is set when the PDS host was re-resolved after a migration but
+  // the existing OAuth tokens were still rejected — the user must re-authenticate
+  // against the new PDS's auth server. Callers should surface this, not retry.
+  | { success: false; error: string; retryable: boolean; needsReauth?: boolean };
+
+/**
+ * Optional context that lets a PDSClient self-heal a stale PDS endpoint.
+ * When present, a request that fails because the cached host moved (PDS
+ * migration) re-resolves the host from the DID document, persists it back to
+ * the session, and retries once.
+ */
+export interface PDSRecoveryContext {
+  env: Env;
+  sessionId: string;
+}
 
 /**
  * Client for interacting with the user's Personal Data Server (PDS)
@@ -79,19 +99,102 @@ export type PDSResult<T> =
 export class PDSClient {
   private session: Session;
   private dpopNonce: string | null = null;
+  private readonly recovery?: PDSRecoveryContext;
+  // One-shot guard: only attempt endpoint re-resolution once per client, so a
+  // genuinely broken host (or a transient blip misread as a migration) can't
+  // spin into a re-resolve loop.
+  private recoveryAttempted = false;
 
-  constructor(session: Session) {
+  constructor(session: Session, recovery?: PDSRecoveryContext) {
     this.session = session;
+    this.recovery = recovery;
   }
 
   /**
-   * Make an authenticated request to the PDS
+   * Make an authenticated request to the PDS, with one-shot recovery from a
+   * stale PDS endpoint (e.g. after the user migrated their PDS). If the first
+   * attempt fails in a way that looks like the host moved and a recovery
+   * context is available, re-resolve the host from the DID document, persist
+   * it, and retry once.
    */
   private async request<T>(
     method: string,
     endpoint: string,
     body?: unknown
   ): Promise<PDSResult<T>> {
+    const first = await this.attemptRequest<T>(method, endpoint, body);
+    if (!first.staleEndpoint || !this.recovery || this.recoveryAttempted) {
+      return first.result;
+    }
+
+    this.recoveryAttempted = true;
+    const moved = await this.recoverEndpoint();
+    if (!moved) {
+      // Host didn't actually change (or re-resolution failed) — the original
+      // failure stands; don't mask it.
+      return first.result;
+    }
+
+    const second = await this.attemptRequest<T>(method, endpoint, body);
+    if (second.staleEndpoint && !second.result.success) {
+      // New host resolved but auth still rejected: the tokens were minted by
+      // the old PDS's auth server and don't carry over. Signal re-auth.
+      console.warn(
+        `[PDSClient] Auth still rejected after migrating to ${this.session.pdsUrl}; re-auth required`
+      );
+      return { ...second.result, needsReauth: true };
+    }
+    return second.result;
+  }
+
+  /**
+   * Re-resolve this session's PDS host from the DID document, bypassing the
+   * cache. If the host genuinely moved, persist it to the session and reset
+   * per-host DPoP state so the retry binds proofs to the new host. Returns true
+   * only when the host changed (a real migration).
+   */
+  private async recoverEndpoint(): Promise<boolean> {
+    if (!this.recovery) return false;
+    const { env, sessionId } = this.recovery;
+    const did = this.session.did;
+    const oldUrl = this.session.pdsUrl;
+
+    try {
+      await invalidatePdsCache(did, env);
+      const { pdsUrl } = await getPdsFromDid(did, env);
+
+      if (pdsUrl === oldUrl) {
+        // Same host — the failure wasn't a migration (transient error, expired
+        // token, etc.). Nothing to recover.
+        console.warn(
+          `[PDSClient] Re-resolved PDS for ${did} unchanged (${pdsUrl}); not a migration`
+        );
+        return false;
+      }
+
+      console.warn(`[PDSClient] PDS host moved for ${did}: ${oldUrl} -> ${pdsUrl}; persisting`);
+      await updateSessionPdsUrl(env, sessionId, pdsUrl);
+      this.session = { ...this.session, pdsUrl };
+      // DPoP nonces are issued per-host; a nonce from the old host is invalid
+      // against the new one.
+      this.dpopNonce = null;
+      return true;
+    } catch (err) {
+      console.error(`[PDSClient] Endpoint recovery failed for ${did}:`, err);
+      return false;
+    }
+  }
+
+  /**
+   * Perform a single authenticated PDS request (including the in-band
+   * use_dpop_nonce retry). Reports whether the failure looks like a stale
+   * endpoint so the caller can decide whether to re-resolve + retry.
+   */
+  private async attemptRequest<T>(
+    method: string,
+    endpoint: string,
+    body?: unknown
+  ): Promise<{ result: PDSResult<T>; staleEndpoint: boolean }> {
     const url = `${this.session.pdsUrl}/xrpc/${endpoint}`;
     console.log(`[PDSClient] ${method} ${url}`);
 
@@ -212,16 +315,33 @@ export class PDSClient {
           });
         }
 
-        return { success: false, error: errorMessage, retryable };
+        // A stale/migrated endpoint shows up as an auth rejection: the request
+        // reached *a* server but the credentials/host no longer line up. We
+        // exclude not-found (a normal outcome), rate limits, and 5xx (transient,
+        // the host is fine) so a re-resolve only fires on real host drift.
+        const staleEndpoint =
+          !isNotFound &&
+          (response.status === 401 ||
+            response.status === 403 ||
+            errorData?.error === 'invalid_token');
+
+        return { result: { success: false, error: errorMessage, retryable }, staleEndpoint };
       }
 
       const data = (await response.json()) as T;
       console.log(`[PDSClient] ${method} ${endpoint} succeeded`);
-      return { success: true, data };
+      return { result: { success: true, data }, staleEndpoint: false };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Network error';
       console.error(`[PDSClient] Request error: ${method} ${endpoint}`, error);
-      return { success: false, error: errorMessage, retryable: true };
+      // A network throw can mean the old host is unreachable after a migration.
+      // Treat it as a stale-endpoint candidate; recoverEndpoint() only retries
+      // if the DID doc actually points somewhere new, so a transient blip with
+      // an unchanged host is a no-op.
+      return {
+        result: { success: false, error: errorMessage, retryable: true },
+        staleEndpoint: true,
+      };
     }
   }
 
@@ -427,8 +547,9 @@ export class PDSClient {
 }
 
 /**
- * Create a PDS client for the given session
+ * Create a PDS client for the given session. Pass a recovery context to enable
+ * one-shot self-healing of a stale PDS endpoint after a PDS migration.
  */
-export function createPDSClient(session: Session): PDSClient {
-  return new PDSClient(session);
+export function createPDSClient(session: Session, recovery?: PDSRecoveryContext): PDSClient {
+  return new PDSClient(session, recovery);
 }

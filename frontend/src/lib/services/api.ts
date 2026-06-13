@@ -970,6 +970,8 @@ class ApiClient {
   // PDS Sync
   async triggerFullSync(): Promise<{
     success: boolean;
+    /** Set when the user's PDS moved and they must reconnect to resume sync. */
+    needsReauth?: boolean;
     subscriptions?: {
       success: boolean;
       pulledFromPds: number;
@@ -977,6 +979,7 @@ class ApiClient {
       skipped: number;
       warnings: string[];
       hasMore?: boolean;
+      needsReauth?: boolean;
     };
     atmosphere?: {
       success: boolean;
