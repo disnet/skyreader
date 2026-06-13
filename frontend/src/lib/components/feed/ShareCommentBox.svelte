@@ -173,10 +173,13 @@
       }}
     ></textarea>
     <MentionAutocomplete {textareaEl} bind:value />
-    <!-- Always rendered so it reserves its space — focusing (or a saved note at
-         rest) reveals it via opacity/visibility, never a layout shift. -->
-    <div class="actions" class:hidden={!focused && !showSaved}>
-      {#if focused}
+    <!-- The actions slot always reserves the focused controls' footprint: the
+         controls stay mounted and are only hidden via visibility/opacity, never
+         unmounted, so revealing them on focus changes neither the row's width nor
+         its height. The at-rest "Saved" pill overlaps the controls in a single grid
+         cell, so the slot stays sized to the controls in every state — no reflow. -->
+    <div class="actions">
+      <div class="action-controls" class:hidden={!focused}>
         {#if nearLimit}
           <span class="counter" class:over={value.length >= MAX}>{MAX - value.length}</span>
         {/if}
@@ -241,9 +244,13 @@
           <Icon name="check" size={16} />
           <span class="btn-text">Save</span>
         </button>
-      {:else if showSaved}
+      </div>
+      {#if !focused && showSaved}
         <!-- Persistent confirmation: the note landed. Stays until the user edits
-             again, so the feedback doesn't blink out the moment they tap save. -->
+             again, so the feedback doesn't blink out the moment they tap save.
+             Overlaid in the same grid cell as the controls, so mounting it on save
+             never shifts the row. Mounting (rather than toggling visibility) keeps
+             the aria-live announcement firing. -->
         <span class="saved-pill" aria-live="polite">
           <Icon name="check" size={14} />
           <span class="saved-text">Saved</span>
@@ -319,6 +326,19 @@
     /* Stick to the bottom so the button trails the last line as the note wraps,
        while the icon stays aligned to the first line. */
     align-self: flex-end;
+    /* Overlap children in a single cell so the slot is always sized to the
+       controls — whichever state (focused controls or at-rest "Saved" pill) is
+       showing — so focus only toggles visibility and never reflows the row. */
+    display: grid;
+    justify-items: end;
+    align-items: center;
+  }
+
+  .actions > * {
+    grid-area: 1 / 1;
+  }
+
+  .action-controls {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -326,7 +346,7 @@
   }
 
   /* Hidden but still occupying space, so showing it on focus never reflows. */
-  .actions.hidden {
+  .hidden {
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
@@ -492,7 +512,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .actions {
+    .action-controls {
       transition: none;
     }
   }
