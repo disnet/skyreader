@@ -233,8 +233,10 @@
     transition: background-color 0.15s;
   }
 
-  .nav-item:hover {
-    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+  @media (hover: hover) {
+    .nav-item:hover {
+      background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+    }
   }
 
   .nav-item.active {
@@ -407,8 +409,10 @@
     animation: spin 0.8s linear infinite;
   }
 
-  .retry-btn:hover {
-    color: var(--color-primary);
+  @media (hover: hover) {
+    .retry-btn:hover {
+      color: var(--color-primary);
+    }
   }
 
   .more-btn {
@@ -424,25 +428,31 @@
     font-size: var(--text-base);
     padding: 0;
     line-height: var(--leading-none);
-    opacity: 0;
+    opacity: 1;
     transition: opacity 0.15s;
     flex-shrink: 0;
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
   }
 
-  .feed-item:hover .more-btn,
-  .more-btn:focus {
-    opacity: 1;
+  @media (hover: hover) {
+    .more-btn {
+      opacity: 0;
+    }
+
+    .feed-item:hover .more-btn,
+    .more-btn:focus {
+      opacity: 1;
+    }
+
+    .more-btn:hover {
+      color: var(--color-text);
+      background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.1));
+      border-radius: 4px;
+    }
   }
 
-  .more-btn:hover {
-    color: var(--color-text);
-    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.1));
-    border-radius: 4px;
-  }
-
-  @media (prefers-color-scheme: dark) {
+  @media (hover: hover) and (prefers-color-scheme: dark) {
     .nav-item:hover {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
     }

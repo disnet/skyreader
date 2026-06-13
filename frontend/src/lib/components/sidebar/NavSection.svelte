@@ -96,8 +96,10 @@
     transition: background-color 0.15s;
   }
 
-  .section-header:hover {
-    background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+  @media (hover: hover) {
+    .section-header:hover {
+      background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+    }
   }
 
   .section-header.active {
@@ -152,18 +154,24 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    opacity: 0;
+    opacity: 0.6;
     transition: opacity 0.15s;
     border-radius: 4px;
   }
 
-  .section-header:hover .add-btn {
-    opacity: 0.6;
-  }
+  @media (hover: hover) {
+    .add-btn {
+      opacity: 0;
+    }
 
-  .add-btn:hover {
-    opacity: 1 !important;
-    color: var(--color-primary);
+    .section-header:hover .add-btn {
+      opacity: 0.6;
+    }
+
+    .add-btn:hover {
+      opacity: 1 !important;
+      color: var(--color-primary);
+    }
   }
 
   .disclosure-btn {
@@ -177,8 +185,10 @@
     justify-content: center;
   }
 
-  .disclosure-btn:hover {
-    color: var(--color-text);
+  @media (hover: hover) {
+    .disclosure-btn:hover {
+      color: var(--color-text);
+    }
   }
 
   .section-header.active .disclosure-btn {
@@ -194,16 +204,22 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    opacity: 0;
+    opacity: 0.6;
     transition: opacity 0.15s;
   }
 
-  .section-header:hover .filter-toggle {
-    opacity: 0.6;
-  }
+  @media (hover: hover) {
+    .filter-toggle {
+      opacity: 0;
+    }
 
-  .filter-toggle:hover {
-    opacity: 1 !important;
+    .section-header:hover .filter-toggle {
+      opacity: 0.6;
+    }
+
+    .filter-toggle:hover {
+      opacity: 1 !important;
+    }
   }
 
   .filter-toggle.active {
@@ -218,11 +234,13 @@
     gap: 2px;
   }
 
-  @media (prefers-color-scheme: dark) {
+  @media (hover: hover) and (prefers-color-scheme: dark) {
     .section-header:hover {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
     }
+  }
 
+  @media (prefers-color-scheme: dark) {
     .nav-section.expanded {
       background-color: rgba(255, 255, 255, 0.025);
     }
