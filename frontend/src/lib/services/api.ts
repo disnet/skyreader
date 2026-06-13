@@ -245,6 +245,14 @@ class ApiClient {
     return this.fetch(`/api/auth/login?${params}`);
   }
 
+  // Server-first sign-up: start OAuth against a provider's PDS/entryway host with
+  // no account yet. The provider offers account creation, then redirects back here.
+  async signup(pds: string, returnUrl?: string): Promise<{ authUrl: string }> {
+    const params = new URLSearchParams({ pds });
+    if (returnUrl) params.set('returnUrl', returnUrl);
+    return this.fetch(`/api/auth/login?${params}`);
+  }
+
   async logout(): Promise<void> {
     await this.fetch('/api/auth/logout', { method: 'POST' });
   }

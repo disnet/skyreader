@@ -43,6 +43,30 @@ import {
 // Maximum number of users allowed during beta
 const MAX_USERS = 1000;
 
+// Curated set of provider hosts the server-first sign-up flow may target. Because
+// the `pds` param is user-controlled and we fetch its well-known OAuth metadata,
+// this doubles as an SSRF allowlist — only these known atproto entryways/PDSes are
+// ever reachable. Keep in sync with the providers list in the frontend login page.
+const SIGNUP_PDS_HOSTS = new Set(['bsky.social', 'eurosky.social', 'blacksky.app']);
+
+// Normalize a user-supplied PDS/entryway host into a clean https origin and confirm
+// it is on the allowlist. Drops any path/query and forces https so the sign-up flow
+// only ever hits a known host's well-known OAuth metadata. Returns null if the host
+// is malformed or not allowlisted.
+function normalizePdsHost(input: string): string | null {
+  let parsed: URL;
+  try {
+    const trimmed = input.trim();
+    const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    parsed = new URL(withScheme);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+  if (!SIGNUP_PDS_HOSTS.has(host)) return null;
+  return `https://${host}`;
+}
+
 // Scope constants now live in config/scopes.ts (shared with the token-refresh
 // path). Re-exported here so existing importers (integrations, linkblog, saved)
 // keep working unchanged.
@@ -195,6 +219,10 @@ export async function handleClientMetadata(request: Request, env: Env): Promise<
 export async function handleAuthLogin(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const handle = url.searchParams.get('handle');
+  // Server-first sign-up: start the OAuth flow against a PDS/entryway host with no
+  // account yet. The auth server offers account creation, then redirects back via
+  // our redirect_uri (the "link-back"). See docs.bsky.app/blog/account-management.
+  const pdsParam = url.searchParams.get('pds');
   const rawReturnUrl = url.searchParams.get('returnUrl') || '/';
 
   // Validate returnUrl to prevent open redirect attacks
@@ -207,42 +235,64 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
   const cliPortParam = url.searchParams.get('cli_port');
   const cliPort = cliPortParam ? parseInt(cliPortParam, 10) : undefined;
 
-  if (!handle) {
-    return new Response(JSON.stringify({ error: 'Missing handle parameter' }), {
+  if (!handle && !pdsParam) {
+    return new Response(JSON.stringify({ error: 'Missing handle or pds parameter' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
   }
 
-  // Normalize handle (strip @, lowercase, add .bsky.social if needed)
-  const normalizedHandle = normalizeHandleInput(handle);
+  // Sign-up mode carries no account identifier; login_hint is the handle otherwise.
+  const isSignup = !handle && !!pdsParam;
+  const normalizedHandle = handle ? normalizeHandleInput(handle) : '';
 
   try {
-    // Resolve handle to DID
-    const did = await resolveHandle(normalizedHandle);
-
-    // Get PDS URL from DID (may be served from cache)
-    let { pdsUrl, fromCache } = await getPdsFromDid(did, env);
+    // In sign-up mode we have no account yet: the DID is learned in the callback,
+    // and the PDS host comes straight from the chosen provider.
+    let did = '';
+    let pdsUrl: string;
 
     // Always request all scopes (base + integrations)
     const requestedScopes = ALL_POSSIBLE_SCOPES;
 
-    // Fetch authorization server metadata. If the PDS came from cache and the
-    // endpoint no longer accepts us (e.g., user migrated their PDS), evict
-    // and re-resolve once.
     let authMeta;
-    try {
+    if (isSignup) {
+      const normalized = normalizePdsHost(pdsParam!);
+      if (!normalized) {
+        return new Response(JSON.stringify({ error: 'Unsupported sign-up provider' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      pdsUrl = normalized;
       authMeta = await fetchAuthServerMetadata(pdsUrl);
-    } catch (err) {
-      if (!fromCache) throw err;
-      console.warn(
-        `Auth metadata failed for cached PDS ${pdsUrl} (DID ${did}); evicting and retrying`,
-        err
-      );
-      await invalidatePdsCache(did, env);
+    } else {
+      // Resolve handle to DID
+      did = await resolveHandle(normalizedHandle);
+
+      // Get PDS URL from DID (may be served from cache)
+      let fromCache: boolean;
       ({ pdsUrl, fromCache } = await getPdsFromDid(did, env));
-      authMeta = await fetchAuthServerMetadata(pdsUrl);
+
+      // Fetch authorization server metadata. If the PDS came from cache and the
+      // endpoint no longer accepts us (e.g., user migrated their PDS), evict
+      // and re-resolve once.
+      try {
+        authMeta = await fetchAuthServerMetadata(pdsUrl);
+      } catch (err) {
+        if (!fromCache) throw err;
+        console.warn(
+          `Auth metadata failed for cached PDS ${pdsUrl} (DID ${did}); evicting and retrying`,
+          err
+        );
+        await invalidatePdsCache(did, env);
+        ({ pdsUrl, fromCache } = await getPdsFromDid(did, env));
+        authMeta = await fetchAuthServerMetadata(pdsUrl);
+      }
     }
+
+    // login_hint pre-fills the account on the auth screen; omitted when signing up.
+    const loginHint = isSignup ? undefined : normalizedHandle;
 
     // Generate PKCE
     const { codeVerifier, codeChallenge } = await generatePKCE();
@@ -292,7 +342,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
           state,
           code_challenge: codeChallenge,
           code_challenge_method: 'S256',
-          login_hint: normalizedHandle,
+          ...(loginHint ? { login_hint: loginHint } : {}),
           client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
           client_assertion: clientAssertion,
         }),
@@ -319,7 +369,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
               state,
               code_challenge: codeChallenge,
               code_challenge_method: 'S256',
-              login_hint: normalizedHandle,
+              ...(loginHint ? { login_hint: loginHint } : {}),
               client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
               client_assertion: retryAssertion,
             }),
@@ -351,7 +401,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
         state,
         code_challenge: codeChallenge,
         code_challenge_method: 'S256',
-        login_hint: normalizedHandle,
+        ...(loginHint ? { login_hint: loginHint } : {}),
       });
       authUrl = `${authMeta.authorization_endpoint}?${params}`;
     }
@@ -412,6 +462,10 @@ export async function handleAuthCallback(
 
     // Delete state to prevent replay
     await deleteOAuthState(env, state);
+
+    // Server-first sign-up has no DID/handle yet; both are learned from the token
+    // response and the freshly created account below.
+    const isSignup = !oauthState.did;
 
     // Fetch auth server metadata again
     const authMeta = await fetchAuthServerMetadata(oauthState.pdsUrl);
@@ -568,7 +622,7 @@ export async function handleAuthCallback(
         console.error('Token exchange failed:', finalErrorText);
         // Token exchange against the cached PDS failed — could be a stale
         // cache after a PDS migration. Evict so the next attempt re-resolves.
-        await invalidatePdsCache(oauthState.did, env);
+        if (oauthState.did) await invalidatePdsCache(oauthState.did, env);
         return Response.redirect(
           `${oauthState.frontendUrl}/auth/error?error=Token+exchange+failed`
         );
@@ -583,21 +637,44 @@ export async function handleAuthCallback(
       scope?: string;
     };
 
-    // Verify sub matches our expected DID
-    if (tokenData.sub !== oauthState.did) {
+    // In sign-up mode the account is whatever the user just created, so the token
+    // `sub` IS the DID. In login mode it must match the DID we resolved up front.
+    let did = oauthState.did;
+    let pdsUrl = oauthState.pdsUrl;
+    if (isSignup) {
+      did = tokenData.sub;
+      // The chosen host may be an entryway (e.g. bsky.social); resolve the new
+      // account's actual PDS so authenticated calls hit the right resource server.
+      pdsUrl = (await getPdsFromDid(did, env)).pdsUrl;
+    } else if (tokenData.sub !== oauthState.did) {
       console.error('DID mismatch:', tokenData.sub, oauthState.did);
       return Response.redirect(
         `${oauthState.frontendUrl}/auth/error?error=DID+verification+failed`
       );
     }
 
-    // Fetch user profile from public API (no auth needed for public profile data)
-    const profileUrl = `https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${oauthState.did}`;
-    const profileResponse = await fetch(profileUrl);
-
     let displayName: string | undefined;
     let avatarUrl: string | undefined;
     let handle = oauthState.handle;
+
+    // A brand-new account may not be indexed by the AppView yet, so take the
+    // canonical handle straight from its PDS first.
+    if (isSignup) {
+      try {
+        const descRes = await fetch(
+          `${pdsUrl}/xrpc/com.atproto.repo.describeRepo?repo=${encodeURIComponent(did)}`
+        );
+        if (descRes.ok) {
+          handle = ((await descRes.json()) as { handle?: string }).handle || handle;
+        }
+      } catch (err) {
+        console.warn('describeRepo handle lookup failed during sign-up:', err);
+      }
+    }
+
+    // Fetch user profile from public API (no auth needed for public profile data)
+    const profileUrl = `https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${did}`;
+    const profileResponse = await fetch(profileUrl);
 
     if (profileResponse.ok) {
       const profile = (await profileResponse.json()) as {
@@ -605,10 +682,10 @@ export async function handleAuthCallback(
         displayName?: string;
         avatar?: string;
       };
-      handle = profile.handle;
+      if (profile.handle) handle = profile.handle;
       displayName = profile.displayName;
       avatarUrl = profile.avatar;
-    } else {
+    } else if (!isSignup) {
       console.error(
         'Profile fetch failed:',
         profileResponse.status,
@@ -622,11 +699,11 @@ export async function handleAuthCallback(
 
     const sessionId = generateRandomString(32);
     const session: Session = {
-      did: oauthState.did,
+      did,
       handle,
       displayName,
       avatarUrl,
-      pdsUrl: oauthState.pdsUrl,
+      pdsUrl,
       accessToken: tokenData.access_token,
       refreshToken: tokenData.refresh_token,
       dpopPrivateKey: JSON.stringify(privateKeyJwk),
@@ -636,7 +713,7 @@ export async function handleAuthCallback(
 
     // Check if user has logged in before (registered_at is NULL for users added via Jetstream/follow sync)
     const existingUser = await env.DB.prepare('SELECT did, registered_at FROM users WHERE did = ?')
-      .bind(oauthState.did)
+      .bind(did)
       .first<{ did: string; registered_at: number | null }>();
 
     // Check user cap for new users
@@ -647,7 +724,7 @@ export async function handleAuthCallback(
       ).first<{ count: number }>();
 
       if ((userCountResult?.count || 0) >= MAX_USERS) {
-        console.log(`User cap reached, rejecting new user: ${oauthState.handle}`);
+        console.log(`User cap reached, rejecting new user: ${handle || did}`);
         return Response.redirect(`${oauthState.frontendUrl}/auth/error?error=user_cap_reached`);
       }
     }
@@ -666,7 +743,7 @@ export async function handleAuthCallback(
         registered_at = COALESCE(users.registered_at, unixepoch())
     `
     )
-      .bind(oauthState.did, handle, displayName || null, avatarUrl || null, oauthState.pdsUrl)
+      .bind(did, handle, displayName || null, avatarUrl || null, pdsUrl)
       .run();
 
     // Now store session (after user exists in DB due to FK constraint)

@@ -371,16 +371,17 @@ export async function fetchAuthServerMetadata(pdsUrl: string): Promise<{
   pushed_authorization_request_endpoint?: string;
   revocation_endpoint?: string;
 }> {
-  // First get the PDS resource server metadata
+  // First get the PDS resource server metadata to discover its auth server.
+  let authServerUrl = pdsUrl;
   const resourceResponse = await fetch(`${pdsUrl}/.well-known/oauth-protected-resource`);
-  if (!resourceResponse.ok) {
-    throw new Error(`Could not fetch resource server metadata from ${pdsUrl}`);
+  if (resourceResponse.ok) {
+    const resourceMeta = (await resourceResponse.json()) as {
+      authorization_servers: string[];
+    };
+    authServerUrl = resourceMeta.authorization_servers[0];
   }
-  const resourceMeta = (await resourceResponse.json()) as {
-    authorization_servers: string[];
-  };
-
-  const authServerUrl = resourceMeta.authorization_servers[0];
+  // Otherwise the host may itself be the authorization server — e.g. an entryway
+  // like bsky.social, which has no resource metadata. Fall back to it directly.
 
   // Then get the authorization server metadata
   const authResponse = await fetch(`${authServerUrl}/.well-known/oauth-authorization-server`);
