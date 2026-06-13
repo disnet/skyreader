@@ -55,12 +55,15 @@
   let styleMenuOpen = $state(false);
   let styleSheetOpen = $state(false);
   let tagMenuOpen = $state(false);
+  let overflowMenuOpen = $state(false);
   let overflowRef = $state<HTMLDivElement | null>(null);
   let tagBtnRef = $state<HTMLButtonElement | null>(null);
   let controlsVisible = $state(true);
   // Desktop header hides on scroll-down, but stays put while a header-anchored
-  // menu (Style/Tag) is open so its popover doesn't slide off-screen.
-  let headerHidden = $derived(!controlsVisible && !styleMenuOpen && !tagMenuOpen);
+  // menu (Style/Tag/overflow ⋯) is open so its popover doesn't slide off-screen.
+  let headerHidden = $derived(
+    !controlsVisible && !styleMenuOpen && !tagMenuOpen && !overflowMenuOpen
+  );
   let scrolled = $state(false);
   let lastScrollY = $state(0);
   let suppressScrollHide = $state(false);
@@ -701,7 +704,7 @@
         </button>
 
         <div class="overflow-menu-wrapper" bind:this={overflowRef}>
-          <PopoverMenu items={overflowItems} />
+          <PopoverMenu items={overflowItems} bind:open={overflowMenuOpen} />
         </div>
       </div>
     </div>
