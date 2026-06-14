@@ -211,6 +211,7 @@
   }
 
   .right-pill {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 0.125rem;
@@ -277,9 +278,12 @@
 
   /* Add menu */
   .add-menu-wrapper {
-    position: relative;
+    display: flex;
   }
 
+  /* Anchored to .right-pill (not the wrapper) so the menu drops down aligned to
+     the pill's right edge. The add button is the leftmost item in the pill, so
+     anchoring to it would push the 200px menu off the left edge on narrow phones. */
   .add-menu {
     position: absolute;
     bottom: calc(100% + 0.5rem);
