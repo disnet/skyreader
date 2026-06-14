@@ -347,7 +347,7 @@
             <span>Skyreader</span>
           </a>
           <a
-            href="https://github.com/disnet/skyreader/issues"
+            href="https://userinput.app/#/s/did:plc:ra4jsemddo2ii4pn5jaf6x4v/3mobgsd6d5n27"
             class="feedback-link"
             target="_blank"
             rel="noopener noreferrer">Feedback ↗</a
@@ -365,7 +365,7 @@
         <a href="mailto:abuse@skyreader.app">Report Abuse</a>
         <span class="separator">·</span>
         <a
-          href="https://github.com/disnet/skyreader/issues"
+          href="https://userinput.app/#/s/did:plc:ra4jsemddo2ii4pn5jaf6x4v/3mobgsd6d5n27"
           target="_blank"
           rel="noopener noreferrer">Feedback</a
         >
