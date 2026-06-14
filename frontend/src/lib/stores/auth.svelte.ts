@@ -1,7 +1,5 @@
 import { browser } from '$app/environment';
 import { api, OfflineError, SessionRefreshError } from '$lib/services/api';
-import { clearAllData } from '$lib/services/db';
-import { unregisterPeriodicSync } from '$lib/services/backgroundRefresh';
 import type { User } from '$lib/types';
 
 interface AuthState {
@@ -90,6 +88,14 @@ function createAuthStore() {
 
     if (browser) {
       localStorage.removeItem('skyreader-auth');
+      // Dynamically imported so the IndexedDB layer (Dexie) and background-sync
+      // service stay out of the always-loaded auth chunk — they're only needed
+      // here, at logout. Keeping them lazy is what lets the logged-out landing
+      // page avoid downloading the app's data layer.
+      const [{ clearAllData }, { unregisterPeriodicSync }] = await Promise.all([
+        import('$lib/services/db'),
+        import('$lib/services/backgroundRefresh'),
+      ]);
       await clearAllData();
       // Unregister from periodic background sync
       await unregisterPeriodicSync();
