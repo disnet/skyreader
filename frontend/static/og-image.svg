@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="sky" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#87CEEB"/>
+      <stop offset="50%" stop-color="#4A9FD4"/>
+      <stop offset="100%" stop-color="#1E6FA8"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#E8F4FC"/>
+      <stop offset="100%" stop-color="#FFFFFF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="1200" height="630" fill="url(#sky)"/>
+
+  <!-- Logo mark: RSS arcs reaching toward the sky -->
+  <g transform="translate(118, 95) scale(0.42)">
+    <circle cx="128" cy="384" r="40" fill="url(#wave)"/>
+    <path d="M 128 288 A 96 96 0 0 1 224 384" fill="none" stroke="url(#wave)" stroke-width="32" stroke-linecap="round"/>
+    <path d="M 128 192 A 192 192 0 0 1 320 384" fill="none" stroke="url(#wave)" stroke-width="32" stroke-linecap="round"/>
+    <path d="M 128 100 A 284 284 0 0 1 412 384" fill="none" stroke="url(#wave)" stroke-width="32" stroke-linecap="round"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="120" y="420" font-family="Georgia, 'Times New Roman', serif" font-size="104" font-weight="700" fill="#FFFFFF">Skyreader</text>
+
+  <!-- Tagline -->
+  <text x="124" y="495" font-family="-apple-system, 'Helvetica Neue', Arial, sans-serif" font-size="40" font-weight="400" fill="#EAF5FD">Read everything from everywhere.</text>
+  <text x="124" y="548" font-family="-apple-system, 'Helvetica Neue', Arial, sans-serif" font-size="40" font-weight="400" fill="#EAF5FD">Make sense of it all.</text>
+</svg>
