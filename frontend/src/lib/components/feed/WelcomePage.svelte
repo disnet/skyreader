@@ -24,6 +24,42 @@
     return { destroy: () => io.disconnect() };
   }
 
+  // ── Margin-note popup: keep it on-screen ─────────────────────
+  // The note is centered under its marker, but the marker can wrap close
+  // to a viewport edge (notably on narrow phones), which clipped the popup.
+  // This nudges the centered popup horizontally so it always clears the
+  // viewport by a small gutter, recomputed on hover/focus and resize.
+  function clampPopup(node: HTMLElement) {
+    if (typeof window === 'undefined') return;
+    const gutter = 12;
+    const anchor = node.parentElement; // .note-anchor
+    let nudge = 0;
+    // Measure the popup *with the current nudge applied* and correct only by
+    // the overshoot, so a correctly-placed popup never resets to 0 (which
+    // would otherwise commit a transition start and make it flick on click).
+    const update = () => {
+      const rect = node.getBoundingClientRect();
+      let correction = 0;
+      if (rect.left < gutter) correction = gutter - rect.left;
+      else if (rect.right > window.innerWidth - gutter)
+        correction = window.innerWidth - gutter - rect.right;
+      if (Math.abs(correction) < 0.5) return;
+      nudge = Math.round(nudge + correction);
+      node.style.setProperty('--nudge', `${nudge}px`);
+    };
+    anchor?.addEventListener('pointerenter', update);
+    anchor?.addEventListener('focusin', update);
+    window.addEventListener('resize', update);
+    update();
+    return {
+      destroy() {
+        anchor?.removeEventListener('pointerenter', update);
+        anchor?.removeEventListener('focusin', update);
+        window.removeEventListener('resize', update);
+      },
+    };
+  }
+
   // ── Hero highlight draw ──────────────────────────────────────
   let motion = $state(false); // becomes true on mount when motion allowed
   let heroDrawn = $state(false);
@@ -201,7 +237,7 @@
               >
                 <Icon name="message-circle" size={13} />
               </button>
-              <span id="demo-margin-note" class="note-popup" role="tooltip">
+              <span id="demo-margin-note" class="note-popup" role="tooltip" use:clampPopup>
                 Connects to last week's piece on maintenance over novelty. Save for the essay.
               </span>
             </span>The web didn't disappear. We just stopped tending it.
@@ -735,7 +771,7 @@
     color: var(--r-muted);
     /* Hidden until the marker is hovered or focused. */
     opacity: 0;
-    transform: translate(-50%, 4px);
+    transform: translate(calc(-50% + var(--nudge, 0px)), 4px);
     pointer-events: none;
     transition:
       opacity 0.16s ease,
@@ -744,7 +780,7 @@
   .note-marker:hover + .note-popup,
   .note-anchor:focus-within .note-popup {
     opacity: 1;
-    transform: translate(-50%, 0);
+    transform: translate(calc(-50% + var(--nudge, 0px)), 0);
   }
 
   /* In-reader share moment: a quote + a box for a thought of your own. */
