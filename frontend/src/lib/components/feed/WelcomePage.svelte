@@ -108,6 +108,14 @@
     { title: 'Why I still keep a reading list', src: 'Bluesky', time: '1d', unread: false },
   ];
 
+  // Saved shelf demo: the few pieces pulled out of the stream to read properly.
+  // One is marked available offline to make the read-anywhere promise concrete.
+  const saved = [
+    { title: 'The case for slow software', meta: 'Newsletter · saved 2h ago', offline: true },
+    { title: 'Notes on attention and the open web', meta: 'RSS · saved yesterday', offline: false },
+    { title: 'A field guide to RSS in 2026', meta: 'Blog · saved 3d ago', offline: false },
+  ];
+
   onMount(() => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     motion = true;
@@ -137,8 +145,8 @@
       </span>
     </h1>
     <p class="hero-lead" use:reveal={{ delay: 180 }}>
-      Skyreader gathers your feeds and the people you follow into one calm place to read. Then it
-      helps make what you read become part of how you think.
+      Skyreader gathers your reading from across the internet into one calm place and helps you make
+      sense of it all.
     </p>
     <div class="hero-actions" use:reveal={{ delay: 260 }}>
       <a href="/auth/login" class="cta-primary"> Sign in </a>
@@ -153,11 +161,11 @@
   <!-- ── One place ─────────────────────────────────────────── -->
   <section class="section section--sources" aria-labelledby="sources-h">
     <div class="section-head" use:reveal>
-      <h2 id="sources-h">Everything you follow, in one quiet place.</h2>
+      <h2 id="sources-h">Craft your own stream from across the web.</h2>
       <p>
-        Subscribe to RSS feeds on the web and publications on the Atmosphere today, with email
-        newsletters and more coming soon. It all arrives in a single, time-ordered stream. No
-        algorithm, no reordering, no guessing what you missed.
+        Follow RSS feeds from any website and publications across the Atmosphere, with more sources
+        coming soon. You pick every source, so the stream is yours by design. No algorithm, no
+        reordering, no guessing what you missed.
       </p>
     </div>
 
@@ -201,13 +209,67 @@
     </div>
   </section>
 
-  <!-- ── Read deeply (interactive) ─────────────────────────── -->
-  <section id="read" class="section section--read" aria-labelledby="read-h">
+  <!-- ── Save what matters ─────────────────────────────────── -->
+  <section class="section section--save" aria-labelledby="save-h">
     <div class="section-head" use:reveal>
-      <h2 id="read-h">Built for reading</h2>
+      <h2 id="save-h">Save what matters.</h2>
       <p>
-        A clean reading view, free of clutter. Highlight what matters, leave a note in the margin,
-        then share it with a thought of your own.
+        Your stream moves fast, and not everything deserves the same attention. Save what matters to
+        you and dive deep.
+      </p>
+    </div>
+
+    <div class="save-demo" use:reveal={{ delay: 80 }}>
+      <!-- The save moment: one item, pulled out of the stream. -->
+      <div class="save-moment">
+        <span class="dot dot--unread" aria-hidden="true"></span>
+        <span class="stream-item-body">
+          <span class="stream-item-title">The case for slow software</span>
+          <span class="stream-item-meta">Newsletter · 2h</span>
+        </span>
+        <span class="save-btn" aria-hidden="true">
+          <Icon name="bookmark" size={16} /> Saved
+        </span>
+      </div>
+
+      <div class="save-flow" aria-hidden="true">
+        <Icon name="arrow-down" size={20} />
+      </div>
+
+      <!-- The shelf: what you chose to read properly, yours and offline-ready. -->
+      <div class="shelf" aria-label="Your saved reading">
+        <div class="shelf-head">
+          <span class="shelf-title"><Icon name="bookmark" size={15} /> To read</span>
+          <span class="shelf-count">3 saved</span>
+        </div>
+        <ul class="shelf-list">
+          {#each saved as item}
+            <li class="stream-item shelf-item">
+              <span class="shelf-mark" aria-hidden="true"><Icon name="bookmark" size={14} /></span>
+              <span class="stream-item-body">
+                <span class="stream-item-title">{item.title}</span>
+                <span class="stream-item-meta">{item.meta}</span>
+              </span>
+              {#if item.offline}
+                <span class="offline-badge"><Icon name="check" size={11} /> Offline</span>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+        <p class="shelf-foot">
+          Saved articles come with you and read offline. Get to them when you have the time.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Make sense of it all (read deeply → understanding) ── -->
+  <section id="read" class="section section--sense" aria-labelledby="sense-h">
+    <div class="section-head" use:reveal>
+      <h2 id="sense-h">Reading is how you think.</h2>
+      <p>
+        A clean reading view, free of clutter. Highlight what matters, make notes, and share your
+        thoughts. Engaging with what you read makes it part of how you think.
       </p>
     </div>
 
@@ -226,7 +288,7 @@
           <p>
             But the plumbing never left.
             <mark class="hl reader-hl"
-              >Every site you love still publishes a feed , waiting for a reader patient enough to
+              >Every site you love still publishes a feed, waiting for a reader patient enough to
               collect them.
             </mark><span class="note-anchor">
               <button
@@ -260,56 +322,31 @@
         </div>
       </div>
     </figure>
-  </section>
-
-  <!-- ── Make sense of it ──────────────────────────────────── -->
-  <section class="section section--sense" aria-labelledby="sense-h">
-    <div class="section-head" use:reveal>
-      <h2 id="sense-h">Reading is how you think.</h2>
-      <p>The goal isn't to clear a queue. It's to keep the ideas worth keeping.</p>
-    </div>
-
-    <div class="sense-grid">
-      <figure class="linkblog" use:reveal={{ delay: 60 }}>
-        <figcaption class="linkblog-head">
-          <span class="avatar" aria-hidden="true"><Icon name="user" size={15} /></span>
-          <span class="linkblog-who"><strong>You</strong> shared to your linkblog</span>
-          <span class="linkblog-icon" aria-hidden="true"><Icon name="share-2" size={15} /></span>
-        </figcaption>
-        <a class="linkblog-link" href="#read">The case for slow software</a>
-        <p class="linkblog-note">
-          The part about maintenance over novelty is the whole argument. The best tools get quieter
-          as you learn them, not louder.
-        </p>
-        <p class="linkblog-foot">Sharing with a note is how the idea sticks.</p>
-      </figure>
-
-      <ul class="sense-points">
-        <li use:reveal={{ delay: 120 }}>
-          <span class="point-icon"><Icon name="users" size={20} /></span>
-          <div>
-            <h3>Follow people, not algorithms</h3>
-            <p>
-              See what the people you trust are actually reading, through their linkblogs.
-              Recommendations with a name attached.
-            </p>
-          </div>
-        </li>
-        <li use:reveal={{ delay: 200 }}>
-          <span class="point-icon point-icon--tools">
-            <Icon name="semble" size={18} />
-            <Icon name="margin" size={18} />
-          </span>
-          <div>
-            <h3>Carry ideas further</h3>
-            <p>
-              Send highlights and notes to sensemaking tools like Semble and Margin, and connect
-              what you read across everything else you're thinking about.
-            </p>
-          </div>
-        </li>
-      </ul>
-    </div>
+    <ul class="sense-points" use:reveal={{ delay: 140 }}>
+      <li>
+        <span class="point-icon"><Icon name="users" size={20} /></span>
+        <div>
+          <h3>Follow people, not algorithms</h3>
+          <p>
+            See what the people you trust are actually reading, through their linkblogs.
+            Recommendations with a name attached.
+          </p>
+        </div>
+      </li>
+      <li>
+        <span class="point-icon point-icon--tools">
+          <Icon name="semble" size={18} />
+          <Icon name="margin" size={18} />
+        </span>
+        <div>
+          <h3>Carry ideas further</h3>
+          <p>
+            Send highlights and notes to sensemaking tools like Semble and Margin, and connect what
+            you read across everything else you're thinking about.
+          </p>
+        </div>
+      </li>
+    </ul>
   </section>
 
   <!-- ── Foundation (quiet) ────────────────────────────────── -->
@@ -325,11 +362,9 @@
   </section>
 
   <!-- ── Final CTA ─────────────────────────────────────────── -->
-  <section class="section section--cta" aria-labelledby="cta-h">
+  <section class="section section--cta" aria-label="Get started">
     <div class="cta-inner" use:reveal>
-      <h2 id="cta-h">Start reading.</h2>
-      <a href="/auth/login" class="cta-primary cta-primary--lg"> Sign in </a>
-      <p class="hero-note">Bring your own handle. Nothing to set up.</p>
+      <a href="/auth/login" class="cta-primary cta-primary--lg"> Start Reading </a>
     </div>
   </section>
 </div>
@@ -476,8 +511,7 @@
   }
   .cta-primary:focus-visible,
   .cta-ghost:focus-visible,
-  .note-marker:focus-visible,
-  .linkblog-link:focus-visible {
+  .note-marker:focus-visible {
     outline: 2px solid var(--color-primary);
     outline-offset: 2px;
     border-radius: 4px;
@@ -494,8 +528,7 @@
     text-align: center;
   }
   .section-head h2,
-  .foundation-inner h2,
-  .cta-inner h2 {
+  .foundation-inner h2 {
     font-size: clamp(1.75rem, 3.6vw, 2.5rem);
     font-weight: var(--weight-bold);
     line-height: 1.12;
@@ -656,6 +689,108 @@
     font-size: var(--text-sm);
     color: var(--muted);
     margin-top: 0.1rem;
+  }
+
+  /* ── Save: a stream item flowing into the "To read" shelf ── */
+  .save-demo {
+    max-width: 26rem;
+    margin: 0 auto;
+  }
+  .save-moment {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.8rem 1rem;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    background: var(--color-bg);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  }
+  .save-moment .stream-item-body {
+    flex: 1;
+  }
+  .save-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-shrink: 0;
+    padding: 0.4rem 0.7rem;
+    border: 1px solid var(--color-primary);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+    color: var(--color-primary);
+    font-weight: var(--weight-semibold);
+    font-size: var(--text-sm);
+    white-space: nowrap;
+  }
+  .save-flow {
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+    margin-block: 0.5rem;
+  }
+  .shelf {
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    background: var(--color-bg);
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  }
+  .shelf-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .shelf-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-weight: var(--weight-bold);
+    font-size: var(--text-lg);
+  }
+  .shelf-count {
+    font-size: var(--text-sm);
+    color: var(--muted);
+  }
+  .shelf-list {
+    list-style: none;
+  }
+  .shelf-item {
+    align-items: center;
+  }
+  .shelf-item .stream-item-body {
+    flex: 1;
+  }
+  .shelf-mark {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    color: var(--muted);
+  }
+  .offline-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    flex-shrink: 0;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    padding: 0.05rem 0.45rem 0.05rem 0.35rem;
+    line-height: 1.55;
+  }
+  .shelf-foot {
+    padding: 0.8rem 1rem;
+    border-top: 1px solid var(--color-border);
+    font-size: var(--text-sm);
+    color: var(--muted);
+    line-height: var(--leading-relaxed);
   }
 
   /* ── Reader demo ─────────────────────────────────────────── */
@@ -833,83 +968,14 @@
     box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.18);
   }
 
-  /* ── Make sense: featured linkblog + two points ──────────── */
-  .sense-grid {
-    display: grid;
-    grid-template-columns: 1.1fr 1fr;
-    gap: clamp(1.5rem, 4vw, 3rem);
-    align-items: start;
-    max-width: 62rem;
-    margin: 0 auto;
-  }
-  .linkblog {
-    border: 1px solid var(--color-border);
-    border-radius: 14px;
-    padding: clamp(1.25rem, 3vw, 1.75rem);
-    background: var(--color-bg);
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.06);
-  }
-  .linkblog-head {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    font-size: var(--text-md);
-    color: var(--muted);
-    margin-bottom: 1rem;
-  }
-  .linkblog-head strong {
-    color: var(--ink);
-    font-weight: var(--weight-semibold);
-  }
-  .avatar {
-    display: grid;
-    place-items: center;
-    width: 1.8rem;
-    height: 1.8rem;
-    border-radius: 50%;
-    background: var(--color-bg-secondary);
-    color: var(--muted);
-    flex-shrink: 0;
-  }
-  .linkblog-icon {
-    margin-left: auto;
-    color: var(--color-primary);
-  }
-  .linkblog-link {
-    display: inline-block;
-    font-size: var(--text-2xl);
-    font-weight: var(--weight-semibold);
-    line-height: 1.25;
-    color: var(--ink);
-    text-decoration: none;
-  }
-  .linkblog-link:hover {
-    color: var(--color-primary);
-  }
-  .linkblog-note {
-    font-family: var(--font-literata);
-    font-style: italic;
-    font-size: 1.0625rem;
-    line-height: 1.6;
-    color: var(--ink);
-    margin-top: 0.85rem;
-    padding-left: 1rem;
-    border-left: 2px solid color-mix(in srgb, var(--gold) 55%, transparent);
-  }
-  .linkblog-foot {
-    margin-top: 1.1rem;
-    padding-top: 0.9rem;
-    border-top: 1px solid var(--color-border);
-    font-size: var(--text-sm);
-    color: var(--muted);
-  }
-
+  /* ── Make sense: two supporting points beneath the reader ── */
   .sense-points {
     list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: clamp(1.5rem, 3vw, 2.25rem);
-    padding-top: 0.5rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: clamp(1.5rem, 4vw, 2.5rem);
+    max-width: 44rem;
+    margin: clamp(2rem, 5vw, 3rem) auto 0;
   }
   .sense-points li {
     display: flex;
@@ -965,9 +1031,6 @@
   .section--cta {
     text-align: center;
   }
-  .cta-inner h2 {
-    margin-bottom: 1.5rem;
-  }
 
   /* ── Responsive ──────────────────────────────────────────── */
   @media (max-width: 780px) {
@@ -979,7 +1042,7 @@
     .merge-arrow {
       transform: rotate(90deg);
     }
-    .sense-grid {
+    .sense-points {
       grid-template-columns: 1fr;
       max-width: 34rem;
     }
