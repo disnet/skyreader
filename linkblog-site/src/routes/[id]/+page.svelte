@@ -30,11 +30,18 @@
   <title>{title}</title>
   <meta name="description" content={ogDescription} />
   <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Skyreader" />
   <meta property="og:title" content={title} />
   <meta property="og:description" content={ogDescription} />
   <meta property="og:url" content={pageUrl} />
-  {#if icon}<meta property="og:image" content={icon} />{/if}
+  {#if icon}
+    <meta property="og:image" content={icon} />
+    <meta property="og:image:alt" content={title} />
+  {/if}
   <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content={title} />
+  <meta name="twitter:description" content={ogDescription} />
+  {#if icon}<meta name="twitter:image" content={icon} />{/if}
   <link rel="alternate" type="application/rss+xml" {title} href={feedUrl} />
 </svelte:head>
 

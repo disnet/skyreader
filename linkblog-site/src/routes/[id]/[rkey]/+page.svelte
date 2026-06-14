@@ -40,17 +40,27 @@
   const feedUrl = $derived(feedUrlFor(data.origin, data.did));
   const icon = $derived(safeHttpUrl(data.pub?.icon || data.profile?.avatar));
   const summary = $derived(plainBody(note || excerpt).slice(0, 280));
+  const ogTitle = $derived(`${title} · ${blogName}`);
+  const published = $derived(doc.publishedAt || doc.createdAt);
 </script>
 
 <svelte:head>
   <title>{title} · {blogName}</title>
   {#if summary}<meta name="description" content={summary} />{/if}
-  <meta property="og:type" content="website" />
-  <meta property="og:title" content={`${title} · ${blogName}`} />
+  <meta property="og:type" content="article" />
+  <meta property="og:site_name" content={blogName} />
+  <meta property="og:title" content={ogTitle} />
   {#if summary}<meta property="og:description" content={summary} />{/if}
   <meta property="og:url" content={pageUrl} />
-  {#if icon}<meta property="og:image" content={icon} />{/if}
+  {#if icon}
+    <meta property="og:image" content={icon} />
+    <meta property="og:image:alt" content={blogName} />
+  {/if}
+  {#if published}<meta property="article:published_time" content={published} />{/if}
   <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content={ogTitle} />
+  {#if summary}<meta name="twitter:description" content={summary} />{/if}
+  {#if icon}<meta name="twitter:image" content={icon} />{/if}
   <link rel="alternate" type="application/rss+xml" title={blogName} href={feedUrl} />
 </svelte:head>
 
