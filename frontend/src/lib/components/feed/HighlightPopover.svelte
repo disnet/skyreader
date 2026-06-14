@@ -305,7 +305,7 @@
     flex-direction: column;
     gap: 0.5rem;
     padding: 0.5rem;
-    width: 17.5rem;
+    width: 19rem;
   }
 
   .note-read {
@@ -434,9 +434,10 @@
 
   .note-btn {
     flex: 1;
+    min-width: 0;
     display: inline-flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 0.375rem;
     min-height: 2.25rem;
     padding: 0.4375rem 0.75rem;
@@ -452,6 +453,12 @@
       background-color 120ms ease,
       border-color 120ms ease,
       transform 100ms ease;
+  }
+
+  /* A lone full-width button reads better centered; only paired buttons
+     need left-aligned content so their icons share the same leading edge. */
+  .note-btn:only-child {
+    justify-content: center;
   }
 
   .note-btn:hover {
