@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { browser } from '$app/environment';
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
@@ -38,6 +39,41 @@
   ];
 
   let showImportModal = $state(false);
+
+  // "Save from anywhere" — browser bookmarklets + a Share Sheet shortcut.
+  // Paste a published iCloud Shortcut link (icloud.com/shortcuts/...) into either
+  // constant to turn the manual steps into a one-tap "Add Shortcut" button.
+  const APPLE_SAVE_SHORTCUT_URL =
+    'https://www.icloud.com/shortcuts/ead7df12455949fa92271ec3d0bea3f7';
+  const APPLE_SUBSCRIBE_SHORTCUT_URL =
+    'https://www.icloud.com/shortcuts/4b70e834a8ae48ee8c039cbf01e5b8c4';
+
+  // Build links against the current origin so they also work on staging/local.
+  const appOrigin = browser ? window.location.origin : 'https://skyreader.app';
+  const saveBookmarklet = `javascript:void(window.open('${appOrigin}/save?url='+encodeURIComponent(location.href)))`;
+  const subscribeBookmarklet = `javascript:void(window.open('${appOrigin}/subscribe?url='+encodeURIComponent(location.href)))`;
+
+  let copiedKey = $state<string | null>(null);
+  let bookmarkletHint = $state(false);
+
+  async function copyText(text: string, key: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      copiedKey = key;
+      setTimeout(() => {
+        if (copiedKey === key) copiedKey = null;
+      }, 1500);
+    } catch {
+      // Clipboard unavailable (e.g. insecure context); the drag target still works.
+    }
+  }
+
+  // A bookmarklet is meant to be dragged to the bookmarks bar, not clicked here:
+  // the app's CSP blocks the javascript: navigation anyway. Nudge the user.
+  function showDragHint(e: MouseEvent) {
+    e.preventDefault();
+    bookmarkletHint = true;
+  }
 
   // PDS Sync state
   let pdsSyncEnabled = $state(false);
@@ -549,6 +585,75 @@
   </section>
 
   <section class="card">
+    <h2>Save from anywhere</h2>
+    <p>Save an article or subscribe to a feed without leaving the page you're reading.</p>
+
+    <h3 class="subhead">On your computer</h3>
+    <p class="hint-text">Drag a button to your bookmarks bar, then click it on any page:</p>
+    <div class="bookmarklet-row">
+      <a class="bookmarklet" href={saveBookmarklet} onclick={showDragHint}>Save to Skyreader</a>
+      <a class="bookmarklet" href={subscribeBookmarklet} onclick={showDragHint}>
+        Subscribe in Skyreader
+      </a>
+    </div>
+    {#if bookmarkletHint}
+      <p class="hint-text">Drag these up to your bookmarks bar. Clicking here won't run them.</p>
+    {/if}
+    <div class="button-row">
+      <button class="btn btn-secondary" onclick={() => copyText(saveBookmarklet, 'save')}>
+        {copiedKey === 'save' ? 'Copied' : 'Copy Save link'}
+      </button>
+      <button class="btn btn-secondary" onclick={() => copyText(subscribeBookmarklet, 'subscribe')}>
+        {copiedKey === 'subscribe' ? 'Copied' : 'Copy Subscribe link'}
+      </button>
+    </div>
+
+    <h3 class="subhead">On iPhone or iPad</h3>
+    {#if APPLE_SAVE_SHORTCUT_URL || APPLE_SUBSCRIBE_SHORTCUT_URL}
+      <p class="hint-text">Add a shortcut, then use it from any Share Sheet:</p>
+      <div class="button-row">
+        {#if APPLE_SAVE_SHORTCUT_URL}
+          <a
+            class="btn btn-secondary"
+            href={APPLE_SAVE_SHORTCUT_URL}
+            target="_blank"
+            rel="noopener noreferrer">Add Save shortcut</a
+          >
+        {/if}
+        {#if APPLE_SUBSCRIBE_SHORTCUT_URL}
+          <a
+            class="btn btn-secondary"
+            href={APPLE_SUBSCRIBE_SHORTCUT_URL}
+            target="_blank"
+            rel="noopener noreferrer">Add Subscribe shortcut</a
+          >
+        {/if}
+      </div>
+    {:else}
+      <details class="shortcut-steps">
+        <summary>Build a Share Sheet shortcut</summary>
+        <ol>
+          <li>Open the <strong>Shortcuts</strong> app and create a new shortcut.</li>
+          <li>
+            In its settings, turn on <strong>Show in Share Sheet</strong> and set the type to
+            <strong>URLs</strong>.
+          </li>
+          <li>Add <strong>Get URLs from Input</strong>, set to Shortcut Input.</li>
+          <li>Add <strong>URL Encode</strong> (Encode) on that URL.</li>
+          <li>
+            Add <strong>Text</strong>: <code>{appOrigin}/save?url=</code> followed by the Encoded
+            URL. Use <code>/subscribe?url=</code> instead for a feed shortcut.
+          </li>
+          <li>Add <strong>Open URLs</strong> with that text.</li>
+        </ol>
+        <p class="hint-text">
+          Share any page, pick your shortcut, and it opens here and saves while you stay logged in.
+        </p>
+      </details>
+    {/if}
+  </section>
+
+  <section class="card">
     <h2>About</h2>
     <p>Skyreader is a reading app that helps you make sense of what you read.</p>
     <p>
@@ -889,6 +994,68 @@
     display: flex;
     gap: 0.75rem;
     flex-wrap: wrap;
+  }
+
+  .subhead {
+    font-size: var(--text-md);
+    font-weight: var(--weight-semibold);
+    margin: 1.25rem 0 0.5rem;
+  }
+
+  .hint-text {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    margin: 0 0 0.5rem;
+  }
+
+  .bookmarklet-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .bookmarklet {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.45rem 0.85rem;
+    border: 1px solid var(--color-primary, #0066cc);
+    border-radius: 6px;
+    background: var(--color-bg);
+    color: var(--color-primary, #0066cc);
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
+    text-decoration: none;
+    cursor: grab;
+  }
+
+  .bookmarklet:active {
+    cursor: grabbing;
+  }
+
+  .shortcut-steps summary {
+    cursor: pointer;
+    font-weight: var(--weight-medium);
+    color: var(--color-primary);
+  }
+
+  .shortcut-steps ol {
+    margin: 0.75rem 0;
+    padding-left: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    font-size: var(--text-md);
+    color: var(--color-text);
+  }
+
+  .shortcut-steps code {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.9em;
+    background: var(--color-bg-secondary);
+    padding: 0.05em 0.3em;
+    border-radius: 4px;
+    word-break: break-all;
   }
 
   .loading {
