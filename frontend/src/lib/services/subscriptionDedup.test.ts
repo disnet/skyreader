@@ -7,8 +7,9 @@ import {
   createInFlightGuard,
   DuplicateInFlightError,
   normalizeSiteHost,
+  subscriptionHosts,
   findCrossTypeDuplicates,
-  crossTypePairsForHost,
+  crossTypeDuplicatesForAdded,
 } from './subscriptionDedup';
 import type { Subscription } from '$lib/types';
 
@@ -447,20 +448,54 @@ describe('findCrossTypeDuplicates', () => {
 });
 
 /**
- * crossTypePairsForHost is the add-time counterpart: the just-added sub may not
- * have a resolved siteUrl yet (a fresh RSS row), so the host is passed in
- * explicitly rather than read off the row.
+ * subscriptionHosts is the single source of truth both the add-time check and
+ * the /sources scan derive their hosts from.
  */
-describe('crossTypePairsForHost', () => {
-  it('pairs a freshly-added RSS sub (no siteUrl) with an existing standard.site on the host', () => {
+describe('subscriptionHosts', () => {
+  it('collects both the siteUrl host and the feedUrl host', () => {
+    const s = sub({
+      feedUrl: 'https://feeds.example.com/rss',
+      siteUrl: 'https://www.example.com',
+    });
+    expect([...subscriptionHosts(s)].sort()).toEqual(['example.com', 'feeds.example.com']);
+  });
+
+  it('falls back to the feedUrl host when siteUrl is unresolved', () => {
+    const s = sub({ feedUrl: 'https://blog.example.com/feed.xml', siteUrl: undefined });
+    expect([...subscriptionHosts(s)]).toEqual(['blog.example.com']);
+  });
+
+  it('ignores an at:// feedUrl (standard.site streams match on siteUrl only)', () => {
+    const s = sub({
+      sourceType: 'atproto.documents',
+      feedUrl: 'at://did:plc:abc/site.standard.publication/blog',
+      siteUrl: 'https://example.com',
+    });
+    expect([...subscriptionHosts(s)]).toEqual(['example.com']);
+  });
+});
+
+/**
+ * crossTypeDuplicatesForAdded is the add-time counterpart of
+ * findCrossTypeDuplicates. It shares subscriptionHosts and the same kind/host
+ * matching, so the two can never disagree — the consistency tests below pin
+ * that down on the exact case the old split logic got wrong.
+ */
+describe('crossTypeDuplicatesForAdded', () => {
+  it('pairs a freshly-added RSS sub (no siteUrl) with an existing standard.site via feedUrl host', () => {
     const std = sub({
       id: 1,
       sourceType: 'atproto.documents',
       subjectDid: 'did:plc:abc',
       siteUrl: 'https://blog.example.com',
     });
-    const addedRss = sub({ id: 2, sourceType: 'rss', siteUrl: undefined });
-    const pairs = crossTypePairsForHost([std, addedRss], addedRss, 'blog.example.com');
+    const addedRss = sub({
+      id: 2,
+      sourceType: 'rss',
+      feedUrl: 'https://blog.example.com/feed.xml',
+      siteUrl: undefined,
+    });
+    const pairs = crossTypeDuplicatesForAdded([std, addedRss], addedRss);
     expect(pairs).toHaveLength(1);
     expect(pairs[0].rss.id).toBe(2);
     expect(pairs[0].standard.id).toBe(1);
@@ -475,7 +510,7 @@ describe('crossTypePairsForHost', () => {
       subjectDid: 'd',
       siteUrl: 'https://example.com',
     });
-    const pairs = crossTypePairsForHost([rss, addedStd], addedStd, 'example.com');
+    const pairs = crossTypeDuplicatesForAdded([rss, addedStd], addedStd);
     expect(pairs).toHaveLength(1);
     expect(pairs[0].rss.id).toBe(1);
     expect(pairs[0].standard.id).toBe(2);
@@ -485,17 +520,52 @@ describe('crossTypePairsForHost', () => {
     const addedRss = sub({ id: 1, sourceType: 'rss', siteUrl: 'https://example.com' });
     const otherRss = sub({ id: 2, sourceType: 'rss', siteUrl: 'https://example.com' });
     // Only same-type rows on the host: no opposite type to pair with.
-    expect(crossTypePairsForHost([addedRss, otherRss], addedRss, 'example.com')).toEqual([]);
+    expect(crossTypeDuplicatesForAdded([addedRss, otherRss], addedRss)).toEqual([]);
   });
 
-  it('returns nothing when no existing sub shares the host', () => {
+  it('returns nothing when no existing sub shares a host', () => {
     const std = sub({
       id: 1,
       sourceType: 'atproto.documents',
       subjectDid: 'd',
       siteUrl: 'https://other.com',
     });
-    const addedRss = sub({ id: 2, sourceType: 'rss', siteUrl: undefined });
-    expect(crossTypePairsForHost([std, addedRss], addedRss, 'example.com')).toEqual([]);
+    const addedRss = sub({
+      id: 2,
+      sourceType: 'rss',
+      feedUrl: 'https://example.com/feed.xml',
+      siteUrl: undefined,
+    });
+    expect(crossTypeDuplicatesForAdded([std, addedRss], addedRss)).toEqual([]);
+  });
+
+  // The regression that motivated unifying the two paths: an existing RSS feed
+  // with no resolved siteUrl (only a feedUrl host) that a newly-added
+  // standard.site duplicates. The old add-time check matched existing subs on
+  // siteUrl alone, so it stayed silent while /sources later flagged the pair.
+  it('warns at add time on the same pair /sources would show (RSS has only a feedUrl host)', () => {
+    const existingRss = sub({
+      id: 1,
+      sourceType: 'rss',
+      feedUrl: 'https://blog.example.com/feed.xml',
+      siteUrl: undefined,
+    });
+    const addedStd = sub({
+      id: 2,
+      sourceType: 'atproto.documents',
+      subjectDid: 'd',
+      siteUrl: 'https://blog.example.com',
+    });
+    const all = [existingRss, addedStd];
+
+    const addTime = crossTypeDuplicatesForAdded(all, addedStd);
+    const onSources = findCrossTypeDuplicates(all);
+
+    expect(addTime).toHaveLength(1);
+    expect(onSources).toHaveLength(1);
+    // Both paths agree: same RSS, same standard, same host.
+    expect(addTime[0].rss.id).toBe(onSources[0].rss.id);
+    expect(addTime[0].standard.id).toBe(onSources[0].standard.id);
+    expect(addTime[0].host).toBe(onSources[0].host);
   });
 });

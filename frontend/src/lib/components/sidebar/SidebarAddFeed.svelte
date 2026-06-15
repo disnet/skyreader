@@ -9,8 +9,7 @@
   import { searchBlueskyActors, type BlueskySearchResult } from '$lib/services/blueskySearch';
   import { api } from '$lib/services/api';
   import {
-    crossTypePairsForHost,
-    normalizeSiteHost,
+    crossTypeDuplicatesForAdded,
     type CrossTypeDuplicate,
   } from '$lib/services/subscriptionDedup';
   import { dismissUnifyHost } from '$lib/services/unifyDismiss';
@@ -247,20 +246,21 @@
   let subscribingStandardSub = $state<string | null>(null);
 
   // Cross-type duplicate pairs the just-added subs form with existing sources.
-  // Each added sub is matched on its site host (passed in, since a fresh RSS
-  // sub's siteUrl hasn't resolved yet).
-  function detectUnifyPairs(added: Array<{ id: number; siteUrl?: string }>): CrossTypeDuplicate[] {
+  // crossTypeDuplicatesForAdded derives each added sub's hosts from the sub
+  // itself (its feedUrl host is set immediately, even before siteUrl resolves),
+  // so this matches identically to the /sources scan. Deduped to one notice per
+  // shared host — UnifyNotice is keyed and dismissed per host.
+  function detectUnifyPairs(added: Array<{ id: number }>): CrossTypeDuplicate[] {
     const subs = subscriptionsStore.subscriptions;
-    const pairs: CrossTypeDuplicate[] = [];
-    const seenHosts = new Set<string>();
-    for (const { id, siteUrl } of added) {
-      const host = normalizeSiteHost(siteUrl);
+    const byHost = new Map<string, CrossTypeDuplicate>();
+    for (const { id } of added) {
       const sub = subscriptionsStore.getById(id);
-      if (!host || !sub || seenHosts.has(host)) continue;
-      seenHosts.add(host);
-      pairs.push(...crossTypePairsForHost(subs, sub, host));
+      if (!sub) continue;
+      for (const pair of crossTypeDuplicatesForAdded(subs, sub)) {
+        if (!byHost.has(pair.host)) byHost.set(pair.host, pair);
+      }
     }
-    return pairs;
+    return [...byHost.values()];
   }
 
   // After adding, either pause on the unify notice or open the kept feed.
@@ -338,7 +338,7 @@
 
       socialStore.loadFeed(true);
       void fetchAllDocuments(subscriptionsStore.subscriptions);
-      settleAdd(detectUnifyPairs([{ id: subId, siteUrl: sub.publication.url }]), subId);
+      settleAdd(detectUnifyPairs([{ id: subId }]), subId);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to subscribe';
     } finally {
@@ -455,8 +455,7 @@
         });
       }
 
-      // The RSS sub's siteUrl isn't resolved yet, so match on the URL's host.
-      settleAdd(detectUnifyPairs([{ id, siteUrl: url }]), id);
+      settleAdd(detectUnifyPairs([{ id }]), id);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to add feed';
       mode = 'idle';
@@ -512,7 +511,7 @@
     error = null;
     isSubscribing = true;
     let firstAddedId: number | null = null;
-    const added: Array<{ id: number; siteUrl?: string }> = [];
+    const added: Array<{ id: number }> = [];
 
     try {
       for (const pubUri of selectedPublications) {
@@ -529,7 +528,7 @@
           siteUrl: pub.url,
           feedUrl: pubUri,
         });
-        added.push({ id: subId, siteUrl: pub.url });
+        added.push({ id: subId });
         if (!firstAddedId) firstAddedId = subId;
         if (pub.iconUrl) {
           await subscriptionsStore.updateLocal(subId, {
