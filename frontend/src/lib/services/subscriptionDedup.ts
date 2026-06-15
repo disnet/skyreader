@@ -198,18 +198,24 @@ export interface CrossTypeDuplicate {
  * callers must confirm before unifying.
  *
  * Each standard.site stream is paired with the oldest matching RSS sub. An RSS
- * sub whose feed hasn't resolved yet (no `siteUrl`) can't match and is skipped.
+ * sub is indexed by every host it exposes — its resolved site (`siteUrl`) and
+ * its feed URL's host (`feedUrl`). The feedUrl host matters because a sub added
+ * before siteUrl tracking existed has no `siteUrl`, so its feedUrl is the only
+ * bridge; it's also the exact host the add screen matches on (it pairs on the
+ * typed feed URL, not the not-yet-resolved siteUrl), so indexing both keeps the
+ * /sources notices consistent with what the add flow already warns about.
  */
 export function findCrossTypeDuplicates(subs: Subscription[]): CrossTypeDuplicate[] {
-  // Index RSS subs by normalized host, keeping the oldest per host (the one a
-  // racing add wouldn't have replaced).
+  // Index RSS subs by every host they expose, keeping the oldest per host (the
+  // one a racing add wouldn't have replaced).
   const rssByHost = new Map<string, Subscription>();
   for (const s of subs) {
     if (s.sourceType && s.sourceType !== 'rss') continue;
-    const host = normalizeSiteHost(s.siteUrl);
-    if (!host) continue;
-    const current = rssByHost.get(host);
-    if (!current || isOlder(s, current)) rssByHost.set(host, s);
+    for (const host of [normalizeSiteHost(s.siteUrl), normalizeSiteHost(s.feedUrl)]) {
+      if (!host) continue;
+      const current = rssByHost.get(host);
+      if (!current || isOlder(s, current)) rssByHost.set(host, s);
+    }
   }
 
   const pairs: CrossTypeDuplicate[] = [];
