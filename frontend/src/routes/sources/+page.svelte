@@ -9,7 +9,10 @@
   import { profileService } from '$lib/services/profiles';
   import { api } from '$lib/services/api';
   import { getSourceDisplay, isLinkblogPublication } from '$lib/utils/sourceDisplay';
+  import { findCrossTypeDuplicates } from '$lib/services/subscriptionDedup';
+  import { loadDismissedUnifyHosts, dismissUnifyHost } from '$lib/services/unifyDismiss';
   import Icon from '$lib/components/Icon.svelte';
+  import UnifyNotice from '$lib/components/UnifyNotice.svelte';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
   import EditFeedModal from '$lib/components/EditFeedModal.svelte';
   import AddFeedModal from '$lib/components/AddFeedModal.svelte';
@@ -87,6 +90,30 @@
   // While searching, sections stay open so results are never hidden.
   let webOpen = $derived(!webCollapsed || !!searchQuery);
   let atmoOpen = $derived(!atmoCollapsed || !!searchQuery);
+
+  // -- Unify duplicates: a site followed both by RSS and on standard.site.
+  // "Keep both" dismissals are persisted by host so the notice doesn't nag. --
+  let dismissedUnifyHosts = $state<Set<string>>(new Set());
+
+  function dismissUnify(host: string) {
+    dismissUnifyHost(host);
+    dismissedUnifyHosts = new Set(dismissedUnifyHosts).add(host);
+  }
+
+  // Pairs where the same publication is followed by RSS and on standard.site,
+  // minus any host the user chose to keep both copies of.
+  let unifyPairs = $derived(
+    findCrossTypeDuplicates(subscriptionsStore.subscriptions).filter(
+      (p) => !dismissedUnifyHosts.has(p.host)
+    )
+  );
+
+  // Resolve a duplicate by dropping the subscription the user didn't keep.
+  // "Keep both" instead persists a dismissal via dismissUnify.
+  async function dropSubscription(id: number | undefined) {
+    if (id == null) return;
+    await subscriptionsStore.remove(id);
+  }
 
   const CONTENT_CACHE_KEY = 'skyreader:detected-content';
   type CachedContent = Omit<DetectedContent, 'loading'>;
@@ -455,6 +482,7 @@
 
   onMount(() => {
     loadCollapse();
+    dismissedUnifyHosts = loadDismissedUnifyHosts();
     // Seed detected-content from cache so unsubscribed publications show instantly.
     detectedContent = new Map(
       [...loadContentCache().entries()].map(([did, c]) => [did, { ...c, loading: false }])
@@ -555,6 +583,19 @@
       onBulkDelete={bulkDelete}
       onClearSelection={() => (selectedIds = new Set())}
     />
+  {/if}
+
+  {#if unifyPairs.length > 0}
+    <div class="unify-list">
+      {#each unifyPairs as pair (`${pair.host}:${pair.rss.id}:${pair.standard.id}`)}
+        <UnifyNotice
+          {pair}
+          onKeepRss={() => dropSubscription(pair.standard.id)}
+          onKeepStandard={() => dropSubscription(pair.rss.id)}
+          onKeepBoth={() => dismissUnify(pair.host)}
+        />
+      {/each}
+    </div>
   {/if}
 
   {#if hasNoSources && !searchQuery}
@@ -941,5 +982,13 @@
   .section-empty strong {
     font-weight: var(--weight-semibold);
     color: var(--color-text);
+  }
+
+  /* Unify notice: a site followed both by RSS and on standard.site. */
+  .unify-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1.25rem;
   }
 </style>
