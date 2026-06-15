@@ -121,9 +121,10 @@
 {/if}
 
 <div class="app">
-  {#if $page.url.pathname === '/auth/callback'}
-    <!-- The OAuth callback is a transient bounce page; render it bare so no app
-         (or marketing) chrome flashes before it redirects on. -->
+  {#if $page.url.pathname === '/auth/callback' || $page.url.pathname === '/save'}
+    <!-- Transient bounce/action pages rendered bare so no app (or marketing)
+         chrome flashes: the OAuth callback before it redirects on, and the
+         /save share-target which runs a single save and shows a confirmation. -->
     {@render children()}
   {:else if !auth.isLoading}
     {#if auth.isAuthenticated}
