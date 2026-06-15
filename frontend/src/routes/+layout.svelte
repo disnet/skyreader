@@ -121,10 +121,11 @@
 {/if}
 
 <div class="app">
-  {#if $page.url.pathname === '/auth/callback' || $page.url.pathname === '/save'}
+  {#if $page.url.pathname === '/auth/callback' || $page.url.pathname === '/save' || $page.url.pathname === '/subscribe'}
     <!-- Transient bounce/action pages rendered bare so no app (or marketing)
          chrome flashes: the OAuth callback before it redirects on, and the
-         /save share-target which runs a single save and shows a confirmation. -->
+         /save and /subscribe share-targets, which run a single action and show
+         a confirmation. -->
     {@render children()}
   {:else if !auth.isLoading}
     {#if auth.isAuthenticated}
