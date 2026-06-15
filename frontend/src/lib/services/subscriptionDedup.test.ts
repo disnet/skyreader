@@ -6,6 +6,9 @@ import {
   subscriptionDedupKey,
   createInFlightGuard,
   DuplicateInFlightError,
+  normalizeSiteHost,
+  findCrossTypeDuplicates,
+  crossTypePairsForHost,
 } from './subscriptionDedup';
 import type { Subscription } from '$lib/types';
 
@@ -299,5 +302,183 @@ describe('createInFlightGuard', () => {
     // A retry after the failure is allowed.
     const retry = await guard.run('k', 'dup', async () => 'ok');
     expect(retry).toBe('ok');
+  });
+});
+
+describe('normalizeSiteHost', () => {
+  it('lowercases the host and strips a leading www.', () => {
+    expect(normalizeSiteHost('https://WWW.Example.com/feed')).toBe('example.com');
+    expect(normalizeSiteHost('https://example.com')).toBe('example.com');
+  });
+
+  it('keeps non-www subdomains distinct', () => {
+    expect(normalizeSiteHost('https://foo.substack.com')).toBe('foo.substack.com');
+    expect(normalizeSiteHost('https://bar.substack.com')).toBe('bar.substack.com');
+  });
+
+  it('returns null for missing or unparseable URLs', () => {
+    expect(normalizeSiteHost(undefined)).toBeNull();
+    expect(normalizeSiteHost('')).toBeNull();
+    expect(normalizeSiteHost('not a url')).toBeNull();
+  });
+});
+
+/**
+ * Cross-type duplicates: the same publication followed once by RSS and once as
+ * a standard.site (atproto.documents) stream. They share no feed identity, so
+ * only the website host (siteUrl) can relate them.
+ */
+describe('findCrossTypeDuplicates', () => {
+  it('pairs an RSS sub and a standard.site stream on the same host', () => {
+    const rss = sub({
+      id: 1,
+      rkey: 'r',
+      feedUrl: 'https://blog.example.com/feed.xml',
+      siteUrl: 'https://blog.example.com',
+    });
+    const std = sub({
+      id: 2,
+      rkey: 's',
+      sourceType: 'atproto.documents',
+      subjectDid: 'did:plc:abc',
+      feedUrl: 'at://did:plc:abc/site.standard.publication/blog',
+      siteUrl: 'https://www.blog.example.com',
+    });
+    const pairs = findCrossTypeDuplicates([rss, std]);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].rss.id).toBe(1);
+    expect(pairs[0].standard.id).toBe(2);
+    expect(pairs[0].host).toBe('blog.example.com');
+  });
+
+  it('does not pair subs on different hosts', () => {
+    const rss = sub({ id: 1, sourceType: 'rss', siteUrl: 'https://a.com' });
+    const std = sub({
+      id: 2,
+      sourceType: 'atproto.documents',
+      subjectDid: 'd',
+      siteUrl: 'https://b.com',
+    });
+    expect(findCrossTypeDuplicates([rss, std])).toEqual([]);
+  });
+
+  it('does not pair subdomain-per-author hosts (shared platforms)', () => {
+    const rss = sub({ id: 1, siteUrl: 'https://foo.substack.com' });
+    const std = sub({
+      id: 2,
+      sourceType: 'atproto.documents',
+      subjectDid: 'd',
+      siteUrl: 'https://bar.substack.com',
+    });
+    expect(findCrossTypeDuplicates([rss, std])).toEqual([]);
+  });
+
+  it('skips RSS subs whose feed has not resolved (no siteUrl)', () => {
+    const rss = sub({ id: 1, feedUrl: 'https://blog.example.com/feed.xml', siteUrl: undefined });
+    const std = sub({
+      id: 2,
+      sourceType: 'atproto.documents',
+      subjectDid: 'd',
+      siteUrl: 'https://blog.example.com',
+    });
+    expect(findCrossTypeDuplicates([rss, std])).toEqual([]);
+  });
+
+  it('pairs the standard.site stream with the oldest matching RSS sub', () => {
+    const older = sub({
+      id: 1,
+      rkey: 'old',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      siteUrl: 'https://x.com',
+    });
+    const newer = sub({
+      id: 2,
+      rkey: 'new',
+      createdAt: '2026-02-01T00:00:00.000Z',
+      siteUrl: 'https://x.com',
+    });
+    const std = sub({
+      id: 3,
+      sourceType: 'atproto.documents',
+      subjectDid: 'd',
+      siteUrl: 'https://x.com',
+    });
+    const pairs = findCrossTypeDuplicates([newer, older, std]);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].rss.id).toBe(1);
+  });
+
+  it('does not relate two RSS subs or two standard.site streams', () => {
+    const rssA = sub({ id: 1, siteUrl: 'https://x.com' });
+    const rssB = sub({ id: 2, siteUrl: 'https://x.com' });
+    const stdA = sub({
+      id: 3,
+      sourceType: 'atproto.documents',
+      subjectDid: 'd1',
+      siteUrl: 'https://y.com',
+    });
+    const stdB = sub({
+      id: 4,
+      sourceType: 'atproto.documents',
+      subjectDid: 'd2',
+      siteUrl: 'https://y.com',
+    });
+    // Two RSS on x.com (no atproto): no cross-type pair. Two standard.site on
+    // y.com (no RSS): no cross-type pair.
+    expect(findCrossTypeDuplicates([rssA, rssB, stdA, stdB])).toEqual([]);
+  });
+});
+
+/**
+ * crossTypePairsForHost is the add-time counterpart: the just-added sub may not
+ * have a resolved siteUrl yet (a fresh RSS row), so the host is passed in
+ * explicitly rather than read off the row.
+ */
+describe('crossTypePairsForHost', () => {
+  it('pairs a freshly-added RSS sub (no siteUrl) with an existing standard.site on the host', () => {
+    const std = sub({
+      id: 1,
+      sourceType: 'atproto.documents',
+      subjectDid: 'did:plc:abc',
+      siteUrl: 'https://blog.example.com',
+    });
+    const addedRss = sub({ id: 2, sourceType: 'rss', siteUrl: undefined });
+    const pairs = crossTypePairsForHost([std, addedRss], addedRss, 'blog.example.com');
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].rss.id).toBe(2);
+    expect(pairs[0].standard.id).toBe(1);
+    expect(pairs[0].host).toBe('blog.example.com');
+  });
+
+  it('pairs a freshly-added standard.site sub with an existing RSS on the host', () => {
+    const rss = sub({ id: 1, sourceType: 'rss', siteUrl: 'https://www.example.com' });
+    const addedStd = sub({
+      id: 2,
+      sourceType: 'atproto.documents',
+      subjectDid: 'd',
+      siteUrl: 'https://example.com',
+    });
+    const pairs = crossTypePairsForHost([rss, addedStd], addedStd, 'example.com');
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].rss.id).toBe(1);
+    expect(pairs[0].standard.id).toBe(2);
+  });
+
+  it('excludes the added sub itself and same-type subs on the host', () => {
+    const addedRss = sub({ id: 1, sourceType: 'rss', siteUrl: 'https://example.com' });
+    const otherRss = sub({ id: 2, sourceType: 'rss', siteUrl: 'https://example.com' });
+    // Only same-type rows on the host: no opposite type to pair with.
+    expect(crossTypePairsForHost([addedRss, otherRss], addedRss, 'example.com')).toEqual([]);
+  });
+
+  it('returns nothing when no existing sub shares the host', () => {
+    const std = sub({
+      id: 1,
+      sourceType: 'atproto.documents',
+      subjectDid: 'd',
+      siteUrl: 'https://other.com',
+    });
+    const addedRss = sub({ id: 2, sourceType: 'rss', siteUrl: undefined });
+    expect(crossTypePairsForHost([std, addedRss], addedRss, 'example.com')).toEqual([]);
   });
 });

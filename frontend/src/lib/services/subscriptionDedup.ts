@@ -162,6 +162,96 @@ export function dedupeRemoteSubscriptionRecords<V extends FeedIdentity & { creat
   return { duplicateRkeys };
 }
 
+/**
+ * Normalize a site URL to a comparable host: lowercased hostname with a leading
+ * `www.` stripped. Returns null for a missing or unparseable URL (which can
+ * never match anything).
+ */
+export function normalizeSiteHost(url: string | undefined | null): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return null;
+  }
+}
+
+export interface CrossTypeDuplicate {
+  /** The RSS subscription (sourceType undefined or 'rss'). */
+  rss: Subscription;
+  /** The standard.site document stream (sourceType 'atproto.documents'). */
+  standard: Subscription;
+  /** The shared normalized site host that links the two. */
+  host: string;
+}
+
+/**
+ * Find publications the user follows twice: once by RSS and once as a
+ * standard.site document stream. The two carry disjoint feed identities — an
+ * http `feedUrl` vs an `at://` publication URI — so dedupeSubscriptionsByFeed
+ * never relates them. Their only bridge is the website host (`siteUrl`).
+ *
+ * Matching is full-host equality on the normalized `siteUrl`. Full-host (not
+ * apex) is deliberate: per-author subdomains (foo.substack.com vs
+ * bar.substack.com) stay distinct, so shared hosting platforms don't
+ * false-positive. Apex-shared hosts remain a small residual risk, which is why
+ * callers must confirm before unifying.
+ *
+ * Each standard.site stream is paired with the oldest matching RSS sub. An RSS
+ * sub whose feed hasn't resolved yet (no `siteUrl`) can't match and is skipped.
+ */
+export function findCrossTypeDuplicates(subs: Subscription[]): CrossTypeDuplicate[] {
+  // Index RSS subs by normalized host, keeping the oldest per host (the one a
+  // racing add wouldn't have replaced).
+  const rssByHost = new Map<string, Subscription>();
+  for (const s of subs) {
+    if (s.sourceType && s.sourceType !== 'rss') continue;
+    const host = normalizeSiteHost(s.siteUrl);
+    if (!host) continue;
+    const current = rssByHost.get(host);
+    if (!current || isOlder(s, current)) rssByHost.set(host, s);
+  }
+
+  const pairs: CrossTypeDuplicate[] = [];
+  for (const s of subs) {
+    if (s.sourceType !== 'atproto.documents') continue;
+    const host = normalizeSiteHost(s.siteUrl);
+    if (!host) continue;
+    const rss = rssByHost.get(host);
+    if (rss) pairs.push({ rss, standard: s, host });
+  }
+  return pairs;
+}
+
+/**
+ * Cross-type pairs a freshly-added subscription forms with existing subs on the
+ * same `host`. Used at add time, where findCrossTypeDuplicates can't be relied
+ * on: an RSS sub is inserted before its feed resolves, so its stored `siteUrl`
+ * is still empty and it wouldn't be indexed. The caller supplies `host`
+ * explicitly (the host of the URL it just added) instead.
+ *
+ * Returns one pair per existing subscription of the opposite type on `host`.
+ * `added` itself is excluded by id.
+ */
+export function crossTypePairsForHost(
+  subs: Subscription[],
+  added: Subscription,
+  host: string
+): CrossTypeDuplicate[] {
+  const addedIsStandard = added.sourceType === 'atproto.documents';
+  const pairs: CrossTypeDuplicate[] = [];
+  for (const s of subs) {
+    if (s.id != null && s.id === added.id) continue;
+    if (normalizeSiteHost(s.siteUrl) !== host) continue;
+    const sIsStandard = s.sourceType === 'atproto.documents';
+    if (sIsStandard === addedIsStandard) continue; // need the opposite type
+    pairs.push(
+      addedIsStandard ? { rss: s, standard: added, host } : { rss: added, standard: s, host }
+    );
+  }
+  return pairs;
+}
+
 /** Raised when a second operation for an already-in-flight key is attempted. */
 export class DuplicateInFlightError extends Error {
   constructor(message: string) {

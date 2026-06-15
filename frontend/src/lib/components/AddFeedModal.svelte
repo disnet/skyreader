@@ -7,10 +7,17 @@
   import { fetchSingleFeed, fetchAllDocuments } from '$lib/services/feedFetcher';
   import { api } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
+  import {
+    crossTypePairsForHost,
+    normalizeSiteHost,
+    type CrossTypeDuplicate,
+  } from '$lib/services/subscriptionDedup';
+  import { dismissUnifyHost } from '$lib/services/unifyDismiss';
   import Modal from '$lib/components/common/Modal.svelte';
+  import UnifyNotice from '$lib/components/UnifyNotice.svelte';
   import Icon from '$lib/components/Icon.svelte';
 
-  type Step = 'input' | 'select-feeds';
+  type Step = 'input' | 'select-feeds' | 'unify';
 
   interface StandardSite {
     did: string;
@@ -36,6 +43,13 @@
   let discoveredFeeds = $state<string[]>([]);
   let standardSite = $state<StandardSite | null>(null);
 
+  // After an add that turns out to duplicate an existing source (the same site
+  // followed by both RSS and standard.site), we hold here so the user can keep
+  // one or both before leaving. `unifyKeptFeedId` is the feed to open once
+  // resolved, updated to whichever sub survives each choice.
+  let unifyPairs = $state<CrossTypeDuplicate[]>([]);
+  let unifyKeptFeedId = $state<number | null>(null);
+
   const isAtLimit = $derived(
     subscriptionsStore.subscriptions.length >= subscriptionsStore.maxSubscriptions
   );
@@ -55,6 +69,8 @@
     isAdding = false;
     discoveredFeeds = [];
     standardSite = null;
+    unifyPairs = [];
+    unifyKeptFeedId = null;
   }
 
   function handleClose() {
@@ -111,6 +127,25 @@
 
   let isAdding = $state(false);
 
+  // Open the just-added feed and close, unless the add duplicates an existing
+  // source on the same host — then pause on the unify step instead.
+  function finishAdd(id: number, siteUrl: string | undefined) {
+    const sub = subscriptionsStore.getById(id);
+    const host = normalizeSiteHost(siteUrl);
+    const pairs =
+      sub && host ? crossTypePairsForHost(subscriptionsStore.subscriptions, sub, host) : [];
+    if (pairs.length > 0) {
+      unifyPairs = pairs;
+      unifyKeptFeedId = id;
+      step = 'unify';
+      isAdding = false;
+      return;
+    }
+    handleClose();
+    goto(`/?feed=${id}`);
+    sidebarStore.closeMobile();
+  }
+
   async function addFeed(url: string) {
     if (isAdding) return;
     isAdding = true;
@@ -119,10 +154,6 @@
       const tempTitle = new URL(url).hostname;
       const id = await subscriptionsStore.add(url, tempTitle, {});
       const sub = subscriptionsStore.getById(id);
-
-      handleClose();
-      goto(`/?feed=${id}`);
-      sidebarStore.closeMobile();
 
       if (sub) {
         fetchSingleFeed(sub, true, articlesStore.savedGuids).then(async (result) => {
@@ -138,6 +169,9 @@
           }
         });
       }
+
+      // The RSS sub's siteUrl isn't resolved yet, so match on the URL's host.
+      finishAdd(id, url);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to add feed';
       isDiscovering = false;
@@ -171,13 +205,45 @@
       // Fetch this publication's documents now so they appear immediately
       // (also refreshed on the regular cycle).
       void fetchAllDocuments(subscriptionsStore.subscriptions);
-      handleClose();
-      goto(`/?feed=${id}`);
-      sidebarStore.closeMobile();
+      finishAdd(id, site.url);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to add subscription';
       isDiscovering = false;
       isAdding = false;
+    }
+  }
+
+  // Resolve one unify pair; when the last is handled, open the surviving feed.
+  async function resolveUnify(
+    pair: CrossTypeDuplicate,
+    action: 'keep-rss' | 'keep-standard' | 'keep-both'
+  ) {
+    let removedId: number | null = null;
+    if (action === 'keep-rss') {
+      removedId = pair.standard.id ?? null;
+      if (removedId != null) await subscriptionsStore.remove(removedId);
+      unifyKeptFeedId = pair.rss.id ?? unifyKeptFeedId;
+    } else if (action === 'keep-standard') {
+      removedId = pair.rss.id ?? null;
+      if (removedId != null) await subscriptionsStore.remove(removedId);
+      unifyKeptFeedId = pair.standard.id ?? unifyKeptFeedId;
+    } else {
+      dismissUnifyHost(pair.host);
+    }
+    // Drop the resolved pair, every pair on a host we just dismissed, and any
+    // pair left dangling because it referenced the sub we removed (a host can
+    // carry more than one feed of the same side).
+    unifyPairs = unifyPairs.filter(
+      (p) =>
+        p !== pair &&
+        (action !== 'keep-both' || p.host !== pair.host) &&
+        (removedId == null || (p.rss.id !== removedId && p.standard.id !== removedId))
+    );
+    if (unifyPairs.length === 0) {
+      const id = unifyKeptFeedId;
+      handleClose();
+      if (id != null) goto(`/?feed=${id}`);
+      sidebarStore.closeMobile();
     }
   }
 
@@ -190,7 +256,18 @@
 </script>
 
 <Modal {open} onclose={handleClose} title="Add RSS Feed">
-  {#if isAtLimit}
+  {#if step === 'unify'}
+    <div class="modal-content">
+      {#each unifyPairs as pair (`${pair.host}:${pair.rss.id}:${pair.standard.id}`)}
+        <UnifyNotice
+          {pair}
+          onKeepRss={() => resolveUnify(pair, 'keep-rss')}
+          onKeepStandard={() => resolveUnify(pair, 'keep-standard')}
+          onKeepBoth={() => resolveUnify(pair, 'keep-both')}
+        />
+      {/each}
+    </div>
+  {:else if isAtLimit}
     <p class="limit-message">
       You've reached the maximum of {subscriptionsStore.maxSubscriptions} feeds. Remove some feeds to
       add new ones.

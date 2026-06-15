@@ -8,6 +8,13 @@
   import { fetchSingleFeed, fetchAllDocuments } from '$lib/services/feedFetcher';
   import { searchBlueskyActors, type BlueskySearchResult } from '$lib/services/blueskySearch';
   import { api } from '$lib/services/api';
+  import {
+    crossTypePairsForHost,
+    normalizeSiteHost,
+    type CrossTypeDuplicate,
+  } from '$lib/services/subscriptionDedup';
+  import { dismissUnifyHost } from '$lib/services/unifyDismiss';
+  import UnifyNotice from '../UnifyNotice.svelte';
   import Icon from '../Icon.svelte';
 
   interface Publication {
@@ -29,7 +36,13 @@
     };
   };
 
-  type Mode = 'idle' | 'searching-actors' | 'discovering-feeds' | 'select-feeds' | 'select-content';
+  type Mode =
+    | 'idle'
+    | 'searching-actors'
+    | 'discovering-feeds'
+    | 'select-feeds'
+    | 'select-content'
+    | 'unify';
 
   let inputValue = $state('');
   let mode = $state<Mode>('idle');
@@ -49,6 +62,12 @@
   let publications = $state<Publication[]>([]);
   let selectedPublications = $state<Set<string>>(new Set());
   let isSubscribing = $state(false);
+
+  // Unify state: after an add that duplicates an existing source (same site via
+  // both RSS and standard.site), pause in 'unify' mode so the user can keep one
+  // or both. unifyKeptFeedId is the feed to open once resolved.
+  let unifyPairs = $state<CrossTypeDuplicate[]>([]);
+  let unifyKeptFeedId = $state<number | null>(null);
 
   // Standard subscriptions state
   let standardSubs = $state<StandardSub[]>([]);
@@ -227,6 +246,78 @@
 
   let subscribingStandardSub = $state<string | null>(null);
 
+  // Cross-type duplicate pairs the just-added subs form with existing sources.
+  // Each added sub is matched on its site host (passed in, since a fresh RSS
+  // sub's siteUrl hasn't resolved yet).
+  function detectUnifyPairs(added: Array<{ id: number; siteUrl?: string }>): CrossTypeDuplicate[] {
+    const subs = subscriptionsStore.subscriptions;
+    const pairs: CrossTypeDuplicate[] = [];
+    const seenHosts = new Set<string>();
+    for (const { id, siteUrl } of added) {
+      const host = normalizeSiteHost(siteUrl);
+      const sub = subscriptionsStore.getById(id);
+      if (!host || !sub || seenHosts.has(host)) continue;
+      seenHosts.add(host);
+      pairs.push(...crossTypePairsForHost(subs, sub, host));
+    }
+    return pairs;
+  }
+
+  // After adding, either pause on the unify notice or open the kept feed.
+  function settleAdd(pairs: CrossTypeDuplicate[], keptId: number | null) {
+    if (pairs.length > 0) {
+      // Clear the other dropdown sections so only the unify notice shows.
+      searchResults = [];
+      discoveredFeeds = [];
+      publications = [];
+      selectedPublications = new Set();
+      selectedAccount = null;
+      unifyPairs = pairs;
+      unifyKeptFeedId = keptId;
+      mode = 'unify';
+      return;
+    }
+    reset();
+    if (keptId != null) goto(`/?feed=${keptId}`);
+    sidebarStore.closeMobile();
+    inputFocused = false;
+  }
+
+  // Resolve one unify pair; when the last is handled, open the surviving feed.
+  async function resolveUnify(
+    pair: CrossTypeDuplicate,
+    action: 'keep-rss' | 'keep-standard' | 'keep-both'
+  ) {
+    let removedId: number | null = null;
+    if (action === 'keep-rss') {
+      removedId = pair.standard.id ?? null;
+      if (removedId != null) await subscriptionsStore.remove(removedId);
+      unifyKeptFeedId = pair.rss.id ?? unifyKeptFeedId;
+    } else if (action === 'keep-standard') {
+      removedId = pair.rss.id ?? null;
+      if (removedId != null) await subscriptionsStore.remove(removedId);
+      unifyKeptFeedId = pair.standard.id ?? unifyKeptFeedId;
+    } else {
+      dismissUnifyHost(pair.host);
+    }
+    // Drop the resolved pair, every pair on a host we just dismissed, and any
+    // pair left dangling because it referenced the sub we removed (a host can
+    // carry more than one feed of the same side).
+    unifyPairs = unifyPairs.filter(
+      (p) =>
+        p !== pair &&
+        (action !== 'keep-both' || p.host !== pair.host) &&
+        (removedId == null || (p.rss.id !== removedId && p.standard.id !== removedId))
+    );
+    if (unifyPairs.length === 0) {
+      const id = unifyKeptFeedId;
+      reset();
+      if (id != null) goto(`/?feed=${id}`);
+      sidebarStore.closeMobile();
+      inputFocused = false;
+    }
+  }
+
   async function subscribeStandardSub(sub: StandardSub) {
     if (subscribedPublisherDids.has(sub.publisherDid)) return;
     if (!subscriptionsStore.canAddMore) {
@@ -247,9 +338,7 @@
 
       socialStore.loadFeed(true);
       void fetchAllDocuments(subscriptionsStore.subscriptions);
-      goto(`/?feed=${subId}`);
-      sidebarStore.closeMobile();
-      inputFocused = false;
+      settleAdd(detectUnifyPairs([{ id: subId, siteUrl: sub.publication.url }]), subId);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to subscribe';
     } finally {
@@ -273,6 +362,8 @@
     publications = [];
     selectedPublications = new Set();
     isSubscribing = false;
+    unifyPairs = [];
+    unifyKeptFeedId = null;
     if (searchTimeout) clearTimeout(searchTimeout);
   }
 
@@ -349,10 +440,6 @@
       const id = await subscriptionsStore.add(url, tempTitle, {});
       const sub = subscriptionsStore.getById(id);
 
-      reset();
-      goto(`/?feed=${id}`);
-      sidebarStore.closeMobile();
-
       if (sub) {
         fetchSingleFeed(sub, true, articlesStore.savedGuids).then(async (result) => {
           if (result.success && result.title) {
@@ -367,6 +454,9 @@
           }
         });
       }
+
+      // The RSS sub's siteUrl isn't resolved yet, so match on the URL's host.
+      settleAdd(detectUnifyPairs([{ id, siteUrl: url }]), id);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to add feed';
       mode = 'idle';
@@ -422,6 +512,7 @@
     error = null;
     isSubscribing = true;
     let firstAddedId: number | null = null;
+    const added: Array<{ id: number; siteUrl?: string }> = [];
 
     try {
       for (const pubUri of selectedPublications) {
@@ -438,6 +529,7 @@
           siteUrl: pub.url,
           feedUrl: pubUri,
         });
+        added.push({ id: subId, siteUrl: pub.url });
         if (!firstAddedId) firstAddedId = subId;
         if (pub.iconUrl) {
           await subscriptionsStore.updateLocal(subId, {
@@ -448,12 +540,7 @@
 
       socialStore.loadFeed(true);
       void fetchAllDocuments(subscriptionsStore.subscriptions);
-      reset();
-
-      if (firstAddedId) {
-        goto(`/?feed=${firstAddedId}`);
-        sidebarStore.closeMobile();
-      }
+      settleAdd(detectUnifyPairs(added), firstAddedId);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to subscribe';
     } finally {
@@ -500,6 +587,7 @@
       discoveredFeeds.length > 0 ||
       mode === 'select-content' ||
       mode === 'discovering-feeds' ||
+      mode === 'unify' ||
       showStandardSubs
   );
 </script>
@@ -536,7 +624,18 @@
 
   {#if showDropdown}
     <div class="dropdown" bind:this={dropdownEl}>
-      {#if showStandardSubs}
+      {#if mode === 'unify'}
+        <div class="unify-dropdown">
+          {#each unifyPairs as pair (`${pair.host}:${pair.rss.id}:${pair.standard.id}`)}
+            <UnifyNotice
+              {pair}
+              onKeepRss={() => resolveUnify(pair, 'keep-rss')}
+              onKeepStandard={() => resolveUnify(pair, 'keep-standard')}
+              onKeepBoth={() => resolveUnify(pair, 'keep-both')}
+            />
+          {/each}
+        </div>
+      {:else if showStandardSubs}
         {#if isLoadingStandardSubs}
           <div class="dropdown-status">
             <span class="spinner"></span>
@@ -743,6 +842,13 @@
     max-height: 320px;
     overflow-y: auto;
     margin-top: 0.25rem;
+  }
+
+  .unify-dropdown {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.5rem;
   }
 
   .dropdown-status {
