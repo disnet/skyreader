@@ -181,38 +181,77 @@ export interface CrossTypeDuplicate {
   rss: Subscription;
   /** The standard.site document stream (sourceType 'atproto.documents'). */
   standard: Subscription;
-  /** The shared normalized site host that links the two. */
+  /** A shared normalized host that links the two. */
   host: string;
+}
+
+/** Cross-type bucket a subscription belongs to, or null if it never cross-matches. */
+type CrossTypeKind = 'rss' | 'standard' | null;
+
+/**
+ * Which side of a cross-type duplicate a subscription can be. RSS feeds
+ * (sourceType undefined or 'rss') and standard.site document streams
+ * (`atproto.documents`) are the only two that describe the same publication
+ * from different sources; every other atproto stream type (collections,
+ * linkblogs, …) never cross-matches.
+ */
+function crossTypeKind(sub: Pick<Subscription, 'sourceType'>): CrossTypeKind {
+  if (sub.sourceType === 'atproto.documents') return 'standard';
+  if (!sub.sourceType || sub.sourceType === 'rss') return 'rss';
+  return null;
+}
+
+/**
+ * Every normalized host a subscription occupies — the single source of truth
+ * for cross-type matching. A subscription "is" all of these hosts at once:
+ *
+ *  - `siteUrl` host: the resolved public website. Both an RSS feed (once its
+ *    metadata resolves) and a standard.site publication carry one.
+ *  - `feedUrl` host: an RSS feed's URL host. Present the instant the sub is
+ *    created — before its feed resolves a `siteUrl` — so it's the only bridge
+ *    for feeds added before siteUrl tracking existed. (A standard.site stream's
+ *    feedUrl is an `at://` publication URI, which has no web host, so it
+ *    contributes nothing here and the type matches purely on `siteUrl`.)
+ *
+ * Because BOTH the add-time check and the /sources scan derive hosts from this
+ * one function, they can never disagree about what counts as a duplicate.
+ */
+export function subscriptionHosts(sub: Pick<Subscription, 'siteUrl' | 'feedUrl'>): Set<string> {
+  const hosts = new Set<string>();
+  for (const host of [normalizeSiteHost(sub.siteUrl), normalizeSiteHost(sub.feedUrl)]) {
+    if (host) hosts.add(host);
+  }
+  return hosts;
+}
+
+/** First host present in both sets, or null. The shared host of a duplicate. */
+function sharedHost(a: Set<string>, b: Set<string>): string | null {
+  for (const host of a) {
+    if (b.has(host)) return host;
+  }
+  return null;
 }
 
 /**
  * Find publications the user follows twice: once by RSS and once as a
  * standard.site document stream. The two carry disjoint feed identities — an
  * http `feedUrl` vs an `at://` publication URI — so dedupeSubscriptionsByFeed
- * never relates them. Their only bridge is the website host (`siteUrl`).
+ * never relates them. Their bridge is a shared web host (see subscriptionHosts).
  *
- * Matching is full-host equality on the normalized `siteUrl`. Full-host (not
- * apex) is deliberate: per-author subdomains (foo.substack.com vs
- * bar.substack.com) stay distinct, so shared hosting platforms don't
- * false-positive. Apex-shared hosts remain a small residual risk, which is why
- * callers must confirm before unifying.
+ * Matching is full-host equality (not apex): per-author subdomains
+ * (foo.substack.com vs bar.substack.com) stay distinct, so shared hosting
+ * platforms don't false-positive. Apex-shared hosts remain a small residual
+ * risk, which is why callers must confirm before unifying.
  *
- * Each standard.site stream is paired with the oldest matching RSS sub. An RSS
- * sub is indexed by every host it exposes — its resolved site (`siteUrl`) and
- * its feed URL's host (`feedUrl`). The feedUrl host matters because a sub added
- * before siteUrl tracking existed has no `siteUrl`, so its feedUrl is the only
- * bridge; it's also the exact host the add screen matches on (it pairs on the
- * typed feed URL, not the not-yet-resolved siteUrl), so indexing both keeps the
- * /sources notices consistent with what the add flow already warns about.
+ * Each standard.site stream is paired with the oldest matching RSS sub (the one
+ * a racing add wouldn't have replaced).
  */
 export function findCrossTypeDuplicates(subs: Subscription[]): CrossTypeDuplicate[] {
-  // Index RSS subs by every host they expose, keeping the oldest per host (the
-  // one a racing add wouldn't have replaced).
+  // Index every RSS sub under each host it occupies; oldest wins per host.
   const rssByHost = new Map<string, Subscription>();
   for (const s of subs) {
-    if (s.sourceType && s.sourceType !== 'rss') continue;
-    for (const host of [normalizeSiteHost(s.siteUrl), normalizeSiteHost(s.feedUrl)]) {
-      if (!host) continue;
+    if (crossTypeKind(s) !== 'rss') continue;
+    for (const host of subscriptionHosts(s)) {
       const current = rssByHost.get(host);
       if (!current || isOlder(s, current)) rssByHost.set(host, s);
     }
@@ -220,39 +259,51 @@ export function findCrossTypeDuplicates(subs: Subscription[]): CrossTypeDuplicat
 
   const pairs: CrossTypeDuplicate[] = [];
   for (const s of subs) {
-    if (s.sourceType !== 'atproto.documents') continue;
-    const host = normalizeSiteHost(s.siteUrl);
-    if (!host) continue;
-    const rss = rssByHost.get(host);
-    if (rss) pairs.push({ rss, standard: s, host });
+    if (crossTypeKind(s) !== 'standard') continue;
+    // A standard sub may share more than one host with the same RSS sub; emit
+    // the first match only, so each standard sub yields at most one pair.
+    for (const host of subscriptionHosts(s)) {
+      const rss = rssByHost.get(host);
+      if (rss) {
+        pairs.push({ rss, standard: s, host });
+        break;
+      }
+    }
   }
   return pairs;
 }
 
 /**
- * Cross-type pairs a freshly-added subscription forms with existing subs on the
- * same `host`. Used at add time, where findCrossTypeDuplicates can't be relied
- * on: an RSS sub is inserted before its feed resolves, so its stored `siteUrl`
- * is still empty and it wouldn't be indexed. The caller supplies `host`
- * explicitly (the host of the URL it just added) instead.
+ * Cross-type duplicates a freshly-added subscription forms with existing subs.
+ * Uses the same host-set definition (subscriptionHosts) and the same kind/host
+ * matching as findCrossTypeDuplicates, so the add-time warning and the /sources
+ * notice can never disagree.
  *
- * Returns one pair per existing subscription of the opposite type on `host`.
- * `added` itself is excluded by id.
+ * `added` is matched by its OWN hosts — its feedUrl host is set the moment it's
+ * created, even before siteUrl resolves — so no host needs to be passed in.
+ * Returns one pair per existing subscription of the opposite type that shares a
+ * host; `added` itself is excluded by id.
  */
-export function crossTypePairsForHost(
+export function crossTypeDuplicatesForAdded(
   subs: Subscription[],
-  added: Subscription,
-  host: string
+  added: Subscription
 ): CrossTypeDuplicate[] {
-  const addedIsStandard = added.sourceType === 'atproto.documents';
+  const addedKind = crossTypeKind(added);
+  if (addedKind === null) return [];
+  const addedHosts = subscriptionHosts(added);
+  if (addedHosts.size === 0) return [];
+
   const pairs: CrossTypeDuplicate[] = [];
   for (const s of subs) {
     if (s.id != null && s.id === added.id) continue;
-    if (normalizeSiteHost(s.siteUrl) !== host) continue;
-    const sIsStandard = s.sourceType === 'atproto.documents';
-    if (sIsStandard === addedIsStandard) continue; // need the opposite type
+    const kind = crossTypeKind(s);
+    if (kind === null || kind === addedKind) continue; // need the opposite type
+    const host = sharedHost(addedHosts, subscriptionHosts(s));
+    if (!host) continue;
     pairs.push(
-      addedIsStandard ? { rss: s, standard: added, host } : { rss: added, standard: s, host }
+      addedKind === 'standard'
+        ? { rss: s, standard: added, host }
+        : { rss: added, standard: s, host }
     );
   }
   return pairs;

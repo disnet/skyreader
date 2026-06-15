@@ -8,8 +8,7 @@
   import { api } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
   import {
-    crossTypePairsForHost,
-    normalizeSiteHost,
+    crossTypeDuplicatesForAdded,
     type CrossTypeDuplicate,
   } from '$lib/services/subscriptionDedup';
   import { dismissUnifyHost } from '$lib/services/unifyDismiss';
@@ -128,12 +127,12 @@
   let isAdding = $state(false);
 
   // Open the just-added feed and close, unless the add duplicates an existing
-  // source on the same host — then pause on the unify step instead.
-  function finishAdd(id: number, siteUrl: string | undefined) {
+  // source on a shared host — then pause on the unify step instead. The added
+  // sub already carries its feedUrl (and, for standard.site, its siteUrl), so
+  // crossTypeDuplicatesForAdded derives the host from the sub itself.
+  function finishAdd(id: number) {
     const sub = subscriptionsStore.getById(id);
-    const host = normalizeSiteHost(siteUrl);
-    const pairs =
-      sub && host ? crossTypePairsForHost(subscriptionsStore.subscriptions, sub, host) : [];
+    const pairs = sub ? crossTypeDuplicatesForAdded(subscriptionsStore.subscriptions, sub) : [];
     if (pairs.length > 0) {
       unifyPairs = pairs;
       unifyKeptFeedId = id;
@@ -170,8 +169,7 @@
         });
       }
 
-      // The RSS sub's siteUrl isn't resolved yet, so match on the URL's host.
-      finishAdd(id, url);
+      finishAdd(id);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to add feed';
       isDiscovering = false;
@@ -205,7 +203,7 @@
       // Fetch this publication's documents now so they appear immediately
       // (also refreshed on the regular cycle).
       void fetchAllDocuments(subscriptionsStore.subscriptions);
-      finishAdd(id, site.url);
+      finishAdd(id);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to add subscription';
       isDiscovering = false;
