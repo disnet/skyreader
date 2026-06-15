@@ -26,6 +26,15 @@
     }
   ],
   "categories": ["news", "productivity"],
+  "share_target": {
+    "action": "/save",
+    "method": "GET",
+    "params": {
+      "url": "url",
+      "text": "text",
+      "title": "title"
+    }
+  },
   "shortcuts": [
     {
       "name": "Add Feed",

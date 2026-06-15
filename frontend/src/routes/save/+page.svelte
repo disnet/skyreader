@@ -21,19 +21,41 @@
   let errorMessage = $state<string | null>(null);
   let limitInfo = $state<{ limit: number; resetsAt: string } | null>(null);
 
-  // The article URL from the query string. searchParams decodes once, so a
-  // Shortcut that percent-encodes the URL lands here as a clean absolute URL.
-  function readUrl(): string | null {
-    const raw = $page.url.searchParams.get('url');
-    if (!raw) return null;
-    const trimmed = raw.trim();
+  // Pull a clean http(s) URL out of a shared string. A Shortcut/bookmarklet
+  // sends a bare URL; the Web Share Target on Android often delivers it inside
+  // `text`, sometimes wrapped in other words ("Great read https://…"), so fall
+  // back to scanning for the first URL.
+  function extractHttpUrl(raw: string): string | null {
+    const s = raw.trim();
+    if (!s) return null;
     try {
-      const parsed = new URL(trimmed);
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
-      return trimmed;
+      const parsed = new URL(s);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return s;
     } catch {
-      return null;
+      // Not a bare URL; scan the text for one below.
     }
+    const match = s.match(/https?:\/\/\S+/i);
+    if (match) {
+      try {
+        const parsed = new URL(match[0]);
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return match[0];
+      } catch {
+        // Fall through.
+      }
+    }
+    return null;
+  }
+
+  // The article URL from the query string. Accepts the `url` param (Shortcut /
+  // bookmarklet) or the `text` param (PWA share_target / Android share sheet).
+  function readUrl(): string | null {
+    const params = $page.url.searchParams;
+    for (const raw of [params.get('url'), params.get('text')]) {
+      if (!raw) continue;
+      const found = extractHttpUrl(raw);
+      if (found) return found;
+    }
+    return null;
   }
 
   async function run() {
