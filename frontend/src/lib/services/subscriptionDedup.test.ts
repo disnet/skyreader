@@ -373,8 +373,25 @@ describe('findCrossTypeDuplicates', () => {
     expect(findCrossTypeDuplicates([rss, std])).toEqual([]);
   });
 
-  it('skips RSS subs whose feed has not resolved (no siteUrl)', () => {
+  it('pairs an RSS sub with no resolved siteUrl via its feedUrl host', () => {
+    // A feed subscribed before siteUrl tracking existed has no siteUrl; its
+    // feedUrl host is the only bridge, and it's the same host the add screen
+    // matches on. It must still surface as a cross-type duplicate.
     const rss = sub({ id: 1, feedUrl: 'https://blog.example.com/feed.xml', siteUrl: undefined });
+    const std = sub({
+      id: 2,
+      sourceType: 'atproto.documents',
+      subjectDid: 'd',
+      siteUrl: 'https://blog.example.com',
+    });
+    const pairs = findCrossTypeDuplicates([rss, std]);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].rss.id).toBe(1);
+    expect(pairs[0].host).toBe('blog.example.com');
+  });
+
+  it('skips RSS subs with neither a siteUrl nor a usable feedUrl host', () => {
+    const rss = sub({ id: 1, feedUrl: undefined, siteUrl: undefined });
     const std = sub({
       id: 2,
       sourceType: 'atproto.documents',
