@@ -203,15 +203,25 @@ export async function fetchAllFeeds(
           continue;
         }
 
-        // Update subscription title/siteUrl from feed metadata (initial pass only)
-        if (countStatus && feedResult.title) {
+        // Update subscription title/siteUrl from feed metadata (initial pass only).
+        // Title and siteUrl are backfilled independently: a sub added before
+        // siteUrl tracking existed already has its proper title, so gating the
+        // siteUrl write on a title change would leave it siteUrl-less forever —
+        // which hides it from cross-type duplicate detection (findCrossTypeDuplicates).
+        if (countStatus) {
           const sub = liveDb.getSubscriptionById(req.subscriptionId);
-          if (sub && shouldUpdateTitle(sub.title, sub.feedUrl, feedResult.title)) {
-            await liveDb.updateSubscription(req.subscriptionId, {
-              title: feedResult.title,
-              siteUrl: feedResult.siteUrl ?? sub.siteUrl,
-              localUpdatedAt: Date.now(),
-            });
+          if (sub) {
+            const updates: { title?: string; siteUrl?: string; localUpdatedAt?: number } = {};
+            if (feedResult.title && shouldUpdateTitle(sub.title, sub.feedUrl, feedResult.title)) {
+              updates.title = feedResult.title;
+            }
+            if (feedResult.siteUrl && feedResult.siteUrl !== sub.siteUrl) {
+              updates.siteUrl = feedResult.siteUrl;
+            }
+            if (updates.title !== undefined || updates.siteUrl !== undefined) {
+              updates.localUpdatedAt = Date.now();
+              await liveDb.updateSubscription(req.subscriptionId, updates);
+            }
           }
         }
 
