@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { goto } from '$app/navigation';
   import Icon from '$lib/components/Icon.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
 
@@ -139,6 +140,14 @@
         >
           <span class="item-icon"><Icon name="bookmark" size={16} /></span>
           Save URL
+        </button>
+        <button
+          class="add-menu-item"
+          onclick={(e) => handleItemClick(() => goto('/settings#save-anywhere'), e)}
+          role="menuitem"
+        >
+          <span class="item-icon"><Icon name="share" size={16} /></span>
+          Save from anywhere
         </button>
       </div>
     </div>

@@ -584,7 +584,7 @@
     </div>
   </section>
 
-  <section class="card">
+  <section class="card" id="save-anywhere">
     <h2>Save from anywhere</h2>
     <p>Save an article or subscribe to a feed without leaving the page you're reading.</p>
 
@@ -651,6 +651,12 @@
         </p>
       </details>
     {/if}
+
+    <h3 class="subhead">On Android</h3>
+    <p class="hint-text">
+      Install Skyreader to your home screen and it appears right in the system share sheet. Share
+      any page, pick Skyreader, and it saves the article. No setup needed.
+    </p>
   </section>
 
   <section class="card">
