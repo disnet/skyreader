@@ -18,7 +18,7 @@ Each package has its own CLAUDE.md with detailed guidance.
 
 A reading app that helps you make sense of what you read. It brings everything you follow — RSS, newsletters, social posts, YouTube, the Atmosphere — into one calm place, gives you a focused surface to read and annotate it, and helps it become understanding through highlights, margin notes, a linkblog, and integrations with sensemaking tools (Semble, Margin).
 
-It's built on the AT Protocol (Bluesky): subscriptions, saved articles, and shares live in the user's Personal Data Server (PDS), so a reader's reading life is portable and outlives any one app. That ownership is the **foundation, not the headline** — lead with reading, not protocol jargon. Read state lives server-side in D1, not the PDS. Features offline support (PWA + IndexedDB), real-time updates, and calm social sharing via linkblogs.
+It's built on the AT Protocol (Bluesky): subscriptions, saved articles, and shares can sync to the user's Personal Data Server (PDS), so a reader's reading life is portable and outlives any one app. That ownership is the **foundation, not the headline** — lead with reading, not protocol jargon. Read state lives server-side in D1, not the PDS — and so, canonically, do saves (the PDS `app.skyreader.feed.saved` record is an opt-in export, see the Copy & Voice accuracy note below). Features offline support (PWA + IndexedDB), real-time updates, and calm social sharing via linkblogs.
 
 ## Design Context
 
@@ -53,8 +53,14 @@ When writing user-facing copy about data ownership, portability, or AT Protocol,
   user's **atproto PDS**, making it backed up, portable to any Atmospheric app, and
   **publicly visible**. Always surface the public-visibility tradeoff.
 - `PDS` is fine as a concrete noun once the framing is established (e.g. "stored on your PDS"), but
-  don't _lead_ with it — lead with the Atmosphere/portability idea. Saves and shares always live on
-  the PDS; only the subscription/feed list is the opt-in choice.
+  don't _lead_ with it — lead with the Atmosphere/portability idea. **Accuracy note:** the canonical
+  store for saves is **D1**, not the PDS. Writing the `app.skyreader.feed.saved` record to the PDS is
+  an opt-in _export_ gated on the same `pds_sync_enabled` flag as subscriptions, and today it only
+  fires for `feed`/`url` saves — `document` and `share` saves never write a PDS save record at all
+  (see `backend/src/routes/saved.ts`). So don't claim in copy that "your saves always live on your
+  PDS"; the honest line is that saves live in Skyreader and become PDS-portable when Atmospheric sync
+  is on. (See [External-backed saves](docs/plans/EXTERNAL_BACKED_SAVES_PLAN.md), which would make a
+  Saved list _be_ a foreign collection.)
 - Keep the voice **calm, terse, reading-first** (per PRODUCT.md). Prefer one short clause over a
   paragraph; let the user act, don't oversell.
 

@@ -6,7 +6,7 @@ import { SEMBLE_SCOPES, MARGIN_SCOPES } from './auth';
 /**
  * Check if the session has the required scopes for a specific integration
  */
-function hasIntegrationScopes(session: Session, integration: 'semble' | 'margin'): boolean {
+export function hasIntegrationScopes(session: Session, integration: 'semble' | 'margin'): boolean {
   if (!session.grantedScopes) return false;
   const granted = new Set(session.grantedScopes.split(' '));
   const required = integration === 'semble' ? SEMBLE_SCOPES : MARGIN_SCOPES;

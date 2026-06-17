@@ -908,6 +908,13 @@ export interface IntegrationStatus {
   };
 }
 
+// External-backed saves: which engine backs the Saved list (one per account).
+// Mirrors the backend SaveBacking union (backend/src/routes/settings.ts).
+export type SaveBacking =
+  | { provider: 'skyreader' }
+  | { provider: 'semble'; collectionUri: string }
+  | { provider: 'margin'; collectionUri: string };
+
 export interface SembleCollection {
   uri: string;
   cid: string;

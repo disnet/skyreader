@@ -57,6 +57,7 @@ import {
   handleUpdateSaved,
   handleDeleteSaved,
   handleDeleteSavedByGuid,
+  handleSetBacking,
 } from './routes/saved';
 import { handleExtract } from './routes/extract';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
@@ -380,7 +381,7 @@ export default {
         case url.pathname === '/api/saved':
           if (!session) return unauthorizedResponse(headers);
           if (request.method === 'GET') {
-            response = await handleGetSaved(request, env);
+            response = await handleGetSaved(request, env, ctx);
           } else if (request.method === 'POST') {
             response = await handleCreateSaved(request, env, ctx);
           } else {
@@ -393,6 +394,10 @@ export default {
         case url.pathname.startsWith('/api/saved/by-guid/'):
           if (!session) return unauthorizedResponse(headers);
           response = await handleDeleteSavedByGuid(request, env, ctx);
+          break;
+        case url.pathname === '/api/saved/backing':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleSetBacking(request, env);
           break;
         case url.pathname.startsWith('/api/saved/'):
           if (!session) return unauthorizedResponse(headers);
