@@ -4,6 +4,7 @@
   // lives in the container (ArticleCard.svelte). See articleCardView.types.ts.
   import Icon from './Icon.svelte';
   import AtmospherePanel from '$lib/components/feed/AtmospherePanel.svelte';
+  import CollectionReader from '$lib/components/feed/CollectionReader.svelte';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { overlapShadow } from '$lib/actions/overlap-shadow';
   import type { ArticleCardViewProps } from './articleCardView.types';
@@ -38,6 +39,8 @@
     expandedLaneItems,
     itemTagCount,
     itemTags = [],
+    collectionPieceCount = 0,
+    collection,
     // state
     isRead = false,
     isSaved = false,
@@ -67,6 +70,9 @@
     onRemoveShare,
     onOpenUrl,
     onOpenFullscreen,
+    onOpenCollectionPiece,
+    onSaveCollectionPiece,
+    isCollectionPieceSaved,
     onOpenLinkMenu,
     onExpandToggle,
     onTagClick,
@@ -222,6 +228,16 @@
             <span class="via-name">{authorDisplayName}</span>
           </span>
         {/if}
+        {#if collectionPieceCount > 0}
+          <span
+            class="edition-tag"
+            title="A curated edition of {collectionPieceCount} {collectionPieceCount === 1
+              ? 'piece'
+              : 'pieces'}"
+          >
+            <Icon name="layers" size={12} />Edition · {collectionPieceCount}
+          </span>
+        {/if}
         {#if displayFeedTitle && !isLinkPostMode}
           {#if feedId}
             <a
@@ -279,6 +295,31 @@
           <span class="link-post-url-text">{linkDisplayUrl}</span>
           <Icon name="external-link" size={13} />
         </button>
+      {:else if collection}
+        <!-- A curated edition: render its pieces as embedded cards (the same
+             CollectionReader the fullscreen reader uses), so the river and the
+             reader show the edition identically. -->
+        <div class="article-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
+          <!-- .collection-host (not .article-body): the prose globals (p/ol/li/
+               blockquote margins) would otherwise bleed into the edition's card
+               layout. Keeps the clamp behavior for the collapsed preview.
+               `inert` while clamped: the line-clamp visually hides the lower
+               pieces' Save/Open buttons but leaves them tab-focusable + clickable,
+               so the collapsed preview reads as a pure teaser (expand to act). -->
+          <div
+            bind:this={bodyEl}
+            class="collection-host"
+            class:truncated={selected && !expanded}
+            inert={selected && !expanded}
+          >
+            <CollectionReader
+              {collection}
+              onOpenPiece={onOpenCollectionPiece}
+              onSavePiece={onSaveCollectionPiece}
+              isPieceSaved={isCollectionPieceSaved}
+            />
+          </div>
+        </div>
       {:else if hasContent}
         <div class="article-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
           <div
@@ -446,7 +487,7 @@
               >{/if}
           </button>
         {/if}
-        {#if hasOpenFullscreen && hasContent}
+        {#if hasOpenFullscreen && (hasContent || collectionPieceCount > 0)}
           <button
             class="action-btn"
             onclick={(e) => {
@@ -455,7 +496,7 @@
             }}
           >
             <span class="action-icon"><Icon name="maximize" size={16} /></span><span
-              class="action-label">Reader</span
+              class="action-label">{collectionPieceCount > 0 ? 'Open edition' : 'Reader'}</span
             >
           </button>
         {/if}
@@ -706,6 +747,43 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* A curated edition reads as an ordinary article row — same favicon, title,
+     meta, and action bar — with one quiet marker that it gathers many pieces.
+     One Blue + the layers glyph (color never alone) make it the single colour
+     event on the row; flat, no bespoke card. Aligns to the title's first line
+     so it rides the meta cluster cleanly past the header's baseline. */
+  .edition-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    flex-shrink: 0;
+    /* Ride the meta row's shared text baseline (like .via-pill) rather than
+       centering in the taller title line box — otherwise the pill floats above
+       the feed/date text beside it. The wash stays optically centered on the
+       text because the padding is symmetric and the glyph matches the cap height. */
+    align-self: baseline;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    line-height: var(--leading-normal, 1.5);
+    color: var(--color-primary, #0066cc);
+    background: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
+    white-space: nowrap;
+  }
+
+  /* Pull the layers glyph onto the text baseline so it centers with the label
+     inside the pill (svgs have no baseline of their own). */
+  .edition-tag :global(.icon) {
+    vertical-align: -0.15em;
+  }
+
+  /* A read edition mutes with the rest of the row rather than holding its blue. */
+  .article-item.read .edition-tag {
+    color: var(--color-text-secondary);
+    background: var(--color-bg-secondary, rgba(128, 128, 128, 0.1));
   }
 
   /* Link-post body: the note as prose, then the article as a tappable card. */
@@ -1117,6 +1195,21 @@
     .article-body-wrapper.has-fade::after {
       background: linear-gradient(to bottom, transparent, var(--fade-bg, var(--color-bg, #1a1a1a)));
     }
+  }
+
+  /* Host for a curated edition's pieces. Bare on purpose — CollectionReader owns
+     its own typography, and staying off .article-body avoids the prose globals
+     bleeding into the card layout. Keeps the collapsed-preview clamp. */
+  .collection-host {
+    position: relative;
+  }
+
+  .collection-host.truncated {
+    display: -webkit-box;
+    -webkit-line-clamp: 8;
+    line-clamp: 8;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .article-body {
@@ -1710,6 +1803,11 @@
       line-clamp: 2;
       -webkit-box-orient: vertical;
       overflow: hidden;
+    }
+
+    .edition-tag {
+      order: 1;
+      font-size: var(--text-xs);
     }
 
     .feed-title-link,

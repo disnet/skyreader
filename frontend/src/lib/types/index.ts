@@ -562,9 +562,63 @@ export interface SocialDocument {
   // External resource refs (RFC-8288-style). A linkblog "link post" carries the
   // shared article's https URL here (rel: 'related'); see utils/linkPost.ts.
   links?: Array<{ uri: string; rel?: string }>;
+  // Present when this document is a Standard Reader "Collection" — a curated
+  // magazine edition of other documents. The proxy resolves each item to a
+  // preview; the river renders an edition card, opening into the edition reader.
+  readerCollection?: ReaderCollection;
   // Per-user read state stamped onto the document batch response by the backend
   // (inline read annotation, keyed by recordUri). Consumed additively on merge.
   read?: boolean;
+}
+
+// A single curated piece in a Collection, resolved by the proxy to a renderable
+// preview (the curator's `note` + the referenced document's metadata). A failed
+// resolution degrades to note + raw `document` URI with the previews absent.
+export interface ReaderCollectionItem {
+  /** The referenced document's at:// URI (or a raw https URL for loose links). */
+  document: string;
+  /** The curator's blurb for this piece (markdown). */
+  note?: string;
+  authorDid?: string;
+  title?: string;
+  description?: string;
+  canonicalUrl?: string;
+  siteIcon?: string;
+  /** The referenced document's publication name (e.g. "Alex's Blog"), shown as
+   *  the source label in the magazine TOC. Falls back to hostname in the UI. */
+  sourceName?: string;
+  publishedAt?: string;
+}
+
+// A publication's `basicTheme` palette — accent/background/foreground colors as
+// raw RGB triples (from `site.standard.publication.basicTheme`), used to paint
+// the optional magazine view of a curated edition.
+export interface BasicTheme {
+  accent?: { r: number; g: number; b: number };
+  background?: { r: number; g: number; b: number };
+  foreground?: { r: number; g: number; b: number };
+  accentForeground?: { r: number; g: number; b: number };
+}
+
+// Google Font family names for a collections publication's typography
+// (app.standard-reader.publicationTheme), honored by the magazine view.
+export interface PublicationFonts {
+  title?: string;
+  body?: string;
+}
+
+// A curated edition: an editorial intro, an ordered list of pieces with notes,
+// and a closing colophon. `editorial`/`colophon` bodies are GFM markdown.
+// `publicationName`/`theme`/`fonts`/`authorHandle` describe the edition's own
+// publication and drive the themed magazine masthead.
+export interface ReaderCollection {
+  editorial?: { title?: string; body?: string };
+  colophon?: { body?: string };
+  items: ReaderCollectionItem[];
+  publicationName?: string;
+  theme?: BasicTheme;
+  fonts?: PublicationFonts;
+  authorHandle?: string;
 }
 
 // Profile info fetched from Bluesky

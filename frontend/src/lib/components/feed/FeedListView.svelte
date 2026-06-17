@@ -1,7 +1,5 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { pushState } from '$app/navigation';
-  import { page } from '$app/state';
   import ArticleCard from '$lib/components/ArticleCard.svelte';
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
@@ -10,6 +8,7 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
+  import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
   import type { Article, SocialDocument } from '$lib/types';
   import {
     extractSembleMetadata,
@@ -50,44 +49,16 @@
     return subs[0];
   }
 
-  // Reader overlay state — readerItem holds the data, page.state.readerOpen drives history
-  let readerItem = $state<FeedDisplayItem | null>(null);
-  let savedScrollY = 0;
-
-  // Close reader when back button is pressed (page.state.readerOpen becomes falsy)
-  $effect(() => {
-    if (!page.state.readerOpen && readerItem) {
-      readerItem = null;
-      onReaderChange?.(false);
-      requestAnimationFrame(() => {
-        window.scrollTo(0, savedScrollY);
-      });
-    }
-  });
-
-  function openReader(item: FeedDisplayItem) {
-    savedScrollY = window.scrollY;
-    readerItem = item;
-    pushState('', { readerOpen: true });
-    onReaderChange?.(true);
-  }
-
-  function closeReader() {
-    readerItem = null;
-    onReaderChange?.(false);
-    history.back();
-    requestAnimationFrame(() => {
-      window.scrollTo(0, savedScrollY);
-    });
-  }
+  // The fullscreen reader as a navigation stack (shared with the saved list), so
+  // a curated Collection piece opens on top of the edition and Back returns to it.
+  const reader = useReaderStack({ onReaderChange: (open) => onReaderChange?.(open) });
+  let readerItem = $derived(reader.readerItem);
+  const openReader = reader.openReader;
+  const closeReader = reader.closeReader;
+  const openCollectionPiece = reader.openCollectionPiece;
 
   export function openSelectedReader() {
-    const key = feedViewStore.selectedKey;
-    if (key === null) return;
-    const item = feedViewStore.currentItems.find((i) => i.key === key);
-    if (item) {
-      openReader(item);
-    }
+    reader.openSelectedReader();
   }
 
   // Element refs for scroll observation
@@ -284,6 +255,7 @@
           onSelect={() => handleSelect(index)}
           onExpand={() => handleExpand(index)}
           onOpenFullscreen={() => openReader(displayItem)}
+          onOpenCollectionPiece={openCollectionPiece}
           onSaveToSemble={onSaveToSemble
             ? () => onSaveToSemble(extractSembleMetadata(displayItem))
             : undefined}

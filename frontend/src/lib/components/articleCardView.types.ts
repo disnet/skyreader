@@ -1,5 +1,5 @@
 import type { IconName } from './Icon.svelte';
-import type { Highlight } from '$lib/types';
+import type { Highlight, ReaderCollection, ReaderCollectionItem } from '$lib/types';
 
 /**
  * View-model types for the PURE presentational `ArticleCardView.svelte`.
@@ -101,6 +101,17 @@ export interface ArticleCardViewProps {
   itemTagCount: number;
   itemTags?: string[];
 
+  /** >0 when this document is a curated edition (Collection): the number of
+   *  pieces it gathers. Drives the quiet "Edition · N" marker in the title row
+   *  and keeps the Reader action available even when there's no inline body. */
+  collectionPieceCount?: number;
+
+  /** The resolved curated edition, when this document is a Collection. When
+   *  present (and the card is open), the body renders the edition's pieces as
+   *  embedded cards (CollectionReader) instead of the {@html sanitizedContent}
+   *  body — the same treatment the fullscreen reader uses. */
+  collection?: ReaderCollection;
+
   // ── State ──
   isRead?: boolean;
   isSaved?: boolean;
@@ -134,6 +145,12 @@ export interface ArticleCardViewProps {
   onRemoveShare?: () => void;
   onOpenUrl?: () => void;
   onOpenFullscreen?: () => void;
+  /** Open a curated edition piece in the in-app reader (CollectionReader). */
+  onOpenCollectionPiece?: (item: ReaderCollectionItem) => void | Promise<void>;
+  /** Toggle a curated edition piece into the Saved list. */
+  onSaveCollectionPiece?: (item: ReaderCollectionItem) => void;
+  /** Reactive saved-state predicate for a curated edition piece. */
+  isCollectionPieceSaved?: (item: ReaderCollectionItem) => boolean;
   /** Open the link context menu (open externally / save to reader) for a link
    *  post's URL, anchored to the clicked chip's rect. */
   onOpenLinkMenu?: (anchorRect: DOMRect) => void;

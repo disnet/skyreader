@@ -11,11 +11,13 @@ export const onRequest: PagesFunction = async (context) => {
   const csp = [
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
-    "style-src 'self' 'unsafe-inline'",
+    // fonts.googleapis.com: collections-publication typography stylesheets (magazine view).
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "img-src 'self' https: data:",
     "media-src 'self' https: data: blob:",
     "connect-src 'self' https://*.skyreader.app https:",
-    "font-src 'self' data:",
+    // fonts.gstatic.com: the actual web-font files for the magazine view.
+    "font-src 'self' data: https://fonts.gstatic.com",
     'frame-src https://www.youtube.com https://youtube.com https://www.youtube-nocookie.com https://youtube-nocookie.com https://player.vimeo.com',
     "frame-ancestors 'none'",
     "base-uri 'self'",

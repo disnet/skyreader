@@ -446,6 +446,61 @@ export async function handleV2BatchDocumentFetch(
 }
 
 /**
+ * GET /api/v2/documents/get?uri=at://...
+ *
+ * On-demand fetch of a single standard.site document — the in-app reader path
+ * for a curated Collection piece whose author the user doesn't subscribe to (so
+ * it's in no batch response). Thin pass-through to the proxy, then the same
+ * per-user read annotation the batch path applies (item_type 'document').
+ */
+export async function handleV2GetDocument(
+  request: Request,
+  env: Env,
+  session: Session
+): Promise<Response> {
+  if (request.method !== 'GET') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const uri = new URL(request.url).searchParams.get('uri');
+  if (!uri || !uri.startsWith('at://')) {
+    return new Response(JSON.stringify({ error: 'Missing or invalid uri' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  try {
+    const client = new FeedProxyClient(env);
+    const document = await client.fetchDocument(uri);
+    if (!document) {
+      return new Response(JSON.stringify({ error: 'Document not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Stamp per-user read state, mirroring the batch path's annotation.
+    const readUris = await getReadKeys(env, session.did, 'document', [document.recordUri]);
+    document.read = readUris.has(document.recordUri);
+
+    return new Response(JSON.stringify({ document }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('V2 get document error:', error);
+    const message = error instanceof Error ? error.message : 'Proxy fetch failed';
+    return new Response(JSON.stringify({ error: message }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+/**
  * POST /api/v2/social-context
  *
  * Batch fetch Constellation social context for link posts via the Fly.io proxy

@@ -96,9 +96,52 @@ export interface ProxyDocument {
   indexedAt?: string;
   createdAt: string;
   siteIcon?: string;
+  // Present when the document is a Standard Reader "Collection" (curated edition).
+  // The proxy resolves each curated item to a preview; we forward it untouched.
+  readerCollection?: ProxyReaderCollection;
   // Stamped by handleV2BatchDocumentFetch from a per-user read join (item_type
   // 'document'). Not returned by the proxy itself — annotation only.
   read?: boolean;
+}
+
+/** A publication's `basicTheme` palette (RGB triples), used by the magazine view. */
+export interface BasicTheme {
+  accent?: { r: number; g: number; b: number };
+  background?: { r: number; g: number; b: number };
+  foreground?: { r: number; g: number; b: number };
+  accentForeground?: { r: number; g: number; b: number };
+}
+
+/** A curated collection item, resolved by the proxy to a renderable preview. */
+export interface ProxyReaderCollectionItem {
+  document: string;
+  note?: string;
+  authorDid?: string;
+  title?: string;
+  description?: string;
+  canonicalUrl?: string;
+  siteIcon?: string;
+  sourceName?: string;
+  publishedAt?: string;
+}
+
+/** Google Font family names for a collections publication's typography. */
+export interface PublicationFonts {
+  title?: string;
+  body?: string;
+}
+
+/** A resolved curated edition: editorial/colophon markdown + resolved items.
+ *  `publicationName`/`theme`/`fonts`/`authorHandle` describe the edition's
+ *  publication, consumed by the optional themed magazine view. */
+export interface ProxyReaderCollection {
+  editorial?: { title?: string; body?: string };
+  colophon?: { body?: string };
+  items: ProxyReaderCollectionItem[];
+  publicationName?: string;
+  theme?: BasicTheme;
+  fonts?: PublicationFonts;
+  authorHandle?: string;
 }
 
 export interface ProxyDocumentEntry {
@@ -461,6 +504,19 @@ export class FeedProxyClient {
     }
 
     return raw.authors;
+  }
+
+  /**
+   * Fetch a single standard.site document by its at:// URI (on-demand read of a
+   * curated Collection piece). Returns the resolved document, or null when the
+   * proxy can't resolve it (bad URI / missing record).
+   */
+  async fetchDocument(uri: string): Promise<ProxyDocument | null> {
+    const raw = await this.fetch<{ document?: ProxyDocument; error?: string }>(
+      `/document?uri=${encodeURIComponent(uri)}`,
+      { method: 'GET' }
+    );
+    return raw.document ?? null;
   }
 
   /**
