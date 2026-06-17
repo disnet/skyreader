@@ -11,6 +11,7 @@ import {
   handleV2BatchFeedFetch,
   handleV2FeedDiscover,
   handleV2BatchDocumentFetch,
+  handleV2GetDocument,
   handleV2SocialContext,
   handleV2Mentions,
   handleV2MentionLane,
@@ -224,6 +225,10 @@ export default {
         case url.pathname === '/api/v2/documents/batch':
           if (!session) return unauthorizedResponse(headers);
           response = await handleV2BatchDocumentFetch(request, env, session);
+          break;
+        case url.pathname === '/api/v2/documents/get':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleV2GetDocument(request, env, session);
           break;
         case url.pathname === '/api/v2/social-context':
           if (!session) return unauthorizedResponse(headers);

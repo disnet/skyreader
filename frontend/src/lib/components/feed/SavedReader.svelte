@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Article } from '$lib/types';
+  import type { Article, ReaderCollectionItem } from '$lib/types';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import { normalizeDisplayItem, getAuthorLabel, getDisplayContent } from '$lib/utils/displayItem';
   import { getExternalArticleLink, formatQuoteSeed } from '$lib/utils/linkPost';
@@ -10,6 +10,7 @@
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
   import { db } from '$lib/services/db';
+  import { saveCollectionPiece, isCollectionPieceSaved } from '$lib/utils/collectionPiece';
   import { sanitizeHtml } from '$lib/utils/sanitize';
   import { formatRelativeDate } from '$lib/utils/date';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
@@ -30,6 +31,8 @@
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import NotePeek from '$lib/components/feed/NotePeek.svelte';
+  import CollectionMagazine from '$lib/components/feed/CollectionMagazine.svelte';
+  import { magazineThemeVars } from '$lib/utils/magazineTheme';
   import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { tick, onMount, onDestroy } from 'svelte';
@@ -176,6 +179,20 @@
   let linkPostUrl = $derived(
     readerItem.type === 'document' ? getExternalArticleLink(readerItem.item) : undefined
   );
+
+  // A curated Collection (Standard Reader "edition"): render the structured
+  // editorial → pieces → colophon layout in place of the document body.
+  let collection = $derived(
+    readerItem.type === 'document' ? readerItem.item.readerCollection : undefined
+  );
+  // The edition title for the magazine masthead (the document's own title).
+  let collectionTitle = $derived(
+    readerItem.type === 'document' ? readerItem.item.title : undefined
+  );
+  // An edition always renders as the themed magazine; its publication palette +
+  // fonts paint the whole reader surface (not just the content column).
+  let magazineVars = $derived(collection ? magazineThemeVars(collection) : '');
+
   $effect(() => {
     if (linkPostUrl) linkPostContentStore.fetch(linkPostUrl);
   });
@@ -688,7 +705,13 @@
   }
 </script>
 
-<div class="reader-overlay" bind:this={overlayEl} onscroll={handleScroll}>
+<div
+  class="reader-overlay"
+  class:magazine-mode={!!collection}
+  style={collection ? `${magazineVars};background:var(--mag-bg);color:var(--mag-fg)` : ''}
+  bind:this={overlayEl}
+  onscroll={handleScroll}
+>
   <!-- Reading-progress bar: a thin One-Blue fill pinned to the very top edge of
        the overlay (over the header's empty top padding), filling as the reader
        moves through the article body. Stays put when the header hides on
@@ -1031,9 +1054,23 @@
       </div>
 
       <div class="reader-body-wrapper">
-        <div class="reader-body" bind:this={readerBodyEl} use:bskyEmbed>
-          {@html sanitizedContent}
-        </div>
+        {#if collection}
+          <!-- Rendered outside .reader-body so its prose globals (p/ol/li/
+               blockquote margins) don't bleed into the edition's own card
+               layout. -->
+          <div class="reader-collection-host">
+            <CollectionMagazine
+              {collection}
+              title={collectionTitle}
+              onSavePiece={saveCollectionPiece}
+              isPieceSaved={isCollectionPieceSaved}
+            />
+          </div>
+        {:else}
+          <div class="reader-body" bind:this={readerBodyEl} use:bskyEmbed>
+            {@html sanitizedContent}
+          </div>
+        {/if}
       </div>
 
       <!-- End-of-article Discussion: a quiet separator, then sharing (a Share
@@ -1104,6 +1141,15 @@
     background: var(--color-bg, #ffffff);
     overflow-y: auto;
     overscroll-behavior: contain;
+  }
+
+  /* Edition view: the chrome takes the publication background (not the app's
+     default) so it matches the themed surface while staying opaque — a sticky
+     header must occlude the article scrolling beneath it, not let text bleed
+     through. */
+  .reader-overlay.magazine-mode .reader-header,
+  .reader-overlay.magazine-mode .reader-bottom-bar {
+    background: var(--mag-bg);
   }
 
   /* Reading-progress bar. Fixed to the top edge, above the sticky header (z 10)
@@ -1567,6 +1613,12 @@
   }
 
   .reader-body-wrapper {
+    position: relative;
+  }
+
+  /* Host for a curated edition. Deliberately bare — CollectionReader owns its own
+     typography, and keeping it out of .reader-body avoids the prose globals. */
+  .reader-collection-host {
     position: relative;
   }
 

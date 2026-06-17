@@ -14,6 +14,7 @@
     OffprintContent,
     GreengaleContent,
     MarkpubContent,
+    ReaderCollectionItem,
   } from '$lib/types';
   import { formatRelativeDate } from '$lib/utils/date';
   import { getFaviconUrl } from '$lib/utils/favicon';
@@ -35,6 +36,7 @@
   } from '$lib/utils/linkPost';
   import { api } from '$lib/services/api';
   import { db } from '$lib/services/db';
+  import { saveCollectionPiece, isCollectionPieceSaved } from '$lib/utils/collectionPiece';
   import { socialStore } from '$lib/stores/social.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
@@ -79,6 +81,7 @@
     onSelect,
     onExpand,
     onOpenFullscreen,
+    onOpenCollectionPiece,
     onSaveToSemble,
     onSaveToMargin,
   }: {
@@ -102,6 +105,9 @@
     onSelect?: () => void;
     onExpand?: () => void;
     onOpenFullscreen?: () => void;
+    /** Open a curated edition piece in the in-app reader. Threaded from the list
+     *  view, which owns the reader stack. */
+    onOpenCollectionPiece?: (item: ReaderCollectionItem) => void | Promise<void>;
     onSaveToSemble?: () => void;
     onSaveToMargin?: () => void;
   } = $props();
@@ -660,6 +666,11 @@
   let itemTagCount = $derived(itemLabelsStore.getTagsForItem(itemGuid).length);
   let itemTags = $derived(itemLabelsStore.getTagsForItem(itemGuid));
 
+  // Curated edition (Collection): the count of gathered pieces drives the quiet
+  // "Edition · N" marker in the title row and keeps the Reader action available.
+  let collectionPieceCount = $derived(document?.readerCollection?.items.length ?? 0);
+  let collection = $derived(document?.readerCollection);
+
   // Paragraph tracking for read progress
   const paragraphTracking = useParagraphTracking({
     contentEl: () => bodyEl,
@@ -801,6 +812,8 @@
   expandedLaneItems={atmosphere.expandedLaneItems}
   {itemTagCount}
   {itemTags}
+  {collectionPieceCount}
+  {collection}
   {isRead}
   {isSaved}
   {selected}
@@ -827,6 +840,9 @@
   onRemoveShare={() => removeShare()}
   onOpenUrl={handleOpenUrl}
   onOpenFullscreen={() => onOpenFullscreen?.()}
+  {onOpenCollectionPiece}
+  onSaveCollectionPiece={saveCollectionPiece}
+  {isCollectionPieceSaved}
   onOpenLinkMenu={(rect) =>
     linkInterception.openMenu({ url: itemUrl, linkText: itemTitle, anchorRect: rect })}
   onExpandToggle={() => onExpand?.()}

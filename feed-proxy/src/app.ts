@@ -5,6 +5,7 @@ import { parseFeed } from './feed-parser';
 import type { ParsedFeed, FeedItem } from './types';
 import {
   fetchDocumentsForAuthor,
+  fetchSingleDocument,
   filterByPublication,
   digestScope,
   MAX_DOCUMENTS_PER_AUTHOR,
@@ -786,6 +787,15 @@ export function initDatabase(db: Database): void {
 			cached_at INTEGER NOT NULL
 		)
 	`);
+  // Migration: add name + theme + fonts columns, all consumed by the optional
+  // magazine view of a curated Collection. `name` is the publication title,
+  // `theme` is the JSON `basicTheme` palette (colors), and `fonts` is the JSON
+  // `publicationTheme` typography (Google Font family names).
+  const pubColumns = db.query<{ name: string }, []>(`PRAGMA table_info(publication_cache)`).all();
+  const pubColNames = new Set(pubColumns.map((c) => c.name));
+  if (!pubColNames.has('name')) db.run(`ALTER TABLE publication_cache ADD COLUMN name TEXT`);
+  if (!pubColNames.has('theme')) db.run(`ALTER TABLE publication_cache ADD COLUMN theme TEXT`);
+  if (!pubColNames.has('fonts')) db.run(`ALTER TABLE publication_cache ADD COLUMN fonts TEXT`);
 
   // Per-author resolved standard.site documents. Same freshness/backoff shape as
   // `cache`, keyed by the author DID. Documents are stored unfiltered (full
@@ -2164,6 +2174,26 @@ export function createApp(db: Database, config: AppConfig) {
   // Bulk standard.site document endpoint. Symmetric with /feeds, but keyed by
   // author DID instead of feed URL. Returns each requested author's documents
   // (scoped to a publication and trimmed to what the client hasn't seen yet).
+  // On-demand fetch of a single standard.site document by at:// URI. Serves
+  // pieces opened from a Collection edition whose authors the reader doesn't
+  // subscribe to (so they're in no cached author list). Resolved fresh.
+  app.get('/document', async (c) => {
+    if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const uri = c.req.query('uri');
+    if (!uri || !uri.startsWith('at://')) {
+      return c.json({ error: 'Missing or invalid uri' }, 400);
+    }
+
+    const document = await fetchSingleDocument(db, uri);
+    if (!document) {
+      return c.json({ error: 'Document not found' }, 404);
+    }
+    return c.json({ document });
+  });
+
   app.post('/documents', async (c) => {
     if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret) {
       return c.json({ error: 'Unauthorized' }, 401);

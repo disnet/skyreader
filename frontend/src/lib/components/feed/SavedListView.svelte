@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { pushState } from '$app/navigation';
-  import { page } from '$app/state';
   import SavedCard from './SavedCard.svelte';
   import SavedReader from './SavedReader.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
@@ -9,6 +7,7 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
   import type { ItemLabelType } from '$lib/types';
   import {
     extractSembleMetadata,
@@ -25,8 +24,12 @@
 
   let { onReaderChange, onSaveToSemble, onSaveToMargin }: Props = $props();
 
-  let readerItem = $state<FeedDisplayItem | null>(null);
-  let savedScrollY = 0;
+  // Shared reader stack (same as the feed): curated Collection pieces open in-app
+  // on top of the edition, with Back returning to it.
+  const reader = useReaderStack({ onReaderChange: (open) => onReaderChange?.(open) });
+  let readerItem = $derived(reader.readerItem);
+  const openReader = reader.openReader;
+  const closeReader = reader.closeReader;
 
   // Element refs for scroll management
   let articleElements = $state<HTMLElement[]>([]);
@@ -41,33 +44,6 @@
     const offset = rect.top - targetY;
 
     window.scrollBy({ top: offset, behavior: 'instant' });
-  }
-
-  // Close reader when back button is pressed (page.state.readerOpen becomes falsy)
-  $effect(() => {
-    if (!page.state.readerOpen && readerItem) {
-      readerItem = null;
-      onReaderChange?.(false);
-      requestAnimationFrame(() => {
-        window.scrollTo(0, savedScrollY);
-      });
-    }
-  });
-
-  function openReader(item: FeedDisplayItem) {
-    savedScrollY = window.scrollY;
-    readerItem = item;
-    pushState('', { readerOpen: true });
-    onReaderChange?.(true);
-  }
-
-  function closeReader() {
-    readerItem = null;
-    onReaderChange?.(false);
-    history.back();
-    requestAnimationFrame(() => {
-      window.scrollTo(0, savedScrollY);
-    });
   }
 
   // When a URL is added, open its reader as soon as the new item lands in the
@@ -138,12 +114,7 @@
   }
 
   export function openSelectedReader() {
-    const key = feedViewStore.selectedKey;
-    if (key === null) return;
-    const item = feedViewStore.currentItems.find((i) => i.key === key);
-    if (item) {
-      openReader(item);
-    }
+    reader.openSelectedReader();
   }
 
   export function getArticleElements(): HTMLElement[] {
@@ -158,10 +129,7 @@
     {readerItem}
     onClose={closeReader}
     onArchive={() => handleArchive(readerItem!)}
-    onRemove={() => {
-      handleRemoveBookmark(readerItem!);
-      closeReader();
-    }}
+    onRemove={() => handleRemoveBookmark(readerItem!)}
     onSaveToSemble={onSaveToSemble
       ? () => onSaveToSemble(extractSembleMetadata(readerItem!))
       : undefined}

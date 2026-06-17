@@ -9,6 +9,9 @@ declare global {
     // interface PageData {}
     interface PageState {
       readerOpen?: boolean;
+      // Reader-stack depth for the main feed (FeedListView): each open pushes a
+      // history entry; Back regresses the depth, popping the stack to match.
+      readerDepth?: number;
     }
     // interface Platform {}
   }

@@ -337,6 +337,11 @@ function createSavesStore() {
     title?: string;
     description?: string;
     publishedAt?: string;
+    // Pre-rendered body HTML. Standard.site documents render from structured
+    // content, not URL extraction, so the caller passes the rendered body here
+    // and we persist it as the saved copy's content (otherwise the saved reader
+    // has nothing to show — see the collection-piece save path).
+    content?: string;
   }): Promise<SavedItem> {
     saving = true;
     error = null;
@@ -351,11 +356,11 @@ function createSavesStore() {
         title: doc.title || null,
         author: null,
         description: doc.description || null,
-        content: null,
+        content: doc.content ?? null,
         contentType: 'document',
         domain: null,
         image: null,
-        wordCount: null,
+        wordCount: doc.content ? wordCountFrom(doc.content) : null,
         publishedAt: doc.publishedAt || null,
         savedAt: now,
         source: 'document',
@@ -374,6 +379,12 @@ function createSavesStore() {
             title: doc.title,
             description: doc.description,
             publishedAt: doc.publishedAt,
+            // Persist the rendered body server-side too, so it survives the
+            // backend-authoritative reload in load() (a 'document' save is a
+            // metadata save — the backend stores this content rather than
+            // extracting from the URL).
+            content: doc.content,
+            wordCount: savedItem.wordCount ?? undefined,
           });
 
           const updated: SavedItem = {
@@ -395,6 +406,8 @@ function createSavesStore() {
             title: doc.title,
             description: doc.description,
             publishedAt: doc.publishedAt,
+            content: doc.content,
+            wordCount: savedItem.wordCount ?? undefined,
           } as SavedPayload);
           return savedItem;
         }
@@ -407,6 +420,8 @@ function createSavesStore() {
           title: doc.title,
           description: doc.description,
           publishedAt: doc.publishedAt,
+          content: doc.content,
+          wordCount: savedItem.wordCount ?? undefined,
         } as SavedPayload);
         return savedItem;
       }

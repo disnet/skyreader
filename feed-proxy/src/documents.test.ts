@@ -8,6 +8,8 @@ import {
   digestScope,
   parseAtUri,
   resolveSiteMeta,
+  recordToProxyDocument,
+  fetchSingleDocument,
   type ProxyDocument,
 } from './standard-site';
 
@@ -653,6 +655,11 @@ describe('POST /documents cache lifecycle', () => {
         );
       }
       if (url.includes('com.atproto.repo.listRecords')) {
+        // The collection sidecar listing is a separate call; this test only
+        // exercises site.standard.document pagination, so ignore the rest.
+        if (new URL(url).searchParams.get('collection') !== 'site.standard.document') {
+          return new Response(JSON.stringify({ records: [] }));
+        }
         seenCursors.push(new URL(url).searchParams.get('cursor'));
         listCalls++;
         if (listCalls === 1) {
@@ -765,6 +772,35 @@ describe('resolveSiteMeta caching', () => {
     expect(meta.baseUrl).toBe('https://blog.example.com');
     expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
   });
+
+  it('captures the publication name + basicTheme (and round-trips theme through the cache)', async () => {
+    const db = freshDb();
+    const theme = {
+      accent: { r: 196, g: 33, b: 188 },
+      background: { r: 255, g: 240, b: 254 },
+      foreground: { r: 38, g: 4, b: 37 },
+      accentForeground: { r: 255, g: 255, b: 255 },
+    };
+    fetchMock = mockAtprotoFetch({
+      publication: {
+        $type: 'site.standard.publication',
+        url: 'https://blog.example.com',
+        name: 'Dispatches from the Atmosphere',
+        basicTheme: theme,
+      },
+    });
+
+    const meta = await resolveSiteMeta(db, PUB_URI);
+    expect(meta.name).toBe('Dispatches from the Atmosphere');
+    expect(meta.theme).toEqual(theme);
+
+    // Second call hits the SQLite cache (no further fetch) and still parses theme.
+    fetchMock.mockClear();
+    const cached = await resolveSiteMeta(db, PUB_URI);
+    expect(cached.name).toBe('Dispatches from the Atmosphere');
+    expect(cached.theme).toEqual(theme);
+    expect(fetchMock.mock.calls.length).toBe(0);
+  });
 });
 
 describe('warmStaleDocuments', () => {
@@ -854,5 +890,306 @@ describe('cleanupCache (documents)', () => {
       .all()
       .map((r) => r.did);
     expect(remaining).toEqual(['recent']);
+  });
+});
+
+describe('readerCollection resolution', () => {
+  afterEach(() => {
+    spyOn(globalThis, 'fetch').mockRestore();
+  });
+
+  // Routes PLC resolution, the publication getRecord, and per-item document
+  // getRecords. `items` maps an item rkey → its document record value (or null
+  // for a 404), so a test can mix resolvable and unresolvable curated pieces.
+  function mockCollectionFetch(
+    items: Record<string, Record<string, unknown> | null>,
+    opts: { fonts?: { title?: string; body?: string }; basicTheme?: Record<string, unknown> } = {}
+  ) {
+    return spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = String(input);
+
+      if (url.startsWith('https://plc.directory/')) {
+        return new Response(
+          JSON.stringify({
+            id: AUTHOR,
+            service: [
+              { id: '#atproto_pds', type: 'AtprotoPersonalDataServer', serviceEndpoint: PDS },
+            ],
+          })
+        );
+      }
+
+      if (url.includes('com.atproto.repo.getRecord')) {
+        const params = new URLSearchParams(url.split('?')[1]);
+        const collection = params.get('collection');
+        if (collection === 'site.standard.publication') {
+          return new Response(
+            JSON.stringify({
+              value: {
+                $type: 'site.standard.publication',
+                url: 'https://blog.example.com',
+                name: 'Example Blog',
+                icon: { ref: { $link: 'iconcid' }, mimeType: 'image/jpeg' },
+                ...(opts.basicTheme ? { basicTheme: opts.basicTheme } : {}),
+              },
+            })
+          );
+        }
+        // The publication's typography sidecar (paired by rkey).
+        if (collection === 'app.standard-reader.publicationTheme') {
+          if (!opts.fonts) return new Response('not found', { status: 404 });
+          return new Response(
+            JSON.stringify({
+              value: {
+                $type: 'app.standard-reader.publicationTheme',
+                publication: PUB_URI,
+                fonts: opts.fonts,
+              },
+            })
+          );
+        }
+        // A curated item's document record.
+        const rkey = params.get('rkey') ?? '';
+        const value = items[rkey];
+        if (!value) return new Response('not found', { status: 404 });
+        return new Response(JSON.stringify({ value }));
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as unknown as typeof fetch);
+  }
+
+  // Build a structured Markpub markdown body, the shape collection notes/editorial
+  // use on the PDS (the resolver flattens it to plain markdown).
+  function markpub(markdown: string) {
+    return {
+      text: { $type: 'at.markpub.text', markdown },
+      $type: 'at.markpub.markdown',
+      flavor: 'gfm',
+    };
+  }
+
+  function itemUri(rkey: string) {
+    return `at://${AUTHOR}/site.standard.document/${rkey}`;
+  }
+
+  it('resolves curated items to previews and carries editorial/colophon', async () => {
+    const db = new Database(':memory:');
+    initDatabase(db);
+    mockCollectionFetch({
+      good: {
+        $type: 'site.standard.document',
+        site: PUB_URI,
+        title: 'A Resolved Piece',
+        description: 'Its excerpt.',
+        path: '/a-resolved-piece',
+        publishedAt: '2026-06-01T00:00:00.000Z',
+      },
+    });
+
+    const resolved = await recordToProxyDocument(
+      db,
+      AUTHOR,
+      itemUri('edition'),
+      'cid-edition',
+      {
+        $type: 'site.standard.document',
+        site: PUB_URI,
+        title: 'My Edition',
+        publishedAt: '2026-06-10T00:00:00.000Z',
+      },
+      // The paired app.standard-reader.collection sidecar. Notes/editorial are
+      // structured Markpub; the colophon is a legacy plain string — both flatten.
+      {
+        document: itemUri('edition'),
+        editorial: { title: 'A Word Before', body: markpub('The intro.') },
+        colophon: { body: 'The closing.' },
+        items: [
+          { document: itemUri('good'), note: markpub('Read this one.') },
+          { document: itemUri('missing'), note: markpub('Could not resolve.') },
+        ],
+        createdAt: '2026-06-10T00:00:00.000Z',
+      }
+    );
+
+    const rc = resolved.readerCollection;
+    expect(rc).toBeDefined();
+    expect(rc?.editorial?.title).toBe('A Word Before');
+    expect(rc?.editorial?.body).toBe('The intro.');
+    expect(rc?.colophon?.body).toBe('The closing.');
+    expect(rc?.items).toHaveLength(2);
+
+    // Resolved piece carries title + canonical URL + the (flattened) curator note
+    // + the referenced publication's name (the magazine TOC source label).
+    const good = rc!.items[0];
+    expect(good.title).toBe('A Resolved Piece');
+    expect(good.canonicalUrl).toBe('https://blog.example.com/a-resolved-piece');
+    expect(good.note).toBe('Read this one.');
+    expect(good.authorDid).toBe(AUTHOR);
+    expect(good.sourceName).toBe('Example Blog');
+
+    // The edition carries its own publication name (for the magazine masthead).
+    expect(rc?.publicationName).toBe('Example Blog');
+
+    // Unresolvable piece degrades to a note-only stub (the URI + note survive).
+    const missing = rc!.items[1];
+    expect(missing.document).toBe(itemUri('missing'));
+    expect(missing.note).toBe('Could not resolve.');
+    expect(missing.title).toBeUndefined();
+    expect(missing.canonicalUrl).toBeUndefined();
+  });
+
+  it('carries publication fonts (publicationTheme) onto the edition', async () => {
+    const db = new Database(':memory:');
+    initDatabase(db);
+    mockCollectionFetch(
+      {
+        good: {
+          $type: 'site.standard.document',
+          site: PUB_URI,
+          title: 'A Resolved Piece',
+          path: '/p',
+          publishedAt: '2026-06-01T00:00:00.000Z',
+        },
+      },
+      { fonts: { title: 'Black Ops One', body: 'Space Grotesk' } }
+    );
+
+    const resolved = await recordToProxyDocument(
+      db,
+      AUTHOR,
+      itemUri('edition'),
+      'cid-edition',
+      {
+        $type: 'site.standard.document',
+        site: PUB_URI,
+        title: 'My Edition',
+        publishedAt: '2026-06-10T00:00:00.000Z',
+      },
+      {
+        document: itemUri('edition'),
+        items: [{ document: itemUri('good') }],
+        createdAt: '2026-06-10T00:00:00.000Z',
+      }
+    );
+
+    expect(resolved.readerCollection?.fonts).toEqual({
+      title: 'Black Ops One',
+      body: 'Space Grotesk',
+    });
+  });
+
+  it('leaves readerCollection undefined for ordinary documents (no paired collection)', async () => {
+    const db = new Database(':memory:');
+    initDatabase(db);
+    mockCollectionFetch({});
+
+    const resolved = await recordToProxyDocument(db, AUTHOR, itemUri('plain'), 'cid-plain', {
+      $type: 'site.standard.document',
+      site: PUB_URI,
+      title: 'Just an article',
+      publishedAt: '2026-06-10T00:00:00.000Z',
+    });
+
+    expect(resolved.readerCollection).toBeUndefined();
+  });
+
+  it('drops readerCollection when no items resolve (empty edition)', async () => {
+    const db = new Database(':memory:');
+    initDatabase(db);
+    mockCollectionFetch({});
+
+    // An edition whose only item has no `document` URI resolves to nothing, so the
+    // collection is dropped and the doc renders as an ordinary body, not an empty
+    // edition card.
+    const resolved = await recordToProxyDocument(
+      db,
+      AUTHOR,
+      itemUri('edition'),
+      'cid-edition',
+      {
+        $type: 'site.standard.document',
+        site: PUB_URI,
+        title: 'Empty Edition',
+        publishedAt: '2026-06-10T00:00:00.000Z',
+      },
+      {
+        document: itemUri('edition'),
+        editorial: { body: markpub('Nothing made the cut.') },
+        items: [{ note: markpub('A note with no document reference.') }],
+        createdAt: '2026-06-10T00:00:00.000Z',
+      }
+    );
+
+    expect(resolved.readerCollection).toBeUndefined();
+  });
+});
+
+describe('fetchSingleDocument', () => {
+  afterEach(() => {
+    spyOn(globalThis, 'fetch').mockRestore();
+  });
+
+  function mockSingleFetch(doc: Record<string, unknown> | null) {
+    return spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = String(input);
+      if (url.startsWith('https://plc.directory/')) {
+        return new Response(
+          JSON.stringify({
+            id: AUTHOR,
+            service: [
+              { id: '#atproto_pds', type: 'AtprotoPersonalDataServer', serviceEndpoint: PDS },
+            ],
+          })
+        );
+      }
+      if (url.includes('com.atproto.repo.getRecord')) {
+        const params = new URLSearchParams(url.split('?')[1]);
+        if (params.get('collection') === 'site.standard.publication') {
+          return new Response(
+            JSON.stringify({ value: { url: 'https://blog.example.com', name: 'Example Blog' } })
+          );
+        }
+        if (!doc) return new Response('not found', { status: 404 });
+        const fullUri = `at://${params.get('repo')}/${params.get('collection')}/${params.get('rkey')}`;
+        return new Response(JSON.stringify({ uri: fullUri, cid: 'cid-1', value: doc }));
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as unknown as typeof fetch);
+  }
+
+  const DOC_URI = `at://${AUTHOR}/site.standard.document/piece1`;
+
+  it('resolves a document by at:// URI', async () => {
+    const db = new Database(':memory:');
+    initDatabase(db);
+    mockSingleFetch({
+      $type: 'site.standard.document',
+      site: PUB_URI,
+      title: 'On-demand Piece',
+      path: '/on-demand-piece',
+      publishedAt: '2026-06-01T00:00:00.000Z',
+    });
+
+    const doc = await fetchSingleDocument(db, DOC_URI);
+    expect(doc).not.toBeNull();
+    expect(doc?.title).toBe('On-demand Piece');
+    expect(doc?.recordUri).toBe(DOC_URI);
+    expect(doc?.canonicalUrl).toBe('https://blog.example.com/on-demand-piece');
+  });
+
+  it('returns null for a non-document collection', async () => {
+    const db = new Database(':memory:');
+    initDatabase(db);
+    const doc = await fetchSingleDocument(db, `at://${AUTHOR}/site.standard.publication/pub1`);
+    expect(doc).toBeNull();
+  });
+
+  it('returns null when the record is missing', async () => {
+    const db = new Database(':memory:');
+    initDatabase(db);
+    mockSingleFetch(null);
+    const doc = await fetchSingleDocument(db, DOC_URI);
+    expect(doc).toBeNull();
   });
 });

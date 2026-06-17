@@ -576,6 +576,80 @@ export const fixtures: CardFixture[] = [
     },
   },
   {
+    name: 'Edition · collapsed',
+    note: 'A curated edition (Collection) in the river. Reads as an ordinary list row — same favicon, title, meta, action bar — denoted only by the quiet "Edition · N" marker in the title row.',
+    props: {
+      ...base,
+      itemTitle: 'Inflection points',
+      isDocumentMode: true,
+      displayFeedTitle: 'standard.site',
+      feedTitle: 'standard.site',
+      collectionPieceCount: 16,
+    },
+  },
+  {
+    name: 'Edition · open',
+    note: 'Selected edition: the editorial intro, then each curated piece as a flat embedded card (curator note as a blockquote above it, with Save / Open in viewer / New tab actions). The same CollectionReader the fullscreen reader uses. "Open edition" replaces "Reader" in the action bar.',
+    props: {
+      ...base,
+      itemTitle: 'Inflection points',
+      isDocumentMode: true,
+      selected: true,
+      isOpen: true,
+      expanded: true,
+      displayFeedTitle: 'standard.site',
+      feedTitle: 'standard.site',
+      collectionPieceCount: 3,
+      hasOpenFullscreen: true,
+      onOpenCollectionPiece: () => {},
+      onSaveCollectionPiece: () => {},
+      isCollectionPieceSaved: (item) => item.document.endsWith('two'),
+      collection: {
+        publicationName: 'Dispatches from the Atmosphere',
+        authorHandle: 'hipstersmoothie.com',
+        // The real "Dispatches" basicTheme palette (light pink / dark purple /
+        // magenta accent) so the magazine preview is faithful.
+        theme: {
+          accent: { r: 196, g: 33, b: 188 },
+          background: { r: 255, g: 240, b: 254 },
+          foreground: { r: 38, g: 4, b: 37 },
+          accentForeground: { r: 255, g: 255, b: 255 },
+        },
+        // The publication's Google Fonts (app.standard-reader.publicationTheme).
+        fonts: { title: 'Black Ops One', body: 'Space Grotesk' },
+        editorial: {
+          body: 'Every network has a season when the scaffolding comes down and you can finally see the shape of the thing being built. The pieces gathered here trace where the open social web turned a corner.',
+        },
+        colophon: { body: 'Curated in the open. Corrections welcome.' },
+        items: [
+          {
+            document: 'at://did:plc:example/site.standard.document/one',
+            note: 'The clearest account I have read of why **portability** changes the incentives, not just the plumbing.',
+            title: 'The shape of a portable network',
+            description:
+              'When your data outlives the app, the app has to earn you back every day. That is the whole game.',
+            canonicalUrl: 'https://blog.example.com/portable-network',
+            sourceName: "Alex's Blog",
+            publishedAt: '2026-05-02T00:00:00.000Z',
+          },
+          {
+            document: 'at://did:plc:example/site.standard.document/two',
+            note: 'Short, and worth it for the diagram alone.',
+            title: 'Eurosky, one year in',
+            description: 'A field report from the people shipping the infrastructure.',
+            canonicalUrl: 'https://eurosky.example/one-year',
+            sourceName: 'Modal Foundation',
+            publishedAt: '2026-04-18T00:00:00.000Z',
+          },
+          {
+            document: 'at://did:plc:example/site.standard.document/three',
+            note: 'Could not resolve a preview for this one, but the note stands on its own.',
+          },
+        ],
+      },
+    },
+  },
+  {
     name: 'Tagged',
     note: 'Expanded item with tag chips.',
     props: {

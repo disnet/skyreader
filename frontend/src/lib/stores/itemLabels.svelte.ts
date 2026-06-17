@@ -764,6 +764,9 @@ function createItemLabelsStore() {
         title?: string;
         description?: string;
         publishedAt?: string;
+        // Pre-rendered body HTML, when the caller has the full document (e.g. a
+        // saved collection piece). Persisted as the saved copy's content.
+        content?: string;
       };
 
   async function toggleSave(

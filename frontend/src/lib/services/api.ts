@@ -338,6 +338,16 @@ class ApiClient {
     });
   }
 
+  // On-demand fetch of a single standard.site document by at:// URI — the in-app
+  // reader path for a curated Collection piece the user doesn't subscribe to.
+  // Returns null when the proxy can't resolve it.
+  async fetchDocumentV2(uri: string): Promise<SocialDocument | null> {
+    const res = await this.fetch<{ document?: SocialDocument }>(
+      `/api/v2/documents/get?uri=${encodeURIComponent(uri)}`
+    );
+    return res.document ?? null;
+  }
+
   async discoverFeedsV2(url: string): Promise<{
     feeds: string[];
     standardSite?: {
