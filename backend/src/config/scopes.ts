@@ -19,7 +19,9 @@ export const SEMBLE_SCOPES = [
   'repo:network.cosmik.collectionLink',
 ];
 export const MARGIN_SCOPES = [
-  'repo:at.margin.bookmark',
+  // Bookmarks are no longer a distinct collection — Margin folded them into
+  // at.margin.note (motivation: 'bookmarking'), so we only need the note +
+  // collection scopes.
   'repo:at.margin.note',
   'repo:at.margin.collection',
   'repo:at.margin.collectionItem',
