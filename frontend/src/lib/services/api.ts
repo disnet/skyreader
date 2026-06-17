@@ -7,6 +7,7 @@ import type {
   LinkblogPublication,
   MarginCollection,
   ParsedFeed,
+  SaveBacking,
   SembleCollection,
   SocialContextResult,
   ArticleMentions,
@@ -790,6 +791,7 @@ class ApiClient {
   async getSettings(): Promise<{
     pdsSyncEnabled: boolean;
     lastPdsSyncSubscriptions: number | null;
+    backing: SaveBacking;
     createdAt: number;
     updatedAt: number;
   }> {
@@ -799,12 +801,53 @@ class ApiClient {
   async updateSettings(settings: { pdsSyncEnabled?: boolean }): Promise<{
     pdsSyncEnabled: boolean;
     lastPdsSyncSubscriptions: number | null;
+    backing: SaveBacking;
     createdAt: number;
     updatedAt: number;
   }> {
     return this.fetch('/api/settings', {
       method: 'PUT',
       body: JSON.stringify(settings),
+    });
+  }
+
+  /**
+   * Turn external-backed saves on or off (Phase 5). Enable backs the Saved list
+   * with a Semble/Margin collection (creating a default "Skyreader Saves" if no
+   * collectionUri is given) and optionally exports existing saves into it. A 403
+   * scope_upgrade_required (caught by the fetch wrapper) means the provider scopes
+   * must be re-granted via login.
+   */
+  async setBacking(
+    body:
+      | {
+          action: 'enable';
+          provider: 'semble' | 'margin';
+          collectionUri?: string;
+          exportExisting?: boolean;
+        }
+      | { action: 'disable' }
+  ): Promise<{ backing: SaveBacking; exported?: number }> {
+    return this.fetch('/api/saved/backing', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  /**
+   * Export one slice of the user's existing saves into their (already-on) backing
+   * collection. Returns `exported` (records created this call), `scanned` (rows
+   * examined — advance `offset` by this), and `total` (candidate count, for a
+   * progress denominator). Loop with `offset += scanned` until `scanned === 0` or
+   * `offset >= total` so a large library uploads with a live progress bar.
+   */
+  async exportSavesBatch(
+    offset: number,
+    limit?: number
+  ): Promise<{ exported: number; scanned: number; total: number }> {
+    return this.fetch('/api/saved/backing', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'exportBatch', offset, limit }),
     });
   }
 

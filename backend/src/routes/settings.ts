@@ -1,6 +1,41 @@
 import type { Env } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
 
+/**
+ * Which engine backs the user's saves (external-backed saves, one per account).
+ * `'skyreader'` = the default app.skyreader.feed.saved export (today's behavior).
+ * Otherwise the user's Saved list IS a foreign collection, identified by its at-uri.
+ * See docs/plans/EXTERNAL_BACKED_SAVES_PLAN.md.
+ */
+export type SaveBacking =
+  | { provider: 'skyreader' }
+  | { provider: 'semble'; collectionUri: string }
+  | { provider: 'margin'; collectionUri: string };
+
+/**
+ * Parse the stored `backing` column ('skyreader' | 'semble:<uri>' | 'margin:<uri>')
+ * into a discriminated union. NULL / unknown / malformed all fall back to the
+ * default 'skyreader' backing (fail safe — never silently treat a save as backed).
+ */
+export function parseBacking(raw: string | null | undefined): SaveBacking {
+  if (!raw || raw === 'skyreader') return { provider: 'skyreader' };
+  const sep = raw.indexOf(':');
+  if (sep === -1) return { provider: 'skyreader' };
+  const provider = raw.slice(0, sep);
+  const collectionUri = raw.slice(sep + 1);
+  if ((provider === 'semble' || provider === 'margin') && collectionUri.startsWith('at://')) {
+    return { provider, collectionUri };
+  }
+  return { provider: 'skyreader' };
+}
+
+/** Serialize a SaveBacking back to the stored column form. */
+export function serializeBacking(backing: SaveBacking): string {
+  return backing.provider === 'skyreader'
+    ? 'skyreader'
+    : `${backing.provider}:${backing.collectionUri}`;
+}
+
 export interface UserSettings {
   /**
    * Atmospheric sync — the single opt-in for mirroring data to the user's PDS.
@@ -10,6 +45,8 @@ export interface UserSettings {
    */
   pdsSyncEnabled: boolean;
   lastPdsSyncSubscriptions: number | null;
+  /** External-backed saves: which engine backs the Saved list (one per account). */
+  backing: SaveBacking;
   createdAt: number;
   updatedAt: number;
 }
@@ -18,6 +55,7 @@ interface UserSettingsRow {
   user_did: string;
   pds_sync_enabled: number;
   last_pds_sync_subscriptions: number | null;
+  backing: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -27,6 +65,7 @@ function rowToSettings(row: UserSettingsRow | null): UserSettings {
     return {
       pdsSyncEnabled: false,
       lastPdsSyncSubscriptions: null,
+      backing: { provider: 'skyreader' },
       createdAt: Math.floor(Date.now() / 1000),
       updatedAt: Math.floor(Date.now() / 1000),
     };
@@ -34,6 +73,7 @@ function rowToSettings(row: UserSettingsRow | null): UserSettings {
   return {
     pdsSyncEnabled: row.pds_sync_enabled === 1,
     lastPdsSyncSubscriptions: row.last_pds_sync_subscriptions,
+    backing: parseBacking(row.backing),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -83,10 +123,11 @@ export async function handleUpdateSettings(request: Request, env: Env): Promise<
     });
   }
 
-  let body: { pdsSyncEnabled?: boolean };
+  let body: { pdsSyncEnabled?: boolean; backing?: SaveBacking };
   try {
     body = (await request.json()) as {
       pdsSyncEnabled?: boolean;
+      backing?: SaveBacking;
     };
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
@@ -95,17 +136,44 @@ export async function handleUpdateSettings(request: Request, env: Env): Promise<
     });
   }
 
+  // Validate + serialize the backing change, if present. This is the low-level
+  // persistence primitive — the full enable flow (createCollection, one-time
+  // export of existing native saves, backfill poll) wraps it in Phase 5. A
+  // malformed value round-trips through parseBacking to 'skyreader' rather than
+  // landing a junk column.
+  let backingValue: string | null = null;
+  if (body.backing !== undefined) {
+    const parsed =
+      body.backing.provider === 'skyreader'
+        ? { provider: 'skyreader' as const }
+        : parseBacking(serializeBacking(body.backing));
+    if (body.backing.provider !== 'skyreader' && parsed.provider === 'skyreader') {
+      return new Response(
+        JSON.stringify({
+          error: 'Invalid backing: expected { provider, collectionUri: at://... }',
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    backingValue = serializeBacking(parsed);
+  }
+
   try {
-    // Upsert the settings. The column is only written when present in the body
+    // Upsert the settings. Each column is only written when present in the body
     // (COALESCE keeps the existing value for an omitted/null bind).
     await env.DB.prepare(
-      `INSERT INTO user_settings (user_did, pds_sync_enabled, updated_at)
-			 VALUES (?, ?, unixepoch())
+      `INSERT INTO user_settings (user_did, pds_sync_enabled, backing, updated_at)
+			 VALUES (?, ?, ?, unixepoch())
 			 ON CONFLICT(user_did) DO UPDATE SET
 			   pds_sync_enabled = COALESCE(excluded.pds_sync_enabled, pds_sync_enabled),
+			   backing = COALESCE(excluded.backing, backing),
 			   updated_at = unixepoch()`
     )
-      .bind(session.did, body.pdsSyncEnabled !== undefined ? (body.pdsSyncEnabled ? 1 : 0) : null)
+      .bind(
+        session.did,
+        body.pdsSyncEnabled !== undefined ? (body.pdsSyncEnabled ? 1 : 0) : null,
+        backingValue
+      )
       .run();
 
     // Fetch the updated settings
