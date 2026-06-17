@@ -226,7 +226,11 @@ export async function handleListSembleCollections(request: Request, env: Env): P
 }
 
 /**
- * POST /api/integrations/margin/bookmarks — create an at.margin.bookmark on PDS
+ * POST /api/integrations/margin/bookmarks — save a page to Margin.
+ *
+ * Margin no longer has a distinct bookmark record; bookmarks are an
+ * at.margin.note with `motivation: 'bookmarking'` (no selector, since the whole
+ * page is the target) and the description carried in `body.value`.
  */
 export async function handleCreateMarginBookmark(request: Request, env: Env): Promise<Response> {
   const session = await getSessionFromRequest(request, env);
@@ -272,17 +276,22 @@ export async function handleCreateMarginBookmark(request: Request, env: Env): Pr
         : [];
 
   const rkey = generateTID();
+  const description = body.description?.trim();
   const record = {
-    $type: 'at.margin.bookmark',
-    source: body.url,
-    title: body.title || undefined,
-    description: body.description || undefined,
+    $type: 'at.margin.note',
+    motivation: 'bookmarking',
+    target: {
+      source: body.url,
+      ...(body.title ? { title: body.title } : {}),
+    },
+    ...(description ? { body: { value: description, format: 'text/plain' } } : {}),
     tags: [],
+    generator: { name: 'Skyreader', homepage: 'https://skyreader.app' },
     createdAt: new Date().toISOString(),
   };
 
   const pdsClient = createPDSClient(session);
-  const result = await pdsClient.putRecord('at.margin.bookmark', rkey, record);
+  const result = await pdsClient.putRecord('at.margin.note', rkey, record);
 
   if (!result.success) {
     return new Response(JSON.stringify({ error: result.error }), {
