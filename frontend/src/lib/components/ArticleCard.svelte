@@ -50,6 +50,7 @@
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
+  import { isInputFocused } from '$lib/stores/keyboard.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
@@ -748,6 +749,9 @@
   function handleParagraphKeydown(e: KeyboardEvent) {
     if (!expanded || paragraphTracking.totalParagraphs <= 1) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // Don't hijack keys while typing in an input/textarea/contenteditable
+    // (e.g. the share note box) — `h` must type, not toggle a highlight.
+    if (isInputFocused()) return;
 
     if (e.key === 'ArrowDown') {
       e.preventDefault();
