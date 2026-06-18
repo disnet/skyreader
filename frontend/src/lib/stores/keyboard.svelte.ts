@@ -14,6 +14,21 @@ interface KeyboardState {
   shortcuts: Map<string, Shortcut>;
 }
 
+/**
+ * True when the user is typing into an editable element, so global keyboard
+ * shortcuts (single letters like `h`, arrow keys, etc.) must not fire.
+ * Shared by the central store and component-local window handlers.
+ */
+export function isInputFocused(): boolean {
+  if (!browser) return false;
+  const activeElement = document.activeElement;
+  return (
+    activeElement instanceof HTMLInputElement ||
+    activeElement instanceof HTMLTextAreaElement ||
+    activeElement?.getAttribute('contenteditable') === 'true'
+  );
+}
+
 function createKeyboardStore() {
   let state = $state<KeyboardState>({
     isHelpOpen: false,
@@ -32,16 +47,6 @@ function createKeyboardStore() {
   function unregister(key: string, shift?: boolean) {
     const shortcutKey = getShortcutKey(key, shift);
     state.shortcuts.delete(shortcutKey);
-  }
-
-  function isInputFocused(): boolean {
-    if (!browser) return false;
-    const activeElement = document.activeElement;
-    return (
-      activeElement instanceof HTMLInputElement ||
-      activeElement instanceof HTMLTextAreaElement ||
-      activeElement?.getAttribute('contenteditable') === 'true'
-    );
   }
 
   function handleKeydown(e: KeyboardEvent) {
