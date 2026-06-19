@@ -12,6 +12,8 @@ interface PreferencesState {
   scrollToMarkAsRead: boolean;
   expandAllItems: boolean;
   sortOrder: BaseSortOrder;
+  // Set once the user has acknowledged the first-share "this is public" confirmation.
+  linkblogShareConfirmed: boolean;
 }
 
 const STORAGE_KEY = 'skyreader-preferences';
@@ -23,6 +25,7 @@ function createPreferencesStore() {
     scrollToMarkAsRead: false,
     expandAllItems: true,
     sortOrder: 'newest',
+    linkblogShareConfirmed: false,
   });
 
   // Restore from localStorage on init
@@ -45,6 +48,9 @@ function createPreferencesStore() {
         }
         if (parsed.sortOrder) {
           state.sortOrder = parsed.sortOrder;
+        }
+        if (parsed.linkblogShareConfirmed !== undefined) {
+          state.linkblogShareConfirmed = parsed.linkblogShareConfirmed;
         }
       } catch {
         localStorage.removeItem(STORAGE_KEY);
@@ -109,6 +115,11 @@ function createPreferencesStore() {
     save();
   }
 
+  function confirmLinkblogShare() {
+    state.linkblogShareConfirmed = true;
+    save();
+  }
+
   return {
     get articleFont() {
       return state.articleFont;
@@ -125,6 +136,10 @@ function createPreferencesStore() {
     get sortOrder() {
       return state.sortOrder;
     },
+    get linkblogShareConfirmed() {
+      return state.linkblogShareConfirmed;
+    },
+    confirmLinkblogShare,
     setArticleFont,
     setArticleFontSize,
     increaseFontSize,

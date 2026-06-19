@@ -3,7 +3,7 @@ import { getSessionFromRequest } from '../services/oauth';
 
 /**
  * Which engine backs the user's saves (external-backed saves, one per account).
- * `'skyreader'` = the default app.skyreader.feed.saved export (today's behavior).
+ * `'skyreader'` = the default: saves live only in D1, with no PDS record.
  * Otherwise the user's Saved list IS a foreign collection, identified by its at-uri.
  * See docs/plans/EXTERNAL_BACKED_SAVES_PLAN.md.
  */

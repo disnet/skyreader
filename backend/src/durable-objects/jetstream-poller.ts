@@ -30,13 +30,6 @@ interface JetstreamEvent {
       textContent?: string;
       bskyPostRef?: { uri: string; cid: string };
       updatedAt?: string;
-      // For saved records
-      url?: string;
-      savedAt?: string;
-      contentType?: string;
-      domain?: string;
-      image?: string;
-      wordCount?: number;
     };
     cid?: string;
   };
@@ -45,7 +38,6 @@ interface JetstreamEvent {
 interface PollStats {
   subscriptions: { processed: number; errors: number };
   documents: { processed: number; errors: number };
-  saved: { processed: number; errors: number };
   duration: number;
   lastPollAt: number;
 }
@@ -99,21 +91,18 @@ export class JetstreamPoller implements DurableObject {
     }
 
     if (url.pathname === '/status') {
-      const [subscriptionsCursor, documentsCursor, savedCursor, lastStats, alarmTime] =
-        await Promise.all([
-          this.state.storage.get<string>('cursor_subscriptions'),
-          this.state.storage.get<string>('cursor_documents'),
-          this.state.storage.get<string>('cursor_saved'),
-          this.state.storage.get<PollStats>('last_stats'),
-          this.state.storage.getAlarm(),
-        ]);
+      const [subscriptionsCursor, documentsCursor, lastStats, alarmTime] = await Promise.all([
+        this.state.storage.get<string>('cursor_subscriptions'),
+        this.state.storage.get<string>('cursor_documents'),
+        this.state.storage.get<PollStats>('last_stats'),
+        this.state.storage.getAlarm(),
+      ]);
 
       return new Response(
         JSON.stringify({
           cursors: {
             subscriptions: subscriptionsCursor,
             documents: documentsCursor,
-            saved: savedCursor,
           },
           lastStats,
           nextPoll: alarmTime,
@@ -142,7 +131,6 @@ export class JetstreamPoller implements DurableObject {
       const stats: PollStats = {
         subscriptions: { processed: 0, errors: 0 },
         documents: { processed: 0, errors: 0 },
-        saved: { processed: 0, errors: 0 },
         duration: 0,
         lastPollAt: startTime,
       };
@@ -158,11 +146,6 @@ export class JetstreamPoller implements DurableObject {
         console.log('[JetstreamPoller] Polling documents stream');
         const documentsResult = await this.pollDocumentsStream();
         stats.documents = documentsResult;
-
-        // 3. Saved (app.skyreader.feed.saved) - global watch, filter by registered users
-        console.log('[JetstreamPoller] Polling saved stream');
-        const savedResult = await this.pollSavedStream();
-        stats.saved = savedResult;
       } catch (error) {
         console.error('[JetstreamPoller] Error during poll cycle:', error);
       }
@@ -180,7 +163,6 @@ export class JetstreamPoller implements DurableObject {
         `[JetstreamPoller] Poll complete: ` +
           `subscriptions=${stats.subscriptions.processed}/${stats.subscriptions.errors}, ` +
           `documents=${stats.documents.processed}/${stats.documents.errors}, ` +
-          `saved=${stats.saved.processed}/${stats.saved.errors}, ` +
           `duration=${stats.duration}ms`
       );
     } catch (error) {
@@ -589,169 +571,6 @@ export class JetstreamPoller implements DurableObject {
     return true;
   }
 
-  // --- Saved Stream ---
-  // Watches globally (all app.skyreader.feed.saved events) but only
-  // processes events for registered Skyreader users
-  private async pollSavedStream(): Promise<{
-    processed: number;
-    errors: number;
-  }> {
-    const registeredDids = await this.getRegisteredDidsSet();
-
-    const cursor = await this.state.storage.get<string>('cursor_saved');
-
-    const wsUrl = new URL('wss://jetstream2.us-east.bsky.network/subscribe');
-    wsUrl.searchParams.append('wantedCollections', 'app.skyreader.feed.saved');
-
-    let lastCursor: string;
-    if (cursor) {
-      wsUrl.searchParams.set('cursor', cursor);
-      lastCursor = cursor;
-    } else {
-      lastCursor = (Date.now() * 1000).toString();
-    }
-
-    return new Promise((resolve) => {
-      let processed = 0;
-      let errors = 0;
-      let lastEventTime = Date.now();
-      let cleanedUp = false;
-
-      const cleanupWithCatch = () =>
-        cleanup().catch((e) => console.error('[JetstreamPoller] saved cleanup error:', e));
-
-      const pollTimeout = setTimeout(cleanupWithCatch, POLL_TIMEOUT_MS);
-      const idleCheck = setInterval(() => {
-        if (Date.now() - lastEventTime > IDLE_TIMEOUT_MS) {
-          cleanupWithCatch();
-        }
-      }, 500);
-
-      let ws: WebSocket | null = null;
-
-      const cleanup = async () => {
-        if (cleanedUp) return;
-        cleanedUp = true;
-
-        clearTimeout(pollTimeout);
-        clearInterval(idleCheck);
-
-        if (ws) {
-          try {
-            ws.close();
-          } catch {
-            /* ignore */
-          }
-          ws = null;
-        }
-
-        await this.state.storage.put('cursor_saved', lastCursor);
-        resolve({ processed, errors });
-      };
-
-      try {
-        ws = new WebSocket(wsUrl.toString());
-
-        ws.addEventListener('open', () => {
-          lastEventTime = Date.now();
-        });
-
-        ws.addEventListener('message', async (event) => {
-          try {
-            const data = JSON.parse(event.data as string) as JetstreamEvent;
-
-            if (data.kind === 'commit') {
-              lastEventTime = Date.now();
-            }
-
-            if (data.time_us) {
-              lastCursor = data.time_us.toString();
-            }
-
-            if (data.kind === 'commit' && data.commit?.collection === 'app.skyreader.feed.saved') {
-              const wasProcessed = await this.processSavedEvent(data, registeredDids);
-              if (wasProcessed) processed++;
-            }
-          } catch (error) {
-            console.error('[JetstreamPoller] Error processing saved event:', error);
-            errors++;
-          }
-        });
-
-        ws.addEventListener('close', cleanupWithCatch);
-        ws.addEventListener('error', cleanupWithCatch);
-      } catch {
-        cleanupWithCatch();
-      }
-    });
-  }
-
-  private async processSavedEvent(
-    event: JetstreamEvent,
-    registeredDids: Set<string>
-  ): Promise<boolean> {
-    const { did, commit } = event;
-    if (!commit || commit.collection !== 'app.skyreader.feed.saved') return false;
-
-    // Only process events for registered Skyreader users
-    if (!registeredDids.has(did)) {
-      return false;
-    }
-
-    const { operation, rkey, record } = commit;
-    const recordUri = `at://${did}/app.skyreader.feed.saved/${rkey}`;
-
-    if (operation === 'create' && record) {
-      try {
-        // Insert saved metadata — DO NOT overwrite if it already exists (API handler
-        // inserts with extracted content; Jetstream records have no content field)
-        const result = await this.env.DB.prepare(
-          `
-          INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, description, content_type, domain, image, word_count, published_at, saved_at, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(user_did, rkey) DO NOTHING
-          `
-        )
-          .bind(
-            did,
-            rkey,
-            recordUri,
-            record.url || '',
-            record.title || null,
-            record.description || null,
-            record.contentType || 'webpage',
-            record.domain || null,
-            record.image || null,
-            record.wordCount || null,
-            record.publishedAt ? new Date(record.publishedAt).getTime() : null,
-            record.savedAt ? new Date(record.savedAt).getTime() : Date.now(),
-            Date.now()
-          )
-          .run();
-
-        if (result.meta.changes > 0) {
-          console.log(`[JetstreamPoller] ${did} created saved item: ${record.url}`);
-        }
-      } catch (dbError) {
-        console.error(`[JetstreamPoller] D1 WRITE ERROR inserting saved item for ${did}:`, dbError);
-        throw dbError;
-      }
-    } else if (operation === 'delete') {
-      try {
-        await this.env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ? AND rkey = ?')
-          .bind(did, rkey)
-          .run();
-      } catch (dbError) {
-        console.error(`[JetstreamPoller] D1 WRITE ERROR deleting saved item for ${did}:`, dbError);
-        throw dbError;
-      }
-
-      console.log(`[JetstreamPoller] ${did} deleted saved item (rkey: ${rkey})`);
-    }
-
-    return true;
-  }
-
   // --- Helper Methods ---
   /**
    * Get all DIDs that are followed by any Skyreader user (in-app follows).
@@ -776,18 +595,6 @@ export class JetstreamPoller implements DurableObject {
   private async getSyncEnabledDidsSet(): Promise<Set<string>> {
     const result = await this.env.DB.prepare(
       `SELECT user_did as did FROM user_settings WHERE pds_sync_enabled = 1`
-    ).all<{ did: string }>();
-
-    return new Set(result.results.map((r) => r.did));
-  }
-
-  /**
-   * Get all registered user DIDs as a Set.
-   * Used for checking if a user is registered before processing saved events.
-   */
-  private async getRegisteredDidsSet(): Promise<Set<string>> {
-    const result = await this.env.DB.prepare(
-      `SELECT did FROM users WHERE registered_at IS NOT NULL`
     ).all<{ did: string }>();
 
     return new Set(result.results.map((r) => r.did));

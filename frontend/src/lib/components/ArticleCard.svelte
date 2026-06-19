@@ -43,6 +43,8 @@
   import { socialContextStore } from '$lib/stores/socialContext.svelte';
   import { profileService } from '$lib/services/profiles';
   import { auth } from '$lib/stores/auth.svelte';
+  import { preferences } from '$lib/stores/preferences.svelte';
+  import Modal from '$lib/components/common/Modal.svelte';
   import ArticleCardView from './ArticleCardView.svelte';
   import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
   import type { LaneId } from './articleCardView.types';
@@ -464,10 +466,17 @@
   );
   let seededQuote = $derived(formatQuoteSeed(shareQuoteSource));
 
+  // First-share confirmation: sharing publishes to a public linkblog, which is
+  // irreversible-feeling and easy to do by accident. We gate the very first share
+  // on a one-time "this is public" dialog; "Don't ask again" persists in prefs.
+  let showShareConfirm = $state(false);
+  let dontAskAgain = $state(false);
+  let linkblogPublicUrl = $derived(myLinkblogStore.publicUrl());
+
   // Fire the share for the current mode (the Blogs lane [+]), seeding the note
   // with the article's quote so it lands in the persistent note box ready to
   // edit or remove. Submitting from the feed is one tap; refinement happens there.
-  async function shareNow() {
+  async function performShare() {
     if (isDocumentMode) {
       isQuoting = true;
       try {
@@ -478,6 +487,21 @@
       return;
     }
     onShare?.(seededQuote);
+  }
+
+  function shareNow() {
+    if (!preferences.linkblogShareConfirmed) {
+      dontAskAgain = false;
+      showShareConfirm = true;
+      return;
+    }
+    performShare();
+  }
+
+  function confirmShare() {
+    if (dontAskAgain) preferences.confirmLinkblogShare();
+    showShareConfirm = false;
+    performShare();
   }
 
   // Attach/update the note. The box stays visible after saving — it's persistent
@@ -912,3 +936,63 @@
     <NotePeek note={highlights.notePeek.note} anchorRect={highlights.notePeek.anchorRect} />
   {/if}
 {/if}
+
+<Modal
+  open={showShareConfirm}
+  onclose={() => (showShareConfirm = false)}
+  title="Share to your linkblog?"
+  maxWidth="420px"
+>
+  <p class="share-confirm-text">
+    This publishes to your public linkblog{#if linkblogPublicUrl}
+      at
+      <a
+        href={linkblogPublicUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="share-confirm-link"
+        >{linkblogPublicUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}</a
+      >{/if}. Anyone can read it.
+  </p>
+  <label class="share-confirm-remember">
+    <input type="checkbox" bind:checked={dontAskAgain} />
+    <span>Don't ask again</span>
+  </label>
+  {#snippet footer()}
+    <button class="btn btn-secondary" onclick={() => (showShareConfirm = false)}>Cancel</button>
+    <button class="btn btn-primary" onclick={confirmShare}>Share</button>
+  {/snippet}
+</Modal>
+
+<style>
+  .share-confirm-text {
+    margin: 0 0 1rem;
+    color: var(--color-text);
+    line-height: var(--leading-normal);
+  }
+
+  .share-confirm-link {
+    color: var(--color-primary);
+    text-decoration: none;
+    word-break: break-all;
+  }
+
+  .share-confirm-link:hover {
+    text-decoration: underline;
+  }
+
+  .share-confirm-remember {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: var(--text-md);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+
+  .share-confirm-remember input {
+    width: 1rem;
+    height: 1rem;
+    cursor: pointer;
+  }
+</style>
