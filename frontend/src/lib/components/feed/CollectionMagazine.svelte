@@ -519,10 +519,27 @@
   .piece-content :global(a) {
     color: var(--mag-accent);
   }
-  .piece-content :global(img) {
+  .piece-content :global(img),
+  .piece-content :global(svg),
+  .piece-content :global(video) {
     max-width: 100%;
     height: auto;
     border-radius: 6px;
+  }
+  .piece-content :global(iframe) {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    aspect-ratio: 16 / 9;
+    height: auto;
+    border: 0;
+    border-radius: 6px;
+    margin: 1rem 0;
+  }
+  .piece-content :global(table) {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
   }
   .piece-content :global(blockquote) {
     margin: 1rem 0;

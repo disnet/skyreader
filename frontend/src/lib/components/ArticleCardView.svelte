@@ -1249,7 +1249,8 @@
     cursor: auto;
   }
 
-  .article-body :global(img) {
+  .article-body :global(img),
+  .article-body :global(svg) {
     max-width: 100%;
     height: auto;
     border-radius: 4px;
@@ -1266,6 +1267,12 @@
     border-radius: 4px;
     overflow-x: auto;
     font-size: var(--text-sm);
+  }
+
+  .article-body :global(table) {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
   }
 
   .article-body :global(blockquote) {

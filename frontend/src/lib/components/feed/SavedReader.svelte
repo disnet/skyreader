@@ -1635,7 +1635,8 @@
     -webkit-tap-highlight-color: transparent;
   }
 
-  .reader-body :global(img) {
+  .reader-body :global(img),
+  .reader-body :global(svg) {
     max-width: 100%;
     height: auto;
     border-radius: 4px;
@@ -1672,6 +1673,12 @@
     border-radius: 6px;
     overflow-x: auto;
     font-size: var(--text-md);
+  }
+
+  .reader-body :global(table) {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
   }
 
   .reader-body :global(blockquote) {
