@@ -41,6 +41,12 @@ export const test = base.extend<TestFixtures>({
               did,
               handle,
               displayName: 'Test User',
+              // Seed plan limits so the settings "Plan" card renders its
+              // subscription/save usage rows (gated on `auth.user.limits`).
+              limits: {
+                maxSubscriptions: 100,
+                maxUrlSavesPerMonth: 100,
+              },
             },
           })
         );
