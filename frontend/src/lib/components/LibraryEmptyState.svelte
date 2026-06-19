@@ -6,6 +6,8 @@
   import { api, RateLimitError } from '$lib/services/api';
   import SourcesDiscovery from '$lib/components/sources/SourcesDiscovery.svelte';
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
+  import SaveBackingPicker from '$lib/components/settings/SaveBackingPicker.svelte';
+  import Icon from '$lib/components/Icon.svelte';
 
   interface Props {
     onAddFeed: () => void;
@@ -96,12 +98,20 @@
   <p class="lede">Subscribe to a few feeds.</p>
 
   <div class="add-actions">
-    <button type="button" class="add-action" onclick={onAddFeed}>Add an RSS feed</button>
-    <button type="button" class="add-action secondary" onclick={onAddHandle}>
-      Add an Atmosphere publication
+    <button type="button" class="add-action primary" onclick={onAddFeed}>
+      <Icon name="rss" size={18} />
+      <span class="label">Add an RSS feed</span>
+      <Icon name="chevron-right" size={18} />
     </button>
-    <button type="button" class="add-action secondary" onclick={() => (showImportModal = true)}>
-      Import OPML
+    <button type="button" class="add-action" onclick={onAddHandle}>
+      <Icon name="at-sign" size={18} />
+      <span class="label">Add an Atmosphere publication</span>
+      <Icon name="chevron-right" size={18} />
+    </button>
+    <button type="button" class="add-action" onclick={() => (showImportModal = true)}>
+      <Icon name="file-text" size={18} />
+      <span class="label">Import OPML</span>
+      <Icon name="chevron-right" size={18} />
     </button>
   </div>
 
@@ -150,6 +160,16 @@
     {/if}
   </div>
 
+  <div class="portability">
+    <h3>Where your saves live</h3>
+    <p>
+      Your saves stay private on Skyreader. To turn your whole Saved list into a collection you can
+      edit in another app, back it with Semble or Margin. That collection is public. You can change
+      this anytime.
+    </p>
+    <SaveBackingPicker allowExport={false} returnUrl="/" />
+  </div>
+
   <div class="discovery-wrap">
     <SourcesDiscovery />
   </div>
@@ -184,30 +204,47 @@
 
   .add-actions {
     display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
+    flex-direction: column;
     gap: 0.5rem;
+    text-align: left;
   }
 
   .add-action {
-    display: inline-block;
-    padding: 0.5rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.75rem 1rem;
     font: inherit;
     font-weight: var(--weight-medium);
     line-height: var(--leading-snug);
-    color: #fff;
-    background: var(--color-primary);
-    border: 1px solid var(--color-primary);
-    border-radius: var(--radius-md, 6px);
+    color: var(--color-text);
+    background: var(--color-surface, #fff);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
     cursor: pointer;
     transition:
-      background-color 0.2s ease,
-      border-color 0.2s ease;
+      background-color 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .add-action .label {
+    flex: 1;
+    text-align: left;
+  }
+
+  /* leading icon picks up the One Blue accent; trailing chevron stays quiet */
+  .add-action :global(.icon:first-child) {
+    color: var(--color-primary);
+  }
+
+  .add-action :global(.icon:last-child) {
+    color: var(--color-text-secondary);
   }
 
   .add-action:hover {
-    background: var(--color-primary-dark);
-    border-color: var(--color-primary-dark);
+    background: var(--color-bg-secondary, rgba(0, 102, 204, 0.06));
+    border-color: var(--color-primary);
   }
 
   .add-action:focus-visible {
@@ -215,15 +252,19 @@
     box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.35);
   }
 
-  .add-action.secondary {
-    color: var(--color-primary);
-    background: transparent;
-    border-color: var(--color-border);
+  .add-action.primary {
+    color: #fff;
+    background: var(--color-primary);
+    border-color: var(--color-primary);
   }
 
-  .add-action.secondary:hover {
-    background: var(--color-bg-secondary, rgba(0, 102, 204, 0.06));
-    border-color: var(--color-primary);
+  .add-action.primary :global(.icon) {
+    color: #fff;
+  }
+
+  .add-action.primary:hover {
+    background: var(--color-primary-dark);
+    border-color: var(--color-primary-dark);
   }
 
   .portability {

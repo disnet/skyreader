@@ -187,9 +187,9 @@ export async function handleCreateSaved(
   }
 
   try {
-    // When backing is on, EVERY save becomes a membership in the foreign collection
-    // (in place of the optional app.skyreader.feed.saved export). A URL that won't
-    // normalize (no web URL to key on) falls through to the native path below.
+    // When backing is on, EVERY save becomes a membership in the foreign
+    // (Semble/Margin) collection. A URL that won't normalize (no web URL to key
+    // on) falls through to the native, D1-only path below.
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && normalizeArticleUrl(body.url)) {
       return await handleBackedSave(env, session, body, source, settings.backing);
@@ -231,31 +231,11 @@ async function handleMetadataSave(
   // Determine content type from source
   const contentType = source === 'feed' ? 'article' : source;
 
-  // Build PDS record (only for feed saves with valid URLs)
-  let recordUri = `at://${session.did}/${COLLECTION}/${body.rkey}`;
-  const settings = await getUserSettings(env, session.did);
-  if (settings.pdsSyncEnabled && source === 'feed' && body.url) {
-    const record: Record<string, unknown> = {
-      $type: COLLECTION,
-      url: body.url,
-      savedAt,
-      contentType: 'article',
-    };
-    if (body.title) record.title = body.title;
-    if (body.description) record.description = body.description;
-    if (body.author) record.author = body.author;
-    if (body.domain) record.domain = body.domain;
-    if (body.image) record.image = body.image;
-    if (publishedAt) record.publishedAt = publishedAt;
-    if (body.itemGuid) record.itemGuid = body.itemGuid;
-
-    const pdsClient = createPDSClient(session);
-    const pdsResult = await pdsClient.putRecord(COLLECTION, body.rkey, record);
-
-    if (pdsResult.success) {
-      recordUri = pdsResult.data.uri;
-    }
-  }
+  // Saves live only in D1 (canonical) and, when backing is on, in the user's
+  // Semble/Margin collection (the backed path handles that earlier). We do not
+  // publish an app.skyreader.feed.saved record to the PDS; record_uri is a stable
+  // local identifier for this save.
+  const recordUri = `at://${session.did}/${COLLECTION}/${body.rkey}`;
 
   // Cache in D1. The full article body (when the client supplies it for a feed
   // save) is stored here, not in the PDS record — same split as URL saves — so
@@ -318,32 +298,10 @@ async function handleUrlSave(
   const savedAt = new Date().toISOString();
   const publishedAt = body.publishedAt || null;
 
-  // Build PDS record (no content written to PDS)
-  const record: Record<string, unknown> = {
-    $type: COLLECTION,
-    url: body.url,
-    savedAt,
-    contentType: 'webpage',
-  };
-  if (body.title) record.title = body.title;
-  if (body.description) record.description = body.description;
-  if (body.author) record.author = body.author;
-  if (body.domain) record.domain = body.domain;
-  if (body.image) record.image = body.image;
-  if (publishedAt) record.publishedAt = publishedAt;
-  if (body.wordCount) record.wordCount = body.wordCount;
-
-  // Write to PDS (if sync enabled)
-  const settings = await getUserSettings(env, session.did);
-  let recordUri = `at://${session.did}/${COLLECTION}/${body.rkey}`;
-  if (settings.pdsSyncEnabled) {
-    const pdsClient = createPDSClient(session);
-    const pdsResult = await pdsClient.putRecord(COLLECTION, body.rkey, record);
-
-    if (pdsResult.success) {
-      recordUri = pdsResult.data.uri;
-    }
-  }
+  // Saves are stored in D1 only (and in the user's Semble/Margin collection when
+  // backing is on, handled earlier). No app.skyreader.feed.saved record is written
+  // to the PDS; record_uri is a stable local identifier for this save.
+  const recordUri = `at://${session.did}/${COLLECTION}/${body.rkey}`;
 
   // Cache in D1 (content is stored here, not in PDS)
   await env.DB.prepare(
@@ -869,20 +827,10 @@ export async function handleDeleteSaved(
       .run();
 
     const settings = await getUserSettings(env, session.did);
-    if (settings.backing.provider !== 'skyreader') {
-      // Backed: leave the collection (membership delete + tombstone). No
-      // app.skyreader.feed.saved record exists for a backed save.
-      if (row.url_normalized) {
-        await backedUnsave(env, session, settings.backing, row.url_normalized, ctx);
-      }
-    } else if (settings.pdsSyncEnabled) {
-      // Native: delete the PDS export (fire and forget)
-      const pdsClient = createPDSClient(session);
-      ctx.waitUntil(
-        pdsClient.deleteRecord(COLLECTION, rkey).catch((err) => {
-          console.error('Failed to delete from PDS:', err);
-        })
-      );
+    if (settings.backing.provider !== 'skyreader' && row.url_normalized) {
+      // Backed: remove the membership from the foreign collection (+ tombstone).
+      // Native saves live only in D1, so deleting the row above is the whole job.
+      await backedUnsave(env, session, settings.backing, row.url_normalized, ctx);
     }
 
     return new Response(JSON.stringify({ success: true }), {
@@ -954,19 +902,10 @@ export async function handleDeleteSavedByGuid(
       .run();
 
     const settings = await getUserSettings(env, session.did);
-    if (settings.backing.provider !== 'skyreader') {
-      // Backed: leave the collection (membership delete + tombstone).
-      if (row.url_normalized) {
-        await backedUnsave(env, session, settings.backing, row.url_normalized, ctx);
-      }
-    } else if (settings.pdsSyncEnabled) {
-      // Native: delete the PDS export (fire and forget)
-      const pdsClient = createPDSClient(session);
-      ctx.waitUntil(
-        pdsClient.deleteRecord(COLLECTION, row.rkey).catch((err) => {
-          console.error('Failed to delete from PDS:', err);
-        })
-      );
+    if (settings.backing.provider !== 'skyreader' && row.url_normalized) {
+      // Backed: remove the membership from the foreign collection (+ tombstone).
+      // Native saves live only in D1, so deleting the row above is the whole job.
+      await backedUnsave(env, session, settings.backing, row.url_normalized, ctx);
     }
 
     return new Response(JSON.stringify({ success: true }), {

@@ -4,12 +4,14 @@
 // refresh without importing a route module (which would create a cycle).
 
 // Granular scopes for Skyreader's custom lexicons
-// Requests write access only to app.skyreader.* record collections
+// Requests write access only to app.skyreader.* record collections.
+// Note: saves are NOT written to the PDS (they live in D1, and optionally in a
+// Semble/Margin collection via the integration scopes), so no app.skyreader.feed.saved
+// scope is requested.
 export const GRANULAR_SCOPES = [
   'atproto',
   'repo:app.skyreader.feed.subscription',
   'repo:app.skyreader.social.follow',
-  'repo:app.skyreader.feed.saved',
 ].join(' ');
 
 // Integration-specific scopes (written to external app lexicons on user's PDS)
