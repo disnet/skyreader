@@ -27,10 +27,12 @@ import {
 const DEFAULT_JETSTREAM_URL = 'wss://jetstream2.us-east.bsky.network/subscribe';
 const DOCUMENT_COLLECTION = 'site.standard.document';
 const CURSOR_KEY = 'jetstream_cursor_documents';
-// Jetstream accepts at most 10,000 wantedDids per connection. We're far under at
-// any realistic scale; beyond this, DID-set sharding across connections is the
-// follow-up (see plan). Until then we watch the most-recently-requested 10k and
-// let the rest fall back to age-based refresh.
+// Jetstream's hard cap is 10,000 wantedDids per connection. We send the DID set
+// over the socket via an `options_update` message (not in the handshake URL), so
+// the only ceiling that bites is this logical cap — large sets no longer risk a
+// rejected upgrade from an oversized request URL. Beyond 10k, DID-set sharding
+// across connections is the follow-up (see plan); until then we watch the
+// most-recently-requested 10k and let the rest fall back to age-based refresh.
 const MAX_WANTED_DIDS = 10_000;
 const RECONNECT_MAX_MS = 30_000;
 // WebSocket-level liveness. The subscription is filtered to our DIDs + one
@@ -204,7 +206,33 @@ export class DocumentFirehose {
       this.closeSocket();
       return;
     }
-    this.reconnect();
+    // Push the new DID filter over the live socket instead of tearing it down —
+    // a reconnect on every set change hammered the public endpoint with
+    // handshakes. Fall back to (re)connect only if we don't have an open socket.
+    if (this.connected && this.ws) {
+      this.sendOptionsUpdate(this.ws);
+    } else {
+      this.reconnect();
+    }
+  }
+
+  /** Send the current collection + DID filter as a Jetstream `options_update`
+   *  message. Used both on `open` (the URL carries no DIDs) and on reconcile to
+   *  narrow/widen the watched set without reconnecting. The message replaces the
+   *  connection's whole filter, so it must carry both fields. */
+  private sendOptionsUpdate(ws: WebSocket): void {
+    const message = {
+      type: 'options_update',
+      payload: {
+        wantedCollections: [DOCUMENT_COLLECTION],
+        wantedDids: [...this.subscribedDids],
+      },
+    };
+    try {
+      ws.send(JSON.stringify(message));
+    } catch (err) {
+      console.error('[Firehose] options_update send failed:', err);
+    }
   }
 
   // --- Event application ------------------------------------------------------
@@ -292,8 +320,15 @@ export class DocumentFirehose {
 
     const url = new URL(this.url);
     url.searchParams.set('wantedCollections', DOCUMENT_COLLECTION);
-    for (const did of this.subscribedDids) url.searchParams.append('wantedDids', did);
     if (this.lastCursor) url.searchParams.set('cursor', this.lastCursor);
+    // The DID filter is sent over the socket via `options_update` after `open`,
+    // NOT in the URL. One `?wantedDids=` param per author grows the handshake
+    // request line by ~56 bytes/DID, so a few hundred active authors already
+    // exceed the fronting proxy's URL/header limit and the upgrade is rejected
+    // with a non-101 response ("Expected 101 status code") instead of connecting.
+    // Until the update lands we briefly match all authors for this (low-volume)
+    // collection; foreign-author events are harmless no-ops (spliceDocument drops
+    // any author without a cache row).
 
     let ws: WebSocket;
     try {
@@ -312,6 +347,7 @@ export class DocumentFirehose {
       this.lastEventAt = now;
       this.lastActivityAt = now;
       console.log(`[Firehose] connected, watching ${this.subscribedDids.size} author(s)`);
+      this.sendOptionsUpdate(ws);
       this.startPingTimer(ws);
     });
 
