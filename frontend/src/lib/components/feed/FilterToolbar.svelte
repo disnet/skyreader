@@ -6,6 +6,7 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { goto } from '$app/navigation';
+  import { channelPath, FEEDS_PATH } from '$lib/utils/viewNav';
   import { subscriptionSourceKey } from '$lib/utils/sourceKeys';
   import { filterSubscriptionsBySearch, subscriptionIconUrl } from '$lib/utils/subscriptionDisplay';
   import {
@@ -200,7 +201,7 @@
     if (!confirm('Are you sure you want to delete this channel?')) return;
     const id = parseInt(feedViewStore.viewFilter);
     await filteredViewsStore.remove(id);
-    goto('/');
+    goto(FEEDS_PATH);
   }
 
   async function handleSave() {
@@ -230,7 +231,7 @@
       });
       showNameInput = false;
       newViewName = '';
-      goto(`/?view=${id}`);
+      goto(channelPath(id));
     } finally {
       saving = false;
     }

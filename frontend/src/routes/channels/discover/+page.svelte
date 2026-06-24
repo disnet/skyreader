@@ -7,6 +7,7 @@
   } from '$lib/stores/savedChannelSuggestions.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
+  import { channelPath } from '$lib/utils/viewNav';
   import { DOMAIN_CLUSTERS } from '$lib/utils/channelLogic';
   import Icon from '$lib/components/Icon.svelte';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
@@ -28,7 +29,7 @@
       readFilter: 'unread',
       sortOrder: 'newest',
     });
-    goto(`/?view=${id}`);
+    goto(channelPath(id));
   }
 
   async function acceptSavedSuggestion(suggestion: SavedChannelSuggestion) {
@@ -42,7 +43,7 @@
       readFilter: suggestion.readFilter ?? 'unread',
       sortOrder: suggestion.sortOrder ?? 'newest',
     });
-    goto(`/?view=${id}`);
+    goto(channelPath(id));
   }
 
   async function createChannelFromType(type: ChannelTypeConfig) {
@@ -55,7 +56,7 @@
       readFilter: 'unread',
       sortOrder: 'newest',
     });
-    goto(`/?view=${id}`);
+    goto(channelPath(id));
   }
 
   async function createSavedChannelFromType(type: SavedChannelTypeConfig) {
@@ -67,7 +68,7 @@
       readFilter: 'unread',
       sortOrder: type.sortOrder ?? 'newest',
     });
-    goto(`/?view=${id}`);
+    goto(channelPath(id));
   }
 
   // All possible channel types with descriptions and default creation config

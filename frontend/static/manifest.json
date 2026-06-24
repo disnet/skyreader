@@ -2,7 +2,7 @@
   "name": "Skyreader",
   "short_name": "Skyreader",
   "description": "Read everything from everywhere, and make sense of it all.",
-  "start_url": "/",
+  "start_url": "/home",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#4A9FD4",

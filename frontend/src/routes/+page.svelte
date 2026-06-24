@@ -1,27 +1,42 @@
 <script lang="ts">
-  // The landing route. A logged-out visitor gets the lightweight WelcomePage (which
-  // imports nothing heavier than an Icon). The full FeedPage — and its dependency
-  // graph (data layer, feed stores, modals) — is code-split and only fetched once
-  // the user is authenticated, so the marketing page never downloads the app.
+  // `/` is the marketing landing for logged-out visitors and a pure redirector for
+  // authenticated ones: the app proper now lives at /home, /feeds and /saved, so
+  // nothing renders the app here. Any authed arrival — a cold load, the post-login
+  // bounce, a "Go to Skyreader" / logo link — redirects to /home, with legacy deep
+  // links (?saved=true, ?feed=, ?view=, ?category=, ?shared=) translated to their
+  // new home so old bookmarks and share links keep working.
+  //
+  // The layout only renders this page once auth has resolved, so there's no
+  // marketing flash before the redirect for a logged-in reader.
   import { browser } from '$app/environment';
-  import type { Component } from 'svelte';
+  import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
+  import { channelPath } from '$lib/utils/viewNav';
   import WelcomePage from '$lib/components/feed/WelcomePage.svelte';
 
-  let FeedPage = $state<Component | null>(null);
+  function targetFor(url: URL): string {
+    const sp = new URLSearchParams(url.search);
+    if (sp.get('saved')) {
+      sp.delete('saved');
+      const rest = sp.toString();
+      return rest ? `/saved?${rest}` : '/saved';
+    }
+    // A bare ?view= is a channel; route it by its mode so a saved channel lands
+    // on /saved, not /feeds. channelPath falls back to /feeds if the store hasn't
+    // hydrated yet — no worse than the generic case below.
+    const view = sp.get('view');
+    if (view && [...sp].length === 1) return channelPath(view);
+    if ([...sp].length > 0) return `/feeds${url.search}`;
+    return '/home';
+  }
+
   $effect(() => {
-    if (browser && auth.isAuthenticated && !FeedPage) {
-      import('$lib/components/feed/FeedPage.svelte').then((m) => {
-        FeedPage = m.default;
-      });
+    if (browser && auth.isAuthenticated) {
+      goto(targetFor(new URL(window.location.href)), { replaceState: true });
     }
   });
 </script>
 
-{#if auth.isAuthenticated}
-  {#if FeedPage}
-    <FeedPage />
-  {/if}
-{:else}
+{#if !auth.isAuthenticated}
   <WelcomePage />
 {/if}

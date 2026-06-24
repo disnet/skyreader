@@ -241,7 +241,7 @@
         {#if displayFeedTitle && !isLinkPostMode}
           {#if feedId}
             <a
-              href="/?feed={feedId}"
+              href="/feeds?feed={feedId}"
               class="feed-title-link"
               title={isDocumentMode ? 'standard.site' : 'RSS'}
               onclick={(e) => e.stopPropagation()}

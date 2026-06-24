@@ -31,12 +31,12 @@
   </div>
 
   <div class="unify-options">
-    <a class="unify-option" href="/?feed={pair.rss.id}">
+    <a class="unify-option" href="/feeds?feed={pair.rss.id}">
       <Icon name="rss" size={15} />
       <span class="unify-option-label">{pair.rss.customTitle || pair.rss.title}</span>
       <span class="unify-option-kind">RSS</span>
     </a>
-    <a class="unify-option" href="/?feed={pair.standard.id}">
+    <a class="unify-option" href="/feeds?feed={pair.standard.id}">
       <Icon name={stdDisplay.iconName as IconName} size={15} />
       <span class="unify-option-label">{pair.standard.customTitle || pair.standard.title}</span>
       <span class="unify-option-kind">standard.site</span>

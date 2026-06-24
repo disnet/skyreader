@@ -44,6 +44,7 @@
   import { useScrollMarkAsRead } from '$lib/hooks/useScrollMarkAsRead.svelte';
   import { useFeedKeyboardShortcuts } from '$lib/hooks/useFeedKeyboardShortcuts.svelte';
   import { goto } from '$app/navigation';
+  import { channelPath, FEEDS_PATH } from '$lib/utils/viewNav';
   import LinkblogIntro from '$lib/components/feed/LinkblogIntro.svelte';
 
   // `linkblog` renders the current user's own linkblog (their shared documents)
@@ -209,7 +210,9 @@
     const contentType: 'documents' | null = typeParam === 'documents' ? typeParam : null;
     const filters = {
       feed: url.searchParams.get('feed'),
-      saved: url.searchParams.get('saved'),
+      // The Saved surface is now its own route; treat /saved as the saved view
+      // (the legacy ?saved=true still works for old deep links).
+      saved: url.pathname === '/saved' ? 'true' : url.searchParams.get('saved'),
       sharer: url.searchParams.get('sharer'),
       following: url.searchParams.get('following'),
       feeds: null,
@@ -307,7 +310,7 @@
     if (feedViewStore.sharerFilter) {
       return sharerProfile?.displayName || sharerProfile?.handle || 'Articles';
     }
-    return 'Everything';
+    return 'Feeds';
   });
 
   // Get unread count for the current view
@@ -505,7 +508,7 @@
   async function removeFeed(id: number) {
     if (confirm('Are you sure you want to remove this subscription?')) {
       await subscriptionsStore.remove(id);
-      goto('/');
+      goto(FEEDS_PATH);
     }
   }
 
@@ -793,11 +796,11 @@
           initialChannelType={channelCreateInitialType}
           oncreated={(id) => {
             filterSheetOpen = false;
-            goto(`/?view=${id}`);
+            goto(channelPath(id));
           }}
           ondeleted={() => {
             filterSheetOpen = false;
-            goto('/');
+            goto(FEEDS_PATH);
           }}
         />
       </BottomSheet>

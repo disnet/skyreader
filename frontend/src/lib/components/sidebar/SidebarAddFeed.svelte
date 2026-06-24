@@ -278,7 +278,7 @@
       return;
     }
     reset();
-    if (keptId != null) goto(`/?feed=${keptId}`);
+    if (keptId != null) goto(`/feeds?feed=${keptId}`);
     sidebarStore.closeMobile();
     inputFocused = false;
   }
@@ -312,7 +312,7 @@
     if (unifyPairs.length === 0) {
       const id = unifyKeptFeedId;
       reset();
-      if (id != null) goto(`/?feed=${id}`);
+      if (id != null) goto(`/feeds?feed=${id}`);
       sidebarStore.closeMobile();
       inputFocused = false;
     }

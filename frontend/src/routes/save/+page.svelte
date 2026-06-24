@@ -95,7 +95,7 @@
     if (!saved) return;
     // Mirror SaveArticleModal: navigate first, then signal which item the saved
     // view should open in the reader (pushState must run after the goto settles).
-    await goto('/?saved=true');
+    await goto('/saved');
     savesStore.pendingOpenKey = saved.uri || saved.itemGuid || saved.rkey;
   }
 

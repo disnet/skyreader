@@ -12,6 +12,8 @@
     | 'chevron-down'
     | 'chevron-up'
     | 'chevron-right'
+    | 'chevron-left'
+    | 'home'
     | 'circle'
     | 'circle-dot'
     | 'edit'
@@ -120,6 +122,11 @@
     <path d="m18 15-6-6-6 6" />
   {:else if name === 'chevron-right'}
     <path d="m9 18 6-6-6-6" />
+  {:else if name === 'chevron-left'}
+    <path d="m15 18-6-6 6-6" />
+  {:else if name === 'home'}
+    <path d="M3 9.5 12 2l9 7.5V20a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    <polyline points="9 22 9 13 15 13 15 22" />
   {:else if name === 'circle'}
     <circle cx="12" cy="12" r="10" />
   {:else if name === 'circle-dot'}

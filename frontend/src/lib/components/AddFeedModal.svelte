@@ -141,7 +141,7 @@
       return;
     }
     handleClose();
-    goto(`/?feed=${id}`);
+    goto(`/feeds?feed=${id}`);
     sidebarStore.closeMobile();
   }
 
@@ -240,7 +240,7 @@
     if (unifyPairs.length === 0) {
       const id = unifyKeptFeedId;
       handleClose();
-      if (id != null) goto(`/?feed=${id}`);
+      if (id != null) goto(`/feeds?feed=${id}`);
       sidebarStore.closeMobile();
     }
   }
