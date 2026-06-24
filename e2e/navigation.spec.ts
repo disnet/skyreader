@@ -2,7 +2,7 @@ import { test, expect } from './fixtures';
 
 test.describe('Navigation', () => {
   test('sidebar shows all nav items', async ({ authedPage }) => {
-    await expect(authedPage.locator('.nav-label', { hasText: 'Everything' })).toBeVisible({
+    await expect(authedPage.locator('.nav-label', { hasText: 'Feeds' })).toBeVisible({
       timeout: 15_000,
     });
     await expect(authedPage.locator('.nav-label', { hasText: 'Saved' })).toBeVisible();
@@ -12,7 +12,7 @@ test.describe('Navigation', () => {
 
   test('clicking Saved sets filter', async ({ authedPage }) => {
     await authedPage.locator('.nav-label', { hasText: 'Saved' }).click();
-    await expect(authedPage).toHaveURL(/saved=true/);
+    await expect(authedPage).toHaveURL(/\/saved/);
   });
 
   test('Settings link navigates to /settings', async ({ authedPage }) => {
