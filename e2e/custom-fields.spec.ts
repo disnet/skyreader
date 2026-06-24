@@ -60,9 +60,9 @@ test.describe('Custom Fields', () => {
 
     // Reload and verify persistence (round-trips through D1 → backend → IndexedDB).
     // Reload lands on /sources which doesn't initialize the store — bounce through
-    // '/' to trigger appManager.initialize() and re-sync subscriptions from backend.
+    // /feeds to trigger appManager.initialize() and re-sync subscriptions from backend.
     await authedPage.reload();
-    await authedPage.locator('.nav-label', { hasText: 'Everything' }).click();
+    await authedPage.locator('.nav-label', { hasText: 'Feeds' }).click();
     await authedPage.locator('.nav-label', { hasText: 'Manage Sources' }).click();
     await expect(sourceRowByTitle(authedPage, customTitle)).toBeVisible({
       timeout: 15_000,

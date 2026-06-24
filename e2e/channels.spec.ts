@@ -1,14 +1,14 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
 
-/** Create a source channel via the Everything row's + button and modal form. */
+/** Create a source channel via the Feeds row's + button and modal form. */
 async function createChannel(page: Page, name: string) {
-  // Channels live under the Everything nav row. Click the + add button on that row.
-  const everythingRow = page.locator('.nav-row', {
-    has: page.locator('.nav-label', { hasText: 'Everything' }),
+  // Channels live under the Feeds nav row. Click the + add button on that row.
+  const feedsRow = page.locator('.nav-row', {
+    has: page.locator('.nav-label', { hasText: 'Feeds' }),
   });
-  await expect(everythingRow).toBeVisible({ timeout: 15_000 });
-  await everythingRow.locator('.row-add-btn').click({ force: true });
+  await expect(feedsRow).toBeVisible({ timeout: 15_000 });
+  await feedsRow.locator('.row-add-btn').click({ force: true });
 
   // Fill the channel name in the modal
   const nameInput = page.locator('#view-name');
@@ -24,8 +24,8 @@ async function createChannel(page: Page, name: string) {
 }
 
 test.describe('Channels', () => {
-  test('sidebar shows Everything section', async ({ authedPage }) => {
-    await expect(authedPage.locator('.nav-label', { hasText: 'Everything' })).toBeVisible({
+  test('sidebar shows Feeds section', async ({ authedPage }) => {
+    await expect(authedPage.locator('.nav-label', { hasText: 'Feeds' })).toBeVisible({
       timeout: 15_000,
     });
   });
@@ -102,8 +102,8 @@ test.describe('Channels', () => {
     });
 
     // Navigate away first
-    await authedPage.locator('.nav-label', { hasText: 'Everything' }).click();
-    await expect(authedPage).toHaveURL(/\/$/);
+    await authedPage.locator('.nav-label', { hasText: 'Feeds' }).click();
+    await expect(authedPage).toHaveURL(/\/feeds/);
 
     // Click the channel to navigate to it
     await viewItem.click();
