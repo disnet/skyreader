@@ -9,6 +9,7 @@
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
+  import { channelPath, feedPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
   import Icon from './Icon.svelte';
   import AddDropdownMenu from './AddDropdownMenu.svelte';
 
@@ -116,7 +117,7 @@
     // If we're currently viewing the deleted view, navigate away
     const currentView = $page.url.searchParams.get('view');
     if (currentView === viewUuid) {
-      goto('/');
+      goto(FEEDS_PATH);
     }
   }
 
@@ -210,7 +211,7 @@
     const everythingItem: NavItem = {
       type: 'view',
       id: 'all',
-      label: 'Everything',
+      label: 'Feeds',
       count: totalUnread,
       icon: 'inbox',
     };
@@ -362,10 +363,10 @@
     if (pathname === '/sources') return { type: 'icon', name: 'rss' };
     if (pathname === '/settings') return { type: 'icon', name: 'settings' };
 
-    // Feed page filters (query params on /)
+    // Feed page filters (query params on /feeds and /saved)
     const url = $page.url;
     const feed = url.searchParams.get('feed');
-    const saved = url.searchParams.get('saved');
+    const saved = pathname === '/saved' || url.searchParams.get('saved');
     const shared = url.searchParams.get('shared');
     const view = url.searchParams.get('view');
 
@@ -394,13 +395,15 @@
   // Get current filter from URL
   let currentFilter = $derived.by(() => {
     const url = $page.url;
-    const feed = url.searchParams.get('feed');
-    const saved = url.searchParams.get('saved');
-    const shared = url.searchParams.get('shared');
+    const onFeeds = url.pathname === FEEDS_PATH;
+    const onSaved = url.pathname === SAVED_PATH;
     const view = url.searchParams.get('view');
-    if (view) return { type: 'filteredView', id: view };
+    if (view && (onFeeds || onSaved)) return { type: 'filteredView', id: view };
+    if (onSaved) return { type: 'saved' };
+    if (!onFeeds) return { type: 'none' };
+    const feed = url.searchParams.get('feed');
+    const shared = url.searchParams.get('shared');
     if (feed) return { type: 'feed', id: parseInt(feed) };
-    if (saved) return { type: 'saved' };
     if (shared) return { type: 'shared' };
     return { type: 'all' };
   });
@@ -469,21 +472,21 @@
             sortOrder: 'newest',
           })
           .then((id) => {
-            goto(`/?view=${id}`);
+            goto(channelPath(id));
             feedViewStore.setFilterToolbarOpen(true);
             feedViewStore.setSourcePopoverOpen(true);
           });
       }
       return;
     }
-    let url = '/';
+    let url = FEEDS_PATH;
     if (item.type === 'view') {
-      if (item.id === 'saved') url = '/?saved=true';
-      else if (item.id === 'shared') url = '/?shared=true';
+      if (item.id === 'saved') url = SAVED_PATH;
+      else if (item.id === 'shared') url = `${FEEDS_PATH}?shared=true`;
     } else if (item.type === 'feed') {
-      url = `/?feed=${item.id}`;
+      url = feedPath(item.id);
     } else if (item.type === 'filteredView') {
-      url = `/?view=${item.id}`;
+      url = channelPath(item.id);
     } else if (item.type === 'utility') {
       url = `/${item.id}`;
     }

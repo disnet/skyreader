@@ -157,9 +157,9 @@
 
   async function openInApp() {
     if (successId != null) {
-      await goto(`/?feed=${successId}`);
+      await goto(`/feeds?feed=${successId}`);
     } else {
-      await goto('/');
+      await goto('/feeds');
     }
   }
 

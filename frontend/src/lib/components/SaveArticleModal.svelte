@@ -46,7 +46,7 @@
       // item to open: SavedListView opens it via pushState, which must happen
       // after the goto navigation has settled (otherwise the navigation resets
       // page.state and the reader is torn down mid-render → null deref crash).
-      await goto('/?saved=true');
+      await goto('/saved');
       savesStore.pendingOpenKey = saved.uri || saved.itemGuid || saved.rkey;
     } catch (err) {
       if (err instanceof ScopeUpgradeError) {

@@ -1033,7 +1033,7 @@
             <img src={faviconUrl} alt="" class="reader-favicon" />
           {/if}
           {#if feedTitle}
-            <a href="/?feed={sub?.id}" class="reader-feed">{feedTitle}</a>
+            <a href="/feeds?feed={sub?.id}" class="reader-feed">{feedTitle}</a>
           {/if}
           {#if authorLabel}
             <span class="reader-author">{authorLabel}</span>

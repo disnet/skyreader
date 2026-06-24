@@ -16,6 +16,7 @@
     savedChannelSuggestions,
     type SavedChannelSuggestion,
   } from '$lib/stores/savedChannelSuggestions.svelte';
+  import { channelPath, feedPath, categoryPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
   import Icon from '$lib/components/Icon.svelte';
   import Tooltip from '$lib/components/Tooltip.svelte';
   import type { Subscription } from '$lib/types';
@@ -151,7 +152,7 @@
     const everythingItem: NavItem = {
       type: 'view',
       id: 'all',
-      label: 'Everything',
+      label: 'Feeds',
       count: totalUnread,
       icon: 'inbox',
     };
@@ -299,15 +300,17 @@
   // Get current filter from URL
   let currentFilter = $derived.by(() => {
     const url = $page.url;
-    const feed = url.searchParams.get('feed');
-    const saved = url.searchParams.get('saved');
-    const shared = url.searchParams.get('shared');
+    const onFeeds = url.pathname === FEEDS_PATH;
+    const onSaved = url.pathname === SAVED_PATH;
     const view = url.searchParams.get('view');
+    if (view && (onFeeds || onSaved)) return { type: 'filteredView', id: view };
+    if (onSaved) return { type: 'saved' };
+    if (!onFeeds) return { type: 'none' };
+    const feed = url.searchParams.get('feed');
+    const shared = url.searchParams.get('shared');
     const category = url.searchParams.get('category');
-    if (view) return { type: 'filteredView', id: view };
     if (feed) return { type: 'feed', id: parseInt(feed) };
     if (category) return { type: 'category', name: category };
-    if (saved) return { type: 'saved' };
     if (shared) return { type: 'shared' };
     return { type: 'all' };
   });
@@ -337,7 +340,7 @@
       readFilter: 'unread',
       sortOrder: 'newest',
     });
-    goto(`/?view=${id}`);
+    goto(channelPath(id));
     onclose();
   }
 
@@ -352,21 +355,21 @@
       readFilter: suggestion.readFilter ?? 'unread',
       sortOrder: suggestion.sortOrder ?? 'newest',
     });
-    goto(`/?view=${id}`);
+    goto(channelPath(id));
     onclose();
   }
 
   function selectItem(item: NavItem) {
-    let url = '/';
+    let url = FEEDS_PATH;
     if (item.type === 'view') {
-      if (item.id === 'saved') url = '/?saved=true';
-      else if (item.id === 'shared') url = '/?shared=true';
+      if (item.id === 'saved') url = SAVED_PATH;
+      else if (item.id === 'shared') url = `${FEEDS_PATH}?shared=true`;
     } else if (item.type === 'feed') {
-      url = `/?feed=${item.id}`;
+      url = feedPath(item.id);
     } else if (item.type === 'category') {
-      url = `/?category=${encodeURIComponent(item.id)}`;
+      url = categoryPath(item.id);
     } else if (item.type === 'filteredView') {
-      url = `/?view=${item.id}`;
+      url = channelPath(item.id);
     } else if (item.type === 'utility') {
       url = `/${item.id}`;
     }

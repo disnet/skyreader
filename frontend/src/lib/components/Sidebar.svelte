@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
+  import { channelPath, feedPath, categoryPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
   import { auth } from '$lib/stores/auth.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
@@ -102,23 +103,27 @@
 
   let totalUnread = $derived(unreadCounts.totalArticles + unreadCounts.totalSocial);
 
-  // Current filter from URL
+  // Current filter from URL. Feed filters are active on /feeds, saved on /saved;
+  // a channel (?view=) can live under either base depending on its mode.
   let currentFilter = $derived(() => {
-    // Only show feed filters as active on the home page
-    if ($page.url.pathname !== '/') {
-      return { type: 'none' as const };
+    const path = $page.url.pathname;
+    const sp = $page.url.searchParams;
+    const view = sp.get('view');
+    if (path === FEEDS_PATH) {
+      const feed = sp.get('feed');
+      const category = sp.get('category');
+      const shared = sp.get('shared');
+      if (view) return { type: 'view' as const, id: view };
+      if (feed) return { type: 'feed' as const, id: parseInt(feed) };
+      if (category) return { type: 'category' as const, name: category };
+      if (shared) return { type: 'shared' as const };
+      return { type: 'all' as const };
     }
-    const view = $page.url.searchParams.get('view');
-    const feed = $page.url.searchParams.get('feed');
-    const starred = $page.url.searchParams.get('saved');
-    const shared = $page.url.searchParams.get('shared');
-    const category = $page.url.searchParams.get('category');
-    if (view) return { type: 'view' as const, id: view };
-    if (feed) return { type: 'feed' as const, id: parseInt(feed) };
-    if (category) return { type: 'category' as const, name: category };
-    if (starred) return { type: 'saved' as const };
-    if (shared) return { type: 'shared' as const };
-    return { type: 'all' as const };
+    if (path === SAVED_PATH) {
+      if (view) return { type: 'view' as const, id: view };
+      return { type: 'saved' as const };
+    }
+    return { type: 'none' as const };
   });
 
   // View context menu state
@@ -215,15 +220,14 @@
   }
 
   function selectFilter(type: string, id?: string | number) {
-    const params = new URLSearchParams();
-    if (type === 'view' && id) params.set('view', String(id));
-    else if (type === 'feed' && id) params.set('feed', String(id));
-    else if (type === 'category' && id) params.set('category', String(id));
-    else if (type === 'saved') params.set('saved', 'true');
-    else if (type === 'shared') params.set('shared', 'true');
+    let url: string = FEEDS_PATH;
+    if (type === 'view' && id != null) url = channelPath(id);
+    else if (type === 'feed' && id != null) url = feedPath(id);
+    else if (type === 'category' && id != null) url = categoryPath(String(id));
+    else if (type === 'saved') url = SAVED_PATH;
+    else if (type === 'shared') url = `${FEEDS_PATH}?shared=true`;
 
-    const query = params.toString();
-    goto(query ? `/?${query}` : '/');
+    goto(url);
 
     // Close mobile sidebar after navigation
     sidebarStore.closeMobile();
@@ -317,12 +321,23 @@
 
   <!-- Navigation items -->
   <nav class="sidebar-nav">
+    <!-- Home: the default landing surface (a route, not a feed filter) -->
+    <a
+      href="/home"
+      class="nav-item nav-link"
+      class:active={$page.url.pathname === '/home'}
+      onclick={() => sidebarStore.closeMobile()}
+    >
+      <span class="nav-icon"><Icon name="home" /></span>
+      <span class="nav-label">Home</span>
+    </a>
+
     <!-- Everything: top-level filter + nested source channels -->
     <div class="nav-group" class:expanded={sidebarStore.expandedSections.everything}>
       <div class="nav-row" class:active={currentFilter().type === 'all'}>
         <button class="nav-row-main" onclick={() => selectFilter('all')}>
           <span class="nav-icon"><Icon name="inbox" /></span>
-          <span class="nav-label">Everything</span>
+          <span class="nav-label">Feeds</span>
         </button>
         <button
           class="row-add-btn"

@@ -393,7 +393,7 @@
       // (also refreshed on the regular cycle).
       void fetchAllDocuments(subscriptionsStore.subscriptions);
       handleClose();
-      goto(`/?feed=${subId}`);
+      goto(`/feeds?feed=${subId}`);
       sidebarStore.closeMobile();
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to subscribe';
@@ -479,7 +479,7 @@
       handleClose();
 
       if (firstAddedId) {
-        goto(`/?feed=${firstAddedId}`);
+        goto(`/feeds?feed=${firstAddedId}`);
         sidebarStore.closeMobile();
       }
     } catch (e) {

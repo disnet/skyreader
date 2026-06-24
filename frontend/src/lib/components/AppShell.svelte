@@ -15,6 +15,7 @@
   import { preferences } from '$lib/stores/preferences.svelte';
   import { keyboardStore } from '$lib/stores/keyboard.svelte';
   import { notificationsStore } from '$lib/stores/notifications.svelte';
+  import { feedPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import KeyboardShortcutsModal from '$lib/components/KeyboardShortcutsModal.svelte';
   import RefreshProgressBar from '$lib/components/RefreshProgressBar.svelte';
@@ -39,19 +40,19 @@
     if (currentFeedId === null) {
       // Not on a feed view, go to first/last feed
       const targetId = direction === 1 ? feedIds[0] : feedIds[feedIds.length - 1];
-      goto(`/?feed=${targetId}`);
+      goto(feedPath(targetId));
       return;
     }
 
     const currentIndex = feedIds.indexOf(currentFeedId);
     if (currentIndex === -1) {
       // Current feed not found in sorted list, go to first
-      goto(`/?feed=${feedIds[0]}`);
+      goto(feedPath(feedIds[0]));
       return;
     }
 
     const newIndex = (currentIndex + direction + feedIds.length) % feedIds.length;
-    goto(`/?feed=${feedIds[newIndex]}`);
+    goto(feedPath(feedIds[newIndex]));
   }
 
   // Initialize app data (cache-first hydrate + background refresh).
@@ -72,10 +73,18 @@
   onMount(() => {
     // View switching shortcuts
     keyboardStore.register({
-      key: '1',
-      description: 'All',
+      key: 'h',
+      description: 'Home',
       category: 'Views',
-      action: () => goto('/'),
+      action: () => goto('/home'),
+      condition: () => auth.isAuthenticated,
+    });
+
+    keyboardStore.register({
+      key: '1',
+      description: 'Feeds',
+      category: 'Views',
+      action: () => goto(FEEDS_PATH),
       condition: () => auth.isAuthenticated,
     });
 
@@ -83,7 +92,7 @@
       key: '2',
       description: 'Saved',
       category: 'Views',
-      action: () => goto('/?saved=true'),
+      action: () => goto(SAVED_PATH),
       condition: () => auth.isAuthenticated,
     });
 
@@ -91,7 +100,7 @@
       key: '3',
       description: 'Shared',
       category: 'Views',
-      action: () => goto('/?shared=true'),
+      action: () => goto(`${FEEDS_PATH}?shared=true`),
       condition: () => auth.isAuthenticated,
     });
 

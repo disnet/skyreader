@@ -561,6 +561,7 @@ function createSavesStore() {
     // Optimistically remove from local state
     articles = articles.filter((a) => a.rkey !== rkey);
     rebuildMaps();
+    contentCache.delete(rkey);
     await db.saved.delete(rkey);
 
     if (syncStore.isOnline) {
@@ -597,12 +598,36 @@ function createSavesStore() {
     return savedByGuid.get(guid);
   }
 
+  // In-memory body cache, primed by prefetchContent() when a tile is hovered, so
+  // opening the reader is instant — no IndexedDB roundtrip, no null→content flash.
+  // Only non-null bodies are cached: a save's extracted text is immutable, but a
+  // missing body can later be backfilled, so nulls always re-read. Bounded by the
+  // handful of tiles a user can hover; entries are dropped on item removal.
+  const contentCache = new Map<string, string>();
+
+  // Warm the cache for a saved item ahead of an open (hover prefetch). Cheap and
+  // idempotent; failures are non-fatal since getContent re-reads on open.
+  async function prefetchContent(rkey: string): Promise<void> {
+    if (!rkey || contentCache.has(rkey)) return;
+    try {
+      const row = await db.saved.get(rkey);
+      if (row?.content) contentCache.set(rkey, row.content);
+    } catch {
+      // Non-fatal: getContent falls back to a fresh read on open.
+    }
+  }
+
   // Read a saved item's full body back from IndexedDB by rkey. The in-memory
   // list drops bodies (see toLightSaved); the reader calls this on open.
   async function getContent(rkey: string): Promise<string | null> {
+    const cached = contentCache.get(rkey);
+    if (cached != null) return cached;
     try {
       const row = await db.saved.get(rkey);
-      if (row?.content != null) return row.content;
+      if (row?.content != null) {
+        contentCache.set(rkey, row.content);
+        return row.content;
+      }
 
       // The list is metadata-only and bodies are hydrated for fresh items in
       // load(); if that hydration was skipped or failed (offline at sync time, a
@@ -615,6 +640,7 @@ function createSavesStore() {
       if (body != null && row) {
         await safePut(db.saved, { ...row, content: body });
       }
+      if (body != null) contentCache.set(rkey, body);
       return body;
     } catch {
       return null;
@@ -651,6 +677,7 @@ function createSavesStore() {
     getByUrl,
     getByGuid,
     getContent,
+    prefetchContent,
   };
 }
 

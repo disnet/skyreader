@@ -1,6 +1,7 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { page } from '$app/stores';
+  import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { writable, type Writable } from 'svelte/store';
   import type { Component, Snippet } from 'svelte';
@@ -23,6 +24,23 @@
       import('$lib/components/AppShell.svelte').then((m) => {
         AppShell = m.default;
       });
+    }
+  });
+
+  // The reading surfaces require auth. A logged-out visitor who deep-links to one
+  // (an old bookmark, a shared link) would otherwise get the app component rendered
+  // bare inside the marketing chrome, with no sidebar and no data layer; bounce them
+  // to the marketing landing instead. Public routes (/, /auth/*, /terms, the /save
+  // and /subscribe share targets) are left to render.
+  const APP_ROUTES = ['/home', '/feeds', '/saved'];
+  $effect(() => {
+    if (
+      browser &&
+      !auth.isLoading &&
+      !auth.isAuthenticated &&
+      APP_ROUTES.includes($page.url.pathname)
+    ) {
+      goto('/', { replaceState: true });
     }
   });
 

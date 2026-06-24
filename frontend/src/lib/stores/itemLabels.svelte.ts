@@ -1281,6 +1281,45 @@ function createItemLabelsStore() {
     };
   }
 
+  // Most recent reading activity for an item, resolved across the several keys a
+  // single logical item can be addressed by (a saved feed article is keyed by its
+  // guid in one place and by the save's AT-URI in another). Returns the newest
+  // `readAt` (finished) or `lastReadAt` (in-progress) timestamp seen across those
+  // keys, plus the current scroll progress when one exists. Returns null when the
+  // item has never been opened. Drives the Home "Continue reading" lane.
+  // Reads labelMap directly so it stays reactive when called inside a $derived.
+  function getReadActivity(itemKeys: string[]): {
+    lastActivityAt: number;
+    progress: { paragraphIndex: number; totalParagraphs: number } | null;
+  } | null {
+    let lastActivityAt = 0;
+    let progress: { paragraphIndex: number; totalParagraphs: number } | null = null;
+
+    for (const key of itemKeys) {
+      if (!key) continue;
+
+      const read = labelMap.get(makeKey(key, 'read'));
+      if (read) {
+        const at = (read.props.readAt as number) || read.updatedAt || 0;
+        if (at > lastActivityAt) lastActivityAt = at;
+      }
+
+      const rp = labelMap.get(makeKey(key, 'readProgress'));
+      if (rp) {
+        const at = (rp.props.lastReadAt as number) || rp.updatedAt || 0;
+        if (at > lastActivityAt) lastActivityAt = at;
+        const paragraphIndex = rp.props.paragraphIndex as number;
+        const totalParagraphs = rp.props.totalParagraphs as number;
+        if (typeof paragraphIndex === 'number' && typeof totalParagraphs === 'number') {
+          progress = { paragraphIndex, totalParagraphs };
+        }
+      }
+    }
+
+    if (lastActivityAt === 0) return null;
+    return { lastActivityAt, progress };
+  }
+
   function setReadProgress(
     itemKey: string,
     itemType: ItemLabelType,
@@ -1640,6 +1679,7 @@ function createItemLabelsStore() {
     markSocialAsUnread,
     // Read progress
     getReadProgress,
+    getReadActivity,
     setReadProgress,
     // Highlights
     get allHighlights() {
