@@ -28,6 +28,11 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   '/api/leaflet/resolve': EXPENSIVE_LIMIT,
   '/api/extract': EXPENSIVE_LIMIT,
 
+  // AT Intents service-auth pre-verification. Keyed by client IP (not did) and checked
+  // BEFORE the signature, since verifying a service-auth JWT triggers an outbound DID
+  // resolution fetch that an unauthenticated caller could otherwise spam.
+  '/xrpc:service-auth': EXPENSIVE_LIMIT,
+
   // PDS sync operations (allow retries for hasMore batching)
   '/api/sync/full': { limit: 20, windowMs: 300000 },
   // Individual sync operations (6 per hour)
