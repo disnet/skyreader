@@ -45,8 +45,21 @@ primary_region = "sjc"
   WARM_ENABLED = "true"
   WARM_INTERVAL_SECONDS = "60"
   WARM_ACTIVE_WINDOW_SECONDS = "1209600"
-  WARM_BATCH_CAP = "200"
-  WARM_CONCURRENCY = "8"
+  # Sized to keep the whole active set fresh: ~1330 active feeds at a 180s refresh
+  # threshold need ~440 refreshes/tick (1330 × 60/180) to never go stale. Cap 500
+  # covers that with margin. Cheap now that WARM_MENTIONS is off (load dropped from
+  # ~0.8 to ~0.04 once the mention fan-out was removed). Concurrency raised so a few
+  # 30s-timeout feeds can't stall the drain within a 60s tick.
+  WARM_BATCH_CAP = "500"
+  WARM_CONCURRENCY = "16"
+  # Pre-warming network-wide mention counts (Constellation fan-out) is OFF. It was a
+  # pathological amplification — 25 items × ~1330 feeds × ~14 Constellation calls per
+  # tick, with 30s timeouts piling up — and measured as ~all of the machine's load
+  # (2026-06-26 A/B). Mentions still enrich lazily on read (POST /mentions triggers a
+  # background enrich), so the only loss is pre-warm: counts fill in a poll later on
+  # brand-new articles. Turning this back on requires real global rate-limiting first,
+  # not just a bigger cap.
+  WARM_MENTIONS = "false"
   # /extract concurrency cap. /extract fetches up to 10 MB of HTML and builds a
   # full DOM (Defuddle) — several × the raw bytes in memory — so unbounded
   # concurrency is the realistic OOM path on this 1 GB machine. Excess callers
