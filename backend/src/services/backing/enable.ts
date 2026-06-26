@@ -137,7 +137,9 @@ export async function disableBacking(env: Env, session: Session): Promise<void> 
  */
 export async function backfillUrlNormalized(env: Env, did: string): Promise<number> {
   const rows = await env.DB.prepare(
-    `SELECT id, url, url_normalized FROM saved_articles WHERE user_did = ? AND url != ''`
+    // ORDER BY id so which of two same-URL duplicates gets keyed is deterministic
+    // (the lowest id wins) rather than depending on the query planner's index choice.
+    `SELECT id, url, url_normalized FROM saved_articles WHERE user_did = ? AND url != '' ORDER BY id`
   )
     .bind(did)
     .all<{ id: number; url: string; url_normalized: string | null }>();
@@ -267,10 +269,17 @@ export async function exportNativeSaves(
       canonicalAtUri,
     });
     await env.DB.batch([
-      // Backfill the join key on the enrichment row (no-op if already set).
+      // Backfill the join key on the enrichment row. No-op if already set, and
+      // collision-safe: if a DIFFERENT same-URL row already holds this key (a
+      // pre-existing native duplicate), leave this row untouched rather than
+      // tripping the unique (user_did, url_normalized) index. The loop's
+      // alreadyBacked guard still collapses the duplicate to a single member.
       env.DB.prepare(
-        `UPDATE saved_articles SET url_normalized = ? WHERE id = ? AND url_normalized IS NULL`
-      ).bind(normalized, row.id),
+        `UPDATE saved_articles SET url_normalized = ? WHERE id = ? AND url_normalized IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM saved_articles WHERE user_did = ? AND url_normalized = ?
+           )`
+      ).bind(normalized, row.id, session.did, normalized),
       env.DB.prepare(
         `INSERT INTO backed_collection_members
            (user_did, external_collection, url_normalized, url, external_provider, external_item_uri, external_link_uri, metadata)
