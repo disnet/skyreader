@@ -38,6 +38,15 @@ export const LINKBLOG_SCOPES = ['repo:site.standard.publication', 'repo:site.sta
 // check for sharing) so adding it doesn't retroactively over-restrict shares.
 export const ATMOSPHERE_SCOPES = ['repo:site.standard.graph.subscription'];
 
+// AT Intents discovery footprint — lets Skyreader write a dev.at-intent.usage record
+// into the user's OWN repo so other Atmosphere apps/agents can discover that the user
+// uses Skyreader and resolve the capabilities it publishes. Deliberately kept OUT of
+// GRANULAR_SCOPES (it's not required for any core Skyreader action), so requesting it
+// doesn't push existing users through a hasRequiredScopes re-auth. It's only added to
+// ALL_POSSIBLE_SCOPES, which is what the login/callback flow actually requests, so new
+// logins pick it up and the usage write is skipped for sessions that lack it.
+export const AT_INTENT_SCOPES = ['repo:dev.at-intent.usage'];
+
 // All possible scopes (base + all integrations) — used in client metadata
 export const ALL_POSSIBLE_SCOPES = [
   GRANULAR_SCOPES,
@@ -45,4 +54,5 @@ export const ALL_POSSIBLE_SCOPES = [
   ...MARGIN_SCOPES,
   ...LINKBLOG_SCOPES,
   ...ATMOSPHERE_SCOPES,
+  ...AT_INTENT_SCOPES,
 ].join(' ');

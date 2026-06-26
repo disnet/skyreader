@@ -1,0 +1,54 @@
+{
+  "capabilities": [
+    {
+      "name": "Save to Skyreader",
+      "icon": "https://skyreader.app/icons/icon-512.png",
+      "description": "Save an article to your Skyreader reading list (read-it-later). Accepts any web URL. Not for following a source over time; use subscribe for that.",
+      "verb": "save",
+      "subject": [{ "kind": "uri" }],
+      "input": [{ "name": "title", "kind": "string", "required": false }],
+      "delivery": "service",
+      "endpoint": "https://api.skyreader.app/xrpc/app.skyreader.feed.save",
+      "serviceId": "skyreader_api"
+    },
+    {
+      "name": "Subscribe to feed in Skyreader",
+      "icon": "https://skyreader.app/icons/icon-512.png",
+      "description": "Subscribe to an RSS/Atom feed by URL so new items appear in your Skyreader reading list. For following an atproto account or publication, this maps to the account-follow capability instead.",
+      "verb": "subscribe",
+      "subject": [{ "kind": "uri" }],
+      "input": [{ "name": "category", "kind": "string", "required": false }],
+      "delivery": "service",
+      "endpoint": "https://api.skyreader.app/xrpc/app.skyreader.feed.subscribe",
+      "serviceId": "skyreader_api"
+    },
+    {
+      "name": "Follow in Skyreader",
+      "icon": "https://skyreader.app/icons/icon-512.png",
+      "description": "Follow an atproto account or standard.site publication so its new posts appear in Skyreader. Requires Atmospheric sync to be enabled on the account.",
+      "verb": "subscribe",
+      "subject": [
+        { "kind": "did", "as": "account" },
+        { "kind": "at-uri", "of": "site.standard.publication" }
+      ],
+      "produces": ["site.standard.graph.subscription"],
+      "delivery": "repo",
+      "scope": "repo:site.standard.graph.subscription"
+    },
+    {
+      "name": "Share to Skyreader linkblog",
+      "icon": "https://skyreader.app/icons/icon-512.png",
+      "description": "Share a link to your public linkblog with an optional note. The post appears in your portable standard.site linkblog, visible across the Atmosphere.",
+      "verb": "share",
+      "subject": [{ "kind": "uri" }],
+      "input": [
+        { "name": "title", "kind": "string", "required": false },
+        { "name": "note", "kind": "string", "required": false },
+        { "name": "tags", "kind": "string", "required": false }
+      ],
+      "delivery": "service",
+      "endpoint": "https://api.skyreader.app/xrpc/app.skyreader.linkblog.share",
+      "serviceId": "skyreader_api"
+    }
+  ]
+}

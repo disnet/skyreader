@@ -29,6 +29,7 @@ import {
   ALL_POSSIBLE_SCOPES,
 } from '../config/scopes';
 import { getUserTier } from '../services/user-tier';
+import { writeUsageRecord } from '../services/at-intent-usage';
 import { getLimitsForTier } from '../config/tier-limits';
 import {
   buildSetCookieHeader,
@@ -748,6 +749,10 @@ export async function handleAuthCallback(
 
     // Now store session (after user exists in DB due to FK constraint)
     await storeSession(env, sessionId, session);
+
+    // Write the AT Intents discovery footprint into the user's repo (best-effort,
+    // skipped if the usage scope wasn't granted). Never block the login redirect on it.
+    ctx.waitUntil(writeUsageRecord(session));
 
     // Build the session cookie to set during redirect
     const cookieDomain = getCookieDomain(env, request);

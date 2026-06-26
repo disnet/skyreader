@@ -826,6 +826,20 @@ export async function getSessionFromRequest(request: Request, env: Env): Promise
   return session;
 }
 
+// Find the most recent stored session id for a DID. Used by the AT Intents service-auth
+// path: a verified inter-service JWT proves the user's identity, but acting on their
+// behalf (especially PDS writes) still needs Skyreader's stored OAuth tokens, so we map
+// the DID to a session the user established by signing in. Returns null if there is none.
+// The caller delegates with this session id, so the normal auto-refresh still applies.
+export async function findSessionIdForDid(env: Env, did: string): Promise<string | null> {
+  const row = await env.DB.prepare(
+    'SELECT session_id FROM sessions WHERE did = ? ORDER BY expires_at DESC LIMIT 1'
+  )
+    .bind(did)
+    .first<{ session_id: string }>();
+  return row?.session_id ?? null;
+}
+
 // Lock timeout in milliseconds - if a refresh takes longer than this, the lock is considered stale
 const REFRESH_LOCK_TIMEOUT_MS = 30 * 1000; // 30 seconds
 

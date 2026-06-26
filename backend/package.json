@@ -16,6 +16,8 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
+    "@noble/curves": "^2.2.0",
+    "@scure/base": "^2.2.0",
     "fast-xml-parser": "^5.2.0"
   },
   "devDependencies": {

@@ -51,6 +51,7 @@ import {
   handleDeleteLabel,
   handleBulkAddLabels,
 } from './routes/labels';
+import { handleXrpcSave, handleXrpcSubscribe, handleXrpcLinkblogShare } from './routes/xrpc';
 import {
   handleCreateSaved,
   handleGetSaved,
@@ -525,6 +526,18 @@ export default {
         case url.pathname === '/api/sync/status':
           if (!session) return unauthorizedResponse(headers);
           response = await handleSyncStatus(request, env);
+          break;
+
+        // AT Intents service endpoints (XRPC procedures). No top-level session guard:
+        // the handlers return XRPC-shaped `{ error, message }` auth errors themselves.
+        case url.pathname === '/xrpc/app.skyreader.feed.save':
+          response = await handleXrpcSave(request, env, ctx);
+          break;
+        case url.pathname === '/xrpc/app.skyreader.feed.subscribe':
+          response = await handleXrpcSubscribe(request, env, ctx);
+          break;
+        case url.pathname === '/xrpc/app.skyreader.linkblog.share':
+          response = await handleXrpcLinkblogShare(request, env);
           break;
 
         default:
