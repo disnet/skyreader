@@ -363,6 +363,9 @@ describe('GET /api/saved — backed list path', () => {
     const { status, body } = await call(req);
     expect(status).toBe(200);
     expect(body.articles).toHaveLength(1);
-    expect(body.articles[0]).toMatchObject({ title: 'A', content: 'BODY' });
+    // The list is metadata-only now — the body is hydrated separately via
+    // /api/saved/bodies, so it must NOT ride along in the snapshot.
+    expect(body.articles[0]).toMatchObject({ title: 'A' });
+    expect('content' in body.articles[0]).toBe(false);
   });
 });

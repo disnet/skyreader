@@ -54,6 +54,7 @@ import {
 import {
   handleCreateSaved,
   handleGetSaved,
+  handleGetSavedBodies,
   handleUpdateSaved,
   handleDeleteSaved,
   handleDeleteSavedByGuid,
@@ -398,6 +399,10 @@ export default {
         case url.pathname === '/api/saved/backing':
           if (!session) return unauthorizedResponse(headers);
           response = await handleSetBacking(request, env);
+          break;
+        case url.pathname === '/api/saved/bodies':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleGetSavedBodies(request, env);
           break;
         case url.pathname.startsWith('/api/saved/'):
           if (!session) return unauthorizedResponse(headers);

@@ -985,7 +985,11 @@ class ApiClient {
     });
   }
 
-  async getSaved(): Promise<{
+  async getSaved(opts?: { limit?: number; cursor?: string | null }): Promise<{
+    // Metadata only — `content` (the article body) is omitted; hydrate it for
+    // unseen rkeys via getSavedBodies. The body is ~20-50× the rest of a row and
+    // the client already caches it, so re-sending it every refresh is the bulk
+    // of the "excessive data" this endpoint used to ship.
     articles: Array<{
       rkey: string;
       uri: string;
@@ -993,7 +997,6 @@ class ApiClient {
       title: string | null;
       author: string | null;
       description: string | null;
-      content: string | null;
       contentType: string | null;
       domain: string | null;
       image: string | null;
@@ -1003,8 +1006,27 @@ class ApiClient {
       source?: 'url' | 'feed' | 'document';
       itemGuid?: string;
     }>;
+    // Keyset cursor for the next (older) page; null at the end of the list.
+    cursor: string | null;
+    // True when the response is a full snapshot that must replace the cache
+    // wholesale (external-backed saves) rather than being merged incrementally.
+    full: boolean;
   }> {
-    return this.fetch('/api/saved');
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set('limit', String(opts.limit));
+    if (opts?.cursor) params.set('cursor', opts.cursor);
+    const qs = params.toString();
+    return this.fetch(`/api/saved${qs ? `?${qs}` : ''}`);
+  }
+
+  // Hydrate article bodies for the given rkeys. Returns a map rkey → body (null
+  // when the row has no stored content yet, e.g. a backed stub awaiting
+  // extraction). The client calls this only for saves it hasn't cached locally.
+  async getSavedBodies(rkeys: string[]): Promise<{ bodies: Record<string, string | null> }> {
+    return this.fetch('/api/saved/bodies', {
+      method: 'POST',
+      body: JSON.stringify({ rkeys }),
+    });
   }
 
   // Patch mutable fields on an existing saved item (currently just the
