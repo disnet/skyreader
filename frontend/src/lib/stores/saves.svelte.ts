@@ -54,6 +54,72 @@ function createSavesStore() {
     savedByUrl = byUrl;
   }
 
+  // Self-heal old saves that have a body but no stored word count (pre-fix
+  // saves, failed extractions, offline replays). Without this they fall back to
+  // counting the short RSS description and show a misleading "1 min". Mutates
+  // each item's wordCount in place and returns the ones that changed so the
+  // caller can PATCH the backend (so the fix sticks across reloads/devices).
+  function backfillWordCounts(items: SavedItem[]): SavedItem[] {
+    const backfilled: SavedItem[] = [];
+    for (const a of items) {
+      if (a.wordCount == null && a.content) {
+        const wc = wordCountFrom(a.content);
+        if (wc != null) {
+          a.wordCount = wc;
+          backfilled.push(a);
+        }
+      }
+    }
+    return backfilled;
+  }
+
+  function pushWordCountBackfills(backfilled: SavedItem[]) {
+    if (backfilled.length > 0 && syncStore.isOnline) {
+      void Promise.all(
+        backfilled.map((a) =>
+          api.updateSaved(a.rkey, { wordCount: a.wordCount! }).catch((err) => {
+            console.warn('Failed to backfill saved word count:', err);
+          })
+        )
+      );
+    }
+  }
+
+  const PAGE_SIZE = 50;
+  const BODY_BATCH = 200;
+
+  // The list endpoint returns metadata only (the body is the bulk of a row and
+  // we already cache it). Fill each item's `content` in place: reuse the cached
+  // body when we still have it, otherwise fetch bodies for the unseen rkeys.
+  // Offline, items keep whatever body the cache had (null for genuinely new ones).
+  async function hydrateBodies(items: SavedItem[], cachedByRkey: Map<string, SavedItem>) {
+    const needFetch: string[] = [];
+    for (const it of items) {
+      if (it.content != null) continue;
+      const cachedBody = cachedByRkey.get(it.rkey)?.content;
+      if (cachedBody != null) {
+        it.content = cachedBody;
+      } else {
+        needFetch.push(it.rkey);
+      }
+    }
+    if (needFetch.length === 0 || !syncStore.isOnline) return;
+
+    const byRkey = new Map(items.map((it) => [it.rkey, it]));
+    for (let i = 0; i < needFetch.length; i += BODY_BATCH) {
+      const chunk = needFetch.slice(i, i + BODY_BATCH);
+      try {
+        const { bodies } = await api.getSavedBodies(chunk);
+        for (const [rkey, body] of Object.entries(bodies)) {
+          const it = byRkey.get(rkey);
+          if (it && body != null) it.content = body;
+        }
+      } catch (err) {
+        console.warn('Failed to hydrate saved bodies:', err);
+      }
+    }
+  }
+
   async function load() {
     loading = true;
     error = null;
@@ -61,49 +127,75 @@ function createSavesStore() {
       // Load from local cache first. The in-memory list is kept "light" (no
       // body); IndexedDB retains the full rows.
       const cached = await db.saved.orderBy('rkey').reverse().toArray();
-      if (cached.length > 0) {
+      const cachedByRkey = new Map(cached.map((c) => [c.rkey, c]));
+      const firstLoad = cached.length === 0;
+      if (!firstLoad) {
         articles = cached.map(toLightSaved);
         rebuildMaps();
       }
 
-      // Then fetch from backend
-      const response = await api.getSaved();
+      // Fetch the first page. The backend pages newest-first over a keyset
+      // cursor; `full` means an external-backed snapshot that must replace the
+      // cache wholesale (membership can be *removed* elsewhere, so it can't be
+      // merged incrementally).
+      const first = await api.getSaved({ limit: PAGE_SIZE });
 
-      // Self-heal old saves that have a body but no stored word count (pre-fix
-      // saves, failed extractions, offline replays). Without this they fall back
-      // to counting the short RSS description and show a misleading "1 min".
-      // Compute locally, persist to IndexedDB, and PATCH the backend so the fix
-      // sticks across reloads and devices instead of recomputing every load.
-      const backfilled: SavedItem[] = [];
-      for (const a of response.articles) {
-        if (a.wordCount == null && a.content) {
-          const wc = wordCountFrom(a.content);
-          if (wc != null) {
-            a.wordCount = wc;
-            backfilled.push(a);
-          }
+      if (first.full) {
+        const snapshot = first.articles as SavedItem[];
+        // Bodies aren't in the response — reuse cached ones, fetch the rest —
+        // before the clear()+replace below drops the old cache (and its bodies).
+        await hydrateBodies(snapshot, cachedByRkey);
+        const backfilled = backfillWordCounts(snapshot);
+        articles = snapshot.map(toLightSaved);
+        rebuildMaps();
+        await db.saved.clear();
+        if (snapshot.length > 0) {
+          await safeBulkPut(db.saved, snapshot);
         }
+        pushWordCountBackfills(backfilled);
+        return;
       }
 
-      articles = response.articles.map(toLightSaved);
+      // Incremental merge: page newest-first, keeping items we don't already
+      // have. New saves always sort ahead of cached ones (saved_at is set at
+      // save time), so the first already-cached rkey means we've caught up —
+      // stop there. On a first-ever load (empty cache) page through everything.
+      const fresh: SavedItem[] = [];
+      let page = first;
+      let caughtUp = false;
+      while (!caughtUp) {
+        for (const a of page.articles as SavedItem[]) {
+          if (!firstLoad && cachedByRkey.has(a.rkey)) {
+            caughtUp = true;
+            break;
+          }
+          fresh.push(a);
+        }
+        if (caughtUp || !page.cursor) break;
+        page = await api.getSaved({ limit: PAGE_SIZE, cursor: page.cursor });
+      }
+
+      // Fresh items are new (not in cache), so their bodies always need fetching.
+      await hydrateBodies(fresh, cachedByRkey);
+      const backfilled = backfillWordCounts(fresh);
+
+      // Merge the fresh (newer) items ahead of the cached ones, dropping any
+      // cached row a fresh item supersedes, then keep the list in saved_at order.
+      const freshKeys = new Set(fresh.map((a) => a.rkey));
+      const merged = [
+        ...fresh.map(toLightSaved),
+        ...cached.filter((c) => !freshKeys.has(c.rkey)).map(toLightSaved),
+      ].sort((a, b) => (a.savedAt < b.savedAt ? 1 : a.savedAt > b.savedAt ? -1 : 0));
+      articles = merged;
       rebuildMaps();
 
-      // Update local cache — persist the full rows (with bodies) so getContent
-      // can read them back on demand.
-      await db.saved.clear();
-      if (response.articles.length > 0) {
-        await safeBulkPut(db.saved, response.articles);
+      // Upsert only the fresh rows (full bodies) — no clear(), so the rest of
+      // the cache is left untouched.
+      if (fresh.length > 0) {
+        await safeBulkPut(db.saved, fresh);
       }
 
-      if (backfilled.length > 0 && syncStore.isOnline) {
-        void Promise.all(
-          backfilled.map((a) =>
-            api.updateSaved(a.rkey, { wordCount: a.wordCount! }).catch((err) => {
-              console.warn('Failed to backfill saved word count:', err);
-            })
-          )
-        );
-      }
+      pushWordCountBackfills(backfilled);
     } catch (err) {
       console.error('Failed to load saved items:', err);
       // Keep cached data if backend fails
@@ -510,7 +602,20 @@ function createSavesStore() {
   async function getContent(rkey: string): Promise<string | null> {
     try {
       const row = await db.saved.get(rkey);
-      return row?.content ?? null;
+      if (row?.content != null) return row.content;
+
+      // The list is metadata-only and bodies are hydrated for fresh items in
+      // load(); if that hydration was skipped or failed (offline at sync time, a
+      // batch error, a backed stub awaiting extraction) the body never lands and
+      // the incremental refresh won't revisit an already-cached row. Fetch it on
+      // demand here as a self-healing fallback, and cache it so the next open is local.
+      if (!syncStore.isOnline) return null;
+      const { bodies } = await api.getSavedBodies([rkey]);
+      const body = bodies[rkey] ?? null;
+      if (body != null && row) {
+        await safePut(db.saved, { ...row, content: body });
+      }
+      return body;
     } catch {
       return null;
     }

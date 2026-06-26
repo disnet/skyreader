@@ -648,7 +648,11 @@ export async function handleGetSaved(
       } catch (pollErr) {
         console.error('Backed membership poll failed (serving last good snapshot):', pollErr);
       }
-      const articles = await listBackedSaved(env, session.did, settings.backing);
+      // Metadata only — the body is the bulk of a saved item and the client
+      // already caches it; it hydrates bodies for unseen rkeys via /api/saved/bodies.
+      const articles = (await listBackedSaved(env, session.did, settings.backing)).map(
+        ({ content: _content, ...rest }) => rest
+      );
       // Fill in bodies for imported stubs after responding (bounded, self-healing
       // across opens). Titles are already seeded from the foreign record metadata.
       ctx.waitUntil(
@@ -656,17 +660,63 @@ export async function handleGetSaved(
           console.error('Backed content extraction failed:', err);
         })
       );
-      return new Response(JSON.stringify({ articles }), {
+      // Backing is a snapshot of foreign membership (items can be *removed*
+      // elsewhere), so it can't be merged incrementally — `full: true` tells the
+      // client to replace its cache wholesale. `cursor: null` → single page.
+      return new Response(JSON.stringify({ articles, cursor: null, full: true }), {
         headers: { 'Content-Type': 'application/json' },
       });
     }
 
+    // Keyset pagination over (saved_at DESC, id DESC). The client refreshes
+    // incrementally — it pages newest-first and stops once it reaches items it
+    // already has — so a typical refresh pulls one small page instead of the
+    // whole history (bodies included). New saves always sort ahead of cached
+    // ones (saved_at is set at save time), making "stop at first cached rkey" safe.
+    const DEFAULT_LIMIT = 50;
+    const MAX_LIMIT = 200;
+    const url = new URL(request.url);
+    const limit = Math.min(
+      Math.max(1, Math.floor(Number(url.searchParams.get('limit')) || DEFAULT_LIMIT)),
+      MAX_LIMIT
+    );
+
+    // Cursor is "<saved_at>.<id>" of the last row of the previous page.
+    let cursorSavedAt: number | null = null;
+    let cursorId: number | null = null;
+    const rawCursor = url.searchParams.get('cursor');
+    if (rawCursor) {
+      const [s, i] = rawCursor.split('.');
+      const sv = Number(s);
+      const iv = Number(i);
+      if (Number.isFinite(sv) && Number.isFinite(iv)) {
+        cursorSavedAt = sv;
+        cursorId = iv;
+      } else {
+        return new Response(JSON.stringify({ error: 'Invalid cursor' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    const where =
+      cursorSavedAt !== null
+        ? `user_did = ? AND (saved_at < ? OR (saved_at = ? AND id < ?))`
+        : `user_did = ?`;
+    const bindings =
+      cursorSavedAt !== null
+        ? [session.did, cursorSavedAt, cursorSavedAt, cursorId, limit]
+        : [session.did, limit];
+
+    // `content` is deliberately excluded — it's the bulk of a row and the client
+    // already has bodies cached. Fresh rkeys are hydrated via /api/saved/bodies.
     const result = await env.DB.prepare(
-      `SELECT rkey, record_uri, url, title, author, description, content, content_type, domain, image,
+      `SELECT id, rkey, record_uri, url, title, author, description, content_type, domain, image,
               word_count, published_at, saved_at, created_at, source, item_guid
-       FROM saved_articles WHERE user_did = ? ORDER BY saved_at DESC`
+       FROM saved_articles WHERE ${where} ORDER BY saved_at DESC, id DESC LIMIT ?`
     )
-      .bind(session.did)
+      .bind(...bindings)
       .all<SavedRow>();
 
     const articles = result.results.map((row) => ({
@@ -676,7 +726,6 @@ export async function handleGetSaved(
       title: row.title,
       author: row.author,
       description: row.description,
-      content: row.content,
       contentType: row.content_type || 'webpage',
       domain: row.domain,
       image: row.image,
@@ -687,7 +736,12 @@ export async function handleGetSaved(
       itemGuid: row.item_guid,
     }));
 
-    return new Response(JSON.stringify({ articles }), {
+    // A full page means there may be more — hand back a cursor pointing past the
+    // last row. A short page is the end of the list (cursor null).
+    const last = result.results[result.results.length - 1];
+    const cursor = result.results.length === limit && last ? `${last.saved_at}.${last.id}` : null;
+
+    return new Response(JSON.stringify({ articles, cursor, full: false }), {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error) {
@@ -697,6 +751,68 @@ export async function handleGetSaved(
       headers: { 'Content-Type': 'application/json' },
     });
   }
+}
+
+// POST /api/saved/bodies — hydrate article bodies for a set of rkeys.
+// GET /api/saved returns metadata only (the body is ~20-50× the rest of a row);
+// the client asks for bodies only for items it hasn't cached yet, so a no-op
+// refresh transfers almost nothing. Bodies come straight from saved_articles,
+// which is where both native and external-backed content lives.
+export async function handleGetSavedBodies(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  let body: { rkeys?: unknown };
+  try {
+    body = (await request.json()) as { rkeys?: unknown };
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const MAX_RKEYS = 200;
+  const rkeys = Array.isArray(body.rkeys)
+    ? body.rkeys
+        .filter((r): r is string => typeof r === 'string' && isValidRkey(r))
+        .slice(0, MAX_RKEYS)
+    : null;
+  if (!rkeys) {
+    return new Response(JSON.stringify({ error: 'Missing rkeys array' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const bodies: Record<string, string | null> = {};
+  if (rkeys.length > 0) {
+    const placeholders = rkeys.map(() => '?').join(',');
+    const result = await env.DB.prepare(
+      `SELECT rkey, content FROM saved_articles WHERE user_did = ? AND rkey IN (${placeholders})`
+    )
+      .bind(session.did, ...rkeys)
+      .all<{ rkey: string; content: string | null }>();
+    for (const row of result.results) {
+      bodies[row.rkey] = row.content;
+    }
+  }
+
+  return new Response(JSON.stringify({ bodies }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 // PATCH /api/saved/:rkey — update mutable fields on a saved item.
