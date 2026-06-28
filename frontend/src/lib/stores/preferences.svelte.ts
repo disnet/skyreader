@@ -3,6 +3,8 @@ import { browser } from '$app/environment';
 export type ArticleFont = 'sans-serif' | 'serif' | 'mono' | 'literata';
 export type ArticleFontSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 export type BaseSortOrder = 'newest' | 'oldest';
+// Which reading surface the app opens to on a fresh load (the `/` redirector).
+export type DefaultView = 'home' | 'feeds' | 'saved';
 
 const FONT_SIZE_ORDER: ArticleFontSize[] = ['xs', 'sm', 'md', 'lg', 'xl'];
 
@@ -14,6 +16,8 @@ interface PreferencesState {
   sortOrder: BaseSortOrder;
   // Set once the user has acknowledged the first-share "this is public" confirmation.
   linkblogShareConfirmed: boolean;
+  // Which surface a cold app load lands on (consumed by the `/` redirector).
+  defaultView: DefaultView;
 }
 
 const STORAGE_KEY = 'skyreader-preferences';
@@ -26,6 +30,7 @@ function createPreferencesStore() {
     expandAllItems: true,
     sortOrder: 'newest',
     linkblogShareConfirmed: false,
+    defaultView: 'home',
   });
 
   // Restore from localStorage on init
@@ -51,6 +56,13 @@ function createPreferencesStore() {
         }
         if (parsed.linkblogShareConfirmed !== undefined) {
           state.linkblogShareConfirmed = parsed.linkblogShareConfirmed;
+        }
+        if (
+          parsed.defaultView === 'home' ||
+          parsed.defaultView === 'feeds' ||
+          parsed.defaultView === 'saved'
+        ) {
+          state.defaultView = parsed.defaultView;
         }
       } catch {
         localStorage.removeItem(STORAGE_KEY);
@@ -120,6 +132,11 @@ function createPreferencesStore() {
     save();
   }
 
+  function setDefaultView(view: DefaultView) {
+    state.defaultView = view;
+    save();
+  }
+
   return {
     get articleFont() {
       return state.articleFont;
@@ -139,7 +156,11 @@ function createPreferencesStore() {
     get linkblogShareConfirmed() {
       return state.linkblogShareConfirmed;
     },
+    get defaultView() {
+      return state.defaultView;
+    },
     confirmLinkblogShare,
+    setDefaultView,
     setArticleFont,
     setArticleFontSize,
     increaseFontSize,

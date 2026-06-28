@@ -12,7 +12,14 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { channelPath } from '$lib/utils/viewNav';
+  import { preferences } from '$lib/stores/preferences.svelte';
   import WelcomePage from '$lib/components/feed/WelcomePage.svelte';
+
+  const DEFAULT_VIEW_PATH: Record<typeof preferences.defaultView, string> = {
+    home: '/home',
+    feeds: '/feeds',
+    saved: '/saved',
+  };
 
   function targetFor(url: URL): string {
     const sp = new URLSearchParams(url.search);
@@ -27,7 +34,8 @@
     const view = sp.get('view');
     if (view && [...sp].length === 1) return channelPath(view);
     if ([...sp].length > 0) return `/feeds${url.search}`;
-    return '/home';
+    // No params: land on the reader's chosen default surface.
+    return DEFAULT_VIEW_PATH[preferences.defaultView];
   }
 
   $effect(() => {
