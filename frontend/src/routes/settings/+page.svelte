@@ -9,6 +9,7 @@
     preferences,
     type ArticleFont,
     type ArticleFontSize,
+    type DefaultView,
   } from '$lib/stores/preferences.svelte';
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
   import SaveBackingPicker from '$lib/components/settings/SaveBackingPicker.svelte';
@@ -37,6 +38,12 @@
     { value: 'md', label: 'M' },
     { value: 'lg', label: 'L' },
     { value: 'xl', label: 'XL' },
+  ];
+
+  const defaultViewOptions: { value: DefaultView; label: string }[] = [
+    { value: 'home', label: 'Home' },
+    { value: 'feeds', label: 'Feeds' },
+    { value: 'saved', label: 'Saved' },
   ];
 
   let showImportModal = $state(false);
@@ -611,6 +618,21 @@
 
   <section class="card">
     <h2>Reading</h2>
+    <div class="setting-row">
+      <label for="default-view">When you open the app</label>
+      <div class="font-options">
+        {#each defaultViewOptions as option}
+          <button
+            class="view-option"
+            class:selected={preferences.defaultView === option.value}
+            onclick={() => preferences.setDefaultView(option.value)}
+          >
+            {option.label}
+          </button>
+        {/each}
+      </div>
+    </div>
+    <p class="setting-description">Choose which view loads first when you open Skyreader.</p>
     <label class="toggle-setting">
       <input
         type="checkbox"
@@ -947,6 +969,31 @@
   }
 
   .font-option.selected .font-label {
+    color: var(--color-primary);
+  }
+
+  .view-option {
+    padding: 0.5rem 1rem;
+    background: var(--color-bg);
+    border: 2px solid var(--color-border);
+    border-radius: 8px;
+    color: var(--color-text-secondary);
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
+    cursor: pointer;
+    transition:
+      border-color 0.15s,
+      background-color 0.15s,
+      color 0.15s;
+  }
+
+  .view-option:hover {
+    border-color: var(--color-primary);
+  }
+
+  .view-option.selected {
+    border-color: var(--color-primary);
+    background: var(--color-sidebar-active);
     color: var(--color-primary);
   }
 
