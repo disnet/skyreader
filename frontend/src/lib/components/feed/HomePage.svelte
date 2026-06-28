@@ -7,6 +7,7 @@
   import { onMount, onDestroy } from 'svelte';
   import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import LibraryEmptyState from '$lib/components/LibraryEmptyState.svelte';
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
   import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
   import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
@@ -15,6 +16,7 @@
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
@@ -328,13 +330,20 @@
       <HomeLane title="Continue reading" icon="clock" items={[]} loading onOpen={() => {}} />
       <HomeLane title="Random picks" icon="layers" items={[]} loading onOpen={() => {}} />
     {:else if !hasAnyLane}
-      <EmptyState
-        title="Nothing to read here yet"
-        description="Save an article and it collects here: your recent reads, a few to pick back up, and a rotating handful from your pile."
-        actionHref="/feeds"
-        actionText="Browse your feeds"
-        icon="📚"
-      />
+      {#if subscriptionsStore.subscriptions.length === 0}
+        <LibraryEmptyState
+          onAddFeed={() => sidebarStore.openAddFeedModal()}
+          onAddHandle={() => sidebarStore.openAddHandleModal()}
+        />
+      {:else}
+        <EmptyState
+          title="Nothing to read here yet"
+          description="Save an article and it collects here: your recent reads, a few to pick back up, and a rotating handful from your pile."
+          actionHref="/feeds"
+          actionText="Browse your feeds"
+          icon="📚"
+        />
+      {/if}
     {:else}
       {#if continueItems.length > 0}
         <HomeLane
