@@ -18,6 +18,7 @@ import { snapshotBackedCollection, type BackedMember } from './read';
 import { removeMember } from './write';
 import { createPDSClient } from '../pds-client';
 import { FeedProxyClient } from '../feed-proxy-client';
+import { fillExtractedContent } from '../saved-content';
 import type { SaveBacking } from '../../routes/settings';
 
 // Open-driven poll cadence: skip a fresh snapshot if we polled within this window.
@@ -237,33 +238,10 @@ export async function extractMissingBackedContent(
       if (!row) return;
       try {
         const a = await proxy.extract(row.url);
-        // Always set the body; fill metadata only where the stub lacked it (keep the
-        // foreign-record title/author we already captured).
-        await env.DB.prepare(
-          `UPDATE saved_articles SET
-             content = ?,
-             word_count = COALESCE(word_count, ?),
-             title = COALESCE(title, ?),
-             author = COALESCE(author, ?),
-             description = COALESCE(description, ?),
-             image = COALESCE(image, ?),
-             domain = COALESCE(domain, ?),
-             published_at = COALESCE(published_at, ?),
-             content_type = 'article'
-           WHERE id = ? AND content IS NULL`
-        )
-          .bind(
-            a.content ?? '',
-            a.wordCount || null,
-            a.title ?? null,
-            a.author ?? null,
-            a.description ?? null,
-            a.image ?? null,
-            a.domain ?? null,
-            a.published ? new Date(a.published).getTime() : null,
-            row.id
-          )
-          .run();
+        // Set the body, COALESCE-fill metadata only where the stub lacked it (keep the
+        // foreign-record title/author we already captured), and hard-set the type to
+        // 'article' — these rows are only ever article-like saves (source IN url/feed).
+        await fillExtractedContent(env, a, { id: row.id }, { setArticleType: true });
         filled++;
       } catch (err) {
         console.error(`[backing] extract failed for ${row.url}:`, err);

@@ -4,8 +4,10 @@ import { handleCreateSubscription } from './subscriptions';
 import { handleCreateLinkblogShare } from './linkblog';
 import { generateTid } from '../utils/tid';
 import { verifyServiceAuth } from '../services/service-auth';
-import { findSessionIdForDid } from '../services/oauth';
+import { findSessionIdForDid, getSessionFromRequest } from '../services/oauth';
 import { checkRateLimit } from '../services/rate-limit';
+import { FeedProxyClient } from '../services/feed-proxy-client';
+import { fillExtractedContent } from '../services/saved-content';
 
 // Bucket key for the unauthenticated service-auth throttle (see rate-limit.ts).
 const SERVICE_AUTH_RL_KEY = '/xrpc:service-auth';
@@ -168,16 +170,52 @@ export async function handleXrpcSave(
     return xrpcError('InvalidRequest', 'Missing required param: subject (the article URL).', 400);
   }
 
+  const rkey = generateTid();
   const body = {
     url: subject,
-    rkey: generateTid(),
+    rkey,
     source: 'url',
     title: params.get('title') ?? undefined,
   };
 
   const built = await buildDelegatedRequest(request, env, 'app.skyreader.feed.save', body);
   if ('error' in built) return built.error;
-  return toXrpcResponse(await handleCreateSaved(built.req, env, ctx));
+
+  const res = await handleCreateSaved(built.req, env, ctx);
+
+  // The save itself stores only url + title; the first-party flow extracts the article
+  // body (feed-proxy + Defuddle) before saving, but that fetch is slow, so for the
+  // AT-intent path we save immediately and fill the body in the background rather than
+  // blocking the caller. Keyed by (did, rkey): the rkey we generated, the did from the
+  // acting session (the response uri can be a foreign collection item on the backed
+  // path, so it isn't a reliable did source). Only on a successful save.
+  if (res.ok) {
+    const session = await getSessionFromRequest(built.req, env);
+    if (session) {
+      ctx.waitUntil(extractAndStoreSavedContent(env, session.did, rkey, subject));
+    }
+  }
+
+  return toXrpcResponse(res);
+}
+
+// Background fill for an XRPC URL save (see handleXrpcSave): extract the article body and
+// write it onto the saved row. Runs under ctx.waitUntil so the caller isn't blocked on
+// the extraction. The UPDATE itself (content-IS-NULL guard, COALESCE metadata) lives in
+// fillExtractedContent — here we leave content_type alone so a URL save stays 'webpage'.
+// Best-effort — an un-extractable URL just keeps its title and an empty body.
+async function extractAndStoreSavedContent(
+  env: Env,
+  userDid: string,
+  rkey: string,
+  url: string
+): Promise<void> {
+  try {
+    const a = await new FeedProxyClient(env).extract(url);
+    await fillExtractedContent(env, a, { userDid, rkey });
+  } catch (err) {
+    console.error('xrpc save: background extraction failed', err);
+  }
 }
 
 // POST /xrpc/app.skyreader.feed.subscribe — subscribe to an RSS/Atom feed by URL.
