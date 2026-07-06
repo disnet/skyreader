@@ -140,6 +140,7 @@
 
   // Icon names type (matches Icon.svelte)
   type IconName =
+    | 'home'
     | 'inbox'
     | 'bookmark'
     | 'share'
@@ -208,6 +209,12 @@
   let filteredItems = $derived.by((): SectionData[] => {
     const query = searchQuery.toLowerCase().trim();
 
+    const homeItem: NavItem = {
+      type: 'utility',
+      id: 'home',
+      label: 'Home',
+      icon: 'home',
+    };
     const everythingItem: NavItem = {
       type: 'view',
       id: 'all',
@@ -299,6 +306,12 @@
 
     const sections: SectionData[] = [];
 
+    // Home: the default landing surface (a route, not a feed filter)
+    const homeGroup = [homeItem].filter(filterItem);
+    if (homeGroup.length > 0) {
+      sections.push({ section: '', items: homeGroup });
+    }
+
     // Everything group: Everything + nested source channels
     const everythingGroup = [everythingItem, ...sourceChannelItems].filter(filterItem);
     if (everythingGroup.length > 0) {
@@ -357,6 +370,7 @@
     const pathname = $page.url.pathname;
 
     // Utility pages (separate routes)
+    if (pathname === '/home') return { type: 'icon', name: 'home' };
     if (pathname === '/linkblog') return { type: 'icon', name: 'share' };
     if (pathname === '/highlights') return { type: 'icon', name: 'highlighter' };
     if (pathname === '/discover') return { type: 'icon', name: 'users' };
@@ -367,12 +381,10 @@
     const url = $page.url;
     const feed = url.searchParams.get('feed');
     const saved = pathname === '/saved' || url.searchParams.get('saved');
-    const shared = url.searchParams.get('shared');
     const view = url.searchParams.get('view');
 
     if (view) return { type: 'icon', name: 'filter' };
     if (saved) return { type: 'icon', name: 'bookmark' };
-    if (shared) return { type: 'icon', name: 'share' };
 
     if (feed) {
       const sub = subscriptions.find((s) => s.id === parseInt(feed));
@@ -402,9 +414,7 @@
     if (onSaved) return { type: 'saved' };
     if (!onFeeds) return { type: 'none' };
     const feed = url.searchParams.get('feed');
-    const shared = url.searchParams.get('shared');
     if (feed) return { type: 'feed', id: parseInt(feed) };
-    if (shared) return { type: 'shared' };
     return { type: 'all' };
   });
 
@@ -413,7 +423,6 @@
     if (item.type === 'view') {
       if (item.id === 'all' && filter.type === 'all') return true;
       if (item.id === 'saved' && filter.type === 'saved') return true;
-      if (item.id === 'shared' && filter.type === 'shared') return true;
     }
     if (item.type === 'feed' && filter.type === 'feed' && filter.id === item.id) return true;
     if (item.type === 'filteredView' && filter.type === 'filteredView' && filter.id === item.id)
@@ -482,7 +491,6 @@
     let url = FEEDS_PATH;
     if (item.type === 'view') {
       if (item.id === 'saved') url = SAVED_PATH;
-      else if (item.id === 'shared') url = `${FEEDS_PATH}?shared=true`;
     } else if (item.type === 'feed') {
       url = feedPath(item.id);
     } else if (item.type === 'filteredView') {

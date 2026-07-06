@@ -112,11 +112,9 @@
     if (path === FEEDS_PATH) {
       const feed = sp.get('feed');
       const category = sp.get('category');
-      const shared = sp.get('shared');
       if (view) return { type: 'view' as const, id: view };
       if (feed) return { type: 'feed' as const, id: parseInt(feed) };
       if (category) return { type: 'category' as const, name: category };
-      if (shared) return { type: 'shared' as const };
       return { type: 'all' as const };
     }
     if (path === SAVED_PATH) {
@@ -225,7 +223,6 @@
     else if (type === 'feed' && id != null) url = feedPath(id);
     else if (type === 'category' && id != null) url = categoryPath(String(id));
     else if (type === 'saved') url = SAVED_PATH;
-    else if (type === 'shared') url = `${FEEDS_PATH}?shared=true`;
 
     goto(url);
 

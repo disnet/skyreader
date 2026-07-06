@@ -73,7 +73,7 @@
   onMount(() => {
     // View switching shortcuts
     keyboardStore.register({
-      key: 'h',
+      key: '0',
       description: 'Home',
       category: 'Views',
       action: () => goto('/home'),
@@ -98,22 +98,38 @@
 
     keyboardStore.register({
       key: '3',
-      description: 'Shared',
+      description: 'Linkblog',
       category: 'Views',
-      action: () => goto(`${FEEDS_PATH}?shared=true`),
+      action: () => goto('/linkblog'),
       condition: () => auth.isAuthenticated,
     });
 
     keyboardStore.register({
       key: '4',
-      description: 'Toggle Feeds section',
+      description: 'Highlights',
       category: 'Views',
-      action: () => sidebarStore.toggleSection('feeds'),
+      action: () => goto('/highlights'),
       condition: () => auth.isAuthenticated,
     });
 
     keyboardStore.register({
-      key: '0',
+      key: '5',
+      description: 'Discover',
+      category: 'Views',
+      action: () => goto('/discover'),
+      condition: () => auth.isAuthenticated,
+    });
+
+    keyboardStore.register({
+      key: '6',
+      description: 'Manage Sources',
+      category: 'Views',
+      action: () => goto('/sources'),
+      condition: () => auth.isAuthenticated,
+    });
+
+    keyboardStore.register({
+      key: '7',
       description: 'Settings',
       category: 'Views',
       action: () => goto('/settings'),
@@ -137,12 +153,12 @@
       condition: () => auth.isAuthenticated,
     });
 
-    // Add feed shortcut
+    // Add menu shortcut (Add feed / @handle / Save URL / …)
     keyboardStore.register({
       key: 'a',
-      description: 'Add feed',
+      description: 'Toggle add menu',
       category: 'Other',
-      action: () => sidebarStore.openAddFeedModal(),
+      action: () => sidebarStore.toggleAddMenu(),
       condition: () => auth.isAuthenticated,
     });
 
