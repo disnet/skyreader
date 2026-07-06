@@ -39,6 +39,7 @@
   let savedCount = $derived(itemLabelsStore.savedCount);
 
   type IconName =
+    | 'home'
     | 'inbox'
     | 'bookmark'
     | 'share'
@@ -100,7 +101,7 @@
 
   type SectionData = {
     section: string;
-    groupId?: 'everything' | 'saved' | 'other' | 'sources';
+    groupId?: 'home' | 'everything' | 'saved' | 'other' | 'sources';
     items: NavItem[];
   };
 
@@ -149,6 +150,12 @@
   let filteredItems = $derived.by((): SectionData[] => {
     const query = searchQuery.toLowerCase().trim();
 
+    const homeItem: NavItem = {
+      type: 'view',
+      id: 'home',
+      label: 'Home',
+      icon: 'home',
+    };
     const everythingItem: NavItem = {
       type: 'view',
       id: 'all',
@@ -264,6 +271,11 @@
 
     const sections: SectionData[] = [];
 
+    // Home: the default landing surface (a route, not a feed filter)
+    if (filterItem(homeItem)) {
+      sections.push({ section: '', groupId: 'home', items: [homeItem] });
+    }
+
     // Everything group: Everything + source channels (+ suggestions rendered inline in template)
     const everythingGroup = [everythingItem, ...sourceChannelItems].filter(filterItem);
     if (everythingGroup.length > 0 || (!query && channelSuggestions.suggestions.length > 0)) {
@@ -300,6 +312,7 @@
   // Get current filter from URL
   let currentFilter = $derived.by(() => {
     const url = $page.url;
+    if (url.pathname === '/home') return { type: 'home' };
     const onFeeds = url.pathname === FEEDS_PATH;
     const onSaved = url.pathname === SAVED_PATH;
     const view = url.searchParams.get('view');
@@ -318,6 +331,7 @@
   function isItemActive(item: NavItem): boolean {
     const filter = currentFilter;
     if (item.type === 'view') {
+      if (item.id === 'home' && filter.type === 'home') return true;
       if (item.id === 'all' && filter.type === 'all') return true;
       if (item.id === 'saved' && filter.type === 'saved') return true;
       if (item.id === 'shared' && filter.type === 'shared') return true;
@@ -362,7 +376,8 @@
   function selectItem(item: NavItem) {
     let url = FEEDS_PATH;
     if (item.type === 'view') {
-      if (item.id === 'saved') url = SAVED_PATH;
+      if (item.id === 'home') url = '/home';
+      else if (item.id === 'saved') url = SAVED_PATH;
       else if (item.id === 'shared') url = `${FEEDS_PATH}?shared=true`;
     } else if (item.type === 'feed') {
       url = feedPath(item.id);
