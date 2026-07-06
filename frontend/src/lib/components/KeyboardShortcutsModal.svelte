@@ -9,36 +9,42 @@
     { category: 'Navigation', key: 'k', description: 'Previous item' },
     { category: 'Navigation', key: 'Enter', description: 'Toggle expand' },
     { category: 'Navigation', key: 'o', description: 'Open in new tab' },
+    { category: 'Navigation', key: 'f', description: 'Read in full screen' },
 
     // Views
-    { category: 'Views', key: '1', description: 'All' },
+    { category: 'Views', key: '0', description: 'Home' },
+    { category: 'Views', key: '1', description: 'Feeds' },
     { category: 'Views', key: '2', description: 'Saved' },
-    { category: 'Views', key: '3', description: 'Shared' },
-    { category: 'Views', key: '4', description: 'Feeds' },
-    { category: 'Views', key: '5', description: 'Following' },
-    { category: 'Views', key: '6', description: 'Discover' },
-    { category: 'Views', key: '0', description: 'Settings' },
+    { category: 'Views', key: '3', description: 'Linkblog' },
+    { category: 'Views', key: '4', description: 'Highlights' },
+    { category: 'Views', key: '5', description: 'Discover' },
+    { category: 'Views', key: '6', description: 'Manage Sources' },
+    { category: 'Views', key: '7', description: 'Settings' },
 
-    // Feed/User cycling
-    { category: 'Feed/User', key: '[', description: 'Previous feed/user' },
-    { category: 'Feed/User', key: ']', description: 'Next feed/user' },
+    // Feed cycling
+    { category: 'Feed', key: '[', description: 'Previous feed' },
+    { category: 'Feed', key: ']', description: 'Next feed' },
 
     // Article actions
-    { category: 'Article', key: 's', description: 'Save' },
+    { category: 'Article', key: 's', description: 'Toggle save' },
     { category: 'Article', key: 'S', description: 'Share/unshare' },
     { category: 'Article', key: 'm', description: 'Mark read/unread' },
+    { category: 'Article', key: 'A', description: 'Mark all as read' },
+    { category: 'Article', key: 't', description: 'Tag item' },
+    { category: 'Article', key: 'e', description: 'Archive/unarchive saved item' },
+    { category: 'Article', key: 'h', description: 'Toggle highlight on paragraph' },
     { category: 'Article', key: '+', description: 'Increase font size' },
     { category: 'Article', key: '_', description: 'Decrease font size' },
     { category: 'Article', key: ')', description: 'Reset font size' },
 
     // Other
     { category: 'Other', key: 'u', description: 'Toggle unread filter' },
-    { category: 'Other', key: 'a', description: 'Add feed' },
+    { category: 'Other', key: 'a', description: 'Toggle add menu' },
     { category: 'Other', key: '?', description: 'Show shortcuts' },
     { category: 'Other', key: 'Esc', description: 'Close modal / Deselect' },
   ];
 
-  const categories = ['Navigation', 'Views', 'Feed/User', 'Article', 'Other'];
+  const categories = ['Navigation', 'Views', 'Feed', 'Article', 'Other'];
 </script>
 
 <Modal

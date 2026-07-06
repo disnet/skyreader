@@ -4,7 +4,9 @@
   import Icon from '$lib/components/Icon.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
 
-  let isOpen = $state(false);
+  // Open state lives in the store so the keyboard shortcut ("a") can toggle
+  // this menu as well as the trigger button.
+  let isOpen = $derived(sidebarStore.addMenuOpen);
   let inputValue = $state('');
   let inputRef: HTMLInputElement | null = $state(null);
   let buttonRef: HTMLButtonElement | null = $state(null);
@@ -40,7 +42,12 @@
 
   function toggle(e: MouseEvent) {
     e.stopPropagation();
-    isOpen = !isOpen;
+    sidebarStore.toggleAddMenu();
+  }
+
+  // On open (from a click or the keyboard shortcut), reset the input, position
+  // the menu, and focus the field.
+  $effect(() => {
     if (isOpen) {
       inputValue = '';
       requestAnimationFrame(() => {
@@ -48,10 +55,10 @@
         inputRef?.focus();
       });
     }
-  }
+  });
 
   function close() {
-    isOpen = false;
+    sidebarStore.closeAddMenu();
     inputValue = '';
   }
 

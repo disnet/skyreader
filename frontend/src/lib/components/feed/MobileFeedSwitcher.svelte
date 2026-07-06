@@ -320,11 +320,9 @@
     if (onSaved) return { type: 'saved' };
     if (!onFeeds) return { type: 'none' };
     const feed = url.searchParams.get('feed');
-    const shared = url.searchParams.get('shared');
     const category = url.searchParams.get('category');
     if (feed) return { type: 'feed', id: parseInt(feed) };
     if (category) return { type: 'category', name: category };
-    if (shared) return { type: 'shared' };
     return { type: 'all' };
   });
 
@@ -334,7 +332,6 @@
       if (item.id === 'home' && filter.type === 'home') return true;
       if (item.id === 'all' && filter.type === 'all') return true;
       if (item.id === 'saved' && filter.type === 'saved') return true;
-      if (item.id === 'shared' && filter.type === 'shared') return true;
     }
     if (item.type === 'feed' && filter.type === 'feed' && filter.id === item.id) return true;
     if (item.type === 'category' && filter.type === 'category' && filter.name === item.id)
@@ -378,7 +375,6 @@
     if (item.type === 'view') {
       if (item.id === 'home') url = '/home';
       else if (item.id === 'saved') url = SAVED_PATH;
-      else if (item.id === 'shared') url = `${FEEDS_PATH}?shared=true`;
     } else if (item.type === 'feed') {
       url = feedPath(item.id);
     } else if (item.type === 'category') {

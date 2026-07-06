@@ -6,6 +6,7 @@ interface SidebarState {
   addHandleModalOpen: boolean; // For add @handle modal
   saveArticleModalOpen: boolean; // For save article by URL modal
   navigationDropdownOpen: boolean; // For navigation dropdown
+  addMenuOpen: boolean; // For the "+" add menu (Add feed / @handle / Save URL / …)
   expandedSections: {
     shared: boolean;
     feeds: boolean;
@@ -29,6 +30,7 @@ function createSidebarStore() {
     addHandleModalOpen: false,
     saveArticleModalOpen: false,
     navigationDropdownOpen: false,
+    addMenuOpen: false,
     expandedSections: {
       shared: false,
       feeds: false,
@@ -178,6 +180,15 @@ function createSidebarStore() {
     state.navigationDropdownOpen = false;
   }
 
+  // The sidebar "+" add source menu (AddSourceInput).
+  function toggleAddMenu() {
+    state.addMenuOpen = !state.addMenuOpen;
+  }
+
+  function closeAddMenu() {
+    state.addMenuOpen = false;
+  }
+
   function setSortedFeedIds(ids: number[]) {
     state.sortedFeedIds = ids;
   }
@@ -203,6 +214,9 @@ function createSidebarStore() {
     },
     get navigationDropdownOpen() {
       return state.navigationDropdownOpen;
+    },
+    get addMenuOpen() {
+      return state.addMenuOpen;
     },
     get expandedSections() {
       return state.expandedSections;
@@ -241,6 +255,8 @@ function createSidebarStore() {
     closeSaveArticleModal,
     toggleNavigationDropdown,
     closeNavigationDropdown,
+    toggleAddMenu,
+    closeAddMenu,
     setSortedFeedIds,
     openChannelModal,
     closeChannelModal,
