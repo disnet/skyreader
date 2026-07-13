@@ -1,13 +1,9 @@
 <script lang="ts">
-  import type { Article, ReaderCollectionItem } from '$lib/types';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import { normalizeDisplayItem, getAuthorLabel, getDisplayContent } from '$lib/utils/displayItem';
-  import { getExternalArticleLink, formatQuoteSeed } from '$lib/utils/linkPost';
+  import { getExternalArticleLink } from '$lib/utils/linkPost';
   import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
-  import { linkblogStore } from '$lib/stores/linkblog.svelte';
-  import { auth } from '$lib/stores/auth.svelte';
-  import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
   import { db } from '$lib/services/db';
   import { saveCollectionPiece, isCollectionPieceSaved } from '$lib/utils/collectionPiece';
@@ -23,9 +19,7 @@
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import AppearanceToolbar from '$lib/components/feed/AppearanceToolbar.svelte';
-  import AtmospherePanel from '$lib/components/feed/AtmospherePanel.svelte';
-  import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
-  import type { LaneId } from '$lib/components/articleCardView.types';
+  import ReaderDiscussion from '$lib/components/feed/ReaderDiscussion.svelte';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
@@ -326,127 +320,6 @@
 
   let isArchived = $derived(itemLabelsStore.isArchived(itemKey));
   let isSaved = $derived(itemLabelsStore.isSaved(itemKey));
-
-  // Highlights offered to the share composer as quick blockquotes. A saved item's
-  // display key is its AT-URI, but highlights are stored under the canonical guid;
-  // getHighlights resolves either key, so this sees them regardless of which the
-  // reader holds.
-  let shareHighlights = $derived(itemLabelsStore.getHighlights(itemKey));
-  // ── Sharing + Discussion (the Atmosphere) ──────────────────────────────────
-  // Driven straight off linkblogStore, keyed on the item's URL — the same source
-  // of truth the feed card uses — so the share, its note, and the lane counts
-  // stay in lockstep whether the reader was opened from the feed or the saved
-  // list. It all lives inline at the end of the article: a Share button that
-  // becomes the note box once shared, then the discussion lanes.
-  let sharedNow = $derived(linkblogStore.isShared(itemUrl));
-  let currentShareNote = $derived(linkblogStore.getNote(itemUrl));
-  let canShareLinkblog = $derived(Boolean(auth.user));
-
-  // The article record to share for the Blogs lane, built from whichever item
-  // type the reader is showing. A document carries its recordUri as repostUri so
-  // a reshared link post credits the original.
-  let shareTarget = $derived.by((): { article: Article; repostUri?: string } | null => {
-    if (!itemUrl) return null;
-    if (readerItem.type === 'article') return { article: readerItem.item };
-    if (readerItem.type === 'saved') {
-      const s = readerItem.item;
-      return {
-        article: {
-          subscriptionId: 0,
-          guid: s.url,
-          url: s.url,
-          title: s.title ?? s.url,
-          author: s.author ?? undefined,
-          summary: s.description ?? undefined,
-          imageUrl: s.image ?? undefined,
-          publishedAt: s.publishedAt ?? s.savedAt,
-          fetchedAt: Date.now(),
-        },
-      };
-    }
-    const d = readerItem.item;
-    const image = d.coverImageCid
-      ? `https://cdn.bsky.app/img/feed_fullsize/plain/${d.authorDid}/${d.coverImageCid}@jpeg`
-      : undefined;
-    return {
-      article: {
-        subscriptionId: 0,
-        guid: itemUrl,
-        url: itemUrl,
-        title: title || itemUrl,
-        author: linkPostArticle?.author ?? undefined,
-        summary: d.description ?? undefined,
-        imageUrl: image,
-        publishedAt,
-        fetchedAt: Date.now(),
-      },
-      repostUri: d.recordUri,
-    };
-  });
-
-  // Seed a fresh share's note with the item's excerpt as an editable quote.
-  let seededQuote = $derived(formatQuoteSeed(shareTarget?.article.summary));
-
-  async function shareNow() {
-    const t = shareTarget;
-    if (!t) return;
-    await linkblogStore.shareLink(t.article, seededQuote ?? '', t.repostUri);
-  }
-
-  function applyShareNote(note: string) {
-    linkblogStore.setNote(itemUrl, note);
-  }
-
-  async function removeShare() {
-    await linkblogStore.unshare(itemUrl);
-  }
-
-  // Whether the user can contribute to a lane from the reader (mode-specific).
-  // The Blogs lane defers to the dedicated Share button + note box below, so it
-  // never offers its own [+] here — it stays a count-and-read affordance.
-  function laneCanCreate(id: LaneId): boolean {
-    switch (id) {
-      case 'linkblog':
-        return false;
-      case 'semble':
-        return Boolean(onSaveToSemble);
-      case 'margin':
-        return Boolean(onSaveToMargin);
-      case 'bluesky':
-        return true;
-    }
-  }
-
-  const atmosphere = useAtmosphere({
-    itemUrl: () => itemUrl,
-    isShared: () => sharedNow,
-    canCreate: laneCanCreate,
-  });
-
-  function createInLane(id: LaneId) {
-    switch (id) {
-      case 'linkblog':
-        if (!sharedNow) void shareNow();
-        break;
-      case 'semble':
-        onSaveToSemble?.();
-        break;
-      case 'margin':
-        onSaveToMargin?.();
-        break;
-      case 'bluesky':
-        window.open(
-          `https://bsky.app/intent/compose?text=${encodeURIComponent(itemUrl)}`,
-          '_blank',
-          'noopener'
-        );
-        break;
-    }
-  }
-
-  function openAuthor(did: string) {
-    sidebarStore.openAddFeedModalForDid(did);
-  }
 
   let sanitizedContent = $derived(sanitizeHtml(displayContent, itemUrl));
 
@@ -1073,40 +946,7 @@
         {/if}
       </div>
 
-      <!-- End-of-article Discussion: a quiet separator, then sharing (a Share
-           button that becomes the note box once shared, like the feed card) and
-           the discussion lanes. Sits in the reading flow — finish the piece, the
-           conversation is right there. -->
-      <section class="reader-discussion" aria-label="Discussion">
-        <div class="reader-discussion-divider"></div>
-        {#if !sharedNow && canShareLinkblog}
-          <button type="button" class="reader-share-cta" onclick={() => void shareNow()}>
-            <Icon name="share" size={16} />
-            <span>Share to your linkblog</span>
-          </button>
-        {/if}
-        <AtmospherePanel
-          laneRow={atmosphere.laneRow}
-          expandedLane={atmosphere.expandedLane}
-          expandedLaneItems={atmosphere.expandedLaneItems}
-          currentlyShared={sharedNow}
-          currentNote={currentShareNote}
-          highlights={shareHighlights}
-          lanesOpen={true}
-          panelId="reader-discussion-panel"
-          onToggleLane={atmosphere.toggleLane}
-          onCreateInLane={createInLane}
-          onApplyComment={applyShareNote}
-          onOpenAuthor={openAuthor}
-        >
-          {#snippet leadExtra()}
-            <button type="button" class="discussion-remove" onclick={() => void removeShare()}>
-              <Icon name="trash" size={14} />
-              <span>Remove from your linkblog</span>
-            </button>
-          {/snippet}
-        </AtmospherePanel>
-      </section>
+      <ReaderDiscussion {readerItem} {onSaveToSemble} {onSaveToMargin} />
     </article>
   </div>
 </div>
@@ -1867,14 +1707,6 @@
     .reader-container {
       padding: 1rem 1rem calc(5rem + env(safe-area-inset-bottom, 0px));
     }
-
-    /* The share note box sits at the very end of the scroll content, where the
-       fixed bottom nav (and the on-screen keyboard) would otherwise cover it.
-       While it's focused, add a tall overscroll cushion beneath it so it can be
-       scrolled clear of both. */
-    .reader-discussion:has(:global(textarea:focus)) {
-      padding-bottom: calc(50vh + env(safe-area-inset-bottom, 0px));
-    }
   }
 
   @media (max-width: 640px) {
@@ -1903,77 +1735,5 @@
     .sheet-action-btn:active {
       background: rgba(255, 255, 255, 0.1);
     }
-  }
-
-  /* End-of-article Discussion section — in the reading flow, not chrome. */
-  .reader-discussion {
-    margin-top: 2.5rem;
-  }
-
-  /* A quiet full-width rule marking the end of the article. */
-  .reader-discussion-divider {
-    height: 1px;
-    background: var(--color-border, #e8e8e8);
-    margin-bottom: 1.25rem;
-  }
-
-  /* The primary Share affordance: a calm outline button that gives way to the
-     note box once shared (the box then owns editing). One Blue on hover. */
-  .reader-share-cta {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.875rem;
-    background: none;
-    border: 1px solid var(--color-border, #e0e0e0);
-    border-radius: 8px;
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
-    color: var(--color-text);
-    cursor: pointer;
-    transition:
-      color 0.15s ease,
-      border-color 0.15s ease,
-      background-color 0.15s ease;
-  }
-
-  .reader-share-cta :global(.icon) {
-    color: var(--color-text-secondary);
-    transition: color 0.15s ease;
-  }
-
-  .reader-share-cta:hover {
-    border-color: var(--color-primary, #0066cc);
-    color: var(--color-primary, #0066cc);
-  }
-
-  .reader-share-cta:hover :global(.icon) {
-    color: var(--color-primary, #0066cc);
-  }
-
-  /* Remove control: quiet by default, danger on hover — removal deletes a PDS
-     record, so it reads as deliberate without shouting. */
-  .discussion-remove {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    margin-top: 0.75rem;
-    padding: 0.375rem 0.625rem;
-    background: none;
-    border: 1px solid var(--color-border, #e0e0e0);
-    border-radius: 6px;
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    transition:
-      color 0.15s ease,
-      border-color 0.15s ease,
-      background-color 0.15s ease;
-  }
-
-  .discussion-remove:hover {
-    color: var(--color-error, #f44336);
-    border-color: var(--color-error, #f44336);
   }
 </style>

@@ -11,6 +11,11 @@ import {
 import { syncStore } from './sync.svelte';
 import { savesStore } from './saves.svelte';
 import { generateTid } from '$lib/utils/tid';
+import {
+  mutateHighlightUnion,
+  resolveHighlightAliases,
+  unionHighlightSources,
+} from '$lib/utils/highlightAliases';
 import type { ItemLabel, ItemLabelType, SocialItemType, Highlight } from '$lib/types';
 
 const BULK_BATCH_SIZE = 500;
@@ -533,11 +538,19 @@ function createItemLabelsStore() {
   let allHighlights = $derived.by(
     (): Array<{ itemKey: string; itemType: ItemLabelType; highlight: Highlight }> => {
       const out: Array<{ itemKey: string; itemType: ItemLabelType; highlight: Highlight }> = [];
+      const emitted = new Set<string>();
       for (const [, lbl] of labelMap) {
         if (lbl.label !== 'highlights') continue;
-        const highlights = (lbl.props.highlights as Highlight[]) || [];
+        const context = highlightContext(lbl.itemKey);
+        if (emitted.has(context.canonicalKey)) continue;
+        emitted.add(context.canonicalKey);
+        const itemType = context.labels.reduce(
+          (newest, entry) => (entry.updatedAt > newest.updatedAt ? entry : newest),
+          lbl
+        ).itemType;
+        const highlights = context.highlights;
         for (const highlight of highlights) {
-          out.push({ itemKey: lbl.itemKey, itemType: lbl.itemType as ItemLabelType, highlight });
+          out.push({ itemKey: context.canonicalKey, itemType, highlight });
         }
       }
       return out;
@@ -1270,6 +1283,53 @@ function createItemLabelsStore() {
   let readProgressDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   const READ_PROGRESS_DEBOUNCE_MS = 500;
 
+  async function persistReadProgress(
+    itemKey: string,
+    itemType: ItemLabelType,
+    paragraphIndex: number,
+    totalParagraphs: number
+  ) {
+    const current = getReadProgress(itemKey);
+    const now = Date.now();
+    const lbl: ItemLabel = {
+      itemKey,
+      itemType,
+      label: 'readProgress',
+      props: { paragraphIndex, totalParagraphs, lastReadAt: now },
+      createdAt: current ? (labelMap.get(makeKey(itemKey, 'readProgress'))?.createdAt ?? now) : now,
+      updatedAt: now,
+    };
+    await putLabel(lbl);
+    triggerReactivity();
+
+    const props = { paragraphIndex, totalParagraphs, lastReadAt: now };
+    if (syncStore.isOnline) {
+      try {
+        await api.addLabel({
+          itemKey,
+          itemType,
+          label: 'readProgress',
+          props,
+        });
+      } catch (e) {
+        console.error('Failed to sync read progress, queueing for retry:', e);
+        await syncQueue.enqueue('create', 'label', `${itemKey}\0readProgress`, {
+          itemKey,
+          itemType,
+          label: 'readProgress',
+          props,
+        } as LabelPayload);
+      }
+    } else {
+      await syncQueue.enqueue('create', 'label', `${itemKey}\0readProgress`, {
+        itemKey,
+        itemType,
+        label: 'readProgress',
+        props,
+      } as LabelPayload);
+    }
+  }
+
   function getReadProgress(
     itemKey: string
   ): { paragraphIndex: number; totalParagraphs: number } | null {
@@ -1332,49 +1392,18 @@ function createItemLabelsStore() {
 
     // Debounce the actual persist
     if (readProgressDebounceTimer) clearTimeout(readProgressDebounceTimer);
-    readProgressDebounceTimer = setTimeout(async () => {
-      const now = Date.now();
-      const lbl: ItemLabel = {
-        itemKey,
-        itemType,
-        label: 'readProgress',
-        props: { paragraphIndex, totalParagraphs, lastReadAt: now },
-        createdAt: current
-          ? (labelMap.get(makeKey(itemKey, 'readProgress'))?.createdAt ?? now)
-          : now,
-        updatedAt: now,
-      };
-      await putLabel(lbl);
-      triggerReactivity();
+    readProgressDebounceTimer = setTimeout(
+      () => void persistReadProgress(itemKey, itemType, paragraphIndex, totalParagraphs),
+      READ_PROGRESS_DEBOUNCE_MS
+    );
+  }
 
-      // Sync to backend
-      const props = { paragraphIndex, totalParagraphs, lastReadAt: now };
-      if (syncStore.isOnline) {
-        try {
-          await api.addLabel({
-            itemKey,
-            itemType,
-            label: 'readProgress',
-            props,
-          });
-        } catch (e) {
-          console.error('Failed to sync read progress, queueing for retry:', e);
-          await syncQueue.enqueue('create', 'label', `${itemKey}\0readProgress`, {
-            itemKey,
-            itemType,
-            label: 'readProgress',
-            props,
-          } as LabelPayload);
-        }
-      } else {
-        await syncQueue.enqueue('create', 'label', `${itemKey}\0readProgress`, {
-          itemKey,
-          itemType,
-          label: 'readProgress',
-          props,
-        } as LabelPayload);
-      }
-    }, READ_PROGRESS_DEBOUNCE_MS);
+  // Record that a combined reading surface reached this item without inventing
+  // paragraph progress. The sentinel (-1 / 0) is visible to getReadActivity,
+  // but ignored by the single-article reader's restore/progress calculations.
+  function markOpened(itemKey: string, itemType: ItemLabelType) {
+    if (getReadActivity([itemKey])) return;
+    void persistReadProgress(itemKey, itemType, -1, 0);
   }
 
   // --- Highlight mutations ---
@@ -1388,12 +1417,7 @@ function createItemLabelsStore() {
   // Depends on savesStore being loaded: a highlight created before saves hydrate
   // resolves to its uri and is folded back under the guid by a later write.
   function canonicalKey(itemKey: string): string {
-    for (const bm of savesStore.articles) {
-      if (bm.itemGuid === itemKey || bm.uri === itemKey) {
-        return bm.itemGuid || bm.uri;
-      }
-    }
-    return itemKey;
+    return resolveHighlightAliases(itemKey, savesStore.articles).canonicalKey;
   }
 
   // Exact-key read. Used by reconcile (which reconciles each server row by its
@@ -1403,9 +1427,26 @@ function createItemLabelsStore() {
     return lbl ? (lbl.props.highlights as Highlight[]) || [] : [];
   }
 
-  // Public read: callers may hold a guid or a uri — always serve the canonical set.
+  function highlightContext(itemKey: string) {
+    const resolution = resolveHighlightAliases(itemKey, savesStore.articles);
+    const labels = resolution.keys
+      .map((key) => getLabel(key, 'highlights'))
+      .filter((label): label is ItemLabel => Boolean(label));
+    const highlights = unionHighlightSources(
+      labels.map((label) => ({
+        key: label.itemKey,
+        updatedAt: label.updatedAt,
+        highlights: (label.props.highlights as Highlight[]) || [],
+      }))
+    );
+    return { ...resolution, labels, highlights };
+  }
+
+  // Public read: callers may hold a guid or a uri — serve the union of every
+  // alias row. This keeps URI-keyed highlights visible when saves hydrate later
+  // and reveal that the canonical key is the article guid.
   function getHighlights(itemKey: string): Highlight[] {
-    return rawHighlights(canonicalKey(itemKey));
+    return highlightContext(itemKey).highlights;
   }
 
   function hasHighlights(itemKey: string): boolean {
@@ -1454,55 +1495,91 @@ function createItemLabelsStore() {
     }
   }
 
-  async function addHighlight(itemKey: string, itemType: ItemLabelType, highlight: Highlight) {
-    itemKey = canonicalKey(itemKey);
-    const existing = getLabel(itemKey, 'highlights');
-    const currentHighlights = existing ? (existing.props.highlights as Highlight[]) || [] : [];
-    const newHighlights = [...currentHighlights, highlight];
-    const now = Date.now();
+  async function persistHighlightUnion(
+    itemKey: string,
+    itemType: ItemLabelType,
+    highlights: Highlight[]
+  ) {
+    const context = highlightContext(itemKey);
+    const canonicalExisting = context.labels.find(
+      (label) => label.itemKey === context.canonicalKey
+    );
+    const newestExisting = context.labels.reduce<ItemLabel | undefined>(
+      (newest, label) => (!newest || label.updatedAt > newest.updatedAt ? label : newest),
+      undefined
+    );
+    const resolvedType = canonicalExisting?.itemType || newestExisting?.itemType || itemType;
+    const aliasKeys = context.keys.filter((key) => key !== context.canonicalKey);
 
-    const label: ItemLabel = {
-      itemKey,
-      itemType: existing?.itemType || itemType,
-      label: 'highlights',
-      props: { highlights: newHighlights },
-      createdAt: existing?.createdAt || now,
-      updatedAt: now,
-    };
-    addToState(label);
+    if (highlights.length > 0) {
+      const now = Date.now();
+      const createdAt = context.labels.reduce(
+        (oldest, label) => Math.min(oldest, label.createdAt),
+        canonicalExisting?.createdAt || newestExisting?.createdAt || now
+      );
+      const canonicalLabel: ItemLabel = {
+        itemKey: context.canonicalKey,
+        itemType: resolvedType,
+        label: 'highlights',
+        props: { highlights },
+        createdAt,
+        updatedAt: now,
+      };
+
+      // Write the canonical row before deleting aliases so a failed local write
+      // never strands the only copy of a highlight.
+      addToState(canonicalLabel);
+      triggerReactivity();
+      await safePut(db.itemLabels, canonicalLabel);
+      for (const aliasKey of aliasKeys) removeFromState(aliasKey, 'highlights');
+      triggerReactivity();
+      for (const aliasKey of aliasKeys) {
+        try {
+          await db.itemLabels.where('[itemKey+label]').equals([aliasKey, 'highlights']).delete();
+        } catch (error) {
+          console.error('Failed to delete migrated highlights alias from DB:', error);
+        }
+      }
+
+      // Preserve ordering remotely too: publish the union under the canonical
+      // key, then tombstone every alias via the normal API/queue path.
+      void (async () => {
+        await syncHighlightsToBackend(context.canonicalKey, resolvedType, highlights);
+        for (const aliasKey of aliasKeys) {
+          await syncHighlightsToBackend(aliasKey, resolvedType, []);
+        }
+      })();
+      return;
+    }
+
+    for (const key of context.keys) removeFromState(key, 'highlights');
     triggerReactivity();
-    await safePut(db.itemLabels, label);
-    void syncHighlightsToBackend(itemKey, label.itemType, newHighlights);
+    for (const key of context.keys) {
+      try {
+        await db.itemLabels.where('[itemKey+label]').equals([key, 'highlights']).delete();
+      } catch (error) {
+        console.error('Failed to delete highlights label from DB:', error);
+      }
+    }
+    void (async () => {
+      for (const key of context.keys) await syncHighlightsToBackend(key, resolvedType, []);
+    })();
+  }
+
+  async function addHighlight(itemKey: string, itemType: ItemLabelType, highlight: Highlight) {
+    const mutation = mutateHighlightUnion(getHighlights(itemKey), { type: 'add', highlight });
+    await persistHighlightUnion(itemKey, itemType, mutation.highlights);
   }
 
   async function removeHighlight(itemKey: string, highlightId: string) {
-    itemKey = canonicalKey(itemKey);
-    const existing = getLabel(itemKey, 'highlights');
-    if (!existing) return;
-
-    const currentHighlights = (existing.props.highlights as Highlight[]) || [];
-    const newHighlights = currentHighlights.filter((h) => h.id !== highlightId);
-    const now = Date.now();
-
-    if (newHighlights.length === 0) {
-      removeFromState(itemKey, 'highlights');
-      triggerReactivity();
-      try {
-        await db.itemLabels.where('[itemKey+label]').equals([itemKey, 'highlights']).delete();
-      } catch (e) {
-        console.error('Failed to delete highlights label from DB:', e);
-      }
-    } else {
-      const label: ItemLabel = {
-        ...existing,
-        props: { highlights: newHighlights },
-        updatedAt: now,
-      };
-      addToState(label);
-      triggerReactivity();
-      await safePut(db.itemLabels, label);
-    }
-    void syncHighlightsToBackend(itemKey, existing.itemType, newHighlights);
+    const context = highlightContext(itemKey);
+    const mutation = mutateHighlightUnion(context.highlights, { type: 'remove', highlightId });
+    if (!mutation.changed) return;
+    await persistHighlightUnion(
+      itemKey,
+      context.labels[0]?.itemType || 'saved',
+      mutation.highlights
+    );
   }
 
   /**
@@ -1515,34 +1592,18 @@ function createItemLabelsStore() {
     highlightId: string,
     margin: { uri: string; rkey: string } | null
   ) {
-    itemKey = canonicalKey(itemKey);
-    const existing = getLabel(itemKey, 'highlights');
-    if (!existing) return;
-
-    const currentHighlights = (existing.props.highlights as Highlight[]) || [];
-    let changed = false;
-    const newHighlights = currentHighlights.map((h) => {
-      if (h.id !== highlightId) return h;
-      changed = true;
-      if (margin) {
-        return { ...h, marginUri: margin.uri, marginRkey: margin.rkey };
-      }
-      const { marginUri: _u, marginRkey: _r, ...rest } = h;
-      return rest;
+    const context = highlightContext(itemKey);
+    const mutation = mutateHighlightUnion(context.highlights, {
+      type: 'margin',
+      highlightId,
+      margin,
     });
-    if (!changed) return;
-
-    const label: ItemLabel = {
-      ...existing,
-      props: { highlights: newHighlights },
-      updatedAt: Date.now(),
-    };
-    addToState(label);
-    triggerReactivity();
-    await safePut(db.itemLabels, label);
-    // Margin notes are global (one at.margin.note per highlight), so propagate
-    // the learned uri/rkey to other devices via the same highlights label.
-    void syncHighlightsToBackend(itemKey, existing.itemType, newHighlights);
+    if (!mutation.changed) return;
+    await persistHighlightUnion(
+      itemKey,
+      context.labels[0]?.itemType || 'saved',
+      mutation.highlights
+    );
   }
 
   /**
@@ -1551,33 +1612,18 @@ function createItemLabelsStore() {
    * note record (if any) is updated separately by the caller.
    */
   async function setHighlightNote(itemKey: string, highlightId: string, note: string | undefined) {
-    itemKey = canonicalKey(itemKey);
-    const existing = getLabel(itemKey, 'highlights');
-    if (!existing) return;
-
-    const trimmed = note?.trim();
-    const currentHighlights = (existing.props.highlights as Highlight[]) || [];
-    let changed = false;
-    const newHighlights = currentHighlights.map((h) => {
-      if (h.id !== highlightId) return h;
-      changed = true;
-      if (trimmed) {
-        return { ...h, note: trimmed };
-      }
-      const { note: _n, ...rest } = h;
-      return rest;
+    const context = highlightContext(itemKey);
+    const mutation = mutateHighlightUnion(context.highlights, {
+      type: 'note',
+      highlightId,
+      note,
     });
-    if (!changed) return;
-
-    const label: ItemLabel = {
-      ...existing,
-      props: { highlights: newHighlights },
-      updatedAt: Date.now(),
-    };
-    addToState(label);
-    triggerReactivity();
-    await safePut(db.itemLabels, label);
-    void syncHighlightsToBackend(itemKey, existing.itemType, newHighlights);
+    if (!mutation.changed) return;
+    await persistHighlightUnion(
+      itemKey,
+      context.labels[0]?.itemType || 'saved',
+      mutation.highlights
+    );
   }
 
   // --- Derived helpers ---
@@ -1681,6 +1727,7 @@ function createItemLabelsStore() {
     getReadProgress,
     getReadActivity,
     setReadProgress,
+    markOpened,
     // Highlights
     get allHighlights() {
       return allHighlights;

@@ -19,6 +19,21 @@ async function execD1(statements: string[]) {
   }
 }
 
+/** Quote a string for the small SQL fixtures sent through /api/test/exec. */
+function sqlString(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function sqlNullableString(value: string | null | undefined): string {
+  return value == null ? 'NULL' : sqlString(value);
+}
+
+function sqlNullableInteger(value: number | null | undefined): string {
+  if (value == null) return 'NULL';
+  if (!Number.isFinite(value)) throw new Error('SQL fixture integer must be finite');
+  return String(Math.trunc(value));
+}
+
 export interface TestUser {
   did: string;
   handle: string;
@@ -92,6 +107,10 @@ export interface SeedSavedArticleOpts {
   itemGuid?: string;
   domain?: string;
   contentType?: string;
+  content?: string;
+  wordCount?: number;
+  author?: string;
+  description?: string;
 }
 
 export async function seedSavedArticle(
@@ -102,12 +121,16 @@ export async function seedSavedArticle(
   const recordUri = `at://${user.did}/app.skyreader.feed.saved/${rkey}`;
   const nowMs = Date.now();
   const source = opts.source || 'url';
-  const domain = opts.domain ? `'${opts.domain}'` : 'NULL';
+  const domain = sqlNullableString(opts.domain);
   const contentType = opts.contentType || 'webpage';
-  const itemGuid = opts.itemGuid ? `'${opts.itemGuid}'` : 'NULL';
+  const itemGuid = sqlNullableString(opts.itemGuid);
+  const content = sqlNullableString(opts.content);
+  const author = sqlNullableString(opts.author);
+  const description = sqlNullableString(opts.description);
+  const wordCount = sqlNullableInteger(opts.wordCount);
 
   await execD1([
-    `INSERT OR REPLACE INTO saved_articles (user_did, rkey, record_uri, url, title, source, item_guid, domain, content_type, saved_at, created_at) VALUES ('${user.did}', '${rkey}', '${recordUri}', '${opts.url}', '${opts.title}', '${source}', ${itemGuid}, ${domain}, '${contentType}', ${nowMs}, ${nowMs})`,
+    `INSERT OR REPLACE INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content, word_count, source, item_guid, domain, content_type, saved_at, created_at) VALUES (${sqlString(user.did)}, ${sqlString(rkey)}, ${sqlString(recordUri)}, ${sqlString(opts.url)}, ${sqlString(opts.title)}, ${author}, ${description}, ${content}, ${wordCount}, ${sqlString(source)}, ${itemGuid}, ${domain}, ${sqlString(contentType)}, ${nowMs}, ${nowMs})`,
   ]);
 
   return rkey;

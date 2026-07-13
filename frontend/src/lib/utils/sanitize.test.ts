@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allowedIframeSrc, safeHref } from './sanitize';
+import { allowedIframeSrc, safeHref, safeSanitizerBase } from './sanitize';
 
 describe('safeHref', () => {
   it('passes through http(s) URLs', () => {
@@ -51,5 +51,16 @@ describe('allowedIframeSrc', () => {
     expect(allowedIframeSrc('http://www.youtube.com/embed/video-id', null)).toBeNull();
     expect(allowedIframeSrc('https://example.com/embed', null)).toBeNull();
     expect(allowedIframeSrc('javascript:alert(1)', null)).toBeNull();
+  });
+});
+
+describe('safeSanitizerBase', () => {
+  it('only permits web URLs as relative-link rewrite bases', () => {
+    expect(safeSanitizerBase('javascript:alert(1)')).toBeNull();
+    expect(safeSanitizerBase('data:text/html,unsafe')).toBeNull();
+    expect(safeSanitizerBase('file:///tmp/article')).toBeNull();
+    expect(safeSanitizerBase('https://example.com/article')?.href).toBe(
+      'https://example.com/article'
+    );
   });
 });

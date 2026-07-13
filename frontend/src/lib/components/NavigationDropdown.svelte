@@ -371,6 +371,7 @@
 
     // Utility pages (separate routes)
     if (pathname === '/home') return { type: 'icon', name: 'home' };
+    if (pathname === '/daily') return { type: 'icon', name: 'newspaper' };
     if (pathname === '/linkblog') return { type: 'icon', name: 'share' };
     if (pathname === '/highlights') return { type: 'icon', name: 'highlighter' };
     if (pathname === '/discover') return { type: 'icon', name: 'users' };

@@ -3,10 +3,12 @@ import { browser } from '$app/environment';
 export type ArticleFont = 'sans-serif' | 'serif' | 'mono' | 'literata';
 export type ArticleFontSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 export type BaseSortOrder = 'newest' | 'oldest';
+export type DailyMagazineMinutes = 10 | 20 | 30 | 45 | 60;
 // Which reading surface the app opens to on a fresh load (the `/` redirector).
 export type DefaultView = 'home' | 'feeds' | 'saved';
 
 const FONT_SIZE_ORDER: ArticleFontSize[] = ['xs', 'sm', 'md', 'lg', 'xl'];
+export const DAILY_MAGAZINE_MINUTE_OPTIONS: DailyMagazineMinutes[] = [10, 20, 30, 45, 60];
 
 interface PreferencesState {
   articleFont: ArticleFont;
@@ -18,6 +20,7 @@ interface PreferencesState {
   linkblogShareConfirmed: boolean;
   // Which surface a cold app load lands on (consumed by the `/` redirector).
   defaultView: DefaultView;
+  dailyMagazineMinutes: DailyMagazineMinutes;
 }
 
 const STORAGE_KEY = 'skyreader-preferences';
@@ -31,6 +34,7 @@ function createPreferencesStore() {
     sortOrder: 'newest',
     linkblogShareConfirmed: false,
     defaultView: 'home',
+    dailyMagazineMinutes: 20,
   });
 
   // Restore from localStorage on init
@@ -63,6 +67,9 @@ function createPreferencesStore() {
           parsed.defaultView === 'saved'
         ) {
           state.defaultView = parsed.defaultView;
+        }
+        if (DAILY_MAGAZINE_MINUTE_OPTIONS.includes(parsed.dailyMagazineMinutes)) {
+          state.dailyMagazineMinutes = parsed.dailyMagazineMinutes;
         }
       } catch {
         localStorage.removeItem(STORAGE_KEY);
@@ -137,6 +144,12 @@ function createPreferencesStore() {
     save();
   }
 
+  function setDailyMagazineMinutes(minutes: DailyMagazineMinutes) {
+    if (!DAILY_MAGAZINE_MINUTE_OPTIONS.includes(minutes)) return;
+    state.dailyMagazineMinutes = minutes;
+    save();
+  }
+
   return {
     get articleFont() {
       return state.articleFont;
@@ -159,8 +172,12 @@ function createPreferencesStore() {
     get defaultView() {
       return state.defaultView;
     },
+    get dailyMagazineMinutes() {
+      return state.dailyMagazineMinutes;
+    },
     confirmLinkblogShare,
     setDefaultView,
+    setDailyMagazineMinutes,
     setArticleFont,
     setArticleFontSize,
     increaseFontSize,

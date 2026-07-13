@@ -2,9 +2,11 @@
   // Visual harness for the Home view's lanes — no auth, no backend. Iterate on the
   // lane + tile design here; it flows to the real /home through the same components.
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
+  import DailyMagazineEntry from '$lib/components/feed/DailyMagazineEntry.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import type { SavedItem } from '$lib/types';
+  import type { DailyMagazineIssue } from '$lib/utils/dailyMagazine';
   import Showcase from '../_harness/Showcase.svelte';
   import Case from '../_harness/Case.svelte';
 
@@ -163,6 +165,20 @@
 
   const fewItems = continueItems.slice(0, 1);
 
+  const dailyItems = savedItems.slice(0, 3).map((item, index) => ({
+    item: item.displayItem.item as SavedItem,
+    key: item.key,
+    wordCount: item.displayItem.item.wordCount,
+    opened: false,
+    minutes: [9, 5, 4][index],
+  }));
+  const dailyIssue: DailyMagazineIssue<SavedItem> = {
+    dateKey: '2026-07-13',
+    targetMinutes: 20,
+    totalMinutes: 18,
+    items: dailyItems,
+  };
+
   function noop() {}
 </script>
 
@@ -176,6 +192,10 @@
       <input type="range" min="320" max="980" step="10" bind:value={width} />
     </label>
   {/snippet}
+
+  <Case name="Daily magazine entry" width="{width}px">
+    <DailyMagazineEntry date={new Date(2026, 6, 13)} issue={dailyIssue} />
+  </Case>
 
   <Case name="Continue reading — progress spines" width="{width}px">
     <HomeLane title="Continue reading" icon="clock" items={continueItems} onOpen={noop} />
