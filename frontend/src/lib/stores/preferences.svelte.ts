@@ -2,6 +2,9 @@ import { browser } from '$app/environment';
 
 export type ArticleFont = 'sans-serif' | 'serif' | 'mono' | 'literata';
 export type ArticleFontSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+// How the full-screen readers lay out prose: a continuous vertical scroll, or a
+// Kindle-style paged view (one page — or two columns when wide — turned at a time).
+export type ReaderViewMode = 'scroll' | 'paged';
 export type BaseSortOrder = 'newest' | 'oldest';
 export type DailyMagazineMinutes = 10 | 20 | 30 | 45 | 60;
 // Which reading surface the app opens to on a fresh load (the `/` redirector).
@@ -13,6 +16,7 @@ export const DAILY_MAGAZINE_MINUTE_OPTIONS: DailyMagazineMinutes[] = [10, 20, 30
 interface PreferencesState {
   articleFont: ArticleFont;
   articleFontSize: ArticleFontSize;
+  readerViewMode: ReaderViewMode;
   scrollToMarkAsRead: boolean;
   expandAllItems: boolean;
   sortOrder: BaseSortOrder;
@@ -29,6 +33,7 @@ function createPreferencesStore() {
   let state = $state<PreferencesState>({
     articleFont: 'serif',
     articleFontSize: 'md',
+    readerViewMode: 'scroll',
     scrollToMarkAsRead: false,
     expandAllItems: true,
     sortOrder: 'newest',
@@ -48,6 +53,9 @@ function createPreferencesStore() {
         }
         if (parsed.articleFontSize) {
           state.articleFontSize = parsed.articleFontSize;
+        }
+        if (parsed.readerViewMode === 'scroll' || parsed.readerViewMode === 'paged') {
+          state.readerViewMode = parsed.readerViewMode;
         }
         if (parsed.scrollToMarkAsRead !== undefined) {
           state.scrollToMarkAsRead = parsed.scrollToMarkAsRead;
@@ -114,6 +122,16 @@ function createPreferencesStore() {
     save();
   }
 
+  function setReaderViewMode(mode: ReaderViewMode) {
+    state.readerViewMode = mode;
+    save();
+  }
+
+  function toggleReaderViewMode() {
+    state.readerViewMode = state.readerViewMode === 'paged' ? 'scroll' : 'paged';
+    save();
+  }
+
   function setScrollToMarkAsRead(enabled: boolean) {
     state.scrollToMarkAsRead = enabled;
     save();
@@ -157,6 +175,9 @@ function createPreferencesStore() {
     get articleFontSize() {
       return state.articleFontSize;
     },
+    get readerViewMode() {
+      return state.readerViewMode;
+    },
     get scrollToMarkAsRead() {
       return state.scrollToMarkAsRead;
     },
@@ -183,6 +204,8 @@ function createPreferencesStore() {
     increaseFontSize,
     decreaseFontSize,
     resetFontSize,
+    setReaderViewMode,
+    toggleReaderViewMode,
     setScrollToMarkAsRead,
     setExpandAllItems,
     setSortOrder,

@@ -5,6 +5,8 @@
   import type { MagazineArticleControls } from '$lib/components/feed/DailyMagazineArticle.svelte';
   import DailyMagazineArticle from '$lib/components/feed/DailyMagazineArticle.svelte';
   import ReaderChrome from '$lib/components/feed/ReaderChrome.svelte';
+  import PagedView, { type PagedController } from '$lib/components/feed/PagedView.svelte';
+  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import {
     DAILY_MAGAZINE_MINUTE_OPTIONS,
@@ -55,6 +57,24 @@
   let progressVisible = $state(false);
   let scrollRaf: number | null = null;
   const openedSnapshot = new Map<string, boolean>();
+
+  // Kindle-style paged reading for the issue. The whole magazine body flows into
+  // columns; the active article (which ReaderChrome archives/tags) is derived from
+  // the current page rather than scroll position.
+  let paged = $derived(preferences.readerViewMode === 'paged');
+  let pagedController = $state<PagedController>();
+
+  function handleMagazinePageChange(page: number) {
+    if (!paged || !pagedController || issue.items.length === 0) return;
+    let nearestKey = savedItemDisplayKey(issue.items[0].item);
+    for (const entry of issue.items) {
+      const key = savedItemDisplayKey(entry.item);
+      const root = articleRoots.get(key);
+      if (!root) continue;
+      if (pagedController.pageOfElement(root) <= page) nearestKey = key;
+    }
+    if (nearestKey !== activeKey) activeKey = nearestKey;
+  }
 
   let activeEntry = $derived(
     issue.items.find((entry) => savedItemDisplayKey(entry.item) === activeKey) ?? issue.items[0]
@@ -240,7 +260,7 @@
 
 <svelte:head><title>Daily magazine - Skyreader</title></svelte:head>
 
-<div class="daily-reader" bind:this={scrollEl} onscroll={handleScroll}>
+<div class="daily-reader" class:paged bind:this={scrollEl} onscroll={handleScroll}>
   <ReaderChrome
     itemKey={activeDisplayKey}
     itemType="saved"
@@ -253,91 +273,116 @@
     onClose={closeMagazine}
     onArchive={activeItem ? toggleActiveArchive : undefined}
     onOpenUrl={() => activeItem && window.open(activeItem.url, '_blank', 'noopener')}
-    onContents={() => introEl?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+    onContents={() =>
+      paged
+        ? pagedController?.goToPage(0)
+        : introEl?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
     onNextParagraph={() => articleControls.get(activeDisplayKey)?.nextParagraph()}
     onPreviousParagraph={() => articleControls.get(activeDisplayKey)?.previousParagraph()}
     onHighlightParagraph={() => articleControls.get(activeDisplayKey)?.highlightParagraph()}
   />
 
-  <main class="reader-container">
-    <section class="issue-intro" bind:this={introEl}>
-      <p class="issue-date">{formatMagazineDate(today)}</p>
-      <h1>Daily magazine</h1>
-      {#if !preparing && issue.items.length}
-        <p class="issue-summary">{magazineIssueSummary(issue.items.length, issue.totalMinutes)}</p>
-      {/if}
-      <label class="length-control">
-        <span>Issue length</span>
-        <select value={preferences.dailyMagazineMinutes} onchange={updateTarget}>
-          {#each DAILY_MAGAZINE_MINUTE_OPTIONS as minutes}
-            <option value={minutes}>{minutes} minutes</option>
-          {/each}
-        </select>
-      </label>
-    </section>
+  <main class="reader-container" class:paged>
+    {#snippet magazineBody()}
+      <section class="issue-intro" bind:this={introEl}>
+        <p class="issue-date">{formatMagazineDate(today)}</p>
+        <h1>Daily magazine</h1>
+        {#if !preparing && issue.items.length}
+          <p class="issue-summary">
+            {magazineIssueSummary(issue.items.length, issue.totalMinutes)}
+          </p>
+        {/if}
+        <label class="length-control">
+          <span>Issue length</span>
+          <select value={preferences.dailyMagazineMinutes} onchange={updateTarget}>
+            {#each DAILY_MAGAZINE_MINUTE_OPTIONS as minutes}
+              <option value={minutes}>{minutes} minutes</option>
+            {/each}
+          </select>
+        </label>
+      </section>
 
-    {#if preparing}
-      <section class="state" aria-live="polite">
-        <h2>Preparing today’s issue</h2>
-        <p>Gathering saved articles and reading times.</p>
-      </section>
-    {:else if savesStore.articles.length === 0}
-      <section class="state">
-        <h2>Your magazine starts with a save</h2>
-        <p>Save an article, then return here for a daily issue.</p>
-        <a href="/feeds">Browse your feeds</a>
-      </section>
-    {:else if unarchivedSavedCount === 0}
-      <section class="state">
-        <h2>No articles for today’s issue</h2>
-        <p>Your saved articles are archived. Restore one to include it here.</p>
-        <a href="/saved">View saved articles</a>
-      </section>
-    {:else if eligibleCandidateCount === 0}
-      <section class="state">
-        <h2>Reading times aren’t available yet</h2>
-        <p>Today’s issue needs saved articles with a known reading time.</p>
-        <a href="/saved">View saved articles</a>
-      </section>
-    {:else if issue.items.length === 0}
-      <section class="state">
-        <h2>Nothing fits this issue length</h2>
-        <p>Choose a longer issue to make room for one of your saved articles.</p>
-      </section>
-    {:else}
-      <nav class="contents" aria-labelledby="contents-title">
-        <h2 id="contents-title">Today’s issue</h2>
-        <ol>
+      {#if preparing}
+        <section class="state" aria-live="polite">
+          <h2>Preparing today’s issue</h2>
+          <p>Gathering saved articles and reading times.</p>
+        </section>
+      {:else if savesStore.articles.length === 0}
+        <section class="state">
+          <h2>Your magazine starts with a save</h2>
+          <p>Save an article, then return here for a daily issue.</p>
+          <a href="/feeds">Browse your feeds</a>
+        </section>
+      {:else if unarchivedSavedCount === 0}
+        <section class="state">
+          <h2>No articles for today’s issue</h2>
+          <p>Your saved articles are archived. Restore one to include it here.</p>
+          <a href="/saved">View saved articles</a>
+        </section>
+      {:else if eligibleCandidateCount === 0}
+        <section class="state">
+          <h2>Reading times aren’t available yet</h2>
+          <p>Today’s issue needs saved articles with a known reading time.</p>
+          <a href="/saved">View saved articles</a>
+        </section>
+      {:else if issue.items.length === 0}
+        <section class="state">
+          <h2>Nothing fits this issue length</h2>
+          <p>Choose a longer issue to make room for one of your saved articles.</p>
+        </section>
+      {:else}
+        <nav class="contents" aria-labelledby="contents-title">
+          <h2 id="contents-title">Today’s issue</h2>
+          <ol>
+            {#each issue.items as entry, index (entry.key)}
+              <li>
+                <a href={`#article-${index + 1}`}
+                  ><span>{decodeEntities(entry.item.title || '') || entry.item.url}</span><span
+                    >{entry.minutes} min</span
+                  ></a
+                >
+              </li>
+            {/each}
+          </ol>
+        </nav>
+
+        <div class="reading-surface">
           {#each issue.items as entry, index (entry.key)}
-            <li>
-              <a href={`#article-${index + 1}`}
-                ><span>{decodeEntities(entry.item.title || '') || entry.item.url}</span><span
-                  >{entry.minutes} min</span
-                ></a
-              >
-            </li>
+            {@const body = bodies.get(entry.key) ?? { status: 'loading', html: '' }}
+            {@const displayKey = savedItemDisplayKey(entry.item)}
+            <DailyMagazineArticle
+              item={entry.item}
+              {index}
+              count={issue.items.length}
+              minutes={entry.minutes}
+              bodyStatus={body.status}
+              bodyHtml={body.html}
+              active={displayKey === activeDisplayKey}
+              scrollRoot={scrollEl}
+              {registerControls}
+              {registerRoot}
+            />
           {/each}
-        </ol>
-      </nav>
+        </div>
+      {/if}
+    {/snippet}
 
-      <div class="reading-surface">
-        {#each issue.items as entry, index (entry.key)}
-          {@const body = bodies.get(entry.key) ?? { status: 'loading', html: '' }}
-          {@const displayKey = savedItemDisplayKey(entry.item)}
-          <DailyMagazineArticle
-            item={entry.item}
-            {index}
-            count={issue.items.length}
-            minutes={entry.minutes}
-            bodyStatus={body.status}
-            bodyHtml={body.html}
-            active={displayKey === activeDisplayKey}
-            scrollRoot={scrollEl}
-            {registerControls}
-            {registerRoot}
-          />
-        {/each}
-      </div>
+    {#if paged}
+      <PagedView
+        bottomInset={mobileStore.isMobile ? 64 : 0}
+        deps={() => [
+          issue.items.length,
+          bodies,
+          preferences.articleFont,
+          preferences.articleFontSize,
+        ]}
+        oncontroller={(c) => (pagedController = c)}
+        onpagechange={(page) => handleMagazinePageChange(page)}
+      >
+        {@render magazineBody()}
+      </PagedView>
+    {:else}
+      {@render magazineBody()}
     {/if}
   </main>
 </div>
@@ -352,11 +397,31 @@
     background: var(--color-bg);
     color: var(--color-text);
   }
+  /* Paged mode: no scroll — the chrome sits on top and the paginator fills the
+     rest, dropping the 800px cap so it can use its own wider column band. */
+  .daily-reader.paged {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
   .reader-container {
     width: 100%;
     max-width: 800px;
     margin: 0 auto;
     padding: 0 1rem 4rem;
+  }
+  .reader-container.paged {
+    flex: 1;
+    min-height: 0;
+    max-width: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .reader-container.paged :global(.paged-root) {
+    flex: 1 1 0;
+    min-height: 0;
+    height: auto;
   }
   .issue-intro {
     display: grid;

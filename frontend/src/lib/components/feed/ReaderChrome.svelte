@@ -7,6 +7,7 @@
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import AppearanceToolbar from './AppearanceToolbar.svelte';
+  import ReaderViewModeToggle from './ReaderViewModeToggle.svelte';
   import TagMenu from './TagMenu.svelte';
 
   let {
@@ -282,6 +283,8 @@
             >
           </div>
         </div>
+        <span class="toolbar-divider"></span>
+        <ReaderViewModeToggle />
       </div>
     </div>
   {/if}
@@ -346,6 +349,7 @@
       <div class="style-sheet-section">
         <div class="style-sheet-label">Appearance</div>
         <div class="toolbar-wrapper"><AppearanceToolbar /></div>
+        <div class="view-toggle-wrapper"><ReaderViewModeToggle /></div>
       </div>
       <div class="style-sheet-section">
         <div class="style-sheet-label">Actions</div>
@@ -662,6 +666,9 @@
     display: flex;
     flex-direction: column;
     gap: 0.625rem;
+  }
+  .view-toggle-wrapper {
+    margin-top: 0.25rem;
   }
   .style-sheet-actions {
     display: flex;

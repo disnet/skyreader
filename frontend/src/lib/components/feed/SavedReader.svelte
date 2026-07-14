@@ -26,6 +26,8 @@
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import NotePeek from '$lib/components/feed/NotePeek.svelte';
   import CollectionMagazine from '$lib/components/feed/CollectionMagazine.svelte';
+  import PagedView, { type PagedController } from '$lib/components/feed/PagedView.svelte';
+  import ReaderViewModeToggle from '$lib/components/feed/ReaderViewModeToggle.svelte';
   import { magazineThemeVars } from '$lib/utils/magazineTheme';
   import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
@@ -323,6 +325,67 @@
 
   let sanitizedContent = $derived(sanitizeHtml(displayContent, itemUrl));
 
+  // Kindle-style paged reading. When on, the article flows into columns turned a
+  // page at a time instead of scrolling; the scroll-driven paragraph highlight and
+  // progress bar are disabled (see the `enabled`/`!paged` guards below) and the
+  // Discussion section is dropped for a focused read.
+  let paged = $derived(preferences.readerViewMode === 'paged');
+  let pagedController = $state<PagedController>();
+  let pagedRestoredForKey: string | null = null;
+  let pagedSaveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const PARA_SELECTOR = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
+  function detectReaderParagraphs(): HTMLElement[] {
+    if (!readerBodyEl) return [];
+    return (Array.from(readerBodyEl.querySelectorAll(PARA_SELECTOR)) as HTMLElement[]).filter(
+      (el) => (el.textContent?.trim().length ?? 0) >= 20
+    );
+  }
+
+  // Save the furthest paragraph that has been paged past, reusing the same
+  // read-progress store the scroll reader writes — so position is stable across
+  // reflows (font size / width changes repaginate but the paragraph is unchanged).
+  function handlePagedPageChange(page: number) {
+    if (!paged || !pagedController) return;
+    const paras = detectReaderParagraphs();
+    if (!paras.length) return;
+    let furthest = 0;
+    for (let i = 0; i < paras.length; i++) {
+      if (pagedController.pageOfElement(paras[i]) <= page) furthest = i;
+    }
+    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
+    pagedSaveTimer = setTimeout(() => {
+      itemLabelsStore.setReadProgress(itemKey, labelItemType, furthest, paras.length);
+    }, 500);
+  }
+
+  // Restore the saved page once the paginator has measured. Retries on content
+  // settle (lazy bodies) until the paragraphs exist, mirroring the scroll reader's
+  // 'partial' handling.
+  $effect(() => {
+    void sanitizedContent;
+    if (!paged || !pagedController || !readerBodyEl) return;
+    const key = itemKey;
+    if (pagedRestoredForKey === key) return;
+    const saved = itemLabelsStore.getReadProgress(key);
+    if (!saved || saved.paragraphIndex <= 0) {
+      pagedRestoredForKey = key;
+      return;
+    }
+    const timer = setTimeout(() => {
+      const paras = detectReaderParagraphs();
+      if (!paras.length) return; // body not loaded yet — retry on next settle
+      const idx = Math.min(saved.paragraphIndex, paras.length - 1);
+      pagedController?.goToPage(pagedController.pageOfElement(paras[idx]));
+      pagedRestoredForKey = key;
+    }, 300);
+    return () => clearTimeout(timer);
+  });
+
+  onDestroy(() => {
+    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
+  });
+
   let readTimeMinutes = $derived.by(() => {
     const text = displayContent.replace(/<[^>]*>/g, '');
     const wordCount = text.split(/\s+/).filter(Boolean).length;
@@ -491,7 +554,8 @@
     scrollRoot: () => overlayEl,
     itemKey: () => itemKey,
     itemType: () => labelItemType,
-    enabled: () => true,
+    // Scroll-driven — disabled in paged mode (paged position is tracked by page).
+    enabled: () => !paged,
   });
 
   // Link interception for showing context menu on link clicks
@@ -526,6 +590,9 @@
         paragraphTracking.setupObserver();
         linkInterception.attach();
         highlightsHook.attach();
+        // The scroll-driven progress bar + paragraph position restore only apply
+        // to scroll mode; paged mode handles its own page restore (see above).
+        if (paged) return;
         // Re-measure now that the (possibly lazily-loaded) body has settled, so
         // the bar reflects the current scroll position immediately.
         updateReadingProgress();
@@ -581,6 +648,7 @@
 <div
   class="reader-overlay"
   class:magazine-mode={!!collection}
+  class:paged
   style={collection ? `${magazineVars};background:var(--mag-bg);color:var(--mag-fg)` : ''}
   bind:this={overlayEl}
   onscroll={handleScroll}
@@ -588,18 +656,21 @@
   <!-- Reading-progress bar: a thin One-Blue fill pinned to the very top edge of
        the overlay (over the header's empty top padding), filling as the reader
        moves through the article body. Stays put when the header hides on
-       scroll; clears the notch via safe-area inset on mobile. -->
-  <div
-    class="reading-progress"
-    class:visible={progressVisible}
-    role="progressbar"
-    aria-label="Reading progress"
-    aria-valuemin={0}
-    aria-valuemax={100}
-    aria-valuenow={Math.round(readingProgress * 100)}
-  >
-    <div class="reading-progress-fill" style:transform={`scaleX(${readingProgress})`}></div>
-  </div>
+       scroll; clears the notch via safe-area inset on mobile. Paged mode shows a
+       per-page indicator instead. -->
+  {#if !paged}
+    <div
+      class="reading-progress"
+      class:visible={progressVisible}
+      role="progressbar"
+      aria-label="Reading progress"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(readingProgress * 100)}
+    >
+      <div class="reading-progress-fill" style:transform={`scaleX(${readingProgress})`}></div>
+    </div>
+  {/if}
 
   <!-- Desktop: top header — a full-width flat bar (matches the feed header's
        800px band) so the chrome doesn't shift when opening the reader. The
@@ -716,6 +787,10 @@
               </button>
             </div>
           </div>
+
+          <span class="toolbar-divider"></span>
+
+          <ReaderViewModeToggle />
         </div>
       </div>
     {/if}
@@ -730,7 +805,7 @@
     {/if}
   </header>
 
-  <div class="reader-container">
+  <div class="reader-container" class:paged>
     <!-- Mobile: bottom bar -->
     <div class="reader-bottom-bar mobile-only" class:hidden={!controlsVisible}>
       <button class="bottom-btn" onclick={onClose} title="Back (Escape)">
@@ -791,6 +866,9 @@
             <div class="style-sheet-label">Appearance</div>
             <div class="toolbar-wrapper">
               <AppearanceToolbar />
+            </div>
+            <div class="view-toggle-wrapper">
+              <ReaderViewModeToggle />
             </div>
           </div>
 
@@ -898,7 +976,9 @@
       {/key}
     {/if}
 
-    <article class="reader-article">
+    <!-- The article header + body, shared verbatim between scroll and paged modes
+         (same DOM element, so `readerBodyEl` + hooks bind identically either way). -->
+    {#snippet articleContent()}
       <div class="reader-article-header">
         <h1 class="reader-title">{title}</h1>
         <div class="reader-meta">
@@ -945,9 +1025,25 @@
           </div>
         {/if}
       </div>
+    {/snippet}
 
-      <ReaderDiscussion {readerItem} {onSaveToSemble} {onSaveToMargin} />
-    </article>
+    {#if paged}
+      <!-- Kindle-style paged reading. Discussion is dropped here for a focused
+           read (it remains in scroll mode). -->
+      <PagedView
+        bottomInset={mobileStore.isMobile ? 64 : 0}
+        deps={() => [sanitizedContent, preferences.articleFont, preferences.articleFontSize]}
+        oncontroller={(c) => (pagedController = c)}
+        onpagechange={(page) => handlePagedPageChange(page)}
+      >
+        {@render articleContent()}
+      </PagedView>
+    {:else}
+      <article class="reader-article">
+        {@render articleContent()}
+        <ReaderDiscussion {readerItem} {onSaveToSemble} {onSaveToMargin} />
+      </article>
+    {/if}
   </div>
 </div>
 
@@ -981,6 +1077,36 @@
     background: var(--color-bg, #ffffff);
     overflow-y: auto;
     overscroll-behavior: contain;
+  }
+
+  /* Paged mode: the overlay no longer scrolls — it's a flex column (header on top,
+     the paged column filling the rest). The container drops its 800px cap so the
+     paginator can use its own wider band and take the full remaining height. */
+  .reader-overlay.paged {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .reader-container.paged {
+    flex: 1;
+    min-height: 0;
+    max-width: none;
+    width: 100%;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .reader-container.paged :global(.paged-root) {
+    flex: 1 1 0;
+    min-height: 0;
+    height: auto;
+  }
+
+  /* View toggle sits under the appearance toolbar in the mobile style sheet. */
+  .view-toggle-wrapper {
+    margin-top: 0.25rem;
   }
 
   /* Edition view: the chrome takes the publication background (not the app's
