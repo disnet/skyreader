@@ -2,11 +2,17 @@ import type { SavedItem } from '$lib/types';
 
 export const DAILY_MAGAZINE_WORDS_PER_MINUTE = 200;
 
+// How today's pile is ordered before it is packed into the issue:
+// a stable daily shuffle, newest saves first, or oldest saves first.
+export type DailyMagazineOrder = 'shuffle' | 'recent' | 'oldest';
+
 export interface DailyMagazineCandidate<T> {
   item: T;
   key: string;
   wordCount: number | null | undefined;
   opened: boolean;
+  // Epoch ms used to order 'recent'/'oldest' issues (typically the save date).
+  sortValue?: number | null;
 }
 
 export interface DailyMagazineIssueItem<T> extends DailyMagazineCandidate<T> {
@@ -76,14 +82,17 @@ function dailyScore(dateKey: string, key: string): number {
 }
 
 /**
- * Builds a deterministic issue for one local day. Never-opened items are
- * considered first; within each group, date + stable key rotates the order.
- * An item that is too long is skipped so a later, shorter item can still fit.
+ * Builds a deterministic issue for one local day. The `order` mode decides how
+ * the pile is ranked before packing: 'shuffle' considers never-opened items
+ * first and rotates the rest by day, while 'recent'/'oldest' rank purely by
+ * each candidate's `sortValue` (the save date). An item that is too long is
+ * skipped so a later, shorter item can still fit.
  */
 export function buildDailyMagazine<T>(
   candidates: DailyMagazineCandidate<T>[],
   targetMinutes: number,
-  date: Date
+  date: Date,
+  order: DailyMagazineOrder = 'shuffle'
 ): DailyMagazineIssue<T> {
   const dateKey = localDateKey(date);
   const budget = Number.isFinite(targetMinutes) ? Math.max(0, Math.floor(targetMinutes)) : 0;
@@ -96,6 +105,12 @@ export function buildDailyMagazine<T>(
     })
     .filter((candidate): candidate is DailyMagazineIssueItem<T> => candidate !== null)
     .sort((a, b) => {
+      if (order === 'recent' || order === 'oldest') {
+        const aValue = typeof a.sortValue === 'number' ? a.sortValue : 0;
+        const bValue = typeof b.sortValue === 'number' ? b.sortValue : 0;
+        const byDate = order === 'recent' ? bValue - aValue : aValue - bValue;
+        return byDate || a.key.localeCompare(b.key);
+      }
       if (a.opened !== b.opened) return a.opened ? 1 : -1;
       const scoreDifference = dailyScore(dateKey, a.key) - dailyScore(dateKey, b.key);
       return scoreDifference || a.key.localeCompare(b.key);

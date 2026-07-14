@@ -154,9 +154,11 @@
         key: savedItemMagazineKey(s),
         wordCount: s.wordCount,
         opened: activity !== null,
+        sortValue: Date.parse(s.savedAt),
       })),
       preferences.dailyMagazineMinutes,
-      magazineDate
+      magazineDate,
+      preferences.dailyMagazineOrder
     )
   );
 

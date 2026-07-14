@@ -7,11 +7,18 @@ export type ArticleFontSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 export type ReaderViewMode = 'scroll' | 'paged';
 export type BaseSortOrder = 'newest' | 'oldest';
 export type DailyMagazineMinutes = 10 | 20 | 30 | 45 | 60;
+// How the daily magazine picks which saved articles to include.
+export type DailyMagazineOrder = 'shuffle' | 'recent' | 'oldest';
 // Which reading surface the app opens to on a fresh load (the `/` redirector).
 export type DefaultView = 'home' | 'feeds' | 'saved';
 
 const FONT_SIZE_ORDER: ArticleFontSize[] = ['xs', 'sm', 'md', 'lg', 'xl'];
 export const DAILY_MAGAZINE_MINUTE_OPTIONS: DailyMagazineMinutes[] = [10, 20, 30, 45, 60];
+export const DAILY_MAGAZINE_ORDER_OPTIONS: { value: DailyMagazineOrder; label: string }[] = [
+  { value: 'shuffle', label: 'Random' },
+  { value: 'recent', label: 'Most recent' },
+  { value: 'oldest', label: 'Oldest' },
+];
 
 interface PreferencesState {
   articleFont: ArticleFont;
@@ -25,6 +32,7 @@ interface PreferencesState {
   // Which surface a cold app load lands on (consumed by the `/` redirector).
   defaultView: DefaultView;
   dailyMagazineMinutes: DailyMagazineMinutes;
+  dailyMagazineOrder: DailyMagazineOrder;
 }
 
 const STORAGE_KEY = 'skyreader-preferences';
@@ -40,6 +48,7 @@ function createPreferencesStore() {
     linkblogShareConfirmed: false,
     defaultView: 'home',
     dailyMagazineMinutes: 20,
+    dailyMagazineOrder: 'shuffle',
   });
 
   // Restore from localStorage on init
@@ -78,6 +87,9 @@ function createPreferencesStore() {
         }
         if (DAILY_MAGAZINE_MINUTE_OPTIONS.includes(parsed.dailyMagazineMinutes)) {
           state.dailyMagazineMinutes = parsed.dailyMagazineMinutes;
+        }
+        if (DAILY_MAGAZINE_ORDER_OPTIONS.some((o) => o.value === parsed.dailyMagazineOrder)) {
+          state.dailyMagazineOrder = parsed.dailyMagazineOrder;
         }
       } catch {
         localStorage.removeItem(STORAGE_KEY);
@@ -168,6 +180,12 @@ function createPreferencesStore() {
     save();
   }
 
+  function setDailyMagazineOrder(order: DailyMagazineOrder) {
+    if (!DAILY_MAGAZINE_ORDER_OPTIONS.some((o) => o.value === order)) return;
+    state.dailyMagazineOrder = order;
+    save();
+  }
+
   return {
     get articleFont() {
       return state.articleFont;
@@ -196,9 +214,13 @@ function createPreferencesStore() {
     get dailyMagazineMinutes() {
       return state.dailyMagazineMinutes;
     },
+    get dailyMagazineOrder() {
+      return state.dailyMagazineOrder;
+    },
     confirmLinkblogShare,
     setDefaultView,
     setDailyMagazineMinutes,
+    setDailyMagazineOrder,
     setArticleFont,
     setArticleFontSize,
     increaseFontSize,

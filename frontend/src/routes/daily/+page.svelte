@@ -10,8 +10,10 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import {
     DAILY_MAGAZINE_MINUTE_OPTIONS,
+    DAILY_MAGAZINE_ORDER_OPTIONS,
     preferences,
     type DailyMagazineMinutes,
+    type DailyMagazineOrder,
   } from '$lib/stores/preferences.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
@@ -145,6 +147,7 @@
         key,
         wordCount: item.wordCount,
         opened: openedSnapshot.get(key) ?? false,
+        sortValue: Date.parse(item.savedAt),
       });
     }
 
@@ -154,12 +157,17 @@
       .map((item) => `${savedItemMagazineKey(item)}:${item.wordCount ?? 'none'}`)
       .sort()
       .join('|');
-    const signature = `${localDateKey(today)}|${preferences.dailyMagazineMinutes}|${sourceMembership}`;
+    const signature = `${localDateKey(today)}|${preferences.dailyMagazineMinutes}|${preferences.dailyMagazineOrder}|${sourceMembership}`;
     if (signature === issueSignature) return;
     unarchivedSavedCount = unarchived;
     eligibleCandidateCount = eligible;
     issueSignature = signature;
-    issue = buildDailyMagazine(candidates, preferences.dailyMagazineMinutes, today);
+    issue = buildDailyMagazine(
+      candidates,
+      preferences.dailyMagazineMinutes,
+      today,
+      preferences.dailyMagazineOrder
+    );
     activeKey = issue.items[0] ? savedItemDisplayKey(issue.items[0].item) : '';
   });
 
@@ -192,6 +200,11 @@
     if (DAILY_MAGAZINE_MINUTE_OPTIONS.includes(minutes as DailyMagazineMinutes)) {
       preferences.setDailyMagazineMinutes(minutes as DailyMagazineMinutes);
     }
+  }
+
+  function updateOrder(event: Event) {
+    const order = (event.currentTarget as HTMLSelectElement).value as DailyMagazineOrder;
+    preferences.setDailyMagazineOrder(order);
   }
 
   function registerControls(key: string, controls: MagazineArticleControls | null) {
@@ -303,14 +316,24 @@
             {magazineIssueSummary(issue.items.length, issue.totalMinutes)}
           </p>
         {/if}
-        <label class="length-control">
-          <span>Issue length</span>
-          <select value={preferences.dailyMagazineMinutes} onchange={updateTarget}>
-            {#each DAILY_MAGAZINE_MINUTE_OPTIONS as minutes}
-              <option value={minutes}>{minutes} minutes</option>
-            {/each}
-          </select>
-        </label>
+        <div class="issue-controls">
+          <label class="length-control">
+            <span>Issue length</span>
+            <select value={preferences.dailyMagazineMinutes} onchange={updateTarget}>
+              {#each DAILY_MAGAZINE_MINUTE_OPTIONS as minutes}
+                <option value={minutes}>{minutes} minutes</option>
+              {/each}
+            </select>
+          </label>
+          <label class="length-control">
+            <span>Articles</span>
+            <select value={preferences.dailyMagazineOrder} onchange={updateOrder}>
+              {#each DAILY_MAGAZINE_ORDER_OPTIONS as option}
+                <option value={option.value}>{option.label}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
       </section>
 
       {#if preparing}
@@ -451,12 +474,17 @@
     font-size: 1.25rem;
     line-height: var(--leading-tight);
   }
+  .issue-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-top: 0.5rem;
+  }
   .length-control {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     width: fit-content;
-    margin-top: 0.5rem;
     color: var(--color-text-secondary);
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);

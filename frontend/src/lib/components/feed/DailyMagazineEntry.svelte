@@ -2,7 +2,13 @@
   import type { SavedItem } from '$lib/types';
   import type { DailyMagazineIssue } from '$lib/utils/dailyMagazine';
   import { formatMagazineDate, magazineIssueSummary } from '$lib/utils/dailyMagazine';
-  import { decodeEntities } from '$lib/utils/entities';
+  import {
+    DAILY_MAGAZINE_MINUTE_OPTIONS,
+    DAILY_MAGAZINE_ORDER_OPTIONS,
+    preferences,
+    type DailyMagazineMinutes,
+    type DailyMagazineOrder,
+  } from '$lib/stores/preferences.svelte';
   import Icon from '$lib/components/Icon.svelte';
 
   interface Props {
@@ -11,33 +17,54 @@
   }
 
   let { date, issue }: Props = $props();
-  let previewItems = $derived(issue.items.slice(0, 3));
+
+  function updateLength(event: Event) {
+    const minutes = Number((event.currentTarget as HTMLSelectElement).value);
+    preferences.setDailyMagazineMinutes(minutes as DailyMagazineMinutes);
+  }
+
+  function updateOrder(event: Event) {
+    const order = (event.currentTarget as HTMLSelectElement).value as DailyMagazineOrder;
+    preferences.setDailyMagazineOrder(order);
+  }
 </script>
 
 <section class="magazine-entry" aria-labelledby="daily-magazine-title">
-  <div class="entry-heading">
-    <div class="entry-copy">
-      <p class="entry-kicker">Daily magazine · {formatMagazineDate(date)}</p>
-      <h2 id="daily-magazine-title">Today’s issue from your saved articles</h2>
-    </div>
-    <span class="target">{issue.targetMinutes} min target</span>
+  <div class="entry-copy">
+    <p class="entry-kicker">Daily magazine · {formatMagazineDate(date)}</p>
+    <h2 id="daily-magazine-title">Today’s issue from your saved articles</h2>
   </div>
 
-  <p class="summary">{magazineIssueSummary(issue.items.length, issue.totalMinutes)}</p>
-  {#if issue.items.length > 0}
-    <ol class="preview" aria-label="Today’s articles">
-      {#each previewItems as entry}
-        <li>{decodeEntities(entry.item.title || '') || entry.item.url}</li>
-      {/each}
-    </ol>
-  {:else}
-    <p class="empty-copy">Save an article or choose a longer issue to get started.</p>
-  {/if}
+  <div class="controls">
+    <label class="control">
+      <span>Length</span>
+      <select value={preferences.dailyMagazineMinutes} onchange={updateLength}>
+        {#each DAILY_MAGAZINE_MINUTE_OPTIONS as minutes}
+          <option value={minutes}>{minutes} min</option>
+        {/each}
+      </select>
+    </label>
+    <label class="control">
+      <span>Articles</span>
+      <select value={preferences.dailyMagazineOrder} onchange={updateOrder}>
+        {#each DAILY_MAGAZINE_ORDER_OPTIONS as option}
+          <option value={option.value}>{option.label}</option>
+        {/each}
+      </select>
+    </label>
+  </div>
 
-  <a class="open-link" href="/daily">
-    <span>{issue.items.length > 0 ? 'Open today’s magazine' : 'Set up your magazine'}</span>
-    <Icon name="arrow-right" size={15} />
-  </a>
+  <div class="entry-footer">
+    {#if issue.items.length > 0}
+      <p class="summary">{magazineIssueSummary(issue.items.length, issue.totalMinutes)}</p>
+    {:else}
+      <p class="summary">Save an article or choose a longer issue to get started.</p>
+    {/if}
+    <a class="open-link" href="/daily">
+      <span>{issue.items.length > 0 ? 'Open today’s magazine' : 'Set up your magazine'}</span>
+      <Icon name="arrow-right" size={15} />
+    </a>
+  </div>
 </section>
 
 <style>
@@ -49,28 +76,16 @@
     margin-bottom: 2rem;
   }
 
-  .entry-heading {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-
   .entry-copy {
     display: grid;
     gap: 0.2rem;
     min-width: 0;
   }
 
-  .entry-kicker,
-  .summary,
-  .empty-copy {
+  .entry-kicker {
     margin: 0;
     color: var(--color-text-secondary);
     font-size: var(--text-sm);
-  }
-
-  .entry-kicker {
     font-weight: var(--weight-medium);
   }
 
@@ -83,36 +98,55 @@
     letter-spacing: var(--tracking-tight);
   }
 
-  .target {
-    flex: 0 0 auto;
-    padding: 0.25rem 0.5rem;
-    border: 1px solid var(--color-border);
-    border-radius: 999px;
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .control {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
     color: var(--color-text-secondary);
     font-size: var(--text-xs);
     font-weight: var(--weight-medium);
-    white-space: nowrap;
   }
 
-  .preview {
-    display: grid;
-    gap: 0.4rem;
-    margin: 0;
-    padding-left: 1.3rem;
+  .control select {
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-bg);
     color: var(--color-text);
-    font-size: var(--text-md);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    cursor: pointer;
   }
 
-  .preview li {
-    padding-left: 0.2rem;
-    line-height: var(--leading-snug);
+  .control select:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 1px;
+  }
+
+  .entry-footer {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .summary {
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
   }
 
   .open-link {
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    width: fit-content;
+    flex: 0 0 auto;
     color: var(--color-primary);
     font-size: var(--text-sm);
     font-weight: var(--weight-semibold);
@@ -136,13 +170,10 @@
       margin-bottom: 1.5rem;
     }
 
-    .entry-heading {
-      display: grid;
+    .entry-footer {
+      flex-direction: column;
+      align-items: flex-start;
       gap: 0.625rem;
-    }
-
-    .target {
-      width: fit-content;
     }
   }
 </style>

@@ -95,6 +95,21 @@ describe('daily magazine', () => {
     expect(issue.totalMinutes).toBeLessThanOrEqual(issue.targetMinutes);
   });
 
+  it('orders by newest and oldest save date when requested', () => {
+    const candidates = [
+      { ...candidate('older', 200), sortValue: 1_000 },
+      { ...candidate('newest', 200), sortValue: 3_000 },
+      { ...candidate('middle', 200), sortValue: 2_000 },
+    ];
+    const date = new Date(2026, 6, 13);
+
+    const recent = buildDailyMagazine(candidates, 3, date, 'recent');
+    expect(recent.items.map((item) => item.key)).toEqual(['newest', 'middle', 'older']);
+
+    const oldest = buildDailyMagazine(candidates, 3, date, 'oldest');
+    expect(oldest.items.map((item) => item.key)).toEqual(['older', 'middle', 'newest']);
+  });
+
   it('formats a compact issue summary', () => {
     expect(magazineIssueSummary(1, 8)).toBe('1 article · 8 min');
     expect(magazineIssueSummary(3, 20)).toBe('3 articles · 20 min');
