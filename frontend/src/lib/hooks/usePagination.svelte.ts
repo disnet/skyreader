@@ -159,6 +159,57 @@ export function usePagination(params: PaginationParams) {
     goToPage(currentPage - 1);
   }
 
+  // --- Physical drag: the page follows the finger, then completes the turn or
+  // springs back on release (distance past ~20% of a page, or a quick flick). ---
+
+  // Fraction of a page you must drag to commit a turn on release.
+  const DRAG_COMMIT_FRACTION = 0.2;
+  // Flick velocity (px/ms) that commits a turn regardless of distance.
+  const FLICK_VELOCITY = 0.4;
+  // Rubber-band factor when dragging past the first/last page.
+  const OVERSCROLL_DAMP = 0.35;
+
+  function setTransition(on: boolean) {
+    const content = params.getContentEl();
+    if (content) content.style.transition = on ? '' : 'none';
+  }
+
+  function startDrag() {
+    setTransition(false); // 1:1 with the finger — no easing lag while dragging
+  }
+
+  function updateDrag(dx: number) {
+    const content = params.getContentEl();
+    if (!content || pageStride <= 0) return;
+    const atStart = currentPage <= 0;
+    const atEnd = currentPage >= totalPages - 1;
+    // Rubber-band the edges so there's nowhere-to-go feedback rather than a dead stop.
+    const offset = (atStart && dx > 0) || (atEnd && dx < 0) ? dx * OVERSCROLL_DAMP : dx;
+    content.style.transform = `translateX(${-currentPage * pageStride + offset}px)`;
+  }
+
+  function endDrag(dx: number, velocity: number) {
+    const content = params.getContentEl();
+    setTransition(true); // restore the eased transition for the settle animation
+    if (content) void content.offsetWidth; // reflow so the next transform transitions
+    if (pageStride <= 0) {
+      applyTransform();
+      return;
+    }
+    const threshold = pageStride * DRAG_COMMIT_FRACTION;
+    let target = currentPage;
+    if (dx < -threshold || velocity < -FLICK_VELOCITY) target = currentPage + 1;
+    else if (dx > threshold || velocity > FLICK_VELOCITY) target = currentPage - 1;
+    target = Math.max(0, Math.min(totalPages - 1, target));
+    if (target === currentPage) {
+      applyTransform(); // spring back to the current page
+    } else {
+      currentPage = target;
+      applyTransform(); // animate to the committed page
+      params.onPageChange?.(currentPage, totalPages);
+    }
+  }
+
   /**
    * Which page a given element's start sits on. Used to restore reading position
    * (map a saved paragraph → its page) and to derive the "active" article in the
@@ -193,6 +244,9 @@ export function usePagination(params: PaginationParams) {
     next,
     prev,
     goToPage,
+    startDrag,
+    updateDrag,
+    endDrag,
     pageOfElement,
     recalc: scheduleMeasure,
   };

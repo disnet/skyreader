@@ -27,7 +27,6 @@
   import NotePeek from '$lib/components/feed/NotePeek.svelte';
   import CollectionMagazine from '$lib/components/feed/CollectionMagazine.svelte';
   import PagedView, { type PagedController } from '$lib/components/feed/PagedView.svelte';
-  import ReaderViewModeToggle from '$lib/components/feed/ReaderViewModeToggle.svelte';
   import { magazineThemeVars } from '$lib/utils/magazineTheme';
   import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
@@ -700,6 +699,16 @@
           <span class="action-label">Style</span>
         </button>
 
+        <button
+          class="action-btn"
+          class:active={paged}
+          onclick={() => preferences.toggleReaderViewMode()}
+          title={paged ? 'Switch to scroll view' : 'Switch to paged view'}
+        >
+          <Icon name={paged ? 'align-justify' : 'book-open'} size={16} />
+          <span class="action-label">{paged ? 'Scroll' : 'Pages'}</span>
+        </button>
+
         <span class="action-separator"></span>
 
         {#if onArchive}
@@ -787,10 +796,6 @@
               </button>
             </div>
           </div>
-
-          <span class="toolbar-divider"></span>
-
-          <ReaderViewModeToggle />
         </div>
       </div>
     {/if}
@@ -845,6 +850,14 @@
         <span class="bottom-separator"></span>
         <button
           class="bottom-btn"
+          class:active={paged}
+          onclick={() => preferences.toggleReaderViewMode()}
+          title={paged ? 'Switch to scroll view' : 'Switch to paged view'}
+        >
+          <Icon name={paged ? 'align-justify' : 'book-open'} size={20} />
+        </button>
+        <button
+          class="bottom-btn"
           class:active={styleSheetOpen}
           onclick={() => (styleSheetOpen = true)}
           title="Style & Actions"
@@ -866,9 +879,6 @@
             <div class="style-sheet-label">Appearance</div>
             <div class="toolbar-wrapper">
               <AppearanceToolbar />
-            </div>
-            <div class="view-toggle-wrapper">
-              <ReaderViewModeToggle />
             </div>
           </div>
 
@@ -1102,11 +1112,6 @@
     flex: 1 1 0;
     min-height: 0;
     height: auto;
-  }
-
-  /* View toggle sits under the appearance toolbar in the mobile style sheet. */
-  .view-toggle-wrapper {
-    margin-top: 0.25rem;
   }
 
   /* Edition view: the chrome takes the publication background (not the app's

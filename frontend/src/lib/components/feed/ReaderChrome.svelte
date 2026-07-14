@@ -7,7 +7,6 @@
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import AppearanceToolbar from './AppearanceToolbar.svelte';
-  import ReaderViewModeToggle from './ReaderViewModeToggle.svelte';
   import TagMenu from './TagMenu.svelte';
 
   let {
@@ -66,6 +65,7 @@
   let headerHidden = $derived(
     !controlsVisible && !styleMenuOpen && !tagMenuOpen && !overflowMenuOpen
   );
+  let paged = $derived(preferences.readerViewMode === 'paged');
 
   const fontOptions: { value: ArticleFont; label: string; family: string }[] = [
     { value: 'sans-serif', label: 'Sans', family: 'sans-serif' },
@@ -208,6 +208,15 @@
         <Icon name="type" size={16} />
         <span class="action-label">Style</span>
       </button>
+      <button
+        class="action-btn"
+        class:active={paged}
+        onclick={() => preferences.toggleReaderViewMode()}
+        title={paged ? 'Switch to scroll view' : 'Switch to paged view'}
+      >
+        <Icon name={paged ? 'align-justify' : 'book-open'} size={16} />
+        <span class="action-label">{paged ? 'Scroll' : 'Pages'}</span>
+      </button>
       <span class="action-separator"></span>
       {#if onArchive}
         <button
@@ -283,8 +292,6 @@
             >
           </div>
         </div>
-        <span class="toolbar-divider"></span>
-        <ReaderViewModeToggle />
       </div>
     </div>
   {/if}
@@ -330,6 +337,14 @@
     <span class="bottom-separator"></span>
     <button
       class="bottom-btn"
+      class:active={paged}
+      onclick={() => preferences.toggleReaderViewMode()}
+      title={paged ? 'Switch to scroll view' : 'Switch to paged view'}
+    >
+      <Icon name={paged ? 'align-justify' : 'book-open'} size={20} />
+    </button>
+    <button
+      class="bottom-btn"
       class:active={styleSheetOpen}
       onclick={() => (styleSheetOpen = true)}
       title="Style & Actions"
@@ -349,7 +364,6 @@
       <div class="style-sheet-section">
         <div class="style-sheet-label">Appearance</div>
         <div class="toolbar-wrapper"><AppearanceToolbar /></div>
-        <div class="view-toggle-wrapper"><ReaderViewModeToggle /></div>
       </div>
       <div class="style-sheet-section">
         <div class="style-sheet-label">Actions</div>
@@ -666,9 +680,6 @@
     display: flex;
     flex-direction: column;
     gap: 0.625rem;
-  }
-  .view-toggle-wrapper {
-    margin-top: 0.25rem;
   }
   .style-sheet-actions {
     display: flex;

@@ -7,6 +7,9 @@
     goToPage: (page: number) => void;
     next: () => void;
     prev: () => void;
+    startDrag: () => void;
+    updateDrag: (dx: number) => void;
+    endDrag: (dx: number, velocity: number) => void;
     pageOfElement: (el: HTMLElement) => number;
     recalc: () => void;
     readonly currentPage: number;
@@ -61,31 +64,125 @@
   let atEnd = $derived(pagination.currentPage >= pagination.totalPages - 1);
 
   // Touch swipe: horizontal drag turns the page; vertical / small drags are
-  // ignored so taps and text selection still work.
+  // ignored so taps and text selection still work. The page follows the finger
+  // (physical drag); on release the paginator commits the turn or springs back.
+  // We decide the axis after a small movement, then drag until touchend/cancel.
+  const AXIS_DECIDE_PX = 8;
+  // A still, quick touch is a tap → turn a page if it lands in an edge zone.
+  const TAP_MAX_MS = 500;
+  const TAP_PREV_ZONE = 0.3; // left 30% → previous page
+  const TAP_NEXT_ZONE = 0.7; // right 30% → next page (middle is neutral)
   let touchStartX = 0;
   let touchStartY = 0;
-  let touchTracking = false;
+  let touchStartT = 0;
+  let touchLastX = 0;
+  let touchLastT = 0;
+  let touchVelocity = 0;
+  let touchDecided = false;
+  let dragging = false;
 
   function onTouchStart(e: TouchEvent) {
     if (e.touches.length !== 1) {
-      touchTracking = false;
+      dragging = false;
+      touchDecided = false;
       return;
     }
     touchStartX = e.touches[0].clientX;
     touchStartY = e.touches[0].clientY;
-    touchTracking = true;
+    touchStartT = performance.now();
+    touchLastX = touchStartX;
+    touchLastT = touchStartT;
+    touchVelocity = 0;
+    touchDecided = false;
+    dragging = false;
+  }
+
+  function hasActiveSelection(): boolean {
+    const sel = typeof window !== 'undefined' ? window.getSelection() : null;
+    return !!sel && !sel.isCollapsed && sel.toString().trim().length > 0;
+  }
+
+  function onTouchMove(e: TouchEvent) {
+    if (e.touches.length !== 1) return;
+    const x = e.touches[0].clientX;
+    const y = e.touches[0].clientY;
+    const dx = x - touchStartX;
+    const dy = y - touchStartY;
+    if (!touchDecided) {
+      if (Math.abs(dx) < AXIS_DECIDE_PX && Math.abs(dy) < AXIS_DECIDE_PX) return;
+      touchDecided = true;
+      // Horizontal intent → drive a physical page drag; vertical → leave it be.
+      // But never hijack the gesture while text is selected (a long-press selects
+      // a word on touch): let the native selection handles be dragged instead.
+      if (Math.abs(dx) > Math.abs(dy) && !hasActiveSelection()) {
+        dragging = true;
+        pagination.startDrag();
+      }
+    }
+    if (!dragging) return;
+    // A selection appearing mid-drag (rare) hands the gesture back to the browser.
+    if (hasActiveSelection()) {
+      dragging = false;
+      pagination.endDrag(0, 0); // settle back to the current page
+      return;
+    }
+    if (e.cancelable) e.preventDefault(); // claim the horizontal gesture
+    pagination.updateDrag(dx);
+    const now = performance.now();
+    const dt = now - touchLastT;
+    if (dt > 0) touchVelocity = (x - touchLastX) / dt;
+    touchLastX = x;
+    touchLastT = now;
+  }
+
+  // Tap-to-turn: a still, quick tap in the left/right edge zone turns a page.
+  // Runs off the touch sequence (not a click listener) so it never competes with
+  // text selection or link taps — those are filtered out below.
+  function maybeTapTurn(e: TouchEvent) {
+    if (performance.now() - touchStartT >= TAP_MAX_MS) return; // long-press, not a tap
+    if (hasActiveSelection()) return; // selecting text, not turning
+    const t = e.changedTouches && e.changedTouches[0];
+    if (!t || !viewportEl) return;
+    const target = e.target as HTMLElement | null;
+    // Let real links / controls / media handle their own tap.
+    if (
+      target?.closest?.('a, button, input, textarea, select, video, audio, iframe, [role="button"]')
+    )
+      return;
+    const rect = viewportEl.getBoundingClientRect();
+    const frac = (t.clientX - rect.left) / rect.width;
+    if (frac <= TAP_PREV_ZONE) pagination.prev();
+    else if (frac >= TAP_NEXT_ZONE) pagination.next();
+    // middle zone: neutral (reading area), no turn
   }
 
   function onTouchEnd(e: TouchEvent) {
-    if (!touchTracking) return;
-    touchTracking = false;
-    const touch = e.changedTouches[0];
-    if (!touch) return;
-    const dx = touch.clientX - touchStartX;
-    const dy = touch.clientY - touchStartY;
-    if (Math.abs(dx) < 50 || Math.abs(dx) <= Math.abs(dy)) return;
-    if (dx < 0) pagination.next();
+    const wasDragging = dragging;
+    const moved = touchDecided;
+    dragging = false;
+    touchDecided = false;
+    if (wasDragging) {
+      const t = e.changedTouches && e.changedTouches[0];
+      const endX = t ? t.clientX : touchLastX;
+      pagination.endDrag(endX - touchStartX, touchVelocity);
+      return;
+    }
+    // No drag. If the finger didn't meaningfully move, treat it as a tap.
+    if (!moved && e.type === 'touchend') maybeTapTurn(e);
+  }
+
+  // Scroll wheel / trackpad turns pages. One turn per gesture (a short lock keeps
+  // a fast wheel or inertial trackpad from skipping several pages at once).
+  let wheelLocked = false;
+  function onWheel(e: WheelEvent) {
+    const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    if (Math.abs(delta) < 8) return;
+    e.preventDefault();
+    if (wheelLocked) return;
+    wheelLocked = true;
+    if (delta > 0) pagination.next();
     else pagination.prev();
+    setTimeout(() => (wheelLocked = false), 420);
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -116,41 +213,56 @@
     document.addEventListener('keydown', handleKeydown, true);
     return () => document.removeEventListener('keydown', handleKeydown, true);
   });
+
+  // Wheel + touch need non-passive listeners to preventDefault, so attach them
+  // manually rather than via the (passive-by-default) on* attributes.
+  $effect(() => {
+    const vp = viewportEl;
+    if (!vp) return;
+    vp.addEventListener('wheel', onWheel, { passive: false });
+    vp.addEventListener('touchstart', onTouchStart, { passive: true });
+    vp.addEventListener('touchmove', onTouchMove, { passive: false });
+    vp.addEventListener('touchend', onTouchEnd, { passive: true });
+    vp.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    return () => {
+      vp.removeEventListener('wheel', onWheel);
+      vp.removeEventListener('touchstart', onTouchStart);
+      vp.removeEventListener('touchmove', onTouchMove);
+      vp.removeEventListener('touchend', onTouchEnd);
+      vp.removeEventListener('touchcancel', onTouchEnd);
+    };
+  });
 </script>
 
 <div class="paged-root" style:padding-bottom={bottomInset ? `${bottomInset}px` : undefined}>
-  <div
-    class="paged-viewport"
-    bind:this={viewportEl}
-    ontouchstart={onTouchStart}
-    ontouchend={onTouchEnd}
-  >
+  <div class="paged-viewport" bind:this={viewportEl}>
     <div class="paged-content" bind:this={contentEl}>
       {@render children()}
     </div>
+  </div>
 
+  <div class="paged-nav">
     <button
-      class="turn-zone turn-prev"
+      class="page-btn"
       onclick={() => pagination.prev()}
       disabled={atStart}
       aria-label="Previous page"
       title="Previous page"
     >
-      <span class="turn-chevron"><Icon name="chevron-left" size={22} /></span>
+      <Icon name="chevron-left" size={18} />
     </button>
+    <span class="paged-count" aria-live="polite"
+      >Page {pagination.currentPage + 1} of {pagination.totalPages}</span
+    >
     <button
-      class="turn-zone turn-next"
+      class="page-btn"
       onclick={() => pagination.next()}
       disabled={atEnd}
       aria-label="Next page"
       title="Next page"
     >
-      <span class="turn-chevron"><Icon name="chevron-right" size={22} /></span>
+      <Icon name="chevron-right" size={18} />
     </button>
-  </div>
-
-  <div class="paged-nav" aria-live="polite">
-    <span class="paged-count">Page {pagination.currentPage + 1} of {pagination.totalPages}</span>
   </div>
 </div>
 
@@ -171,6 +283,9 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    /* Let JS own horizontal swipes (no browser back-gesture hijack); vertical is
+       free but nothing scrolls here. */
+    touch-action: pan-y;
   }
 
   /* The paginated flow. Every measured value (width, height, column-width,
@@ -181,7 +296,10 @@
     box-sizing: border-box;
     column-fill: auto;
     transform: translateX(0);
-    transition: transform 0.28s ease;
+    /* Physical settle: decelerating ease-out so a committed turn or spring-back
+       glides in and eases to rest (like flicking a page). Disabled inline by the
+       paginator while a finger is actively dragging. */
+    transition: transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
     will-change: transform;
   }
 
@@ -218,75 +336,46 @@
     break-after: avoid;
   }
 
-  /* Edge tap/click zones. Narrow so they don't swallow text selection across the
-     column; the chevron only fades in on hover (desktop) or stays faint (touch). */
-  .turn-zone {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: clamp(40px, 8%, 72px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: 0;
-    background: none;
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    padding: 0;
-  }
-
-  .turn-prev {
-    left: 0;
-    justify-content: flex-start;
-  }
-
-  .turn-next {
-    right: 0;
-    justify-content: flex-end;
-  }
-
-  .turn-zone:disabled {
-    cursor: default;
-  }
-
-  .turn-chevron {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 34px;
-    height: 34px;
-    border-radius: 999px;
-    background: var(--color-bg, #fff);
-    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
-    opacity: 0;
-    transition: opacity 0.15s ease;
-  }
-
-  .turn-zone:hover:not(:disabled) .turn-chevron {
-    opacity: 1;
-  }
-
-  .turn-zone:disabled .turn-chevron {
-    opacity: 0;
-  }
-
-  /* Touch devices don't hover — keep the chevrons quietly visible so the page-turn
-     affordance is discoverable. */
-  @media (hover: none) {
-    .turn-chevron {
-      opacity: 0.5;
-    }
-  }
-
+  /* Bottom bar: ‹  Page X of N  › — the only page-turn affordance in the reading
+     surface (plus wheel / swipe / keys). No floating overlay buttons. */
   .paged-nav {
     flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
+    gap: 0.5rem;
     padding: 0.5rem 0 calc(0.5rem + env(safe-area-inset-bottom, 0px));
   }
 
+  .page-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
+  }
+
+  .page-btn:hover:not(:disabled) {
+    background: var(--color-bg-secondary, #f5f5f5);
+    color: var(--color-text);
+  }
+
+  .page-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+
   .paged-count {
+    min-width: 8ch;
+    text-align: center;
     font-size: var(--text-xs);
     font-weight: var(--weight-medium);
     color: var(--color-text-secondary);
@@ -295,9 +384,8 @@
   }
 
   @media (prefers-color-scheme: dark) {
-    .turn-chevron {
-      background: var(--color-bg-secondary, #2a2a2a);
-      box-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
+    .page-btn:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.1);
     }
   }
 </style>
