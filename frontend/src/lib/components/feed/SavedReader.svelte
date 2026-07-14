@@ -1035,11 +1035,15 @@
           </div>
         {/if}
       </div>
+
+      <!-- Share-to-linkblog + discussion rails. Part of the shared content so they
+           sit at the end in scroll mode and flow onto the final page(s) when
+           paged. -->
+      <ReaderDiscussion {readerItem} {onSaveToSemble} {onSaveToMargin} />
     {/snippet}
 
     {#if paged}
-      <!-- Kindle-style paged reading. Discussion is dropped here for a focused
-           read (it remains in scroll mode). -->
+      <!-- Kindle-style paged reading. -->
       <PagedView
         bottomInset={mobileStore.isMobile ? 64 : 0}
         deps={() => [sanitizedContent, preferences.articleFont, preferences.articleFontSize]}
@@ -1051,7 +1055,6 @@
     {:else}
       <article class="reader-article">
         {@render articleContent()}
-        <ReaderDiscussion {readerItem} {onSaveToSemble} {onSaveToMargin} />
       </article>
     {/if}
   </div>

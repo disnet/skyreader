@@ -46,6 +46,7 @@ export function usePagination(params: PaginationParams) {
   let pageStride = 0; // horizontal distance between two consecutive pages (px)
 
   let resizeObserver: ResizeObserver | null = null;
+  let mutationObserver: MutationObserver | null = null;
   let imgCleanups: Array<() => void> = [];
   let recalcRaf: number | null = null;
   const deferredTimers: Array<ReturnType<typeof setTimeout>> = [];
@@ -126,6 +127,16 @@ export function usePagination(params: PaginationParams) {
     resizeObserver = new ResizeObserver(() => scheduleMeasure());
     resizeObserver.observe(viewport);
 
+    // Content can grow/shrink after first paint — embeds hydrate, and the
+    // discussion rail expands when Atmosphere data loads or the user shares. Watch
+    // the subtree so the page count stays correct. We observe childList/text only
+    // (NOT attributes) so measure()'s own inline style writes don't re-trigger it.
+    const content = params.getContentEl();
+    if (content) {
+      mutationObserver = new MutationObserver(() => scheduleMeasure());
+      mutationObserver.observe(content, { childList: true, subtree: true, characterData: true });
+    }
+
     watchImages();
     scheduleMeasure();
     // Late images / web fonts can change the flow after first paint; re-measure a
@@ -137,6 +148,8 @@ export function usePagination(params: PaginationParams) {
     return () => {
       resizeObserver?.disconnect();
       resizeObserver = null;
+      mutationObserver?.disconnect();
+      mutationObserver = null;
       for (const cleanup of imgCleanups) cleanup();
       imgCleanups = [];
       while (deferredTimers.length) clearTimeout(deferredTimers.pop());
@@ -230,6 +243,7 @@ export function usePagination(params: PaginationParams) {
   onDestroy(() => {
     if (recalcRaf != null) cancelAnimationFrame(recalcRaf);
     resizeObserver?.disconnect();
+    mutationObserver?.disconnect();
     for (const cleanup of imgCleanups) cleanup();
     while (deferredTimers.length) clearTimeout(deferredTimers.pop());
   });

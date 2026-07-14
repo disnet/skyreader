@@ -318,7 +318,12 @@
   .paged-content :global(figure),
   .paged-content :global(pre),
   .paged-content :global(table),
-  .paged-content :global(blockquote) {
+  .paged-content :global(blockquote),
+  .paged-content :global(button),
+  /* Keep the share-to-linkblog / discussion rail whole rather than split across
+     a column break where it can. */
+  .paged-content :global(.reader-share-cta),
+  .paged-content :global(.reader-discussion-divider) {
     break-inside: avoid;
   }
 
