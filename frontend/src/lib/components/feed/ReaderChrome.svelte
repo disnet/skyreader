@@ -13,6 +13,7 @@
     itemKey,
     itemType,
     itemTags = [],
+    showTag = true,
     isArchived = false,
     isSaved = false,
     controlsVisible = true,
@@ -34,6 +35,9 @@
     itemKey: string;
     itemType: ItemLabelType;
     itemTags?: string[];
+    /** When false, hide all tagging affordances (e.g. the magazine reader, whose
+     *  chrome acts on the issue, not the article being read). */
+    showTag?: boolean;
     isArchived?: boolean;
     isSaved?: boolean;
     controlsVisible?: boolean;
@@ -94,12 +98,15 @@
       keepOpen?: boolean;
       onclick: () => void;
     }[] = [];
-    if (onContents) items.push({ label: 'Contents', icon: 'list', onclick: onContents });
-    items.push({
-      label: `Tag${itemTags.length ? ` (${itemTags.length})` : ''}`,
-      icon: 'tag',
-      onclick: () => (tagMenuOpen = true),
-    });
+    // Contents isn't added here: it already has its own always-visible header
+    // button (same `onContents` gate), so listing it in the overflow is redundant.
+    if (showTag) {
+      items.push({
+        label: `Tag${itemTags.length ? ` (${itemTags.length})` : ''}`,
+        icon: 'tag',
+        onclick: () => (tagMenuOpen = true),
+      });
+    }
     if (onToggleSave) {
       items.push({ label: isSaved ? 'Unsave' : 'Save', icon: 'bookmark', onclick: onToggleSave });
     }
@@ -118,7 +125,6 @@
         onclick: handleDelete,
       });
     }
-    items.push({ label: 'Open in browser', icon: 'external-link', onclick: onOpenUrl });
     return items;
   });
 
@@ -142,7 +148,7 @@
     if (event.key === 'Escape') action = onClose;
     else if (event.key === 'e' && noMod) action = onArchive;
     else if (event.key === 's' && noMod) action = onToggleSave;
-    else if (event.key === 't' && noMod) action = () => (tagMenuOpen = !tagMenuOpen);
+    else if (event.key === 't' && noMod && showTag) action = () => (tagMenuOpen = !tagMenuOpen);
     else if (event.key === 'ArrowDown' && noMod) action = onNextParagraph;
     else if (event.key === 'ArrowUp' && noMod) action = onPreviousParagraph;
     else if (event.key === 'h' && noMod) action = onHighlightParagraph;
@@ -239,19 +245,27 @@
           <span class="action-label">{isSaved ? 'Unsave' : 'Save'}</span>
         </button>
       {/if}
-      <button
-        class="action-btn"
-        class:active={tagMenuOpen}
-        bind:this={desktopTagRef}
-        onclick={() => (tagMenuOpen = !tagMenuOpen)}
-        title="Tag (t)"
-      >
-        <Icon name="tag" size={16} />
-        <span class="action-label">Tag{itemTags.length ? ` (${itemTags.length})` : ''}</span>
+      {#if showTag}
+        <button
+          class="action-btn"
+          class:active={tagMenuOpen}
+          bind:this={desktopTagRef}
+          onclick={() => (tagMenuOpen = !tagMenuOpen)}
+          title="Tag (t)"
+        >
+          <Icon name="tag" size={16} />
+          <span class="action-label">Tag{itemTags.length ? ` (${itemTags.length})` : ''}</span>
+        </button>
+      {/if}
+      <button class="action-btn" onclick={onOpenUrl} title="Open in browser">
+        <Icon name="external-link" size={16} />
+        <span class="action-label">Open</span>
       </button>
-      <div class="overflow-menu-wrapper">
-        <PopoverMenu items={overflowItems} bind:open={overflowMenuOpen} />
-      </div>
+      {#if overflowItems.length}
+        <div class="overflow-menu-wrapper">
+          <PopoverMenu items={overflowItems} bind:open={overflowMenuOpen} />
+        </div>
+      {/if}
     </div>
   </div>
 
@@ -295,7 +309,7 @@
       </div>
     </div>
   {/if}
-  {#if tagMenuOpen && !mobileStore.isMobile}
+  {#if showTag && tagMenuOpen && !mobileStore.isMobile}
     <TagMenu {itemKey} {itemType} anchorEl={desktopTagRef} onClose={() => (tagMenuOpen = false)} />
   {/if}
 </header>
@@ -325,16 +339,18 @@
         <Icon name="bookmark" size={20} />
       </button>
     {/if}
-    <button
-      class="bottom-btn"
-      class:active={tagMenuOpen}
-      bind:this={mobileTagRef}
-      onclick={() => (tagMenuOpen = !tagMenuOpen)}
-      title="Tag (t)"
-    >
-      <Icon name="tag" size={20} />
-    </button>
-    <span class="bottom-separator"></span>
+    {#if showTag}
+      <button
+        class="bottom-btn"
+        class:active={tagMenuOpen}
+        bind:this={mobileTagRef}
+        onclick={() => (tagMenuOpen = !tagMenuOpen)}
+        title="Tag (t)"
+      >
+        <Icon name="tag" size={20} />
+      </button>
+      <span class="bottom-separator"></span>
+    {/if}
     <button
       class="bottom-btn"
       class:active={paged}
@@ -379,17 +395,19 @@
               <Icon name="list" size={18} /><span>Contents</span>
             </button>
           {/if}
-          <button
-            class="sheet-action-btn"
-            onclick={() => {
-              styleSheetOpen = false;
-              tagMenuOpen = true;
-            }}
-          >
-            <Icon name="tag" size={18} /><span
-              >Tag{itemTags.length ? ` (${itemTags.length})` : ''}</span
+          {#if showTag}
+            <button
+              class="sheet-action-btn"
+              onclick={() => {
+                styleSheetOpen = false;
+                tagMenuOpen = true;
+              }}
             >
-          </button>
+              <Icon name="tag" size={18} /><span
+                >Tag{itemTags.length ? ` (${itemTags.length})` : ''}</span
+              >
+            </button>
+          {/if}
           {#if onToggleSave}
             <button
               class="sheet-action-btn"
@@ -443,7 +461,7 @@
       </div>
     </div>
   </BottomSheet>
-  {#if tagMenuOpen}
+  {#if showTag && tagMenuOpen}
     <TagMenu {itemKey} {itemType} anchorEl={mobileTagRef} onClose={() => (tagMenuOpen = false)} />
   {/if}
 {/if}

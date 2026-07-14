@@ -5,8 +5,7 @@
   import DailyMagazineEntry from '$lib/components/feed/DailyMagazineEntry.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
-  import type { SavedItem } from '$lib/types';
-  import type { DailyMagazineIssue } from '$lib/utils/dailyMagazine';
+  import type { Magazine, SavedItem } from '$lib/types';
   import Showcase from '../_harness/Showcase.svelte';
   import Case from '../_harness/Case.svelte';
 
@@ -165,18 +164,31 @@
 
   const fewItems = continueItems.slice(0, 1);
 
-  const dailyItems = savedItems.slice(0, 3).map((item, index) => ({
-    item: item.displayItem.item as SavedItem,
-    key: item.key,
-    wordCount: item.displayItem.item.wordCount,
-    opened: false,
-    minutes: [9, 5, 4][index],
-  }));
-  const dailyIssue: DailyMagazineIssue<SavedItem> = {
-    dateKey: '2026-07-13',
-    targetMinutes: 20,
-    totalMinutes: 18,
-    items: dailyItems,
+  const magazineStamp = Math.floor(new Date(2026, 6, 13).getTime() / 1000);
+  const magazineMock: Magazine = {
+    rkey: 'devmagazine00001',
+    params: { order: 'shuffle', targetMinutes: 20, totalMinutes: 18 },
+    items: savedItems.slice(0, 3).map((entry, index) => {
+      const s = entry.displayItem.item as SavedItem;
+      return {
+        key: s.rkey,
+        displayKey: s.uri || s.rkey,
+        rkey: s.rkey,
+        title: s.title,
+        author: s.author,
+        url: s.url,
+        domain: s.domain,
+        image: s.image,
+        wordCount: s.wordCount,
+        minutes: [9, 5, 4][index],
+        savedAt: s.savedAt,
+      };
+    }),
+    position: null,
+    title: null,
+    createdAt: magazineStamp,
+    updatedAt: magazineStamp,
+    deletedAt: null,
   };
 
   function noop() {}
@@ -194,7 +206,7 @@
   {/snippet}
 
   <Case name="Daily magazine entry" width="{width}px">
-    <DailyMagazineEntry date={new Date(2026, 6, 13)} issue={dailyIssue} />
+    <DailyMagazineEntry magazine={magazineMock} generating={false} onGenerate={noop} />
   </Case>
 
   <Case name="Continue reading — progress spines" width="{width}px">

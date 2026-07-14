@@ -64,6 +64,12 @@ import {
 import { handleExtract } from './routes/extract';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
 import {
+  handleGetMagazines,
+  handleUpsertMagazine,
+  handleUpdateMagazinePosition,
+  handleDeleteMagazine,
+} from './routes/magazines';
+import {
   handleIntegrationStatus,
   handleCreateSembleCard,
   handleListSembleCollections,
@@ -424,6 +430,34 @@ export default {
           }
           break;
 
+        // Magazine routes (durable, cross-device reading issues)
+        case url.pathname === '/api/magazines':
+          if (!session) return unauthorizedResponse(headers);
+          if (request.method === 'GET') {
+            response = await handleGetMagazines(request, env);
+          } else if (request.method === 'POST') {
+            response = await handleUpsertMagazine(request, env);
+          } else if (request.method === 'DELETE') {
+            response = await handleDeleteMagazine(request, env);
+          } else {
+            response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+              status: 405,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          break;
+        case url.pathname === '/api/magazines/position':
+          if (!session) return unauthorizedResponse(headers);
+          if (request.method === 'PATCH') {
+            response = await handleUpdateMagazinePosition(request, env);
+          } else {
+            response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+              status: 405,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          break;
+
         // Integration routes
         case url.pathname === '/api/integrations/status':
           if (!session) return unauthorizedResponse(headers);
@@ -660,6 +694,19 @@ export default {
           labelTombstonesDeleted = tombstoneResult.meta?.changes || 0;
         } catch (error) {
           console.error('[Cron] D1 WRITE ERROR purging label tombstones:', error);
+        }
+
+        // Purge old magazine tombstones (same 90-day retention as labels so a
+        // long-offline client still replays the deletion via its `?since=` delta).
+        try {
+          const magazineCutoff = Math.floor(now / 1000) - 90 * 24 * 60 * 60;
+          await env.DB.prepare(
+            'DELETE FROM magazines WHERE deleted_at IS NOT NULL AND deleted_at < ?'
+          )
+            .bind(magazineCutoff)
+            .run();
+        } catch (error) {
+          console.error('[Cron] D1 WRITE ERROR purging magazine tombstones:', error);
         }
 
         d1CleanupDuration = Date.now() - cleanupStart;

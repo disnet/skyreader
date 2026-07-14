@@ -1,6 +1,5 @@
 <script lang="ts">
-  import type { SavedItem } from '$lib/types';
-  import type { DailyMagazineIssue } from '$lib/utils/dailyMagazine';
+  import type { Magazine } from '$lib/types';
   import { formatMagazineDate, magazineIssueSummary } from '$lib/utils/dailyMagazine';
   import {
     DAILY_MAGAZINE_MINUTE_OPTIONS,
@@ -12,11 +11,17 @@
   import Icon from '$lib/components/Icon.svelte';
 
   interface Props {
-    date: Date;
-    issue: DailyMagazineIssue<SavedItem>;
+    // The user's current durable magazine, or null if none has been generated.
+    magazine: Magazine | null;
+    generating: boolean;
+    onGenerate: () => void | Promise<void>;
   }
 
-  let { date, issue }: Props = $props();
+  let { magazine, generating, onGenerate }: Props = $props();
+
+  // A magazine carries its own creation date; without one, fall back to today for
+  // the "generate your first issue" framing.
+  let date = $derived(magazine ? new Date(magazine.createdAt * 1000) : new Date());
 
   function updateLength(event: Event) {
     const minutes = Number((event.currentTarget as HTMLSelectElement).value);
@@ -32,7 +37,9 @@
 <section class="magazine-entry" aria-labelledby="daily-magazine-title">
   <div class="entry-copy">
     <p class="entry-kicker">Daily magazine · {formatMagazineDate(date)}</p>
-    <h2 id="daily-magazine-title">Today’s issue from your saved articles</h2>
+    <h2 id="daily-magazine-title">
+      {magazine ? 'Your current issue' : 'A reading issue from your saved articles'}
+    </h2>
   </div>
 
   <div class="controls">
@@ -55,15 +62,26 @@
   </div>
 
   <div class="entry-footer">
-    {#if issue.items.length > 0}
-      <p class="summary">{magazineIssueSummary(issue.items.length, issue.totalMinutes)}</p>
+    {#if magazine}
+      <p class="summary">
+        {magazineIssueSummary(magazine.items.length, magazine.params.totalMinutes)}
+      </p>
+      <div class="actions">
+        <button class="reroll" onclick={() => onGenerate()} disabled={generating}>
+          {generating ? 'Generating…' : 'New issue'}
+        </button>
+        <a class="open-link" href="/daily">
+          <span>Open magazine</span>
+          <Icon name="arrow-right" size={15} />
+        </a>
+      </div>
     {:else}
-      <p class="summary">Save an article or choose a longer issue to get started.</p>
+      <p class="summary">Generate an issue to start reading across devices.</p>
+      <button class="generate" onclick={() => onGenerate()} disabled={generating}>
+        <span>{generating ? 'Generating…' : 'Generate issue'}</span>
+        <Icon name="arrow-right" size={15} />
+      </button>
     {/if}
-    <a class="open-link" href="/daily">
-      <span>{issue.items.length > 0 ? 'Open today’s magazine' : 'Set up your magazine'}</span>
-      <Icon name="arrow-right" size={15} />
-    </a>
   </div>
 </section>
 
@@ -142,7 +160,15 @@
     font-size: var(--text-sm);
   }
 
-  .open-link {
+  .actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 1rem;
+    flex: 0 0 auto;
+  }
+
+  .open-link,
+  .generate {
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
@@ -154,13 +180,47 @@
     border-radius: 4px;
   }
 
-  .open-link:hover {
+  .generate {
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .open-link:hover,
+  .generate:hover:not(:disabled) {
     text-decoration: underline;
   }
 
-  .open-link:focus-visible {
+  .open-link:focus-visible,
+  .generate:focus-visible,
+  .reroll:focus-visible {
     outline: 2px solid var(--color-primary);
     outline-offset: 3px;
+  }
+
+  .reroll {
+    flex: 0 0 auto;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .reroll:hover:not(:disabled) {
+    color: var(--color-text);
+    text-decoration: underline;
+  }
+
+  .reroll:disabled,
+  .generate:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
 
   @media (max-width: 560px) {

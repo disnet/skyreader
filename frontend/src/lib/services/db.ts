@@ -9,13 +9,21 @@ import type {
   ItemLabel,
   SavedItem,
   FollowingPublication,
+  Magazine,
 } from '$lib/types';
 
 // Sync queue for offline operations
 export interface SyncQueueEntry {
   id?: number;
   operation: 'create' | 'update' | 'delete';
-  collection: 'reading' | 'socialReading' | 'follows' | 'label' | 'saved' | 'integration';
+  collection:
+    | 'reading'
+    | 'socialReading'
+    | 'follows'
+    | 'label'
+    | 'saved'
+    | 'integration'
+    | 'magazine';
   key: string; // Deduplication key (e.g., articleGuid, rkey)
   payload: string; // JSON-serialized data
   timestamp: number;
@@ -80,6 +88,7 @@ class SkyreaderDatabase extends Dexie {
   follows!: Table<FollowCacheEntry>;
   followingPublications!: Table<FollowingPublication>;
   feedCursors!: Table<FeedCursorEntry>;
+  magazines!: Table<Magazine>;
 
   constructor() {
     super('skyreader');
@@ -417,6 +426,13 @@ class SkyreaderDatabase extends Dexie {
     this.version(36).stores({
       feedCursors: 'subscriptionId',
     });
+
+    // Durable, cross-device magazines: locally-cached mirror of the D1 magazines
+    // table (delta-synced). Keyed by rkey; createdAt indexed to resolve "current"
+    // (newest) quickly. `items`/`position` are stored as plain objects.
+    this.version(37).stores({
+      magazines: 'rkey, createdAt, updatedAt',
+    });
   }
 }
 
@@ -439,6 +455,7 @@ export async function clearAllData(): Promise<void> {
     db.follows.clear(),
     db.followingPublications.clear(),
     db.feedCursors.clear(),
+    db.magazines.clear(),
   ]);
 }
 

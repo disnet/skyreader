@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import type { SavedItem } from '$lib/types';
+  import type { PagedController } from './PagedView.svelte';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -20,6 +21,12 @@
     nextParagraph: () => void;
     previousParagraph: () => void;
     highlightParagraph: () => void;
+    // Current paragraph index within this article — read by the magazine to store
+    // a resume pointer.
+    currentParagraph: () => number;
+    // The element the saved reading position points at (paged mode turns to its
+    // page). Null when there's no saved paragraph or the body isn't rendered yet.
+    restoreTargetElement: () => HTMLElement | null;
     body: () => HTMLElement | undefined;
     root: () => HTMLElement | undefined;
   }
@@ -32,6 +39,9 @@
     bodyStatus,
     bodyHtml,
     active,
+    restore = false,
+    paged = false,
+    pagedController,
     scrollRoot,
     registerControls,
     registerRoot,
@@ -43,6 +53,14 @@
     bodyStatus: 'loading' | 'ready' | 'missing';
     bodyHtml: string;
     active: boolean;
+    // True only for the article the magazine is resuming into: restore its saved
+    // reading position once the body settles (scroll mode).
+    restore?: boolean;
+    // Paged reading: mode flag + the shared paginator, so the active article can
+    // save its reading position on page turns (paged mode never scrolls, so the
+    // scroll-driven tracker records nothing).
+    paged?: boolean;
+    pagedController?: PagedController;
     scrollRoot: HTMLElement | undefined;
     registerControls: (key: string, controls: MagazineArticleControls | null) => void;
     registerRoot: (key: string, root: HTMLElement | null) => void;
@@ -78,6 +96,8 @@
     previousParagraph: paragraphTracking.prevParagraph,
     highlightParagraph: () =>
       highlightsHook.toggleParagraphHighlight(paragraphTracking.currentParagraphIndex),
+    currentParagraph: () => paragraphTracking.currentParagraphIndex,
+    restoreTargetElement: () => paragraphTracking.restoreTargetElement(),
     body: () => bodyEl,
     root: () => rootEl,
   };
@@ -109,6 +129,10 @@
     };
   });
 
+  // Restore the resume-target article's saved reading position once, retrying
+  // while the (lazily-loaded) body reports `'partial'` — mirrors SavedReader.
+  let restoredOnce = false;
+
   $effect(() => {
     void bodyHtml;
     void bodyStatus;
@@ -120,6 +144,18 @@
       if (active) paragraphTracking.setupObserver();
       linkInterception.attach();
       highlightsHook.attach();
+      // Wait for the lazily-loaded body: with no paragraphs detected yet,
+      // restorePosition would return 'none' and terminally give up at the top.
+      if (restore && active && bodyStatus === 'ready' && !restoredOnce) {
+        setTimeout(() => {
+          if (cancelled || restoredOnce) return;
+          const result = paragraphTracking.restorePosition();
+          // 'exact'/'none' are terminal; 'partial' retries when the body settles.
+          if (result !== 'partial') restoredOnce = true;
+          // No saved paragraph (or at the very top): at least land on the article.
+          if (result === 'none') rootEl?.scrollIntoView({ block: 'start' });
+        }, 100);
+      }
     });
     return () => {
       cancelled = true;
@@ -127,6 +163,31 @@
       linkInterception.detach();
       highlightsHook.detach();
     };
+  });
+
+  // Paged mode never scrolls, so the scroll-driven tracker above records nothing.
+  // While this is the active (on-screen) article, save the furthest paragraph
+  // paged past into the same readProgress the scroll reader / restore use — so a
+  // reopened issue turns back to it (mirrors SavedReader.handlePagedPageChange).
+  let pagedSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => {
+    const controller = pagedController;
+    if (!paged || !active || !controller || bodyStatus !== 'ready') return;
+    const page = controller.currentPage; // re-run on every page turn
+    const paras = paragraphTracking.paragraphElements();
+    if (!paras.length) return;
+    let furthest = 0;
+    for (let i = 0; i < paras.length; i++) {
+      if (controller.pageOfElement(paras[i]) <= page) furthest = i;
+    }
+    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
+    pagedSaveTimer = setTimeout(() => {
+      itemLabelsStore.setReadProgress(itemKey, 'saved', furthest, paras.length);
+    }, 500);
+  });
+
+  onDestroy(() => {
+    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
   });
 </script>
 

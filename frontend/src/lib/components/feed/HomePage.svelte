@@ -15,8 +15,11 @@
   import NotificationList from '$lib/components/NotificationList.svelte';
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
   import DailyMagazineEntry from '$lib/components/feed/DailyMagazineEntry.svelte';
+  import MagazineRail from '$lib/components/feed/MagazineRail.svelte';
+  import { goto } from '$app/navigation';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { magazineStore } from '$lib/stores/magazine.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
@@ -28,11 +31,7 @@
   import { useScrollDirection } from '$lib/hooks/useScrollDirection.svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { decodeEntities } from '$lib/utils/entities';
-  import {
-    buildDailyMagazine,
-    savedItemLabelKeys,
-    savedItemMagazineKey,
-  } from '$lib/utils/dailyMagazine';
+  import { savedItemLabelKeys } from '$lib/utils/dailyMagazine';
   import { preferences } from '$lib/stores/preferences.svelte';
   import {
     datePresetToMs,
@@ -56,10 +55,8 @@
   // --- Time-of-day masthead (client-only; computed once on mount) ---
   let greeting = $state('Welcome back');
   let dateLabel = $state('');
-  let magazineDate = $state(new Date());
   onMount(() => {
     const now = new Date();
-    magazineDate = now;
     const h = now.getHours();
     greeting =
       h < 5 ? 'Good evening' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
@@ -147,20 +144,11 @@
     return out;
   });
 
-  let magazineIssue = $derived.by(() =>
-    buildDailyMagazine(
-      enriched.map(({ s, activity }) => ({
-        item: s,
-        key: savedItemMagazineKey(s),
-        wordCount: s.wordCount,
-        opened: activity !== null,
-        sortValue: Date.parse(s.savedAt),
-      })),
-      preferences.dailyMagazineMinutes,
-      magazineDate,
-      preferences.dailyMagazineOrder
-    )
-  );
+  // The Home card reflects the user's durable current magazine (if any). Mint a
+  // new one on demand; navigation to /daily is left to the card's link.
+  async function generateMagazine() {
+    await magazineStore.generate();
+  }
 
   // Continue reading: anything opened, newest activity first.
   let continueEnriched = $derived.by(() =>
@@ -351,7 +339,17 @@
     </div>
 
     {#if !isLoading}
-      <DailyMagazineEntry date={magazineDate} issue={magazineIssue} />
+      <DailyMagazineEntry
+        magazine={magazineStore.current}
+        generating={magazineStore.generating}
+        onGenerate={generateMagazine}
+      />
+      {#if magazineStore.magazines.length >= 2}
+        <MagazineRail
+          issues={magazineStore.magazines}
+          onOpen={(rkey) => goto(`/daily?id=${rkey}`)}
+        />
+      {/if}
     {/if}
 
     {#if isLoading}
