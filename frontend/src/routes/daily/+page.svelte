@@ -76,6 +76,17 @@
     if (nearestKey !== activeKey) activeKey = nearestKey;
   }
 
+  // Contents-list navigation. In scroll mode the native `#article-N` anchor jump
+  // works; in paged mode nothing scrolls (overflow:hidden), so turn to the page
+  // the article starts on instead.
+  function jumpToArticle(e: MouseEvent, entry: (typeof issue.items)[number]) {
+    if (!paged || !pagedController) return; // let the anchor scroll natively
+    const root = articleRoots.get(savedItemDisplayKey(entry.item));
+    if (!root) return;
+    e.preventDefault();
+    pagedController.goToElement(root);
+  }
+
   let activeEntry = $derived(
     issue.items.find((entry) => savedItemDisplayKey(entry.item) === activeKey) ?? issue.items[0]
   );
@@ -336,7 +347,7 @@
           <ol>
             {#each issue.items as entry, index (entry.key)}
               <li>
-                <a href={`#article-${index + 1}`}
+                <a href={`#article-${index + 1}`} onclick={(e) => jumpToArticle(e, entry)}
                   ><span>{decodeEntities(entry.item.title || '') || entry.item.url}</span><span
                     >{entry.minutes} min</span
                   ></a

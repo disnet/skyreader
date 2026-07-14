@@ -375,7 +375,7 @@
       const paras = detectReaderParagraphs();
       if (!paras.length) return; // body not loaded yet — retry on next settle
       const idx = Math.min(saved.paragraphIndex, paras.length - 1);
-      pagedController?.goToPage(pagedController.pageOfElement(paras[idx]));
+      pagedController?.goToElement(paras[idx]);
       pagedRestoredForKey = key;
     }, 300);
     return () => clearTimeout(timer);

@@ -45,6 +45,12 @@ export function usePagination(params: PaginationParams) {
   let cols = 1;
   let pageStride = 0; // horizontal distance between two consecutive pages (px)
 
+  // A target element to keep at the top of the page across reflows (jump-to /
+  // restore). Late-loading images repaginate the flow, so a one-shot goToPage can
+  // land short; we re-resolve this element's page on every measure until the user
+  // turns a page.
+  let pendingElement: HTMLElement | null = null;
+
   let resizeObserver: ResizeObserver | null = null;
   let mutationObserver: MutationObserver | null = null;
   let imgCleanups: Array<() => void> = [];
@@ -88,6 +94,13 @@ export function usePagination(params: PaginationParams) {
     if (currentPage > totalPages - 1) currentPage = totalPages - 1;
     if (currentPage < 0) currentPage = 0;
 
+    // Keep a jumped-to / restored element pinned to the top of its page as the
+    // flow reflows (images loading, fonts settling) — otherwise the turn lands
+    // short of where the element ends up.
+    if (pendingElement?.isConnected) {
+      currentPage = Math.max(0, Math.min(totalPages - 1, pageOfElement(pendingElement)));
+    }
+
     applyTransform();
     params.onPageChange?.(currentPage, totalPages);
   }
@@ -107,6 +120,11 @@ export function usePagination(params: PaginationParams) {
     if (!content) return;
     const imgs = Array.from(content.querySelectorAll('img'));
     for (const img of imgs) {
+      // Paged mode never scrolls, so `loading="lazy"` images translated off the
+      // current page would never enter the viewport and never load — leaving their
+      // columns measured at ~0 height and page counts (and jump targets) wrong.
+      // Force them to load so the flow is stable.
+      if (img.loading === 'lazy') img.loading = 'eager';
       if (img.complete) continue;
       const onLoad = () => scheduleMeasure();
       img.addEventListener('load', onLoad);
@@ -157,11 +175,24 @@ export function usePagination(params: PaginationParams) {
   });
 
   function goToPage(page: number) {
+    pendingElement = null; // a deliberate page turn drops any pinned target
     const clamped = Math.max(0, Math.min(totalPages - 1, page));
     if (clamped === currentPage) return;
     currentPage = clamped;
     applyTransform();
     params.onPageChange?.(currentPage, totalPages);
+  }
+
+  // Turn to the page an element sits on and keep it pinned there through any
+  // reflow until the reader turns a page (see `pendingElement` in measure()).
+  function goToElement(el: HTMLElement) {
+    pendingElement = el;
+    const clamped = Math.max(0, Math.min(totalPages - 1, pageOfElement(el)));
+    if (clamped !== currentPage) {
+      currentPage = clamped;
+      params.onPageChange?.(currentPage, totalPages);
+    }
+    applyTransform();
   }
 
   function next() {
@@ -188,6 +219,7 @@ export function usePagination(params: PaginationParams) {
   }
 
   function startDrag() {
+    pendingElement = null; // the reader is turning by hand — stop pinning
     setTransition(false); // 1:1 with the finger — no easing lag while dragging
   }
 
@@ -234,10 +266,17 @@ export function usePagination(params: PaginationParams) {
     if (!content || pageStride <= 0) return 0;
     const rect = el.getBoundingClientRect();
     const contentRect = content.getBoundingClientRect();
-    // rect.left is the visual (translated) position; add back the current offset
-    // to get the absolute position within the untranslated column flow.
-    const x = rect.left - contentRect.left + currentPage * pageStride;
-    return Math.max(0, Math.floor((x + pageStride / 2) / pageStride));
+    // Both rects carry the same translateX, so their difference is the element's
+    // offset within the untranslated column flow (no page term to add back).
+    const x = rect.left - contentRect.left;
+    // Every element in a multicol column shares that column's left edge, so x is
+    // ~an exact multiple of colStride. Snap to the nearest *column* (robust to
+    // sub-pixel), then floor to its containing page. Rounding straight to the
+    // nearest page would push an element in the right-hand column of a two-column
+    // page onto the next page — landing you a page past the article's start.
+    const colStride = pageStride / cols;
+    const columnIndex = Math.max(0, Math.round(x / colStride));
+    return Math.floor(columnIndex / cols);
   }
 
   onDestroy(() => {
@@ -258,6 +297,7 @@ export function usePagination(params: PaginationParams) {
     next,
     prev,
     goToPage,
+    goToElement,
     startDrag,
     updateDrag,
     endDrag,

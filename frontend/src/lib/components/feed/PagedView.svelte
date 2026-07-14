@@ -5,6 +5,7 @@
 
   export interface PagedController {
     goToPage: (page: number) => void;
+    goToElement: (el: HTMLElement) => void;
     next: () => void;
     prev: () => void;
     startDrag: () => void;
