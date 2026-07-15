@@ -11,6 +11,8 @@ export type DailyMagazineMinutes = 10 | 20 | 30 | 45 | 60;
 export type DailyMagazineOrder = 'shuffle' | 'recent' | 'oldest';
 // Which reading surface the app opens to on a fresh load (the `/` redirector).
 export type DefaultView = 'home' | 'feeds' | 'saved';
+// How tightly the Home lane tiles are packed (tile width, thumbnail, padding).
+export type CardDensity = 'compact' | 'cozy' | 'comfortable';
 
 const FONT_SIZE_ORDER: ArticleFontSize[] = ['xs', 'sm', 'md', 'lg', 'xl'];
 export const DAILY_MAGAZINE_MINUTE_OPTIONS: DailyMagazineMinutes[] = [10, 20, 30, 45, 60];
@@ -31,6 +33,8 @@ interface PreferencesState {
   linkblogShareConfirmed: boolean;
   // Which surface a cold app load lands on (consumed by the `/` redirector).
   defaultView: DefaultView;
+  // How tightly the Home lane tiles are packed.
+  cardDensity: CardDensity;
   dailyMagazineMinutes: DailyMagazineMinutes;
   dailyMagazineOrder: DailyMagazineOrder;
 }
@@ -47,6 +51,7 @@ function createPreferencesStore() {
     sortOrder: 'newest',
     linkblogShareConfirmed: false,
     defaultView: 'home',
+    cardDensity: 'cozy',
     dailyMagazineMinutes: 20,
     dailyMagazineOrder: 'shuffle',
   });
@@ -84,6 +89,13 @@ function createPreferencesStore() {
           parsed.defaultView === 'saved'
         ) {
           state.defaultView = parsed.defaultView;
+        }
+        if (
+          parsed.cardDensity === 'compact' ||
+          parsed.cardDensity === 'cozy' ||
+          parsed.cardDensity === 'comfortable'
+        ) {
+          state.cardDensity = parsed.cardDensity;
         }
         if (DAILY_MAGAZINE_MINUTE_OPTIONS.includes(parsed.dailyMagazineMinutes)) {
           state.dailyMagazineMinutes = parsed.dailyMagazineMinutes;
@@ -174,6 +186,11 @@ function createPreferencesStore() {
     save();
   }
 
+  function setCardDensity(density: CardDensity) {
+    state.cardDensity = density;
+    save();
+  }
+
   function setDailyMagazineMinutes(minutes: DailyMagazineMinutes) {
     if (!DAILY_MAGAZINE_MINUTE_OPTIONS.includes(minutes)) return;
     state.dailyMagazineMinutes = minutes;
@@ -211,6 +228,9 @@ function createPreferencesStore() {
     get defaultView() {
       return state.defaultView;
     },
+    get cardDensity() {
+      return state.cardDensity;
+    },
     get dailyMagazineMinutes() {
       return state.dailyMagazineMinutes;
     },
@@ -219,6 +239,7 @@ function createPreferencesStore() {
     },
     confirmLinkblogShare,
     setDefaultView,
+    setCardDensity,
     setDailyMagazineMinutes,
     setDailyMagazineOrder,
     setArticleFont,
