@@ -2,7 +2,7 @@
   // Visual harness for the Home view's lanes — no auth, no backend. Iterate on the
   // lane + tile design here; it flows to the real /home through the same components.
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
-  import DailyMagazineEntry from '$lib/components/feed/DailyMagazineEntry.svelte';
+  import MagazineRail from '$lib/components/feed/MagazineRail.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import type { Magazine, SavedItem } from '$lib/types';
@@ -205,8 +205,12 @@
     </label>
   {/snippet}
 
-  <Case name="Daily magazine entry" width="{width}px">
-    <DailyMagazineEntry magazine={magazineMock} generating={false} onGenerate={noop} />
+  <Case name="Daily magazine — with issues" width="{width}px">
+    <MagazineRail issues={[magazineMock]} generating={false} onGenerate={noop} onOpen={noop} />
+  </Case>
+
+  <Case name="Daily magazine — empty" width="{width}px">
+    <MagazineRail issues={[]} generating={false} onGenerate={noop} onOpen={noop} />
   </Case>
 
   <Case name="Continue reading — progress spines" width="{width}px">
