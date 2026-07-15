@@ -40,7 +40,7 @@ export type FeedDisplayItem =
 const DEFAULT_PAGE_SIZE = 50;
 
 export interface EffectiveFilters {
-  sourceMode: 'all' | 'include';
+  sourceMode: 'all' | 'include' | 'exclude';
   sourceKeys: string[];
   readFilter: 'all' | 'unread' | 'read';
   sortOrder: SortOrder;
@@ -48,11 +48,13 @@ export interface EffectiveFilters {
 }
 
 /**
- * Derive allowed RSS subscription IDs from effective filters.
- * Converts rkeys in sourceKeys to Dexie IDs for article filtering.
- * Returns null if all RSS sources are allowed.
+ * Derive an RSS subscription-id predicate from effective filters.
+ * Converts rkeys in sourceKeys to Dexie IDs and returns a test for whether an
+ * article's subscriptionId is allowed. In 'include' mode only the listed ids
+ * pass; in 'exclude' mode every id except the listed ones passes.
+ * Returns null if all RSS sources are allowed (no filtering needed).
  */
-function deriveAllowedRssIds(fv: EffectiveFilters): Set<number> | null {
+function deriveRssFilter(fv: EffectiveFilters): ((subscriptionId: number) => boolean) | null {
   if (fv.sourceMode === 'all') return null;
 
   const ids = new Set<number>();
@@ -63,7 +65,10 @@ function deriveAllowedRssIds(fv: EffectiveFilters): Set<number> | null {
       if (sub?.id != null) ids.add(sub.id);
     }
   }
-  return ids;
+  if (fv.sourceMode === 'exclude') {
+    return (subscriptionId: number) => !ids.has(subscriptionId);
+  }
+  return (subscriptionId: number) => ids.has(subscriptionId);
 }
 
 /**
@@ -179,7 +184,7 @@ function createFeedViewStore() {
   // Toolbar filter state (unified source model)
   let filterToolbarOpen = $state(false);
   let sourcePopoverOpen = $state(false);
-  let toolbarSourceMode = $state<'all' | 'include'>('all');
+  let toolbarSourceMode = $state<'all' | 'include' | 'exclude'>('all');
   let toolbarSourceKeys = $state<string[]>([]);
   // View-local sort order override (null = use global preferences.sortOrder)
   let toolbarSortOrder = $state<SortOrder | null>(null);
@@ -313,7 +318,7 @@ function createFeedViewStore() {
         if (!savedDomains.has(d)) return true;
       }
     } else {
-      const savedMode = view.sourceMode === 'all' ? 'all' : 'include';
+      const savedMode = view.sourceMode ?? 'all';
       const savedKeys = new Set(view.sourceKeys ?? []);
       if (toolbarSourceMode !== savedMode) return true;
       if (toolbarSourceKeys.length !== savedKeys.size) return true;
@@ -384,6 +389,9 @@ function createFeedViewStore() {
     const fv = effectiveFilters;
     if (fv.typeFilter.length > 0 && !fv.typeFilter.includes('rss')) return false;
     if (fv.sourceMode === 'all') return true;
+    // Exclude mode never zeroes out a whole type — the per-item filter drops the
+    // excluded sources and everything else stays.
+    if (fv.sourceMode === 'exclude') return true;
     return fv.sourceKeys.some(isRssSource);
   });
 
@@ -392,6 +400,7 @@ function createFeedViewStore() {
     const fv = effectiveFilters;
     if (fv.typeFilter.length > 0 && !fv.typeFilter.includes('atproto.documents')) return false;
     if (fv.sourceMode === 'all') return true;
+    if (fv.sourceMode === 'exclude') return true;
     return fv.sourceKeys.some(isDocumentsSource);
   });
 
@@ -437,9 +446,9 @@ function createFeedViewStore() {
       }
 
       // Apply source-based RSS filtering
-      const allowedIds = deriveAllowedRssIds(fv);
-      if (allowedIds !== null) {
-        articles = articles.filter((a) => allowedIds.has(a.subscriptionId));
+      const rssAllowed = deriveRssFilter(fv);
+      if (rssAllowed !== null) {
+        articles = articles.filter((a) => rssAllowed(a.subscriptionId));
       }
 
       // Apply read filter
@@ -522,7 +531,10 @@ function createFeedViewStore() {
     // so two publications owned by one author are independently includable.
     if (fv.sourceMode !== 'all') {
       const scopes = resolveDocScopes(fv.sourceKeys, subscriptionsStore.subscriptions);
-      filtered = filtered.filter((d) => docInAnyScope(d, scopes));
+      filtered =
+        fv.sourceMode === 'exclude'
+          ? filtered.filter((d) => !docInAnyScope(d, scopes))
+          : filtered.filter((d) => docInAnyScope(d, scopes));
     }
 
     // Filter by category: only show documents from subscriptions in the category
@@ -1353,7 +1365,7 @@ function createFeedViewStore() {
     clearToolbarDomain() {
       toolbarDomainFilter = [];
     },
-    setToolbarSourceFilter(mode: 'all' | 'include', keys: string[]) {
+    setToolbarSourceFilter(mode: 'all' | 'include' | 'exclude', keys: string[]) {
       toolbarSourceMode = mode;
       toolbarSourceKeys = keys;
     },
@@ -1430,8 +1442,8 @@ function createFeedViewStore() {
             // global state from a prior view.
             savedView = fv.readFilter === 'read' ? 'archive' : 'inbox';
           } else if (fv.sourceMode != null) {
-            // New format (coerce any stale 'exclude' to 'include')
-            toolbarSourceMode = fv.sourceMode === 'all' ? 'all' : 'include';
+            // New format
+            toolbarSourceMode = fv.sourceMode;
             toolbarSourceKeys = toolbarSourceMode === 'all' ? [] : [...(fv.sourceKeys ?? [])];
             toolbarSavedSourceFilter = [];
           } else {

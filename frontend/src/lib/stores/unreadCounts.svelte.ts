@@ -205,13 +205,14 @@ function createUnreadCountsStore() {
       const sourceKeys = view.sourceKeys ?? [];
       const typeFilter = view.typeFilter ?? [];
 
-      // Determine which content types this channel shows
+      // Determine which content types this channel shows. Exclude mode always
+      // leaves some of every type visible (unless the type filter says otherwise).
       const showRss =
         (typeFilter.length === 0 || typeFilter.includes('rss')) &&
-        (sourceMode === 'all' || sourceKeys.some(isRssSource));
+        (sourceMode !== 'include' || sourceKeys.some(isRssSource));
       const showDocs =
         (typeFilter.length === 0 || typeFilter.includes('atproto.documents')) &&
-        (sourceMode === 'all' || sourceKeys.some(isDocumentsSource));
+        (sourceMode !== 'include' || sourceKeys.some(isDocumentsSource));
 
       let count = 0;
 
@@ -221,7 +222,7 @@ function createUnreadCountsStore() {
           // Reuse already-computed total (deduped by guid)
           count += totalArticles;
         } else {
-          const allowedIds = new Set(
+          const listedIds = new Set(
             sourceKeys
               .filter(isRssSource)
               .map((key) => {
@@ -230,11 +231,15 @@ function createUnreadCountsStore() {
               })
               .filter((id): id is number => id != null)
           );
+          const isAllowed =
+            sourceMode === 'exclude'
+              ? (id: number) => !listedIds.has(id)
+              : (id: number) => listedIds.has(id);
           const seen = new Set<string>();
           for (const article of articlesStore.allArticles) {
             if (seen.has(article.guid)) continue;
             seen.add(article.guid);
-            if (!allowedIds.has(article.subscriptionId)) continue;
+            if (!isAllowed(article.subscriptionId)) continue;
             if (!itemLabelsStore.isRead(article.guid)) count++;
           }
         }
@@ -242,7 +247,8 @@ function createUnreadCountsStore() {
 
       // Count unread documents. 'all' sums the pre-computed per-author map; an
       // include filter counts per (author, publication) scope so two publications
-      // owned by one author aren't conflated.
+      // owned by one author aren't conflated; exclude counts everything outside
+      // those scopes.
       if (showDocs) {
         if (sourceMode === 'all') {
           for (const c of sharerDocCounts.values()) count += c;
@@ -250,7 +256,9 @@ function createUnreadCountsStore() {
           const scopes = resolveDocScopes(sourceKeys, subscriptionsStore.subscriptions);
           for (const doc of socialStore.documents) {
             if (itemLabelsStore.isSocialRead(doc.recordUri)) continue;
-            if (docInAnyScope(doc, scopes)) count++;
+            const inScope = docInAnyScope(doc, scopes);
+            if (sourceMode === 'exclude' ? inScope : !inScope) continue;
+            count++;
           }
         }
       }
