@@ -8,8 +8,16 @@ const ARTICLES = [
     title: 'The First Magazine Story',
     author: "Ada O'Reader",
     description: "Ada's first dispatch",
+    // Long enough that, on a mobile viewport, the reader can scroll the *second*
+    // article's top above the active-article line (so scroll-driven active
+    // tracking is actually exercised, not stuck on this first article).
     content:
-      '<p>The first article has a paragraph that can be highlighted from the magazine reader.</p><p>Its second paragraph makes the saved copy unmistakable.</p>',
+      '<p>The first article has a paragraph that can be highlighted from the magazine reader.</p><p>Its second paragraph makes the saved copy unmistakable.</p>' +
+      Array.from(
+        { length: 14 },
+        (_, i) =>
+          `<p>Filler paragraph ${i + 1} adds enough height to this first story that the reader has real scroll range on a phone-sized viewport, so turning to the next story is a meaningful scroll.</p>`
+      ).join(''),
   },
   {
     url: 'https://example.org/magazine/second',
@@ -34,14 +42,21 @@ async function seedMagazine(user: TestUser) {
 
 async function openMagazineFromHome(page: Page) {
   await page.goto('/home');
-  const openLink = page.getByRole('link', { name: 'Open today’s magazine' });
+  // Magazines are now durable, explicitly-generated issues: the Home card offers
+  // "Generate issue" (frozen from the saved pile) which, once minted, exposes an
+  // "Open magazine" link. The card only renders after saves hydrate, so a visible
+  // Generate button means the seeded articles are present.
+  const generate = page.getByRole('button', { name: 'Generate issue' });
+  await expect(generate).toBeVisible({ timeout: 15_000 });
+  await generate.click();
+  const openLink = page.getByRole('link', { name: 'Open magazine' });
   await expect(openLink).toBeVisible({ timeout: 15_000 });
   await openLink.click();
   await expect(page).toHaveURL(/\/daily$/);
   await expect(page.getByRole('heading', { name: 'Daily magazine', exact: true })).toBeVisible({
     timeout: 15_000,
   });
-  await expect(page.getByText('Preparing today’s issue')).not.toBeVisible();
+  await expect(page.getByText('Preparing your issue')).not.toBeVisible();
 }
 
 test.describe('Daily magazine reader', () => {
@@ -84,7 +99,9 @@ test.describe('Daily magazine reader', () => {
     await expect(bottomBar).toBeVisible();
     await expect(bottomBar.locator('button[title^="Back"]')).toBeVisible();
     await expect(bottomBar.getByTitle('Contents')).toBeVisible();
-    await expect(bottomBar.locator('button[title^="Tag"]')).toBeVisible();
+    // The magazine reader's chrome acts on the issue, not the article being read,
+    // so per-article tagging is intentionally absent (ReaderChrome showTag={false}).
+    await expect(bottomBar.locator('button[title^="Tag"]')).toHaveCount(0);
     await expect(bottomBar.getByTitle('Style & Actions')).toBeVisible();
 
     const chromeLayout = await bottomBar.evaluate((element) => {
@@ -134,6 +151,10 @@ test.describe('Daily magazine reader', () => {
         )
     );
     await expect(bottomBar).toBeVisible();
+    // The scroll-driven "active article" only switches once the target's top rises
+    // above the reader's ~28%-of-viewport line. Wait for that so the Open-in-browser
+    // assertion below reflects the article actually being read.
+    await expect(secondArticle).toHaveClass(/\bactive\b/, { timeout: 5_000 });
 
     await authedPage.evaluate(() => {
       Object.defineProperty(window, '__openedMagazineUrl', {
