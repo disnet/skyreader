@@ -2,30 +2,39 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { seedSavedArticle, type TestUser } from './seed';
 
+// The magazine orders articles by a per-day shuffle (a hash of each URL), so which
+// story renders first is deterministic-per-day but NOT insertion order — tests must
+// not assume a fixed #article-N ↔ story mapping. Both stories are given well over a
+// viewport of their own content so that whichever one lands last can still be
+// scrolled until its heading rises above the active-article line (a short trailing
+// article bottoms the scroll out first and never goes active).
+function longBody(lead: string): string {
+  return (
+    `<p>${lead}</p>` +
+    Array.from(
+      { length: 20 },
+      (_, i) =>
+        `<p>Filler paragraph ${i + 1} gives this story more than a screenful of its own height, so scrolling into it lifts its heading above the active-article line on a phone-sized viewport.</p>`
+    ).join('')
+  );
+}
+
 const ARTICLES = [
   {
     url: 'https://example.com/magazine/first',
     title: 'The First Magazine Story',
     author: "Ada O'Reader",
     description: "Ada's first dispatch",
-    // Long enough that, on a mobile viewport, the reader can scroll the *second*
-    // article's top above the active-article line (so scroll-driven active
-    // tracking is actually exercised, not stuck on this first article).
-    content:
-      '<p>The first article has a paragraph that can be highlighted from the magazine reader.</p><p>Its second paragraph makes the saved copy unmistakable.</p>' +
-      Array.from(
-        { length: 14 },
-        (_, i) =>
-          `<p>Filler paragraph ${i + 1} adds enough height to this first story that the reader has real scroll range on a phone-sized viewport, so turning to the next story is a meaningful scroll.</p>`
-      ).join(''),
+    content: longBody(
+      'The first article has a paragraph that can be highlighted from the magazine reader.'
+    ),
   },
   {
     url: 'https://example.org/magazine/second',
     title: 'The Second Magazine Story',
     author: 'Grace Reader',
     description: 'A distinct second dispatch',
-    content:
-      '<p>The second article appears in the same continuous issue.</p><p>This is distinct content for the later story.</p>',
+    content: longBody('The second article appears in the same continuous issue.'),
   },
 ] as const;
 
@@ -130,18 +139,18 @@ test.describe('Daily magazine reader', () => {
     expect(overflow.documentWidth).toBeLessThanOrEqual(overflow.viewportWidth + 1);
     expect(overflow.readerWidth).toBeLessThanOrEqual(overflow.readerClientWidth + 1);
 
-    const secondArticle = authedPage.locator('#article-2');
-    const secondUrl = await secondArticle.locator('a.original-link').getAttribute('href');
-    expect(secondUrl).toBeTruthy();
-    // Bodies load lazily. Wait for the layout to settle before scrolling: article 1
-    // must reach its full (filler) height so there's real scroll range, and article
-    // 2's body must exist so scrolling to it doesn't get undone by a later reflow
-    // (content growth emits no scroll event, so the active article wouldn't recompute).
-    await expect(authedPage.getByText('Filler paragraph 14')).toBeVisible({ timeout: 15_000 });
-    await expect(
-      authedPage.getByText('The second article appears in the same continuous issue.')
-    ).toBeVisible({ timeout: 15_000 });
-    await secondArticle.evaluate((element) => element.scrollIntoView({ block: 'start' }));
+    // Target the LAST article in the issue by position (shuffle order makes which
+    // story that is nondeterministic, so read its URL from the DOM rather than
+    // assuming the second seeded story).
+    const lastArticle = authedPage.locator('.issue-article').last();
+    const lastUrl = await lastArticle.locator('a.original-link').getAttribute('href');
+    expect(lastUrl).toBeTruthy();
+    // Bodies load lazily. Wait for the last article's full (filler) height to render
+    // before scrolling, so the layout — and thus scroll range — is stable (content
+    // growth emits no scroll event, so the active article wouldn't otherwise
+    // recompute after a late reflow).
+    await expect(lastArticle.getByText('Filler paragraph 20')).toBeVisible({ timeout: 15_000 });
+    await lastArticle.evaluate((element) => element.scrollIntoView({ block: 'start' }));
     await authedPage.evaluate(
       () =>
         new Promise<void>((resolve) =>
@@ -162,7 +171,7 @@ test.describe('Daily magazine reader', () => {
     // The scroll-driven "active article" only switches once the target's top rises
     // above the reader's ~28%-of-viewport line. Wait for that so the Open-in-browser
     // assertion below reflects the article actually being read.
-    await expect(secondArticle).toHaveClass(/\bactive\b/, { timeout: 5_000 });
+    await expect(lastArticle).toHaveClass(/\bactive\b/, { timeout: 5_000 });
 
     await authedPage.evaluate(() => {
       Object.defineProperty(window, '__openedMagazineUrl', {
@@ -183,6 +192,6 @@ test.describe('Daily magazine reader', () => {
     const openedUrl = await authedPage.evaluate(
       () => (window as Window & { __openedMagazineUrl?: string }).__openedMagazineUrl
     );
-    expect(openedUrl).toBe(secondUrl);
+    expect(openedUrl).toBe(lastUrl);
   });
 });
