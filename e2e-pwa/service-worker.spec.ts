@@ -60,19 +60,51 @@ test.describe('service worker lifecycle', () => {
     ).toEqual([]);
   });
 
-  // The real update path: a new SW version must (1) self-activate and claim the open
+  // The real update path: a new SW BUILD must (1) self-activate and claim the open
   // page with no user action (skipWaiting in install + clientsClaim — the recovery
-  // property), and (2) surface the update banner, which is driven by controllerchange
-  // in +layout.svelte (workbox-window's 'waiting' event never fires for a worker that
-  // skip-waits, so a waiting-based prompt would never appear — the original bug).
-  test('a new SW version self-activates, claims the page, and shows the update banner', async ({
+  // property), and (2) surface the update banner. The banner is gated on the
+  // controlling worker reporting a build version different from the one this page is
+  // running (GET_VERSION message in service-worker.ts, checked on controllerchange in
+  // +layout.svelte). A same-build re-claim must NOT prompt — see the next test.
+  //
+  // We simulate a genuinely different build with a fixture worker (e2e-fixture-sw.js,
+  // staged into the served dir by playwright.pwa.config.ts) that self-activates,
+  // claims, and reports a distinct version.
+  test('a new SW BUILD claims the page and shows the update banner', async ({ page }) => {
+    await page.goto('/');
+    await waitForControl(page);
+
+    const claimed = await page.evaluate(async () => {
+      const swapped = new Promise<boolean>((resolve) => {
+        navigator.serviceWorker.addEventListener('controllerchange', () => resolve(true), {
+          once: true,
+        });
+        setTimeout(() => resolve(false), 15000);
+      });
+      await navigator.serviceWorker.register('/e2e-fixture-sw.js');
+      return swapped;
+    });
+    expect(claimed, 'new worker should activate and claim the page without user action').toBe(true);
+
+    // A different build now controls the page → offer the update.
+    await expect(page.locator('.update-banner')).toBeVisible();
+
+    // Applying the update is a plain reload.
+    await Promise.all([page.waitForEvent('domcontentloaded'), page.locator('.update-btn').click()]);
+    expect(await shellRendered(page)).toBe(true);
+  });
+
+  // Regression: on mobile, opening a link (new tab / in-app browser sheet) backgrounds
+  // the PWA; returning can fire controllerchange while the SAME build still controls
+  // the page. That must NOT surface a "new version available" banner. Registering a
+  // byte-different script URL for the real SW installs a worker with IDENTICAL build
+  // version — the exact same-version re-claim, without a deploy.
+  test('a same-build re-claim (mobile resume) does NOT show the update banner', async ({
     page,
   }) => {
     await page.goto('/');
     await waitForControl(page);
 
-    // Simulate a deploy: registering a byte-different script URL on the same scope
-    // installs a "new version" of the worker.
     const claimed = await page.evaluate(async () => {
       const swapped = new Promise<boolean>((resolve) => {
         navigator.serviceWorker.addEventListener('controllerchange', () => resolve(true), {
@@ -83,22 +115,11 @@ test.describe('service worker lifecycle', () => {
       await navigator.serviceWorker.register('/service-worker.js?deploy=2');
       return swapped;
     });
-    expect(claimed, 'new worker should activate and claim the page without user action').toBe(
-      true
-    );
+    expect(claimed, 'the re-registered worker should still claim the page').toBe(true);
 
-    // The page reacts to losing/changing its controller by offering the update.
-    await expect(page.locator('.update-banner')).toBeVisible();
-
-    // Applying the update is a plain reload served by the already-active new worker.
-    await Promise.all([
-      page.waitForEvent('domcontentloaded'),
-      page.locator('.update-btn').click(),
-    ]);
-    expect(await shellRendered(page)).toBe(true);
-    const controller = await page.evaluate(
-      () => navigator.serviceWorker.controller?.scriptURL ?? null
-    );
-    expect(controller, 'reloaded page must be SW-controlled').toContain('/service-worker.js');
+    // Give the controllerchange handler's version round-trip time to resolve, then
+    // confirm it stayed silent — the controlling build equals the running build.
+    await page.waitForTimeout(1500);
+    await expect(page.locator('.update-banner')).toBeHidden();
   });
 });
