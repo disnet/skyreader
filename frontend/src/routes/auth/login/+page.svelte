@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { api } from '$lib/services/api';
+  import { getRecentUsers, forgetRecentUser, type LastUser } from '$lib/stores/auth.svelte';
   import { searchBlueskyActors, type BlueskySearchResult } from '$lib/services/blueskySearch';
   import Icon from '$lib/components/Icon.svelte';
   import Logo from '$lib/assets/logo.svg';
@@ -8,6 +10,60 @@
   let handle = $state('');
   let isLoading = $state(false);
   let error = $state('');
+
+  // The accounts that have signed in on this device (most recent first). When
+  // any exist we lead with one-click "continue as" cards and tuck the handle
+  // form behind them. Read in onMount so it resolves on the client (not during
+  // SSR, where it'd be empty).
+  let recentUsers = $state<LastUser[]>([]);
+  let showForm = $state(false);
+  // Handles whose cached avatar URL failed to load (rotated/deleted since we
+  // remembered it). We fall back to the placeholder swatch for these.
+  let brokenAvatars = $state<Set<string>>(new Set());
+
+  function markAvatarBroken(handle: string) {
+    brokenAvatars = new Set(brokenAvatars).add(handle);
+  }
+
+  onMount(() => {
+    recentUsers = getRecentUsers();
+    showForm = recentUsers.length === 0;
+  });
+
+  // Kick off OAuth for a specific handle (shared by the form submit and the
+  // "continue as" card).
+  async function startLogin(loginHandle: string) {
+    error = '';
+    closeDropdown();
+    isLoading = true;
+    try {
+      // Carry ?returnUrl through OAuth so deep links (e.g. /follow) resume after
+      // login. The backend validates it against open-redirects.
+      const returnUrl = $page.url.searchParams.get('returnUrl') || undefined;
+      const { authUrl } = await api.login(loginHandle, returnUrl);
+      window.location.href = authUrl;
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Failed to start login';
+      isLoading = false;
+    }
+  }
+
+  function useDifferentAccount() {
+    showForm = true;
+    error = '';
+  }
+
+  // Return from the handle form to the "continue as" cards (only offered when
+  // there are remembered accounts to go back to).
+  function backToAccounts() {
+    showForm = false;
+    error = '';
+  }
+
+  function removeAccount(handle: string) {
+    recentUsers = forgetRecentUser(handle);
+    if (recentUsers.length === 0) showForm = true;
+  }
 
   // Explainer + sign-up UI state
   let explainerOpen = $state(false);
@@ -163,8 +219,6 @@
 
   async function handleSubmit(e: SubmitEvent) {
     e.preventDefault();
-    error = '';
-    closeDropdown();
 
     const trimmedHandle = handle.trim();
     if (!trimmedHandle) {
@@ -172,17 +226,7 @@
       return;
     }
 
-    isLoading = true;
-    try {
-      // Carry ?returnUrl through OAuth so deep links (e.g. /follow) resume after
-      // login. The backend validates it against open-redirects.
-      const returnUrl = $page.url.searchParams.get('returnUrl') || undefined;
-      const { authUrl } = await api.login(trimmedHandle, returnUrl);
-      window.location.href = authUrl;
-    } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to start login';
-      isLoading = false;
-    }
+    await startLogin(trimmedHandle);
   }
 </script>
 
@@ -213,63 +257,122 @@
       </p>
     {/if}
 
-    <form onsubmit={handleSubmit}>
-      <div class="form-group" bind:this={containerRef}>
-        <label for="handle">Your handle</label>
-        <div class="input-wrapper">
-          <input
-            type="text"
-            id="handle"
-            value={handle}
-            oninput={handleInput}
-            onkeydown={handleKeydown}
-            onfocus={handleFocus}
-            placeholder="you.bsky.social"
-            disabled={isLoading}
-            autocomplete="off"
-            autocapitalize="none"
-            spellcheck="false"
-          />
-          {#if isSearching}
-            <div class="search-spinner"></div>
-          {/if}
-        </div>
-
-        {#if isOpen && results.length > 0}
-          <div class="dropdown">
-            {#each results as user, index (user.did)}
+    {#if recentUsers.length > 0 && !showForm}
+      <div class="continue-as">
+        <ul class="account-list">
+          {#each recentUsers as account (account.handle)}
+            <li class="account-row">
               <button
                 type="button"
-                class="result-item"
-                class:selected={index === selectedIndex}
-                onclick={() => selectUser(user)}
-                onmouseenter={() => (selectedIndex = index)}
+                class="continue-card"
+                disabled={isLoading}
+                onclick={() => startLogin(account.handle)}
               >
-                {#if user.avatar}
-                  <img src={user.avatar} alt="" class="avatar" />
+                {#if account.avatarUrl && !brokenAvatars.has(account.handle)}
+                  <img
+                    src={account.avatarUrl}
+                    alt=""
+                    class="avatar"
+                    onerror={() => markAvatarBroken(account.handle)}
+                  />
                 {:else}
                   <div class="avatar placeholder"></div>
                 {/if}
-                <div class="user-info">
-                  <span class="name">{user.displayName || user.handle}</span>
-                  {#if user.displayName}
-                    <span class="handle">@{user.handle}</span>
-                  {/if}
+                <div class="continue-info">
+                  <span class="continue-name">{account.displayName || account.handle}</span>
+                  <span class="continue-handle">@{account.handle}</span>
                 </div>
               </button>
-            {/each}
+              <button
+                type="button"
+                class="account-remove"
+                aria-label="Remove {account.handle}"
+                disabled={isLoading}
+                onclick={() => removeAccount(account.handle)}
+              >
+                <Icon name="x" size={14} />
+              </button>
+            </li>
+          {/each}
+        </ul>
+
+        {#if error}
+          <div class="error">{error}</div>
+        {/if}
+
+        <div class="continue-links">
+          <button type="button" class="text-link" onclick={useDifferentAccount}>
+            Use a different account
+          </button>
+        </div>
+      </div>
+    {:else}
+      <form onsubmit={handleSubmit}>
+        <div class="form-group" bind:this={containerRef}>
+          <label for="handle">Your handle</label>
+          <div class="input-wrapper">
+            <input
+              type="text"
+              id="handle"
+              value={handle}
+              oninput={handleInput}
+              onkeydown={handleKeydown}
+              onfocus={handleFocus}
+              placeholder="you.bsky.social"
+              disabled={isLoading}
+              autocomplete="off"
+              autocapitalize="none"
+              spellcheck="false"
+            />
+            {#if isSearching}
+              <div class="search-spinner"></div>
+            {/if}
+          </div>
+
+          {#if isOpen && results.length > 0}
+            <div class="dropdown">
+              {#each results as user, index (user.did)}
+                <button
+                  type="button"
+                  class="result-item"
+                  class:selected={index === selectedIndex}
+                  onclick={() => selectUser(user)}
+                  onmouseenter={() => (selectedIndex = index)}
+                >
+                  {#if user.avatar}
+                    <img src={user.avatar} alt="" class="avatar" />
+                  {:else}
+                    <div class="avatar placeholder"></div>
+                  {/if}
+                  <div class="user-info">
+                    <span class="name">{user.displayName || user.handle}</span>
+                    {#if user.displayName}
+                      <span class="handle">@{user.handle}</span>
+                    {/if}
+                  </div>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+
+        {#if error}
+          <div class="error">{error}</div>
+        {/if}
+
+        <button type="submit" class="btn btn-primary" disabled={isLoading}>
+          {isLoading ? 'Connecting...' : 'Log in'}
+        </button>
+
+        {#if recentUsers.length > 0}
+          <div class="continue-links">
+            <button type="button" class="text-link" onclick={backToAccounts}>
+              Back to saved accounts
+            </button>
           </div>
         {/if}
-      </div>
-
-      {#if error}
-        <div class="error">{error}</div>
-      {/if}
-
-      <button type="submit" class="btn btn-primary" disabled={isLoading}>
-        {isLoading ? 'Connecting...' : 'Log in'}
-      </button>
-    </form>
+      </form>
+    {/if}
 
     <div class="signup">
       <p class="signup-prompt">New to the Atmosphere?</p>
@@ -373,6 +476,136 @@
     color: var(--color-text-secondary);
     font-size: var(--text-md);
     line-height: 1.5;
+  }
+
+  .continue-as {
+    margin-bottom: 0.5rem;
+  }
+
+  .account-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .account-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .continue-card {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex: 1;
+    min-width: 0;
+    padding: 0.75rem;
+    padding-right: 2.75rem;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    color: var(--color-text);
+    transition:
+      border-color 0.1s,
+      background-color 0.1s;
+  }
+
+  .continue-card:hover:not(:disabled) {
+    border-color: var(--color-primary);
+    background: var(--color-bg-secondary);
+  }
+
+  .continue-card:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+  }
+
+  .continue-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .continue-name {
+    font-weight: var(--weight-medium);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .continue-handle {
+    font-size: var(--text-md);
+    color: var(--color-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .account-remove {
+    position: absolute;
+    right: 0.5rem;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 50%;
+    color: var(--color-text-secondary);
+    opacity: 0.5;
+    cursor: pointer;
+    transition:
+      opacity 0.1s,
+      background-color 0.1s,
+      color 0.1s;
+  }
+
+  .account-row:hover .account-remove,
+  .account-remove:focus-visible {
+    opacity: 1;
+  }
+
+  .account-remove:hover:not(:disabled) {
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .account-remove:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  .continue-links {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    margin-top: 0.875rem;
+  }
+
+  .text-link {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--color-primary);
+    font: inherit;
+    font-size: var(--text-md);
+    cursor: pointer;
+  }
+
+  .text-link:hover {
+    text-decoration: underline;
   }
 
   .form-group {
