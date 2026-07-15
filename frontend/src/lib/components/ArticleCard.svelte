@@ -35,6 +35,7 @@
     noteHasBlockquote,
   } from '$lib/utils/linkPost';
   import { api } from '$lib/services/api';
+  import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
   import { db } from '$lib/services/db';
   import { saveCollectionPiece, isCollectionPieceSaved } from '$lib/utils/collectionPiece';
   import { socialStore } from '$lib/stores/social.svelte';
@@ -252,6 +253,12 @@
     // fullscreen reader on demand). The expanded body is rendered as explicit
     // note + link-card markup below, so there's no HTML content here.
     if (isLinkPostMode) return '';
+
+    // If the reader explicitly fetched the original article, that full extraction
+    // wins over the feed body — RSS entries are often just an excerpt. Keyed on
+    // the article URL via the shared extract cache (same path link posts use).
+    const fetchedOriginal = article ? linkPostContentStore.get(itemUrl) : undefined;
+    if (fetchedOriginal?.content) return fetchedOriginal.content;
 
     // For articles, use existing logic. The in-memory article is "light" (its
     // body was stripped to keep the heap small), so `article.content` is
@@ -608,14 +615,19 @@
   // Pre-resolved date string for the view (so the view imports no utils).
   let relativeDate = $derived(formatRelativeDate(itemPublishedAt));
 
-  // Estimate read time from content (~200 words/min)
-  let readTimeMinutes = $derived.by(() => {
+  // Word count of the currently displayed body (tags stripped). Drives both the
+  // read-time estimate and the short-article signal below.
+  let bodyWordCount = $derived.by(() => {
     const content = displayContent;
     if (!content) return 0;
     const text = content.replace(/<[^>]*>/g, '');
-    const wordCount = text.split(/\s+/).filter(Boolean).length;
-    return Math.max(1, Math.round(wordCount / 200));
+    return text.split(/\s+/).filter(Boolean).length;
   });
+
+  // Estimate read time from content (~200 words/min)
+  let readTimeMinutes = $derived(
+    bodyWordCount > 0 ? Math.max(1, Math.round(bodyWordCount / 200)) : 0
+  );
 
   // Compute favicon URL. For documents whose siteUri is an AT Protocol URI
   // (which getFaviconUrl can't handle), fall back to the canonical/site URL.
@@ -660,6 +672,39 @@
   function handleOverflowOpenUrl() {
     overflowMenuOpen = false;
     window.open(itemUrl, '_blank', 'noopener');
+  }
+
+  // "Fetch original article" — pull the full article body via the feed-proxy
+  // reader (Defuddle) and render it inline, replacing the RSS excerpt.
+  // Articles-only (documents bring their own body); the extract cache
+  // dedupes/caches per URL. The affordance takes two forms:
+  //   - short excerpt: a prominent inline "Fetch full article" at the body's end
+  //     (a natural "continue reading" nudge where the feed clearly held back).
+  //   - long body: a quieter entry in the ⋯ overflow menu, so a full-content
+  //     feed isn't nagged but the reader can still force a clean re-extraction.
+  const SHORT_ARTICLE_WORDS = 200;
+  let fetchingOriginal = $derived(Boolean(article) && linkPostContentStore.isFetching(itemUrl));
+  let hasFetchedOriginal = $derived(Boolean(article) && Boolean(linkPostContentStore.get(itemUrl)));
+  let canFetchOriginal = $derived(Boolean(article) && Boolean(itemUrl) && !hasFetchedOriginal);
+  let showFetchOriginal = $derived(
+    canFetchOriginal && bodyWordCount > 0 && bodyWordCount < SHORT_ARTICLE_WORDS
+  );
+  // Everything fetchable that isn't the short-excerpt inline case (long bodies,
+  // and the rare empty body) surfaces in the overflow menu instead.
+  let showFetchOriginalMenu = $derived(canFetchOriginal && !showFetchOriginal);
+
+  function handleFetchOriginal() {
+    if (!itemUrl) return;
+    linkPostContentStore.fetch(itemUrl);
+    // The excerpt is short so it shows fully when selected; the fetched body is
+    // longer, so expand to keep it all visible. onExpand toggles — only fire it
+    // when not already expanded.
+    if (!expanded) onExpand?.();
+  }
+
+  function handleOverflowFetchOriginal() {
+    overflowMenuOpen = false;
+    handleFetchOriginal();
   }
 
   let overflowTriggerRef = $state<HTMLButtonElement | undefined>(undefined);
@@ -854,6 +899,10 @@
   highlights={itemLabelsStore.getHighlights(itemGuid)}
   {showActionBarIntegrations}
   {overflowMenuOpen}
+  {showFetchOriginal}
+  {showFetchOriginalMenu}
+  {fetchingOriginal}
+  {hasFetchedOriginal}
   {canFollowSource}
   hasSaveToSemble={Boolean(onSaveToSemble)}
   hasSaveToMargin={Boolean(onSaveToMargin)}
@@ -877,6 +926,8 @@
   onTagClick={handleTagClick}
   onOverflowClick={handleOverflowClick}
   onOverflowOpenUrl={handleOverflowOpenUrl}
+  onFetchOriginal={handleFetchOriginal}
+  onOverflowFetchOriginal={handleOverflowFetchOriginal}
   onOverflowTag={handleOverflowTag}
   onOverflowSemble={handleOverflowSemble}
   onOverflowMargin={handleOverflowMargin}

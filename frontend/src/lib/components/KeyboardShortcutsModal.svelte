@@ -31,6 +31,7 @@
     { category: 'Article', key: 'm', description: 'Mark read/unread' },
     { category: 'Article', key: 'A', description: 'Mark all as read' },
     { category: 'Article', key: 't', description: 'Tag item' },
+    { category: 'Article', key: 'F', description: 'Fetch full article' },
     { category: 'Article', key: 'e', description: 'Archive/unarchive saved item' },
     { category: 'Article', key: 'h', description: 'Toggle highlight on paragraph' },
     { category: 'Article', key: '+', description: 'Increase font size' },

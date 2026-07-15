@@ -126,6 +126,14 @@ export interface ArticleCardViewProps {
   highlights?: Highlight[];
   showActionBarIntegrations?: boolean;
   overflowMenuOpen?: boolean;
+  /** Offer the inline "fetch original article" action (short-excerpt articles). */
+  showFetchOriginal?: boolean;
+  /** Offer "fetch original article" in the overflow menu (long-body articles). */
+  showFetchOriginalMenu?: boolean;
+  /** The original-article extraction is in flight. */
+  fetchingOriginal?: boolean;
+  /** The original article has been fetched and is shown inline. */
+  hasFetchedOriginal?: boolean;
   canFollowSource?: boolean;
   hasSaveToSemble?: boolean;
   hasSaveToMargin?: boolean;
@@ -158,6 +166,10 @@ export interface ArticleCardViewProps {
   onTagClick?: () => void;
   onOverflowClick?: () => void;
   onOverflowOpenUrl?: () => void;
+  /** Fetch the full original article and render it inline. */
+  onFetchOriginal?: () => void;
+  /** Fetch the full original article from the overflow menu (closes the menu). */
+  onOverflowFetchOriginal?: () => void;
   onOverflowTag?: () => void;
   onOverflowSemble?: () => void;
   onOverflowMargin?: () => void;

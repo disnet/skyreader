@@ -54,6 +54,10 @@
     highlights = [],
     showActionBarIntegrations = false,
     overflowMenuOpen = false,
+    showFetchOriginal = false,
+    showFetchOriginalMenu = false,
+    fetchingOriginal = false,
+    hasFetchedOriginal = false,
     canFollowSource = false,
     hasSaveToSemble = false,
     hasSaveToMargin = false,
@@ -78,6 +82,8 @@
     onTagClick,
     onOverflowClick,
     onOverflowOpenUrl,
+    onFetchOriginal,
+    onOverflowFetchOriginal,
     onOverflowTag,
     onOverflowSemble,
     onOverflowMargin,
@@ -331,6 +337,24 @@
             {@html sanitizedContent}
           </div>
         </div>
+        <!-- When the feed only gave us a short excerpt, offer to pull the full
+             article inline. Hidden once the body is long (full-content feeds)
+             or already fetched. Sits at the end of the body, not in the ⋯ menu,
+             so it reads as a natural "continue reading" affordance. Hidden while
+             the collapsed preview is clamped — you can't reach the body's end. -->
+        {#if showFetchOriginal && !(selected && !expanded && isTruncated)}
+          <button
+            class="fetch-original"
+            disabled={fetchingOriginal}
+            onclick={(e) => {
+              e.stopPropagation();
+              onFetchOriginal?.();
+            }}
+          >
+            <Icon name="file-text" size={15} />
+            <span>{fetchingOriginal ? 'Fetching full article…' : 'Fetch full article'}</span>
+          </button>
+        {/if}
       {/if}
     </div>
 
@@ -581,6 +605,22 @@
                 <Icon name="external-link" size={16} />
                 <span>Open in browser</span>
               </button>
+              {#if showFetchOriginalMenu}
+                <!-- Long-body / full-content articles get the fetch action here
+                     rather than the prominent end-of-body nudge reserved for
+                     short excerpts. Lets the reader force a clean re-extraction. -->
+                <button
+                  class="overflow-menu-item"
+                  disabled={fetchingOriginal}
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    onOverflowFetchOriginal?.();
+                  }}
+                >
+                  <Icon name="file-text" size={16} />
+                  <span>{fetchingOriginal ? 'Fetching full article…' : 'Fetch full article'}</span>
+                </button>
+              {/if}
               {#if showActionBarIntegrations && hasSaveToSemble}
                 <button
                   class="overflow-menu-item"
@@ -1219,6 +1259,31 @@
     line-height: 1.7;
     color: var(--color-text);
     overflow-wrap: break-word;
+  }
+
+  /* "Fetch full article" — a quiet inline affordance at the end of a short
+     excerpt. Muted secondary text so it recedes; the interaction blue is
+     reserved for primary actions. Deepens to full text color on hover. */
+  .fetch-original {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.75rem;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--color-text-secondary);
+    font-size: var(--text-md);
+    cursor: pointer;
+  }
+
+  .fetch-original:hover:not(:disabled) {
+    color: var(--color-text);
+  }
+
+  .fetch-original:disabled {
+    cursor: default;
+    opacity: 0.7;
   }
 
   .article-body.truncated {
