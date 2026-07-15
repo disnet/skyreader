@@ -32,6 +32,28 @@
   let menuPos = $state<{ top: number; left: number; maxHeight: number } | null>(null);
   const positioned = $derived(menuPos !== null);
 
+  // Reparent the menu to <body>. A position:fixed element resolves against the
+  // nearest ancestor with a transform/filter/backdrop-filter as its containing
+  // block, not the viewport — and both the toolbar pill (backdrop-filter) and the
+  // full-screen reader header (transform) are such ancestors, which threw the
+  // viewport-coordinate placement off-screen. Portaling to body removes any such
+  // ancestor so the getBoundingClientRect() coordinates land correctly.
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    // Clicks inside the (now body-level) menu must not bubble to the document
+    // click-outside handlers — ours here, and the full-screen reader's own one
+    // that closes the whole style row — which would otherwise fire because the
+    // menu is no longer a DOM descendant of the toolbar/header.
+    const stop = (e: Event) => e.stopPropagation();
+    node.addEventListener('click', stop);
+    return {
+      destroy() {
+        node.removeEventListener('click', stop);
+        node.parentNode?.removeChild(node);
+      },
+    };
+  }
+
   function positionMenu() {
     if (!triggerRef || !menuRef) return;
     const t = triggerRef.getBoundingClientRect();
@@ -83,7 +105,15 @@
   }
 
   function handleClickOutside(e: MouseEvent) {
-    if (open && dropdownRef && !dropdownRef.contains(e.target as Node)) {
+    // The menu is portaled to <body>, so it's no longer inside dropdownRef —
+    // check it separately so a click within the menu doesn't count as outside.
+    const target = e.target as Node;
+    if (
+      open &&
+      dropdownRef &&
+      !dropdownRef.contains(target) &&
+      !(menuRef && menuRef.contains(target))
+    ) {
       open = false;
     }
   }
@@ -134,6 +164,7 @@
       {#if open}
         <div
           bind:this={menuRef}
+          use:portal
           class="font-menu"
           class:positioned
           role="listbox"
