@@ -79,6 +79,34 @@ export const fixtures: CardFixture[] = [
     props: { ...base, isRead: false },
   },
   {
+    name: 'Short excerpt · fetch article',
+    note: 'The feed gave only a short excerpt, so a quiet "Read full article" sits at the end of the body — it pulls the original via the feed proxy and swaps it inline. Hidden for full-content feeds.',
+    props: {
+      ...base,
+      selected: true,
+      expanded: true,
+      isOpen: true,
+      hasContent: true,
+      readTimeMinutes: 1,
+      sanitizedContent:
+        '<p>The owned library is a quiet idea: the things you read are yours, and the place you keep them is yours too. Not rented from a feed, not subject to a ranking change overnight… <a href="https://arstechnica.com/example-article">Continue reading</a></p>',
+      showFetchOriginal: true,
+    },
+  },
+  {
+    name: 'Long body · fetch in overflow menu',
+    note: 'A full-content feed already gave us the whole article, so the prominent inline nudge is dropped — "Fetch full article" moves into the ⋯ overflow menu as a quiet way to force a clean re-extraction.',
+    props: {
+      ...base,
+      selected: true,
+      expanded: true,
+      isOpen: true,
+      hasContent: true,
+      overflowMenuOpen: true,
+      showFetchOriginalMenu: true,
+    },
+  },
+  {
     name: 'Read · collapsed',
     note: 'Read items dim to 0.6 opacity.',
     props: { ...base, isRead: true },

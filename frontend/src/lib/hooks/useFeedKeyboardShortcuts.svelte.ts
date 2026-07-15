@@ -6,6 +6,7 @@ import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte
 import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { linkblogStore } from '$lib/stores/linkblog.svelte';
+import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
 import type { Article, Subscription } from '$lib/types';
 
 interface KeyboardShortcutsParams {
@@ -108,6 +109,20 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
           publishedAt: item.item.publishedAt,
         }
       );
+    }
+  }
+
+  // Fetch the full original article for the selected item and show it inline,
+  // replacing the RSS excerpt (the same path the end-of-body affordance uses).
+  // Article items only; the extract cache dedupes/caches per URL.
+  function fetchSelectedOriginal() {
+    const item = getSelectedItem();
+    if (!item || item.type !== 'article' || !item.item.url) return;
+    linkPostContentStore.fetch(item.item.url);
+    // Expand so the fetched (longer) body shows rather than the clamped excerpt.
+    if (feedViewStore.expandedKey !== item.key) {
+      const idx = feedViewStore.currentItems.findIndex((i) => i.key === item.key);
+      if (idx >= 0) feedViewStore.expand(idx);
     }
   }
 
@@ -341,6 +356,19 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       action: () => params.openFullscreenReader?.(),
       condition: () => hasSelected() && !feedViewStore.savedFilter,
     });
+
+    // Fetch the full original article (pairs with 'f'). Article items only.
+    keyboardStore.register({
+      key: 'F',
+      shift: true,
+      description: 'Fetch full article',
+      category: 'Article',
+      action: fetchSelectedOriginal,
+      condition: () => {
+        const item = getSelectedItem();
+        return auth.isAuthenticated && item?.type === 'article' && !!item.item.url;
+      },
+    });
   }
 
   function unregister() {
@@ -359,6 +387,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     keyboardStore.unregister('x');
     keyboardStore.unregister('h');
     keyboardStore.unregister('f');
+    keyboardStore.unregister('F', true);
   }
 
   // Auto-cleanup on component destroy
