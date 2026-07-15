@@ -32,6 +32,29 @@
 
   let searchQuery = $state('');
 
+  const SOURCES_EXPANDED_KEY = 'skyreader-mobile-switcher-sources-expanded';
+
+  let sourcesExpanded = $state(
+    (() => {
+      if (typeof localStorage === 'undefined') return false;
+      return localStorage.getItem(SOURCES_EXPANDED_KEY) === '1';
+    })()
+  );
+
+  function toggleSources() {
+    sourcesExpanded = !sourcesExpanded;
+    try {
+      localStorage.setItem(SOURCES_EXPANDED_KEY, sourcesExpanded ? '1' : '0');
+    } catch {
+      // ignore storage failures (private mode, quota)
+    }
+  }
+
+  // Render/compute the Sources tree only when the section is open or the user is
+  // searching. With a large subscription list, building and rendering every feed
+  // row on open is the expensive part, so keep it lazy.
+  let showSources = $derived(sourcesExpanded || searchQuery.trim().length > 0);
+
   // Derive data from stores
   let subscriptions = $derived(subscriptionsStore.subscriptions);
   let feedUnreadCounts = $derived(unreadCounts.feedCounts);
@@ -230,44 +253,50 @@
       return item.label.toLowerCase().includes(query);
     };
 
-    const byCategory = new Map<string, Subscription[]>();
-    const uncategorized: Subscription[] = [];
-    for (const sub of subscriptions) {
-      if (sub.category) {
-        const existing = byCategory.get(sub.category) || [];
-        existing.push(sub);
-        byCategory.set(sub.category, existing);
-      } else {
-        uncategorized.push(sub);
-      }
-    }
-
+    // Only build the (potentially large) Sources tree when the section is open
+    // or the user is searching — otherwise skip the grouping/sorting/mapping work.
     const feedItems: NavItem[] = [];
-    for (const [name, subs] of [...byCategory.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-      const sortedSubs = sortSources(subs);
-      const childItems = sortedSubs.map((s) => sourceToNavItem(s, true));
-      const categoryItem: NavItem = {
-        type: 'category',
-        id: name,
-        label: name,
-        count: sortedSubs.reduce(
-          (sum, s) => sum + (s.id ? (feedUnreadCounts.get(s.id) ?? 0) : 0),
-          0
-        ),
-        icon: 'folder',
-      };
-
-      if (!query || filterItem(categoryItem)) {
-        feedItems.push(categoryItem, ...childItems);
-      } else {
-        const matchingChildren = childItems.filter(filterItem);
-        if (matchingChildren.length > 0) {
-          feedItems.push(categoryItem, ...matchingChildren);
+    if (showSources) {
+      const byCategory = new Map<string, Subscription[]>();
+      const uncategorized: Subscription[] = [];
+      for (const sub of subscriptions) {
+        if (sub.category) {
+          const existing = byCategory.get(sub.category) || [];
+          existing.push(sub);
+          byCategory.set(sub.category, existing);
+        } else {
+          uncategorized.push(sub);
         }
       }
+
+      for (const [name, subs] of [...byCategory.entries()].sort((a, b) =>
+        a[0].localeCompare(b[0])
+      )) {
+        const sortedSubs = sortSources(subs);
+        const childItems = sortedSubs.map((s) => sourceToNavItem(s, true));
+        const categoryItem: NavItem = {
+          type: 'category',
+          id: name,
+          label: name,
+          count: sortedSubs.reduce(
+            (sum, s) => sum + (s.id ? (feedUnreadCounts.get(s.id) ?? 0) : 0),
+            0
+          ),
+          icon: 'folder',
+        };
+
+        if (!query || filterItem(categoryItem)) {
+          feedItems.push(categoryItem, ...childItems);
+        } else {
+          const matchingChildren = childItems.filter(filterItem);
+          if (matchingChildren.length > 0) {
+            feedItems.push(categoryItem, ...matchingChildren);
+          }
+        }
+      }
+      const uncategorizedItems = sortSources(uncategorized).map((s) => sourceToNavItem(s));
+      feedItems.push(...(query ? uncategorizedItems.filter(filterItem) : uncategorizedItems));
     }
-    const uncategorizedItems = sortSources(uncategorized).map((s) => sourceToNavItem(s));
-    feedItems.push(...(query ? uncategorizedItems.filter(filterItem) : uncategorizedItems));
 
     const sections: SectionData[] = [];
 
@@ -298,7 +327,10 @@
       sections.push({ section: '', groupId: 'other', items: filteredOther });
     }
 
-    if (feedItems.length > 0) {
+    // Always surface the Sources header (as a disclosure toggle) when there are
+    // subscriptions, even while collapsed and empty. When searching, only show it
+    // if there are matches.
+    if ((showSources && feedItems.length > 0) || (!query && subscriptions.length > 0)) {
       sections.push({
         section: 'Sources',
         groupId: 'sources',
@@ -404,7 +436,18 @@
   <div class="items-list">
     {#each filteredItems as { section, groupId, items }}
       <div class="nav-group" class:tinted={groupId === 'everything' || groupId === 'saved'}>
-        {#if section}
+        {#if section && groupId === 'sources' && !searchQuery}
+          <button
+            class="section-header section-toggle"
+            onclick={toggleSources}
+            aria-expanded={sourcesExpanded}
+          >
+            <span>{section}</span>
+            <span class="section-chevron" class:expanded={sourcesExpanded}>
+              <Icon name="chevron-right" size={14} />
+            </span>
+          </button>
+        {:else if section}
           <div class="section-header">
             <span>{section}</span>
           </div>
@@ -599,6 +642,42 @@
     color: var(--color-text-secondary);
     text-transform: uppercase;
     letter-spacing: var(--tracking-wider);
+  }
+
+  .section-toggle {
+    width: calc(100% - 1rem);
+    margin: 0 0.5rem;
+    background: none;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font: inherit;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-semibold);
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wider);
+  }
+
+  .section-toggle:active {
+    background: var(--color-bg-secondary, #f5f5f5);
+  }
+
+  .section-chevron {
+    display: flex;
+    align-items: center;
+    color: var(--color-text-secondary);
+    transition: transform 0.15s;
+  }
+
+  .section-chevron.expanded {
+    transform: rotate(90deg);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .section-toggle:active {
+      background: rgba(255, 255, 255, 0.1);
+    }
   }
 
   .channel-add-btn {
