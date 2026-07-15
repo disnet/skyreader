@@ -835,7 +835,7 @@ export interface FilteredView {
   // Channel mode: 'feed' (default) shows normal content, 'saved' shows only saved items
   mode?: 'feed' | 'saved';
   // Unified source filter (new format) — applies to feed-mode channels
-  sourceMode?: 'all' | 'include';
+  sourceMode?: 'all' | 'include' | 'exclude';
   sourceKeys?: string[];
   // Auto-update rule: when set, sourceKeys are kept in sync with subscriptions
   autoRule?: ChannelAutoRule;

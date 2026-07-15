@@ -54,7 +54,7 @@
   let categoryValue = $state('');
   let tagValue = $state('');
   let domainPatterns = $state<string[]>([]);
-  let sourceMode = $state<'all' | 'include'>('all');
+  let sourceMode = $state<'all' | 'include' | 'exclude'>('all');
   let sourceKeys = $state<Set<string>>(new Set());
   let readFilter = $state<'all' | 'unread' | 'read'>('all');
   let sortOrder = $state<SortOrder>('newest');
@@ -227,7 +227,12 @@
 
           // Load source mode/keys for manual mode
           if (!isSmartChannel) {
-            const mode = view.sourceMode === 'include' ? 'include' : 'all';
+            const mode =
+              view.sourceMode === 'include'
+                ? 'include'
+                : view.sourceMode === 'exclude'
+                  ? 'exclude'
+                  : 'all';
             sourceMode = mode;
             sourceKeys = mode === 'all' ? new Set() : new Set(view.sourceKeys ?? []);
           }
@@ -634,10 +639,19 @@
               <input type="radio" bind:group={sourceMode} value="include" />
               Include only
             </label>
+            <label class="radio-label">
+              <input type="radio" bind:group={sourceMode} value="exclude" />
+              Exclude only
+            </label>
           </div>
 
-          {#if sourceMode === 'include'}
+          {#if sourceMode !== 'all'}
             {#if subscriptionsStore.subscriptions.length > 0}
+              <p class="form-hint">
+                {sourceMode === 'exclude'
+                  ? 'Show everything except the sources you check.'
+                  : 'Show only the sources you check.'}
+              </p>
               <div class="source-group-header">Subscriptions</div>
               <input
                 type="text"

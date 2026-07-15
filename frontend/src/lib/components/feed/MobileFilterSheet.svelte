@@ -85,7 +85,7 @@
   let chCategoryValue = $state('');
   let chTagValue = $state('');
   let chDomainPatterns = $state<string[]>([]);
-  let chSourceMode = $state<'all' | 'include'>('all');
+  let chSourceMode = $state<'all' | 'include' | 'exclude'>('all');
   let chSourceKeys = $state<Set<string>>(new Set());
   let chTypeFilter = $state<Set<SubscriptionSourceType>>(new Set());
   let chSaving = $state(false);
@@ -217,7 +217,12 @@
             chDomainPatterns = [...view.autoRule!.patterns];
         } else {
           chMode = 'manual';
-          const mode = view.sourceMode === 'include' ? 'include' : 'all';
+          const mode =
+            view.sourceMode === 'include'
+              ? 'include'
+              : view.sourceMode === 'exclude'
+                ? 'exclude'
+                : 'all';
           chSourceMode = mode;
           chSourceKeys = mode === 'all' ? new Set() : new Set(view.sourceKeys ?? []);
         }
@@ -848,9 +853,21 @@
             >
               Include only
             </button>
+            <button
+              class="toggle-btn small"
+              class:active={chSourceMode === 'exclude'}
+              onclick={() => (chSourceMode = 'exclude')}
+            >
+              Exclude only
+            </button>
           </div>
 
-          {#if chSourceMode === 'include' && subscriptionsStore.subscriptions.length > 0}
+          {#if chSourceMode !== 'all' && subscriptionsStore.subscriptions.length > 0}
+            <p class="section-hint">
+              {chSourceMode === 'exclude'
+                ? 'Show everything except the sources you check.'
+                : 'Show only the sources you check.'}
+            </p>
             {#if subscriptionsStore.subscriptions.length > 6}
               <input
                 type="text"

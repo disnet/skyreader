@@ -111,7 +111,7 @@
     activeTagFilter.length === 0 ? 'Tags' : `Tags (${activeTagFilter.length})`
   );
 
-  function setSourceMode(mode: 'all' | 'include') {
+  function setSourceMode(mode: 'all' | 'include' | 'exclude') {
     feedViewStore.setToolbarSourceFilter(mode, mode === 'all' ? [] : [...ef.sourceKeys]);
   }
 
@@ -506,9 +506,19 @@
               />
               Include only
             </label>
+            <label class="radio-label">
+              <input
+                type="radio"
+                name="sourceMode"
+                value="exclude"
+                checked={ef.sourceMode === 'exclude'}
+                onchange={() => setSourceMode('exclude')}
+              />
+              Exclude only
+            </label>
           </div>
 
-          {#if ef.sourceMode === 'include'}
+          {#if ef.sourceMode !== 'all'}
             {#if subscriptionsStore.subscriptions.length > 0}
               <div class="popover-group-header">
                 <span>Subscriptions</span>
