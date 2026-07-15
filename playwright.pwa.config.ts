@@ -33,7 +33,13 @@ export default defineConfig({
     // Build a fresh production bundle, then serve it. Locally (reuseExistingServer) a
     // preview already running on :4173 is reused — restart it after a rebuild to avoid
     // testing a stale bundle. In CI the bundle is always built fresh.
-    command: 'npm run build && npm run preview -- --port 4173 --host 127.0.0.1',
+    //
+    // The `cp` stages the SW update-fixture into the served client dir (vite preview
+    // serves .svelte-kit/output/client, and sirv only indexes files present at
+    // startup). It's a test-only file — it never ships to production and the app never
+    // registers it — used to simulate a genuinely new build in service-worker.spec.ts.
+    command:
+      'npm run build && cp ../e2e-pwa/fixtures/e2e-fixture-sw.js .svelte-kit/output/client/ && npm run preview -- --port 4173 --host 127.0.0.1',
     cwd: './frontend',
     url: 'http://127.0.0.1:4173',
     reuseExistingServer: !process.env.CI,

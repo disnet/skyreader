@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { browser } from '$app/environment';
+  import { browser, version as appVersion } from '$app/environment';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
@@ -54,45 +54,78 @@
   // is `controllerchange`: the new worker claiming this page. So the banner hangs
   // off controllerchange, and applying the update is just a reload — the new shell
   // and chunks come from the already-active worker's precache.
+  //
+  // But controllerchange alone is not proof of a NEW build. On mobile — iOS PWAs in
+  // particular — opening a link (new tab / in-app browser sheet) backgrounds the app,
+  // and returning fires visibilitychange → registration.update(); the resume can
+  // re-establish control with the SAME build, firing a spurious controllerchange. So
+  // we don't trust the event by itself: on each controllerchange we ask the new
+  // controller for its build version and only prompt when it actually differs from
+  // the build this page is running (appVersion, baked into this bundle).
   // In dev there's no SW (devOptions.enabled = false), so this is an inert no-op.
   //
+  // We OWN this store. Deliberately not the one useRegisterSW returns: vite-pwa flips
+  // its needRefresh on workbox-window's "external update" signal, which fires for any
+  // worker it didn't itself install — including a byte-identical worker re-activating
+  // after an iOS background resume. That version-blind signal is exactly the false
+  // "update available" banner this fixes. We gate our own store on a real build change.
+  const needRefresh: Writable<boolean> = writable(false);
   // useRegisterSW() is NOT SSR-safe in this version: it synchronously calls register(),
   // whose `"serviceWorker" in navigator` check throws when `navigator` is undefined.
-  // adapter-static prerenders the SPA shell at build time, so guard on `browser` and
-  // fall back to inert stores during prerender — otherwise the build crashes.
-  let needRefresh: Writable<boolean> = writable(false);
+  // adapter-static prerenders the SPA shell at build time, so only touch the SW in the
+  // browser — during prerender this whole block is skipped and needRefresh stays inert.
   if (browser) {
-    ({ needRefresh } = useRegisterSW({
-      // The library's prompt path (taken when an update is classified "external")
-      // auto-reloads on controllerchange unless onNeedReload is supplied. Route it
-      // to the banner instead of yanking a mid-read reload.
-      onNeedReload() {
-        needRefresh.set(true);
-      },
+    // Register the SW and drive update checks. Its needRefresh store is discarded.
+    useRegisterSW({
       onRegisteredSW(_swScriptUrl, registration) {
         if (!registration) return;
         // Poll for a newer SW hourly, and whenever the tab regains focus —
         // the latter covers iOS PWAs resuming from a long background idle.
         setInterval(() => registration.update(), 60 * 60 * 1000);
         document.addEventListener('visibilitychange', () => {
-          if (document.visibilityState === 'visible') registration.update();
+          if (document.visibilityState === 'visible') {
+            registration.update();
+            // If a newer worker activated while we were backgrounded, surface it now.
+            checkForUpdate();
+          }
         });
       },
       onRegisterError(error) {
         console.error('Service worker registration failed:', error);
       },
-    }));
+    });
 
     if ('serviceWorker' in navigator) {
-      // True on a normal load of an installed PWA; false on first-ever visit, where
-      // the initial worker's clientsClaim() fires controllerchange but the page is
-      // already running the build that worker precached — no banner needed.
-      let hadController = Boolean(navigator.serviceWorker.controller);
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (hadController) needRefresh.set(true);
-        hadController = true;
-      });
+      navigator.serviceWorker.addEventListener('controllerchange', checkForUpdate);
     }
+  }
+
+  // Prompt only when the worker now controlling the page is a DIFFERENT build than the
+  // one this page is running (appVersion). A spurious controllerchange on mobile resume
+  // is the same build → version === appVersion → no banner. The first-ever install is
+  // also the just-loaded build, so it's correctly silent too.
+  function checkForUpdate() {
+    void controllerVersion().then((version) => {
+      if (version && version !== appVersion) needRefresh.set(true);
+    });
+  }
+
+  // Round-trip the controlling worker over a MessageChannel for its build version.
+  // Resolves null if there's no controller or the worker doesn't answer (e.g. an
+  // older build without the GET_VERSION handler, or a slow/killed worker) — null is
+  // treated as "don't prompt", so we never show a false banner on an unclear answer.
+  function controllerVersion(): Promise<string | null> {
+    const controller = navigator.serviceWorker.controller;
+    if (!controller) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const channel = new MessageChannel();
+      const timeout = setTimeout(() => resolve(null), 3000);
+      channel.port1.onmessage = (event) => {
+        clearTimeout(timeout);
+        resolve(event.data?.version ?? null);
+      };
+      controller.postMessage({ type: 'GET_VERSION' }, [channel.port2]);
+    });
   }
 
   function applyUpdate() {

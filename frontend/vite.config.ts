@@ -33,8 +33,9 @@ export default defineConfig({
       // register module won't reload the page on its own; the update banner is driven
       // by a controllerchange listener in +layout.svelte (the workbox-window 'waiting'
       // event the prompt flow normally uses never fires when skipWaiting runs in
-      // install), and onNeedReload routes the library's external-update path to that
-      // same banner instead of an immediate reload.
+      // install). That listener confirms the new controller is a different build
+      // before prompting, so a spurious controllerchange on mobile resume doesn't
+      // surface a false "new version available" banner.
       registerType: 'prompt',
 
       // We register the SW ourselves via useRegisterSW() inside the app bundle, so the

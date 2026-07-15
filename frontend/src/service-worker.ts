@@ -18,6 +18,11 @@ import {
 import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { NetworkFirst } from 'workbox-strategies';
 import { clientsClaim } from 'workbox-core';
+// SvelteKit build version — identical to `$app/environment`'s `version` in the app
+// bundle for a given build, and different across builds. The layout compares the
+// controlling worker's version against the running app's to tell a genuine deploy
+// from a spurious controllerchange (see the message handler below).
+import { version } from '$service-worker';
 
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<PrecacheEntry | string>;
@@ -106,11 +111,19 @@ clientsClaim();
 // ---------------------------------------------------------------------------
 // Custom message handler — inert compatibility shim.
 // ---------------------------------------------------------------------------
-// With skipWaiting() in install there is never a waiting worker, so this should
-// never fire; kept so an older app bundle posting SKIP_WAITING stays harmless.
+// With skipWaiting() in install there is never a waiting worker, so SKIP_WAITING
+// should never fire; kept so an older app bundle posting it stays harmless.
+//
+// GET_VERSION lets the page ask the *controlling* worker which build it is. The
+// layout uses this to gate the update banner on a real version change: an iOS PWA
+// resuming from background can fire controllerchange while still controlled by the
+// SAME build, and that must not prompt a "new version available" (this bug).
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
+  }
+  if (event.data && event.data.type === 'GET_VERSION') {
+    event.ports[0]?.postMessage({ version });
   }
 });
 
