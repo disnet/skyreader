@@ -8,8 +8,9 @@
   import {
     preferences,
     type ArticleFont,
-    type ArticleFontSize,
     type DefaultView,
+    ARTICLE_FONT_SIZE_MIN,
+    ARTICLE_FONT_SIZE_MAX,
   } from '$lib/stores/preferences.svelte';
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
   import SaveBackingPicker from '$lib/components/settings/SaveBackingPicker.svelte';
@@ -30,14 +31,6 @@
     { value: 'serif', label: 'Serif', family: 'serif' },
     { value: 'mono', label: 'Monospace', family: 'monospace' },
     { value: 'literata', label: 'Literata', family: 'Literata, serif' },
-  ];
-
-  const fontSizeOptions: { value: ArticleFontSize; label: string }[] = [
-    { value: 'xs', label: 'XS' },
-    { value: 'sm', label: 'S' },
-    { value: 'md', label: 'M' },
-    { value: 'lg', label: 'L' },
-    { value: 'xl', label: 'XL' },
   ];
 
   const defaultViewOptions: { value: DefaultView; label: string }[] = [
@@ -601,17 +594,24 @@
     </div>
     <div class="setting-row">
       <label for="article-font-size">Article Font Size</label>
-      <div class="font-options">
-        {#each fontSizeOptions as option}
-          <button
-            class="font-size-option"
-            class:selected={preferences.articleFontSize === option.value}
-            onclick={() => preferences.setArticleFontSize(option.value)}
-          >
-            <span class="font-size-preview" data-size={option.value}>Aa</span>
-            <span class="font-label">{option.label}</span>
-          </button>
-        {/each}
+      <div class="font-size-control">
+        <button
+          class="size-step"
+          onclick={() => preferences.decreaseFontSize()}
+          disabled={preferences.articleFontSize <= ARTICLE_FONT_SIZE_MIN}
+          aria-label="Decrease font size"
+        >
+          <span class="size-glyph size-glyph-sm">A</span>
+        </button>
+        <span class="size-readout">{preferences.articleFontSize}<small>px</small></span>
+        <button
+          class="size-step"
+          onclick={() => preferences.increaseFontSize()}
+          disabled={preferences.articleFontSize >= ARTICLE_FONT_SIZE_MAX}
+          aria-label="Increase font size"
+        >
+          <span class="size-glyph size-glyph-lg">A</span>
+        </button>
       </div>
     </div>
   </section>
@@ -997,56 +997,64 @@
     color: var(--color-primary);
   }
 
-  .font-size-option {
-    display: flex;
-    flex-direction: column;
+  .font-size-control {
+    display: inline-flex;
     align-items: center;
-    gap: 0.25rem;
-    padding: 0.75rem 1rem;
+    gap: 0.5rem;
+  }
+
+  .size-step {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
     background: var(--color-bg);
     border: 2px solid var(--color-border);
     border-radius: 8px;
     cursor: pointer;
+    color: var(--color-text);
     transition:
       border-color 0.15s,
       background-color 0.15s;
   }
 
-  .font-size-option:hover {
+  .size-step:hover:not(:disabled) {
     border-color: var(--color-primary);
   }
 
-  .font-size-option.selected {
-    border-color: var(--color-primary);
-    background: var(--color-sidebar-active);
+  .size-step:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
 
-  .font-size-option.selected .font-label {
-    color: var(--color-primary);
-  }
-
-  .font-size-preview {
+  .size-glyph {
     line-height: var(--leading-none);
+    font-weight: var(--weight-semibold);
   }
 
-  .font-size-preview[data-size='xs'] {
+  .size-glyph-sm {
     font-size: var(--text-md);
   }
 
-  .font-size-preview[data-size='sm'] {
-    font-size: var(--text-base);
-  }
-
-  .font-size-preview[data-size='md'] {
-    font-size: var(--text-xl);
-  }
-
-  .font-size-preview[data-size='lg'] {
+  .size-glyph-lg {
     font-size: var(--text-2xl);
   }
 
-  .font-size-preview[data-size='xl'] {
-    font-size: 1.375rem;
+  .size-readout {
+    min-width: 3.25rem;
+    text-align: center;
+    font-size: var(--text-xl);
+    font-weight: var(--weight-semibold);
+    color: var(--color-text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .size-readout small {
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-secondary);
+    margin-left: 0.1rem;
   }
 
   .toggle-setting {

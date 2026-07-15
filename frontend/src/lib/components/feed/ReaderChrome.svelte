@@ -1,6 +1,5 @@
 <script lang="ts">
   import type { ItemLabelType } from '$lib/types';
-  import type { ArticleFont } from '$lib/stores/preferences.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import Icon from '$lib/components/Icon.svelte';
@@ -70,14 +69,6 @@
     !controlsVisible && !styleMenuOpen && !tagMenuOpen && !overflowMenuOpen
   );
   let paged = $derived(preferences.readerViewMode === 'paged');
-
-  const fontOptions: { value: ArticleFont; label: string; family: string }[] = [
-    { value: 'sans-serif', label: 'Sans', family: 'sans-serif' },
-    { value: 'serif', label: 'Serif', family: 'serif' },
-    { value: 'mono', label: 'Mono', family: 'monospace' },
-    { value: 'literata', label: 'Literata', family: 'Literata, serif' },
-  ];
-  const sizeLabels: Record<string, string> = { xs: 'XS', sm: 'S', md: 'M', lg: 'L', xl: 'XL' };
 
   function handleDelete() {
     if (deleteConfirming) {
@@ -271,42 +262,7 @@
 
   {#if styleMenuOpen}
     <div class="reader-style-row">
-      <div class="style-toolbar">
-        <div class="toolbar-group">
-          <span class="group-label">Font</span>
-          <div class="segment-group" role="group" aria-label="Font style">
-            {#each fontOptions as option}
-              <button
-                class="segment-btn"
-                class:active={preferences.articleFont === option.value}
-                onclick={() => preferences.setArticleFont(option.value)}
-                title={option.label}
-              >
-                <span class="font-preview" style:font-family={option.family}>Aa</span>
-              </button>
-            {/each}
-          </div>
-        </div>
-        <span class="toolbar-divider"></span>
-        <div class="toolbar-group">
-          <span class="group-label">Size</span>
-          <div class="size-controls" role="group" aria-label="Font size">
-            <button
-              class="size-btn"
-              onclick={() => preferences.decreaseFontSize()}
-              disabled={preferences.articleFontSize === 'xs'}
-              title="Decrease font size"><Icon name="minus" size={14} /></button
-            >
-            <span class="size-label">{sizeLabels[preferences.articleFontSize]}</span>
-            <button
-              class="size-btn"
-              onclick={() => preferences.increaseFontSize()}
-              disabled={preferences.articleFontSize === 'xl'}
-              title="Increase font size"><Icon name="plus" size={14} /></button
-            >
-          </div>
-        </div>
-      </div>
+      <AppearanceToolbar />
     </div>
   {/if}
   {#if showTag && tagMenuOpen && !mobileStore.isMobile}
@@ -526,20 +482,12 @@
     margin: 0 auto;
     padding: 0.625rem 1rem;
   }
-  .reader-actions-right,
-  .style-toolbar,
-  .toolbar-group,
-  .segment-group,
-  .size-controls {
+  .reader-actions-right {
     display: flex;
     align-items: center;
-  }
-  .reader-actions-right {
     gap: 0.5rem;
   }
-  .action-btn,
-  .segment-btn,
-  .size-btn {
+  .action-btn {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -548,14 +496,11 @@
     background: none;
     color: var(--color-text-secondary);
     cursor: pointer;
-  }
-  .action-btn {
     gap: 0.35rem;
     padding: 0.4rem 0.6rem;
   }
   .action-btn:hover,
-  .action-btn.active,
-  .segment-btn.active {
+  .action-btn.active {
     color: var(--color-text);
     background: var(--color-bg-secondary, #f5f5f5);
   }
@@ -564,14 +509,12 @@
     font-weight: var(--weight-medium);
   }
   .action-separator,
-  .toolbar-divider,
   .bottom-separator {
     width: 1px;
     background: var(--color-border);
     opacity: 0.5;
   }
-  .action-separator,
-  .toolbar-divider {
+  .action-separator {
     height: 1rem;
   }
   .overflow-menu-wrapper :global(.menu-trigger) {
@@ -590,44 +533,12 @@
     margin: 0 auto;
     padding: 0 1rem 0.625rem;
   }
-  .style-toolbar {
-    gap: 0.125rem;
-  }
-  .toolbar-group {
-    gap: 0.375rem;
-  }
-  .group-label,
   .style-sheet-label {
     color: var(--color-text-secondary);
     font-size: var(--text-2xs);
     font-weight: var(--weight-semibold);
     letter-spacing: var(--tracking-wide);
     text-transform: uppercase;
-  }
-  .segment-group {
-    gap: 1px;
-  }
-  .segment-btn {
-    padding: 0.35rem 0.5rem;
-  }
-  .font-preview {
-    font-size: var(--text-md);
-    line-height: var(--leading-none);
-    font-size-adjust: 0.52;
-  }
-  .size-btn {
-    padding: 0.3rem;
-  }
-  .size-btn:disabled {
-    opacity: 0.3;
-    cursor: default;
-  }
-  .size-label {
-    min-width: 1.25rem;
-    color: var(--color-text);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-semibold);
-    text-align: center;
   }
   .reader-bottom-bar {
     position: fixed;

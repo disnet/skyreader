@@ -85,7 +85,10 @@
      so first paint (before the data-article-font attribute is applied)
      doesn't flash sans → serif. */
   --article-font: var(--font-serif);
-  --article-font-size: 1rem;
+  /* Matches ARTICLE_FONT_SIZE_DEFAULT (18px) in the preferences store. Only
+     the pre-hydration paint uses this; AppShell then sets the exact px value
+     inline from the stored preference. */
+  --article-font-size: 1.125rem;
   /* Let variable fonts (Literata) pick their optical-size master by
      size; inherited and a no-op for static fonts. */
   font-optical-sizing: auto;
@@ -314,26 +317,9 @@ body.sidebar-open-mobile {
   }
 }
 
-/* Article font size preference */
-:root[data-article-font-size='xs'] {
-  --article-font-size: 0.75rem;
-}
-
-:root[data-article-font-size='sm'] {
-  --article-font-size: 0.875rem;
-}
-
-:root[data-article-font-size='md'] {
-  --article-font-size: 1rem;
-}
-
-:root[data-article-font-size='lg'] {
-  --article-font-size: 1.125rem;
-}
-
-:root[data-article-font-size='xl'] {
-  --article-font-size: 1.25rem;
-}
+/* Article font size preference is applied as an inline `--article-font-size`
+   px value on the document root by AppShell (see preferences store), so there
+   are no discrete size selectors here. */
 
 /* Inline note marker — a small comment glyph appended after a highlight that
    carries a note. Injected as raw DOM into the reader body (in both the saved

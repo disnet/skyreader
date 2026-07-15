@@ -28,7 +28,7 @@
   import CollectionMagazine from '$lib/components/feed/CollectionMagazine.svelte';
   import PagedView, { type PagedController } from '$lib/components/feed/PagedView.svelte';
   import { magazineThemeVars } from '$lib/utils/magazineTheme';
-  import { preferences, type ArticleFont } from '$lib/stores/preferences.svelte';
+  import { preferences } from '$lib/stores/preferences.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { tick, onMount, onDestroy } from 'svelte';
 
@@ -82,21 +82,6 @@
   let itemTags = $derived(itemLabelsStore.getTagsForItem(itemKey));
 
   let labelItemType = $derived.by((): 'article' | 'document' | 'saved' => readerItem.type);
-
-  const fontOptions: { value: ArticleFont; label: string; family: string }[] = [
-    { value: 'sans-serif', label: 'Sans', family: 'sans-serif' },
-    { value: 'serif', label: 'Serif', family: 'serif' },
-    { value: 'mono', label: 'Mono', family: 'monospace' },
-    { value: 'literata', label: 'Literata', family: 'Literata, serif' },
-  ];
-
-  const sizeLabels: Record<string, string> = {
-    xs: 'XS',
-    sm: 'S',
-    md: 'M',
-    lg: 'L',
-    xl: 'XL',
-  };
 
   // Compute reading progress as scrollTop / (article-body-end − clientHeight),
   // clamped to 0–1. The overlay scrolls past the body into the discussion +
@@ -755,48 +740,7 @@
            pill), shown beneath the controls when Style is toggled. -->
     {#if styleMenuOpen}
       <div class="reader-style-row">
-        <div class="style-toolbar">
-          <div class="toolbar-group">
-            <span class="group-label">Font</span>
-            <div class="segment-group" role="group" aria-label="Font style">
-              {#each fontOptions as option}
-                <button
-                  class="segment-btn"
-                  class:active={preferences.articleFont === option.value}
-                  onclick={() => preferences.setArticleFont(option.value)}
-                  title={option.label}
-                >
-                  <span class="font-preview" style:font-family={option.family}>Aa</span>
-                </button>
-              {/each}
-            </div>
-          </div>
-
-          <span class="toolbar-divider"></span>
-
-          <div class="toolbar-group">
-            <span class="group-label">Size</span>
-            <div class="size-controls" role="group" aria-label="Font size">
-              <button
-                class="size-btn"
-                onclick={() => preferences.decreaseFontSize()}
-                disabled={preferences.articleFontSize === 'xs'}
-                title="Decrease font size"
-              >
-                <Icon name="minus" size={14} />
-              </button>
-              <span class="size-label">{sizeLabels[preferences.articleFontSize]}</span>
-              <button
-                class="size-btn"
-                onclick={() => preferences.increaseFontSize()}
-                disabled={preferences.articleFontSize === 'xl'}
-                title="Increase font size"
-              >
-                <Icon name="plus" size={14} />
-              </button>
-            </div>
-          </div>
-        </div>
+        <AppearanceToolbar />
       </div>
     {/if}
 
@@ -1417,114 +1361,6 @@
     padding: 0 1rem 0.625rem;
   }
 
-  .style-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 0.125rem;
-  }
-
-  .toolbar-group {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-  }
-
-  .group-label {
-    font-size: var(--text-2xs);
-    font-weight: var(--weight-semibold);
-    color: var(--color-text-secondary);
-    text-transform: uppercase;
-    letter-spacing: var(--tracking-wide);
-    padding-left: 0.375rem;
-    white-space: nowrap;
-  }
-
-  .toolbar-divider {
-    width: 1px;
-    height: 1rem;
-    background: var(--color-border, #e0e0e0);
-    margin: 0 0.25rem;
-    opacity: 0.5;
-  }
-
-  .segment-group {
-    display: flex;
-    gap: 1px;
-  }
-
-  .segment-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: none;
-    border: none;
-    padding: 0.35rem 0.5rem;
-    cursor: pointer;
-    color: var(--color-text-secondary);
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-    border-radius: 6px;
-    transition:
-      background-color 0.15s ease,
-      color 0.15s ease;
-  }
-
-  .segment-btn.active {
-    background: var(--color-bg-secondary, #f5f5f5);
-    color: var(--color-text);
-  }
-
-  .segment-btn:hover:not(.active) {
-    color: var(--color-text);
-  }
-
-  .font-preview {
-    font-size: var(--text-md);
-    line-height: var(--leading-none);
-    /* Normalize visual size across families by x-height — see
-       AppearanceToolbar; keeps the four preview buttons equal height. */
-    font-size-adjust: 0.52;
-  }
-
-  .size-controls {
-    display: flex;
-    align-items: center;
-    gap: 0.125rem;
-  }
-
-  .size-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: none;
-    border: none;
-    padding: 0.3rem;
-    border-radius: 6px;
-    cursor: pointer;
-    color: var(--color-text-secondary);
-    transition:
-      background-color 0.15s ease,
-      color 0.15s ease;
-  }
-
-  .size-btn:hover:not(:disabled) {
-    color: var(--color-text);
-    background: var(--color-bg-secondary, #f5f5f5);
-  }
-
-  .size-btn:disabled {
-    opacity: 0.3;
-    cursor: default;
-  }
-
-  .size-label {
-    font-size: var(--text-xs);
-    font-weight: var(--weight-semibold);
-    color: var(--color-text);
-    min-width: 1.25rem;
-    text-align: center;
-  }
-
   .reader-article-header {
     margin-bottom: 2rem;
   }
@@ -1701,20 +1537,6 @@
     background-color: color-mix(in srgb, #f5c518 40%, transparent);
   }
 
-  @media (prefers-color-scheme: dark) {
-    .toolbar-divider {
-      background: rgba(255, 255, 255, 0.2);
-    }
-
-    .segment-btn.active {
-      background: rgba(255, 255, 255, 0.15);
-    }
-
-    .size-btn:hover:not(:disabled) {
-      background: rgba(255, 255, 255, 0.1);
-    }
-  }
-
   /* On narrower desktops, drop the action labels to icons — matches the feed
      header's 1100px breakpoint so both collapse at the same width. */
   @media (max-width: 1100px) {
@@ -1766,24 +1588,11 @@
     gap: 0.375rem;
   }
 
-  .style-sheet-content .toolbar-wrapper :global(.segment-btn) {
-    padding: 0.6rem 0.75rem;
-  }
-
-  .style-sheet-content .toolbar-wrapper :global(.font-preview) {
-    font-size: var(--text-xl);
-  }
-
   .style-sheet-content .toolbar-wrapper :global(.size-btn) {
     padding: 0.6rem;
   }
 
-  .style-sheet-content .toolbar-wrapper :global(.size-btn .icon) {
-    width: 18px;
-    height: 18px;
-  }
-
-  .style-sheet-content .toolbar-wrapper :global(.size-label) {
+  .style-sheet-content .toolbar-wrapper :global(.size-value) {
     font-size: var(--text-lg);
     min-width: 1.75rem;
   }

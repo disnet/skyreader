@@ -218,10 +218,14 @@
     }
   });
 
-  // Apply article font size preference to document
+  // Apply article font size preference to document. It's now an arbitrary px
+  // value (not a fixed xs…xl scale), so drive the CSS var directly.
   $effect(() => {
     if (browser) {
-      document.documentElement.setAttribute('data-article-font-size', preferences.articleFontSize);
+      document.documentElement.style.setProperty(
+        '--article-font-size',
+        `${preferences.articleFontSize}px`
+      );
     }
   });
 </script>
