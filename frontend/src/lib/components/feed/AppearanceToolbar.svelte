@@ -40,15 +40,21 @@
   // ancestor so the getBoundingClientRect() coordinates land correctly.
   function portal(node: HTMLElement) {
     document.body.appendChild(node);
-    // Clicks inside the (now body-level) menu must not bubble to the document
-    // click-outside handlers — ours here, and the full-screen reader's own one
-    // that closes the whole style row — which would otherwise fire because the
-    // menu is no longer a DOM descendant of the toolbar/header.
-    const stop = (e: Event) => e.stopPropagation();
-    node.addEventListener('click', stop);
+    // The menu now lives on <body>, OUTSIDE Svelte 5's event-delegation root
+    // (the SvelteKit mount wrapper). Delegated `onclick` handlers on the menu
+    // items would never fire, so dispatch selection here from a real, directly
+    // attached listener instead. The same handler stopPropagation()s so the
+    // click doesn't reach the document click-outside handlers — ours here, and
+    // the full-screen reader's own one that closes the whole pinned style row.
+    const onClick = (e: MouseEvent) => {
+      e.stopPropagation();
+      const item = (e.target as HTMLElement).closest<HTMLElement>('[data-font-value]');
+      if (item?.dataset.fontValue) selectFont(item.dataset.fontValue as ArticleFont);
+    };
+    node.addEventListener('click', onClick);
     return {
       destroy() {
-        node.removeEventListener('click', stop);
+        node.removeEventListener('click', onClick);
         node.parentNode?.removeChild(node);
       },
     };
@@ -179,7 +185,7 @@
               class:active={preferences.articleFont === option.value}
               role="option"
               aria-selected={preferences.articleFont === option.value}
-              onclick={() => selectFont(option.value)}
+              data-font-value={option.value}
             >
               <span class="specimen" style:font-family={option.family}>Ag</span>
               <span class="labels">
