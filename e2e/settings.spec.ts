@@ -30,16 +30,19 @@ test.describe('Settings', () => {
     await expect(serifButton).toHaveClass(/selected/);
   });
 
-  test('font size buttons work', async ({ authedPage }) => {
+  test('font size stepper works', async ({ authedPage }) => {
     await authedPage.goto('/settings');
-    await expect(authedPage.locator('.font-size-option').first()).toBeVisible({
-      timeout: 10_000,
-    });
+    const readout = authedPage.locator('.size-readout');
+    await expect(readout).toBeVisible({ timeout: 10_000 });
 
-    // Click "L" option
-    const largeButton = authedPage.locator('.font-size-option', { hasText: 'L' }).first();
-    await largeButton.click();
-    await expect(largeButton).toHaveClass(/selected/);
+    // Read the current px value (readout renders e.g. "18px").
+    const currentSize = async () =>
+      parseInt(((await readout.textContent()) ?? '').replace(/[^0-9]/g, ''), 10);
+    const before = await currentSize();
+
+    // Bumping the size up increases the number by one step (2px).
+    await authedPage.getByRole('button', { name: 'Increase font size' }).click();
+    await expect(readout).toHaveText(`${before + 2}px`);
   });
 
   test('logout shows confirm dialog', async ({ authedPage }) => {

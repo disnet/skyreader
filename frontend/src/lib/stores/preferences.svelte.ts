@@ -1,7 +1,38 @@
 import { browser } from '$app/environment';
 
 export type ArticleFont = 'sans-serif' | 'serif' | 'mono' | 'literata';
-export type ArticleFontSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+// Reader body size, in CSS pixels. Was a fixed xs…xl scale (12–20px); now a
+// wider numeric range so large-type reading is actually reachable. Legacy
+// stored keys are migrated on load (see LEGACY_FONT_SIZE_PX).
+export type ArticleFontSize = number;
+
+export const ARTICLE_FONT_SIZE_MIN = 14;
+export const ARTICLE_FONT_SIZE_MAX = 40;
+export const ARTICLE_FONT_SIZE_STEP = 2;
+export const ARTICLE_FONT_SIZE_DEFAULT = 18;
+
+// Map the retired xs…xl keys onto their old px values so a returning user keeps
+// roughly the size they had (clamped into the new range).
+const LEGACY_FONT_SIZE_PX: Record<string, number> = {
+  xs: 12,
+  sm: 14,
+  md: 16,
+  lg: 18,
+  xl: 20,
+};
+
+function clampFontSize(px: number): number {
+  return Math.max(ARTICLE_FONT_SIZE_MIN, Math.min(ARTICLE_FONT_SIZE_MAX, Math.round(px)));
+}
+
+// Accept either a modern numeric px value or a legacy key; null if unusable.
+function coerceFontSize(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return clampFontSize(value);
+  if (typeof value === 'string' && value in LEGACY_FONT_SIZE_PX) {
+    return clampFontSize(LEGACY_FONT_SIZE_PX[value]);
+  }
+  return null;
+}
 // How the full-screen readers lay out prose: a continuous vertical scroll, or a
 // Kindle-style paged view (one page — or two columns when wide — turned at a time).
 export type ReaderViewMode = 'scroll' | 'paged';
@@ -14,7 +45,6 @@ export type DefaultView = 'home' | 'feeds' | 'saved';
 // How tightly the Home lane tiles are packed (tile width, thumbnail, padding).
 export type CardDensity = 'compact' | 'cozy' | 'comfortable';
 
-const FONT_SIZE_ORDER: ArticleFontSize[] = ['xs', 'sm', 'md', 'lg', 'xl'];
 export const DAILY_MAGAZINE_MINUTE_OPTIONS: DailyMagazineMinutes[] = [10, 20, 30, 45, 60];
 export const DAILY_MAGAZINE_ORDER_OPTIONS: { value: DailyMagazineOrder; label: string }[] = [
   { value: 'shuffle', label: 'Random' },
@@ -44,7 +74,7 @@ const STORAGE_KEY = 'skyreader-preferences';
 function createPreferencesStore() {
   let state = $state<PreferencesState>({
     articleFont: 'serif',
-    articleFontSize: 'md',
+    articleFontSize: ARTICLE_FONT_SIZE_DEFAULT,
     readerViewMode: 'scroll',
     scrollToMarkAsRead: false,
     expandAllItems: true,
@@ -65,8 +95,9 @@ function createPreferencesStore() {
         if (parsed.articleFont) {
           state.articleFont = parsed.articleFont;
         }
-        if (parsed.articleFontSize) {
-          state.articleFontSize = parsed.articleFontSize;
+        const migratedSize = coerceFontSize(parsed.articleFontSize);
+        if (migratedSize !== null) {
+          state.articleFontSize = migratedSize;
         }
         if (parsed.readerViewMode === 'scroll' || parsed.readerViewMode === 'paged') {
           state.readerViewMode = parsed.readerViewMode;
@@ -121,28 +152,28 @@ function createPreferencesStore() {
   }
 
   function setArticleFontSize(size: ArticleFontSize) {
-    state.articleFontSize = size;
+    state.articleFontSize = clampFontSize(size);
     save();
   }
 
   function increaseFontSize() {
-    const currentIndex = FONT_SIZE_ORDER.indexOf(state.articleFontSize);
-    if (currentIndex < FONT_SIZE_ORDER.length - 1) {
-      state.articleFontSize = FONT_SIZE_ORDER[currentIndex + 1];
+    const next = clampFontSize(state.articleFontSize + ARTICLE_FONT_SIZE_STEP);
+    if (next !== state.articleFontSize) {
+      state.articleFontSize = next;
       save();
     }
   }
 
   function decreaseFontSize() {
-    const currentIndex = FONT_SIZE_ORDER.indexOf(state.articleFontSize);
-    if (currentIndex > 0) {
-      state.articleFontSize = FONT_SIZE_ORDER[currentIndex - 1];
+    const next = clampFontSize(state.articleFontSize - ARTICLE_FONT_SIZE_STEP);
+    if (next !== state.articleFontSize) {
+      state.articleFontSize = next;
       save();
     }
   }
 
   function resetFontSize() {
-    state.articleFontSize = 'md';
+    state.articleFontSize = ARTICLE_FONT_SIZE_DEFAULT;
     save();
   }
 
