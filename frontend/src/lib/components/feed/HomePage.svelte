@@ -109,6 +109,19 @@
     }
   }
 
+  // Fraction of the article actually scrolled through, or null if it was never
+  // opened in the reader (a bare `read` label from marking-read in a feed list
+  // carries no scroll progress).
+  function readFraction(
+    activity: { progress: { paragraphIndex: number; totalParagraphs: number } | null } | null
+  ): number | null {
+    const p = activity?.progress;
+    if (p && p.totalParagraphs > 0) {
+      return Math.min(1, (p.paragraphIndex + 1) / p.totalParagraphs);
+    }
+    return null;
+  }
+
   function toVM(
     s: SavedItem,
     activity: { progress: { paragraphIndex: number; totalParagraphs: number } | null } | null
@@ -118,9 +131,8 @@
     let progress: number | null = null;
     let metaLabel: string | null = totalMin ? `${totalMin} min read` : null;
 
-    const p = activity?.progress;
-    if (p && p.totalParagraphs > 0) {
-      const fraction = Math.min(1, (p.paragraphIndex + 1) / p.totalParagraphs);
+    const fraction = readFraction(activity);
+    if (fraction !== null) {
       progress = fraction;
       if (fraction < 0.98 && totalMin) {
         const left = Math.max(1, Math.round(totalMin * (1 - fraction)));
@@ -165,10 +177,15 @@
     if (magazine) goto('/daily');
   }
 
-  // Continue reading: anything opened, newest activity first.
+  // Continue reading: only items actually started in the reader and not yet
+  // finished — newest activity first. A bare `read` label (marked-read from a
+  // feed list, never opened) has no scroll progress and doesn't qualify.
   let continueEnriched = $derived.by(() =>
     enriched
-      .filter((e) => e.activity)
+      .filter((e) => {
+        const fraction = readFraction(e.activity);
+        return fraction !== null && fraction < 0.98;
+      })
       .sort((a, b) => (b.activity!.lastActivityAt ?? 0) - (a.activity!.lastActivityAt ?? 0))
       .slice(0, CONTINUE_CAP)
   );
