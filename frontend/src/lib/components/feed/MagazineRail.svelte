@@ -7,13 +7,32 @@
   import Icon from '$lib/components/Icon.svelte';
   import type { Magazine } from '$lib/types';
   import { formatMagazineDate, magazineIssueSummary } from '$lib/utils/dailyMagazine';
+  import {
+    DAILY_MAGAZINE_MINUTE_OPTIONS,
+    DAILY_MAGAZINE_ORDER_OPTIONS,
+    preferences,
+    type DailyMagazineMinutes,
+    type DailyMagazineOrder,
+  } from '$lib/stores/preferences.svelte';
 
   interface Props {
     issues: Magazine[];
+    generating: boolean;
+    onGenerate: () => void | Promise<void>;
     onOpen: (rkey: string) => void;
   }
 
-  let { issues, onOpen }: Props = $props();
+  let { issues, generating, onGenerate, onOpen }: Props = $props();
+
+  function updateLength(event: Event) {
+    const minutes = Number((event.currentTarget as HTMLSelectElement).value);
+    preferences.setDailyMagazineMinutes(minutes as DailyMagazineMinutes);
+  }
+
+  function updateOrder(event: Event) {
+    const order = (event.currentTarget as HTMLSelectElement).value as DailyMagazineOrder;
+    preferences.setDailyMagazineOrder(order);
+  }
 
   // Fraction read, from the resume pointer (which article of how many). Null when
   // the issue hasn't been opened yet, so the spine bar only shows real progress.
@@ -65,51 +84,77 @@
   <div class="lane-header">
     <h2 class="lane-title">
       <span class="lane-icon"><Icon name="newspaper" size={16} /></span>
-      Issues
+      Daily magazine
     </h2>
-  </div>
-
-  <div class="lane-viewport" class:fade-left={canLeft} class:fade-right={canRight}>
-    <button
-      class="scroll-btn left"
-      class:visible={canLeft}
-      onclick={() => scrollByCards(-1)}
-      aria-label="Scroll Issues left"
-      tabindex={canLeft ? 0 : -1}
-    >
-      <Icon name="chevron-left" size={18} />
-    </button>
-
-    <div class="lane-track" bind:this={track} onscroll={updateAffordances}>
-      {#each issues as mag (mag.rkey)}
-        {@const pct = issueProgress(mag)}
-        <button class="issue-card" onclick={() => onOpen(mag.rkey)}>
-          <span class="thumb"><Icon name="newspaper" size={18} /></span>
-          <span class="body">
-            <span class="title">{formatMagazineDate(new Date(mag.createdAt * 1000))}</span>
-            <span class="meta"
-              >{magazineIssueSummary(mag.items.length, mag.params.totalMinutes)}</span
-            >
-          </span>
-          {#if pct !== null}
-            <span class="progress" aria-hidden="true">
-              <span class="progress-fill" style="width: {pct}%"></span>
-            </span>
-          {/if}
-        </button>
-      {/each}
+    <div class="header-controls">
+      <label class="control">
+        <span>Length</span>
+        <select value={preferences.dailyMagazineMinutes} onchange={updateLength}>
+          {#each DAILY_MAGAZINE_MINUTE_OPTIONS as minutes}
+            <option value={minutes}>{minutes} min</option>
+          {/each}
+        </select>
+      </label>
+      <label class="control">
+        <span>Articles</span>
+        <select value={preferences.dailyMagazineOrder} onchange={updateOrder}>
+          {#each DAILY_MAGAZINE_ORDER_OPTIONS as option}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </label>
+      <button class="generate" onclick={() => onGenerate()} disabled={generating}>
+        <span>{generating ? 'Generating…' : issues.length ? 'New issue' : 'Generate issue'}</span>
+        <Icon name="arrow-right" size={15} />
+      </button>
     </div>
-
-    <button
-      class="scroll-btn right"
-      class:visible={canRight}
-      onclick={() => scrollByCards(1)}
-      aria-label="Scroll Issues right"
-      tabindex={canRight ? 0 : -1}
-    >
-      <Icon name="chevron-right" size={18} />
-    </button>
   </div>
+
+  {#if issues.length === 0}
+    <p class="empty">Generate an issue to start reading across devices.</p>
+  {:else}
+    <div class="lane-viewport" class:fade-left={canLeft} class:fade-right={canRight}>
+      <button
+        class="scroll-btn left"
+        class:visible={canLeft}
+        onclick={() => scrollByCards(-1)}
+        aria-label="Scroll Issues left"
+        tabindex={canLeft ? 0 : -1}
+      >
+        <Icon name="chevron-left" size={18} />
+      </button>
+
+      <div class="lane-track" bind:this={track} onscroll={updateAffordances}>
+        {#each issues as mag (mag.rkey)}
+          {@const pct = issueProgress(mag)}
+          <button class="issue-card" onclick={() => onOpen(mag.rkey)}>
+            <span class="thumb"><Icon name="newspaper" size={18} /></span>
+            <span class="body">
+              <span class="title">{formatMagazineDate(new Date(mag.createdAt * 1000))}</span>
+              <span class="meta"
+                >{magazineIssueSummary(mag.items.length, mag.params.totalMinutes)}</span
+              >
+            </span>
+            {#if pct !== null}
+              <span class="progress" aria-hidden="true">
+                <span class="progress-fill" style="width: {pct}%"></span>
+              </span>
+            {/if}
+          </button>
+        {/each}
+      </div>
+
+      <button
+        class="scroll-btn right"
+        class:visible={canRight}
+        onclick={() => scrollByCards(1)}
+        aria-label="Scroll Issues right"
+        tabindex={canRight ? 0 : -1}
+      >
+        <Icon name="chevron-right" size={18} />
+      </button>
+    </div>
+  {/if}
 </section>
 
 <style>
@@ -118,9 +163,10 @@
   }
   .lane-header {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
-    gap: 1rem;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
     padding: 0 0.25rem;
     margin-bottom: 0.625rem;
   }
@@ -137,6 +183,68 @@
   .lane-icon {
     display: inline-flex;
     color: var(--color-text-secondary);
+  }
+
+  .header-controls {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+  .control {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
+  }
+  .control select {
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    cursor: pointer;
+  }
+  .control select:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 1px;
+  }
+  .generate {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex: 0 0 auto;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--color-primary);
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .generate:hover:not(:disabled) {
+    text-decoration: underline;
+  }
+  .generate:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 3px;
+  }
+  .generate:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  .empty {
+    margin: 0;
+    padding: 0 0.25rem;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
   }
   .lane-viewport {
     position: relative;

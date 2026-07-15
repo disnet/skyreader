@@ -51,16 +51,13 @@ async function seedMagazine(user: TestUser) {
 
 async function openMagazineFromHome(page: Page) {
   await page.goto('/home');
-  // Magazines are now durable, explicitly-generated issues: the Home card offers
-  // "Generate issue" (frozen from the saved pile) which, once minted, exposes an
-  // "Open magazine" link. The card only renders after saves hydrate, so a visible
-  // Generate button means the seeded articles are present.
+  // Magazines are now durable, explicitly-generated issues: the magazine rail
+  // offers "Generate issue" (frozen from the saved pile), which mints the issue
+  // and opens it straight away. The rail only renders after saves hydrate, so a
+  // visible Generate button means the seeded articles are present.
   const generate = page.getByRole('button', { name: 'Generate issue' });
   await expect(generate).toBeVisible({ timeout: 15_000 });
   await generate.click();
-  const openLink = page.getByRole('link', { name: 'Open magazine' });
-  await expect(openLink).toBeVisible({ timeout: 15_000 });
-  await openLink.click();
   await expect(page).toHaveURL(/\/daily$/);
   await expect(page.getByRole('heading', { name: 'Daily magazine', exact: true })).toBeVisible({
     timeout: 15_000,

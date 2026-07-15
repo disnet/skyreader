@@ -14,7 +14,6 @@
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import NotificationList from '$lib/components/NotificationList.svelte';
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
-  import DailyMagazineEntry from '$lib/components/feed/DailyMagazineEntry.svelte';
   import MagazineRail from '$lib/components/feed/MagazineRail.svelte';
   import { goto } from '$app/navigation';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
@@ -145,9 +144,11 @@
   });
 
   // The Home card reflects the user's durable current magazine (if any). Mint a
-  // new one on demand; navigation to /daily is left to the card's link.
+  // new one on demand and open it straight away; past issues stay reachable via
+  // the rail below.
   async function generateMagazine() {
-    await magazineStore.generate();
+    const magazine = await magazineStore.generate();
+    if (magazine) goto('/daily');
   }
 
   // Continue reading: anything opened, newest activity first.
@@ -339,17 +340,12 @@
     </div>
 
     {#if !isLoading}
-      <DailyMagazineEntry
-        magazine={magazineStore.current}
+      <MagazineRail
+        issues={magazineStore.magazines}
         generating={magazineStore.generating}
         onGenerate={generateMagazine}
+        onOpen={(rkey) => goto(`/daily?id=${rkey}`)}
       />
-      {#if magazineStore.magazines.length >= 2}
-        <MagazineRail
-          issues={magazineStore.magazines}
-          onOpen={(rkey) => goto(`/daily?id=${rkey}`)}
-        />
-      {/if}
     {/if}
 
     {#if isLoading}
