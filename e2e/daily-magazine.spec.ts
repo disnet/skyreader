@@ -133,6 +133,14 @@ test.describe('Daily magazine reader', () => {
     const secondArticle = authedPage.locator('#article-2');
     const secondUrl = await secondArticle.locator('a.original-link').getAttribute('href');
     expect(secondUrl).toBeTruthy();
+    // Bodies load lazily. Wait for the layout to settle before scrolling: article 1
+    // must reach its full (filler) height so there's real scroll range, and article
+    // 2's body must exist so scrolling to it doesn't get undone by a later reflow
+    // (content growth emits no scroll event, so the active article wouldn't recompute).
+    await expect(authedPage.getByText('Filler paragraph 14')).toBeVisible({ timeout: 15_000 });
+    await expect(
+      authedPage.getByText('The second article appears in the same continuous issue.')
+    ).toBeVisible({ timeout: 15_000 });
     await secondArticle.evaluate((element) => element.scrollIntoView({ block: 'start' }));
     await authedPage.evaluate(
       () =>
