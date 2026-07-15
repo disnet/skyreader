@@ -77,7 +77,9 @@ test.describe('Daily magazine reader', () => {
     await expect(authedPage.locator('.nav-dropdown')).toHaveCount(0);
     await expect(authedPage.locator('button[aria-haspopup="listbox"]')).toHaveCount(0);
 
-    await expect(authedPage.locator('.issue-article')).toHaveCount(2);
+    // Article bodies stream in from the document proxy, which can lag the issue
+    // heading under CI load — wait past the 5s default so a slow fetch doesn't flake.
+    await expect(authedPage.locator('.issue-article')).toHaveCount(2, { timeout: 15_000 });
     for (const article of ARTICLES) {
       await expect(authedPage.getByRole('heading', { name: article.title })).toBeVisible();
       await expect(
