@@ -7,6 +7,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import type { IconName } from '$lib/components/Icon.svelte';
   import HomeLaneCard from './HomeLaneCard.svelte';
+  import { preferences } from '$lib/stores/preferences.svelte';
   import type { LaneCardVM } from './homeLane';
 
   type Action =
@@ -24,6 +25,10 @@
   }
 
   let { title, icon, items, action, loading = false, onOpen, onHover }: Props = $props();
+
+  // Skeletons mirror the current density so the loading footprint matches the real
+  // tiles (compact = text-only square; see HomeLaneCard).
+  let density = $derived(preferences.cardDensity);
 
   let track = $state<HTMLDivElement | null>(null);
   let canLeft = $state(false);
@@ -101,7 +106,7 @@
     <div class="lane-track" bind:this={track} onscroll={updateAffordances}>
       {#if loading}
         {#each Array(4) as _, i (i)}
-          <div class="skeleton-card" aria-hidden="true">
+          <div class="skeleton-card" data-density={density} aria-hidden="true">
             <div class="skeleton-thumb"></div>
             <div class="skeleton-lines">
               <div class="skeleton-line"></div>
@@ -287,23 +292,36 @@
     }
   }
 
-  /* Skeletons mirror the tile footprint so first paint doesn't reflow. */
+  /* Skeletons mirror the tile footprint (including the current density) so first
+     paint doesn't reflow. Same density variables the real tile reads. */
   .skeleton-card {
     flex-shrink: 0;
     display: flex;
-    gap: 0.75rem;
-    width: 16.5rem;
-    padding: 0.75rem 0.875rem 0.875rem;
+    gap: var(--lane-gap, 0.75rem);
+    width: var(--lane-card-w, 16.5rem);
+    padding: var(--lane-pad-t, 0.75rem) var(--lane-pad-x, 0.875rem) var(--lane-pad-b, 0.875rem);
     border: 1px solid var(--color-border);
     border-radius: 12px;
   }
 
   .skeleton-thumb {
     flex-shrink: 0;
-    width: 3.25rem;
-    height: 3.25rem;
+    width: var(--lane-thumb, 3.25rem);
+    height: var(--lane-thumb, 3.25rem);
     border-radius: 8px;
     background: var(--color-bg-secondary, #f0f0f0);
+  }
+
+  /* Compact skeleton mirrors the text-only square tile (no thumb). */
+  .skeleton-card[data-density='compact'] {
+    flex-direction: column;
+    aspect-ratio: 1 / 1;
+    gap: 0.4rem;
+    padding: var(--lane-pad-t, 0.6rem) var(--lane-pad-x, 0.7rem) var(--lane-pad-b, 0.7rem);
+  }
+
+  .skeleton-card[data-density='compact'] .skeleton-thumb {
+    display: none;
   }
 
   .skeleton-lines {
@@ -329,7 +347,7 @@
     .skeleton-card {
       flex-direction: column;
       align-items: stretch;
-      width: 9.75rem;
+      width: var(--lane-card-w-m, 9.75rem);
       padding: 0 0 0.7rem;
       gap: 0;
       overflow: hidden;
@@ -337,7 +355,7 @@
 
     .skeleton-thumb {
       width: 100%;
-      height: 5.5rem;
+      height: var(--lane-thumb-h, 5.5rem);
       border-radius: 0;
     }
 

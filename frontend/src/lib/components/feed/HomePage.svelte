@@ -31,13 +31,27 @@
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { decodeEntities } from '$lib/utils/entities';
   import { savedItemLabelKeys } from '$lib/utils/dailyMagazine';
-  import { preferences } from '$lib/stores/preferences.svelte';
+  import { preferences, type CardDensity, type DefaultView } from '$lib/stores/preferences.svelte';
   import {
     datePresetToMs,
     matchesReadingLength,
     type FeedDisplayItem,
   } from '$lib/stores/feedView.svelte';
   import type { FilteredView, SavedItem, SortOrder } from '$lib/types';
+
+  // Quiet Home preferences strip (under the greeting). "Opens to" reuses the
+  // global default-view preference (consumed by the `/` redirector); "Cards"
+  // drives the lane-tile density variables set on .home-body below.
+  const defaultViewOptions: { value: DefaultView; label: string }[] = [
+    { value: 'home', label: 'Home' },
+    { value: 'feeds', label: 'Feeds' },
+    { value: 'saved', label: 'Saved' },
+  ];
+  const densityOptions: { value: CardDensity; label: string }[] = [
+    { value: 'compact', label: 'Compact' },
+    { value: 'cozy', label: 'Cozy' },
+    { value: 'comfortable', label: 'Comfortable' },
+  ];
 
   const CONTINUE_CAP = 12;
   const RANDOM_CAP = 12;
@@ -333,10 +347,40 @@
     </div>
   </header>
 
-  <div class="home-body">
+  <div class="home-body" data-density={preferences.cardDensity}>
     <div class="masthead">
-      {#if dateLabel}<p class="masthead-date">{dateLabel}</p>{/if}
-      <h1 class="masthead-greeting">{greeting}</h1>
+      <div class="masthead-text">
+        {#if dateLabel}<p class="masthead-date">{dateLabel}</p>{/if}
+        <h1 class="masthead-greeting">{greeting}</h1>
+      </div>
+
+      <div class="home-controls">
+        <label class="control-group">
+          <span class="control-label">Opens to</span>
+          <select
+            class="control-select"
+            value={preferences.defaultView}
+            onchange={(e) => preferences.setDefaultView(e.currentTarget.value as DefaultView)}
+          >
+            {#each defaultViewOptions as option}
+              <option value={option.value}>{option.label}</option>
+            {/each}
+          </select>
+        </label>
+
+        <label class="control-group">
+          <span class="control-label">Cards</span>
+          <select
+            class="control-select"
+            value={preferences.cardDensity}
+            onchange={(e) => preferences.setCardDensity(e.currentTarget.value as CardDensity)}
+          >
+            {#each densityOptions as option}
+              <option value={option.value}>{option.label}</option>
+            {/each}
+          </select>
+        </label>
+      </div>
     </div>
 
     {#if !isLoading}
@@ -522,10 +566,58 @@
     max-width: 880px;
     margin: 0 auto;
     padding: 0.5rem 0.75rem 2rem;
+    /* Density tokens for the lane tiles (read by HomeLaneCard / HomeLane skeletons,
+       which inherit them). Base = "cozy"; data-density overrides below. Kept here
+       rather than on each card so the "Cards" control changes one attribute and the
+       whole surface re-flows. */
+    --lane-card-w: 16.5rem;
+    --lane-card-w-m: 9.75rem;
+    --lane-thumb: 3.25rem;
+    --lane-thumb-h: 5.5rem;
+    --lane-pad-x: 0.875rem;
+    --lane-pad-t: 0.75rem;
+    --lane-pad-b: 0.875rem;
+    --lane-gap: 0.75rem;
   }
 
+  /* Compact tiles are text-only squares (HomeLaneCard drops the thumbnail), so they
+     need a small square footprint — several across the lane. Thumb vars go unused. */
+  .home-body[data-density='compact'] {
+    --lane-card-w: 9rem;
+    --lane-card-w-m: 7.25rem;
+    --lane-pad-x: 0.7rem;
+    --lane-pad-t: 0.6rem;
+    --lane-pad-b: 0.7rem;
+    --lane-gap: 0;
+  }
+
+  .home-body[data-density='comfortable'] {
+    --lane-card-w: 19.5rem;
+    --lane-card-w-m: 11.5rem;
+    --lane-thumb: 4rem;
+    --lane-thumb-h: 6.5rem;
+    --lane-pad-x: 1.05rem;
+    --lane-pad-t: 1rem;
+    --lane-pad-b: 1.05rem;
+    --lane-gap: 0.95rem;
+  }
+
+  /* Greeting on the left, the preferences strip bottom-aligned on the right of the
+     same row. They wrap (controls drop below) when the row runs out of width; the
+     hairline under the whole masthead separates it from the lanes. */
   .masthead {
-    padding: 1rem 0.25rem 1.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 0.5rem 1.5rem;
+    padding: 1rem 0.25rem 0.875rem;
+    margin-bottom: 0.875rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .masthead-text {
+    flex-shrink: 0;
   }
 
   .masthead-date {
@@ -541,5 +633,44 @@
     line-height: var(--leading-tight);
     letter-spacing: var(--tracking-tight);
     color: var(--color-text);
+  }
+
+  /* Quiet preferences strip. Two compact <select>s styled to match the daily-magazine
+     dropdowns that share this screen (MagazineRail's `.control` / `.control select`),
+     so the masthead and the magazine rail read as one control vocabulary. */
+  .home-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 1.25rem;
+    /* Nudge up so the dropdowns sit level with the greeting's text rather than its
+       descenders when bottom-aligned in the masthead row. */
+    padding-bottom: 0.15rem;
+  }
+
+  .control-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
+    cursor: pointer;
+  }
+
+  .control-select {
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    cursor: pointer;
+  }
+
+  .control-select:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 1px;
   }
 </style>

@@ -4,6 +4,7 @@
   // thin, fast render reused across every lane. Restrained on purpose — a small
   // thumbnail and text, not a magazine cover — per the Reading Room design system.
   import Icon from '$lib/components/Icon.svelte';
+  import { preferences } from '$lib/stores/preferences.svelte';
 
   interface Props {
     title: string;
@@ -20,6 +21,10 @@
 
   let { title, domain, image, faviconUrl, metaLabel, progress, onOpen, onHover }: Props = $props();
 
+  // Compact density switches the tile to a text-only square (see styles below); the
+  // thumbnail is dropped and the shape/size come from the .home-body density vars.
+  let density = $derived(preferences.cardDensity);
+
   // A cover image that 404s would otherwise leave a broken-image box; fall back to
   // the favicon tile on error.
   let imageFailed = $state(false);
@@ -32,7 +37,12 @@
   );
 </script>
 
-<button class="lane-card" onclick={() => onOpen?.()} onmouseenter={() => onHover?.()}>
+<button
+  class="lane-card"
+  data-density={density}
+  onclick={() => onOpen?.()}
+  onmouseenter={() => onHover?.()}
+>
   <span class="thumb" class:has-cover={showCover}>
     {#if showCover}
       <img src={image} alt="" loading="lazy" onerror={() => (imageFailed = true)} />
@@ -70,11 +80,13 @@
     position: relative;
     display: flex;
     align-items: flex-start;
-    gap: 0.75rem;
-    width: 16.5rem;
+    /* Density-driven metrics inherit from .home-body[data-density]; the fallbacks
+       are the "cozy" defaults so the tile still renders standalone (e.g. /dev). */
+    gap: var(--lane-gap, 0.75rem);
+    width: var(--lane-card-w, 16.5rem);
     /* Hold the set width so the track scrolls instead of squeezing tiles. */
     flex-shrink: 0;
-    padding: 0.75rem 0.875rem 0.875rem;
+    padding: var(--lane-pad-t, 0.75rem) var(--lane-pad-x, 0.875rem) var(--lane-pad-b, 0.875rem);
     background: none;
     border: 1px solid var(--color-border);
     border-radius: 12px;
@@ -103,8 +115,8 @@
 
   .thumb {
     flex-shrink: 0;
-    width: 3.25rem;
-    height: 3.25rem;
+    width: var(--lane-thumb, 3.25rem);
+    height: var(--lane-thumb, 3.25rem);
     border-radius: 8px;
     overflow: hidden;
     display: flex;
@@ -176,11 +188,12 @@
     flex-shrink: 0;
   }
 
-  /* Reading-progress spine along the bottom edge — only on Continue reading. */
+  /* Reading-progress spine along the bottom edge — only on Continue reading.
+     Insets track the card's horizontal padding so the bar stays flush at any density. */
   .progress {
     position: absolute;
-    left: 0.875rem;
-    right: 0.875rem;
+    left: var(--lane-pad-x, 0.875rem);
+    right: var(--lane-pad-x, 0.875rem);
     bottom: 0.5rem;
     height: 2px;
     border-radius: 999px;
@@ -195,6 +208,36 @@
     background: var(--color-primary);
   }
 
+  /* Compact density: drop the thumbnail and lay the tile out as a text-only square —
+     title at the top, meta pinned to the bottom — for a denser wall of tiles. Higher
+     specificity than the base + mobile rules, so it holds at every width; only the
+     square's size (--lane-card-w / -w-m) changes between desktop and mobile. */
+  .lane-card[data-density='compact'] {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    aspect-ratio: 1 / 1;
+    padding: var(--lane-pad-t, 0.6rem) var(--lane-pad-x, 0.7rem) var(--lane-pad-b, 0.7rem);
+    overflow: hidden;
+  }
+
+  .lane-card[data-density='compact'] .thumb {
+    display: none;
+  }
+
+  .lane-card[data-density='compact'] .body {
+    flex: 1;
+    justify-content: space-between;
+    padding: 0;
+    gap: 0.3rem;
+  }
+
+  .lane-card[data-density='compact'] .title {
+    font-size: var(--text-sm);
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
+  }
+
   /* Phones: a more square, compact tile — cover on top, text below — so several
      fit across the viewport instead of one wide row. */
   @media (max-width: 640px) {
@@ -202,14 +245,14 @@
       flex-direction: column;
       align-items: stretch;
       gap: 0;
-      width: 9.75rem;
+      width: var(--lane-card-w-m, 9.75rem);
       padding: 0 0 0.7rem;
       overflow: hidden;
     }
 
     .thumb {
       width: 100%;
-      height: 5.5rem;
+      height: var(--lane-thumb-h, 5.5rem);
       /* The card's own radius + overflow:hidden clips these top corners. */
       border-radius: 0;
     }
