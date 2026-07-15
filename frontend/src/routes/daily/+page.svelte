@@ -5,6 +5,7 @@
   import type { Magazine, MagazineItemSnapshot, SavedItem } from '$lib/types';
   import type { MagazineArticleControls } from '$lib/components/feed/DailyMagazineArticle.svelte';
   import DailyMagazineArticle from '$lib/components/feed/DailyMagazineArticle.svelte';
+  import ArchiveMagazineModal from '$lib/components/feed/ArchiveMagazineModal.svelte';
   import ReaderChrome from '$lib/components/feed/ReaderChrome.svelte';
   import PagedView, { type PagedController } from '$lib/components/feed/PagedView.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
@@ -351,10 +352,24 @@
 
   // In the magazine reader the archive action operates on the *issue*, not the
   // article being read: it dismisses this magazine (soft-delete, synced across
-  // devices) so it drops off Home, then closes the reader.
+  // devices) so it drops off Home. We first prompt about the issue's articles,
+  // since dismissing a finished issue usually means you're done with its reads.
+  let archivePromptOpen = $state(false);
+
   function archiveMagazine() {
+    if (!magazine) return;
+    archivePromptOpen = true;
+  }
+
+  // alsoArchiveArticles archives each article in the issue too, clearing them
+  // from the saved inbox. Either way the issue is dismissed and the reader closes.
+  function confirmArchiveMagazine(alsoArchiveArticles: boolean) {
     const mag = magazine;
+    archivePromptOpen = false;
     if (!mag) return;
+    if (alsoArchiveArticles) {
+      for (const snap of mag.items) void itemLabelsStore.archiveItem(snap.displayKey, 'saved');
+    }
     void magazineStore.remove(mag.rkey);
     closeMagazine();
   }
@@ -371,6 +386,13 @@
 </script>
 
 <svelte:head><title>Daily magazine - Skyreader</title></svelte:head>
+
+<ArchiveMagazineModal
+  open={archivePromptOpen}
+  count={magazine?.items.length ?? 0}
+  onclose={() => (archivePromptOpen = false)}
+  onArchive={confirmArchiveMagazine}
+/>
 
 <div class="daily-reader" class:paged bind:this={scrollEl} onscroll={handleScroll}>
   <ReaderChrome
