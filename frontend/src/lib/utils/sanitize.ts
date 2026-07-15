@@ -62,6 +62,17 @@ export function safeHref(url: string | null | undefined): string | undefined {
   return undefined;
 }
 
+/** A base used for post-sanitize URL rewriting must itself be a web URL. */
+export function safeSanitizerBase(baseUrl: string | null | undefined): URL | null {
+  const navigableBase = safeHref(baseUrl);
+  if (!navigableBase) return null;
+  try {
+    return new URL(navigableBase);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Sanitizes HTML content, rewrites relative URLs to be absolute
  * based on the article's source URL, and opens all links in new tab.
@@ -69,24 +80,24 @@ export function safeHref(url: string | null | undefined): string | undefined {
 export function sanitizeHtml(html: string, baseUrl?: string): string {
   if (!html) return '';
 
-  let base: URL | null = null;
-  if (baseUrl) {
-    try {
-      base = new URL(baseUrl);
-    } catch {
-      // Invalid base URL, continue without URL rewriting
-    }
-  }
+  const base = safeSanitizerBase(baseUrl);
 
   // Add hook to process URLs and links
   DOMPurify.addHook('afterSanitizeAttributes', (node) => {
     // Rewrite img src (only if we have a valid base)
-    if (base && node.tagName === 'IMG' && node.hasAttribute('src')) {
-      const src = node.getAttribute('src');
-      if (src) {
-        const absoluteUrl = resolveUrl(src, base);
-        if (absoluteUrl) {
-          node.setAttribute('src', absoluteUrl);
+    if (node.tagName === 'IMG') {
+      // A daily issue can contain several full articles. Keep below-fold media
+      // from competing with the text the reader is currently looking at.
+      node.setAttribute('loading', 'lazy');
+      node.setAttribute('decoding', 'async');
+
+      if (base && node.hasAttribute('src')) {
+        const src = node.getAttribute('src');
+        if (src) {
+          const absoluteUrl = resolveUrl(src, base);
+          if (absoluteUrl) {
+            node.setAttribute('src', absoluteUrl);
+          }
         }
       }
     }

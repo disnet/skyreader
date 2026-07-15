@@ -1,11 +1,18 @@
 import { db, type SyncQueueEntry } from './db';
 import { api } from './api';
 import { toUnifiedReadItem } from './readSync';
+import type { MagazineItemSnapshot, MagazineParams, MagazinePosition } from '$lib/types';
 
 const MAX_RETRIES = 5;
 
 export type SyncOperation = 'create' | 'update' | 'delete';
-export type SyncCollection = 'reading' | 'socialReading' | 'label' | 'saved' | 'integration';
+export type SyncCollection =
+  | 'reading'
+  | 'socialReading'
+  | 'label'
+  | 'saved'
+  | 'integration'
+  | 'magazine';
 
 // Payload types for each collection
 export interface ReadingPayload {
@@ -74,13 +81,26 @@ export interface MarginNotePayload {
   rkey?: string; // present for updates/deletes of already-synced notes
 }
 
+// Offline magazine write. Both create and position-update carry the FULL
+// magazine so the generic create+update / update+update conflict merges stay
+// correct (the position-only PATCH endpoint is only used on the online fast
+// path). Delete only needs `rkey`.
+export interface MagazinePayload {
+  rkey: string;
+  params: MagazineParams;
+  items: MagazineItemSnapshot[];
+  position?: MagazinePosition | null;
+  title?: string | null;
+}
+
 type SyncPayload =
   | ReadingPayload
   | SocialReadingPayload
   | LabelPayload
   | SavedPayload
   | IntegrationPayload
-  | MarginNotePayload;
+  | MarginNotePayload
+  | MagazinePayload;
 
 class SyncQueue {
   private processing = false;
@@ -422,6 +442,31 @@ class SyncQueue {
         }
         break;
       }
+      case 'magazine':
+        await this.executeMagazineOperation(entry.operation, payload as MagazinePayload);
+        break;
+    }
+  }
+
+  private async executeMagazineOperation(
+    operation: SyncOperation,
+    payload: MagazinePayload
+  ): Promise<void> {
+    switch (operation) {
+      case 'create':
+      case 'update':
+        // Offline writes always resend the whole magazine (position included).
+        await api.upsertMagazine({
+          rkey: payload.rkey,
+          params: payload.params,
+          items: payload.items,
+          position: payload.position ?? null,
+          title: payload.title ?? null,
+        });
+        break;
+      case 'delete':
+        await api.deleteMagazine(payload.rkey);
+        break;
     }
   }
 

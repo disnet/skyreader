@@ -8,6 +8,7 @@ import { feedStatusStore } from './feedStatus.svelte';
 import { articlesStore } from './articles.svelte';
 import { syncStore } from './sync.svelte';
 import { savesStore } from './saves.svelte';
+import { magazineStore } from './magazine.svelte';
 import { fetchAllFeeds, fetchAllDocuments } from '$lib/services/feedFetcher';
 import { api } from '$lib/services/api';
 import { dedupeRemoteSubscriptionRecords } from '$lib/services/subscriptionDedup';
@@ -72,6 +73,7 @@ function createAppManager() {
         linkblogStore.load(),
         filteredViewsStore.load(),
         savesStore.load(),
+        magazineStore.load(),
       ]);
 
       // Initialize feed statuses for existing subscriptions
@@ -129,6 +131,7 @@ function createAppManager() {
       const [syncResult] = await Promise.all([
         syncSubscriptions(),
         itemLabelsStore.load(),
+        magazineStore.load(),
         socialStore.loadFeed(true),
         filteredViewsStore.syncWithBackend(),
         // Pull the user's own linkblog so share-state reconciles across devices.

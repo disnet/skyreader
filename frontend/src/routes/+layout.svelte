@@ -32,7 +32,7 @@
   // bare inside the marketing chrome, with no sidebar and no data layer; bounce them
   // to the marketing landing instead. Public routes (/, /auth/*, /terms, the /save
   // and /subscribe share targets) are left to render.
-  const APP_ROUTES = ['/home', '/feeds', '/saved'];
+  const APP_ROUTES = ['/home', '/feeds', '/saved', '/daily'];
   $effect(() => {
     if (
       browser &&

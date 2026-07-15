@@ -5,6 +5,10 @@ import type {
   ItemLabelType,
   LinkblogPerson,
   LinkblogPublication,
+  Magazine,
+  MagazineItemSnapshot,
+  MagazineParams,
+  MagazinePosition,
   MarginCollection,
   ParsedFeed,
   SaveBacking,
@@ -784,6 +788,60 @@ class ApiClient {
     return this.fetch('/api/labels/bulk', {
       method: 'POST',
       body: JSON.stringify({ labels }),
+    });
+  }
+
+  // Magazines (durable, cross-device reading issues)
+  async getMagazines(
+    options: { since?: number; cursor?: string; limit?: number } = {}
+  ): Promise<{ magazines: Magazine[]; cursor?: string }> {
+    const params = new URLSearchParams();
+    if (options.since !== undefined) params.set('since', String(options.since));
+    if (options.cursor) params.set('cursor', options.cursor);
+    if (options.limit) params.set('limit', String(options.limit));
+    const query = params.toString();
+    return this.fetch(`/api/magazines${query ? `?${query}` : ''}`);
+  }
+
+  // Paginate the full magazine set (or delta when `since` is given).
+  async getAllMagazines(options: { since?: number } = {}): Promise<Magazine[]> {
+    const all: Magazine[] = [];
+    let cursor: string | undefined;
+    do {
+      const response = await this.getMagazines({ ...options, cursor, limit: 500 });
+      all.push(...response.magazines);
+      cursor = response.cursor;
+    } while (cursor);
+    return all;
+  }
+
+  async upsertMagazine(data: {
+    rkey: string;
+    params: MagazineParams;
+    items: MagazineItemSnapshot[];
+    position?: MagazinePosition | null;
+    title?: string | null;
+  }): Promise<{ success: boolean; rkey: string }> {
+    return this.fetch('/api/magazines', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateMagazinePosition(
+    rkey: string,
+    position: MagazinePosition | null
+  ): Promise<{ success: boolean }> {
+    return this.fetch('/api/magazines/position', {
+      method: 'PATCH',
+      body: JSON.stringify({ rkey, position }),
+    });
+  }
+
+  async deleteMagazine(rkey: string): Promise<{ success: boolean }> {
+    return this.fetch('/api/magazines', {
+      method: 'DELETE',
+      body: JSON.stringify({ rkey }),
     });
   }
 

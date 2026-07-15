@@ -2,9 +2,10 @@
   // Visual harness for the Home view's lanes — no auth, no backend. Iterate on the
   // lane + tile design here; it flows to the real /home through the same components.
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
+  import DailyMagazineEntry from '$lib/components/feed/DailyMagazineEntry.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
-  import type { SavedItem } from '$lib/types';
+  import type { Magazine, SavedItem } from '$lib/types';
   import Showcase from '../_harness/Showcase.svelte';
   import Case from '../_harness/Case.svelte';
 
@@ -163,6 +164,33 @@
 
   const fewItems = continueItems.slice(0, 1);
 
+  const magazineStamp = Math.floor(new Date(2026, 6, 13).getTime() / 1000);
+  const magazineMock: Magazine = {
+    rkey: 'devmagazine00001',
+    params: { order: 'shuffle', targetMinutes: 20, totalMinutes: 18 },
+    items: savedItems.slice(0, 3).map((entry, index) => {
+      const s = entry.displayItem.item as SavedItem;
+      return {
+        key: s.rkey,
+        displayKey: s.uri || s.rkey,
+        rkey: s.rkey,
+        title: s.title,
+        author: s.author,
+        url: s.url,
+        domain: s.domain,
+        image: s.image,
+        wordCount: s.wordCount,
+        minutes: [9, 5, 4][index],
+        savedAt: s.savedAt,
+      };
+    }),
+    position: null,
+    title: null,
+    createdAt: magazineStamp,
+    updatedAt: magazineStamp,
+    deletedAt: null,
+  };
+
   function noop() {}
 </script>
 
@@ -176,6 +204,10 @@
       <input type="range" min="320" max="980" step="10" bind:value={width} />
     </label>
   {/snippet}
+
+  <Case name="Daily magazine entry" width="{width}px">
+    <DailyMagazineEntry magazine={magazineMock} generating={false} onGenerate={noop} />
+  </Case>
 
   <Case name="Continue reading — progress spines" width="{width}px">
     <HomeLane title="Continue reading" icon="clock" items={continueItems} onOpen={noop} />

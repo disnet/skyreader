@@ -2,15 +2,28 @@ import { browser } from '$app/environment';
 
 export type ArticleFont = 'sans-serif' | 'serif' | 'mono' | 'literata';
 export type ArticleFontSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+// How the full-screen readers lay out prose: a continuous vertical scroll, or a
+// Kindle-style paged view (one page — or two columns when wide — turned at a time).
+export type ReaderViewMode = 'scroll' | 'paged';
 export type BaseSortOrder = 'newest' | 'oldest';
+export type DailyMagazineMinutes = 10 | 20 | 30 | 45 | 60;
+// How the daily magazine picks which saved articles to include.
+export type DailyMagazineOrder = 'shuffle' | 'recent' | 'oldest';
 // Which reading surface the app opens to on a fresh load (the `/` redirector).
 export type DefaultView = 'home' | 'feeds' | 'saved';
 
 const FONT_SIZE_ORDER: ArticleFontSize[] = ['xs', 'sm', 'md', 'lg', 'xl'];
+export const DAILY_MAGAZINE_MINUTE_OPTIONS: DailyMagazineMinutes[] = [10, 20, 30, 45, 60];
+export const DAILY_MAGAZINE_ORDER_OPTIONS: { value: DailyMagazineOrder; label: string }[] = [
+  { value: 'shuffle', label: 'Random' },
+  { value: 'recent', label: 'Most recent' },
+  { value: 'oldest', label: 'Oldest' },
+];
 
 interface PreferencesState {
   articleFont: ArticleFont;
   articleFontSize: ArticleFontSize;
+  readerViewMode: ReaderViewMode;
   scrollToMarkAsRead: boolean;
   expandAllItems: boolean;
   sortOrder: BaseSortOrder;
@@ -18,6 +31,8 @@ interface PreferencesState {
   linkblogShareConfirmed: boolean;
   // Which surface a cold app load lands on (consumed by the `/` redirector).
   defaultView: DefaultView;
+  dailyMagazineMinutes: DailyMagazineMinutes;
+  dailyMagazineOrder: DailyMagazineOrder;
 }
 
 const STORAGE_KEY = 'skyreader-preferences';
@@ -26,11 +41,14 @@ function createPreferencesStore() {
   let state = $state<PreferencesState>({
     articleFont: 'serif',
     articleFontSize: 'md',
+    readerViewMode: 'scroll',
     scrollToMarkAsRead: false,
     expandAllItems: true,
     sortOrder: 'newest',
     linkblogShareConfirmed: false,
     defaultView: 'home',
+    dailyMagazineMinutes: 20,
+    dailyMagazineOrder: 'shuffle',
   });
 
   // Restore from localStorage on init
@@ -44,6 +62,9 @@ function createPreferencesStore() {
         }
         if (parsed.articleFontSize) {
           state.articleFontSize = parsed.articleFontSize;
+        }
+        if (parsed.readerViewMode === 'scroll' || parsed.readerViewMode === 'paged') {
+          state.readerViewMode = parsed.readerViewMode;
         }
         if (parsed.scrollToMarkAsRead !== undefined) {
           state.scrollToMarkAsRead = parsed.scrollToMarkAsRead;
@@ -63,6 +84,12 @@ function createPreferencesStore() {
           parsed.defaultView === 'saved'
         ) {
           state.defaultView = parsed.defaultView;
+        }
+        if (DAILY_MAGAZINE_MINUTE_OPTIONS.includes(parsed.dailyMagazineMinutes)) {
+          state.dailyMagazineMinutes = parsed.dailyMagazineMinutes;
+        }
+        if (DAILY_MAGAZINE_ORDER_OPTIONS.some((o) => o.value === parsed.dailyMagazineOrder)) {
+          state.dailyMagazineOrder = parsed.dailyMagazineOrder;
         }
       } catch {
         localStorage.removeItem(STORAGE_KEY);
@@ -107,6 +134,16 @@ function createPreferencesStore() {
     save();
   }
 
+  function setReaderViewMode(mode: ReaderViewMode) {
+    state.readerViewMode = mode;
+    save();
+  }
+
+  function toggleReaderViewMode() {
+    state.readerViewMode = state.readerViewMode === 'paged' ? 'scroll' : 'paged';
+    save();
+  }
+
   function setScrollToMarkAsRead(enabled: boolean) {
     state.scrollToMarkAsRead = enabled;
     save();
@@ -137,12 +174,27 @@ function createPreferencesStore() {
     save();
   }
 
+  function setDailyMagazineMinutes(minutes: DailyMagazineMinutes) {
+    if (!DAILY_MAGAZINE_MINUTE_OPTIONS.includes(minutes)) return;
+    state.dailyMagazineMinutes = minutes;
+    save();
+  }
+
+  function setDailyMagazineOrder(order: DailyMagazineOrder) {
+    if (!DAILY_MAGAZINE_ORDER_OPTIONS.some((o) => o.value === order)) return;
+    state.dailyMagazineOrder = order;
+    save();
+  }
+
   return {
     get articleFont() {
       return state.articleFont;
     },
     get articleFontSize() {
       return state.articleFontSize;
+    },
+    get readerViewMode() {
+      return state.readerViewMode;
     },
     get scrollToMarkAsRead() {
       return state.scrollToMarkAsRead;
@@ -159,13 +211,23 @@ function createPreferencesStore() {
     get defaultView() {
       return state.defaultView;
     },
+    get dailyMagazineMinutes() {
+      return state.dailyMagazineMinutes;
+    },
+    get dailyMagazineOrder() {
+      return state.dailyMagazineOrder;
+    },
     confirmLinkblogShare,
     setDefaultView,
+    setDailyMagazineMinutes,
+    setDailyMagazineOrder,
     setArticleFont,
     setArticleFontSize,
     increaseFontSize,
     decreaseFontSize,
     resetFontSize,
+    setReaderViewMode,
+    toggleReaderViewMode,
     setScrollToMarkAsRead,
     setExpandAllItems,
     setSortOrder,

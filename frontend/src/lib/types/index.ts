@@ -900,6 +900,51 @@ export interface ItemLabel {
   updatedAt: number; // epoch ms
 }
 
+// A durable, cross-device magazine: an explicitly-generated reading issue whose
+// membership + order are frozen at generate time (immune to later saves) and
+// synced via D1. See docs/plans / the magazine store for the full model.
+
+// One frozen entry in a magazine. Carries enough to render the TOC/headers and
+// reading time without re-deriving from live saves; the body is still fetched
+// lazily by `rkey` (a snapshot whose save was deleted renders a "missing" body).
+export interface MagazineItemSnapshot {
+  key: string; // stable magazine key (savedItemMagazineKey)
+  displayKey: string; // reader key (savedItemDisplayKey)
+  rkey: string; // save rkey — used to lazily fetch the body
+  title: string | null;
+  author: string | null;
+  url: string;
+  domain: string | null;
+  image: string | null;
+  wordCount: number | null;
+  minutes: number; // estimated reading minutes at generate time
+  savedAt: string | null;
+}
+
+// Where the reader left off inside a magazine (magazine-level resume pointer).
+export interface MagazinePosition {
+  itemKey: string; // displayKey of the active item
+  paragraphIndex: number; // paragraph within that item (-1/0 = opened, not yet deep)
+  updatedAt: number; // epoch ms
+}
+
+export interface MagazineParams {
+  order: 'shuffle' | 'recent' | 'oldest'; // mirrors DailyMagazineOrder
+  targetMinutes: number;
+  totalMinutes: number;
+}
+
+export interface Magazine {
+  rkey: string;
+  params: MagazineParams;
+  items: MagazineItemSnapshot[];
+  position: MagazinePosition | null;
+  title: string | null;
+  createdAt: number; // epoch seconds
+  updatedAt: number; // epoch seconds
+  deletedAt?: number | null;
+}
+
 // Integration types
 export interface IntegrationStatus {
   scopeStatus: {

@@ -14,8 +14,12 @@
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import NotificationList from '$lib/components/NotificationList.svelte';
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
+  import DailyMagazineEntry from '$lib/components/feed/DailyMagazineEntry.svelte';
+  import MagazineRail from '$lib/components/feed/MagazineRail.svelte';
+  import { goto } from '$app/navigation';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { magazineStore } from '$lib/stores/magazine.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
@@ -27,6 +31,8 @@
   import { useScrollDirection } from '$lib/hooks/useScrollDirection.svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { decodeEntities } from '$lib/utils/entities';
+  import { savedItemLabelKeys } from '$lib/utils/dailyMagazine';
+  import { preferences } from '$lib/stores/preferences.svelte';
   import {
     datePresetToMs,
     matchesReadingLength,
@@ -75,7 +81,7 @@
 
   // --- Helpers ---
   function keysFor(s: SavedItem): string[] {
-    return [s.itemGuid, s.uri, s.url].filter(Boolean) as string[];
+    return savedItemLabelKeys(s);
   }
 
   function displayKey(s: SavedItem): string {
@@ -137,6 +143,12 @@
     }
     return out;
   });
+
+  // The Home card reflects the user's durable current magazine (if any). Mint a
+  // new one on demand; navigation to /daily is left to the card's link.
+  async function generateMagazine() {
+    await magazineStore.generate();
+  }
 
   // Continue reading: anything opened, newest activity first.
   let continueEnriched = $derived.by(() =>
@@ -325,6 +337,20 @@
       {#if dateLabel}<p class="masthead-date">{dateLabel}</p>{/if}
       <h1 class="masthead-greeting">{greeting}</h1>
     </div>
+
+    {#if !isLoading}
+      <DailyMagazineEntry
+        magazine={magazineStore.current}
+        generating={magazineStore.generating}
+        onGenerate={generateMagazine}
+      />
+      {#if magazineStore.magazines.length >= 2}
+        <MagazineRail
+          issues={magazineStore.magazines}
+          onOpen={(rkey) => goto(`/daily?id=${rkey}`)}
+        />
+      {/if}
+    {/if}
 
     {#if isLoading}
       <HomeLane title="Continue reading" icon="clock" items={[]} loading onOpen={() => {}} />

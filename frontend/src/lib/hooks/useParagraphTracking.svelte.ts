@@ -230,6 +230,27 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     return exact ? 'exact' : 'partial';
   }
 
+  /**
+   * The DOM element the saved reading position points at, or null when there is
+   * no saved position (or the body isn't rendered yet). Used by paged mode, which
+   * turns to that element's page rather than scrolling. Detects paragraphs on
+   * demand so it works even when the scroll observer isn't active.
+   */
+  function restoreTargetElement(): HTMLElement | null {
+    const saved = itemLabelsStore.getReadProgress(params.itemKey());
+    if (!saved || saved.paragraphIndex <= 0) return null;
+    const paras = detectParagraphs();
+    if (paras.length === 0) return null;
+    const idx = Math.min(saved.paragraphIndex, paras.length - 1);
+    return paras[idx] ?? null;
+  }
+
+  /** The article's block elements, detected on demand (paged mode maps pages to
+   *  paragraphs itself, without the scroll observer). */
+  function paragraphElements(): HTMLElement[] {
+    return detectParagraphs();
+  }
+
   function cleanup() {
     if (scrollHandler && scrollTarget) {
       scrollTarget.removeEventListener('scroll', scrollHandler);
@@ -263,6 +284,8 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     nextParagraph,
     prevParagraph,
     restorePosition,
+    restoreTargetElement,
+    paragraphElements,
     cleanup,
   };
 }
