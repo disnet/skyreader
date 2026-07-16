@@ -4,13 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Structure
 
-This is a monorepo with 5 packages:
+This is a monorepo with 6 packages:
 
 - `backend/` - Cloudflare Workers API
 - `frontend/` - SvelteKit PWA
 - `admin/` - SvelteKit admin dashboard (Cloudflare Pages)
 - `feed-proxy/` - Feed caching proxy (Fly.io)
 - `linkblog-site/` - Standalone SvelteKit app rendering public linkblogs at `linkblogs.skyreader.app` (Cloudflare Pages)
+- `extension/` - Chrome extension for one-click saves (Manifest V3, no build step)
 
 Each package has its own CLAUDE.md with detailed guidance.
 
