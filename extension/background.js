@@ -3,7 +3,15 @@
 // Clicking the toolbar icon saves the current tab; the context menu saves a
 // link or the page. The save flow mirrors the frontend's saveFromUrl
 // (frontend/src/lib/stores/saves.svelte.ts): generate a TID rkey, extract
-// content via POST /api/extract, then create the save via POST /api/saved.
+// content, then create the save via POST /api/saved.
+//
+// Extraction is live-DOM first: for page saves we inject the bundled Defuddle
+// content script (content/extract.js) and read the article out of the tab the
+// user is looking at — which sees paywalled and JS-rendered content the
+// server-side extractor can't. POST /api/extract is the fallback (and the only
+// path for link saves, where the page isn't open). A save that hits an
+// existing item carries updateContent: true, so richer live content upgrades
+// what the server stored (paywall stub, truncated feed body).
 //
 // Auth rides on the browser's existing skyreader.app session cookie
 // (Domain=.skyreader.app covers api.skyreader.app; the host_permission
@@ -58,6 +66,40 @@ function flashBadge(tabId, text, color, title) {
   }, 4000);
 }
 
+// --- Extraction -------------------------------------------------------------
+
+// Run Defuddle inside the tab's live DOM. Two-step injection: the bundle
+// defines globalThis.__skyreaderExtract in the isolated world, then a func
+// call reads its result back. Returns null when the page can't be scripted
+// (chrome://, PDF viewer, Web Store) or extraction yields no body.
+async function extractFromTab(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content/extract.js'],
+    });
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => globalThis.__skyreaderExtract?.(),
+    });
+    if (!result || result.error || !result.content) return null;
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+// Server-side extraction fallback (feed-proxy → Defuddle over a cold fetch).
+// Returns null on failure; a 401 is surfaced so the caller can route to login.
+async function extractViaBackend(cfg, url) {
+  const res = await apiFetchWithRetry(cfg, '/api/extract', { url });
+  if (res.status === 401) throw new UnauthorizedError();
+  if (!res.ok) return null;
+  return res.json();
+}
+
+class UnauthorizedError extends Error {}
+
 // --- Save flow --------------------------------------------------------------
 
 function isHttpUrl(raw) {
@@ -108,7 +150,11 @@ function openSavePage(cfg, url) {
   });
 }
 
-async function saveUrl(url, tabId, fallbackTitle) {
+// Save `url`. `extractTabId` marks a tab whose live DOM IS that URL (action
+// click, save-page menu) — extraction runs in-page there, with the backend
+// extractor as fallback. Link saves have no open page, so they go straight to
+// the backend extractor.
+async function saveUrl(url, tabId, { fallbackTitle, extractTabId } = {}) {
   if (!isHttpUrl(url)) {
     flashBadge(tabId, '!', BADGE_RED, 'Skyreader: not a saveable page');
     return;
@@ -117,18 +163,18 @@ async function saveUrl(url, tabId, fallbackTitle) {
   const cfg = await getConfig();
   setBadge(tabId, '…', BADGE_BLUE, 'Saving to Skyreader…');
 
-  // Extract content first (same as the web app). Best-effort: a failed
-  // extraction still saves the bare URL with the tab title.
+  // Extraction is best-effort: a failed extraction still saves the bare URL
+  // with the tab title.
   let extracted = null;
   try {
-    const res = await apiFetchWithRetry(cfg, '/api/extract', { url });
-    if (res.status === 401) {
+    if (extractTabId != null) extracted = await extractFromTab(extractTabId);
+    if (!extracted) extracted = await extractViaBackend(cfg, url);
+  } catch (err) {
+    if (err instanceof UnauthorizedError) {
       setBadge(tabId, '', BADGE_BLUE, 'Save to Skyreader');
       openSavePage(cfg, url);
       return;
     }
-    if (res.ok) extracted = await res.json();
-  } catch {
     // Network/extraction failure — fall through to a bare save.
   }
 
@@ -137,6 +183,9 @@ async function saveUrl(url, tabId, fallbackTitle) {
     url,
     rkey: generateTid(),
     source: 'url',
+    // If this URL is already saved, upgrade the stored content with this
+    // (likely richer) extraction instead of getting a 409 back.
+    updateContent: true,
     title: extracted?.title || fallbackTitle || undefined,
     author: extracted?.author || undefined,
     description: extracted?.description || undefined,
@@ -156,7 +205,13 @@ async function saveUrl(url, tabId, fallbackTitle) {
   }
 
   if (res.ok) {
-    flashBadge(tabId, '✓', BADGE_BLUE, 'Saved to Skyreader');
+    const data = await res.json().catch(() => null);
+    flashBadge(
+      tabId,
+      '✓',
+      BADGE_BLUE,
+      data?.updated ? 'Skyreader: updated with the full article' : 'Saved to Skyreader'
+    );
     return;
   }
 
@@ -187,7 +242,7 @@ async function saveUrl(url, tabId, fallbackTitle) {
 // --- Entry points -----------------------------------------------------------
 
 chrome.action.onClicked.addListener((tab) => {
-  saveUrl(tab.url, tab.id, tab.title);
+  saveUrl(tab.url, tab.id, { fallbackTitle: tab.title, extractTabId: tab.id });
 });
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -207,6 +262,6 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === 'save-link') {
     saveUrl(info.linkUrl, tab?.id);
   } else if (info.menuItemId === 'save-page') {
-    saveUrl(info.pageUrl, tab?.id, tab?.title);
+    saveUrl(info.pageUrl, tab?.id, { fallbackTitle: tab?.title, extractTabId: tab?.id });
   }
 });

@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@sentry/bun": "^10.56.0",
-    "defuddle": "^0.18.1",
+    "defuddle": "^0.19.1",
     "fast-xml-parser": "^4.3.0",
     "hono": "^4.4.0",
     "linkedom": "^0.18.12"

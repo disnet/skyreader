@@ -58,6 +58,11 @@ interface CreateSavedBody {
   publishedAt?: string;
   domain?: string;
   wordCount?: number;
+  // When the URL is already saved, upgrade the existing item's content/metadata
+  // with this request's fields instead of returning 409. Used by the browser
+  // extension, whose live-DOM extraction can see paywalled/JS-rendered content
+  // the server-side extractor can't.
+  updateContent?: boolean;
 }
 
 // POST /api/saved — save an item from a URL or feed article
@@ -142,12 +147,19 @@ export async function handleCreateSaved(
     }
   } else {
     const existing = await env.DB.prepare(
-      'SELECT id FROM saved_articles WHERE user_did = ? AND url = ?'
+      'SELECT id, rkey, record_uri FROM saved_articles WHERE user_did = ? AND url = ?'
     )
       .bind(session.did, body.url)
-      .first();
+      .first<Pick<SavedRow, 'id' | 'rkey' | 'record_uri'>>();
 
     if (existing) {
+      // Content upgrade: a re-save carrying fresh content replaces what we have
+      // (live-DOM extraction beats a paywall stub or truncated feed body).
+      // This is an update of an existing save, so it deliberately runs before —
+      // and doesn't count against — the monthly URL-save limit.
+      if (body.updateContent && body.content) {
+        return await handleContentUpdate(env, session, body, existing);
+      }
       return new Response(JSON.stringify({ error: 'Article already saved' }), {
         status: 409,
         headers: { 'Content-Type': 'application/json' },
@@ -282,6 +294,55 @@ async function handleMetadataSave(
       savedAt,
       source,
       itemGuid: body.itemGuid || null,
+    }),
+    { headers: { 'Content-Type': 'application/json' } }
+  );
+}
+
+// Upgrade an already-saved item's content in place (updateContent flag). Each
+// field only overwrites when the request provides a value — same new-wins
+// COALESCE shape as the backed-save upsert — so a sparse extraction never
+// blanks existing metadata. The rkey and record_uri are unchanged: this is the
+// same save, with better content.
+async function handleContentUpdate(
+  env: Env,
+  session: Session,
+  body: CreateSavedBody,
+  existing: Pick<SavedRow, 'id' | 'rkey' | 'record_uri'>
+): Promise<Response> {
+  const publishedAt = body.publishedAt ? new Date(body.publishedAt).getTime() : null;
+
+  await env.DB.prepare(
+    `UPDATE saved_articles SET
+       title = COALESCE(?, title),
+       author = COALESCE(?, author),
+       description = COALESCE(?, description),
+       content = COALESCE(?, content),
+       domain = COALESCE(?, domain),
+       image = COALESCE(?, image),
+       word_count = COALESCE(?, word_count),
+       published_at = COALESCE(?, published_at)
+     WHERE id = ? AND user_did = ?`
+  )
+    .bind(
+      body.title || null,
+      body.author || null,
+      body.description || null,
+      body.content || null,
+      body.domain || null,
+      body.image || null,
+      body.wordCount || null,
+      publishedAt,
+      existing.id,
+      session.did
+    )
+    .run();
+
+  return new Response(
+    JSON.stringify({
+      rkey: existing.rkey,
+      uri: existing.record_uri,
+      updated: true,
     }),
     { headers: { 'Content-Type': 'application/json' } }
   );
