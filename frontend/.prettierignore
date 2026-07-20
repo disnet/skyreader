@@ -1,3 +1,4 @@
 build/
 .svelte-kit/
 node_modules/
+.impeccable/

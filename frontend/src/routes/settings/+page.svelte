@@ -749,6 +749,8 @@
     <div class="about-links">
       <a href="/terms">Terms of Service</a>
       <span class="separator">·</span>
+      <a href="/privacy">Privacy Policy</a>
+      <span class="separator">·</span>
       <a href="mailto:abuse@skyreader.app">Report Abuse</a>
       <span class="separator">·</span>
       <a

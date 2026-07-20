@@ -8,14 +8,17 @@
 
 <div class="terms-page">
   <h1>Terms of Service</h1>
-  <p class="last-updated">Last updated: January 2025</p>
+  <p class="last-updated">Last updated: July 2026</p>
 
   <section>
     <h2>1. What Skyreader Is</h2>
     <p>
-      Skyreader is a decentralized RSS reader built on the AT Protocol. When you share articles,
-      those shares are stored in your own Personal Data Server (PDS), making them portable and under
-      your control. Subscriptions and read state are stored locally and on our servers.
+      Skyreader is a reading app built on the AT Protocol. It brings the feeds, newsletters, and
+      posts you follow into one place to read, highlight, and make sense of. Your reading library,
+      including subscriptions, saved articles, highlights, and read state, is stored on our servers
+      so it stays in sync across your devices. You can make much of it portable across the
+      Atmosphere by syncing it to your own Personal Data Server (PDS). See our
+      <a href="/privacy">Privacy Policy</a> for what we store and what is public.
     </p>
   </section>
 
@@ -23,28 +26,28 @@
     <h2>2. Acceptable Use</h2>
     <p>You may use Skyreader to:</p>
     <ul>
-      <li>Subscribe to and read RSS feeds</li>
-      <li>Share articles with your followers</li>
-      <li>Follow other users and see their shared content</li>
+      <li>Subscribe to and read feeds, newsletters, and posts</li>
+      <li>Save, highlight, and annotate what you read</li>
+      <li>Publish a linkblog and follow what other readers publish</li>
     </ul>
   </section>
 
   <section>
     <h2>3. Prohibited Content</h2>
-    <p>You may not use Skyreader to share or distribute:</p>
+    <p>You may not use Skyreader to publish or distribute:</p>
     <ul>
       <li>
-        <strong>Illegal content</strong> - Content that violates applicable law, including child sexual
-        abuse material (CSAM), which will be reported to authorities
+        <strong>Illegal content.</strong> Content that violates applicable law, including child sexual
+        abuse material (CSAM), which will be reported to authorities.
       </li>
       <li>
-        <strong>Harassment</strong> - Targeted abuse, threats, or content intended to harm specific individuals
+        <strong>Harassment.</strong> Targeted abuse, threats, or content intended to harm specific individuals.
       </li>
       <li>
-        <strong>Spam</strong> - Automated or bulk sharing intended to manipulate or deceive
+        <strong>Spam.</strong> Automated or bulk publishing intended to manipulate or deceive.
       </li>
       <li>
-        <strong>Malware</strong> - Links to malicious software or phishing attempts
+        <strong>Malware.</strong> Links to malicious software or phishing attempts.
       </li>
     </ul>
   </section>
@@ -53,7 +56,7 @@
     <h2>4. Your Responsibilities</h2>
     <p>You are responsible for:</p>
     <ul>
-      <li>The content you share through Skyreader</li>
+      <li>The content you publish through Skyreader, such as linkblog posts</li>
       <li>Maintaining the security of your AT Protocol account</li>
       <li>Complying with applicable laws in your jurisdiction</li>
     </ul>
@@ -66,13 +69,13 @@
       <a href="mailto:abuse@skyreader.app">abuse@skyreader.app</a>. Include:
     </p>
     <ul>
-      <li>The URL or identifier of the problematic content</li>
-      <li>The DID or handle of the user who shared it</li>
+      <li>The URL or identifier of the content</li>
+      <li>The DID or handle of the user who published it</li>
       <li>A brief description of the violation</li>
     </ul>
     <p>We will review reports and take appropriate action, which may include:</p>
     <ul>
-      <li>Removing cached content from our servers</li>
+      <li>Removing content from our servers</li>
       <li>Blocking users from our service</li>
       <li>Reporting illegal content to appropriate authorities</li>
     </ul>
@@ -81,12 +84,15 @@
   <section>
     <h2>6. Content and Data</h2>
     <p>
-      Your shares are stored in your PDS, giving you ownership and portability of that data.
-      Subscriptions and read state are stored on our servers and locally in your browser.
+      Your reading library is stored on our servers, and a copy is cached locally in your browser
+      for offline reading. Your saved articles are private to Skyreader and are not published to
+      your PDS. If you turn on Atmospheric sync, we also write your subscriptions to your PDS, which
+      makes them portable to other Atmospheric apps and publicly visible. Anything you publish
+      deliberately, such as a linkblog post, is public by design.
     </p>
     <p>
-      We may remove cached content from our servers at any time, particularly if it violates these
-      terms. Removing cached shares does not affect the original records in your PDS.
+      We may remove content from our servers at any time, particularly if it violates these terms.
+      Removing content we cache does not affect records you have synced to your own PDS.
     </p>
   </section>
 
@@ -94,8 +100,8 @@
     <h2>7. Service Availability</h2>
     <p>
       Skyreader is provided "as is" without warranty. We may modify, suspend, or discontinue the
-      service at any time. Your shares remain accessible in your PDS and can be accessed through
-      other AT Protocol applications.
+      service at any time. Records you have synced to your PDS remain accessible there and can be
+      used through other AT Protocol applications.
     </p>
   </section>
 

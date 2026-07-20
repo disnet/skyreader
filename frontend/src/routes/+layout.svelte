@@ -208,6 +208,8 @@
       <footer class="app-footer">
         <a href="/terms">Terms</a>
         <span class="separator">·</span>
+        <a href="/privacy">Privacy</a>
+        <span class="separator">·</span>
         <a href="mailto:abuse@skyreader.app">Report Abuse</a>
         <span class="separator">·</span>
         <a
