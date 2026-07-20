@@ -29,6 +29,7 @@ import {
 import { handleAtmosphereSubscription } from './routes/atmosphere';
 import {
   handleCreateSubscription,
+  handleListSubscriptions,
   handleDeleteSubscription,
   handleUpdateSubscription,
   handleBulkCreateSubscriptions,
@@ -55,6 +56,7 @@ import { handleXrpcSave, handleXrpcSubscribe, handleXrpcLinkblogShare } from './
 import {
   handleCreateSaved,
   handleGetSaved,
+  handleSavedStatus,
   handleGetSavedBodies,
   handleUpdateSaved,
   handleDeleteSaved,
@@ -299,7 +301,10 @@ export default {
         // Subscriptions endpoints (new)
         case url.pathname === '/api/subscriptions':
           if (!session) return unauthorizedResponse(headers);
-          response = await handleCreateSubscription(request, env, ctx);
+          response =
+            request.method === 'GET'
+              ? await handleListSubscriptions(request, env)
+              : await handleCreateSubscription(request, env, ctx);
           break;
         case url.pathname === '/api/subscriptions/bulk':
           if (!session) return unauthorizedResponse(headers);
@@ -398,6 +403,10 @@ export default {
               headers: { 'Content-Type': 'application/json' },
             });
           }
+          break;
+        case url.pathname === '/api/saved/status':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleSavedStatus(request, env);
           break;
         case url.pathname.startsWith('/api/saved/by-guid/'):
           if (!session) return unauthorizedResponse(headers);

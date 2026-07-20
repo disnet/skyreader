@@ -1,0 +1,255 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        --blue: #0066cc;
+        --blue-hover: #0052a3;
+        --ink: #1a1a1a;
+        --muted: #6b6b6b;
+        --line: #e6e6e6;
+        --red: #f44336;
+        --green: #1a7f37;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-size: 13px;
+        color: var(--ink);
+        width: 320px;
+        margin: 0;
+        padding: 16px;
+      }
+
+      /* Page header */
+      .page-title {
+        font-weight: 600;
+        font-size: 14px;
+        line-height: 1.3;
+        /* Clamp to two lines. */
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .page-url {
+        color: var(--muted);
+        margin-top: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* Primary save button */
+      button.primary {
+        width: 100%;
+        margin-top: 12px;
+        padding: 8px 14px;
+        font: inherit;
+        font-weight: 600;
+        color: #fff;
+        background: var(--blue);
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      button.primary:hover:not(:disabled) {
+        background: var(--blue-hover);
+      }
+      /* Already saved: outlined "done" look, still clickable to update in place. */
+      button.primary.saved {
+        color: var(--green);
+        background: color-mix(in srgb, var(--green) 8%, #fff);
+        border: 1px solid color-mix(in srgb, var(--green) 40%, transparent);
+      }
+      button.primary.saved:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--green) 14%, #fff);
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+
+      .status {
+        min-height: 16px;
+        margin-top: 6px;
+        color: var(--muted);
+      }
+      .status.error {
+        color: var(--red);
+      }
+      .status.success {
+        color: var(--green);
+      }
+
+      /* Feeds section */
+      .section {
+        margin-top: 16px;
+        padding-top: 14px;
+        border-top: 1px solid var(--line);
+      }
+      .section-label {
+        font-weight: 600;
+        color: var(--muted);
+        text-transform: uppercase;
+        font-size: 11px;
+        letter-spacing: 0.03em;
+        margin-bottom: 8px;
+      }
+      .muted {
+        color: var(--muted);
+      }
+
+      .feed {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 0;
+      }
+      .feed + .feed {
+        border-top: 1px solid var(--line);
+      }
+      /* standard.site publications get a distinct, branded treatment: a tinted
+         card with an accent edge, lifting them above plain RSS rows. */
+      .feed.standard {
+        margin: 2px 0;
+        padding: 8px 10px;
+        border: 1px solid color-mix(in srgb, var(--blue) 30%, transparent);
+        border-radius: 8px;
+        background: color-mix(in srgb, var(--blue) 7%, transparent);
+      }
+      .feed.standard + .feed {
+        border-top: none;
+      }
+      .feed-icon {
+        width: 20px;
+        height: 20px;
+        flex: 0 0 auto;
+        border-radius: 4px;
+        object-fit: cover;
+      }
+      /* standard.site logo used as the avatar when a publication has no icon. */
+      .feed-avatar {
+        width: 20px;
+        height: 20px;
+        flex: 0 0 auto;
+        color: var(--blue);
+      }
+      .feed-info {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .feed-name {
+        display: block;
+        min-width: 0;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      /* "standard.site" pill, mirroring the badge in the web app's AddFeedModal. */
+      .badge {
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        padding: 1px 6px 1px 5px;
+        border-radius: 999px;
+        background: var(--blue);
+        color: #fff;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+      .badge svg {
+        width: 11px;
+        height: 11px;
+      }
+      /* RSS / Atom format tag — muted and outlined, deliberately quieter than
+         the filled standard.site badge (standard.site is the promoted option). */
+      .tag {
+        flex: 0 0 auto;
+        padding: 0 5px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 600;
+        line-height: 15px;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+      }
+      .feed-sub {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        margin-top: 1px;
+        color: var(--muted);
+      }
+      .feed-sub .sub-url {
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      button.subscribe {
+        flex: 0 0 auto;
+        padding: 4px 10px;
+        font: inherit;
+        font-weight: 600;
+        color: var(--blue);
+        background: #fff;
+        border: 1px solid var(--blue);
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      button.subscribe:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--blue) 8%, transparent);
+      }
+      button.subscribe.done {
+        color: var(--green);
+        border-color: var(--line);
+        cursor: default;
+      }
+      button.subscribe.failed {
+        color: var(--red);
+        border-color: var(--red);
+      }
+    </style>
+  </head>
+  <body>
+    <!-- standard.site logo (from the web app's Icon.svelte "standard-site" mark),
+         referenced via <use> for the avatar + badge. Single filled path on a
+         28-unit grid; inherits currentColor. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="sr-standard-site" viewBox="0 0 28 28">
+        <path
+          fill-rule="evenodd"
+          clip-rule="evenodd"
+          d="M13.7848 0.065714C13.9147 -0.0219047 14.0853 -0.0219047 14.2152 0.065714C14.3672 0.16831 14.4487 1.17325 14.6113 3.18324L14.6679 3.88175H18.5308C21.5884 3.88179 24.067 6.36063 24.067 9.41828V10.3728H22.1579V9.41828C22.1579 7.415 20.5341 5.79089 18.5308 5.79086H14.8257C14.9975 7.72432 15.1695 8.84869 15.6731 9.76909C16.2205 10.7696 17.0392 11.5976 18.0361 12.1592C19.167 12.7962 20.6187 12.9381 23.522 13.2213L25.1166 13.3766C26.9289 13.5534 27.8355 13.6419 27.9364 13.793C28.0224 13.9222 28.0211 14.0905 27.933 14.2184C27.83 14.368 26.9222 14.4423 25.107 14.5906L24.067 14.6755V18.5819C24.0669 21.6396 21.5884 24.1181 18.5308 24.1182H14.6632L14.6113 24.7719C14.4489 26.8111 14.3676 27.831 14.2155 27.9342C14.0855 28.0219 13.9148 28.0219 13.7848 27.9342C13.6327 27.8315 13.5514 26.8117 13.389 24.7719L13.3368 24.1182H9.36726C6.30968 24.1181 3.83082 21.6395 3.83079 18.5819V17.6274H5.73987V18.5819C5.73991 20.5852 7.36404 22.209 9.36726 22.209H13.1814C13.0072 20.202 12.8353 19.0446 12.3157 18.1037C11.7575 17.0929 10.9223 16.2602 9.90699 15.7024C8.75503 15.0696 7.27799 14.9489 4.32422 14.7075L2.89302 14.5906C1.07778 14.4423 0.170021 14.368 0.0669912 14.2184C-0.0210463 14.0905 -0.0224419 13.9222 0.0635733 13.793C0.164352 13.6418 1.07092 13.5534 2.88339 13.3766L3.83079 13.284V9.41828C3.83079 6.36064 6.30966 3.8818 9.36726 3.88175H13.3324L13.389 3.18324C13.5515 1.17355 13.6328 0.168553 13.7848 0.065714ZM22.1579 14.8352C20.1779 15.0125 19.0285 15.1887 18.0933 15.7024C17.0779 16.2602 16.2425 17.0929 15.6843 18.1037C15.1647 19.0446 14.9928 20.202 14.8186 22.209H18.5308C20.534 22.209 22.1578 20.5852 22.1579 18.5819V14.8352ZM9.36726 5.79086C7.36401 5.7909 5.73987 7.41501 5.73987 9.41828V13.0957C7.82821 12.8811 9.01013 12.6965 9.96385 12.1592C10.9608 11.5976 11.7795 10.7696 12.3269 9.76909C12.8305 8.84869 13.0028 7.72433 13.1746 5.79086H9.36726Z"
+          fill="currentColor"
+          stroke="none"
+        />
+      </symbol>
+    </svg>
+
+    <div class="page-title" id="pageTitle">This page</div>
+    <div class="page-url" id="pageUrl"></div>
+
+    <button class="primary" id="saveBtn">Save this page</button>
+    <div class="status" id="saveStatus"></div>
+
+    <div class="section">
+      <div class="section-label">Feeds on this page</div>
+      <div id="feeds">
+        <div class="muted" id="feedsMsg">Looking for feeds…</div>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
