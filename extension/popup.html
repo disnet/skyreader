@@ -113,9 +113,13 @@
         border-top: 1px solid var(--line);
       }
       /* standard.site publications get a distinct, branded treatment: a tinted
-         card with an accent edge, lifting them above plain RSS rows. */
+         card with an accent edge, lifting them above plain RSS rows. The
+         negative horizontal margin (-11px = 10px padding + 1px border) bleeds
+         the tint into the body padding so the card's *content* column — name,
+         URL, and Subscribe button — stays flush with the plain RSS rows above
+         and below, keeping every Subscribe button on the same right edge. */
       .feed.standard {
-        margin: 2px 0;
+        margin: 2px -11px;
         padding: 8px 10px;
         border: 1px solid color-mix(in srgb, var(--blue) 30%, transparent);
         border-radius: 8px;
