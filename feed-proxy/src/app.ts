@@ -199,6 +199,16 @@ const MAX_RESPONSE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 // time so repeat (and cross-user) saves of the same article are free.
 const EXTRACT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+// Version tag for extractArticle's output. A cached extraction is only reused
+// when its stored version matches this constant, so bumping it here retires
+// every prior extraction: a row from an older extractor reads as a miss and is
+// re-extracted (then overwritten) on the next request. Bump this whenever a
+// change to extractArticle — the Defuddle call, restoreCollapsedMathML, any
+// post-processing — can change the output for an unchanged source URL.
+//   1: pre-MathML
+//   2: restoreCollapsedMathML added
+export const EXTRACTOR_VERSION = 2;
+
 // A real desktop-Chrome User-Agent, used only as a fallback when HONEST_UA is
 // refused. Verified against cbc.ca (Akamai): a browser UA returns 200 straight
 // through Bun's fetch, so it's the UA string alone — not the TLS/JA3 fingerprint —
@@ -783,10 +793,19 @@ export function initDatabase(db: Database): void {
 			url_hash TEXT PRIMARY KEY,
 			url TEXT NOT NULL,
 			extracted_json TEXT NOT NULL,
-			cached_at INTEGER NOT NULL
+			cached_at INTEGER NOT NULL,
+			extractor_version INTEGER NOT NULL DEFAULT 0
 		)
 	`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_extract_cache_cached_at ON extract_cache(cached_at)`);
+
+  // Migration: add the extractor version tag to pre-existing caches. Rows created
+  // before this column default to version 0, which never matches EXTRACTOR_VERSION,
+  // so they read as misses and get re-extracted rather than serving stale output.
+  const extractColumns = db.query<{ name: string }, []>(`PRAGMA table_info(extract_cache)`).all();
+  if (!extractColumns.some((c) => c.name === 'extractor_version')) {
+    db.run(`ALTER TABLE extract_cache ADD COLUMN extractor_version INTEGER NOT NULL DEFAULT 0`);
+  }
 
   // DID → PDS URL resolution cache (used by standard.site document fetching).
   db.run(`
@@ -1923,13 +1942,15 @@ export function createApp(db: Database, config: AppConfig) {
     const urlHash = hashUrl(url);
     const now = Date.now();
 
-    // Serve from cache when fresh.
+    // Serve from cache when fresh and produced by the current extractor. A
+    // version mismatch reads as a miss so an extractor change repairs old rows
+    // on their next request instead of waiting out the 7-day TTL.
     const cached = db
       .query<
         { extracted_json: string; cached_at: number },
-        [string]
-      >('SELECT extracted_json, cached_at FROM extract_cache WHERE url_hash = ?')
-      .get(urlHash);
+        [string, number]
+      >('SELECT extracted_json, cached_at FROM extract_cache WHERE url_hash = ? AND extractor_version = ?')
+      .get(urlHash, EXTRACTOR_VERSION);
     if (cached && now - cached.cached_at < EXTRACT_CACHE_TTL_MS) {
       c.header('X-Cache', 'HIT');
       c.header('X-Cache-Age', String(Math.floor((now - cached.cached_at) / 1000)));
@@ -1966,8 +1987,8 @@ export function createApp(db: Database, config: AppConfig) {
           const extracted = await extractArticle(html, url);
 
           db.run(
-            'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at) VALUES (?, ?, ?, ?)',
-            [urlHash, url, JSON.stringify(extracted), Date.now()]
+            'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at, extractor_version) VALUES (?, ?, ?, ?, ?)',
+            [urlHash, url, JSON.stringify(extracted), Date.now(), EXTRACTOR_VERSION]
           );
 
           return extracted;
