@@ -4,7 +4,8 @@
   "private": true,
   "description": "Skyreader Chrome extension",
   "scripts": {
-    "build": "esbuild src/extract-entry.js --bundle --format=iife --minify --outfile=content/extract.js"
+    "build": "esbuild src/extract-entry.js --bundle --format=iife --minify --outfile=content/extract.js",
+    "package": "npm run build && rm -f skyreader-extension.zip && zip -r skyreader-extension.zip . -x '*.DS_Store' -x 'node_modules/*' -x 'src/*' -x 'package.json' -x 'package-lock.json' -x 'CLAUDE.md' -x 'skyreader-extension.zip' -x '.*' -x '.*/*'"
   },
   "dependencies": {
     "defuddle": "^0.19.1"
