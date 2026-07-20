@@ -128,7 +128,8 @@ Error handling:
 
 ## Release
 
-No pipeline yet. To package: `npm run build`, then
-`zip -r skyreader-extension.zip . -x '*.DS_Store' -x 'node_modules/*' -x 'src/*'`
-from this directory and upload to the Chrome Web Store dashboard. Bump
-`version` in `manifest.json` first.
+No pipeline yet. To package: run `npm run package` from this directory — it
+rebuilds `content/extract.js` (`npm run build`) and produces
+`skyreader-extension.zip` (excludes `node_modules/`, `src/`, dev files, and
+dotfiles). Upload the zip to the Chrome Web Store dashboard. Bump `version` in
+`manifest.json` first.
