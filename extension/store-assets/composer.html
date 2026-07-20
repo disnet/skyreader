@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Skyreader — Store screenshot composer</title>
+    <style>
+      :root {
+        --blue: #0066cc;
+        --ink: #1a1a1a;
+        --muted: #5a5a5a;
+        --line: #e6e6e6;
+        --bg: #f4f6f8;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        color: var(--ink);
+        background: var(--bg);
+        margin: 0;
+        padding: 32px;
+      }
+      header {
+        max-width: 1280px;
+        margin: 0 auto 24px;
+      }
+      header h1 {
+        font-size: 22px;
+        margin: 0 0 6px;
+      }
+      header p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      header code {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 1px 5px;
+        font-size: 12px;
+      }
+      .frames {
+        max-width: 1280px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 40px;
+      }
+      .card {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 16px;
+      }
+      .card-head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .card-head .name {
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .card-head .dims {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .card-head .spacer {
+        flex: 1;
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 6px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        border: 1px solid var(--blue);
+        color: var(--blue);
+        background: #fff;
+      }
+      button.primary {
+        background: var(--blue);
+        color: #fff;
+        border-color: var(--blue);
+      }
+      button:hover {
+        filter: brightness(0.97);
+      }
+      label.file {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--blue);
+        cursor: pointer;
+        padding: 6px 12px;
+        border: 1px solid var(--blue);
+        border-radius: 6px;
+      }
+      label.file input {
+        display: none;
+      }
+      /* The canvas is authored at 1280x800 and shown at half-size. Drop a popup
+         screenshot anywhere on it to composite; the download is full-res. */
+      .stage {
+        position: relative;
+        width: 640px;
+        height: 400px;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .stage.drag {
+        outline: 3px dashed var(--blue);
+        outline-offset: -3px;
+      }
+      canvas {
+        width: 640px;
+        height: 400px;
+        display: block;
+      }
+      .toolbar {
+        max-width: 1280px;
+        margin: 0 auto 24px;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Skyreader — Chrome Web Store screenshot composer</h1>
+      <p>
+        Each frame is a 1280&times;800 canvas (the store's required size, exported opaque PNG — no
+        alpha). Capture your popup with DevTools <em>right-click&nbsp;&rarr;&nbsp;Inspect</em> (keeps
+        it open) then <em>right-click the <code>&lt;body&gt;</code>&nbsp;&rarr;&nbsp;Capture node
+        screenshot</em>. Drop that PNG onto a frame, or drop the files named
+        <code>save.png</code> / <code>discover.png</code> / <code>standard.png</code> /
+        <code>saved.png</code> into a <code>shots/</code> folder next to this file and reload to
+        auto-fill. Edit the <code>FRAMES</code> array in this file to change headlines.
+      </p>
+    </header>
+
+    <div class="toolbar">
+      <button class="primary" id="downloadAll">Download all PNGs</button>
+      <span class="dims" style="color: var(--muted); font-size: 12px"
+        >Popups render sharpest when the screenshot is at least 640px wide (a 2&times; retina capture
+        of the 320px popup).</span
+      >
+    </div>
+
+    <div class="frames" id="frames"></div>
+
+    <script>
+      // ---- Configuration --------------------------------------------------
+      // One entry per store screenshot. `shot` is the filename looked up under
+      // ./shots/ for auto-fill; drag-drop overrides it. `headline` is an array
+      // of lines (no auto-wrap, so you control the breaks). Voice: calm, terse,
+      // reading-first; no em-dashes.
+      const FRAMES = [
+        {
+          id: 'save',
+          shot: 'save.png',
+          headline: ['Save anything', 'you are reading'],
+          sub: 'One click sends the page to your Skyreader reading list, full article and all.',
+        },
+        {
+          id: 'discover',
+          shot: 'discover.png',
+          headline: ['Subscribe without', 'leaving the page'],
+          sub: 'Skyreader finds the RSS and Atom feeds a site offers and subscribes in a click.',
+        },
+        {
+          id: 'standard',
+          shot: 'standard.png',
+          headline: ['Follow the', 'open web'],
+          sub: 'Native support for standard.site publications, right alongside your feeds.',
+        },
+        {
+          id: 'saved',
+          shot: 'saved.png',
+          headline: ['Always know', 'what you have'],
+          sub: 'Saved and subscribed state shows at a glance, so you never save twice.',
+        },
+      ];
+
+      const W = 1280;
+      const H = 800;
+      const FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+
+      function loadImage(src) {
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => resolve(null);
+          img.src = src;
+        });
+      }
+
+      // Rounded-rect path (Chrome supports ctx.roundRect, but keep an explicit
+      // helper so the clip + shadow calls read clearly).
+      function roundRect(ctx, x, y, w, h, r) {
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, h, r);
+      }
+
+      // Draw one 1280x800 frame. `popup` is an HTMLImageElement or null.
+      function draw(ctx, frame, popup, brandIcon) {
+        // 1. Opaque base (guarantees a no-alpha PNG).
+        ctx.clearRect(0, 0, W, H);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, W, H);
+
+        // 2. Calm blue wash, top-left to bottom-right.
+        const wash = ctx.createLinearGradient(0, 0, W, H);
+        wash.addColorStop(0, '#eef4fb');
+        wash.addColorStop(1, '#ffffff');
+        ctx.fillStyle = wash;
+        ctx.fillRect(0, 0, W, H);
+
+        // 3. Right-hand "stage": a One-Blue tinted rounded panel the popup floats
+        //    on, giving the brand color a quiet presence without going loud.
+        const stageX = 720;
+        const stageW = W - stageX - 64; // 64px right margin
+        roundRect(ctx, stageX, 96, stageW, H - 192, 28);
+        ctx.fillStyle = 'rgba(0, 102, 204, 0.07)';
+        ctx.fill();
+
+        // 4. Brand chip: icon + wordmark, top-left.
+        let textX = 96;
+        let chipY = 104;
+        if (brandIcon) {
+          const s = 40;
+          roundRect(ctx, textX, chipY, s, s, 10);
+          ctx.save();
+          ctx.clip();
+          ctx.drawImage(brandIcon, textX, chipY, s, s);
+          ctx.restore();
+          ctx.fillStyle = '#0f0f0f';
+          ctx.font = `600 24px ${FONT}`;
+          ctx.textBaseline = 'middle';
+          ctx.fillText('Skyreader', textX + s + 14, chipY + s / 2 + 1);
+        }
+
+        // 5. Headline.
+        ctx.fillStyle = '#141414';
+        ctx.textBaseline = 'alphabetic';
+        const hSize = 62;
+        const hLine = 74;
+        ctx.font = `700 ${hSize}px ${FONT}`;
+        let y = 320;
+        for (const line of frame.headline) {
+          ctx.fillText(line, textX, y);
+          y += hLine;
+        }
+
+        // 6. Accent underline in One Blue.
+        y += 8;
+        ctx.fillStyle = '#0066cc';
+        roundRect(ctx, textX, y, 64, 5, 3);
+        ctx.fill();
+
+        // 7. Subcopy (wrapped to the left column width).
+        y += 44;
+        ctx.fillStyle = '#5a5a5a';
+        ctx.font = `400 25px ${FONT}`;
+        wrapText(ctx, frame.sub, textX, y, 560, 36);
+
+        // 8. The popup screenshot as a floating card with a soft shadow.
+        if (popup) {
+          const maxH = H - 192 - 72; // stage height minus inner padding
+          const maxW = stageW - 96;
+          const ar = popup.width / popup.height;
+          let ph = Math.min(maxH, 600);
+          let pw = ph * ar;
+          if (pw > maxW) {
+            pw = maxW;
+            ph = pw / ar;
+          }
+          const px = stageX + (stageW - pw) / 2;
+          const py = 96 + (H - 192 - ph) / 2;
+          const r = 14;
+
+          // Shadow (drawn as a filled rounded rect so the shadow is soft and
+          // the image on top stays crisp).
+          ctx.save();
+          ctx.shadowColor = 'rgba(20, 40, 80, 0.22)';
+          ctx.shadowBlur = 40;
+          ctx.shadowOffsetY = 18;
+          roundRect(ctx, px, py, pw, ph, r);
+          ctx.fillStyle = '#ffffff';
+          ctx.fill();
+          ctx.restore();
+
+          // Clip to rounded corners and draw the popup.
+          ctx.save();
+          roundRect(ctx, px, py, pw, ph, r);
+          ctx.clip();
+          ctx.drawImage(popup, px, py, pw, ph);
+          ctx.restore();
+
+          // Hairline border for definition on white.
+          ctx.save();
+          roundRect(ctx, px + 0.5, py + 0.5, pw - 1, ph - 1, r);
+          ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.restore();
+        } else {
+          // Placeholder prompt.
+          const bx = stageX + 48;
+          const by = 160;
+          const bw = stageW - 96;
+          const bh = H - 192 - 128;
+          ctx.save();
+          ctx.setLineDash([10, 8]);
+          ctx.strokeStyle = 'rgba(0, 102, 204, 0.5)';
+          ctx.lineWidth = 2;
+          roundRect(ctx, bx, by, bw, bh, 14);
+          ctx.stroke();
+          ctx.restore();
+          ctx.fillStyle = 'rgba(0, 102, 204, 0.8)';
+          ctx.font = `600 22px ${FONT}`;
+          ctx.textAlign = 'center';
+          ctx.fillText('Drop popup screenshot', bx + bw / 2, by + bh / 2 - 6);
+          ctx.font = `400 16px ${FONT}`;
+          ctx.fillStyle = 'rgba(0, 102, 204, 0.6)';
+          ctx.fillText(`or add shots/${frame.shot}`, bx + bw / 2, by + bh / 2 + 24);
+          ctx.textAlign = 'left';
+        }
+      }
+
+      function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+        const words = text.split(' ');
+        let line = '';
+        for (const word of words) {
+          const test = line ? line + ' ' + word : word;
+          if (ctx.measureText(test).width > maxWidth && line) {
+            ctx.fillText(line, x, y);
+            line = word;
+            y += lineHeight;
+          } else {
+            line = test;
+          }
+        }
+        if (line) ctx.fillText(line, x, y);
+      }
+
+      // ---- Wire up the page ----------------------------------------------
+      const state = new Map(); // id -> { canvas, popup }
+      let brandIcon = null;
+
+      function redraw(id) {
+        const frame = FRAMES.find((f) => f.id === id);
+        const s = state.get(id);
+        draw(s.canvas.getContext('2d'), frame, s.popup, brandIcon);
+      }
+
+      function download(id) {
+        const s = state.get(id);
+        const a = document.createElement('a');
+        a.download = `skyreader-${id}-1280x800.png`;
+        a.href = s.canvas.toDataURL('image/png');
+        a.click();
+      }
+
+      function setPopup(id, file) {
+        const url = URL.createObjectURL(file);
+        loadImage(url).then((img) => {
+          if (img) {
+            state.get(id).popup = img;
+            redraw(id);
+          }
+          URL.revokeObjectURL(url);
+        });
+      }
+
+      async function build() {
+        brandIcon = await loadImage('../icons/icon-128.png');
+        const container = document.getElementById('frames');
+
+        for (const frame of FRAMES) {
+          const card = document.createElement('div');
+          card.className = 'card';
+
+          const head = document.createElement('div');
+          head.className = 'card-head';
+          head.innerHTML = `
+            <span class="name">${frame.id}</span>
+            <span class="dims">1280 &times; 800</span>
+            <span class="spacer"></span>`;
+
+          const fileLabel = document.createElement('label');
+          fileLabel.className = 'file';
+          fileLabel.textContent = 'Choose image';
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/*';
+          input.addEventListener('change', (e) => {
+            if (e.target.files[0]) setPopup(frame.id, e.target.files[0]);
+          });
+          fileLabel.appendChild(input);
+
+          const dl = document.createElement('button');
+          dl.className = 'primary';
+          dl.textContent = 'Download PNG';
+          dl.addEventListener('click', () => download(frame.id));
+
+          head.append(fileLabel, dl);
+
+          const stage = document.createElement('div');
+          stage.className = 'stage';
+          const canvas = document.createElement('canvas');
+          canvas.width = W;
+          canvas.height = H;
+          stage.appendChild(canvas);
+
+          // Drag-and-drop onto the stage.
+          stage.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            stage.classList.add('drag');
+          });
+          stage.addEventListener('dragleave', () => stage.classList.remove('drag'));
+          stage.addEventListener('drop', (e) => {
+            e.preventDefault();
+            stage.classList.remove('drag');
+            const file = e.dataTransfer.files[0];
+            if (file && file.type.startsWith('image/')) setPopup(frame.id, file);
+          });
+
+          card.append(head, stage);
+          container.appendChild(card);
+
+          state.set(frame.id, { canvas, popup: null });
+
+          // Auto-fill from shots/<name> if present.
+          loadImage(`shots/${frame.shot}`).then((img) => {
+            if (img) {
+              state.get(frame.id).popup = img;
+            }
+            redraw(frame.id);
+          });
+        }
+
+        document.getElementById('downloadAll').addEventListener('click', () => {
+          for (const frame of FRAMES) download(frame.id);
+        });
+      }
+
+      build();
+    </script>
+  </body>
+</html>
