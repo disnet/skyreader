@@ -7,9 +7,14 @@ test.describe('Feed Management', () => {
     await authedPage.locator('button.add-trigger[aria-label="Add source"]').click();
 
     const addFeedInput = authedPage.getByPlaceholder('Paste URL or @handle...');
-    await expect(addFeedInput).toBeVisible({ timeout: 15_000 });
+    // The popover's open effect clears the field and then focuses it (via rAF).
+    // Wait for that focus before filling: it proves the reset already ran, so the
+    // effect can't wipe our value afterward and leave the Enter handler with an
+    // empty input (which no-ops, so the modal never opens — the flaky failure).
+    await expect(addFeedInput).toBeFocused({ timeout: 15_000 });
 
     await addFeedInput.fill('https://xkcd.com/atom.xml');
+    await expect(addFeedInput).toHaveValue('https://xkcd.com/atom.xml');
     await addFeedInput.press('Enter');
 
     // AddFeedModal opens with the URL prefilled — click Add to submit
@@ -52,9 +57,14 @@ test.describe('Feed Management', () => {
     await authedPage.locator('button.add-trigger[aria-label="Add source"]').click();
 
     const addFeedInput = authedPage.getByPlaceholder('Paste URL or @handle...');
-    await expect(addFeedInput).toBeVisible({ timeout: 15_000 });
+    // The popover's open effect clears the field and then focuses it (via rAF).
+    // Wait for that focus before filling: it proves the reset already ran, so the
+    // effect can't wipe our value afterward and leave the Enter handler with an
+    // empty input (which no-ops, so the modal never opens — the flaky failure).
+    await expect(addFeedInput).toBeFocused({ timeout: 15_000 });
 
     await addFeedInput.fill('https://xkcd.com/atom.xml');
+    await expect(addFeedInput).toHaveValue('https://xkcd.com/atom.xml');
     await addFeedInput.press('Enter');
 
     const modalInput = authedPage.locator('.modal-content input.search-input');
