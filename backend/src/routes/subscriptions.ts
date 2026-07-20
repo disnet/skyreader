@@ -589,6 +589,51 @@ export async function removeLocalDocumentSubscription(
 }
 
 // POST /api/subscriptions - Create a single subscription
+// GET /api/subscriptions — list the user's subscriptions (identifiers only).
+// A lightweight read for clients (the browser extension) that need to tell
+// whether a discovered feed / standard.site publication is already subscribed,
+// with no local cache to consult. Includes parked rows (active=0) so a
+// re-subscribe that would silently un-park is surfaced as "already subscribed".
+export async function handleListSubscriptions(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  try {
+    const result = await env.DB.prepare(
+      'SELECT feed_url, subject_did, source_type, active FROM subscriptions_cache WHERE user_did = ?'
+    )
+      .bind(session.did)
+      .all<{
+        feed_url: string;
+        subject_did: string | null;
+        source_type: string | null;
+        active: number;
+      }>();
+
+    const subscriptions = result.results.map((row) => ({
+      feedUrl: row.feed_url || null,
+      subjectDid: row.subject_did || null,
+      sourceType: row.source_type || null,
+      active: row.active !== 0,
+    }));
+
+    return new Response(JSON.stringify({ subscriptions }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Failed to list subscriptions:', error);
+    return new Response(JSON.stringify({ error: 'Failed to list subscriptions' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
 export async function handleCreateSubscription(
   request: Request,
   env: Env,

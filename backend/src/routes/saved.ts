@@ -814,6 +814,52 @@ export async function handleGetSaved(
   }
 }
 
+// GET /api/saved/status?url=<url> — is this exact URL already in the user's Saved
+// list? A lightweight existence check for clients (the browser extension) that
+// have no local cache to consult. Matches the pre-save dedup gate in
+// handleCreateSaved (exact-URL match on saved_articles.url).
+export async function handleSavedStatus(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'GET') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const url = new URL(request.url).searchParams.get('url');
+  if (!url) {
+    return new Response(JSON.stringify({ error: 'Missing url parameter' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  try {
+    const existing = await env.DB.prepare(
+      'SELECT 1 FROM saved_articles WHERE user_did = ? AND url = ? LIMIT 1'
+    )
+      .bind(session.did, url)
+      .first();
+    return new Response(JSON.stringify({ saved: !!existing }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Failed to check saved status:', error);
+    return new Response(JSON.stringify({ error: 'Failed to check saved status' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
 // POST /api/saved/bodies — hydrate article bodies for a set of rkeys.
 // GET /api/saved returns metadata only (the body is ~20-50× the rest of a row);
 // the client asks for bodies only for items it hasn't cached yet, so a no-op
