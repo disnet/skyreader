@@ -382,6 +382,19 @@
     max-width: 100%;
     overflow-x: auto;
   }
+  /* Native MathML. Display equations get their own line and scroll rather than
+     forcing the column wider; inline math just rides along with the text. */
+  .article-body :global(math[display='block']) {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    margin: 1rem 0;
+    padding-bottom: 0.25rem;
+  }
+  .article-body :global(math) {
+    max-width: 100%;
+  }
   .article-body :global(blockquote) {
     margin: 1rem 0;
     padding-left: 1rem;

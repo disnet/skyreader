@@ -350,15 +350,66 @@ function toValidISODate(value: string | undefined | null): string | null {
   return new Date(ms).toISOString();
 }
 
+const MATH_ELEMENT_RE = /<math\b[\s\S]*?<\/math>/g;
+
+function decodeBasicEntities(s: string): string {
+  return s
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+// A <math> whose inner markup is just LaTeX text, with no child elements.
+function isCollapsedMath(mathEl: string): boolean {
+  const inner = mathEl.replace(/^<math\b[^]*?>/, '').replace(/<\/math>$/, '');
+  return !/<[a-zA-Z]/.test(inner);
+}
+
+// Defuddle normalizes math toward a LaTeX round-trip: it rewrites each <math>
+// to `<math data-latex="…">`, and for LaTeXML display equations (arXiv et al,
+// which wrap the equation in an .ltx_equation container) it matches the wrapper,
+// loses the inner presentation MathML, and its LaTeX→MathML fallback fails —
+// leaving `<math data-latex="…">\raw latex\</math>` that a browser renders as
+// literal backslash source instead of an equation.
+//
+// The original HTML still holds the real presentation MathML, and the collapsed
+// element's data-latex is a verbatim copy of the source <math>'s alttext. Key
+// the source elements by alttext and splice the originals back in. This is more
+// faithful than re-rendering the LaTeX (it preserves arXiv's own intent /
+// columnalign / class attributes) and needs no math-typesetting dependency.
+export function restoreCollapsedMathML(sourceHtml: string, content: string): string {
+  if (!content.includes('data-latex')) return content;
+
+  const byAlttext = new Map<string, string>();
+  for (const el of sourceHtml.match(MATH_ELEMENT_RE) || []) {
+    const alt = el.match(/\balttext="([^"]*)"/);
+    if (!alt) continue;
+    const key = decodeBasicEntities(alt[1]);
+    // First occurrence wins; duplicate equations serialize identically anyway.
+    if (!byAlttext.has(key)) byAlttext.set(key, el);
+  }
+  if (byAlttext.size === 0) return content;
+
+  return content.replace(MATH_ELEMENT_RE, (el) => {
+    if (!isCollapsedMath(el)) return el;
+    const dataLatex = el.match(/\bdata-latex="([^"]*)"/);
+    if (!dataLatex) return el;
+    return byAlttext.get(decodeBasicEntities(dataLatex[1])) ?? el;
+  });
+}
+
 async function extractArticle(html: string, url: string): Promise<ExtractedArticle> {
   // Defuddle's node entry builds a DOM from the HTML string via linkedom and
   // resolves relative URLs against `url`.
   const result = await Defuddle(html, url, { url });
+  const content = result.content ? restoreCollapsedMathML(html, result.content) : null;
   return {
     title: result.title || null,
     author: result.author || null,
     description: result.description || null,
-    content: result.content || null,
+    content,
     domain: result.domain || null,
     image: result.image || null,
     published: toValidISODate(result.published),

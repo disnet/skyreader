@@ -82,6 +82,20 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
 
   const base = safeSanitizerBase(baseUrl);
 
+  // MathML: drop the annotation payloads outright. <semantics> pairs the
+  // presentation markup the browser renders with alternate encodings of the
+  // same expression, and MathJax/LaTeXML feeds (arXiv et al) ship a TeX
+  // <annotation> next to every equation. DOMPurify would otherwise unwrap the
+  // disallowed tag and keep its text, printing raw "a^2+b^2" beside the
+  // rendered math. <annotation-xml> stays out of ADD_TAGS as well: with
+  // encoding="text/html" it is an HTML integration point and a classic mXSS
+  // namespace-confusion vector.
+  DOMPurify.addHook('uponSanitizeElement', (node, data) => {
+    if (data.tagName === 'annotation' || data.tagName === 'annotation-xml') {
+      node.parentNode?.removeChild(node);
+    }
+  });
+
   // Add hook to process URLs and links
   DOMPurify.addHook('afterSanitizeAttributes', (node) => {
     // Rewrite img src (only if we have a valid base)
@@ -190,8 +204,36 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
   });
 
   const sanitized = DOMPurify.sanitize(html, {
-    ADD_TAGS: ['iframe'],
-    ADD_ATTR: ['allow', 'allowfullscreen', 'frameborder', 'referrerpolicy', 'scrolling'],
+    // <semantics> is a plain MathML container; allowing it keeps equations
+    // well-formed now that the annotations inside are removed above. The rest
+    // of MathML already survives via DOMPurify's default mathMl profile.
+    ADD_TAGS: ['iframe', 'semantics'],
+    ADD_ATTR: [
+      'allow',
+      'allowfullscreen',
+      'frameborder',
+      'referrerpolicy',
+      'scrolling',
+      // MathML accessibility hints publishers attach to <math>: a plain-text
+      // rendering (alttext) and MathML-Core semantic intent. Both are inert
+      // token strings — no URL or handler sink.
+      'alttext',
+      'intent',
+      // <mtable> layout attributes that LaTeXML/MathJax emit for every aligned
+      // equation, matrix, and cases block. DOMPurify's default MathML allowlist
+      // omits these (it ships a legacy "columnsalign" that no engine emits),
+      // so without them multi-line equations lose their alignment and collapse
+      // to centered. All are enumerated layout tokens — safe on any element.
+      'columnalign',
+      'columnspacing',
+      'columnwidth',
+      'equalrows',
+      'equalcolumns',
+      'groupalign',
+      'minlabelspacing',
+      'side',
+      'form',
+    ],
     // Block attacker-supplied CSS: a feed can otherwise inject a <style> block or
     // inline style= to overlay/hide the app shell (clickjacking / content spoofing,
     // since the prod CSP allows 'unsafe-inline' styles). We rely on our own classes
@@ -200,8 +242,9 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
     FORBID_ATTR: ['style'],
   });
 
-  // Remove hook to avoid affecting other calls
+  // Remove hooks to avoid affecting other calls
   DOMPurify.removeHook('afterSanitizeAttributes');
+  DOMPurify.removeHook('uponSanitizeElement');
 
   return sanitized;
 }
