@@ -125,6 +125,30 @@ describe('parseFeed', () => {
       expect(result.items[0].summary).toBe('Short summary');
     });
 
+    it('converts arXiv dollar-delimited TeX to native MathML', () => {
+      const rss = `<?xml version="1.0"?>
+<rss version="2.0">
+  <channel>
+    <title>hep-ex updates on arXiv.org</title>
+    <link>http://rss.arxiv.org/rss/hep-ex</link>
+    <item>
+      <title>Proof of principle for nucleon polarization measurement at BESIII</title>
+      <link>https://arxiv.org/abs/2607.19927</link>
+      <guid>oai:arXiv.org:2607.19927v1</guid>
+      <description>Using $10.09\\times10^{9}$ $J/\\psi$ events at BESIII.</description>
+    </item>
+  </channel>
+</rss>`;
+
+      const result = parseFeed(rss, 'http://rss.arxiv.org/rss/hep-ex');
+      const summary = result.items[0].summary ?? '';
+
+      expect(summary).toContain('<math');
+      expect(summary).toContain('<mo>×</mo>');
+      expect(summary).toContain('<mi>ψ</mi>');
+      expect(summary).not.toContain('$10.09');
+    });
+
     it('extracts dc:creator as author', () => {
       const rss = `<?xml version="1.0"?>
 <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">

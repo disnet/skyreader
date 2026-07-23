@@ -1,5 +1,6 @@
 import { XMLParser } from 'fast-xml-parser';
 import type { ParsedFeed, FeedItem } from './types';
+import { convertLatexToMathML } from './latex-to-mathml';
 
 // Pre-compiled regex patterns for XML entity decoding
 // IMPORTANT: &amp; must be decoded LAST to avoid double-decoding
@@ -83,8 +84,8 @@ function parseJsonFeed(json: any, feedUrl: string): ParsedFeed {
     const url = item.url || item.external_url || '';
     const guid = item.id || url || generateGuid(title);
     const author = item.author?.name || item.authors?.[0]?.name;
-    const content = item.content_html || item.content_text;
-    const summary = item.summary;
+    const content = convertLatexToMathML(item.content_html || item.content_text);
+    const summary = convertLatexToMathML(item.summary);
     const imageUrl = item.image || item.banner_image;
     const pubDate = item.date_published || item.date_modified;
 
@@ -120,8 +121,10 @@ function parseRssFeed(channel: any, feedUrl: string): ParsedFeed {
     const url = getText(item.link) || '';
     const guid = getText(item.guid) || url || generateGuid(title);
     const author = getText(item.author) || getText(item['dc:creator']);
-    const content = getText(item['content:encoded']) || getText(item.description);
-    const summary = getText(item.description);
+    const content = convertLatexToMathML(
+      getText(item['content:encoded']) || getText(item.description)
+    );
+    const summary = convertLatexToMathML(getText(item.description));
     const pubDate = getText(item.pubDate) || getText(item['dc:date']);
     const imageUrl = extractRssItemImage(item);
 
@@ -158,8 +161,8 @@ function parseAtomFeed(feed: any, feedUrl: string): ParsedFeed {
     const url = getAtomLink(entry.link, 'alternate') || '';
     const guid = getText(entry.id) || url || generateGuid(title);
     const author = entry.author?.name ? getText(entry.author.name) : undefined;
-    const content = getText(entry.content) || getText(entry.summary);
-    const summary = getText(entry.summary);
+    const content = convertLatexToMathML(getText(entry.content) || getText(entry.summary));
+    const summary = convertLatexToMathML(getText(entry.summary));
     const updated = getText(entry.updated) || getText(entry.published);
 
     items.push({
@@ -195,8 +198,10 @@ function parseRdfFeed(rdf: any, feedUrl: string): ParsedFeed {
     const url = getText(item.link) || '';
     const guid = url || generateGuid(title);
     const author = getText(item['dc:creator']);
-    const content = getText(item['content:encoded']) || getText(item.description);
-    const summary = getText(item.description);
+    const content = convertLatexToMathML(
+      getText(item['content:encoded']) || getText(item.description)
+    );
+    const summary = convertLatexToMathML(getText(item.description));
     const pubDate = getText(item['dc:date']);
 
     items.push({

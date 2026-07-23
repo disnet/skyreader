@@ -63,6 +63,8 @@ export interface CacheRow {
   url_hash: string;
   url: string;
   parsed_json: string;
+  parser_version: number;
+  parser_upgrade_attempted_version: number;
   etag: string | null;
   last_modified: string | null;
   cached_at: number;
@@ -198,6 +200,14 @@ const MAX_RESPONSE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 // Extracted article content is effectively immutable per URL; cache it for a long
 // time so repeat (and cross-user) saves of the same article are free.
 const EXTRACT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+// Version tag for parseFeed's durable output. A mismatch forces an unconditional
+// upstream fetch and re-delivers the source feed's current items, so parser
+// improvements repair both the proxy cache and clients that already advanced
+// past those items in the monotonic feed cursor.
+//   0: cache rows created before parser output was versioned
+//   1: TeX feed delimiters converted to native MathML
+export const FEED_PARSER_VERSION = 1;
 
 // Version tag for extractArticle's output. A cached extraction is only reused
 // when its stored version matches this constant, so bumping it here retires
@@ -563,7 +573,8 @@ export function writeFeedItems(
   db: Database,
   urlHash: string,
   items: FeedItem[],
-  now: number
+  now: number,
+  redeliver = false
 ): void {
   if (items.length === 0) return;
 
@@ -579,7 +590,15 @@ export function writeFeedItems(
   // One transaction for the whole parse (up to MAX_ITEMS_TO_PARSE inserts + the cap
   // delete) instead of an implicit commit per statement — a single fsync rather
   // than ~100 every warm-refresh per feed. Single-writer SQLite makes it safe.
+  const deleteForRedelivery = db.query('DELETE FROM feed_items WHERE url_hash = ? AND guid = ?');
   const writeBatch = db.transaction(() => {
+    if (redeliver) {
+      // Keep retained history that has aged out of the source feed, but remove
+      // every item in this parse so it receives a fresh seq and reaches clients
+      // that already consumed its pre-upgrade representation.
+      for (const item of items) deleteForRedelivery.run(urlHash, item.guid);
+    }
+
     for (let i = items.length - 1; i >= 0; i--) {
       const item = items[i];
       const ms = new Date(item.publishedAt).getTime();
@@ -729,6 +748,8 @@ export function initDatabase(db: Database): void {
 			url_hash TEXT PRIMARY KEY,
 			url TEXT NOT NULL,
 			parsed_json TEXT NOT NULL,
+			parser_version INTEGER NOT NULL DEFAULT ${FEED_PARSER_VERSION},
+			parser_upgrade_attempted_version INTEGER NOT NULL DEFAULT 0,
 			etag TEXT,
 			last_modified TEXT,
 			cached_at INTEGER NOT NULL,
@@ -745,6 +766,19 @@ export function initDatabase(db: Database): void {
   const columns = db.query<{ name: string }, []>(`PRAGMA table_info(cache)`).all();
   const columnNames = new Set(columns.map((c) => c.name));
 
+  if (!columnNames.has('parser_version')) {
+    // Existing rows contain output from the unversioned parser. Mark them 0 so
+    // their next request bypasses conditional headers and reparses a 200 body.
+    db.run(`ALTER TABLE cache ADD COLUMN parser_version INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!columnNames.has('parser_upgrade_attempted_version')) {
+    // A parser mismatch gets one immediate attempt even when an older fetch
+    // failure left the feed in backoff. Persist the attempted version so a
+    // failed upgrade resumes normal backoff instead of retrying every request.
+    db.run(
+      `ALTER TABLE cache ADD COLUMN parser_upgrade_attempted_version INTEGER NOT NULL DEFAULT 0`
+    );
+  }
   if (!columnNames.has('error_count')) {
     db.run(`ALTER TABLE cache ADD COLUMN error_count INTEGER DEFAULT 0`);
   }
@@ -1113,19 +1147,35 @@ export function createApp(db: Database, config: AppConfig) {
     cached?: CacheRow
   ): Promise<ParsedFeed | null> {
     const now = Date.now();
+    const parserIsCurrent = cached?.parser_version === FEED_PARSER_VERSION;
+    const parserUpgradeNeedsAttempt =
+      cached !== undefined &&
+      !parserIsCurrent &&
+      cached.parser_upgrade_attempted_version !== FEED_PARSER_VERSION;
 
-    // Circuit breaker: skip fetch if in backoff period
-    if (cached?.next_retry_at && now < cached.next_retry_at) {
+    // A parser upgrade gets one unconditional attempt even if the previous
+    // parser's last fetch put this feed in backoff. Once attempted, any failure
+    // below writes a new backoff and subsequent requests respect it.
+    if (cached?.next_retry_at && now < cached.next_retry_at && !parserUpgradeNeedsAttempt) {
       console.log(
         `[Proxy] ${url}: in backoff until ${new Date(cached.next_retry_at).toISOString()}, skipping fetch`
       );
       return cached.parsed_json ? (JSON.parse(cached.parsed_json) as ParsedFeed) : null;
     }
 
+    if (parserUpgradeNeedsAttempt) {
+      db.run('UPDATE cache SET parser_upgrade_attempted_version = ? WHERE url_hash = ?', [
+        FEED_PARSER_VERSION,
+        urlHash,
+      ]);
+    }
+
     const headers: Record<string, string> = { ...FETCH_HEADERS };
 
-    if (cached?.etag) headers['If-None-Match'] = cached.etag;
-    if (cached?.last_modified) headers['If-Modified-Since'] = cached.last_modified;
+    if (parserIsCurrent && cached?.etag) headers['If-None-Match'] = cached.etag;
+    if (parserIsCurrent && cached?.last_modified) {
+      headers['If-Modified-Since'] = cached.last_modified;
+    }
 
     try {
       const response = await fetchWithBotFallback(url, headers);
@@ -1241,10 +1291,12 @@ export function createApp(db: Database, config: AppConfig) {
       // deliberately NOT in DO UPDATE, so warm-loop refreshes preserve the real
       // last-requested time rather than keeping abandoned feeds alive forever.
       db.run(
-        `INSERT INTO cache (url_hash, url, parsed_json, etag, last_modified, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?)
+        `INSERT INTO cache (url_hash, url, parsed_json, parser_version, parser_upgrade_attempted_version, etag, last_modified, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?)
 				ON CONFLICT(url_hash) DO UPDATE SET
 					parsed_json = excluded.parsed_json,
+					parser_version = excluded.parser_version,
+					parser_upgrade_attempted_version = excluded.parser_upgrade_attempted_version,
 					etag = excluded.etag,
 					last_modified = excluded.last_modified,
 					cached_at = excluded.cached_at,
@@ -1253,14 +1305,31 @@ export function createApp(db: Database, config: AppConfig) {
 					last_error = NULL,
 					last_error_at = NULL,
 					next_retry_at = NULL`,
-        [urlHash, url, parsedJson, etag, lastModified, now, now, now]
+        [
+          urlHash,
+          url,
+          parsedJson,
+          FEED_PARSER_VERSION,
+          FEED_PARSER_VERSION,
+          etag,
+          lastModified,
+          now,
+          now,
+          now,
+        ]
       );
 
       // Retain the parsed items in the durable log (write → cap). Every parse
       // path funnels through here — fresh MISS, REVALIDATED, and the warm-loop
       // refresh — so retention accumulates continuously while the feed is warm.
       // (The 304 path above writes nothing new, preserving existing seqs.)
-      writeFeedItems(db, urlHash, parsed.items, now);
+      writeFeedItems(
+        db,
+        urlHash,
+        parsed.items,
+        now,
+        cached !== undefined && cached.parser_version !== FEED_PARSER_VERSION
+      );
 
       return parsed;
     } catch (error) {
@@ -1395,16 +1464,25 @@ export function createApp(db: Database, config: AppConfig) {
   async function warmStaleFeeds(): Promise<number> {
     const now = Date.now();
     const rows = db
-      .query<CacheRow, [number, number, number, number]>(
+      .query<CacheRow, [number, number, number, number, number, number]>(
         `SELECT * FROM cache
-				WHERE fetched_at < ?
-					AND (next_retry_at IS NULL OR next_retry_at < ?)
+				WHERE (
+						(parser_version <> ? AND parser_upgrade_attempted_version <> ?)
+						OR (fetched_at < ? AND (next_retry_at IS NULL OR next_retry_at < ?))
+					)
 					AND last_requested_at IS NOT NULL
 					AND last_requested_at > ?
 				ORDER BY fetched_at ASC
 				LIMIT ?`
       )
-      .all(now - warmRefreshThresholdMs, now, now - warmActiveWindowMs, warmBatchCap);
+      .all(
+        FEED_PARSER_VERSION,
+        FEED_PARSER_VERSION,
+        now - warmRefreshThresholdMs,
+        now,
+        now - warmActiveWindowMs,
+        warmBatchCap
+      );
 
     if (rows.length === 0) return 0;
 
@@ -1414,14 +1492,22 @@ export function createApp(db: Database, config: AppConfig) {
     ) {
       lastFeedSaturationWarn = now;
       const eligible = db
-        .query<{ count: number }, [number, number, number]>(
+        .query<{ count: number }, [number, number, number, number, number]>(
           `SELECT COUNT(*) as count FROM cache
-					WHERE fetched_at < ?
-						AND (next_retry_at IS NULL OR next_retry_at < ?)
+					WHERE (
+							(parser_version <> ? AND parser_upgrade_attempted_version <> ?)
+							OR (fetched_at < ? AND (next_retry_at IS NULL OR next_retry_at < ?))
+						)
 						AND last_requested_at IS NOT NULL
 						AND last_requested_at > ?`
         )
-        .get(now - warmRefreshThresholdMs, now, now - warmActiveWindowMs);
+        .get(
+          FEED_PARSER_VERSION,
+          FEED_PARSER_VERSION,
+          now - warmRefreshThresholdMs,
+          now,
+          now - warmActiveWindowMs
+        );
       const total = eligible?.count ?? rows.length;
       if (total > warmBatchCap) {
         console.warn(
@@ -1792,7 +1878,7 @@ export function createApp(db: Database, config: AppConfig) {
       }
 
       // Never serve empty error placeholders as valid cache - let them go through fetch
-      if (!isErrorPlaceholder) {
+      if (!isErrorPlaceholder && cached.parser_version === FEED_PARSER_VERSION) {
         if (age < cacheTtlMs) {
           feed = cachedFeed;
           cacheStatus = 'HIT';
@@ -2146,7 +2232,7 @@ export function createApp(db: Database, config: AppConfig) {
           }
 
           // Never serve empty error placeholders as valid cache - let them go through fetch
-          if (!isErrorPlaceholder) {
+          if (!isErrorPlaceholder && cached.parser_version === FEED_PARSER_VERSION) {
             if (age < cacheTtlMs) {
               feed = cachedFeed;
               cacheStatus = 'HIT';

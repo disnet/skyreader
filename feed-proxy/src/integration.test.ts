@@ -8,7 +8,9 @@ import {
   classifyError,
   describeFetchFailure,
   calculateBackoff,
+  FEED_PARSER_VERSION,
   FEED_ITEMS_CAP,
+  writeFeedItems,
   type AppConfig,
   type CacheRow,
 } from './app';
@@ -67,6 +69,38 @@ function mockFetch(responseFactory: () => Response) {
 function mockFetchOnce(body: string, init?: ResponseInit) {
   return mockFetch(() => new Response(body, init));
 }
+
+describe('Feed parser cache version migration', () => {
+  it('marks legacy rows as unparsed and not yet attempted', () => {
+    const db = new Database(':memory:');
+    db.run(`
+      CREATE TABLE cache (
+        url_hash TEXT PRIMARY KEY,
+        url TEXT NOT NULL,
+        parsed_json TEXT NOT NULL,
+        etag TEXT,
+        last_modified TEXT,
+        cached_at INTEGER NOT NULL,
+        fetched_at INTEGER NOT NULL
+      )
+    `);
+    db.run(
+      `INSERT INTO cache (url_hash, url, parsed_json, cached_at, fetched_at)
+       VALUES ('legacy', 'https://example.com/legacy', '{}', 1, 1)`
+    );
+
+    initDatabase(db);
+
+    const row = db
+      .query<{ parser_version: number; parser_upgrade_attempted_version: number }, []>(
+        `SELECT parser_version, parser_upgrade_attempted_version
+         FROM cache WHERE url_hash = 'legacy'`
+      )
+      .get();
+    expect(row?.parser_version).toBe(0);
+    expect(row?.parser_upgrade_attempted_version).toBe(0);
+  });
+});
 
 describe('Integration Tests', () => {
   let fetchMock: ReturnType<typeof spyOn>;
@@ -281,6 +315,197 @@ describe('Integration Tests', () => {
 
       expect(res.status).toBe(200);
       expect(json.feed.title).toBe('Cached Blog');
+    });
+
+    it('reparses and re-delivers current items after a parser upgrade', async () => {
+      const { db, app } = createTestApp();
+      const feedUrl = 'https://example.com/arxiv.xml';
+      const urlHash = hashUrl(feedUrl);
+      const publishedAt = new Date().toISOString();
+      const oldFeed = {
+        title: 'Physics',
+        items: [
+          {
+            guid: 'math-1',
+            url: 'https://example.com/math-1',
+            title: 'Math',
+            summary: 'Using $10.09\\times10^{9}$ events.',
+            publishedAt,
+          },
+        ],
+        fetchedAt: Date.now(),
+      };
+
+      db.run(
+        `INSERT INTO cache
+          (url_hash, url, parsed_json, parser_version, etag, cached_at, fetched_at)
+         VALUES (?, ?, ?, 0, ?, ?, ?)`,
+        [urlHash, feedUrl, JSON.stringify(oldFeed), '"old-etag"', Date.now(), Date.now()]
+      );
+      writeFeedItems(db, urlHash, oldFeed.items, Date.now());
+      const oldCursor = db
+        .query<
+          { seq: number },
+          [string]
+        >('SELECT seq FROM feed_items WHERE url_hash = ? AND guid = "math-1"')
+        .get(urlHash)?.seq;
+      const generation = db
+        .query<{ value: string }, []>(`SELECT value FROM sync_state WHERE key = 'items_generation'`)
+        .get()?.value;
+
+      const refreshedRss = `<?xml version="1.0"?>
+<rss version="2.0"><channel><title>Physics</title>
+<item><title>Math</title><link>https://example.com/math-1</link><guid>math-1</guid>
+<description>Using $10.09\\times10^{9}$ events.</description>
+<pubDate>${new Date(publishedAt).toUTCString()}</pubDate></item>
+</channel></rss>`;
+      let requestHeaders: Headers | undefined;
+      fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async (_input, init) => {
+        requestHeaders = new Headers(init?.headers);
+        return new Response(refreshedRss, { headers: { ETag: '"new-etag"' } });
+      }) as typeof fetch);
+
+      const res = await app.request('/feeds', {
+        method: 'POST',
+        headers: { 'X-Proxy-Secret': 'test-secret', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          feeds: [{ url: feedUrl, since_seq: oldCursor, generation }],
+        }),
+      });
+      const json = (await res.json()).feeds[feedUrl];
+
+      expect(requestHeaders?.has('If-None-Match')).toBe(false);
+      expect(json.feed.items).toHaveLength(1);
+      expect(json.feed.items[0].summary).toContain('<math');
+      expect(json.feed.items[0].summary).toContain('<mo>×</mo>');
+      expect(json.cursor).toBeGreaterThan(oldCursor ?? 0);
+
+      const cache = db
+        .query<CacheRow, [string]>('SELECT * FROM cache WHERE url_hash = ?')
+        .get(urlHash);
+      expect(cache?.parser_version).toBe(FEED_PARSER_VERSION);
+    });
+
+    it('bypasses an older error backoff once to perform a parser upgrade', async () => {
+      const { db, app } = createTestApp();
+      const feedUrl = 'https://example.com/arxiv-backoff.xml';
+      const urlHash = hashUrl(feedUrl);
+      const oldFeed = {
+        title: 'Physics',
+        items: [
+          {
+            guid: 'math-backoff',
+            url: 'https://example.com/math-backoff',
+            title: 'Math',
+            summary: 'Using $x^2$.',
+            publishedAt: new Date().toISOString(),
+          },
+        ],
+        fetchedAt: Date.now(),
+      };
+
+      db.run(
+        `INSERT INTO cache
+          (url_hash, url, parsed_json, parser_version, etag, cached_at, fetched_at,
+           error_count, last_error, last_error_at, next_retry_at)
+         VALUES (?, ?, ?, 0, ?, ?, ?, 1, 'HTTP 500', ?, ?)`,
+        [
+          urlHash,
+          feedUrl,
+          JSON.stringify(oldFeed),
+          '"old-etag"',
+          Date.now(),
+          Date.now(),
+          Date.now(),
+          Date.now() + 60 * 60 * 1000,
+        ]
+      );
+
+      let requestHeaders: Headers | undefined;
+      fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async (_input, init) => {
+        requestHeaders = new Headers(init?.headers);
+        return new Response(
+          `<?xml version="1.0"?><rss version="2.0"><channel><title>Physics</title>
+           <item><title>Math</title><link>https://example.com/math-backoff</link>
+           <guid>math-backoff</guid><description>Using $x^2$.</description></item>
+           </channel></rss>`
+        );
+      }) as typeof fetch);
+
+      const res = await app.request(`/feed?url=${encodeURIComponent(feedUrl)}`, {
+        headers: { 'X-Proxy-Secret': 'test-secret' },
+      });
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(requestHeaders?.has('If-None-Match')).toBe(false);
+      expect(json.feed.items[0].summary).toContain('<math');
+
+      const cache = db
+        .query<CacheRow, [string]>('SELECT * FROM cache WHERE url_hash = ?')
+        .get(urlHash);
+      expect(cache?.parser_version).toBe(FEED_PARSER_VERSION);
+      expect(cache?.parser_upgrade_attempted_version).toBe(FEED_PARSER_VERSION);
+      expect(cache?.next_retry_at).toBeNull();
+    });
+
+    it('resumes backoff after a failed parser-upgrade attempt', async () => {
+      const { db, app } = createTestApp();
+      const feedUrl = 'https://example.com/arxiv-upgrade-fails.xml';
+      const urlHash = hashUrl(feedUrl);
+      const oldFeed = {
+        title: 'Physics',
+        items: [
+          {
+            guid: 'math-failure',
+            url: 'https://example.com/math-failure',
+            title: 'Math',
+            summary: 'Using $x^2$.',
+            publishedAt: new Date().toISOString(),
+          },
+        ],
+        fetchedAt: Date.now(),
+      };
+
+      db.run(
+        `INSERT INTO cache
+          (url_hash, url, parsed_json, parser_version, cached_at, fetched_at,
+           error_count, last_error, last_error_at, next_retry_at)
+         VALUES (?, ?, ?, 0, ?, ?, 1, 'HTTP 500', ?, ?)`,
+        [
+          urlHash,
+          feedUrl,
+          JSON.stringify(oldFeed),
+          Date.now(),
+          Date.now(),
+          Date.now(),
+          Date.now() + 60 * 60 * 1000,
+        ]
+      );
+
+      let fetchCalls = 0;
+      fetchMock = mockFetch(() => {
+        fetchCalls++;
+        return new Response('Unavailable', { status: 503 });
+      });
+
+      const first = await app.request(`/feed?url=${encodeURIComponent(feedUrl)}`, {
+        headers: { 'X-Proxy-Secret': 'test-secret' },
+      });
+      const second = await app.request(`/feed?url=${encodeURIComponent(feedUrl)}`, {
+        headers: { 'X-Proxy-Secret': 'test-secret' },
+      });
+
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(fetchCalls).toBe(1);
+
+      const cache = db
+        .query<CacheRow, [string]>('SELECT * FROM cache WHERE url_hash = ?')
+        .get(urlHash);
+      expect(cache?.parser_version).toBe(0);
+      expect(cache?.parser_upgrade_attempted_version).toBe(FEED_PARSER_VERSION);
+      expect(cache?.next_retry_at).toBeGreaterThan(Date.now());
     });
 
     it('backfills the durable log from the blob when feed_items is empty', async () => {
@@ -2535,6 +2760,32 @@ describe('Self-warming loop', () => {
 
     expect(refreshed).toBe(0);
     expect(fetchMock.mock.calls.length).toBe(0);
+  });
+
+  it('warms a parser upgrade once despite an older error backoff', async () => {
+    const { db, warmStaleFeeds } = createTestApp({
+      warmRefreshThresholdMs: 60_000,
+    });
+    fetchMock = mockFetch(() => new Response(SAMPLE_RSS));
+
+    const url = 'https://example.com/backoff-parser-upgrade';
+    const now = Date.now();
+    insertCacheRow(db, url, {
+      fetchedAt: now - 1000,
+      lastRequestedAt: now - 1000,
+      errorCount: 3,
+      nextRetryAt: now + 60_000,
+    });
+    db.run('UPDATE cache SET parser_version = 0 WHERE url = ?', [url]);
+
+    const refreshed = await warmStaleFeeds();
+
+    expect(refreshed).toBe(1);
+    expect(fetchMock.mock.calls.length).toBe(1);
+    const row = db.query<CacheRow, [string]>('SELECT * FROM cache WHERE url = ?').get(url);
+    expect(row?.parser_version).toBe(FEED_PARSER_VERSION);
+    expect(row?.parser_upgrade_attempted_version).toBe(FEED_PARSER_VERSION);
+    expect(row?.next_retry_at).toBeNull();
   });
 
   it('honors the batch cap', async () => {

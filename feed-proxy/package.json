@@ -17,7 +17,8 @@
     "defuddle": "^0.19.1",
     "fast-xml-parser": "^4.3.0",
     "hono": "^4.4.0",
-    "linkedom": "^0.18.12"
+    "linkedom": "^0.18.12",
+    "temml": "^0.13.3"
   },
   "devDependencies": {
     "@types/bun": "latest",
