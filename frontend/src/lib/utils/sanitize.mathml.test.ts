@@ -9,6 +9,15 @@ describe('sanitizeHtml MathML', () => {
     expect(out).toContain('display="block"');
   });
 
+  it('keeps the Temml output generated for TeX-only feed summaries', () => {
+    const out = sanitizeHtml(
+      '<math xmlns="http://www.w3.org/1998/Math/MathML"><mrow><mn>10.09</mn><mo>×</mo>' +
+        '<msup><mn>10</mn><mn>9</mn></msup></mrow></math>'
+    );
+    expect(out).toContain('<mn>10.09</mn><mo>×</mo>');
+    expect(out).toContain('<msup><mn>10</mn><mn>9</mn></msup>');
+  });
+
   it('keeps the structural elements publishers actually emit', () => {
     const out = sanitizeHtml(
       '<math><mtable><mtr><mtd><msup><mi>x</mi><mn>2</mn></msup></mtd></mtr></mtable>' +
