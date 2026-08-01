@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildLinkblogDocument,
+  noteToLeafletBlocks,
+  replaceLeafletNoteRegion,
   publicationUri,
   LINKBLOG_RKEY,
 } from '../src/services/linkblog-sync';
@@ -74,5 +76,79 @@ describe('buildLinkblogDocument', () => {
     const types = content.pages[0].blocks.map((b) => b.block.$type);
     expect(types).not.toContain('pub.leaflet.blocks.text');
     expect(types).toContain('pub.leaflet.blocks.website');
+  });
+});
+
+describe('noteToLeafletBlocks', () => {
+  it('converts mixed commentary and multiline quotes into ordered native blocks', () => {
+    const blocks = noteToLeafletBlocks('Before\n\n> first\n> second\n>\n> fourth\n\nAfter');
+    expect(blocks.map(({ block }) => [block.$type, block.plaintext])).toEqual([
+      ['pub.leaflet.blocks.text', 'Before'],
+      ['pub.leaflet.blocks.blockquote', 'first\nsecond\n\nfourth'],
+      ['pub.leaflet.blocks.text', 'After'],
+    ]);
+  });
+
+  it('supports quote-only and multiple separated quote runs without empty blocks', () => {
+    const blocks = noteToLeafletBlocks('  \n> one\n\nComment\n\n>two\n  ');
+    expect(blocks.map(({ block }) => [block.$type, block.plaintext])).toEqual([
+      ['pub.leaflet.blocks.blockquote', 'one'],
+      ['pub.leaflet.blocks.text', 'Comment'],
+      ['pub.leaflet.blocks.blockquote', 'two'],
+    ]);
+  });
+
+  it('does not interpret greater-than characters away from line start', () => {
+    expect(noteToLeafletBlocks('one > two')[0].block).toMatchObject({
+      $type: 'pub.leaflet.blocks.text',
+      plaintext: 'one > two',
+    });
+  });
+
+  it('rebases Unicode mention facets to each marker-stripped block', () => {
+    const blocks = noteToLeafletBlocks(
+      'é @text.test\n> ü @quote.test',
+      new Map([
+        ['text.test', 'did:plc:text'],
+        ['quote.test', 'did:plc:quote'],
+      ])
+    );
+    expect(blocks[0].block.facets).toMatchObject([{ index: { byteStart: 3, byteEnd: 13 } }]);
+    expect(blocks[1].block.facets).toMatchObject([{ index: { byteStart: 3, byteEnd: 14 } }]);
+  });
+});
+
+describe('replaceLeafletNoteRegion', () => {
+  const existing = {
+    $type: 'pub.leaflet.content',
+    pages: [
+      {
+        $type: 'pub.leaflet.pages.linearDocument',
+        blocks: [
+          { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'old' } },
+          { block: { $type: 'pub.leaflet.blocks.blockquote', plaintext: 'old quote' } },
+          { block: { $type: 'pub.leaflet.blocks.website', url: 'https://example.com' } },
+          { block: { $type: 'pub.leaflet.blocks.image', image: { ref: { $link: 'cid' } } } },
+        ],
+      },
+    ],
+  };
+
+  it('replaces every leading note block and preserves the website and trailing blocks', () => {
+    const content = replaceLeafletNoteRegion(existing, 'new\n> quote') as typeof existing;
+    expect(content.pages[0].blocks.map(({ block }) => block.$type)).toEqual([
+      'pub.leaflet.blocks.text',
+      'pub.leaflet.blocks.blockquote',
+      'pub.leaflet.blocks.website',
+      'pub.leaflet.blocks.image',
+    ]);
+  });
+
+  it('clearing a note removes both old note block types', () => {
+    const content = replaceLeafletNoteRegion(existing, '') as typeof existing;
+    expect(content.pages[0].blocks.map(({ block }) => block.$type)).toEqual([
+      'pub.leaflet.blocks.website',
+      'pub.leaflet.blocks.image',
+    ]);
   });
 });

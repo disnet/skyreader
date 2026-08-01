@@ -51,7 +51,7 @@ describe('buildLinkblogDocument with mention facets', () => {
       'did:plc:author',
       '3kabcdefghijk',
       { articleUrl: 'https://example.com/a', note: '@a.com hi' },
-      [facet]
+      new Map([['a.com', 'did:plc:xyz']])
     );
     const content = doc.content as {
       pages: Array<{ blocks: Array<{ block: Record<string, unknown> }> }>;
@@ -66,7 +66,7 @@ describe('buildLinkblogDocument with mention facets', () => {
       'did:plc:author',
       '3kabcdefghijk',
       { articleUrl: 'https://example.com/a', note: 'no mentions' },
-      []
+      new Map()
     );
     const content = doc.content as {
       pages: Array<{ blocks: Array<{ block: Record<string, unknown> }> }>;
