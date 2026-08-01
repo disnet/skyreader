@@ -10,6 +10,7 @@
 import { api } from '$lib/services/api';
 import { auth } from '$lib/stores/auth.svelte';
 import { getExternalArticleLink } from '$lib/utils/linkPost';
+import { noteToLeafletBlocks } from '$lib/utils/linkPostNote';
 import { loadDigests, saveDigests, scopeKey } from '$lib/services/documentDigests';
 import type { LinkblogPublication, SocialDocument } from '$lib/types';
 
@@ -106,7 +107,7 @@ function createMyLinkblogStore() {
   // Front-insert a just-shared link so it shows on the user's own linkblog
   // immediately, ahead of the PDS → indexer → proxy round-trip. Built to match
   // what the link-post card reads: the external URL in `links`, the note as the
-  // leading leaflet text block. Deduped by article URL.
+  // leading native Leaflet note blocks. Deduped by article URL.
   function addOptimistic(input: {
     recordUri: string;
     siteUri: string;
@@ -137,7 +138,7 @@ function createMyLinkblogStore() {
             pages: [
               {
                 $type: 'pub.leaflet.pages.linearDocument',
-                blocks: [{ block: { $type: 'pub.leaflet.blocks.text', plaintext: note } }],
+                blocks: noteToLeafletBlocks(note),
               },
             ],
           }
@@ -147,23 +148,23 @@ function createMyLinkblogStore() {
     documents = [doc, ...documents.filter((d) => getExternalArticleLink(d) !== input.articleUrl)];
   }
 
-  // Rebuild a document's pub.leaflet body with a new note as the leading text
-  // block, preserving any other blocks (the website link-card). Mirrors the shape
-  // getLinkPostNote reads. Returns undefined when the note is empty AND there are
-  // no other blocks (a bare share).
+  // Rebuild a document's pub.leaflet body with new leading text/blockquote
+  // blocks, preserving the website card and everything after it.
   function rebuildContentWithNote(existing: unknown, note: string): unknown {
     const pages =
       (existing as { pages?: Array<{ blocks?: Array<{ block?: { $type?: string } }> }> })?.pages ??
       [];
     const blocks: Array<{ block: unknown }> = [];
-    if (note) blocks.push({ block: { $type: 'pub.leaflet.blocks.text', plaintext: note } });
-    for (const page of pages) {
-      for (const wrapper of page.blocks ?? []) {
-        // Preserve every non-text block (the website link-card); the note above
-        // replaces the original leading text block.
-        if (wrapper.block && wrapper.block.$type !== 'pub.leaflet.blocks.text') {
-          blocks.push({ block: wrapper.block });
-        }
+    blocks.push(...noteToLeafletBlocks(note));
+    const oldBlocks = pages[0]?.blocks ?? [];
+    const firstPreserved = oldBlocks.findIndex(
+      (wrapper) =>
+        wrapper.block?.$type !== 'pub.leaflet.blocks.text' &&
+        wrapper.block?.$type !== 'pub.leaflet.blocks.blockquote'
+    );
+    if (firstPreserved >= 0) {
+      for (const wrapper of oldBlocks.slice(firstPreserved)) {
+        if (wrapper.block) blocks.push({ block: wrapper.block });
       }
     }
     if (blocks.length === 0) return undefined;

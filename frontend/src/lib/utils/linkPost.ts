@@ -1,5 +1,6 @@
 import type { LeafletContent, SocialDocument } from '$lib/types';
 import { isLeafletContent } from '$lib/utils/leaflet-renderer';
+import { reconstructLinkPostNote } from '$lib/utils/linkPostNote';
 
 /**
  * Link-post helpers (Linkblog Phase 2).
@@ -8,7 +9,7 @@ import { isLeafletContent } from '$lib/utils/leaflet-renderer';
  * rather than being the thing you read itself — the shape Skyreader writes when a
  * user shares an article to their `skyreader-links` publication (Phase 1). The
  * external URL lives in the document's `links` field; the user's commentary is the
- * leading text block of the `pub.leaflet.content` body.
+ * leading text and blockquote blocks of the `pub.leaflet.content` body.
  *
  * The rule lives here so the feed card, the reader, save/Semble/Margin metadata,
  * and content normalization all agree on "is this a link post, and what's its URL".
@@ -37,20 +38,15 @@ export function getDocumentEffectiveUrl(doc: SocialDocument): string {
 }
 
 /**
- * The user's commentary on a link post: the plaintext of the first
- * `pub.leaflet.blocks.text` block (Skyreader writes the note as the leading text
- * block, before the website card). Returns undefined when there's no note.
+ * The user's commentary on a link post, reconstructed from the native text and
+ * blockquote blocks before the website card. Returns undefined when there's no note.
  */
 export function getLinkPostNote(doc: SocialDocument): string | undefined {
   if (!doc.content || !isLeafletContent(doc.content)) return undefined;
   const content = doc.content as LeafletContent;
   for (const page of content.pages ?? []) {
-    for (const wrapper of page.blocks ?? []) {
-      if (wrapper.block?.$type === 'pub.leaflet.blocks.text') {
-        const text = wrapper.block.plaintext?.trim();
-        if (text) return text;
-      }
-    }
+    const note = reconstructLinkPostNote(page.blocks ?? []).note;
+    if (note) return note;
   }
   return undefined;
 }
@@ -65,42 +61,17 @@ export interface MentionFacet {
 
 // Facet $types we treat as an @mention. Skyreader's writer emits `#didMention`; the
 // others are accepted for interop with bsky/leaflet-native records.
-const MENTION_FACET_TYPES = new Set([
-  'pub.leaflet.richtext.facet#didMention',
-  'pub.leaflet.richtext.facet#mention',
-  'app.bsky.richtext.facet#mention',
-]);
-
 /**
  * The resolved @mention facets on a link post's note, byte-indexed into
- * getLinkPostNote(doc). Pulled from the same leading text block, so the offsets line
- * up with that string (the backend stores the note plaintext already trimmed).
+ * getLinkPostNote(doc). Block-local offsets are rebased over the reconstructed
+ * Markdown, including the inserted `> ` markers and blank-line separators.
  */
 export function getLinkPostNoteMentions(doc: SocialDocument): MentionFacet[] {
   if (!doc.content || !isLeafletContent(doc.content)) return [];
   const content = doc.content as LeafletContent;
   for (const page of content.pages ?? []) {
-    for (const wrapper of page.blocks ?? []) {
-      if (wrapper.block?.$type === 'pub.leaflet.blocks.text' && wrapper.block.plaintext?.trim()) {
-        const out: MentionFacet[] = [];
-        for (const f of wrapper.block.facets ?? []) {
-          const byteStart = f?.index?.byteStart;
-          const byteEnd = f?.index?.byteEnd;
-          if (
-            typeof byteStart !== 'number' ||
-            typeof byteEnd !== 'number' ||
-            byteEnd <= byteStart
-          ) {
-            continue;
-          }
-          const did = (f.features ?? []).find(
-            (ft) => ft && MENTION_FACET_TYPES.has(ft.$type ?? '') && ft.did?.startsWith('did:')
-          )?.did;
-          if (did) out.push({ byteStart, byteEnd, did });
-        }
-        return out;
-      }
-    }
+    const result = reconstructLinkPostNote(page.blocks ?? []);
+    if (result.note) return result.mentions;
   }
   return [];
 }

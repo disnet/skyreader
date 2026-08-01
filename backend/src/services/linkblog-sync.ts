@@ -32,14 +32,14 @@ const MAX_NOTE_SCAN_CHARS = 4000;
 // for ANY resolvable handle — interop is universal. Surfacing it in-app is fully
 // client-side: the recipient's browser discovers it via Constellation's backlink
 // index (see frontend services/mentions.ts); there is no server-side notifier.
-async function resolveNoteMentions(note: string | undefined): Promise<MentionFacet[]> {
+async function resolveNoteMentionHandles(note: string | undefined): Promise<Map<string, string>> {
   const text = note?.trim();
-  if (!text) return [];
+  if (!text) return new Map();
   // Bound the regex input (see MAX_NOTE_SCAN_CHARS). Byte offsets stay valid
   // because we only ever slice off the tail, never shift the prefix.
   const scanText = text.length > MAX_NOTE_SCAN_CHARS ? text.slice(0, MAX_NOTE_SCAN_CHARS) : text;
   const tokens = parseHandleTokens(scanText);
-  if (tokens.length === 0) return [];
+  if (tokens.length === 0) return new Map();
 
   const uniqueHandles = [...new Set(tokens.map((t) => t.handle))].slice(0, MAX_RESOLVED_HANDLES);
   const resolved = new Map<string, string>();
@@ -54,12 +54,7 @@ async function resolveNoteMentions(note: string | undefined): Promise<MentionFac
     })
   );
 
-  const facets: MentionFacet[] = [];
-  for (const t of tokens) {
-    const did = resolved.get(t.handle);
-    if (did) facets.push(buildMentionFacet(t.byteStart, t.byteEnd, did));
-  }
-  return facets;
+  return resolved;
 }
 
 export const PUBLICATION_COLLECTION = 'site.standard.publication';
@@ -324,25 +319,91 @@ function websiteCardExcerpt(content: unknown): string {
   return '';
 }
 
-// Build the rich, interoperable body: the user's note as a text block, then the
-// shared article as a website link-card. The card carries the external URL so
+// Build the rich, interoperable body: the user's note as native text/blockquote
+// blocks, then the shared article as a website link-card. The card carries the external URL so
 // any pub.leaflet-aware reader (incl. Skyreader's own renderer in Phase 2) can
 // render and open it; the top-level `links` field is the machine-readable ref.
+type NoteBlock = { block: Record<string, unknown> };
+
+// Parse the editor's deliberately small Markdown subset into native Leaflet
+// blocks. Only a `>` at the beginning of a line is special; all other Markdown
+// remains plaintext for Leaflet-aware clients to interpret as they choose.
+export function noteToLeafletBlocks(
+  note: string | undefined,
+  resolvedHandles: Map<string, string> = new Map()
+): NoteBlock[] {
+  const text = note?.trim();
+  if (!text) return [];
+
+  const blocks: NoteBlock[] = [];
+  let kind: 'text' | 'blockquote' | undefined;
+  let lines: string[] = [];
+  const flush = () => {
+    if (!kind || lines.length === 0) return;
+    const plaintext = lines.join('\n');
+    const block: Record<string, unknown> = {
+      $type: `pub.leaflet.blocks.${kind}`,
+      plaintext,
+    };
+    const facets = parseHandleTokens(plaintext).flatMap((token) => {
+      const did = resolvedHandles.get(token.handle);
+      return did ? [buildMentionFacet(token.byteStart, token.byteEnd, did)] : [];
+    });
+    if (facets.length > 0) block.facets = facets;
+    blocks.push({ block });
+    kind = undefined;
+    lines = [];
+  };
+
+  for (const line of text.split('\n')) {
+    const quote = line.match(/^> ?(.*)$/);
+    if (!quote && line.trim() === '') {
+      flush();
+      continue;
+    }
+    const nextKind = quote ? 'blockquote' : 'text';
+    if (kind && kind !== nextKind) flush();
+    kind = nextKind;
+    lines.push(quote ? quote[1] : line);
+  }
+  flush();
+  return blocks;
+}
+
+export function replaceLeafletNoteRegion(
+  existing: unknown,
+  note: string,
+  resolvedHandles: Map<string, string> = new Map()
+): unknown {
+  const oldContent = existing as {
+    $type?: string;
+    pages?: Array<{ $type?: string; blocks?: Array<{ block?: Record<string, unknown> }> }>;
+  };
+  const oldBlocks = oldContent?.pages?.[0]?.blocks ?? [];
+  const firstPreserved = oldBlocks.findIndex(
+    (wrapper) =>
+      wrapper.block?.$type !== 'pub.leaflet.blocks.text' &&
+      wrapper.block?.$type !== 'pub.leaflet.blocks.blockquote'
+  );
+  const preserved = firstPreserved < 0 ? [] : oldBlocks.slice(firstPreserved);
+  return {
+    $type: oldContent?.$type || 'pub.leaflet.content',
+    pages: [
+      {
+        $type: oldContent?.pages?.[0]?.$type || 'pub.leaflet.pages.linearDocument',
+        blocks: [...noteToLeafletBlocks(note, resolvedHandles), ...preserved],
+      },
+      ...(oldContent?.pages?.slice(1) ?? []),
+    ],
+  };
+}
+
 function buildLeafletContent(
   input: LinkblogShareInput,
   excerpt: string,
-  noteFacets?: MentionFacet[]
+  resolvedHandles?: Map<string, string>
 ): unknown {
-  const blocks: Array<{ block: unknown }> = [];
-
-  const note = input.note?.trim();
-  if (note) {
-    const block: Record<string, unknown> = { $type: 'pub.leaflet.blocks.text', plaintext: note };
-    // Attach didMention facets so the note's @mentions are legible to any
-    // pub.leaflet-aware reader/notifier (Leaflet incl.) and to Constellation.
-    if (noteFacets && noteFacets.length > 0) block.facets = noteFacets;
-    blocks.push({ block });
-  }
+  const blocks: Array<{ block: unknown }> = noteToLeafletBlocks(input.note, resolvedHandles);
 
   const website: Record<string, unknown> = {
     $type: 'pub.leaflet.blocks.website',
@@ -362,7 +423,7 @@ export function buildLinkblogDocument(
   did: string,
   rkey: string,
   input: LinkblogShareInput,
-  mentionFacets?: MentionFacet[]
+  resolvedHandles?: Map<string, string>
 ): DocumentRecord {
   const now = new Date().toISOString();
   const excerpt = input.excerpt ? truncate(input.excerpt, MAX_EXCERPT_CHARS) : '';
@@ -379,7 +440,7 @@ export function buildLinkblogDocument(
     path: `/${rkey}`,
     publishedAt: input.articlePublishedAt || now,
     createdAt: now,
-    // The quote now lives inside the editable note (the leading text block), so
+    // The quote now lives inside the editable note (as a native blockquote), so
     // new shares no longer write a top-level `description`. Its presence is the
     // legacy marker the renderers use to keep showing the old standalone quote;
     // an absent description means "the note owns the body." The excerpt still
@@ -389,7 +450,7 @@ export function buildLinkblogDocument(
     textContent,
     tags: input.tags && input.tags.length > 0 ? input.tags : undefined,
     links,
-    content: buildLeafletContent(input, excerpt, mentionFacets),
+    content: buildLeafletContent(input, excerpt, resolvedHandles),
   };
 }
 
@@ -404,8 +465,8 @@ export async function writeLinkblogShare(
   const ensured = await ensureLinkblogPublication(session, env);
   if (!ensured.success) return ensured;
 
-  const mentionFacets = await resolveNoteMentions(input.note);
-  const record = buildLinkblogDocument(session.did, rkey, input, mentionFacets);
+  const resolvedHandles = await resolveNoteMentionHandles(input.note);
+  const record = buildLinkblogDocument(session.did, rkey, input, resolvedHandles);
   return createPDSClient(session).putRecord(DOCUMENT_COLLECTION, rkey, record);
 }
 
@@ -419,7 +480,7 @@ export async function deleteLinkblogShare(
 // Update just the note on an existing share document, leaving everything else
 // (createdAt, publishedAt, path, links/provenance, tags, the article link-card)
 // intact. We read the record back, swap the note-derived parts — the leaflet
-// text block and the flattened `textContent` — and putRecord under the same rkey.
+// note region and the flattened `textContent` — and putRecord under the same rkey.
 export async function updateLinkblogShareNote(
   session: Session,
   rkey: string,
@@ -435,22 +496,17 @@ export async function updateLinkblogShareNote(
   // comes from the website card (its durable home); `rec.description` is the
   // fallback for legacy records that still carry it at the top level. `...rec`
   // preserves that legacy `description` as-is — we never add one to a new record.
-  const articleUrl = rec.links?.find((l) => l.rel === 'related')?.uri || '';
   const excerpt = websiteCardExcerpt(rec.content) || rec.description || '';
   const trimmedNote = note.trim();
   // Re-resolve mentions on edit so added/removed @handles re-encode; recipients
   // pick up the change on their next Constellation poll.
-  const mentionFacets = await resolveNoteMentions(trimmedNote);
+  const resolvedHandles = await resolveNoteMentionHandles(trimmedNote);
 
   const updated: DocumentRecord = {
     ...rec,
     $type: DOCUMENT_COLLECTION,
     textContent: [trimmedNote, excerpt].filter(Boolean).join('\n\n') || undefined,
-    content: buildLeafletContent(
-      { articleUrl, articleTitle: rec.title, excerpt, note: trimmedNote },
-      excerpt,
-      mentionFacets
-    ),
+    content: replaceLeafletNoteRegion(rec.content, trimmedNote, resolvedHandles),
   };
 
   return pdsClient.putRecord(DOCUMENT_COLLECTION, rkey, updated);

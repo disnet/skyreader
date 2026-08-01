@@ -511,7 +511,7 @@ export const fixtures: CardFixture[] = [
   },
   {
     name: 'Link post · in-note quote',
-    note: 'The new model: the article quote lives inside the note as a Markdown blockquote (seeded at share time, editable). No separate excerpt quote — the note owns the body.',
+    note: 'The article quote is authored with Markdown markers, stored as a native Leaflet blockquote, and remains editable. No separate excerpt quote — the note owns the body.',
     props: {
       ...base,
       itemTitle: 'The Web We Lost',
