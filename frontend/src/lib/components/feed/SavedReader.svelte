@@ -974,6 +974,7 @@
               title={collectionTitle}
               onSavePiece={saveCollectionPiece}
               isPieceSaved={isCollectionPieceSaved}
+              pagedController={() => pagedController}
             />
           </div>
         {:else}

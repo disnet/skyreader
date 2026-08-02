@@ -92,6 +92,17 @@ export function handleFootnoteClick(
   // The marker is a placeholder link; never follow it.
   e.preventDefault();
 
+  // A modifier / non-primary click on a real link means "open a copy elsewhere",
+  // but this href is the sanitizer's rewrite to the source article, so honoring
+  // it would open the whole post in a new tab. An in-page jump has no
+  // open-elsewhere form either, so consume the gesture and do nothing — the same
+  // outcome on every surface, rather than one that depends on which entry point
+  // sees the click first.
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) {
+    e.stopPropagation();
+    return 'handled';
+  }
+
   // The surface can't jump right now — leave the click to the caller.
   if (options.jump === false) return 'suppressed';
 

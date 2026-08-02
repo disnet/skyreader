@@ -6,7 +6,7 @@
   import { decodeEntities } from '$lib/utils/entities';
   import { fetchCollectionDoc } from '$lib/utils/collectionPiece';
   import { magazineThemeVars, magazineFontHref } from '$lib/utils/magazineTheme';
-  import { footnoteNav } from '$lib/utils/footnoteNav';
+  import { footnoteNav, type FootnotePagedController } from '$lib/utils/footnoteNav';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import Icon from '$lib/components/Icon.svelte';
   import type { ReaderCollection, ReaderCollectionItem, SocialDocument } from '$lib/types';
@@ -16,6 +16,7 @@
     title,
     onSavePiece,
     isPieceSaved,
+    pagedController,
   }: {
     collection: ReaderCollection;
     // The edition's title (the document title, e.g. "Inflection points"), shown as
@@ -26,6 +27,12 @@
     onSavePiece?: (item: ReaderCollectionItem) => void | Promise<void>;
     // Reactive saved-state predicate for a piece.
     isPieceSaved?: (item: ReaderCollectionItem) => boolean;
+    // The paginator when the host renders this edition in paged reading mode
+    // (SavedReader puts it inside PagedView, so an edition can sit in a paged
+    // flow). A getter, not the controller itself: it's bound late and swapped on
+    // re-measure, and the action's `update` only runs when its parameter object
+    // changes.
+    pagedController?: () => FootnotePagedController | null | undefined;
   } = $props();
 
   let savingUri = $state<string | null>(null);
@@ -241,8 +248,9 @@
           <!-- Each piece is its own render, so footnote numbering restarts at 1
                per piece — scope the jump to this body. Without this the marker's
                href (rewritten by sanitizeHtml to the source article) would open
-               the original in a new tab. -->
-          <div class="piece-content" use:footnoteNav>{@html st.html}</div>
+               the original in a new tab. In paged mode the jump turns the page
+               rather than scrolling the paged viewport out of sync. -->
+          <div class="piece-content" use:footnoteNav={{ pagedController }}>{@html st.html}</div>
         {/if}
       </article>
     {/each}

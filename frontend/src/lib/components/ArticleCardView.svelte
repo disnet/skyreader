@@ -105,8 +105,12 @@
 
   // The collapsed preview line-clamps the body, so anything below the clamp
   // (notably the footnotes list) can't be jumped to — the card has to expand
-  // first. Mirrors the `class:truncated` condition on the body below.
-  const bodyClamped = $derived(selected && !expanded);
+  // first. `class:truncated` is set on every selected, unexpanded body, but it
+  // only *hides* anything when the body actually overflows the clamp, which is
+  // what `isTruncated` measures. A short Leaflet post that fits shows its
+  // footnotes on screen, so there the jump stays live (and the container's
+  // content tap would do nothing anyway).
+  const bodyClamped = $derived(selected && !expanded && isTruncated);
 
   // The content tap: keep the pure DOM guards here (let real links / media play),
   // then hand off the expand-vs-select decision to the container via onContentTap.

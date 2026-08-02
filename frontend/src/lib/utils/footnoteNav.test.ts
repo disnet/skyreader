@@ -43,7 +43,8 @@ function content(paged = false): {
 function click(
   el: HTMLElement,
   container: HTMLElement,
-  options?: Parameters<typeof handleFootnoteClick>[2]
+  options?: Parameters<typeof handleFootnoteClick>[2],
+  init: MouseEventInit = {}
 ): { result: string; prevented: boolean; reachedAncestor: boolean } {
   let result = 'none';
   let reachedAncestor = false;
@@ -55,7 +56,7 @@ function click(
   };
   el.addEventListener('click', onEl);
   document.body.addEventListener('click', onAncestor);
-  const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+  const event = new MouseEvent('click', { bubbles: true, cancelable: true, ...init });
   el.dispatchEvent(event);
   el.removeEventListener('click', onEl);
   document.body.removeEventListener('click', onAncestor);
@@ -143,6 +144,31 @@ describe('handleFootnoteClick', () => {
     expect(result).toBe('handled');
     expect(scrollIntoView).not.toHaveBeenCalled();
     expect(entry.classList.contains('footnote-flash')).toBe(false);
+  });
+
+  it('consumes a modifier click instead of opening the rewritten href', () => {
+    const { container, ref, entry } = content();
+    const { result, prevented, reachedAncestor } = click(ref, container, undefined, {
+      metaKey: true,
+    });
+    // sanitizeHtml rewrote the placeholder href to the source article, so letting
+    // the browser have this would open the whole post in a new tab. No jump
+    // either — "open elsewhere" has no in-page meaning.
+    expect(result).toBe('handled');
+    expect(prevented).toBe(true);
+    expect(reachedAncestor).toBe(false);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(entry.classList.contains('footnote-flash')).toBe(false);
+  });
+
+  it('consumes a modifier click even where jumping is off', () => {
+    // The clamped card preview: an ordinary tap falls through to expand the card,
+    // but a cmd-click still shouldn't leave the app.
+    const { container, ref } = content();
+    const { result, prevented } = click(ref, container, { jump: false }, { ctrlKey: true });
+    expect(result).toBe('handled');
+    expect(prevented).toBe(true);
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
   it('is inert for a malformed marker', () => {

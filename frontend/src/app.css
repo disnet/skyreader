@@ -326,9 +326,9 @@ body.sidebar-open-mobile {
    into four surfaces now (the saved reader, article cards, the daily magazine,
    and curated editions), so the rules live here rather than being copied into
    each component's scoped styles. Sized in `em` so they track the reader's
-   chosen article size; muted with `opacity` and a `currentColor` rule rather
-   than the app's text tokens, so they stay legible on a curated edition's own
-   themed background too. Text-first — no boxes, no backgrounds. */
+   chosen article size; muted off `currentColor` rather than the app's text
+   tokens, so they stay legible on a curated edition's own themed background
+   too. Text-first — no boxes, no backgrounds. */
 sup.footnote-ref {
   font-size: 0.7em;
   line-height: 0;
