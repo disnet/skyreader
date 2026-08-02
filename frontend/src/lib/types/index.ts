@@ -93,6 +93,12 @@ export interface LeafletFacetFeature {
   $type: string;
   uri?: string; // for links
   did?: string; // for mentions
+  // Footnotes travel inside the facet rather than as a block: the reference
+  // point is a facet over a marker character in the block's plaintext, and the
+  // footnote body rides along in contentPlaintext/contentFacets.
+  footnoteId?: string;
+  contentPlaintext?: string;
+  contentFacets?: LeafletFacet[];
 }
 
 export interface LeafletFacet {

@@ -9,6 +9,7 @@
   import { overlapShadow } from '$lib/actions/overlap-shadow';
   import type { ArticleCardViewProps } from './articleCardView.types';
   import { safeHref } from '$lib/utils/sanitize';
+  import { handleFootnoteClick } from '$lib/utils/footnoteNav';
 
   let {
     // data
@@ -105,6 +106,9 @@
   // The content tap: keep the pure DOM guards here (let real links / media play),
   // then hand off the expand-vs-select decision to the container via onContentTap.
   function handleContentClick(e: MouseEvent) {
+    // Footnote markers jump within this card's own content (scoped lookup, so
+    // other cards' footnotes on the same page don't interfere).
+    if (handleFootnoteClick(e, e.currentTarget as HTMLElement)) return;
     // A @mention opens the add-feed dialog for that account (to subscribe to their
     // publications) instead of following its bsky-profile href fallback.
     const mention = (e.target as HTMLElement).closest<HTMLElement>('a[data-mention-did]');
@@ -1407,6 +1411,36 @@
 
   .article-body :global(mark.highlight:hover) {
     background-color: color-mix(in srgb, #f5c518 40%, transparent);
+  }
+
+  /* Leaflet footnotes: a numbered reference in the text and the bodies in a
+     hairline-ruled list at the end. Text-first — no boxes, no backgrounds. */
+  .article-body :global(sup.footnote-ref) {
+    font-size: 0.7em;
+    line-height: 0;
+    padding: 0 0.1em;
+  }
+
+  .article-body :global(sup.footnote-ref a) {
+    text-decoration: none;
+  }
+
+  .article-body :global(section.footnotes) {
+    margin-top: 1.5rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--color-border);
+    font-size: 0.875em;
+    color: var(--color-text-secondary);
+  }
+
+  .article-body :global(a.footnote-backref) {
+    text-decoration: none;
+    margin-left: 0.25rem;
+  }
+
+  .article-body :global(.footnote-flash) {
+    background-color: color-mix(in srgb, var(--color-primary, #0066cc) 12%, transparent);
+    transition: background-color 0.4s ease;
   }
 
   .article-actions-container {

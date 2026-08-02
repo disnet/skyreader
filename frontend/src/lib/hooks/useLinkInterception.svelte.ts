@@ -1,4 +1,5 @@
 import { onDestroy } from 'svelte';
+import { handleFootnoteClick } from '$lib/utils/footnoteNav';
 
 export interface LinkMenuState {
   url: string;
@@ -24,6 +25,11 @@ export function useLinkInterception(params: LinkInterceptionParams) {
 
     const target = e.target as HTMLElement;
     if (target.closest(INTERACTIVE_MEDIA_SELECTOR)) return;
+
+    // Footnote markers are placeholder links that jump within this content, so
+    // they're resolved here rather than offered as an external link. This runs
+    // in the capture phase, ahead of any handler on the content itself.
+    if (handleFootnoteClick(e, currentEl ?? params.contentEl())) return;
 
     const link = target.closest('a[href]') as HTMLAnchorElement | null;
     if (!link) return;
