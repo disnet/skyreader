@@ -6,6 +6,7 @@
   import { decodeEntities } from '$lib/utils/entities';
   import { fetchCollectionDoc } from '$lib/utils/collectionPiece';
   import { magazineThemeVars, magazineFontHref } from '$lib/utils/magazineTheme';
+  import { footnoteNav } from '$lib/utils/footnoteNav';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import Icon from '$lib/components/Icon.svelte';
   import type { ReaderCollection, ReaderCollectionItem, SocialDocument } from '$lib/types';
@@ -237,7 +238,11 @@
             {/if}
           </p>
         {:else}
-          <div class="piece-content">{@html st.html}</div>
+          <!-- Each piece is its own render, so footnote numbering restarts at 1
+               per piece — scope the jump to this body. Without this the marker's
+               href (rewritten by sanitizeHtml to the source article) would open
+               the original in a new tab. -->
+          <div class="piece-content" use:footnoteNav>{@html st.html}</div>
         {/if}
       </article>
     {/each}

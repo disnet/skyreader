@@ -754,6 +754,10 @@
   const linkInterception = useLinkInterception({
     contentEl: () => bodyEl,
     enabled: () => true,
+    // While the preview is clamped, a footnote number is visible but its list
+    // entry is below the clamp: let the tap expand the card instead of jumping
+    // to something the reader can't see.
+    footnoteJump: () => !(selected && !expanded),
   });
 
   // Highlights hook

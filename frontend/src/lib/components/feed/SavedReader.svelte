@@ -546,6 +546,9 @@
   const linkInterception = useLinkInterception({
     contentEl: () => readerBodyEl,
     enabled: () => true,
+    // Paged mode: a footnote jump turns to the target's page (scrolling would
+    // slide the paged viewport sideways and desync every later page turn).
+    pagedController: () => pagedController,
   });
 
   // Highlights hook
@@ -1552,36 +1555,8 @@
     background-color: color-mix(in srgb, #f5c518 40%, transparent);
   }
 
-  /* Leaflet footnotes: a numbered reference in the text, the bodies in a
-     hairline-ruled list at the end. Text-first — no boxes, no backgrounds. */
-  .reader-body :global(sup.footnote-ref) {
-    font-size: 0.7em;
-    line-height: 0;
-    padding: 0 0.1em;
-  }
-
-  .reader-body :global(sup.footnote-ref a) {
-    text-decoration: none;
-  }
-
-  .reader-body :global(section.footnotes) {
-    margin-top: 2rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--color-border);
-    font-size: 0.875em;
-    color: var(--color-text-secondary);
-  }
-
-  .reader-body :global(a.footnote-backref) {
-    text-decoration: none;
-    margin-left: 0.25rem;
-  }
-
-  /* Brief arrival highlight so the jump is legible. */
-  .reader-body :global(.footnote-flash) {
-    background-color: color-mix(in srgb, var(--color-primary, #0066cc) 12%, transparent);
-    transition: background-color 0.4s ease;
-  }
+  /* Leaflet footnote styling is shared by every surface that renders leaflet
+     content, so it lives in app.css rather than here. */
 
   /* On narrower desktops, drop the action labels to icons — matches the feed
      header's 1100px breakpoint so both collapse at the same width. */

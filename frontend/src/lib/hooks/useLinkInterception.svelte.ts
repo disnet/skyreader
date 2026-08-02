@@ -1,5 +1,5 @@
 import { onDestroy } from 'svelte';
-import { handleFootnoteClick } from '$lib/utils/footnoteNav';
+import { handleFootnoteClick, type FootnotePagedController } from '$lib/utils/footnoteNav';
 
 export interface LinkMenuState {
   url: string;
@@ -12,6 +12,13 @@ const INTERACTIVE_MEDIA_SELECTOR = 'video, audio, iframe, embed, object';
 interface LinkInterceptionParams {
   contentEl: () => HTMLElement | undefined;
   enabled: () => boolean;
+  // Footnote markers jump within the content. False while the surface can't
+  // honor a jump (the clamped card preview, whose footnotes list sits below the
+  // line clamp) — the click is then left to the host's own tap handling.
+  footnoteJump?: () => boolean;
+  // The paginator when this content is laid out in paged mode, so a footnote
+  // jump turns the page instead of scrolling (which would desync the columns).
+  pagedController?: () => FootnotePagedController | null | undefined;
 }
 
 export function useLinkInterception(params: LinkInterceptionParams) {
@@ -28,8 +35,14 @@ export function useLinkInterception(params: LinkInterceptionParams) {
 
     // Footnote markers are placeholder links that jump within this content, so
     // they're resolved here rather than offered as an external link. This runs
-    // in the capture phase, ahead of any handler on the content itself.
-    if (handleFootnoteClick(e, currentEl ?? params.contentEl())) return;
+    // in the capture phase, ahead of any handler on the content itself. A
+    // 'suppressed' result already blocked the (rewritten) href but deliberately
+    // left propagation alone, so the host's content tap still runs.
+    const footnote = handleFootnoteClick(e, currentEl ?? params.contentEl(), {
+      jump: params.footnoteJump?.() ?? true,
+      pagedController: params.pagedController,
+    });
+    if (footnote !== 'none') return;
 
     const link = target.closest('a[href]') as HTMLAnchorElement | null;
     if (!link) return;

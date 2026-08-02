@@ -103,12 +103,24 @@
   // any trailing slash so it reads as a clean address rather than a raw href.
   const linkDisplayUrl = $derived((itemUrl ?? '').replace(/^https?:\/\//, '').replace(/\/+$/, ''));
 
+  // The collapsed preview line-clamps the body, so anything below the clamp
+  // (notably the footnotes list) can't be jumped to — the card has to expand
+  // first. Mirrors the `class:truncated` condition on the body below.
+  const bodyClamped = $derived(selected && !expanded);
+
   // The content tap: keep the pure DOM guards here (let real links / media play),
   // then hand off the expand-vs-select decision to the container via onContentTap.
   function handleContentClick(e: MouseEvent) {
     // Footnote markers jump within this card's own content (scoped lookup, so
-    // other cards' footnotes on the same page don't interfere).
-    if (handleFootnoteClick(e, e.currentTarget as HTMLElement)) return;
+    // other cards' footnotes on the same page don't interfere) — except while
+    // the preview is clamped, where the footnotes list is below the clamp: there
+    // the tap is only kept from following its href and falls through to the
+    // ordinary expand tap below (skipping the anchor guard, since the marker is
+    // an anchor).
+    const footnote = handleFootnoteClick(e, e.currentTarget as HTMLElement, {
+      jump: !bodyClamped,
+    });
+    if (footnote === 'handled') return;
     // A @mention opens the add-feed dialog for that account (to subscribe to their
     // publications) instead of following its bsky-profile href fallback.
     const mention = (e.target as HTMLElement).closest<HTMLElement>('a[data-mention-did]');
@@ -121,7 +133,7 @@
         return;
       }
     }
-    if ((e.target as HTMLElement).closest('a')) return;
+    if (footnote !== 'suppressed' && (e.target as HTMLElement).closest('a')) return;
     if ((e.target as HTMLElement).closest('video, audio, iframe')) return;
     // A click that ends a drag-select shouldn't expand/collapse the card — let
     // the text selection stand so it can be highlighted (matters most for short
@@ -1413,34 +1425,12 @@
     background-color: color-mix(in srgb, #f5c518 40%, transparent);
   }
 
-  /* Leaflet footnotes: a numbered reference in the text and the bodies in a
-     hairline-ruled list at the end. Text-first — no boxes, no backgrounds. */
-  .article-body :global(sup.footnote-ref) {
-    font-size: 0.7em;
-    line-height: 0;
-    padding: 0 0.1em;
-  }
-
-  .article-body :global(sup.footnote-ref a) {
-    text-decoration: none;
-  }
-
+  /* Leaflet footnote styling is shared by every surface that renders leaflet
+     content, so it lives in app.css rather than here. The card's tighter
+     rhythm for the trailing list is the one local override. */
   .article-body :global(section.footnotes) {
     margin-top: 1.5rem;
     padding-top: 0.75rem;
-    border-top: 1px solid var(--color-border);
-    font-size: 0.875em;
-    color: var(--color-text-secondary);
-  }
-
-  .article-body :global(a.footnote-backref) {
-    text-decoration: none;
-    margin-left: 0.25rem;
-  }
-
-  .article-body :global(.footnote-flash) {
-    background-color: color-mix(in srgb, var(--color-primary, #0066cc) 12%, transparent);
-    transition: background-color 0.4s ease;
   }
 
   .article-actions-container {
