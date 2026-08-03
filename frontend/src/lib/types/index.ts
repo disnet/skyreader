@@ -777,6 +777,16 @@ export interface LinkblogPublication {
   description?: string;
   iconUrl?: string;
   exists: boolean;
+  external: boolean;
+  format: 'leaflet' | 'pckt' | 'offprint' | 'markpub';
+}
+
+export interface LinkblogPublicationChoice {
+  uri: string;
+  rkey: string;
+  name: string;
+  url?: string;
+  isDefault: boolean;
 }
 
 export interface ParsedFeed {

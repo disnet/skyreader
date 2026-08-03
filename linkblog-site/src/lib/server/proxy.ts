@@ -10,6 +10,21 @@ export interface ProxyConfig {
   feedProxySecret?: string;
 }
 
+export async function resolveLinkblogTarget(
+  apiBase: string,
+  did: string
+): Promise<{ siteUri: string; defaultSiteUri: string }> {
+  const fallback = publicationUri(did);
+  if (!apiBase) return { siteUri: fallback, defaultSiteUri: fallback };
+  try {
+    const res = await fetch(`${apiBase}/api/linkblog/resolve/${encodeURIComponent(did)}`);
+    if (!res.ok) throw new Error();
+    return (await res.json()) as { siteUri: string; defaultSiteUri: string };
+  } catch {
+    return { siteUri: fallback, defaultSiteUri: fallback };
+  }
+}
+
 function proxyHeaders(cfg: ProxyConfig): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (cfg.feedProxySecret) headers['X-Proxy-Secret'] = cfg.feedProxySecret;
@@ -20,14 +35,15 @@ function proxyHeaders(cfg: ProxyConfig): Record<string, string> {
 // dedicated skyreader-links publication. Returns newest-shared-first.
 export async function fetchLinkblogDocuments(
   cfg: ProxyConfig,
-  did: string
+  did: string,
+  siteUris: string[] = [publicationUri(did)]
 ): Promise<ProxyDocument[]> {
   try {
     const res = await fetch(`${cfg.feedProxyUrl}/documents`, {
       method: 'POST',
       headers: proxyHeaders(cfg),
       body: JSON.stringify({
-        authors: [{ did, siteUri: publicationUri(did) }],
+        authors: [...new Set(siteUris)].map((siteUri) => ({ did, siteUri })),
       }),
     });
     if (!res.ok) return [];
@@ -35,7 +51,11 @@ export async function fetchLinkblogDocuments(
     const data = (await res.json()) as {
       authors?: Array<{ documents?: ProxyDocument[]; status?: string }>;
     };
-    const docs = data.authors?.[0]?.documents ?? [];
+    const docs = [
+      ...new Map(
+        (data.authors ?? []).flatMap((a) => a.documents ?? []).map((d) => [d.recordUri, d])
+      ).values(),
+    ];
     // A linkblog reads newest-shared-first. Order by when each link was shared
     // (the record's `createdAt`), not by the article's own publish date — the
     // proxy sorts its generic document feed by `publishedAt`, which would float
