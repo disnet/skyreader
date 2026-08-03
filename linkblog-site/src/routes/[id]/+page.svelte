@@ -15,7 +15,7 @@
   const countLabel = $derived(count > 0 ? `${count} ${count === 1 ? 'link' : 'links'}` : '');
 
   const feedUrl = $derived(feedUrlFor(data.origin, data.did));
-  const publication = $derived(publicationUri(data.did));
+  const publication = $derived(data.publication || publicationUri(data.did));
   const pageUrl = $derived(`${data.origin}/${encodeURIComponent(data.did)}`);
   const ogDescription = $derived(
     data.pub?.description || `Links shared by ${data.profile?.displayName || data.did}.`

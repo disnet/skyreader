@@ -19,7 +19,7 @@
   import { api, RateLimitError } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
-  import type { LinkblogPublication, SaveBacking } from '$lib/types';
+  import type { LinkblogPublication, LinkblogPublicationChoice, SaveBacking } from '$lib/types';
 
   $effect(() => {
     viewTitleStore.set('Settings');
@@ -101,6 +101,9 @@
   let isSavingLinkblog = $state(false);
   let linkblogError = $state<string | null>(null);
   let linkblogSuccess = $state<string | null>(null);
+  let linkblogChoices = $state<LinkblogPublicationChoice[]>([]);
+  let selectedLinkblogUri = $state('');
+  let selectedLinkblogFormat = $state<LinkblogPublication['format']>('leaflet');
 
   onMount(async () => {
     if (!auth.isAuthenticated) {
@@ -121,14 +124,40 @@
     if (!syncStore.isOnline) return;
     isLinkblogLoading = true;
     try {
-      const pub = await api.getLinkblogPublication();
+      const [pub, choices] = await Promise.all([
+        api.getLinkblogPublication(),
+        api.listLinkblogPublications(),
+      ]);
       linkblogPub = pub;
+      linkblogChoices = choices.publications;
+      selectedLinkblogUri = pub.uri;
+      selectedLinkblogFormat = pub.format;
       linkblogName = pub.name;
       linkblogDescription = pub.description ?? '';
     } catch (error) {
       console.error('Failed to load linkblog publication:', error);
     } finally {
       isLinkblogLoading = false;
+    }
+  }
+
+  async function handleConnectLinkblog() {
+    if (!selectedLinkblogUri) return;
+    isSavingLinkblog = true;
+    linkblogError = null;
+    try {
+      const choice = linkblogChoices.find((p) => p.uri === selectedLinkblogUri);
+      const pub = choice?.isDefault
+        ? await api.disconnectLinkblogPublication()
+        : await api.connectLinkblogPublication(selectedLinkblogUri, selectedLinkblogFormat);
+      linkblogPub = pub;
+      linkblogName = pub.name;
+      linkblogDescription = pub.description ?? '';
+      linkblogSuccess = 'Publication connected.';
+    } catch (error) {
+      linkblogError = error instanceof Error ? error.message : 'Failed to connect publication.';
+    } finally {
+      isSavingLinkblog = false;
     }
   }
 
@@ -543,12 +572,42 @@
           >
         </p>
       {/if}
+      {#if linkblogChoices.length > 0}
+        <div class="linkblog-field">
+          <label for="linkblog-publication">Publish new links to</label>
+          <select id="linkblog-publication" bind:value={selectedLinkblogUri}>
+            {#each linkblogChoices as publication}
+              <option value={publication.uri}
+                >{publication.name}{publication.isDefault ? ' (Skyreader)' : ''}</option
+              >
+            {/each}
+          </select>
+        </div>
+        <div class="linkblog-field">
+          <label for="linkblog-format">Content format</label>
+          <select id="linkblog-format" bind:value={selectedLinkblogFormat}>
+            <option value="leaflet">Leaflet</option><option value="pckt">pckt</option>
+            <option value="offprint">Offprint</option><option value="markpub">Markdown</option>
+          </select>
+        </div>
+        <button
+          class="btn btn-secondary"
+          onclick={handleConnectLinkblog}
+          disabled={isSavingLinkblog}>Connect publication</button
+        >
+        <p class="setting-description">
+          New links are public and portable across the Atmosphere. Existing posts stay where they
+          are. Connected publications remain managed by their home app; Skyreader discovery works
+          best with the Skyreader linkblog.
+        </p>
+      {/if}
       <div class="linkblog-field">
         <label for="linkblog-name">Name</label>
         <input
           id="linkblog-name"
           type="text"
           bind:value={linkblogName}
+          disabled={linkblogPub?.external}
           maxlength="120"
           placeholder="My links"
         />
@@ -558,12 +617,17 @@
         <textarea
           id="linkblog-description"
           bind:value={linkblogDescription}
+          disabled={linkblogPub?.external}
           rows="2"
           maxlength="500"
           placeholder="Optional"
         ></textarea>
       </div>
-      <button class="btn btn-secondary" onclick={handleSaveLinkblog} disabled={isSavingLinkblog}>
+      <button
+        class="btn btn-secondary"
+        onclick={handleSaveLinkblog}
+        disabled={isSavingLinkblog || linkblogPub?.external}
+      >
         {#if isSavingLinkblog}Saving…{:else}Save{/if}
       </button>
       {#if linkblogError}
