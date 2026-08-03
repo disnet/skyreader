@@ -25,6 +25,9 @@ import {
   handleUpdatePublication,
   handleDiscover,
   handleDiscoverFriends,
+  handleListPublications,
+  handleConnectPublication,
+  handleResolvePublication,
 } from './routes/linkblog';
 import { handleAtmosphereSubscription } from './routes/atmosphere';
 import {
@@ -288,6 +291,17 @@ export default {
           } else {
             response = await handleUpdatePublication(request, env);
           }
+          break;
+        case url.pathname === '/api/linkblog/publications':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleListPublications(request, env);
+          break;
+        case url.pathname === '/api/linkblog/publication/connect':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleConnectPublication(request, env);
+          break;
+        case url.pathname.startsWith('/api/linkblog/resolve/'):
+          response = await handleResolvePublication(request, env);
           break;
 
         // Subscribe via the Atmosphere — writes the portable

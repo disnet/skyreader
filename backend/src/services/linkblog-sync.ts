@@ -78,6 +78,46 @@ export const LINKBLOG_RKEY = 'skyreader-links';
 // See LINKBLOG_PLAN.md Phase 6.
 export const LINKBLOG_MARKER_URL = 'https://skyreader.app/linkblog';
 
+export type ContentFormat = 'leaflet' | 'pckt' | 'offprint' | 'markpub';
+export interface LinkblogTarget {
+  siteUri: string;
+  format: ContentFormat;
+  external: boolean;
+}
+
+const CONTENT_FORMATS = new Set<ContentFormat>(['leaflet', 'pckt', 'offprint', 'markpub']);
+
+export async function getLinkblogTarget(env: Env, did: string): Promise<LinkblogTarget> {
+  const fallback: LinkblogTarget = {
+    siteUri: publicationUri(did),
+    format: 'leaflet',
+    external: false,
+  };
+  try {
+    const row = await env.DB.prepare(
+      'SELECT linkblog_publication, linkblog_content_format FROM user_settings WHERE user_did = ?'
+    )
+      .bind(did)
+      .first<{ linkblog_publication: string | null; linkblog_content_format: string | null }>();
+    if (!row?.linkblog_publication) return fallback;
+    const match = row.linkblog_publication.match(
+      /^at:\/\/([^/]+)\/site\.standard\.publication\/([^/]+)$/
+    );
+    if (!match || match[1] !== did) return fallback;
+    const format = CONTENT_FORMATS.has(row.linkblog_content_format as ContentFormat)
+      ? (row.linkblog_content_format as ContentFormat)
+      : 'leaflet';
+    return {
+      siteUri: row.linkblog_publication,
+      format,
+      external: row.linkblog_publication !== fallback.siteUri,
+    };
+  } catch {
+    // Deploys remain usable while a migration is rolling out.
+    return fallback;
+  }
+}
+
 // Generous excerpt cap — the excerpt is the only durable copy if the source
 // link-rots or paywalls, so keep it roomy, but bound it so a record can't bloat.
 const MAX_EXCERPT_CHARS = 1500;
@@ -134,6 +174,8 @@ export interface PublicationMeta {
   description?: string;
   iconUrl?: string;
   exists: boolean;
+  external: boolean;
+  format: ContentFormat;
 }
 
 function iconUrlFromBlob(did: string, icon: BlobRef | undefined): string | undefined {
@@ -144,11 +186,10 @@ function iconUrlFromBlob(did: string, icon: BlobRef | undefined): string | undef
 // Read the current linkblog publication, or synthesize sensible defaults when it
 // doesn't exist yet (so the settings UI can render before the first share).
 export async function getPublicationMeta(session: Session, env: Env): Promise<PublicationMeta> {
+  const target = await getLinkblogTarget(env, session.did);
   const pdsClient = createPDSClient(session);
-  const result = await pdsClient.getRecord<PublicationRecord>(
-    PUBLICATION_COLLECTION,
-    LINKBLOG_RKEY
-  );
+  const rkey = target.siteUri.split('/').pop() || LINKBLOG_RKEY;
+  const result = await pdsClient.getRecord<PublicationRecord>(PUBLICATION_COLLECTION, rkey);
 
   const url = linkblogBaseUrl(env, session.did);
   if (!result.success) {
@@ -157,21 +198,25 @@ export async function getPublicationMeta(session: Session, env: Env): Promise<Pu
       url,
       name: defaultPublicationName(session),
       exists: false,
+      external: target.external,
+      format: target.format,
     };
   }
 
   const value = result.data.value;
   return {
-    uri: publicationUri(session.did),
+    uri: target.siteUri,
     // Report the current canonical public URL, not the record's stored `value.url`
     // — older records still point at the previous origin (skyreader.app/blogs/…)
     // until lazy-backfilled, and the UI should always show where the linkblog
     // actually lives now (the stored field self-corrects on the user's next share).
-    url,
+    url: target.external ? value.url : url,
     name: value.name || defaultPublicationName(session),
     description: value.description,
     iconUrl: iconUrlFromBlob(session.did, value.icon),
     exists: true,
+    external: target.external,
+    format: target.format,
   };
 }
 
@@ -423,7 +468,9 @@ export function buildLinkblogDocument(
   did: string,
   rkey: string,
   input: LinkblogShareInput,
-  resolvedHandles?: Map<string, string>
+  resolvedHandles?: Map<string, string>,
+  siteUri = publicationUri(did),
+  format: ContentFormat = 'leaflet'
 ): DocumentRecord {
   const now = new Date().toISOString();
   const excerpt = input.excerpt ? truncate(input.excerpt, MAX_EXCERPT_CHARS) : '';
@@ -435,7 +482,7 @@ export function buildLinkblogDocument(
 
   return {
     $type: DOCUMENT_COLLECTION,
-    site: publicationUri(did),
+    site: siteUri,
     title: input.articleTitle?.trim() || input.articleUrl,
     path: `/${rkey}`,
     publishedAt: input.articlePublishedAt || now,
@@ -450,8 +497,53 @@ export function buildLinkblogDocument(
     textContent,
     tags: input.tags && input.tags.length > 0 ? input.tags : undefined,
     links,
-    content: buildLeafletContent(input, excerpt, resolvedHandles),
+    content: buildContent(format, input, excerpt, resolvedHandles),
   };
+}
+
+function buildContent(
+  format: ContentFormat,
+  input: LinkblogShareInput,
+  excerpt: string,
+  handles?: Map<string, string>
+): unknown {
+  if (format === 'leaflet') return buildLeafletContent(input, excerpt, handles);
+  if (format === 'markpub') {
+    const title = (input.articleTitle || input.articleUrl).replace(/([\\[\]()])/g, '\\$1');
+    return {
+      $type: 'at.markpub.markdown',
+      text: {
+        markdown: [input.note?.trim(), `[${title}](${input.articleUrl})`]
+          .filter(Boolean)
+          .join('\n\n'),
+      },
+    };
+  }
+  const prefix = format === 'pckt' ? 'blog.pckt.block.' : 'app.offprint.block.';
+  const items: Array<Record<string, unknown>> = (
+    input.note?.trim() ? input.note.trim().split(/\n\s*\n/) : []
+  ).map((paragraph) => {
+    const quoted = paragraph.startsWith('>');
+    const plaintext = paragraph.replace(/^> ?/gm, '');
+    if (!quoted) return { $type: `${prefix}text`, plaintext };
+    const text = { $type: `${prefix}text`, plaintext };
+    return { $type: `${prefix}blockquote`, content: [text] };
+  });
+  if (format === 'pckt')
+    items.push({
+      $type: 'blog.pckt.block.website',
+      attrs: {
+        src: input.articleUrl,
+        title: input.articleTitle,
+        description: excerpt || undefined,
+      },
+    });
+  else
+    items.push({
+      $type: 'app.offprint.block.text',
+      plaintext: `${input.articleTitle || input.articleUrl} — ${input.articleUrl}`,
+    });
+  return { $type: format === 'pckt' ? 'blog.pckt.content' : 'app.offprint.content', items };
 }
 
 // Ensure the publication exists, then write the share document. The rkey is
@@ -462,11 +554,21 @@ export async function writeLinkblogShare(
   rkey: string,
   input: LinkblogShareInput
 ): Promise<PDSResult<PutRecordResponse>> {
-  const ensured = await ensureLinkblogPublication(session, env);
-  if (!ensured.success) return ensured;
+  const target = await getLinkblogTarget(env, session.did);
+  if (!target.external) {
+    const ensured = await ensureLinkblogPublication(session, env);
+    if (!ensured.success) return ensured;
+  }
 
   const resolvedHandles = await resolveNoteMentionHandles(input.note);
-  const record = buildLinkblogDocument(session.did, rkey, input, resolvedHandles);
+  const record = buildLinkblogDocument(
+    session.did,
+    rkey,
+    input,
+    resolvedHandles,
+    target.siteUri,
+    target.format
+  );
   return createPDSClient(session).putRecord(DOCUMENT_COLLECTION, rkey, record);
 }
 
@@ -491,6 +593,14 @@ export async function updateLinkblogShareNote(
   if (!existing.success) return existing;
 
   const rec = existing.data.value;
+  const contentType = (rec.content as { $type?: string } | undefined)?.$type;
+  if (contentType !== 'pub.leaflet.content') {
+    return {
+      success: false,
+      error: `Editing ${contentType || 'unknown'} linkblog content is not supported yet`,
+      retryable: false,
+    };
+  }
   // Reconstruct the article link-card inputs from the stored record so the
   // rebuilt content keeps the same external link, title, and excerpt. The excerpt
   // comes from the website card (its durable home); `rec.description` is the

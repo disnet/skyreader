@@ -79,6 +79,33 @@ describe('buildLinkblogDocument', () => {
   });
 });
 
+describe('connected publication formats', () => {
+  const target = `at://${DID}/site.standard.publication/existing`;
+  const input = { articleUrl: 'https://example.com/post', articleTitle: 'Post', note: 'A note' };
+
+  it.each([
+    ['pckt', 'blog.pckt.content'],
+    ['offprint', 'app.offprint.content'],
+    ['markpub', 'at.markpub.markdown'],
+  ] as const)('writes %s content while preserving the selected site URI', (format, type) => {
+    const doc = buildLinkblogDocument(DID, RKEY, input, undefined, target, format);
+    expect(doc.site).toBe(target);
+    expect(doc.content).toMatchObject({ $type: type });
+    expect(doc.links).toEqual([{ uri: input.articleUrl, rel: 'related' }]);
+  });
+
+  it('uses the observed pckt website attrs and markpub text wrapper shapes', () => {
+    const pckt = buildLinkblogDocument(DID, RKEY, input, undefined, target, 'pckt').content as {
+      items: Array<{ $type: string; attrs?: { src?: string } }>;
+    };
+    expect(pckt.items.at(-1)?.attrs?.src).toBe(input.articleUrl);
+    const markpub = buildLinkblogDocument(DID, RKEY, input, undefined, target, 'markpub').content;
+    expect(markpub).toMatchObject({
+      text: { markdown: expect.stringContaining(input.articleUrl) },
+    });
+  });
+});
+
 describe('noteToLeafletBlocks', () => {
   it('converts mixed commentary and multiline quotes into ordered native blocks', () => {
     const blocks = noteToLeafletBlocks('Before\n\n> first\n> second\n>\n> fourth\n\nAfter');

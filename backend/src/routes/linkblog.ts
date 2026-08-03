@@ -10,12 +10,15 @@ import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
 import {
   deleteLinkblogShare,
   getPublicationMeta,
+  getLinkblogTarget,
   publicationUri,
   updateLinkblogShareNote,
   updatePublication,
   writeLinkblogShare,
   type LinkblogShareInput,
+  type ContentFormat,
 } from '../services/linkblog-sync';
+import { createPDSClient } from '../services/pds-client';
 import { getLinkblogDiscover, getLinkblogFriends } from '../services/linkblog-discovery';
 
 function json(body: unknown, status = 200): Response {
@@ -106,7 +109,7 @@ export async function handleCreateLinkblogShare(request: Request, env: Env): Pro
     uri: result.data.uri,
     cid: result.data.cid,
     rkey,
-    publication: publicationUri(session.did),
+    publication: (await getLinkblogTarget(env, session.did)).siteUri,
   });
 }
 
@@ -215,6 +218,9 @@ export async function handleUpdatePublication(request: Request, env: Env): Promi
   if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
     return insufficientScopesResponse();
   }
+  if ((await getLinkblogTarget(env, session.did)).external) {
+    return json({ error: 'This publication is managed by its home app' }, 409);
+  }
 
   let body: { name?: string; description?: string };
   try {
@@ -241,4 +247,84 @@ export async function handleUpdatePublication(request: Request, env: Env): Promi
 
   const meta = await getPublicationMeta(session, env);
   return json(meta);
+}
+
+const FORMATS = new Set<ContentFormat>(['leaflet', 'pckt', 'offprint', 'markpub']);
+
+export async function handleListPublications(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Unauthorized' }, 401);
+  const result = await createPDSClient(session).listAllRecords<{ name?: string; url?: string }>(
+    'site.standard.publication',
+    { maxPages: 5, maxRecords: 200 }
+  );
+  if (!result.success) return json({ error: result.error }, 502);
+  return json({
+    publications: result.data.map((record) => ({
+      uri: record.uri,
+      rkey: record.uri.split('/').pop(),
+      name: record.value.name || 'Untitled publication',
+      url: record.value.url,
+      isDefault: record.uri === publicationUri(session.did),
+    })),
+  });
+}
+
+export async function handleConnectPublication(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Unauthorized' }, 401);
+  const now = Math.floor(Date.now() / 1000);
+  if (request.method === 'DELETE') {
+    await env.DB.prepare(
+      'UPDATE user_settings SET linkblog_publication = NULL, linkblog_content_format = NULL, updated_at = ? WHERE user_did = ?'
+    )
+      .bind(now, session.did)
+      .run();
+    return json(await getPublicationMeta(session, env));
+  }
+  if (request.method !== 'PUT') return json({ error: 'Method not allowed' }, 405);
+  let body: { publicationUri?: string; format?: ContentFormat };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+  const match = body.publicationUri?.match(
+    /^at:\/\/([^/]+)\/site\.standard\.publication\/([^/]+)$/
+  );
+  if (!match || match[1] !== session.did)
+    return json({ error: 'Choose a publication from your own Atmosphere account' }, 400);
+  if (body.format && !FORMATS.has(body.format))
+    return json({ error: 'Unsupported content format' }, 400);
+  const exists = await createPDSClient(session).getRecord('site.standard.publication', match[2]);
+  if (!exists.success) return json({ error: 'Publication not found' }, 404);
+  const format = body.format || 'leaflet';
+  await env.DB.prepare(
+    `INSERT INTO user_settings (user_did, linkblog_publication, linkblog_content_format, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_did) DO UPDATE SET linkblog_publication=excluded.linkblog_publication,
+    linkblog_content_format=excluded.linkblog_content_format, updated_at=excluded.updated_at`
+  )
+    .bind(session.did, body.publicationUri, format, now, now)
+    .run();
+  await env.DB.prepare(
+    `UPDATE subscriptions_cache SET feed_url = ?, atmosphere_synced = NULL, updated_at = ?
+    WHERE source_type = 'atproto.documents' AND subject_did = ? AND feed_url = ?`
+  )
+    .bind(body.publicationUri, now * 1000, session.did, publicationUri(session.did))
+    .run();
+  return json(await getPublicationMeta(session, env));
+}
+
+export async function handleResolvePublication(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
+  const did = decodeURIComponent(new URL(request.url).pathname.split('/').pop() || '');
+  if (!did.startsWith('did:')) return json({ error: 'Invalid DID' }, 400);
+  const target = await getLinkblogTarget(env, did);
+  return new Response(
+    JSON.stringify({ siteUri: target.siteUri, defaultSiteUri: publicationUri(did) }),
+    {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=60' },
+    }
+  );
 }
