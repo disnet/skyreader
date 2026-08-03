@@ -1,4 +1,5 @@
 import type { ArticleCardViewProps } from '$lib/components/articleCardView.types';
+import { renderLeafletContent } from '$lib/utils/leaflet-renderer';
 
 /**
  * Mock view-models for ArticleCardView — one per visual state. These are plain
@@ -40,6 +41,75 @@ const BODY_HTML_LONG =
       `shadow while this text scrolls beneath it, then settles flat once the ` +
       `card's end comes into view.</p>`
   ).join('\n');
+
+// A Leaflet document whose footnotes are facets over a `*` marker — the shape a
+// leaflet.pub post arrives in. Rendered here (not hand-written HTML) so the dev
+// page exercises the real renderer: numbered references, the list at the end,
+// and the click-to-jump wiring.
+const LEAFLET_FOOTNOTES_HTML = renderLeafletContent(
+  {
+    $type: 'pub.leaflet.content',
+    pages: [
+      {
+        $type: 'pub.leaflet.pages.linearDocument',
+        blocks: [
+          {
+            block: {
+              $type: 'pub.leaflet.blocks.text',
+              plaintext:
+                'Reading in public used to mean a blogroll and a feed reader.* The tools got quieter; the habit did not.',
+              facets: [
+                {
+                  index: { byteStart: 60, byteEnd: 61 },
+                  features: [
+                    {
+                      $type: 'pub.leaflet.richtext.facet#footnote',
+                      footnoteId: 'fn-blogroll',
+                      contentPlaintext:
+                        'Both are still around, and both are better than they were. See the archive.',
+                      contentFacets: [
+                        {
+                          index: { byteStart: 67, byteEnd: 74 },
+                          features: [
+                            {
+                              $type: 'pub.leaflet.richtext.facet#link',
+                              uri: 'https://example.com/archive',
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+          {
+            block: {
+              $type: 'pub.leaflet.blocks.text',
+              plaintext:
+                'What changed is where the record lives.* A reading life that outlives one app is worth the small friction of owning it.',
+              facets: [
+                {
+                  index: { byteStart: 39, byteEnd: 40 },
+                  features: [
+                    {
+                      $type: 'pub.leaflet.richtext.facet#footnote',
+                      footnoteId: 'fn-record',
+                      contentPlaintext:
+                        'Portability is the foundation here, not the pitch — it only matters because it keeps the reading.',
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  },
+  'did:plc:example'
+);
 
 const base: ArticleCardViewProps = {
   itemUrl: 'https://arstechnica.com/example-article',
@@ -675,6 +745,24 @@ export const fixtures: CardFixture[] = [
           },
         ],
       },
+    },
+  },
+  {
+    name: 'Leaflet · footnotes',
+    note: 'A Leaflet post with footnote facets: each reference renders as a numbered superscript instead of a bare "*", and the bodies collect in a ruled list at the end. Tap a number to jump down, ↩ to come back.',
+    props: {
+      ...base,
+      itemTitle: 'Notes on reading in public',
+      displayFeedTitle: 'leaflet.pub',
+      feedTitle: 'A Quiet Publication',
+      isDocumentMode: true,
+      selected: true,
+      isOpen: true,
+      expanded: true,
+      hasContent: true,
+      readTimeMinutes: 2,
+      sanitizedContent: LEAFLET_FOOTNOTES_HTML,
+      hasOpenFullscreen: true,
     },
   },
   {

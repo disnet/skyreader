@@ -321,6 +321,57 @@ body.sidebar-open-mobile {
    px value on the document root by AppShell (see preferences store), so there
    are no discrete size selectors here. */
 
+/* Leaflet footnotes — a numbered reference in the text and the bodies in a
+   hairline-ruled list at the end (see lib/utils/leaflet-renderer.ts). Rendered
+   into four surfaces now (the saved reader, article cards, the daily magazine,
+   and curated editions), so the rules live here rather than being copied into
+   each component's scoped styles. Sized in `em` so they track the reader's
+   chosen article size; muted off `currentColor` rather than the app's text
+   tokens, so they stay legible on a curated edition's own themed background
+   too. Text-first — no boxes, no backgrounds. */
+sup.footnote-ref {
+  font-size: 0.7em;
+  line-height: 0;
+  padding: 0 0.1em;
+}
+
+sup.footnote-ref a,
+a.footnote-backref {
+  text-decoration: none;
+}
+
+a.footnote-backref {
+  margin-left: 0.25rem;
+}
+
+section.footnotes {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  font-size: 0.875em;
+  /* Muted off the surrounding text rather than off a token, so the section reads
+     as secondary on the app's body and on a curated edition's themed page alike.
+     On `color` (not `opacity`) so links inside a note keep their own color and
+     the arrival highlight keeps its strength. */
+  color: color-mix(in srgb, currentColor 72%, transparent);
+}
+
+/* Brief arrival highlight so the jump is legible. */
+.footnote-flash {
+  background-color: color-mix(
+    in srgb,
+    var(--mag-accent, var(--color-primary, #0066cc)) 12%,
+    transparent
+  );
+  transition: background-color 0.4s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .footnote-flash {
+    transition: none;
+  }
+}
+
 /* Inline note marker — a small comment glyph appended after a highlight that
    carries a note. Injected as raw DOM into the reader body (in both the saved
    reader and the article card), so it's styled globally here rather than in a

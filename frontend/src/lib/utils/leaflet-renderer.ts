@@ -52,11 +52,131 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#039;');
 }
 
+const FOOTNOTE_FEATURE = 'pub.leaflet.richtext.facet#footnote';
+
+/** A footnote collected in document order, keyed by its footnoteId. */
+interface FootnoteEntry {
+  /** 1-based number shown in the marker and in the list at the end. */
+  number: number;
+  contentPlaintext: string;
+  contentFacets?: LeafletFacet[];
+}
+
+type FootnoteIndex = Map<string, FootnoteEntry>;
+
+/**
+ * Visit every facet-bearing block in document order.
+ * Used to number footnotes by reading order (applyFacets walks facets in
+ * reverse, so numbers can't be assigned while wrapping).
+ */
+function forEachFacetList(
+  content: LeafletContent,
+  visit: (facets: LeafletFacet[] | undefined) => void
+): void {
+  const visitItems = (items: LeafletListItemBlock[] | undefined) => {
+    for (const item of items || []) {
+      visit(item.content?.facets);
+      visitItems(item.children);
+    }
+  };
+
+  for (const page of content.pages || []) {
+    if (page.$type !== 'pub.leaflet.pages.linearDocument' || !page.blocks) {
+      continue;
+    }
+    for (const wrapper of page.blocks) {
+      const block = wrapper.block;
+      switch (block.$type) {
+        case 'pub.leaflet.blocks.text':
+        case 'pub.leaflet.blocks.header':
+        case 'pub.leaflet.blocks.blockquote':
+          visit(block.facets);
+          break;
+        case 'pub.leaflet.blocks.unorderedList':
+        case 'pub.leaflet.blocks.orderedList':
+          visitItems(block.children);
+          break;
+      }
+    }
+  }
+}
+
+/**
+ * Number every footnote in the document by reading order.
+ * A footnoteId that appears more than once reuses its first number.
+ */
+function buildFootnoteIndex(content: LeafletContent): FootnoteIndex {
+  const index: FootnoteIndex = new Map();
+
+  forEachFacetList(content, (facets) => {
+    if (!facets || facets.length === 0) return;
+    const inOrder = [...facets].sort(
+      (a, b) => (a.index?.byteStart ?? 0) - (b.index?.byteStart ?? 0)
+    );
+    for (const facet of inOrder) {
+      for (const feature of facet.features || []) {
+        if (feature.$type !== FOOTNOTE_FEATURE) continue;
+        const id = feature.footnoteId;
+        if (!id || index.has(id)) continue;
+        index.set(id, {
+          number: index.size + 1,
+          contentPlaintext: feature.contentPlaintext || '',
+          contentFacets: feature.contentFacets,
+        });
+      }
+    }
+  });
+
+  return index;
+}
+
+/**
+ * The inline reference. Leaflet puts a bare marker character (a `*`) at the
+ * reference position, so we replace the faceted span rather than wrap it —
+ * the number is what makes each reference identifiable.
+ *
+ * `href="#"` is a placeholder: the sanitizer rewrites real hash hrefs to the
+ * source article and forces target="_blank", so the jump is handled by the
+ * delegated click handler in `footnoteNav.ts` instead.
+ */
+function renderFootnoteRef(number: number): string {
+  return `<sup class="footnote-ref"><a href="#" data-footnote-ref="${number}" aria-label="Footnote ${number}">${number}</a></sup>`;
+}
+
+/**
+ * The list of footnote bodies, appended once at the end of the document.
+ */
+function renderFootnotesSection(footnotes: FootnoteIndex): string {
+  if (footnotes.size === 0) {
+    return '';
+  }
+
+  const items = [...footnotes.values()]
+    .sort((a, b) => a.number - b.number)
+    .map((footnote) => {
+      // No footnote index passed down: a footnote nested inside a footnote body
+      // (the lexicon allows it) renders as plain text rather than recursing.
+      const body = applyFacets(footnote.contentPlaintext, footnote.contentFacets);
+      const backref = `<a class="footnote-backref" href="#" data-footnote-backref="${footnote.number}" aria-label="Back to reference ${footnote.number}">↩</a>`;
+      return `<li data-footnote-id="${footnote.number}">${body} ${backref}</li>`;
+    })
+    .join('');
+
+  return `<section class="footnotes" role="doc-endnotes" aria-label="Footnotes"><ol>${items}</ol></section>`;
+}
+
 /**
  * Apply facets (rich text formatting) to plaintext
  * Facets use byte ranges, so we need to handle UTF-8 encoding properly
+ *
+ * @param footnotes - Document footnote numbering; omitted inside footnote
+ *   bodies so nested footnotes degrade to plain text.
  */
-function applyFacets(plaintext: string, facets?: LeafletFacet[]): string {
+function applyFacets(
+  plaintext: string,
+  facets?: LeafletFacet[],
+  footnotes?: FootnoteIndex
+): string {
   if (!facets || facets.length === 0) {
     return escapeHtml(plaintext);
   }
@@ -85,7 +205,16 @@ function applyFacets(plaintext: string, facets?: LeafletFacet[]): string {
     // Build the wrapped text based on facet features
     let wrappedText = facetText;
 
-    for (const feature of facet.features) {
+    // A footnote replaces the marker outright, so the other features on that
+    // facet don't apply (a bold footnote number means nothing). A malformed
+    // feature — no footnoteId, or one the pre-pass never saw — falls through
+    // to the normal wrapping below.
+    const footnoteId = footnotes
+      ? facet.features?.find((f) => f.$type === FOOTNOTE_FEATURE && f.footnoteId)?.footnoteId
+      : undefined;
+    const footnote = footnoteId ? footnotes?.get(footnoteId) : undefined;
+
+    for (const feature of footnote ? [] : facet.features) {
       switch (feature.$type) {
         case 'pub.leaflet.richtext.facet#bold':
         case 'app.bsky.richtext.facet#bold':
@@ -127,6 +256,10 @@ function applyFacets(plaintext: string, facets?: LeafletFacet[]): string {
       }
     }
 
+    if (footnote) {
+      wrappedText = renderFootnoteRef(footnote.number);
+    }
+
     // Reconstruct the byte array with the HTML-wrapped text
     const wrappedBytes = encoder.encode(wrappedText);
     const newResult = new Uint8Array(beforeBytes.length + wrappedBytes.length + afterBytes.length);
@@ -142,11 +275,11 @@ function applyFacets(plaintext: string, facets?: LeafletFacet[]): string {
 /**
  * Render a text block
  */
-function renderTextBlock(block: LeafletTextBlock): string {
+function renderTextBlock(block: LeafletTextBlock, footnotes?: FootnoteIndex): string {
   if (!block.plaintext) {
     return '';
   }
-  const content = applyFacets(block.plaintext, block.facets);
+  const content = applyFacets(block.plaintext, block.facets, footnotes);
 
   // Apply text size styling
   let sizeClass = '';
@@ -162,11 +295,11 @@ function renderTextBlock(block: LeafletTextBlock): string {
 /**
  * Render a header block
  */
-function renderHeaderBlock(block: LeafletHeaderBlock): string {
+function renderHeaderBlock(block: LeafletHeaderBlock, footnotes?: FootnoteIndex): string {
   if (!block.plaintext) {
     return '';
   }
-  const content = applyFacets(block.plaintext, block.facets);
+  const content = applyFacets(block.plaintext, block.facets, footnotes);
   const level = block.level || 2; // Default to h2
   const tag = `h${Math.min(Math.max(level, 1), 6)}`;
   return `<${tag}>${content}</${tag}>`;
@@ -187,11 +320,11 @@ function renderCodeBlock(block: LeafletCodeBlock): string {
 /**
  * Render a blockquote block
  */
-function renderBlockquoteBlock(block: LeafletBlockquoteBlock): string {
+function renderBlockquoteBlock(block: LeafletBlockquoteBlock, footnotes?: FootnoteIndex): string {
   if (!block.plaintext) {
     return '';
   }
-  const content = applyFacets(block.plaintext, block.facets);
+  const content = applyFacets(block.plaintext, block.facets, footnotes);
   return `<blockquote>${content}</blockquote>`;
 }
 
@@ -209,7 +342,8 @@ function renderHorizontalRuleBlock(): string {
  */
 function renderListItems(
   children: LeafletListItemBlock[] | undefined,
-  listTag: 'ul' | 'ol' = 'ul'
+  listTag: 'ul' | 'ol' = 'ul',
+  footnotes?: FootnoteIndex
 ): string {
   if (!children || children.length === 0) {
     return '';
@@ -220,12 +354,12 @@ function renderListItems(
       // Extract plaintext and facets from the content block
       const plaintext = item.content?.plaintext || '';
       const facets = item.content?.facets;
-      const content = applyFacets(plaintext, facets);
+      const content = applyFacets(plaintext, facets, footnotes);
       let html = `<li>${content}`;
 
       // Handle nested lists (inherit parent list type)
       if (item.children && item.children.length > 0) {
-        html += `<${listTag}>${renderListItems(item.children, listTag)}</${listTag}>`;
+        html += `<${listTag}>${renderListItems(item.children, listTag, footnotes)}</${listTag}>`;
       }
 
       html += '</li>';
@@ -237,8 +371,11 @@ function renderListItems(
 /**
  * Render an unordered list block
  */
-function renderUnorderedListBlock(block: LeafletUnorderedListBlock): string {
-  const itemsHtml = renderListItems(block.children, 'ul');
+function renderUnorderedListBlock(
+  block: LeafletUnorderedListBlock,
+  footnotes?: FootnoteIndex
+): string {
+  const itemsHtml = renderListItems(block.children, 'ul', footnotes);
   if (!itemsHtml) {
     return '';
   }
@@ -248,8 +385,8 @@ function renderUnorderedListBlock(block: LeafletUnorderedListBlock): string {
 /**
  * Render an ordered list block
  */
-function renderOrderedListBlock(block: LeafletOrderedListBlock): string {
-  const itemsHtml = renderListItems(block.children, 'ol');
+function renderOrderedListBlock(block: LeafletOrderedListBlock, footnotes?: FootnoteIndex): string {
+  const itemsHtml = renderListItems(block.children, 'ol', footnotes);
   if (!itemsHtml) {
     return '';
   }
@@ -344,22 +481,22 @@ function renderPageBlock(block: LeafletPageBlock): string {
 /**
  * Render a single block based on its type
  */
-function renderBlock(block: LeafletBlock, authorDid: string): string {
+function renderBlock(block: LeafletBlock, authorDid: string, footnotes?: FootnoteIndex): string {
   switch (block.$type) {
     case 'pub.leaflet.blocks.text':
-      return renderTextBlock(block as LeafletTextBlock);
+      return renderTextBlock(block as LeafletTextBlock, footnotes);
     case 'pub.leaflet.blocks.header':
-      return renderHeaderBlock(block as LeafletHeaderBlock);
+      return renderHeaderBlock(block as LeafletHeaderBlock, footnotes);
     case 'pub.leaflet.blocks.code':
       return renderCodeBlock(block as LeafletCodeBlock);
     case 'pub.leaflet.blocks.blockquote':
-      return renderBlockquoteBlock(block as LeafletBlockquoteBlock);
+      return renderBlockquoteBlock(block as LeafletBlockquoteBlock, footnotes);
     case 'pub.leaflet.blocks.horizontalRule':
       return renderHorizontalRuleBlock();
     case 'pub.leaflet.blocks.unorderedList':
-      return renderUnorderedListBlock(block as LeafletUnorderedListBlock);
+      return renderUnorderedListBlock(block as LeafletUnorderedListBlock, footnotes);
     case 'pub.leaflet.blocks.orderedList':
-      return renderOrderedListBlock(block as LeafletOrderedListBlock);
+      return renderOrderedListBlock(block as LeafletOrderedListBlock, footnotes);
     case 'pub.leaflet.blocks.image':
       return renderImageBlock(block as LeafletImageBlock, authorDid);
     case 'pub.leaflet.blocks.website':
@@ -389,13 +526,16 @@ export function renderLeafletContent(content: LeafletContent, authorDid: string)
 
   const htmlParts: string[] = [];
 
+  // Numbered up front, in reading order, so markers and the list at the end agree.
+  const footnotes = buildFootnoteIndex(content);
+
   for (const page of content.pages) {
     if (page.$type !== 'pub.leaflet.pages.linearDocument' || !page.blocks) {
       continue;
     }
 
     for (const wrapper of page.blocks) {
-      const blockHtml = renderBlock(wrapper.block, authorDid);
+      const blockHtml = renderBlock(wrapper.block, authorDid, footnotes);
       if (blockHtml) {
         // Apply alignment if specified
         if (wrapper.alignment && wrapper.alignment !== 'left') {
@@ -407,6 +547,11 @@ export function renderLeafletContent(content: LeafletContent, authorDid: string)
         }
       }
     }
+  }
+
+  const footnotesHtml = renderFootnotesSection(footnotes);
+  if (footnotesHtml) {
+    htmlParts.push(footnotesHtml);
   }
 
   return htmlParts.join('\n');

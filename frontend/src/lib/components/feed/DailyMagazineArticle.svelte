@@ -81,7 +81,13 @@
     itemType: () => 'saved',
     enabled: () => active,
   });
-  const linkInterception = useLinkInterception({ contentEl: () => bodyEl, enabled: () => true });
+  const linkInterception = useLinkInterception({
+    contentEl: () => bodyEl,
+    enabled: () => true,
+    // Paged mode: turn to the footnote's page rather than scrolling the paged
+    // viewport (which the transform-driven paginator never resets).
+    pagedController: () => pagedController,
+  });
   const highlightsHook = useHighlights({
     contentEl: () => bodyEl,
     itemKey: () => itemKey,

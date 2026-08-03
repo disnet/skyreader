@@ -754,6 +754,12 @@
   const linkInterception = useLinkInterception({
     contentEl: () => bodyEl,
     enabled: () => true,
+    // While the preview is clamped *and overflowing* (`isTruncated`), a footnote
+    // number is visible but its list entry is below the clamp: let the tap expand
+    // the card instead of jumping to something the reader can't see. A preview
+    // that fits keeps the jump — handleContentTap deliberately does nothing in
+    // that state, so suppressing it there would leave a dead tap.
+    footnoteJump: () => !(selected && !expanded && isTruncated),
   });
 
   // Highlights hook

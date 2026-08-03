@@ -546,6 +546,9 @@
   const linkInterception = useLinkInterception({
     contentEl: () => readerBodyEl,
     enabled: () => true,
+    // Paged mode: a footnote jump turns to the target's page (scrolling would
+    // slide the paged viewport sideways and desync every later page turn).
+    pagedController: () => pagedController,
   });
 
   // Highlights hook
@@ -971,6 +974,7 @@
               title={collectionTitle}
               onSavePiece={saveCollectionPiece}
               isPieceSaved={isCollectionPieceSaved}
+              pagedController={() => pagedController}
             />
           </div>
         {:else}
@@ -1551,6 +1555,9 @@
   .reader-body :global(mark.highlight:hover) {
     background-color: color-mix(in srgb, #f5c518 40%, transparent);
   }
+
+  /* Leaflet footnote styling is shared by every surface that renders leaflet
+     content, so it lives in app.css rather than here. */
 
   /* On narrower desktops, drop the action labels to icons — matches the feed
      header's 1100px breakpoint so both collapse at the same width. */
