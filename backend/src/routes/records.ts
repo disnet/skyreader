@@ -7,6 +7,7 @@ interface SubscriptionRow {
   record_uri: string;
   feed_url: string;
   title: string | null;
+  site_url: string | null;
   created_at: number;
   source_type: string | null;
   subject_did: string | null;
@@ -46,7 +47,7 @@ export async function handleRecordsList(request: Request, env: Env): Promise<Res
       // serviced or shown in the reader. The manage UI lists them separately via
       // /api/subscriptions/parked.
       const result = await env.DB.prepare(
-        'SELECT record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url, category FROM subscriptions_cache WHERE user_did = ? AND active = 1'
+        'SELECT record_uri, feed_url, title, site_url, created_at, source_type, subject_did, custom_title, custom_icon_url, category FROM subscriptions_cache WHERE user_did = ? AND active = 1'
       )
         .bind(session.did)
         .all<SubscriptionRow>();
@@ -63,6 +64,9 @@ export async function handleRecordsList(request: Request, env: Env): Promise<Res
             $type: collection,
             feedUrl: row.feed_url,
             title: row.title,
+            // Carries the "this publication is a linkblog" tell for a follower on
+            // a device that didn't create the subscription (see sourceDisplay).
+            siteUrl: row.site_url || undefined,
             createdAt: new Date(createdAtMs).toISOString(),
             sourceType: row.source_type || undefined,
             subjectDid: row.subject_did || undefined,

@@ -115,4 +115,18 @@ describe('linkblog follower target migration', () => {
       },
     ]);
   });
+
+  // Once the publication rkey is arbitrary, the author's public linkblog page is
+  // the only thing that still says "this is a linkblog" to the reader. Rows that
+  // predate persisting it get it filled in as they move.
+  it('backfills the follower’s missing linkblog page as its siteUrl', async () => {
+    await insertSubscription('source', DEFAULT_URI);
+
+    await migrateLinkblogFollowers(env, AUTHOR_DID, DEFAULT_URI, EXTERNAL_A);
+
+    const row = await env.DB.prepare('SELECT site_url FROM subscriptions_cache WHERE user_did = ?')
+      .bind(FOLLOWER_DID)
+      .first<{ site_url: string | null }>();
+    expect(row?.site_url).toBe(`https://linkblogs.skyreader.app/${AUTHOR_DID}/`);
+  });
 });

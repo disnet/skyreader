@@ -168,6 +168,38 @@ export async function getLinkblogTargets(
   return out;
 }
 
+// Bound on the connected-linkblog list below. Far above any plausible count of
+// users who've connected an existing publication; a cap only so a runaway table
+// can't be loaded whole into a discovery request.
+const MAX_CONNECTED_AUTHORS = 2000;
+
+// The DIDs whose linkblog is an EXISTING publication they connected.
+//
+// These users are invisible to the Constellation marker registry: the marker is
+// stamped on the `skyreader-links` publication we create, and connecting is
+// deliberately non-mutating — we never touch a publication the home app owns. A
+// user who connects before their first share therefore never creates a marked
+// record at all. Discovery unions this local list over the registry so they're
+// still findable (see linkblog-discovery.ts). Best-effort, like everything in
+// discovery: a failure yields a shorter list, not an error.
+export async function getConnectedLinkblogAuthors(env: Env): Promise<string[]> {
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT user_did, linkblog_publication FROM user_settings
+       WHERE linkblog_publication IS NOT NULL LIMIT ?`
+    )
+      .bind(MAX_CONNECTED_AUTHORS)
+      .all<{ user_did: string; linkblog_publication: string }>();
+    // Only rows that actually resolve to a target (a publication in that user's
+    // own repo) count — targetFromRow rejects anything else.
+    return (rows.results ?? [])
+      .filter((row) => targetFromRow(row.user_did, row.linkblog_publication, null).external)
+      .map((row) => row.user_did);
+  } catch {
+    return [];
+  }
+}
+
 // Generous excerpt cap — the excerpt is the only durable copy if the source
 // link-rots or paywalls, so keep it roomy, but bound it so a record can't bloat.
 const MAX_EXCERPT_CHARS = 1500;
@@ -419,6 +451,26 @@ interface DocumentRecord {
   tags?: string[];
   links?: Array<{ uri: string; rel: string }>;
   content?: unknown;
+  // Provenance marker: "Skyreader wrote this link post" (same constant the
+  // publication carries — see LINKBLOG_MARKER_URL). Load-bearing once a linkblog
+  // is connected to an existing publication: that publication also holds posts
+  // its HOME app wrote, and a home-app post that happens to link out is otherwise
+  // indistinguishable from a share. Everything Skyreader offers to *mutate* — the
+  // un-share/delete, the in-place note edit, the "already shared" overlay — keys
+  // off this, so we never rewrite or destroy someone's Leaflet/pckt essay.
+  // Absent on documents in the default publication written before the marker
+  // existed; those are covered by the publication check instead.
+  skyreaderLinkblog?: string;
+}
+
+// Whether a `site.standard.document` is one of OUR link posts: it carries the
+// marker, or it lives in the user's own Skyreader publication (where everything
+// is ours, marker or not — pre-marker records still count).
+function isSkyreaderShareRecord(
+  did: string,
+  rec: Pick<DocumentRecord, 'site' | 'skyreaderLinkblog'>
+): boolean {
+  return rec.skyreaderLinkblog === LINKBLOG_MARKER_URL || rec.site === publicationUri(did);
 }
 
 // The article excerpt stored on a record's website link-card block. The card is
@@ -581,6 +633,9 @@ export function buildLinkblogDocument(
     tags: input.tags && input.tags.length > 0 ? input.tags : undefined,
     links,
     content: buildContent(format, input, excerpt, resolvedHandles),
+    // See DocumentRecord.skyreaderLinkblog — the tell that separates a Skyreader
+    // share from a post the connected publication's home app wrote.
+    skyreaderLinkblog: LINKBLOG_MARKER_URL,
   };
 }
 
@@ -774,11 +829,35 @@ export async function writeLinkblogShare(
   return createPDSClient(session).putRecord(DOCUMENT_COLLECTION, rkey, record);
 }
 
+// A read that came back "no such record" — a normal outcome, not a failure.
+function isNotFoundError(error: string): boolean {
+  return /RecordNotFound|could not locate record/i.test(error);
+}
+
+// Returned when a mutation targets a record Skyreader didn't write. The routes
+// map it to 409 (a policy answer, not a PDS failure).
+export const FOREIGN_RECORD_ERROR =
+  'That post was written by this publication’s own app, so Skyreader won’t change it';
+
+// Delete one of the user's own link posts. A connected publication also holds
+// posts its HOME app wrote, so the record is read back first and only deleted
+// when it's actually a Skyreader share — deleting a user's Leaflet/pckt essay
+// because it happened to carry an outbound link is unrecoverable.
 export async function deleteLinkblogShare(
   session: Session,
   rkey: string
 ): Promise<PDSResult<void>> {
-  return createPDSClient(session).deleteRecord(DOCUMENT_COLLECTION, rkey);
+  const pdsClient = createPDSClient(session);
+  const existing = await pdsClient.getRecord<DocumentRecord>(DOCUMENT_COLLECTION, rkey);
+  if (!existing.success) {
+    // Already gone — un-sharing is idempotent (deleteRecord is too).
+    if (isNotFoundError(existing.error)) return { success: true, data: undefined };
+    return existing;
+  }
+  if (!isSkyreaderShareRecord(session.did, existing.data.value)) {
+    return { success: false, error: FOREIGN_RECORD_ERROR, retryable: false };
+  }
+  return pdsClient.deleteRecord(DOCUMENT_COLLECTION, rkey);
 }
 
 // Update just the note on an existing share document, leaving everything else
@@ -795,6 +874,11 @@ export async function updateLinkblogShareNote(
   if (!existing.success) return existing;
 
   const rec = existing.data.value;
+  // Same guard as the delete path: rewriting the note region of a post the home
+  // app wrote would replace its leading blocks with our commentary.
+  if (!isSkyreaderShareRecord(session.did, rec)) {
+    return { success: false, error: FOREIGN_RECORD_ERROR, retryable: false };
+  }
   const format = contentFormatOf(rec.content);
   if (!format) {
     const contentType = (rec.content as { $type?: string } | undefined)?.$type;
@@ -824,6 +908,8 @@ export async function updateLinkblogShareNote(
   const updated: DocumentRecord = {
     ...rec,
     $type: DOCUMENT_COLLECTION,
+    // Backfill the marker onto pre-marker shares while we're rewriting anyway.
+    skyreaderLinkblog: LINKBLOG_MARKER_URL,
     textContent: [trimmedNote, excerpt].filter(Boolean).join('\n\n') || undefined,
     content:
       format === 'leaflet'

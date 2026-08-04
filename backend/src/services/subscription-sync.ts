@@ -204,6 +204,7 @@ export async function syncSubscriptions(
       rkey: string;
       feedUrl: string;
       title: string | null;
+      siteUrl: string | null;
       createdAt: number;
       sourceType: string | null;
       subjectDid: string | null;
@@ -257,6 +258,7 @@ export async function syncSubscriptions(
         rkey,
         feedUrl: pdsRecord.value.feedUrl || '',
         title: pdsRecord.value.title || null,
+        siteUrl: pdsRecord.value.siteUrl || null,
         createdAt: pdsRecord.value.createdAt
           ? Math.floor(new Date(pdsRecord.value.createdAt).getTime() / 1000)
           : Math.floor(Date.now() / 1000),
@@ -297,13 +299,14 @@ export async function syncSubscriptions(
         const recordUri = buildRecordUri(session.did, COLLECTION, sub.rkey);
         return env.DB.prepare(
           `INSERT OR IGNORE INTO subscriptions_cache
-					 (user_did, record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url, category, active)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					 (user_did, record_uri, feed_url, title, site_url, created_at, source_type, subject_did, custom_title, custom_icon_url, category, active)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           session.did,
           recordUri,
           sub.feedUrl,
           sub.title,
+          sub.siteUrl,
           sub.createdAt,
           sub.sourceType,
           sub.subjectDid,

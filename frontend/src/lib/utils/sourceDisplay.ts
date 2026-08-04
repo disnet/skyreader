@@ -12,13 +12,21 @@ export interface SourceDisplayInfo {
 export const LINKBLOG_PUB_SUFFIX = 'site.standard.publication/skyreader-links';
 
 // A linkblog connected to an existing publication has an arbitrary rkey, so the
-// URI alone can't identify it. Those subscriptions are minted by linkblog
-// discovery with the author's Skyreader linkblog page as their siteUrl — that
-// origin is the reliable tell.
+// URI alone can't identify it. Every linkblog subscription — minted in-app from
+// discovery, or by the Subscribe button on the public site — carries the author's
+// Skyreader linkblog page as its siteUrl, and the backend persists it, so it
+// survives to other devices. That page is always `<linkblog origin>/<did>/`: the
+// DID-keyed path is the shape-level tell, which also holds on the dev/staging
+// origins (matching hostnames alone both missed those and matched unrelated
+// third-party hosts named `linkblogs.*`).
 function isLinkblogSiteUrl(siteUrl?: string): boolean {
   if (!siteUrl) return false;
   try {
-    return /(^|\.)linkblogs\./i.test(new URL(siteUrl).hostname);
+    const { hostname, pathname } = new URL(siteUrl);
+    if (hostname === 'linkblogs.skyreader.app') return true;
+    // …/<did:method:id>/ — the canonical linkblog page path (the legacy
+    // `/blogs/<did>/` form, still redirected, matches too).
+    return /(^|\/)did:[a-z]+:/i.test(pathname);
   } catch {
     return false;
   }

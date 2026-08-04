@@ -3,7 +3,10 @@
 //
 // It's an intersection: (the user's Bluesky follows) ∩ (the linkblog registry).
 //   - registry: every DID with a linkblog, from the proxy's one cached
-//     Constellation marker query (see feed-proxy/src/linkblog-registry.ts).
+//     Constellation marker query (see feed-proxy/src/linkblog-registry.ts),
+//     unioned with the local list of users who connected an EXISTING publication
+//     — connecting never stamps a marker on someone else's app's record, so those
+//     linkblogs are real but invisible to the network-wide query.
 //   - follows: the user's Bluesky follows, which already carry profile basics —
 //     so "friends with linkblogs" needs no extra profile resolution.
 // Everything is best-effort: a registry/follows outage yields a shorter list, not
@@ -12,7 +15,12 @@
 import type { Env, Session } from '../types';
 import { FeedProxyClient } from './feed-proxy-client';
 import { fetchFollows, fetchProfiles, type BskyProfileLite } from './bsky-appview';
-import { getLinkblogTargets, linkblogBaseUrl, publicationUri } from './linkblog-sync';
+import {
+  getConnectedLinkblogAuthors,
+  getLinkblogTargets,
+  linkblogBaseUrl,
+  publicationUri,
+} from './linkblog-sync';
 
 export interface LinkblogPerson {
   did: string;
@@ -62,12 +70,13 @@ function toPerson(
  */
 export async function getLinkblogFriends(session: Session, env: Env): Promise<LinkblogPerson[]> {
   const proxy = new FeedProxyClient(env);
-  const [registry, follows] = await Promise.all([
+  const [registry, connected, follows] = await Promise.all([
     proxy.fetchLinkblogRegistry().catch(() => [] as string[]),
+    getConnectedLinkblogAuthors(env),
     fetchFollows(session.did),
   ]);
 
-  const registrySet = new Set(registry);
+  const registrySet = new Set([...registry, ...connected]);
   const people = follows.filter((f) => f.did !== session.did && registrySet.has(f.did));
   // One batched settings lookup resolves everyone's current publication.
   const targets = await getLinkblogTargets(
@@ -84,13 +93,14 @@ export async function getLinkblogFriends(session: Session, env: Env): Promise<Li
  */
 export async function getLinkblogDiscover(session: Session, env: Env): Promise<LinkblogPerson[]> {
   const proxy = new FeedProxyClient(env);
-  const [registry, follows] = await Promise.all([
+  const [registry, connected, follows] = await Promise.all([
     proxy.fetchLinkblogRegistry().catch(() => [] as string[]),
+    getConnectedLinkblogAuthors(env),
     fetchFollows(session.did).catch(() => [] as BskyProfileLite[]),
   ]);
 
   const followMap = new Map(follows.map((f) => [f.did, f]));
-  const authors = registry.filter((did) => did !== session.did);
+  const authors = [...new Set([...registry, ...connected])].filter((did) => did !== session.did);
 
   const friendDids = authors.filter((did) => followMap.has(did));
   const otherDids = authors.filter((did) => !followMap.has(did)).slice(0, MAX_DISCOVER_OTHERS);

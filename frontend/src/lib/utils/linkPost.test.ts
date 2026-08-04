@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SocialDocument } from '$lib/types';
-import { getLinkPostNote } from './linkPost';
+import { getLinkPostNote, isSkyreaderShare } from './linkPost';
 
 const ARTICLE = 'https://example.com/post';
 
@@ -97,5 +97,37 @@ describe('getLinkPostNote across connected publication formats', () => {
 
   it('ignores a content shape it does not know', () => {
     expect(getLinkPostNote(doc({ $type: 'com.example.content', items: [] }))).toBeUndefined();
+  });
+});
+
+// The gate for every affordance that MUTATES a document: un-share/delete, the
+// in-place note edit, and the "already shared" overlay. A connected publication
+// carries its home app's own posts too, and an essay that links out is shaped
+// exactly like a share — so "lives in my linkblog and has a link" must not be
+// enough to offer Remove.
+describe('isSkyreaderShare', () => {
+  const MARKER = 'https://skyreader.app/linkblog';
+
+  it('accepts a marked post in a connected publication', () => {
+    expect(isSkyreaderShare({ ...doc(undefined), skyreaderLinkblog: MARKER })).toBe(true);
+  });
+
+  it('rejects an unmarked post in a connected publication', () => {
+    expect(isSkyreaderShare(doc(undefined))).toBe(false);
+  });
+
+  it('accepts an unmarked post in the user’s own Skyreader publication', () => {
+    expect(
+      isSkyreaderShare({
+        ...doc(undefined),
+        siteUri: 'at://did:plc:someone/site.standard.publication/skyreader-links',
+      })
+    ).toBe(true);
+  });
+
+  it('rejects a marker that isn’t ours', () => {
+    expect(
+      isSkyreaderShare({ ...doc(undefined), skyreaderLinkblog: 'https://evil.example/linkblog' })
+    ).toBe(false);
   });
 });

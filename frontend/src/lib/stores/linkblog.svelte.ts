@@ -19,7 +19,7 @@ import { db } from '$lib/services/db';
 import { safeAdd } from '$lib/services/safeDb.svelte';
 import { generateTid } from '$lib/utils/tid';
 import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
-import { getExternalArticleLink, getLinkPostNote } from '$lib/utils/linkPost';
+import { getExternalArticleLink, getLinkPostNote, isSkyreaderShare } from '$lib/utils/linkPost';
 import type { Article, LinkblogShare } from '$lib/types';
 
 function createLinkblogStore() {
@@ -33,6 +33,10 @@ function createLinkblogStore() {
   const serverShares = $derived.by(() => {
     const map = new Map<string, { recordUri: string; note?: string; title?: string }>();
     for (const doc of myLinkblogStore.documents) {
+      // Only OUR link posts. A connected publication also lists the posts its home
+      // app wrote; treating one of those as a share would make the reader's Share
+      // button offer to "un-share" — i.e. delete — someone's own essay.
+      if (!isSkyreaderShare(doc)) continue;
       const url = getExternalArticleLink(doc);
       if (url)
         map.set(url, { recordUri: doc.recordUri, note: getLinkPostNote(doc), title: doc.title });

@@ -28,6 +28,29 @@ export function isLinkPost(doc: SocialDocument): boolean {
   return Boolean(getExternalArticleLink(doc));
 }
 
+// The constant marker Skyreader stamps on the records it writes (publications and
+// link posts alike). MUST match backend LINKBLOG_MARKER_URL.
+const LINKBLOG_MARKER_URL = 'https://skyreader.app/linkblog';
+const DEFAULT_LINKBLOG_PUB_SUFFIX = '/site.standard.publication/skyreader-links';
+
+/**
+ * Whether SKYREADER wrote this document — the gate for every affordance that
+ * mutates it (un-share/delete, in-place note edit, the "already shared" overlay).
+ *
+ * "Has an outbound link and lives in my linkblog" is not enough: a linkblog
+ * connected to an existing publication shares that publication with everything
+ * its home app publishes there, and an essay that happens to link out looks
+ * identical. Deleting one of those is unrecoverable, so the test is the marker we
+ * write, or the document living in the user's own Skyreader publication (where
+ * everything is ours — including shares written before the marker existed).
+ */
+export function isSkyreaderShare(doc: SocialDocument): boolean {
+  return (
+    doc.skyreaderLinkblog === LINKBLOG_MARKER_URL ||
+    (doc.siteUri?.endsWith(DEFAULT_LINKBLOG_PUB_SUFFIX) ?? false)
+  );
+}
+
 /**
  * The URL a document effectively represents for opening/saving/reading:
  * - link post → the external article

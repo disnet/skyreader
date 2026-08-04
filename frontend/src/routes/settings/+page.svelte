@@ -625,9 +625,9 @@
         >
         <p class="setting-description">
           New links are public and portable across the Atmosphere. Existing posts stay where they
-          are, and only posts that link out show up as linkblog entries. A connected publication's
-          name and description stay managed by its home app; new links are written in that app's own
-          format. Skyreader discovery works best with the Skyreader linkblog.
+          are — only posts that link out show up as linkblog entries, and Skyreader edits or removes
+          only the ones it wrote. A connected publication's name and description stay managed by its
+          home app; new links are written in that app's own format.
         </p>
       {/if}
       <div class="linkblog-field">

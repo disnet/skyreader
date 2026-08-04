@@ -30,6 +30,7 @@
     getExternalArticleLink,
     getLinkPostNote,
     getLinkPostNoteMentions,
+    isSkyreaderShare,
     linkifyNoteMentions,
     formatQuoteSeed,
     noteHasBlockquote,
@@ -129,17 +130,15 @@
   // Linkblog" page)? If so, the Share button is a toggle that starts on, and the
   // note is editable in place — both acting directly on this document by rkey,
   // rather than via the URL-keyed reshare path.
-  // Matched against the user's CURRENT linkblog publication (which may be an
-  // existing standard.site publication they connected) as well as the default
-  // Skyreader one, so posts written before or after a switch both count.
-  const LINKBLOG_PUB_SUFFIX = 'site.standard.publication/skyreader-links';
+  // Requires that SKYREADER wrote it, not merely that it sits in the user's
+  // linkblog: a connected publication also carries its home app's own posts, and
+  // offering Remove on one of those would delete an essay from their PDS.
   let isOwnLinkblogPost = $derived(
     isDocumentMode &&
       !!document &&
       !!auth.user &&
       document.authorDid === auth.user.did &&
-      (document.siteUri === myLinkblogStore.publication?.uri ||
-        (document.siteUri?.endsWith(LINKBLOG_PUB_SUFFIX) ?? false))
+      isSkyreaderShare(document)
   );
   // The rkey of this document's PDS record (last path segment of its AT URI).
   let ownRkey = $derived(isOwnLinkblogPost ? (document?.recordUri.split('/').pop() ?? '') : '');

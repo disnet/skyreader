@@ -14,6 +14,11 @@ import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
 import { generateTid } from '../utils/tid';
 import { fetchProfiles } from '../services/bsky-appview';
 import { getUserTierLimits } from '../services/user-tier';
+import {
+  getLinkblogTarget,
+  linkblogBaseUrl,
+  publicationUri as defaultLinkblogPublicationUri,
+} from '../services/linkblog-sync';
 
 /**
  * Helper to sync subscription to PDS in background (fire and forget)
@@ -526,14 +531,26 @@ export async function ensureLocalDocumentSubscription(
   const owner = profile?.displayName?.trim() || (profile?.handle ? `@${profile.handle}` : '');
   const title = owner ? `${owner}'s links` : 'Linkblog';
 
+  // The author's public linkblog page, stored as the subscription's siteUrl so
+  // the reader can tell a linkblog from an ordinary publication: a connected
+  // linkblog's rkey is arbitrary, so the URI alone can't say. (The page renders
+  // whichever publication the author currently publishes to, so this survives a
+  // later switch.) Only when this publication really is their linkblog — this
+  // endpoint takes any standard.site publication.
+  const target = await getLinkblogTarget(env, subjectDid);
+  const isLinkblog =
+    publicationUri === target.siteUri ||
+    publicationUri === defaultLinkblogPublicationUri(subjectDid);
+  const siteUrl = isLinkblog ? linkblogBaseUrl(env, subjectDid) : null;
+
   const rkey = generateTid();
   const recordUri = `at://${session.did}/app.skyreader.feed.subscription/${rkey}`;
   await env.DB.prepare(
     `INSERT OR REPLACE INTO subscriptions_cache
-     (user_did, record_uri, feed_url, title, category, created_at, source_type, subject_did, custom_title, custom_icon_url, active)
-     VALUES (?, ?, ?, ?, NULL, unixepoch(), 'atproto.documents', ?, NULL, NULL, ?)`
+     (user_did, record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url, active)
+     VALUES (?, ?, ?, ?, ?, NULL, unixepoch(), 'atproto.documents', ?, NULL, NULL, ?)`
   )
-    .bind(session.did, recordUri, publicationUri, title, subjectDid, active)
+    .bind(session.did, recordUri, publicationUri, title, siteUrl, subjectDid, active)
     .run();
 
   // Pull the author's existing link posts so the feed isn't empty on first open.
@@ -552,7 +569,7 @@ export async function ensureLocalDocumentSubscription(
       rkey,
       publicationUri,
       title,
-      undefined,
+      siteUrl ?? undefined,
       'atproto.documents',
       subjectDid
     )
@@ -768,8 +785,8 @@ export async function handleCreateSubscription(
     await env.DB.prepare(
       `
 			INSERT OR REPLACE INTO subscriptions_cache
-			(user_did, record_uri, feed_url, title, category, created_at, source_type, subject_did, custom_title, custom_icon_url)
-			VALUES (?, ?, ?, ?, ?, unixepoch(), ?, ?, ?, ?)
+			(user_did, record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url)
+			VALUES (?, ?, ?, ?, ?, ?, unixepoch(), ?, ?, ?, ?)
 			`
     )
       .bind(
@@ -777,6 +794,11 @@ export async function handleCreateSubscription(
         recordUri,
         feedUrl || '',
         title || null,
+        // Persisted (not just mirrored to the PDS) so it survives to any other
+        // device via /api/records/list. For a linkblog follow it's the author's
+        // public linkblog page, which is what tells the reader this publication
+        // is a linkblog once its rkey is no longer `skyreader-links`.
+        siteUrl || null,
         category || null,
         sourceType || null,
         subjectDid || null,

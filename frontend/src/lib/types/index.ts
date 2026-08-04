@@ -575,6 +575,11 @@ export interface SocialDocument {
   // Per-user read state stamped onto the document batch response by the backend
   // (inline read annotation, keyed by recordUri). Consumed additively on merge.
   read?: boolean;
+  // Skyreader's provenance marker (a constant URL) on a link post it wrote. A
+  // linkblog connected to an existing publication shares that publication with
+  // whatever its home app publishes there, so this is what separates a share from
+  // someone's essay — see isSkyreaderShare in utils/linkPost.
+  skyreaderLinkblog?: string;
 }
 
 // A single curated piece in a Collection, resolved by the proxy to a renderable

@@ -95,6 +95,12 @@ function createMyLinkblogStore() {
         if (!author || author.status === 'unchanged') return;
         if (author.status === 'error') {
           error = author.error ?? 'Could not load your linkblog.';
+          // Keep this scope's documents (a transient failure must not blank the
+          // view), but it is no longer authoritative: leaving a stale `complete`
+          // in place would let reconcile() prune live shares against a snapshot
+          // this pull could not confirm.
+          const previous = scopeResults.get(siteUri);
+          if (previous?.complete) scopeResults.set(siteUri, { ...previous, complete: false });
           return;
         }
         scopeResults.set(siteUri, {

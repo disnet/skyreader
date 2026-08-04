@@ -9,8 +9,10 @@ import { hasRequiredScopes, insufficientScopesResponse, LINKBLOG_SCOPES } from '
 import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
 import {
   deleteLinkblogShare,
+  FOREIGN_RECORD_ERROR,
   getPublicationMeta,
   getLinkblogTarget,
+  linkblogBaseUrl,
   publicationUri,
   updateLinkblogShareNote,
   updatePublication,
@@ -145,6 +147,8 @@ export async function handleUpdateLinkblogShare(request: Request, env: Env): Pro
   const result = await updateLinkblogShareNote(session, rkey, body.note);
   if (!result.success) {
     if (isScopeError(result.error)) return insufficientScopesResponse();
+    // Not a PDS failure: the record isn't ours to rewrite.
+    if (result.error === FOREIGN_RECORD_ERROR) return json({ error: result.error }, 409);
     return json({ error: result.error }, result.retryable ? 503 : 502);
   }
   return json({ uri: result.data.uri, cid: result.data.cid, rkey });
@@ -171,6 +175,8 @@ export async function handleDeleteLinkblogShare(request: Request, env: Env): Pro
   const result = await deleteLinkblogShare(session, rkey);
   if (!result.success) {
     if (isScopeError(result.error)) return insufficientScopesResponse();
+    // Not a PDS failure: the record isn't ours to delete.
+    if (result.error === FOREIGN_RECORD_ERROR) return json({ error: result.error }, 409);
     return json({ error: result.error }, result.retryable ? 503 : 502);
   }
   return json({ success: true });
@@ -259,6 +265,12 @@ export async function migrateLinkblogFollowers(
 ): Promise<void> {
   if (previousSiteUri === nextSiteUri) return;
 
+  // Heal the follower's siteUrl while we're here. The author's public linkblog
+  // page is what tells the reader this publication is a linkblog once its rkey is
+  // no longer `skyreader-links` (see sourceDisplay); rows created before we
+  // persisted it have none. COALESCE so a user-set value is never overwritten.
+  const linkblogPage = linkblogBaseUrl(env, subjectDid);
+
   // A follower may already subscribe to the destination publication. Keep that
   // row and use it to reconcile the old graph edge, then remove the redundant
   // source row. Otherwise move the source row in place.
@@ -274,6 +286,7 @@ export async function migrateLinkblogFollowers(
              destination.atmosphere_previous_feed_url,
              ?
            ),
+           site_url = COALESCE(site_url, ?),
            atmosphere_synced = NULL
        WHERE source_type = 'atproto.documents' AND subject_did = ? AND feed_url = ?
          AND EXISTS (
@@ -286,6 +299,7 @@ export async function migrateLinkblogFollowers(
       subjectDid,
       previousSiteUri,
       previousSiteUri,
+      linkblogPage,
       subjectDid,
       nextSiteUri,
       subjectDid,
@@ -305,9 +319,10 @@ export async function migrateLinkblogFollowers(
       `UPDATE subscriptions_cache
        SET feed_url = ?,
            atmosphere_previous_feed_url = COALESCE(atmosphere_previous_feed_url, ?),
+           site_url = COALESCE(site_url, ?),
            atmosphere_synced = NULL
        WHERE source_type = 'atproto.documents' AND subject_did = ? AND feed_url = ?`
-    ).bind(nextSiteUri, previousSiteUri, subjectDid, previousSiteUri),
+    ).bind(nextSiteUri, previousSiteUri, linkblogPage, subjectDid, previousSiteUri),
   ]);
 }
 
