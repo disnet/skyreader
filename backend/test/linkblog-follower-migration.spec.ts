@@ -7,6 +7,7 @@ const FOLLOWER_DID = 'did:plc:linkblog-follower';
 const DEFAULT_URI = `at://${AUTHOR_DID}/site.standard.publication/skyreader-links`;
 const EXTERNAL_A = `at://${AUTHOR_DID}/site.standard.publication/external-a`;
 const EXTERNAL_B = `at://${AUTHOR_DID}/site.standard.publication/external-b`;
+const EXTERNAL_C = `at://${AUTHOR_DID}/site.standard.publication/external-c`;
 
 async function insertSubscription(rkey: string, feedUrl: string) {
   await env.DB.prepare(
@@ -78,6 +79,37 @@ describe('linkblog follower target migration', () => {
     expect(await subscriptions()).toEqual([
       {
         feed_url: EXTERNAL_B,
+        atmosphere_synced: null,
+        atmosphere_previous_feed_url: EXTERNAL_A,
+      },
+    ]);
+  });
+
+  it('preserves the earliest pending URI across back-to-back switches', async () => {
+    await insertSubscription('source', EXTERNAL_A);
+
+    await migrateLinkblogFollowers(env, AUTHOR_DID, EXTERNAL_A, EXTERNAL_B);
+    await migrateLinkblogFollowers(env, AUTHOR_DID, EXTERNAL_B, EXTERNAL_C);
+
+    expect(await subscriptions()).toEqual([
+      {
+        feed_url: EXTERNAL_C,
+        atmosphere_synced: null,
+        atmosphere_previous_feed_url: EXTERNAL_A,
+      },
+    ]);
+  });
+
+  it('transfers the earliest pending URI when deduplicating a later destination', async () => {
+    await insertSubscription('source', EXTERNAL_A);
+
+    await migrateLinkblogFollowers(env, AUTHOR_DID, EXTERNAL_A, EXTERNAL_B);
+    await insertSubscription('destination', EXTERNAL_C);
+    await migrateLinkblogFollowers(env, AUTHOR_DID, EXTERNAL_B, EXTERNAL_C);
+
+    expect(await subscriptions()).toEqual([
+      {
+        feed_url: EXTERNAL_C,
         atmosphere_synced: null,
         atmosphere_previous_feed_url: EXTERNAL_A,
       },
