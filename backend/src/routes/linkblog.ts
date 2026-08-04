@@ -251,6 +251,47 @@ export async function handleUpdatePublication(request: Request, env: Env): Promi
 
 const FORMATS = new Set<ContentFormat>(['leaflet', 'pckt', 'offprint', 'markpub']);
 
+export async function migrateLinkblogFollowers(
+  env: Env,
+  subjectDid: string,
+  previousSiteUri: string,
+  nextSiteUri: string
+): Promise<void> {
+  if (previousSiteUri === nextSiteUri) return;
+
+  // A follower may already subscribe to the destination publication. Keep that
+  // row and use it to reconcile the old graph edge, then remove the redundant
+  // source row. Otherwise move the source row in place.
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE subscriptions_cache AS destination
+       SET atmosphere_previous_feed_url = ?, atmosphere_synced = NULL
+       WHERE source_type = 'atproto.documents' AND subject_did = ? AND feed_url = ?
+         AND EXISTS (
+           SELECT 1 FROM subscriptions_cache AS source
+           WHERE source.user_did = destination.user_did
+             AND source.source_type = 'atproto.documents'
+             AND source.subject_did = ? AND source.feed_url = ?
+         )`
+    ).bind(previousSiteUri, subjectDid, nextSiteUri, subjectDid, previousSiteUri),
+    env.DB.prepare(
+      `DELETE FROM subscriptions_cache AS source
+       WHERE source_type = 'atproto.documents' AND subject_did = ? AND feed_url = ?
+         AND EXISTS (
+           SELECT 1 FROM subscriptions_cache AS destination
+           WHERE destination.user_did = source.user_did
+             AND destination.source_type = 'atproto.documents'
+             AND destination.subject_did = ? AND destination.feed_url = ?
+         )`
+    ).bind(subjectDid, previousSiteUri, subjectDid, nextSiteUri),
+    env.DB.prepare(
+      `UPDATE subscriptions_cache
+       SET feed_url = ?, atmosphere_previous_feed_url = ?, atmosphere_synced = NULL
+       WHERE source_type = 'atproto.documents' AND subject_did = ? AND feed_url = ?`
+    ).bind(nextSiteUri, previousSiteUri, subjectDid, previousSiteUri),
+  ]);
+}
+
 export async function handleListPublications(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
   const session = await getSessionFromRequest(request, env);
@@ -276,11 +317,14 @@ export async function handleConnectPublication(request: Request, env: Env): Prom
   if (!session) return json({ error: 'Unauthorized' }, 401);
   const now = Math.floor(Date.now() / 1000);
   if (request.method === 'DELETE') {
+    const previousTarget = await getLinkblogTarget(env, session.did);
+    const nextSiteUri = publicationUri(session.did);
     await env.DB.prepare(
       'UPDATE user_settings SET linkblog_publication = NULL, linkblog_content_format = NULL, updated_at = ? WHERE user_did = ?'
     )
       .bind(now, session.did)
       .run();
+    await migrateLinkblogFollowers(env, session.did, previousTarget.siteUri, nextSiteUri);
     return json(await getPublicationMeta(session, env));
   }
   if (request.method !== 'PUT') return json({ error: 'Method not allowed' }, 405);
@@ -295,24 +339,21 @@ export async function handleConnectPublication(request: Request, env: Env): Prom
   );
   if (!match || match[1] !== session.did)
     return json({ error: 'Choose a publication from your own Atmosphere account' }, 400);
+  const selectedPublicationUri = body.publicationUri!;
   if (body.format && !FORMATS.has(body.format))
     return json({ error: 'Unsupported content format' }, 400);
   const exists = await createPDSClient(session).getRecord('site.standard.publication', match[2]);
   if (!exists.success) return json({ error: 'Publication not found' }, 404);
   const format = body.format || 'leaflet';
+  const previousTarget = await getLinkblogTarget(env, session.did);
   await env.DB.prepare(
     `INSERT INTO user_settings (user_did, linkblog_publication, linkblog_content_format, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_did) DO UPDATE SET linkblog_publication=excluded.linkblog_publication,
     linkblog_content_format=excluded.linkblog_content_format, updated_at=excluded.updated_at`
   )
-    .bind(session.did, body.publicationUri, format, now, now)
+    .bind(session.did, selectedPublicationUri, format, now, now)
     .run();
-  await env.DB.prepare(
-    `UPDATE subscriptions_cache SET feed_url = ?, atmosphere_synced = NULL, updated_at = ?
-    WHERE source_type = 'atproto.documents' AND subject_did = ? AND feed_url = ?`
-  )
-    .bind(body.publicationUri, now * 1000, session.did, publicationUri(session.did))
-    .run();
+  await migrateLinkblogFollowers(env, session.did, previousTarget.siteUri, selectedPublicationUri);
   return json(await getPublicationMeta(session, env));
 }
 
