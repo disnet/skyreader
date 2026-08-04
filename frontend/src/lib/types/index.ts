@@ -779,6 +779,10 @@ export interface LinkblogPublication {
   exists: boolean;
   external: boolean;
   format: 'leaflet' | 'pckt' | 'offprint' | 'markpub';
+  // For a connected publication only: its own site (e.g. https://leaflet.pub/…).
+  // Informational — `url` above is always the Skyreader linkblog page, which
+  // renders the connected publication's link posts too.
+  externalUrl?: string;
 }
 
 export interface LinkblogPublicationChoice {

@@ -87,35 +87,85 @@ export interface LinkblogTarget {
 
 const CONTENT_FORMATS = new Set<ContentFormat>(['leaflet', 'pckt', 'offprint', 'markpub']);
 
-export async function getLinkblogTarget(env: Env, did: string): Promise<LinkblogTarget> {
-  const fallback: LinkblogTarget = {
-    siteUri: publicationUri(did),
-    format: 'leaflet',
-    external: false,
+export function defaultLinkblogTarget(did: string): LinkblogTarget {
+  return { siteUri: publicationUri(did), format: 'leaflet', external: false };
+}
+
+// Turn a stored `linkblog_publication` setting into a target, ignoring anything
+// that isn't a publication in this user's own repo.
+function targetFromRow(
+  did: string,
+  publication: string | null | undefined,
+  contentFormat: string | null | undefined
+): LinkblogTarget {
+  const fallback = defaultLinkblogTarget(did);
+  if (!publication) return fallback;
+  const match = publication.match(/^at:\/\/([^/]+)\/site\.standard\.publication\/([^/]+)$/);
+  if (!match || match[1] !== did) return fallback;
+  const format = CONTENT_FORMATS.has(contentFormat as ContentFormat)
+    ? (contentFormat as ContentFormat)
+    : 'leaflet';
+  return {
+    siteUri: publication,
+    format,
+    external: publication !== fallback.siteUri,
   };
+}
+
+export async function getLinkblogTarget(env: Env, did: string): Promise<LinkblogTarget> {
   try {
     const row = await env.DB.prepare(
       'SELECT linkblog_publication, linkblog_content_format FROM user_settings WHERE user_did = ?'
     )
       .bind(did)
       .first<{ linkblog_publication: string | null; linkblog_content_format: string | null }>();
-    if (!row?.linkblog_publication) return fallback;
-    const match = row.linkblog_publication.match(
-      /^at:\/\/([^/]+)\/site\.standard\.publication\/([^/]+)$/
-    );
-    if (!match || match[1] !== did) return fallback;
-    const format = CONTENT_FORMATS.has(row.linkblog_content_format as ContentFormat)
-      ? (row.linkblog_content_format as ContentFormat)
-      : 'leaflet';
-    return {
-      siteUri: row.linkblog_publication,
-      format,
-      external: row.linkblog_publication !== fallback.siteUri,
-    };
+    return targetFromRow(did, row?.linkblog_publication, row?.linkblog_content_format);
   } catch {
     // Deploys remain usable while a migration is rolling out.
-    return fallback;
+    return defaultLinkblogTarget(did);
   }
+}
+
+// D1 caps bound parameters per statement; chunk the IN (...) list well under it.
+const TARGET_LOOKUP_CHUNK = 80;
+
+// Batch form of getLinkblogTarget for list endpoints (discovery). Every requested
+// DID is present in the result — DIDs with no (or an unusable) setting map to the
+// default Skyreader publication, same as the single-DID resolver.
+export async function getLinkblogTargets(
+  env: Env,
+  dids: string[]
+): Promise<Map<string, LinkblogTarget>> {
+  const out = new Map<string, LinkblogTarget>();
+  const unique = [...new Set(dids)];
+  for (const did of unique) out.set(did, defaultLinkblogTarget(did));
+  if (unique.length === 0) return out;
+
+  try {
+    for (let i = 0; i < unique.length; i += TARGET_LOOKUP_CHUNK) {
+      const chunk = unique.slice(i, i + TARGET_LOOKUP_CHUNK);
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = await env.DB.prepare(
+        `SELECT user_did, linkblog_publication, linkblog_content_format
+         FROM user_settings WHERE user_did IN (${placeholders})`
+      )
+        .bind(...chunk)
+        .all<{
+          user_did: string;
+          linkblog_publication: string | null;
+          linkblog_content_format: string | null;
+        }>();
+      for (const row of rows.results ?? []) {
+        out.set(
+          row.user_did,
+          targetFromRow(row.user_did, row.linkblog_publication, row.linkblog_content_format)
+        );
+      }
+    }
+  } catch {
+    // Best-effort: discovery falls back to the default publication for everyone.
+  }
+  return out;
 }
 
 // Generous excerpt cap — the excerpt is the only durable copy if the source
@@ -131,7 +181,9 @@ interface BlobRef {
 
 interface PublicationRecord {
   $type?: string;
-  url: string;
+  // Optional: a foreign publication (Leaflet, pckt, …) isn't guaranteed to carry
+  // one, and we never depend on it for our own records.
+  url?: string;
   name?: string;
   description?: string;
   icon?: BlobRef;
@@ -169,13 +221,33 @@ function truncate(text: string, max: number): string {
 
 export interface PublicationMeta {
   uri: string;
+  // ALWAYS the Skyreader linkblog page for this user (<linkblogs origin>/<did>/).
+  // Clients build the handle alias off its origin and present it as "your public
+  // page", so it must stay on the linkblog site even when the documents live in a
+  // connected publication — that page renders them too.
   url: string;
+  // For a connected publication only: its own site, as stored on the record
+  // (e.g. https://leaflet.pub/lish/…). Absent when there is none, or when it
+  // isn't an http(s) URL. Purely informational — never the "your linkblog" link.
+  externalUrl?: string;
   name: string;
   description?: string;
   iconUrl?: string;
   exists: boolean;
   external: boolean;
   format: ContentFormat;
+}
+
+// PDS records are user-controlled, so a `url` can be any string. Only surface it
+// when it's a real http(s) URL (it ends up in an href).
+function httpUrlOrUndefined(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function iconUrlFromBlob(did: string, icon: BlobRef | undefined): string | undefined {
@@ -194,7 +266,7 @@ export async function getPublicationMeta(session: Session, env: Env): Promise<Pu
   const url = linkblogBaseUrl(env, session.did);
   if (!result.success) {
     return {
-      uri: publicationUri(session.did),
+      uri: target.siteUri,
       url,
       name: defaultPublicationName(session),
       exists: false,
@@ -210,7 +282,9 @@ export async function getPublicationMeta(session: Session, env: Env): Promise<Pu
     // — older records still point at the previous origin (skyreader.app/blogs/…)
     // until lazy-backfilled, and the UI should always show where the linkblog
     // actually lives now (the stored field self-corrects on the user's next share).
-    url: target.external ? value.url : url,
+    // A connected publication's own site rides along separately as `externalUrl`.
+    url,
+    externalUrl: target.external ? httpUrlOrUndefined(value.url) : undefined,
     name: value.name || defaultPublicationName(session),
     description: value.description,
     iconUrl: iconUrlFromBlob(session.did, value.icon),
@@ -352,13 +426,22 @@ interface DocumentRecord {
 // as the legacy-quote marker, so the note-update path reads it back from here to
 // rebuild the card without dropping it.
 function websiteCardExcerpt(content: unknown): string {
-  const c = content as { pages?: Array<{ blocks?: Array<{ block?: Record<string, unknown> }> }> };
+  const c = content as {
+    pages?: Array<{ blocks?: Array<{ block?: Record<string, unknown> }> }>;
+    items?: Array<{ $type?: string; attrs?: Record<string, unknown> }>;
+  };
   for (const page of c?.pages ?? []) {
     for (const wrapper of page.blocks ?? []) {
       if (wrapper.block?.$type === 'pub.leaflet.blocks.website') {
         const desc = wrapper.block.description;
         if (typeof desc === 'string') return desc;
       }
+    }
+  }
+  // pckt's link card keeps the same excerpt under `attrs.description`.
+  for (const item of c?.items ?? []) {
+    if (item?.$type === 'blog.pckt.block.website' && typeof item.attrs?.description === 'string') {
+      return item.attrs.description;
     }
   }
   return '';
@@ -501,6 +584,61 @@ export function buildLinkblogDocument(
   };
 }
 
+// The block-item formats (pckt, Offprint) share a shape — an ordered `items`
+// array of `<prefix>text` / `<prefix>blockquote` blocks — and differ only in the
+// NSID prefix and in how they carry the shared article.
+const ITEM_PREFIX: Record<'pckt' | 'offprint', string> = {
+  pckt: 'blog.pckt.block.',
+  offprint: 'app.offprint.block.',
+};
+
+const ITEM_CONTENT_TYPE: Record<'pckt' | 'offprint', string> = {
+  pckt: 'blog.pckt.content',
+  offprint: 'app.offprint.content',
+};
+
+// The note as native blocks: one item per paragraph, a leading `>` making it a
+// blockquote (the same deliberately small Markdown subset the editor speaks).
+function noteToBlockItems(
+  prefix: string,
+  note: string | undefined
+): Array<Record<string, unknown>> {
+  const text = note?.trim();
+  if (!text) return [];
+  return text.split(/\n\s*\n/).map((paragraph) => {
+    const quoted = paragraph.startsWith('>');
+    const plaintext = paragraph.replace(/^> ?/gm, '');
+    const textBlock = { $type: `${prefix}text`, plaintext };
+    return quoted ? { $type: `${prefix}blockquote`, content: [textBlock] } : textBlock;
+  });
+}
+
+// The shared article itself, trailing the note. pckt has a native link card;
+// Offprint has no equivalent block, so the article rides as a final text line.
+function articleItem(
+  format: 'pckt' | 'offprint',
+  article: { url: string; title?: string; excerpt?: string }
+): Record<string, unknown> {
+  if (format === 'pckt') {
+    return {
+      $type: 'blog.pckt.block.website',
+      attrs: {
+        src: article.url,
+        title: article.title,
+        description: article.excerpt || undefined,
+      },
+    };
+  }
+  return {
+    $type: 'app.offprint.block.text',
+    plaintext: `${article.title || article.url} — ${article.url}`,
+  };
+}
+
+function markpubLinkLine(url: string, title?: string): string {
+  return `[${(title || url).replace(/([\\[\]()])/g, '\\$1')}](${url})`;
+}
+
 function buildContent(
   format: ContentFormat,
   input: LinkblogShareInput,
@@ -509,41 +647,105 @@ function buildContent(
 ): unknown {
   if (format === 'leaflet') return buildLeafletContent(input, excerpt, handles);
   if (format === 'markpub') {
-    const title = (input.articleTitle || input.articleUrl).replace(/([\\[\]()])/g, '\\$1');
     return {
       $type: 'at.markpub.markdown',
       text: {
-        markdown: [input.note?.trim(), `[${title}](${input.articleUrl})`]
+        markdown: [input.note?.trim(), markpubLinkLine(input.articleUrl, input.articleTitle)]
           .filter(Boolean)
           .join('\n\n'),
       },
     };
   }
-  const prefix = format === 'pckt' ? 'blog.pckt.block.' : 'app.offprint.block.';
-  const items: Array<Record<string, unknown>> = (
-    input.note?.trim() ? input.note.trim().split(/\n\s*\n/) : []
-  ).map((paragraph) => {
-    const quoted = paragraph.startsWith('>');
-    const plaintext = paragraph.replace(/^> ?/gm, '');
-    if (!quoted) return { $type: `${prefix}text`, plaintext };
-    const text = { $type: `${prefix}text`, plaintext };
-    return { $type: `${prefix}blockquote`, content: [text] };
-  });
-  if (format === 'pckt')
-    items.push({
-      $type: 'blog.pckt.block.website',
-      attrs: {
-        src: input.articleUrl,
-        title: input.articleTitle,
-        description: excerpt || undefined,
-      },
-    });
-  else
-    items.push({
-      $type: 'app.offprint.block.text',
-      plaintext: `${input.articleTitle || input.articleUrl} — ${input.articleUrl}`,
-    });
-  return { $type: format === 'pckt' ? 'blog.pckt.content' : 'app.offprint.content', items };
+  const items = [
+    ...noteToBlockItems(ITEM_PREFIX[format], input.note),
+    articleItem(format, { url: input.articleUrl, title: input.articleTitle, excerpt }),
+  ];
+  return { $type: ITEM_CONTENT_TYPE[format], items };
+}
+
+// Which content shape a stored record uses, or null for anything we can't edit.
+export function contentFormatOf(content: unknown): ContentFormat | null {
+  switch ((content as { $type?: string } | undefined)?.$type) {
+    case 'pub.leaflet.content':
+      return 'leaflet';
+    case 'blog.pckt.content':
+      return 'pckt';
+    case 'app.offprint.content':
+      return 'offprint';
+    case 'at.markpub.markdown':
+      return 'markpub';
+    default:
+      return null;
+  }
+}
+
+// Is this item part of the leading note region (as opposed to the article that
+// closes the post)? Offprint's article line is an ordinary text block, so it's
+// identified by the article URL it carries.
+function isNoteItem(item: unknown, prefix: string, articleUrl: string | undefined): boolean {
+  const block = item as { $type?: string; plaintext?: unknown } | undefined;
+  if (block?.$type === `${prefix}blockquote`) return true;
+  if (block?.$type !== `${prefix}text`) return false;
+  const plaintext = typeof block.plaintext === 'string' ? block.plaintext : '';
+  return !(articleUrl && plaintext.includes(articleUrl));
+}
+
+// Swap the note region of a pckt/Offprint body, preserving the article block and
+// anything the home app appended after it.
+export function replaceItemsNoteRegion(
+  existing: unknown,
+  format: 'pckt' | 'offprint',
+  note: string,
+  article: { url?: string; title?: string }
+): unknown {
+  const content = existing as { $type?: string; items?: unknown[] } | undefined;
+  const prefix = ITEM_PREFIX[format];
+  const items = Array.isArray(content?.items) ? content.items : [];
+  const firstPreserved = items.findIndex((item) => !isNoteItem(item, prefix, article.url));
+  const preserved = firstPreserved < 0 ? [] : items.slice(firstPreserved);
+  return {
+    ...content,
+    $type: content?.$type || ITEM_CONTENT_TYPE[format],
+    items: [
+      ...noteToBlockItems(prefix, note),
+      // The article block should always be there; rebuild it if the record somehow
+      // arrived without one, so an edit can't drop the link itself.
+      ...(preserved.length > 0
+        ? preserved
+        : article.url
+          ? [articleItem(format, { url: article.url, title: article.title })]
+          : []),
+    ],
+  };
+}
+
+// Swap the note in a Markdown body: everything before the trailing article link,
+// which is kept verbatim when present.
+export function replaceMarkpubNote(
+  existing: unknown,
+  note: string,
+  article: { url?: string; title?: string }
+): unknown {
+  const content = existing as { text?: { markdown?: string } } | undefined;
+  const markdown = content?.text?.markdown ?? '';
+  let tail = article.url ? markpubLinkLine(article.url, article.title) : '';
+  if (article.url) {
+    const lines = markdown.split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].includes(`](${article.url})`)) {
+        tail = lines[i].trim();
+        break;
+      }
+    }
+  }
+  return {
+    ...content,
+    $type: 'at.markpub.markdown',
+    text: {
+      ...(content?.text ?? {}),
+      markdown: [note.trim(), tail].filter(Boolean).join('\n\n'),
+    },
+  };
 }
 
 // Ensure the publication exists, then write the share document. The rkey is
@@ -593,8 +795,9 @@ export async function updateLinkblogShareNote(
   if (!existing.success) return existing;
 
   const rec = existing.data.value;
-  const contentType = (rec.content as { $type?: string } | undefined)?.$type;
-  if (contentType !== 'pub.leaflet.content') {
+  const format = contentFormatOf(rec.content);
+  if (!format) {
+    const contentType = (rec.content as { $type?: string } | undefined)?.$type;
     return {
       success: false,
       error: `Editing ${contentType || 'unknown'} linkblog content is not supported yet`,
@@ -608,15 +811,26 @@ export async function updateLinkblogShareNote(
   // preserves that legacy `description` as-is — we never add one to a new record.
   const excerpt = websiteCardExcerpt(rec.content) || rec.description || '';
   const trimmedNote = note.trim();
+  const article = {
+    url: rec.links?.find((l) => /^https?:\/\//i.test(l.uri))?.uri,
+    title: rec.title,
+  };
   // Re-resolve mentions on edit so added/removed @handles re-encode; recipients
-  // pick up the change on their next Constellation poll.
-  const resolvedHandles = await resolveNoteMentionHandles(trimmedNote);
+  // pick up the change on their next Constellation poll. (Facets are a Leaflet
+  // richtext feature; the other formats store the note as plain text.)
+  const resolvedHandles =
+    format === 'leaflet' ? await resolveNoteMentionHandles(trimmedNote) : new Map<string, string>();
 
   const updated: DocumentRecord = {
     ...rec,
     $type: DOCUMENT_COLLECTION,
     textContent: [trimmedNote, excerpt].filter(Boolean).join('\n\n') || undefined,
-    content: replaceLeafletNoteRegion(rec.content, trimmedNote, resolvedHandles),
+    content:
+      format === 'leaflet'
+        ? replaceLeafletNoteRegion(rec.content, trimmedNote, resolvedHandles)
+        : format === 'markpub'
+          ? replaceMarkpubNote(rec.content, trimmedNote, article)
+          : replaceItemsNoteRegion(rec.content, format, trimmedNote, article),
   };
 
   return pdsClient.putRecord(DOCUMENT_COLLECTION, rkey, updated);

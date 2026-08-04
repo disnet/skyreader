@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildLinkblogDocument,
+  contentFormatOf,
   noteToLeafletBlocks,
+  replaceItemsNoteRegion,
   replaceLeafletNoteRegion,
+  replaceMarkpubNote,
   publicationUri,
   LINKBLOG_RKEY,
 } from '../src/services/linkblog-sync';
@@ -177,5 +180,99 @@ describe('replaceLeafletNoteRegion', () => {
       'pub.leaflet.blocks.website',
       'pub.leaflet.blocks.image',
     ]);
+  });
+});
+
+// Editing a note on a connected publication has to round-trip through that
+// publication's own content shape — otherwise the edit affordance is a dead end
+// for three of the four supported formats.
+describe('contentFormatOf', () => {
+  it.each([
+    ['pub.leaflet.content', 'leaflet'],
+    ['blog.pckt.content', 'pckt'],
+    ['app.offprint.content', 'offprint'],
+    ['at.markpub.markdown', 'markpub'],
+  ] as const)('maps %s', (type, format) => {
+    expect(contentFormatOf({ $type: type })).toBe(format);
+  });
+
+  it('returns null for a shape we cannot rewrite', () => {
+    expect(contentFormatOf({ $type: 'com.example.content' })).toBeNull();
+    expect(contentFormatOf(undefined)).toBeNull();
+  });
+});
+
+describe('replaceItemsNoteRegion', () => {
+  const ARTICLE = { url: 'https://example.com/post', title: 'Post' };
+
+  it('swaps the pckt note items and keeps the website card', () => {
+    const existing = {
+      $type: 'blog.pckt.content',
+      items: [
+        { $type: 'blog.pckt.block.text', plaintext: 'old' },
+        { $type: 'blog.pckt.block.website', attrs: { src: ARTICLE.url } },
+      ],
+    };
+    const content = replaceItemsNoteRegion(existing, 'pckt', 'new\n\n> quote', ARTICLE) as {
+      items: Array<{ $type: string; plaintext?: string }>;
+    };
+    expect(content.items.map((i) => i.$type)).toEqual([
+      'blog.pckt.block.text',
+      'blog.pckt.block.blockquote',
+      'blog.pckt.block.website',
+    ]);
+    expect(content.items[0].plaintext).toBe('new');
+  });
+
+  it("keeps Offprint's trailing article line, which is itself a text block", () => {
+    const existing = {
+      $type: 'app.offprint.content',
+      items: [
+        { $type: 'app.offprint.block.text', plaintext: 'old' },
+        { $type: 'app.offprint.block.text', plaintext: `Post — ${ARTICLE.url}` },
+      ],
+    };
+    const content = replaceItemsNoteRegion(existing, 'offprint', 'new', ARTICLE) as {
+      items: Array<{ plaintext?: string }>;
+    };
+    expect(content.items.map((i) => i.plaintext)).toEqual(['new', `Post — ${ARTICLE.url}`]);
+  });
+
+  it('clearing the note leaves only the article block', () => {
+    const existing = {
+      $type: 'blog.pckt.content',
+      items: [
+        { $type: 'blog.pckt.block.blockquote', content: [] },
+        { $type: 'blog.pckt.block.website', attrs: { src: ARTICLE.url } },
+      ],
+    };
+    const content = replaceItemsNoteRegion(existing, 'pckt', '', ARTICLE) as {
+      items: Array<{ $type: string }>;
+    };
+    expect(content.items.map((i) => i.$type)).toEqual(['blog.pckt.block.website']);
+  });
+});
+
+describe('replaceMarkpubNote', () => {
+  const ARTICLE = { url: 'https://example.com/post', title: 'Post' };
+
+  it('rewrites the prose and keeps the trailing article link verbatim', () => {
+    const existing = {
+      $type: 'at.markpub.markdown',
+      text: { markdown: `old note\n\n[Post](${ARTICLE.url})` },
+    };
+    const content = replaceMarkpubNote(existing, 'new note', ARTICLE) as {
+      text: { markdown: string };
+    };
+    expect(content.text.markdown).toBe(`new note\n\n[Post](${ARTICLE.url})`);
+  });
+
+  it('rebuilds the article link when the stored markdown has lost it', () => {
+    const content = replaceMarkpubNote(
+      { $type: 'at.markpub.markdown', text: { markdown: 'old note' } },
+      'new note',
+      ARTICLE
+    ) as { text: { markdown: string } };
+    expect(content.text.markdown).toBe(`new note\n\n[Post](${ARTICLE.url})`);
   });
 });

@@ -2,7 +2,7 @@
 // social context (Constellation counts + "also linked by"). Both best-effort —
 // they return empty on any error so the page still renders.
 
-import { publicationUri } from '$lib/fields';
+import { externalArticleUrl, publicationUri } from '$lib/fields';
 import type { ProxyDocument, SocialContext } from '$lib/types';
 
 export interface ProxyConfig {
@@ -31,13 +31,20 @@ function proxyHeaders(cfg: ProxyConfig): Record<string, string> {
   return headers;
 }
 
-// Fetch the user's linkblog documents through the feed proxy, scoped to the
-// dedicated skyreader-links publication. Returns newest-shared-first.
+// Fetch the user's linkblog documents through the feed proxy. Scoped to the
+// dedicated skyreader-links publication, plus the existing standard.site
+// publication they've connected, if any. Returns newest-shared-first.
+//
+// A connected publication is also its home app's blog, so it can hold posts that
+// aren't link posts (essays written in Leaflet/pckt/…). A linkblog is links, so
+// only entries that link out are listed from it; everything in the Skyreader
+// publication is a share by construction.
 export async function fetchLinkblogDocuments(
   cfg: ProxyConfig,
   did: string,
   siteUris: string[] = [publicationUri(did)]
 ): Promise<ProxyDocument[]> {
+  const defaultSiteUri = publicationUri(did);
   try {
     const res = await fetch(`${cfg.feedProxyUrl}/documents`, {
       method: 'POST',
@@ -53,7 +60,10 @@ export async function fetchLinkblogDocuments(
     };
     const docs = [
       ...new Map(
-        (data.authors ?? []).flatMap((a) => a.documents ?? []).map((d) => [d.recordUri, d])
+        (data.authors ?? [])
+          .flatMap((a) => a.documents ?? [])
+          .filter((d) => d.siteUri === defaultSiteUri || externalArticleUrl(d))
+          .map((d) => [d.recordUri, d])
       ).values(),
     ];
     // A linkblog reads newest-shared-first. Order by when each link was shared

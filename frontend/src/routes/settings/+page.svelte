@@ -104,6 +104,17 @@
   let linkblogChoices = $state<LinkblogPublicationChoice[]>([]);
   let selectedLinkblogUri = $state('');
   let selectedLinkblogFormat = $state<LinkblogPublication['format']>('leaflet');
+  let selectedIsDefault = $derived(
+    linkblogChoices.find((p) => p.uri === selectedLinkblogUri)?.isDefault ?? false
+  );
+  // The Skyreader linkblog is always in the list, so a lone entry means there's
+  // nothing to switch between — don't show the picker at all.
+  let showLinkblogPicker = $derived(linkblogChoices.length > 1 || linkblogPub?.external === true);
+  let linkblogChanged = $derived(
+    !!linkblogPub &&
+      (selectedLinkblogUri !== linkblogPub.uri ||
+        (!selectedIsDefault && selectedLinkblogFormat !== linkblogPub.format))
+  );
 
   onMount(async () => {
     if (!auth.isAuthenticated) {
@@ -145,15 +156,22 @@
     if (!selectedLinkblogUri) return;
     isSavingLinkblog = true;
     linkblogError = null;
+    linkblogSuccess = null;
     try {
-      const choice = linkblogChoices.find((p) => p.uri === selectedLinkblogUri);
-      const pub = choice?.isDefault
+      // Choosing the Skyreader linkblog is a disconnect — it's always offered,
+      // even before its record exists (first share creates it), so there's always
+      // a way back from a connected publication.
+      const pub = selectedIsDefault
         ? await api.disconnectLinkblogPublication()
         : await api.connectLinkblogPublication(selectedLinkblogUri, selectedLinkblogFormat);
       linkblogPub = pub;
+      selectedLinkblogUri = pub.uri;
+      selectedLinkblogFormat = pub.format;
       linkblogName = pub.name;
       linkblogDescription = pub.description ?? '';
-      linkblogSuccess = 'Publication connected.';
+      linkblogSuccess = pub.external
+        ? 'New links will publish to this publication.'
+        : 'New links will publish to your Skyreader linkblog.';
     } catch (error) {
       linkblogError = error instanceof Error ? error.message : 'Failed to connect publication.';
     } finally {
@@ -570,9 +588,16 @@
           <a href={linkblogPub.url} target="_blank" rel="noopener noreferrer"
             >View your linkblog →</a
           >
+          {#if linkblogPub.externalUrl}
+            <br />
+            Published to
+            <a href={linkblogPub.externalUrl} target="_blank" rel="noopener noreferrer"
+              >{linkblogPub.name}</a
+            >.
+          {/if}
         </p>
       {/if}
-      {#if linkblogChoices.length > 0}
+      {#if showLinkblogPicker}
         <div class="linkblog-field">
           <label for="linkblog-publication">Publish new links to</label>
           <select id="linkblog-publication" bind:value={selectedLinkblogUri}>
@@ -583,22 +608,26 @@
             {/each}
           </select>
         </div>
-        <div class="linkblog-field">
-          <label for="linkblog-format">Content format</label>
-          <select id="linkblog-format" bind:value={selectedLinkblogFormat}>
-            <option value="leaflet">Leaflet</option><option value="pckt">pckt</option>
-            <option value="offprint">Offprint</option><option value="markpub">Markdown</option>
-          </select>
-        </div>
+        {#if !selectedIsDefault}
+          <div class="linkblog-field">
+            <label for="linkblog-format">Content format</label>
+            <select id="linkblog-format" bind:value={selectedLinkblogFormat}>
+              <option value="leaflet">Leaflet</option><option value="pckt">pckt</option>
+              <option value="offprint">Offprint</option><option value="markpub">Markdown</option>
+            </select>
+          </div>
+        {/if}
         <button
           class="btn btn-secondary"
           onclick={handleConnectLinkblog}
-          disabled={isSavingLinkblog}>Connect publication</button
+          disabled={isSavingLinkblog || !linkblogChanged}
+          >{selectedIsDefault ? 'Use Skyreader linkblog' : 'Connect publication'}</button
         >
         <p class="setting-description">
           New links are public and portable across the Atmosphere. Existing posts stay where they
-          are. Connected publications remain managed by their home app; Skyreader discovery works
-          best with the Skyreader linkblog.
+          are, and only posts that link out show up as linkblog entries. A connected publication's
+          name and description stay managed by its home app; new links are written in that app's own
+          format. Skyreader discovery works best with the Skyreader linkblog.
         </p>
       {/if}
       <div class="linkblog-field">

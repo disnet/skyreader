@@ -320,15 +320,29 @@ export async function handleListPublications(request: Request, env: Env): Promis
     { maxPages: 5, maxRecords: 200 }
   );
   if (!result.success) return json({ error: result.error }, 502);
-  return json({
-    publications: result.data.map((record) => ({
-      uri: record.uri,
-      rkey: record.uri.split('/').pop(),
-      name: record.value.name || 'Untitled publication',
-      url: record.value.url,
-      isDefault: record.uri === publicationUri(session.did),
-    })),
-  });
+
+  const defaultUri = publicationUri(session.did);
+  const publications = result.data.map((record) => ({
+    uri: record.uri,
+    rkey: record.uri.split('/').pop(),
+    name: record.value.name || 'Untitled publication',
+    url: record.value.url,
+    isDefault: record.uri === defaultUri,
+  }));
+  // The Skyreader linkblog is always offered, even before its record exists — it's
+  // created lazily on first share, and a user who connected an external
+  // publication without ever sharing would otherwise have no way back. Choosing it
+  // hits the disconnect path, which works whether or not the record is there.
+  if (!publications.some((p) => p.isDefault)) {
+    publications.unshift({
+      uri: defaultUri,
+      rkey: defaultUri.split('/').pop(),
+      name: 'Skyreader linkblog',
+      url: undefined,
+      isDefault: true,
+    });
+  }
+  return json({ publications });
 }
 
 export async function handleConnectPublication(request: Request, env: Env): Promise<Response> {

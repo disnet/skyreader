@@ -11,18 +11,32 @@ export interface SourceDisplayInfo {
 // Atmosphere source apart (linkblog = curated links + notes; blog = writing).
 export const LINKBLOG_PUB_SUFFIX = 'site.standard.publication/skyreader-links';
 
-export function isLinkblogPublication(feedUrl?: string): boolean {
-  return !!feedUrl && feedUrl.endsWith(LINKBLOG_PUB_SUFFIX);
+// A linkblog connected to an existing publication has an arbitrary rkey, so the
+// URI alone can't identify it. Those subscriptions are minted by linkblog
+// discovery with the author's Skyreader linkblog page as their siteUrl — that
+// origin is the reliable tell.
+function isLinkblogSiteUrl(siteUrl?: string): boolean {
+  if (!siteUrl) return false;
+  try {
+    return /(^|\.)linkblogs\./i.test(new URL(siteUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function isLinkblogPublication(feedUrl?: string, siteUrl?: string): boolean {
+  return (!!feedUrl && feedUrl.endsWith(LINKBLOG_PUB_SUFFIX)) || isLinkblogSiteUrl(siteUrl);
 }
 
 export function getSourceDisplay(
   sourceType: SubscriptionSourceType | undefined,
-  feedUrl?: string
+  feedUrl?: string,
+  siteUrl?: string
 ): SourceDisplayInfo {
   switch (sourceType) {
     case 'atproto.documents':
       if (feedUrl) {
-        if (isLinkblogPublication(feedUrl)) {
+        if (isLinkblogPublication(feedUrl, siteUrl)) {
           return {
             label: 'Linkblog',
             iconName: 'link',

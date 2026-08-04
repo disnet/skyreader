@@ -115,37 +115,19 @@ const MENTION_FACET_TYPES = new Set([
   'app.bsky.richtext.facet#mention',
 ]);
 
-// The first `pub.leaflet.blocks.text` block with non-blank text — the note block.
-// Skyreader writes the note as the leading text block, before the website card.
-function firstNoteBlock(doc: ProxyDocument): LeafletTextBlock | null {
-  const content = doc.content as LeafletContent | undefined;
-  if (content && content.$type === 'pub.leaflet.content') {
-    for (const page of content.pages ?? []) {
-      for (const wrapper of page.blocks ?? []) {
-        if (wrapper.block?.$type === 'pub.leaflet.blocks.text' && wrapper.block.plaintext?.trim()) {
-          return wrapper.block;
-        }
-      }
-    }
-  }
-  return null;
+// A note's blockquote lines are stored as their own native blockquote block, so
+// a facet offset inside one shifts by the `> ` markers renderBodyHtml re-adds:
+// two bytes per line up to and including the line the offset falls on.
+function quoteOffset(plaintext: string, byteOffset: number): number {
+  const prefix = utf8Encoder.encode(plaintext).slice(0, byteOffset);
+  let newlines = 0;
+  for (const byte of prefix) if (byte === 10) newlines++;
+  return byteOffset + 2 * (newlines + 1);
 }
 
-// The user's commentary on a link post: the note block's plaintext (trimmed).
-// Returns '' when there's no note — the document's `description`/`textContent` hold
-// the article excerpt, not the note. The backend stores this plaintext already
-// trimmed, so the mention facets' byte offsets line up with this string (see
-// linkPostMentions).
-export function linkPostNote(doc: ProxyDocument): string {
-  return firstNoteBlock(doc)?.plaintext?.trim() ?? '';
-}
-
-// The resolved @mention facets on the note, byte-indexed into linkPostNote(doc).
-export function linkPostMentions(doc: ProxyDocument): MentionFacet[] {
-  const facets = firstNoteBlock(doc)?.facets;
-  if (!Array.isArray(facets)) return [];
+function blockMentions(block: LeafletTextBlock, base: number, isQuote: boolean): MentionFacet[] {
   const out: MentionFacet[] = [];
-  for (const f of facets) {
+  for (const f of block.facets ?? []) {
     const byteStart = f?.index?.byteStart;
     const byteEnd = f?.index?.byteEnd;
     if (typeof byteStart !== 'number' || typeof byteEnd !== 'number' || byteEnd <= byteStart) {
@@ -154,9 +136,146 @@ export function linkPostMentions(doc: ProxyDocument): MentionFacet[] {
     const did = (f.features ?? []).find(
       (ft) => ft && MENTION_FACET_TYPES.has(ft.$type ?? '') && ft.did?.startsWith('did:')
     )?.did;
-    if (did) out.push({ byteStart, byteEnd, did });
+    if (!did) continue;
+    const plaintext = block.plaintext ?? '';
+    out.push({
+      byteStart: base + (isQuote ? quoteOffset(plaintext, byteStart) : byteStart),
+      byteEnd: base + (isQuote ? quoteOffset(plaintext, byteEnd) : byteEnd),
+      did,
+    });
   }
   return out;
+}
+
+// Rebuild the note from the leading text and blockquote blocks — the same
+// restricted Markdown the user typed, with `> ` markers restored — and rebase the
+// mention facets onto it. Skyreader writes the note before the website card, so
+// the walk stops at the first block that is neither.
+function reconstructLeafletNote(blocks: Array<{ block?: LeafletTextBlock }>): {
+  note: string;
+  mentions: MentionFacet[];
+} {
+  const parts: string[] = [];
+  const mentions: MentionFacet[] = [];
+  let outputBytes = 0;
+
+  for (const wrapper of blocks) {
+    const block = wrapper.block;
+    const isQuote = block?.$type === 'pub.leaflet.blocks.blockquote';
+    if (!isQuote && block?.$type !== 'pub.leaflet.blocks.text') break;
+    const plaintext = block?.plaintext;
+    if (!plaintext?.trim()) continue;
+    const rendered = isQuote
+      ? plaintext
+          .split('\n')
+          .map((line) => `> ${line}`)
+          .join('\n')
+      : plaintext;
+    if (parts.length > 0) outputBytes += 2; // the '\n\n' separator
+    mentions.push(...blockMentions(block!, outputBytes, isQuote));
+    parts.push(rendered);
+    outputBytes += utf8Encoder.encode(rendered).length;
+  }
+  return { note: parts.join('\n\n').trim(), mentions };
+}
+
+// ── Notes in a connected publication's own content lexicon ───────────────────
+//
+// A linkblog can be an existing standard.site publication (Leaflet, pckt,
+// Offprint, Markdown), in which case its link posts carry the note in that app's
+// content shape. pckt and Offprint use an ordered `items` array of text and
+// blockquote blocks; Markdown stores one string. In each the note leads and the
+// shared article closes the post — as a link card (pckt), a trailing line
+// carrying the URL (Offprint), or a trailing Markdown link.
+
+interface ForeignBlock {
+  $type?: string;
+  plaintext?: string;
+  content?: ForeignBlock[];
+}
+
+function foreignBlockText(block: ForeignBlock): string {
+  if (typeof block.plaintext === 'string') return block.plaintext;
+  return (block.content ?? []).map(foreignBlockText).filter(Boolean).join('\n');
+}
+
+function foreignItemsNote(items: ForeignBlock[], prefix: string, articleUrl?: string): string {
+  const parts: string[] = [];
+  for (const item of items) {
+    const isQuote = item?.$type === `${prefix}blockquote`;
+    if (!isQuote && item?.$type !== `${prefix}text`) break;
+    const text = foreignBlockText(item).trim();
+    if (!text) continue;
+    if (!isQuote && articleUrl && text.includes(articleUrl)) break;
+    parts.push(
+      isQuote
+        ? text
+            .split('\n')
+            .map((line) => `> ${line}`)
+            .join('\n')
+        : text
+    );
+  }
+  return parts.join('\n\n').trim();
+}
+
+function foreignMarkdownNote(markdown: string, articleUrl?: string): string {
+  const lines = markdown.split('\n');
+  if (articleUrl) {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].includes(`](${articleUrl})`)) {
+        lines.splice(i, 1);
+        break;
+      }
+    }
+  }
+  return lines.join('\n').trim();
+}
+
+// The user's commentary on a link post, with any @mention facets rebased onto it.
+// Returns an empty note when there is none — the document's
+// `description`/`textContent` hold the article excerpt, not the note. Mentions are
+// a Leaflet richtext feature; the other formats store the note as plain text.
+function noteOf(doc: ProxyDocument): { note: string; mentions: MentionFacet[] } {
+  const content = doc.content as
+    | (LeafletContent & { items?: ForeignBlock[]; text?: { markdown?: string } })
+    | undefined;
+  const articleUrl = externalArticleUrl(doc);
+  switch (content?.$type) {
+    case 'pub.leaflet.content': {
+      for (const page of content.pages ?? []) {
+        const result = reconstructLeafletNote(page.blocks ?? []);
+        if (result.note) return result;
+      }
+      return { note: '', mentions: [] };
+    }
+    case 'blog.pckt.content':
+      return {
+        note: foreignItemsNote(content.items ?? [], 'blog.pckt.block.', articleUrl),
+        mentions: [],
+      };
+    case 'app.offprint.content':
+      return {
+        note: foreignItemsNote(content.items ?? [], 'app.offprint.block.', articleUrl),
+        mentions: [],
+      };
+    case 'at.markpub.markdown':
+      return {
+        note: foreignMarkdownNote(content.text?.markdown ?? '', articleUrl),
+        mentions: [],
+      };
+    default:
+      return { note: '', mentions: [] };
+  }
+}
+
+export function linkPostNote(doc: ProxyDocument): string {
+  return noteOf(doc).note;
+}
+
+// The resolved @mention facets on the note, byte-indexed into linkPostNote(doc).
+export function linkPostMentions(doc: ProxyDocument): MentionFacet[] {
+  return noteOf(doc).mentions;
 }
 
 // A snippet of the shared article itself (its first paragraph or so). LEGACY

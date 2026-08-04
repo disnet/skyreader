@@ -40,15 +40,93 @@ export function getDocumentEffectiveUrl(doc: SocialDocument): string {
 /**
  * The user's commentary on a link post, reconstructed from the native text and
  * blockquote blocks before the website card. Returns undefined when there's no note.
+ *
+ * A linkblog connected to an existing standard.site publication writes the same
+ * shape in that publication's own content lexicon (pckt, Offprint, Markdown), so
+ * all four are read here — otherwise the commentary, which is the point of a
+ * linkblog, would render blank on every Skyreader surface.
  */
 export function getLinkPostNote(doc: SocialDocument): string | undefined {
-  if (!doc.content || !isLeafletContent(doc.content)) return undefined;
-  const content = doc.content as LeafletContent;
-  for (const page of content.pages ?? []) {
-    const note = reconstructLinkPostNote(page.blocks ?? []).note;
-    if (note) return note;
+  if (!doc.content) return undefined;
+  if (isLeafletContent(doc.content)) {
+    const content = doc.content as LeafletContent;
+    for (const page of content.pages ?? []) {
+      const note = reconstructLinkPostNote(page.blocks ?? []).note;
+      if (note) return note;
+    }
+    return undefined;
   }
-  return undefined;
+  return foreignNote(doc.content, getExternalArticleLink(doc));
+}
+
+// ── Notes in a connected publication's own content lexicon ───────────────────
+//
+// pckt and Offprint share an `items` array of text/blockquote blocks; Markdown
+// (at.markpub) stores one string. In each, the note leads and the shared article
+// closes the post — as a link card (pckt), a trailing line carrying the URL
+// (Offprint), or a trailing Markdown link. Rendered back into the same small
+// Markdown subset the Leaflet reader produces (`> ` for quotes).
+
+interface ForeignBlock {
+  $type?: string;
+  plaintext?: string;
+  content?: ForeignBlock[];
+}
+
+function blockText(block: ForeignBlock): string {
+  if (typeof block.plaintext === 'string') return block.plaintext;
+  return (block.content ?? []).map(blockText).filter(Boolean).join('\n');
+}
+
+function itemsNote(items: ForeignBlock[], prefix: string, articleUrl?: string): string | undefined {
+  const parts: string[] = [];
+  for (const item of items) {
+    const isQuote = item?.$type === `${prefix}blockquote`;
+    if (!isQuote && item?.$type !== `${prefix}text`) break;
+    const text = blockText(item).trim();
+    if (!text) continue;
+    // Offprint has no link-card block, so the article rides as a trailing text
+    // line — that line is the article, not the note.
+    if (!isQuote && articleUrl && text.includes(articleUrl)) break;
+    parts.push(
+      isQuote
+        ? text
+            .split('\n')
+            .map((line) => `> ${line}`)
+            .join('\n')
+        : text
+    );
+  }
+  const note = parts.join('\n\n').trim();
+  return note || undefined;
+}
+
+function markdownNote(markdown: string, articleUrl?: string): string | undefined {
+  const lines = markdown.split('\n');
+  if (articleUrl) {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].includes(`](${articleUrl})`)) {
+        lines.splice(i, 1);
+        break;
+      }
+    }
+  }
+  const note = lines.join('\n').trim();
+  return note || undefined;
+}
+
+function foreignNote(content: unknown, articleUrl?: string): string | undefined {
+  const shape = content as { $type?: string; items?: ForeignBlock[]; text?: { markdown?: string } };
+  switch (shape?.$type) {
+    case 'blog.pckt.content':
+      return itemsNote(shape.items ?? [], 'blog.pckt.block.', articleUrl);
+    case 'app.offprint.content':
+      return itemsNote(shape.items ?? [], 'app.offprint.block.', articleUrl);
+    case 'at.markpub.markdown':
+      return markdownNote(shape.text?.markdown ?? '', articleUrl);
+    default:
+      return undefined;
+  }
 }
 
 // A resolved @mention in a note: the UTF-8 byte range of the `@handle` token within
