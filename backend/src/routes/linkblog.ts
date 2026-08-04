@@ -265,7 +265,16 @@ export async function migrateLinkblogFollowers(
   await env.DB.batch([
     env.DB.prepare(
       `UPDATE subscriptions_cache AS destination
-       SET atmosphere_previous_feed_url = ?, atmosphere_synced = NULL
+       SET atmosphere_previous_feed_url = COALESCE(
+             (SELECT source.atmosphere_previous_feed_url
+              FROM subscriptions_cache AS source
+              WHERE source.user_did = destination.user_did
+                AND source.source_type = 'atproto.documents'
+                AND source.subject_did = ? AND source.feed_url = ?),
+             destination.atmosphere_previous_feed_url,
+             ?
+           ),
+           atmosphere_synced = NULL
        WHERE source_type = 'atproto.documents' AND subject_did = ? AND feed_url = ?
          AND EXISTS (
            SELECT 1 FROM subscriptions_cache AS source
@@ -273,7 +282,15 @@ export async function migrateLinkblogFollowers(
              AND source.source_type = 'atproto.documents'
              AND source.subject_did = ? AND source.feed_url = ?
          )`
-    ).bind(previousSiteUri, subjectDid, nextSiteUri, subjectDid, previousSiteUri),
+    ).bind(
+      subjectDid,
+      previousSiteUri,
+      previousSiteUri,
+      subjectDid,
+      nextSiteUri,
+      subjectDid,
+      previousSiteUri
+    ),
     env.DB.prepare(
       `DELETE FROM subscriptions_cache AS source
        WHERE source_type = 'atproto.documents' AND subject_did = ? AND feed_url = ?
@@ -286,7 +303,9 @@ export async function migrateLinkblogFollowers(
     ).bind(subjectDid, previousSiteUri, subjectDid, nextSiteUri),
     env.DB.prepare(
       `UPDATE subscriptions_cache
-       SET feed_url = ?, atmosphere_previous_feed_url = ?, atmosphere_synced = NULL
+       SET feed_url = ?,
+           atmosphere_previous_feed_url = COALESCE(atmosphere_previous_feed_url, ?),
+           atmosphere_synced = NULL
        WHERE source_type = 'atproto.documents' AND subject_did = ? AND feed_url = ?`
     ).bind(nextSiteUri, previousSiteUri, subjectDid, previousSiteUri),
   ]);
