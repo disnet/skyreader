@@ -43,7 +43,7 @@ export const GET: RequestHandler = async ({ params, url }) => {
   const target = await resolveLinkblogTarget(apiBaseFor(origin, env.API_URL), did);
   const [profile, pub, docs] = await Promise.all([
     getProfile(did),
-    fetchPublicationMeta(did),
+    fetchPublicationMeta(did, target.siteUri),
     fetchLinkblogDocuments(cfg, did, [target.siteUri, target.defaultSiteUri]),
   ]);
 

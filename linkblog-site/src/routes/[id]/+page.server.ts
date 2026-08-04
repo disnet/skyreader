@@ -36,7 +36,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
   const target = await resolveLinkblogTarget(apiBase, did);
   const [profile, pub, docs] = await Promise.all([
     getProfile(did),
-    fetchPublicationMeta(did),
+    fetchPublicationMeta(did, target.siteUri),
     fetchLinkblogDocuments(cfg, did, [target.siteUri, target.defaultSiteUri]),
   ]);
 
