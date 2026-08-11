@@ -1,6 +1,6 @@
 import type { LeafletContent, SocialDocument } from '$lib/types';
 import { isLeafletContent } from '$lib/utils/leaflet-renderer';
-import { reconstructLinkPostNote } from '$lib/utils/linkPostNote';
+import { noteToLeafletBlocks, reconstructLinkPostNote } from '$lib/utils/linkPostNote';
 
 /**
  * Link-post helpers (Linkblog Phase 2).
@@ -30,7 +30,7 @@ export function isLinkPost(doc: SocialDocument): boolean {
 
 // The constant marker Skyreader stamps on the records it writes (publications and
 // link posts alike). MUST match backend LINKBLOG_MARKER_URL.
-const LINKBLOG_MARKER_URL = 'https://skyreader.app/linkblog';
+export const LINKBLOG_MARKER_URL = 'https://skyreader.app/linkblog';
 const DEFAULT_LINKBLOG_PUB_SUFFIX = '/site.standard.publication/skyreader-links';
 
 /**
@@ -49,6 +49,58 @@ export function isSkyreaderShare(doc: SocialDocument): boolean {
     doc.skyreaderLinkblog === LINKBLOG_MARKER_URL ||
     (doc.siteUri?.endsWith(DEFAULT_LINKBLOG_PUB_SUFFIX) ?? false)
   );
+}
+
+/**
+ * The document a just-written share looks like, before the PDS → indexer → proxy
+ * round-trip surfaces the real one. Shaped to match what the link-post card
+ * reads: the external URL in `links`, the note as leading native Leaflet blocks.
+ *
+ * It carries the marker because we just wrote the record with it. That matters
+ * beyond the card: without it `isSkyreaderShare` rejects the optimistic document
+ * (a connected publication's siteUri isn't the `skyreader-links` fallback), which
+ * drops the share out of the cross-device overlay — and reconcile() would then
+ * read "not on the server" and prune the local row while the write is still
+ * being indexed.
+ */
+export function buildOptimisticLinkPost(
+  did: string,
+  input: {
+    recordUri: string;
+    siteUri: string;
+    articleUrl: string;
+    articleTitle?: string;
+    publishedAt?: string;
+    note?: string;
+    createdAt: string;
+  }
+): SocialDocument {
+  const note = input.note?.trim();
+  return {
+    authorDid: did,
+    recordUri: input.recordUri,
+    siteUri: input.siteUri,
+    skyreaderLinkblog: LINKBLOG_MARKER_URL,
+    title: input.articleTitle || input.articleUrl,
+    publishedAt: input.publishedAt || input.createdAt,
+    createdAt: input.createdAt,
+    // New shares carry the quote inside the note (the body), not a top-level
+    // `description` — leaving it unset so this optimistic doc renders exactly
+    // like the pulled one (no standalone legacy quote, just the note body).
+    description: undefined,
+    links: [{ uri: input.articleUrl, rel: 'related' }],
+    content: note
+      ? {
+          $type: 'pub.leaflet.content',
+          pages: [
+            {
+              $type: 'pub.leaflet.pages.linearDocument',
+              blocks: noteToLeafletBlocks(note),
+            },
+          ],
+        }
+      : undefined,
+  };
 }
 
 /**

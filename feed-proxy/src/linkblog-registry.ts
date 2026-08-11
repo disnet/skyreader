@@ -10,6 +10,14 @@
  *   GET /links/distinct-dids?target=https://skyreader.app/linkblog
  *       &collection=site.standard.publication&path=.skyreaderLinkblog
  *
+ * The same marker rides on every link post we write, so the identical query over
+ * `site.standard.document` enumerates everyone who has shared to a publication we
+ * did NOT create — a linkblog connected to an existing Leaflet/pckt/offprint,
+ * where the publication record isn't ours to stamp. Both are unioned, so the
+ * registry covers connected linkblogs network-wide, not just on the deployment
+ * that holds the author's settings row. (A user who connects and never shares
+ * still stamps nothing anywhere; the backend unions its local list for those.)
+ *
  * The result is a slowly-changing global list, identical for every user, so we
  * cache it once here (longer TTL than the per-post social context — the set of
  * people who *have* a linkblog churns far slower than recommend counts). The
@@ -23,7 +31,9 @@ const CONSTELLATION_BASE = 'https://constellation.microcosm.blue';
 // The constant marker — MUST match backend LINKBLOG_MARKER_URL exactly, or the
 // registry won't find the publications it stamps.
 const MARKER_URL = 'https://skyreader.app/linkblog';
-const PUBLICATION_COLLECTION = 'site.standard.publication';
+// The two collections that carry the marker: the publication we create, and the
+// link posts we write (the only stamped record a connected linkblog produces).
+const MARKED_COLLECTIONS = ['site.standard.publication', 'site.standard.document'];
 const MARKER_PATH = '.skyreaderLinkblog';
 
 // Who-has-a-linkblog changes slowly; refresh a populated registry every 15 min.
@@ -51,20 +61,21 @@ interface RegistryCacheRow {
   cached_at: number;
 }
 
-// Page through Constellation's backlinks for the marker, collecting author DIDs.
-// We only ever want the distinct DIDs, so we ask Constellation to dedup them
-// server-side (`/links/distinct-dids`) instead of pulling full linking records
-// and discarding everything but `.did`. Returns null on a *total* failure (first
-// page errored) so the caller can fall back to a stale cache; a mid-pagination
-// failure returns whatever resolved so far (better a partial registry than none).
-async function fetchRegistryFromConstellation(): Promise<string[] | null> {
+// Page through Constellation's backlinks for the marker in ONE collection,
+// collecting author DIDs. We only ever want the distinct DIDs, so we ask
+// Constellation to dedup them server-side (`/links/distinct-dids`) instead of
+// pulling full linking records and discarding everything but `.did`. Returns null
+// on a *total* failure (first page errored) so the caller can fall back to a
+// stale cache; a mid-pagination failure returns whatever resolved so far (better
+// a partial registry than none).
+async function fetchCollectionFromConstellation(collection: string): Promise<string[] | null> {
   const seen = new Set<string>();
   let cursor: string | undefined;
 
   for (let page = 0; page < MAX_PAGES; page++) {
     const params = new URLSearchParams({
       target: MARKER_URL,
-      collection: PUBLICATION_COLLECTION,
+      collection,
       path: MARKER_PATH,
       limit: String(PAGE_LIMIT),
     });
@@ -90,6 +101,21 @@ async function fetchRegistryFromConstellation(): Promise<string[] | null> {
     cursor = data.cursor;
   }
 
+  return [...seen];
+}
+
+// Union of the marked collections. Queried in parallel — they're independent, and
+// one being slow shouldn't serialize the other. Null only when EVERY collection
+// failed outright: a partial answer still beats serving stale-or-empty.
+async function fetchRegistryFromConstellation(): Promise<string[] | null> {
+  const results = await Promise.all(
+    MARKED_COLLECTIONS.map((collection) => fetchCollectionFromConstellation(collection))
+  );
+  if (results.every((dids) => dids === null)) return null;
+  const seen = new Set<string>();
+  for (const dids of results) {
+    for (const did of dids ?? []) seen.add(did);
+  }
   return [...seen];
 }
 

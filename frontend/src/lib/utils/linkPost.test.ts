@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SocialDocument } from '$lib/types';
-import { getLinkPostNote, isSkyreaderShare } from './linkPost';
+import { buildOptimisticLinkPost, getLinkPostNote, isSkyreaderShare } from './linkPost';
 
 const ARTICLE = 'https://example.com/post';
 
@@ -129,5 +129,34 @@ describe('isSkyreaderShare', () => {
     expect(
       isSkyreaderShare({ ...doc(undefined), skyreaderLinkblog: 'https://evil.example/linkblog' })
     ).toBe(false);
+  });
+});
+
+// The optimistic document stands in for a share the proxy hasn't indexed yet. If
+// it doesn't read as ours, the cross-device overlay drops it — and reconcile()
+// takes "absent from the overlay" as "deleted elsewhere" and prunes the local
+// row, un-sharing an article that is live in the user's PDS.
+describe('buildOptimisticLinkPost', () => {
+  const input = {
+    recordUri: 'at://did:plc:someone/site.standard.document/3kabcdefghijk',
+    siteUri: 'at://did:plc:someone/site.standard.publication/my-leaflet',
+    articleUrl: ARTICLE,
+    articleTitle: 'Post',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  };
+
+  it('reads as a Skyreader share even in a connected publication', () => {
+    const optimistic = buildOptimisticLinkPost('did:plc:someone', input);
+    expect(optimistic.skyreaderLinkblog).toBe('https://skyreader.app/linkblog');
+    expect(isSkyreaderShare(optimistic)).toBe(true);
+  });
+
+  it('carries the article link and the note as Leaflet blocks', () => {
+    const optimistic = buildOptimisticLinkPost('did:plc:someone', {
+      ...input,
+      note: 'Worth reading.',
+    });
+    expect(optimistic.links?.[0]?.uri).toBe(ARTICLE);
+    expect(getLinkPostNote(optimistic)).toBe('Worth reading.');
   });
 });

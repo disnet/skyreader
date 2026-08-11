@@ -33,6 +33,32 @@ describe('isLinkblogPublication', () => {
     ).toBe(true);
   });
 
+  it('recognizes the legacy /blogs/<did>/ page path', () => {
+    expect(
+      isLinkblogPublication(
+        `at://${DID}/site.standard.publication/my-leaflet`,
+        `https://linkblogs.staging.example/blogs/${DID}/`
+      )
+    ).toBe(true);
+  });
+
+  it('does not label a DID-keyed page on some other app a linkblog', () => {
+    // siteUrl is client-supplied on create, and plenty of Atmosphere apps key
+    // their pages by DID — only the whole linkblog page path counts.
+    expect(
+      isLinkblogPublication(
+        `at://${DID}/site.standard.publication/essays`,
+        `https://leaflet.pub/lish/${DID}/essays`
+      )
+    ).toBe(false);
+    expect(
+      isLinkblogPublication(
+        `at://${DID}/site.standard.publication/essays`,
+        `https://pckt.example/u/${DID}`
+      )
+    ).toBe(false);
+  });
+
   it('does not label an unrelated third-party host a linkblog', () => {
     expect(
       isLinkblogPublication(

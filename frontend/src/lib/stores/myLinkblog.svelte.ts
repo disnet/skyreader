@@ -15,7 +15,7 @@
 
 import { api } from '$lib/services/api';
 import { auth } from '$lib/stores/auth.svelte';
-import { getExternalArticleLink } from '$lib/utils/linkPost';
+import { buildOptimisticLinkPost, getExternalArticleLink } from '$lib/utils/linkPost';
 import { noteToLeafletBlocks } from '$lib/utils/linkPostNote';
 import { loadDigests, saveDigests, scopeKey } from '$lib/services/documentDigests';
 import type { LinkblogPublication, SocialDocument } from '$lib/types';
@@ -179,31 +179,7 @@ function createMyLinkblogStore() {
   }) {
     const did = auth.user?.did;
     if (!did) return;
-    const note = input.note?.trim();
-    const doc: SocialDocument = {
-      authorDid: did,
-      recordUri: input.recordUri,
-      siteUri: input.siteUri,
-      title: input.articleTitle || input.articleUrl,
-      publishedAt: input.publishedAt || input.createdAt,
-      createdAt: input.createdAt,
-      // New shares carry the quote inside the note (the body), not a top-level
-      // `description` — leaving it unset so this optimistic doc renders exactly
-      // like the pulled one (no standalone legacy quote, just the note body).
-      description: undefined,
-      links: [{ uri: input.articleUrl, rel: 'related' }],
-      content: note
-        ? {
-            $type: 'pub.leaflet.content',
-            pages: [
-              {
-                $type: 'pub.leaflet.pages.linearDocument',
-                blocks: noteToLeafletBlocks(note),
-              },
-            ],
-          }
-        : undefined,
-    };
+    const doc = buildOptimisticLinkPost(did, input);
     optimisticUris.add(doc.recordUri);
     documents = [doc, ...documents.filter((d) => getExternalArticleLink(d) !== input.articleUrl)];
   }

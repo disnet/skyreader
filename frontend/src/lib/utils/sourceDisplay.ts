@@ -19,14 +19,20 @@ export const LINKBLOG_PUB_SUFFIX = 'site.standard.publication/skyreader-links';
 // DID-keyed path is the shape-level tell, which also holds on the dev/staging
 // origins (matching hostnames alone both missed those and matched unrelated
 // third-party hosts named `linkblogs.*`).
+//
+// The WHOLE path has to be that shape — a bare "contains a DID" test would pill
+// any publication whose home app happens to key pages by DID as a linkblog, and
+// siteUrl is client-supplied on create.
+const LINKBLOG_PAGE_PATH = /^\/(blogs\/)?did:[a-z]+:[a-zA-Z0-9._:%-]+\/?$/;
+
 function isLinkblogSiteUrl(siteUrl?: string): boolean {
   if (!siteUrl) return false;
   try {
     const { hostname, pathname } = new URL(siteUrl);
     if (hostname === 'linkblogs.skyreader.app') return true;
-    // …/<did:method:id>/ — the canonical linkblog page path (the legacy
+    // /<did:method:id>/ — the canonical linkblog page path (the legacy
     // `/blogs/<did>/` form, still redirected, matches too).
-    return /(^|\/)did:[a-z]+:/i.test(pathname);
+    return LINKBLOG_PAGE_PATH.test(pathname);
   } catch {
     return false;
   }
