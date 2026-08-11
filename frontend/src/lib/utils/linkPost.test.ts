@@ -30,7 +30,7 @@ describe('getLinkPostNote across connected publication formats', () => {
             blocks: [
               { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'Worth reading.' } },
               { block: { $type: 'pub.leaflet.blocks.blockquote', plaintext: 'A quote' } },
-              { block: { $type: 'pub.leaflet.blocks.website', url: ARTICLE } },
+              { block: { $type: 'pub.leaflet.blocks.website', src: ARTICLE } },
             ],
           },
         ],
@@ -49,7 +49,7 @@ describe('getLinkPostNote across connected publication formats', () => {
             $type: 'blog.pckt.block.blockquote',
             content: [{ $type: 'blog.pckt.block.text', plaintext: 'A quote' }],
           },
-          { $type: 'blog.pckt.block.website', attrs: { src: ARTICLE } },
+          { $type: 'blog.pckt.block.website', src: ARTICLE },
         ],
       })
     );
@@ -84,7 +84,7 @@ describe('getLinkPostNote across connected publication formats', () => {
       getLinkPostNote(
         doc({
           $type: 'blog.pckt.content',
-          items: [{ $type: 'blog.pckt.block.website', attrs: { src: ARTICLE } }],
+          items: [{ $type: 'blog.pckt.block.website', src: ARTICLE }],
         })
       )
     ).toBeUndefined();

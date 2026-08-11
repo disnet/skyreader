@@ -165,12 +165,16 @@ export interface LeafletImageBlock {
   alt?: string;
 }
 
+// Field names here are the lexicon's, not ours: `src` for the URL and
+// `previewImage` for the card image. Both are what Leaflet writes and what its
+// appview validates against, so a Skyreader-invented name would render blank on
+// every card written by any other app.
 export interface LeafletWebsiteBlock {
   $type: 'pub.leaflet.blocks.website';
-  url: string;
+  src: string;
   title?: string;
   description?: string;
-  thumb?: {
+  previewImage?: {
     ref: { $link: string };
     mimeType: string;
   };
@@ -304,32 +308,29 @@ export interface PcktBlogTableBlock {
   content?: PcktBlogTableRowBlock[];
 }
 
+// pckt puts a tiptap-shaped `attrs` bag on some blocks (image, ordered list,
+// table cells) but not on these three, which carry their fields at the top level
+// — in its published lexicons and in the posts its editor writes alike.
 export interface PcktBlogBlueskyEmbedBlock {
   $type: 'blog.pckt.block.blueskyEmbed';
-  attrs?: {
-    postRef?: {
-      uri: string;
-      cid: string;
-    };
+  postRef?: {
+    uri: string;
+    cid: string;
   };
 }
 
 export interface PcktBlogIframeBlock {
   $type: 'blog.pckt.block.iframe';
-  attrs?: {
-    url?: string;
-    height?: number;
-  };
+  url?: string;
+  height?: number;
 }
 
 export interface PcktBlogWebsiteBlock {
   $type: 'blog.pckt.block.website';
-  attrs?: {
-    src?: string;
-    title?: string;
-    description?: string;
-    previewImage?: string;
-  };
+  src?: string;
+  title?: string;
+  description?: string;
+  previewImage?: string;
 }
 
 // Union of all supported pckt.blog block types
@@ -481,6 +482,18 @@ export interface OffprintImageDiffBlock {
   alignment?: 'left' | 'center' | 'right';
 }
 
+// Offprint's link card. The one Offprint block a Skyreader linkblog writes
+// itself, and the shape every shared article takes on an Offprint publication.
+export interface OffprintWebBookmarkBlock {
+  $type: 'app.offprint.block.webBookmark';
+  href: string;
+  title: string;
+  description?: string;
+  siteName?: string;
+  // Open Graph image, stored as a blob on the author's PDS.
+  preview?: { ref: { $link: string }; mimeType: string; size?: number };
+}
+
 // Union of all supported Offprint block types
 export type OffprintBlock =
   | OffprintTextBlock
@@ -495,7 +508,8 @@ export type OffprintBlock =
   | OffprintImageBlock
   | OffprintImageGridBlock
   | OffprintImageCarouselBlock
-  | OffprintImageDiffBlock;
+  | OffprintImageDiffBlock
+  | OffprintWebBookmarkBlock;
 
 export interface OffprintContent {
   $type: 'app.offprint.content';

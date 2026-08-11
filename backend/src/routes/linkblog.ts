@@ -5,7 +5,13 @@
 
 import type { Env } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
-import { hasRequiredScopes, insufficientScopesResponse, LINKBLOG_SCOPES } from './auth';
+import {
+  hasRequiredScopes,
+  insufficientScopesResponse,
+  LINKBLOG_SCOPES,
+  PCKT_SCOPES,
+  OFFPRINT_SCOPES,
+} from './auth';
 import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
 import {
   deleteLinkblogShare,
@@ -45,6 +51,24 @@ function json(body: unknown, status = 200): Response {
 // rejection as an authoritative fallback when our stored scopes are stale.
 function isScopeError(error: string): boolean {
   return /scope/i.test(error);
+}
+
+// A pckt or Offprint linkblog needs one scope beyond the standard.site pair,
+// because the post only surfaces on those hosts once its companion record is
+// written (see COMPANION_COLLECTIONS). Checked here rather than left to fail
+// inside the write so the user gets the "log in again" banner instead of a share
+// that publishes to their PDS and then quietly never appears on their blog.
+const COMPANION_SCOPES: Partial<Record<ContentFormat, string[]>> = {
+  pckt: PCKT_SCOPES,
+  offprint: OFFPRINT_SCOPES,
+};
+
+function missingCompanionScopes(
+  session: { grantedScopes?: string },
+  format: ContentFormat
+): boolean {
+  const required = COMPANION_SCOPES[format];
+  return !!required && !hasRequiredScopes(session.grantedScopes, required);
 }
 
 function isHttpUrl(value: string): boolean {
@@ -97,6 +121,9 @@ export async function handleCreateLinkblogShare(request: Request, env: Env): Pro
     return json({ error: 'repostUri must be an at:// URI' }, 400);
   }
 
+  const target = await getLinkblogTarget(env, session.did);
+  if (missingCompanionScopes(session, target.format)) return insufficientScopesResponse();
+
   const input: LinkblogShareInput = {
     articleUrl: body.articleUrl,
     articleTitle: body.articleTitle,
@@ -119,7 +146,7 @@ export async function handleCreateLinkblogShare(request: Request, env: Env): Pro
     uri: result.data.uri,
     cid: result.data.cid,
     rkey,
-    publication: (await getLinkblogTarget(env, session.did)).siteUri,
+    publication: target.siteUri,
   });
 }
 
@@ -151,6 +178,13 @@ export async function handleUpdateLinkblogShare(request: Request, env: Env): Pro
   if (typeof body.note !== 'string') {
     return json({ error: 'note must be a string' }, 400);
   }
+
+  // An edit changes the document's cid, which strands the companion's strongRef
+  // on the old revision unless it's rewritten too — so the scope matters here as
+  // much as on the create. Checked against the current target rather than the
+  // stored record, which we haven't read yet.
+  const target = await getLinkblogTarget(env, session.did);
+  if (missingCompanionScopes(session, target.format)) return insufficientScopesResponse();
 
   const result = await updateLinkblogShareNote(session, rkey, body.note);
   if (!result.success) {

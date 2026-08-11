@@ -54,7 +54,7 @@ describe('buildLinkblogDocument', () => {
       $type: string;
       pages: Array<{
         blocks: Array<{
-          block: { $type: string; url?: string; plaintext?: string; description?: string };
+          block: { $type: string; src?: string; plaintext?: string; description?: string };
         }>;
       }>;
     };
@@ -63,7 +63,9 @@ describe('buildLinkblogDocument', () => {
     const text = blocks.find((b) => b.$type === 'pub.leaflet.blocks.text');
     const website = blocks.find((b) => b.$type === 'pub.leaflet.blocks.website');
     expect(text?.plaintext).toBe('Worth reading.');
-    expect(website?.url).toBe('https://example.com/the-article');
+    // `src`, not `url` — the field pub.leaflet.blocks.website requires. A card
+    // without it fails Leaflet's record validation and the post never indexes.
+    expect(website?.src).toBe('https://example.com/the-article');
     // The website card is the excerpt's durable home now that `description` is reserved.
     expect(website?.description).toBe('A generous first-paragraph excerpt.');
   });
@@ -97,14 +99,34 @@ describe('connected publication formats', () => {
     expect(doc.links).toEqual([{ uri: input.articleUrl, rel: 'related' }]);
   });
 
-  it('uses the observed pckt website attrs and markpub text wrapper shapes', () => {
+  it('closes a pckt post with its flat website card', () => {
     const pckt = buildLinkblogDocument(DID, RKEY, input, undefined, target, 'pckt').content as {
-      items: Array<{ $type: string; attrs?: { src?: string } }>;
+      items: Array<{ $type: string; src?: string; attrs?: unknown }>;
     };
-    expect(pckt.items.at(-1)?.attrs?.src).toBe(input.articleUrl);
+    const card = pckt.items.at(-1);
+    // Top level, not nested under `attrs` — the shape pckt's lexicon requires and
+    // its own posts use.
+    expect(card?.$type).toBe('blog.pckt.block.website');
+    expect(card?.src).toBe(input.articleUrl);
+    expect(card?.attrs).toBeUndefined();
+  });
+
+  it('closes an Offprint post with its native bookmark card, not a text line', () => {
+    const offprint = buildLinkblogDocument(DID, RKEY, input, undefined, target, 'offprint')
+      .content as { items: Array<{ $type: string; href?: string; title?: string }> };
+    const card = offprint.items.at(-1);
+    // `href`, and a title that's required rather than optional.
+    expect(card?.$type).toBe('app.offprint.block.webBookmark');
+    expect(card?.href).toBe(input.articleUrl);
+    expect(card?.title).toBe(input.articleTitle);
+  });
+
+  it('declares the flavor and text type markpub asks a writer to state', () => {
     const markpub = buildLinkblogDocument(DID, RKEY, input, undefined, target, 'markpub').content;
     expect(markpub).toMatchObject({
-      text: { markdown: expect.stringContaining(input.articleUrl) },
+      $type: 'at.markpub.markdown',
+      flavor: 'commonmark',
+      text: { $type: 'at.markpub.text', markdown: expect.stringContaining(input.articleUrl) },
     });
   });
 });
@@ -157,7 +179,7 @@ describe('replaceLeafletNoteRegion', () => {
         blocks: [
           { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'old' } },
           { block: { $type: 'pub.leaflet.blocks.blockquote', plaintext: 'old quote' } },
-          { block: { $type: 'pub.leaflet.blocks.website', url: 'https://example.com' } },
+          { block: { $type: 'pub.leaflet.blocks.website', src: 'https://example.com' } },
           { block: { $type: 'pub.leaflet.blocks.image', image: { ref: { $link: 'cid' } } } },
         ],
       },
@@ -210,7 +232,7 @@ describe('replaceItemsNoteRegion', () => {
       $type: 'blog.pckt.content',
       items: [
         { $type: 'blog.pckt.block.text', plaintext: 'old' },
-        { $type: 'blog.pckt.block.website', attrs: { src: ARTICLE.url } },
+        { $type: 'blog.pckt.block.website', src: ARTICLE.url },
       ],
     };
     const content = replaceItemsNoteRegion(existing, 'pckt', 'new\n\n> quote', ARTICLE) as {
@@ -224,7 +246,27 @@ describe('replaceItemsNoteRegion', () => {
     expect(content.items[0].plaintext).toBe('new');
   });
 
-  it("keeps Offprint's trailing article line, which is itself a text block", () => {
+  it("keeps Offprint's link card and swaps only the note above it", () => {
+    const existing = {
+      $type: 'app.offprint.content',
+      items: [
+        { $type: 'app.offprint.block.text', plaintext: 'old' },
+        { $type: 'app.offprint.block.webBookmark', href: ARTICLE.url, title: 'Post' },
+      ],
+    };
+    const content = replaceItemsNoteRegion(existing, 'offprint', 'new', ARTICLE) as {
+      items: Array<{ $type: string; plaintext?: string }>;
+    };
+    expect(content.items.map((i) => i.$type)).toEqual([
+      'app.offprint.block.text',
+      'app.offprint.block.webBookmark',
+    ]);
+    expect(content.items[0].plaintext).toBe('new');
+  });
+
+  // Shares written before Offprint's native card was used put the article in a
+  // trailing text line; editing one must still not swallow it into the note.
+  it('keeps a legacy Offprint article line, which is itself a text block', () => {
     const existing = {
       $type: 'app.offprint.content',
       items: [
@@ -243,7 +285,7 @@ describe('replaceItemsNoteRegion', () => {
       $type: 'blog.pckt.content',
       items: [
         { $type: 'blog.pckt.block.blockquote', content: [] },
-        { $type: 'blog.pckt.block.website', attrs: { src: ARTICLE.url } },
+        { $type: 'blog.pckt.block.website', src: ARTICLE.url },
       ],
     };
     const content = replaceItemsNoteRegion(existing, 'pckt', '', ARTICLE) as {

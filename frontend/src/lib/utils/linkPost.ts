@@ -138,9 +138,9 @@ export function getLinkPostNote(doc: SocialDocument): string | undefined {
 //
 // pckt and Offprint share an `items` array of text/blockquote blocks; Markdown
 // (at.markpub) stores one string. In each, the note leads and the shared article
-// closes the post — as a link card (pckt), a trailing line carrying the URL
-// (Offprint), or a trailing Markdown link. Rendered back into the same small
-// Markdown subset the Leaflet reader produces (`> ` for quotes).
+// closes the post — as a native link card (pckt, Offprint) or a trailing Markdown
+// link. Rendered back into the same small Markdown subset the Leaflet reader
+// produces (`> ` for quotes).
 
 interface ForeignBlock {
   $type?: string;
@@ -160,8 +160,9 @@ function itemsNote(items: ForeignBlock[], prefix: string, articleUrl?: string): 
     if (!isQuote && item?.$type !== `${prefix}text`) break;
     const text = blockText(item).trim();
     if (!text) continue;
-    // Offprint has no link-card block, so the article rides as a trailing text
-    // line — that line is the article, not the note.
+    // A link card ends the note by not being a text block at all. Shares written
+    // before Offprint's card was used put the article in a trailing text line
+    // instead, so a text block carrying the URL ends it too.
     if (!isQuote && articleUrl && text.includes(articleUrl)) break;
     parts.push(
       isQuote

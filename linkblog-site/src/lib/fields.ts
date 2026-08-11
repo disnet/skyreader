@@ -185,8 +185,9 @@ function reconstructLeafletNote(blocks: Array<{ block?: LeafletTextBlock }>): {
 // Offprint, Markdown), in which case its link posts carry the note in that app's
 // content shape. pckt and Offprint use an ordered `items` array of text and
 // blockquote blocks; Markdown stores one string. In each the note leads and the
-// shared article closes the post — as a link card (pckt), a trailing line
-// carrying the URL (Offprint), or a trailing Markdown link.
+// shared article closes the post — as a native link card (pckt, Offprint) or a
+// trailing Markdown link. Older Offprint shares closed with a text line carrying
+// the URL instead, which is why a URL-bearing text block also ends the note.
 
 interface ForeignBlock {
   $type?: string;

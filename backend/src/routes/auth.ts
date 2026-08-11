@@ -26,6 +26,8 @@ import {
   SEMBLE_SCOPES,
   MARGIN_SCOPES,
   LINKBLOG_SCOPES,
+  PCKT_SCOPES,
+  OFFPRINT_SCOPES,
   ALL_POSSIBLE_SCOPES,
 } from '../config/scopes';
 import { getUserTier } from '../services/user-tier';
@@ -71,7 +73,15 @@ function normalizePdsHost(input: string): string | null {
 // Scope constants now live in config/scopes.ts (shared with the token-refresh
 // path). Re-exported here so existing importers (integrations, linkblog, saved)
 // keep working unchanged.
-export { GRANULAR_SCOPES, SEMBLE_SCOPES, MARGIN_SCOPES, LINKBLOG_SCOPES, ALL_POSSIBLE_SCOPES };
+export {
+  GRANULAR_SCOPES,
+  SEMBLE_SCOPES,
+  MARGIN_SCOPES,
+  LINKBLOG_SCOPES,
+  PCKT_SCOPES,
+  OFFPRINT_SCOPES,
+  ALL_POSSIBLE_SCOPES,
+};
 
 // Check if granted scopes satisfy the required scopes
 export function hasRequiredScopes(

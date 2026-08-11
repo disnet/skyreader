@@ -19,6 +19,7 @@ import type {
   OffprintImageGridBlock,
   OffprintImageCarouselBlock,
   OffprintImageDiffBlock,
+  OffprintWebBookmarkBlock,
   OffprintListItem,
   OffprintTaskItem,
   OffprintImageGridImage,
@@ -461,6 +462,42 @@ function renderImageDiffBlock(block: OffprintImageDiffBlock, authorDid: string):
 }
 
 /**
+ * Render a web bookmark (link card) — the block a shared article becomes on an
+ * Offprint publication, and the shape Offprint's own posts use for outbound links.
+ */
+function renderWebBookmarkBlock(block: OffprintWebBookmarkBlock, authorDid: string): string {
+  const url = block.href;
+  if (!url) {
+    return '';
+  }
+
+  const title = block.title || url;
+  const previewCid = block.preview?.ref?.$link;
+
+  let html =
+    '<div class="website-preview" style="border: 1px solid var(--border, #e5e5e5); border-radius: 8px; overflow: hidden; margin: 1em 0">';
+
+  if (previewCid) {
+    const previewUrl = getBlobUrl(authorDid, previewCid);
+    html += `<img src="${previewUrl}" alt="" style="width: 100%; max-height: 200px; object-fit: cover" loading="lazy" />`;
+  }
+
+  html += '<div style="padding: 12px">';
+  html += `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" style="font-weight: 600; text-decoration: none">${escapeHtml(title)}</a>`;
+
+  if (block.siteName) {
+    html += `<p style="margin: 2px 0 0; font-size: 0.75em; color: var(--text-secondary, #666)">${escapeHtml(block.siteName)}</p>`;
+  }
+  if (block.description) {
+    html += `<p style="margin: 4px 0 0; font-size: 0.875em; color: var(--text-secondary, #666)">${escapeHtml(block.description)}</p>`;
+  }
+
+  html += '</div></div>';
+
+  return html;
+}
+
+/**
  * Render a single block based on its type
  */
 function renderBlock(block: OffprintBlock, authorDid: string): string {
@@ -491,6 +528,8 @@ function renderBlock(block: OffprintBlock, authorDid: string): string {
       return renderImageCarouselBlock(block as OffprintImageCarouselBlock, authorDid);
     case 'app.offprint.block.imageDiff':
       return renderImageDiffBlock(block as OffprintImageDiffBlock, authorDid);
+    case 'app.offprint.block.webBookmark':
+      return renderWebBookmarkBlock(block as OffprintWebBookmarkBlock, authorDid);
     default: {
       // Unsupported block type - try to extract plaintext if available
       const unknownBlock = block as unknown as { plaintext?: string };
