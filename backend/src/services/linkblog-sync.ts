@@ -272,7 +272,7 @@ export interface PublicationMeta {
 
 // PDS records are user-controlled, so a `url` can be any string. Only surface it
 // when it's a real http(s) URL (it ends up in an href).
-function httpUrlOrUndefined(value: string | undefined): string | undefined {
+export function httpUrlOrUndefined(value: string | undefined): string | undefined {
   if (!value) return undefined;
   try {
     const parsed = new URL(value);

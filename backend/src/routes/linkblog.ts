@@ -9,10 +9,13 @@ import { hasRequiredScopes, insufficientScopesResponse, LINKBLOG_SCOPES } from '
 import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
 import {
   deleteLinkblogShare,
+  DOCUMENT_COLLECTION,
   FOREIGN_RECORD_ERROR,
   getPublicationMeta,
   getLinkblogTarget,
+  httpUrlOrUndefined,
   linkblogBaseUrl,
+  PUBLICATION_COLLECTION,
   publicationUri,
   updateLinkblogShareNote,
   updatePublication,
@@ -20,8 +23,13 @@ import {
   type LinkblogShareInput,
   type ContentFormat,
 } from '../services/linkblog-sync';
+import { appForContentType, appForUrl, type PublicationApp } from '../services/publication-app';
 import { createPDSClient } from '../services/pds-client';
 import { getLinkblogDiscover, getLinkblogFriends } from '../services/linkblog-discovery';
+
+// The Skyreader linkblog isn't a third-party app's publication; label it as ours
+// so the picker can say plainly which side of the choice each row is on.
+const SKYREADER_APP: PublicationApp = { id: 'skyreader', label: 'Skyreader', format: 'leaflet' };
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -326,24 +334,95 @@ export async function migrateLinkblogFollowers(
   ]);
 }
 
+/** What a publication's existing documents say about it: how many, and which
+ *  app's content lexicon they use (the most common one wins — a publication that
+ *  gained a few Skyreader leaflet posts is still a pckt publication). */
+interface PublicationEvidence {
+  posts: number;
+  contentTypes: Map<string, number>;
+}
+
+export function summarizeDocuments(
+  documents: Array<{ site?: string; content?: unknown }>
+): Map<string, PublicationEvidence> {
+  const bySite = new Map<string, PublicationEvidence>();
+  for (const doc of documents) {
+    if (!doc.site) continue;
+    let evidence = bySite.get(doc.site);
+    if (!evidence) {
+      evidence = { posts: 0, contentTypes: new Map() };
+      bySite.set(doc.site, evidence);
+    }
+    evidence.posts++;
+    const contentType = (doc.content as { $type?: string } | undefined)?.$type;
+    if (contentType) {
+      evidence.contentTypes.set(contentType, (evidence.contentTypes.get(contentType) ?? 0) + 1);
+    }
+  }
+  return bySite;
+}
+
+function dominantContentType(evidence: PublicationEvidence | undefined): string | undefined {
+  if (!evidence) return undefined;
+  let winner: string | undefined;
+  let best = 0;
+  for (const [contentType, count] of evidence.contentTypes) {
+    if (count > best) {
+      winner = contentType;
+      best = count;
+    }
+  }
+  return winner;
+}
+
 export async function handleListPublications(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
   const session = await getSessionFromRequest(request, env);
   if (!session) return json({ error: 'Unauthorized' }, 401);
-  const result = await createPDSClient(session).listAllRecords<{ name?: string; url?: string }>(
-    'site.standard.publication',
-    { maxPages: 5, maxRecords: 200 }
-  );
+  const pdsClient = createPDSClient(session);
+  // Documents are read only to describe each publication (which app, how many
+  // posts), so a failure there degrades the list rather than failing it.
+  const [result, documents] = await Promise.all([
+    pdsClient.listAllRecords<{ name?: string; description?: string; url?: string }>(
+      PUBLICATION_COLLECTION,
+      { maxPages: 5, maxRecords: 200 }
+    ),
+    pdsClient.listAllRecords<{ site?: string; content?: unknown }>(DOCUMENT_COLLECTION, {
+      maxPages: 3,
+      maxRecords: 300,
+    }),
+  ]);
   if (!result.success) return json({ error: result.error }, 502);
+  const evidenceBySite = summarizeDocuments(
+    documents.success ? documents.data.map((record) => record.value) : []
+  );
 
   const defaultUri = publicationUri(session.did);
-  const publications = result.data.map((record) => ({
-    uri: record.uri,
-    rkey: record.uri.split('/').pop(),
-    name: record.value.name || 'Untitled publication',
-    url: record.value.url,
-    isDefault: record.uri === defaultUri,
-  }));
+  const publications = result.data.map((record) => {
+    const evidence = evidenceBySite.get(record.uri);
+    const url = httpUrlOrUndefined(record.value.url);
+    const isDefault = record.uri === defaultUri;
+    // A publication's own posts name its app; its host is the fallback for one
+    // that's still empty. Skyreader's own linkblog is named for the app the user
+    // is standing in, not for the content lexicon it happens to write.
+    const app = isDefault
+      ? SKYREADER_APP
+      : (appForContentType(dominantContentType(evidence)) ?? appForUrl(url));
+    return {
+      uri: record.uri,
+      rkey: record.uri.split('/').pop(),
+      name: record.value.name || 'Untitled publication',
+      description: record.value.description,
+      url,
+      isDefault,
+      appId: app?.id,
+      appLabel: app?.label,
+      // Only offered when we can write it — Greengale resolves to an app with no
+      // format, and the picker leaves that choice to the user.
+      detectedFormat: app?.format ?? undefined,
+      posts: evidence?.posts ?? 0,
+    };
+  });
   // The Skyreader linkblog is always offered, even before its record exists — it's
   // created lazily on first share, and a user who connected an external
   // publication without ever sharing would otherwise have no way back. Choosing it
@@ -353,8 +432,13 @@ export async function handleListPublications(request: Request, env: Env): Promis
       uri: defaultUri,
       rkey: defaultUri.split('/').pop(),
       name: 'Skyreader linkblog',
+      description: undefined,
       url: undefined,
       isDefault: true,
+      appId: SKYREADER_APP.id,
+      appLabel: SKYREADER_APP.label,
+      detectedFormat: SKYREADER_APP.format ?? undefined,
+      posts: evidenceBySite.get(defaultUri)?.posts ?? 0,
     });
   }
   return json({ publications });

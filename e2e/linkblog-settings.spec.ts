@@ -1,0 +1,114 @@
+import { test, expect } from './fixtures';
+
+// The publication picker on Settings is fed entirely by two endpoints that need a
+// live PDS, so both are stubbed here. What's under test is the picker itself:
+// that each publication arrives described (app, address, post count) and that
+// choosing one offers the content format its app can actually read.
+const CONNECTED_DID = 'did:plc:linkblog-picker';
+
+const SKYREADER_URI = `at://${CONNECTED_DID}/site.standard.publication/skyreader-links`;
+const LEAFLET_URI = `at://${CONNECTED_DID}/site.standard.publication/3ljmyleaflet`;
+const PCKT_URI = `at://${CONNECTED_DID}/site.standard.publication/3ljmypckt`;
+
+async function stubLinkblogApi(page: import('@playwright/test').Page) {
+  await page.route('**/api/linkblog/publication', async (route) => {
+    await route.fulfill({
+      json: {
+        uri: SKYREADER_URI,
+        url: `https://linkblogs.skyreader.app/${CONNECTED_DID}/`,
+        name: 'My links',
+        exists: true,
+        external: false,
+        format: 'leaflet',
+      },
+    });
+  });
+
+  await page.route('**/api/linkblog/publications', async (route) => {
+    await route.fulfill({
+      json: {
+        publications: [
+          {
+            uri: SKYREADER_URI,
+            rkey: 'skyreader-links',
+            name: 'My links',
+            isDefault: true,
+            appId: 'skyreader',
+            appLabel: 'Skyreader',
+            detectedFormat: 'leaflet',
+            posts: 4,
+          },
+          {
+            uri: LEAFLET_URI,
+            rkey: '3ljmyleaflet',
+            name: 'Field Notes',
+            description: 'Occasional essays',
+            url: 'https://leaflet.pub/lish/fieldnotes',
+            isDefault: false,
+            appId: 'leaflet',
+            appLabel: 'Leaflet',
+            detectedFormat: 'leaflet',
+            posts: 12,
+          },
+          {
+            uri: PCKT_URI,
+            rkey: '3ljmypckt',
+            name: 'Untitled publication',
+            url: 'https://reader.pckt.blog/',
+            isDefault: false,
+            appId: 'pckt',
+            appLabel: 'pckt',
+            detectedFormat: 'pckt',
+            posts: 1,
+          },
+        ],
+      },
+    });
+  });
+}
+
+test.describe('Linkblog publication picker', () => {
+  test('describes each publication and follows the app it belongs to', async ({ authedPage }) => {
+    await stubLinkblogApi(authedPage);
+    await authedPage.goto('/settings');
+
+    const picker = authedPage.locator('.target-picker');
+    await expect(picker).toBeVisible({ timeout: 10_000 });
+
+    // The Skyreader linkblog reads as Skyreader's own, and as the live target.
+    const skyreaderRow = picker.locator('.pub-option', { hasText: 'Your Skyreader linkblog' });
+    await expect(skyreaderRow).toHaveClass(/selected/);
+    await expect(skyreaderRow.locator('.pub-badge.is-live')).toHaveText('Publishing here');
+    await expect(skyreaderRow.locator('.pub-meta')).toContainText('linkblogs.skyreader.app');
+    await expect(skyreaderRow.locator('.pub-meta')).toContainText('4 posts');
+
+    // An existing publication carries its app, its address and its size — enough
+    // to tell two "Untitled publication" rows apart.
+    const leafletRow = picker.locator('.pub-option', { hasText: 'Field Notes' });
+    await expect(leafletRow.locator('.pub-badge.is-app')).toHaveText('Leaflet');
+    await expect(leafletRow.locator('.pub-meta')).toContainText('leaflet.pub');
+    await expect(leafletRow.locator('.pub-meta')).toContainText('12 posts');
+    await expect(leafletRow.locator('.pub-desc')).toHaveText('Occasional essays');
+
+    const pcktRow = picker.locator('.pub-option', { hasText: 'Untitled publication' });
+    await expect(pcktRow.locator('.pub-badge.is-app')).toHaveText('pckt');
+    await expect(pcktRow.locator('.pub-meta')).toContainText('reader.pckt.blog');
+
+    // No format question while the Skyreader linkblog is the target, and nothing
+    // to apply until something changes.
+    await expect(picker.locator('#linkblog-format')).toHaveCount(0);
+    await expect(picker.getByRole('button', { name: /Use my Skyreader linkblog/ })).toBeDisabled();
+
+    // Choosing the pckt publication pre-selects the format pckt actually reads.
+    await pcktRow.click();
+    await expect(picker.locator('#linkblog-format')).toHaveValue('pckt');
+    await expect(picker.locator('.format-hint')).toContainText('Matches the posts already');
+    await expect(
+      picker.getByRole('button', { name: /Publish to Untitled publication/ })
+    ).toBeEnabled();
+
+    // Name and description stay editable while the Skyreader linkblog is live —
+    // they're its fields, not a connected publication's.
+    await expect(authedPage.locator('#linkblog-name')).toBeEnabled();
+  });
+});

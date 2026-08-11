@@ -790,12 +790,24 @@ export interface LinkblogPublication {
   externalUrl?: string;
 }
 
+// One publication the user could publish their links to, as offered by
+// GET /api/linkblog/publications. Everything past `isDefault` is descriptive —
+// it exists so the picker can say what a publication actually is instead of
+// showing a bare name.
 export interface LinkblogPublicationChoice {
   uri: string;
   rkey: string;
   name: string;
+  description?: string;
   url?: string;
   isDefault: boolean;
+  /** Which standard.site app this publication belongs to, when we can tell. */
+  appId?: string;
+  appLabel?: string;
+  /** The content format that app's posts use — pre-selected on connect. */
+  detectedFormat?: LinkblogPublication['format'];
+  /** How many documents already live in this publication (capped by the scan). */
+  posts?: number;
 }
 
 export interface ParsedFeed {
