@@ -1,7 +1,8 @@
-// Helpers for the "publish new links to" picker in Settings. The choice is
-// between the Skyreader linkblog and a standard.site publication the user
-// already owns, so each row has to be described well enough to pick from — and
-// the content format has to follow the publication, not the previous selection.
+// Helpers for describing where a user's shared links go. The target is either
+// the Skyreader linkblog or a standard.site publication the user already owns,
+// which the Settings picker has to describe well enough to choose between (and
+// whose content format has to follow the publication, not the previous
+// selection) — and which the share confirmation has to name correctly.
 
 import type { LinkblogPublication, LinkblogPublicationChoice } from '$lib/types';
 
