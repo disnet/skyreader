@@ -81,8 +81,7 @@
               )}
             </span>
             <span class="pub-desc">
-              Made for you by Skyreader. You name it, you describe it, and it holds nothing but your
-              shared links.
+              Made for you by Skyreader — you name it, and it holds nothing but your shared links.
             </span>
           </span>
         </label>
@@ -185,13 +184,15 @@
     </div>
 
     <p class="picker-note">
-      {#if selectedIsDefault}
-        Links you've already published stay where they are — both publications keep showing up on
-        your linkblog page and in your followers' feeds.
+      {#if !selectedIsDefault}
+        Skyreader adds link posts to this publication and never touches the rest of it — its name,
+        description and everything else stay managed by its own app.
+      {:else if current.external}
+        Links already in {current.name} stay there. Both publications keep showing up on your linkblog
+        page and in your followers' feeds.
       {:else}
-        Skyreader adds link posts to this publication and never touches the rest of it. Its name,
-        description and everything else stay managed by its own app. Links you've already published
-        stay where they are.
+        Connecting only adds link posts to a publication you already have; nothing moves out of your
+        Skyreader linkblog.
       {/if}
     </p>
   {/if}
