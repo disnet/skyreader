@@ -42,6 +42,7 @@
   import { socialStore } from '$lib/stores/social.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
+  import { shareDestination } from '$lib/utils/linkblogTargets';
   import { socialContextStore } from '$lib/stores/socialContext.svelte';
   import { profileService } from '$lib/services/profiles';
   import { auth } from '$lib/stores/auth.svelte';
@@ -479,9 +480,13 @@
   // First-share confirmation: sharing publishes to a public linkblog, which is
   // irreversible-feeling and easy to do by accident. We gate the very first share
   // on a one-time "this is public" dialog; "Don't ask again" persists in prefs.
+  // It names the publication the share actually lands in — a connected one, if
+  // the user switched, not the Skyreader linkblog they no longer publish to.
   let showShareConfirm = $state(false);
   let dontAskAgain = $state(false);
-  let linkblogPublicUrl = $derived(myLinkblogStore.publicUrl());
+  let shareTarget = $derived(
+    shareDestination(myLinkblogStore.publication, myLinkblogStore.publicUrl())
+  );
 
   // Fire the share for the current mode (the Blogs lane [+]), seeding the note
   // with the article's quote so it lands in the persistent note box ready to
@@ -1004,16 +1009,24 @@
   maxWidth="420px"
 >
   <p class="share-confirm-text">
-    This publishes to your public linkblog{#if linkblogPublicUrl}
+    This publishes to {#if shareTarget.external}<strong>{shareTarget.name}</strong>{:else}your
+      public linkblog{/if}{#if shareTarget.address}
       at
-      <a
-        href={linkblogPublicUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        class="share-confirm-link"
-        >{linkblogPublicUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}</a
+      <a href={shareTarget.url} target="_blank" rel="noopener noreferrer" class="share-confirm-link"
+        >{shareTarget.address}</a
       >{/if}. Anyone can read it.
   </p>
+  {#if shareTarget.external && shareTarget.linkblogUrl}
+    <p class="share-confirm-aside">
+      It shows on
+      <a
+        href={shareTarget.linkblogUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="share-confirm-link">your linkblog page</a
+      > too.
+    </p>
+  {/if}
   <label class="share-confirm-remember">
     <input type="checkbox" bind:checked={dontAskAgain} />
     <span>Don't ask again</span>
@@ -1028,6 +1041,13 @@
   .share-confirm-text {
     margin: 0 0 1rem;
     color: var(--color-text);
+    line-height: var(--leading-normal);
+  }
+
+  .share-confirm-aside {
+    margin: -0.5rem 0 1rem;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
     line-height: var(--leading-normal);
   }
 

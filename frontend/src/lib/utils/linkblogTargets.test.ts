@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   linkblogSelectionChanged,
+  publicationAddress,
   publicationHost,
   publicationPostCount,
   resolveLinkblogFormat,
+  shareDestination,
 } from './linkblogTargets';
 import type { LinkblogPublicationChoice } from '$lib/types';
 
@@ -39,6 +41,80 @@ describe('publicationHost', () => {
   it('has nothing to show for a missing or unparseable url', () => {
     expect(publicationHost(undefined)).toBeUndefined();
     expect(publicationHost('leaflet')).toBeUndefined();
+  });
+});
+
+describe('publicationAddress', () => {
+  it('drops the scheme and the trailing slash', () => {
+    expect(publicationAddress('https://linkblogs.skyreader.app/alice.bsky.social/')).toBe(
+      'linkblogs.skyreader.app/alice.bsky.social'
+    );
+    expect(publicationAddress('http://reader.pckt.blog')).toBe('reader.pckt.blog');
+  });
+
+  it('has nothing to show for a missing url', () => {
+    expect(publicationAddress(undefined)).toBeUndefined();
+    expect(publicationAddress(null)).toBeUndefined();
+    expect(publicationAddress('')).toBeUndefined();
+  });
+});
+
+describe('shareDestination', () => {
+  const linkblogPage = 'https://linkblogs.skyreader.app/alice.bsky.social/';
+
+  it('names the Skyreader linkblog when nothing is connected', () => {
+    expect(shareDestination({ name: 'My links', external: false }, linkblogPage)).toEqual({
+      name: 'your public linkblog',
+      external: false,
+      url: linkblogPage,
+      address: 'linkblogs.skyreader.app/alice.bsky.social',
+    });
+  });
+
+  it('falls back to the linkblog before the publication has loaded', () => {
+    expect(shareDestination(null, linkblogPage).external).toBe(false);
+    expect(shareDestination(null, null)).toEqual({
+      name: 'your public linkblog',
+      external: false,
+      url: undefined,
+      address: undefined,
+    });
+  });
+
+  it('names the connected publication and its own page, not the linkblog url', () => {
+    expect(
+      shareDestination(
+        {
+          name: 'Reading notes',
+          external: true,
+          externalUrl: 'https://reader.pckt.blog/',
+        },
+        linkblogPage
+      )
+    ).toEqual({
+      name: 'Reading notes',
+      external: true,
+      url: 'https://reader.pckt.blog/',
+      address: 'reader.pckt.blog',
+      linkblogUrl: linkblogPage,
+    });
+  });
+
+  it('still names a connected publication that has no usable url', () => {
+    const destination = shareDestination(
+      { name: 'Reading notes', external: true, externalUrl: undefined },
+      linkblogPage
+    );
+    expect(destination.name).toBe('Reading notes');
+    expect(destination.url).toBeUndefined();
+    expect(destination.address).toBeUndefined();
+    expect(destination.linkblogUrl).toBe(linkblogPage);
+  });
+
+  it('has something to call an unnamed connected publication', () => {
+    expect(shareDestination({ name: '', external: true }, linkblogPage).name).toBe(
+      'the publication you connected'
+    );
   });
 });
 

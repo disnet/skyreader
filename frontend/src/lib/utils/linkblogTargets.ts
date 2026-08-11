@@ -17,6 +17,12 @@ export function publicationHost(url: string | undefined): string | undefined {
   }
 }
 
+/** The address as a person reads it: no scheme, no trailing slash. */
+export function publicationAddress(url: string | undefined | null): string | undefined {
+  if (!url) return undefined;
+  return url.replace(/^https?:\/\//, '').replace(/\/$/, '') || undefined;
+}
+
 /** How many posts a publication already holds, phrased for a metadata line. */
 export function publicationPostCount(posts: number | undefined): string {
   if (!posts) return 'No posts yet';
@@ -41,6 +47,49 @@ export function resolveLinkblogFormat(
     selected.detectedFormat ??
     'leaflet'
   );
+}
+
+/**
+ * Where a share is about to land, for the "this is public" confirmation. Once a
+ * user connects a publication, that publication — not the Skyreader linkblog —
+ * is what a new share is written to, so the warning has to name it and link its
+ * own page. The Skyreader linkblog page still renders those posts, so it rides
+ * along as a secondary mention rather than the headline address.
+ */
+export interface ShareDestination {
+  /** Where the share lands, named the way the user would name it. */
+  name: string;
+  /** True when links go to a publication the user connected. */
+  external: boolean;
+  /** The destination's own public page, when it has a usable one. */
+  url?: string;
+  /** `url`, trimmed for display. */
+  address?: string;
+  /** The Skyreader linkblog page — only set when it isn't the destination itself. */
+  linkblogUrl?: string;
+}
+
+export function shareDestination(
+  publication: Pick<LinkblogPublication, 'name' | 'external' | 'externalUrl'> | null | undefined,
+  linkblogUrl: string | null | undefined
+): ShareDestination {
+  const linkblog = linkblogUrl ?? undefined;
+  // Not connected (or not loaded yet): the Skyreader linkblog is the destination.
+  if (!publication?.external) {
+    return {
+      name: 'your public linkblog',
+      external: false,
+      url: linkblog,
+      address: publicationAddress(linkblog),
+    };
+  }
+  return {
+    name: publication.name || 'the publication you connected',
+    external: true,
+    url: publication.externalUrl,
+    address: publicationAddress(publication.externalUrl),
+    linkblogUrl: linkblog,
+  };
 }
 
 /** Is there anything to apply — a different publication, or a different format? */
