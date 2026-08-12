@@ -1,5 +1,6 @@
 <script lang="ts">
   import { appManager } from '$lib/stores/app.svelte';
+  import { bottomRail } from '$lib/stores/bottomRail.svelte';
 
   let visible = $state(false);
   let completing = $state(false);
@@ -21,7 +22,7 @@
 </script>
 
 {#if visible}
-  <div class="progress-bar" class:completing>
+  <div class="progress-bar" class:completing class:standing-down={bottomRail.claimed}>
     <div class="bar"></div>
   </div>
 {/if}
@@ -69,6 +70,31 @@
     to {
       transform: translateX(0) scaleX(1);
       opacity: 0;
+    }
+  }
+
+  /* Mobile has no top chrome to hang this from, and a bottom bar's own rail
+     already carries the same sweep at the edge the thumb and eye are on. Two
+     indicators for one refresh is one too many, so this stands down — but only
+     while a bar is actually claiming the job (see the bottomRail store). A bar
+     that has slid away on scroll hands it back rather than leaving mobile with
+     no indicator at all. */
+  @media (max-width: 1000px) {
+    .progress-bar.standing-down {
+      display: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bar {
+      animation: none;
+      opacity: 0.6;
+    }
+
+    .completing .bar {
+      animation: none;
+      opacity: 0;
+      transition: opacity 0.2s ease;
     }
   }
 </style>

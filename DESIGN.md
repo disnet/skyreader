@@ -144,10 +144,18 @@ semantic signals. The point of the restraint is that when color appears, it mean
 
 ### Secondary
 
-- **Sky Identity** (`#4a9fd4`): The "Sky" in Skyreader. Reserved for **brand/OS identity surfaces
-  only** — the app icon, `theme-color`, and PWA mask-icon. It sets the lighter, airier brand note
-  the OS shows around the installed app. It is **not** an in-app UI color; inside the app, the
-  primary is `#0066cc`.
+- **Sky Identity** (`#4a9fd4`): The "Sky" in Skyreader. Reserved for **brand identity marks only** —
+  the app icon, the logo gradient, the PWA mask-icon, the OG image. It sets the lighter, airier brand
+  note the OS shows around the installed app's icon. It is **not** an in-app UI color; inside the
+  app, the primary is `#0066cc`.
+
+  **Not `theme-color`.** Browser and OS chrome takes the reading surface instead (`#ffffff` light /
+  `#1a1a1a` dark, declared per `prefers-color-scheme` in `app.html`). Mobile Safari paints its own
+  bottom toolbar with `theme-color`, and that toolbar sits directly beneath the app's mobile bottom
+  bar — a brand-blue band under a white bar reads as two mismatched surfaces. Matching them makes the
+  pair read as one, and the installed app opens into the same quiet surface it reads on. Declare
+  `theme-color` only in `app.html`: a copy in a `<svelte:head>` renders later and would override both
+  scheme variants with a single value.
 
 ### Tertiary
 
