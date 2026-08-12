@@ -1,6 +1,7 @@
 import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { syncSubscriptions } from '../src/services/subscription-sync';
+import { upsertSubscriptionFromFirehose } from '../src/services/firehose-subscription';
 import type { Session } from '../src/types';
 import worker from '../src/index';
 
@@ -109,6 +110,19 @@ async function getActive(rkey: string): Promise<number | undefined> {
   return row?.active;
 }
 
+async function getParkingState(rkey: string) {
+  return env.DB.prepare(
+    'SELECT active, user_parked, atmosphere_synced, title FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
+  )
+    .bind(TEST_DID, `%/${rkey}`)
+    .first<{
+      active: number;
+      user_parked: number;
+      atmosphere_synced: number | null;
+      title: string;
+    }>();
+}
+
 function makeAuthRequest(path: string, opts?: { method?: string; body?: unknown }) {
   return new IncomingRequest(`http://localhost${path}`, {
     method: opts?.method ?? 'GET',
@@ -161,7 +175,7 @@ describe('Subscription parking', () => {
       await waitOnExecutionContext(ctx);
 
       expect(res.status).toBe(200);
-      expect(await getActive(RKEY_A)).toBe(0);
+      expect(await getParkingState(RKEY_A)).toMatchObject({ active: 0, user_parked: 1 });
     });
 
     it('excludes a parked sub from /api/records/list but lists it under /parked', async () => {
@@ -238,7 +252,7 @@ describe('Subscription parking', () => {
       await waitOnExecutionContext(ctx);
 
       expect(res.status).toBe(200);
-      expect(await getActive(RKEY_A)).toBe(1);
+      expect(await getParkingState(RKEY_A)).toMatchObject({ active: 1, user_parked: 0 });
     });
 
     it('is blocked with 403 when already at the active limit', async () => {
@@ -362,15 +376,15 @@ describe('Subscription parking', () => {
   });
 
   describe('syncSubscriptions auto-fill', () => {
-    it('promotes the oldest parked rows into freed active slots', async () => {
+    it('promotes only capacity-parked rows and keeps user-parked rows sticky', async () => {
       await setupTestUser(); // free → 100 active limit
 
       // 99 active + 2 parked: one active slot is free. The parked rows are older
       // (created_at 1) than the seeded active rows (created_at = now).
       await seedActiveRows(99);
       await env.DB.prepare(
-        `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, created_at, active)
-         VALUES (?, ?, ?, 'Old parked A', 1, 0), (?, ?, ?, 'Old parked B', 2, 0)`
+        `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, created_at, active, user_parked)
+         VALUES (?, ?, ?, 'User parked', 1, 0, 1), (?, ?, ?, 'Capacity parked', 2, 0, 0)`
       )
         .bind(
           TEST_DID,
@@ -397,11 +411,61 @@ describe('Subscription parking', () => {
       const result = await syncSubscriptions(createTestSession(), env);
 
       expect(result.success).toBe(true);
-      // Exactly one slot was free, so only the oldest parked row (A) is promoted.
+      // Exactly one slot was free. The newer capacity-parked row is eligible;
+      // the older user-parked row is deliberately skipped.
       expect(result.reactivated).toBe(1);
       expect(await countWhere('active = 1')).toBe(100);
-      expect(await getActive('oldparkedaaaa1')).toBe(1);
-      expect(await getActive('oldparkedbbbb2')).toBe(0);
+      expect(await getActive('oldparkedaaaa1')).toBe(0);
+      expect(await getActive('oldparkedbbbb2')).toBe(1);
+
+      const second = await syncSubscriptions(createTestSession(), env);
+      expect(second.reactivated).toBe(0);
+      expect(await getActive('oldparkedaaaa1')).toBe(0);
+    });
+  });
+
+  describe('firehose subscription upsert', () => {
+    it('refreshes PDS fields while preserving local parked and sync state', async () => {
+      await setupTestUser();
+      await insertSub(RKEY_A, 0);
+      await env.DB.prepare(
+        'UPDATE subscriptions_cache SET user_parked = 1, atmosphere_synced = 12345 WHERE record_uri LIKE ?'
+      )
+        .bind(`%/${RKEY_A}`)
+        .run();
+
+      await upsertSubscriptionFromFirehose(env.DB, TEST_DID, RKEY_A, {
+        feedUrl: `https://example.com/${RKEY_A}.xml`,
+        title: 'Updated on PDS',
+        createdAt: '2025-01-01T00:00:00.000Z',
+      });
+
+      expect(await getParkingState(RKEY_A)).toMatchObject({
+        active: 0,
+        user_parked: 1,
+        atmosphere_synced: 12345,
+        title: 'Updated on PDS',
+      });
+    });
+
+    it('ignores a new rkey that duplicates an existing feed', async () => {
+      await setupTestUser();
+      await insertSub(RKEY_A, 0, 'https://example.com/duplicate.xml');
+      await env.DB.prepare('UPDATE subscriptions_cache SET source_type = ? WHERE record_uri LIKE ?')
+        .bind('atproto.documents', `%/${RKEY_A}`)
+        .run();
+
+      await expect(
+        upsertSubscriptionFromFirehose(env.DB, TEST_DID, RKEY_B, {
+          feedUrl: 'https://example.com/duplicate.xml',
+          title: 'Duplicate echo',
+          sourceType: 'atproto.documents',
+        })
+      ).resolves.toBeUndefined();
+
+      expect(await countWhere('')).toBe(1);
+      expect(await getActive(RKEY_A)).toBe(0);
+      expect(await getActive(RKEY_B)).toBeUndefined();
     });
   });
 });
