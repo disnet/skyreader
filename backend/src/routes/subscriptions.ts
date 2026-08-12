@@ -1610,8 +1610,16 @@ export async function handleSetSubscriptionActive(
       });
     }
 
-    // Already in the desired state — nothing to do.
+    // Already in the desired state — parking still records explicit user intent
+    // for rows that were previously parked automatically due to capacity.
     if (!!existing.active === active) {
+      if (!active) {
+        await env.DB.prepare(
+          'UPDATE subscriptions_cache SET user_parked = 1 WHERE user_did = ? AND record_uri LIKE ?'
+        )
+          .bind(session.did, `%/${rkey}`)
+          .run();
+      }
       return new Response(JSON.stringify({ success: true, active }), {
         headers: { 'Content-Type': 'application/json' },
       });
@@ -1638,9 +1646,9 @@ export async function handleSetSubscriptionActive(
     }
 
     await env.DB.prepare(
-      'UPDATE subscriptions_cache SET active = ? WHERE user_did = ? AND record_uri LIKE ?'
+      'UPDATE subscriptions_cache SET active = ?, user_parked = ? WHERE user_did = ? AND record_uri LIKE ?'
     )
-      .bind(active ? 1 : 0, session.did, `%/${rkey}`)
+      .bind(active ? 1 : 0, active ? 0 : 1, session.did, `%/${rkey}`)
       .run();
 
     return new Response(JSON.stringify({ success: true, active }), {

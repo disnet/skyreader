@@ -1,5 +1,6 @@
 import type { Env } from '../types';
 import { resolveCanonicalUrl } from '../utils/canonical-url';
+import { upsertSubscriptionFromFirehose } from '../services/firehose-subscription';
 
 // Jetstream event types
 interface JetstreamEvent {
@@ -295,36 +296,8 @@ export class JetstreamPoller implements DurableObject {
     const recordUri = `at://${did}/app.skyreader.feed.subscription/${rkey}`;
 
     if ((operation === 'create' || operation === 'update') && record) {
-      // Extract fields from the record (cast to access AT Proto fields)
-      const recAny = record as Record<string, unknown>;
-      const sourceType = (recAny.sourceType as string) || null;
-      const subjectDid = (recAny.subjectDid as string) || null;
-      const customTitle = (recAny.customTitle as string) || null;
-      const customIconUrl = (recAny.customIconUrl as string) || null;
-      const category = (recAny.category as string) || null;
-
       try {
-        await this.env.DB.prepare(
-          `
-					INSERT OR REPLACE INTO subscriptions_cache (user_did, record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url, category)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-				`
-        )
-          .bind(
-            did,
-            recordUri,
-            record.feedUrl || '',
-            record.title || null,
-            record.createdAt
-              ? Math.floor(new Date(record.createdAt).getTime() / 1000)
-              : Math.floor(Date.now() / 1000),
-            sourceType,
-            subjectDid,
-            customTitle,
-            customIconUrl,
-            category
-          )
-          .run();
+        await upsertSubscriptionFromFirehose(this.env.DB, did, rkey, record);
       } catch (dbError) {
         console.error(
           `[JetstreamPoller] D1 WRITE ERROR upserting subscription for ${did}:`,
@@ -334,7 +307,7 @@ export class JetstreamPoller implements DurableObject {
       }
 
       console.log(
-        `[JetstreamPoller] ${did} ${operation}d subscription: ${record.feedUrl || sourceType + ':' + subjectDid}`
+        `[JetstreamPoller] ${did} ${operation}d subscription: ${record.feedUrl || recordUri}`
       );
     } else if (operation === 'delete') {
       try {
