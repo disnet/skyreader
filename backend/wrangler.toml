@@ -69,10 +69,18 @@ vars = { FRONTEND_URL = "http://127.0.0.1:5173" }
 # Staging environment
 [env.staging]
 name = "skyreader-api-staging"
-# Staging talks to its OWN Fly proxy (skyreader-feed-proxy-staging), which pushes
-# only into the staging D1. Prod and staging are two fully isolated pairs — no
-# cross-links, distinct PROXY_SECRET/FEED_PROXY_SECRET values.
-vars = { FRONTEND_URL = "https://staging.skyreader.app", ALLOWED_ORIGINS = "https://staging.skyreader.app,https://staging-linkblogs.skyreader.app", FEED_PROXY_URL = "https://skyreader-feed-proxy-staging.fly.dev", LINKBLOG_PUBLIC_URL = "https://staging-linkblogs.skyreader.app" }
+# Staging is MEANT to talk to its own Fly proxy (skyreader-feed-proxy-staging),
+# which pushes only into the staging D1 — prod and staging as two fully isolated
+# pairs, no cross-links, distinct PROXY_SECRET/FEED_PROXY_SECRET values.
+#
+# The URL below still points at the prod proxy on purpose: staging deploys on
+# every push to main, so flipping it before the app exists would take /extract,
+# discovery, standard.site documents and social context down on staging. Flip it
+# to https://skyreader-feed-proxy-staging.fly.dev in the SAME deploy that rotates
+# FEED_PROXY_SECRET, once Phase 3 of docs/plans/D1_FEED_TIMELINE.md has actually
+# provisioned the app. Until then staging clients stay on the legacy batch path
+# by themselves (the timeline reports ingestActive: false).
+vars = { FRONTEND_URL = "https://staging.skyreader.app", ALLOWED_ORIGINS = "https://staging.skyreader.app,https://staging-linkblogs.skyreader.app", FEED_PROXY_URL = "https://skyreader-feed-proxy.fly.dev", LINKBLOG_PUBLIC_URL = "https://staging-linkblogs.skyreader.app" }
 routes = [{ pattern = "api-staging.skyreader.app", custom_domain = true }]
 
 [env.staging.durable_objects]

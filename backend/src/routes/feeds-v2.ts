@@ -54,6 +54,21 @@ const SINGLE_FEED_LIMIT = 30;
 const SINGLE_FEED_MAX_LIMIT = 200;
 
 /**
+ * Does this user hold a subscription to this feed? The gate on every write into
+ * the shared archive that a user request can trigger. Parked (`active = 0`) subs
+ * count — the user owns the feed either way, and re-activating it shouldn't need
+ * a different code path.
+ */
+async function callerSubscribes(env: Env, userDid: string, feedUrl: string): Promise<boolean> {
+  const row = await env.DB.prepare(
+    `SELECT 1 AS ok FROM subscriptions_cache WHERE user_did = ? AND feed_url = ? LIMIT 1`
+  )
+    .bind(userDid, feedUrl)
+    .first<{ ok: number }>();
+  return !!row;
+}
+
+/**
  * GET /api/v2/feeds/fetch
  *
  * One feed's newest slice, served from the D1 archive with read state joined in
@@ -64,6 +79,13 @@ const SINGLE_FEED_MAX_LIMIT = 200;
  * If D1 has nothing for the feed (nobody was subscribed, so the crawler never
  * pushed it), we PULL THROUGH: fetch it from the proxy once, ingest the result,
  * then serve from D1. Steady state never touches Fly.
+ *
+ * The pull-through only runs for a feed the CALLER actually subscribes to. The
+ * archive is shared and (by design) never pruned, so an open ingest surface would
+ * let any authenticated user write arbitrary feeds into it forever; requiring a
+ * subscription bounds writes to each user's own feed list. Subscriptions are
+ * written to `subscriptions_cache` synchronously by POST /api/subscriptions
+ * before the client fetches, so the add-feed path is unaffected.
  *
  * Query params:
  * - url: Feed URL (required)
@@ -113,9 +135,11 @@ export async function handleV2FeedFetch(
     // Pull-through: the archive has nothing for this feed (first subscriber, so
     // the crawler never pushed it), or the caller explicitly asked for a fresh
     // fetch. One synchronous proxy call, ingested so every later read — and
-    // every other user — comes from D1.
+    // every other user — comes from D1. Gated on the caller's own subscription
+    // (see the note above); a non-subscriber just reads whatever D1 already holds.
     const archiveEmpty = items.length === 0;
-    if (archiveEmpty || forceRefresh) {
+    const wantsPullThrough = archiveEmpty || forceRefresh;
+    if (wantsPullThrough && (await callerSubscribes(env, session.did, feedUrl))) {
       try {
         const client = new FeedProxyClient(env);
         const feed = await client.fetchFeed(feedUrl);
@@ -713,26 +737,31 @@ export interface WarmCacheResult {
 }
 
 /**
- * Warm up the proxy cache for a single feed.
- * Just fetches via proxy to ensure it's cached - no D1 storage.
+ * Fetch a newly subscribed feed through the proxy and INGEST it into the archive.
+ *
+ * This used to only warm the proxy's cache and throw the parse away. Now that D1
+ * is the read path, the same one fetch we were already paying for at subscribe
+ * time populates the archive — so the client's first per-feed read is a plain D1
+ * query instead of another synchronous crawl through the pull-through.
  */
-export async function warmProxyCache(env: Env, feedUrl: string): Promise<WarmCacheResult> {
+export async function warmFeedIntoArchive(env: Env, feedUrl: string): Promise<WarmCacheResult> {
   try {
     const client = new FeedProxyClient(env);
     const feed = await client.fetchFeed(feedUrl);
+    await ingestProxyFeed(env, feedUrl, feed);
     return { success: true, itemCount: feed.items.length };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to fetch feed';
-    console.error(`[warmProxyCache] Error fetching ${feedUrl}:`, errorMessage);
+    console.error(`[warmFeedIntoArchive] Error fetching ${feedUrl}:`, errorMessage);
     return { success: false, error: errorMessage };
   }
 }
 
 /**
- * Warm up the proxy cache for multiple feeds in a single batch request.
- * Just fetches via proxy to ensure they're cached - no D1 storage.
+ * The same, for several feeds in one proxy batch request (bulk / OPML import).
+ * A feed whose ingest fails is reported as an error but never fails the others.
  */
-export async function warmProxyCacheBatch(
+export async function warmFeedsIntoArchive(
   env: Env,
   feedUrls: string[]
 ): Promise<Record<string, WarmCacheResult>> {
@@ -757,15 +786,20 @@ export async function warmProxyCacheBatch(
       } else if (feedResult.status === 'error') {
         results[feedUrl] = { success: false, error: feedResult.error };
       } else {
-        results[feedUrl] = {
-          success: true,
-          itemCount: feedResult.items.length,
-        };
+        try {
+          await ingestProxyFeed(env, feedUrl, feedResult);
+          results[feedUrl] = { success: true, itemCount: feedResult.items.length };
+        } catch (error) {
+          results[feedUrl] = {
+            success: false,
+            error: error instanceof Error ? error.message : 'Ingest failed',
+          };
+        }
       }
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Batch fetch failed';
-    console.error(`[warmProxyCacheBatch] Batch error:`, errorMessage);
+    console.error(`[warmFeedsIntoArchive] Batch error:`, errorMessage);
 
     for (const feedUrl of feedUrls) {
       results[feedUrl] = { success: false, error: errorMessage };

@@ -125,9 +125,10 @@
       // Get the newly added subscriptions
       const newSubs = liveDb.subscriptions.filter((s) => result.added.includes(s.id!));
 
-      // Fetch each new feed directly in the background. A freshly imported feed's
-      // items sit below the global timeline cursor, so the per-feed endpoint (not
-      // the timeline) is what backfills its history.
+      // Backfill each new feed in the background. A freshly imported feed's items
+      // sit below the global timeline cursor, so the per-feed endpoint (not the
+      // timeline) is what delivers its history. fetchNewSubscriptionFeeds paces
+      // the requests, so a large import stays inside the endpoint's rate limit.
       fetchNewSubscriptionFeeds(newSubs, articlesStore.savedGuids);
     }
   }

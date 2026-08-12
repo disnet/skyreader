@@ -97,6 +97,11 @@ export interface TimelineResponse {
   // True when the server served a per-feed newest slice instead of draining from
   // a cursor (no cursor sent, or the generation no longer matches).
   coldStart: boolean;
+  // Continuation index for a paged cold start; echo it back as `cold_offset`.
+  nextColdOffset?: number;
+  // Whether this deployment's crawler is actually pushing into the archive.
+  // Absent on a backend that predates the flag.
+  ingestActive?: boolean;
   // Feed-level metadata for the caller's subscriptions; present only on a page
   // that carried items.
   feeds?: Record<string, { title?: string; siteUrl?: string; imageUrl?: string }>;
@@ -332,11 +337,13 @@ class ApiClient {
     since_seq?: number;
     generation?: string;
     limit?: number;
+    cold_offset?: number;
   }): Promise<TimelineResponse> {
     const search = new URLSearchParams();
     if (params.since_seq !== undefined) search.set('since_seq', String(params.since_seq));
     if (params.generation) search.set('generation', params.generation);
     if (params.limit) search.set('limit', String(params.limit));
+    if (params.cold_offset) search.set('cold_offset', String(params.cold_offset));
     const query = search.toString();
     return this.fetch(`/api/v2/timeline${query ? `?${query}` : ''}`);
   }

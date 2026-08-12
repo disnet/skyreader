@@ -10,8 +10,12 @@ Skyreader backend is a Cloudflare Workers API that serves as a gateway between t
 and edited items into `feed_items` (`POST /api/internal/ingest`) and pulls the set of feeds to
 crawl (`GET /api/internal/crawl-set`), both authenticated with the shared `FEED_PROXY_SECRET`
 (fail-closed when unset). A client refresh is one `GET /api/v2/timeline` — a single query joining
-subscriptions and read state. See `docs/plans/D1_FEED_TIMELINE.md`. The proxy is still on the path
-for `/api/extract`, feed discovery, standard.site documents, and social context.
+subscriptions and read state. Both internal endpoints stamp `sync_state.crawler_heartbeat_at`, and
+the timeline reports `ingestActive` from it: an environment whose proxy has no `INGEST_URL` tells
+clients to stay on the legacy batch path instead of reading an archive nothing fills. See
+`docs/plans/D1_FEED_TIMELINE.md`. The proxy is still on the path for `/api/extract`, feed
+discovery, standard.site documents, and social context — plus the one crawl per new subscription
+(`warmFeedIntoArchive`) and the subscription-gated pull-through in `/api/v2/feeds/fetch`.
 
 ## Key Concepts
 

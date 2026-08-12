@@ -47,6 +47,10 @@ export interface Article {
   imageUrl?: string;
   publishedAt: string;
   fetchedAt: number;
+  // The archive dropped this item's body at ingest (over the per-item content
+  // cap), so `content` here is absent or just the RSS summary. The reader
+  // extracts the full text on demand when the card opens.
+  contentTruncated?: boolean;
   // Precomputed body stats. The full `content` HTML is dropped from the
   // in-memory copy of an article (see toLightArticle) to keep the heap small —
   // it stays in IndexedDB and is lazy-loaded on expand. These numbers let the

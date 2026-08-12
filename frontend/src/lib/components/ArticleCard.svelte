@@ -594,6 +594,19 @@
     };
   });
 
+  // The archive drops oversized bodies at ingest (per-item content cap) and marks
+  // the item `contentTruncated`. Without this the reader would silently show the
+  // RSS summary — often two sentences — in place of a full-text post. So when
+  // such an article opens, extract the original automatically; the result flows
+  // into displayContent above (fetchedOriginal wins) and the extract cache means
+  // it happens once per URL.
+  // Gated on `expanded` rather than `isOpen`: a keyboard cursor moving across the
+  // list shouldn't fire an extraction per card it passes over.
+  $effect(() => {
+    if (!expanded || !article?.contentTruncated || !itemUrl) return;
+    linkPostContentStore.fetch(itemUrl);
+  });
+
   // Same lazy-load for a document's flat text (stripped from memory). Only
   // fetched when the document carries no in-memory textContent — i.e. a
   // stripped social-feed doc — and read back by recordUri.

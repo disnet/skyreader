@@ -57,6 +57,11 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // The whole feed refresh is one D1 query per page now, and a returning reader
   // drains several pages in a burst — a light limit, not a standard one.
   '/api/v2/timeline': LIGHT_LIMIT,
+  // Single-feed reads are D1 queries now (the archive), and an OPML import fires
+  // one per imported feed to backfill it. The one expensive case — the
+  // pull-through crawl — only happens for a feed the caller subscribes to and
+  // only when the archive has nothing for it yet.
+  '/api/v2/feeds/fetch': LIGHT_LIMIT,
   '/api/feeds/cached': LIGHT_LIMIT,
   '/api/feeds/batch': LIGHT_LIMIT,
   '/api/feeds/status': LIGHT_LIMIT,

@@ -159,6 +159,10 @@ export async function seedFeedItems(
 
   const statements = [
     `INSERT OR REPLACE INTO feeds (feed_url, title, site_url, last_ingest_at, created_at) VALUES (${sqlString(feedUrl)}, ${sqlNullableString(opts.title ?? null)}, ${sqlNullableString(opts.siteUrl ?? null)}, ${nowSeconds}, ${nowSeconds})`,
+    // Stand in for the crawler's check-in. Without a fresh heartbeat the timeline
+    // reports `ingestActive: false` and the client (correctly) stays on the legacy
+    // batch path, which is not what these tests are exercising.
+    `INSERT INTO sync_state (key, value, updated_at) VALUES ('crawler_heartbeat_at', ${sqlString(String(nowSeconds))}, ${nowSeconds}) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
   ];
 
   items.forEach((item, index) => {
@@ -182,6 +186,7 @@ export async function cleanupFeedItems(feedUrl: string): Promise<void> {
   await execD1([
     `DELETE FROM feed_items WHERE feed_url = ${sqlString(feedUrl)}`,
     `DELETE FROM feeds WHERE feed_url = ${sqlString(feedUrl)}`,
+    `DELETE FROM sync_state WHERE key = 'crawler_heartbeat_at'`,
   ]);
 }
 

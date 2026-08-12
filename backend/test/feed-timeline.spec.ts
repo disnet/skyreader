@@ -1,7 +1,13 @@
 import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { handleIngest, handleCrawlSet, trimFeedsToSanityCap } from '../src/routes/ingest';
-import { handleTimeline } from '../src/routes/timeline';
+import {
+  handleIngest,
+  handleCrawlSet,
+  trimFeedsToSanityCap,
+  ingestProxyFeed,
+  CRAWLER_HEARTBEAT_KEY,
+} from '../src/routes/ingest';
+import { handleTimeline, readFeedSlice } from '../src/routes/timeline';
 import type { Env, FeedItem, Session } from '../src/types';
 
 const TEST_DID = 'did:plc:timeline123';
@@ -103,10 +109,16 @@ async function timeline(params: Record<string, string> = {}) {
     cursor: number;
     generation: string;
     hasMore: boolean;
+    nextColdOffset?: number;
+    ingestActive: boolean;
     readCursor: number;
     coldStart: boolean;
     feeds?: Record<string, { title?: string }>;
   };
+}
+
+async function clearCrawlerHeartbeat() {
+  await env.DB.prepare('DELETE FROM sync_state WHERE key = ?').bind(CRAWLER_HEARTBEAT_KEY).run();
 }
 
 describe('feed timeline (D1 ingest + serve)', () => {
@@ -131,6 +143,7 @@ describe('feed timeline (D1 ingest + serve)', () => {
     await env.DB.prepare('DELETE FROM feeds').run();
     await env.DB.prepare('DELETE FROM subscriptions_cache').run();
     await env.DB.prepare('DELETE FROM item_labels_cache').run();
+    await clearCrawlerHeartbeat();
   });
 
   describe('ingest auth', () => {
@@ -276,6 +289,41 @@ describe('feed timeline (D1 ingest + serve)', () => {
     });
   });
 
+  describe('pull-through ingest (proxy feed → archive)', () => {
+    it('assigns seq oldest→newest, so the newest entries are what a per-feed read serves', async () => {
+      // A proxy feed is newest-first. Ingesting it forward would give the newest
+      // item the lowest seq, and every later `ORDER BY seq DESC` read would then
+      // serve the feed's OLDEST items.
+      const newestFirst = Array.from({ length: 5 }, (_, i) => item(`p${5 - i}`));
+      await ingestProxyFeed(env, FEED_A, { title: 'Pulled', items: newestFirst });
+
+      const rows = await env.DB.prepare(
+        'SELECT guid, seq FROM feed_items WHERE feed_url = ? ORDER BY seq ASC'
+      )
+        .bind(FEED_A)
+        .all<{ guid: string; seq: number }>();
+      expect(rows.results.map((r) => r.guid)).toEqual(['p1', 'p2', 'p3', 'p4', 'p5']);
+
+      const slice = await readFeedSlice(env, TEST_DID, FEED_A, 2);
+      expect(slice.map((i) => i.guid)).toEqual(['p5', 'p4']);
+    });
+
+    it('hashes identically to a later crawler push, so the push is a no-op', async () => {
+      await ingestProxyFeed(env, FEED_A, { title: 'Pulled', items: [item('same')] });
+      const before = await env.DB.prepare('SELECT seq, content_hash FROM feed_items WHERE guid = ?')
+        .bind('same')
+        .first<{ seq: number; content_hash: string }>();
+
+      await ingestProxyFeed(env, FEED_A, { title: 'Pulled', items: [item('same')] });
+      const rows = await env.DB.prepare('SELECT seq, content_hash FROM feed_items WHERE guid = ?')
+        .bind('same')
+        .all<{ seq: number; content_hash: string }>();
+      expect(rows.results.length).toBe(1);
+      expect(rows.results[0].seq).toBe(before?.seq);
+      expect(rows.results[0].content_hash).toBe(before?.content_hash);
+    });
+  });
+
   describe('crawl set', () => {
     it('requires the shared secret', async () => {
       const res = await handleCrawlSet(
@@ -407,6 +455,98 @@ describe('feed timeline (D1 ingest + serve)', () => {
       const body = await timeline();
       expect(body.items).toEqual([]);
       expect(body.cursor).toBeGreaterThan(0);
+    });
+
+    it('cold-starts a client whose cursor sits above the head (rewound archive)', async () => {
+      // The generation survives a Time Travel restore while the seqs rewind, so a
+      // cursor above the head is the only symptom — and `seq > cursor` would
+      // otherwise return nothing on every poll, forever.
+      await addSubscription(TEST_DID, FEED_A);
+      await ingest(FEED_A, [{ item: item('r1'), contentHash: 'h1' }]);
+      const cold = await timeline();
+
+      const stalled = await timeline({
+        since_seq: String(cold.cursor + 5000),
+        generation: cold.generation,
+      });
+      expect(stalled.coldStart).toBe(true);
+      expect(stalled.items.map((i) => i.guid)).toEqual(['r1']);
+      expect(stalled.cursor).toBeLessThan(cold.cursor + 5000);
+    });
+
+    it('pages a large cold start and continues from nextColdOffset', async () => {
+      // 26 feeds × 30 items is past the per-page item budget, so the first page
+      // stops early and hands back a continuation index.
+      const feedUrls = Array.from({ length: 26 }, (_, i) => `https://example.com/paged${i}.xml`);
+      for (const feedUrl of feedUrls) {
+        await addSubscription(TEST_DID, feedUrl);
+        await ingest(
+          feedUrl,
+          Array.from({ length: 30 }, (_, i) => ({
+            item: item(`${feedUrl}#${i}`),
+            contentHash: `${feedUrl}-${i}`,
+          }))
+        );
+      }
+
+      const first = await timeline();
+      expect(first.coldStart).toBe(true);
+      expect(first.hasMore).toBe(true);
+      expect(first.nextColdOffset).toBeGreaterThan(0);
+      expect(first.items.length).toBeLessThan(26 * 30);
+
+      const second = await timeline({ cold_offset: String(first.nextColdOffset) });
+      expect(second.coldStart).toBe(true);
+      expect(second.hasMore).toBe(false);
+      expect(second.items.length).toBeGreaterThan(0);
+
+      // Every feed is covered across the two pages, each with its newest slice.
+      const seen = new Set([...first.items, ...second.items].map((i) => i.feedUrl));
+      expect(seen.size).toBe(26);
+      expect(first.items.length + second.items.length).toBe(26 * 30);
+    });
+  });
+
+  describe('crawler liveness (ingestActive)', () => {
+    it('is false until the crawler checks in', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await clearCrawlerHeartbeat();
+      const body = await timeline();
+      expect(body.ingestActive).toBe(false);
+    });
+
+    it('is true after an ingest push', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await ingest(FEED_A, [{ item: item('h1'), contentHash: 'h1' }]);
+      expect((await timeline()).ingestActive).toBe(true);
+    });
+
+    it('is true after a crawl-set pull, even with nothing ingested', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await clearCrawlerHeartbeat();
+      const res = await handleCrawlSet(
+        new Request('https://api.example/api/internal/crawl-set', {
+          headers: { 'X-Proxy-Secret': SECRET },
+        }),
+        env
+      );
+      expect(res.status).toBe(200);
+
+      const body = await timeline();
+      expect(body.ingestActive).toBe(true);
+      expect(body.items).toEqual([]);
+    });
+
+    it('goes stale when the last heartbeat is old', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await env.DB.prepare(
+        `INSERT INTO sync_state (key, value, updated_at) VALUES (?, ?, unixepoch())
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+      )
+        .bind(CRAWLER_HEARTBEAT_KEY, String(Math.floor(Date.now() / 1000) - 4 * 3600))
+        .run();
+
+      expect((await timeline()).ingestActive).toBe(false);
     });
   });
 });

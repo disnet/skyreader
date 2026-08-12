@@ -18,8 +18,18 @@ export const SANITY_CAP = 5000;
 // Stored-content cap per item. Unbounded retention makes this mandatory rather
 // than optional: D1 has a hard 10 GB database ceiling, so storage grows with
 // ingest velocity × item size × time. Oversized bodies are dropped at ingest
-// (summary/title/url/image kept) and the reader falls back to /extract on demand.
+// (summary/title/url/image kept) and `contentTruncated` is set, which the reader
+// acts on: ArticleCard auto-extracts the full text via /api/extract when a
+// truncated article is opened, so the body the user sees is still the whole
+// article (see frontend/src/lib/components/ArticleCard.svelte).
 export const MAX_ITEM_CONTENT_BYTES = 8 * 1024;
+
+// How long a crawler heartbeat stays "fresh". The proxy pulls the crawl set every
+// 5 minutes whenever INGEST_URL is set, so a stamp older than this means this
+// environment has no crawler pushing into its D1 — the timeline says so and
+// clients stay on the legacy batch path instead of serving an empty archive.
+export const CRAWLER_HEARTBEAT_KEY = 'crawler_heartbeat_at';
+export const CRAWLER_HEARTBEAT_FRESH_SECONDS = 30 * 60;
 
 // Bounds on one ingest call. The pusher chunks to ~100 items; these are abuse
 // guards, not tuning knobs.
@@ -235,9 +245,18 @@ export async function trimFeedsToSanityCap(
 }
 
 /**
- * Ingest a feed fetched straight from the proxy (the subscribe-time pull-through
- * in feeds-v2.ts). Hashes match what the crawler will push later, so the first
- * real push over these rows is a no-op rather than a phantom edit.
+ * Ingest a feed fetched straight from the proxy (the subscribe-time warm/ingest
+ * and the pull-through in feeds-v2.ts). Hashes match what the crawler will push
+ * later, so the first real push over these rows is a no-op rather than a phantom
+ * edit.
+ *
+ * Order matters: a proxy feed is newest-first, and `seq` is assigned in insert
+ * order, so we walk the array BACKWARDS — oldest first — exactly as the proxy's
+ * own `writeFeedItems` does. Ingesting forward would give the newest item the
+ * lowest seq, and since a re-push of an unchanged item is a no-op, that
+ * inversion would never heal: every later per-feed cold start (`ORDER BY seq
+ * DESC`) would serve the feed's OLDEST items, and the sanity-cap trim (deletes
+ * the lowest seqs) would delete its newest.
  */
 export async function ingestProxyFeed(
   env: Env,
@@ -251,8 +270,9 @@ export async function ingestProxyFeed(
   }
 ): Promise<void> {
   const nowMs = Date.now();
+  const oldestFirst = [...feed.items].reverse();
   const items: IngestItem[] = await Promise.all(
-    feed.items.map(async (item) => {
+    oldestFirst.map(async (item) => {
       const publishedMs = new Date(item.publishedAt).getTime();
       return {
         feedUrl,
@@ -278,6 +298,31 @@ export async function ingestProxyFeed(
     ],
     items
   );
+}
+
+/**
+ * Record that this environment's crawler just talked to us. Both internal
+ * endpoints stamp it, so the signal survives a quiet period with no new items
+ * (the crawl-set pull runs every 5 minutes regardless of what the feeds do).
+ *
+ * This is what makes "is ingest live here?" server-authoritative instead of
+ * inferred from an empty archive: a Worker whose proxy has no INGEST_URL never
+ * gets a stamp, so `/api/v2/timeline` reports `ingestActive: false` and clients
+ * keep using the legacy batch path rather than committing a cursor against an
+ * archive nothing is filling.
+ */
+export async function stampCrawlerHeartbeat(env: Env): Promise<void> {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO sync_state (key, value, updated_at) VALUES (?, ?, unixepoch())
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    )
+      .bind(CRAWLER_HEARTBEAT_KEY, String(Math.floor(Date.now() / 1000)))
+      .run();
+  } catch (error) {
+    // Observability only — never fail an ingest because the stamp didn't land.
+    console.error('[ingest] Failed to stamp crawler heartbeat:', error);
+  }
 }
 
 /**
@@ -307,6 +352,7 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
 
   try {
     const { inserted, updated } = await ingestBatch(env, feeds, items);
+    await stampCrawlerHeartbeat(env);
     return new Response(JSON.stringify({ ok: true, inserted, updated }), {
       headers: { 'Content-Type': 'application/json' },
     });
@@ -330,6 +376,10 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
 export async function handleCrawlSet(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'GET') return badRequest('Method not allowed', 405);
   if (!isAuthorizedProxyRequest(request, env)) return unauthorized();
+
+  // The crawl-set pull is the crawler's liveness signal (it runs every 5 minutes
+  // whether or not any feed produced an item).
+  await stampCrawlerHeartbeat(env);
 
   const rows = await env.DB.prepare(
     `SELECT feed_url, COUNT(*) AS subscribers

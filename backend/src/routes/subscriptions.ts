@@ -1,6 +1,6 @@
 import type { Env, Session } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
-import { warmProxyCache, warmProxyCacheBatch } from './feeds-v2';
+import { warmFeedIntoArchive, warmFeedsIntoArchive } from './feeds-v2';
 import { backfillDocumentsForUser } from './social';
 import { getUserSettings } from './settings';
 import { pushSubscriptionToPds, deleteSubscriptionFromPds } from '../services/subscription-sync';
@@ -785,13 +785,14 @@ export async function handleCreateSubscription(
       )
       .run();
 
-    // Warm up proxy cache for RSS subscriptions only
+    // Crawl the feed once and ingest it into the archive, so the client's first
+    // read of this brand-new subscription is a plain D1 query (RSS only).
     if (!isAtProto && feedUrl) {
-      const cacheResult = await warmProxyCache(env, feedUrl);
+      const cacheResult = await warmFeedIntoArchive(env, feedUrl);
       if (cacheResult.success) {
-        console.log(`Warmed proxy cache: ${feedUrl} (${cacheResult.itemCount} items)`);
+        console.log(`Ingested new feed: ${feedUrl} (${cacheResult.itemCount} items)`);
       } else {
-        console.error(`Failed to warm cache for ${feedUrl}: ${cacheResult.error}`);
+        console.error(`Failed to ingest ${feedUrl}: ${cacheResult.error}`);
       }
     }
 
@@ -1226,16 +1227,17 @@ export async function handleBulkCreateSubscriptions(
       await env.DB.batch(batchStatements);
     }
 
-    // Warm up proxy cache for new subscriptions (batch is efficient)
+    // Crawl + ingest the first few new subscriptions (batch is efficient) so the
+    // client's backfill reads them straight from the archive.
     const MAX_FEEDS_TO_WARM = 10;
     const feedsToWarmNow = feedsToFetch.slice(0, MAX_FEEDS_TO_WARM);
     if (feedsToWarmNow.length > 0) {
-      const cacheResults = await warmProxyCacheBatch(env, feedsToWarmNow);
+      const cacheResults = await warmFeedsIntoArchive(env, feedsToWarmNow);
       for (const [feedUrl, result] of Object.entries(cacheResults)) {
         if (result.success) {
-          console.log(`Warmed proxy cache: ${feedUrl} (${result.itemCount} items)`);
+          console.log(`Ingested new feed: ${feedUrl} (${result.itemCount} items)`);
         } else {
-          console.error(`Failed to warm cache for ${feedUrl}: ${result.error}`);
+          console.error(`Failed to ingest ${feedUrl}: ${result.error}`);
         }
       }
     }

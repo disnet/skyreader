@@ -13,6 +13,9 @@ export type TimelineItem = FeedItem & { seq: number; feedUrl: string; read: bool
 export interface TimelinePageShape {
   items: TimelineItem[];
   coldStart: boolean;
+  // Server-authoritative: is this deployment's crawler pushing into the archive?
+  // Absent on a backend that predates the flag.
+  ingestActive?: boolean;
 }
 
 /** Feed metadata the timeline carries alongside a non-empty page. */
@@ -84,13 +87,64 @@ export function groupTimelineItems(
  * Whether to abandon the timeline for this sync and use the legacy per-feed
  * batch path instead.
  *
- * A cold start that finds nothing while the user has subscriptions means the
- * server-side archive isn't populated for them yet — the environment's crawler
- * isn't pushing into D1. Showing an empty reader would be wrong; falling back
- * (without committing a cursor) keeps the reader working until ingest catches up.
+ * The decisive signal is the server's own `ingestActive`: it is false until this
+ * deployment's crawler has actually checked in, so a Worker whose proxy has no
+ * `INGEST_URL` (the whole pre-rollout window) tells every client to stay on the
+ * batch path — no cursor is committed, and nothing infers "healthy" from a page
+ * that happened to carry items. Emptiness alone can't decide that: one
+ * subscribe-time ingest is enough to make a cold start non-empty while the
+ * user's other feeds are never crawled at all.
+ *
+ * The emptiness heuristic remains only for a backend that predates the flag.
  */
 export function shouldFallBackToBatch(page: TimelinePageShape, subscriptionCount: number): boolean {
+  if (page.ingestActive === false) return true;
+  if (page.ingestActive === true) return false;
   return page.coldStart && page.items.length === 0 && subscriptionCount > 0;
+}
+
+/**
+ * Subscriptions that need a one-off per-feed backfill.
+ *
+ * The timeline's cursor is global, so a subscription that arrives from ANOTHER
+ * device (synced in from the backend/PDS) is already below it: the drain will
+ * never deliver its existing items, and the reader would show it empty until the
+ * crawler happens to publish something new. The add-feed and OPML paths call the
+ * per-feed endpoint explicitly; this covers the remote-sync path.
+ *
+ * `attempted` holds the feed URLs already tried (persisted), so a genuinely empty
+ * feed is fetched once rather than on every sync. Bounded per sync so a large
+ * incoming subscription list doesn't turn into a request storm.
+ */
+export function selectBackfillTargets(
+  subscriptions: Subscription[],
+  attempted: Set<string>,
+  hasArticles: (sub: Subscription) => boolean,
+  max: number
+): Subscription[] {
+  const targets: Subscription[] = [];
+  for (const sub of subscriptions) {
+    if (targets.length >= max) break;
+    if (!sub.id || !isRssSubscription(sub)) continue;
+    if (attempted.has(sub.feedUrl!)) continue;
+    if (hasArticles(sub)) continue;
+    targets.push(sub);
+  }
+  return targets;
+}
+
+/**
+ * Keep the attempted-backfill record to feeds the user still subscribes to, so
+ * it can't grow without bound as feeds come and go.
+ */
+export function pruneAttemptedBackfills(
+  attempted: Iterable<string>,
+  subscriptions: Subscription[]
+): string[] {
+  const live = new Set(
+    subscriptions.filter((s) => isRssSubscription(s)).map((s) => s.feedUrl as string)
+  );
+  return [...attempted].filter((url) => live.has(url));
 }
 
 /**

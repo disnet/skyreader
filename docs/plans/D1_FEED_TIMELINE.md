@@ -46,12 +46,21 @@ read state (`getReadKeys`). Now:
   authenticated by a constant-time compare against `FEED_PROXY_SECRET` and **fail-closed** when
   it is unset. Idempotent upsert (edit-in-place keeps the seq), per-item content cap
   (`MAX_ITEM_CONTENT_BYTES = 8 KB`, drops `content` and sets `contentTruncated`), and the per-feed
-  `SANITY_CAP = 5000` trim — the only pruning that ever runs.
-- `routes/timeline.ts`: `GET /api/v2/timeline?since_seq=&generation=&limit=` — incremental drain
-  (cursor derived from returned rows, `hasMore` via `limit+1`) and a per-feed newest-30 cold start.
-  Read state is an `EXISTS` probe in the same query; `getReadKeys` is never called on the feed path.
+  `SANITY_CAP = 5000` trim — the only pruning that ever runs. Both endpoints stamp a **crawler
+  heartbeat** (`sync_state.crawler_heartbeat_at`); the crawl-set pull runs every 5 minutes, so the
+  stamp is fresh even when no feed produced an item.
+- `routes/timeline.ts`: `GET /api/v2/timeline?since_seq=&generation=&limit=&cold_offset=` —
+  incremental drain (cursor derived from returned rows, `hasMore` via `limit+1`) and a **paged**
+  per-feed newest-30 cold start (feeds walked in a stable order, `COLD_START_MAX_ITEMS` per page,
+  continuation via `nextColdOffset`). Read state is an `EXISTS` probe in the same query;
+  `getReadKeys` is never called on the feed path. Every response carries `ingestActive`, derived
+  from the heartbeat: false means this deployment has no crawler filling D1, and clients stay on
+  the legacy batch path. A cursor above the archive head cold-starts (rewound-archive guard).
 - `GET /api/v2/feeds/fetch` re-backed with D1 + **pull-through**: if a feed isn't in the archive
-  yet (first subscriber), fetch it from the proxy once, ingest it, then serve.
+  yet (first subscriber), fetch it from the proxy once, ingest it, then serve. The pull-through is
+  gated on the caller's own subscription, so the shared never-pruned archive can't be written with
+  arbitrary feeds. Subscribe time already crawls + ingests the feed (`warmFeedIntoArchive`, which
+  replaced the old warm-and-discard), so the pull-through is normally not needed at all.
 
 **Proxy** (`feed-proxy/`)
 
@@ -69,10 +78,18 @@ read state (`getReadKeys`). Now:
 - `feedFetcher.fetchAllFeeds` prefers one `GET /api/v2/timeline` (plus drain pages) with a single
   global cursor in Dexie `metadata` (`timelineCursor`). Pure helpers live in `timelineSync.ts`.
 - Falls back to the legacy `/api/v2/feeds/batch` path when the timeline 404s (old or rolled-back
-  backend) **or** when a cold start returns nothing for a subscribed user (the environment's
-  crawler isn't pushing yet). The cursor is never committed in that case.
-- OPML import now backfills via the per-feed endpoint: a freshly imported feed's items sit below
-  the global cursor, so only the single-feed path (with its pull-through) can deliver them.
+  backend) **or** whenever the server reports `ingestActive: false`. The cursor is never committed
+  in that case. (An `ingestActive`-less backend keeps the old empty-cold-start heuristic.)
+- A paged cold start commits only the FIRST page's cursor, and only after its last page merges, so
+  an interrupted bootstrap starts over instead of skipping feeds it never delivered.
+- Subscriptions that arrive from another device sit below the global cursor, so each is backfilled
+  once through the per-feed endpoint (`backfillMissingSubscriptions`, ≤ 10 per sync, attempts
+  recorded in Dexie `metadata.timelineBackfilledFeeds`).
+- OPML import backfills via the per-feed endpoint: a freshly imported feed's items sit below the
+  global cursor, so only the single-feed path can deliver them. The requests are paced (3 at a
+  time, 1 s apart) and no longer force a crawl, so a 250-feed import stays inside the rate limit.
+- An article whose body was dropped at ingest (`contentTruncated`) is extracted automatically when
+  its card opens, so the reader shows the whole article rather than an RSS summary.
 
 **Admin** (`admin/`) — feed health is re-pointed at `feeds`/`feed_items`: crawled feeds, subscribed
 feeds not ingesting (the R1 alarm), archived item count, estimated archive size with a 6 GB alert,
@@ -109,8 +126,10 @@ cd feed-proxy && fly deploy --remote-only --config fly.staging.toml
 ```
 
 Sequencing matters: today's staging Worker authenticates to the **prod** proxy with prod's secret,
-so provision + deploy the staging proxy first, then flip `FEED_PROXY_URL` (already committed) and
-rotate `FEED_PROXY_SECRET` together in one staging Worker deploy.
+so provision + deploy the staging proxy first, then flip `FEED_PROXY_URL` in
+`backend/wrangler.toml` (`[env.staging]`, still pointing at the prod proxy on purpose) and rotate
+`FEED_PROXY_SECRET` together in one staging Worker deploy. The CI staging Fly job skips itself with
+a notice until the app exists, so nothing breaks in the meantime.
 
 Verify: `fly status -a skyreader-feed-proxy-staging` shows exactly **one** machine (the singleton
 invariant applies to this app too — never `fly scale count`); `/stats` answers and its
@@ -119,8 +138,11 @@ logs show no staging-origin traffic.
 
 **Then enable prod:** uncomment `INGEST_URL` in `feed-proxy/fly.toml` and cut a release. Prod's
 backfill drains through the normal pusher loop (≤ 200 × active feeds at 100 items / 15 s). Until
-that happens, prod clients keep using the legacy batch path automatically — the frontend's
-empty-archive fallback covers exactly this window.
+that happens, prod clients keep using the legacy batch path automatically: with no crawler pushing,
+nothing stamps `crawler_heartbeat_at`, so `/api/v2/timeline` answers `ingestActive: false` and no
+client commits a cursor. That signal is server-side on purpose — subscribe-time ingest and the
+pull-through both write to the archive, so "the archive is empty for this user" would stop being
+true long before the crawler existed.
 
 ### Phase 5 — cleanup (a later release, once no legacy traffic remains)
 
@@ -132,10 +154,31 @@ step deleting `feeds`/`feed_items` rows whose feed has had **zero active subscri
 
 ## Invariants worth keeping
 
-- **Cursor from returned rows, never `MAX(seq)`** — the latter races ingest and silently skips rows.
+- **The incremental cursor comes from returned rows, never `MAX(seq)`** — the latter races ingest
+  and silently skips rows. A cold start is the one exception, and only because it reads the head
+  BEFORE its per-feed slices: anything ingested while it pages lands above that head and arrives on
+  the next poll.
 - **Any D1 restore bumps `items_generation`** (one `UPDATE sync_state`): Time Travel rewinds seqs
-  while the token would otherwise stay the same, so clients would sit above the head forever.
+  while the token would otherwise stay the same. The timeline also self-heals a cursor that sits
+  above the head by cold-starting that client, so a forgotten bump degrades to one extra cold start
+  rather than a silent, permanent stall.
+- **Ingest order is oldest→newest.** A proxy feed is newest-first; seq is assigned in insert order,
+  so the pull-through walks it backwards (as the proxy's `writeFeedItems` does). Inverting it would
+  never heal — a re-push of an unchanged item is a no-op.
+- **Writes to the archive need a subscription.** Ordinary ingest deletes nothing, so every
+  user-triggered write path (subscribe-time ingest, the pull-through) is gated on the caller's own
+  subscription list.
 - **The pusher sends `cache.url`**, the registered URL, never a post-redirect one: the timeline
   joins on that exact string.
 - **Ordinary ingest deletes nothing.** A feed at the sanity cap is a bug signal (GUID churn), not
   steady state — investigate the feed rather than letting it rotate.
+
+## Known scaling knob
+
+The incremental drain scans the `feed_items` rowid range above the caller's cursor and probes the
+subscription set per row, so its cost tracks **global** ingest above the cursor rather than the
+caller's own new items: a 5-feed reader returning after a week pays for everything the whole system
+ingested that week. That is the accepted fan-out-on-read trade at ~1,330 feeds. If D1 row-reads or
+CPU ever become the constraint, bound the scan with per-feed `(feed_url, seq)` seeks against the
+subscription set (`idx_feed_items_feed_seq` already supports them) rather than materializing
+per-user timelines.

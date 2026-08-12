@@ -3,6 +3,8 @@ import {
   buildSubscriptionIndex,
   groupTimelineItems,
   isRssSubscription,
+  pruneAttemptedBackfills,
+  selectBackfillTargets,
   shouldFallBackToBatch,
   shouldUpdateTitle,
   subscriptionMetaUpdate,
@@ -99,7 +101,27 @@ describe('groupTimelineItems', () => {
 });
 
 describe('shouldFallBackToBatch', () => {
-  it('falls back when a cold start finds nothing for a subscribed user', () => {
+  it('falls back whenever the server says nothing is ingesting, however full the page', () => {
+    // The rollout window: one subscribe-time ingest is enough to make a cold
+    // start non-empty while nothing crawls the user's other feeds.
+    expect(
+      shouldFallBackToBatch({ items: [tItem()], coldStart: true, ingestActive: false }, 3)
+    ).toBe(true);
+    expect(
+      shouldFallBackToBatch({ items: [tItem()], coldStart: false, ingestActive: false }, 3)
+    ).toBe(true);
+  });
+
+  it('stays on the timeline once the crawler is live, even on an empty page', () => {
+    expect(shouldFallBackToBatch({ items: [], coldStart: true, ingestActive: true }, 3)).toBe(
+      false
+    );
+    expect(shouldFallBackToBatch({ items: [], coldStart: false, ingestActive: true }, 3)).toBe(
+      false
+    );
+  });
+
+  it('falls back when a cold start finds nothing for a subscribed user (pre-flag backend)', () => {
     expect(shouldFallBackToBatch({ items: [], coldStart: true }, 3)).toBe(true);
   });
 
@@ -113,6 +135,37 @@ describe('shouldFallBackToBatch', () => {
 
   it('does not fall back on an empty incremental page (steady state)', () => {
     expect(shouldFallBackToBatch({ items: [], coldStart: false }, 3)).toBe(false);
+  });
+});
+
+describe('selectBackfillTargets', () => {
+  const subA = sub({ id: 1, feedUrl: FEED_A });
+  const subB = sub({ id: 2, feedUrl: FEED_B, title: 'Feed B' });
+  const none = () => false;
+
+  it('picks subscriptions that hold no articles yet', () => {
+    expect(selectBackfillTargets([subA, subB], new Set(), none, 10)).toEqual([subA, subB]);
+  });
+
+  it('skips feeds already tried, feeds with articles, and non-RSS sources', () => {
+    const atproto = sub({ id: 3, feedUrl: 'at://did:plc:x/pub', sourceType: 'atproto.documents' });
+    const targets = selectBackfillTargets(
+      [subA, subB, atproto],
+      new Set([FEED_A]),
+      (s) => s.id === 2,
+      10
+    );
+    expect(targets).toEqual([]);
+  });
+
+  it('caps how many it returns per sync', () => {
+    expect(selectBackfillTargets([subA, subB], new Set(), none, 1)).toEqual([subA]);
+  });
+});
+
+describe('pruneAttemptedBackfills', () => {
+  it('keeps only feeds still subscribed', () => {
+    expect(pruneAttemptedBackfills([FEED_A, FEED_B], [sub({ feedUrl: FEED_A })])).toEqual([FEED_A]);
   });
 });
 
