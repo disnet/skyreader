@@ -63,6 +63,53 @@
 
   // Element refs for scroll observation
   let articleElements = $state<HTMLElement[]>([]);
+  let anchorSuppressed = $state(false);
+  let anchorTransitionCount = 0;
+
+  async function beginAnchorTransition() {
+    anchorTransitionCount += 1;
+    anchorSuppressed = true;
+    // Apply overflow-anchor before changing the list's layout so native scroll
+    // anchoring cannot race or double-correct our explicit compensation.
+    await tick();
+  }
+
+  async function endAnchorTransition() {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    anchorTransitionCount -= 1;
+    if (anchorTransitionCount === 0) anchorSuppressed = false;
+  }
+
+  async function preservingCardTop(index: number, mutate: () => void) {
+    const el = articleElements[index];
+    const before = el?.getBoundingClientRect().top;
+    await beginAnchorTransition();
+    try {
+      mutate();
+      await tick();
+      const after = el?.getBoundingClientRect().top;
+      if (before !== undefined && after !== undefined && Math.abs(after - before) > 1) {
+        // An absolute post-layout scroll avoids racing Chrome mobile's URL-bar resize.
+        window.scrollTo({ top: window.scrollY + (after - before), behavior: 'instant' });
+      }
+    } finally {
+      await endAnchorTransition();
+    }
+  }
+
+  async function collapseAndReanchor(index: number, collapse: () => void) {
+    const wasAboveViewport = (articleElements[index]?.getBoundingClientRect().top ?? 0) < 0;
+    await beginAnchorTransition();
+    try {
+      collapse();
+      await tick();
+      if (wasAboveViewport) {
+        articleElements[index]?.scrollIntoView({ block: 'start' });
+      }
+    } finally {
+      await endAnchorTransition();
+    }
+  }
 
   function scrollToCenter(index?: number) {
     const targetIndex = index ?? feedViewStore.selectedIndex;
@@ -90,26 +137,23 @@
       // mobile a relative scroll races the body shrink and the URL-bar resize
       // and can overshoot all the way to the page top. scroll-margin-top on the
       // wrapper keeps it clear of the (desktop) fixed header.
-      const wasAboveViewport = (articleElements[index]?.getBoundingClientRect().top ?? 0) < 0;
-      feedViewStore.collapse();
-      await tick();
-      if (wasAboveViewport) {
-        articleElements[index]?.scrollIntoView({ block: 'start' });
-      }
+      await collapseAndReanchor(index, () => feedViewStore.collapse());
     } else {
-      feedViewStore.select(index);
-      feedViewStore.expand(index);
-      // No scroll on expand: the body grows downward, so the card's top stays put.
-      // (Keyboard nav still calls the exported scrollToCenter explicitly.)
+      // Selecting this card can collapse a taller card above it. Preserve the
+      // tapped card's viewport position across both state changes.
+      await preservingCardTop(index, () => {
+        feedViewStore.select(index);
+        feedViewStore.expand(index);
+      });
     }
   }
 
-  function handleSelect(index: number) {
+  async function handleSelect(index: number) {
     const key = feedViewStore.currentItems[index]?.key ?? null;
     if (key !== null && feedViewStore.selectedKey === key) {
-      feedViewStore.deselect();
+      await collapseAndReanchor(index, () => feedViewStore.deselect());
     } else {
-      feedViewStore.select(index);
+      await preservingCardTop(index, () => feedViewStore.select(index));
     }
   }
 
@@ -198,7 +242,11 @@
   />
 {/if}
 
-<div class="article-list" class:hidden-behind-reader={readerItem !== null}>
+<div
+  class="article-list"
+  class:anchor-suppressed={anchorSuppressed}
+  class:hidden-behind-reader={readerItem !== null}
+>
   {#each feedViewStore.currentItems as displayItem, index (displayItem.key)}
     <div class="article-item-anchor" bind:this={articleElements[index]}>
       {#if displayItem.type === 'article'}
@@ -283,6 +331,10 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+  }
+
+  .article-list.anchor-suppressed {
+    overflow-anchor: none;
   }
 
   /* When a collapse re-anchors a card to the top (see handleExpand), land it
