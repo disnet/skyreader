@@ -8,7 +8,23 @@
     <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
     <link rel="apple-touch-icon" href="/icons/icon-512.png" />
     <link rel="mask-icon" href="/icons/icon-512.svg" color="#4A9FD4" />
-    <meta name="theme-color" content="#4A9FD4" />
+
+    <!--
+      The reading surface, not the brand blue. Safari 15+ paints its own bottom
+      toolbar with this, and that toolbar sits directly beneath the app's mobile
+      bottom bar — matching them makes the pair read as one band instead of two
+      mismatched surfaces. It also paints the installed PWA's status-bar area, so
+      the app opens into the same quiet surface it reads on. Sky (#4A9FD4) stays
+      the identity colour on the icon and mask-icon.
+
+      A browser takes the first theme-color whose media matches (or that has no
+      media at all), so the two conditional tags lead and the unconditional
+      fallback goes last, where it only lands on browsers that understand
+      neither. Keep it in that order.
+    -->
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#ffffff" />
 
     <!-- Open Graph / social sharing -->
     <meta property="og:type" content="website" />

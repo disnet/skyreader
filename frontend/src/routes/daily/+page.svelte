@@ -7,6 +7,7 @@
   import DailyMagazineArticle from '$lib/components/feed/DailyMagazineArticle.svelte';
   import ArchiveMagazineModal from '$lib/components/feed/ArchiveMagazineModal.svelte';
   import ReaderChrome from '$lib/components/feed/ReaderChrome.svelte';
+  import { READER_BAR_INSET } from '$lib/components/feed/ReaderBottomBar.svelte';
   import PagedView, { type PagedController } from '$lib/components/feed/PagedView.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -99,10 +100,12 @@
   let articleControls = $state<Map<string, MagazineArticleControls>>(new Map());
   let articleRoots = $state<Map<string, HTMLElement>>(new Map());
   let controlsVisible = $state(true);
-  let scrolled = $state(false);
   let lastScrollY = $state(0);
   let readingProgress = $state(0);
   let progressVisible = $state(false);
+  // The bar names the article you're actually in, once the issue masthead has
+  // scrolled away (the masthead already says "Daily magazine" while it's up).
+  let barTitleVisible = $state(false);
   let scrollRaf: number | null = null;
   let generateHint = $state('');
 
@@ -111,6 +114,23 @@
   // the current page rather than scroll position.
   let paged = $derived(preferences.readerViewMode === 'paged');
   let pagedController = $state<PagedController>();
+  let pagedPage = $state(0);
+  let pagedTotal = $state(1);
+
+  // One value for the bar's bottom rail: progress through the article you're
+  // reading while scrolling, position through the issue while paged.
+  let railProgress = $derived(
+    paged ? (pagedTotal > 1 ? pagedPage / (pagedTotal - 1) : 0) : readingProgress
+  );
+  let railVisible = $derived(paged ? pagedTotal > 1 : progressVisible);
+
+  // Paged mode: the masthead owns page one, so the bar takes over from page two.
+  // Leaving paged mode resets it so the bar doesn't inherit the page-based answer
+  // against a scroll position that still shows the masthead.
+  $effect(() => {
+    if (paged) barTitleVisible = pagedPage > 0;
+    else barTitleVisible = false;
+  });
 
   // Resume: restore to the stored spot once per magazine. Tracked by rkey so a
   // reroll (new magazine) restarts the restore. `resumeKey` is the article the
@@ -336,7 +356,13 @@
     scrollRaf = requestAnimationFrame(() => {
       scrollRaf = null;
       const currentY = scrollEl?.scrollTop ?? 0;
-      scrolled = currentY > 4;
+      // Hand the title to the bar once the issue masthead has left the top.
+      // Measured against the scroller, not the bar, so the handoff point doesn't
+      // move as the bar slides in and out.
+      if (scrollEl && introEl) {
+        barTitleVisible =
+          introEl.getBoundingClientRect().bottom < scrollEl.getBoundingClientRect().top + 8;
+      }
       const delta = currentY - lastScrollY;
       if (delta > 3 && currentY > 60) controlsVisible = false;
       else if (delta < -10) controlsVisible = true;
@@ -401,9 +427,11 @@
     showTag={false}
     isArchived={false}
     {controlsVisible}
-    {scrolled}
-    {readingProgress}
-    {progressVisible}
+    readingProgress={railProgress}
+    progressVisible={railVisible}
+    barTitle={activeItem?.title ?? ''}
+    barSource={activeItem?.domain ?? ''}
+    {barTitleVisible}
     onClose={closeMagazine}
     onArchive={magazine ? archiveMagazine : undefined}
     onOpenUrl={() => activeItem && window.open(activeItem.url, '_blank', 'noopener')}
@@ -525,8 +553,10 @@
 
     {#if paged}
       <PagedView
-        bottomInset={mobileStore.isMobile ? 64 : 0}
+        bottomInset={mobileStore.isMobile ? READER_BAR_INSET : 0}
         deps={() => [entries.length, bodies, preferences.articleFont, preferences.articleFontSize]}
+        bind:currentPage={pagedPage}
+        bind:totalPages={pagedTotal}
         oncontroller={(c) => (pagedController = c)}
         onpagechange={(page) => handleMagazinePageChange(page)}
       >
