@@ -1,0 +1,351 @@
+import type { Env, FeedItem } from '../types';
+
+/**
+ * Internal (proxy → Worker) endpoints for the D1-served feed timeline.
+ *
+ * The Fly proxy is the crawler; it pushes deltas from its durable log here and
+ * pulls the set of feeds it should crawl. Neither endpoint has a user session —
+ * both are authenticated with the shared `FEED_PROXY_SECRET` (the same value the
+ * Worker sends outbound as `X-Proxy-Secret`), so no new secret exists to manage.
+ */
+
+// Per-feed sanity cap. D1 is an archive: ordinary ingest never prunes. This trim
+// exists only to bound a pathological feed (GUID churn re-minting ids every
+// fetch, calendar feeds reposting their whole window). A daily-cadence feed takes
+// ~14 years to reach it, so a feed at the cap is a bug signal, not steady state.
+export const SANITY_CAP = 5000;
+
+// Stored-content cap per item. Unbounded retention makes this mandatory rather
+// than optional: D1 has a hard 10 GB database ceiling, so storage grows with
+// ingest velocity × item size × time. Oversized bodies are dropped at ingest
+// (summary/title/url/image kept) and the reader falls back to /extract on demand.
+export const MAX_ITEM_CONTENT_BYTES = 8 * 1024;
+
+// Bounds on one ingest call. The pusher chunks to ~100 items; these are abuse
+// guards, not tuning knobs.
+const MAX_INGEST_ITEMS = 1000;
+const MAX_INGEST_BODY_BYTES = 8 * 1024 * 1024;
+
+// D1 caps statements per batch; keep well under it.
+const INGEST_BATCH_SIZE = 50;
+
+/**
+ * Subscriptions that aren't RSS feeds (standard.site documents, collections)
+ * never belong to the crawl set or the timeline — their `feed_url` is an at://
+ * URI, and the client skips every `atproto.*` source on the feed path too.
+ */
+export function rssSubscriptionPredicate(alias = ''): string {
+  const column = alias ? `${alias}.source_type` : 'source_type';
+  return `(${column} IS NULL OR ${column} NOT LIKE 'atproto.%')`;
+}
+
+export interface IngestFeed {
+  feedUrl: string;
+  title?: string | null;
+  siteUrl?: string | null;
+  description?: string | null;
+  imageUrl?: string | null;
+}
+
+export interface IngestItem {
+  feedUrl: string;
+  guid: string;
+  item: FeedItem;
+  publishedAt?: number | null;
+  firstSeenAt: number;
+  contentHash: string;
+}
+
+/**
+ * Timing-safe secret comparison. Fails closed: an unset `FEED_PROXY_SECRET`
+ * rejects every request rather than turning the ingest endpoint into an open
+ * write surface (local dev sets the pair explicitly — see scripts/dev-local.sh).
+ */
+export function isAuthorizedProxyRequest(request: Request, env: Env): boolean {
+  const expected = env.FEED_PROXY_SECRET;
+  if (!expected) return false;
+  const provided = request.headers.get('X-Proxy-Secret');
+  if (!provided || provided.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) {
+    diff |= provided.charCodeAt(i) ^ expected.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+function unauthorized(): Response {
+  return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+    status: 401,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function badRequest(message: string, status = 400): Response {
+  return new Response(JSON.stringify({ error: message }), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+/**
+ * Apply the stored-content cap. Returns the item to persist: unchanged when it
+ * fits, otherwise the same item with `content` dropped and `contentTruncated`
+ * set. `content_hash` is computed by the proxy over the FULL item, so truncation
+ * never confuses edit detection.
+ */
+export function capItemContent(item: FeedItem): FeedItem {
+  const content = item.content;
+  if (!content) return item;
+  // Byte length, not code units — the cap is about stored bytes.
+  const bytes = new TextEncoder().encode(content).length;
+  if (bytes <= MAX_ITEM_CONTENT_BYTES) return item;
+  const { content: _dropped, ...rest } = item;
+  return { ...rest, contentTruncated: true };
+}
+
+/**
+ * Stable hash of an item's mutable content — byte-for-byte the same function the
+ * proxy applies before pushing (`itemContentHash` in feed-proxy/src/app.ts), so
+ * an item ingested by the subscribe-time pull-through and later pushed by the
+ * crawler hashes identically and doesn't register as a spurious edit.
+ */
+export async function computeContentHash(item: FeedItem): Promise<string> {
+  const payload = `${item.title}|${item.url}|${item.content ?? ''}|${item.summary ?? ''}`;
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(payload));
+  return [...new Uint8Array(digest)]
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 16);
+}
+
+/**
+ * The write itself, shared by the pushed-batch endpoint and the subscribe-time
+ * pull-through in feeds-v2.ts. Idempotent: a re-pushed item with the same content
+ * hash is a no-op, a changed one updates in place (seq unchanged → not
+ * re-delivered to clients that already saw it). That makes the proxy's
+ * at-least-once delivery safe.
+ *
+ * Throws on a D1 write failure so callers can surface a 5xx (which leaves the
+ * pusher's outbox state untouched, so it retries).
+ */
+export async function ingestBatch(
+  env: Env,
+  feeds: IngestFeed[],
+  items: IngestItem[]
+): Promise<{ inserted: number; updated: number }> {
+  const now = Math.floor(Date.now() / 1000);
+  const statements: D1PreparedStatement[] = [];
+
+  for (const feed of feeds) {
+    if (!feed?.feedUrl) continue;
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO feeds (feed_url, title, site_url, description, image_url, last_ingest_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(feed_url) DO UPDATE SET
+           title          = COALESCE(excluded.title, feeds.title),
+           site_url       = COALESCE(excluded.site_url, feeds.site_url),
+           description    = COALESCE(excluded.description, feeds.description),
+           image_url      = COALESCE(excluded.image_url, feeds.image_url),
+           last_ingest_at = excluded.last_ingest_at`
+      ).bind(
+        feed.feedUrl,
+        feed.title ?? null,
+        feed.siteUrl ?? null,
+        feed.description ?? null,
+        feed.imageUrl ?? null,
+        now
+      )
+    );
+  }
+
+  // Max seq before this batch: everything above it in the RETURNING rows below is
+  // a fresh insert, everything at or below is an edit-in-place. Purely for the
+  // response's counters — no correctness depends on it.
+  const before = await env.DB.prepare('SELECT MAX(seq) AS max_seq FROM feed_items').first<{
+    max_seq: number | null;
+  }>();
+  const maxSeqBefore = before?.max_seq ?? 0;
+
+  const touchedFeeds = new Set<string>();
+  for (const entry of items) {
+    if (!entry?.feedUrl || !entry.guid || !entry.item || !entry.contentHash) continue;
+    touchedFeeds.add(entry.feedUrl);
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO feed_items (feed_url, guid, item_json, published_at, first_seen_at, content_hash)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(feed_url, guid) DO UPDATE SET
+           item_json    = excluded.item_json,
+           content_hash = excluded.content_hash
+         WHERE feed_items.content_hash <> excluded.content_hash
+         RETURNING seq`
+      ).bind(
+        entry.feedUrl,
+        entry.guid,
+        JSON.stringify(capItemContent(entry.item)),
+        entry.publishedAt ?? null,
+        entry.firstSeenAt || Date.now(),
+        entry.contentHash
+      )
+    );
+  }
+
+  let inserted = 0;
+  let updated = 0;
+  for (let i = 0; i < statements.length; i += INGEST_BATCH_SIZE) {
+    const results = await env.DB.batch<{ seq: number }>(statements.slice(i, i + INGEST_BATCH_SIZE));
+    for (const result of results) {
+      for (const row of result.results ?? []) {
+        if (row.seq > maxSeqBefore) inserted++;
+        else updated++;
+      }
+    }
+  }
+
+  await trimFeedsToSanityCap(env, [...touchedFeeds]);
+
+  return { inserted, updated };
+}
+
+/**
+ * The ONLY pruning that happens at ingest. Under the cap the OFFSET subquery
+ * yields no row, so `seq <= NULL` matches nothing and the DELETE is a no-op
+ * costing a bounded index scan — which is the expected case for every healthy
+ * feed. `cap` is a parameter so tests can exercise the trim without writing
+ * 5,000 rows.
+ */
+export async function trimFeedsToSanityCap(
+  env: Env,
+  feedUrls: string[],
+  cap = SANITY_CAP
+): Promise<void> {
+  if (feedUrls.length === 0) return;
+  const trims = feedUrls.map((feedUrl) =>
+    env.DB.prepare(
+      `DELETE FROM feed_items
+         WHERE feed_url = ?1
+           AND seq <= (SELECT seq FROM feed_items WHERE feed_url = ?1
+                        ORDER BY seq DESC LIMIT 1 OFFSET ?2)`
+    ).bind(feedUrl, cap)
+  );
+  for (let i = 0; i < trims.length; i += INGEST_BATCH_SIZE) {
+    await env.DB.batch(trims.slice(i, i + INGEST_BATCH_SIZE));
+  }
+}
+
+/**
+ * Ingest a feed fetched straight from the proxy (the subscribe-time pull-through
+ * in feeds-v2.ts). Hashes match what the crawler will push later, so the first
+ * real push over these rows is a no-op rather than a phantom edit.
+ */
+export async function ingestProxyFeed(
+  env: Env,
+  feedUrl: string,
+  feed: {
+    title?: string;
+    description?: string;
+    siteUrl?: string;
+    imageUrl?: string;
+    items: FeedItem[];
+  }
+): Promise<void> {
+  const nowMs = Date.now();
+  const items: IngestItem[] = await Promise.all(
+    feed.items.map(async (item) => {
+      const publishedMs = new Date(item.publishedAt).getTime();
+      return {
+        feedUrl,
+        guid: item.guid,
+        item,
+        publishedAt: Number.isNaN(publishedMs) ? null : publishedMs,
+        firstSeenAt: nowMs,
+        contentHash: await computeContentHash(item),
+      };
+    })
+  );
+
+  await ingestBatch(
+    env,
+    [
+      {
+        feedUrl,
+        title: feed.title ?? null,
+        siteUrl: feed.siteUrl ?? null,
+        description: feed.description ?? null,
+        imageUrl: feed.imageUrl ?? null,
+      },
+    ],
+    items
+  );
+}
+
+/**
+ * POST /api/internal/ingest
+ *
+ * Upsert a batch of feed metadata + items pushed by the crawler. Any 5xx leaves
+ * the proxy's outbox state untouched — the idempotent upsert above makes
+ * at-least-once delivery safe.
+ */
+export async function handleIngest(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') return badRequest('Method not allowed', 405);
+  if (!isAuthorizedProxyRequest(request, env)) return unauthorized();
+
+  const declaredLength = Number(request.headers.get('Content-Length') ?? '0');
+  if (declaredLength > MAX_INGEST_BODY_BYTES) return badRequest('Payload too large', 413);
+
+  let body: { feeds?: IngestFeed[]; items?: IngestItem[] };
+  try {
+    body = await request.json();
+  } catch {
+    return badRequest('Invalid JSON body');
+  }
+
+  const feeds = Array.isArray(body.feeds) ? body.feeds : [];
+  const items = Array.isArray(body.items) ? body.items : [];
+  if (items.length > MAX_INGEST_ITEMS) return badRequest('Too many items');
+
+  try {
+    const { inserted, updated } = await ingestBatch(env, feeds, items);
+    return new Response(JSON.stringify({ ok: true, inserted, updated }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('[ingest] D1 WRITE ERROR:', error);
+    return new Response(JSON.stringify({ error: 'Ingest failed' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+/**
+ * GET /api/internal/crawl-set
+ *
+ * The feeds this environment wants crawled. Replaces the proxy's request-driven
+ * warmth: once clients stop reading through Fly, nothing stamps
+ * `last_requested_at`, so every feed would silently age out of the warm loop.
+ * The proxy polls this and stamps the rows itself.
+ */
+export async function handleCrawlSet(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'GET') return badRequest('Method not allowed', 405);
+  if (!isAuthorizedProxyRequest(request, env)) return unauthorized();
+
+  const rows = await env.DB.prepare(
+    `SELECT feed_url, COUNT(*) AS subscribers
+       FROM subscriptions_cache
+      WHERE active = 1
+        AND feed_url IS NOT NULL AND feed_url <> ''
+        AND ${rssSubscriptionPredicate()}
+      GROUP BY feed_url`
+  ).all<{ feed_url: string; subscribers: number }>();
+
+  const feeds = rows.results.map((row) => ({
+    feedUrl: row.feed_url,
+    subscribers: row.subscribers,
+  }));
+
+  return new Response(JSON.stringify({ feeds, count: feeds.length }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}

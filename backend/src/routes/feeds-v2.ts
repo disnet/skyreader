@@ -8,6 +8,8 @@ import type {
 } from '../services/feed-proxy-client';
 import { resolveStandardSite } from '../utils/canonical-url';
 import { getReadKeys } from './reading';
+import { ingestProxyFeed } from './ingest';
+import { readFeedMetadata, readFeedSlice } from './timeline';
 
 interface V2FeedResponse {
   title: string;
@@ -15,10 +17,9 @@ interface V2FeedResponse {
   siteUrl?: string;
   imageUrl?: string;
   items: FeedItem[];
+  // Unix ms of the last ingest for this feed (freshness, for the client's UI) —
+  // no longer a live upstream fetch time, since reads never touch the proxy.
   fetchedAt: number;
-  cursor?: number;
-  generation?: string;
-  hasMore?: boolean;
 }
 
 interface V2BatchFeedResult {
@@ -48,22 +49,37 @@ interface V2BatchResponse {
   readCursor?: number;
 }
 
+// Newest-N a single-feed fetch delivers from the D1 archive.
+const SINGLE_FEED_LIMIT = 30;
+const SINGLE_FEED_MAX_LIMIT = 200;
+
 /**
  * GET /api/v2/feeds/fetch
  *
- * Fetch a single feed via Fly.io proxy with GUID-based incremental sync.
+ * One feed's newest slice, served from the D1 archive with read state joined in
+ * (the timeline's per-feed sibling). This is the "new subscription gap" path:
+ * a feed the user just subscribed to contributes nothing to the global timeline
+ * cursor (its items sit below it), so the client fetches it directly here.
+ *
+ * If D1 has nothing for the feed (nobody was subscribed, so the crawler never
+ * pushed it), we PULL THROUGH: fetch it from the proxy once, ingest the result,
+ * then serve from D1. Steady state never touches Fly.
  *
  * Query params:
  * - url: Feed URL (required)
- * - since_guids: Comma-separated GUIDs the client already has (optional)
- * - limit: Max items to return (optional, default 100)
+ * - limit: Max items to return (optional, default 30)
+ * - refresh: `1` to force the pull-through even when the archive already has the
+ *   feed — the "retry this feed" action, the one path that still asks the
+ *   crawler for a fresh fetch on demand.
+ * - since_guids: accepted and ignored (legacy); the client dedupes by GUID.
  */
-export async function handleV2FeedFetch(request: Request, env: Env): Promise<Response> {
+export async function handleV2FeedFetch(
+  request: Request,
+  env: Env,
+  session: Session
+): Promise<Response> {
   const url = new URL(request.url);
   const feedUrl = url.searchParams.get('url');
-  const sinceGuidsParam = url.searchParams.get('since_guids');
-  const sinceSeqParam = url.searchParams.get('since_seq');
-  const generationParam = url.searchParams.get('generation');
   const limitParam = url.searchParams.get('limit');
 
   if (!feedUrl) {
@@ -83,28 +99,43 @@ export async function handleV2FeedFetch(request: Request, env: Env): Promise<Res
     });
   }
 
-  const sinceGuids = sinceGuidsParam ? sinceGuidsParam.split(',').filter(Boolean) : undefined;
-  const limit = limitParam ? parseInt(limitParam, 10) : undefined;
-  const sinceSeq =
-    sinceSeqParam !== null && Number.isInteger(Number(sinceSeqParam))
-      ? Number(sinceSeqParam)
-      : undefined;
-  const generation = generationParam ?? undefined;
+  const parsedLimit = limitParam ? parseInt(limitParam, 10) : SINGLE_FEED_LIMIT;
+  const limit = Number.isInteger(parsedLimit)
+    ? Math.min(Math.max(parsedLimit, 1), SINGLE_FEED_MAX_LIMIT)
+    : SINGLE_FEED_LIMIT;
+
+  const forceRefresh = url.searchParams.get('refresh') === '1';
 
   try {
-    const client = new FeedProxyClient(env);
-    const feed = await client.fetchFeed(feedUrl, sinceGuids, limit, sinceSeq, generation);
+    let items = await readFeedSlice(env, session.did, feedUrl, limit);
+    let metadata = await readFeedMetadata(env, feedUrl);
+
+    // Pull-through: the archive has nothing for this feed (first subscriber, so
+    // the crawler never pushed it), or the caller explicitly asked for a fresh
+    // fetch. One synchronous proxy call, ingested so every later read — and
+    // every other user — comes from D1.
+    const archiveEmpty = items.length === 0;
+    if (archiveEmpty || forceRefresh) {
+      try {
+        const client = new FeedProxyClient(env);
+        const feed = await client.fetchFeed(feedUrl);
+        await ingestProxyFeed(env, feedUrl, feed);
+        items = await readFeedSlice(env, session.did, feedUrl, limit);
+        metadata = await readFeedMetadata(env, feedUrl);
+      } catch (error) {
+        // A failed refresh of a feed we already hold is not a failed read.
+        if (archiveEmpty) throw error;
+        console.error('V2 feed refresh failed, serving the archive:', error);
+      }
+    }
 
     const response: V2FeedResponse = {
-      title: feed.title,
-      description: feed.description,
-      siteUrl: feed.siteUrl,
-      imageUrl: feed.imageUrl,
-      items: feed.items,
-      fetchedAt: feed.fetchedAt,
-      cursor: feed.cursor,
-      generation: feed.generation,
-      hasMore: feed.hasMore,
+      title: metadata?.title ?? '',
+      description: metadata?.description ?? undefined,
+      siteUrl: metadata?.site_url ?? undefined,
+      imageUrl: metadata?.image_url ?? undefined,
+      items,
+      fetchedAt: (metadata?.last_ingest_at ?? Math.floor(Date.now() / 1000)) * 1000,
     };
 
     return new Response(JSON.stringify(response), {

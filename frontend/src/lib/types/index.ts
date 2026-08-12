@@ -801,6 +801,9 @@ export interface FeedItem {
   // (inline read annotation). Consumed additively on merge, then discarded — it
   // is not an Article column. Absent on un-annotated responses.
   read?: boolean;
+  // The stored body exceeded the archive's per-item content cap and was dropped
+  // at ingest; the reader falls back to on-demand extraction for full text.
+  contentTruncated?: boolean;
 }
 
 // Combined feed item for unified "all" view

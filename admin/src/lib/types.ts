@@ -29,9 +29,10 @@ export interface FeedRow {
   title: string | null;
   site_url: string | null;
   subscriber_count: number;
-  error_count: number;
-  fetch_error: string | null;
-  last_fetched_at: number | null;
+  // Rows this feed holds in the D1 archive.
+  item_count: number;
+  // Unix seconds of the last push we received from the crawler for this feed.
+  last_ingest_at: number | null;
 }
 
 export interface SubscriptionRow {

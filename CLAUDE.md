@@ -9,7 +9,7 @@ This is a monorepo with 6 packages:
 - `backend/` - Cloudflare Workers API
 - `frontend/` - SvelteKit PWA
 - `admin/` - SvelteKit admin dashboard (Cloudflare Pages)
-- `feed-proxy/` - Feed caching proxy (Fly.io)
+- `feed-proxy/` - Feed crawler + article extraction (Fly.io; one app per environment)
 - `linkblog-site/` - Standalone SvelteKit app rendering public linkblogs at `linkblogs.skyreader.app` (Cloudflare Pages)
 - `extension/` - Chrome extension for one-click saves with live-DOM article extraction (Manifest V3)
 
@@ -85,6 +85,9 @@ This script runs D1 migrations, then starts the feed proxy (port 3000), backend 
   ```
   FRONTEND_URL=http://127.0.0.1:5173
   FEED_PROXY_URL=http://127.0.0.1:3000
+  # Shared with the proxy (dev-local.sh exports the same value as PROXY_SECRET).
+  # Feed ingest is fail-closed, so without this the local reader stays empty.
+  FEED_PROXY_SECRET=dev-proxy-secret
   ```
 
 **Resetting the local database:**
@@ -213,7 +216,9 @@ AT Protocol (Bluesky PDS) + Fly.io Feed Proxy + Jetstream Firehose
 
 1. **Auth:** Handle → DID resolution → OAuth PKCE/DPoP → session token
 2. **Subscriptions:** Stored in user's PDS, cached locally in IndexedDB
-3. **Feed Updates:** Frontend requests feeds → backend proxies via Fly.io feed cache
+3. **Feed Updates:** Fly.io proxy crawls feeds and pushes new items into D1 (`feed_items`); the
+   frontend refreshes with one `GET /api/v2/timeline` query that joins subscriptions and read
+   state. Reads never touch Fly — see `docs/plans/D1_FEED_TIMELINE.md`
 4. **Social:** Jetstream firehose → D1 shares table → frontend polls for updates
 
 ## AT Protocol Integration

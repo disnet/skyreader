@@ -54,6 +54,27 @@ jobs:
       - name: Run tests
         run: bun test
 
+  deploy-staging:
+    name: Deploy to Staging
+    needs: [typecheck, test]
+    # Same cadence as the staging Worker: every push to main. Staging has its own
+    # Fly app (fly.staging.toml) so it never shares the prod machine or its cache,
+    # and config drift between the two files surfaces here before a release.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
+
+      - name: Deploy
+        run: flyctl deploy --remote-only --config fly.staging.toml
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
   deploy:
     name: Deploy to Production
     needs: [typecheck, test]

@@ -136,6 +136,55 @@ export async function seedSavedArticle(
   return rkey;
 }
 
+export interface SeedFeedItemOpts {
+  guid: string;
+  title: string;
+  url?: string;
+  publishedAt?: string;
+  summary?: string;
+}
+
+/**
+ * Seed the server-side archive the timeline serves from: a `feeds` row plus its
+ * `feed_items`. Feed-scoped rather than user-scoped (the archive is shared by
+ * every subscriber), so it's cleaned up with `cleanupFeedItems`.
+ */
+export async function seedFeedItems(
+  feedUrl: string,
+  items: SeedFeedItemOpts[],
+  opts: { title?: string; siteUrl?: string } = {}
+): Promise<void> {
+  const nowMs = Date.now();
+  const nowSeconds = Math.floor(nowMs / 1000);
+
+  const statements = [
+    `INSERT OR REPLACE INTO feeds (feed_url, title, site_url, last_ingest_at, created_at) VALUES (${sqlString(feedUrl)}, ${sqlNullableString(opts.title ?? null)}, ${sqlNullableString(opts.siteUrl ?? null)}, ${nowSeconds}, ${nowSeconds})`,
+  ];
+
+  items.forEach((item, index) => {
+    const publishedAt = item.publishedAt ?? new Date(nowMs - index * 60_000).toISOString();
+    const itemJson = JSON.stringify({
+      guid: item.guid,
+      url: item.url ?? `https://example.com/${item.guid}`,
+      title: item.title,
+      summary: item.summary ?? `Summary for ${item.title}`,
+      publishedAt,
+    });
+    statements.push(
+      `INSERT OR REPLACE INTO feed_items (feed_url, guid, item_json, published_at, first_seen_at, content_hash) VALUES (${sqlString(feedUrl)}, ${sqlString(item.guid)}, ${sqlString(itemJson)}, ${Date.parse(publishedAt)}, ${nowMs}, ${sqlString(`hash-${item.guid}`)})`
+    );
+  });
+
+  await execD1(statements);
+}
+
+export async function cleanupFeedItems(feedUrl: string): Promise<void> {
+  await execD1([
+    `DELETE FROM feed_items WHERE feed_url = ${sqlString(feedUrl)}`,
+    `DELETE FROM feeds WHERE feed_url = ${sqlString(feedUrl)}`,
+  ]);
+}
+
 export interface SeedItemLabelOpts {
   itemKey: string;
   itemType: string;

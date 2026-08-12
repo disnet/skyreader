@@ -288,13 +288,34 @@ curl "/feed?url=...&since_guids=old-guid&limit=50"
 
 ## Configuration
 
-| Environment Variable | Default  | Description                               |
-| -------------------- | -------- | ----------------------------------------- |
-| `PROXY_SECRET`       | (none)   | Shared secret for `X-Proxy-Secret` header |
-| `DATA_DIR`           | `./data` | SQLite database location                  |
-| `CACHE_TTL_SECONDS`  | `900`    | Fresh cache duration (15 min)             |
-| `STALE_TTL_SECONDS`  | `3600`   | Stale cache max age (1 hour)              |
-| `PORT`               | `3000`   | HTTP server port                          |
+| Environment Variable         | Default  | Description                                             |
+| ---------------------------- | -------- | ------------------------------------------------------- |
+| `PROXY_SECRET`               | (none)   | Shared secret for `X-Proxy-Secret` (inbound + outbound) |
+| `DATA_DIR`                   | `./data` | SQLite database location                                |
+| `CACHE_TTL_SECONDS`          | `900`    | Fresh cache duration (15 min)                           |
+| `STALE_TTL_SECONDS`          | `3600`   | Stale cache max age (1 hour)                            |
+| `PORT`                       | `3000`   | HTTP server port                                        |
+| `INGEST_URL`                 | (none)   | Paired Worker base URL. **Unset ⇒ ingest disabled**     |
+| `INGEST_INTERVAL_SECONDS`    | `15`     | Push cycle                                              |
+| `INGEST_BATCH_SIZE`          | `100`    | Items per push request                                  |
+| `CRAWL_SET_INTERVAL_SECONDS` | `300`    | How often to pull the crawl set                         |
+
+## Ingest push (crawler mode)
+
+With `INGEST_URL` set, this proxy stops being a read path for the reader and becomes the crawler
+for exactly ONE Worker + D1 pair (prod proxy → prod Worker, staging proxy → staging Worker):
+
+- **Push:** the durable item log _is_ the outbox. `push_state(seq, pushed_hash)` records what has
+  reached D1; a row is dirty when it's missing there or its `content_hash` has changed since. Dirty
+  rows drain in seq order to `POST {INGEST_URL}/api/internal/ingest`; delivery is at-least-once and
+  the Worker's upsert is idempotent. Failures back off and retry the same rows.
+- **Pull:** every `CRAWL_SET_INTERVAL_SECONDS` the proxy fetches
+  `GET {INGEST_URL}/api/internal/crawl-set` and stamps `last_requested_at` on each feed, which is
+  what keeps the warm loop working now that reads no longer touch this box.
+- The per-feed cap (`FEED_ITEMS_CAP = 200`) bounds the **outbox**, not the archive: D1 retains
+  everything it has ingested. `push_state` cascades with every `feed_items` delete.
+
+See `docs/plans/D1_FEED_TIMELINE.md`.
 
 ## Cache Behavior
 
@@ -388,6 +409,11 @@ The `/stats` endpoint includes error statistics:
 
 ### Fly.io
 
+Two apps, one per environment — `skyreader-feed-proxy` (prod, `fly.toml`) and
+`skyreader-feed-proxy-staging` (staging, `fly.staging.toml`). Each pushes into its own Worker's D1
+and holds its own `PROXY_SECRET`; keep the two config files in sync apart from `app` and
+`INGEST_URL`. Each app runs exactly ONE machine (see the singleton invariant in `fly.toml`).
+
 ```bash
 # Create app
 fly apps create skyreader-feed-proxy
@@ -395,7 +421,7 @@ fly apps create skyreader-feed-proxy
 # Set secret
 fly secrets set PROXY_SECRET=your-secret-here
 
-# Deploy
+# Deploy (staging: add --config fly.staging.toml)
 fly deploy
 ```
 

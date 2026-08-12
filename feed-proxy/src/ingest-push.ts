@@ -1,0 +1,242 @@
+import type { Database } from 'bun:sqlite';
+import type { FeedItem } from './types';
+import { hashUrl, itemContentHash } from './app';
+
+/**
+ * Ingest push: the proxy stops being a read path and becomes a crawler that
+ * pushes deltas into its paired Worker's D1.
+ *
+ * The durable item log IS the outbox — there is no separate queue. A row is
+ * *dirty* when `push_state` has no row for its seq, or the hash we last pushed
+ * differs from the row's current `content_hash`. That comparison is race-free
+ * against concurrent edits: if `writeFeedItems` rewrites an item between select
+ * and ack, the hashes no longer match and the row simply re-qualifies.
+ *
+ * One proxy pushes to exactly ONE Worker (prod proxy → prod Worker, staging
+ * proxy → staging Worker), so delivery state is keyed by seq alone. With
+ * `INGEST_URL` unset both loops are disabled — the safe default for local dev
+ * and the gate for a staged rollout.
+ */
+
+export interface IngestConfig {
+  // Base URL of the paired Worker, e.g. https://api.skyreader.app
+  ingestUrl: string;
+  // Shared secret, sent as X-Proxy-Secret (the same PROXY_SECRET the Worker uses
+  // to authenticate to us — one secret per environment, no new names).
+  secret?: string;
+  // Items per push request. The Worker's own cap is well above this.
+  batchSize?: number;
+  timeoutMs?: number;
+}
+
+const DEFAULT_BATCH_SIZE = 100;
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+interface DirtyRow {
+  seq: number;
+  url_hash: string;
+  guid: string;
+  item_json: string;
+  published_at: number | null;
+  first_seen_at: number;
+  content_hash: string;
+  feed_url: string;
+}
+
+interface FeedMetaRow {
+  url_hash: string;
+  url: string;
+  title: string | null;
+  site_url: string | null;
+  description: string | null;
+  image_url: string | null;
+}
+
+export interface PushResult {
+  pushed: number;
+  // True when the log still holds dirty rows beyond this batch.
+  hasMore: boolean;
+  error?: string;
+}
+
+export function selectDirtyRows(db: Database, limit: number): DirtyRow[] {
+  return db
+    .query<DirtyRow, [number]>(
+      `SELECT fi.seq, fi.url_hash, fi.guid, fi.item_json, fi.published_at, fi.first_seen_at,
+			        COALESCE(fi.content_hash, '') AS content_hash, c.url AS feed_url
+			   FROM feed_items fi
+			   JOIN cache c ON c.url_hash = fi.url_hash
+			   LEFT JOIN push_state ps ON ps.seq = fi.seq
+			  WHERE ps.seq IS NULL OR ps.pushed_hash <> COALESCE(fi.content_hash, '')
+			  ORDER BY fi.seq ASC
+			  LIMIT ?`
+    )
+    .all(limit);
+}
+
+export function countDirtyRows(db: Database): number {
+  return (
+    db
+      .query<{ count: number }, []>(
+        `SELECT COUNT(*) AS count
+		     FROM feed_items fi
+		     JOIN cache c ON c.url_hash = fi.url_hash
+		     LEFT JOIN push_state ps ON ps.seq = fi.seq
+		    WHERE ps.seq IS NULL OR ps.pushed_hash <> COALESCE(fi.content_hash, '')`
+      )
+      .get()?.count ?? 0
+  );
+}
+
+function feedMetadata(db: Database, urlHashes: string[]): FeedMetaRow[] {
+  if (urlHashes.length === 0) return [];
+  const placeholders = urlHashes.map(() => '?').join(',');
+  return db
+    .query<FeedMetaRow, string[]>(
+      `SELECT url_hash, url,
+			        json_extract(parsed_json, '$.title')       AS title,
+			        json_extract(parsed_json, '$.siteUrl')     AS site_url,
+			        json_extract(parsed_json, '$.description') AS description,
+			        json_extract(parsed_json, '$.imageUrl')    AS image_url
+			   FROM cache
+			  WHERE url_hash IN (${placeholders})`
+    )
+    .all(...urlHashes);
+}
+
+function ackPushed(db: Database, rows: DirtyRow[]): void {
+  const upsert = db.query(
+    `INSERT INTO push_state (seq, pushed_hash) VALUES (?, ?)
+		 ON CONFLICT(seq) DO UPDATE SET pushed_hash = excluded.pushed_hash`
+  );
+  // Ack the hash we actually PUSHED, not the row's hash right now: if the item
+  // was edited mid-flight the two differ and the row stays dirty for the next
+  // cycle, which is exactly what we want.
+  db.transaction(() => {
+    for (const row of rows) upsert.run(row.seq, row.content_hash);
+  })();
+}
+
+/**
+ * Drain one batch of dirty rows to the paired Worker. Rows go in seq order, so
+ * within-feed order in D1 matches proxy first-seen order — all the cursor
+ * semantics need. On any failure nothing is acked and the same rows retry.
+ */
+export async function pushDirtyItems(db: Database, config: IngestConfig): Promise<PushResult> {
+  const batchSize = config.batchSize ?? DEFAULT_BATCH_SIZE;
+  const rows = selectDirtyRows(db, batchSize);
+  if (rows.length === 0) return { pushed: 0, hasMore: false };
+
+  const urlHashes = [...new Set(rows.map((r) => r.url_hash))];
+  const feeds = feedMetadata(db, urlHashes).map((meta) => ({
+    feedUrl: meta.url,
+    title: meta.title,
+    siteUrl: meta.site_url,
+    description: meta.description,
+    imageUrl: meta.image_url,
+  }));
+
+  const items = rows.map((row) => {
+    const item = JSON.parse(row.item_json) as FeedItem;
+    return {
+      // ALWAYS the registered/requested URL (cache.url), never a post-redirect
+      // one: D1 joins subscriptions on this exact string.
+      feedUrl: row.feed_url,
+      guid: row.guid,
+      item,
+      publishedAt: row.published_at,
+      firstSeenAt: row.first_seen_at,
+      // A pre-hash legacy row still needs a hash for D1's NOT NULL column.
+      contentHash: row.content_hash || itemContentHash(item),
+    };
+  });
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (config.secret) headers['X-Proxy-Secret'] = config.secret;
+
+  try {
+    const response = await fetch(`${config.ingestUrl}/api/internal/ingest`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ feeds, items }),
+      signal: AbortSignal.timeout(config.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      return {
+        pushed: 0,
+        hasMore: true,
+        error: `HTTP ${response.status}${body ? `: ${body.slice(0, 200)}` : ''}`,
+      };
+    }
+
+    ackPushed(db, rows);
+    return { pushed: rows.length, hasMore: rows.length >= batchSize };
+  } catch (error) {
+    return {
+      pushed: 0,
+      hasMore: true,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * Register a feed in the crawl set: create its cache row if missing and stamp
+ * `last_requested_at`. That single stamp is the whole trick — the existing warm
+ * loop, active window and eviction machinery then work unchanged, with the
+ * Worker's subscription table (rather than read traffic) driving warmth.
+ *
+ * A newly created row starts with parser_version 0 and fetched_at 0 so the warm
+ * loop treats it as due immediately.
+ */
+export function registerCrawlFeeds(db: Database, feedUrls: string[], now: number): number {
+  if (feedUrls.length === 0) return 0;
+  const upsert = db.query(
+    `INSERT INTO cache (url_hash, url, parsed_json, parser_version, parser_upgrade_attempted_version,
+		                    cached_at, fetched_at, error_count, last_requested_at)
+		 VALUES (?, ?, '{"title":"","items":[],"fetchedAt":0}', 0, 0, 0, 0, 0, ?)
+		 ON CONFLICT(url_hash) DO UPDATE SET last_requested_at = excluded.last_requested_at`
+  );
+  let registered = 0;
+  db.transaction(() => {
+    for (const url of feedUrls) {
+      if (!url) continue;
+      upsert.run(hashUrl(url), url, now);
+      registered++;
+    }
+  })();
+  return registered;
+}
+
+export interface CrawlSetResult {
+  registered: number;
+  error?: string;
+}
+
+/**
+ * Pull the crawl set from the paired Worker and stamp every feed in it.
+ */
+export async function pullCrawlSet(db: Database, config: IngestConfig): Promise<CrawlSetResult> {
+  const headers: Record<string, string> = {};
+  if (config.secret) headers['X-Proxy-Secret'] = config.secret;
+
+  try {
+    const response = await fetch(`${config.ingestUrl}/api/internal/crawl-set`, {
+      headers,
+      signal: AbortSignal.timeout(config.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      return { registered: 0, error: `HTTP ${response.status}` };
+    }
+    const body = (await response.json()) as { feeds?: Array<{ feedUrl: string }> };
+    const urls = (body.feeds ?? []).map((f) => f.feedUrl).filter(Boolean);
+    return { registered: registerCrawlFeeds(db, urls, Date.now()) };
+  } catch (error) {
+    return {
+      registered: 0,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}

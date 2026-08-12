@@ -53,6 +53,20 @@ export class UrlSaveLimitError extends Error {
   }
 }
 
+// A non-2xx the client may want to branch on by status (the feed path uses it to
+// detect a backend that predates /api/v2/timeline and fall back). `message` is
+// unchanged from the generic error path, so existing `e.message` handling still
+// works.
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 export class OfflineError extends Error {
   constructor() {
     super('You are offline');
@@ -69,6 +83,23 @@ export class SessionRefreshError extends Error {
     super('Session is refreshing, please retry');
     this.name = 'SessionRefreshError';
   }
+}
+
+// One page of GET /api/v2/timeline. Items carry their archive `seq` and the feed
+// they belong to; `cursor`/`generation` are stored and echoed on the next poll.
+export interface TimelineResponse {
+  items: Array<FeedItem & { seq: number; feedUrl: string; read: boolean }>;
+  cursor: number;
+  generation: string;
+  hasMore: boolean;
+  // Server time (unix seconds) at annotation — seeds the forward read delta.
+  readCursor?: number;
+  // True when the server served a per-feed newest slice instead of draining from
+  // a cursor (no cursor sent, or the generation no longer matches).
+  coldStart: boolean;
+  // Feed-level metadata for the caller's subscriptions; present only on a page
+  // that carried items.
+  feeds?: Record<string, { title?: string; siteUrl?: string; imageUrl?: string }>;
 }
 
 export interface ExtractedArticle {
@@ -237,7 +268,10 @@ class ApiClient {
       }
 
       const error = await response.json().catch(() => ({ error: 'Request failed' }));
-      throw new Error((error as { error: string }).error || `HTTP ${response.status}`);
+      throw new ApiError(
+        (error as { error: string }).error || `HTTP ${response.status}`,
+        response.status
+      );
     }
 
     return response.json() as Promise<T>;
@@ -267,7 +301,14 @@ class ApiClient {
   }
 
   // Feeds (V2 - via Fly.io proxy)
-  async fetchFeedV2(url: string, sinceGuids?: string[], limit?: number): Promise<ParsedFeed> {
+  // One feed's newest slice from the server-side archive. `refresh` forces the
+  // backend to re-fetch it through the crawler first (the per-feed retry action).
+  async fetchFeedV2(
+    url: string,
+    sinceGuids?: string[],
+    limit?: number,
+    refresh = false
+  ): Promise<ParsedFeed> {
     const params = new URLSearchParams({ url });
     if (sinceGuids && sinceGuids.length > 0) {
       params.set('since_guids', sinceGuids.join(','));
@@ -275,7 +316,29 @@ class ApiClient {
     if (limit) {
       params.set('limit', limit.toString());
     }
+    if (refresh) {
+      params.set('refresh', '1');
+    }
     return this.fetch(`/api/v2/feeds/fetch?${params}`);
+  }
+
+  /**
+   * The whole feed refresh in one request: every new item across every
+   * subscription, with read state already stamped on. `since_seq` + `generation`
+   * are the client's global cursor into the server-side archive; `hasMore` drives
+   * the drain loop. Replaces the per-subscription batch calls below.
+   */
+  async fetchTimeline(params: {
+    since_seq?: number;
+    generation?: string;
+    limit?: number;
+  }): Promise<TimelineResponse> {
+    const search = new URLSearchParams();
+    if (params.since_seq !== undefined) search.set('since_seq', String(params.since_seq));
+    if (params.generation) search.set('generation', params.generation);
+    if (params.limit) search.set('limit', String(params.limit));
+    const query = search.toString();
+    return this.fetch(`/api/v2/timeline${query ? `?${query}` : ''}`);
   }
 
   async fetchFeedsBatchV2(

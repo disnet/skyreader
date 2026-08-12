@@ -69,7 +69,10 @@ vars = { FRONTEND_URL = "http://127.0.0.1:5173" }
 # Staging environment
 [env.staging]
 name = "skyreader-api-staging"
-vars = { FRONTEND_URL = "https://staging.skyreader.app", ALLOWED_ORIGINS = "https://staging.skyreader.app,https://staging-linkblogs.skyreader.app", FEED_PROXY_URL = "https://skyreader-feed-proxy.fly.dev", LINKBLOG_PUBLIC_URL = "https://staging-linkblogs.skyreader.app" }
+# Staging talks to its OWN Fly proxy (skyreader-feed-proxy-staging), which pushes
+# only into the staging D1. Prod and staging are two fully isolated pairs — no
+# cross-links, distinct PROXY_SECRET/FEED_PROXY_SECRET values.
+vars = { FRONTEND_URL = "https://staging.skyreader.app", ALLOWED_ORIGINS = "https://staging.skyreader.app,https://staging-linkblogs.skyreader.app", FEED_PROXY_URL = "https://skyreader-feed-proxy-staging.fly.dev", LINKBLOG_PUBLIC_URL = "https://staging-linkblogs.skyreader.app" }
 routes = [{ pattern = "api-staging.skyreader.app", custom_domain = true }]
 
 [env.staging.durable_objects]

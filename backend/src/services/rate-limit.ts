@@ -54,6 +54,9 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   '/api/leaflet/subscriptions': STANDARD_LIMIT,
 
   // Light operations (cached data, simple queries)
+  // The whole feed refresh is one D1 query per page now, and a returning reader
+  // drains several pages in a burst — a light limit, not a standard one.
+  '/api/v2/timeline': LIGHT_LIMIT,
   '/api/feeds/cached': LIGHT_LIMIT,
   '/api/feeds/batch': LIGHT_LIMIT,
   '/api/feeds/status': LIGHT_LIMIT,

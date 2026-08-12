@@ -4,7 +4,7 @@
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { liveDb } from '$lib/services/liveDb.svelte';
-  import { fetchAllFeeds } from '$lib/services/feedFetcher';
+  import { fetchNewSubscriptionFeeds } from '$lib/services/feedFetcher';
   import Modal from '$lib/components/common/Modal.svelte';
 
   interface Props {
@@ -125,8 +125,10 @@
       // Get the newly added subscriptions
       const newSubs = liveDb.subscriptions.filter((s) => result.added.includes(s.id!));
 
-      // Fetch feeds in background
-      fetchAllFeeds(newSubs, articlesStore.savedGuids);
+      // Fetch each new feed directly in the background. A freshly imported feed's
+      // items sit below the global timeline cursor, so the per-feed endpoint (not
+      // the timeline) is what backfills its history.
+      fetchNewSubscriptionFeeds(newSubs, articlesStore.savedGuids);
     }
   }
 

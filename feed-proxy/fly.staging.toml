@@ -1,0 +1,55 @@
+app = "skyreader-feed-proxy-staging"
+primary_region = "sjc"
+
+# KEEP IN SYNC WITH fly.toml. These two files must differ only in `app` and the
+# `INGEST_URL` in [env]; everything else (mounts, http_service, vm, tuning) is
+# deliberately identical so staging is a faithful soak of what prod will run.
+# Staging deploys on every push to main, prod on release — so drift shows up here
+# first, before a release ships it.
+#
+# SINGLETON INVARIANT — run exactly ONE machine. This app is not horizontally
+# scalable as written: the cache is a SQLite DB on the per-machine `proxy_data`
+# volume (volumes can't be shared between machines), and the Jetstream firehose,
+# the self-warming loop, the ingest pusher, and the in-memory request-coalescing
+# maps are all in-process singletons. A second machine would get its own empty
+# volume + its own firehose + its own warm loop, with no shared coalescing — i.e.
+# a split-brain cache, duplicate upstream fetches, duplicate pushes, and responses
+# that differ by which machine you hit. Scale VERTICALLY via the [vm] block below,
+# never by `fly scale count`. Keep only one machine provisioned; auto_start/stop
+# below toggle that one machine, they do not create new ones.
+
+[build]
+
+[mounts]
+  source = "proxy_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  # Keep one machine alive: the self-warming loop and the ingest pusher run
+  # in-process on timers and can only work while a machine is up.
+  min_machines_running = 1
+
+[vm]
+  cpu_kind = "shared"
+  cpus = 2
+  memory_mb = 1024
+
+[env]
+  DATA_DIR = "/data"
+  # This proxy pushes its item log into the STAGING Worker's D1 and pulls the
+  # staging crawl set from it. One proxy, one Worker — never both environments.
+  INGEST_URL = "https://api-staging.skyreader.app"
+  CACHE_TTL_SECONDS = "300"
+  STALE_TTL_SECONDS = "3600"
+  WARM_ENABLED = "true"
+  WARM_INTERVAL_SECONDS = "60"
+  WARM_ACTIVE_WINDOW_SECONDS = "1209600"
+  WARM_BATCH_CAP = "500"
+  WARM_CONCURRENCY = "16"
+  WARM_MENTIONS = "false"
+  EXTRACT_CONCURRENCY = "4"
+  EXTRACT_QUEUE_MAX = "20"

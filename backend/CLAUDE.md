@@ -4,7 +4,14 @@
 
 ## Project Overview
 
-Skyreader backend is a Cloudflare Workers API that serves as a gateway between the frontend and the AT Protocol ecosystem. It handles authentication, RSS feed fetching via a Fly.io proxy, social features, saved articles, labels, and background Jetstream polling.
+Skyreader backend is a Cloudflare Workers API that serves as a gateway between the frontend and the AT Protocol ecosystem. It handles authentication, the feed timeline, social features, saved articles, labels, and background Jetstream polling.
+
+**Feed reads are served from D1, not the proxy.** The Fly.io proxy is the crawler: it pushes new
+and edited items into `feed_items` (`POST /api/internal/ingest`) and pulls the set of feeds to
+crawl (`GET /api/internal/crawl-set`), both authenticated with the shared `FEED_PROXY_SECRET`
+(fail-closed when unset). A client refresh is one `GET /api/v2/timeline` — a single query joining
+subscriptions and read state. See `docs/plans/D1_FEED_TIMELINE.md`. The proxy is still on the path
+for `/api/extract`, feed discovery, standard.site documents, and social context.
 
 ## Key Concepts
 
@@ -46,7 +53,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | File                          | Purpose                                               |
 | ----------------------------- | ----------------------------------------------------- |
 | `src/routes/auth.ts`          | OAuth flow (login, callback, logout, client metadata) |
-| `src/routes/feeds-v2.ts`      | RSS fetching via Fly.io proxy                         |
+| `src/routes/timeline.ts`      | `GET /api/v2/timeline` — the whole refresh, one query |
+| `src/routes/ingest.ts`        | Crawler endpoints: item ingest + crawl set            |
+| `src/routes/feeds-v2.ts`      | Single-feed read (D1 + pull-through), discover, docs  |
 | `src/routes/social.ts`        | Social feed, popular, grouped, detect-content         |
 | `src/routes/shares.ts`        | User shares CRUD (with PDS sync)                      |
 | `src/routes/subscriptions.ts` | Subscription CRUD (with PDS sync)                     |
@@ -88,9 +97,10 @@ Key tables:
 - `sessions` - Server-side sessions (tokens, DPoP key, expiry)
 - `subscriptions_cache` - Cached feed subscriptions from PDS
 - `shares` - Aggregated share data from Jetstream
-- `feed_metadata` - Feed caching metadata (ETags, errors, shard_id)
-- `feed_cache` - Parsed feed cache
-- `feed_items` - Individual feed items
+- `feeds` - One row per crawled feed (title/site/image + `last_ingest_at`)
+- `feed_items` - The feed archive the timeline serves: every item the crawler has ever pushed,
+  keyed `(feed_url, guid)` with a monotonic `seq`. Never pruned in ordinary operation — see
+  `docs/plans/D1_FEED_TIMELINE.md`
 - `documents` - `site.standard.document` records from follows
 - `item_labels_cache` - Unified labels (read/starred/archived/tags)
 - `saved_articles` - Saved/bookmarked articles

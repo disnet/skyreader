@@ -41,9 +41,23 @@ All stores use Svelte 5 runes (`.svelte.ts` files):
 
 | Service         | Purpose                                            |
 | --------------- | -------------------------------------------------- |
-| `api.ts`        | HTTP client for backend API                        |
-| `db.ts`         | Dexie (IndexedDB) schema for offline storage       |
-| `sync-queue.ts` | Queue operations when offline, process when online |
+| `api.ts`         | HTTP client for backend API                        |
+| `db.ts`          | Dexie (IndexedDB) schema for offline storage       |
+| `feedFetcher.ts` | Feed refresh (timeline sync + legacy batch path)   |
+| `timelineSync.ts`| Pure helpers for the timeline sync (unit-tested)   |
+| `sync-queue.ts`  | Queue operations when offline, process when online |
+
+### Feed refresh
+
+A refresh is **one** `GET /api/v2/timeline` request (plus drain pages while `hasMore`), served from
+the backend's D1 archive with read state already stamped on each item. The client holds a single
+global cursor in Dexie `metadata` (`timelineCursor` = `{cursor, generation}`), committed only after
+a successful merge; a `generation` change cold-starts. New subscriptions are backfilled through
+`fetchSingleFeed` → `GET /api/v2/feeds/fetch`, since their items sit below the global cursor.
+
+The legacy per-feed `/api/v2/feeds/batch` path (`fetchAllFeedsViaBatch`, with per-subscription
+`feedCursors`) is kept for one release as a fallback: it runs when the timeline 404s or when a cold
+start returns nothing for a subscribed user. See `docs/plans/D1_FEED_TIMELINE.md`.
 | `realtime.ts`   | WebSocket connection management                    |
 
 ### Key Routes

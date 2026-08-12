@@ -1,9 +1,18 @@
 import type { FeedRow, PaginatedResult } from '$lib/types';
 
+// Matches the dashboard's stale-ingest metric: a subscribed feed that hasn't
+// been ingested within an hour isn't being crawled.
+const STALE_INGEST_SECONDS = 60 * 60;
+
+/**
+ * Feed health from the D1 archive. Fetch errors and backoff now live with the
+ * crawler (the Fly proxy), so "healthy" here means "still ingesting": the last
+ * push we received for the feed is recent.
+ */
 export async function listFeeds(
   db: D1Database,
   opts: {
-    filter?: 'all' | 'healthy' | 'erroring';
+    filter?: 'all' | 'healthy' | 'stale';
     sort?: string;
     order?: 'asc' | 'desc';
     page?: number;
@@ -19,27 +28,34 @@ export async function listFeeds(
   } = opts;
   const offset = (page - 1) * perPage;
 
-  const allowedSorts = ['feed_url', 'title', 'subscriber_count', 'error_count', 'last_fetched_at'];
+  const allowedSorts = ['feed_url', 'title', 'subscriber_count', 'item_count', 'last_ingest_at'];
   const sortCol = allowedSorts.includes(sort) ? sort : 'subscriber_count';
   const sortDir = order === 'asc' ? 'ASC' : 'DESC';
 
+  const cutoff = Math.floor(Date.now() / 1000) - STALE_INGEST_SECONDS;
   let where = '';
-  if (filter === 'healthy') where = 'WHERE error_count = 0';
-  else if (filter === 'erroring') where = 'WHERE error_count > 0';
+  if (filter === 'healthy') where = 'WHERE f.last_ingest_at IS NOT NULL AND f.last_ingest_at >= ?';
+  else if (filter === 'stale') where = 'WHERE f.last_ingest_at IS NULL OR f.last_ingest_at < ?';
+  const filterBindings = filter === 'all' ? [] : [cutoff];
 
   const countResult = await db
-    .prepare(`SELECT COUNT(*) as count FROM feed_metadata ${where}`)
+    .prepare(`SELECT COUNT(*) as count FROM feeds f ${where}`)
+    .bind(...filterBindings)
     .first<{ count: number }>();
 
   const rows = await db
     .prepare(
-      `SELECT feed_url, title, site_url, subscriber_count, error_count, fetch_error, last_fetched_at
-			FROM feed_metadata
-			${where}
-			ORDER BY ${sortCol} ${sortDir}
-			LIMIT ? OFFSET ?`
+      `SELECT f.feed_url, f.title, f.site_url, f.last_ingest_at,
+			        (SELECT COUNT(*) FROM subscriptions_cache sc
+			          WHERE sc.feed_url = f.feed_url AND sc.active = 1) AS subscriber_count,
+			        (SELECT COUNT(*) FROM feed_items fi
+			          WHERE fi.feed_url = f.feed_url) AS item_count
+			   FROM feeds f
+			   ${where}
+			  ORDER BY ${sortCol} ${sortDir}
+			  LIMIT ? OFFSET ?`
     )
-    .bind(perPage, offset)
+    .bind(...filterBindings, perPage, offset)
     .all<FeedRow>();
 
   return {

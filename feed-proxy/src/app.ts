@@ -57,6 +57,9 @@ export interface AppConfig {
   // Defaults to "unhealthy / nothing subscribed" so behavior is unchanged when
   // the firehose isn't wired in.
   getFirehoseStatus?: () => FirehoseStatus;
+  // Whether this proxy pushes its item log into a paired Worker's D1 (INGEST_URL
+  // is set). Reported by /stats; the loops themselves live in index.ts.
+  ingestEnabled?: boolean;
 }
 
 export interface CacheRow {
@@ -591,12 +594,20 @@ export function writeFeedItems(
   // delete) instead of an implicit commit per statement — a single fsync rather
   // than ~100 every warm-refresh per feed. Single-writer SQLite makes it safe.
   const deleteForRedelivery = db.query('DELETE FROM feed_items WHERE url_hash = ? AND guid = ?');
+  // Cascade for the two deletes below. push_state is keyed by seq, so a seq that
+  // disappears from feed_items would otherwise leave an orphan row forever.
+  const dropPushStateForItem = db.query(
+    'DELETE FROM push_state WHERE seq IN (SELECT seq FROM feed_items WHERE url_hash = ? AND guid = ?)'
+  );
   const writeBatch = db.transaction(() => {
     if (redeliver) {
       // Keep retained history that has aged out of the source feed, but remove
       // every item in this parse so it receives a fresh seq and reaches clients
       // that already consumed its pre-upgrade representation.
-      for (const item of items) deleteForRedelivery.run(urlHash, item.guid);
+      for (const item of items) {
+        dropPushStateForItem.run(urlHash, item.guid);
+        deleteForRedelivery.run(urlHash, item.guid);
+      }
     }
 
     for (let i = items.length - 1; i >= 0; i--) {
@@ -615,6 +626,20 @@ export function writeFeedItems(
     // Cheaper-than-anti-join cap: compute the (K+1)-th-newest seq once, range-delete
     // below it. The OFFSET subquery yields nothing when the feed has <= K rows, so
     // `seq <= NULL` matches nothing — a no-op.
+    //
+    // NOTE: this cap bounds the *outbox*, not the archive. Items trimmed here that
+    // already reached D1 stay there permanently (D1 does not prune); items trimmed
+    // before ever being pushed simply drop out of the dirty set — the same K-window
+    // bound the proxy has always had.
+    db.run(
+      `DELETE FROM push_state
+			 WHERE seq IN (
+				 SELECT seq FROM feed_items
+				  WHERE url_hash = ?
+				    AND seq <= (SELECT seq FROM feed_items WHERE url_hash = ? ORDER BY seq DESC LIMIT 1 OFFSET ?)
+			 )`,
+      [urlHash, urlHash, FEED_ITEMS_CAP]
+    );
     db.run(
       `DELETE FROM feed_items
 			 WHERE url_hash = ?
@@ -818,6 +843,18 @@ export function initDatabase(db: Database): void {
 	`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_feed_items_feed_seq ON feed_items(url_hash, seq)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_feed_items_first_seen ON feed_items(first_seen_at)`);
+
+  // Ingest delivery state (ingest-push.ts): which seqs, at which content hash,
+  // have reached the paired Worker's D1. A row is dirty when it's missing here or
+  // the hashes differ — race-free against a concurrent edit. Created
+  // unconditionally, even with pushing disabled, so the cascade deletes that keep
+  // this table bounded (writeFeedItems, cleanupCache) always have a table to hit.
+  db.run(`
+		CREATE TABLE IF NOT EXISTS push_state (
+			seq         INTEGER PRIMARY KEY,
+			pushed_hash TEXT NOT NULL
+		)
+	`);
 
   // Extracted article content (Defuddle output), keyed by source URL. Separate
   // from the feed cache: article content is effectively immutable per URL, so it
@@ -1799,11 +1836,37 @@ export function createApp(db: Database, config: AppConfig) {
       >('SELECT COUNT(*) as count FROM cache WHERE next_retry_at > ? AND error_count >= 5')
       .get(now + 6 * 24 * 60 * 60 * 1000); // More than 6 days means it's a permanent error
 
+    // Ingest push (see ingest-push.ts). `pending` is the outbox backlog — the
+    // number that should hover near zero once a push cycle keeps up.
+    const itemCount = db
+      .query<{ count: number }, []>('SELECT COUNT(*) as count FROM feed_items')
+      .get();
+    const pushedCount = db
+      .query<{ count: number }, []>('SELECT COUNT(*) as count FROM push_state')
+      .get();
+    // Inlined rather than imported from ingest-push.ts, which imports this
+    // module (hashUrl/itemContentHash) — keep the dependency one-directional.
+    const pendingCount = db
+      .query<{ count: number }, []>(
+        `SELECT COUNT(*) AS count
+		       FROM feed_items fi
+		       JOIN cache c ON c.url_hash = fi.url_hash
+		       LEFT JOIN push_state ps ON ps.seq = fi.seq
+		      WHERE ps.seq IS NULL OR ps.pushed_hash <> COALESCE(fi.content_hash, '')`
+      )
+      .get();
+
     return c.json({
       total: total?.count || 0,
       fresh: fresh?.count || 0,
       stale: stale?.count || 0,
       inFlight: inFlight.size,
+      ingest: {
+        enabled: config.ingestEnabled ?? false,
+        items: itemCount?.count || 0,
+        pushed: pushedCount?.count || 0,
+        pending: pendingCount?.count || 0,
+      },
       extract: { inUse: extractSemaphore.inUse, queued: extractSemaphore.queued },
       cacheTtlSeconds: cacheTtlMs / 1000,
       staleTtlSeconds: staleTtlMs / 1000,
@@ -2680,6 +2743,13 @@ export function cleanupCache(db: Database): number {
   // cache row goes (the delete keys off cache.fetched_at). Once the feed is cold
   // the retained items are unreachable anyway, and this bounds feed_items growth
   // to the active working set.
+  db.run(
+    `DELETE FROM push_state WHERE seq IN (
+		   SELECT seq FROM feed_items
+		    WHERE url_hash IN (SELECT url_hash FROM cache WHERE fetched_at < ?)
+		 )`,
+    [threshold]
+  );
   db.run(
     'DELETE FROM feed_items WHERE url_hash IN (SELECT url_hash FROM cache WHERE fetched_at < ?)',
     [threshold]

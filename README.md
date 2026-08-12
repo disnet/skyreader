@@ -40,6 +40,9 @@ cd skyreader
   ```
   FRONTEND_URL=http://127.0.0.1:5173
   FEED_PROXY_URL=http://127.0.0.1:3000
+  # Shared with the proxy (dev-local.sh exports the same value as PROXY_SECRET).
+  # Feed ingest is fail-closed, so without this the local reader stays empty.
+  FEED_PROXY_SECRET=dev-proxy-secret
   ```
 
 ### Local Development

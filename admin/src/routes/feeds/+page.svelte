@@ -8,9 +8,18 @@
 
   const filters = [
     { value: 'all', label: 'All' },
-    { value: 'healthy', label: 'Healthy' },
-    { value: 'erroring', label: 'Erroring' },
+    { value: 'healthy', label: 'Ingesting' },
+    { value: 'stale', label: 'Stale' },
   ] as const;
+
+  // Mirrors the backend/admin stale-ingest threshold: an hour without a push
+  // from the crawler means this feed isn't being crawled any more.
+  const STALE_INGEST_SECONDS = 60 * 60;
+
+  function isStale(lastIngestAt: number | null): boolean {
+    if (!lastIngestAt) return true;
+    return lastIngestAt < Math.floor(Date.now() / 1000) - STALE_INGEST_SECONDS;
+  }
 
   function filterUrl(filter: string): string {
     const url = new URL(pageState.url);
@@ -73,9 +82,8 @@
     <th><a href={sortUrl('title')}>Title{sortIndicator('title')}</a></th>
     <th>URL</th>
     <th><a href={sortUrl('subscriber_count')}>Subs{sortIndicator('subscriber_count')}</a></th>
-    <th><a href={sortUrl('error_count')}>Errors{sortIndicator('error_count')}</a></th>
-    <th>Last Error</th>
-    <th><a href={sortUrl('last_fetched_at')}>Last Fetched{sortIndicator('last_fetched_at')}</a></th>
+    <th><a href={sortUrl('item_count')}>Archived{sortIndicator('item_count')}</a></th>
+    <th><a href={sortUrl('last_ingest_at')}>Last Ingest{sortIndicator('last_ingest_at')}</a></th>
     <th>Status</th>
   {/snippet}
 
@@ -84,17 +92,16 @@
       <td>{feed.title ?? '—'}</td>
       <td class="url-cell">{feed.feed_url}</td>
       <td>{feed.subscriber_count}</td>
-      <td>{feed.error_count}</td>
-      <td class="error-cell">{feed.fetch_error ?? '—'}</td>
-      <td>{formatDate(feed.last_fetched_at)}</td>
+      <td>{feed.item_count}</td>
+      <td>{formatDate(feed.last_ingest_at)}</td>
       <td>
-        <StatusBadge status={feed.error_count > 0 ? 'error' : 'healthy'} />
+        <StatusBadge status={isStale(feed.last_ingest_at) ? 'error' : 'healthy'} />
       </td>
     </tr>
   {:else}
     <tr>
       <td
-        colspan="7"
+        colspan="6"
         style="text-align: center; color: var(--color-text-secondary); padding: 2rem;"
       >
         No feeds found
@@ -141,14 +148,5 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 0.85rem;
-  }
-
-  .error-cell {
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 0.8rem;
-    color: var(--color-error);
   }
 </style>
