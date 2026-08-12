@@ -48,7 +48,7 @@ async function seedLongFeed(page: Page, user: Parameters<typeof seedSubscription
       }),
     });
   });
-  await page.reload();
+  await page.goto('/feeds');
   await expect(page.getByText('Long article B', { exact: true })).toBeVisible({ timeout: 15_000 });
 
   // Make the regression deterministic instead of depending on Chromium's
