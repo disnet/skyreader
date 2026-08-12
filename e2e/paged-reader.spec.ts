@@ -85,6 +85,25 @@ async function takeClicks(page: Page): Promise<RecordedClick[]> {
   });
 }
 
+/** Switch reading modes through the control exposed at the current viewport. */
+async function switchToPagedView(page: Page) {
+  const mobileStyleButton = page
+    .getByRole('button', { name: 'Style and actions' })
+    .locator('visible=true');
+
+  if (await mobileStyleButton.count()) {
+    await mobileStyleButton.click({ timeout: 15_000 });
+    const styleSheet = page.getByRole('dialog', { name: 'Style & Actions' });
+    await expect(styleSheet).toBeVisible();
+    await styleSheet.getByRole('button', { name: 'Pages', exact: true }).click();
+    await styleSheet.getByRole('button', { name: 'Drag to dismiss' }).press('Enter');
+    await expect(styleSheet).toBeHidden();
+    return;
+  }
+
+  await page.getByTitle('Switch to paged view').locator('visible=true').click({ timeout: 15_000 });
+}
+
 /** Seed one long article, open its reader, and switch to paged mode. */
 async function openPagedReader(page: Page, user: TestUser) {
   await seedSavedArticle(user, {
@@ -99,9 +118,7 @@ async function openPagedReader(page: Page, user: TestUser) {
   await page.goto('/?saved=true');
   await page.getByText(ARTICLE_TITLE).first().click({ timeout: 15_000 });
 
-  // Both the mobile bottom bar and the desktop toolbar carry the toggle; only one
-  // of them is on screen at this viewport.
-  await page.getByTitle('Switch to paged view').locator('visible=true').click({ timeout: 15_000 });
+  await switchToPagedView(page);
 
   const count = page.locator('.paged-count');
   await expect(count).toBeVisible({ timeout: 15_000 });
@@ -204,47 +221,63 @@ async function visibleLinkPoint(page: Page) {
 async function trapPoint(page: Page) {
   const next = page.getByRole('button', { name: 'Next page' });
   const previous = page.getByRole('button', { name: 'Previous page' });
-  const before = await pageLabel(page);
 
-  await next.click();
-  await expect(page.locator('.paged-count')).not.toHaveText(before);
-  await settlePageTransform(page);
-  const candidates = await page.evaluate(() => {
-    const viewport = document.querySelector('.paged-viewport');
-    if (!viewport) return [];
-    const bounds = viewport.getBoundingClientRect();
-    const points: { x: number; y: number; href: string }[] = [];
-    for (const anchor of document.querySelectorAll<HTMLAnchorElement>('.paged-content a[href]')) {
-      for (const rect of anchor.getClientRects()) {
-        if (rect.left < bounds.left || rect.right > bounds.right) continue;
-        if (rect.top < bounds.top || rect.bottom > bounds.bottom) continue;
-        const x = rect.right - 6;
-        // Must sit in the next-page tap zone (right 30%) to be the coordinate the
-        // page-turn tap releases on.
-        if ((x - bounds.left) / bounds.width < 0.75) continue;
-        points.push({ x, y: rect.top + rect.height / 2, href: anchor.getAttribute('href') ?? '' });
+  // Chrome height and font metrics can shift where links wrap. Search page pairs
+  // instead of assuming page 1 → 2 contains the exact overlap this test needs.
+  for (let attempt = 0; attempt < 20 && !(await next.isDisabled()); attempt++) {
+    const before = await pageLabel(page);
+
+    await next.click();
+    await expect(page.locator('.paged-count')).not.toHaveText(before);
+    await settlePageTransform(page);
+    const after = await pageLabel(page);
+    const candidates = await page.evaluate(() => {
+      const viewport = document.querySelector('.paged-viewport');
+      if (!viewport) return [];
+      const bounds = viewport.getBoundingClientRect();
+      const points: { x: number; y: number; href: string }[] = [];
+      for (const anchor of document.querySelectorAll<HTMLAnchorElement>('.paged-content a[href]')) {
+        for (const rect of anchor.getClientRects()) {
+          if (rect.left < bounds.left || rect.right > bounds.right) continue;
+          if (rect.top < bounds.top || rect.bottom > bounds.bottom) continue;
+          const x = rect.right - 6;
+          // Must sit in the next-page tap zone (right 30%) to be the coordinate the
+          // page-turn tap releases on.
+          if ((x - bounds.left) / bounds.width < 0.75) continue;
+          points.push({
+            x,
+            y: rect.top + rect.height / 2,
+            href: anchor.getAttribute('href') ?? '',
+          });
+        }
       }
-    }
-    return points;
-  });
-  expect(candidates.length, 'links sitting in the next page’s tap zone').toBeGreaterThan(0);
+      return points;
+    });
 
-  await previous.click();
-  await expect(page.locator('.paged-count')).toHaveText(before);
-  await settlePageTransform(page);
-  // Keep only the coordinates that are plain reading area on the page being left,
-  // so the tap is unambiguously a page turn and any link it activates belongs to
-  // the page it revealed.
-  const point = await page.evaluate((points) => {
-    const interactive = 'a, button, input, textarea, select, video, audio, iframe, [role="button"]';
-    return points.find((p) => !document.elementFromPoint(p.x, p.y)?.closest(interactive)) ?? null;
-  }, candidates);
-  expect(
-    point,
-    'found a tap point that is plain content now and a link after the turn'
-  ).not.toBeNull();
-  await takeClicks(page);
-  return point!;
+    await previous.click();
+    await expect(page.locator('.paged-count')).toHaveText(before);
+    await settlePageTransform(page);
+    // Keep only the coordinates that are plain reading area on the page being left,
+    // so the tap is unambiguously a page turn and any link it activates belongs to
+    // the page it revealed.
+    const point = await page.evaluate((points) => {
+      const interactive =
+        'a, button, input, textarea, select, video, audio, iframe, [role="button"]';
+      return points.find((p) => !document.elementFromPoint(p.x, p.y)?.closest(interactive)) ?? null;
+    }, candidates);
+    if (point) {
+      await takeClicks(page);
+      return { ...point, before, after };
+    }
+
+    // Try the following pair. We intentionally leave the reader on its first page
+    // when a match is found, so the touch below still performs the page turn.
+    await next.click();
+    await expect(page.locator('.paged-count')).toHaveText(after);
+    await settlePageTransform(page);
+  }
+
+  throw new Error('could not find a plain-content point occupied by a link on the next page');
 }
 
 /** Give the browser room to fire a delayed compatibility click, if it fires one. */
@@ -260,14 +293,15 @@ test.describe('Paged reader interactions', () => {
     await openPagedReader(authedPage, testUser);
     expect(await pageLabel(authedPage)).toMatch(/^Page 1 of \d+$/);
 
-    // Tap where page 2 keeps a link — the reported failure exactly.
-    const { x, y } = await trapPoint(authedPage);
+    // Tap where the next page keeps a link — the reported failure exactly.
+    const { x, y, before, after } = await trapPoint(authedPage);
+    await expect(authedPage.locator('.paged-count')).toHaveText(before);
     await authedPage.touchscreen.tap(x, y);
 
     // Exactly one page turn...
-    await expect(authedPage.locator('.paged-count')).toHaveText(/^Page 2 of \d+$/);
+    await expect(authedPage.locator('.paged-count')).toHaveText(after);
     await settleCompatibilityClick(authedPage);
-    expect(await pageLabel(authedPage)).toMatch(/^Page 2 of \d+$/);
+    expect(await pageLabel(authedPage)).toBe(after);
 
     // ...and the tap produced no click against the article at all, so nothing on
     // the page it revealed (nor the one it left) was activated. The reader answers
@@ -349,7 +383,7 @@ test.describe('Paged reader interactions', () => {
     await expect(authedPage).toHaveURL(/\/daily$/);
     await expect(authedPage.locator('.issue-article')).toHaveCount(2, { timeout: 15_000 });
 
-    await authedPage.getByTitle('Switch to paged view').locator('visible=true').click();
+    await switchToPagedView(authedPage);
     const count = authedPage.locator('.paged-count');
     await expect(count).toHaveText(/^Page 1 of (?!1$)\d+$/, { timeout: 15_000 });
     await settlePageTransform(authedPage);
