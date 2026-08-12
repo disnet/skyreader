@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  linkblogFormatLocked,
   linkblogSelectionChanged,
   publicationAddress,
   publicationHost,
@@ -27,8 +28,22 @@ const pckt: LinkblogPublicationChoice = {
   name: 'Reading notes',
   url: 'https://reader.pckt.blog/',
   isDefault: false,
+  appLabel: 'pckt',
   detectedFormat: 'pckt',
+  formatLocked: true,
   posts: 3,
+};
+
+// A publication whose app we can't place: the format is genuinely the user's to
+// pick, so nothing is locked.
+const OPEN_URI = `at://${DID}/site.standard.publication/3lmyopen`;
+const open: LinkblogPublicationChoice = {
+  uri: OPEN_URI,
+  rkey: '3lmyopen',
+  name: 'Field notes',
+  url: 'https://notes.example.com/',
+  isDefault: false,
+  posts: 2,
 };
 
 const currentSkyreader = { uri: SKYREADER_URI, format: 'leaflet' as const };
@@ -127,29 +142,47 @@ describe('publicationPostCount', () => {
   });
 });
 
+describe('linkblogFormatLocked', () => {
+  it('is locked for an app that reads only its own blocks', () => {
+    expect(linkblogFormatLocked(pckt)).toBe(true);
+  });
+
+  it('is open when the app leaves the choice, or we can’t place it', () => {
+    expect(linkblogFormatLocked(open)).toBe(false);
+    expect(linkblogFormatLocked(undefined)).toBe(false);
+    // A lock with nothing detected to lock to is no lock at all.
+    expect(linkblogFormatLocked({ ...pckt, detectedFormat: undefined })).toBe(false);
+  });
+});
+
 describe('resolveLinkblogFormat', () => {
   it('follows the format detected from the publication’s own posts', () => {
     expect(resolveLinkblogFormat(pckt, currentSkyreader, {})).toBe('pckt');
   });
 
+  it('holds a locked publication to its app’s format', () => {
+    // Neither a stale stored format nor an override can send pckt blocks to a
+    // reader that renders nothing else.
+    expect(resolveLinkblogFormat(pckt, { uri: PCKT_URI, format: 'markpub' }, {})).toBe('pckt');
+    expect(resolveLinkblogFormat(pckt, currentSkyreader, { [PCKT_URI]: 'offprint' })).toBe('pckt');
+  });
+
   it('keeps the format already in use on the live target', () => {
-    expect(resolveLinkblogFormat(pckt, { uri: PCKT_URI, format: 'markpub' }, {})).toBe('markpub');
+    expect(resolveLinkblogFormat(open, { uri: OPEN_URI, format: 'markpub' }, {})).toBe('markpub');
   });
 
   it('prefers what the user picked for that publication', () => {
-    expect(resolveLinkblogFormat(pckt, currentSkyreader, { [PCKT_URI]: 'offprint' })).toBe(
-      'offprint'
+    expect(resolveLinkblogFormat(open, currentSkyreader, { [OPEN_URI]: 'markpub' })).toBe(
+      'markpub'
     );
     // An override on a different publication doesn't leak across rows.
-    expect(resolveLinkblogFormat(pckt, currentSkyreader, { [SKYREADER_URI]: 'offprint' })).toBe(
-      'pckt'
+    expect(resolveLinkblogFormat(open, currentSkyreader, { [SKYREADER_URI]: 'markpub' })).toBe(
+      'leaflet'
     );
   });
 
   it('falls back to leaflet for a publication we can’t place', () => {
-    expect(
-      resolveLinkblogFormat({ ...pckt, detectedFormat: undefined }, currentSkyreader, {})
-    ).toBe('leaflet');
+    expect(resolveLinkblogFormat(open, currentSkyreader, {})).toBe('leaflet');
   });
 });
 
@@ -164,7 +197,12 @@ describe('linkblogSelectionChanged', () => {
   });
 
   it('is true when the connected publication keeps the row but changes format', () => {
-    expect(linkblogSelectionChanged(pckt, { uri: PCKT_URI, format: 'pckt' }, 'markpub')).toBe(true);
+    expect(linkblogSelectionChanged(open, { uri: OPEN_URI, format: 'leaflet' }, 'markpub')).toBe(
+      true
+    );
+    // Including the case where the lock corrects a format stored before it
+    // existed — there is something to apply.
+    expect(linkblogSelectionChanged(pckt, { uri: PCKT_URI, format: 'markpub' }, 'pckt')).toBe(true);
   });
 
   it('ignores format for the Skyreader linkblog, which writes its own', () => {

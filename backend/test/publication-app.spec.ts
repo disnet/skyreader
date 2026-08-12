@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { appForContentType, appForUrl } from '../src/services/publication-app';
-import { summarizeDocuments } from '../src/routes/linkblog';
+import {
+  appForPublication,
+  connectContentFormat,
+  summarizeDocuments,
+} from '../src/routes/linkblog';
 
 // The settings picker describes each of the user's publications — which app it
 // belongs to, and which content format to write there. Both come from inference,
@@ -12,10 +16,21 @@ describe('appForContentType', () => {
       id: 'leaflet',
       label: 'Leaflet',
       format: 'leaflet',
+      formatLocked: true,
     });
     expect(appForContentType('blog.pckt.content')?.format).toBe('pckt');
     expect(appForContentType('app.offprint.content')?.format).toBe('offprint');
     expect(appForContentType('at.markpub.markdown')?.format).toBe('markpub');
+  });
+
+  it('locks the format of apps that read only their own blocks', () => {
+    // A link written in anything else lands in the publication and renders as
+    // nothing, so these three aren't a choice.
+    expect(appForContentType('pub.leaflet.content')?.formatLocked).toBe(true);
+    expect(appForContentType('blog.pckt.content')?.formatLocked).toBe(true);
+    expect(appForContentType('app.offprint.content')?.formatLocked).toBe(true);
+    // Markdown is also what an unplaceable publication gets, so it stays open.
+    expect(appForContentType('at.markpub.markdown')?.formatLocked).toBe(false);
   });
 
   it('labels an app Skyreader can read but not write, with no format', () => {
@@ -23,6 +38,7 @@ describe('appForContentType', () => {
       id: 'greengale',
       label: 'Greengale',
       format: null,
+      formatLocked: false,
     });
   });
 
@@ -64,5 +80,46 @@ describe('summarizeDocuments', () => {
     expect(evidence.get('at://did:plc:alice/site.standard.publication/other')?.posts).toBe(1);
     // A document with no `site` belongs to no publication.
     expect(evidence.size).toBe(2);
+  });
+});
+
+describe('connectContentFormat', () => {
+  const site = 'at://did:plc:alice/site.standard.publication/mine';
+  const evidenceFor = (contentType: string) =>
+    summarizeDocuments([{ site, content: { $type: contentType } }]).get(site);
+
+  it('writes what a locked app reads, whatever the client asked for', () => {
+    const pckt = appForPublication(evidenceFor('blog.pckt.content'), undefined);
+    expect(connectContentFormat(pckt, 'markpub')).toBe('pckt');
+    // An empty publication on a known host is just as locked.
+    expect(
+      connectContentFormat(appForPublication(undefined, 'https://alice.pckt.blog/'), 'leaflet')
+    ).toBe('pckt');
+    expect(
+      connectContentFormat(
+        appForPublication(evidenceFor('app.offprint.content'), undefined),
+        'leaflet'
+      )
+    ).toBe('offprint');
+    expect(
+      connectContentFormat(appForPublication(evidenceFor('pub.leaflet.content'), undefined), 'pckt')
+    ).toBe('leaflet');
+  });
+
+  it('takes the requested format where the app leaves the choice', () => {
+    const markpub = appForPublication(evidenceFor('at.markpub.markdown'), undefined);
+    expect(connectContentFormat(markpub, 'leaflet')).toBe('leaflet');
+    // Greengale is labeled but unwritable, so its format is the user's too.
+    expect(
+      connectContentFormat(
+        appForPublication(evidenceFor('app.greengale.document'), undefined),
+        'markpub'
+      )
+    ).toBe('markpub');
+    expect(connectContentFormat(null, 'markpub')).toBe('markpub');
+  });
+
+  it('falls back to leaflet when nothing is detected or requested', () => {
+    expect(connectContentFormat(null, undefined)).toBe('leaflet');
   });
 });

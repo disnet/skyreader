@@ -24,6 +24,13 @@ export interface PublicationApp {
   label: string;
   /** The format Skyreader writes for this app, or null if it can't write it. */
   format: ContentFormat | null;
+  /**
+   * True when the app renders only its own content lexicon, so `format` is the
+   * one right answer and not a default to be overridden. Leaflet, pckt and
+   * Offprint each read their own blocks and nothing else — a link written in
+   * any other format lands in the publication and shows up as nothing.
+   */
+  formatLocked: boolean;
 }
 
 interface KnownApp extends PublicationApp {
@@ -38,21 +45,33 @@ const KNOWN_APPS: KnownApp[] = [
     id: 'leaflet',
     label: 'Leaflet',
     format: 'leaflet',
+    formatLocked: true,
     nsidPrefix: 'pub.leaflet.',
     host: 'leaflet.pub',
   },
-  { id: 'pckt', label: 'pckt', format: 'pckt', nsidPrefix: 'blog.pckt.', host: 'pckt.blog' },
+  {
+    id: 'pckt',
+    label: 'pckt',
+    format: 'pckt',
+    formatLocked: true,
+    nsidPrefix: 'blog.pckt.',
+    host: 'pckt.blog',
+  },
   {
     id: 'offprint',
     label: 'Offprint',
     format: 'offprint',
+    formatLocked: true,
     nsidPrefix: 'app.offprint.',
     host: 'offprint.app',
   },
+  // markpub reads Markdown, which is also what a publication we can't place gets
+  // written as, so its format stays a choice rather than a lock.
   {
     id: 'markpub',
     label: 'markpub',
     format: 'markpub',
+    formatLocked: false,
     nsidPrefix: 'at.markpub.',
     host: 'markpub.at',
   },
@@ -62,13 +81,14 @@ const KNOWN_APPS: KnownApp[] = [
     id: 'greengale',
     label: 'Greengale',
     format: null,
+    formatLocked: false,
     nsidPrefix: 'app.greengale.',
     host: 'greengale.app',
   },
 ];
 
-function publicApp({ id, label, format }: KnownApp): PublicationApp {
-  return { id, label, format };
+function publicApp({ id, label, format, formatLocked }: KnownApp): PublicationApp {
+  return { id, label, format, formatLocked };
 }
 
 /** The app that owns a document's content lexicon, e.g. `pub.leaflet.content`. */

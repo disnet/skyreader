@@ -30,11 +30,20 @@ export function publicationPostCount(posts: number | undefined): string {
   return posts === 1 ? '1 post' : `${posts} posts`;
 }
 
+/** Is this publication's format settled by the app that owns it? */
+export function linkblogFormatLocked(
+  selected: LinkblogPublicationChoice | undefined
+): selected is LinkblogPublicationChoice & { detectedFormat: LinkblogFormat } {
+  return !!selected?.formatLocked && !!selected.detectedFormat;
+}
+
 /**
  * Which content format to write to the selected publication, strongest signal
- * first: an explicit choice the user made for it, the format already in use if
- * it's the live target, the format detected from its existing posts, and
- * finally leaflet — the format every standard.site reader in the app renders.
+ * first: the format its app locks it to (Leaflet, pckt and Offprint each read
+ * only their own blocks, so there's nothing to choose), an explicit choice the
+ * user made for it, the format already in use if it's the live target, the
+ * format detected from its existing posts, and finally leaflet — the format
+ * every standard.site reader in the app renders.
  */
 export function resolveLinkblogFormat(
   selected: LinkblogPublicationChoice | undefined,
@@ -42,6 +51,7 @@ export function resolveLinkblogFormat(
   overrides: Record<string, LinkblogFormat>
 ): LinkblogFormat {
   if (!selected) return current.format;
+  if (linkblogFormatLocked(selected)) return selected.detectedFormat;
   return (
     overrides[selected.uri] ??
     (selected.uri === current.uri ? current.format : undefined) ??

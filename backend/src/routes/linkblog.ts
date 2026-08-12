@@ -35,7 +35,12 @@ import { getLinkblogDiscover, getLinkblogFriends } from '../services/linkblog-di
 
 // The Skyreader linkblog isn't a third-party app's publication; label it as ours
 // so the picker can say plainly which side of the choice each row is on.
-const SKYREADER_APP: PublicationApp = { id: 'skyreader', label: 'Skyreader', format: 'leaflet' };
+const SKYREADER_APP: PublicationApp = {
+  id: 'skyreader',
+  label: 'Skyreader',
+  format: 'leaflet',
+  formatLocked: true,
+};
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -409,6 +414,33 @@ function dominantContentType(evidence: PublicationEvidence | undefined): string 
   return winner;
 }
 
+/** Which app a publication belongs to: its own posts name it, its host is the
+ *  fallback for one that's still empty. */
+export function appForPublication(
+  evidence: PublicationEvidence | undefined,
+  url: string | undefined
+): PublicationApp | null {
+  return appForContentType(dominantContentType(evidence)) ?? appForUrl(url);
+}
+
+/** The format an app leaves no choice about, if it is one — see `formatLocked`. */
+function lockedFormat(app: PublicationApp | null): ContentFormat | null {
+  return app?.formatLocked ? app.format : null;
+}
+
+/**
+ * The format links get written in when connecting to a publication. A Leaflet,
+ * pckt or Offprint publication renders only its own blocks, so the app decides
+ * and the request doesn't get a say; anything else takes the requested format,
+ * falling back to leaflet, which every standard.site reader in Skyreader shows.
+ */
+export function connectContentFormat(
+  app: PublicationApp | null,
+  requested: ContentFormat | undefined
+): ContentFormat {
+  return lockedFormat(app) ?? requested ?? 'leaflet';
+}
+
 export async function handleListPublications(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
   const session = await getSessionFromRequest(request, env);
@@ -436,12 +468,9 @@ export async function handleListPublications(request: Request, env: Env): Promis
     const evidence = evidenceBySite.get(record.uri);
     const url = httpUrlOrUndefined(record.value.url);
     const isDefault = record.uri === defaultUri;
-    // A publication's own posts name its app; its host is the fallback for one
-    // that's still empty. Skyreader's own linkblog is named for the app the user
-    // is standing in, not for the content lexicon it happens to write.
-    const app = isDefault
-      ? SKYREADER_APP
-      : (appForContentType(dominantContentType(evidence)) ?? appForUrl(url));
+    // Skyreader's own linkblog is named for the app the user is standing in, not
+    // for the content lexicon it happens to write.
+    const app = isDefault ? SKYREADER_APP : appForPublication(evidence, url);
     return {
       uri: record.uri,
       rkey: record.uri.split('/').pop(),
@@ -454,6 +483,10 @@ export async function handleListPublications(request: Request, env: Env): Promis
       // Only offered when we can write it — Greengale resolves to an app with no
       // format, and the picker leaves that choice to the user.
       detectedFormat: app?.format ?? undefined,
+      // Leaflet, pckt and Offprint read only their own blocks, so the picker
+      // states the format instead of offering it. The connect route enforces the
+      // same thing, whatever the client sends.
+      formatLocked: lockedFormat(app) !== null,
       posts: evidence?.posts ?? 0,
     };
   });
@@ -472,6 +505,7 @@ export async function handleListPublications(request: Request, env: Env): Promis
       appId: SKYREADER_APP.id,
       appLabel: SKYREADER_APP.label,
       detectedFormat: SKYREADER_APP.format ?? undefined,
+      formatLocked: true,
       posts: evidenceBySite.get(defaultUri)?.posts ?? 0,
     });
   }
@@ -508,9 +542,22 @@ export async function handleConnectPublication(request: Request, env: Env): Prom
   const selectedPublicationUri = body.publicationUri!;
   if (body.format && !FORMATS.has(body.format))
     return json({ error: 'Unsupported content format' }, 400);
-  const exists = await createPDSClient(session).getRecord('site.standard.publication', match[2]);
+  const pdsClient = createPDSClient(session);
+  const exists = await pdsClient.getRecord<{ url?: string }>('site.standard.publication', match[2]);
   if (!exists.success) return json({ error: 'Publication not found' }, 404);
-  const format = body.format || 'leaflet';
+  // A Leaflet, pckt or Offprint publication renders only its own blocks, so the
+  // format isn't the client's to pick: detect the app the same way the picker
+  // describes it, and write what that app reads. Detection failing is not a
+  // reason to refuse the connect — it just leaves the choice where it was.
+  const documents = await pdsClient.listAllRecords<{ site?: string; content?: unknown }>(
+    DOCUMENT_COLLECTION,
+    { maxPages: 3, maxRecords: 300 }
+  );
+  const evidence = documents.success
+    ? summarizeDocuments(documents.data.map((record) => record.value)).get(selectedPublicationUri)
+    : undefined;
+  const app = appForPublication(evidence, httpUrlOrUndefined(exists.data.value?.url));
+  const format = connectContentFormat(app, body.format);
   const previousTarget = await getLinkblogTarget(env, session.did);
   await env.DB.prepare(
     `INSERT INTO user_settings (user_did, linkblog_publication, linkblog_content_format, created_at, updated_at)

@@ -7,6 +7,7 @@
   import { untrack } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import {
+    linkblogFormatLocked,
     linkblogSelectionChanged,
     publicationHost,
     publicationPostCount,
@@ -35,6 +36,9 @@
     { value: 'markpub', label: 'Markdown' },
   ];
 
+  const formatLabel = (format: Format) =>
+    FORMATS.find((entry) => entry.value === format)?.label ?? format;
+
   const skyreaderChoice = $derived(choices.find((choice) => choice.isDefault));
   const externalChoices = $derived(choices.filter((choice) => !choice.isDefault));
 
@@ -55,6 +59,9 @@
   const selected = $derived(choices.find((choice) => choice.uri === selectedUri));
   const selectedIsDefault = $derived(selected?.isDefault ?? true);
   const selectedFormat = $derived(resolveLinkblogFormat(selected, current, formatOverrides));
+  // Leaflet, pckt and Offprint read only their own blocks, so the format is a
+  // fact about the publication, not a decision for the user to get wrong.
+  const formatLocked = $derived(linkblogFormatLocked(selected));
   const changed = $derived(linkblogSelectionChanged(selected, current, selectedFormat));
 </script>
 
@@ -135,7 +142,12 @@
     {/if}
   </div>
 
-  {#if !selectedIsDefault && selected}
+  {#if !selectedIsDefault && selected && formatLocked}
+    <p class="format-fixed">
+      Links go in as {formatLabel(selectedFormat)}, the only format {selected.appLabel ??
+        'this app'} reads.
+    </p>
+  {:else if !selectedIsDefault && selected}
     <div class="format-row">
       <label class="format-label" for="linkblog-format">Write links as</label>
       <select
@@ -384,6 +396,13 @@
 
   .format-row {
     margin-top: 0.75rem;
+  }
+
+  /* Nothing to choose here, so it reads as a note rather than a control. */
+  .format-fixed {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    margin: 0.75rem 0 0 0;
   }
 
   .format-label {

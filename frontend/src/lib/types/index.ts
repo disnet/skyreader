@@ -820,6 +820,12 @@ export interface LinkblogPublicationChoice {
   appLabel?: string;
   /** The content format that app's posts use — pre-selected on connect. */
   detectedFormat?: LinkblogPublication['format'];
+  /**
+   * True when that app reads only its own content type (Leaflet, pckt,
+   * Offprint), so `detectedFormat` is the one format that renders there and the
+   * picker states it instead of offering a choice. The backend enforces it too.
+   */
+  formatLocked?: boolean;
   /** How many documents already live in this publication (capped by the scan). */
   posts?: number;
 }

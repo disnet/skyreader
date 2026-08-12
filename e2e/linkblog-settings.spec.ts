@@ -48,6 +48,7 @@ async function stubLinkblogApi(page: import('@playwright/test').Page) {
             appId: 'leaflet',
             appLabel: 'Leaflet',
             detectedFormat: 'leaflet',
+            formatLocked: true,
             posts: 12,
           },
           {
@@ -59,6 +60,7 @@ async function stubLinkblogApi(page: import('@playwright/test').Page) {
             appId: 'pckt',
             appLabel: 'pckt',
             detectedFormat: 'pckt',
+            formatLocked: true,
             posts: 1,
           },
         ],
@@ -99,10 +101,13 @@ test.describe('Linkblog publication picker', () => {
     await expect(picker.locator('#linkblog-format')).toHaveCount(0);
     await expect(picker.getByRole('button', { name: /Use my Skyreader linkblog/ })).toBeDisabled();
 
-    // Choosing the pckt publication pre-selects the format pckt actually reads.
+    // pckt renders only its own blocks, so choosing it states the format rather
+    // than offering a choice that could only be wrong.
     await pcktRow.click();
-    await expect(picker.locator('#linkblog-format')).toHaveValue('pckt');
-    await expect(picker.locator('.format-hint')).toContainText('Matches the posts already');
+    await expect(picker.locator('#linkblog-format')).toHaveCount(0);
+    await expect(picker.locator('.format-fixed')).toContainText(
+      'Links go in as pckt blocks, the only format pckt reads.'
+    );
     await expect(
       picker.getByRole('button', { name: /Publish to Untitled publication/ })
     ).toBeEnabled();
