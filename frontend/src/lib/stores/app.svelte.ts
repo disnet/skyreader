@@ -280,9 +280,19 @@ function createAppManager() {
           // Check if anything changed
           // Preserve local siteUrl if PDS record doesn't have it
           const resolvedSiteUrl = record.value.siteUrl || local.siteUrl;
+          // A documents subscription's feedUrl is the publication it's scoped to,
+          // and that MOVES: when an author connects an existing publication, the
+          // server re-points every follower's row. Take the remote value so this
+          // device re-scopes too. (Only for documents — an RSS feedUrl is the
+          // identity its cached articles hang off, so it stays local.)
+          const resolvedFeedUrl =
+            record.value.sourceType === 'atproto.documents' && record.value.feedUrl
+              ? record.value.feedUrl
+              : local.feedUrl;
           const hasChanges =
             local.title !== (record.value.title || record.value.feedUrl) ||
             local.siteUrl !== resolvedSiteUrl ||
+            local.feedUrl !== resolvedFeedUrl ||
             local.category !== record.value.category ||
             local.sourceType !== record.value.sourceType ||
             local.subjectDid !== record.value.subjectDid ||
@@ -292,6 +302,7 @@ function createAppManager() {
           if (hasChanges) {
             await liveDb.updateSubscription(local.id, {
               title: record.value.title || record.value.feedUrl,
+              feedUrl: resolvedFeedUrl,
               siteUrl: resolvedSiteUrl,
               category: record.value.category,
               tags: record.value.tags || [],

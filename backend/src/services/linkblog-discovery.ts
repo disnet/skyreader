@@ -3,7 +3,10 @@
 //
 // It's an intersection: (the user's Bluesky follows) ∩ (the linkblog registry).
 //   - registry: every DID with a linkblog, from the proxy's one cached
-//     Constellation marker query (see feed-proxy/src/linkblog-registry.ts).
+//     Constellation marker query (see feed-proxy/src/linkblog-registry.ts),
+//     unioned with the local list of users who connected an EXISTING publication
+//     — connecting never stamps a marker on someone else's app's record, so those
+//     linkblogs are real but invisible to the network-wide query.
 //   - follows: the user's Bluesky follows, which already carry profile basics —
 //     so "friends with linkblogs" needs no extra profile resolution.
 // Everything is best-effort: a registry/follows outage yields a shorter list, not
@@ -12,16 +15,26 @@
 import type { Env, Session } from '../types';
 import { FeedProxyClient } from './feed-proxy-client';
 import { fetchFollows, fetchProfiles, type BskyProfileLite } from './bsky-appview';
-import { linkblogBaseUrl, publicationUri } from './linkblog-sync';
+import {
+  getConnectedLinkblogAuthors,
+  getLinkblogTargets,
+  linkblogBaseUrl,
+  publicationUri,
+} from './linkblog-sync';
 
 export interface LinkblogPerson {
   did: string;
   handle: string | null;
   displayName?: string;
   avatar?: string;
-  // The publication to subscribe to (at://did/site.standard.publication/skyreader-links).
+  // The publication to subscribe to — the author's CURRENT linkblog target, which
+  // is their `skyreader-links` publication unless they've connected an existing
+  // standard.site publication. Subscribing to the default after someone switched
+  // would silently yield a feed that never updates again.
   publicationUri: string;
-  // The public linkblog page (env-correct base URL) — used as the subscription's siteUrl.
+  // The public linkblog page (env-correct base URL) — used as the subscription's
+  // siteUrl. Always the Skyreader linkblog site: it renders the connected
+  // publication's link posts too.
   blogUrl: string;
   // Whether the requesting user already follows this person on Bluesky.
   isFollow: boolean;
@@ -35,7 +48,8 @@ const MAX_DISCOVER_OTHERS = 100;
 function toPerson(
   p: BskyProfileLite | { did: string },
   isFollow: boolean,
-  env: Env
+  env: Env,
+  targets?: Map<string, { siteUri: string }>
 ): LinkblogPerson {
   const lite = p as BskyProfileLite;
   return {
@@ -43,7 +57,7 @@ function toPerson(
     handle: lite.handle || null,
     displayName: lite.displayName,
     avatar: lite.avatar,
-    publicationUri: publicationUri(p.did),
+    publicationUri: targets?.get(p.did)?.siteUri || publicationUri(p.did),
     blogUrl: linkblogBaseUrl(env, p.did),
     isFollow,
   };
@@ -56,15 +70,20 @@ function toPerson(
  */
 export async function getLinkblogFriends(session: Session, env: Env): Promise<LinkblogPerson[]> {
   const proxy = new FeedProxyClient(env);
-  const [registry, follows] = await Promise.all([
+  const [registry, connected, follows] = await Promise.all([
     proxy.fetchLinkblogRegistry().catch(() => [] as string[]),
+    getConnectedLinkblogAuthors(env),
     fetchFollows(session.did),
   ]);
 
-  const registrySet = new Set(registry);
-  return follows
-    .filter((f) => f.did !== session.did && registrySet.has(f.did))
-    .map((f) => toPerson(f, true, env));
+  const registrySet = new Set([...registry, ...connected]);
+  const people = follows.filter((f) => f.did !== session.did && registrySet.has(f.did));
+  // One batched settings lookup resolves everyone's current publication.
+  const targets = await getLinkblogTargets(
+    env,
+    people.map((f) => f.did)
+  );
+  return people.map((f) => toPerson(f, true, env, targets));
 }
 
 /**
@@ -74,22 +93,26 @@ export async function getLinkblogFriends(session: Session, env: Env): Promise<Li
  */
 export async function getLinkblogDiscover(session: Session, env: Env): Promise<LinkblogPerson[]> {
   const proxy = new FeedProxyClient(env);
-  const [registry, follows] = await Promise.all([
+  const [registry, connected, follows] = await Promise.all([
     proxy.fetchLinkblogRegistry().catch(() => [] as string[]),
+    getConnectedLinkblogAuthors(env),
     fetchFollows(session.did).catch(() => [] as BskyProfileLite[]),
   ]);
 
   const followMap = new Map(follows.map((f) => [f.did, f]));
-  const authors = registry.filter((did) => did !== session.did);
+  const authors = [...new Set([...registry, ...connected])].filter((did) => did !== session.did);
 
   const friendDids = authors.filter((did) => followMap.has(did));
   const otherDids = authors.filter((did) => !followMap.has(did)).slice(0, MAX_DISCOVER_OTHERS);
 
   // Friends already have profiles from getFollows; resolve only the rest.
-  const otherProfiles = await fetchProfiles(otherDids);
+  const [otherProfiles, targets] = await Promise.all([
+    fetchProfiles(otherDids),
+    getLinkblogTargets(env, [...friendDids, ...otherDids]),
+  ]);
 
   return [
-    ...friendDids.map((did) => toPerson(followMap.get(did)!, true, env)),
-    ...otherDids.map((did) => toPerson(otherProfiles.get(did) ?? { did }, false, env)),
+    ...friendDids.map((did) => toPerson(followMap.get(did)!, true, env, targets)),
+    ...otherDids.map((did) => toPerson(otherProfiles.get(did) ?? { did }, false, env, targets)),
   ];
 }

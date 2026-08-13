@@ -1,21 +1,38 @@
 // Generate a TID (Timestamp Identifier) for AT Protocol record keys.
 //
-// rkeys are validated against /^[a-z0-9]{13,}$/ (see ./validation.ts), so the
-// result must always be lowercase alphanumeric and at least 13 characters. A
-// base36 millisecond timestamp (8 chars for any modern date) gives rough
-// sortability; a fixed-length random suffix guarantees the minimum length and
-// reduces the chance of collisions for records created within the same
-// millisecond.
-const RANDOM_CHARS = 10;
+// This is the real thing, not a lookalike: 13 characters of base32-sortable
+// encoding a 64-bit integer whose top bit is 0, then 53 bits of microseconds
+// since the UNIX epoch, then a 10-bit random clock identifier. Lexicographic
+// order therefore equals creation order, and the string decodes back to a
+// timestamp.
+//
+// It has to be exact because lexicons declare `"key": "tid"` and consumers act
+// on that — Leaflet's `site.standard.document` is one, and the Semble/Margin
+// collections the backing engines write into are others. A rkey that merely
+// looks TID-shaped (the old base36-millis + random suffix) is 18 characters,
+// decodes to nothing, and sorts by an alphabet that isn't the one readers use.
+//
+// Mirrors frontend/src/lib/utils/tid.ts.
+const S32 = '234567abcdefghijklmnopqrstuvwxyz';
+
+// The clock id disambiguates records created in the same microsecond by
+// different clients; per spec it's chosen once at startup and kept.
+const CLOCK_ID = BigInt(Math.floor(Math.random() * 1024));
+
+// Date.now() only has millisecond resolution, so several calls can land in the
+// same microsecond value. Bumping past the last one keeps rkeys unique and
+// monotonic within a session without inventing false precision.
+let lastMicros = 0n;
 
 export function generateTid(): string {
-  const timestamp = Date.now().toString(36);
-  let random = '';
-  for (let i = 0; i < RANDOM_CHARS; i++) {
-    // Each iteration appends exactly one base36 char (0-9, a-z), so the suffix
-    // length is deterministic — unlike Math.random().toString(36) slicing,
-    // which can yield fewer chars when the expansion terminates early.
-    random += Math.floor(Math.random() * 36).toString(36);
+  let micros = BigInt(Date.now()) * 1000n;
+  if (micros <= lastMicros) micros = lastMicros + 1n;
+  lastMicros = micros;
+
+  const value = (micros << 10n) | CLOCK_ID;
+  let tid = '';
+  for (let shift = 60n; shift >= 0n; shift -= 5n) {
+    tid += S32[Number((value >> shift) & 31n)];
   }
-  return timestamp + random;
+  return tid;
 }

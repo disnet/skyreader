@@ -43,7 +43,9 @@
   }: Props = $props();
 
   let isAtProto = $derived(subscription.sourceType?.startsWith('atproto.') ?? false);
-  let sourceDisplay = $derived(getSourceDisplay(subscription.sourceType, subscription.feedUrl));
+  let sourceDisplay = $derived(
+    getSourceDisplay(subscription.sourceType, subscription.feedUrl, subscription.siteUrl)
+  );
 
   let faviconUrl = $derived(
     subscription.customIconUrl ||

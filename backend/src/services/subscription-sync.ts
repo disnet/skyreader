@@ -29,6 +29,8 @@ interface LocalSubscription {
   record_uri: string;
   feed_url: string;
   title: string | null;
+  site_url: string | null;
+  category: string | null;
   created_at: number;
   source_type: string | null;
   subject_did: string | null;
@@ -147,7 +149,7 @@ export async function syncSubscriptions(
 
     // Step 2: Fetch all local subscriptions
     const localResult = await env.DB.prepare(
-      `SELECT record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url, active
+      `SELECT record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url, active
 			 FROM subscriptions_cache
 			 WHERE user_did = ?`
     )
@@ -204,6 +206,7 @@ export async function syncSubscriptions(
       rkey: string;
       feedUrl: string;
       title: string | null;
+      siteUrl: string | null;
       createdAt: number;
       sourceType: string | null;
       subjectDid: string | null;
@@ -257,6 +260,7 @@ export async function syncSubscriptions(
         rkey,
         feedUrl: pdsRecord.value.feedUrl || '',
         title: pdsRecord.value.title || null,
+        siteUrl: pdsRecord.value.siteUrl || null,
         createdAt: pdsRecord.value.createdAt
           ? Math.floor(new Date(pdsRecord.value.createdAt).getTime() / 1000)
           : Math.floor(Date.now() / 1000),
@@ -297,13 +301,14 @@ export async function syncSubscriptions(
         const recordUri = buildRecordUri(session.did, COLLECTION, sub.rkey);
         return env.DB.prepare(
           `INSERT OR IGNORE INTO subscriptions_cache
-					 (user_did, record_uri, feed_url, title, created_at, source_type, subject_did, custom_title, custom_icon_url, category, active)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					 (user_did, record_uri, feed_url, title, site_url, created_at, source_type, subject_did, custom_title, custom_icon_url, category, active)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           session.did,
           recordUri,
           sub.feedUrl,
           sub.title,
+          sub.siteUrl,
           sub.createdAt,
           sub.sourceType,
           sub.subjectDid,
@@ -379,6 +384,12 @@ export async function syncSubscriptions(
         $type: COLLECTION,
         feedUrl: localSub.feed_url || undefined,
         title: localSub.title || undefined,
+        // siteUrl and category are part of the record (and of what the pull maps
+        // back into D1), so pushing without them strips them from the PDS — and
+        // the next Jetstream mirror of that commit would carry the loss back
+        // down. For a linkblog follow siteUrl is the "this is a linkblog" tell.
+        siteUrl: localSub.site_url || undefined,
+        category: localSub.category || undefined,
         createdAt: new Date(createdAtMs).toISOString(),
         sourceType: localSub.source_type || undefined,
         subjectDid: localSub.subject_did || undefined,
@@ -395,6 +406,8 @@ export async function syncSubscriptions(
         if (
           existingValue.feedUrl === newRecord.feedUrl &&
           (existingValue.title || undefined) === newRecord.title &&
+          (existingValue.siteUrl || undefined) === newRecord.siteUrl &&
+          (existingValue.category || undefined) === newRecord.category &&
           (existingValue.customTitle || undefined) === newRecord.customTitle &&
           (existingValue.customIconUrl || undefined) === newRecord.customIconUrl
         ) {

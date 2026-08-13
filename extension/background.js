@@ -44,17 +44,25 @@ async function getConfig() {
 }
 
 // --- TID generation (mirrors frontend/src/lib/utils/tid.ts) ---------------
-// Backends validate rkeys against /^[a-z0-9]{13,}$/. Base36 millisecond
-// timestamp + fixed-length random suffix.
-const RANDOM_CHARS = 10;
+// A real AT Protocol TID: 13 base32-sortable chars over a 64-bit integer with a
+// 0 top bit, 53 bits of microseconds since the epoch, and a 10-bit clock id. It
+// sorts by creation time and decodes back to a timestamp, which lexicons
+// declaring `"key": "tid"` and their readers rely on.
+const S32 = '234567abcdefghijklmnopqrstuvwxyz';
+const CLOCK_ID = BigInt(Math.floor(Math.random() * 1024));
+let lastMicros = 0n;
 
 function generateTid() {
-  const timestamp = Date.now().toString(36);
-  let random = '';
-  for (let i = 0; i < RANDOM_CHARS; i++) {
-    random += Math.floor(Math.random() * 36).toString(36);
+  let micros = BigInt(Date.now()) * 1000n;
+  if (micros <= lastMicros) micros = lastMicros + 1n;
+  lastMicros = micros;
+
+  const value = (micros << 10n) | CLOCK_ID;
+  let tid = '';
+  for (let shift = 60n; shift >= 0n; shift -= 5n) {
+    tid += S32[Number((value >> shift) & 31n)];
   }
-  return timestamp + random;
+  return tid;
 }
 
 // --- Badge feedback --------------------------------------------------------

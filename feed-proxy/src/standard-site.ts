@@ -65,6 +65,9 @@ export interface ProxyDocument {
   // Standard Reader "Collection": a curated magazine edition. Each item points to
   // another document; we resolve them to previews (see `ProxyReaderCollection`).
   readerCollection?: ProxyReaderCollection;
+  // Passed through verbatim from the record (see DocumentRecord). Clients use it
+  // to decide whether a document is theirs to edit or delete.
+  skyreaderLinkblog?: string;
 }
 
 /**
@@ -162,6 +165,11 @@ export interface DocumentRecord {
   updatedAt?: string;
   content?: unknown;
   links?: Array<{ uri?: string; rel?: string }>;
+  // Skyreader's provenance marker on a link post it wrote (a constant URL, the
+  // same one its publications carry). A linkblog connected to an existing
+  // publication shares that publication with the posts its home app writes, so
+  // this is the only thing separating "a share" from "an essay that links out".
+  skyreaderLinkblog?: string;
 }
 
 interface PublicationRecord {
@@ -536,6 +544,8 @@ export async function recordToProxyDocument(
     siteIcon: meta.icon || undefined,
     links: links.length > 0 ? links : undefined,
     readerCollection: readerCollection || undefined,
+    skyreaderLinkblog:
+      typeof doc.skyreaderLinkblog === 'string' ? doc.skyreaderLinkblog : undefined,
   };
 }
 

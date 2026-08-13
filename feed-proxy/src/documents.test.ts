@@ -131,16 +131,20 @@ function insertDocCache(
     lastError?: string | null;
     nextRetryAt?: number | null;
     lastRequestedAt?: number | null;
+    // Last full PDS re-list. Defaults to fetchedAt (the two only diverge once a
+    // firehose splice has bumped fetched_at); null models a pre-migration row.
+    listedAt?: number | null;
   }
 ) {
   db.run(
-    `INSERT INTO document_cache (did, documents_json, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO document_cache (did, documents_json, cached_at, fetched_at, listed_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       row.did ?? AUTHOR,
       JSON.stringify(row.documents ?? []),
       row.fetchedAt,
       row.fetchedAt,
+      row.listedAt === undefined ? row.fetchedAt : row.listedAt,
       row.errorCount ?? 0,
       row.lastError ?? null,
       row.lastError ? row.fetchedAt : null,
@@ -703,6 +707,143 @@ describe('POST /documents cache lifecycle', () => {
     expect(json.authors[0].documents.map((d) => d.title)).toEqual(['C', 'B', 'A']);
     expect(listCalls).toBe(2);
     expect(seenCursors).toEqual([null, 'CURSOR2']);
+  });
+});
+
+// The firehose fast path serves a covered author's cache without an age check.
+// That is right for anything written while the stream was connected, and wrong
+// for everything else — a reconnect gap, or a document that predates the cache
+// row, which is every post of a publication the client has only just subscribed
+// to. Without a floor, `documents_json` is frozen for as long as the author
+// stays active, and the stable digest turns that into `unchanged` forever.
+describe('POST /documents firehose-covered re-list floor', () => {
+  let fetchMock: ReturnType<typeof spyOn> | undefined;
+  afterEach(() => {
+    fetchMock?.mockRestore();
+    fetchMock = undefined;
+  });
+
+  const COVERED = { healthy: true, isSubscribed: () => true };
+
+  it('re-lists a covered author whose last list is older than the floor', async () => {
+    const { db, app, inFlightDocs } = createTestApp({
+      firehoseRelistMs: 60_000,
+      getFirehoseStatus: () => COVERED,
+    });
+    const now = Date.now();
+    // Splices have kept `fetched_at` current; the last real list was long ago.
+    insertDocCache(db, {
+      documents: [proxyDoc({ recordUri: 'spliced', title: 'Spliced' })],
+      fetchedAt: now - 1000,
+      listedAt: now - 10 * 60_000,
+      lastRequestedAt: now,
+    });
+    fetchMock = mockAtprotoFetch({
+      docs: [docRecord('missed', { site: PUB_URI, title: 'Missed' })],
+    });
+
+    const json = (await (await postDocuments(app, [{ did: AUTHOR }])).json()) as {
+      authors: Array<{ status: string; documents: ProxyDocument[] }>;
+    };
+    // Still served from cache — the refresh is background, not inline.
+    expect(json.authors[0].status).toBe('ready');
+    expect(json.authors[0].documents.map((d) => d.title)).toEqual(['Spliced']);
+
+    expect(inFlightDocs.size).toBeGreaterThan(0);
+    await Promise.all(inFlightDocs.values());
+    const row = db
+      .query<
+        { documents_json: string; listed_at: number },
+        [string]
+      >('SELECT documents_json, listed_at FROM document_cache WHERE did = ?')
+      .get(AUTHOR);
+    expect((JSON.parse(row!.documents_json) as ProxyDocument[]).map((d) => d.title)).toEqual([
+      'Missed',
+    ]);
+    expect(row!.listed_at).toBeGreaterThanOrEqual(now);
+  });
+
+  it('does not re-list a covered author listed inside the floor', async () => {
+    const { db, app, inFlightDocs } = createTestApp({
+      firehoseRelistMs: 60_000,
+      getFirehoseStatus: () => COVERED,
+    });
+    const now = Date.now();
+    insertDocCache(db, {
+      documents: [proxyDoc({ recordUri: 'a', title: 'A' })],
+      // Well past cacheTtlMs: only the firehose fast path can be serving this.
+      fetchedAt: now - 30 * 60_000,
+      listedAt: now - 5_000,
+      lastRequestedAt: now,
+    });
+    fetchMock = mockAtprotoFetch({ docs: [docRecord('b', { site: PUB_URI, title: 'B' })] });
+
+    const json = (await (await postDocuments(app, [{ did: AUTHOR }])).json()) as {
+      authors: Array<{ documents: ProxyDocument[] }>;
+    };
+    expect(json.authors[0].documents.map((d) => d.title)).toEqual(['A']);
+    expect(inFlightDocs.size).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('re-lists when a requested publication scope is empty but the author is not', async () => {
+    const OTHER_PUB = `at://${AUTHOR}/site.standard.publication/pub2`;
+    const { db, app, inFlightDocs } = createTestApp({
+      cacheTtlMs: 1000,
+      firehoseRelistMs: 24 * 60 * 60 * 1000, // floor far away; the scope check must fire
+      getFirehoseStatus: () => COVERED,
+    });
+    const now = Date.now();
+    // The author is cached, but only for the publication someone already read.
+    // The newly-subscribed one has no documents here at all.
+    insertDocCache(db, {
+      documents: [proxyDoc({ recordUri: 'known', title: 'Known', siteUri: PUB_URI })],
+      fetchedAt: now - 5_000,
+      listedAt: now - 5_000,
+      lastRequestedAt: now,
+    });
+    fetchMock = mockAtprotoFetch({
+      docs: [
+        docRecord('known', { site: PUB_URI, title: 'Known' }),
+        docRecord('backlog', { site: OTHER_PUB, title: 'Backlog' }),
+      ],
+      publication: { name: 'Pub', url: 'https://example.com' },
+    });
+
+    const first = (await (
+      await postDocuments(app, [{ did: AUTHOR, siteUri: OTHER_PUB }])
+    ).json()) as { authors: Array<{ documents: ProxyDocument[] }> };
+    expect(first.authors[0].documents).toEqual([]);
+
+    // The empty scope triggered a re-list rather than settling into `unchanged`.
+    expect(inFlightDocs.size).toBeGreaterThan(0);
+    await Promise.all(inFlightDocs.values());
+
+    const second = (await (
+      await postDocuments(app, [{ did: AUTHOR, siteUri: OTHER_PUB }])
+    ).json()) as { authors: Array<{ documents: ProxyDocument[] }> };
+    expect(second.authors[0].documents.map((d) => d.title)).toEqual(['Backlog']);
+  });
+
+  it('does not re-list an empty scope again inside the TTL', async () => {
+    const EMPTY_PUB = `at://${AUTHOR}/site.standard.publication/empty`;
+    const { db, app, inFlightDocs } = createTestApp({
+      cacheTtlMs: 60_000,
+      getFirehoseStatus: () => COVERED,
+    });
+    const now = Date.now();
+    insertDocCache(db, {
+      documents: [proxyDoc({ recordUri: 'known', title: 'Known' })],
+      fetchedAt: now - 1_000,
+      listedAt: now - 1_000,
+      lastRequestedAt: now,
+    });
+    fetchMock = mockAtprotoFetch({ docs: [] });
+
+    // A genuinely empty publication costs one refresh per TTL, not one per poll.
+    await postDocuments(app, [{ did: AUTHOR, siteUri: EMPTY_PUB }]);
+    expect(inFlightDocs.size).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

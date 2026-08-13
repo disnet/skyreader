@@ -8,7 +8,13 @@ export default function globalSetup() {
   try {
     execFileSync('npx', ['wrangler', 'd1', 'migrations', 'apply', 'skyreader', '--local'], {
       cwd: BACKEND_DIR,
-      stdio: 'pipe',
+      // Wrangler reprints the full migration table after every migration it
+      // applies, so a fresh database emits O(migrations^2) bytes on stdout —
+      // past ~60 migrations that alone blows execFileSync's 1 MB default
+      // maxBuffer and fails the run with ENOBUFS. Nothing here reads stdout,
+      // so drop it; errors (the only output we inspect) go to stderr.
+      stdio: ['ignore', 'ignore', 'pipe'],
+      maxBuffer: 16 * 1024 * 1024,
     });
     console.log('D1 migrations applied.');
   } catch (err: unknown) {

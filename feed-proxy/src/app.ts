@@ -31,6 +31,11 @@ export interface AppConfig {
   // before we serve stale (or nothing) and let the fetch finish in the
   // background. Optional; defaults to BATCH_INLINE_FETCH_BUDGET_MS in createApp.
   batchInlineFetchBudgetMs?: number;
+  // How long a firehose-covered author may go without a full PDS re-list. The
+  // stream keeps the cache current for anything written while we were watching;
+  // this floor is what recovers the rest. Optional; defaults to
+  // FIREHOSE_RELIST_MS in createApp.
+  firehoseRelistMs?: number;
   // Self-warming loop (optional; defaults applied in createApp).
   // Refresh any cached feed older than this so user requests always land in the
   // fresh window (a HIT) instead of triggering a blocking upstream fetch.
@@ -95,6 +100,9 @@ export interface DocumentCacheRow {
   last_error_at: number | null;
   next_retry_at: number | null;
   last_requested_at: number | null;
+  /** Last full re-list from the author's PDS; NULL on rows written before the
+   *  column existed. Unlike `fetched_at`, a firehose splice does not bump it. */
+  listed_at: number | null;
 }
 
 interface DocumentRequestEntry {
@@ -196,6 +204,12 @@ const FETCH_TIMEOUT_MS = 30 * 1000; // 30 seconds
 // in the background (it warms the cache for the next poll) and return what we
 // have. Much shorter than FETCH_TIMEOUT_MS on purpose.
 const BATCH_INLINE_FETCH_BUDGET_MS = 6 * 1000; // 6 seconds
+// How long a firehose-covered author may go without a full PDS re-list. Long,
+// because the stream really does carry everything written while it is connected
+// — this only has to close the gaps it can't see (a reconnect, a cursor reset,
+// a record that predates the cache row). One list per author per day is a
+// rounding error against the warm loop's ordinary volume.
+const FIREHOSE_RELIST_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_RESPONSE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 // Extracted article content is effectively immutable per URL; cache it for a long
 // time so repeat (and cross-user) saves of the same article are free.
@@ -921,6 +935,18 @@ export function initDatabase(db: Database): void {
   db.run(
     `CREATE INDEX IF NOT EXISTS idx_document_cache_last_requested_at ON document_cache(last_requested_at)`
   );
+  // Migration: `listed_at` is when we last re-listed the author from their PDS,
+  // as distinct from `fetched_at`, which a firehose splice also bumps. Only a
+  // real list discovers documents that were never spliced — records written
+  // while the stream was down, or (the common case) records that predate this
+  // cache row entirely, which is every document of a publication the client has
+  // only just subscribed to. Staleness has to be measured against the list, or a
+  // steady trickle of splices keeps an incomplete blob looking permanently
+  // fresh. NULL on pre-migration rows; readers fall back to `fetched_at`.
+  const docColumns = db.query<{ name: string }, []>(`PRAGMA table_info(document_cache)`).all();
+  if (!new Set(docColumns.map((c) => c.name)).has('listed_at')) {
+    db.run(`ALTER TABLE document_cache ADD COLUMN listed_at INTEGER`);
+  }
 
   // Small key/value store for sync bookkeeping (e.g. the Jetstream document
   // firehose cursor), so the stream resumes across restarts without replaying
@@ -1080,6 +1106,7 @@ async function runDiscover(siteUrl: string): Promise<DiscoverResult> {
 export function createApp(db: Database, config: AppConfig) {
   const { proxySecret, cacheTtlMs, staleTtlMs, defaultLimit } = config;
   const batchInlineFetchBudgetMs = config.batchInlineFetchBudgetMs ?? BATCH_INLINE_FETCH_BUDGET_MS;
+  const firehoseRelistMs = config.firehoseRelistMs ?? FIREHOSE_RELIST_MS;
 
   // The durable-log generation token, read once (minted in initDatabase). Stable
   // for the process lifetime; returned in every feed response so clients can
@@ -1568,17 +1595,18 @@ export function createApp(db: Database, config: AppConfig) {
       // last_requested_at only set on insert (a real client miss), not on the
       // warm-loop refresh path — same rationale as the feed cache.
       db.run(
-        `INSERT INTO document_cache (did, documents_json, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
-				VALUES (?, ?, ?, ?, 0, NULL, NULL, NULL, ?)
+        `INSERT INTO document_cache (did, documents_json, cached_at, fetched_at, listed_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
+				VALUES (?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?)
 				ON CONFLICT(did) DO UPDATE SET
 					documents_json = excluded.documents_json,
 					cached_at = excluded.cached_at,
 					fetched_at = excluded.fetched_at,
+					listed_at = excluded.listed_at,
 					error_count = 0,
 					last_error = NULL,
 					last_error_at = NULL,
 					next_retry_at = NULL`,
-        [did, documentsJson, now, now, now]
+        [did, documentsJson, now, now, now, now]
       );
 
       return documents;
@@ -2420,9 +2448,16 @@ export function createApp(db: Database, config: AppConfig) {
         recordDocumentRequest(did, now);
 
         let documents: ProxyDocument[] | null = null;
+        // Infinity when there is no cache row at all: nothing has been listed, so
+        // every "have we listed recently?" test below should say no.
+        let listedAge = Number.POSITIVE_INFINITY;
 
         if (cached && cached.documents_json) {
           const age = now - cached.fetched_at;
+          // Age since the last real PDS list. Splices bump `fetched_at` but not
+          // `listed_at`, so this is the only measure that reflects whether we
+          // have actually looked for documents we never saw written.
+          listedAge = now - (cached.listed_at ?? cached.fetched_at);
           const inErrorBackoff =
             cached.error_count > 0 && cached.next_retry_at && now < cached.next_retry_at;
           const stale = JSON.parse(cached.documents_json) as ProxyDocument[];
@@ -2444,8 +2479,16 @@ export function createApp(db: Database, config: AppConfig) {
             const firehose = getFirehoseStatus();
             if (firehose.healthy && firehose.isSubscribed(did)) {
               // The firehose is keeping this author current, so age no longer
-              // implies staleness — serve the cache and skip the re-list.
+              // implies staleness — serve the cache and skip the re-list. But the
+              // stream only carries writes made while we were watching, so this
+              // cannot be an unbounded licence to never list again: a gap (a
+              // reconnect, a cursor reset) leaves a hole nothing else fills, and
+              // splices keep bumping `fetched_at` so the age check below never
+              // gets a turn. Re-list on a slow floor to close those holes.
               documents = stale;
+              if (listedAge > firehoseRelistMs) {
+                triggerBackgroundDocumentRefresh(did, cached);
+              }
             } else if (age < cacheTtlMs) {
               documents = stale;
             } else if (age < staleTtlMs) {
@@ -2487,6 +2530,20 @@ export function createApp(db: Database, config: AppConfig) {
         }
 
         const scoped = filterByPublication(documents, siteUri);
+
+        // An empty scope over a non-empty author is the shape of a cache that
+        // predates the subscription: the author is cached and the firehose keeps
+        // them current, but this publication's back catalogue was written before
+        // anyone asked for it, so no splice ever carried it and no age check ever
+        // fires. Subscribing to a publication owned by an already-cached author
+        // would otherwise show nothing, permanently — and because the digest over
+        // the empty set is stable, every later poll returns `unchanged` and the
+        // client never even re-asks. Re-list, floored at the normal TTL so a
+        // genuinely empty publication costs one refresh per TTL, not one per poll.
+        if (siteUri && scoped.length === 0 && documents.length > 0 && listedAge > cacheTtlMs) {
+          triggerBackgroundDocumentRefresh(did, cached ?? undefined);
+        }
+
         const digest = digestScope(scoped);
 
         // 304-style short-circuit: an unchanged scope returns a bodyless result.

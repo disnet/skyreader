@@ -360,7 +360,7 @@
   function getAtmosphereSubtitle(sub: Subscription, handle: string): string {
     if (
       sub.sourceType === 'atproto.documents' &&
-      !isLinkblogPublication(sub.feedUrl) &&
+      !isLinkblogPublication(sub.feedUrl, sub.siteUrl) &&
       sub.siteUrl
     ) {
       return formatPublicationUrl(sub.siteUrl);
@@ -649,7 +649,7 @@
 
               <!-- Subscribed streams (blog / linkblog) -->
               {#each group.subscriptions as sub (sub.rkey)}
-                {@const display = getSourceDisplay(sub.sourceType, sub.feedUrl)}
+                {@const display = getSourceDisplay(sub.sourceType, sub.feedUrl, sub.siteUrl)}
                 <SourceRow
                   iconUrl={sub.customIconUrl || avatarUrl}
                   iconRound={!sub.customIconUrl}

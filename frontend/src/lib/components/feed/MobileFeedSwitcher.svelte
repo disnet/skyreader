@@ -150,7 +150,7 @@
   }
 
   function sourceToNavItem(s: Subscription, indent = false): NavItem {
-    const sourceDisplay = getSourceDisplay(s.sourceType, s.feedUrl);
+    const sourceDisplay = getSourceDisplay(s.sourceType, s.feedUrl, s.siteUrl);
     return {
       type: 'feed',
       id: s.id!,

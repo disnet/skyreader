@@ -597,6 +597,26 @@ class ApiClient {
     });
   }
 
+  async listLinkblogPublications(): Promise<{
+    publications: import('$lib/types').LinkblogPublicationChoice[];
+  }> {
+    return this.fetch('/api/linkblog/publications');
+  }
+
+  async connectLinkblogPublication(
+    publicationUri: string,
+    format: LinkblogPublication['format']
+  ): Promise<LinkblogPublication> {
+    return this.fetch('/api/linkblog/publication/connect', {
+      method: 'PUT',
+      body: JSON.stringify({ publicationUri, format }),
+    });
+  }
+
+  async disconnectLinkblogPublication(): Promise<LinkblogPublication> {
+    return this.fetch('/api/linkblog/publication/connect', { method: 'DELETE' });
+  }
+
   // Subscribe via the Atmosphere — writes/reads/deletes only the portable
   // site.standard.graph.subscription record (no Skyreader subscription).
   async getAtmosphereSubscription(publication: string): Promise<{ subscribed: boolean }> {

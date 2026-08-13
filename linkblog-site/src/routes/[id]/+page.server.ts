@@ -7,7 +7,12 @@ import { error, redirect } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { apiBaseFor, appUrlFor, blogUrlFor, isDid } from '$lib/fields';
 import { fetchPublicationMeta, getProfile, resolveHandleToDid } from '$lib/server/identity';
-import { fetchLinkblogDocuments, fetchSocialContext, type ProxyConfig } from '$lib/server/proxy';
+import {
+  fetchLinkblogDocuments,
+  fetchSocialContext,
+  resolveLinkblogTarget,
+  type ProxyConfig,
+} from '$lib/server/proxy';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params, url }) => {
@@ -27,10 +32,12 @@ export const load: PageServerLoad = async ({ params, url }) => {
     feedProxySecret: env.FEED_PROXY_SECRET,
   };
 
+  const apiBase = apiBaseFor(origin, env.API_URL);
+  const target = await resolveLinkblogTarget(apiBase, did);
   const [profile, pub, docs] = await Promise.all([
     getProfile(did),
-    fetchPublicationMeta(did),
-    fetchLinkblogDocuments(cfg, did),
+    fetchPublicationMeta(did, target.siteUri),
+    fetchLinkblogDocuments(cfg, did, [target.siteUri, target.defaultSiteUri]),
   ]);
 
   // Counts-only social context for the most recent entries (one proxy batch, no
@@ -47,7 +54,8 @@ export const load: PageServerLoad = async ({ params, url }) => {
     pub,
     docs,
     social,
-    apiBase: apiBaseFor(origin, env.API_URL),
+    apiBase,
+    publication: target.siteUri,
     appUrl: appUrlFor(origin, env.APP_URL),
   };
 };

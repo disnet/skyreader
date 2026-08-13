@@ -24,7 +24,7 @@ describe('link post note conversion', () => {
 
   it('stops the note at the website card and handles website-only shares', () => {
     const website = {
-      block: { $type: 'pub.leaflet.blocks.website', url: 'https://example.com' },
+      block: { $type: 'pub.leaflet.blocks.website', src: 'https://example.com' },
     } as LeafletBlockWrapper;
     expect(reconstructLinkPostNote([website])).toEqual({ note: undefined, mentions: [] });
     expect(

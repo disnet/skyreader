@@ -14,12 +14,13 @@
   } from '$lib/stores/preferences.svelte';
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
   import SaveBackingPicker from '$lib/components/settings/SaveBackingPicker.svelte';
+  import LinkblogTargetPicker from '$lib/components/settings/LinkblogTargetPicker.svelte';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
   import { downloadOPML } from '$lib/utils/opml-exporter';
   import { api, RateLimitError } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
-  import type { LinkblogPublication, SaveBacking } from '$lib/types';
+  import type { LinkblogPublication, LinkblogPublicationChoice, SaveBacking } from '$lib/types';
 
   $effect(() => {
     viewTitleStore.set('Settings');
@@ -101,6 +102,7 @@
   let isSavingLinkblog = $state(false);
   let linkblogError = $state<string | null>(null);
   let linkblogSuccess = $state<string | null>(null);
+  let linkblogChoices = $state<LinkblogPublicationChoice[]>([]);
 
   onMount(async () => {
     if (!auth.isAuthenticated) {
@@ -121,14 +123,51 @@
     if (!syncStore.isOnline) return;
     isLinkblogLoading = true;
     try {
-      const pub = await api.getLinkblogPublication();
+      const [pub, choices] = await Promise.all([
+        api.getLinkblogPublication(),
+        api.listLinkblogPublications(),
+      ]);
       linkblogPub = pub;
+      linkblogChoices = choices.publications;
       linkblogName = pub.name;
       linkblogDescription = pub.description ?? '';
     } catch (error) {
       console.error('Failed to load linkblog publication:', error);
     } finally {
       isLinkblogLoading = false;
+    }
+  }
+
+  async function handleConnectLinkblog(selection: {
+    uri: string;
+    isDefault: boolean;
+    format: LinkblogPublication['format'];
+  }) {
+    if (!selection.uri || isSavingLinkblog) return;
+    if (!syncStore.isOnline) {
+      linkblogError = 'You are offline. Connect to the internet to change this.';
+      return;
+    }
+    isSavingLinkblog = true;
+    linkblogError = null;
+    linkblogSuccess = null;
+    try {
+      // Choosing the Skyreader linkblog is a disconnect — it's always offered,
+      // even before its record exists (first share creates it), so there's always
+      // a way back from a connected publication.
+      const pub = selection.isDefault
+        ? await api.disconnectLinkblogPublication()
+        : await api.connectLinkblogPublication(selection.uri, selection.format);
+      linkblogPub = pub;
+      linkblogName = pub.name;
+      linkblogDescription = pub.description ?? '';
+      linkblogSuccess = pub.external
+        ? `New links will publish to ${pub.name}.`
+        : 'New links will publish to your Skyreader linkblog.';
+    } catch (error) {
+      linkblogError = error instanceof Error ? error.message : 'Failed to connect publication.';
+    } finally {
+      isSavingLinkblog = false;
     }
   }
 
@@ -541,31 +580,56 @@
           <a href={linkblogPub.url} target="_blank" rel="noopener noreferrer"
             >View your linkblog →</a
           >
+          {#if linkblogPub.externalUrl}
+            <br />
+            Your links are going into
+            <a href={linkblogPub.externalUrl} target="_blank" rel="noopener noreferrer"
+              >{linkblogPub.name}</a
+            >, alongside whatever else that publication holds.
+          {/if}
         </p>
-      {/if}
-      <div class="linkblog-field">
-        <label for="linkblog-name">Name</label>
-        <input
-          id="linkblog-name"
-          type="text"
-          bind:value={linkblogName}
-          maxlength="120"
-          placeholder="My links"
+
+        <LinkblogTargetPicker
+          current={linkblogPub}
+          choices={linkblogChoices}
+          busy={isSavingLinkblog}
+          onapply={handleConnectLinkblog}
         />
-      </div>
-      <div class="linkblog-field">
-        <label for="linkblog-description">Description</label>
-        <textarea
-          id="linkblog-description"
-          bind:value={linkblogDescription}
-          rows="2"
-          maxlength="500"
-          placeholder="Optional"
-        ></textarea>
-      </div>
-      <button class="btn btn-secondary" onclick={handleSaveLinkblog} disabled={isSavingLinkblog}>
-        {#if isSavingLinkblog}Saving…{:else}Save{/if}
-      </button>
+      {/if}
+
+      <!-- Name/description belong to the Skyreader linkblog only. A connected
+           publication is its home app's record; Skyreader doesn't rename it. -->
+      {#if linkblogPub?.external}
+        <p class="setting-description">
+          <strong>{linkblogPub.name}</strong> is managed by its own app — change its name, description
+          and appearance there. Your Skyreader linkblog keeps its own name, ready if you switch back.
+        </p>
+      {:else}
+        <h3 class="subhead">Your Skyreader linkblog</h3>
+        <div class="linkblog-field">
+          <label for="linkblog-name">Name</label>
+          <input
+            id="linkblog-name"
+            type="text"
+            bind:value={linkblogName}
+            maxlength="120"
+            placeholder="My links"
+          />
+        </div>
+        <div class="linkblog-field">
+          <label for="linkblog-description">Description</label>
+          <textarea
+            id="linkblog-description"
+            bind:value={linkblogDescription}
+            rows="2"
+            maxlength="500"
+            placeholder="Optional"
+          ></textarea>
+        </div>
+        <button class="btn btn-secondary" onclick={handleSaveLinkblog} disabled={isSavingLinkblog}>
+          {#if isSavingLinkblog}Saving…{:else}Save{/if}
+        </button>
+      {/if}
       {#if linkblogError}
         <p class="sync-error">{linkblogError}</p>
       {/if}

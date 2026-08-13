@@ -22,6 +22,7 @@ interface JetstreamEvent {
       subject?: string; // For follow records
       title?: string; // For subscription records
       category?: string; // For subscription records
+      siteUrl?: string; // For subscription records: the public linkblog page
       // For site.standard.document records
       site?: string;
       publishedAt?: string;
@@ -306,8 +307,11 @@ export class JetstreamPoller implements DurableObject {
         throw dbError;
       }
 
+      const recAny = record as Record<string, unknown>;
       console.log(
-        `[JetstreamPoller] ${did} ${operation}d subscription: ${record.feedUrl || recordUri}`
+        `[JetstreamPoller] ${did} ${operation}d subscription: ${
+          record.feedUrl || `${recAny.sourceType}:${recAny.subjectDid}`
+        }`
       );
     } else if (operation === 'delete') {
       try {
