@@ -110,7 +110,6 @@ test.describe('Linkblog publication picker', () => {
     await expect(pcktRow.locator('.pub-desc')).toHaveText(
       'pckt does not currently import posts published by other apps.'
     );
-    await pcktRow.click({ position: { x: 8, y: 8 } });
     await expect(skyreaderRow).toHaveClass(/selected/);
     await expect(picker.locator('#linkblog-format')).toHaveCount(0);
     await expect(
