@@ -3,7 +3,10 @@
   import Modal from '$lib/components/common/Modal.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
 
-  const shortcuts = [
+  // Derived, not a const: the modal is mounted once for the app's lifetime, so a
+  // plain array would be built before `linkblogDisabled` is hydrated from the
+  // server and would keep listing linkblog keys for a deleted one.
+  const shortcuts = $derived([
     // Navigation
     { category: 'Navigation', key: '/', description: 'Open switcher' },
     { category: 'Navigation', key: 'j', description: 'Next item' },
@@ -48,7 +51,7 @@
     { category: 'Other', key: 'a', description: 'Toggle add menu' },
     { category: 'Other', key: '?', description: 'Show shortcuts' },
     { category: 'Other', key: 'Esc', description: 'Close modal / Deselect' },
-  ];
+  ]);
 
   const categories = ['Navigation', 'Views', 'Feed', 'Article', 'Other'];
 </script>

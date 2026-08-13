@@ -54,7 +54,7 @@
   );
   let sharedNow = $derived(linkblogStore.isShared(itemUrl));
   let currentShareNote = $derived(linkblogStore.getNote(itemUrl));
-  let canShareLinkblog = $derived(Boolean(auth.user));
+  let canShareLinkblog = $derived(Boolean(auth.user) && !preferences.linkblogDisabled);
   let shareHighlights = $derived(itemLabelsStore.getHighlights(readerItem.key));
 
   let shareTarget = $derived.by((): { article: Article; repostUri?: string } | null => {

@@ -77,11 +77,20 @@ export async function getLinkblogFriends(session: Session, env: Env): Promise<Li
     fetchFollows(session.did),
   ]);
 
-  const candidates = [...new Set([...registry, ...connected])];
-  const disabled = await getDisabledLinkblogAuthors(env, candidates);
-  const disabledSet = new Set(disabled);
-  const registrySet = new Set(candidates.filter((did) => !disabledSet.has(did)));
-  const people = follows.filter((f) => f.did !== session.did && registrySet.has(f.did));
+  const registrySet = new Set([...registry, ...connected]);
+  // Intersect with the follows first. getDisabledLinkblogAuthors costs one
+  // sequential D1 query per 100 DIDs, and the whole registry is orders of
+  // magnitude larger than the handful of it a given user follows — the answer is
+  // the same either way (getLinkblogTargets on the next line already reads this
+  // way round).
+  const followed = follows.filter((f) => f.did !== session.did && registrySet.has(f.did));
+  const disabledSet = new Set(
+    await getDisabledLinkblogAuthors(
+      env,
+      followed.map((f) => f.did)
+    )
+  );
+  const people = followed.filter((f) => !disabledSet.has(f.did));
   // One batched settings lookup resolves everyone's current publication.
   const targets = await getLinkblogTargets(
     env,

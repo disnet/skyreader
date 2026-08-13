@@ -140,7 +140,8 @@
   }
 
   async function handleDeleteLinkblog() {
-    if (isSavingLinkblog || !syncStore.isOnline) {
+    if (isSavingLinkblog) return;
+    if (!syncStore.isOnline) {
       linkblogError = 'You are offline. Connect to the internet to delete your linkblog.';
       return;
     }

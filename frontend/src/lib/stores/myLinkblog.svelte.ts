@@ -47,8 +47,27 @@ function createMyLinkblogStore() {
   // drop its documents while the other scope refreshes.
   const scopeResults = new Map<string, { documents: SocialDocument[]; complete: boolean }>();
 
+  // A forced load has to await the pull in flight rather than return past it:
+  // callers chain reconcile() onto load(true), and resolving early runs the
+  // prune against whatever state the unfinished pull hasn't written yet.
+  let inFlight: Promise<void> | null = null;
+
   async function load(force = false) {
-    if (loading) return;
+    // An unforced load piggybacks on the pull already running. A forced one can't:
+    // that pull may itself be unforced and skip the refresh (`loaded && !force`),
+    // so wait for it to settle and then do the real thing.
+    while (inFlight) {
+      if (!force) return;
+      await inFlight.catch(() => {});
+    }
+    const run = loadOnce(force);
+    inFlight = run.finally(() => {
+      inFlight = null;
+    });
+    await inFlight;
+  }
+
+  async function loadOnce(force = false) {
     const user = auth.user;
     if (!user) return;
 
@@ -65,6 +84,13 @@ function createMyLinkblogStore() {
         if (pub.disabled) {
           documents = [];
           loaded = true;
+          // A deleted linkblog is an authoritative empty set, not an unfinished
+          // pull: the posts are gone from the PDS. Say so, or reconcile() bails
+          // on a stale `false` and leaves every share sitting in IndexedDB,
+          // still rendering its card as shared.
+          lastPullComplete = true;
+          scopeResults.clear();
+          optimisticUris.clear();
           return;
         }
       }

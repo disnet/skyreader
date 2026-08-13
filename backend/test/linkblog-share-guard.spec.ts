@@ -6,6 +6,7 @@ import {
   LINKBLOG_MARKER_URL,
   publicationUri,
 } from '../src/services/linkblog-sync';
+import { OFFPRINT_SCOPES } from '../src/config/scopes';
 import type { Env, Session } from '../src/types';
 
 // A connected linkblog publishes into a publication its HOME app owns, which also
@@ -85,6 +86,61 @@ function stubPds(record: Record<string, unknown> | 'missing') {
   return calls;
 }
 
+// One of OUR link posts: carries the provenance marker, so the delete walk picks
+// it up out of a connected publication that also holds the home app's own posts.
+function ourShare(overrides: Record<string, unknown> = {}) {
+  return documentRecord({ skyreaderLinkblog: LINKBLOG_MARKER_URL, ...overrides });
+}
+
+function record(rkey: string, value: Record<string, unknown>) {
+  return { uri: `at://${DID}/site.standard.document/${rkey}`, cid: 'bafy', value };
+}
+
+interface ListPage {
+  records: Array<{ uri: string; cid: string; value: Record<string, unknown> }>;
+  cursor?: string;
+}
+
+// Stub the PDS for a full-linkblog delete: `page` answers each listRecords call
+// by cursor, and every applyWrites body is handed to `onApplyWrites` so a test
+// can assert which collections were addressed.
+function stubDeleteWalk(
+  page: (cursor: string | null) => ListPage,
+  options: { onApplyWrites?: (body: { writes: Array<{ collection: string }> }) => void } = {}
+) {
+  globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(typeof input === 'string' ? input : input.toString());
+    const endpoint = url.pathname.split('/xrpc/')[1];
+    if (endpoint === 'com.atproto.repo.listRecords') {
+      return Response.json(page(url.searchParams.get('cursor')));
+    }
+    if (endpoint === 'com.atproto.repo.applyWrites') {
+      options.onApplyWrites?.(JSON.parse((init?.body as string) ?? '{"writes":[]}'));
+    }
+    return Response.json({});
+  }) as unknown as typeof fetch;
+}
+
+// A D1 stub that records the SQL it was handed, so a test can assert which
+// settings a failed delete did and didn't touch.
+function dbStub() {
+  const sql: string[] = [];
+  const statement = {
+    bind: vi.fn(() => statement),
+    run: vi.fn(async () => ({})),
+    first: vi.fn(async () => null),
+  };
+  const env = {
+    DB: {
+      prepare: vi.fn((query: string) => {
+        sql.push(query);
+        return statement;
+      }),
+    },
+  } as unknown as Env;
+  return { env, sql };
+}
+
 describe('linkblog share guards', () => {
   let originalFetch: typeof fetch;
 
@@ -143,50 +199,99 @@ describe('linkblog share guards', () => {
     );
   });
 
-  it('continues deleting across pages and restarts after mutating the collection', async () => {
+  it('walks the collection once, deleting as it pages', async () => {
+    // listRecords' cursor is an exclusive rkey bound, not an offset, so deleting
+    // a page can't shift a later record past the cursor. The walk stays linear:
+    // no page is ever fetched twice.
     const cursors: Array<string | null> = [];
     let deleted = false;
-    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(typeof input === 'string' ? input : input.toString());
-      const endpoint = url.pathname.split('/xrpc/')[1];
-      if (endpoint === 'com.atproto.repo.listRecords') {
-        const cursor = url.searchParams.get('cursor');
+    stubDeleteWalk(
+      (cursor) => {
         cursors.push(cursor);
-        if (!cursor) {
-          return Response.json({
-            records: [
-              {
-                uri: `at://${DID}/site.standard.document/foreign`,
-                cid: 'a',
-                value: documentRecord(),
-              },
-            ],
-            cursor: 'next',
-          });
-        }
-        if (!deleted) {
-          return Response.json({
-            records: [
-              {
-                uri: `at://${DID}/site.standard.document/ours`,
-                cid: 'b',
-                value: documentRecord({ skyreaderLinkblog: LINKBLOG_MARKER_URL }),
-              },
-            ],
-            cursor: 'more',
-          });
-        }
-        return Response.json({ records: [] });
+        if (!cursor) return { records: [record('foreign', documentRecord())], cursor: 'next' };
+        if (!deleted) return { records: [record('ours', ourShare())], cursor: 'more' };
+        return { records: [] };
+      },
+      {
+        onApplyWrites: () => {
+          deleted = true;
+        },
       }
-      if (endpoint === 'com.atproto.repo.applyWrites') deleted = true;
-      return Response.json({});
-    }) as unknown as typeof fetch;
-    const statement = { bind: vi.fn(() => statement), run: vi.fn(async () => ({})) };
-    const env = { DB: { prepare: vi.fn(() => statement) } } as unknown as Env;
+    );
+    const { env } = dbStub();
 
     const result = await deleteLinkblog(SESSION, env);
 
-    expect(result).toEqual({ success: true, data: { deletedPosts: 1 } });
-    expect(cursors).toEqual([null, 'next', null, 'next']);
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.deletedPosts).toBe(1);
+    expect(cursors).toEqual([null, 'next', 'more']);
+  });
+
+  it('deletes only the companion the record was actually written in', async () => {
+    // Both companion collections used to be addressed for every rkey. Neither is
+    // in LINKBLOG_SCOPES, so on a large linkblog that was two guaranteed-failing
+    // applyWrites plus a per-record fallback behind each — enough to burn the
+    // Worker's subrequest budget before the delete finished.
+    const collections: string[] = [];
+    stubDeleteWalk(
+      (cursor) =>
+        cursor
+          ? { records: [] }
+          : {
+              records: [
+                record('offprint-share', ourShare({ content: { $type: 'app.offprint.content' } })),
+                record('leaflet-share', ourShare()),
+              ],
+            },
+      { onApplyWrites: (body) => collections.push(body.writes[0].collection) }
+    );
+    const { env } = dbStub();
+
+    const session = { ...SESSION, grantedScopes: OFFPRINT_SCOPES.join(' ') } as Session;
+    const result = await deleteLinkblog(session, env);
+
+    expect(result.success).toBe(true);
+    expect(collections).toEqual(['site.standard.document', 'app.offprint.document.article']);
+    expect(collections).not.toContain('blog.pckt.document');
+  });
+
+  it('skips the companion entirely when the session never held that app’s scope', async () => {
+    const collections: string[] = [];
+    stubDeleteWalk(
+      (cursor) =>
+        cursor
+          ? { records: [] }
+          : {
+              records: [
+                record('offprint-share', ourShare({ content: { $type: 'app.offprint.content' } })),
+              ],
+            },
+      { onApplyWrites: (body) => collections.push(body.writes[0].collection) }
+    );
+    const { env } = dbStub();
+
+    const result = await deleteLinkblog(SESSION, env);
+
+    expect(result.success).toBe(true);
+    expect(collections).toEqual(['site.standard.document']);
+  });
+
+  it('puts the disabled flag back when the walk fails before deleting anything', async () => {
+    // The flag goes on first so a share can't race the walk. If the PDS side
+    // never happened, leaving it on would strand the user with a live linkblog
+    // that every write path rejects.
+    globalThis.fetch = vi.fn(async () =>
+      Response.json({ error: 'InternalServerError' }, { status: 500 })
+    ) as unknown as typeof fetch;
+    const { env, sql } = dbStub();
+
+    const result = await deleteLinkblog(SESSION, env);
+
+    expect(result.success).toBe(false);
+    expect(sql.filter((s) => /linkblog_disabled = 1/.test(s))).toHaveLength(1);
+    expect(sql.filter((s) => /linkblog_disabled = 0/.test(s))).toHaveLength(1);
+    // The connected publication is the one thing a restore can't give back, so a
+    // failed delete must not clear it.
+    expect(sql.some((s) => /linkblog_publication = NULL/.test(s))).toBe(false);
   });
 });

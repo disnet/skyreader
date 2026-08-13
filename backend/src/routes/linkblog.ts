@@ -623,6 +623,16 @@ export async function handleDeletePublication(request: Request, env: Env): Promi
   }
   const result = await deleteLinkblog(session, env);
   if (!result.success) return json({ error: result.error }, result.retryable ? 503 : 502);
+  // Delete moves the target back to the default publication the same way
+  // disconnecting does, so followers of a connected publication have to come
+  // with it — otherwise a restore publishes to `skyreader-links` while every
+  // existing subscriber still points at a feed that will never update again.
+  await migrateLinkblogFollowers(
+    env,
+    session.did,
+    result.data.previousSiteUri,
+    publicationUri(session.did)
+  );
   return json({ success: true, deletedPosts: result.data.deletedPosts });
 }
 

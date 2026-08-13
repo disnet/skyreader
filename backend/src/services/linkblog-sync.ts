@@ -15,6 +15,7 @@ import {
   type PutRecordResponse,
 } from './pds-client';
 import { resolveHandle } from './oauth';
+import { OFFPRINT_SCOPES, PCKT_SCOPES } from '../config/scopes';
 import { parseHandleTokens, buildMentionFacet, type MentionFacet } from '../utils/mention-facets';
 
 // Cap on the number of distinct handles we resolve per note. Each unique handle
@@ -1048,58 +1049,170 @@ async function deleteRecordBatch(
   return { success: true, data: undefined };
 }
 
+// Upper bound on pages walked in one delete. listRecords' cursor is the rkey of
+// the last record returned and is an exclusive key bound, not an offset: a PDS
+// hands back the same page for a cursor whose record no longer exists (verified
+// against a live PDS). So deleting as we page can neither invalidate the cursor
+// nor shift a record past it, and the walk is linear in the size of the repo's
+// document collection. The cap is a backstop against a PDS that keeps returning
+// records we just deleted, not a ceiling on a real linkblog: at 100 records a
+// page it covers 10k documents for 100 subrequests.
+const MAX_DELETE_PAGES = 100;
+
+// Companion collections we can only touch while the session still holds the
+// host app's scope (see COMPANION_SCOPES in routes/linkblog.ts, which gates the
+// write the same way). Deleting from a collection we were never granted costs a
+// guaranteed-failing applyWrites plus, because companion deletes are best-effort,
+// one deleteRecord per rkey behind it — enough to exhaust the Worker's
+// subrequest budget partway through a large linkblog.
+const COMPANION_SCOPES: Partial<Record<ContentFormat, string[]>> = {
+  pckt: PCKT_SCOPES,
+  offprint: OFFPRINT_SCOPES,
+};
+
+function canWriteCompanion(session: Session, format: ContentFormat): boolean {
+  const required = COMPANION_SCOPES[format];
+  if (!required) return false;
+  const granted = new Set((session.grantedScopes ?? '').split(' '));
+  return required.every((scope) => granted.has(scope));
+}
+
+// The companion deletes a page of documents actually calls for, keyed by
+// collection. Only the format a record was written in gets one, so an offprint
+// linkblog never addresses blog.pckt.document, and a leaflet or markpub share —
+// which has no companion at all — costs nothing.
+function companionDeletes(
+  session: Session,
+  records: Array<{ rkey: string; value: DocumentRecord }>
+): Map<string, string[]> {
+  const byCollection = new Map<string, string[]>();
+  const unauthorized = new Set<string>();
+  for (const { rkey, value } of records) {
+    const format = contentFormatOf(value.content);
+    const collection = format ? COMPANION_COLLECTIONS[format] : undefined;
+    if (!format || !collection) continue;
+    if (!canWriteCompanion(session, format)) {
+      // The grant is gone (revoked, or an older session): the document goes, and
+      // its companion is left pointing at nothing. Worth a line — it's the one
+      // way this path leaves the user's repo untidy.
+      unauthorized.add(collection);
+      continue;
+    }
+    const existing = byCollection.get(collection);
+    if (existing) existing.push(rkey);
+    else byCollection.set(collection, [rkey]);
+  }
+  for (const collection of unauthorized) {
+    console.warn(`[linkblog] no scope for ${collection}; leaving its companions orphaned`);
+  }
+  return byCollection;
+}
+
+// How far a delete got before it failed. `deletedPosts` is what separates "the
+// user's linkblog is untouched" from "it's already half gone", which is what the
+// caller needs to decide whether disabling it can be taken back.
+type PurgeResult =
+  | { success: true; deletedPosts: number }
+  | { success: false; error: string; retryable: boolean; deletedPosts: number };
+
+async function purgeLinkblogRecords(session: Session): Promise<PurgeResult> {
+  const client = createPDSClient(session);
+  let cursor: string | undefined;
+  let deletedPosts = 0;
+
+  for (let page = 0; page < MAX_DELETE_PAGES; page++) {
+    const listed = await client.listRecords<DocumentRecord>(DOCUMENT_COLLECTION, cursor);
+    if (!listed.success) {
+      return { success: false, error: listed.error, retryable: !!listed.retryable, deletedPosts };
+    }
+    const ours = listed.data.records
+      .filter((record) => isSkyreaderShareRecord(session.did, record.value))
+      .map((record) => ({ rkey: record.uri.split('/').pop() ?? '', value: record.value }))
+      .filter((record) => record.rkey);
+    if (ours.length > 0) {
+      const rkeys = ours.map((record) => record.rkey);
+      const documents = await deleteRecordBatch(client, DOCUMENT_COLLECTION, rkeys, false);
+      if (!documents.success) {
+        return {
+          success: false,
+          error: documents.error,
+          retryable: !!documents.retryable,
+          deletedPosts,
+        };
+      }
+      for (const [collection, companionRkeys] of companionDeletes(session, ours)) {
+        await deleteRecordBatch(client, collection, companionRkeys, true);
+      }
+      deletedPosts += rkeys.length;
+    }
+
+    const nextCursor = listed.data.cursor || undefined;
+    if (!nextCursor || listed.data.records.length === 0) {
+      const publication = await client.deleteRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY);
+      if (!publication.success && !isNotFoundError(publication.error)) {
+        return {
+          success: false,
+          error: publication.error,
+          retryable: !!publication.retryable,
+          deletedPosts,
+        };
+      }
+      return { success: true, deletedPosts };
+    }
+    cursor = nextCursor;
+  }
+
+  return {
+    success: false,
+    error: 'Too many document pages while deleting linkblog',
+    retryable: true,
+    deletedPosts,
+  };
+}
+
+// Delete every link post, then the publication record. Returns the publication
+// the linkblog pointed at, so the caller can move followers off it.
 export async function deleteLinkblog(
   session: Session,
   env: Env
-): Promise<PDSResult<{ deletedPosts: number }>> {
+): Promise<PDSResult<{ deletedPosts: number; previousSiteUri: string }>> {
   const now = Math.floor(Date.now() / 1000);
+  const previous = await getLinkblogTarget(env, session.did);
+
+  // Disable first: every write path checks the flag, so this is what stops a
+  // share racing the walk and landing a document behind it. The connected
+  // publication is deliberately NOT cleared yet — it's the one setting a failed
+  // delete could not give back (restore doesn't know it), so it waits until the
+  // PDS side is actually gone.
   await env.DB.prepare(
     `INSERT INTO user_settings (user_did, linkblog_disabled, created_at, updated_at)
      VALUES (?, 1, ?, ?) ON CONFLICT(user_did) DO UPDATE SET linkblog_disabled = 1,
-     linkblog_publication = NULL, linkblog_content_format = NULL, updated_at = excluded.updated_at`
+     updated_at = excluded.updated_at`
   )
     .bind(session.did, now, now)
     .run();
 
-  const client = createPDSClient(session);
-  let cursor: string | undefined;
-  let deletedPosts = 0;
-  const seenCursors = new Set<string>();
-  while (true) {
-    const page = await client.listRecords<DocumentRecord>(DOCUMENT_COLLECTION, cursor);
-    if (!page.success) return page;
-    const rkeys = page.data.records
-      .filter((record) => isSkyreaderShareRecord(session.did, record.value))
-      .map((record) => record.uri.split('/').pop()!)
-      .filter(Boolean);
-    if (rkeys.length > 0) {
-      const documents = await deleteRecordBatch(client, DOCUMENT_COLLECTION, rkeys, false);
-      if (!documents.success) return documents;
-      for (const collection of new Set(Object.values(COMPANION_COLLECTIONS))) {
-        await deleteRecordBatch(client, collection, rkeys, true);
-      }
-      deletedPosts += rkeys.length;
-      // Mutating a collection can invalidate its cursor. Restarting guarantees
-      // that records shifted across page boundaries cannot be skipped.
-      cursor = undefined;
-      seenCursors.clear();
-      continue;
-    }
-    const nextCursor = page.data.cursor || undefined;
-    if (!nextCursor) break;
-    if (seenCursors.has(nextCursor)) {
-      return {
-        success: false,
-        error: 'PDS returned a repeated cursor while deleting linkblog',
-        retryable: true,
-      };
-    }
-    seenCursors.add(nextCursor);
-    cursor = nextCursor;
+  const purged = await purgeLinkblogRecords(session);
+  if (!purged.success) {
+    // Nothing went yet, so the linkblog is exactly as the user left it: take the
+    // flag back rather than strand them with a live blog that every write path
+    // rejects. A partial purge keeps the flag — that blog is already half gone,
+    // and retrying the delete resumes where this one stopped.
+    if (purged.deletedPosts === 0) await restoreLinkblog(session, env);
+    return { success: false, error: purged.error, retryable: purged.retryable };
   }
-  const publication = await client.deleteRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY);
-  if (!publication.success && !isNotFoundError(publication.error)) return publication;
-  return { success: true, data: { deletedPosts } };
+
+  await env.DB.prepare(
+    `UPDATE user_settings SET linkblog_publication = NULL, linkblog_content_format = NULL,
+     updated_at = ? WHERE user_did = ?`
+  )
+    .bind(now, session.did)
+    .run();
+
+  return {
+    success: true,
+    data: { deletedPosts: purged.deletedPosts, previousSiteUri: previous.siteUri },
+  };
 }
 
 export async function restoreLinkblog(session: Session, env: Env): Promise<void> {
