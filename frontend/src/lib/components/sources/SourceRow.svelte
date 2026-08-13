@@ -41,17 +41,24 @@
     onReactivate = null,
   }: Props = $props();
 
+  const errorPopoverId = $props.id();
+
   let showErrorPopover = $state(false);
   let errorBadge: HTMLButtonElement | null = $state(null);
+  let errorRegion: HTMLDivElement | null = $state(null);
   let popoverPosition = $state({ top: 0, left: 0 });
   let hideTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  function showErrorDetails() {
-    if (!errorDetails) return;
+  function cancelHide() {
     if (hideTimeout) {
       clearTimeout(hideTimeout);
       hideTimeout = null;
     }
+  }
+
+  function showErrorDetails() {
+    if (!errorDetails) return;
+    cancelHide();
     if (errorBadge) {
       const rect = errorBadge.getBoundingClientRect();
       popoverPosition = {
@@ -63,9 +70,51 @@
   }
 
   function hideErrorDetails() {
+    cancelHide();
     hideTimeout = setTimeout(() => {
+      hideTimeout = null;
       showErrorPopover = false;
     }, 150);
+  }
+
+  function hideErrorDetailsNow() {
+    cancelHide();
+    showErrorPopover = false;
+  }
+
+  $effect(() => cancelHide);
+
+  // The badge and the popover are one focus region: keep the popover open while
+  // focus moves between them so keyboard users can reach the technical details.
+  let suppressFocusOpen = false;
+
+  function handleRegionFocusIn() {
+    if (suppressFocusOpen) return;
+    showErrorDetails();
+  }
+
+  function handleRegionFocusOut(event: FocusEvent) {
+    const next = event.relatedTarget;
+    if (next instanceof Node) {
+      if (errorRegion?.contains(next)) return;
+      hideErrorDetailsNow();
+      return;
+    }
+    // Some browsers omit relatedTarget; fall back to the delayed hide so a
+    // focusin landing inside the region can still cancel it.
+    hideErrorDetails();
+  }
+
+  function handleRegionKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || !showErrorPopover) return;
+    event.stopPropagation();
+    hideErrorDetailsNow();
+    if (errorBadge && document.activeElement !== errorBadge) {
+      // Returning focus to the badge must not immediately reopen the popover.
+      suppressFocusOpen = true;
+      errorBadge.focus();
+      suppressFocusOpen = false;
+    }
   }
 
   let actions = $derived.by(() => {
@@ -112,21 +161,40 @@
   </div>
 
   {#if subscribed && (hasError || errorDetails)}
-    <button
-      bind:this={errorBadge}
-      type="button"
-      class="error-badge"
-      class:permanent={errorDetails?.isPermanent}
-      title={errorDetails?.title ?? 'Feed error'}
-      aria-label={errorDetails ? `Feed error: ${errorDetails.title}` : 'Feed error'}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      bind:this={errorRegion}
+      class="error-region"
       onmouseenter={showErrorDetails}
       onmouseleave={hideErrorDetails}
-      onfocus={showErrorDetails}
-      onblur={hideErrorDetails}
-      onclick={showErrorDetails}
+      onfocusin={handleRegionFocusIn}
+      onfocusout={handleRegionFocusOut}
+      onkeydown={handleRegionKeydown}
     >
-      <Icon name="alert-triangle" size={14} />
-    </button>
+      <button
+        bind:this={errorBadge}
+        type="button"
+        class="error-badge"
+        class:permanent={errorDetails?.isPermanent}
+        title={errorDetails?.title ?? 'Feed error'}
+        aria-label={errorDetails ? `Feed error: ${errorDetails.title}` : 'Feed error'}
+        aria-expanded={errorDetails ? showErrorPopover : undefined}
+        aria-controls={errorDetails && showErrorPopover ? errorPopoverId : undefined}
+        onclick={showErrorDetails}
+      >
+        <Icon name="alert-triangle" size={14} />
+      </button>
+
+      {#if showErrorPopover && errorDetails}
+        <div
+          id={errorPopoverId}
+          class="error-popover-container"
+          style="top: {popoverPosition.top}px; left: {popoverPosition.left}px;"
+        >
+          <FeedErrorPopover {errorDetails} />
+        </div>
+      {/if}
+    </div>
   {/if}
 
   {#if actions.length > 0}
@@ -145,18 +213,6 @@
     </div>
   {/if}
 </div>
-
-{#if showErrorPopover && errorDetails}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="error-popover-container"
-    style="top: {popoverPosition.top}px; left: {popoverPosition.left}px;"
-    onmouseenter={showErrorDetails}
-    onmouseleave={hideErrorDetails}
-  >
-    <FeedErrorPopover {errorDetails} />
-  </div>
-{/if}
 
 <style>
   .source-row {
@@ -233,6 +289,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .error-region {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
   }
 
   .error-badge {

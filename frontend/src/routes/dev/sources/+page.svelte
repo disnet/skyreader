@@ -67,7 +67,11 @@
     />
   </Case>
 
-  <Case name="SourceRow · error" note="Hover or focus the badge for full error details." frame>
+  <Case
+    name="SourceRow · error"
+    note="Hover or focus the badge for full error details; Tab reaches Technical details, Escape closes."
+    frame
+  >
     <SourceRow
       iconUrl={FAVICON}
       title="Flaky Feed"
