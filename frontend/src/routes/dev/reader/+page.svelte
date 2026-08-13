@@ -297,15 +297,20 @@
   }
 
   .reading-progress-fill {
-    height: 100%;
+    height: 2px;
     background: var(--color-primary);
     transform-origin: left;
   }
 
   @media (max-width: 1000px) {
+    /* Opaque and covering the inset, matching the real reader: the hairline
+       stands in for the bottom bar, so it occludes the text beneath it. */
     .reading-progress {
       top: auto;
-      bottom: env(safe-area-inset-bottom, 0px);
+      bottom: 0;
+      height: auto;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      background: var(--reader-chrome-bg, var(--color-bg, #fff));
     }
 
     .reading-progress.visible.bar-hidden {
