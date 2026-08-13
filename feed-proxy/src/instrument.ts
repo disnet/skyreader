@@ -25,3 +25,27 @@ if (dsn) {
 }
 
 export { Sentry };
+
+// The build this process is running, stamped by the Fly build arg (see Dockerfile
+// and .github/workflows/feed-proxy-deploy.yml). Surfaced on /health so a
+// post-deploy smoke check can prove the new code is actually serving.
+export const VERSION = process.env.GIT_COMMIT_SHA || 'dev';
+
+export interface ReportContext {
+  tags?: Record<string, string>;
+  extra?: Record<string, unknown>;
+}
+
+/**
+ * Report an error to the error tracker. Every call site goes through this rather
+ * than `Sentry.captureException` directly, so swapping the vendor (GlitchTip, a
+ * hand-rolled envelope POST, nothing at all) stays a one-file change. Never
+ * throws — an observability failure must not become a request failure.
+ */
+export function reportError(error: unknown, context?: ReportContext): void {
+  try {
+    Sentry.captureException(error, { tags: context?.tags, extra: context?.extra });
+  } catch (reportingError) {
+    console.error('[Proxy] Failed to report error:', reportingError);
+  }
+}

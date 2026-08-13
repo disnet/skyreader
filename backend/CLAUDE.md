@@ -57,6 +57,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/settings.ts`      | User settings                                         |
 | `src/routes/sync.ts`          | PDS full sync, subscription sync, sync status         |
 | `src/routes/lexicons.ts`      | Serve lexicon schemas at /.well-known/lexicons        |
+| `src/routes/health.ts`        | `/api/health` (shallow) + `/api/health/deep` (gated)  |
 
 ### Services
 
@@ -71,6 +72,18 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/services/subscription-sync.ts` | Sync subscriptions to/from PDS                    |
 | `src/services/rate-limit.ts`        | Per-user per-endpoint rate limiting (D1-backed)   |
 | `src/services/user-tier.ts`         | Tier lookup (free/supporter)                      |
+
+### Observability
+
+| File                             | Purpose                                                        |
+| -------------------------------- | -------------------------------------------------------------- |
+| `src/observability/sentry.ts`    | SDK options + the `reportError()` wrapper every call site uses |
+| `src/observability/scrub.ts`     | `beforeSend` credential scrubbing (keeps DIDs, drops tokens)   |
+| `src/observability/heartbeat.ts` | Dead-man's-switch ping for the every-minute cron               |
+
+Error reporting goes through `reportError()`, never `Sentry.captureException`
+directly, so the vendor stays a one-file decision. Alert thresholds, secrets, and
+incident procedures: [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 
 ### Durable Objects
 
@@ -129,8 +142,16 @@ FRONTEND_URL = "https://skyreader.app"
 ALLOWED_ORIGINS = "https://skyreader.app,https://staging.skyreader.app,..."
 FEED_PROXY_URL = "https://skyreader-feed-proxy.fly.dev"
 
+SENTRY_ENVIRONMENT = "production"   # "staging" in [env.staging]
+
 # Secrets (set via `wrangler secret put`):
-# FEED_PROXY_SECRET - authenticates with the Fly.io feed proxy
+# FEED_PROXY_SECRET   - authenticates with the Fly.io feed proxy
+# SENTRY_DSN          - error reporting (unset ⇒ silent no-op)
+# HEARTBEAT_URL       - dead-man ping for the every-minute cron
+# HEALTH_CHECK_SECRET - gates /api/health/deep (X-Health-Secret header)
+#
+# GIT_COMMIT_SHA is passed by CI at deploy time (`--var GIT_COMMIT_SHA:<sha>`)
+# and reported by /api/health; a manual deploy reports "dev".
 ```
 
 ## Local Development Setup

@@ -20,6 +20,11 @@ const STANDARD_LIMIT: RateLimitConfig = { limit: 100, windowMs: 60000 };
 const LIGHT_LIMIT: RateLimitConfig = { limit: 300, windowMs: 60000 };
 
 const RATE_LIMITS: Record<string, RateLimitConfig> = {
+  // Deep health check. Keyed by client IP (not did) since callers are monitors,
+  // not users. Sized for a poll every 30s plus retries — anything above that is
+  // someone using our dependency fan-out as an amplifier.
+  '/api/health/deep': { limit: 10, windowMs: 60000 },
+
   // Expensive operations (external API calls, complex queries)
   '/api/social/feed': EXPENSIVE_LIMIT,
   '/api/social/sync-follows': EXPENSIVE_LIMIT,

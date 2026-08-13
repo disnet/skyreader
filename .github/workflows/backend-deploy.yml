@@ -75,8 +75,17 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy --env staging
+          command: deploy --env staging --var GIT_COMMIT_SHA:${{ github.sha }}
           workingDirectory: backend
+
+      # Smoke check against production reality, not test-suite reality: asserts the
+      # deployed Worker answers AND that it's serving *this* commit. A deploy that
+      # passes tests but 500s (or silently didn't roll out) now turns the run red.
+      - name: Smoke check staging
+        env:
+          HEALTH_URL: https://api-staging.skyreader.app/api/health
+          EXPECTED_SHA: ${{ github.sha }}
+        run: node ../scripts/smoke-check.mjs "$HEALTH_URL" --version "$EXPECTED_SHA"
 
   deploy-production:
     name: Deploy to Production
@@ -114,5 +123,11 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
+          command: deploy --var GIT_COMMIT_SHA:${{ github.sha }}
           workingDirectory: backend
+
+      - name: Smoke check production
+        env:
+          HEALTH_URL: https://api.skyreader.app/api/health
+          EXPECTED_SHA: ${{ github.sha }}
+        run: node ../scripts/smoke-check.mjs "$HEALTH_URL" --version "$EXPECTED_SHA"

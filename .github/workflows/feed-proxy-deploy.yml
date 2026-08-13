@@ -68,6 +68,15 @@ jobs:
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
 
       - name: Deploy
-        run: flyctl deploy --remote-only
+        run: flyctl deploy --remote-only --build-arg GIT_COMMIT_SHA=${{ github.sha }}
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      # Asserts the machine is answering AND running this commit. The proxy is a
+      # singleton, so "deployed but wedged" is a total feed outage — worth failing
+      # the workflow over.
+      - name: Smoke check
+        env:
+          HEALTH_URL: https://skyreader-feed-proxy.fly.dev/health
+          EXPECTED_SHA: ${{ github.sha }}
+        run: node ../scripts/smoke-check.mjs "$HEALTH_URL" --version "$EXPECTED_SHA"

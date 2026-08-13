@@ -20,7 +20,7 @@ import type { LaneId } from './lanes';
 import { normalizeArticleUrl } from './url-normalize';
 import { Semaphore, OverloadError } from './semaphore';
 import { safeFetch } from './ssrf-guard';
-import { Sentry } from './instrument';
+import { reportError, VERSION } from './instrument';
 
 export interface AppConfig {
   proxySecret?: string;
@@ -1772,18 +1772,21 @@ export function createApp(db: Database, config: AppConfig) {
   // Sentry instead of vanishing into a bare 500. No-op send when Sentry is off.
   app.onError((err, c) => {
     console.error(`[Proxy] Unhandled error on ${c.req.method} ${c.req.path}:`, err);
-    Sentry.captureException(err, {
+    reportError(err, {
       tags: { source: 'route' },
       extra: { method: c.req.method, path: c.req.path },
     });
     return c.json({ error: 'Internal server error' }, 500);
   });
 
-  // Health check (no auth)
+  // Health check (no auth). `version` is the deployed commit — the post-deploy
+  // smoke check asserts it matches the SHA it just shipped, which proves the new
+  // code is serving rather than just that something answers.
   app.get('/health', (c) => {
     const cacheCount = db.query<{ count: number }, []>('SELECT COUNT(*) as count FROM cache').get();
     return c.json({
       status: 'ok',
+      version: VERSION,
       timestamp: Date.now(),
       cachedFeeds: cacheCount?.count || 0,
     });

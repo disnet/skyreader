@@ -92,8 +92,12 @@ import {
   handleDeleteChannel,
 } from './routes/channels';
 import { handleTestExec } from './routes/test-utils';
+import { handleHealth, handleDeepHealth } from './routes/health';
 import { resolveSessionFromRequest, updateUserActivity } from './services/oauth';
 import { checkRateLimit, cleanupRateLimits, getRateLimitConfig } from './services/rate-limit';
+import * as Sentry from '@sentry/cloudflare';
+import { sentryOptions, reportError } from './observability/sentry';
+import { pingHeartbeat } from './observability/heartbeat';
 
 export { JetstreamPoller } from './durable-objects/jetstream-poller';
 
@@ -146,7 +150,14 @@ function isPublicPath(pathname: string): boolean {
   );
 }
 
-export default {
+// The other set of session-free routes. Health endpoints are answered *before*
+// session resolution rather than via isPublicPath: an uptime poller has no
+// session, and the shallow check must stay free of D1 work (see routes/health.ts).
+function isHealthPath(pathname: string): boolean {
+  return pathname === '/api/health' || pathname === '/api/health/deep';
+}
+
+const handler = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const origin = request.headers.get('Origin');
@@ -155,6 +166,14 @@ export default {
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers });
+    }
+
+    if (isHealthPath(url.pathname)) {
+      const health =
+        url.pathname === '/api/health' ? handleHealth(env) : await handleDeepHealth(request, env);
+      const healthHeaders = new Headers(health.headers);
+      Object.entries(headers).forEach(([key, value]) => healthHeaders.set(key, value as string));
+      return new Response(health.body, { status: health.status, headers: healthHeaders });
     }
 
     // Track user activity for authenticated requests (non-blocking)
@@ -616,7 +635,13 @@ export default {
         headers: newHeaders,
       });
     } catch (error) {
+      // Workers Logs stays the quick-look tool; Sentry is what groups, dedupes,
+      // and notifies. Both, deliberately.
       console.error('Request error:', error);
+      reportError(error, {
+        tags: { source: 'fetch', route: url.pathname },
+        extra: { method: request.method },
+      });
       return new Response(JSON.stringify({ error: 'Internal server error' }), {
         status: 500,
         headers: { ...headers, 'Content-Type': 'application/json' },
@@ -631,6 +656,11 @@ export default {
 
     console.log(`[Cron] Started: ${controller.cron}, minute=${minute}`);
 
+    // Tracks whether this run did its job. The heartbeat at the end only fires on
+    // a clean run, so "cron throwing every minute" looks the same to the monitor
+    // as "cron never fired" — both are outages.
+    let cronHealthy = true;
+
     // Every minute: Cleanup tasks and ensure JetstreamPoller is running
     if (isEveryMinuteCron) {
       // Phase 1: Ensure JetstreamPoller DO is running
@@ -642,6 +672,8 @@ export default {
         console.log(`[Cron] JetstreamPoller: ${result.status}`);
       } catch (error) {
         console.error('[Cron] Failed to start JetstreamPoller:', error);
+        reportError(error, { tags: { source: 'cron', phase: 'poller-start' } });
+        cronHealthy = false;
       }
 
       // Phase 2: Clean up rate limit records
@@ -658,6 +690,8 @@ export default {
         }
       } catch (error) {
         console.error('[Cron] Rate limit cleanup error:', error);
+        reportError(error, { tags: { source: 'cron', phase: 'rate-limit-cleanup' } });
+        cronHealthy = false;
       }
 
       // Phase 3: Clean up expired D1 data (once per hour)
@@ -680,6 +714,7 @@ export default {
           oauthDeleted = oauthResult.meta?.changes || 0;
         } catch (error) {
           console.error('[Cron] D1 WRITE ERROR deleting expired oauth_state:', error);
+          reportError(error, { tags: { source: 'cron', phase: 'oauth-state-cleanup' } });
         }
 
         // Clean up failed/expired sessions
@@ -699,6 +734,7 @@ export default {
           sessionsDeleted = sessionsResult.meta?.changes || 0;
         } catch (error) {
           console.error('[Cron] D1 WRITE ERROR deleting expired sessions:', error);
+          reportError(error, { tags: { source: 'cron', phase: 'session-cleanup' } });
         }
 
         // Purge old label tombstones (soft-deleted archived/tagged AND read
@@ -717,6 +753,7 @@ export default {
           labelTombstonesDeleted = tombstoneResult.meta?.changes || 0;
         } catch (error) {
           console.error('[Cron] D1 WRITE ERROR purging label tombstones:', error);
+          reportError(error, { tags: { source: 'cron', phase: 'label-tombstone-purge' } });
         }
 
         // Purge old magazine tombstones (same 90-day retention as labels so a
@@ -730,6 +767,7 @@ export default {
             .run();
         } catch (error) {
           console.error('[Cron] D1 WRITE ERROR purging magazine tombstones:', error);
+          reportError(error, { tags: { source: 'cron', phase: 'magazine-tombstone-purge' } });
         }
 
         d1CleanupDuration = Date.now() - cleanupStart;
@@ -740,6 +778,19 @@ export default {
 
       const totalDuration = Date.now() - cronStart;
       console.log(`[Cron] Every-minute complete: total=${totalDuration}ms`);
+
+      // Dead-man's switch. Fire-and-forget so a slow monitor can never extend or
+      // fail the cron. Skipped on a failed run so the monitor's grace period
+      // expires and pages — that's the whole point of the switch.
+      if (cronHealthy) {
+        ctx.waitUntil(pingHeartbeat(env.HEARTBEAT_URL, 'cron'));
+      } else {
+        console.warn('[Cron] Skipping heartbeat: run had failures');
+      }
     }
   },
-};
+} satisfies ExportedHandler<Env>;
+
+// Wrapping the exported handler instruments both `fetch` and `scheduled`; the
+// JetstreamPoller DO is instrumented separately at its own export.
+export default Sentry.withSentry(sentryOptions, handler);

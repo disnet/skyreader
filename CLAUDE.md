@@ -175,6 +175,14 @@ These are **separate** from the main E2E suite (`playwright.pwa.config.ts`, spec
 - **What's covered:** `build-output.spec.ts` (the built SW precaches the shell as `/` not `index.html`, every precache URL exists, custom handlers present — fast disk-only checks), `service-worker.spec.ts` (registers → full precache → activated → controls; no-skew invariant), `offline.spec.ts` (offline reload + deep-link still render the shell; recovery overlay stays hidden).
 - **webkit caveat:** Playwright webkit throws an internal error when navigating with `setOffline(true)`, so the offline-navigation tests are chromium-only (guarded with `test.skip`). webkit still verifies SW lifecycle + healthy load. True installed iOS Safari PWA behavior still needs manual device testing.
 
+## Operations
+
+[`docs/RUNBOOK.md`](docs/RUNBOOK.md) is the operational source of truth: health
+endpoints, the external check list and thresholds, dead-man's-switch heartbeats,
+error-tracking setup, and per-alert response procedures. Read it before changing
+anything under `backend/src/observability/`, the health routes, or a deploy
+workflow's smoke-check step.
+
 ## Architecture Overview
 
 ```

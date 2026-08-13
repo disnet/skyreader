@@ -1,6 +1,8 @@
+import * as Sentry from '@sentry/cloudflare';
 import type { Env } from '../types';
 import { resolveCanonicalUrl } from '../utils/canonical-url';
 import { upsertSubscriptionFromFirehose } from '../services/firehose-subscription';
+import { sentryOptions, reportError } from '../observability/sentry';
 
 // Jetstream event types
 interface JetstreamEvent {
@@ -49,7 +51,7 @@ const POLL_TIMEOUT_MS = 8000; // 8 seconds per stream
 const IDLE_TIMEOUT_MS = 2000; // 2 seconds without events = caught up
 const ALARM_INTERVAL_MS = 60000; // 60 seconds between polls
 
-export class JetstreamPoller implements DurableObject {
+class JetstreamPollerBase implements DurableObject {
   private state: DurableObjectState;
   private env: Env;
 
@@ -150,6 +152,7 @@ export class JetstreamPoller implements DurableObject {
         stats.documents = documentsResult;
       } catch (error) {
         console.error('[JetstreamPoller] Error during poll cycle:', error);
+        reportError(error, { tags: { source: 'jetstream-poller', phase: 'poll-cycle' } });
       }
 
       stats.duration = Date.now() - startTime;
@@ -170,12 +173,16 @@ export class JetstreamPoller implements DurableObject {
     } catch (error) {
       // Catch-all for any unexpected errors
       console.error('[JetstreamPoller] UNEXPECTED ERROR in alarm handler:', error);
+      reportError(error, { tags: { source: 'jetstream-poller', phase: 'alarm' } });
     } finally {
       // ALWAYS schedule next poll - this runs even if an error occurred above
       try {
         await this.state.storage.setAlarm(Date.now() + ALARM_INTERVAL_MS);
       } catch (error) {
+        // The firehose stops here until the next cron /start ping revives it, so
+        // this one is worth a page rather than a log line.
         console.error('[JetstreamPoller] CRITICAL: Error scheduling next alarm:', error);
+        reportError(error, { tags: { source: 'jetstream-poller', phase: 'alarm-scheduling' } });
       }
     }
   }
@@ -577,3 +584,17 @@ export class JetstreamPoller implements DurableObject {
     return new Set(result.results.map((r) => r.did));
   }
 }
+
+// Instrumented at the export so exceptions escaping `fetch`/`alarm` reach Sentry,
+// and — just as importantly — so the SDK is initialized inside this DO's isolate,
+// which is what makes the `reportError()` calls above actually send. The cast
+// bridges the ambient `DurableObject` interface this class implements to the
+// `cloudflare:workers` base class the instrumenter's types expect; the runtime
+// contract (constructor(state, env) + fetch/alarm) is identical.
+export const JetstreamPoller = Sentry.instrumentDurableObjectWithSentry(
+  sentryOptions,
+  JetstreamPollerBase as unknown as new (
+    state: DurableObjectState,
+    env: Env
+  ) => InstanceType<typeof JetstreamPollerBase> & { ctx: DurableObjectState; env: Env }
+) as unknown as typeof JetstreamPollerBase;

@@ -79,6 +79,14 @@ jobs:
           command: pages deploy --project-name=skyreader-staging --commit-dirty=true
           workingDirectory: frontend
 
+      # Pages deploys can't carry a version stamp the way the Workers do, so this
+      # is a liveness + "the shell actually rendered" check: a build that deploys
+      # but serves a broken/empty document goes red here instead of in a bug report.
+      - name: Smoke check staging
+        env:
+          SMOKE_URL: https://staging.skyreader.app
+        run: node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains '<title>Skyreader</title>'
+
   deploy-staging-prod:
     name: Deploy Staging (Prod Backend)
     needs: typecheck
@@ -118,6 +126,11 @@ jobs:
           command: pages deploy --project-name=skyreader-staging-prod --commit-dirty=true
           workingDirectory: frontend
 
+      - name: Smoke check staging-prod
+        env:
+          SMOKE_URL: https://staging-prod.skyreader.app
+        run: node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains '<title>Skyreader</title>'
+
   deploy-production:
     name: Deploy to Production
     needs: typecheck
@@ -156,3 +169,8 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy --project-name=skyreader --branch=main --commit-dirty=true
           workingDirectory: frontend
+
+      - name: Smoke check production
+        env:
+          SMOKE_URL: https://skyreader.app
+        run: node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains '<title>Skyreader</title>'

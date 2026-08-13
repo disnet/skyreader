@@ -295,6 +295,12 @@ curl "/feed?url=...&since_guids=old-guid&limit=50"
 | `CACHE_TTL_SECONDS`  | `900`    | Fresh cache duration (15 min)             |
 | `STALE_TTL_SECONDS`  | `3600`   | Stale cache max age (1 hour)              |
 | `PORT`               | `3000`   | HTTP server port                          |
+| `SENTRY_DSN`         | (none)   | Error reporting; unset ⇒ no-op            |
+| `WARM_HEARTBEAT_URL` | (none)   | Dead-man ping after each warm tick        |
+| `GIT_COMMIT_SHA`     | `dev`    | Build stamp, reported by `/health`        |
+
+Observability setup, alert thresholds, and incident procedures live in
+[`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 
 ## Cache Behavior
 
