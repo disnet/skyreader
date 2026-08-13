@@ -19,6 +19,7 @@ import { buildOptimisticLinkPost, getExternalArticleLink } from '$lib/utils/link
 import { noteToLeafletBlocks } from '$lib/utils/linkPostNote';
 import { loadDigests, saveDigests, scopeKey } from '$lib/services/documentDigests';
 import type { LinkblogPublication, SocialDocument } from '$lib/types';
+import { preferences } from '$lib/stores/preferences.svelte';
 
 const PUBLICATION_COLLECTION = 'site.standard.publication';
 const LINKBLOG_RKEY = 'skyreader-links';
@@ -47,6 +48,7 @@ function createMyLinkblogStore() {
   const scopeResults = new Map<string, { documents: SocialDocument[]; complete: boolean }>();
 
   async function load(force = false) {
+    if (preferences.linkblogDisabled) return;
     if ((loaded || loading) && !force) return;
     const user = auth.user;
     if (!user) return;
@@ -58,7 +60,15 @@ function createMyLinkblogStore() {
       // scoped to the default alone would come back (completely) empty for a user
       // who has switched.
       const pub = await api.getLinkblogPublication().catch(() => null);
-      if (pub) publication = pub;
+      if (pub) {
+        publication = pub;
+        preferences.setLinkblogDisabled(pub.disabled);
+        if (pub.disabled) {
+          documents = [];
+          loaded = true;
+          return;
+        }
+      }
       const target = pub ?? publication;
       const defaultUri = publicationUri(user.did);
       const scopes = [...new Set([target?.uri || defaultUri, defaultUri])];

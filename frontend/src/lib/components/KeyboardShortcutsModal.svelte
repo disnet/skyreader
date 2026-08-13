@@ -1,6 +1,7 @@
 <script lang="ts">
   import { keyboardStore } from '$lib/stores/keyboard.svelte';
   import Modal from '$lib/components/common/Modal.svelte';
+  import { preferences } from '$lib/stores/preferences.svelte';
 
   const shortcuts = [
     // Navigation
@@ -15,7 +16,9 @@
     { category: 'Views', key: '0', description: 'Home' },
     { category: 'Views', key: '1', description: 'Feeds' },
     { category: 'Views', key: '2', description: 'Saved' },
-    { category: 'Views', key: '3', description: 'Linkblog' },
+    ...(!preferences.linkblogDisabled
+      ? [{ category: 'Views', key: '3', description: 'Linkblog' }]
+      : []),
     { category: 'Views', key: '4', description: 'Highlights' },
     { category: 'Views', key: '5', description: 'Discover' },
     { category: 'Views', key: '6', description: 'Manage Sources' },
@@ -27,7 +30,9 @@
 
     // Article actions
     { category: 'Article', key: 's', description: 'Toggle save' },
-    { category: 'Article', key: 'S', description: 'Share/unshare' },
+    ...(!preferences.linkblogDisabled
+      ? [{ category: 'Article', key: 'S', description: 'Share/unshare' }]
+      : []),
     { category: 'Article', key: 'm', description: 'Mark read/unread' },
     { category: 'Article', key: 'A', description: 'Mark all as read' },
     { category: 'Article', key: 't', description: 'Tag item' },

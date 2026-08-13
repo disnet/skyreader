@@ -300,6 +300,7 @@ export interface PublicationMeta {
   exists: boolean;
   external: boolean;
   format: ContentFormat;
+  disabled: boolean;
 }
 
 // PDS records are user-controlled, so a `url` can be any string. Only surface it
@@ -322,7 +323,10 @@ function iconUrlFromBlob(did: string, icon: BlobRef | undefined): string | undef
 // Read the current linkblog publication, or synthesize sensible defaults when it
 // doesn't exist yet (so the settings UI can render before the first share).
 export async function getPublicationMeta(session: Session, env: Env): Promise<PublicationMeta> {
-  const target = await getLinkblogTarget(env, session.did);
+  const [target, disabled] = await Promise.all([
+    getLinkblogTarget(env, session.did),
+    isLinkblogDisabled(env, session.did),
+  ]);
   const pdsClient = createPDSClient(session);
   const rkey = target.siteUri.split('/').pop() || LINKBLOG_RKEY;
   const result = await pdsClient.getRecord<PublicationRecord>(PUBLICATION_COLLECTION, rkey);
@@ -336,6 +340,7 @@ export async function getPublicationMeta(session: Session, env: Env): Promise<Pu
       exists: false,
       external: target.external,
       format: target.format,
+      disabled,
     };
   }
 
@@ -355,6 +360,7 @@ export async function getPublicationMeta(session: Session, env: Env): Promise<Pu
     exists: true,
     external: target.external,
     format: target.format,
+    disabled,
   };
 }
 
@@ -498,11 +504,35 @@ interface DocumentRecord {
 // Whether a `site.standard.document` is one of OUR link posts: it carries the
 // marker, or it lives in the user's own Skyreader publication (where everything
 // is ours, marker or not — pre-marker records still count).
-function isSkyreaderShareRecord(
+export function isSkyreaderShareRecord(
   did: string,
   rec: Pick<DocumentRecord, 'site' | 'skyreaderLinkblog'>
 ): boolean {
   return rec.skyreaderLinkblog === LINKBLOG_MARKER_URL || rec.site === publicationUri(did);
+}
+
+export async function isLinkblogDisabled(env: Env, did: string): Promise<boolean> {
+  try {
+    const row = await env.DB.prepare(
+      'SELECT linkblog_disabled FROM user_settings WHERE user_did = ?'
+    )
+      .bind(did)
+      .first<{ linkblog_disabled: number }>();
+    return row?.linkblog_disabled === 1;
+  } catch {
+    return false;
+  }
+}
+
+export async function getDisabledLinkblogAuthors(env: Env): Promise<string[]> {
+  try {
+    const rows = await env.DB.prepare(
+      'SELECT user_did FROM user_settings WHERE linkblog_disabled = 1 LIMIT 2000'
+    ).all<{ user_did: string }>();
+    return (rows.results ?? []).map((row) => row.user_did);
+  } catch {
+    return [];
+  }
 }
 
 // The article excerpt stored on a record's website link-card block. The card is
@@ -974,6 +1004,77 @@ export async function writeLinkblogShare(
 // A read that came back "no such record" — a normal outcome, not a failure.
 function isNotFoundError(error: string): boolean {
   return /RecordNotFound|could not locate record/i.test(error);
+}
+
+const DELETE_BATCH_SIZE = 200;
+
+async function deleteRecordBatch(
+  client: ReturnType<typeof createPDSClient>,
+  collection: string,
+  rkeys: string[],
+  bestEffort: boolean
+): Promise<PDSResult<void>> {
+  for (let i = 0; i < rkeys.length; i += DELETE_BATCH_SIZE) {
+    const chunk = rkeys.slice(i, i + DELETE_BATCH_SIZE);
+    const batch = await client.applyWrites(
+      chunk.map((rkey) => ({
+        $type: 'com.atproto.repo.applyWrites#delete' as const,
+        collection,
+        rkey,
+      }))
+    );
+    if (batch.success) continue;
+    if (!bestEffort) return batch;
+    for (const rkey of chunk) {
+      const result = await client.deleteRecord(collection, rkey);
+      if (!result.success && !isNotFoundError(result.error)) {
+        console.warn(`[linkblog] ${collection} delete failed for ${rkey}: ${result.error}`);
+      }
+    }
+  }
+  return { success: true, data: undefined };
+}
+
+export async function deleteLinkblog(
+  session: Session,
+  env: Env
+): Promise<PDSResult<{ deletedPosts: number }>> {
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(
+    `INSERT INTO user_settings (user_did, linkblog_disabled, created_at, updated_at)
+     VALUES (?, 1, ?, ?) ON CONFLICT(user_did) DO UPDATE SET linkblog_disabled = 1,
+     linkblog_publication = NULL, linkblog_content_format = NULL, updated_at = excluded.updated_at`
+  )
+    .bind(session.did, now, now)
+    .run();
+
+  const client = createPDSClient(session);
+  const records = await client.listAllRecords<DocumentRecord>(DOCUMENT_COLLECTION);
+  if (!records.success) return records;
+  const rkeys = records.data
+    .filter((record) => isSkyreaderShareRecord(session.did, record.value))
+    .map((record) => record.uri.split('/').pop()!)
+    .filter(Boolean);
+  const documents = await deleteRecordBatch(client, DOCUMENT_COLLECTION, rkeys, false);
+  if (!documents.success) return documents;
+
+  for (const collection of new Set(Object.values(COMPANION_COLLECTIONS))) {
+    await deleteRecordBatch(client, collection, rkeys, true);
+  }
+  const publication = await client.deleteRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY);
+  if (!publication.success && !isNotFoundError(publication.error)) return publication;
+  return { success: true, data: { deletedPosts: rkeys.length } };
+}
+
+export async function restoreLinkblog(session: Session, env: Env): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(
+    `INSERT INTO user_settings (user_did, linkblog_disabled, created_at, updated_at)
+     VALUES (?, 0, ?, ?) ON CONFLICT(user_did) DO UPDATE SET linkblog_disabled = 0,
+     updated_at = excluded.updated_at`
+  )
+    .bind(session.did, now, now)
+    .run();
 }
 
 // Returned when a mutation targets a record Skyreader didn't write. The routes

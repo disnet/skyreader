@@ -17,6 +17,7 @@ import { FeedProxyClient } from './feed-proxy-client';
 import { fetchFollows, fetchProfiles, type BskyProfileLite } from './bsky-appview';
 import {
   getConnectedLinkblogAuthors,
+  getDisabledLinkblogAuthors,
   getLinkblogTargets,
   linkblogBaseUrl,
   publicationUri,
@@ -70,13 +71,15 @@ function toPerson(
  */
 export async function getLinkblogFriends(session: Session, env: Env): Promise<LinkblogPerson[]> {
   const proxy = new FeedProxyClient(env);
-  const [registry, connected, follows] = await Promise.all([
+  const [registry, connected, disabled, follows] = await Promise.all([
     proxy.fetchLinkblogRegistry().catch(() => [] as string[]),
     getConnectedLinkblogAuthors(env),
+    getDisabledLinkblogAuthors(env),
     fetchFollows(session.did),
   ]);
 
-  const registrySet = new Set([...registry, ...connected]);
+  const disabledSet = new Set(disabled);
+  const registrySet = new Set([...registry, ...connected].filter((did) => !disabledSet.has(did)));
   const people = follows.filter((f) => f.did !== session.did && registrySet.has(f.did));
   // One batched settings lookup resolves everyone's current publication.
   const targets = await getLinkblogTargets(
@@ -93,14 +96,18 @@ export async function getLinkblogFriends(session: Session, env: Env): Promise<Li
  */
 export async function getLinkblogDiscover(session: Session, env: Env): Promise<LinkblogPerson[]> {
   const proxy = new FeedProxyClient(env);
-  const [registry, connected, follows] = await Promise.all([
+  const [registry, connected, disabled, follows] = await Promise.all([
     proxy.fetchLinkblogRegistry().catch(() => [] as string[]),
     getConnectedLinkblogAuthors(env),
+    getDisabledLinkblogAuthors(env),
     fetchFollows(session.did).catch(() => [] as BskyProfileLite[]),
   ]);
 
   const followMap = new Map(follows.map((f) => [f.did, f]));
-  const authors = [...new Set([...registry, ...connected])].filter((did) => did !== session.did);
+  const disabledSet = new Set(disabled);
+  const authors = [...new Set([...registry, ...connected])].filter(
+    (did) => did !== session.did && !disabledSet.has(did)
+  );
 
   const friendDids = authors.filter((did) => followMap.has(did));
   const otherDids = authors.filter((did) => !followMap.has(did)).slice(0, MAX_DISCOVER_OTHERS);

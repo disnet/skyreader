@@ -61,6 +61,7 @@ interface PreferencesState {
   sortOrder: BaseSortOrder;
   // Set once the user has acknowledged the first-share "this is public" confirmation.
   linkblogShareConfirmed: boolean;
+  linkblogDisabled: boolean;
   // Which surface a cold app load lands on (consumed by the `/` redirector).
   defaultView: DefaultView;
   // How tightly the Home lane tiles are packed.
@@ -80,6 +81,7 @@ function createPreferencesStore() {
     expandAllItems: true,
     sortOrder: 'newest',
     linkblogShareConfirmed: false,
+    linkblogDisabled: false,
     defaultView: 'home',
     cardDensity: 'cozy',
     dailyMagazineMinutes: 20,
@@ -114,6 +116,7 @@ function createPreferencesStore() {
         if (parsed.linkblogShareConfirmed !== undefined) {
           state.linkblogShareConfirmed = parsed.linkblogShareConfirmed;
         }
+        if (parsed.linkblogDisabled !== undefined) state.linkblogDisabled = parsed.linkblogDisabled;
         if (
           parsed.defaultView === 'home' ||
           parsed.defaultView === 'feeds' ||
@@ -212,6 +215,11 @@ function createPreferencesStore() {
     save();
   }
 
+  function setLinkblogDisabled(disabled: boolean) {
+    state.linkblogDisabled = disabled;
+    save();
+  }
+
   function setDefaultView(view: DefaultView) {
     state.defaultView = view;
     save();
@@ -256,6 +264,9 @@ function createPreferencesStore() {
     get linkblogShareConfirmed() {
       return state.linkblogShareConfirmed;
     },
+    get linkblogDisabled() {
+      return state.linkblogDisabled;
+    },
     get defaultView() {
       return state.defaultView;
     },
@@ -269,6 +280,7 @@ function createPreferencesStore() {
       return state.dailyMagazineOrder;
     },
     confirmLinkblogShare,
+    setLinkblogDisabled,
     setDefaultView,
     setCardDensity,
     setDailyMagazineMinutes,

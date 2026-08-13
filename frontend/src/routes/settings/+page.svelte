@@ -128,6 +128,7 @@
         api.listLinkblogPublications(),
       ]);
       linkblogPub = pub;
+      preferences.setLinkblogDisabled(pub.disabled);
       linkblogChoices = choices.publications;
       linkblogName = pub.name;
       linkblogDescription = pub.description ?? '';
@@ -135,6 +136,44 @@
       console.error('Failed to load linkblog publication:', error);
     } finally {
       isLinkblogLoading = false;
+    }
+  }
+
+  async function handleDeleteLinkblog() {
+    if (isSavingLinkblog || !syncStore.isOnline) {
+      linkblogError = 'You are offline. Connect to the internet to delete your linkblog.';
+      return;
+    }
+    const confirmation = prompt(
+      'Every link post will be deleted from your PDS. Your page will go blank and subscribers will stop receiving it. This cannot be undone. Type DELETE to continue.'
+    );
+    if (confirmation !== 'DELETE') return;
+    isSavingLinkblog = true;
+    linkblogError = null;
+    try {
+      const result = await api.deleteLinkblog();
+      preferences.setLinkblogDisabled(true);
+      if (linkblogPub) linkblogPub = { ...linkblogPub, disabled: true, exists: false };
+      linkblogSuccess = `Linkblog deleted. ${result.deletedPosts} post${result.deletedPosts === 1 ? '' : 's'} removed.`;
+    } catch (error) {
+      linkblogError = error instanceof Error ? error.message : 'Could not delete your linkblog.';
+    } finally {
+      isSavingLinkblog = false;
+    }
+  }
+
+  async function handleRestoreLinkblog() {
+    if (isSavingLinkblog || !syncStore.isOnline) return;
+    isSavingLinkblog = true;
+    linkblogError = null;
+    try {
+      linkblogPub = await api.restoreLinkblog();
+      preferences.setLinkblogDisabled(false);
+      linkblogSuccess = 'Linkblog restored. Deleted posts do not come back.';
+    } catch (error) {
+      linkblogError = error instanceof Error ? error.message : 'Could not restore your linkblog.';
+    } finally {
+      isSavingLinkblog = false;
     }
   }
 
@@ -574,6 +613,11 @@
     </p>
     {#if isLinkblogLoading}
       <p class="loading">Loading linkblog…</p>
+    {:else if linkblogPub?.disabled}
+      <p class="setting-description">Your linkblog is deleted. Deleted posts cannot be restored.</p>
+      <button class="btn btn-secondary" onclick={handleRestoreLinkblog} disabled={isSavingLinkblog}>
+        {isSavingLinkblog ? 'Restoring…' : 'Restore linkblog'}
+      </button>
     {:else}
       {#if linkblogPub}
         <p class="setting-description" style="margin-top: 0;">
@@ -636,6 +680,15 @@
       {#if linkblogSuccess}
         <p class="sync-success">{linkblogSuccess}</p>
       {/if}
+      <hr />
+      <h3 class="subhead">Delete linkblog</h3>
+      <p class="setting-description">
+        Deletes every link post from your PDS and removes the linkblog from Skyreader. This cannot
+        be undone.
+      </p>
+      <button class="btn btn-danger" onclick={handleDeleteLinkblog} disabled={isSavingLinkblog}>
+        Delete linkblog
+      </button>
     {/if}
   </section>
 

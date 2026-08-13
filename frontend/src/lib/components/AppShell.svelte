@@ -101,7 +101,7 @@
       description: 'Linkblog',
       category: 'Views',
       action: () => goto('/linkblog'),
-      condition: () => auth.isAuthenticated,
+      condition: () => auth.isAuthenticated && !preferences.linkblogDisabled,
     });
 
     keyboardStore.register({
