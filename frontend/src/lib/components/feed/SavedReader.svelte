@@ -19,6 +19,8 @@
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import AppearanceToolbar from '$lib/components/feed/AppearanceToolbar.svelte';
+  import ReaderBottomBar, { READER_BAR_INSET } from '$lib/components/feed/ReaderBottomBar.svelte';
+  import ReadingModeToggle from '$lib/components/feed/ReadingModeToggle.svelte';
   import ReaderDiscussion from '$lib/components/feed/ReaderDiscussion.svelte';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
@@ -55,28 +57,42 @@
   let tagMenuOpen = $state(false);
   let overflowMenuOpen = $state(false);
   let overflowRef = $state<HTMLDivElement | null>(null);
+  // Two anchors, one per breakpoint: the desktop header button and the mobile
+  // bar's. Both exist in the DOM at once (the breakpoint hides one with CSS), so
+  // sharing a single ref would anchor the tag menu to a zero-size element.
   let tagBtnRef = $state<HTMLButtonElement | null>(null);
+  let mobileTagBtnRef = $state<HTMLButtonElement | null>(null);
   let controlsVisible = $state(true);
   // Desktop header hides on scroll-down, but stays put while a header-anchored
   // menu (Style/Tag/overflow ⋯) is open so its popover doesn't slide off-screen.
   let headerHidden = $derived(
     !controlsVisible && !styleMenuOpen && !tagMenuOpen && !overflowMenuOpen
   );
-  let scrolled = $state(false);
   let lastScrollY = $state(0);
   let suppressScrollHide = $state(false);
   let overlayEl: HTMLElement | undefined = $state();
   let readerBodyEl: HTMLElement | undefined = $state();
   let headerRef = $state<HTMLElement | undefined>(undefined);
 
-  // Reading-progress indicator: a thin top bar that fills left-to-right as the
-  // reader scrolls through the article body. Scroll-driven (not paragraph-driven)
-  // for smooth frame-by-frame motion; measured against the body's end rather than
-  // raw scrollHeight so it hits ~100% at the end of the text, not the bottom of
-  // the discussion section below it.
+  // Reading-progress indicator: fills left-to-right as the reader scrolls through
+  // the article body. Scroll-driven (not paragraph-driven) for smooth
+  // frame-by-frame motion; measured against the body's end rather than raw
+  // scrollHeight so it hits ~100% at the end of the text, not the bottom of the
+  // discussion section below it. It is drawn twice: as the bar's own bottom rail,
+  // and as a bare hairline that takes over once the bar slides away.
   let readingProgress = $state(0); // 0–1
   let progressVisible = $state(false);
   let progressRaf: number | null = null;
+
+  // The bar's title slot stays empty while the article's own H1 is on screen and
+  // fades in once it scrolls away, so the full-bleed bar always says what you're
+  // in without duplicating the headline right beneath it.
+  let articleHeaderEl: HTMLElement | undefined = $state();
+  let titleVisible = $state(false);
+
+  // Paged mode has nothing to scroll, so the rail tracks page position instead.
+  let pagedPage = $state(0);
+  let pagedTotal = $state(1);
 
   let itemKey = $derived(readerItem.key);
   let itemTags = $derived(itemLabelsStore.getTagsForItem(itemKey));
@@ -107,22 +123,28 @@
     readingProgress = Math.min(1, Math.max(0, scrollTop / denom));
   }
 
+  // Hand the title to the bar once the article's own header has left the top of
+  // the overlay. Measured against the overlay (not the bar) so the handoff point
+  // doesn't move when the bar itself slides in and out.
+  function updateTitleVisibility() {
+    if (paged) return; // page position drives it there
+    if (!overlayEl || !articleHeaderEl) return;
+    const overlayTop = overlayEl.getBoundingClientRect().top;
+    titleVisible = articleHeaderEl.getBoundingClientRect().bottom < overlayTop + 8;
+  }
+
   function scheduleProgressUpdate() {
     if (progressRaf != null) return;
     progressRaf = requestAnimationFrame(() => {
       progressRaf = null;
       updateReadingProgress();
+      updateTitleVisibility();
     });
   }
 
   function handleScroll() {
     if (!overlayEl) return;
     scheduleProgressUpdate();
-    // Scroll-aware divider: the desktop header blends into the page at the top
-    // and grows its hairline divider once content scrolls underneath it. (The
-    // header stays pinned — only the mobile bottom bar hides on scroll.)
-    const next = overlayEl.scrollTop > 4;
-    if (next !== scrolled) scrolled = next;
 
     if (suppressScrollHide) return;
     const currentY = overlayEl.scrollTop;
@@ -304,6 +326,19 @@
     return getAuthorLabel(readerItem, authorProfile);
   });
 
+  // The bar's subtitle: the most specific source we know — the feed, then the
+  // author, then the bare domain.
+  let sourceLabel = $derived.by(() => {
+    if (feedTitle) return feedTitle;
+    if (authorLabel) return authorLabel.replace(/^by\s+/i, '');
+    if (!itemUrl) return '';
+    try {
+      return new URL(itemUrl).hostname.replace(/^www\./, '');
+    } catch {
+      return '';
+    }
+  });
+
   let isArchived = $derived(itemLabelsStore.isArchived(itemKey));
   let isSaved = $derived(itemLabelsStore.isSaved(itemKey));
 
@@ -317,6 +352,25 @@
   let pagedController = $state<PagedController>();
   let pagedRestoredForKey: string | null = null;
   let pagedSaveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // One value feeds both drawings of the rail: scroll fraction while scrolling,
+  // page position while paged. The bar's bottom edge means the same thing either
+  // way, which is what makes it readable as a single edge.
+  let railProgress = $derived(
+    paged ? (pagedTotal > 1 ? pagedPage / (pagedTotal - 1) : 0) : readingProgress
+  );
+  let railVisible = $derived(paged ? pagedTotal > 1 : progressVisible);
+
+  // Paged mode: the H1 lives on page one, so the bar takes the title from page two.
+  $effect(() => {
+    if (paged) {
+      titleVisible = pagedPage > 0;
+      return;
+    }
+    // Leaving paged mode: re-measure against the restored scroll position rather
+    // than inheriting the page-based answer until the reader happens to scroll.
+    void tick().then(updateTitleVisibility);
+  });
 
   const PARA_SELECTOR = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
   function detectReaderParagraphs(): HTMLElement[] {
@@ -640,40 +694,43 @@
   bind:this={overlayEl}
   onscroll={handleScroll}
 >
-  <!-- Reading-progress bar: a thin One-Blue fill pinned to the very top edge of
-       the overlay (over the header's empty top padding), filling as the reader
-       moves through the article body. Stays put when the header hides on
-       scroll; clears the notch via safe-area inset on mobile. Paged mode shows a
-       per-page indicator instead. -->
-  {#if !paged}
-    <div
-      class="reading-progress"
-      class:visible={progressVisible}
-      role="progressbar"
-      aria-label="Reading progress"
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={Math.round(readingProgress * 100)}
-    >
-      <div class="reading-progress-fill" style:transform={`scaleX(${readingProgress})`}></div>
-    </div>
-  {/if}
-
-  <!-- Desktop: top header — a full-width flat bar (matches the feed header's
-       800px band) so the chrome doesn't shift when opening the reader. The
-       article below lives in its own narrower reading column. -->
-  <header
-    class="reader-header desktop-only"
-    class:scrolled
-    class:hidden={headerHidden}
-    bind:this={headerRef}
+  <!-- Reading progress, drawing two. A bare One-Blue hairline that stands in for
+       the bar's own rail while that bar is off-screen, so progress is never lost
+       mid-read. It pins to whichever edge the bar occupies: the top on desktop
+       (clearing the notch), the bottom on mobile (clearing the home indicator). -->
+  <div
+    class="reading-progress"
+    class:visible={railVisible}
+    class:detached={headerHidden}
+    class:bar-hidden={!controlsVisible}
+    role="progressbar"
+    aria-label="Reading progress"
+    aria-valuemin={0}
+    aria-valuemax={100}
+    aria-valuenow={Math.round(railProgress * 100)}
   >
+    <div class="reading-progress-fill" style:transform={`scaleX(${railProgress})`}></div>
+  </div>
+
+  <!-- Desktop: top bar — full-bleed, spanning the viewport rather than tracking
+       the reading column, so it frames the page identically in scroll and paged
+       mode (which use different content widths). -->
+  <header class="reader-header desktop-only" class:hidden={headerHidden} bind:this={headerRef}>
     <div class="reader-header-bar">
       <div class="reader-actions-left">
         <button class="action-btn" onclick={onClose} title="Back (Escape)">
           <Icon name="arrow-left" size={16} />
           <span class="action-label">Back</span>
         </button>
+      </div>
+
+      <!-- Takes over from the article's H1 once that scrolls away. Decorative:
+           the heading itself is the accessible name for the article. -->
+      <div class="reader-bar-title" class:visible={titleVisible} aria-hidden="true">
+        <span class="reader-bar-title-text">{title}</span>
+        {#if sourceLabel}
+          <span class="reader-bar-title-source">{sourceLabel}</span>
+        {/if}
       </div>
 
       <div class="reader-actions-right">
@@ -747,7 +804,10 @@
       </div>
     {/if}
 
-    {#if tagMenuOpen}
+    <!-- Desktop only: the mobile menu below anchors to the bottom bar's tag
+         button instead. Mounting both would register two document-level keydown
+         handlers, and the number-key tag shortcuts would cancel each other out. -->
+    {#if tagMenuOpen && !mobileStore.isMobile}
       <TagMenu
         {itemKey}
         itemType={labelItemType}
@@ -755,65 +815,37 @@
         onClose={() => (tagMenuOpen = false)}
       />
     {/if}
+
+    <!-- The bar's bottom edge *is* the progress rail: a full-bleed track that
+         fills One Blue as you move through the piece. One element does the job
+         of the divider and the progress bar, so the bar reads as a definite
+         edge instead of fading into the page. -->
+    <div class="reader-rail" aria-hidden="true">
+      <div class="reader-rail-fill" style:transform={`scaleX(${railProgress})`}></div>
+    </div>
   </header>
 
+  <!-- Mobile: one flat bar along the bottom edge, its top rail carrying reading
+       progress. Lives outside .reader-container so the paged column's flex
+       layout never has to account for it. -->
+  <ReaderBottomBar
+    progress={railProgress}
+    eased={paged}
+    visible={controlsVisible}
+    onBack={onClose}
+    {onArchive}
+    {isArchived}
+    {onToggleSave}
+    {isSaved}
+    onTag={() => (tagMenuOpen = !tagMenuOpen)}
+    tagCount={itemTags.length}
+    tagActive={tagMenuOpen}
+    bind:tagButtonEl={mobileTagBtnRef}
+    onMore={() => (styleSheetOpen = true)}
+    moreActive={styleSheetOpen}
+  />
+
   <div class="reader-container" class:paged>
-    <!-- Mobile: bottom bar -->
-    <div class="reader-bottom-bar mobile-only" class:hidden={!controlsVisible}>
-      <button class="bottom-btn" onclick={onClose} title="Back (Escape)">
-        <Icon name="arrow-left" size={20} />
-      </button>
-
-      <div class="bottom-bar-right">
-        {#if onArchive}
-          <button
-            class="bottom-btn"
-            onclick={() => onArchive()}
-            title={isArchived ? 'Move to inbox' : 'Archive (e)'}
-          >
-            <Icon name={isArchived ? 'inbox' : 'archive'} size={20} />
-          </button>
-          <span class="bottom-separator"></span>
-        {/if}
-        {#if onToggleSave}
-          <button
-            class="bottom-btn"
-            class:active={isSaved}
-            onclick={() => onToggleSave!()}
-            title={isSaved ? 'Unsave' : 'Save (s)'}
-          >
-            <Icon name="bookmark" size={20} />
-          </button>
-        {/if}
-        <button
-          class="bottom-btn"
-          class:active={tagMenuOpen}
-          bind:this={tagBtnRef}
-          onclick={() => (tagMenuOpen = !tagMenuOpen)}
-          title="Tag (t)"
-        >
-          <Icon name="tag" size={20} />
-        </button>
-        <span class="bottom-separator"></span>
-        <button
-          class="bottom-btn"
-          class:active={paged}
-          onclick={() => preferences.toggleReaderViewMode()}
-          title={paged ? 'Switch to scroll view' : 'Switch to paged view'}
-        >
-          <Icon name={paged ? 'align-justify' : 'book-open'} size={20} />
-        </button>
-        <button
-          class="bottom-btn"
-          class:active={styleSheetOpen}
-          onclick={() => (styleSheetOpen = true)}
-          title="Style & Actions"
-        >
-          <Icon name="sliders" size={20} />
-        </button>
-      </div>
-    </div>
-
     <!-- Mobile: style & actions bottom sheet -->
     {#if mobileStore.isMobile}
       <BottomSheet
@@ -827,6 +859,7 @@
             <div class="toolbar-wrapper">
               <AppearanceToolbar />
             </div>
+            <ReadingModeToggle />
           </div>
 
           <div class="style-sheet-section">
@@ -916,7 +949,7 @@
         <TagMenu
           {itemKey}
           itemType={labelItemType}
-          anchorEl={tagBtnRef}
+          anchorEl={mobileTagBtnRef}
           onClose={() => (tagMenuOpen = false)}
         />
       {/if}
@@ -936,7 +969,7 @@
     <!-- The article header + body, shared verbatim between scroll and paged modes
          (same DOM element, so `readerBodyEl` + hooks bind identically either way). -->
     {#snippet articleContent()}
-      <div class="reader-article-header">
+      <div class="reader-article-header" bind:this={articleHeaderEl}>
         <h1 class="reader-title">{title}</h1>
         <div class="reader-meta">
           {#if faviconUrl}
@@ -993,8 +1026,10 @@
     {#if paged}
       <!-- Kindle-style paged reading. -->
       <PagedView
-        bottomInset={mobileStore.isMobile ? 64 : 0}
+        bottomInset={mobileStore.isMobile ? READER_BAR_INSET : 0}
         deps={() => [sanitizedContent, preferences.articleFont, preferences.articleFontSize]}
+        bind:currentPage={pagedPage}
+        bind:totalPages={pagedTotal}
         oncontroller={(c) => (pagedController = c)}
         onpagechange={(page) => handlePagedPageChange(page)}
       >
@@ -1065,19 +1100,49 @@
     height: auto;
   }
 
-  /* Edition view: the chrome takes the publication background (not the app's
-     default) so it matches the themed surface while staying opaque — a sticky
-     header must occlude the article scrolling beneath it, not let text bleed
-     through. */
-  .reader-overlay.magazine-mode .reader-header,
-  .reader-overlay.magazine-mode .reader-bottom-bar {
-    background: var(--mag-bg);
+  /* Edition view: the chrome takes the publication's own palette (not the app's
+     default) so it belongs to the magazine rather than cutting across it — and
+     stays opaque, since a pinned bar must occlude the article moving beneath it
+     rather than let text bleed through. Declared as variables so the mobile bar,
+     which lives in its own component, repaints from the same source. */
+  .reader-overlay.magazine-mode {
+    --reader-chrome-bg: var(--mag-bg);
+    --reader-chrome-fg: color-mix(in srgb, var(--mag-fg) 78%, var(--mag-bg));
+    --reader-chrome-accent: var(--mag-accent);
+    --reader-rail-track: color-mix(in srgb, var(--mag-fg) 18%, transparent);
+    --reader-rail-fill: var(--mag-accent);
   }
 
-  /* Reading-progress bar. Fixed to the top edge, above the sticky header (z 10)
-     but below RefreshProgressBar (z 500) so the refresh bar wins on the rare
-     overlap. Flat-by-default: transparent track, One Blue fill, no shadow.
-     Calm: a 2px hairline that fades in only once the article is scrollable. */
+  .reader-overlay.magazine-mode .reader-header {
+    background: var(--reader-chrome-bg);
+  }
+
+  .reader-overlay.magazine-mode .reader-rail {
+    background: var(--reader-rail-track);
+  }
+
+  .reader-overlay.magazine-mode .reader-rail-fill {
+    background: var(--reader-rail-fill);
+  }
+
+  .reader-overlay.magazine-mode .reader-bar-title-text {
+    color: var(--mag-fg);
+  }
+
+  /* Tinted from the edition's own foreground toward its background (not toward
+     transparent, and never gray) so it stays legible on any publication palette. */
+  .reader-overlay.magazine-mode .reader-bar-title-source {
+    color: color-mix(in srgb, var(--mag-fg) 78%, var(--mag-bg));
+  }
+
+  /* Detached progress hairline. Fixed above the sticky header (z 10) but below
+     RefreshProgressBar (z 500) so the refresh bar wins on the rare overlap.
+     Flat-by-default: transparent track, One Blue fill, no shadow — no track
+     here, so it reads as progress rather than as a stray divider.
+
+     It only ever draws while the bar that owns the rail is off-screen; otherwise
+     two lines would show the same value. Desktop watches the top bar, mobile the
+     bottom one. */
   .reading-progress {
     position: fixed;
     top: env(safe-area-inset-top, 0px);
@@ -1088,20 +1153,35 @@
     background: transparent;
     overflow: hidden;
     opacity: 0;
-    transition: opacity 0.2s ease;
+    transition: opacity 0.25s ease;
     pointer-events: none;
   }
 
-  .reading-progress.visible {
-    opacity: 1;
+  @media (min-width: 1001px) {
+    .reading-progress.visible.detached {
+      opacity: 1;
+    }
   }
 
   .reading-progress-fill {
     height: 100%;
-    background: var(--color-primary, #0066cc);
+    background: var(--reader-rail-fill, var(--color-primary, #0066cc));
     transform-origin: left;
     /* No transition — scroll drives the fill frame-by-frame for smooth motion. */
     will-change: transform;
+  }
+
+  @media (max-width: 1000px) {
+    /* Pinned to the bottom, above the home indicator: it stands in for the
+       mobile bar's top rail, so it belongs at that bar's edge. */
+    .reading-progress {
+      top: auto;
+      bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    .reading-progress.visible.bar-hidden {
+      opacity: 1;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -1124,11 +1204,12 @@
     padding: 0 1rem 4rem;
   }
 
-  /* A flat, solid header bar pinned to the top of the overlay. It spans the full
-     width and re-centers its controls in an 800px band — identical geometry to
-     the feed header (.feed-header-fixed / .feed-header-controls) so the chrome
-     doesn't shift when opening the reader. Flat-by-default: one 1px divider, no
-     blur, no shadow. */
+  /* A flat, solid bar pinned to the top of the overlay, full-bleed edge to edge.
+     It deliberately does *not* track the reading column: scroll mode centers an
+     800px article and paged mode a 1200px spread, so a column-width bar lands in
+     the wrong place in one of them. Framing the viewport is the one geometry
+     that's right in both. Flat-by-default: no blur, no shadow — the rail at the
+     bottom is the only edge it needs. */
   .reader-header {
     position: sticky;
     top: 0;
@@ -1151,32 +1232,37 @@
     transform: translateY(-100%);
   }
 
-  /* The divider spans only the 800px control band, centered — matching the feed
-     header. Scroll-aware: hidden at the top (the bar blends into the page) and
-     fades in once content scrolls underneath. */
-  .reader-header::after {
-    content: '';
-    position: absolute;
-    inset-inline: 0;
-    bottom: 0;
-    margin-inline: auto;
-    max-width: 800px;
-    height: 1px;
+  /* The rail: the bar's bottom edge and its reading-progress indicator, one
+     element. The track is a solid 2px in Divider so the edge is unmistakable at
+     any scroll position (this replaces the old fade-in hairline), and the fill
+     is One Blue driven by the same 0–1 value in both scroll and paged mode. */
+  .reader-rail {
+    position: relative;
+    flex-shrink: 0;
+    height: 2px;
+    overflow: hidden;
     background: var(--color-border);
-    opacity: 0;
-    transition: opacity 0.2s ease;
   }
 
-  .reader-header.scrolled::after {
-    opacity: 1;
+  .reader-rail-fill {
+    height: 100%;
+    background: var(--color-primary, #0066cc);
+    transform-origin: left;
+    /* No transition in scroll mode — scroll drives it frame-by-frame. Paged mode
+       jumps a whole page at a time, so it gets an eased settle below. */
+    will-change: transform;
+  }
+
+  .reader-overlay.paged .reader-rail-fill {
+    transition: transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .reader-header::after {
+    .reader-header {
       transition: none;
     }
 
-    .reader-header {
+    .reader-overlay.paged .reader-rail-fill {
       transition: none;
     }
   }
@@ -1185,15 +1271,10 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 0.75rem;
-    /* width:100% is load-bearing: as a flex item in the column-flex header, the
-       `margin: 0 auto` centering would otherwise disable stretch and shrink the
-       bar to its content width, collapsing space-between (Back + actions bunch
-       together). An explicit width gives it the full 800px to spread across. */
+    gap: 1rem;
     width: 100%;
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 0.625rem 1rem;
+    /* Full-bleed: inset from the viewport edges, not centered in a column. */
+    padding: 0.625rem clamp(0.75rem, 1.5vw, 1.5rem);
   }
 
   .reader-actions-left,
@@ -1202,6 +1283,52 @@
     flex-wrap: nowrap;
     align-items: center;
     gap: 0.5rem;
+    /* Never let the title slot squeeze the controls. */
+    flex-shrink: 0;
+  }
+
+  /* The title slot fills the width the full-bleed bar opened up. It centers in
+     the space left between Back and the actions rather than in the viewport, so
+     it can never slide underneath either group. */
+  .reader-bar-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 0.5rem;
+    flex: 1 1 auto;
+    min-width: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+
+  .reader-bar-title.visible {
+    opacity: 1;
+  }
+
+  .reader-bar-title-text {
+    overflow: hidden;
+    color: var(--color-text);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .reader-bar-title-source {
+    flex-shrink: 0;
+    max-width: 14ch;
+    overflow: hidden;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reader-bar-title {
+      transition: none;
+    }
   }
 
   /* Matches the feed header's .view-toggle button: padded, 6px radius, grey
@@ -1263,106 +1390,25 @@
     flex-shrink: 0;
   }
 
-  /* Mobile bottom bar */
-  .reader-bottom-bar {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem 1rem;
-    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
-    z-index: 10;
-    pointer-events: none;
-    transition:
-      transform 0.25s ease,
-      opacity 0.25s ease;
-  }
-
-  .reader-bottom-bar.hidden {
-    transform: translateY(100%);
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  .bottom-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(255, 255, 255, 0.85);
-    backdrop-filter: blur(8px);
-    border: none;
-    padding: 0.7rem;
-    border-radius: 999px;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
-    color: var(--color-text-secondary);
-    pointer-events: auto;
-    cursor: pointer;
-    transition: color 0.15s;
-  }
-
-  .bottom-btn:active,
-  .bottom-btn.active {
-    color: var(--color-primary, #0066cc);
-  }
-
-  .bottom-bar-right {
-    display: flex;
-    align-items: center;
-    gap: 0.125rem;
-    background: rgba(255, 255, 255, 0.85);
-    backdrop-filter: blur(8px);
-    border-radius: 999px;
-    padding: 0.25rem 0.5rem;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
-    pointer-events: auto;
-  }
-
-  .bottom-bar-right .bottom-btn {
-    background: none;
-    backdrop-filter: none;
-    box-shadow: none;
-    padding: 0.6rem;
-  }
-
-  .bottom-separator {
-    width: 1px;
-    height: 1.25rem;
-    background: var(--color-border, #e0e0e0);
-    opacity: 0.5;
-  }
-
-  /* Desktop/mobile visibility */
-  .mobile-only {
-    display: none;
-  }
-
+  /* Desktop/mobile visibility (the mobile bar carries its own breakpoint guard) */
   .desktop-only {
     display: flex;
   }
 
   @media (max-width: 1000px) {
-    .mobile-only {
-      display: flex;
-    }
-
     .desktop-only {
       display: none !important;
     }
   }
 
-  /* Inline style row: a flat extension of the header bar, right-aligned beneath
-     the controls within the same 800px band. No floating pill — it sits in
-     normal flow and pushes the article down (closes on click-outside). */
+  /* Inline style row: a flat extension of the bar, right-aligned beneath the
+     controls it belongs to and sharing their full-bleed inset. No floating pill —
+     it sits in normal flow above the rail (closes on click-outside). */
   .reader-style-row {
     display: flex;
     justify-content: flex-end;
-    max-width: 800px;
-    margin: 0 auto;
     width: 100%;
-    padding: 0 1rem 0.625rem;
+    padding: 0 clamp(0.75rem, 1.5vw, 1.5rem) 0.625rem;
   }
 
   .reader-article-header {
@@ -1685,18 +1731,6 @@
   }
 
   @media (prefers-color-scheme: dark) {
-    .bottom-btn {
-      background: rgba(40, 40, 40, 0.95);
-    }
-
-    .bottom-bar-right {
-      background: rgba(40, 40, 40, 0.95);
-    }
-
-    .bottom-bar-right .bottom-btn {
-      background: none;
-    }
-
     .sheet-action-btn:active {
       background: rgba(255, 255, 255, 0.1);
     }

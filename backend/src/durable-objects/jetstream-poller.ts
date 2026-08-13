@@ -1,5 +1,6 @@
 import type { Env } from '../types';
 import { resolveCanonicalUrl } from '../utils/canonical-url';
+import { upsertSubscriptionFromFirehose } from '../services/firehose-subscription';
 
 // Jetstream event types
 interface JetstreamEvent {
@@ -21,6 +22,7 @@ interface JetstreamEvent {
       subject?: string; // For follow records
       title?: string; // For subscription records
       category?: string; // For subscription records
+      siteUrl?: string; // For subscription records: the public linkblog page
       // For site.standard.document records
       site?: string;
       publishedAt?: string;
@@ -40,90 +42,6 @@ interface PollStats {
   documents: { processed: number; errors: number };
   duration: number;
   lastPollAt: number;
-}
-
-/**
- * Mirror one `app.skyreader.feed.subscription` commit into `subscriptions_cache`.
- *
- * UPDATE first, INSERT only when the row is genuinely new. A blanket
- * `INSERT OR REPLACE` deletes and re-inserts the row, which silently resets every
- * column the PDS record doesn't carry: `site_url` (for a linkblog connected to an
- * existing publication, the only durable "this is a linkblog" tell — the rkey is
- * arbitrary), `atmosphere_previous_feed_url` (a pending follow-graph migration
- * that reconcileAtmosphereSubscriptions still has to act on), `active` (a parked
- * feed would come back reactivated) and `atmosphere_synced`. `UPDATE OR REPLACE`
- * keeps the old collision behavior for the rare case where the new feed_url
- * collides with another row of the same user on idx_subs_cache_user_source_feed.
- */
-export async function upsertSubscriptionFromRecord(
-  db: D1Database,
-  did: string,
-  recordUri: string,
-  record: Record<string, unknown>
-): Promise<void> {
-  const str = (value: unknown): string | null =>
-    typeof value === 'string' && value ? value : null;
-  const feedUrl = str(record.feedUrl) || '';
-  const title = str(record.title);
-  const sourceType = str(record.sourceType);
-  const subjectDid = str(record.subjectDid);
-  const customTitle = str(record.customTitle);
-  const customIconUrl = str(record.customIconUrl);
-  const category = str(record.category);
-  // Absent means "the record doesn't carry one", not "clear it" — a follower's
-  // site_url is back-filled server-side by the linkblog follower migration and
-  // must survive a mirror of a record written before that column existed.
-  const siteUrl = str(record.siteUrl);
-  const createdAtRaw = str(record.createdAt);
-  const createdAt = createdAtRaw
-    ? Math.floor(new Date(createdAtRaw).getTime() / 1000)
-    : Math.floor(Date.now() / 1000);
-
-  const updated = await db
-    .prepare(
-      `UPDATE OR REPLACE subscriptions_cache
-			    SET feed_url = ?, title = ?, created_at = ?, source_type = ?, subject_did = ?,
-			        custom_title = ?, custom_icon_url = ?, category = ?,
-			        site_url = COALESCE(?, site_url)
-			  WHERE user_did = ? AND record_uri = ?`
-    )
-    .bind(
-      feedUrl,
-      title,
-      createdAt,
-      sourceType,
-      subjectDid,
-      customTitle,
-      customIconUrl,
-      category,
-      siteUrl,
-      did,
-      recordUri
-    )
-    .run();
-
-  if (updated.meta?.changes) return;
-
-  await db
-    .prepare(
-      `INSERT OR REPLACE INTO subscriptions_cache
-			   (user_did, record_uri, feed_url, title, site_url, created_at, source_type, subject_did, custom_title, custom_icon_url, category)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .bind(
-      did,
-      recordUri,
-      feedUrl,
-      title,
-      siteUrl,
-      createdAt,
-      sourceType,
-      subjectDid,
-      customTitle,
-      customIconUrl,
-      category
-    )
-    .run();
 }
 
 // Constants
@@ -380,7 +298,7 @@ export class JetstreamPoller implements DurableObject {
 
     if ((operation === 'create' || operation === 'update') && record) {
       try {
-        await upsertSubscriptionFromRecord(this.env.DB, did, recordUri, record);
+        await upsertSubscriptionFromFirehose(this.env.DB, did, rkey, record);
       } catch (dbError) {
         console.error(
           `[JetstreamPoller] D1 WRITE ERROR upserting subscription for ${did}:`,

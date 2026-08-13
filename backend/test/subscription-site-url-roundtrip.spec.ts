@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { syncSubscriptions } from '../src/services/subscription-sync';
-import { upsertSubscriptionFromRecord } from '../src/durable-objects/jetstream-poller';
+import { upsertSubscriptionFromFirehose } from '../src/services/firehose-subscription';
 import type { Session } from '../src/types';
 
 // A linkblog connected to an existing publication has an arbitrary rkey, so
@@ -22,7 +22,8 @@ const TEST_DPOP_KEY = {
 const TEST_DID = 'did:plc:sitrurlreader';
 const AUTHOR_DID = 'did:plc:sitrurlauthor';
 const COLLECTION = 'app.skyreader.feed.subscription';
-const RECORD_URI = `at://${TEST_DID}/${COLLECTION}/linkblogfollow1`;
+const RKEY = 'linkblogfollow1';
+const RECORD_URI = `at://${TEST_DID}/${COLLECTION}/${RKEY}`;
 const PUBLICATION = `at://${AUTHOR_DID}/site.standard.publication/leaflet-essays`;
 const LINKBLOG_PAGE = `https://linkblogs.skyreader.app/${AUTHOR_DID}/`;
 
@@ -128,8 +129,7 @@ describe('subscription siteUrl round-trip', () => {
 
     // The record as it comes off the firehose for a device that pushed before the
     // column existed: no siteUrl at all.
-    await upsertSubscriptionFromRecord(env.DB, TEST_DID, RECORD_URI, {
-      $type: COLLECTION,
+    await upsertSubscriptionFromFirehose(env.DB, TEST_DID, RKEY, {
       feedUrl: PUBLICATION,
       title: "Author's links",
       sourceType: 'atproto.documents',
@@ -150,8 +150,7 @@ describe('subscription siteUrl round-trip', () => {
   it('takes the record siteUrl when it carries one, and mirrors changed fields', async () => {
     await insertFollow({ siteUrl: null });
 
-    await upsertSubscriptionFromRecord(env.DB, TEST_DID, RECORD_URI, {
-      $type: COLLECTION,
+    await upsertSubscriptionFromFirehose(env.DB, TEST_DID, RKEY, {
       feedUrl: PUBLICATION,
       title: 'Renamed',
       siteUrl: LINKBLOG_PAGE,
@@ -168,8 +167,7 @@ describe('subscription siteUrl round-trip', () => {
   });
 
   it('inserts a row, with its siteUrl, for a record it has never seen', async () => {
-    await upsertSubscriptionFromRecord(env.DB, TEST_DID, RECORD_URI, {
-      $type: COLLECTION,
+    await upsertSubscriptionFromFirehose(env.DB, TEST_DID, RKEY, {
       feedUrl: PUBLICATION,
       title: "Author's links",
       siteUrl: LINKBLOG_PAGE,

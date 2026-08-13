@@ -155,7 +155,9 @@
   />
   <link rel="icon" type="image/svg+xml" href={Logo} />
   <link rel="manifest" href="/manifest.json" />
-  <meta name="theme-color" content="#4A9FD4" />
+  <!-- theme-color lives in app.html, where it can carry a light and a dark
+       variant. This block renders into %sveltekit.head%, i.e. after those, so a
+       single value here would win and paint one colour in both schemes. -->
 </svelte:head>
 
 <Toast />

@@ -68,6 +68,13 @@ export const harnesses: HarnessEntry[] = [
     components: ['NavSection', 'ViewItem', 'ContextMenu', 'ResizeHandle'],
   },
   {
+    slug: 'reader',
+    title: 'Mobile bottom chrome',
+    description:
+      'Both bottom bars over a scrolling surface — the reader’s (progress rail, detached hairline, style sheet) and the app’s (view switcher + actions). Mobile widths only.',
+    components: ['ReaderBottomBar', 'MobileBottomBar', 'ReadingModeToggle', 'BottomSheet'],
+  },
+  {
     slug: 'feed',
     title: 'Feed surfaces',
     description:

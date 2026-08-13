@@ -324,12 +324,9 @@ export async function syncSubscriptions(
       console.log(`[SubscriptionSync] Successfully inserted ${toAddLocally.length} subscriptions`);
     }
 
-    // Step 3b: Auto-fill freed active slots. Parking is sticky, but capacity does
-    // change — a tier upgrade raises maxSubscriptions, and removing/parking active
-    // feeds frees slots. Rather than leaving those slots empty until the user
-    // manually reactivates, promote the oldest parked rows (createdAt order, the
-    // same order parking fills) back to active to fill the headroom. Re-query the
-    // live active count so concurrent syncs / ignored inserts can't drift it.
+    // Step 3b: Auto-fill freed active slots from capacity-parked rows. Rows the
+    // user explicitly parked are sticky and must never be promoted by sync.
+    // Re-query the live active count so concurrent syncs / ignored inserts can't drift it.
     const activeRow = await env.DB.prepare(
       'SELECT COUNT(*) as count FROM subscriptions_cache WHERE user_did = ? AND active = 1'
     )
@@ -340,7 +337,7 @@ export async function syncSubscriptions(
       const slack = maxSubscriptions - liveActive;
       const parkedRows = await env.DB.prepare(
         `SELECT record_uri FROM subscriptions_cache
-         WHERE user_did = ? AND active = 0
+         WHERE user_did = ? AND active = 0 AND user_parked = 0
          ORDER BY created_at ASC, record_uri ASC
          LIMIT ?`
       )
