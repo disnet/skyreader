@@ -17,6 +17,7 @@ import { FeedProxyClient } from './feed-proxy-client';
 import { fetchFollows, fetchProfiles, type BskyProfileLite } from './bsky-appview';
 import {
   getConnectedLinkblogAuthors,
+  getDisabledLinkblogAuthors,
   getLinkblogTargets,
   linkblogBaseUrl,
   publicationUri,
@@ -77,7 +78,19 @@ export async function getLinkblogFriends(session: Session, env: Env): Promise<Li
   ]);
 
   const registrySet = new Set([...registry, ...connected]);
-  const people = follows.filter((f) => f.did !== session.did && registrySet.has(f.did));
+  // Intersect with the follows first. getDisabledLinkblogAuthors costs one
+  // sequential D1 query per 100 DIDs, and the whole registry is orders of
+  // magnitude larger than the handful of it a given user follows — the answer is
+  // the same either way (getLinkblogTargets on the next line already reads this
+  // way round).
+  const followed = follows.filter((f) => f.did !== session.did && registrySet.has(f.did));
+  const disabledSet = new Set(
+    await getDisabledLinkblogAuthors(
+      env,
+      followed.map((f) => f.did)
+    )
+  );
+  const people = followed.filter((f) => !disabledSet.has(f.did));
   // One batched settings lookup resolves everyone's current publication.
   const targets = await getLinkblogTargets(
     env,
@@ -99,11 +112,27 @@ export async function getLinkblogDiscover(session: Session, env: Env): Promise<L
     fetchFollows(session.did).catch(() => [] as BskyProfileLite[]),
   ]);
 
+  const candidates = [...new Set([...registry, ...connected])].filter((did) => did !== session.did);
   const followMap = new Map(follows.map((f) => [f.did, f]));
-  const authors = [...new Set([...registry, ...connected])].filter((did) => did !== session.did);
 
-  const friendDids = authors.filter((did) => followMap.has(did));
-  const otherDids = authors.filter((did) => !followMap.has(did)).slice(0, MAX_DISCOVER_OTHERS);
+  // Narrow to the DIDs this response can actually contain BEFORE asking which are
+  // disabled: that lookup costs one sequential D1 query per 100 DIDs, and the
+  // registry is orders of magnitude larger than the page we return (friends, plus
+  // a capped slice of everyone else). Same reasoning as getLinkblogFriends above.
+  // The "others" window is oversampled so a few deleted linkblogs in it don't
+  // shorten the list, and it stays bounded either way.
+  const friendCandidates = candidates.filter((did) => followMap.has(did));
+  const otherCandidates = candidates
+    .filter((did) => !followMap.has(did))
+    .slice(0, MAX_DISCOVER_OTHERS * 2);
+  const disabledSet = new Set(
+    await getDisabledLinkblogAuthors(env, [...friendCandidates, ...otherCandidates])
+  );
+
+  const friendDids = friendCandidates.filter((did) => !disabledSet.has(did));
+  const otherDids = otherCandidates
+    .filter((did) => !disabledSet.has(did))
+    .slice(0, MAX_DISCOVER_OTHERS);
 
   // Friends already have profiles from getFollows; resolve only the rest.
   const [otherProfiles, targets] = await Promise.all([

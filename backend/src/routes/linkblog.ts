@@ -15,14 +15,17 @@ import {
 import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
 import {
   deleteLinkblogShare,
+  deleteLinkblog,
   DOCUMENT_COLLECTION,
   FOREIGN_RECORD_ERROR,
   getPublicationMeta,
   getLinkblogTarget,
+  isLinkblogDisabled,
   httpUrlOrUndefined,
   linkblogBaseUrl,
   PUBLICATION_COLLECTION,
   publicationUri,
+  restoreLinkblog,
   updateLinkblogShareNote,
   updatePublication,
   writeLinkblogShare,
@@ -107,6 +110,9 @@ export async function handleCreateLinkblogShare(request: Request, env: Env): Pro
   if (!session) return json({ error: 'Unauthorized' }, 401);
   if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
     return insufficientScopesResponse();
+  }
+  if (await isLinkblogDisabled(env, session.did)) {
+    return json({ error: 'linkblog_deleted' }, 409);
   }
 
   let body: CreateLinkblogShareRequest;
@@ -271,6 +277,9 @@ export async function handleUpdatePublication(request: Request, env: Env): Promi
   if (!session) return json({ error: 'Unauthorized' }, 401);
   if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
     return insufficientScopesResponse();
+  }
+  if (await isLinkblogDisabled(env, session.did)) {
+    return json({ error: 'linkblog_deleted' }, 409);
   }
   if ((await getLinkblogTarget(env, session.did)).external) {
     return json({ error: 'This publication is managed by its home app' }, 409);
@@ -548,6 +557,9 @@ export async function handleConnectPublication(request: Request, env: Env): Prom
     return json(await getPublicationMeta(session, env));
   }
   if (request.method !== 'PUT') return json({ error: 'Method not allowed' }, 405);
+  if (await isLinkblogDisabled(env, session.did)) {
+    return json({ error: 'linkblog_deleted' }, 409);
+  }
   let body: { publicationUri?: string; format?: ContentFormat };
   try {
     body = await request.json();
@@ -600,6 +612,40 @@ export async function handleConnectPublication(request: Request, env: Env): Prom
     .bind(session.did, selectedPublicationUri, format, now, now)
     .run();
   await migrateLinkblogFollowers(env, session.did, previousTarget.siteUri, selectedPublicationUri);
+  return json(await getPublicationMeta(session, env));
+}
+
+export async function handleDeletePublication(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Unauthorized' }, 401);
+  if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
+    return insufficientScopesResponse();
+  }
+  const result = await deleteLinkblog(session, env);
+  if (!result.success) return json({ error: result.error }, result.retryable ? 503 : 502);
+  // Delete moves the target back to the default publication the same way
+  // disconnecting does, so followers of a connected publication have to come
+  // with it — otherwise a restore publishes to `skyreader-links` while every
+  // existing subscriber still points at a feed that will never update again.
+  await migrateLinkblogFollowers(
+    env,
+    session.did,
+    result.data.previousSiteUri,
+    publicationUri(session.did)
+  );
+  return json({ success: true, deletedPosts: result.data.deletedPosts });
+}
+
+export async function handleRestorePublication(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Unauthorized' }, 401);
+  // Gated like every other linkblog mutation. Restoring only flips a D1 flag, but
+  // a session that can't write is one whose next share fails — better to send it
+  // into the re-auth flow here than to hand back a linkblog it can't publish to.
+  if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
+    return insufficientScopesResponse();
+  }
+  await restoreLinkblog(session, env);
   return json(await getPublicationMeta(session, env));
 }
 

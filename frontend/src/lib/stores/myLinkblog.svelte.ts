@@ -19,6 +19,7 @@ import { buildOptimisticLinkPost, getExternalArticleLink } from '$lib/utils/link
 import { noteToLeafletBlocks } from '$lib/utils/linkPostNote';
 import { loadDigests, saveDigests, scopeKey } from '$lib/services/documentDigests';
 import type { LinkblogPublication, SocialDocument } from '$lib/types';
+import { preferences } from '$lib/stores/preferences.svelte';
 
 const PUBLICATION_COLLECTION = 'site.standard.publication';
 const LINKBLOG_RKEY = 'skyreader-links';
@@ -46,8 +47,27 @@ function createMyLinkblogStore() {
   // drop its documents while the other scope refreshes.
   const scopeResults = new Map<string, { documents: SocialDocument[]; complete: boolean }>();
 
+  // A forced load has to await the pull in flight rather than return past it:
+  // callers chain reconcile() onto load(true), and resolving early runs the
+  // prune against whatever state the unfinished pull hasn't written yet.
+  let inFlight: Promise<void> | null = null;
+
   async function load(force = false) {
-    if ((loaded || loading) && !force) return;
+    // An unforced load piggybacks on the pull already running. A forced one can't:
+    // that pull may itself be unforced and skip the refresh (`loaded && !force`),
+    // so wait for it to settle and then do the real thing.
+    while (inFlight) {
+      if (!force) return;
+      await inFlight.catch(() => {});
+    }
+    const run = loadOnce(force);
+    inFlight = run.finally(() => {
+      inFlight = null;
+    });
+    await inFlight;
+  }
+
+  async function loadOnce(force = false) {
     const user = auth.user;
     if (!user) return;
 
@@ -58,7 +78,26 @@ function createMyLinkblogStore() {
       // scoped to the default alone would come back (completely) empty for a user
       // who has switched.
       const pub = await api.getLinkblogPublication().catch(() => null);
-      if (pub) publication = pub;
+      if (pub) {
+        publication = pub;
+        preferences.setLinkblogDisabled(pub.disabled);
+        if (pub.disabled) {
+          documents = [];
+          loaded = true;
+          // A deleted linkblog is an authoritative empty set, not an unfinished
+          // pull: the posts are gone from the PDS. Say so, or reconcile() bails
+          // on a stale `false` and leaves every share sitting in IndexedDB,
+          // still rendering its card as shared.
+          lastPullComplete = true;
+          scopeResults.clear();
+          optimisticUris.clear();
+          return;
+        }
+      }
+      // The disabled preference is device-global, so publication metadata must
+      // be refreshed before honoring the in-memory document cache. This also
+      // corrects state after switching accounts or restoring on another device.
+      if (loaded && !force) return;
       const target = pub ?? publication;
       const defaultUri = publicationUri(user.did);
       const scopes = [...new Set([target?.uri || defaultUri, defaultUri])];

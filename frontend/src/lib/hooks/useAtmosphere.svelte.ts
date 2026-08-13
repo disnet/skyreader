@@ -15,6 +15,7 @@ import type { IconName } from '$lib/components/Icon.svelte';
 import type { LaneId, LaneRowVM, ExpandedLaneItemsVM } from '$lib/components/articleCardView.types';
 import { articleMentionsStore } from '$lib/stores/articleMentions.svelte';
 import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
+import { preferences } from '$lib/stores/preferences.svelte';
 
 // Per-lane display metadata. The count + verb come from the network breakdown;
 // this fixes the icon, name, and the create-affordance label per lane.
@@ -109,6 +110,7 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     const shared = opts.isShared();
     const rows: LaneRowVM[] = [];
     for (const id of LANE_ORDER) {
+      if (id === 'linkblog' && preferences.linkblogDisabled) continue;
       const data = mentionLaneMap.get(id);
       const count = data?.count ?? 0;
       const canCreate = opts.canCreate(id);

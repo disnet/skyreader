@@ -15,7 +15,10 @@
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
   import SaveBackingPicker from '$lib/components/settings/SaveBackingPicker.svelte';
   import LinkblogTargetPicker from '$lib/components/settings/LinkblogTargetPicker.svelte';
+  import DeleteLinkblogModal from '$lib/components/settings/DeleteLinkblogModal.svelte';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
+  import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
+  import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { downloadOPML } from '$lib/utils/opml-exporter';
   import { api, RateLimitError } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
@@ -103,6 +106,7 @@
   let linkblogError = $state<string | null>(null);
   let linkblogSuccess = $state<string | null>(null);
   let linkblogChoices = $state<LinkblogPublicationChoice[]>([]);
+  let showDeleteLinkblogConfirm = $state(false);
 
   onMount(async () => {
     if (!auth.isAuthenticated) {
@@ -128,6 +132,7 @@
         api.listLinkblogPublications(),
       ]);
       linkblogPub = pub;
+      preferences.setLinkblogDisabled(pub.disabled);
       linkblogChoices = choices.publications;
       linkblogName = pub.name;
       linkblogDescription = pub.description ?? '';
@@ -135,6 +140,66 @@
       console.error('Failed to load linkblog publication:', error);
     } finally {
       isLinkblogLoading = false;
+    }
+  }
+
+  function handleDeleteLinkblog() {
+    if (isSavingLinkblog) return;
+    linkblogSuccess = null;
+    if (!syncStore.isOnline) {
+      linkblogError = 'You are offline. Connect to the internet to delete your linkblog.';
+      return;
+    }
+    linkblogError = null;
+    showDeleteLinkblogConfirm = true;
+  }
+
+  async function confirmDeleteLinkblog() {
+    if (isSavingLinkblog) return;
+    isSavingLinkblog = true;
+    linkblogError = null;
+    try {
+      const result = await api.deleteLinkblog();
+      preferences.setLinkblogDisabled(true);
+      if (linkblogPub) linkblogPub = { ...linkblogPub, disabled: true, exists: false };
+      linkblogSuccess = `Linkblog deleted. ${result.deletedPosts} post${result.deletedPosts === 1 ? '' : 's'} removed.`;
+      showDeleteLinkblogConfirm = false;
+      // The posts are gone from the PDS, but every card still holds its local
+      // share state: without this they keep rendering as shared, with a Remove
+      // that would address a record that no longer exists. Same pair the app
+      // runs on boot — do it now rather than leaving the window open until then.
+      await myLinkblogStore.load(true);
+      await linkblogStore.reconcile();
+    } catch (error) {
+      // A delete that fails partway leaves the linkblog disabled server-side, so
+      // re-read the publication rather than trusting the pre-delete copy: the
+      // section then shows the deleted state (and its Restore) instead of
+      // offering edits that every write path now rejects.
+      linkblogError = error instanceof Error ? error.message : 'Could not delete your linkblog.';
+      showDeleteLinkblogConfirm = false;
+      await loadLinkblog();
+    } finally {
+      isSavingLinkblog = false;
+    }
+  }
+
+  async function handleRestoreLinkblog() {
+    if (isSavingLinkblog) return;
+    linkblogSuccess = null;
+    if (!syncStore.isOnline) {
+      linkblogError = 'You are offline. Connect to the internet to restore your linkblog.';
+      return;
+    }
+    isSavingLinkblog = true;
+    linkblogError = null;
+    try {
+      linkblogPub = await api.restoreLinkblog();
+      preferences.setLinkblogDisabled(false);
+      linkblogSuccess = 'Linkblog restored. Deleted posts do not come back.';
+    } catch (error) {
+      linkblogError = error instanceof Error ? error.message : 'Could not restore your linkblog.';
+    } finally {
+      isSavingLinkblog = false;
     }
   }
 
@@ -204,6 +269,10 @@
       const settings = await api.getSettings();
       pdsSyncEnabled = settings.pdsSyncEnabled;
       lastSyncSubscriptions = settings.lastPdsSyncSubscriptions;
+      // Runs before loadLinkblog and doesn't touch the PDS, so on a device that
+      // has never seen this account the linkblog nav hides a beat sooner —
+      // and still corrects itself if the publication fetch disagrees.
+      preferences.setLinkblogDisabled(settings.linkblogDisabled);
     } catch (error) {
       console.error('Failed to load sync settings:', error);
     } finally {
@@ -574,6 +643,11 @@
     </p>
     {#if isLinkblogLoading}
       <p class="loading">Loading linkblog…</p>
+    {:else if linkblogPub?.disabled}
+      <p class="setting-description">Your linkblog is deleted. Deleted posts cannot be restored.</p>
+      <button class="btn btn-secondary" onclick={handleRestoreLinkblog} disabled={isSavingLinkblog}>
+        {isSavingLinkblog ? 'Restoring…' : 'Restore linkblog'}
+      </button>
     {:else}
       {#if linkblogPub}
         <p class="setting-description" style="margin-top: 0;">
@@ -630,12 +704,25 @@
           {#if isSavingLinkblog}Saving…{:else}Save{/if}
         </button>
       {/if}
-      {#if linkblogError}
-        <p class="sync-error">{linkblogError}</p>
-      {/if}
-      {#if linkblogSuccess}
-        <p class="sync-success">{linkblogSuccess}</p>
-      {/if}
+      <div class="danger-section">
+        <h3 class="subhead">Delete linkblog</h3>
+        <p class="setting-description">
+          Deletes every link post from your PDS and removes the linkblog from Skyreader. This cannot
+          be undone.
+        </p>
+        <button class="btn btn-danger" onclick={handleDeleteLinkblog} disabled={isSavingLinkblog}>
+          Delete linkblog
+        </button>
+      </div>
+    {/if}
+    <!-- Outside the branches above: delete and restore both report here, and each
+         one switches which branch is rendered. Nested in either, the delete's
+         "N posts removed" and a failed restore's error would never be seen. -->
+    {#if linkblogError}
+      <p class="sync-error">{linkblogError}</p>
+    {/if}
+    {#if linkblogSuccess}
+      <p class="sync-success">{linkblogSuccess}</p>
     {/if}
   </section>
 
@@ -843,6 +930,13 @@
 </div>
 
 <ImportOPMLModal open={showImportModal} onclose={() => (showImportModal = false)} />
+
+<DeleteLinkblogModal
+  open={showDeleteLinkblogConfirm}
+  busy={isSavingLinkblog}
+  onconfirm={confirmDeleteLinkblog}
+  oncancel={() => (showDeleteLinkblogConfirm = false)}
+/>
 
 <style>
   .settings-page {
@@ -1316,6 +1410,21 @@
     margin-top: 1rem;
     padding-top: 1rem;
     border-top: 1px solid var(--color-border);
+  }
+
+  /* Sets the destructive action apart from the settings above it, on the same
+     divider rhythm as .about-links / .sync-toggle-section. (It replaced a bare
+     <hr>, which drew the UA's grooved 2px line on ~8px of margin — too tight
+     above, and the wrong rule.) The subhead drops its own top margin so the
+     spacing is the section's, not the sum of both. */
+  .danger-section {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .danger-section .subhead {
+    margin-top: 0;
   }
 
   .sync-status {

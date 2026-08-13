@@ -597,6 +597,14 @@ class ApiClient {
     });
   }
 
+  async deleteLinkblog(): Promise<{ success: true; deletedPosts: number }> {
+    return this.fetch('/api/linkblog/publication', { method: 'DELETE' });
+  }
+
+  async restoreLinkblog(): Promise<LinkblogPublication> {
+    return this.fetch('/api/linkblog/publication', { method: 'POST' });
+  }
+
   async listLinkblogPublications(): Promise<{
     publications: import('$lib/types').LinkblogPublicationChoice[];
   }> {
@@ -870,6 +878,7 @@ class ApiClient {
     pdsSyncEnabled: boolean;
     lastPdsSyncSubscriptions: number | null;
     backing: SaveBacking;
+    linkblogDisabled: boolean;
     createdAt: number;
     updatedAt: number;
   }> {
