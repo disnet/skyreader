@@ -639,6 +639,12 @@ export async function handleDeletePublication(request: Request, env: Env): Promi
 export async function handleRestorePublication(request: Request, env: Env): Promise<Response> {
   const session = await getSessionFromRequest(request, env);
   if (!session) return json({ error: 'Unauthorized' }, 401);
+  // Gated like every other linkblog mutation. Restoring only flips a D1 flag, but
+  // a session that can't write is one whose next share fails — better to send it
+  // into the re-auth flow here than to hand back a linkblog it can't publish to.
+  if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
+    return insufficientScopesResponse();
+  }
   await restoreLinkblog(session, env);
   return json(await getPublicationMeta(session, env));
 }

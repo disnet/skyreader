@@ -122,13 +122,15 @@ function stubDeleteWalk(
 }
 
 // A D1 stub that records the SQL it was handed, so a test can assert which
-// settings a failed delete did and didn't touch.
-function dbStub() {
+// settings a failed delete did and didn't touch. `row` is what every `.first()`
+// returns — enough to stand in for the user_settings lookups the delete makes
+// (its own disabled flag, and the linkblog target).
+function dbStub(row: Record<string, unknown> | null = null) {
   const sql: string[] = [];
   const statement = {
     bind: vi.fn(() => statement),
     run: vi.fn(async () => ({})),
-    first: vi.fn(async () => null),
+    first: vi.fn(async () => row),
   };
   const env = {
     DB: {
@@ -276,6 +278,54 @@ describe('linkblog share guards', () => {
     expect(collections).toEqual(['site.standard.document']);
   });
 
+  it('caps the per-record companion fallback across the whole walk', async () => {
+    // A companion batch that keeps failing degrades to one deleteRecord per
+    // record. Unbounded that's a subrequest per companion for every page, which
+    // exhausts the Worker's budget and strands the delete half-done. Documents
+    // still go; the leftover companions are orphaned on purpose.
+    const PAGES = 6;
+    const PER_PAGE = 100;
+    let deleteRecordCalls = 0;
+    let page = 0;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === 'string' ? input : input.toString());
+      const endpoint = url.pathname.split('/xrpc/')[1];
+      if (endpoint === 'com.atproto.repo.listRecords') {
+        if (page >= PAGES) return Response.json({ records: [] });
+        const records = Array.from({ length: PER_PAGE }, (_, i) =>
+          record(`r${page}-${i}`, ourShare({ content: { $type: 'app.offprint.content' } }))
+        );
+        page++;
+        return Response.json({ records, cursor: `page-${page}` });
+      }
+      if (endpoint === 'com.atproto.repo.applyWrites') {
+        const body = JSON.parse((init?.body as string) ?? '{"writes":[]}');
+        // Documents succeed; the companion collection fails every time.
+        if (body.writes[0]?.collection !== 'site.standard.document') {
+          return Response.json({ error: 'InvalidRequest' }, { status: 400 });
+        }
+      }
+      if (endpoint === 'com.atproto.repo.deleteRecord') {
+        // Count only the companion fallback, not the single publication-record
+        // delete that closes out a successful walk.
+        const body = JSON.parse((init?.body as string) ?? '{}');
+        if (body.collection !== 'site.standard.publication') deleteRecordCalls++;
+      }
+      return Response.json({});
+    }) as unknown as typeof fetch;
+    const { env } = dbStub();
+
+    const session = { ...SESSION, grantedScopes: OFFPRINT_SCOPES.join(' ') } as Session;
+    const result = await deleteLinkblog(session, env);
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.deletedPosts).toBe(PAGES * PER_PAGE);
+    // Bounded by the budget, not by the repo: without the cap this would be one
+    // call per companion record (600), and it grows with the linkblog.
+    expect(deleteRecordCalls).toBeLessThanOrEqual(200);
+    expect(deleteRecordCalls).toBeGreaterThan(0);
+  });
+
   it('puts the disabled flag back when the walk fails before deleting anything', async () => {
     // The flag goes on first so a share can't race the walk. If the PDS side
     // never happened, leaving it on would strand the user with a live linkblog
@@ -293,5 +343,22 @@ describe('linkblog share guards', () => {
     // The connected publication is the one thing a restore can't give back, so a
     // failed delete must not clear it.
     expect(sql.some((s) => /linkblog_publication = NULL/.test(s))).toBe(false);
+  });
+
+  it('keeps the flag when a retry of a partial delete fails having deleted nothing', async () => {
+    // A delete that got partway leaves the flag on. Retrying it can fail before
+    // deleting anything of its OWN — but the posts the first attempt took are
+    // still gone. Rolling back on this call's zero count would hand back a
+    // linkblog silently missing them, which is the one state the flag exists to
+    // prevent. Already-disabled on entry is what tells the two apart.
+    globalThis.fetch = vi.fn(async () =>
+      Response.json({ error: 'InternalServerError' }, { status: 500 })
+    ) as unknown as typeof fetch;
+    const { env, sql } = dbStub({ linkblog_disabled: 1 });
+
+    const result = await deleteLinkblog(SESSION, env);
+
+    expect(result.success).toBe(false);
+    expect(sql.some((s) => /linkblog_disabled = 0/.test(s))).toBe(false);
   });
 });

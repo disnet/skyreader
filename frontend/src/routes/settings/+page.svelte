@@ -15,7 +15,10 @@
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
   import SaveBackingPicker from '$lib/components/settings/SaveBackingPicker.svelte';
   import LinkblogTargetPicker from '$lib/components/settings/LinkblogTargetPicker.svelte';
+  import DeleteLinkblogModal from '$lib/components/settings/DeleteLinkblogModal.svelte';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
+  import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
+  import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { downloadOPML } from '$lib/utils/opml-exporter';
   import { api, RateLimitError } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
@@ -103,6 +106,7 @@
   let linkblogError = $state<string | null>(null);
   let linkblogSuccess = $state<string | null>(null);
   let linkblogChoices = $state<LinkblogPublicationChoice[]>([]);
+  let showDeleteLinkblogConfirm = $state(false);
 
   onMount(async () => {
     if (!auth.isAuthenticated) {
@@ -139,16 +143,19 @@
     }
   }
 
-  async function handleDeleteLinkblog() {
+  function handleDeleteLinkblog() {
     if (isSavingLinkblog) return;
+    linkblogSuccess = null;
     if (!syncStore.isOnline) {
       linkblogError = 'You are offline. Connect to the internet to delete your linkblog.';
       return;
     }
-    const confirmation = prompt(
-      'Every link post will be deleted from your PDS. Your page will go blank and subscribers will stop receiving it. This cannot be undone. Type DELETE to continue.'
-    );
-    if (confirmation !== 'DELETE') return;
+    linkblogError = null;
+    showDeleteLinkblogConfirm = true;
+  }
+
+  async function confirmDeleteLinkblog() {
+    if (isSavingLinkblog) return;
     isSavingLinkblog = true;
     linkblogError = null;
     try {
@@ -156,15 +163,33 @@
       preferences.setLinkblogDisabled(true);
       if (linkblogPub) linkblogPub = { ...linkblogPub, disabled: true, exists: false };
       linkblogSuccess = `Linkblog deleted. ${result.deletedPosts} post${result.deletedPosts === 1 ? '' : 's'} removed.`;
+      showDeleteLinkblogConfirm = false;
+      // The posts are gone from the PDS, but every card still holds its local
+      // share state: without this they keep rendering as shared, with a Remove
+      // that would address a record that no longer exists. Same pair the app
+      // runs on boot — do it now rather than leaving the window open until then.
+      await myLinkblogStore.load(true);
+      await linkblogStore.reconcile();
     } catch (error) {
+      // A delete that fails partway leaves the linkblog disabled server-side, so
+      // re-read the publication rather than trusting the pre-delete copy: the
+      // section then shows the deleted state (and its Restore) instead of
+      // offering edits that every write path now rejects.
       linkblogError = error instanceof Error ? error.message : 'Could not delete your linkblog.';
+      showDeleteLinkblogConfirm = false;
+      await loadLinkblog();
     } finally {
       isSavingLinkblog = false;
     }
   }
 
   async function handleRestoreLinkblog() {
-    if (isSavingLinkblog || !syncStore.isOnline) return;
+    if (isSavingLinkblog) return;
+    linkblogSuccess = null;
+    if (!syncStore.isOnline) {
+      linkblogError = 'You are offline. Connect to the internet to restore your linkblog.';
+      return;
+    }
     isSavingLinkblog = true;
     linkblogError = null;
     try {
@@ -244,6 +269,10 @@
       const settings = await api.getSettings();
       pdsSyncEnabled = settings.pdsSyncEnabled;
       lastSyncSubscriptions = settings.lastPdsSyncSubscriptions;
+      // Runs before loadLinkblog and doesn't touch the PDS, so on a device that
+      // has never seen this account the linkblog nav hides a beat sooner —
+      // and still corrects itself if the publication fetch disagrees.
+      preferences.setLinkblogDisabled(settings.linkblogDisabled);
     } catch (error) {
       console.error('Failed to load sync settings:', error);
     } finally {
@@ -675,12 +704,6 @@
           {#if isSavingLinkblog}Saving…{:else}Save{/if}
         </button>
       {/if}
-      {#if linkblogError}
-        <p class="sync-error">{linkblogError}</p>
-      {/if}
-      {#if linkblogSuccess}
-        <p class="sync-success">{linkblogSuccess}</p>
-      {/if}
       <div class="danger-section">
         <h3 class="subhead">Delete linkblog</h3>
         <p class="setting-description">
@@ -691,6 +714,15 @@
           Delete linkblog
         </button>
       </div>
+    {/if}
+    <!-- Outside the branches above: delete and restore both report here, and each
+         one switches which branch is rendered. Nested in either, the delete's
+         "N posts removed" and a failed restore's error would never be seen. -->
+    {#if linkblogError}
+      <p class="sync-error">{linkblogError}</p>
+    {/if}
+    {#if linkblogSuccess}
+      <p class="sync-success">{linkblogSuccess}</p>
     {/if}
   </section>
 
@@ -898,6 +930,13 @@
 </div>
 
 <ImportOPMLModal open={showImportModal} onclose={() => (showImportModal = false)} />
+
+<DeleteLinkblogModal
+  open={showDeleteLinkblogConfirm}
+  busy={isSavingLinkblog}
+  onconfirm={confirmDeleteLinkblog}
+  oncancel={() => (showDeleteLinkblogConfirm = false)}
+/>
 
 <style>
   .settings-page {

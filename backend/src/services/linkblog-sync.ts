@@ -1022,11 +1022,28 @@ function isNotFoundError(error: string): boolean {
 
 const DELETE_BATCH_SIZE = 200;
 
+// Total one-at-a-time companion deletes a single purge may spend across the whole
+// walk. The per-record fallback exists so a companion batch that fails for a
+// reason we can't pre-check still gets cleaned up, but it's the one part of the
+// delete whose cost isn't bounded by the repo size: a companion collection whose
+// batch keeps failing (transient 5xx, one rejected write) would spend a
+// subrequest per record for every page, and exhausting the Worker's budget
+// partway leaves the linkblog half-deleted. Orphaned companions are untidy;
+// a stalled delete is worse, so the fallback yields first.
+const MAX_COMPANION_FALLBACK_DELETES = 200;
+
+interface FallbackBudget {
+  remaining: number;
+  exhaustedLogged: boolean;
+}
+
+// `fallback` present = best-effort: a failed batch degrades to per-record deletes
+// against the shared budget. Absent = strict, and the batch error is returned.
 async function deleteRecordBatch(
   client: ReturnType<typeof createPDSClient>,
   collection: string,
   rkeys: string[],
-  bestEffort: boolean
+  fallback?: FallbackBudget
 ): Promise<PDSResult<void>> {
   for (let i = 0; i < rkeys.length; i += DELETE_BATCH_SIZE) {
     const chunk = rkeys.slice(i, i + DELETE_BATCH_SIZE);
@@ -1038,8 +1055,19 @@ async function deleteRecordBatch(
       }))
     );
     if (batch.success) continue;
-    if (!bestEffort) return batch;
+    if (!fallback) return batch;
+    if (fallback.remaining <= 0) {
+      if (!fallback.exhaustedLogged) {
+        fallback.exhaustedLogged = true;
+        console.warn(
+          `[linkblog] companion fallback budget spent; leaving remaining ${collection} companions orphaned`
+        );
+      }
+      continue;
+    }
     for (const rkey of chunk) {
+      if (fallback.remaining <= 0) break;
+      fallback.remaining--;
       const result = await client.deleteRecord(collection, rkey);
       if (!result.success && !isNotFoundError(result.error)) {
         console.warn(`[linkblog] ${collection} delete failed for ${rkey}: ${result.error}`);
@@ -1119,6 +1147,11 @@ async function purgeLinkblogRecords(session: Session): Promise<PurgeResult> {
   const client = createPDSClient(session);
   let cursor: string | undefined;
   let deletedPosts = 0;
+  // Shared across every page: the cap is on the whole delete, not per page.
+  const companionFallback: FallbackBudget = {
+    remaining: MAX_COMPANION_FALLBACK_DELETES,
+    exhaustedLogged: false,
+  };
 
   for (let page = 0; page < MAX_DELETE_PAGES; page++) {
     const listed = await client.listRecords<DocumentRecord>(DOCUMENT_COLLECTION, cursor);
@@ -1131,7 +1164,7 @@ async function purgeLinkblogRecords(session: Session): Promise<PurgeResult> {
       .filter((record) => record.rkey);
     if (ours.length > 0) {
       const rkeys = ours.map((record) => record.rkey);
-      const documents = await deleteRecordBatch(client, DOCUMENT_COLLECTION, rkeys, false);
+      const documents = await deleteRecordBatch(client, DOCUMENT_COLLECTION, rkeys);
       if (!documents.success) {
         return {
           success: false,
@@ -1141,7 +1174,7 @@ async function purgeLinkblogRecords(session: Session): Promise<PurgeResult> {
         };
       }
       for (const [collection, companionRkeys] of companionDeletes(session, ours)) {
-        await deleteRecordBatch(client, collection, companionRkeys, true);
+        await deleteRecordBatch(client, collection, companionRkeys, companionFallback);
       }
       deletedPosts += rkeys.length;
     }
@@ -1177,7 +1210,13 @@ export async function deleteLinkblog(
   env: Env
 ): Promise<PDSResult<{ deletedPosts: number; previousSiteUri: string }>> {
   const now = Math.floor(Date.now() / 1000);
-  const previous = await getLinkblogTarget(env, session.did);
+  // Read the flag BEFORE setting it: a delete that starts already-disabled is
+  // resuming an earlier one that got partway, which changes what a failure here
+  // is allowed to undo (see the rollback below).
+  const [previous, alreadyDisabled] = await Promise.all([
+    getLinkblogTarget(env, session.did),
+    isLinkblogDisabled(env, session.did),
+  ]);
 
   // Disable first: every write path checks the flag, so this is what stops a
   // share racing the walk and landing a document behind it. The connected
@@ -1192,13 +1231,31 @@ export async function deleteLinkblog(
     .bind(session.did, now, now)
     .run();
 
-  const purged = await purgeLinkblogRecords(session);
+  let purged: PurgeResult;
+  try {
+    purged = await purgeLinkblogRecords(session);
+  } catch (e) {
+    // purgeLinkblogRecords reports PDS failures as values, but an unexpected
+    // throw (a D1 error, a client it couldn't build) would escape past the
+    // rollback below and leave the flag on with nothing deleted. Fold it into
+    // the same shape so every failure exits through one path.
+    purged = {
+      success: false,
+      error: e instanceof Error ? e.message : 'Could not delete your linkblog',
+      retryable: true,
+      deletedPosts: 0,
+    };
+  }
+
   if (!purged.success) {
     // Nothing went yet, so the linkblog is exactly as the user left it: take the
     // flag back rather than strand them with a live blog that every write path
-    // rejects. A partial purge keeps the flag — that blog is already half gone,
-    // and retrying the delete resumes where this one stopped.
-    if (purged.deletedPosts === 0) await restoreLinkblog(session, env);
+    // rejects. Two cases keep it. A partial purge — that blog is already half
+    // gone. And a delete that was ALREADY disabled when it started: it is
+    // retrying an earlier partial one, so "this call deleted nothing" says
+    // nothing about the posts the first attempt took. Restoring on that would
+    // hand back a linkblog silently missing them.
+    if (purged.deletedPosts === 0 && !alreadyDisabled) await restoreLinkblog(session, env);
     return { success: false, error: purged.error, retryable: purged.retryable };
   }
 
