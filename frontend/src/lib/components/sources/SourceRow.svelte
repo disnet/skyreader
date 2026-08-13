@@ -1,5 +1,7 @@
 <script lang="ts">
   import Icon from '$lib/components/Icon.svelte';
+  import FeedErrorPopover from '$lib/components/sidebar/FeedErrorPopover.svelte';
+  import type { ErrorDetails } from '$lib/stores/feedStatus.svelte';
 
   interface Props {
     iconUrl: string | null;
@@ -7,6 +9,7 @@
     title: string;
     subtitle: string;
     hasError?: boolean;
+    errorDetails?: ErrorDetails | null;
     subscribed?: boolean;
     selected?: boolean;
     fallbackIcon?: string;
@@ -25,6 +28,7 @@
     title,
     subtitle,
     hasError = false,
+    errorDetails = null,
     subscribed = true,
     selected = false,
     fallbackIcon = 'rss',
@@ -36,6 +40,33 @@
     onPark = null,
     onReactivate = null,
   }: Props = $props();
+
+  let showErrorPopover = $state(false);
+  let errorBadge: HTMLButtonElement | null = $state(null);
+  let popoverPosition = $state({ top: 0, left: 0 });
+  let hideTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  function showErrorDetails() {
+    if (!errorDetails) return;
+    if (hideTimeout) {
+      clearTimeout(hideTimeout);
+      hideTimeout = null;
+    }
+    if (errorBadge) {
+      const rect = errorBadge.getBoundingClientRect();
+      popoverPosition = {
+        top: rect.bottom + 4,
+        left: Math.min(rect.left, window.innerWidth - 292),
+      };
+    }
+    showErrorPopover = true;
+  }
+
+  function hideErrorDetails() {
+    hideTimeout = setTimeout(() => {
+      showErrorPopover = false;
+    }, 150);
+  }
 
   let actions = $derived.by(() => {
     const items: {
@@ -80,10 +111,22 @@
     <span class="source-meta">{subtitle}</span>
   </div>
 
-  {#if subscribed && hasError}
-    <span class="error-badge" title="Feed error">
+  {#if subscribed && (hasError || errorDetails)}
+    <button
+      bind:this={errorBadge}
+      type="button"
+      class="error-badge"
+      class:permanent={errorDetails?.isPermanent}
+      title={errorDetails?.title ?? 'Feed error'}
+      aria-label={errorDetails ? `Feed error: ${errorDetails.title}` : 'Feed error'}
+      onmouseenter={showErrorDetails}
+      onmouseleave={hideErrorDetails}
+      onfocus={showErrorDetails}
+      onblur={hideErrorDetails}
+      onclick={showErrorDetails}
+    >
       <Icon name="alert-triangle" size={14} />
-    </span>
+    </button>
   {/if}
 
   {#if actions.length > 0}
@@ -102,6 +145,18 @@
     </div>
   {/if}
 </div>
+
+{#if showErrorPopover && errorDetails}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="error-popover-container"
+    style="top: {popoverPosition.top}px; left: {popoverPosition.left}px;"
+    onmouseenter={showErrorDetails}
+    onmouseleave={hideErrorDetails}
+  >
+    <FeedErrorPopover {errorDetails} />
+  </div>
+{/if}
 
 <style>
   .source-row {
@@ -185,6 +240,26 @@
     color: var(--color-error, #dc2626);
     display: flex;
     align-items: center;
+    justify-content: center;
+    padding: 0.25rem;
+    border: 0;
+    background: transparent;
+    border-radius: 4px;
+    cursor: help;
+  }
+
+  .error-badge:not(.permanent) {
+    color: var(--color-warning, #ff9800);
+  }
+
+  .error-badge:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 1px;
+  }
+
+  .error-popover-container {
+    position: fixed;
+    z-index: 1000;
   }
 
   .source-actions {
