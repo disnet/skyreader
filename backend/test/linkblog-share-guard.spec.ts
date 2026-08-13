@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+  deleteLinkblog,
   deleteLinkblogShare,
   updateLinkblogShareNote,
   LINKBLOG_MARKER_URL,
   publicationUri,
 } from '../src/services/linkblog-sync';
-import type { Session } from '../src/types';
+import type { Env, Session } from '../src/types';
 
 // A connected linkblog publishes into a publication its HOME app owns, which also
 // holds that app's own posts — and an essay that links out is shaped exactly like
@@ -140,5 +141,52 @@ describe('linkblog share guards', () => {
     expect((put?.body as { record: { skyreaderLinkblog?: string } }).record.skyreaderLinkblog).toBe(
       LINKBLOG_MARKER_URL
     );
+  });
+
+  it('continues deleting across pages and restarts after mutating the collection', async () => {
+    const cursors: Array<string | null> = [];
+    let deleted = false;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(typeof input === 'string' ? input : input.toString());
+      const endpoint = url.pathname.split('/xrpc/')[1];
+      if (endpoint === 'com.atproto.repo.listRecords') {
+        const cursor = url.searchParams.get('cursor');
+        cursors.push(cursor);
+        if (!cursor) {
+          return Response.json({
+            records: [
+              {
+                uri: `at://${DID}/site.standard.document/foreign`,
+                cid: 'a',
+                value: documentRecord(),
+              },
+            ],
+            cursor: 'next',
+          });
+        }
+        if (!deleted) {
+          return Response.json({
+            records: [
+              {
+                uri: `at://${DID}/site.standard.document/ours`,
+                cid: 'b',
+                value: documentRecord({ skyreaderLinkblog: LINKBLOG_MARKER_URL }),
+              },
+            ],
+            cursor: 'more',
+          });
+        }
+        return Response.json({ records: [] });
+      }
+      if (endpoint === 'com.atproto.repo.applyWrites') deleted = true;
+      return Response.json({});
+    }) as unknown as typeof fetch;
+    const statement = { bind: vi.fn(() => statement), run: vi.fn(async () => ({})) };
+    const env = { DB: { prepare: vi.fn(() => statement) } } as unknown as Env;
+
+    const result = await deleteLinkblog(SESSION, env);
+
+    expect(result).toEqual({ success: true, data: { deletedPosts: 1 } });
+    expect(cursors).toEqual([null, 'next', null, 'next']);
   });
 });

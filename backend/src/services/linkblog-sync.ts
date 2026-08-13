@@ -524,12 +524,25 @@ export async function isLinkblogDisabled(env: Env, did: string): Promise<boolean
   }
 }
 
-export async function getDisabledLinkblogAuthors(env: Env): Promise<string[]> {
+export async function getDisabledLinkblogAuthors(env: Env, dids: string[]): Promise<string[]> {
+  const candidates = [...new Set(dids)];
+  if (candidates.length === 0) return [];
   try {
-    const rows = await env.DB.prepare(
-      'SELECT user_did FROM user_settings WHERE linkblog_disabled = 1 LIMIT 2000'
-    ).all<{ user_did: string }>();
-    return (rows.results ?? []).map((row) => row.user_did);
+    const disabled: string[] = [];
+    // Stay comfortably below SQLite/D1's bind-parameter ceiling while filtering
+    // exactly the registry candidates; no global row cap can leak disabled blogs.
+    for (let i = 0; i < candidates.length; i += 100) {
+      const chunk = candidates.slice(i, i + 100);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = await env.DB.prepare(
+        `SELECT user_did FROM user_settings
+         WHERE linkblog_disabled = 1 AND user_did IN (${placeholders})`
+      )
+        .bind(...chunk)
+        .all<{ user_did: string }>();
+      disabled.push(...(rows.results ?? []).map((row) => row.user_did));
+    }
+    return disabled;
   } catch {
     return [];
   }
@@ -1049,21 +1062,44 @@ export async function deleteLinkblog(
     .run();
 
   const client = createPDSClient(session);
-  const records = await client.listAllRecords<DocumentRecord>(DOCUMENT_COLLECTION);
-  if (!records.success) return records;
-  const rkeys = records.data
-    .filter((record) => isSkyreaderShareRecord(session.did, record.value))
-    .map((record) => record.uri.split('/').pop()!)
-    .filter(Boolean);
-  const documents = await deleteRecordBatch(client, DOCUMENT_COLLECTION, rkeys, false);
-  if (!documents.success) return documents;
-
-  for (const collection of new Set(Object.values(COMPANION_COLLECTIONS))) {
-    await deleteRecordBatch(client, collection, rkeys, true);
+  let cursor: string | undefined;
+  let deletedPosts = 0;
+  const seenCursors = new Set<string>();
+  while (true) {
+    const page = await client.listRecords<DocumentRecord>(DOCUMENT_COLLECTION, cursor);
+    if (!page.success) return page;
+    const rkeys = page.data.records
+      .filter((record) => isSkyreaderShareRecord(session.did, record.value))
+      .map((record) => record.uri.split('/').pop()!)
+      .filter(Boolean);
+    if (rkeys.length > 0) {
+      const documents = await deleteRecordBatch(client, DOCUMENT_COLLECTION, rkeys, false);
+      if (!documents.success) return documents;
+      for (const collection of new Set(Object.values(COMPANION_COLLECTIONS))) {
+        await deleteRecordBatch(client, collection, rkeys, true);
+      }
+      deletedPosts += rkeys.length;
+      // Mutating a collection can invalidate its cursor. Restarting guarantees
+      // that records shifted across page boundaries cannot be skipped.
+      cursor = undefined;
+      seenCursors.clear();
+      continue;
+    }
+    const nextCursor = page.data.cursor || undefined;
+    if (!nextCursor) break;
+    if (seenCursors.has(nextCursor)) {
+      return {
+        success: false,
+        error: 'PDS returned a repeated cursor while deleting linkblog',
+        retryable: true,
+      };
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
   }
   const publication = await client.deleteRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY);
   if (!publication.success && !isNotFoundError(publication.error)) return publication;
-  return { success: true, data: { deletedPosts: rkeys.length } };
+  return { success: true, data: { deletedPosts } };
 }
 
 export async function restoreLinkblog(session: Session, env: Env): Promise<void> {

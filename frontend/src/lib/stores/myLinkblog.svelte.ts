@@ -48,8 +48,7 @@ function createMyLinkblogStore() {
   const scopeResults = new Map<string, { documents: SocialDocument[]; complete: boolean }>();
 
   async function load(force = false) {
-    if (preferences.linkblogDisabled) return;
-    if ((loaded || loading) && !force) return;
+    if (loading) return;
     const user = auth.user;
     if (!user) return;
 
@@ -69,6 +68,10 @@ function createMyLinkblogStore() {
           return;
         }
       }
+      // The disabled preference is device-global, so publication metadata must
+      // be refreshed before honoring the in-memory document cache. This also
+      // corrects state after switching accounts or restoring on another device.
+      if (loaded && !force) return;
       const target = pub ?? publication;
       const defaultUri = publicationUri(user.did);
       const scopes = [...new Set([target?.uri || defaultUri, defaultUri])];
