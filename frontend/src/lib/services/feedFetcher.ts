@@ -54,6 +54,9 @@ const TIMELINE_CURSOR_KEY = 'timelineCursor';
 // Dexie `metadata` key holding the feed URLs we've already tried to backfill
 // through the per-feed endpoint (see backfillMissingSubscriptions).
 const TIMELINE_BACKFILL_KEY = 'timelineBackfilledFeeds';
+// Last feed selected for a backfill attempt. This rotates retryable failures so
+// a broken prefix cannot consume every sync's bounded backfill budget.
+const TIMELINE_BACKFILL_CURSOR_KEY = 'timelineBackfillCursor';
 
 // Items per timeline page (the server caps at 200 too).
 const TIMELINE_PAGE_LIMIT = 200;
@@ -243,7 +246,14 @@ async function backfillMissingSubscriptions(
   if (!rssSubs.some((sub) => sub.id && !hasArticles(sub))) return 0;
 
   const attempted = new Set((await getMetadata<string[]>(TIMELINE_BACKFILL_KEY)) ?? []);
-  const targets = selectBackfillTargets(rssSubs, attempted, hasArticles, MAX_BACKFILLS_PER_SYNC);
+  const afterFeedUrl = (await getMetadata<string>(TIMELINE_BACKFILL_CURSOR_KEY)) ?? undefined;
+  const targets = selectBackfillTargets(
+    rssSubs,
+    attempted,
+    hasArticles,
+    MAX_BACKFILLS_PER_SYNC,
+    afterFeedUrl
+  );
   if (targets.length === 0) return 0;
 
   let newArticles = 0;
@@ -258,6 +268,7 @@ async function backfillMissingSubscriptions(
     if (fetched.success) attempted.add(sub.feedUrl!);
   }
 
+  await setMetadata<string>(TIMELINE_BACKFILL_CURSOR_KEY, targets.at(-1)!.feedUrl!);
   await setMetadata<string[]>(TIMELINE_BACKFILL_KEY, pruneAttemptedBackfills(attempted, rssSubs));
   return newArticles;
 }

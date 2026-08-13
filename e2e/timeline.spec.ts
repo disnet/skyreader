@@ -41,11 +41,40 @@ test.describe('Timeline refresh', () => {
       if (url.includes('/api/v2/feeds/batch')) batchRequests.push(url);
     });
 
+    const timelineResponsePromise = authedPage.waitForResponse((response) =>
+      response.url().includes('/api/v2/timeline')
+    );
     await authedPage.reload();
+    const timelineResponse = await timelineResponsePromise;
+    expect(timelineResponse.ok()).toBe(true);
+    const timelineBody = (await timelineResponse.json()) as {
+      items: Array<{ title?: string }>;
+    };
+    expect(timelineBody.items.map((item) => item.title)).toEqual(
+      expect.arrayContaining(['Archived Article One', 'Archived Article Two'])
+    );
 
-    // Both articles land in the reader.
-    await expect(authedPage.getByText('Archived Article One')).toBeVisible({ timeout: 20_000 });
-    await expect(authedPage.getByText('Archived Article Two')).toBeVisible({ timeout: 20_000 });
+    // Both articles land in IndexedDB. Assert the durable client merge directly:
+    // a read article may be hidden by the reader's current filter, which made the
+    // old visibility assertion depend on incidental UI state.
+    await expect
+      .poll(async () => {
+        return authedPage.evaluate(async () => {
+          const request = indexedDB.open('skyreader');
+          const database: IDBDatabase = await new Promise((resolve, reject) => {
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          });
+          const store = database.transaction('articles', 'readonly').objectStore('articles');
+          const all: Array<{ title: string }> = await new Promise((resolve, reject) => {
+            const req = store.getAll();
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+          });
+          return all.map((row) => row.title);
+        });
+      })
+      .toEqual(expect.arrayContaining(['Archived Article One', 'Archived Article Two']));
 
     // The refresh is a single timeline call (at most one extra drain page), and
     // the legacy per-feed fan-out never runs — the point of the architecture.

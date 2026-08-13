@@ -161,6 +161,18 @@ describe('selectBackfillTargets', () => {
   it('caps how many it returns per sync', () => {
     expect(selectBackfillTargets([subA, subB], new Set(), none, 1)).toEqual([subA]);
   });
+
+  it('rotates past a failed first batch so later subscriptions get a turn', () => {
+    const subscriptions = Array.from({ length: 15 }, (_, index) =>
+      sub({ id: index + 1, feedUrl: `https://feed-${index + 1}.example/rss` })
+    );
+
+    const first = selectBackfillTargets(subscriptions, new Set(), none, 10);
+    const second = selectBackfillTargets(subscriptions, new Set(), none, 10, first.at(-1)!.feedUrl);
+
+    expect(first.map((subscription) => subscription.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(second.slice(0, 5).map((subscription) => subscription.id)).toEqual([11, 12, 13, 14, 15]);
+  });
 });
 
 describe('pruneAttemptedBackfills', () => {

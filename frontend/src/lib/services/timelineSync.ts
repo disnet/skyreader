@@ -120,14 +120,23 @@ export function selectBackfillTargets(
   subscriptions: Subscription[],
   attempted: Set<string>,
   hasArticles: (sub: Subscription) => boolean,
-  max: number
+  max: number,
+  afterFeedUrl?: string
 ): Subscription[] {
+  if (subscriptions.length === 0 || max <= 0) return [];
+
+  // Resume after the last feed selected on the previous sync. Failed feeds are
+  // deliberately not marked complete, but rotating the starting point ensures
+  // they cannot monopolize the per-sync budget and starve later subscriptions.
+  const previousIndex = afterFeedUrl
+    ? subscriptions.findIndex((sub) => sub.feedUrl === afterFeedUrl)
+    : -1;
+  const start = previousIndex >= 0 ? (previousIndex + 1) % subscriptions.length : 0;
   const targets: Subscription[] = [];
-  for (const sub of subscriptions) {
-    if (targets.length >= max) break;
+  for (let offset = 0; offset < subscriptions.length && targets.length < max; offset++) {
+    const sub = subscriptions[(start + offset) % subscriptions.length];
     if (!sub.id || !isRssSubscription(sub)) continue;
-    if (attempted.has(sub.feedUrl!)) continue;
-    if (hasArticles(sub)) continue;
+    if (attempted.has(sub.feedUrl!) || hasArticles(sub)) continue;
     targets.push(sub);
   }
   return targets;
