@@ -826,6 +826,15 @@ export interface LinkblogPublicationChoice {
    * picker states it instead of offering a choice. The backend enforces it too.
    */
   formatLocked?: boolean;
+  /**
+   * False when this publication's app can't host a Skyreader linkblog at all —
+   * pckt renders only the posts it wrote itself, so ours would land in the repo
+   * and never show. Listed anyway, but the picker offers it disabled with
+   * `unsupportedReason`; the connect endpoint refuses it too.
+   */
+  supported?: boolean;
+  /** Why it can't be connected, in the user's terms. */
+  unsupportedReason?: string;
   /** How many documents already live in this publication (capped by the scan). */
   posts?: number;
 }

@@ -4,11 +4,14 @@
   // Leaflet, pckt, Offprint, … Each row says what the publication actually is —
   // app, address, how many posts — because "Untitled publication" in a bare
   // dropdown tells nobody which of their publications they're about to write to.
+  // A publication whose app won't render a post it didn't write itself (pckt) is
+  // listed disabled with the reason, rather than hidden or silently accepted.
   import { untrack } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import {
     linkblogFormatLocked,
     linkblogSelectionChanged,
+    publicationConnectable,
     publicationHost,
     publicationPostCount,
     resolveLinkblogFormat,
@@ -29,9 +32,11 @@
     onapply: (selection: { uri: string; isDefault: boolean; format: Format }) => void;
   } = $props();
 
+  // No pckt: pckt shows only the posts it wrote itself, so pckt blocks render
+  // nowhere and there's no reason to offer them. (Skyreader still *reads* pckt
+  // posts — this list is output formats only.)
   const FORMATS: Array<{ value: Format; label: string }> = [
     { value: 'leaflet', label: 'Leaflet blocks' },
-    { value: 'pckt', label: 'pckt blocks' },
     { value: 'offprint', label: 'Offprint blocks' },
     { value: 'markpub', label: 'Markdown' },
   ];
@@ -62,7 +67,12 @@
   // Leaflet, pckt and Offprint read only their own blocks, so the format is a
   // fact about the publication, not a decision for the user to get wrong.
   const formatLocked = $derived(linkblogFormatLocked(selected));
-  const changed = $derived(linkblogSelectionChanged(selected, current, selectedFormat));
+  // A publication whose app won't render our posts is offered disabled, so it
+  // can't become the selection — and can't be applied if one ever slips through.
+  const selectable = $derived(publicationConnectable(selected));
+  const changed = $derived(
+    selectable && linkblogSelectionChanged(selected, current, selectedFormat)
+  );
 </script>
 
 <div class="target-picker">
@@ -98,9 +108,19 @@
     {#if externalChoices.length > 0}
       <p class="group-label">Or a publication you already have</p>
       {#each externalChoices as choice (choice.uri)}
+        {@const connectable = publicationConnectable(choice)}
         <div class="pub-row">
-          <label class="pub-option" class:selected={selectedUri === choice.uri}>
-            <input type="radio" value={choice.uri} bind:group={selectedUri} />
+          <label
+            class="pub-option"
+            class:selected={selectedUri === choice.uri}
+            class:unavailable={!connectable}
+          >
+            <input
+              type="radio"
+              value={choice.uri}
+              bind:group={selectedUri}
+              disabled={!connectable}
+            />
             <span class="pub-radio" aria-hidden="true"></span>
             <span class="pub-info">
               <span class="pub-head">
@@ -108,14 +128,21 @@
                 {#if choice.appLabel}
                   <span class="pub-badge is-app">{choice.appLabel}</span>
                 {/if}
-                {#if current.uri === choice.uri}
+                {#if !connectable}
+                  <span class="pub-badge is-unavailable">Can't publish here</span>
+                {:else if current.uri === choice.uri}
                   <span class="pub-badge is-live">Publishing here</span>
                 {/if}
               </span>
               <span class="pub-meta">
                 {publicationHost(choice.url) ?? choice.rkey} · {publicationPostCount(choice.posts)}
               </span>
-              {#if choice.description}
+              {#if !connectable}
+                <span class="pub-desc">
+                  {choice.unsupportedReason ??
+                    "This publication's app shows only the posts it wrote itself."}
+                </span>
+              {:else if choice.description}
                 <span class="pub-desc">{choice.description}</span>
               {/if}
             </span>
@@ -136,8 +163,8 @@
       {/each}
     {:else}
       <p class="picker-hint">
-        Publications you make in Leaflet, pckt, Offprint or another standard.site app show up here,
-        and your links can go into one of them instead.
+        Publications you make in Leaflet, Offprint or another standard.site app show up here, and
+        your links can go into one of them instead.
       </p>
     {/if}
   </div>
@@ -269,6 +296,20 @@
     border-color: var(--color-primary);
   }
 
+  /* Still readable — the user owns this publication and deserves to see it
+     listed — but plainly not a choice. */
+  .pub-option.unavailable,
+  .pub-option.unavailable:hover {
+    border-color: var(--color-border);
+    background: var(--color-bg-secondary);
+    cursor: default;
+  }
+
+  .pub-option.unavailable .pub-name,
+  .pub-option.unavailable .pub-radio {
+    opacity: 0.6;
+  }
+
   .pub-option.selected {
     border-color: var(--color-primary);
     background: var(--color-sidebar-active);
@@ -360,6 +401,11 @@
   .pub-badge.is-live {
     color: var(--color-primary);
     border: 1px solid var(--color-primary);
+  }
+
+  .pub-badge.is-unavailable {
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
   }
 
   .pub-meta {

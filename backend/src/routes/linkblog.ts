@@ -40,6 +40,7 @@ const SKYREADER_APP: PublicationApp = {
   label: 'Skyreader',
   format: 'leaflet',
   formatLocked: true,
+  supported: true,
 };
 
 function json(body: unknown, status = 200): Response {
@@ -302,7 +303,11 @@ export async function handleUpdatePublication(request: Request, env: Env): Promi
   return json(meta);
 }
 
-const FORMATS = new Set<ContentFormat>(['leaflet', 'pckt', 'offprint', 'markpub']);
+// Formats a connect request may ask for. `pckt` is deliberately absent: pckt
+// won't render a post it didn't write (see publication-app.ts), so writing pckt
+// blocks anywhere produces a document nothing shows. Reading pckt content is
+// unaffected — only choosing it as an output format is gone.
+const FORMATS = new Set<ContentFormat>(['leaflet', 'offprint', 'markpub']);
 
 export async function migrateLinkblogFollowers(
   env: Env,
@@ -429,6 +434,15 @@ function lockedFormat(app: PublicationApp | null): ContentFormat | null {
 }
 
 /**
+ * Can a linkblog publish here at all? An app we can't place is assumed to render
+ * standard.site documents (that's what the collection is for); only an app we
+ * know ignores foreign records is refused — see `PublicationApp.supported`.
+ */
+export function publicationSupported(app: PublicationApp | null): boolean {
+  return app?.supported !== false;
+}
+
+/**
  * The format links get written in when connecting to a publication. A Leaflet,
  * pckt or Offprint publication renders only its own blocks, so the app decides
  * and the request doesn't get a say; anything else takes the requested format,
@@ -487,6 +501,10 @@ export async function handleListPublications(request: Request, env: Env): Promis
       // states the format instead of offering it. The connect route enforces the
       // same thing, whatever the client sends.
       formatLocked: lockedFormat(app) !== null,
+      // Listed but not connectable — the picker shows the row disabled with the
+      // reason, which beats leaving a publication the user owns unexplained.
+      supported: publicationSupported(app),
+      unsupportedReason: app?.unsupportedReason,
       posts: evidence?.posts ?? 0,
     };
   });
@@ -506,6 +524,8 @@ export async function handleListPublications(request: Request, env: Env): Promis
       appLabel: SKYREADER_APP.label,
       detectedFormat: SKYREADER_APP.format ?? undefined,
       formatLocked: true,
+      supported: true,
+      unsupportedReason: undefined,
       posts: evidenceBySite.get(defaultUri)?.posts ?? 0,
     });
   }
@@ -557,6 +577,19 @@ export async function handleConnectPublication(request: Request, env: Env): Prom
     ? summarizeDocuments(documents.data.map((record) => record.value)).get(selectedPublicationUri)
     : undefined;
   const app = appForPublication(evidence, httpUrlOrUndefined(exists.data.value?.url));
+  // Some apps ignore records they didn't write themselves, so connecting would
+  // quietly publish into a site that never shows the result. Refuse rather than
+  // accept a setting that can't work.
+  if (!publicationSupported(app)) {
+    return json(
+      {
+        error:
+          app?.unsupportedReason ??
+          "This publication's app doesn't show posts written by other apps.",
+      },
+      400
+    );
+  }
   const format = connectContentFormat(app, body.format);
   const previousTarget = await getLinkblogTarget(env, session.did);
   await env.DB.prepare(

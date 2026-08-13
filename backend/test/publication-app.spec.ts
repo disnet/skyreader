@@ -3,6 +3,7 @@ import { appForContentType, appForUrl } from '../src/services/publication-app';
 import {
   appForPublication,
   connectContentFormat,
+  publicationSupported,
   summarizeDocuments,
 } from '../src/routes/linkblog';
 
@@ -17,6 +18,8 @@ describe('appForContentType', () => {
       label: 'Leaflet',
       format: 'leaflet',
       formatLocked: true,
+      supported: true,
+      unsupportedReason: undefined,
     });
     expect(appForContentType('blog.pckt.content')?.format).toBe('pckt');
     expect(appForContentType('app.offprint.content')?.format).toBe('offprint');
@@ -39,6 +42,8 @@ describe('appForContentType', () => {
       label: 'Greengale',
       format: null,
       formatLocked: false,
+      supported: true,
+      unsupportedReason: undefined,
     });
   });
 
@@ -80,6 +85,42 @@ describe('summarizeDocuments', () => {
     expect(evidence.get('at://did:plc:alice/site.standard.publication/other')?.posts).toBe(1);
     // A document with no `site` belongs to no publication.
     expect(evidence.size).toBe(2);
+  });
+});
+
+// pckt builds its site from the posts pckt wrote; it doesn't ingest records that
+// merely appear in a repo it knows. So a link post Skyreader writes there is
+// correct and invisible — the only honest move is to refuse the connect.
+describe('publicationSupported', () => {
+  const site = 'at://did:plc:alice/site.standard.publication/mine';
+  const evidenceFor = (contentType: string) =>
+    summarizeDocuments([{ site, content: { $type: contentType } }]).get(site);
+
+  it('refuses a pckt publication, however it was recognized', () => {
+    expect(
+      publicationSupported(appForPublication(evidenceFor('blog.pckt.content'), undefined))
+    ).toBe(false);
+    // An empty publication placed only by its host is refused the same way.
+    expect(publicationSupported(appForPublication(undefined, 'https://alice.pckt.blog/'))).toBe(
+      false
+    );
+    expect(appForContentType('blog.pckt.content')?.unsupportedReason).toMatch(/pckt/);
+  });
+
+  it('allows every other app, and anything it cannot place', () => {
+    for (const contentType of [
+      'pub.leaflet.content',
+      'app.offprint.content',
+      'at.markpub.markdown',
+      'app.greengale.document',
+    ]) {
+      expect(publicationSupported(appForPublication(evidenceFor(contentType), undefined))).toBe(
+        true
+      );
+    }
+    // An unrecognized app is assumed to render standard.site documents — that is
+    // what the collection is for, and refusing on a guess helps nobody.
+    expect(publicationSupported(null)).toBe(true);
   });
 });
 

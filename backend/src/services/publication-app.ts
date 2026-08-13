@@ -16,6 +16,10 @@
 //
 // Anything we can't place gets no app label; the UI falls back to showing the
 // publication's host, which is honest and still recognizable.
+//
+// Placement also decides whether a publication can be a linkblog target at all:
+// an app that only renders what it wrote itself (pckt) can't host our link posts
+// no matter how we write them — see `supported`.
 
 import type { ContentFormat } from './linkblog-sync';
 
@@ -31,6 +35,15 @@ export interface PublicationApp {
    * any other format lands in the publication and shows up as nothing.
    */
   formatLocked: boolean;
+  /**
+   * False when connecting a linkblog to this app's publication cannot work,
+   * however correctly we write the records — see `unsupportedReason`. The
+   * publication is still listed (hiding a user's own publication with no
+   * explanation is worse), just not selectable.
+   */
+  supported: boolean;
+  /** Why not, in the user's terms. Only set when `supported` is false. */
+  unsupportedReason?: string;
 }
 
 interface KnownApp extends PublicationApp {
@@ -46,14 +59,24 @@ const KNOWN_APPS: KnownApp[] = [
     label: 'Leaflet',
     format: 'leaflet',
     formatLocked: true,
+    supported: true,
     nsidPrefix: 'pub.leaflet.',
     host: 'leaflet.pub',
   },
+  // pckt builds its site from the posts pckt itself wrote — it doesn't watch the
+  // firehose for records that appear in a repo it already knows. So a link post
+  // Skyreader writes into a pckt publication is a correct `blog.pckt.content`
+  // document with a correct `blog.pckt.document` companion that pckt's site
+  // simply never picks up. There's nothing to fix on our side and no format that
+  // helps, so the publication is listed but can't be connected.
   {
     id: 'pckt',
     label: 'pckt',
     format: 'pckt',
     formatLocked: true,
+    supported: false,
+    unsupportedReason:
+      "pckt only shows posts written in pckt, so links Skyreader adds here wouldn't appear on your pckt site.",
     nsidPrefix: 'blog.pckt.',
     host: 'pckt.blog',
   },
@@ -62,6 +85,7 @@ const KNOWN_APPS: KnownApp[] = [
     label: 'Offprint',
     format: 'offprint',
     formatLocked: true,
+    supported: true,
     nsidPrefix: 'app.offprint.',
     host: 'offprint.app',
   },
@@ -72,6 +96,7 @@ const KNOWN_APPS: KnownApp[] = [
     label: 'markpub',
     format: 'markpub',
     formatLocked: false,
+    supported: true,
     nsidPrefix: 'at.markpub.',
     host: 'markpub.at',
   },
@@ -82,13 +107,21 @@ const KNOWN_APPS: KnownApp[] = [
     label: 'Greengale',
     format: null,
     formatLocked: false,
+    supported: true,
     nsidPrefix: 'app.greengale.',
     host: 'greengale.app',
   },
 ];
 
-function publicApp({ id, label, format, formatLocked }: KnownApp): PublicationApp {
-  return { id, label, format, formatLocked };
+function publicApp({
+  id,
+  label,
+  format,
+  formatLocked,
+  supported,
+  unsupportedReason,
+}: KnownApp): PublicationApp {
+  return { id, label, format, formatLocked, supported, unsupportedReason };
 }
 
 /** The app that owns a document's content lexicon, e.g. `pub.leaflet.content`. */

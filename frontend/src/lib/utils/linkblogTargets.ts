@@ -30,6 +30,18 @@ export function publicationPostCount(posts: number | undefined): string {
   return posts === 1 ? '1 post' : `${posts} posts`;
 }
 
+/**
+ * Can links actually be published here? The backend marks a publication
+ * unsupported when its app ignores records other apps wrote (pckt), so the post
+ * would exist in the user's repo and show up nowhere. Absent means supported —
+ * an older backend that doesn't send the flag keeps its old behavior.
+ */
+export function publicationConnectable(
+  choice: Pick<LinkblogPublicationChoice, 'supported'> | undefined
+): boolean {
+  return choice?.supported !== false;
+}
+
 /** Is this publication's format settled by the app that owns it? */
 export function linkblogFormatLocked(
   selected: LinkblogPublicationChoice | undefined

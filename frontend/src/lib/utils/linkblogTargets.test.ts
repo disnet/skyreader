@@ -3,6 +3,7 @@ import {
   linkblogFormatLocked,
   linkblogSelectionChanged,
   publicationAddress,
+  publicationConnectable,
   publicationHost,
   publicationPostCount,
   resolveLinkblogFormat,
@@ -12,7 +13,7 @@ import type { LinkblogPublicationChoice } from '$lib/types';
 
 const DID = 'did:plc:alice';
 const SKYREADER_URI = `at://${DID}/site.standard.publication/skyreader-links`;
-const PCKT_URI = `at://${DID}/site.standard.publication/3lmypckt`;
+const OFFPRINT_URI = `at://${DID}/site.standard.publication/3lmyoffprint`;
 
 const skyreader: LinkblogPublicationChoice = {
   uri: SKYREADER_URI,
@@ -22,14 +23,14 @@ const skyreader: LinkblogPublicationChoice = {
   detectedFormat: 'leaflet',
 };
 
-const pckt: LinkblogPublicationChoice = {
-  uri: PCKT_URI,
-  rkey: '3lmypckt',
+const offprint: LinkblogPublicationChoice = {
+  uri: OFFPRINT_URI,
+  rkey: '3lmyoffprint',
   name: 'Reading notes',
-  url: 'https://reader.pckt.blog/',
+  url: 'https://offprint.app/reader/',
   isDefault: false,
-  appLabel: 'pckt',
-  detectedFormat: 'pckt',
+  appLabel: 'Offprint',
+  detectedFormat: 'offprint',
   formatLocked: true,
   posts: 3,
 };
@@ -64,7 +65,7 @@ describe('publicationAddress', () => {
     expect(publicationAddress('https://linkblogs.skyreader.app/alice.bsky.social/')).toBe(
       'linkblogs.skyreader.app/alice.bsky.social'
     );
-    expect(publicationAddress('http://reader.pckt.blog')).toBe('reader.pckt.blog');
+    expect(publicationAddress('http://offprint.app/reader')).toBe('offprint.app/reader');
   });
 
   it('has nothing to show for a missing url', () => {
@@ -102,15 +103,15 @@ describe('shareDestination', () => {
         {
           name: 'Reading notes',
           external: true,
-          externalUrl: 'https://reader.pckt.blog/',
+          externalUrl: 'https://offprint.app/reader/',
         },
         linkblogPage
       )
     ).toEqual({
       name: 'Reading notes',
       external: true,
-      url: 'https://reader.pckt.blog/',
-      address: 'reader.pckt.blog',
+      url: 'https://offprint.app/reader/',
+      address: 'offprint.app/reader',
       linkblogUrl: linkblogPage,
     });
   });
@@ -142,29 +143,63 @@ describe('publicationPostCount', () => {
   });
 });
 
+// pckt renders only the posts pckt wrote, so a link post Skyreader adds to a
+// pckt publication is a well-formed record that its site never shows. The
+// backend refuses the connect; the picker has to stop offering it first.
+const pckt: LinkblogPublicationChoice = {
+  uri: `at://${DID}/site.standard.publication/3lmypckt`,
+  rkey: '3lmypckt',
+  name: 'Reading notes',
+  url: 'https://reader.pckt.blog/',
+  isDefault: false,
+  appLabel: 'pckt',
+  detectedFormat: 'pckt',
+  formatLocked: true,
+  supported: false,
+  unsupportedReason: 'pckt only shows posts written in pckt…',
+  posts: 3,
+};
+
+describe('publicationConnectable', () => {
+  it('is false only for a publication the backend marked unsupported', () => {
+    expect(publicationConnectable(pckt)).toBe(false);
+    expect(publicationConnectable(offprint)).toBe(true);
+    expect(publicationConnectable(skyreader)).toBe(true);
+  });
+
+  it('treats a missing flag as connectable, so an older backend still works', () => {
+    expect(publicationConnectable(open)).toBe(true);
+    expect(publicationConnectable(undefined)).toBe(true);
+  });
+});
+
 describe('linkblogFormatLocked', () => {
   it('is locked for an app that reads only its own blocks', () => {
-    expect(linkblogFormatLocked(pckt)).toBe(true);
+    expect(linkblogFormatLocked(offprint)).toBe(true);
   });
 
   it('is open when the app leaves the choice, or we can’t place it', () => {
     expect(linkblogFormatLocked(open)).toBe(false);
     expect(linkblogFormatLocked(undefined)).toBe(false);
     // A lock with nothing detected to lock to is no lock at all.
-    expect(linkblogFormatLocked({ ...pckt, detectedFormat: undefined })).toBe(false);
+    expect(linkblogFormatLocked({ ...offprint, detectedFormat: undefined })).toBe(false);
   });
 });
 
 describe('resolveLinkblogFormat', () => {
   it('follows the format detected from the publication’s own posts', () => {
-    expect(resolveLinkblogFormat(pckt, currentSkyreader, {})).toBe('pckt');
+    expect(resolveLinkblogFormat(offprint, currentSkyreader, {})).toBe('offprint');
   });
 
   it('holds a locked publication to its app’s format', () => {
-    // Neither a stale stored format nor an override can send pckt blocks to a
+    // Neither a stale stored format nor an override can send offprint blocks to a
     // reader that renders nothing else.
-    expect(resolveLinkblogFormat(pckt, { uri: PCKT_URI, format: 'markpub' }, {})).toBe('pckt');
-    expect(resolveLinkblogFormat(pckt, currentSkyreader, { [PCKT_URI]: 'offprint' })).toBe('pckt');
+    expect(resolveLinkblogFormat(offprint, { uri: OFFPRINT_URI, format: 'markpub' }, {})).toBe(
+      'offprint'
+    );
+    expect(resolveLinkblogFormat(offprint, currentSkyreader, { [OFFPRINT_URI]: 'leaflet' })).toBe(
+      'offprint'
+    );
   });
 
   it('keeps the format already in use on the live target', () => {
@@ -189,11 +224,13 @@ describe('resolveLinkblogFormat', () => {
 describe('linkblogSelectionChanged', () => {
   it('is false while the live target is selected unchanged', () => {
     expect(linkblogSelectionChanged(skyreader, currentSkyreader, 'leaflet')).toBe(false);
-    expect(linkblogSelectionChanged(pckt, { uri: PCKT_URI, format: 'pckt' }, 'pckt')).toBe(false);
+    expect(
+      linkblogSelectionChanged(offprint, { uri: OFFPRINT_URI, format: 'offprint' }, 'offprint')
+    ).toBe(false);
   });
 
   it('is true when another publication is selected', () => {
-    expect(linkblogSelectionChanged(pckt, currentSkyreader, 'pckt')).toBe(true);
+    expect(linkblogSelectionChanged(offprint, currentSkyreader, 'offprint')).toBe(true);
   });
 
   it('is true when the connected publication keeps the row but changes format', () => {
@@ -202,7 +239,9 @@ describe('linkblogSelectionChanged', () => {
     );
     // Including the case where the lock corrects a format stored before it
     // existed — there is something to apply.
-    expect(linkblogSelectionChanged(pckt, { uri: PCKT_URI, format: 'markpub' }, 'pckt')).toBe(true);
+    expect(
+      linkblogSelectionChanged(offprint, { uri: OFFPRINT_URI, format: 'markpub' }, 'offprint')
+    ).toBe(true);
   });
 
   it('ignores format for the Skyreader linkblog, which writes its own', () => {
