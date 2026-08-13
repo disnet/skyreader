@@ -5,6 +5,10 @@ import type { ItemLabelType } from '$lib/types';
 const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
 const MIN_TEXT_LENGTH = 20;
 const SAVE_DEBOUNCE_MS = 500;
+// `scrollIntoView({ behavior: 'smooth' })` keeps emitting scroll events for a few
+// hundred ms after it starts. Ignore them for a little longer than that so a jump
+// we initiated is never mistaken for the reader moving.
+const PROGRAMMATIC_SCROLL_SETTLE_MS = 1000;
 
 interface ParagraphTrackingParams {
   contentEl: () => HTMLElement | undefined;
@@ -25,6 +29,8 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
   let scrollTarget: EventTarget | null = null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let lastScrollTop = 0;
+  let programmaticScroll = false;
+  let programmaticScrollTimer: ReturnType<typeof setTimeout> | null = null;
 
   function detectParagraphs() {
     const el = params.contentEl();
@@ -146,9 +152,45 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     highlightEl.style.opacity = '1';
   }
 
+  /**
+   * True while the detected body is too short to contain the saved position — the
+   * lazily-loaded article hasn't landed yet and we're still looking at the short
+   * description fallback (the same condition `restorePosition` reports as
+   * `'partial'`). Every index measurable against that stub is an artifact of the
+   * partial DOM, so persisting one would replace progress synced from another
+   * device with a near-zero value.
+   */
+  function bodyIsPartial(): boolean {
+    const saved = itemLabelsStore.getReadProgress(params.itemKey());
+    if (!saved || saved.paragraphIndex <= 0) return false;
+    return saved.paragraphIndex > paragraphs.length - 1;
+  }
+
+  /**
+   * Mute the scroll handler while a `scrollIntoView` we triggered plays out.
+   * Restoring a position (or stepping to the next paragraph) is not reading, and
+   * the intermediate positions the animation sweeps through are always behind the
+   * destination we already recorded.
+   */
+  function beginProgrammaticScroll() {
+    programmaticScroll = true;
+    if (programmaticScrollTimer) clearTimeout(programmaticScrollTimer);
+    programmaticScrollTimer = setTimeout(() => {
+      programmaticScrollTimer = null;
+      programmaticScroll = false;
+      // Re-baseline the direction heuristic against where the jump landed, so the
+      // next real scroll isn't compared with a pre-jump offset.
+      lastScrollTop = params.scrollRoot()?.scrollTop ?? window.scrollY;
+    }, PROGRAMMATIC_SCROLL_SETTLE_MS);
+  }
+
   function debouncedSave() {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
+      saveTimer = null;
+      // Re-checked at flush time rather than when the save was queued: the full
+      // body may have arrived in the meantime, which makes the position real.
+      if (bodyIsPartial()) return;
       itemLabelsStore.setReadProgress(
         params.itemKey(),
         params.itemType(),
@@ -181,7 +223,11 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     scrollTarget = root ?? window;
 
     scrollHandler = () => {
-      requestAnimationFrame(() => updateCurrentParagraph());
+      if (programmaticScroll) return;
+      requestAnimationFrame(() => {
+        if (programmaticScroll) return;
+        updateCurrentParagraph();
+      });
     };
 
     scrollTarget.addEventListener('scroll', scrollHandler, { passive: true });
@@ -190,13 +236,34 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     updateCurrentParagraph(false);
   }
 
-  function scrollToParagraph(index: number) {
+  /**
+   * Jump to a paragraph. The scroll handler is muted for the duration of the
+   * animation, so the destination set here — not whatever the animation happens to
+   * sweep past — is what gets recorded. `persist: false` additionally keeps the
+   * jump out of the saved position; restores use it, since replaying where the
+   * reader already was is not progress.
+   */
+  function scrollToParagraph(index: number, { persist = true }: { persist?: boolean } = {}) {
     if (index < 0 || index >= paragraphs.length) return;
     const el = paragraphs[index];
     if (!el) return;
+    beginProgrammaticScroll();
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     currentParagraphIndex = index;
+    if (currentParagraphIndex > furthestParagraphIndex) {
+      furthestParagraphIndex = currentParagraphIndex;
+    }
     updateHighlight();
+    if (persist) {
+      // The muted scroll handler no longer persists this move for us.
+      debouncedSave();
+    } else if (saveTimer) {
+      // Drop anything queued before this jump. A restore that re-runs after the
+      // body settles can otherwise let a measurement taken mid-animation — while
+      // the fallback body was still on screen — flush behind it.
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
   }
 
   function nextParagraph() {
@@ -228,7 +295,10 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     if (!saved || saved.paragraphIndex <= 0 || paragraphs.length === 0) return 'none';
     const exact = saved.paragraphIndex <= paragraphs.length - 1;
     const targetIdx = Math.min(saved.paragraphIndex, paragraphs.length - 1);
-    scrollToParagraph(targetIdx);
+    // Never persist a restore: on the `'partial'` path `targetIdx` is clamped to the
+    // end of the fallback body, and writing that back would be the reset this hook
+    // exists to prevent.
+    scrollToParagraph(targetIdx, { persist: false });
     return exact ? 'exact' : 'partial';
   }
 
@@ -263,6 +333,11 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
       clearTimeout(saveTimer);
       saveTimer = null;
     }
+    if (programmaticScrollTimer) {
+      clearTimeout(programmaticScrollTimer);
+      programmaticScrollTimer = null;
+    }
+    programmaticScroll = false;
     if (highlightEl) {
       highlightEl.remove();
       highlightEl = null;
