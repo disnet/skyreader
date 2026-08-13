@@ -11,6 +11,7 @@
   import {
     linkblogFormatLocked,
     linkblogSelectionChanged,
+    publicationCompatibilityUnknown,
     publicationConnectable,
     publicationHost,
     publicationPostCount,
@@ -73,6 +74,10 @@
   const changed = $derived(
     selectable && linkblogSelectionChanged(selected, current, selectedFormat)
   );
+  // We know what Leaflet, Offprint and markpub render; anything else takes
+  // whatever format is chosen and may show none of it, which the user should
+  // hear before sharing rather than after.
+  const compatibilityUnknown = $derived(publicationCompatibilityUnknown(selected));
 </script>
 
 <div class="target-picker">
@@ -102,6 +107,21 @@
             </span>
           </span>
         </label>
+        <!-- `current.url` is always the canonical Skyreader linkblog URL, even
+             while links are going to a connected publication; the choice's own
+             `url` is the record's stored field, which can be stale or unset. -->
+        {#if current.url}
+          <a
+            class="pub-open"
+            href={current.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open your Skyreader linkblog"
+            aria-label="Open your Skyreader linkblog in a new tab"
+          >
+            <Icon name="external-link" size={15} />
+          </a>
+        {/if}
       </div>
     {/if}
 
@@ -109,6 +129,7 @@
       <p class="group-label">Or a publication you already have</p>
       {#each externalChoices as choice (choice.uri)}
         {@const connectable = publicationConnectable(choice)}
+        {@const compatUnknown = publicationCompatibilityUnknown(choice)}
         <div class="pub-row">
           <label
             class="pub-option"
@@ -127,6 +148,9 @@
                 <span class="pub-name">{choice.name}</span>
                 {#if choice.appLabel}
                   <span class="pub-badge is-app">{choice.appLabel}</span>
+                {/if}
+                {#if compatUnknown}
+                  <span class="pub-badge is-unknown">Compatibility unknown</span>
                 {/if}
                 {#if !connectable}
                   <span class="pub-badge is-unavailable">Can't publish here</span>
@@ -168,6 +192,22 @@
       </p>
     {/if}
   </div>
+
+  {#if compatibilityUnknown && selected}
+    <p class="compat-warning">
+      <strong>Skyreader can't tell whether your links will show up here.</strong>
+      {#if selected.appLabel}
+        Skyreader knows what Leaflet, Offprint and markpub read, but it has no writer for {selected.appLabel},
+        so pick the format that app reads and check the site after your first share.
+      {:else}
+        This publication's app isn't one Skyreader recognizes, so pick the format that app reads and
+        check the site after your first share.
+      {/if}
+      <!-- Not a second copy: one document is written, into the connected
+           publication, and the linkblog page reads both publications. -->
+      Your Skyreader linkblog page lists them either way.
+    </p>
+  {/if}
 
   {#if !selectedIsDefault && selected && formatLocked}
     <p class="format-fixed">
@@ -408,6 +448,12 @@
     border: 1px solid var(--color-border);
   }
 
+  /* A caution, not a refusal: this publication is still a real choice. */
+  .pub-badge.is-unknown {
+    color: var(--color-warning);
+    border: 1px solid var(--color-warning);
+  }
+
   .pub-meta {
     font-size: var(--text-sm);
     color: var(--color-text-secondary);
@@ -438,6 +484,22 @@
 
   .pub-open:hover {
     color: var(--color-primary);
+  }
+
+  /* Same shape as the save-backing warning, so a caution reads the same in both
+     settings. */
+  .compat-warning {
+    font-size: var(--text-md);
+    color: var(--color-text);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    padding: 0.75rem;
+    margin: 0.875rem 0 0 0;
+  }
+
+  .compat-warning strong {
+    color: var(--color-warning);
   }
 
   .format-row {

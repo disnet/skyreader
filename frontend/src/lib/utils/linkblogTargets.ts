@@ -42,6 +42,23 @@ export function publicationConnectable(
   return choice?.supported !== false;
 }
 
+/**
+ * Is it a guess whether links written here will render? Skyreader knows what
+ * Leaflet, Offprint and markpub read, so a link written for one of them shows
+ * up on its site. A publication whose app we can't place — and one whose app we
+ * recognize but have no writer for (Greengale) — has no format we can promise,
+ * so the picker says so rather than letting the user find out by sharing.
+ * Publications the backend already marked unsupported say something stronger
+ * and are excluded here.
+ */
+export function publicationCompatibilityUnknown(
+  choice: Pick<LinkblogPublicationChoice, 'isDefault' | 'detectedFormat' | 'supported'> | undefined
+): boolean {
+  if (!choice || choice.isDefault) return false;
+  if (!publicationConnectable(choice)) return false;
+  return !choice.detectedFormat;
+}
+
 /** Is this publication's format settled by the app that owns it? */
 export function linkblogFormatLocked(
   selected: LinkblogPublicationChoice | undefined

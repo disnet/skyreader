@@ -3,6 +3,7 @@ import {
   linkblogFormatLocked,
   linkblogSelectionChanged,
   publicationAddress,
+  publicationCompatibilityUnknown,
   publicationConnectable,
   publicationHost,
   publicationPostCount,
@@ -170,6 +171,25 @@ describe('publicationConnectable', () => {
   it('treats a missing flag as connectable, so an older backend still works', () => {
     expect(publicationConnectable(open)).toBe(true);
     expect(publicationConnectable(undefined)).toBe(true);
+  });
+});
+
+describe('publicationCompatibilityUnknown', () => {
+  it('is a guess for a publication whose app we can’t write for', () => {
+    // Unplaceable app, and Greengale — recognized, but no writer for it.
+    const greengale: LinkblogPublicationChoice = { ...open, appLabel: 'Greengale' };
+    expect(publicationCompatibilityUnknown(open)).toBe(true);
+    expect(publicationCompatibilityUnknown(greengale)).toBe(true);
+  });
+
+  it('is settled for an app we know what to write for', () => {
+    expect(publicationCompatibilityUnknown(offprint)).toBe(false);
+  });
+
+  it('says nothing about the Skyreader linkblog or a publication we already refuse', () => {
+    expect(publicationCompatibilityUnknown(skyreader)).toBe(false);
+    expect(publicationCompatibilityUnknown({ ...open, supported: false })).toBe(false);
+    expect(publicationCompatibilityUnknown(undefined)).toBe(false);
   });
 });
 

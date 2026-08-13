@@ -10,6 +10,7 @@ const CONNECTED_DID = 'did:plc:linkblog-picker';
 const SKYREADER_URI = `at://${CONNECTED_DID}/site.standard.publication/skyreader-links`;
 const LEAFLET_URI = `at://${CONNECTED_DID}/site.standard.publication/3ljmyleaflet`;
 const PCKT_URI = `at://${CONNECTED_DID}/site.standard.publication/3ljmypckt`;
+const UNKNOWN_URI = `at://${CONNECTED_DID}/site.standard.publication/3ljmyunknown`;
 
 async function stubLinkblogApi(page: import('@playwright/test').Page) {
   await page.route('**/api/linkblog/publication', async (route) => {
@@ -65,6 +66,16 @@ async function stubLinkblogApi(page: import('@playwright/test').Page) {
             supported: false,
             unsupportedReason: 'pckt does not currently import posts published by other apps.',
             posts: 1,
+          },
+          // An app Skyreader can't place: no label, and no format it can promise
+          // renders there.
+          {
+            uri: UNKNOWN_URI,
+            rkey: '3ljmyunknown',
+            name: 'Field Journal',
+            url: 'https://notes.example.com/',
+            isDefault: false,
+            posts: 2,
           },
         ],
       },
@@ -138,5 +149,51 @@ test.describe('Linkblog publication picker', () => {
       'Links go in as Leaflet blocks, the only format Leaflet reads.'
     );
     await expect(picker.getByRole('button', { name: /Publish to Field Notes/ })).toBeEnabled();
+  });
+
+  test('opens the Skyreader linkblog from its row', async ({ authedPage }) => {
+    await stubLinkblogApi(authedPage);
+    await authedPage.goto('/settings');
+
+    const picker = authedPage.locator('.target-picker');
+    await expect(picker).toBeVisible({ timeout: 10_000 });
+
+    const skyreaderRow = picker.locator('.pub-row', { hasText: 'Your Skyreader linkblog' });
+    await expect(skyreaderRow.locator('.pub-open')).toHaveAttribute(
+      'href',
+      `https://linkblogs.skyreader.app/${CONNECTED_DID}/`
+    );
+  });
+
+  test('says compatibility is unknown for a publication it can’t place', async ({ authedPage }) => {
+    await stubLinkblogApi(authedPage);
+    await authedPage.goto('/settings');
+
+    const picker = authedPage.locator('.target-picker');
+    await expect(picker).toBeVisible({ timeout: 10_000 });
+
+    // Flagged on the row itself, before the user commits to it.
+    const unknownRow = picker.locator('.pub-option', { hasText: 'Field Journal' });
+    await expect(unknownRow.locator('.pub-badge.is-unknown')).toHaveText('Compatibility unknown');
+    await expect(unknownRow.locator('.pub-badge.is-app')).toHaveCount(0);
+
+    // A known app says nothing of the sort.
+    const leafletRow = picker.locator('.pub-option', { hasText: 'Field Notes' });
+    await expect(leafletRow.locator('.pub-badge.is-unknown')).toHaveCount(0);
+
+    // Selecting it spells out the risk, and still offers the format choice and
+    // the publish action — it's a caution, not a refusal.
+    await unknownRow.click();
+    await expect(unknownRow).toHaveClass(/selected/);
+    await expect(picker.locator('.compat-warning')).toContainText(
+      "Skyreader can't tell whether your links will show up here."
+    );
+    await expect(picker.locator('.compat-warning')).toContainText("isn't one Skyreader recognizes");
+    await expect(picker.locator('#linkblog-format')).toBeVisible();
+    await expect(picker.getByRole('button', { name: /Publish to Field Journal/ })).toBeEnabled();
+
+    // Gone again once a publication Skyreader knows how to write for is picked.
+    await leafletRow.click();
+    await expect(picker.locator('.compat-warning')).toHaveCount(0);
   });
 });
