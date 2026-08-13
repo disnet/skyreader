@@ -52,7 +52,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
    * - Scrolling up: go back when the current paragraph's bottom goes past
    *   the viewport bottom (it's fully off-screen below)
    */
-  function updateCurrentParagraph() {
+  function updateCurrentParagraph(save = true) {
     if (paragraphs.length === 0) return;
 
     const scrollTop = params.scrollRoot()?.scrollTop ?? window.scrollY;
@@ -92,8 +92,10 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
       furthestParagraphIndex = currentParagraphIndex;
     }
 
-    // Save on every position change (up or down)
-    debouncedSave();
+    // Persist only in response to an actual scroll. setupObserver also measures
+    // the initial position, but doing so must not overwrite progress hydrated
+    // from the server while an uncached article body is still loading.
+    if (save) debouncedSave();
   }
 
   function getOffsetRelativeTo(el: HTMLElement, ancestor: HTMLElement): number {
@@ -179,13 +181,13 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     scrollTarget = root ?? window;
 
     scrollHandler = () => {
-      requestAnimationFrame(updateCurrentParagraph);
+      requestAnimationFrame(() => updateCurrentParagraph());
     };
 
     scrollTarget.addEventListener('scroll', scrollHandler, { passive: true });
 
     // Initial position check
-    updateCurrentParagraph();
+    updateCurrentParagraph(false);
   }
 
   function scrollToParagraph(index: number) {
