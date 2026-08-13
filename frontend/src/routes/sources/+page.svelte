@@ -734,6 +734,7 @@
                     title={sub.customTitle || sub.title}
                     subtitle={getSubtitle(sub)}
                     hasError={status?.status === 'error' || status?.status === 'circuit-open'}
+                    errorDetails={sub.feedUrl ? feedStatusStore.getErrorDetails(sub.feedUrl) : null}
                     subscribed={true}
                     selected={sub.id != null && selectedIds.has(sub.id)}
                     fallbackIcon="rss"
@@ -762,6 +763,7 @@
                   title={sub.customTitle || sub.title}
                   subtitle={getSubtitle(sub)}
                   hasError={status?.status === 'error' || status?.status === 'circuit-open'}
+                  errorDetails={sub.feedUrl ? feedStatusStore.getErrorDetails(sub.feedUrl) : null}
                   subscribed={true}
                   selected={sub.id != null && selectedIds.has(sub.id)}
                   fallbackIcon="rss"
