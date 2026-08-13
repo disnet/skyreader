@@ -2,7 +2,8 @@ import { test, expect } from './fixtures';
 
 // The publication picker on Settings is fed entirely by two endpoints that need a
 // live PDS, so both are stubbed here. What's under test is the picker itself:
-// that each publication arrives described (app, address, post count) and that
+// that each publication arrives described (app, address, post count), that
+// choosing one follows the format its app can actually read, and that
 // publications Skyreader cannot publish to are explained without being selectable.
 const CONNECTED_DID = 'did:plc:linkblog-picker';
 
@@ -110,8 +111,15 @@ test.describe('Linkblog publication picker', () => {
     await expect(pcktRow.locator('.pub-desc')).toHaveText(
       'pckt does not currently import posts published by other apps.'
     );
+    // A real click on the row: the browser drops it because the label's control
+    // is disabled, so the selection can't move. `force` skips Playwright's
+    // actionability wait — it resolves a <label> to that control and would
+    // otherwise wait forever for a disabled input to become enabled.
+    await pcktRow.click({ force: true });
     await expect(skyreaderRow).toHaveClass(/selected/);
+    await expect(pcktRow).not.toHaveClass(/selected/);
     await expect(picker.locator('#linkblog-format')).toHaveCount(0);
+    await expect(picker.locator('.format-fixed')).toHaveCount(0);
     await expect(
       picker.getByRole('button', { name: /Publish to Untitled publication/ })
     ).toHaveCount(0);
@@ -120,5 +128,15 @@ test.describe('Linkblog publication picker', () => {
     // Name and description stay editable while the Skyreader linkblog is live —
     // they're its fields, not a connected publication's.
     await expect(authedPage.locator('#linkblog-name')).toBeEnabled();
+
+    // Choosing a publication Skyreader can publish to states the format its app
+    // reads rather than asking, and offers the publish action by name.
+    await leafletRow.click();
+    await expect(leafletRow).toHaveClass(/selected/);
+    await expect(picker.locator('#linkblog-format')).toHaveCount(0);
+    await expect(picker.locator('.format-fixed')).toHaveText(
+      'Links go in as Leaflet blocks, the only format Leaflet reads.'
+    );
+    await expect(picker.getByRole('button', { name: /Publish to Field Notes/ })).toBeEnabled();
   });
 });
