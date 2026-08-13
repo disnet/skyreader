@@ -322,6 +322,36 @@ describe('feed timeline (D1 ingest + serve)', () => {
       expect(rows.results[0].seq).toBe(before?.seq);
       expect(rows.results[0].content_hash).toBe(before?.content_hash);
     });
+
+    it('serves newest publications when pull-through and crawler ingest interleave', async () => {
+      // Subscribe-time pull-through can write the newest proxy window before
+      // the crawler's initial backlog reaches this feed. The older backlog then
+      // has higher seq values, so per-feed reads must not use seq as recency.
+      await ingestProxyFeed(env, FEED_A, {
+        title: 'Pulled',
+        items: [
+          item('newest', { publishedAt: '2026-03-01T00:00:00.000Z' }),
+          item('newer', { publishedAt: '2026-02-01T00:00:00.000Z' }),
+        ],
+      });
+      await ingest(FEED_A, [
+        {
+          item: item('oldest', { publishedAt: '2025-12-01T00:00:00.000Z' }),
+          contentHash: 'oldest-hash',
+        },
+        {
+          item: item('older', { publishedAt: '2026-01-01T00:00:00.000Z' }),
+          contentHash: 'older-hash',
+        },
+      ]);
+
+      const slice = await readFeedSlice(env, TEST_DID, FEED_A, 2);
+      expect(slice.map((i) => i.guid)).toEqual(['newest', 'newer']);
+
+      await addSubscription(TEST_DID, FEED_A);
+      const page = await timeline();
+      expect(page.items.map((i) => i.guid)).toEqual(['newest', 'newer', 'older', 'oldest']);
+    });
   });
 
   describe('crawl set', () => {

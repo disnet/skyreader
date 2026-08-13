@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   // Container for the article card. Owns ALL store/service/hook wiring and the
   // interaction logic; resolves a flat view-model + callbacks and hands them to
   // the PURE presentational <ArticleCardView/>. The card's markup + styles live
@@ -604,7 +605,10 @@
   // list shouldn't fire an extraction per card it passes over.
   $effect(() => {
     if (!expanded || !article?.contentTruncated || !itemUrl) return;
-    linkPostContentStore.fetch(itemUrl);
+    // `fetch` reads and mutates its reactive entry map. Keep those reads out of
+    // this effect's dependency graph so deleting a failed entry doesn't turn an
+    // extraction error (or offline mode) into an unbounded retry loop.
+    untrack(() => linkPostContentStore.fetch(itemUrl));
   });
 
   // Same lazy-load for a document's flat text (stripped from memory). Only

@@ -230,8 +230,8 @@ async function fetchTimeline(
  * A subscription synced in from another device is already below the global
  * cursor, so the drain will never deliver its existing items — the legacy path
  * got this for free because every subscription carried its own cursor. Each feed
- * is attempted once (the attempt is recorded in Dexie), and only a handful per
- * sync, so this can't turn into a request storm after a large sync.
+ * is successfully checked once (the success is recorded in Dexie), and only a
+ * handful per sync, so this can't turn into a request storm after a large sync.
  */
 async function backfillMissingSubscriptions(
   rssSubs: Subscription[],
@@ -252,9 +252,10 @@ async function backfillMissingSubscriptions(
     // pulls the feed through the crawler if it holds nothing for it.
     const fetched = await fetchSingleFeed(sub, false, savedGuids);
     newArticles += fetched.newArticles;
-    // Recorded either way — a feed that legitimately has no items must not be
-    // re-requested every sync. The sidebar's retry action covers a real failure.
-    attempted.add(sub.feedUrl!);
+    // A successful empty response is still a completed backfill. Failures are
+    // left eligible for a later sync (for example after reconnecting or after a
+    // circuit-breaker cooldown expires).
+    if (fetched.success) attempted.add(sub.feedUrl!);
   }
 
   await setMetadata<string[]>(TIMELINE_BACKFILL_KEY, pruneAttemptedBackfills(attempted, rssSubs));

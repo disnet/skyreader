@@ -144,6 +144,11 @@ client commits a cursor. That signal is server-side on purpose — subscribe-tim
 pull-through both write to the archive, so "the archive is empty for this user" would stop being
 true long before the crawler existed.
 
+The heartbeat means a crawler is attached; it does **not** mean the initial archive backfill is
+complete. After enabling prod, watch `/stats` and wait for `ingest.pending` to trend to ~0 before
+announcing the rollout. New or cleared clients remain correct while it drains, but their first cold
+start can be sparse and will fill in over subsequent syncs.
+
 ### Phase 5 — cleanup (a later release, once no legacy traffic remains)
 
 Remove `/api/v2/feeds/batch`'s proxy passthrough + its `getReadKeys` call (keep it for documents),
@@ -162,9 +167,10 @@ step deleting `feeds`/`feed_items` rows whose feed has had **zero active subscri
   while the token would otherwise stay the same. The timeline also self-heals a cursor that sits
   above the head by cold-starting that client, so a forgotten bump degrades to one extra cold start
   rather than a silent, permanent stall.
-- **Ingest order is oldest→newest.** A proxy feed is newest-first; seq is assigned in insert order,
-  so the pull-through walks it backwards (as the proxy's `writeFeedItems` does). Inverting it would
-  never heal — a re-push of an unchanged item is a no-op.
+- **Per-feed recency comes from `published_at`, then `seq`.** A proxy feed is newest-first, so each
+  ingest call still writes oldest→newest. But subscribe-time pull-through and the crawler backlog
+  can interleave, making archive `seq` different from publication order; per-feed slices must remain
+  correct in that case. Incremental delivery continues to use `seq` as its cursor.
 - **Writes to the archive need a subscription.** Ordinary ingest deletes nothing, so every
   user-triggered write path (subscribe-time ingest, the pull-through) is gated on the caller's own
   subscription list.

@@ -89,7 +89,7 @@ export async function readFeedSlice(
     `SELECT fi.seq, fi.feed_url, fi.item_json, ${READ_FLAG_SQL}
        FROM feed_items fi
       WHERE fi.feed_url = ?2
-      ORDER BY fi.seq DESC
+      ORDER BY fi.published_at DESC, fi.seq DESC
       LIMIT ?3`
   )
     .bind(userDid, feedUrl, limit)
@@ -340,7 +340,7 @@ export async function handleTimeline(
           `SELECT fi.seq, fi.feed_url, fi.item_json, ${READ_FLAG_SQL}
              FROM feed_items fi
             WHERE fi.feed_url = ?2
-            ORDER BY fi.seq DESC
+            ORDER BY fi.published_at DESC, fi.seq DESC
             LIMIT ?3`
         ).bind(session.did, feedUrl, COLD_START_PER_FEED)
       );

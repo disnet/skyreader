@@ -43,6 +43,8 @@ CREATE TABLE feed_items (
 );
 
 CREATE INDEX idx_feed_items_feed_seq ON feed_items(feed_url, seq);
+CREATE INDEX idx_feed_items_feed_published_seq
+    ON feed_items(feed_url, published_at DESC, seq DESC);
 
 -- The timeline join probes subscriptions by (user_did, feed_url).
 CREATE INDEX IF NOT EXISTS idx_subscriptions_cache_user_feed
