@@ -680,15 +680,16 @@
       {#if linkblogSuccess}
         <p class="sync-success">{linkblogSuccess}</p>
       {/if}
-      <hr />
-      <h3 class="subhead">Delete linkblog</h3>
-      <p class="setting-description">
-        Deletes every link post from your PDS and removes the linkblog from Skyreader. This cannot
-        be undone.
-      </p>
-      <button class="btn btn-danger" onclick={handleDeleteLinkblog} disabled={isSavingLinkblog}>
-        Delete linkblog
-      </button>
+      <div class="danger-section">
+        <h3 class="subhead">Delete linkblog</h3>
+        <p class="setting-description">
+          Deletes every link post from your PDS and removes the linkblog from Skyreader. This cannot
+          be undone.
+        </p>
+        <button class="btn btn-danger" onclick={handleDeleteLinkblog} disabled={isSavingLinkblog}>
+          Delete linkblog
+        </button>
+      </div>
     {/if}
   </section>
 
@@ -1369,6 +1370,21 @@
     margin-top: 1rem;
     padding-top: 1rem;
     border-top: 1px solid var(--color-border);
+  }
+
+  /* Sets the destructive action apart from the settings above it, on the same
+     divider rhythm as .about-links / .sync-toggle-section. (It replaced a bare
+     <hr>, which drew the UA's grooved 2px line on ~8px of margin — too tight
+     above, and the wrong rule.) The subhead drops its own top margin so the
+     spacing is the section's, not the sum of both. */
+  .danger-section {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .danger-section .subhead {
+    margin-top: 0;
   }
 
   .sync-status {

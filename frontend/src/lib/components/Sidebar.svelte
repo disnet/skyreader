@@ -320,201 +320,203 @@
   <!-- Navigation items -->
   <nav class="sidebar-nav">
     <!-- Home: the default landing surface (a route, not a feed filter) -->
-    {#if !preferences.linkblogDisabled}<a
-        href="/home"
-        class="nav-item nav-link"
-        class:active={$page.url.pathname === '/home'}
-        onclick={() => sidebarStore.closeMobile()}
-      >
-        <span class="nav-icon"><Icon name="home" /></span>
-        <span class="nav-label">Home</span>
-      </a>
+    <a
+      href="/home"
+      class="nav-item nav-link"
+      class:active={$page.url.pathname === '/home'}
+      onclick={() => sidebarStore.closeMobile()}
+    >
+      <span class="nav-icon"><Icon name="home" /></span>
+      <span class="nav-label">Home</span>
+    </a>
 
-      <!-- Everything: top-level filter + nested source channels -->
-      <div class="nav-group" class:expanded={sidebarStore.expandedSections.everything}>
-        <div class="nav-row" class:active={currentFilter().type === 'all'}>
-          <button class="nav-row-main" onclick={() => selectFilter('all')}>
-            <span class="nav-icon"><Icon name="inbox" /></span>
-            <span class="nav-label">Feeds</span>
-          </button>
-          <button
-            class="row-add-btn"
-            onclick={(e) => {
-              e.stopPropagation();
-              openChannelModal(null, 'feed');
-            }}
-            title="New channel"
-          >
-            <Icon name="plus" size={14} strokeWidth={2} />
-          </button>
-          {#if totalUnread > 0}
-            <span class="nav-count">{totalUnread}</span>
-          {/if}
-          <button
-            class="row-disclosure-btn"
-            onclick={(e) => {
-              e.stopPropagation();
-              sidebarStore.toggleSection('everything');
-            }}
-            aria-label="Toggle channels"
-          >
-            <Icon
-              name={sidebarStore.expandedSections.everything ? 'chevron-down' : 'chevron-right'}
-              size={14}
-              strokeWidth={2.5}
-            />
-          </button>
-        </div>
-        {#if sidebarStore.expandedSections.everything}
-          <div class="nav-children">
-            {#each sourceChannels as view (view.uuid)}
-              <ViewItem
-                {view}
-                isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
-                isRenaming={renamingViewId === view.id}
-                unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
-                onSelect={() => selectFilter('view', view.uuid)}
-                onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-                onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
-                onTouchEnd={handleViewTouchEnd}
-                onTouchMove={handleViewTouchMove}
-                onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-                onRename={async (name) => {
-                  if (view.id != null) {
-                    await filteredViewsStore.update(view.id, { name });
-                  }
-                  renamingViewId = null;
-                }}
-                onRenameCancel={() => (renamingViewId = null)}
-              />
-            {/each}
-            {#each channelSuggestions.suggestions as suggestion (suggestion.id)}
-              <div class="suggestion-item">
-                <button class="suggestion-accept" onclick={() => acceptSuggestion(suggestion)}>
-                  <span class="suggestion-icon"><Icon name="plus" size={12} /></span>
-                  <span class="suggestion-name">{suggestion.name}</span>
-                </button>
-                <Tooltip text={suggestion.description} />
-                <button
-                  class="suggestion-dismiss"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    channelSuggestions.dismiss(suggestion.id);
-                  }}
-                  title="Dismiss"
-                >
-                  <Icon name="x" size={12} />
-                </button>
-              </div>
-            {/each}
-            {#if sourceChannels.length === 0 && channelSuggestions.suggestions.length === 0}
-              <div class="empty-section">No channels yet</div>
-            {/if}
-            <a
-              href="/channels/discover"
-              class="more-suggestions-link"
-              onclick={() => sidebarStore.closeMobile()}
-            >
-              More channel ideas
-              <Icon name="arrow-right" size={12} />
-            </a>
-          </div>
+    <!-- Everything: top-level filter + nested source channels -->
+    <div class="nav-group" class:expanded={sidebarStore.expandedSections.everything}>
+      <div class="nav-row" class:active={currentFilter().type === 'all'}>
+        <button class="nav-row-main" onclick={() => selectFilter('all')}>
+          <span class="nav-icon"><Icon name="inbox" /></span>
+          <span class="nav-label">Feeds</span>
+        </button>
+        <button
+          class="row-add-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            openChannelModal(null, 'feed');
+          }}
+          title="New channel"
+        >
+          <Icon name="plus" size={14} strokeWidth={2} />
+        </button>
+        {#if totalUnread > 0}
+          <span class="nav-count">{totalUnread}</span>
         {/if}
+        <button
+          class="row-disclosure-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            sidebarStore.toggleSection('everything');
+          }}
+          aria-label="Toggle channels"
+        >
+          <Icon
+            name={sidebarStore.expandedSections.everything ? 'chevron-down' : 'chevron-right'}
+            size={14}
+            strokeWidth={2.5}
+          />
+        </button>
       </div>
-
-      <!-- Saved: top-level filter + nested saved channels -->
-      <div class="nav-group" class:expanded={sidebarStore.expandedSections.saved}>
-        <div class="nav-row" class:active={currentFilter().type === 'saved'}>
-          <button class="nav-row-main" onclick={() => selectFilter('saved')}>
-            <span class="nav-icon"><Icon name="bookmark" /></span>
-            <span class="nav-label">Saved</span>
-          </button>
-          <button
-            class="row-add-btn"
-            onclick={(e) => {
-              e.stopPropagation();
-              openChannelModal(null, 'saved');
-            }}
-            title="New saved channel"
-          >
-            <Icon name="plus" size={14} strokeWidth={2} />
-          </button>
-          {#if itemLabelsStore.inboxCount > 0}
-            <span class="nav-count">{itemLabelsStore.inboxCount}</span>
-          {/if}
-          <button
-            class="row-disclosure-btn"
-            onclick={(e) => {
-              e.stopPropagation();
-              sidebarStore.toggleSection('saved');
-            }}
-            aria-label="Toggle saved channels"
-          >
-            <Icon
-              name={sidebarStore.expandedSections.saved ? 'chevron-down' : 'chevron-right'}
-              size={14}
-              strokeWidth={2.5}
+      {#if sidebarStore.expandedSections.everything}
+        <div class="nav-children">
+          {#each sourceChannels as view (view.uuid)}
+            <ViewItem
+              {view}
+              isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
+              isRenaming={renamingViewId === view.id}
+              unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
+              onSelect={() => selectFilter('view', view.uuid)}
+              onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+              onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
+              onTouchEnd={handleViewTouchEnd}
+              onTouchMove={handleViewTouchMove}
+              onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+              onRename={async (name) => {
+                if (view.id != null) {
+                  await filteredViewsStore.update(view.id, { name });
+                }
+                renamingViewId = null;
+              }}
+              onRenameCancel={() => (renamingViewId = null)}
             />
-          </button>
-        </div>
-        {#if sidebarStore.expandedSections.saved}
-          <div class="nav-children">
-            {#each savedChannels as view (view.uuid)}
-              <ViewItem
-                {view}
-                isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
-                isRenaming={renamingViewId === view.id}
-                unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
-                onSelect={() => selectFilter('view', view.uuid)}
-                onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-                onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
-                onTouchEnd={handleViewTouchEnd}
-                onTouchMove={handleViewTouchMove}
-                onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-                onRename={async (name) => {
-                  if (view.id != null) {
-                    await filteredViewsStore.update(view.id, { name });
-                  }
-                  renamingViewId = null;
+          {/each}
+          {#each channelSuggestions.suggestions as suggestion (suggestion.id)}
+            <div class="suggestion-item">
+              <button class="suggestion-accept" onclick={() => acceptSuggestion(suggestion)}>
+                <span class="suggestion-icon"><Icon name="plus" size={12} /></span>
+                <span class="suggestion-name">{suggestion.name}</span>
+              </button>
+              <Tooltip text={suggestion.description} />
+              <button
+                class="suggestion-dismiss"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  channelSuggestions.dismiss(suggestion.id);
                 }}
-                onRenameCancel={() => (renamingViewId = null)}
-              />
-            {/each}
-            {#each savedChannelSuggestions.suggestions as suggestion (suggestion.id)}
-              <div class="suggestion-item">
-                <button class="suggestion-accept" onclick={() => acceptSavedSuggestion(suggestion)}>
-                  <span class="suggestion-icon"><Icon name="plus" size={12} /></span>
-                  <span class="suggestion-name">{suggestion.name}</span>
-                </button>
-                <Tooltip text={suggestion.description} />
-                <button
-                  class="suggestion-dismiss"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    savedChannelSuggestions.dismiss(suggestion.id);
-                  }}
-                  title="Dismiss"
-                >
-                  <Icon name="x" size={12} />
-                </button>
-              </div>
-            {/each}
-            {#if savedChannels.length === 0 && savedChannelSuggestions.suggestions.length === 0}
-              <div class="empty-section">No saved channels yet</div>
-            {/if}
-            <a
-              href="/channels/discover"
-              class="more-suggestions-link"
-              onclick={() => sidebarStore.closeMobile()}
-            >
-              More channel ideas
-              <Icon name="arrow-right" size={12} />
-            </a>
-          </div>
-        {/if}
-      </div>
+                title="Dismiss"
+              >
+                <Icon name="x" size={12} />
+              </button>
+            </div>
+          {/each}
+          {#if sourceChannels.length === 0 && channelSuggestions.suggestions.length === 0}
+            <div class="empty-section">No channels yet</div>
+          {/if}
+          <a
+            href="/channels/discover"
+            class="more-suggestions-link"
+            onclick={() => sidebarStore.closeMobile()}
+          >
+            More channel ideas
+            <Icon name="arrow-right" size={12} />
+          </a>
+        </div>
+      {/if}
+    </div>
 
-      <!-- Bottom nav -->
+    <!-- Saved: top-level filter + nested saved channels -->
+    <div class="nav-group" class:expanded={sidebarStore.expandedSections.saved}>
+      <div class="nav-row" class:active={currentFilter().type === 'saved'}>
+        <button class="nav-row-main" onclick={() => selectFilter('saved')}>
+          <span class="nav-icon"><Icon name="bookmark" /></span>
+          <span class="nav-label">Saved</span>
+        </button>
+        <button
+          class="row-add-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            openChannelModal(null, 'saved');
+          }}
+          title="New saved channel"
+        >
+          <Icon name="plus" size={14} strokeWidth={2} />
+        </button>
+        {#if itemLabelsStore.inboxCount > 0}
+          <span class="nav-count">{itemLabelsStore.inboxCount}</span>
+        {/if}
+        <button
+          class="row-disclosure-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            sidebarStore.toggleSection('saved');
+          }}
+          aria-label="Toggle saved channels"
+        >
+          <Icon
+            name={sidebarStore.expandedSections.saved ? 'chevron-down' : 'chevron-right'}
+            size={14}
+            strokeWidth={2.5}
+          />
+        </button>
+      </div>
+      {#if sidebarStore.expandedSections.saved}
+        <div class="nav-children">
+          {#each savedChannels as view (view.uuid)}
+            <ViewItem
+              {view}
+              isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
+              isRenaming={renamingViewId === view.id}
+              unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
+              onSelect={() => selectFilter('view', view.uuid)}
+              onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+              onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
+              onTouchEnd={handleViewTouchEnd}
+              onTouchMove={handleViewTouchMove}
+              onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+              onRename={async (name) => {
+                if (view.id != null) {
+                  await filteredViewsStore.update(view.id, { name });
+                }
+                renamingViewId = null;
+              }}
+              onRenameCancel={() => (renamingViewId = null)}
+            />
+          {/each}
+          {#each savedChannelSuggestions.suggestions as suggestion (suggestion.id)}
+            <div class="suggestion-item">
+              <button class="suggestion-accept" onclick={() => acceptSavedSuggestion(suggestion)}>
+                <span class="suggestion-icon"><Icon name="plus" size={12} /></span>
+                <span class="suggestion-name">{suggestion.name}</span>
+              </button>
+              <Tooltip text={suggestion.description} />
+              <button
+                class="suggestion-dismiss"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  savedChannelSuggestions.dismiss(suggestion.id);
+                }}
+                title="Dismiss"
+              >
+                <Icon name="x" size={12} />
+              </button>
+            </div>
+          {/each}
+          {#if savedChannels.length === 0 && savedChannelSuggestions.suggestions.length === 0}
+            <div class="empty-section">No saved channels yet</div>
+          {/if}
+          <a
+            href="/channels/discover"
+            class="more-suggestions-link"
+            onclick={() => sidebarStore.closeMobile()}
+          >
+            More channel ideas
+            <Icon name="arrow-right" size={12} />
+          </a>
+        </div>
+      {/if}
+    </div>
+
+    <!-- Bottom nav. The linkblog entry hides once the user deletes their
+         linkblog; the rest of the nav is unrelated to it and always shows. -->
+    {#if !preferences.linkblogDisabled}
       <a
         href="/linkblog"
         class="nav-item nav-link"
@@ -523,7 +525,8 @@
       >
         <span class="nav-icon"><Icon name="share" /></span>
         <span class="nav-label">Linkblog</span>
-      </a>{/if}
+      </a>
+    {/if}
 
     <a
       href="/highlights"

@@ -34,6 +34,21 @@
       onclose();
     }
   }
+
+  // Portal to <body>. A modal opened from deep in the page (an article card, the
+  // reader) would otherwise be trapped in an ancestor's stacking context, and
+  // `z-index` can't climb out of one: the sticky page header (z-index 10, but in
+  // a context that outranks the card's) kept painting over the backdrop while
+  // everything around it dimmed. As a direct child of body the backdrop competes
+  // at the root, so it covers the whole app whatever opened it.
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      },
+    };
+  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -42,6 +57,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="modal-backdrop"
+    use:portal
     onclick={handleBackdropClick}
     onkeydown={handleKeydown}
     role="dialog"

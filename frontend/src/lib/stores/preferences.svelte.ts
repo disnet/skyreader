@@ -1,4 +1,5 @@
 import { browser } from '$app/environment';
+import { auth } from '$lib/stores/auth.svelte';
 
 export type ArticleFont = 'sans-serif' | 'serif' | 'mono' | 'literata';
 // Reader body size, in CSS pixels. Was a fixed xs…xl scale (12–20px); now a
@@ -59,9 +60,14 @@ interface PreferencesState {
   scrollToMarkAsRead: boolean;
   expandAllItems: boolean;
   sortOrder: BaseSortOrder;
-  // Set once the user has acknowledged the first-share "this is public" confirmation.
-  linkblogShareConfirmed: boolean;
-  linkblogDisabled: boolean;
+  // Accounts (by DID) that have acknowledged the first-share "this is public"
+  // confirmation, and accounts whose linkblog is deleted. Both are per-account
+  // facts living in a device-global blob that logout doesn't clear, so they're
+  // keyed by DID: a second account on the same browser must not inherit the
+  // first account's acknowledgment (it would publish publicly with no warning)
+  // or its deleted linkblog.
+  linkblogShareConfirmedDids: string[];
+  linkblogDisabledDids: string[];
   // Which surface a cold app load lands on (consumed by the `/` redirector).
   defaultView: DefaultView;
   // How tightly the Home lane tiles are packed.
@@ -72,6 +78,12 @@ interface PreferencesState {
 
 const STORAGE_KEY = 'skyreader-preferences';
 
+// localStorage is user-editable and carries whatever an older build wrote, so a
+// DID list is only trusted once it's actually a list of strings.
+function didList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((did): did is string => typeof did === 'string') : [];
+}
+
 function createPreferencesStore() {
   let state = $state<PreferencesState>({
     articleFont: 'serif',
@@ -80,8 +92,8 @@ function createPreferencesStore() {
     scrollToMarkAsRead: false,
     expandAllItems: true,
     sortOrder: 'newest',
-    linkblogShareConfirmed: false,
-    linkblogDisabled: false,
+    linkblogShareConfirmedDids: [],
+    linkblogDisabledDids: [],
     defaultView: 'home',
     cardDensity: 'cozy',
     dailyMagazineMinutes: 20,
@@ -113,10 +125,13 @@ function createPreferencesStore() {
         if (parsed.sortOrder) {
           state.sortOrder = parsed.sortOrder;
         }
-        if (parsed.linkblogShareConfirmed !== undefined) {
-          state.linkblogShareConfirmed = parsed.linkblogShareConfirmed;
-        }
-        if (parsed.linkblogDisabled !== undefined) state.linkblogDisabled = parsed.linkblogDisabled;
+        // Legacy device-global booleans are intentionally NOT migrated: they
+        // can't be attributed to an account. The disabled flag re-derives from
+        // the server on the next publication fetch, and an un-attributable
+        // share acknowledgment falls back to showing the warning once more —
+        // the safe direction for something that publishes publicly.
+        state.linkblogShareConfirmedDids = didList(parsed.linkblogShareConfirmedDids);
+        state.linkblogDisabledDids = didList(parsed.linkblogDisabledDids);
         if (
           parsed.defaultView === 'home' ||
           parsed.defaultView === 'feeds' ||
@@ -211,12 +226,18 @@ function createPreferencesStore() {
   }
 
   function confirmLinkblogShare() {
-    state.linkblogShareConfirmed = true;
+    const did = auth.user?.did;
+    if (!did || state.linkblogShareConfirmedDids.includes(did)) return;
+    state.linkblogShareConfirmedDids = [...state.linkblogShareConfirmedDids, did];
     save();
   }
 
   function setLinkblogDisabled(disabled: boolean) {
-    state.linkblogDisabled = disabled;
+    const did = auth.user?.did;
+    if (!did || disabled === state.linkblogDisabledDids.includes(did)) return;
+    state.linkblogDisabledDids = disabled
+      ? [...state.linkblogDisabledDids, did]
+      : state.linkblogDisabledDids.filter((d) => d !== did);
     save();
   }
 
@@ -261,11 +282,15 @@ function createPreferencesStore() {
     get sortOrder() {
       return state.sortOrder;
     },
+    // Both read the CURRENT account. Logged out, neither is true: no account
+    // has acknowledged anything, and nothing should be hidden as deleted.
     get linkblogShareConfirmed() {
-      return state.linkblogShareConfirmed;
+      const did = auth.user?.did;
+      return !!did && state.linkblogShareConfirmedDids.includes(did);
     },
     get linkblogDisabled() {
-      return state.linkblogDisabled;
+      const did = auth.user?.did;
+      return !!did && state.linkblogDisabledDids.includes(did);
     },
     get defaultView() {
       return state.defaultView;
