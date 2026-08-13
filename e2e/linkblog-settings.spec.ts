@@ -3,7 +3,7 @@ import { test, expect } from './fixtures';
 // The publication picker on Settings is fed entirely by two endpoints that need a
 // live PDS, so both are stubbed here. What's under test is the picker itself:
 // that each publication arrives described (app, address, post count) and that
-// choosing one offers the content format its app can actually read.
+// publications Skyreader cannot publish to are explained without being selectable.
 const CONNECTED_DID = 'did:plc:linkblog-picker';
 
 const SKYREADER_URI = `at://${CONNECTED_DID}/site.standard.publication/skyreader-links`;
@@ -61,6 +61,8 @@ async function stubLinkblogApi(page: import('@playwright/test').Page) {
             appLabel: 'pckt',
             detectedFormat: 'pckt',
             formatLocked: true,
+            supported: false,
+            unsupportedReason: 'pckt does not currently import posts published by other apps.',
             posts: 1,
           },
         ],
@@ -101,16 +103,20 @@ test.describe('Linkblog publication picker', () => {
     await expect(picker.locator('#linkblog-format')).toHaveCount(0);
     await expect(picker.getByRole('button', { name: /Use my Skyreader linkblog/ })).toBeDisabled();
 
-    // pckt renders only its own blocks, so choosing it states the format rather
-    // than offering a choice that could only be wrong.
-    await pcktRow.click();
-    await expect(picker.locator('#linkblog-format')).toHaveCount(0);
-    await expect(picker.locator('.format-fixed')).toContainText(
-      'Links go in as pckt blocks, the only format pckt reads.'
+    // pckt does not import records written by other apps. Keep it visible so the
+    // user understands why it cannot be chosen, but do not offer a publish action.
+    await expect(pcktRow.locator('input[type="radio"]')).toBeDisabled();
+    await expect(pcktRow.locator('.pub-badge.is-unavailable')).toHaveText("Can't publish here");
+    await expect(pcktRow.locator('.pub-desc')).toHaveText(
+      'pckt does not currently import posts published by other apps.'
     );
+    await pcktRow.click({ position: { x: 8, y: 8 } });
+    await expect(skyreaderRow).toHaveClass(/selected/);
+    await expect(picker.locator('#linkblog-format')).toHaveCount(0);
     await expect(
       picker.getByRole('button', { name: /Publish to Untitled publication/ })
-    ).toBeEnabled();
+    ).toHaveCount(0);
+    await expect(picker.getByRole('button', { name: /Use my Skyreader linkblog/ })).toBeDisabled();
 
     // Name and description stay editable while the Skyreader linkblog is live —
     // they're its fields, not a connected publication's.
