@@ -376,7 +376,9 @@ small community-run host:
 
 1. **Circuit breaker** — 5 consecutive failing calls (timeout, network, 5xx/429)
    open it for 30 s; calls short-circuit to `null` instead of each eating the
-   10 s timeout. A clean 4xx is a healthy "no data" and does not count.
+   10 s timeout. A clean 4xx is a healthy "no data" and does not count. The check
+   runs again after a call gets its concurrency permit, so callers that were
+   queued when the breaker opened short-circuit too.
 2. **Concurrency cap** — `CONSTELLATION_CONCURRENCY` requests in flight, the rest
    queued up to `CONSTELLATION_QUEUE_MAX` and then shed to `null`. Shedding is our
    own backpressure, so it does **not** count toward the breaker.

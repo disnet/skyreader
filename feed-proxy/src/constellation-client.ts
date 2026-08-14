@@ -17,7 +17,9 @@
  *    timeouts / 5xx / network errors it opens, and calls short-circuit to `null`
  *    immediately for a cooldown instead of each eating a 10 s timeout. A clean
  *    4xx is a definitive "no data" answer (the service is healthy), so it does
- *    NOT count toward the breaker.
+ *    NOT count toward the breaker. It is checked twice — once on entry and again
+ *    after the concurrency permit is granted — so a caller that queued while the
+ *    breaker was closed still short-circuits if it opened in the meantime.
  * 2. **Concurrency cap**, because nothing else bounds our fan-out: the warm loop
  *    refreshes 8 feeds at once, each firing up to 25 mention enrichments, each of
  *    which issues up to 12 parallel per-source queries. Unbounded, that's
@@ -266,6 +268,15 @@ export async function constellationGet<T>(
   }
 
   try {
+    // The breaker may have opened while we sat in the queue: with the default
+    // queue that's up to 200 callers who passed the check above and would each
+    // otherwise spend a 10 s timeout on an already-failing host — exactly the
+    // storm the breaker exists to stop. Re-check now that it's our turn.
+    if (isConstellationBreakerOpen()) {
+      counters.shortCircuited++;
+      return null;
+    }
+
     counters.requests++;
     let result = await attempt<T>(url);
 

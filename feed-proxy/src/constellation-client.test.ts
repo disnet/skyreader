@@ -218,4 +218,32 @@ describe('constellationGet concurrency cap', () => {
     expect(await Promise.all(calls.slice(0, 2))).toEqual([{ ok: true }, { ok: true }]);
     expect(spy).toHaveBeenCalledTimes(2);
   });
+
+  it('short-circuits callers that were queued when the breaker opened', async () => {
+    // Serial handoff, so the queue drains in a deterministic order: the first
+    // five calls fail and open the breaker while the other five are parked.
+    setConstellationLimits(1, 200);
+    const spy = spyOn(globalThis, 'fetch').mockImplementation(
+      (async () => new Response('err', { status: 503 })) as unknown as typeof fetch
+    );
+
+    // All ten pass the pre-queue breaker check (it is still closed) before any
+    // of them reaches the network.
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => constellationGet('/links/all', { target: 'x' }))
+    );
+
+    expect(results.every((r) => r === null)).toBe(true);
+    expect(isConstellationBreakerOpen()).toBe(true);
+    // Without the post-acquire re-check the queued five would each have spent a
+    // full request against an already-failing host.
+    expect(spy).toHaveBeenCalledTimes(5);
+    const stats = getConstellationStats();
+    expect(stats.requests).toBe(5);
+    expect(stats.failures).toBe(5);
+    expect(stats.breakerOpens).toBe(1);
+    expect(stats.shortCircuited).toBe(5);
+    // Short-circuiting is not shedding: the queue never overflowed.
+    expect(stats.shed).toBe(0);
+  });
 });
