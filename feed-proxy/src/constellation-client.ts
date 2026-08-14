@@ -23,26 +23,43 @@
  * 2. **Concurrency cap**, because nothing else bounds our fan-out: the warm loop
  *    refreshes 8 feeds at once, each firing up to 25 mention enrichments, each of
  *    which issues up to 12 parallel per-source queries. Unbounded, that's
- *    hundreds of simultaneous sockets against a small community-run service,
- *    which sheds load by resetting connections — i.e. we cause the very errors we
- *    then have to absorb. The cap is also the main defense against resets in its
- *    own right, not just a politeness measure: it is what keeps the connection
- *    pool small and long-lived (see 3). Queue overflow returns `null` *without*
- *    counting a breaker failure: that's our own backpressure, not a Constellation
- *    health signal.
- * 3. **One retry on connection resets.** What resets is *connection setup*, not
- *    idle keep-alive reuse. Measured against the live host: a warm pooled socket
- *    served 47 of 48 sequential requests cleanly, while forcing a fresh
- *    connection per request (`keepalive: false`, or `Connection: close`) reset
- *    60-76% of the time; across a concurrency sweep the failures worked out to
- *    roughly one reset per newly-opened socket, after which that socket was fine.
- *    So the reset we absorb is the one a *new* connection takes, and the retry
- *    works because the next attempt usually lands on a working socket. Two
- *    consequences: keep concurrency low (fewer new sockets is strictly better —
- *    do NOT "fix" this by disabling keep-alive, which makes it much worse), and
- *    expect a residual failure rate, since a retry also has to open a socket.
- *    Timeouts are NOT retried — the caller already waited 10 s, and the breaker
- *    is the right tool for a slow service.
+ *    hundreds of simultaneous sockets against a small community-run service — a
+ *    rude thing to point at one. It also matters for the resets in (3), though
+ *    not for the reason it first appeared to: those aren't load-shedding we
+ *    provoke, but they *do* scale with how many sockets we open, and a low cap is
+ *    what keeps the pool small and long-lived. Queue overflow returns `null`
+ *    *without* counting a breaker failure: that's our own backpressure, not a
+ *    Constellation health signal.
+ * 3. **Retries on connection resets.** These resets are an *upstream* fault, and
+ *    specifically a per-connection one. `constellation.microcosm.blue` publishes
+ *    two A records, and on 2026-08-14 one of them was dead: 155.138.133.71
+ *    answered every request with a 200, while 209.38.8.157 completed the TCP
+ *    connect *and* a TLS handshake against a valid cert for the hostname, took
+ *    the request, then closed without sending a byte — 11 times out of 11, over
+ *    several minutes. Reproduce with:
+ *
+ *      for ip in $(dig +short A constellation.microcosm.blue); do \
+ *        printf '%-16s ' "$ip"; \
+ *        curl -s --resolve constellation.microcosm.blue:443:$ip -o /dev/null \
+ *          -w '%{http_code}\n' -m 10 https://constellation.microcosm.blue/; done
+ *
+ *    So every *new* connection is a coin flip. Land on the healthy node and that
+ *    socket then serves everything cleanly (47/48 sequential on a warm socket;
+ *    0 failures across 54 requests in three back-to-back 3-wide bursts; warm
+ *    sockets survived 30-60 s idle gaps untouched). Land on the dead one and you
+ *    get ECONNRESET. Fresh-connection-per-request measured 26-30% failures;
+ *    pooling is what hides that the rest of the time.
+ *
+ *    Consequences. Retry more than once: each attempt opens a socket and so flips
+ *    the coin again, taking a ~28% per-connection failure rate to ~2% per logical
+ *    call. Keep concurrency low, since failures scale with sockets opened rather
+ *    than requests made. Do NOT "fix" this by disabling keep-alive — that makes
+ *    every request a coin flip. And a keepalive heartbeat does NOT help (measured:
+ *    26% failures cold vs 30% with a 20 s heartbeat, the heartbeat itself 0/13) —
+ *    it keeps *one* socket warm while a burst opens more alongside it. Timeouts
+ *    are NOT retried: the caller already waited 10 s, and the breaker is the right
+ *    tool for a slow service. If the reproduction above stops showing a dead
+ *    address, the upstream node was fixed; the retries stay cheap either way.
  *
  * Breaker, semaphore and counters are per-process module state. That's exactly
  * right on today's single Fly machine; a multi-machine deploy would get one
@@ -72,27 +89,36 @@ const BREAKER_COOLDOWN_MS = 30 * 1000;
 const DEFAULT_CONCURRENCY = parseInt(process.env.CONSTELLATION_CONCURRENCY || '3', 10);
 const DEFAULT_QUEUE_MAX = parseInt(process.env.CONSTELLATION_QUEUE_MAX || '200', 10);
 
-// Backoff before the single retry, jittered so a burst of resets (the common
-// case — several workers opening sockets at once) doesn't re-collide on the
-// reconnect.
+// Backoff before each retry, jittered so a burst of resets (the common case —
+// several workers opening sockets at once) doesn't re-collide on the reconnect.
 const RETRY_DELAY_MS = 250;
 const RETRY_JITTER_MS = 100;
+// Retries after the first attempt. Each one opens a socket and so re-flips the
+// coin described above: at the measured ~28% per-connection failure rate, one
+// attempt fails 28% of the time, two 8%, three 2%.
+const MAX_RESET_RETRIES = 2;
 
 // An outage otherwise logs one line per failed call; the warm loop makes that
-// thousands. Log the first failure of a streak, then every Nth with a count.
+// thousands. Failures log at most once per window, carrying the count of the
+// ones suppressed since — a rate, which is the number worth reading, rather
+// than a wall of identical stacks. (Streak-based throttling doesn't work here:
+// the common case is failures *interleaved* with successes, which resets a
+// streak counter on every other call and so logs every single failure in full.)
+const LOG_WINDOW_MS = 60 * 1000;
 const LOG_EVERY_N_FAILURES = 25;
 
 let consecutiveFailures = 0;
 let openUntil = 0;
-let failureStreak = 0;
+let lastFailureLogAt = 0;
+let suppressedFailures = 0;
 let semaphore = new Semaphore(DEFAULT_CONCURRENCY, DEFAULT_QUEUE_MAX);
 
 const counters = {
   /** Logical calls that reached the network (breaker closed, permit acquired). */
   requests: 0,
-  /** Connection resets seen (both attempts of a retried call count once each). */
+  /** Connection resets seen (every attempt of a retried call counts its own). */
   resets: 0,
-  /** Retries attempted after a reset. */
+  /** Retry attempts made after a reset (a call may make several). */
   retries: 0,
   /** Retries that then succeeded — the errors this hardening absorbs. */
   retriesRecovered: 0,
@@ -115,7 +141,8 @@ export function isConstellationBreakerOpen(now: number = Date.now()): boolean {
 export function resetConstellationBreaker(): void {
   consecutiveFailures = 0;
   openUntil = 0;
-  failureStreak = 0;
+  lastFailureLogAt = 0;
+  suppressedFailures = 0;
   for (const key of Object.keys(counters) as Array<keyof typeof counters>) counters[key] = 0;
 }
 
@@ -150,7 +177,6 @@ export function getConstellationStats(): {
 function recordSuccess(): void {
   consecutiveFailures = 0;
   openUntil = 0;
-  failureStreak = 0;
 }
 
 function recordFailure(now: number): void {
@@ -169,14 +195,31 @@ function recordFailure(now: number): void {
   }
 }
 
-/** First failure of a streak logs in full; the rest are summarised periodically. */
-function logFailure(path: string, error: unknown): void {
-  failureStreak++;
-  if (failureStreak === 1) {
-    console.error(`[constellation] ${path} error:`, error);
-  } else if (failureStreak % LOG_EVERY_N_FAILURES === 0) {
-    console.error(`[constellation] ${failureStreak} consecutive failures (latest ${path}):`, error);
+/**
+ * One line, not a stack. Every failure here comes out of the same `fetch` call
+ * in `attempt`, so the stack is identical every time and says nothing; the code
+ * and message are the whole signal.
+ */
+function describeError(error: unknown): string {
+  if (typeof error === 'string') return error;
+  if (!error || typeof error !== 'object') return String(error);
+  const { name, code, message } = error as { name?: unknown; code?: unknown; message?: unknown };
+  const label = typeof code === 'string' ? code : typeof name === 'string' ? name : 'Error';
+  return typeof message === 'string' ? `${label}: ${message}` : label;
+}
+
+/** At most one failure line per window, carrying how many it stands in for. */
+function logFailure(path: string, error: unknown, now: number): void {
+  if (now - lastFailureLogAt < LOG_WINDOW_MS) {
+    suppressedFailures++;
+    return;
   }
+  const also = suppressedFailures
+    ? ` (+${suppressedFailures} more in the last ${Math.round(LOG_WINDOW_MS / 1000)}s)`
+    : '';
+  console.error(`[constellation] ${path} failed${also}: ${describeError(error)}`);
+  lastFailureLogAt = now;
+  suppressedFailures = 0;
 }
 
 /**
@@ -253,8 +296,8 @@ async function attempt<T>(url: string): Promise<Attempt<T>> {
  * every failure (breaker open, overload, timeout, network, non-OK, parse)
  * degrades to null so callers stay best-effort.
  *
- * A reset-then-success sequence counts as one success; a reset-then-reset
- * sequence counts as exactly *one* breaker failure, so the threshold still
+ * A reset-then-success sequence counts as one success; a call whose every
+ * attempt reset counts as exactly *one* breaker failure, so the threshold still
  * means "5 logical calls failed", not "5 sockets died".
  */
 export async function constellationGet<T>(
@@ -296,19 +339,33 @@ export async function constellationGet<T>(
 
     counters.requests++;
     let result = await attempt<T>(url);
+    // The first error names the socket that died first — keep it for the log if
+    // every attempt resets, since the later ones are the same story retold.
+    const firstError = result.kind === 'retry' ? result.error : undefined;
+    let retried = false;
 
-    if (result.kind === 'retry') {
+    for (let i = 0; result.kind === 'retry' && i < MAX_RESET_RETRIES; i++) {
       counters.retries++;
+      retried = true;
       await sleep(RETRY_DELAY_MS + Math.random() * RETRY_JITTER_MS);
-      const first = result.error;
       result = await attempt<T>(url);
-      if (result.kind === 'ok') {
-        counters.retriesRecovered++;
-        console.warn(`[constellation] ${path} connection reset, retry succeeded`);
-      } else if (result.kind === 'retry') {
-        // Two resets in a row: one logical failure, keeping the first error for
-        // context (it's the one that names the socket that died first).
-        result = { kind: 'fail', error: result.error ?? first };
+    }
+    if (result.kind === 'retry') {
+      // Every attempt reset: one logical failure, not one per dead socket.
+      result = { kind: 'fail', error: firstError };
+    }
+
+    const recovered = retried && (result.kind === 'ok' || result.kind === 'null-ok');
+    if (recovered) {
+      counters.retriesRecovered++;
+      // Absorbed resets are the expected background noise of this host, not an
+      // incident: /stats carries the count, and the log gets an occasional line
+      // so a *changed* rate is still visible without a flood of self-healed ones.
+      if (counters.retriesRecovered % LOG_EVERY_N_FAILURES === 1) {
+        console.warn(
+          `[constellation] absorbed ${counters.retriesRecovered} connection reset(s) ` +
+            `by retrying (latest ${path})`
+        );
       }
     }
 
@@ -319,10 +376,12 @@ export async function constellationGet<T>(
       case 'null-ok':
         recordSuccess();
         return null;
-      default:
-        recordFailure(Date.now());
-        logFailure(path, result.error);
+      default: {
+        const now = Date.now();
+        recordFailure(now);
+        logFailure(path, result.error, now);
         return null;
+      }
     }
   } finally {
     semaphore.release();
