@@ -110,10 +110,15 @@ export interface ShareDestination {
 }
 
 export function shareDestination(
-  publication: Pick<LinkblogPublication, 'name' | 'external' | 'externalUrl'> | null | undefined,
+  publication:
+    | (Pick<LinkblogPublication, 'name' | 'external' | 'externalUrl'> & { pageHidden?: boolean })
+    | null
+    | undefined,
   linkblogUrl: string | null | undefined
 ): ShareDestination {
-  const linkblog = linkblogUrl ?? undefined;
+  // A hidden page 404s, so there's no second address to mention — the connected
+  // publication is the whole story.
+  const linkblog = publication?.pageHidden ? undefined : (linkblogUrl ?? undefined);
   // Not connected (or not loaded yet): the Skyreader linkblog is the destination.
   if (!publication?.external) {
     return {

@@ -663,7 +663,9 @@ export interface LinkblogPerson {
   // The publication to subscribe to (at://did/site.standard.publication/skyreader-links).
   publicationUri: string;
   // The public linkblog page — used as the subscription's siteUrl.
-  blogUrl: string;
+  // Null when the author turned their Skyreader page off — there's no public page
+  // to link to (adding them still works, that goes through `publicationUri`).
+  blogUrl: string | null;
   // Whether the current user already follows this person on Bluesky.
   isFollow: boolean;
 }

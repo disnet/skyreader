@@ -117,6 +117,16 @@
       return 'Skyreader';
     }
   });
+  // The page toggle is bound to a local mirror rather than read straight off
+  // `linkblogPub`. A click moves the checkbox itself, so a save that fails leaves
+  // no server change for a one-way `checked={...}` to re-assert — the box would
+  // sit in the position the user chose while the server still said the opposite.
+  // The failure paths write this back; the effect re-syncs it whenever the server
+  // value does change.
+  let showLinkblogPage = $state(true);
+  $effect(() => {
+    showLinkblogPage = !linkblogPub?.pageHidden;
+  });
 
   onMount(async () => {
     if (!auth.isAuthenticated) {
@@ -251,10 +261,12 @@
   // a stable DID-keyed address with an RSS feed, and it survives switching
   // publications), but it's their call, not ours to infer from the connection.
   async function handleToggleLinkblogPage(show: boolean) {
-    if (isSavingLinkblog) return;
+    // Nothing below saved, so put the checkbox back where the server has it.
+    const revert = () => (showLinkblogPage = !linkblogPub?.pageHidden);
+    if (isSavingLinkblog) return revert();
     if (!syncStore.isOnline) {
       linkblogError = 'You are offline. Connect to the internet to change this.';
-      return;
+      return revert();
     }
     isSavingLinkblog = true;
     linkblogError = null;
@@ -266,6 +278,7 @@
         : 'Your Skyreader page is off. Links keep publishing as before.';
     } catch (error) {
       linkblogError = error instanceof Error ? error.message : 'Could not change this.';
+      revert();
     } finally {
       isSavingLinkblog = false;
     }
@@ -716,7 +729,7 @@
           <label class="toggle-setting">
             <input
               type="checkbox"
-              checked={!linkblogPub.pageHidden}
+              bind:checked={showLinkblogPage}
               disabled={isSavingLinkblog}
               onchange={(e) => handleToggleLinkblogPage(e.currentTarget.checked)}
             />

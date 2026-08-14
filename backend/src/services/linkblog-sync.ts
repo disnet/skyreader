@@ -581,6 +581,37 @@ export async function setLinkblogPageHidden(env: Env, did: string, hidden: boole
     .run();
 }
 
+// The authors who turned off their Skyreader-hosted page. Unlike a disabled
+// linkblog these people still belong in discovery — their links are publishing
+// fine, into the publication they connected — so this only says "don't hand out
+// the linkblogs.skyreader.app address for them", which would 404.
+//
+// Not folded into getLinkblogTargets: that SELECT is the one every share path
+// depends on, and its catch exists so a deploy landing ahead of a migration still
+// resolves targets. A separate query keeps 0066's column out of that blast radius
+// — pre-migration this throws on its own and degrades to "nobody is hidden".
+export async function getPageHiddenAuthors(env: Env, dids: string[]): Promise<string[]> {
+  const candidates = [...new Set(dids)];
+  if (candidates.length === 0) return [];
+  try {
+    const hidden: string[] = [];
+    for (let i = 0; i < candidates.length; i += 100) {
+      const chunk = candidates.slice(i, i + 100);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = await env.DB.prepare(
+        `SELECT user_did FROM user_settings
+         WHERE linkblog_page_hidden = 1 AND user_did IN (${placeholders})`
+      )
+        .bind(...chunk)
+        .all<{ user_did: string }>();
+      hidden.push(...(rows.results ?? []).map((row) => row.user_did));
+    }
+    return hidden;
+  } catch {
+    return [];
+  }
+}
+
 export async function getDisabledLinkblogAuthors(env: Env, dids: string[]): Promise<string[]> {
   const candidates = [...new Set(dids)];
   if (candidates.length === 0) return [];
@@ -1332,9 +1363,12 @@ export async function deleteLinkblog(
     return { success: false, error: purged.error, retryable: purged.retryable };
   }
 
+  // `linkblog_page_hidden` goes with the connection it belonged to. Leaving it set
+  // would re-arm silently: restore, connect a different publication, and the page
+  // is dark again without the user having asked for it this time.
   await env.DB.prepare(
     `UPDATE user_settings SET linkblog_publication = NULL, linkblog_content_format = NULL,
-     updated_at = ? WHERE user_did = ?`
+     linkblog_page_hidden = 0, updated_at = ? WHERE user_did = ?`
   )
     .bind(now, session.did)
     .run();

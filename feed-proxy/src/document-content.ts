@@ -28,25 +28,33 @@ interface TextishBlock {
 
 // The text block `$type` per format. Headers/callouts are deliberately excluded —
 // a snippet is the linker's prose, mirroring the original leaflet-only behavior.
-//
-// Leaflet's blockquote is here because it carries its text as a top-level
-// `plaintext` rather than nested blocks, so the container descent below can't
-// reach it: without this a link post whose note is just the quoted passage — the
-// shape the share composer seeds — yielded no snippet at all and fell back to
-// `textContent`, which still carries the `> ` marker. pckt/offprint spell their
-// blockquote as a container, so the descent already covers them.
 const TEXT_BLOCK_TYPES = new Set([
   'pub.leaflet.blocks.text',
-  'pub.leaflet.blocks.blockquote',
   'blog.pckt.block.text',
   'app.offprint.block.text',
+]);
+
+// Quoted passages. A share's note usually opens with one — the composer seeds the
+// selected passage and drops the cursor under it — so taking the first text in
+// document order would make the snippet the article's own words rather than the
+// linker's. They're a FALLBACK instead: `firstTextInBlocks` runs once skipping
+// quotes, and only if the note is nothing but a quote does a second pass take one
+// (better than the caller's `textContent`, which still carries the `> ` marker).
+//
+// Leaflet needs the type listed here because its blockquote carries text in a
+// top-level `plaintext`; pckt/offprint spell theirs as a container holding inner
+// text blocks, so listing it is what stops the descent reaching in.
+const QUOTE_BLOCK_TYPES = new Set([
+  'pub.leaflet.blocks.blockquote',
+  'blog.pckt.block.blockquote',
+  'app.offprint.block.blockquote',
 ]);
 
 // Bound the descent into nested container blocks (a lead quote/list still yields
 // text) without chasing pathologically deep trees.
 const MAX_DEPTH = 4;
 
-function firstTextInBlocks(blocks: unknown, depth: number): string | null {
+function firstTextInBlocks(blocks: unknown, depth: number, quotes: 'skip' | 'take'): string | null {
   if (depth > MAX_DEPTH || !Array.isArray(blocks)) return null;
   for (const entry of blocks) {
     if (!entry || typeof entry !== 'object') continue;
@@ -56,15 +64,22 @@ function firstTextInBlocks(blocks: unknown, depth: number): string | null {
       | TextishBlock
       | undefined;
     if (!block || typeof block !== 'object') continue;
-    if (typeof block.$type === 'string' && TEXT_BLOCK_TYPES.has(block.$type)) {
+    const isQuote = typeof block.$type === 'string' && QUOTE_BLOCK_TYPES.has(block.$type);
+    if (isQuote && quotes === 'skip') continue;
+    if (isQuote || (typeof block.$type === 'string' && TEXT_BLOCK_TYPES.has(block.$type))) {
       const text = block.plaintext?.trim();
       if (text) return text;
     }
     // Descend into container blocks (blockquote / list item / table cell).
-    const nested = firstTextInBlocks(block.content, depth + 1);
+    const nested = firstTextInBlocks(block.content, depth + 1, quotes);
     if (nested) return nested;
   }
   return null;
+}
+
+// The linker's own prose if the note has any, otherwise whatever they quoted.
+function firstSnippetInBlocks(blocks: unknown): string | null {
+  return firstTextInBlocks(blocks, 0, 'skip') ?? firstTextInBlocks(blocks, 0, 'take');
 }
 
 // The first non-empty markdown line, stripped of leading heading/quote/list
@@ -90,15 +105,19 @@ export function extractContentText(content: unknown): string | null {
   switch (type) {
     case 'pub.leaflet.content': {
       const pages = (content as { pages?: Array<{ blocks?: unknown }> }).pages ?? [];
-      for (const page of pages) {
-        const text = firstTextInBlocks(page?.blocks, 0);
-        if (text) return text;
+      // Prose anywhere in the document beats a quote on the first page, so the
+      // skip pass runs across every page before the take pass does.
+      for (const quotes of ['skip', 'take'] as const) {
+        for (const page of pages) {
+          const text = firstTextInBlocks(page?.blocks, 0, quotes);
+          if (text) return text;
+        }
       }
       return null;
     }
     case 'blog.pckt.content':
     case 'app.offprint.content':
-      return firstTextInBlocks((content as { items?: unknown }).items, 0);
+      return firstSnippetInBlocks((content as { items?: unknown }).items);
     case 'app.greengale.document': {
       const markdown = (content as { markdown?: string }).markdown;
       return firstMarkdownLine(markdown);

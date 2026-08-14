@@ -58,10 +58,19 @@ export const load: PageServerLoad = async ({ params, url }) => {
     apiBase,
     publication: target.siteUri,
     // With a connected publication, these posts have a home of their own and this
-    // page is a view of it: the page says so, and points `rel=canonical` there.
-    // Absent when the publication record carries no usable site URL, in which case
-    // this page is the only address the links have and canonicalizes to itself.
+    // page is a view of it — worth saying, whatever the canonical ends up being.
+    // Absent when the publication record carries no usable site URL.
     externalUrl: target.external ? (pub?.url ?? null) : null,
+    // `rel=canonical` only when the connected publication's site is a superset of
+    // this page. It usually isn't: the docs above are fetched from BOTH
+    // publications, so anything shared before the connection still lives in
+    // `skyreader-links` and is listed here but not there. Canonicalizing then
+    // would hand search engines a page missing exactly those posts, so this page
+    // stays its own canonical instead.
+    canonicalUrl:
+      target.external && !docs.some((d) => d.siteUri === target.defaultSiteUri)
+        ? (pub?.url ?? null)
+        : null,
     appUrl: appUrlFor(origin, env.APP_URL),
   };
 };

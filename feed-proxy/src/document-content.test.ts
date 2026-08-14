@@ -55,6 +55,38 @@ describe('extractContentText', () => {
     expect(extractContentText(content)).toBe('the quoted passage');
   });
 
+  // The composer seeds the selected passage as a quote and drops the cursor under
+  // it, so quote-then-commentary is the ordinary shape of a note. The snippet is
+  // the linker's prose, so the quote only wins when there's nothing else.
+  it('prefers the linker prose over a quote that precedes it (leaflet)', () => {
+    const content = {
+      $type: 'pub.leaflet.content',
+      pages: [
+        {
+          blocks: [
+            { block: { $type: 'pub.leaflet.blocks.blockquote', plaintext: 'the quoted passage' } },
+            { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'my commentary' } },
+          ],
+        },
+      ],
+    };
+    expect(extractContentText(content)).toBe('my commentary');
+  });
+
+  it('prefers the linker prose over a quote that precedes it (offprint)', () => {
+    const content = {
+      $type: 'app.offprint.content',
+      items: [
+        {
+          $type: 'app.offprint.block.blockquote',
+          content: [{ $type: 'app.offprint.block.text', plaintext: 'the quoted passage' }],
+        },
+        { $type: 'app.offprint.block.text', plaintext: 'my commentary' },
+      ],
+    };
+    expect(extractContentText(content)).toBe('my commentary');
+  });
+
   it('descends into pckt/offprint container blocks for a lead quote/list', () => {
     const content = {
       $type: 'app.offprint.content',

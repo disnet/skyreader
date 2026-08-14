@@ -25,12 +25,13 @@
     data.profile?.displayName || (handle ? `@${handle}` : 'This reader')
   );
 
-  // These posts live in a publication the reader already runs somewhere else. Say
-  // where, and hand the canonical URL to that site: two renders of one set of
-  // records shouldn't compete, and theirs is the home.
+  // These posts live in a publication the reader already runs somewhere else — say
+  // where. The canonical is a narrower question and the server answers it
+  // separately: it only points away when that site holds everything this page
+  // lists, otherwise this page is its own canonical.
   const externalUrl = $derived(safeHttpUrl(data.externalUrl ?? undefined));
   const externalHost = $derived(hostnameOf(externalUrl ?? undefined));
-  const canonicalUrl = $derived(externalUrl ?? pageUrl);
+  const canonicalUrl = $derived(safeHttpUrl(data.canonicalUrl ?? undefined) ?? pageUrl);
 </script>
 
 <svelte:head>
