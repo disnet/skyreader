@@ -625,6 +625,16 @@ class ApiClient {
     return this.fetch('/api/linkblog/publication/connect', { method: 'DELETE' });
   }
 
+  // Whether Skyreader serves the public linkblog page. Only accepted while a
+  // publication is connected — otherwise that page is the only public address the
+  // links have, and the backend refuses.
+  async setLinkblogPageHidden(pageHidden: boolean): Promise<LinkblogPublication> {
+    return this.fetch('/api/linkblog/publication/visibility', {
+      method: 'PUT',
+      body: JSON.stringify({ pageHidden }),
+    });
+  }
+
   // Subscribe via the Atmosphere — writes/reads/deletes only the portable
   // site.standard.graph.subscription record (no Skyreader subscription).
   async getAtmosphereSubscription(publication: string): Promise<{ subscribed: boolean }> {

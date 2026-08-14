@@ -20,12 +20,14 @@ import {
   FOREIGN_RECORD_ERROR,
   getPublicationMeta,
   getLinkblogTarget,
+  getLinkblogVisibility,
   isLinkblogDisabled,
   httpUrlOrUndefined,
   linkblogBaseUrl,
   PUBLICATION_COLLECTION,
   publicationUri,
   restoreLinkblog,
+  setLinkblogPageHidden,
   updateLinkblogShareNote,
   updatePublication,
   writeLinkblogShare,
@@ -330,7 +332,16 @@ export async function migrateLinkblogFollowers(
   // page is what tells the reader this publication is a linkblog once its rkey is
   // no longer `skyreader-links` (see sourceDisplay); rows created before we
   // persisted it have none. COALESCE so a user-set value is never overwritten.
-  const linkblogPage = linkblogBaseUrl(env, subjectDid);
+  //
+  // Only while that page is actually served, though — the same reason
+  // ensureLocalDocumentSubscription won't store it. Hiding is honored only for a
+  // connected publication (getPublicationMeta), so weigh the flag against where
+  // links land *after* this migration: coming back to the default publication
+  // makes the page live again even if the flag is still set. A null binding
+  // makes every COALESCE below a no-op, so the graph moves and the URL doesn't.
+  const { pageHidden } = await getLinkblogVisibility(env, subjectDid);
+  const pageServed = !(pageHidden && nextSiteUri !== publicationUri(subjectDid));
+  const linkblogPage = pageServed ? linkblogBaseUrl(env, subjectDid) : null;
 
   // A follower may already subscribe to the destination publication. Keep that
   // row and use it to reconcile the old graph edge, then remove the redundant
@@ -385,6 +396,39 @@ export async function migrateLinkblogFollowers(
        WHERE source_type = 'atproto.documents' AND subject_did = ? AND feed_url = ?`
     ).bind(nextSiteUri, previousSiteUri, linkblogPage, subjectDid, previousSiteUri),
   ]);
+}
+
+/**
+ * Follow the page-visibility choice through to the people already subscribed.
+ * Their `siteUrl` is the author's linkblog page, and it outlives the moment we
+ * stored it: turning the page off leaves every existing follower holding a link
+ * that 404s, and turning it back on leaves them with none. Exact-match on the
+ * way out so a value the reader set themselves is never cleared, and
+ * `feed_url`-scoped on the way back so only the linkblog subscription gets the
+ * address (the same author can have other publications). `atmosphere_synced`
+ * clears because `siteUrl` rides along in the PDS subscription record.
+ */
+async function applyPageVisibilityToFollowers(
+  env: Env,
+  subjectDid: string,
+  siteUri: string,
+  pageHidden: boolean
+): Promise<void> {
+  const linkblogPage = linkblogBaseUrl(env, subjectDid);
+  await (
+    pageHidden
+      ? env.DB.prepare(
+          `UPDATE subscriptions_cache
+         SET site_url = NULL, atmosphere_synced = NULL
+         WHERE source_type = 'atproto.documents' AND subject_did = ? AND site_url = ?`
+        ).bind(subjectDid, linkblogPage)
+      : env.DB.prepare(
+          `UPDATE subscriptions_cache
+         SET site_url = ?, atmosphere_synced = NULL
+         WHERE source_type = 'atproto.documents' AND subject_did = ? AND feed_url = ?
+           AND site_url IS NULL`
+        ).bind(linkblogPage, subjectDid, siteUri)
+  ).run();
 }
 
 /** What a publication's existing documents say about it: how many, and which
@@ -548,8 +592,11 @@ export async function handleConnectPublication(request: Request, env: Env): Prom
   if (request.method === 'DELETE') {
     const previousTarget = await getLinkblogTarget(env, session.did);
     const nextSiteUri = publicationUri(session.did);
+    // Coming back to the Skyreader linkblog also clears "don't serve my page":
+    // that page is now the only public address these links have, and a linkblog
+    // silently published nowhere is worse than one the user has to hide again.
     await env.DB.prepare(
-      'UPDATE user_settings SET linkblog_publication = NULL, linkblog_content_format = NULL, updated_at = ? WHERE user_did = ?'
+      'UPDATE user_settings SET linkblog_publication = NULL, linkblog_content_format = NULL, linkblog_page_hidden = 0, updated_at = ? WHERE user_did = ?'
     )
       .bind(now, session.did)
       .run();
@@ -604,12 +651,18 @@ export async function handleConnectPublication(request: Request, env: Env): Prom
   }
   const format = connectContentFormat(app, body.format);
   const previousTarget = await getLinkblogTarget(env, session.did);
+  // Selecting the default publication here is a disconnect by another name (the
+  // UI routes it to DELETE, but the API is open), so clear the page-hidden choice
+  // the same way that path does — see the note there.
+  const backToDefault = selectedPublicationUri === publicationUri(session.did) ? 1 : 0;
   await env.DB.prepare(
-    `INSERT INTO user_settings (user_did, linkblog_publication, linkblog_content_format, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_did) DO UPDATE SET linkblog_publication=excluded.linkblog_publication,
-    linkblog_content_format=excluded.linkblog_content_format, updated_at=excluded.updated_at`
+    `INSERT INTO user_settings (user_did, linkblog_publication, linkblog_content_format, linkblog_page_hidden, created_at, updated_at)
+    VALUES (?, ?, ?, 0, ?, ?) ON CONFLICT(user_did) DO UPDATE SET linkblog_publication=excluded.linkblog_publication,
+    linkblog_content_format=excluded.linkblog_content_format,
+    linkblog_page_hidden=CASE WHEN ? = 1 THEN 0 ELSE user_settings.linkblog_page_hidden END,
+    updated_at=excluded.updated_at`
   )
-    .bind(session.did, selectedPublicationUri, format, now, now)
+    .bind(session.did, selectedPublicationUri, format, now, now, backToDefault)
     .run();
   await migrateLinkblogFollowers(env, session.did, previousTarget.siteUri, selectedPublicationUri);
   return json(await getPublicationMeta(session, env));
@@ -653,11 +706,67 @@ export async function handleResolvePublication(request: Request, env: Env): Prom
   if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
   const did = decodeURIComponent(new URL(request.url).pathname.split('/').pop() || '');
   if (!did.startsWith('did:')) return json({ error: 'Invalid DID' }, 400);
-  const target = await getLinkblogTarget(env, did);
+  const [target, visibility] = await Promise.all([
+    getLinkblogTarget(env, did),
+    getLinkblogVisibility(env, did),
+  ]);
   return new Response(
-    JSON.stringify({ siteUri: target.siteUri, defaultSiteUri: publicationUri(did) }),
+    JSON.stringify({
+      siteUri: target.siteUri,
+      defaultSiteUri: publicationUri(did),
+      // One flag for the public site: it renders the page or it doesn't, and the
+      // reason (deleted vs. page turned off) isn't the reader's business. Deleted
+      // linkblogs have no posts left to show anyway, but saying so here means the
+      // page 404s instead of rendering an empty shell for a linkblog that's gone.
+      // `pageHidden` is gated on a connected publication for the same reason
+      // getPublicationMeta gates it: without one, this page is the linkblog's only
+      // public address and a stale flag would take it dark with nothing in the UI
+      // to explain it.
+      hidden: visibility.disabled || (visibility.pageHidden && target.external),
+    }),
     {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=60' },
     }
   );
+}
+
+// PUT /api/linkblog/publication/visibility — { pageHidden: boolean }
+//
+// Whether Skyreader serves this user's public linkblog page. Only meaningful with
+// a connected publication (which has a site of its own); with no connection the
+// page is the only public home the linkblog has, so turning it off would be a
+// confusing second way to spell "delete".
+export async function handleSetPageVisibility(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Unauthorized' }, 401);
+  if (request.method !== 'PUT') return json({ error: 'Method not allowed' }, 405);
+  // A D1-only flag flip, gated like every other linkblog mutation (restore is the
+  // closest sibling and gates for the same reason): a session that can't write is
+  // one whose next share fails, so let it re-auth here rather than let it manage a
+  // linkblog it can't publish to.
+  if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
+    return insufficientScopesResponse();
+  }
+  let body: { pageHidden?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+  if (typeof body.pageHidden !== 'boolean') {
+    return json({ error: 'pageHidden must be a boolean' }, 400);
+  }
+  const target = await getLinkblogTarget(env, session.did);
+  if (body.pageHidden && !target.external) {
+    return json(
+      {
+        error:
+          'Your Skyreader linkblog page is the only public home your links have. Connect an existing publication first, or delete the linkblog.',
+      },
+      400
+    );
+  }
+  await setLinkblogPageHidden(env, session.did, body.pageHidden);
+  await applyPageVisibilityToFollowers(env, session.did, target.siteUri, body.pageHidden);
+  return json(await getPublicationMeta(session, env));
 }

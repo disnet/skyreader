@@ -16,6 +16,7 @@ import { fetchProfiles } from '../services/bsky-appview';
 import { getUserTierLimits } from '../services/user-tier';
 import {
   getLinkblogTarget,
+  getPageHiddenAuthors,
   linkblogBaseUrl,
   publicationUri as defaultLinkblogPublicationUri,
 } from '../services/linkblog-sync';
@@ -536,12 +537,17 @@ export async function ensureLocalDocumentSubscription(
   // linkblog's rkey is arbitrary, so the URI alone can't say. (The page renders
   // whichever publication the author currently publishes to, so this survives a
   // later switch.) Only when this publication really is their linkblog — this
-  // endpoint takes any standard.site publication.
-  const target = await getLinkblogTarget(env, subjectDid);
+  // endpoint takes any standard.site publication — and only while that page is
+  // actually served: an author who turned it off would leave us persisting a URL
+  // that 404s, and the subscription outlives the moment we stored it.
+  const [target, pageHidden] = await Promise.all([
+    getLinkblogTarget(env, subjectDid),
+    getPageHiddenAuthors(env, [subjectDid]).then((h) => h.length > 0),
+  ]);
   const isLinkblog =
     publicationUri === target.siteUri ||
     publicationUri === defaultLinkblogPublicationUri(subjectDid);
-  const siteUrl = isLinkblog ? linkblogBaseUrl(env, subjectDid) : null;
+  const siteUrl = isLinkblog && !pageHidden ? linkblogBaseUrl(env, subjectDid) : null;
 
   const rkey = generateTid();
   const recordUri = `at://${session.did}/app.skyreader.feed.subscription/${rkey}`;

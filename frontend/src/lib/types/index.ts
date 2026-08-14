@@ -663,7 +663,9 @@ export interface LinkblogPerson {
   // The publication to subscribe to (at://did/site.standard.publication/skyreader-links).
   publicationUri: string;
   // The public linkblog page — used as the subscription's siteUrl.
-  blogUrl: string;
+  // Null when the author turned their Skyreader page off — there's no public page
+  // to link to (adding them still works, that goes through `publicationUri`).
+  blogUrl: string | null;
   // Whether the current user already follows this person on Bluesky.
   isFollow: boolean;
 }
@@ -799,6 +801,10 @@ export interface LinkblogPublication {
   external: boolean;
   format: 'leaflet' | 'pckt' | 'offprint' | 'markpub';
   disabled: boolean;
+  // The user turned off the Skyreader-hosted page at `url`. Only ever true with a
+  // connected publication, which has a public site of its own; `url` still says
+  // where the page would be, so the choice can be undone.
+  pageHidden: boolean;
   // For a connected publication only: its own site (e.g. https://leaflet.pub/…).
   // Informational — `url` above is always the Skyreader linkblog page, which
   // renders the connected publication's link posts too.

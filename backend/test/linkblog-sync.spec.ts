@@ -224,6 +224,57 @@ describe('contentFormatOf', () => {
   });
 });
 
+// The composer drops the cursor directly under the seeded `> quote`, so a note
+// whose quote and commentary aren't separated by a blank line is the ordinary
+// case, not an edge one. The block-item formats used to split on blank lines
+// alone, which folded the commentary into the quote (or, in the reverse order,
+// stripped the quote's markers and published it as prose).
+describe('note runs in the block-item formats', () => {
+  const ARTICLE_URL = 'https://example.com/the-article';
+  const build = (format: 'pckt' | 'offprint', note: string) =>
+    (
+      buildLinkblogDocument(
+        DID,
+        RKEY,
+        { articleUrl: ARTICLE_URL, articleTitle: 'The Article', note },
+        undefined,
+        publicationUri(DID),
+        format
+      ).content as { items: Array<{ $type: string; plaintext?: string; content?: unknown[] }> }
+    ).items;
+
+  for (const format of ['pckt', 'offprint'] as const) {
+    const prefix = format === 'pckt' ? 'blog.pckt.block.' : 'app.offprint.block.';
+    const card = format === 'pckt' ? `${prefix}website` : `${prefix}webBookmark`;
+
+    it(`${format}: a quote followed by commentary on the next line stays two blocks`, () => {
+      const items = build(format, '> A quoted sentence.\nMy commentary.');
+      expect(items.map((i) => i.$type)).toEqual([`${prefix}blockquote`, `${prefix}text`, card]);
+      expect(items[0].content).toEqual([
+        { $type: `${prefix}text`, plaintext: 'A quoted sentence.' },
+      ]);
+      expect(items[1].plaintext).toBe('My commentary.');
+    });
+
+    it(`${format}: commentary followed by a quote on the next line keeps the quote`, () => {
+      const items = build(format, 'My commentary.\n> A quoted sentence.');
+      expect(items.map((i) => i.$type)).toEqual([`${prefix}text`, `${prefix}blockquote`, card]);
+      expect(items[0].plaintext).toBe('My commentary.');
+      expect(items[1].content).toEqual([
+        { $type: `${prefix}text`, plaintext: 'A quoted sentence.' },
+      ]);
+    });
+
+    it(`${format}: a multiline quote stays one block with its markers stripped`, () => {
+      const items = build(format, '> line one\n> line two\n\nAfter.');
+      expect(items.map((i) => i.$type)).toEqual([`${prefix}blockquote`, `${prefix}text`, card]);
+      expect(items[0].content).toEqual([
+        { $type: `${prefix}text`, plaintext: 'line one\nline two' },
+      ]);
+    });
+  }
+});
+
 describe('replaceItemsNoteRegion', () => {
   const ARTICLE = { url: 'https://example.com/post', title: 'Post' };
 
