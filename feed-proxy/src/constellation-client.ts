@@ -25,15 +25,24 @@
  *    which issues up to 12 parallel per-source queries. Unbounded, that's
  *    hundreds of simultaneous sockets against a small community-run service,
  *    which sheds load by resetting connections — i.e. we cause the very errors we
- *    then have to absorb. Queue overflow returns `null` *without* counting a
- *    breaker failure: that's our own backpressure, not a Constellation health
- *    signal.
- * 3. **One retry on connection resets.** Constellation (or a proxy in front of
- *    it) idle-closes pooled keep-alive sockets; when Bun's fetch reuses one it
- *    fails with ECONNRESET / "socket connection was closed unexpectedly" before
- *    the request is served. These GETs are idempotent, so a single retry turns
- *    that into a success. Timeouts are NOT retried — the caller already waited
- *    10 s, and the breaker is the right tool for a slow service.
+ *    then have to absorb. The cap is also the main defense against resets in its
+ *    own right, not just a politeness measure: it is what keeps the connection
+ *    pool small and long-lived (see 3). Queue overflow returns `null` *without*
+ *    counting a breaker failure: that's our own backpressure, not a Constellation
+ *    health signal.
+ * 3. **One retry on connection resets.** What resets is *connection setup*, not
+ *    idle keep-alive reuse. Measured against the live host: a warm pooled socket
+ *    served 47 of 48 sequential requests cleanly, while forcing a fresh
+ *    connection per request (`keepalive: false`, or `Connection: close`) reset
+ *    60-76% of the time; across a concurrency sweep the failures worked out to
+ *    roughly one reset per newly-opened socket, after which that socket was fine.
+ *    So the reset we absorb is the one a *new* connection takes, and the retry
+ *    works because the next attempt usually lands on a working socket. Two
+ *    consequences: keep concurrency low (fewer new sockets is strictly better —
+ *    do NOT "fix" this by disabling keep-alive, which makes it much worse), and
+ *    expect a residual failure rate, since a retry also has to open a socket.
+ *    Timeouts are NOT retried — the caller already waited 10 s, and the breaker
+ *    is the right tool for a slow service.
  *
  * Breaker, semaphore and counters are per-process module state. That's exactly
  * right on today's single Fly machine; a multi-machine deploy would get one
@@ -54,11 +63,18 @@ const BREAKER_COOLDOWN_MS = 30 * 1000;
 // Concurrent requests allowed against the host, and how many callers may park
 // waiting. The queue is generous because every caller is fire-and-forget or
 // already tolerant of a 10 s wait; it exists to bound memory, not latency.
-const DEFAULT_CONCURRENCY = parseInt(process.env.CONSTELLATION_CONCURRENCY || '6', 10);
+//
+// Concurrency is deliberately low: it sets how many sockets we keep open, and
+// resets scale with socket churn rather than request volume. Measured reset rate
+// over a fixed request count — 1 concurrent: 2%, 2: 0%, 4: 8%, 6: 8%, 12: 14%.
+// Three keeps a warm pool with enough parallelism for the warm loop's per-item
+// fan-out; raising it buys throughput we don't need at the cost of resets.
+const DEFAULT_CONCURRENCY = parseInt(process.env.CONSTELLATION_CONCURRENCY || '3', 10);
 const DEFAULT_QUEUE_MAX = parseInt(process.env.CONSTELLATION_QUEUE_MAX || '200', 10);
 
 // Backoff before the single retry, jittered so a burst of resets (the common
-// case — a pool of pooled sockets goes stale together) doesn't re-collide.
+// case — several workers opening sockets at once) doesn't re-collide on the
+// reconnect.
 const RETRY_DELAY_MS = 250;
 const RETRY_JITTER_MS = 100;
 
@@ -164,8 +180,9 @@ function logFailure(path: string, error: unknown): void {
 }
 
 /**
- * Is this a mid-flight connection reset — the stale-keep-alive shape that a
- * retry fixes? Deliberately defensive about Bun's error shapes: it surfaces
+ * Is this a connection reset — the shape a retry fixes (in practice, a socket
+ * that died on or just after setup; see the header note)? Deliberately
+ * defensive about Bun's error shapes: it surfaces
  * these as `code: 'ECONNRESET'` on some paths and as a bare message on others,
  * and the wording has moved between releases. A shape we don't recognise simply
  * doesn't retry (today's behavior), never crashes.
