@@ -308,11 +308,15 @@ path, so it works in local dev and staging the moment the cron has run once.
 | Tile                     | Source                        | Green            | Amber        | Red                          |
 | ------------------------ | ----------------------------- | ---------------- | ------------ | ---------------------------- |
 | Cron Last Run            | `system_status.cron_last_run` | <3 min ago       | <10 min ago  | ≥10 min, or the run failed   |
-| Firehose Lag             | `poller_status.lagMs`         | <5 min (the SLO) | <15 min      | ≥15 min (= the Sentry alert) |
+| Firehose Lag             | `poller_status.lagMs`         | <5 min (SLO bar) | <15 min      | ≥15 min (= the Sentry alert) |
 | Last Poll                | `poller_status.lastPollAt`    | <5 min ago       | never polled | ≥5 min ago                   |
 | Poll Errors (last cycle) | `poller_status.errors`        | 0                | ≥1           | —                            |
-| Proxy Cache Fresh        | `proxy_stats.freshPct`        | ≥95% (the SLO)   | ≥80%         | <80%, or stats >15 min old   |
+| Proxy Cache Fresh        | `proxy_stats.freshPct`        | ≥95% (SLO bar)   | ≥80%         | <80%, or stats >15 min old   |
 | Proxy Feeds in Error     | `proxy_stats.feedsInError`    | 0                | ≥1           | any permanent failures       |
+
+"SLO bar" means the tile grades the **latest reading** against the number §7's SLO
+uses; the SLO itself is that bar held across a month of hourly points, so an amber
+tile right now is not a breach and a green one is not compliance.
 
 **A tile reading "Stale" or "No data" is a real finding**, not a rendering bug: the
 values are written by the cron, so they stop moving exactly when it does. Cross-check
@@ -343,7 +347,10 @@ stats every 5th minute, snapshot once an hour on the hour.
 The browser reports errors to our own backend — never to a third party — which
 decides what reaches Sentry (`frontend/src/lib/services/telemetry.ts` →
 `backend/src/routes/telemetry.ts`). The endpoint is unauthenticated on purpose: an
-error on the login screen is one worth having.
+error on the login screen is one worth having. It is also routed **before session
+resolution**, alongside the health endpoints — a report sent while D1 or the auth
+path is degraded is the one you most want to arrive, and behind the auth gate that
+report would have become a 500 the reporter never retries.
 
 What restrains it, in the order it applies:
 
@@ -351,9 +358,9 @@ What restrains it, in the order it applies:
 2. **Once per distinct error, per page load.** A render loop reports once.
 3. **Five reports per page load.** Past that the page is telling one story.
 4. **10% sampling** — except `preload_recovery_failed`, which always sends.
-5. **20 accepted reports per minute** per DID (or per IP when anonymous),
-   enforced server-side. A 429 carries no `Retry-After`: a broken page should drop
-   the report, not schedule it.
+5. **20 accepted reports per minute per IP**, enforced server-side — by IP even
+   for a signed-in user, since the route never resolves a session. A 429 carries
+   no `Retry-After`: a broken page should drop the report, not schedule it.
 
 Everything the client sends is capped and validated server-side — a 300-character
 message, a 2000-character stack, a path with no query string, and a `kind` from a
@@ -457,17 +464,49 @@ Four numbers, chosen to be **thresholds worth tuning against** — not dashboard
 admire, and not promises to anyone outside the project. Their only job is to make
 "is this alert set right?" a question with an answer.
 
-| SLO                | Target                          | Measured by                         | Window  |
-| ------------------ | ------------------------------- | ----------------------------------- | ------- |
-| API availability   | 99.5%                           | Uptime check on `/api/health`       | 30 days |
-| Firehose freshness | lag < 5 min, p95                | `metrics_snapshots.firehose_lag_ms` | 30 days |
-| Feed freshness     | ≥95% of cached feeds within TTL | `proxy_stats.freshPct` (ops panel)  | 30 days |
-| Cron liveness      | gap < 5 min                     | Heartbeat check history             | 30 days |
+| SLO                | Target                               | Measured by                         | Window  |
+| ------------------ | ------------------------------------ | ----------------------------------- | ------- |
+| API availability   | 99.5%                                | Uptime check on `/api/health`       | 30 days |
+| Firehose freshness | lag < 5 min, p95 of hourly snapshots | `metrics_snapshots.firehose_lag_ms` | 30 days |
+| Feed freshness     | ≥95% fresh, p05 of hourly snapshots  | `metrics_snapshots.proxy_fresh_pct` | 30 days |
+| Cron liveness      | gap < 5 min                          | Heartbeat check history             | 30 days |
 
 99.5% is ~3.6 hours a month. That is a deliberately loose target for a
 single-operator project on a singleton proxy: it says "a couple of short outages a
 month is survivable, a daily one is not." Tighten it only if you're also willing
 to change the architecture it's measuring.
+
+Both freshness rows aggregate the **hourly** trend points, not the live tile: the
+tile is a point-in-time reading and "95% fresh right now" says nothing about a
+month. p95 for lag and p05 for freshness are the same statement pointed in
+opposite directions — the worst 5% of hours are allowed to miss, the other 95%
+must hold. Read them at the monthly pruning pass (§8) with the queries below (run
+from `backend/`), which take the percentile by offset because SQLite has no
+percentile function:
+
+```bash
+# Firehose lag, p95 (the 95th-worst-percent hour). Passes if < 300000.
+npx wrangler d1 execute skyreader --remote --command "
+  SELECT firehose_lag_ms FROM metrics_snapshots
+  WHERE captured_at > (unixepoch() - 30*86400) * 1000 AND firehose_lag_ms IS NOT NULL
+  ORDER BY firehose_lag_ms
+  LIMIT 1 OFFSET (SELECT CAST(COUNT(*) * 95 / 100 AS INT) FROM metrics_snapshots
+    WHERE captured_at > (unixepoch() - 30*86400) * 1000 AND firehose_lag_ms IS NOT NULL)"
+
+# Proxy cache freshness, p05 (the 5th-worst-percent hour). Passes if >= 95.
+npx wrangler d1 execute skyreader --remote --command "
+  SELECT proxy_fresh_pct FROM metrics_snapshots
+  WHERE captured_at > (unixepoch() - 30*86400) * 1000 AND proxy_fresh_pct IS NOT NULL
+  ORDER BY proxy_fresh_pct
+  LIMIT 1 OFFSET (SELECT CAST(COUNT(*) * 5 / 100 AS INT) FROM metrics_snapshots
+    WHERE captured_at > (unixepoch() - 30*86400) * 1000 AND proxy_fresh_pct IS NOT NULL)"
+```
+
+An hour with no snapshot row is absent from both queries rather than counted as a
+miss — a collector outage shows up as a **gap in the trend sparklines** (§4b), not
+as a freshness breach. If `COUNT(*)` is far below 720, the number above is
+answering for less than the window it claims; fix collection before tuning
+anything against it.
 
 Freshness alert thresholds are **looser than their SLOs on purpose**: the
 firehose SLO is 5 minutes and its warning fires at 15. Availability alerts are

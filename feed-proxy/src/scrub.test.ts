@@ -55,6 +55,17 @@ describe('scrubEvent', () => {
     expect(JSON.stringify(scrubEvent(event))).not.toContain('secret');
     expect(event.message).toContain('token=%5Bredacted%5D');
   });
+
+  test('scrubs a breadcrumb or extra that is a bare string or array', () => {
+    // Neither shape can be redacted in place, so a scrub that ignored the return
+    // value would pass both through while reading as if it had worked.
+    const event = {
+      breadcrumbs: [{ data: 'fetched https://example.com/feed?token=crumb-secret' }],
+      extra: ['warmed https://example.com/feed?token=extra-secret'],
+    };
+
+    expect(JSON.stringify(scrubEvent(event))).not.toContain('secret');
+  });
 });
 
 describe('scrubText', () => {

@@ -158,9 +158,13 @@ export function scrubEvent<T extends Event>(event: T): T {
     if (request.data !== undefined) request.data = scrubBody(request.data);
   }
 
-  if (event.extra) scrubValue(event.extra);
-  if (event.contexts) scrubValue(event.contexts);
-  if (event.tags) scrubValue(event.tags);
+  // Assigned rather than called for their side effect: scrubValue can't redact a
+  // top-level string or array in place, so discarding the result would make the
+  // scrub a silent no-op for those shapes — the worst failure mode for a control
+  // whose caller swallows exceptions.
+  if (event.extra) event.extra = scrubValue(event.extra) as typeof event.extra;
+  if (event.contexts) event.contexts = scrubValue(event.contexts) as typeof event.contexts;
+  if (event.tags) event.tags = scrubValue(event.tags) as typeof event.tags;
 
   // Breadcrumbs are the widest unstructured channel: whatever a call site logged
   // before the throw rides along verbatim. The Console integration is disabled
@@ -168,7 +172,7 @@ export function scrubEvent<T extends Event>(event: T): T {
   // `addBreadcrumb()` adds still passes through here.
   for (const breadcrumb of event.breadcrumbs ?? []) {
     if (typeof breadcrumb.message === 'string') breadcrumb.message = scrubText(breadcrumb.message);
-    if (breadcrumb.data) scrubValue(breadcrumb.data);
+    if (breadcrumb.data) breadcrumb.data = scrubValue(breadcrumb.data) as typeof breadcrumb.data;
   }
 
   // An exception's own message is free text and routinely quotes the URL that

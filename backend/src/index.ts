@@ -96,7 +96,7 @@ import {
 } from './routes/channels';
 import { handleTestExec } from './routes/test-utils';
 import { handleHealth, handleDeepHealth } from './routes/health';
-import { handleTelemetryError } from './routes/telemetry';
+import { handleTelemetryError, TELEMETRY_PATH } from './routes/telemetry';
 import { resolveSessionFromRequest, updateUserActivity } from './services/oauth';
 import { checkRateLimit, cleanupRateLimits, getRateLimitConfig } from './services/rate-limit';
 import * as Sentry from '@sentry/cloudflare';
@@ -162,8 +162,7 @@ function isPublicPath(pathname: string): boolean {
     pathname.startsWith('/.well-known/') ||
     pathname === '/api/auth/login' ||
     pathname === '/api/auth/callback' ||
-    pathname === '/api/auth/logout' ||
-    pathname === '/api/telemetry/error'
+    pathname === '/api/auth/logout'
   );
 }
 
@@ -172,6 +171,18 @@ function isPublicPath(pathname: string): boolean {
 // session, and the shallow check must stay free of D1 work (see routes/health.ts).
 function isHealthPath(pathname: string): boolean {
   return pathname === '/api/health' || pathname === '/api/health/deep';
+}
+
+// Every response leaving route() carries the CORS headers computed for the
+// request's Origin, including the ones answered before the switch.
+function withCors(response: Response, headers: HeadersInit): Response {
+  const merged = new Headers(response.headers);
+  Object.entries(headers).forEach(([key, value]) => merged.set(key, value as string));
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: merged,
+  });
 }
 
 // The routed request. Wrapped by `fetch` below, which owns the request context,
@@ -222,6 +233,18 @@ async function route(
     const healthHeaders = new Headers(health.headers);
     Object.entries(headers).forEach(([key, value]) => healthHeaders.set(key, value as string));
     return new Response(health.body, { status: health.status, headers: healthHeaders });
+  }
+
+  // Client error reports, answered before session resolution — deliberately, and
+  // for a stronger reason than "no session required": the reports worth having
+  // most are the ones sent while auth is broken. Behind `resolveSessionFromRequest`
+  // a D1 read failure would become the 500 from serveRequest's catch, and a session
+  // mid-refresh would wait out the concurrent-refresh poll, before the report was
+  // ever parsed — and the reporter never retries (frontend/src/lib/services/telemetry.ts).
+  // The cost is that an authenticated report is rate-limited by IP rather than by
+  // DID; the handler owns that limit, so this also stops paying for two.
+  if (url.pathname === TELEMETRY_PATH) {
+    return withCors(await handleTelemetryError(request, env), headers);
   }
 
   // Track user activity for authenticated requests (non-blocking)
@@ -290,14 +313,6 @@ async function route(
       break;
     case url.pathname === '/api/auth/me':
       response = await handleAuthMe(request, env);
-      break;
-
-    // Client error reports. Deliberately session-free: an error on the login
-    // screen, or one thrown before auth resolves, is exactly the kind worth
-    // having. The handler rate-limits by DID when there is one, by IP when
-    // there isn't.
-    case url.pathname === '/api/telemetry/error':
-      response = await handleTelemetryError(request, env, session?.did);
       break;
 
     // Feed routes (v2 via Fly.io proxy)
@@ -689,17 +704,7 @@ async function route(
       });
   }
 
-  // Add CORS headers to response
-  const newHeaders = new Headers(response.headers);
-  Object.entries(headers).forEach(([key, value]) => {
-    newHeaders.set(key, value);
-  });
-
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: newHeaders,
-  });
+  return withCors(response, headers);
 }
 
 const handler = {

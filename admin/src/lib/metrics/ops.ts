@@ -209,7 +209,13 @@ export function trendsFrom(
   const bucketOf = (capturedAt: number) => Math.round((capturedAt - from) / HOUR_MS);
   // End at the current hour, not the newest row. Otherwise collection stopping
   // is invisible until it resumes: an old value still sits at the chart edge.
-  const count = Math.min(Math.max(bucketOf(now), bucketOf(to)) + 1, MAX_BUCKETS);
+  //
+  // `now` is a wall clock instant rather than a bucketed timestamp, so it floors
+  // to the hour it falls in. Rounding it would open a bucket for an hour that
+  // hasn't happened yet from :30 onward — a trailing gap on a healthy collector,
+  // which is the opposite of what the gap is supposed to mean.
+  const nowBucket = Math.floor((now - from) / HOUR_MS);
+  const count = Math.min(Math.max(nowBucket, bucketOf(to)) + 1, MAX_BUCKETS);
   const byBucket = new Map(rows.map((row) => [bucketOf(row.captured_at), row]));
 
   return {

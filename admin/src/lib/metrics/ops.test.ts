@@ -192,6 +192,12 @@ describe('trend series', () => {
     ]);
   });
 
+  it('does not open a bucket for an hour that has not happened yet', () => {
+    // Healthy collector, 45 minutes into the newest hour: the timeline ends at
+    // the hour we're in, not the next one, so there is no trailing gap.
+    expect(lagOf([row(NOW), row(NOW + HOUR)], NOW + HOUR + 45 * MINUTE)).toEqual([1000, 1000]);
+  });
+
   it('is empty but well-formed with no history', () => {
     const trends = trendsFrom([]);
     expect(trends.from).toBeNull();

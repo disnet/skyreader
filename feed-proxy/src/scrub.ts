@@ -127,12 +127,16 @@ export function scrubEvent<T>(event: T): T {
     for (const breadcrumb of scrubbable.breadcrumbs ?? []) {
       if (typeof breadcrumb.message === 'string')
         breadcrumb.message = scrubText(breadcrumb.message);
-      if (breadcrumb.data) scrubValue(breadcrumb.data);
+      // Assigned rather than called for its side effect: scrubValue can't redact a
+      // top-level string or array in place, so discarding the result would make the
+      // scrub a silent no-op for those shapes — the worst failure mode for a
+      // security control that swallows its own exceptions.
+      if (breadcrumb.data) breadcrumb.data = scrubValue(breadcrumb.data);
     }
     for (const exception of scrubbable.exception?.values ?? []) {
       if (typeof exception.value === 'string') exception.value = scrubText(exception.value);
     }
-    if (scrubbable.extra) scrubValue(scrubbable.extra);
+    if (scrubbable.extra) scrubbable.extra = scrubValue(scrubbable.extra);
     if (typeof scrubbable.message === 'string') scrubbable.message = scrubText(scrubbable.message);
 
     return event;

@@ -18,7 +18,7 @@ import { reportMessage } from '../observability/sentry';
 // (see frontend/src/lib/services/telemetry.ts); the rate limit here is the floor
 // under a client that ignores its own sampling, not the primary control.
 
-const TELEMETRY_PATH = '/api/telemetry/error';
+export const TELEMETRY_PATH = '/api/telemetry/error';
 
 /** Refuse to even read a body larger than this — nothing legitimate is close. */
 const MAX_BODY_BYTES = 16 * 1024;
@@ -120,20 +120,18 @@ function json(body: unknown, status: number): Response {
  * during a page that is already broken, so nothing here is allowed to be slow or
  * to fail loudly. Every outcome is a small JSON body the client ignores.
  */
-export async function handleTelemetryError(
-  request: Request,
-  env: Env,
-  did?: string
-): Promise<Response> {
+export async function handleTelemetryError(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
   const declaredLength = Number(request.headers.get('Content-Length') ?? 0);
   if (declaredLength > MAX_BODY_BYTES) return json({ error: 'Payload too large' }, 413);
 
-  // Anonymous clients are keyed by IP: an error on the login screen has no DID,
-  // and that's a report worth having.
+  // Keyed by IP, never by DID: this route is answered before session resolution
+  // (see src/index.ts), so there is no session to key on — which is the point.
+  // An error on the login screen has no DID either, and that's a report worth
+  // having.
   const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-  const rateLimit = await checkRateLimit(env, `telemetry:${did ?? ip}`, TELEMETRY_PATH);
+  const rateLimit = await checkRateLimit(env, `telemetry:${ip}`, TELEMETRY_PATH);
   if (!rateLimit.allowed) {
     // 429 without Retry-After on purpose: a client in an error loop should drop
     // the report, not schedule it. The frontend reporter never retries.

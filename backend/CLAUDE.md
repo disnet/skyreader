@@ -106,7 +106,8 @@ Recording failures never withhold the cron heartbeat — losing a data point is 
 an outage; see the note on `runRecordingStep()`.
 
 The browser reports its own errors to `/api/telemetry/error` (unauthenticated by
-design — an error on the login screen counts). That route is the only thing that
+design — an error on the login screen counts, and the route is answered before
+session resolution so a degraded D1 can't turn the report into a 500). That route is the only thing that
 talks to Sentry on the client's behalf: no SDK ships in the frontend bundle, and
 every field the client sends is length-capped and validated against a closed set
 of `kind`s before it becomes a log line or a Sentry tag.

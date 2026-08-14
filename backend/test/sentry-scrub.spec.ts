@@ -123,6 +123,19 @@ describe('Sentry event scrubbing', () => {
     expect((withData.data as Record<string, unknown>).url).toBe('https://example.com/rss');
   });
 
+  // The shapes that can't be redacted in place: a scrub that only mutates would
+  // pass these through untouched while reading as if it had worked.
+  it('redacts a breadcrumb or extra that is a bare string or array', () => {
+    const tokenized = 'fetching https://example.com/rss?token=feed-secret';
+    const event = scrubEvent({
+      breadcrumbs: [{ data: tokenized as unknown as Record<string, unknown> }],
+      extra: [tokenized] as unknown as Event['extra'],
+    } as Event);
+
+    expect(event.breadcrumbs![0].data as unknown as string).not.toContain('feed-secret');
+    expect((event.extra as unknown as string[])[0]).not.toContain('feed-secret');
+  });
+
   it('redacts a tokenized URL quoted in the exception message', () => {
     const event = scrubEvent({
       exception: {
