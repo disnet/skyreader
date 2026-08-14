@@ -36,6 +36,25 @@ describe('extractContentText', () => {
     expect(extractContentText(content)).toBe('my offprint take');
   });
 
+  // Leaflet's blockquote holds its text in a top-level `plaintext`, so the
+  // container descent can't reach it. A share whose note is only the quoted
+  // passage — the shape the composer seeds — must still yield that quote rather
+  // than falling through to `textContent` (which keeps the `> ` marker).
+  it('reads a leaflet blockquote as the snippet when the note is quote-only', () => {
+    const content = {
+      $type: 'pub.leaflet.content',
+      pages: [
+        {
+          blocks: [
+            { block: { $type: 'pub.leaflet.blocks.blockquote', plaintext: 'the quoted passage' } },
+            { block: { $type: 'pub.leaflet.blocks.website', src: 'https://example.com' } },
+          ],
+        },
+      ],
+    };
+    expect(extractContentText(content)).toBe('the quoted passage');
+  });
+
   it('descends into pckt/offprint container blocks for a lead quote/list', () => {
     const content = {
       $type: 'app.offprint.content',

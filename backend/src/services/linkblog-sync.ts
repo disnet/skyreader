@@ -638,49 +638,69 @@ function websiteCardExcerpt(content: unknown): string {
 // render and open it; the top-level `links` field is the machine-readable ref.
 type NoteBlock = { block: Record<string, unknown> };
 
-// Parse the editor's deliberately small Markdown subset into native Leaflet
-// blocks. Only a `>` at the beginning of a line is special; all other Markdown
-// remains plaintext for Leaflet-aware clients to interpret as they choose.
-export function noteToLeafletBlocks(
-  note: string | undefined,
-  resolvedHandles: Map<string, string> = new Map()
-): NoteBlock[] {
+// A contiguous run of note lines that share one kind — the unit every content
+// format turns into a single block. `plaintext` has the `> ` markers stripped.
+interface NoteRun {
+  quote: boolean;
+  plaintext: string;
+}
+
+// Split the editor's deliberately small Markdown subset into runs. Only a `>` at
+// the beginning of a line is special; all other Markdown stays in the plaintext
+// for a format-aware client to interpret as it chooses.
+//
+// A run ends at a blank line OR at a switch between quoted and unquoted lines —
+// the switch matters because the composer's cursor sits right under the seeded
+// quote, so `> quote` followed immediately by commentary (no blank line between)
+// is the ordinary shape of a note. Splitting on blank lines alone folded that
+// commentary into the quote (or, in the reverse order, dropped the quote's
+// markers and rendered it as prose).
+function noteRuns(note: string | undefined): NoteRun[] {
   const text = note?.trim();
   if (!text) return [];
 
-  const blocks: NoteBlock[] = [];
-  let kind: 'text' | 'blockquote' | undefined;
+  const runs: NoteRun[] = [];
+  let quote: boolean | undefined;
   let lines: string[] = [];
   const flush = () => {
-    if (!kind || lines.length === 0) return;
-    const plaintext = lines.join('\n');
-    const block: Record<string, unknown> = {
-      $type: `pub.leaflet.blocks.${kind}`,
-      plaintext,
-    };
-    const facets = parseHandleTokens(plaintext).flatMap((token) => {
-      const did = resolvedHandles.get(token.handle);
-      return did ? [buildMentionFacet(token.byteStart, token.byteEnd, did)] : [];
-    });
-    if (facets.length > 0) block.facets = facets;
-    blocks.push({ block });
-    kind = undefined;
+    if (quote === undefined || lines.length === 0) return;
+    runs.push({ quote, plaintext: lines.join('\n') });
+    quote = undefined;
     lines = [];
   };
 
   for (const line of text.split('\n')) {
-    const quote = line.match(/^> ?(.*)$/);
-    if (!quote && line.trim() === '') {
+    const marked = line.match(/^> ?(.*)$/);
+    if (!marked && line.trim() === '') {
       flush();
       continue;
     }
-    const nextKind = quote ? 'blockquote' : 'text';
-    if (kind && kind !== nextKind) flush();
-    kind = nextKind;
-    lines.push(quote ? quote[1] : line);
+    const isQuote = Boolean(marked);
+    if (quote !== undefined && quote !== isQuote) flush();
+    quote = isQuote;
+    lines.push(marked ? marked[1] : line);
   }
   flush();
-  return blocks;
+  return runs;
+}
+
+// Parse the note into native Leaflet text/blockquote blocks, one per run.
+export function noteToLeafletBlocks(
+  note: string | undefined,
+  resolvedHandles: Map<string, string> = new Map()
+): NoteBlock[] {
+  return noteRuns(note).map((run) => {
+    const block: Record<string, unknown> = {
+      $type: `pub.leaflet.blocks.${run.quote ? 'blockquote' : 'text'}`,
+      plaintext: run.plaintext,
+    };
+    const facets = parseHandleTokens(run.plaintext).flatMap((token) => {
+      const did = resolvedHandles.get(token.handle);
+      return did ? [buildMentionFacet(token.byteStart, token.byteEnd, did)] : [];
+    });
+    if (facets.length > 0) block.facets = facets;
+    return { block };
+  });
 }
 
 export function replaceLeafletNoteRegion(
@@ -789,19 +809,16 @@ const ITEM_CONTENT_TYPE: Record<'pckt' | 'offprint', string> = {
   offprint: 'app.offprint.content',
 };
 
-// The note as native blocks: one item per paragraph, a leading `>` making it a
-// blockquote (the same deliberately small Markdown subset the editor speaks).
+// The note as native blocks: one item per run, quoted runs wrapped in the
+// format's blockquote container (the same deliberately small Markdown subset the
+// editor speaks, split the same way as for Leaflet).
 function noteToBlockItems(
   prefix: string,
   note: string | undefined
 ): Array<Record<string, unknown>> {
-  const text = note?.trim();
-  if (!text) return [];
-  return text.split(/\n\s*\n/).map((paragraph) => {
-    const quoted = paragraph.startsWith('>');
-    const plaintext = paragraph.replace(/^> ?/gm, '');
-    const textBlock = { $type: `${prefix}text`, plaintext };
-    return quoted ? { $type: `${prefix}blockquote`, content: [textBlock] } : textBlock;
+  return noteRuns(note).map((run) => {
+    const textBlock = { $type: `${prefix}text`, plaintext: run.plaintext };
+    return run.quote ? { $type: `${prefix}blockquote`, content: [textBlock] } : textBlock;
   });
 }
 

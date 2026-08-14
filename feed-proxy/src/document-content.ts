@@ -28,8 +28,16 @@ interface TextishBlock {
 
 // The text block `$type` per format. Headers/callouts are deliberately excluded —
 // a snippet is the linker's prose, mirroring the original leaflet-only behavior.
+//
+// Leaflet's blockquote is here because it carries its text as a top-level
+// `plaintext` rather than nested blocks, so the container descent below can't
+// reach it: without this a link post whose note is just the quoted passage — the
+// shape the share composer seeds — yielded no snippet at all and fell back to
+// `textContent`, which still carries the `> ` marker. pckt/offprint spell their
+// blockquote as a container, so the descent already covers them.
 const TEXT_BLOCK_TYPES = new Set([
   'pub.leaflet.blocks.text',
+  'pub.leaflet.blocks.blockquote',
   'blog.pckt.block.text',
   'app.offprint.block.text',
 ]);
