@@ -107,6 +107,16 @@
   let linkblogSuccess = $state<string | null>(null);
   let linkblogChoices = $state<LinkblogPublicationChoice[]>([]);
   let showDeleteLinkblogConfirm = $state(false);
+  // Just the host of the Skyreader linkblog page, to name it in copy without
+  // spelling out a DID-keyed URL. Falls back to the bare label if `url` is ever
+  // unparseable.
+  const linkblogPageHost = $derived.by(() => {
+    try {
+      return new URL(linkblogPub?.url ?? '').hostname;
+    } catch {
+      return 'Skyreader';
+    }
+  });
 
   onMount(async () => {
     if (!auth.isAuthenticated) {
@@ -231,6 +241,31 @@
         : 'New links will publish to your Skyreader linkblog.';
     } catch (error) {
       linkblogError = error instanceof Error ? error.message : 'Failed to connect publication.';
+    } finally {
+      isSavingLinkblog = false;
+    }
+  }
+
+  // A connected publication already has a public site, so the Skyreader page
+  // becomes a second home for the same posts. Worth keeping for most people (it's
+  // a stable DID-keyed address with an RSS feed, and it survives switching
+  // publications), but it's their call, not ours to infer from the connection.
+  async function handleToggleLinkblogPage(show: boolean) {
+    if (isSavingLinkblog) return;
+    if (!syncStore.isOnline) {
+      linkblogError = 'You are offline. Connect to the internet to change this.';
+      return;
+    }
+    isSavingLinkblog = true;
+    linkblogError = null;
+    linkblogSuccess = null;
+    try {
+      linkblogPub = await api.setLinkblogPageHidden(!show);
+      linkblogSuccess = show
+        ? 'Your links are showing on Skyreader again.'
+        : 'Your Skyreader page is off. Links keep publishing as before.';
+    } catch (error) {
+      linkblogError = error instanceof Error ? error.message : 'Could not change this.';
     } finally {
       isSavingLinkblog = false;
     }
@@ -651,9 +686,13 @@
     {:else}
       {#if linkblogPub}
         <p class="setting-description" style="margin-top: 0;">
-          <a href={linkblogPub.url} target="_blank" rel="noopener noreferrer"
-            >View your linkblog →</a
-          >
+          {#if linkblogPub.pageHidden}
+            Your Skyreader page is off.
+          {:else}
+            <a href={linkblogPub.url} target="_blank" rel="noopener noreferrer"
+              >View your linkblog →</a
+            >
+          {/if}
           {#if linkblogPub.externalUrl}
             <br />
             Your links are going into
@@ -669,6 +708,26 @@
           busy={isSavingLinkblog}
           onapply={handleConnectLinkblog}
         />
+
+        <!-- Only with a connected publication: without one, this page is the only
+             public address the links have, and turning it off would be a second,
+             quieter way to spell "delete". -->
+        {#if linkblogPub.external}
+          <label class="toggle-setting">
+            <input
+              type="checkbox"
+              checked={!linkblogPub.pageHidden}
+              disabled={isSavingLinkblog}
+              onchange={(e) => handleToggleLinkblogPage(e.currentTarget.checked)}
+            />
+            <span>Also show my links on Skyreader</span>
+          </label>
+          <p class="setting-description">
+            A page at {linkblogPageHost} that lists only your links, with its own RSS feed. It keeps working
+            if you change publications later. Turn it off to send readers to {linkblogPub.name}
+            only.
+          </p>
+        {/if}
       {/if}
 
       <!-- Name/description belong to the Skyreader linkblog only. A connected

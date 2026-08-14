@@ -11,6 +11,7 @@ import {
   externalArticleUrl,
   isDid,
   rkeyFromUri,
+  safeHttpUrl,
 } from '$lib/fields';
 import { fetchPublicationMeta, getProfile, resolveHandleToDid } from '$lib/server/identity';
 import {
@@ -41,6 +42,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
 
   const apiBase = apiBaseFor(origin, env.API_URL);
   const target = await resolveLinkblogTarget(apiBase, did);
+  if (target.hidden) throw error(404, 'Linkblog not found');
   const [profile, pub, docs] = await Promise.all([
     getProfile(did),
     fetchPublicationMeta(did, target.siteUri),
@@ -69,6 +71,16 @@ export const load: PageServerLoad = async ({ params, url }) => {
     doc,
     ctx: social.get(doc.recordUri),
     apiBase,
+    // Where this entry lives on the connected publication's own site, when we can
+    // name that page exactly. `canonicalUrl` is the publication's base URL joined
+    // with the document's `path`, and with no path it collapses to the publication
+    // home — which is not this post, so it's no good as a canonical or a "read it
+    // there" link. Null then, and the page canonicalizes to itself.
+    sourceUrl:
+      target.external && doc.siteUri === target.siteUri && doc.path
+        ? safeHttpUrl(doc.canonicalUrl)
+        : null,
+    externalUrl: target.external ? (pub?.url ?? null) : null,
     appUrl: appUrlFor(origin, env.APP_URL),
   };
 };

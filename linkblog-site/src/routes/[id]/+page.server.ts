@@ -34,6 +34,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
 
   const apiBase = apiBaseFor(origin, env.API_URL);
   const target = await resolveLinkblogTarget(apiBase, did);
+  if (target.hidden) throw error(404, 'Linkblog not found');
   const [profile, pub, docs] = await Promise.all([
     getProfile(did),
     fetchPublicationMeta(did, target.siteUri),
@@ -56,6 +57,11 @@ export const load: PageServerLoad = async ({ params, url }) => {
     social,
     apiBase,
     publication: target.siteUri,
+    // With a connected publication, these posts have a home of their own and this
+    // page is a view of it: the page says so, and points `rel=canonical` there.
+    // Absent when the publication record carries no usable site URL, in which case
+    // this page is the only address the links have and canonicalizes to itself.
+    externalUrl: target.external ? (pub?.url ?? null) : null,
     appUrl: appUrlFor(origin, env.APP_URL),
   };
 };

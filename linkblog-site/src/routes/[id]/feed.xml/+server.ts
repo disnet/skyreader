@@ -41,6 +41,9 @@ export const GET: RequestHandler = async ({ params, url }) => {
   };
 
   const target = await resolveLinkblogTarget(apiBaseFor(origin, env.API_URL), did);
+  // A hidden linkblog has no feed either — a subscriber polling an old URL should
+  // see it stop, not keep receiving posts from a page that's been taken down.
+  if (target.hidden) return rss(emptyFeed(origin), 404);
   const [profile, pub, docs] = await Promise.all([
     getProfile(did),
     fetchPublicationMeta(did, target.siteUri),

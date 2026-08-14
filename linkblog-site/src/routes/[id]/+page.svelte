@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { blogTitle, feedUrlFor, publicationUri, safeHttpUrl } from '$lib/fields';
+  import { blogTitle, feedUrlFor, hostnameOf, publicationUri, safeHttpUrl } from '$lib/fields';
   import BlogEntry from '$lib/components/BlogEntry.svelte';
   import SubscribeActions from '$lib/components/SubscribeActions.svelte';
   import type { PageData } from './$types';
@@ -24,6 +24,13 @@
   const who = $derived(
     data.profile?.displayName || (handle ? `@${handle}` : 'This reader')
   );
+
+  // These posts live in a publication the reader already runs somewhere else. Say
+  // where, and hand the canonical URL to that site: two renders of one set of
+  // records shouldn't compete, and theirs is the home.
+  const externalUrl = $derived(safeHttpUrl(data.externalUrl ?? undefined));
+  const externalHost = $derived(hostnameOf(externalUrl ?? undefined));
+  const canonicalUrl = $derived(externalUrl ?? pageUrl);
 </script>
 
 <svelte:head>
@@ -42,6 +49,7 @@
   <meta name="twitter:title" content={title} />
   <meta name="twitter:description" content={ogDescription} />
   {#if icon}<meta name="twitter:image" content={icon} />{/if}
+  <link rel="canonical" href={canonicalUrl} />
   <link rel="alternate" type="application/rss+xml" {title} href={feedUrl} />
 </svelte:head>
 
@@ -65,6 +73,11 @@
     <SubscribeActions apiBase={data.apiBase} appUrl={data.appUrl} {publication} {feedUrl} />
   </div>
   {#if description}<p class="pubdesc">{description}</p>{/if}
+  {#if externalUrl}
+    <p class="pubhome">
+      Published on <a href={externalUrl} rel="noopener noreferrer">{externalHost}</a>
+    </p>
+  {/if}
 </header>
 <hr class="divider" />
 

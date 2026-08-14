@@ -10,18 +10,49 @@ export interface ProxyConfig {
   feedProxySecret?: string;
 }
 
-export async function resolveLinkblogTarget(
-  apiBase: string,
-  did: string
-): Promise<{ siteUri: string; defaultSiteUri: string }> {
+export interface LinkblogTarget {
+  siteUri: string;
+  defaultSiteUri: string;
+  /**
+   * Don't render this linkblog: the user deleted it, or connected an existing
+   * publication and turned this page off. The backend collapses both into one
+   * flag — which it is isn't the reader's business.
+   */
+  hidden: boolean;
+  /** The links live in a publication the user already had, with a site of its own. */
+  external: boolean;
+}
+
+export async function resolveLinkblogTarget(apiBase: string, did: string): Promise<LinkblogTarget> {
   const fallback = publicationUri(did);
-  if (!apiBase) return { siteUri: fallback, defaultSiteUri: fallback };
+  // Fail open. A resolve that can't answer degrades to the default publication and
+  // a visible page: the alternative takes every linkblog offline on an API blip,
+  // and a deleted linkblog has no posts left to leak either way.
+  const unresolved: LinkblogTarget = {
+    siteUri: fallback,
+    defaultSiteUri: fallback,
+    hidden: false,
+    external: false,
+  };
+  if (!apiBase) return unresolved;
   try {
     const res = await fetch(`${apiBase}/api/linkblog/resolve/${encodeURIComponent(did)}`);
     if (!res.ok) throw new Error();
-    return (await res.json()) as { siteUri: string; defaultSiteUri: string };
+    const data = (await res.json()) as {
+      siteUri?: string;
+      defaultSiteUri?: string;
+      hidden?: boolean;
+    };
+    const siteUri = data.siteUri || fallback;
+    const defaultSiteUri = data.defaultSiteUri || fallback;
+    return {
+      siteUri,
+      defaultSiteUri,
+      hidden: data.hidden === true,
+      external: siteUri !== defaultSiteUri,
+    };
   } catch {
-    return { siteUri: fallback, defaultSiteUri: fallback };
+    return unresolved;
   }
 }
 

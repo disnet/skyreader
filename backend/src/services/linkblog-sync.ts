@@ -302,6 +302,10 @@ export interface PublicationMeta {
   external: boolean;
   format: ContentFormat;
   disabled: boolean;
+  // The user turned off the Skyreader-hosted page at `url`. Only reachable with a
+  // connected publication; `url` still describes where the page WOULD be, so the
+  // setting can be undone.
+  pageHidden: boolean;
 }
 
 // PDS records are user-controlled, so a `url` can be any string. Only surface it
@@ -324,10 +328,16 @@ function iconUrlFromBlob(did: string, icon: BlobRef | undefined): string | undef
 // Read the current linkblog publication, or synthesize sensible defaults when it
 // doesn't exist yet (so the settings UI can render before the first share).
 export async function getPublicationMeta(session: Session, env: Env): Promise<PublicationMeta> {
-  const [target, disabled] = await Promise.all([
+  const [target, visibility] = await Promise.all([
     getLinkblogTarget(env, session.did),
-    isLinkblogDisabled(env, session.did),
+    getLinkblogVisibility(env, session.did),
   ]);
+  const disabled = visibility.disabled;
+  // Hiding the page is only offered alongside a connected publication, so a stored
+  // `true` with no connection is stale (a direct API call, or a disconnect path
+  // that didn't clear it). Read it as false rather than leaving a linkblog dark
+  // with no visible control to turn it back on.
+  const pageHidden = visibility.pageHidden && target.external;
   const pdsClient = createPDSClient(session);
   const rkey = target.siteUri.split('/').pop() || LINKBLOG_RKEY;
   const result = await pdsClient.getRecord<PublicationRecord>(PUBLICATION_COLLECTION, rkey);
@@ -342,6 +352,7 @@ export async function getPublicationMeta(session: Session, env: Env): Promise<Pu
       external: target.external,
       format: target.format,
       disabled,
+      pageHidden,
     };
   }
 
@@ -362,6 +373,7 @@ export async function getPublicationMeta(session: Session, env: Env): Promise<Pu
     external: target.external,
     format: target.format,
     disabled,
+    pageHidden,
   };
 }
 
@@ -512,6 +524,37 @@ export function isSkyreaderShareRecord(
   return rec.skyreaderLinkblog === LINKBLOG_MARKER_URL || rec.site === publicationUri(did);
 }
 
+export interface LinkblogVisibility {
+  /** The linkblog was deleted (posts removed); restorable, but empty. */
+  disabled: boolean;
+  /**
+   * The user asked us not to serve their public page at linkblogs.skyreader.app.
+   * Only offered while a linkblog is connected to an existing publication, which
+   * has a site of its own; disconnecting clears it.
+   */
+  pageHidden: boolean;
+}
+
+// Both public-visibility flags in one lookup. On error, falls back to reading
+// `linkblog_disabled` alone: a deploy that lands before migration 0066 would
+// otherwise fail the combined SELECT and report a DELETED linkblog as visible,
+// which is the one direction that must not happen.
+export async function getLinkblogVisibility(env: Env, did: string): Promise<LinkblogVisibility> {
+  try {
+    const row = await env.DB.prepare(
+      'SELECT linkblog_disabled, linkblog_page_hidden FROM user_settings WHERE user_did = ?'
+    )
+      .bind(did)
+      .first<{ linkblog_disabled: number; linkblog_page_hidden: number }>();
+    return {
+      disabled: row?.linkblog_disabled === 1,
+      pageHidden: row?.linkblog_page_hidden === 1,
+    };
+  } catch {
+    return { disabled: await isLinkblogDisabled(env, did), pageHidden: false };
+  }
+}
+
 export async function isLinkblogDisabled(env: Env, did: string): Promise<boolean> {
   try {
     const row = await env.DB.prepare(
@@ -523,6 +566,19 @@ export async function isLinkblogDisabled(env: Env, did: string): Promise<boolean
   } catch {
     return false;
   }
+}
+
+// Set (or clear) the "don't serve my page at linkblogs.skyreader.app" choice.
+export async function setLinkblogPageHidden(env: Env, did: string, hidden: boolean): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(
+    `INSERT INTO user_settings (user_did, linkblog_page_hidden, created_at, updated_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_did) DO UPDATE SET linkblog_page_hidden=excluded.linkblog_page_hidden,
+     updated_at=excluded.updated_at`
+  )
+    .bind(did, hidden ? 1 : 0, now, now)
+    .run();
 }
 
 export async function getDisabledLinkblogAuthors(env: Env, dids: string[]): Promise<string[]> {

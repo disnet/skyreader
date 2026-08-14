@@ -1,0 +1,12 @@
+-- Whether to render this user's public page at linkblogs.skyreader.app.
+--
+-- Distinct from 0065's `linkblog_disabled`, which is deletion state (the posts
+-- are gone, restorable only as an empty linkblog). This is a display choice: the
+-- link posts still exist and still publish, they just aren't served a second
+-- public home by us. It only comes up once a linkblog is connected to an existing
+-- publication, which already has a site of its own; disconnecting resets it, so
+-- nobody ends up with a linkblog that has no public address at all.
+--
+-- No companion index, for the same reason as 0065: the only reader looks the flag
+-- up by `user_did`, which the PRIMARY KEY already serves.
+ALTER TABLE user_settings ADD COLUMN linkblog_page_hidden INTEGER NOT NULL DEFAULT 0;

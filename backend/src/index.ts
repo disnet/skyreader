@@ -28,6 +28,7 @@ import {
   handleListPublications,
   handleConnectPublication,
   handleResolvePublication,
+  handleSetPageVisibility,
   handleDeletePublication,
   handleRestorePublication,
 } from './routes/linkblog';
@@ -305,6 +306,10 @@ export default {
         case url.pathname === '/api/linkblog/publication/connect':
           if (!session) return unauthorizedResponse(headers);
           response = await handleConnectPublication(request, env);
+          break;
+        case url.pathname === '/api/linkblog/publication/visibility':
+          if (!session) return unauthorizedResponse(headers);
+          response = await handleSetPageVisibility(request, env);
           break;
         case url.pathname.startsWith('/api/linkblog/resolve/'):
           response = await handleResolvePublication(request, env);
