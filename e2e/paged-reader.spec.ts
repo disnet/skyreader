@@ -2,18 +2,13 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { seedSavedArticle, type TestUser } from './seed';
 
-// Fullscreen paged reading is a touch surface: the bug these tests pin down only
-// exists on the real touch event path, where the browser replays a finished tap as
-// a mouse click. Chromium emulates that replay, so the context needs touch and a
-// phone-sized viewport (one column, many pages). Reduced motion turns pages
-// instantly (see PagedView's prefers-reduced-motion rule), which keeps the
-// coordinate math free of a mid-transition layout race.
-//
-// Note on engines: Chromium aims the replayed click at the node the finger first
-// touched, so here it re-clicks the page being left; WebKit/iOS re-hit-tests at the
-// release point, which is how the report's "it opened a link on the next page"
-// happens. Both are the same defect — a page-turn tap that also produces a click —
-// so these tests assert the replay doesn't reach the article at all.
+// Fullscreen paged reading is a touch surface, and the rule these tests pin down is
+// that a *tap* is never a page turn: taps belong to the text (selection, links,
+// highlights). Only a horizontal swipe and the bottom pager turn pages. That needs
+// the real touch event path, so the context has touch and a phone-sized viewport
+// (one column, many pages). Reduced motion turns pages instantly (see PagedView's
+// prefers-reduced-motion rule), which keeps the coordinate math free of a
+// mid-transition layout race.
 test.use({ hasTouch: true, viewport: { width: 430, height: 860 }, reducedMotion: 'reduce' });
 
 const ARTICLE_TITLE = 'A Long Paged Article';
@@ -21,15 +16,13 @@ const ARTICLE_URL = 'https://example.com/paged/long-article';
 
 /**
  * Enough prose to guarantee many pages, with a wide link in every paragraph so a
- * stray click after a page turn lands on something the reader visibly reacts to —
- * exactly the "tapped to turn the page, opened a link instead" report.
+ * tap that wrongly turned the page would visibly land on something else.
  */
 function pagedBody(): string {
   const paragraphs = Array.from({ length: 60 }, (_, i) => {
     const href = `https://example.com/trap/${i}`;
     // Paragraph lengths cycle rather than repeat, so links don't land on the same
-    // line of every page — the tests need a coordinate that is plain text on one
-    // page and a link on the next.
+    // line of every page.
     const filler = Array.from(
       { length: (i % 5) + 1 },
       (_, j) =>
@@ -53,10 +46,9 @@ declare global {
 }
 
 /**
- * Record clicks that reach the paged column. The recorder sits on `.paged-content`
- * in the capture phase, i.e. *below* PagedView's document-level suppressor and
- * *above* the reader's own link interception — so it sees every click the article
- * would act on, and none that the fix swallows on the way down.
+ * Record clicks that reach the paged column, in the capture phase — i.e. every
+ * click the article would act on, including the one the browser replays after a
+ * finished tap.
  */
 async function recordContentClicks(page: Page) {
   await page.evaluate(() => {
@@ -158,16 +150,16 @@ async function settlePageTransform(page: Page) {
 }
 
 /**
- * A point in the viewport's next-page zone (right 30%) that is NOT over a link or
- * control on the *current* page — i.e. a tap the reader is supposed to consume as a
- * page turn. Derived from `.paged-viewport` so it holds at any layout.
+ * A point near the given horizontal edge of the viewport that is NOT over a link or
+ * control on the current page — the plain reading area that used to be a page-turn
+ * zone. Derived from `.paged-viewport` so it holds at any layout.
  */
-async function nextZonePoint(page: Page) {
-  const point = await page.evaluate(() => {
+async function edgePoint(page: Page, side: 'left' | 'right') {
+  const point = await page.evaluate((edge) => {
     const viewport = document.querySelector('.paged-viewport');
     if (!viewport) return null;
     const rect = viewport.getBoundingClientRect();
-    const x = rect.left + rect.width * 0.85;
+    const x = rect.left + rect.width * (edge === 'left' ? 0.15 : 0.85);
     const interactive = 'a, button, input, textarea, select, video, audio, iframe, [role="button"]';
     for (let fraction = 0.2; fraction <= 0.8; fraction += 0.05) {
       const y = rect.top + rect.height * fraction;
@@ -176,8 +168,8 @@ async function nextZonePoint(page: Page) {
       return { x, y };
     }
     return null;
-  });
-  expect(point, 'found a non-interactive point in the next-page zone').not.toBeNull();
+  }, side);
+  expect(point, `found a non-interactive point in the ${side} edge zone`).not.toBeNull();
   return point!;
 }
 
@@ -212,72 +204,36 @@ async function visibleLinkPoint(page: Page) {
 }
 
 /**
- * A point in the next-page zone that a link will occupy *after* the turn — the
- * exact coordinate the report is about. Found by peeking at the next page with the
- * pager, then coming back and confirming the same point is harmless right now.
- * (Chromium won't re-hit-test its replayed click onto that link, but the fixture
- * still matches the report and the assertion covers engines that do.)
+ * Drag the paged column sideways across most of the viewport — well past the
+ * paginator's commit threshold. Playwright's touchscreen only taps, so the gesture
+ * is dispatched as a real touch sequence against `.paged-viewport`.
  */
-async function trapPoint(page: Page) {
-  const next = page.getByRole('button', { name: 'Next page' });
-  const previous = page.getByRole('button', { name: 'Previous page' });
-
-  // Chrome height and font metrics can shift where links wrap. Search page pairs
-  // instead of assuming page 1 → 2 contains the exact overlap this test needs.
-  for (let attempt = 0; attempt < 20 && !(await next.isDisabled()); attempt++) {
-    const before = await pageLabel(page);
-
-    await next.click();
-    await expect(page.locator('.paged-count')).not.toHaveText(before);
-    await settlePageTransform(page);
-    const after = await pageLabel(page);
-    const candidates = await page.evaluate(() => {
-      const viewport = document.querySelector('.paged-viewport');
-      if (!viewport) return [];
-      const bounds = viewport.getBoundingClientRect();
-      const points: { x: number; y: number; href: string }[] = [];
-      for (const anchor of document.querySelectorAll<HTMLAnchorElement>('.paged-content a[href]')) {
-        for (const rect of anchor.getClientRects()) {
-          if (rect.left < bounds.left || rect.right > bounds.right) continue;
-          if (rect.top < bounds.top || rect.bottom > bounds.bottom) continue;
-          const x = rect.right - 6;
-          // Must sit in the next-page tap zone (right 30%) to be the coordinate the
-          // page-turn tap releases on.
-          if ((x - bounds.left) / bounds.width < 0.75) continue;
-          points.push({
-            x,
-            y: rect.top + rect.height / 2,
-            href: anchor.getAttribute('href') ?? '',
-          });
-        }
-      }
-      return points;
-    });
-
-    await previous.click();
-    await expect(page.locator('.paged-count')).toHaveText(before);
-    await settlePageTransform(page);
-    // Keep only the coordinates that are plain reading area on the page being left,
-    // so the tap is unambiguously a page turn and any link it activates belongs to
-    // the page it revealed.
-    const point = await page.evaluate((points) => {
-      const interactive =
-        'a, button, input, textarea, select, video, audio, iframe, [role="button"]';
-      return points.find((p) => !document.elementFromPoint(p.x, p.y)?.closest(interactive)) ?? null;
-    }, candidates);
-    if (point) {
-      await takeClicks(page);
-      return { ...point, before, after };
-    }
-
-    // Try the following pair. We intentionally leave the reader on its first page
-    // when a match is found, so the touch below still performs the page turn.
-    await next.click();
-    await expect(page.locator('.paged-count')).toHaveText(after);
-    await settlePageTransform(page);
-  }
-
-  throw new Error('could not find a plain-content point occupied by a link on the next page');
+async function swipe(page: Page, direction: 'left' | 'right') {
+  await page.evaluate((dir) => {
+    const viewport = document.querySelector<HTMLElement>('.paged-viewport');
+    if (!viewport) throw new Error('no .paged-viewport to swipe on');
+    const rect = viewport.getBoundingClientRect();
+    const y = rect.top + rect.height / 2;
+    const from = rect.left + rect.width * (dir === 'left' ? 0.8 : 0.2);
+    const travel = rect.width * 0.6 * (dir === 'left' ? -1 : 1);
+    const target = document.elementFromPoint(from, y) ?? viewport;
+    const fire = (type: string, x: number) => {
+      const touch = new Touch({ identifier: 1, target, clientX: x, clientY: y });
+      const live = type === 'touchend' ? [] : [touch];
+      viewport.dispatchEvent(
+        new TouchEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          touches: live,
+          targetTouches: live,
+          changedTouches: [touch],
+        })
+      );
+    };
+    fire('touchstart', from);
+    for (let step = 1; step <= 6; step++) fire('touchmove', from + (travel * step) / 6);
+    fire('touchend', from + travel);
+  }, direction);
 }
 
 /** Give the browser room to fire a delayed compatibility click, if it fires one. */
@@ -286,84 +242,71 @@ async function settleCompatibilityClick(page: Page) {
 }
 
 test.describe('Paged reader interactions', () => {
-  test('edge tap turns one page without clicking through to the new page', async ({
-    authedPage,
-    testUser,
-  }) => {
+  test('a tap in the right reading area never turns the page', async ({ authedPage, testUser }) => {
     await openPagedReader(authedPage, testUser);
-    expect(await pageLabel(authedPage)).toMatch(/^Page 1 of \d+$/);
+    const label = await pageLabel(authedPage);
+    expect(label).toMatch(/^Page 1 of \d+$/);
 
-    // Tap where the next page keeps a link — the reported failure exactly.
-    const { x, y, before, after } = await trapPoint(authedPage);
-    await expect(authedPage.locator('.paged-count')).toHaveText(before);
+    const { x, y } = await edgePoint(authedPage, 'right');
     await authedPage.touchscreen.tap(x, y);
-
-    // Exactly one page turn...
-    await expect(authedPage.locator('.paged-count')).toHaveText(after);
     await settleCompatibilityClick(authedPage);
-    expect(await pageLabel(authedPage)).toBe(after);
 
-    // ...and the tap produced no click against the article at all, so nothing on
-    // the page it revealed (nor the one it left) was activated. The reader answers
-    // a link click with its own context menu, which is the visible form the report
-    // takes on an engine that re-hit-tests the replayed click.
-    const clicks = await takeClicks(authedPage);
-    expect(clicks).toEqual([]);
-    await expect(authedPage.locator('.link-menu')).toHaveCount(0);
+    // Nothing paged, and the tap stayed native: the article still received the
+    // click, so selection and in-text controls keep working.
+    expect(await pageLabel(authedPage)).toBe(label);
+    expect((await takeClicks(authedPage)).length).toBeGreaterThan(0);
   });
 
-  test('tapping a link on the current page opens it instead of turning the page', async ({
+  test('a tap in the left reading area never turns back a page', async ({
     authedPage,
     testUser,
   }) => {
     await openPagedReader(authedPage, testUser);
-    // Start on page 2 so a left-zone link tap has a page it could wrongly turn back to.
+    // Start on page 2 so a left-edge tap has a page it could wrongly turn back to.
     await authedPage.getByRole('button', { name: 'Next page' }).click();
     await expect(authedPage.locator('.paged-count')).toHaveText(/^Page 2 of \d+$/);
     await settlePageTransform(authedPage);
     await takeClicks(authedPage);
 
+    const { x, y } = await edgePoint(authedPage, 'left');
+    await authedPage.touchscreen.tap(x, y);
+    await settleCompatibilityClick(authedPage);
+
+    expect(await pageLabel(authedPage)).toMatch(/^Page 2 of \d+$/);
+    expect((await takeClicks(authedPage)).length).toBeGreaterThan(0);
+  });
+
+  test('swiping turns pages in both directions', async ({ authedPage, testUser }) => {
+    await openPagedReader(authedPage, testUser);
+    const count = authedPage.locator('.paged-count');
+    await expect(count).toHaveText(/^Page 1 of \d+$/);
+
+    await swipe(authedPage, 'left');
+    await expect(count).toHaveText(/^Page 2 of \d+$/);
+    await settlePageTransform(authedPage);
+
+    await swipe(authedPage, 'right');
+    await expect(count).toHaveText(/^Page 1 of \d+$/);
+  });
+
+  test('tapping a link on the current page opens it', async ({ authedPage, testUser }) => {
+    await openPagedReader(authedPage, testUser);
+    const label = await pageLabel(authedPage);
+
     const link = await visibleLinkPoint(authedPage);
     await authedPage.touchscreen.tap(link.x, link.y);
     await settleCompatibilityClick(authedPage);
 
-    expect(await pageLabel(authedPage)).toMatch(/^Page 2 of \d+$/);
+    expect(await pageLabel(authedPage)).toBe(label);
     expect((await takeClicks(authedPage)).map((c) => c.href)).toContain(link.href);
     // The reader answers a link tap with its own context menu rather than a
     // navigation, and titles it with the link's text.
     await expect(authedPage.locator('.link-menu')).toContainText(link.text);
   });
 
-  test('edge tap on the last page stays a native tap', async ({ authedPage, testUser }) => {
-    await openPagedReader(authedPage, testUser);
-
-    // Walk to the final page with the explicit pager, which is unaffected by the
-    // touch path under test.
-    const next = authedPage.getByRole('button', { name: 'Next page' });
-    for (let i = 0; i < 200 && !(await next.isDisabled()); i++) {
-      await next.click();
-    }
-    await expect(next).toBeDisabled();
-    await settlePageTransform(authedPage);
-    const lastLabel = await pageLabel(authedPage);
-    await takeClicks(authedPage);
-
-    const { x, y } = await nextZonePoint(authedPage);
-    await authedPage.touchscreen.tap(x, y);
-    await settleCompatibilityClick(authedPage);
-
-    // Nothing to turn to, so the tap is left alone: the page is unchanged and the
-    // browser's click still reaches the article (no blanket post-turn input lock).
-    expect(await pageLabel(authedPage)).toBe(lastLabel);
-    expect((await takeClicks(authedPage)).length).toBeGreaterThan(0);
-  });
-
-  // The Daily magazine embeds the same PagedView, so the gesture fix is shared —
-  // this is the smoke test that the second consumer really gets it.
-  test('daily magazine edge tap turns one page without clicking through', async ({
-    authedPage,
-    testUser,
-  }) => {
+  // The Daily magazine embeds the same PagedView, so the gesture rules are shared —
+  // this is the smoke test that the second consumer really gets them.
+  test('daily magazine ignores edge taps and pages on swipe', async ({ authedPage, testUser }) => {
     for (const [i, url] of [
       'https://example.com/daily/one',
       'https://example.org/daily/two',
@@ -389,12 +332,12 @@ test.describe('Paged reader interactions', () => {
     await settlePageTransform(authedPage);
     await recordContentClicks(authedPage);
 
-    const { x, y } = await nextZonePoint(authedPage);
+    const { x, y } = await edgePoint(authedPage, 'right');
     await authedPage.touchscreen.tap(x, y);
-
-    await expect(count).toHaveText(/^Page 2 of \d+$/);
     await settleCompatibilityClick(authedPage);
-    expect(await pageLabel(authedPage)).toMatch(/^Page 2 of \d+$/);
-    expect(await takeClicks(authedPage)).toEqual([]);
+    await expect(count).toHaveText(/^Page 1 of \d+$/);
+
+    await swipe(authedPage, 'left');
+    await expect(count).toHaveText(/^Page 2 of \d+$/);
   });
 });

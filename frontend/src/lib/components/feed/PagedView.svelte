@@ -69,13 +69,8 @@
   // (physical drag); on release the paginator commits the turn or springs back.
   // We decide the axis after a small movement, then drag until touchend/cancel.
   const AXIS_DECIDE_PX = 8;
-  // A still, quick touch is a tap → turn a page if it lands in an edge zone.
-  const TAP_MAX_MS = 500;
-  const TAP_PREV_ZONE = 0.3; // left 30% → previous page
-  const TAP_NEXT_ZONE = 0.7; // right 30% → next page (middle is neutral)
   let touchStartX = 0;
   let touchStartY = 0;
-  let touchStartT = 0;
   let touchLastX = 0;
   let touchLastT = 0;
   let touchVelocity = 0;
@@ -83,9 +78,6 @@
   let dragging = false;
 
   function onTouchStart(e: TouchEvent) {
-    // A fresh gesture ends any pending compatibility-click window: the next click
-    // belongs to this touch, and must not be swallowed by the previous one.
-    disarmCompatClickGuard();
     if (e.touches.length !== 1) {
       dragging = false;
       touchDecided = false;
@@ -93,9 +85,8 @@
     }
     touchStartX = e.touches[0].clientX;
     touchStartY = e.touches[0].clientY;
-    touchStartT = performance.now();
     touchLastX = touchStartX;
-    touchLastT = touchStartT;
+    touchLastT = performance.now();
     touchVelocity = 0;
     touchDecided = false;
     dragging = false;
@@ -139,96 +130,17 @@
     touchLastT = now;
   }
 
-  // Tap-to-turn: a still, quick tap in the left/right edge zone turns a page.
-  // Runs off the touch sequence (not a click listener) so it never competes with
-  // text selection or link taps — those are filtered out below.
-  // Returns true only when the tap was consumed as a real page turn, so the
-  // caller can cancel the browser's follow-up compatibility click (see below).
-  function maybeTapTurn(e: TouchEvent): boolean {
-    if (performance.now() - touchStartT >= TAP_MAX_MS) return false; // long-press, not a tap
-    if (hasActiveSelection()) return false; // selecting text, not turning
-    const t = e.changedTouches && e.changedTouches[0];
-    if (!t || !viewportEl) return false;
-    const target = e.target as HTMLElement | null;
-    // Let real links / controls / media handle their own tap.
-    if (
-      target?.closest?.('a, button, input, textarea, select, video, audio, iframe, [role="button"]')
-    )
-      return false;
-    const rect = viewportEl.getBoundingClientRect();
-    const frac = (t.clientX - rect.left) / rect.width;
-    // Edge taps at the first / last page aren't consumed: nothing moves under the
-    // finger, so whatever the tap would natively do should still happen.
-    if (frac <= TAP_PREV_ZONE) {
-      if (atStart) return false;
-      pagination.prev();
-      return true;
-    }
-    if (frac >= TAP_NEXT_ZONE) {
-      if (atEnd) return false;
-      pagination.next();
-      return true;
-    }
-    return false; // middle zone: neutral (reading area), no turn
-  }
-
-  // After a touch the browser replays the gesture as mouse events + a click at the
-  // release coordinates. Once we've turned the page, a *different* element sits
-  // under those coordinates — a link or linked image on the newly revealed page —
-  // and the replayed click would activate it. Cancelling the touchend suppresses
-  // that replay in spec-compliant browsers; the guard below is the belt to that
-  // suspenders, for engines that still emit a delayed click. It is deliberately
-  // narrow (one click, near the release point, inside the compatibility window,
-  // dropped as soon as a new touch starts) rather than a post-turn input lock.
-  const COMPAT_CLICK_MS = 700;
-  const COMPAT_CLICK_SLOP_PX = 44;
-  let compatClickGuard: { x: number; y: number; timer: ReturnType<typeof setTimeout> } | null =
-    null;
-
-  function swallowCompatClick(e: MouseEvent) {
-    const guard = compatClickGuard;
-    if (!guard) return;
-    if (
-      Math.abs(e.clientX - guard.x) > COMPAT_CLICK_SLOP_PX ||
-      Math.abs(e.clientY - guard.y) > COMPAT_CLICK_SLOP_PX
-    )
-      return; // not the replay of the touch we consumed — leave it alone
-    disarmCompatClickGuard();
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation();
-  }
-
-  function armCompatClickGuard(x: number, y: number) {
-    disarmCompatClickGuard();
-    compatClickGuard = { x, y, timer: setTimeout(disarmCompatClickGuard, COMPAT_CLICK_MS) };
-    document.addEventListener('click', swallowCompatClick, true);
-  }
-
-  function disarmCompatClickGuard() {
-    if (!compatClickGuard) return;
-    clearTimeout(compatClickGuard.timer);
-    compatClickGuard = null;
-    document.removeEventListener('click', swallowCompatClick, true);
-  }
-
+  // A touch that never became a horizontal drag is left entirely alone: taps in the
+  // reading area belong to the text (selection, links, highlights), not to paging.
+  // Swiping and the bottom pager are the page-turn affordances.
   function onTouchEnd(e: TouchEvent) {
     const wasDragging = dragging;
-    const moved = touchDecided;
     dragging = false;
     touchDecided = false;
-    if (wasDragging) {
-      const t = e.changedTouches && e.changedTouches[0];
-      const endX = t ? t.clientX : touchLastX;
-      pagination.endDrag(endX - touchStartX, touchVelocity);
-      return;
-    }
-    // No drag. If the finger didn't meaningfully move, treat it as a tap.
-    if (moved || e.type !== 'touchend') return;
-    if (!maybeTapTurn(e)) return; // not consumed → the tap stays native
-    if (e.cancelable) e.preventDefault(); // no compatibility mouse events / click
+    if (!wasDragging) return;
     const t = e.changedTouches && e.changedTouches[0];
-    if (t) armCompatClickGuard(t.clientX, t.clientY);
+    const endX = t ? t.clientX : touchLastX;
+    pagination.endDrag(endX - touchStartX, touchVelocity);
   }
 
   // Scroll wheel / trackpad turns pages. One turn per gesture (a short lock keeps
@@ -282,9 +194,7 @@
     vp.addEventListener('wheel', onWheel, { passive: false });
     vp.addEventListener('touchstart', onTouchStart, { passive: true });
     vp.addEventListener('touchmove', onTouchMove, { passive: false });
-    // touchend is non-passive so a consumed edge tap can cancel the compatibility
-    // click the browser would otherwise fire against the page we just turned to.
-    vp.addEventListener('touchend', onTouchEnd, { passive: false });
+    vp.addEventListener('touchend', onTouchEnd, { passive: true });
     vp.addEventListener('touchcancel', onTouchEnd, { passive: true });
     return () => {
       vp.removeEventListener('wheel', onWheel);
@@ -292,7 +202,6 @@
       vp.removeEventListener('touchmove', onTouchMove);
       vp.removeEventListener('touchend', onTouchEnd);
       vp.removeEventListener('touchcancel', onTouchEnd);
-      disarmCompatClickGuard();
     };
   });
 </script>
