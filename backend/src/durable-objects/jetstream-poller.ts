@@ -3,6 +3,8 @@ import type { Env } from '../types';
 import { resolveCanonicalUrl } from '../utils/canonical-url';
 import { upsertSubscriptionFromFirehose } from '../services/firehose-subscription';
 import { sentryOptions, reportError } from '../observability/sentry';
+import { log, serializeError } from '../utils/logger';
+import { runWithRequestContext } from '../utils/request-context';
 
 // Jetstream event types
 interface JetstreamEvent {
@@ -51,6 +53,13 @@ const POLL_TIMEOUT_MS = 8000; // 8 seconds per stream
 const IDLE_TIMEOUT_MS = 2000; // 2 seconds without events = caught up
 const ALARM_INTERVAL_MS = 60000; // 60 seconds between polls
 
+// How long after an alarm *started* we still consider the poller alive without a
+// scheduled alarm. `getAlarm()` returns null while the handler runs, so both
+// `/start` (don't double-start) and `/status` consumers (don't cry wedged) need
+// this window. Two alarm intervals: long enough to cover a slow cycle, short
+// enough that a genuinely dead poller is caught within a couple of minutes.
+export const ALARM_ACTIVE_WINDOW_MS = 2 * ALARM_INTERVAL_MS;
+
 class JetstreamPollerBase implements DurableObject {
   private state: DurableObjectState;
   private env: Env;
@@ -72,7 +81,7 @@ class JetstreamPollerBase implements DurableObject {
         this.state.storage.get<number>('last_alarm_start'),
       ]);
 
-      const recentlyActive = lastAlarmStart && Date.now() - lastAlarmStart < 120000; // 2 minutes
+      const recentlyActive = lastAlarmStart && Date.now() - lastAlarmStart < ALARM_ACTIVE_WINDOW_MS;
 
       if (!alarmTime && !recentlyActive) {
         // No alarm scheduled and none ran recently - start fresh
@@ -95,12 +104,14 @@ class JetstreamPollerBase implements DurableObject {
     }
 
     if (url.pathname === '/status') {
-      const [subscriptionsCursor, documentsCursor, lastStats, alarmTime] = await Promise.all([
-        this.state.storage.get<string>('cursor_subscriptions'),
-        this.state.storage.get<string>('cursor_documents'),
-        this.state.storage.get<PollStats>('last_stats'),
-        this.state.storage.getAlarm(),
-      ]);
+      const [subscriptionsCursor, documentsCursor, lastStats, alarmTime, lastAlarmStart] =
+        await Promise.all([
+          this.state.storage.get<string>('cursor_subscriptions'),
+          this.state.storage.get<string>('cursor_documents'),
+          this.state.storage.get<PollStats>('last_stats'),
+          this.state.storage.getAlarm(),
+          this.state.storage.get<number>('last_alarm_start'),
+        ]);
 
       return new Response(
         JSON.stringify({
@@ -110,7 +121,14 @@ class JetstreamPollerBase implements DurableObject {
           },
           lastStats,
           nextPoll: alarmTime,
+          // `getAlarm()` returns null *while the alarm handler is running*, and a
+          // poll cycle occupies a real fraction of every minute (two streams, each
+          // 2–8s). A caller that reads `isRunning` alone would see false during
+          // that window and conclude the firehose is dead — so surface
+          // `lastAlarmStart` too and let it apply the same recency rule /start
+          // uses (see above). Callers: routes/health.ts.
           isRunning: !!alarmTime,
+          lastAlarmStart: lastAlarmStart ?? null,
         }),
         {
           headers: { 'Content-Type': 'application/json' },
@@ -122,6 +140,14 @@ class JetstreamPollerBase implements DurableObject {
   }
 
   async alarm(): Promise<void> {
+    // Every line and every Sentry event from this poll cycle shares one id, so a
+    // bad cycle can be read end to end from a single filter.
+    return runWithRequestContext({ requestId: crypto.randomUUID(), route: 'jetstream-poll' }, () =>
+      this.runPollCycle()
+    );
+  }
+
+  private async runPollCycle(): Promise<void> {
     // Record when this alarm started to prevent race conditions with /start
     // (cron calls /start every minute, but getAlarm() returns null while running)
     await this.state.storage.put('last_alarm_start', Date.now());
@@ -130,7 +156,7 @@ class JetstreamPollerBase implements DurableObject {
     // The finally block ensures we always schedule the next alarm
     try {
       const startTime = Date.now();
-      console.log('[JetstreamPoller] Starting poll cycle');
+      log.info('jetstream_poll_start');
 
       const stats: PollStats = {
         subscriptions: { processed: 0, errors: 0 },
@@ -142,16 +168,14 @@ class JetstreamPollerBase implements DurableObject {
       try {
         // Poll streams sequentially to reduce peak CPU usage
         // 1. Subscriptions (app.skyreader.feed.subscription) - global watch, filter by sync-enabled
-        console.log('[JetstreamPoller] Polling subscriptions stream');
         const subscriptionsResult = await this.pollSubscriptionsStream();
         stats.subscriptions = subscriptionsResult;
 
         // 2. Documents (site.standard.document) - filter to followed users
-        console.log('[JetstreamPoller] Polling documents stream');
         const documentsResult = await this.pollDocumentsStream();
         stats.documents = documentsResult;
       } catch (error) {
-        console.error('[JetstreamPoller] Error during poll cycle:', error);
+        log.error('jetstream_poll_failed', { ...serializeError(error) });
         reportError(error, { tags: { source: 'jetstream-poller', phase: 'poll-cycle' } });
       }
 
@@ -164,15 +188,27 @@ class JetstreamPollerBase implements DurableObject {
         console.error('[JetstreamPoller] Error saving stats:', error);
       }
 
-      console.log(
-        `[JetstreamPoller] Poll complete: ` +
-          `subscriptions=${stats.subscriptions.processed}/${stats.subscriptions.errors}, ` +
-          `documents=${stats.documents.processed}/${stats.documents.errors}, ` +
-          `duration=${stats.duration}ms`
-      );
+      // Jetstream cursors are microsecond timestamps, so `now - cursor` is how far
+      // behind the firehose we are. Logging it every cycle turns "the firehose is
+      // stalled" from something you notice when shares stop appearing into a
+      // number with a history.
+      const [subscriptionsLagMs, documentsLagMs] = await Promise.all([
+        this.cursorLagMs('cursor_subscriptions'),
+        this.cursorLagMs('cursor_documents'),
+      ]);
+
+      log.info('jetstream_poll', {
+        subscriptionsProcessed: stats.subscriptions.processed,
+        subscriptionsErrors: stats.subscriptions.errors,
+        documentsProcessed: stats.documents.processed,
+        documentsErrors: stats.documents.errors,
+        subscriptionsLagMs,
+        documentsLagMs,
+        durationMs: stats.duration,
+      });
     } catch (error) {
       // Catch-all for any unexpected errors
-      console.error('[JetstreamPoller] UNEXPECTED ERROR in alarm handler:', error);
+      log.error('jetstream_alarm_failed', { ...serializeError(error) });
       reportError(error, { tags: { source: 'jetstream-poller', phase: 'alarm' } });
     } finally {
       // ALWAYS schedule next poll - this runs even if an error occurred above
@@ -184,6 +220,24 @@ class JetstreamPollerBase implements DurableObject {
         console.error('[JetstreamPoller] CRITICAL: Error scheduling next alarm:', error);
         reportError(error, { tags: { source: 'jetstream-poller', phase: 'alarm-scheduling' } });
       }
+    }
+  }
+
+  /**
+   * How far behind real time the stored cursor is, in ms. Null when the stream
+   * has no cursor yet (first ever poll) — that's "unknown", not "zero lag".
+   */
+  private async cursorLagMs(
+    key: 'cursor_subscriptions' | 'cursor_documents'
+  ): Promise<number | null> {
+    try {
+      const cursor = await this.state.storage.get<string>(key);
+      if (!cursor) return null;
+      const cursorUs = Number(cursor);
+      if (!Number.isFinite(cursorUs) || cursorUs <= 0) return null;
+      return Math.max(0, Date.now() - Math.round(cursorUs / 1000));
+    } catch {
+      return null;
     }
   }
 

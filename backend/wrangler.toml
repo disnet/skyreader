@@ -1,7 +1,16 @@
 name = "skyreader-api"
 main = "src/index.ts"
 compatibility_date = "2025-09-27"
-# nodejs_als: required by @sentry/cloudflare (AsyncLocalStorage-backed scopes).
+# nodejs_als: AsyncLocalStorage. Two consumers — @sentry/cloudflare's scopes, and
+# our own per-request context (src/utils/request-context.ts), which is what lets a
+# request id reach a log line or an outbound header without threading a parameter
+# through every handler.
+#
+# This is a deliberately narrower flag than the `nodejs_compat` the SDK's README
+# asks for: ALS is all it needs today (the full vitest suite runs under workerd
+# with just this), and nodejs_compat additionally injects Node globals we don't
+# want to depend on by accident. Re-check on every @sentry/cloudflare upgrade — if
+# a bump starts needing more of the Node API surface, widen this to nodejs_compat.
 # It coexists with global_fetch_strictly_public — different subsystems, no overlap.
 compatibility_flags = ["global_fetch_strictly_public", "nodejs_als"]
 

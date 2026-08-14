@@ -2,10 +2,10 @@
 
 What's watching Skyreader, what each signal means, and what to do when one fires.
 
-Scope note: this is the **Phase 0** runbook — external checks, dead-man's switches,
-error tracking, and post-deploy smoke checks. Structured logs (Phase 1), the admin
-ops panel (Phase 2), client signal (Phase 3), and SLO/alert pruning (Phase 4) get
-their sections as they land.
+Scope note: this covers **Phases 0–1** — external checks, dead-man's switches,
+error tracking, post-deploy smoke checks, and structured logs with request-id
+correlation. The admin ops panel (Phase 2), client signal (Phase 3), and SLO/alert
+pruning (Phase 4) get their sections as they land.
 
 The operating principle: **silence means healthy**. Every alert below is
 outage-class by construction. If one fires without requiring action, fix or delete
@@ -20,6 +20,7 @@ it rather than learning to ignore it.
 | Backend Worker               | `GET /api/health`             | Shallow: status, version, timestamp. No deps.    |
 | Backend Worker               | `GET /api/health/deep`        | D1 + poller lag + feed proxy. Secret-gated.      |
 | Backend Worker               | Sentry (`@sentry/cloudflare`) | Exceptions from `fetch`, `scheduled`, DO alarm.  |
+| Backend Worker               | Structured logs (Workers Logs) | One JSON object per event, keyed by `requestId`. |
 | Backend cron (every minute)   | Heartbeat ping (`HEARTBEAT_URL`) | Dead-man's switch; also guards the firehose.  |
 | Feed proxy                   | `GET /health`                 | Status, version, cached feed count. No auth.     |
 | Feed proxy                   | `GET /stats`                  | Cache freshness + per-feed error counts. Secret. |
@@ -27,8 +28,8 @@ it rather than learning to ignore it.
 | Feed proxy warmer            | Heartbeat ping (`WARM_HEARTBEAT_URL`) | Dead-man's switch for the warm loop.     |
 | All deploys                  | `scripts/smoke-check.mjs`     | Post-deploy assertion against production.        |
 
-Not yet covered (by design, see the plan): request-level structured logs, trend
-lines, client-side errors.
+Not yet covered (by design, see the plan): trend lines, an ops panel in the admin,
+client-side errors.
 
 ---
 
@@ -186,16 +187,54 @@ Triage by tag: `source` is one of `fetch`, `cron`, `jetstream-poller`, `route`,
 `warmer`. Backend events carry the release (`GIT_COMMIT_SHA`), so "did this start
 with the last deploy?" is answerable directly in Sentry.
 
+Every backend event also carries a `requestId` tag and, when the request was
+authenticated, the user's DID. Copy the id into Workers Logs to get the whole
+request — see below.
+
+---
+
+## 4a. Reading the logs
+
+Backend logs are **objects, not sentences**: Workers Logs indexes the fields of an
+object passed to `console.*` but treats a string as opaque text. Every line from an
+instrumented path carries `level`, `event`, and — inside a request, cron run, or
+poll cycle — a `requestId`, plus `route` and `did` when known.
+
+Query patterns that pay for themselves:
+
+| Question                          | Filter                                            |
+| --------------------------------- | ------------------------------------------------- |
+| Everything about one failure      | `requestId = <id from Sentry or X-Request-Id>`    |
+| Error rate on one endpoint        | `event = request AND route = /api/v2/feeds/batch` |
+| Slow requests                     | `event = request AND durationMs > 3000`           |
+| Is the cron doing its work?       | `event = cron_run`                                |
+| Is the firehose keeping up?       | `event = jetstream_poll` → `subscriptionsLagMs`   |
+| What failed inside a cron run?    | `event = cron_phase_failed` → `phase`             |
+
+The id is also returned to callers as the `X-Request-Id` response header (exposed
+via CORS), so a user-reported failure can be traced if they can quote it. The
+backend stamps the same header on every feed-proxy call, and the proxy echoes it
+into its own error logs and Sentry tags — one id, both runtimes.
+
+Two deliberate gaps: the shallow health check emits no summary line (an uptime
+poller would drown the log in identical entries), and leaf-level `console.log`
+calls elsewhere in the codebase are still plain strings. Convert them
+opportunistically; a big-bang rewrite is churn.
+
 ---
 
 ## 5. Post-deploy smoke checks
 
 Every deploy workflow ends with `scripts/smoke-check.mjs`:
 
-- Workers/proxy: asserts `200` **and** `version === <the SHA just deployed>`. This
-  proves the new code is serving — not merely that something answers.
-- Pages apps: asserts `200` and a content sniff, since a Pages deploy carries no
-  version stamp.
+- Workers/proxy: asserts `200` **and** `version === <the SHA just deployed>` on the
+  health endpoint. This proves the new code is serving — not merely that something
+  answers.
+- Pages apps: the same version assertion against `/_app/version.json` (SvelteKit
+  writes `kit.version.name` there, and each `svelte.config.js` stamps it from
+  `$GITHUB_SHA` at build time), **plus** a content sniff. The version check catches
+  a deploy that silently didn't roll out; the sniff catches a deploy that rolled
+  out but renders nothing.
 
 It retries 6× at 10s intervals (`SMOKE_ATTEMPTS` / `SMOKE_DELAY_SECONDS` to
 override) to absorb propagation delay.
@@ -204,6 +243,7 @@ Run it by hand during an incident:
 
 ```bash
 node scripts/smoke-check.mjs https://api.skyreader.app/api/health --version <sha>
+node scripts/smoke-check.mjs https://skyreader.app/_app/version.json --version <sha>
 node scripts/smoke-check.mjs https://skyreader.app --contains '<title>Skyreader</title>'
 ```
 
@@ -222,5 +262,15 @@ within the stated window. Until a drill has passed, treat the alert as unproven.
 2. Disable the staging cron trigger and deploy → `backend-cron` heartbeat alert
    within the grace period. Re-enable, confirm auto-recovery.
 3. Throw deliberately in a staging route → Sentry event with the right
-   `environment` and release, and no `Authorization`/`Cookie` value in it.
+   `environment` and release, carrying a `requestId` tag whose value finds the
+   matching Workers Logs line (proves correlation end to end). Then read the whole
+   event, not just the headers: no `Authorization`/`Cookie`/DPoP value, no token in
+   a query string, **no credential in a breadcrumb or in the exception message** —
+   those are free text, where a header rule can't help. The Console integration is
+   disabled precisely so a `console.error` on a failure path can't ship a session
+   id (`src/observability/sentry.ts`); confirm the event has no console
+   breadcrumbs at all.
 4. Deploy with a deliberately wrong version stamp → smoke step fails, workflow red.
+   Do it for a Pages app too: edit the built `_app/version.json`, or deploy the
+   same SHA twice while asserting a different one — the point is to see the Pages
+   smoke check catch a build that isn't the one CI just made.

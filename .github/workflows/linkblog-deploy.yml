@@ -77,7 +77,9 @@ jobs:
       - name: Smoke check staging
         env:
           SMOKE_URL: https://staging-linkblogs.skyreader.app
-        run: node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains 'Skyreader'
+        run: |
+          node ../scripts/smoke-check.mjs "$SMOKE_URL/_app/version.json" --version "$GITHUB_SHA"
+          node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains 'Skyreader'
 
   deploy-production:
     name: Deploy to Production
@@ -113,4 +115,6 @@ jobs:
       - name: Smoke check production
         env:
           SMOKE_URL: https://linkblogs.skyreader.app
-        run: node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains 'Skyreader'
+        run: |
+          node ../scripts/smoke-check.mjs "$SMOKE_URL/_app/version.json" --version "$GITHUB_SHA"
+          node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains 'Skyreader'

@@ -1,5 +1,6 @@
 import type { Env } from '../types';
 import { checkRateLimit } from '../services/rate-limit';
+import { ALARM_ACTIVE_WINDOW_MS } from '../durable-objects/jetstream-poller';
 
 // Two health endpoints with deliberately different jobs:
 //
@@ -109,6 +110,7 @@ async function checkPoller(env: Env): Promise<CheckResult> {
       lastStats?: { lastPollAt?: number; duration?: number };
       nextPoll?: number | null;
       isRunning?: boolean;
+      lastAlarmStart?: number | null;
     };
 
     const lastPollAt = status.lastStats?.lastPollAt;
@@ -117,9 +119,20 @@ async function checkPoller(env: Env): Promise<CheckResult> {
     // and not yet run" as healthy rather than paging on a cold start.
     const fresh = lastPollAgeMs === null || lastPollAgeMs < POLLER_STALE_MS;
 
+    // `isRunning` is `!!getAlarm()`, which the DO reports as false for the whole
+    // time the alarm handler is executing — 5–16s of every 60s cycle. Probing in
+    // that window is likely, not exotic, so mirror the recency rule the DO's own
+    // /start branch uses instead of paging on a healthy poller mid-poll. Staleness
+    // is still caught: lastPollAgeMs is the signal that actually means "wedged".
+    const alarmStart = typeof status.lastAlarmStart === 'number' ? status.lastAlarmStart : null;
+    const recentlyActive = alarmStart !== null && Date.now() - alarmStart < ALARM_ACTIVE_WINDOW_MS;
+    const running = Boolean(status.isRunning) || recentlyActive;
+
     return {
-      ok: Boolean(status.isRunning) && fresh,
-      isRunning: Boolean(status.isRunning),
+      ok: running && fresh,
+      isRunning: running,
+      alarmScheduled: Boolean(status.isRunning),
+      lastAlarmAgeMs: alarmStart === null ? null : Date.now() - alarmStart,
       lastPollAgeMs,
       nextPoll: status.nextPoll ?? null,
     };

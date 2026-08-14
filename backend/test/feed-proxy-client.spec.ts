@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { FeedProxyClient, FeedProxyError } from '../src/services/feed-proxy-client';
 import type { Env } from '../src/types';
+import { runWithRequestContext } from '../src/utils/request-context';
 
 function createClient(): FeedProxyClient {
   return new FeedProxyClient({
@@ -188,6 +189,36 @@ describe('FeedProxyClient', () => {
         name: 'FeedProxyError',
         message: 'boom',
       });
+    });
+  });
+
+  // Cross-service correlation: the proxy adopts this header and tags its own logs
+  // and Sentry events with it, so one id spans both runtimes.
+  describe('request id propagation', () => {
+    it('sends X-Request-Id when there is an ambient request context', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ feeds: [] }), { status: 200 }));
+      globalThis.fetch = fetchMock;
+
+      await runWithRequestContext({ requestId: 'req-abc' }, () =>
+        createClient().discoverFeeds('https://example.com')
+      );
+
+      const [, init] = fetchMock.mock.calls[0];
+      expect(new Headers(init.headers).get('X-Request-Id')).toBe('req-abc');
+    });
+
+    it('omits the header outside a request context', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ feeds: [] }), { status: 200 }));
+      globalThis.fetch = fetchMock;
+
+      await createClient().discoverFeeds('https://example.com');
+
+      const [, init] = fetchMock.mock.calls[0];
+      expect(new Headers(init.headers).get('X-Request-Id')).toBeNull();
     });
   });
 });

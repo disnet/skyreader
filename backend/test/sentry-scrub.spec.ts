@@ -95,6 +95,53 @@ describe('Sentry event scrubbing', () => {
     expect(event.extra!.proxySecret).toBe('[redacted]');
   });
 
+  // Breadcrumbs are the channel that bypasses every request-level rule above:
+  // whatever a call site logged before the throw ships verbatim. The Console
+  // integration is off (see observability/sentry.ts), but anything added another
+  // way still has to come out clean.
+  it('redacts credentials carried in breadcrumbs', () => {
+    const event = scrubEvent({
+      breadcrumbs: [
+        {
+          message:
+            'GET https://bsky.social/xrpc/com.atproto.server.refreshSession?refresh_token=rt-secret failed',
+        },
+        { message: 'sending header Authorization: Bearer eyJhbGciOiJFUzI1NiJ9.payload.sig' },
+        { message: 'resolving handle for did:plc:abc123' },
+        { data: { session_id: 'sid-secret', url: 'https://example.com/rss' } },
+      ],
+    } as Event);
+
+    const [tokenizedUrl, authHeader, harmless, withData] = event.breadcrumbs!;
+    expect(tokenizedUrl.message).not.toContain('rt-secret');
+    expect(tokenizedUrl.message).toContain('com.atproto.server.refreshSession');
+    expect(authHeader.message).not.toContain('eyJhbGciOiJFUzI1NiJ9');
+    expect(authHeader.message).toBe('sending header Authorization: [redacted]');
+    // DIDs survive — they're the correlation key, not a credential.
+    expect(harmless.message).toBe('resolving handle for did:plc:abc123');
+    expect((withData.data as Record<string, unknown>).session_id).toBe('[redacted]');
+    expect((withData.data as Record<string, unknown>).url).toBe('https://example.com/rss');
+  });
+
+  it('redacts a tokenized URL quoted in the exception message', () => {
+    const event = scrubEvent({
+      exception: {
+        values: [
+          {
+            type: 'TypeError',
+            value: 'fetch failed: https://pds.example/xrpc/foo?access_token=at-secret&limit=50',
+          },
+        ],
+      },
+      message: 'code_verifier=cv-secret was rejected',
+    } as Event);
+
+    const value = event.exception!.values![0].value!;
+    expect(value).not.toContain('at-secret');
+    expect(value).toContain('limit=50');
+    expect(event.message).not.toContain('cv-secret');
+  });
+
   it('leaves an event with nothing sensitive untouched', () => {
     const event = scrubEvent({
       request: { url: 'https://api.skyreader.app/api/feeds', query_string: 'limit=50' },

@@ -79,13 +79,17 @@ jobs:
           command: pages deploy --project-name=skyreader-staging --commit-dirty=true
           workingDirectory: frontend
 
-      # Pages deploys can't carry a version stamp the way the Workers do, so this
-      # is a liveness + "the shell actually rendered" check: a build that deploys
-      # but serves a broken/empty document goes red here instead of in a bug report.
+      # Two assertions, because they catch different failures. `/_app/version.json`
+      # carries `kit.version.name`, which svelte.config.js stamps with the deployed
+      # SHA — matching it proves *this build* is serving, the same proof the Workers
+      # smoke check gives. The content sniff then proves the shell actually renders;
+      # a deploy that serves a broken/empty document goes red here, not in a bug report.
       - name: Smoke check staging
         env:
           SMOKE_URL: https://staging.skyreader.app
-        run: node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains '<title>Skyreader</title>'
+        run: |
+          node ../scripts/smoke-check.mjs "$SMOKE_URL/_app/version.json" --version "$GITHUB_SHA"
+          node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains '<title>Skyreader</title>'
 
   deploy-staging-prod:
     name: Deploy Staging (Prod Backend)
@@ -129,7 +133,9 @@ jobs:
       - name: Smoke check staging-prod
         env:
           SMOKE_URL: https://staging-prod.skyreader.app
-        run: node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains '<title>Skyreader</title>'
+        run: |
+          node ../scripts/smoke-check.mjs "$SMOKE_URL/_app/version.json" --version "$GITHUB_SHA"
+          node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains '<title>Skyreader</title>'
 
   deploy-production:
     name: Deploy to Production
@@ -173,4 +179,6 @@ jobs:
       - name: Smoke check production
         env:
           SMOKE_URL: https://skyreader.app
-        run: node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains '<title>Skyreader</title>'
+        run: |
+          node ../scripts/smoke-check.mjs "$SMOKE_URL/_app/version.json" --version "$GITHUB_SHA"
+          node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains '<title>Skyreader</title>'

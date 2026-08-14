@@ -8,7 +8,32 @@ interface HealthBody {
   status: string;
   version: string;
   timestamp: number;
-  checks?: Record<string, { ok: boolean; error?: string }>;
+  checks?: Record<string, { ok: boolean; error?: string; [key: string]: unknown }>;
+}
+
+// A stand-in for the JetstreamPoller namespace that answers /status with a fixed
+// body — the only way to drive the "alarm is mid-flight" window deterministically.
+function envWithPollerStatus(status: Record<string, unknown>) {
+  const namespace = {
+    idFromName: () => 'stub-id',
+    get: () => ({
+      fetch: async () =>
+        new Response(JSON.stringify(status), { headers: { 'Content-Type': 'application/json' } }),
+    }),
+  };
+  return {
+    ...env,
+    HEALTH_CHECK_SECRET: SECRET,
+    JETSTREAM_POLLER: namespace,
+  } as unknown as Parameters<typeof handleDeepHealth>[1];
+}
+
+async function pollerCheck(status: Record<string, unknown>) {
+  const response = await handleDeepHealth(
+    new Request('http://localhost/api/health/deep', { headers: { 'X-Health-Secret': SECRET } }),
+    envWithPollerStatus(status)
+  );
+  return ((await response.json()) as HealthBody).checks!.poller;
 }
 
 describe('health endpoints', () => {
@@ -90,6 +115,59 @@ describe('health endpoints', () => {
       const allOk = body.checks!.database.ok && body.checks!.poller.ok && body.checks!.feedProxy.ok;
       expect(body.status).toBe(allOk ? 'ok' : 'degraded');
       expect(response.status).toBe(allOk ? 200 : 503);
+    });
+
+    // The DO reports `isRunning: !!getAlarm()`, and getAlarm() is null for the
+    // whole time the alarm handler is executing — several seconds of every
+    // minute. Treating that as "poller down" would page during normal operation,
+    // which is exactly the false alert that teaches an operator to ignore the one
+    // signal that catches a dead firehose.
+    describe('poller freshness', () => {
+      it('stays healthy while the alarm is mid-cycle', async () => {
+        const poller = await pollerCheck({
+          isRunning: false,
+          nextPoll: null,
+          lastAlarmStart: Date.now() - 3000,
+          lastStats: { lastPollAt: Date.now() - 60_000 },
+        });
+
+        expect(poller.ok).toBe(true);
+        expect(poller.isRunning).toBe(true);
+        // …while still reporting the underlying fact, so the distinction is
+        // visible to a human reading the body.
+        expect(poller.alarmScheduled).toBe(false);
+      });
+
+      it('reports unhealthy when no alarm is scheduled and none ran recently', async () => {
+        const poller = await pollerCheck({
+          isRunning: false,
+          nextPoll: null,
+          lastAlarmStart: Date.now() - 10 * 60_000,
+          lastStats: { lastPollAt: Date.now() - 30_000 },
+        });
+
+        expect(poller.ok).toBe(false);
+        expect(poller.isRunning).toBe(false);
+      });
+
+      it('reports unhealthy when the last completed poll is stale', async () => {
+        const poller = await pollerCheck({
+          isRunning: true,
+          nextPoll: Date.now() + 30_000,
+          lastAlarmStart: Date.now() - 30_000,
+          lastStats: { lastPollAt: Date.now() - 10 * 60_000 },
+        });
+
+        expect(poller.ok).toBe(false);
+        expect(poller.lastPollAgeMs).toBeGreaterThan(5 * 60_000);
+      });
+
+      it('treats a cold DO with no completed poll as healthy', async () => {
+        const poller = await pollerCheck({ isRunning: true, nextPoll: Date.now() + 1000 });
+
+        expect(poller.ok).toBe(true);
+        expect(poller.lastPollAgeMs).toBeNull();
+      });
     });
   });
 });

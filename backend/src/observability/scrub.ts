@@ -37,6 +37,42 @@ function isSensitiveKey(key: string): boolean {
   return SENSITIVE_PARAMS.has(lower) || SENSITIVE_KEY.test(lower);
 }
 
+// --- Free text -------------------------------------------------------------
+//
+// Breadcrumbs, exception messages and log-ish strings carry credentials inline,
+// where there is no key to match on: a tokenized URL, an `Authorization: Bearer
+// …` echoed into an error, a `code_verifier=…` pasted into a message. These
+// three patterns cover what this codebase actually produces.
+
+// A URL with a query string, anywhere inside a longer string.
+const URL_WITH_QUERY = /\bhttps?:\/\/[^\s"'<>]*\?[^\s"'<>]*/gi;
+// `Bearer <token>` / `DPoP <proof>` / `Basic <creds>`.
+const AUTH_SCHEME_VALUE = /\b(Bearer|DPoP|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
+// `key=value` / `key: value` pairs, so the key can be tested with the same rule
+// used for structured fields.
+const INLINE_PAIR = /([A-Za-z0-9_.-]+)(\s*[=:]\s*)(["']?)([^\s,;&"']+)\3/g;
+
+/**
+ * Redact credentials embedded in an arbitrary string. Conservative: it rewrites
+ * only what matches a credential shape, so ordinary prose survives intact.
+ */
+export function scrubText(text: string): string {
+  return (
+    text
+      .replace(URL_WITH_QUERY, (url) => {
+        const [base, query] = splitOnce(url, '?');
+        return `${base}?${scrubQueryString(query)}`;
+      })
+      .replace(AUTH_SCHEME_VALUE, (_match, scheme: string) => `${scheme} ${REDACTED}`)
+      .replace(INLINE_PAIR, (match, key: string, separator: string, quote: string) =>
+        isSensitiveKey(key) ? `${key}${separator}${quote}${REDACTED}${quote}` : match
+      )
+      // `Authorization: Bearer <jwt>` matches two rules in a row and comes out as
+      // `[redacted] [redacted]`. Same safety, less noise.
+      .replace(/(?:\[redacted\]\s+)+\[redacted\]/g, REDACTED)
+  );
+}
+
 function scrubHeaders(headers: Record<string, unknown>): Record<string, unknown> {
   for (const key of Object.keys(headers)) {
     const lower = key.toLowerCase();
@@ -67,6 +103,8 @@ function scrubQueryString(queryString: string): string {
 }
 
 function scrubValue(value: unknown, depth = 0): unknown {
+  // A non-sensitive key can still hold a sensitive string ("url", "message").
+  if (typeof value === 'string') return scrubText(value);
   if (depth > MAX_DEPTH || value === null || typeof value !== 'object') return value;
 
   if (Array.isArray(value)) {
@@ -94,7 +132,7 @@ function scrubBody(data: unknown): unknown {
     }
   }
   if (trimmed.includes('=')) return scrubQueryString(trimmed);
-  return data;
+  return scrubText(data);
 }
 
 /**
@@ -123,6 +161,23 @@ export function scrubEvent<T extends Event>(event: T): T {
   if (event.extra) scrubValue(event.extra);
   if (event.contexts) scrubValue(event.contexts);
   if (event.tags) scrubValue(event.tags);
+
+  // Breadcrumbs are the widest unstructured channel: whatever a call site logged
+  // before the throw rides along verbatim. The Console integration is disabled
+  // for exactly that reason (see ./sentry.ts), but anything the SDK or a future
+  // `addBreadcrumb()` adds still passes through here.
+  for (const breadcrumb of event.breadcrumbs ?? []) {
+    if (typeof breadcrumb.message === 'string') breadcrumb.message = scrubText(breadcrumb.message);
+    if (breadcrumb.data) scrubValue(breadcrumb.data);
+  }
+
+  // An exception's own message is free text and routinely quotes the URL that
+  // failed — including its query string.
+  for (const exception of event.exception?.values ?? []) {
+    if (typeof exception.value === 'string') exception.value = scrubText(exception.value);
+  }
+  if (typeof event.message === 'string') event.message = scrubText(event.message);
+  if (event.logentry?.message) event.logentry.message = scrubText(event.logentry.message);
 
   return event;
 }

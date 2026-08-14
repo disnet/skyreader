@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/cloudflare';
 import type { CloudflareOptions } from '@sentry/cloudflare';
 import type { Env } from '../types';
 import { scrubEvent } from './scrub';
+import { getRequestContext } from '../utils/request-context';
 
 // Error reporting for the Worker. Everything goes through `reportError()` rather
 // than calling `Sentry.captureException` at call sites: the vendor is then a
@@ -26,7 +27,18 @@ export function sentryOptions(env: Env): CloudflareOptions {
     // feed proxy, DID resolution, Jetstream). Measured in `test/xrpc.spec.ts`: the
     // background extraction fetch went 124ms → ~17s with it enabled. Not worth it
     // for breadcrumbs we don't need.
-    integrations: (defaults) => defaults.filter((integration) => integration.name !== 'Fetch'),
+    //
+    // Drop the Console integration too, for a different reason: it turns every
+    // `console.*` call preceding an error into a breadcrumb, verbatim. This
+    // codebase logs raw identifiers on failure paths (session ids, OAuth state),
+    // and no scrubber can reliably tell a credential from prose once it's been
+    // interpolated into a sentence — so the safe move is not to ship the channel
+    // at all. `scrubEvent` still scrubs breadcrumbs defensively in case one gets
+    // added another way. Workers Logs keeps the console output where it belongs.
+    integrations: (defaults) =>
+      defaults.filter(
+        (integration) => integration.name !== 'Fetch' && integration.name !== 'Console'
+      ),
     // Never let the SDK attach bodies/headers on its own judgement; scrubEvent
     // is the only thing that decides what ships.
     sendDefaultPii: false,
@@ -44,11 +56,39 @@ export interface ReportContext {
 /**
  * Report an error to the error tracker. Never throws: an observability failure
  * must not turn into a request failure.
+ *
+ * The request id is attached here rather than at call sites, so every report is
+ * correlatable with the Workers Logs lines for the same request without any
+ * caller having to remember.
  */
 export function reportError(error: unknown, context?: ReportContext): void {
   try {
-    Sentry.captureException(error, { tags: context?.tags, extra: context?.extra });
+    const requestContext = getRequestContext();
+    Sentry.captureException(error, {
+      tags: {
+        ...(requestContext?.requestId ? { requestId: requestContext.requestId } : {}),
+        ...(requestContext?.route ? { route: requestContext.route } : {}),
+        ...context?.tags,
+      },
+      extra: context?.extra,
+      // A DID is a public identifier and the one thing that turns "someone hit
+      // this" into "this account hits this" (see ./scrub.ts).
+      user: requestContext?.did ? { id: requestContext.did } : undefined,
+    });
   } catch (reportingError) {
     console.error('[Observability] Failed to report error:', reportingError);
+  }
+}
+
+/**
+ * Tag the in-flight Sentry scope with the request id, so an exception the SDK
+ * captures on its own (one that escapes our own try/catch) is still correlatable.
+ * No-op when Sentry isn't initialized.
+ */
+export function tagRequestId(requestId: string): void {
+  try {
+    Sentry.getCurrentScope().setTag('requestId', requestId);
+  } catch {
+    // Scope access before init, or a vendor swap that doesn't have scopes.
   }
 }

@@ -80,10 +80,24 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/observability/sentry.ts`    | SDK options + the `reportError()` wrapper every call site uses |
 | `src/observability/scrub.ts`     | `beforeSend` credential scrubbing (keeps DIDs, drops tokens)   |
 | `src/observability/heartbeat.ts` | Dead-man's-switch ping for the every-minute cron               |
+| `src/utils/logger.ts`            | `log.info('event', { … })` — structured, queryable log lines   |
+| `src/utils/request-context.ts`   | Request id / route / DID in AsyncLocalStorage                  |
 
 Error reporting goes through `reportError()`, never `Sentry.captureException`
-directly, so the vendor stays a one-file decision. Alert thresholds, secrets, and
-incident procedures: [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
+directly, so the vendor stays a one-file decision.
+
+Logging: use `log.*` with a stable low-cardinality `event` slug and put the details
+in fields. Workers Logs indexes the fields of a logged object but treats a string
+as opaque text, so `log.info('feed_fetched', { feedCount })` is queryable and an
+interpolated `console.log` sentence is not. Never log a credential — there is no
+redaction layer on this path.
+
+The request id is ambient (`getRequestId()`), so nothing has to thread it: it lands
+on every log line, every `reportError()` tag, the `X-Request-Id` response header,
+and outbound feed-proxy calls.
+
+Alert thresholds, secrets, log queries, and incident procedures:
+[`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 
 ### Durable Objects
 
