@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { scrubEvent, scrubUrl } from './scrub';
+import { scrubEvent, scrubText, scrubUrl } from './scrub';
 
 // The two credentials that pass through this process: the Worker's shared secret
 // on every authenticated call, and tokenised feed URLs.
@@ -44,8 +44,23 @@ describe('scrubEvent', () => {
     expect(scrubbed.request?.data).toBeUndefined();
   });
 
-  test('passes an event with no request through untouched', () => {
-    const event = { message: 'warmer failed' };
-    expect(scrubEvent(event)).toEqual({ message: 'warmer failed' });
+  test('scrubs tokenised URLs from free-text channels without request data', () => {
+    const event = {
+      message: 'warmer failed for https://example.com/feed?token=message-secret',
+      breadcrumbs: [{ message: '[Proxy] https://example.com/feed?token=crumb-secret: HTTP 404' }],
+      exception: { values: [{ value: 'api_key=exception-secret' }] },
+      extra: { feedUrl: 'https://example.com/feed?auth=extra-secret' },
+    };
+
+    expect(JSON.stringify(scrubEvent(event))).not.toContain('secret');
+    expect(event.message).toContain('token=%5Bredacted%5D');
+  });
+});
+
+describe('scrubText', () => {
+  test('redacts authorization values embedded in prose', () => {
+    expect(scrubText('upstream returned Authorization: Bearer abcdefghijklmnop')).not.toContain(
+      'abcdefghijklmnop'
+    );
   });
 });

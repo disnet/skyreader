@@ -21,6 +21,9 @@ if (dsn) {
     tracesSampleRate: parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || '0'),
     // Never let the SDK attach request bodies or headers on its own judgement.
     sendDefaultPii: false,
+    // Console breadcrumbs can retain a tokenised feed URL from one request and
+    // attach it to a later user's error in this long-lived process.
+    integrations: (defaults) => defaults.filter((integration) => integration.name !== 'Console'),
     // The Worker's "nothing leaves with a credential attached" contract stopped
     // at the runtime boundary until this. See ./scrub.ts for what it covers and
     // fire drill #3 in docs/RUNBOOK.md for the check that proves it.

@@ -162,7 +162,8 @@ function isPublicPath(pathname: string): boolean {
     pathname.startsWith('/.well-known/') ||
     pathname === '/api/auth/login' ||
     pathname === '/api/auth/callback' ||
-    pathname === '/api/auth/logout'
+    pathname === '/api/auth/logout' ||
+    pathname === '/api/telemetry/error'
   );
 }
 

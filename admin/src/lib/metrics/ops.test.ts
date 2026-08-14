@@ -151,8 +151,8 @@ describe('trend series', () => {
   });
 
   const HOUR = 60 * MINUTE;
-  const lagOf = (rows: SnapshotRow[]) =>
-    trendsFrom(rows).series.find((s) => s.key === 'firehose_lag_ms')!.points;
+  const lagOf = (rows: SnapshotRow[], now = rows.at(-1)?.captured_at ?? NOW) =>
+    trendsFrom(rows, now).series.find((s) => s.key === 'firehose_lag_ms')!.points;
 
   it('keeps a missing value as a gap rather than a zero', () => {
     expect(
@@ -176,10 +176,20 @@ describe('trend series', () => {
   });
 
   it('reports the real span of the history it holds', () => {
-    const trends = trendsFrom([row(NOW), row(NOW + 5 * HOUR)]);
+    const trends = trendsFrom([row(NOW), row(NOW + 5 * HOUR)], NOW + 5 * HOUR);
     expect(trends.from).toBe(NOW);
     expect(trends.to).toBe(NOW + 5 * HOUR);
     expect(trends.series[0].points).toHaveLength(6);
+  });
+
+  it('shows missing trailing snapshots as a gap through the current hour', () => {
+    expect(lagOf([row(NOW), row(NOW + HOUR)], NOW + 4 * HOUR)).toEqual([
+      1000,
+      1000,
+      null,
+      null,
+      null,
+    ]);
   });
 
   it('is empty but well-formed with no history', () => {

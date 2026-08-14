@@ -81,6 +81,16 @@ Create each check, copy its ping URL, and set it as a secret (below). The backen
 pings **only after a clean run**, so "cron throws every minute" reads the same as
 "cron never fired" — both are outages.
 
+### Sentry issue alert
+
+| Project             | Filter                                                   | Threshold             | Action               |
+| ------------------- | -------------------------------------------------------- | --------------------- | -------------------- |
+| `skyreader-backend` | `tags[source]:client tags[kind]:preload_recovery_failed` | 3 events in 5 minutes | Email and phone push |
+
+Use a three-event threshold because `kind` arrives through a deliberately public
+endpoint and is therefore forgeable. A cluster still catches a broken deploy
+quickly without letting one anonymous POST page the operator.
+
 ---
 
 ## 3. Secrets and variables
@@ -224,12 +234,12 @@ reality (`sampleRate` rides along on every event for exactly this reason). The
 | `rejection`               | `unhandledrejection`                 | A promise nobody caught — often a failed API call. |
 | `preload_recovery_failed` | The stale-chunk guard, tripped twice | **The deploy bricked the PWA.** See below.         |
 
-**`preload_recovery_failed` is the one to page on.** It means a client asked for a
-chunk from its own build, didn't get it, reloaded once to recover, and then failed
-again — so the page is stuck and the user's only remedy is clearing storage. It is
-**never sampled away**. Its usual cause is a build whose immutable assets stopped
-being served (`scripts/retain-immutable-assets.mjs` retention expired or was
-skipped) while old tabs were still open.
+**A cluster of `preload_recovery_failed` events is the one to page on.** It means
+clients asked for a chunk from their own build, didn't get it, reloaded once to
+recover, and then failed again — so the page is stuck and the user's only remedy
+is clearing storage. It is **never sampled away**. Its usual cause is a build
+whose immutable assets stopped being served (`scripts/retain-immutable-assets.mjs`
+retention expired or was skipped) while old tabs were still open.
 **Fix:** re-deploy the frontend, which republishes the current build's assets; if
 reports name an old `appVersion`, extend asset retention rather than chasing the
 client.
@@ -459,11 +469,12 @@ single-operator project on a singleton proxy: it says "a couple of short outages
 month is survivable, a daily one is not." Tighten it only if you're also willing
 to change the architecture it's measuring.
 
-Every alert threshold in this runbook is **looser than its SLO on purpose**: the
-firehose SLO is 5 minutes and the page fires at 15. An SLO you're paged for the
-moment you touch it is an SLO you'll stop believing. Read the trend sparklines
-monthly to see whether you're drifting; wait for the alert to be told you've
-stopped.
+Freshness alert thresholds are **looser than their SLOs on purpose**: the
+firehose SLO is 5 minutes and its warning fires at 15. Availability alerts are
+deliberately budget-agnostic and fire on a short current outage instead of waiting
+for the 30-day error budget to be exhausted. Cron's 5-minute grace matches its
+liveness boundary; tune both together if normal scheduling jitter approaches it.
+Read the trend sparklines monthly to see whether you're drifting.
 
 Where a number can't be measured yet, say so rather than inventing it: **API
 availability and cron liveness live in the uptime vendor's own history**, which
@@ -479,9 +490,9 @@ falsely, which is the whole point of the two rules below.
 **What earns a push notification.** An alert may page a phone only if it is
 outage-class — users are affected right now, or will be within minutes — _and_
 there is something a human can do about it at 3am. Everything currently
-configured passes both tests: five uptime checks, two heartbeats, and
-`preload_recovery_failed`. Everything else is a thing you find when you look:
-Sentry issues, ops tiles, trends.
+configured passes both tests: six uptime checks, two heartbeats, and the
+multi-event `preload_recovery_failed` Sentry alert in §2. Everything else is a
+thing you find when you look: Sentry issues, ops tiles, trends.
 
 **What does not page.** Warning-level conditions (`firehose_lag_high` is a Sentry
 message, not a phone call), individual client errors, feeds failing to parse, a

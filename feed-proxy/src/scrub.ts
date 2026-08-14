@@ -28,6 +28,9 @@ const SENSITIVE_HEADERS = new Set([
 ]);
 
 const SENSITIVE_KEY = /(token|secret|password|authorization|cookie|api[_-]?key|signature|auth)/i;
+const URL_WITH_QUERY = /\bhttps?:\/\/[^\s"'<>]*\?[^\s"'<>]*/gi;
+const AUTH_SCHEME_VALUE = /\b(Bearer|DPoP|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
+const INLINE_PAIR = /([A-Za-z0-9_.-]+)(\s*[=:]\s*)(["']?)([^\s,;&"']+)\3/g;
 
 function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEY.test(key);
@@ -54,6 +57,28 @@ export function scrubUrl(url: string): string {
   return `${url.slice(0, index)}?${scrubQueryString(url.slice(index + 1))}`;
 }
 
+/** Redact tokenised URLs and inline credential-shaped values in free text. */
+export function scrubText(value: string): string {
+  return value
+    .replace(URL_WITH_QUERY, (url) => scrubUrl(url))
+    .replace(AUTH_SCHEME_VALUE, (_match, scheme: string) => `${scheme} ${REDACTED}`)
+    .replace(INLINE_PAIR, (match, key: string, separator: string, quote: string) =>
+      isSensitiveKey(key) ? `${key}${separator}${quote}${REDACTED}${quote}` : match
+    );
+}
+
+function scrubValue(value: unknown, depth = 0): unknown {
+  if (typeof value === 'string') return scrubText(value);
+  if (depth > 6 || value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map((entry) => scrubValue(entry, depth + 1));
+
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    record[key] = isSensitiveKey(key) ? REDACTED : scrubValue(record[key], depth + 1);
+  }
+  return record;
+}
+
 interface ScrubbableRequest {
   url?: string;
   headers?: Record<string, unknown>;
@@ -66,16 +91,13 @@ interface ScrubbableRequest {
  * Strip credentials from a Sentry event in place. Returns the same event, or the
  * untouched event if anything at all goes wrong.
  *
- * Typed over `T` rather than over the SDK's `Event`: this only ever reads two
- * well-known fields, and staying structurally loose means an SDK type change
- * can't turn a security control into a build error.
+ * Typed over `T` rather than over the SDK's `Event`: staying structurally loose
+ * means an SDK type change can't turn a security control into a build error.
  */
 export function scrubEvent<T>(event: T): T {
   try {
     const request = (event as { request?: ScrubbableRequest } | null)?.request;
-    if (!request) return event;
-
-    if (request.headers) {
+    if (request?.headers) {
       for (const key of Object.keys(request.headers)) {
         const lower = key.toLowerCase();
         if (SENSITIVE_HEADERS.has(lower) || isSensitiveKey(lower)) {
@@ -84,15 +106,34 @@ export function scrubEvent<T>(event: T): T {
       }
     }
 
-    if (typeof request.url === 'string') request.url = scrubUrl(request.url);
-    if (typeof request.query_string === 'string') {
+    if (typeof request?.url === 'string') request.url = scrubUrl(request.url);
+    if (typeof request?.query_string === 'string') {
       request.query_string = scrubQueryString(request.query_string);
     }
 
     // Neither is ever useful in a proxy stack trace, and both carry credentials
     // by definition. Dropping beats redacting when there's nothing to lose.
-    delete request.cookies;
-    delete request.data;
+    if (request) {
+      delete request.cookies;
+      delete request.data;
+    }
+
+    const scrubbable = event as {
+      breadcrumbs?: { message?: unknown; data?: unknown }[];
+      exception?: { values?: { value?: unknown }[] };
+      extra?: unknown;
+      message?: unknown;
+    };
+    for (const breadcrumb of scrubbable.breadcrumbs ?? []) {
+      if (typeof breadcrumb.message === 'string')
+        breadcrumb.message = scrubText(breadcrumb.message);
+      if (breadcrumb.data) scrubValue(breadcrumb.data);
+    }
+    for (const exception of scrubbable.exception?.values ?? []) {
+      if (typeof exception.value === 'string') exception.value = scrubText(exception.value);
+    }
+    if (scrubbable.extra) scrubValue(scrubbable.extra);
+    if (typeof scrubbable.message === 'string') scrubbable.message = scrubText(scrubbable.message);
 
     return event;
   } catch {

@@ -161,6 +161,27 @@ describe('auth gate: transient refresh failure (503, retryable)', () => {
     // Cookie is cleared regardless of refresh state.
     expect(res.headers.get('Set-Cookie')).toContain('session_id=');
   });
+
+  it('does NOT block client error telemetry for a transient session', async () => {
+    await insertSession('transient-telemetry', transientOpts());
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      new IncomingRequest('http://localhost/api/telemetry/error', {
+        method: 'POST',
+        headers: {
+          Cookie: 'session_id=transient-telemetry',
+          'Content-Type': 'application/json',
+          Origin: env.FRONTEND_URL,
+        },
+        body: JSON.stringify({ kind: 'render', message: 'auth resolution failed' }),
+      }),
+      env,
+      ctx
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(204);
+  });
 });
 
 describe('token refresh: public client (local dev)', () => {

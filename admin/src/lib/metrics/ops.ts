@@ -185,7 +185,10 @@ const MAX_BUCKETS = 24 * 45;
  * worth having is that a flat line means "nothing changed" and not "nobody
  * looked"; only a timeline with holes in it can tell those apart.
  */
-export function trendsFrom(rows: SnapshotRow[]): {
+export function trendsFrom(
+  rows: SnapshotRow[],
+  now = Date.now()
+): {
   from: number | null;
   to: number | null;
   series: TrendSeries[];
@@ -204,7 +207,9 @@ export function trendsFrom(rows: SnapshotRow[]): {
   // captured_at is already bucketed to the top of the hour by the cron that
   // writes it, so this index is exact rather than approximate.
   const bucketOf = (capturedAt: number) => Math.round((capturedAt - from) / HOUR_MS);
-  const count = Math.min(bucketOf(to) + 1, MAX_BUCKETS);
+  // End at the current hour, not the newest row. Otherwise collection stopping
+  // is invisible until it resumes: an old value still sits at the chart edge.
+  const count = Math.min(Math.max(bucketOf(now), bucketOf(to)) + 1, MAX_BUCKETS);
   const byBucket = new Map(rows.map((row) => [bucketOf(row.captured_at), row]));
 
   return {
