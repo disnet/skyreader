@@ -128,6 +128,22 @@ describe('shareDestination', () => {
     expect(destination.linkblogUrl).toBe(linkblogPage);
   });
 
+  // Turning the Skyreader page off makes it 404, so the share confirmation has no
+  // second address to promise — the connected publication is the whole story.
+  it('drops the linkblog page when the user turned it off', () => {
+    const destination = shareDestination(
+      {
+        name: 'Reading notes',
+        external: true,
+        externalUrl: 'https://offprint.app/reader/',
+        pageHidden: true,
+      },
+      linkblogPage
+    );
+    expect(destination.url).toBe('https://offprint.app/reader/');
+    expect(destination.linkblogUrl).toBeUndefined();
+  });
+
   it('has something to call an unnamed connected publication', () => {
     expect(shareDestination({ name: '', external: true }, linkblogPage).name).toBe(
       'the publication you connected'

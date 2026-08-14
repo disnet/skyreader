@@ -109,8 +109,10 @@
         </label>
         <!-- `current.url` is always the canonical Skyreader linkblog URL, even
              while links are going to a connected publication; the choice's own
-             `url` is the record's stored field, which can be stale or unset. -->
-        {#if current.url}
+             `url` is the record's stored field, which can be stale or unset. It
+             stays populated once the page is turned off, so check that too —
+             the page 404s from then on. -->
+        {#if current.url && !current.pageHidden}
           <a
             class="pub-open"
             href={current.url}

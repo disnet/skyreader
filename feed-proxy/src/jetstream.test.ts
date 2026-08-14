@@ -225,6 +225,29 @@ describe('DocumentFirehose reconcile / active-author set', () => {
 
     expect(fh.computeActiveDids(now)).toHaveLength(10_000);
   });
+
+  // Jetstream validates every entry of `wantedDids` and rejects the whole
+  // options_update if one is malformed, closing the socket — so a single junk
+  // cache row would otherwise loop the firehose forever.
+  test('drops cached authors whose DID is not valid AT Protocol syntax', () => {
+    const db = makeDb();
+    const now = Date.now();
+    const fh = new DocumentFirehose(db, { enabled: false });
+
+    seedAuthor(db, 'did:plc:p37zjcwj6u6yj64qhfc7wmls', [], now);
+    seedAuthor(db, 'did:web:example.com', [], now);
+    seedAuthor(db, 'not-a-did', [], now);
+    seedAuthor(db, 'did:plc:', [], now); // prefix only
+    seedAuthor(db, 'did:PLC:uppercasemethod', [], now);
+    seedAuthor(db, 'did:plc:trailing:', [], now); // may not end in ':'
+    seedAuthor(db, 'did:plc:has space', [], now);
+
+    expect(fh.computeActiveDids(now).sort()).toEqual([
+      'did:plc:p37zjcwj6u6yj64qhfc7wmls',
+      'did:web:example.com',
+    ]);
+    expect(fh.isSubscribed('not-a-did')).toBe(false);
+  });
 });
 
 describe('DocumentFirehose.isHealthy', () => {

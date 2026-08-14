@@ -8,12 +8,14 @@ import {
   fetchSingleDocument,
   filterByPublication,
   digestScope,
+  isValidDid,
   MAX_DOCUMENTS_PER_AUTHOR,
   type ProxyDocument,
 } from './standard-site';
 import type { FirehoseStatus } from './jetstream';
 import { getSocialContext, type SocialContext, type SocialContextQuery } from './constellation';
 import { getLinkblogRegistry } from './linkblog-registry';
+import { getConstellationStats } from './constellation-client';
 import { readCachedMentions, enrichMentions } from './mentions';
 import { getMentionLaneItems, type MentionLaneEntry } from './mention-lane';
 import type { LaneId } from './lanes';
@@ -1859,6 +1861,10 @@ export function createApp(db: Database, config: AppConfig) {
       stale: stale?.count || 0,
       inFlight: inFlight.size,
       extract: { inUse: extractSemaphore.inUse, queued: extractSemaphore.queued },
+      // Constellation health from *our* side: breaker state, gate occupancy, and
+      // the retry/shed counters. `retriesRecovered` ≫ `failures` means the
+      // connection resets are being absorbed rather than blanking adornments.
+      constellation: getConstellationStats(),
       cacheTtlSeconds: cacheTtlMs / 1000,
       staleTtlSeconds: staleTtlMs / 1000,
       errors: {
@@ -2458,7 +2464,10 @@ export function createApp(db: Database, config: AppConfig) {
       authors.map(async (entry): Promise<DocumentResult> => {
         const { did, siteUri } = entry;
 
-        if (!did || typeof did !== 'string' || !did.startsWith('did:')) {
+        // Full DID syntax, not just the `did:` prefix: a near-miss would earn a
+        // document_cache row here and then poison the firehose's wantedDids,
+        // which Jetstream rejects wholesale.
+        if (!isValidDid(did)) {
           return {
             did: String(did),
             siteUri,

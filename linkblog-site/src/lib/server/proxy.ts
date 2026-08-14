@@ -10,18 +10,76 @@ export interface ProxyConfig {
   feedProxySecret?: string;
 }
 
-export async function resolveLinkblogTarget(
-  apiBase: string,
-  did: string
-): Promise<{ siteUri: string; defaultSiteUri: string }> {
+export interface LinkblogTarget {
+  siteUri: string;
+  defaultSiteUri: string;
+  /**
+   * Don't render this linkblog: the user deleted it, or connected an existing
+   * publication and turned this page off. The backend collapses both into one
+   * flag — which it is isn't the reader's business.
+   */
+  hidden: boolean;
+  /** The links live in a publication the user already had, with a site of its own. */
+  external: boolean;
+}
+
+// One retry on a failed resolve. This is the only call that can say "don't render
+// this", and unlike the documents/social fetches its fallback is not "show less"
+// but "show something the user may have taken down" — worth a second attempt
+// before giving up. Kept to one so a hard backend outage doesn't double the TTFB
+// of every linkblog page.
+async function fetchResolve(apiBase: string, did: string): Promise<Response | null> {
+  const url = `${apiBase}/api/linkblog/resolve/${encodeURIComponent(did)}`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return res;
+    } catch {
+      // Fall through to the retry, then to the caller's fail-open.
+    }
+  }
+  return null;
+}
+
+export async function resolveLinkblogTarget(apiBase: string, did: string): Promise<LinkblogTarget> {
   const fallback = publicationUri(did);
-  if (!apiBase) return { siteUri: fallback, defaultSiteUri: fallback };
+  // Fail open, deliberately. A resolve that can't answer degrades to the default
+  // publication and a visible page. Failing closed instead would take every
+  // linkblog AND its RSS feed offline on an API blip — the documents come from the
+  // feed proxy, not this call, so the content itself is unaffected by the outage.
+  //
+  // What fail-open can expose is bounded on both sides. A deleted linkblog has no
+  // posts left to show. A hidden page requires a connected publication, so its
+  // posts are already public on that publication's own site — and because
+  // `siteUri` falls back to the default here, the documents fetched are scoped to
+  // `skyreader-links` alone, which is where a connected user is no longer
+  // publishing. So the exposure is at most their pre-connection posts, which were
+  // public at this address before they ever connected.
+  const unresolved: LinkblogTarget = {
+    siteUri: fallback,
+    defaultSiteUri: fallback,
+    hidden: false,
+    external: false,
+  };
+  if (!apiBase) return unresolved;
   try {
-    const res = await fetch(`${apiBase}/api/linkblog/resolve/${encodeURIComponent(did)}`);
-    if (!res.ok) throw new Error();
-    return (await res.json()) as { siteUri: string; defaultSiteUri: string };
+    const res = await fetchResolve(apiBase, did);
+    if (!res) throw new Error();
+    const data = (await res.json()) as {
+      siteUri?: string;
+      defaultSiteUri?: string;
+      hidden?: boolean;
+    };
+    const siteUri = data.siteUri || fallback;
+    const defaultSiteUri = data.defaultSiteUri || fallback;
+    return {
+      siteUri,
+      defaultSiteUri,
+      hidden: data.hidden === true,
+      external: siteUri !== defaultSiteUri,
+    };
   } catch {
-    return { siteUri: fallback, defaultSiteUri: fallback };
+    return unresolved;
   }
 }
 

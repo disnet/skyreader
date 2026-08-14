@@ -1,7 +1,7 @@
 // Identity + publication-metadata lookups for the public linkblog. All best-effort
 // and read-only: a public page loader stays fast and degrades to profile defaults.
 
-import { PUBLICATION_COLLECTION, LINKBLOG_RKEY } from '$lib/fields';
+import { PUBLICATION_COLLECTION, LINKBLOG_RKEY, safeHttpUrl } from '$lib/fields';
 import type { Profile, PublicationMeta } from '$lib/types';
 
 // Resolve a handle to a DID via the Bluesky public AppView. Returns null if it
@@ -108,6 +108,7 @@ export async function fetchPublicationMeta(
       value?: {
         name?: string;
         description?: string;
+        url?: string;
         icon?: { ref?: { $link?: string } };
       };
     };
@@ -117,6 +118,9 @@ export async function fetchPublicationMeta(
     return {
       name: value.name,
       description: value.description,
+      // A PDS record is user-controlled and this ends up in an href, so only pass
+      // through a real http(s) URL.
+      url: safeHttpUrl(value.url) ?? undefined,
       icon: iconCid ? `https://cdn.bsky.app/img/avatar/plain/${did}/${iconCid}@jpeg` : undefined,
     };
   } catch {

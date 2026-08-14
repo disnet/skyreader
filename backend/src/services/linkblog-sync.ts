@@ -302,6 +302,10 @@ export interface PublicationMeta {
   external: boolean;
   format: ContentFormat;
   disabled: boolean;
+  // The user turned off the Skyreader-hosted page at `url`. Only reachable with a
+  // connected publication; `url` still describes where the page WOULD be, so the
+  // setting can be undone.
+  pageHidden: boolean;
 }
 
 // PDS records are user-controlled, so a `url` can be any string. Only surface it
@@ -324,10 +328,16 @@ function iconUrlFromBlob(did: string, icon: BlobRef | undefined): string | undef
 // Read the current linkblog publication, or synthesize sensible defaults when it
 // doesn't exist yet (so the settings UI can render before the first share).
 export async function getPublicationMeta(session: Session, env: Env): Promise<PublicationMeta> {
-  const [target, disabled] = await Promise.all([
+  const [target, visibility] = await Promise.all([
     getLinkblogTarget(env, session.did),
-    isLinkblogDisabled(env, session.did),
+    getLinkblogVisibility(env, session.did),
   ]);
+  const disabled = visibility.disabled;
+  // Hiding the page is only offered alongside a connected publication, so a stored
+  // `true` with no connection is stale (a direct API call, or a disconnect path
+  // that didn't clear it). Read it as false rather than leaving a linkblog dark
+  // with no visible control to turn it back on.
+  const pageHidden = visibility.pageHidden && target.external;
   const pdsClient = createPDSClient(session);
   const rkey = target.siteUri.split('/').pop() || LINKBLOG_RKEY;
   const result = await pdsClient.getRecord<PublicationRecord>(PUBLICATION_COLLECTION, rkey);
@@ -342,6 +352,7 @@ export async function getPublicationMeta(session: Session, env: Env): Promise<Pu
       external: target.external,
       format: target.format,
       disabled,
+      pageHidden,
     };
   }
 
@@ -362,6 +373,7 @@ export async function getPublicationMeta(session: Session, env: Env): Promise<Pu
     external: target.external,
     format: target.format,
     disabled,
+    pageHidden,
   };
 }
 
@@ -512,6 +524,37 @@ export function isSkyreaderShareRecord(
   return rec.skyreaderLinkblog === LINKBLOG_MARKER_URL || rec.site === publicationUri(did);
 }
 
+export interface LinkblogVisibility {
+  /** The linkblog was deleted (posts removed); restorable, but empty. */
+  disabled: boolean;
+  /**
+   * The user asked us not to serve their public page at linkblogs.skyreader.app.
+   * Only offered while a linkblog is connected to an existing publication, which
+   * has a site of its own; disconnecting clears it.
+   */
+  pageHidden: boolean;
+}
+
+// Both public-visibility flags in one lookup. On error, falls back to reading
+// `linkblog_disabled` alone: a deploy that lands before migration 0066 would
+// otherwise fail the combined SELECT and report a DELETED linkblog as visible,
+// which is the one direction that must not happen.
+export async function getLinkblogVisibility(env: Env, did: string): Promise<LinkblogVisibility> {
+  try {
+    const row = await env.DB.prepare(
+      'SELECT linkblog_disabled, linkblog_page_hidden FROM user_settings WHERE user_did = ?'
+    )
+      .bind(did)
+      .first<{ linkblog_disabled: number; linkblog_page_hidden: number }>();
+    return {
+      disabled: row?.linkblog_disabled === 1,
+      pageHidden: row?.linkblog_page_hidden === 1,
+    };
+  } catch {
+    return { disabled: await isLinkblogDisabled(env, did), pageHidden: false };
+  }
+}
+
 export async function isLinkblogDisabled(env: Env, did: string): Promise<boolean> {
   try {
     const row = await env.DB.prepare(
@@ -522,6 +565,50 @@ export async function isLinkblogDisabled(env: Env, did: string): Promise<boolean
     return row?.linkblog_disabled === 1;
   } catch {
     return false;
+  }
+}
+
+// Set (or clear) the "don't serve my page at linkblogs.skyreader.app" choice.
+export async function setLinkblogPageHidden(env: Env, did: string, hidden: boolean): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(
+    `INSERT INTO user_settings (user_did, linkblog_page_hidden, created_at, updated_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_did) DO UPDATE SET linkblog_page_hidden=excluded.linkblog_page_hidden,
+     updated_at=excluded.updated_at`
+  )
+    .bind(did, hidden ? 1 : 0, now, now)
+    .run();
+}
+
+// The authors who turned off their Skyreader-hosted page. Unlike a disabled
+// linkblog these people still belong in discovery — their links are publishing
+// fine, into the publication they connected — so this only says "don't hand out
+// the linkblogs.skyreader.app address for them", which would 404.
+//
+// Not folded into getLinkblogTargets: that SELECT is the one every share path
+// depends on, and its catch exists so a deploy landing ahead of a migration still
+// resolves targets. A separate query keeps 0066's column out of that blast radius
+// — pre-migration this throws on its own and degrades to "nobody is hidden".
+export async function getPageHiddenAuthors(env: Env, dids: string[]): Promise<string[]> {
+  const candidates = [...new Set(dids)];
+  if (candidates.length === 0) return [];
+  try {
+    const hidden: string[] = [];
+    for (let i = 0; i < candidates.length; i += 100) {
+      const chunk = candidates.slice(i, i + 100);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = await env.DB.prepare(
+        `SELECT user_did FROM user_settings
+         WHERE linkblog_page_hidden = 1 AND user_did IN (${placeholders})`
+      )
+        .bind(...chunk)
+        .all<{ user_did: string }>();
+      hidden.push(...(rows.results ?? []).map((row) => row.user_did));
+    }
+    return hidden;
+  } catch {
+    return [];
   }
 }
 
@@ -582,49 +669,69 @@ function websiteCardExcerpt(content: unknown): string {
 // render and open it; the top-level `links` field is the machine-readable ref.
 type NoteBlock = { block: Record<string, unknown> };
 
-// Parse the editor's deliberately small Markdown subset into native Leaflet
-// blocks. Only a `>` at the beginning of a line is special; all other Markdown
-// remains plaintext for Leaflet-aware clients to interpret as they choose.
-export function noteToLeafletBlocks(
-  note: string | undefined,
-  resolvedHandles: Map<string, string> = new Map()
-): NoteBlock[] {
+// A contiguous run of note lines that share one kind — the unit every content
+// format turns into a single block. `plaintext` has the `> ` markers stripped.
+interface NoteRun {
+  quote: boolean;
+  plaintext: string;
+}
+
+// Split the editor's deliberately small Markdown subset into runs. Only a `>` at
+// the beginning of a line is special; all other Markdown stays in the plaintext
+// for a format-aware client to interpret as it chooses.
+//
+// A run ends at a blank line OR at a switch between quoted and unquoted lines —
+// the switch matters because the composer's cursor sits right under the seeded
+// quote, so `> quote` followed immediately by commentary (no blank line between)
+// is the ordinary shape of a note. Splitting on blank lines alone folded that
+// commentary into the quote (or, in the reverse order, dropped the quote's
+// markers and rendered it as prose).
+function noteRuns(note: string | undefined): NoteRun[] {
   const text = note?.trim();
   if (!text) return [];
 
-  const blocks: NoteBlock[] = [];
-  let kind: 'text' | 'blockquote' | undefined;
+  const runs: NoteRun[] = [];
+  let quote: boolean | undefined;
   let lines: string[] = [];
   const flush = () => {
-    if (!kind || lines.length === 0) return;
-    const plaintext = lines.join('\n');
-    const block: Record<string, unknown> = {
-      $type: `pub.leaflet.blocks.${kind}`,
-      plaintext,
-    };
-    const facets = parseHandleTokens(plaintext).flatMap((token) => {
-      const did = resolvedHandles.get(token.handle);
-      return did ? [buildMentionFacet(token.byteStart, token.byteEnd, did)] : [];
-    });
-    if (facets.length > 0) block.facets = facets;
-    blocks.push({ block });
-    kind = undefined;
+    if (quote === undefined || lines.length === 0) return;
+    runs.push({ quote, plaintext: lines.join('\n') });
+    quote = undefined;
     lines = [];
   };
 
   for (const line of text.split('\n')) {
-    const quote = line.match(/^> ?(.*)$/);
-    if (!quote && line.trim() === '') {
+    const marked = line.match(/^> ?(.*)$/);
+    if (!marked && line.trim() === '') {
       flush();
       continue;
     }
-    const nextKind = quote ? 'blockquote' : 'text';
-    if (kind && kind !== nextKind) flush();
-    kind = nextKind;
-    lines.push(quote ? quote[1] : line);
+    const isQuote = Boolean(marked);
+    if (quote !== undefined && quote !== isQuote) flush();
+    quote = isQuote;
+    lines.push(marked ? marked[1] : line);
   }
   flush();
-  return blocks;
+  return runs;
+}
+
+// Parse the note into native Leaflet text/blockquote blocks, one per run.
+export function noteToLeafletBlocks(
+  note: string | undefined,
+  resolvedHandles: Map<string, string> = new Map()
+): NoteBlock[] {
+  return noteRuns(note).map((run) => {
+    const block: Record<string, unknown> = {
+      $type: `pub.leaflet.blocks.${run.quote ? 'blockquote' : 'text'}`,
+      plaintext: run.plaintext,
+    };
+    const facets = parseHandleTokens(run.plaintext).flatMap((token) => {
+      const did = resolvedHandles.get(token.handle);
+      return did ? [buildMentionFacet(token.byteStart, token.byteEnd, did)] : [];
+    });
+    if (facets.length > 0) block.facets = facets;
+    return { block };
+  });
 }
 
 export function replaceLeafletNoteRegion(
@@ -733,19 +840,16 @@ const ITEM_CONTENT_TYPE: Record<'pckt' | 'offprint', string> = {
   offprint: 'app.offprint.content',
 };
 
-// The note as native blocks: one item per paragraph, a leading `>` making it a
-// blockquote (the same deliberately small Markdown subset the editor speaks).
+// The note as native blocks: one item per run, quoted runs wrapped in the
+// format's blockquote container (the same deliberately small Markdown subset the
+// editor speaks, split the same way as for Leaflet).
 function noteToBlockItems(
   prefix: string,
   note: string | undefined
 ): Array<Record<string, unknown>> {
-  const text = note?.trim();
-  if (!text) return [];
-  return text.split(/\n\s*\n/).map((paragraph) => {
-    const quoted = paragraph.startsWith('>');
-    const plaintext = paragraph.replace(/^> ?/gm, '');
-    const textBlock = { $type: `${prefix}text`, plaintext };
-    return quoted ? { $type: `${prefix}blockquote`, content: [textBlock] } : textBlock;
+  return noteRuns(note).map((run) => {
+    const textBlock = { $type: `${prefix}text`, plaintext: run.plaintext };
+    return run.quote ? { $type: `${prefix}blockquote`, content: [textBlock] } : textBlock;
   });
 }
 
@@ -1259,9 +1363,12 @@ export async function deleteLinkblog(
     return { success: false, error: purged.error, retryable: purged.retryable };
   }
 
+  // `linkblog_page_hidden` goes with the connection it belonged to. Leaving it set
+  // would re-arm silently: restore, connect a different publication, and the page
+  // is dark again without the user having asked for it this time.
   await env.DB.prepare(
     `UPDATE user_settings SET linkblog_publication = NULL, linkblog_content_format = NULL,
-     updated_at = ? WHERE user_did = ?`
+     linkblog_page_hidden = 0, updated_at = ? WHERE user_did = ?`
   )
     .bind(now, session.did)
     .run();

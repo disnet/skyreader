@@ -42,6 +42,13 @@
   const summary = $derived(plainBody(note || excerpt).slice(0, 280));
   const ogTitle = $derived(`${title} · ${blogName}`);
   const published = $derived(doc.publishedAt || doc.createdAt);
+
+  // This entry's own page on the connected publication's site, when there is one.
+  // That's the post's home, so it takes the canonical URL and gets named below the
+  // note; without it this page is the only address the entry has.
+  const sourceUrl = $derived(safeHttpUrl(data.sourceUrl ?? undefined));
+  const sourceHost = $derived(hostnameOf(sourceUrl ?? undefined));
+  const canonicalUrl = $derived(sourceUrl ?? pageUrl);
 </script>
 
 <svelte:head>
@@ -61,6 +68,7 @@
   <meta name="twitter:title" content={ogTitle} />
   {#if summary}<meta name="twitter:description" content={summary} />{/if}
   {#if icon}<meta name="twitter:image" content={icon} />{/if}
+  <link rel="canonical" href={canonicalUrl} />
   <link rel="alternate" type="application/rss+xml" title={blogName} href={feedUrl} />
 </svelte:head>
 
@@ -86,6 +94,11 @@
       Read the full article{host ? ` on ${host}` : ''}
       <span class="arrow" aria-hidden="true">→</span>
     </a>
+  {/if}
+  {#if sourceUrl}
+    <p class="pubhome">
+      Published on <a href={sourceUrl} rel="noopener noreferrer">{sourceHost}</a>
+    </p>
   {/if}
   <AlsoLinkedBy ctx={data.ctx} />
 </article>

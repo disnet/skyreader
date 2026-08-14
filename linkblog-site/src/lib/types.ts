@@ -30,6 +30,10 @@ export interface PublicationMeta {
   name?: string;
   description?: string;
   icon?: string;
+  // The publication's own site, as stored on the record. Present for a connected
+  // publication (e.g. https://leaflet.pub/lish/…), where it's the post's home and
+  // this page is a view of it. Only ever an http(s) URL — see fetchPublicationMeta.
+  url?: string;
 }
 
 export interface AlsoLinkedEntry {

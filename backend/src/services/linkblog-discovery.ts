@@ -19,6 +19,7 @@ import {
   getConnectedLinkblogAuthors,
   getDisabledLinkblogAuthors,
   getLinkblogTargets,
+  getPageHiddenAuthors,
   linkblogBaseUrl,
   publicationUri,
 } from './linkblog-sync';
@@ -34,9 +35,11 @@ export interface LinkblogPerson {
   // would silently yield a feed that never updates again.
   publicationUri: string;
   // The public linkblog page (env-correct base URL) — used as the subscription's
-  // siteUrl. Always the Skyreader linkblog site: it renders the connected
-  // publication's link posts too.
-  blogUrl: string;
+  // siteUrl. Normally the Skyreader linkblog site: it renders the connected
+  // publication's link posts too. Null when the author turned that page off, in
+  // which case it 404s and there's no page to send anyone to — subscribing still
+  // works, it goes through `publicationUri`.
+  blogUrl: string | null;
   // Whether the requesting user already follows this person on Bluesky.
   isFollow: boolean;
 }
@@ -50,7 +53,8 @@ function toPerson(
   p: BskyProfileLite | { did: string },
   isFollow: boolean,
   env: Env,
-  targets?: Map<string, { siteUri: string }>
+  targets?: Map<string, { siteUri: string }>,
+  pageHidden?: Set<string>
 ): LinkblogPerson {
   const lite = p as BskyProfileLite;
   return {
@@ -59,7 +63,7 @@ function toPerson(
     displayName: lite.displayName,
     avatar: lite.avatar,
     publicationUri: targets?.get(p.did)?.siteUri || publicationUri(p.did),
-    blogUrl: linkblogBaseUrl(env, p.did),
+    blogUrl: pageHidden?.has(p.did) ? null : linkblogBaseUrl(env, p.did),
     isFollow,
   };
 }
@@ -91,12 +95,15 @@ export async function getLinkblogFriends(session: Session, env: Env): Promise<Li
     )
   );
   const people = followed.filter((f) => !disabledSet.has(f.did));
-  // One batched settings lookup resolves everyone's current publication.
-  const targets = await getLinkblogTargets(
-    env,
-    people.map((f) => f.did)
-  );
-  return people.map((f) => toPerson(f, true, env, targets));
+  // One batched settings lookup resolves everyone's current publication, and one
+  // more says whose Skyreader page is off (they stay listed — only the outbound
+  // link goes away).
+  const dids = people.map((f) => f.did);
+  const [targets, pageHidden] = await Promise.all([
+    getLinkblogTargets(env, dids),
+    getPageHiddenAuthors(env, dids).then((h) => new Set(h)),
+  ]);
+  return people.map((f) => toPerson(f, true, env, targets, pageHidden));
 }
 
 /**
@@ -135,13 +142,17 @@ export async function getLinkblogDiscover(session: Session, env: Env): Promise<L
     .slice(0, MAX_DISCOVER_OTHERS);
 
   // Friends already have profiles from getFollows; resolve only the rest.
-  const [otherProfiles, targets] = await Promise.all([
+  const listed = [...friendDids, ...otherDids];
+  const [otherProfiles, targets, pageHidden] = await Promise.all([
     fetchProfiles(otherDids),
-    getLinkblogTargets(env, [...friendDids, ...otherDids]),
+    getLinkblogTargets(env, listed),
+    getPageHiddenAuthors(env, listed).then((h) => new Set(h)),
   ]);
 
   return [
-    ...friendDids.map((did) => toPerson(followMap.get(did)!, true, env, targets)),
-    ...otherDids.map((did) => toPerson(otherProfiles.get(did) ?? { did }, false, env, targets)),
+    ...friendDids.map((did) => toPerson(followMap.get(did)!, true, env, targets, pageHidden)),
+    ...otherDids.map((did) =>
+      toPerson(otherProfiles.get(did) ?? { did }, false, env, targets, pageHidden)
+    ),
   ];
 }
