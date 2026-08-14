@@ -104,20 +104,37 @@ class JetstreamPollerBase implements DurableObject {
     }
 
     if (url.pathname === '/status') {
-      const [subscriptionsCursor, documentsCursor, lastStats, alarmTime, lastAlarmStart] =
-        await Promise.all([
-          this.state.storage.get<string>('cursor_subscriptions'),
-          this.state.storage.get<string>('cursor_documents'),
-          this.state.storage.get<PollStats>('last_stats'),
-          this.state.storage.getAlarm(),
-          this.state.storage.get<number>('last_alarm_start'),
-        ]);
+      const [
+        subscriptionsCursor,
+        documentsCursor,
+        lastStats,
+        alarmTime,
+        lastAlarmStart,
+        subscriptionsLagMs,
+        documentsLagMs,
+      ] = await Promise.all([
+        this.state.storage.get<string>('cursor_subscriptions'),
+        this.state.storage.get<string>('cursor_documents'),
+        this.state.storage.get<PollStats>('last_stats'),
+        this.state.storage.getAlarm(),
+        this.state.storage.get<number>('last_alarm_start'),
+        this.cursorLagMs('cursor_subscriptions'),
+        this.cursorLagMs('cursor_documents'),
+      ]);
 
       return new Response(
         JSON.stringify({
           cursors: {
             subscriptions: subscriptionsCursor,
             documents: documentsCursor,
+          },
+          // Lag is derived here rather than by each caller: turning a cursor into
+          // a number of milliseconds behind real time takes knowing that Jetstream
+          // cursors are microsecond timestamps, and that knowledge should live in
+          // exactly one place. Null means "no cursor yet", not "zero lag".
+          lag: {
+            subscriptionsMs: subscriptionsLagMs,
+            documentsMs: documentsLagMs,
           },
           lastStats,
           nextPoll: alarmTime,

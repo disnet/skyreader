@@ -101,6 +101,13 @@ import { checkRateLimit, cleanupRateLimits, getRateLimitConfig } from './service
 import * as Sentry from '@sentry/cloudflare';
 import { sentryOptions, reportError, tagRequestId } from './observability/sentry';
 import { pingHeartbeat } from './observability/heartbeat';
+import {
+  recordPollerStatus,
+  recordProxyStats,
+  recordCronRun,
+  writeMetricsSnapshot,
+  runRecordingStep,
+} from './observability/ops-metrics';
 import { log, serializeError } from './utils/logger';
 import { classifyRoute, runWithRequestContext, setContextDid } from './utils/request-context';
 
@@ -753,6 +760,19 @@ async function runScheduled(
       cronHealthy = false;
     }
 
+    // Phase 1b: Record what the poller knows. The /start ping above only asks
+    // "are you alive"; /status carries the firehose lag, the last cycle's error
+    // counts and the alarm state — all of which were being discarded. Storing it
+    // is what lets the admin show poller health, and what makes the lag threshold
+    // alert possible at all.
+    await runRecordingStep('poller-status', () => recordPollerStatus(env));
+
+    // Every 5th minute: the proxy's cache stats. Its own cadence because it's a
+    // cross-cloud fetch and the cron has a 60s ceiling to respect.
+    if (minute % 5 === 0) {
+      await runRecordingStep('proxy-stats', () => recordProxyStats(env));
+    }
+
     // Phase 2: Clean up rate limit records
     let rateLimitDuration = 0;
     let rateLimitDeleted = 0;
@@ -861,18 +881,35 @@ async function runScheduled(
         labelTombstonesDeleted,
         durationMs: d1CleanupDuration,
       });
+
+      // Hourly trend point. Runs after the proxy-stats refresh above (minute 0 is
+      // a multiple of 5), so the snapshot reads fresh values rather than
+      // five-minute-old ones. Prunes its own tail at 90 days.
+      await runRecordingStep('metrics-snapshot', () => writeMetricsSnapshot(env));
     }
 
     // The run summary. `durationMs` is the number to watch as the cron takes on
     // more work (see the cron-budget risk in the observability plan): it has a
     // hard 60s ceiling before runs start overlapping.
+    const cronDuration = Date.now() - cronStart;
     log.info('cron_run', {
       cron: controller.cron,
       healthy: cronHealthy,
-      durationMs: Date.now() - cronStart,
+      durationMs: cronDuration,
       d1CleanupDurationMs: d1CleanupDuration,
       rateLimitDeleted,
     });
+
+    // The same fact the heartbeat pushes to the monitor, kept locally: the admin
+    // shows "last run 40s ago" from this row, which works in staging and local dev
+    // where no monitor is configured at all.
+    await runRecordingStep('cron-last-run', () =>
+      recordCronRun(env, {
+        cron: controller.cron,
+        healthy: cronHealthy,
+        durationMs: cronDuration,
+      })
+    );
 
     // Dead-man's switch. Fire-and-forget so a slow monitor can never extend or
     // fail the cron. Skipped on a failed run so the monitor's grace period

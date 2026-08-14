@@ -75,16 +75,18 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 
 ### Observability
 
-| File                             | Purpose                                                        |
-| -------------------------------- | -------------------------------------------------------------- |
-| `src/observability/sentry.ts`    | SDK options + the `reportError()` wrapper every call site uses |
-| `src/observability/scrub.ts`     | `beforeSend` credential scrubbing (keeps DIDs, drops tokens)   |
-| `src/observability/heartbeat.ts` | Dead-man's-switch ping for the every-minute cron               |
-| `src/utils/logger.ts`            | `log.info('event', { … })` — structured, queryable log lines   |
-| `src/utils/request-context.ts`   | Request id / route / DID in AsyncLocalStorage                  |
+| File                               | Purpose                                                        |
+| ---------------------------------- | -------------------------------------------------------------- |
+| `src/observability/sentry.ts`      | SDK options + the `reportError()` wrapper every call site uses |
+| `src/observability/scrub.ts`       | `beforeSend` credential scrubbing (keeps DIDs, drops tokens)   |
+| `src/observability/heartbeat.ts`   | Dead-man's-switch ping for the every-minute cron               |
+| `src/observability/ops-metrics.ts` | What the cron records to D1 for the admin's ops panel          |
+| `src/utils/logger.ts`              | `log.info('event', { … })` — structured, queryable log lines   |
+| `src/utils/request-context.ts`     | Request id / route / DID in AsyncLocalStorage                  |
 
-Error reporting goes through `reportError()`, never `Sentry.captureException`
-directly, so the vendor stays a one-file decision.
+Error reporting goes through `reportError()` (exceptions) or `reportMessage()`
+(threshold crossings, with a fingerprint so a persistent condition is one issue),
+never `Sentry.captureException` directly, so the vendor stays a one-file decision.
 
 Logging: use `log.*` with a stable low-cardinality `event` slug and put the details
 in fields. Workers Logs indexes the fields of a logged object but treats a string
@@ -95,6 +97,12 @@ redaction layer on this path.
 The request id is ambient (`getRequestId()`), so nothing has to thread it: it lands
 on every log line, every `reportError()` tag, the `X-Request-Id` response header,
 and outbound feed-proxy calls.
+
+The every-minute cron also _records_: poller lag and cron liveness to
+`system_status`, the proxy's cache stats every 5th minute, and an hourly row in
+`metrics_snapshots` (pruned at 90 days). The admin renders those tables directly.
+Recording failures never withhold the cron heartbeat — losing a data point is not
+an outage; see the note on `runRecordingStep()`.
 
 Alert thresholds, secrets, log queries, and incident procedures:
 [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
@@ -126,6 +134,8 @@ Key tables:
 - `user_settings` - User preferences
 - `rate_limits` - Per-user rate limiting
 - `sync_state` - Jetstream cursor and other sync state
+- `system_status` - Cron-written health board (cron liveness, poller lag, proxy stats)
+- `metrics_snapshots` - Hourly trend points behind the admin's sparklines (90-day retention)
 
 ## Common Tasks
 

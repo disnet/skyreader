@@ -81,6 +81,35 @@ export function reportError(error: unknown, context?: ReportContext): void {
 }
 
 /**
+ * Report a condition that nothing threw for — a threshold crossing, not a crash.
+ *
+ * `fingerprint` is the grouping key: every "firehose lag is high" event lands in
+ * one issue rather than opening a new one each time the condition is re-checked.
+ * Callers are still responsible for *when* to send (see the re-alert interval in
+ * ops-metrics.ts); the fingerprint only controls grouping once sent.
+ */
+export function reportMessage(
+  message: string,
+  options: ReportContext & { level?: 'warning' | 'error'; fingerprint?: string[] } = {}
+): void {
+  try {
+    const requestContext = getRequestContext();
+    Sentry.captureMessage(message, {
+      level: options.level ?? 'warning',
+      fingerprint: options.fingerprint,
+      tags: {
+        ...(requestContext?.requestId ? { requestId: requestContext.requestId } : {}),
+        ...(requestContext?.route ? { route: requestContext.route } : {}),
+        ...options.tags,
+      },
+      extra: options.extra,
+    });
+  } catch (reportingError) {
+    console.error('[Observability] Failed to report message:', reportingError);
+  }
+}
+
+/**
  * Tag the in-flight Sentry scope with the request id, so an exception the SDK
  * captures on its own (one that escapes our own try/catch) is still correlatable.
  * No-op when Sentry isn't initialized.

@@ -213,8 +213,9 @@ AT Protocol (Bluesky PDS) + Fly.io Feed Proxy + Jetstream Firehose
 - **Framework:** SvelteKit 2.x with Svelte 5 runes
 - **Runtime:** Cloudflare Pages
 - **Database:** D1 (SQLite) - reads the same database as the backend
-- **Features:** System metrics dashboard, user management, feed health monitoring, search/sort/pagination
-- **Pages:** Dashboard (metrics overview), Users (list + detail), Feeds (health + error tracking)
+- **Features:** Ops panel (cron liveness, firehose lag, proxy cache health) with 30-day trend
+  sparklines, system metrics, user management, feed health monitoring, search/sort/pagination
+- **Pages:** Dashboard (ops + metrics + trends), Users (list + detail), Feeds (health + error tracking)
 - **Deploy:** Cloudflare Pages via GitHub Actions (staging on push to main, production on release)
 
 ### Key Data Flow

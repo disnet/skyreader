@@ -20,7 +20,7 @@ defaults:
 
 jobs:
   typecheck:
-    name: Type Check
+    name: Type Check & Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -38,6 +38,9 @@ jobs:
 
       - name: Run type check
         run: npm run check
+
+      - name: Run tests
+        run: npm test
 
   deploy-staging:
     name: Deploy to Staging
