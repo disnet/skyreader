@@ -128,16 +128,34 @@ describe('constellationGet connection-reset retry', () => {
     expect(call).toBe(2);
   });
 
-  it('counts a reset-then-reset as exactly one breaker failure', async () => {
+  it('retries a second time — a retry opens a socket too, so it can reset as well', async () => {
+    let call = 0;
+    const spy = spyOn(globalThis, 'fetch').mockImplementation((async () => {
+      call++;
+      if (call <= 2) throw connectionReset();
+      return new Response(JSON.stringify({ total: 7 }));
+    }) as unknown as typeof fetch);
+
+    const data = await constellationGet<{ total: number }>('/links/distinct-dids', { target: 'x' });
+    expect(data?.total).toBe(7);
+    expect(spy).toHaveBeenCalledTimes(3);
+    const stats = getConstellationStats();
+    expect(stats.retries).toBe(2);
+    // One logical call recovered, however many sockets it burned getting there.
+    expect(stats.retriesRecovered).toBe(1);
+    expect(stats.failures).toBe(0);
+  });
+
+  it('counts an all-attempts-reset call as exactly one breaker failure', async () => {
     const spy = spyOn(globalThis, 'fetch').mockImplementation((async () => {
       throw connectionReset();
     }) as unknown as typeof fetch);
 
-    // Four logical calls = 8 sockets died, but only 4 breaker failures.
+    // Four logical calls = 12 sockets died, but only 4 breaker failures.
     for (let i = 0; i < 4; i++) {
       expect(await constellationGet('/links/all', { target: 'x' })).toBeNull();
     }
-    expect(spy).toHaveBeenCalledTimes(8);
+    expect(spy).toHaveBeenCalledTimes(12);
     expect(isConstellationBreakerOpen()).toBe(false);
     expect(getConstellationStats().failures).toBe(4);
 
