@@ -16,6 +16,7 @@
   import SaveBackingPicker from '$lib/components/settings/SaveBackingPicker.svelte';
   import LinkblogTargetPicker from '$lib/components/settings/LinkblogTargetPicker.svelte';
   import DeleteLinkblogModal from '$lib/components/settings/DeleteLinkblogModal.svelte';
+  import Diagnostics from '$lib/components/settings/Diagnostics.svelte';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
@@ -983,6 +984,8 @@
       >
     </div>
   </section>
+
+  <Diagnostics />
 
   <section class="card debug-section">
     <h2>Debug</h2>

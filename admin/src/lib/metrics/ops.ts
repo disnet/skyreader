@@ -16,6 +16,15 @@ const LAG_ERROR_MS = 15 * 60 * 1000;
 /** Mirrors POLLER_STALE_MS in the backend's deep health check. */
 const POLL_STALE_MS = 5 * 60 * 1000;
 
+/**
+ * How old the `poller_status` *row* may be before its numbers stop being facts.
+ * The cron rewrites it every minute, so this catches the case the tile values
+ * can't see themselves: the cron is alive but its DO `/status` fetch keeps
+ * failing, leaving yesterday's lag sitting in D1 looking green. Same 5 minutes
+ * as POLL_STALE_MS — one missed minute is a blip, five is a broken collector.
+ */
+const POLLER_ROW_STALE_MS = 5 * 60 * 1000;
+
 /** Proxy stats refresh every 5 minutes; past this the numbers are history. */
 const PROXY_STALE_MS = 15 * 60 * 1000;
 
@@ -39,6 +48,10 @@ const unknown = (label: string, note = 'No data'): MetricValue => ({
   status: 'error',
 });
 
+/** The one thing these tiles must never do: show a number nobody refreshed. */
+const stale = (label: string, ageMs: number): MetricValue =>
+  unknown(label, `Stale (${formatAge(ageMs)})`);
+
 function cronMetric(status: OpsStatus, now: number): MetricValue {
   const cron = status.cron;
   if (!cron) return unknown('Cron Last Run', 'Never');
@@ -54,11 +67,18 @@ function cronMetric(status: OpsStatus, now: number): MetricValue {
   };
 }
 
+const POLLER_LABELS = ['Firehose Lag', 'Last Poll', 'Poll Errors (last cycle)'] as const;
+
 function pollerMetrics(status: OpsStatus, now: number): MetricValue[] {
   const poller = status.poller;
-  if (!poller) {
-    return [unknown('Firehose Lag'), unknown('Last Poll'), unknown('Poll Errors')];
-  }
+  if (!poller) return POLLER_LABELS.map((label) => unknown(label));
+
+  // Age of the row, not of the values inside it. `Last Poll` carries its own
+  // timestamp and would eventually go red on its own, but `Firehose Lag` and
+  // `Poll Errors` are frozen snapshots: if the collector stopped, they keep
+  // reading green forever. Grade all three on the row instead.
+  const rowAge = now - poller.updatedAt;
+  if (rowAge > POLLER_ROW_STALE_MS) return POLLER_LABELS.map((label) => stale(label, rowAge));
 
   const { lagMs, lastPollAt, errors } = poller.value;
   const lag: MetricValue =
@@ -84,7 +104,7 @@ function pollerMetrics(status: OpsStatus, now: number): MetricValue[] {
     lag,
     lastPoll,
     {
-      label: 'Poll Errors (last cycle)',
+      label: POLLER_LABELS[2],
       value: errors,
       status: errors > 0 ? 'warning' : 'healthy',
     },
@@ -96,12 +116,9 @@ function proxyMetrics(status: OpsStatus, now: number): MetricValue[] {
   if (!proxy) return [unknown('Proxy Cache Fresh'), unknown('Proxy Feeds in Error')];
 
   // Nobody refreshed these, so don't dress them up as current.
-  if (now - proxy.updatedAt > PROXY_STALE_MS) {
-    const age = formatAge(now - proxy.updatedAt);
-    return [
-      { label: 'Proxy Cache Fresh', value: `Stale (${age})`, status: 'error' },
-      { label: 'Proxy Feeds in Error', value: `Stale (${age})`, status: 'error' },
-    ];
+  const rowAge = now - proxy.updatedAt;
+  if (rowAge > PROXY_STALE_MS) {
+    return [stale('Proxy Cache Fresh', rowAge), stale('Proxy Feeds in Error', rowAge)];
   }
 
   const { freshPct, total, feedsInError, feedsPermanentlyFailed } = proxy.value;
@@ -152,19 +169,55 @@ const seriesDefinitions: { key: keyof SnapshotRow; label: string; unit?: string 
   { key: 'proxy_fresh_pct', label: 'Proxy Cache Fresh', unit: '%' },
 ];
 
+const HOUR_MS = 60 * 60 * 1000;
+
+/** 30 days of hourly points is what the query asks for; refuse to allocate past a
+ *  sane ceiling if a stray `captured_at` ever lands in the future. */
+const MAX_BUCKETS = 24 * 45;
+
+/**
+ * One point per hour between the oldest and newest snapshot — including the hours
+ * that have no row at all.
+ *
+ * Mapping rows straight to points would draw an hour the cron missed as no point
+ * rather than as a gap, so a two-day outage would render as an unbroken line
+ * between the snapshots on either side of it. The whole reason these charts are
+ * worth having is that a flat line means "nothing changed" and not "nobody
+ * looked"; only a timeline with holes in it can tell those apart.
+ */
 export function trendsFrom(rows: SnapshotRow[]): {
   from: number | null;
   to: number | null;
   series: TrendSeries[];
 } {
+  const from = rows[0]?.captured_at ?? null;
+  const to = rows[rows.length - 1]?.captured_at ?? null;
+
+  const empty = seriesDefinitions.map(({ key, label, unit }) => ({
+    key,
+    label,
+    unit,
+    points: [] as (number | null)[],
+  }));
+  if (from === null || to === null) return { from, to, series: empty };
+
+  // captured_at is already bucketed to the top of the hour by the cron that
+  // writes it, so this index is exact rather than approximate.
+  const bucketOf = (capturedAt: number) => Math.round((capturedAt - from) / HOUR_MS);
+  const count = Math.min(bucketOf(to) + 1, MAX_BUCKETS);
+  const byBucket = new Map(rows.map((row) => [bucketOf(row.captured_at), row]));
+
   return {
-    from: rows[0]?.captured_at ?? null,
-    to: rows[rows.length - 1]?.captured_at ?? null,
+    from,
+    to,
     series: seriesDefinitions.map(({ key, label, unit }) => ({
       key,
       label,
       unit,
-      points: rows.map((row) => row[key] as number | null),
+      points: Array.from({ length: count }, (_, bucket) => {
+        const row = byBucket.get(bucket);
+        return row ? ((row[key] as number | null) ?? null) : null;
+      }),
     })),
   };
 }

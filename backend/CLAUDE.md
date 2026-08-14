@@ -58,6 +58,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/sync.ts`          | PDS full sync, subscription sync, sync status         |
 | `src/routes/lexicons.ts`      | Serve lexicon schemas at /.well-known/lexicons        |
 | `src/routes/health.ts`        | `/api/health` (shallow) + `/api/health/deep` (gated)  |
+| `src/routes/telemetry.ts`     | `/api/telemetry/error` — sampled client error reports |
 
 ### Services
 
@@ -104,8 +105,14 @@ The every-minute cron also _records_: poller lag and cron liveness to
 Recording failures never withhold the cron heartbeat — losing a data point is not
 an outage; see the note on `runRecordingStep()`.
 
-Alert thresholds, secrets, log queries, and incident procedures:
-[`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
+The browser reports its own errors to `/api/telemetry/error` (unauthenticated by
+design — an error on the login screen counts). That route is the only thing that
+talks to Sentry on the client's behalf: no SDK ships in the frontend bundle, and
+every field the client sends is length-capped and validated against a closed set
+of `kind`s before it becomes a log line or a Sentry tag.
+
+Alert thresholds, SLOs, alert policy, secrets, log queries, and incident
+procedures: [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 
 ### Durable Objects
 

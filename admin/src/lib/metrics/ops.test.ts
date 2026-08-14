@@ -89,6 +89,24 @@ describe('ops tiles', () => {
     expect(lag(null).value).toBe('—');
   });
 
+  it('says "stale" instead of showing poller numbers nobody refreshed', () => {
+    // The cron is alive but its DO /status fetch has been failing for an hour, so
+    // the row still holds an hour-old lag of 20s. The tiles must not read green.
+    const s = status();
+    s.poller!.updatedAt = NOW - 60 * MINUTE;
+    const metrics = opsMetricsFrom(s, NOW);
+    for (const label of ['Firehose Lag', 'Last Poll', 'Poll Errors (last cycle)']) {
+      expect(tile(metrics, label).status).toBe('error');
+      expect(String(tile(metrics, label).value)).toContain('Stale');
+    }
+  });
+
+  it('tolerates a single missed poller write', () => {
+    const s = status();
+    s.poller!.updatedAt = NOW - 2 * MINUTE;
+    expect(tile(opsMetricsFrom(s, NOW), 'Firehose Lag').status).toBe('healthy');
+  });
+
   it('says "stale" instead of showing proxy numbers nobody refreshed', () => {
     const s = status();
     s.proxy!.updatedAt = NOW - 40 * MINUTE;
@@ -132,14 +150,36 @@ describe('trend series', () => {
     ...overrides,
   });
 
+  const HOUR = 60 * MINUTE;
+  const lagOf = (rows: SnapshotRow[]) =>
+    trendsFrom(rows).series.find((s) => s.key === 'firehose_lag_ms')!.points;
+
   it('keeps a missing value as a gap rather than a zero', () => {
-    const { series } = trendsFrom([
-      row(1),
-      row(2, { firehose_lag_ms: null }),
-      row(3, { firehose_lag_ms: 2000 }),
+    expect(
+      lagOf([
+        row(NOW),
+        row(NOW + HOUR, { firehose_lag_ms: null }),
+        row(NOW + 2 * HOUR, { firehose_lag_ms: 2000 }),
+      ])
+    ).toEqual([1000, null, 2000]);
+  });
+
+  it('keeps an hour with no snapshot at all as a gap', () => {
+    // The cron was down for two hours: three rows, but five hours of timeline.
+    expect(lagOf([row(NOW), row(NOW + 3 * HOUR), row(NOW + 4 * HOUR)])).toEqual([
+      1000,
+      null,
+      null,
+      1000,
+      1000,
     ]);
-    const lag = series.find((s) => s.key === 'firehose_lag_ms')!;
-    expect(lag.points).toEqual([1000, null, 2000]);
+  });
+
+  it('reports the real span of the history it holds', () => {
+    const trends = trendsFrom([row(NOW), row(NOW + 5 * HOUR)]);
+    expect(trends.from).toBe(NOW);
+    expect(trends.to).toBe(NOW + 5 * HOUR);
+    expect(trends.series[0].points).toHaveLength(6);
   });
 
   it('is empty but well-formed with no history', () => {

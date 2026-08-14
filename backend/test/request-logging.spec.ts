@@ -127,6 +127,17 @@ describe('classifyRoute', () => {
 
   it('caps the cardinality of junk paths', () => {
     // A scanner hitting random deep paths must not mint a new route value per hit.
-    expect(classifyRoute('/a/b/c/d/e/f/g')).toBe('/a/b/c/d/…');
+    expect(classifyRoute('/api/a/b/c/d/e/f/g')).toBe('/api/a/b/c/…');
+  });
+
+  it('collapses everything outside the prefixes this Worker serves', () => {
+    // Root-level probes are most of the 404 traffic on a public origin, and each
+    // one used to become its own value of the field the runbook aggregates on.
+    expect(classifyRoute('/wp-login.php')).toBe('/other');
+    expect(classifyRoute('/.env')).toBe('/other');
+    expect(classifyRoute('/xyz123')).toBe('/other');
+    // The real prefixes still classify normally.
+    expect(classifyRoute('/api/auth/me')).toBe('/api/auth/me');
+    expect(classifyRoute('/xrpc/app.skyreader.feed.save')).toBe('/xrpc/app.skyreader.feed.save');
   });
 });

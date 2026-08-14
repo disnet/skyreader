@@ -32,6 +32,7 @@
 {#if data.ops.available}
   <section>
     <h2>Trends (30 days, hourly)</h2>
+    <p class="note">A break in a line is an hour with no recorded value, not a drop to zero.</p>
     <div class="grid">
       {#each data.ops.trends.series as series (series.key)}
         <Sparkline {series} />
@@ -56,6 +57,12 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
     margin-bottom: 0.75rem;
+  }
+
+  .note {
+    color: var(--color-text-secondary);
+    font-size: 0.8rem;
+    margin: -0.4rem 0 0.75rem;
   }
 
   .grid {

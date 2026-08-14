@@ -74,8 +74,19 @@ export function classifyRoute(pathname: string): string {
       return `${prefix}:id${next ? `/${next}` : ''}`;
     }
   }
-  // Cap the cardinality of everything else. Real routes in this app are at most
-  // four segments deep; anything longer is a probe or a typo.
+  // Everything this Worker serves lives under one of three prefixes. A path
+  // outside them is a scanner (`/wp-login.php`, `/.env`, `/phpmyadmin`) — a 404
+  // that still gets an `event = request` line, so returning it verbatim would let
+  // anyone on the internet mint unbounded values of the field the runbook says to
+  // aggregate on. One value for the whole class instead; the raw path is still on
+  // the line's `path` field when a specific probe matters.
+  const known = ['/api/', '/xrpc/', '/.well-known/'];
+  if (!known.some((prefix) => pathname.startsWith(prefix))) return '/other';
+
+  // Cap the cardinality of what's left. Real routes in this app are at most four
+  // segments deep; anything longer is a probe or a typo. A scanner enumerating
+  // *inside* `/api/` can still mint a value per path — accepted, because
+  // collapsing those would also collapse the real 404s worth noticing.
   const segments = pathname.split('/').filter(Boolean);
   if (segments.length > 4) return '/' + segments.slice(0, 4).join('/') + '/…';
   return pathname;

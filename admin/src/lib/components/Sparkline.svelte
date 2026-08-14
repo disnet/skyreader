@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { TrendSeries } from '$lib/metrics/ops';
+  import { sparklineGeometry } from './sparkline';
 
   interface Props {
     series: TrendSeries;
@@ -10,36 +11,14 @@
   const WIDTH = 240;
   const HEIGHT = 40;
 
-  // Nulls are gaps, not zeroes — a stretch where the cron never recorded a value
-  // must not be drawn as a plunge to the axis. Points keep their x position so a
-  // gap reads as a gap.
-  const drawn = $derived(
-    series.points
-      .map((value, index) => ({ value, index }))
-      .filter((p): p is { value: number; index: number } => p.value !== null)
+  // Nulls are gaps, not zeroes — an hour the cron never recorded must not be
+  // drawn as a plunge to the axis, and must not be bridged by a line either. See
+  // ./sparkline.ts, where that rule is tested.
+  const geometry = $derived(sparklineGeometry(series.points, WIDTH, HEIGHT));
+  const latest = $derived(geometry.latest);
+  const change = $derived(
+    geometry.latest !== null && geometry.first !== null ? geometry.latest - geometry.first : null
   );
-
-  const latest = $derived(drawn.length ? drawn[drawn.length - 1].value : null);
-  const first = $derived(drawn.length ? drawn[0].value : null);
-  const change = $derived(latest !== null && first !== null ? latest - first : null);
-
-  const path = $derived.by(() => {
-    if (drawn.length < 2) return '';
-    const values = drawn.map((p) => p.value);
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const span = max - min || 1;
-    const lastIndex = series.points.length - 1 || 1;
-
-    return drawn
-      .map((point, i) => {
-        const x = (point.index / lastIndex) * WIDTH;
-        // Flat series sit on the mid-line rather than pinned to the floor.
-        const y = HEIGHT - ((point.value - min) / span) * (HEIGHT - 4) - 2;
-        return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(' ');
-  });
 
   function format(value: number): string {
     if (Number.isInteger(value)) return value.toLocaleString();
@@ -57,17 +36,23 @@
     </span>
   </div>
 
-  {#if path}
+  {#if geometry.path || geometry.dots.length}
     <svg viewBox="0 0 {WIDTH} {HEIGHT}" preserveAspectRatio="none" role="presentation">
-      <path d={path} fill="none" stroke="var(--color-primary)" stroke-width="1.5" />
+      {#if geometry.path}
+        <path d={geometry.path} fill="none" stroke="var(--color-primary)" stroke-width="1.5" />
+      {/if}
+      <!-- An hour recorded with no recorded neighbour has no line to belong to. -->
+      {#each geometry.dots as dot (dot.x)}
+        <circle cx={dot.x} cy={dot.y} r="1.2" fill="var(--color-primary)" />
+      {/each}
     </svg>
   {:else}
     <p class="empty">Not enough history yet</p>
   {/if}
 
-  {#if change !== null && drawn.length > 1}
+  {#if change !== null && geometry.spanHours > 0}
     <div class="change">
-      {change > 0 ? '+' : ''}{format(change)} over {drawn.length}h
+      {change > 0 ? '+' : ''}{format(change)} over {geometry.spanHours}h
     </div>
   {/if}
 </div>

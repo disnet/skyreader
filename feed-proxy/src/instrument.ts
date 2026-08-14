@@ -7,6 +7,7 @@
 // unset — local dev, tests — init() is a no-op and nothing is sent, so this is
 // safe to import unconditionally.
 import * as Sentry from '@sentry/bun';
+import { scrubEvent } from './scrub';
 
 const dsn = process.env.SENTRY_DSN;
 
@@ -18,6 +19,14 @@ if (dsn) {
     // high-throughput and we only want error reporting unless we deliberately
     // turn sampling on.
     tracesSampleRate: parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || '0'),
+    // Never let the SDK attach request bodies or headers on its own judgement.
+    sendDefaultPii: false,
+    // The Worker's "nothing leaves with a credential attached" contract stopped
+    // at the runtime boundary until this. See ./scrub.ts for what it covers and
+    // fire drill #3 in docs/RUNBOOK.md for the check that proves it.
+    beforeSend(event) {
+      return scrubEvent(event);
+    },
   });
   console.log('[Proxy] Sentry initialized');
 } else {

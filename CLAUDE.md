@@ -179,9 +179,11 @@ These are **separate** from the main E2E suite (`playwright.pwa.config.ts`, spec
 
 [`docs/RUNBOOK.md`](docs/RUNBOOK.md) is the operational source of truth: health
 endpoints, the external check list and thresholds, dead-man's-switch heartbeats,
-error-tracking setup, and per-alert response procedures. Read it before changing
-anything under `backend/src/observability/`, the health routes, or a deploy
-workflow's smoke-check step.
+error-tracking setup, per-alert response procedures, the SLOs those thresholds
+answer to, and the alert-pruning ritual that keeps "silence means healthy" true.
+Read it before changing anything under `backend/src/observability/`, the health or
+telemetry routes, the client error reporter (`frontend/src/lib/services/telemetry.ts`),
+or a deploy workflow's smoke-check step.
 
 ## Architecture Overview
 

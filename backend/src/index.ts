@@ -96,6 +96,7 @@ import {
 } from './routes/channels';
 import { handleTestExec } from './routes/test-utils';
 import { handleHealth, handleDeepHealth } from './routes/health';
+import { handleTelemetryError } from './routes/telemetry';
 import { resolveSessionFromRequest, updateUserActivity } from './services/oauth';
 import { checkRateLimit, cleanupRateLimits, getRateLimitConfig } from './services/rate-limit';
 import * as Sentry from '@sentry/cloudflare';
@@ -184,6 +185,36 @@ async function serveRequest(request: Request, env: Env, ctx: ExecutionContext): 
     return new Response(null, { headers });
   }
 
+  // The try opens here rather than after session resolution: a D1 blip inside
+  // `resolveSessionFromRequest` or the rate-limit check used to escape the whole
+  // handler, which meant no summary line, no `request_error`, no CORS headers and
+  // no X-Request-Id on the runtime's bare 500 — the one class of failure you most
+  // want correlated.
+  try {
+    return await route(request, env, ctx, url, headers);
+  } catch (error) {
+    // Workers Logs stays the quick-look tool; Sentry is what groups, dedupes,
+    // and notifies. Both, deliberately — and both carry the request id, which
+    // is what lets a Sentry event find its log line.
+    log.error('request_error', { method: request.method, ...serializeError(error) });
+    reportError(error, {
+      tags: { source: 'fetch', route: classifyRoute(url.pathname) },
+      extra: { method: request.method, path: url.pathname },
+    });
+    return new Response(JSON.stringify({ error: 'Internal server error' }), {
+      status: 500,
+      headers: { ...headers, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function route(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  url: URL,
+  headers: HeadersInit
+): Promise<Response> {
   if (isHealthPath(url.pathname)) {
     const health =
       url.pathname === '/api/health' ? handleHealth(env) : await handleDeepHealth(request, env);
@@ -223,458 +254,451 @@ async function serveRequest(request: Request, env: Env, ctx: ExecutionContext): 
     return sessionRetryResponse(headers);
   }
 
-  try {
-    let response: Response;
+  let response: Response;
 
-    // Route matching
-    switch (true) {
-      // Test-only D1 exec endpoint (e2e seed/cleanup). Mounted only when
-      // E2E_TEST_MODE is set, so it's unreachable in production.
-      case url.pathname === '/api/test/exec' && env.E2E_TEST_MODE === 'true':
-        response = await handleTestExec(request, env);
-        break;
+  // Route matching
+  switch (true) {
+    // Test-only D1 exec endpoint (e2e seed/cleanup). Mounted only when
+    // E2E_TEST_MODE is set, so it's unreachable in production.
+    case url.pathname === '/api/test/exec' && env.E2E_TEST_MODE === 'true':
+      response = await handleTestExec(request, env);
+      break;
 
-      // OAuth client metadata
-      case url.pathname === '/.well-known/client-metadata':
-        response = await handleClientMetadata(request, env);
-        break;
+    // OAuth client metadata
+    case url.pathname === '/.well-known/client-metadata':
+      response = await handleClientMetadata(request, env);
+      break;
 
-      // Lexicon schemas
-      case url.pathname === '/.well-known/lexicons':
-        response = handleLexiconIndex();
-        break;
-      case url.pathname.startsWith('/.well-known/lexicons/'):
-        response = handleLexicon(request);
-        break;
+    // Lexicon schemas
+    case url.pathname === '/.well-known/lexicons':
+      response = handleLexiconIndex();
+      break;
+    case url.pathname.startsWith('/.well-known/lexicons/'):
+      response = handleLexicon(request);
+      break;
 
-      // Auth routes
-      case url.pathname === '/api/auth/login':
-        response = await handleAuthLogin(request, env);
-        break;
-      case url.pathname === '/api/auth/callback':
-        response = await handleAuthCallback(request, env, ctx);
-        break;
-      case url.pathname === '/api/auth/logout':
-        response = await handleAuthLogout(request, env);
-        break;
-      case url.pathname === '/api/auth/me':
-        response = await handleAuthMe(request, env);
-        break;
+    // Auth routes
+    case url.pathname === '/api/auth/login':
+      response = await handleAuthLogin(request, env);
+      break;
+    case url.pathname === '/api/auth/callback':
+      response = await handleAuthCallback(request, env, ctx);
+      break;
+    case url.pathname === '/api/auth/logout':
+      response = await handleAuthLogout(request, env);
+      break;
+    case url.pathname === '/api/auth/me':
+      response = await handleAuthMe(request, env);
+      break;
 
-      // Feed routes (v2 via Fly.io proxy)
-      case url.pathname === '/api/v2/feeds/fetch':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleV2FeedFetch(request, env);
-        break;
-      case url.pathname === '/api/v2/feeds/batch':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleV2BatchFeedFetch(request, env, session);
-        break;
-      case url.pathname === '/api/v2/feeds/discover':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleV2FeedDiscover(request, env);
-        break;
-      case url.pathname === '/api/v2/documents/batch':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleV2BatchDocumentFetch(request, env, session);
-        break;
-      case url.pathname === '/api/v2/documents/get':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleV2GetDocument(request, env, session);
-        break;
-      case url.pathname === '/api/v2/social-context':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleV2SocialContext(request, env);
-        break;
-      case url.pathname === '/api/v2/mentions':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleV2Mentions(request, env);
-        break;
-      case url.pathname === '/api/v2/mention-lane':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleV2MentionLane(request, env);
-        break;
+    // Client error reports. Deliberately session-free: an error on the login
+    // screen, or one thrown before auth resolves, is exactly the kind worth
+    // having. The handler rate-limits by DID when there is one, by IP when
+    // there isn't.
+    case url.pathname === '/api/telemetry/error':
+      response = await handleTelemetryError(request, env, session?.did);
+      break;
 
-      // Social routes
-      case url.pathname === '/api/social/detect-content':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleDetectContent(request, env);
-        break;
-      // Linkblog discovery — find friends with linkblogs / browse all (Phase 6)
-      case url.pathname === '/api/linkblog/discover/friends':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleDiscoverFriends(request, env);
-        break;
-      case url.pathname === '/api/linkblog/discover':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleDiscover(request, env);
-        break;
+    // Feed routes (v2 via Fly.io proxy)
+    case url.pathname === '/api/v2/feeds/fetch':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleV2FeedFetch(request, env);
+      break;
+    case url.pathname === '/api/v2/feeds/batch':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleV2BatchFeedFetch(request, env, session);
+      break;
+    case url.pathname === '/api/v2/feeds/discover':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleV2FeedDiscover(request, env);
+      break;
+    case url.pathname === '/api/v2/documents/batch':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleV2BatchDocumentFetch(request, env, session);
+      break;
+    case url.pathname === '/api/v2/documents/get':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleV2GetDocument(request, env, session);
+      break;
+    case url.pathname === '/api/v2/social-context':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleV2SocialContext(request, env);
+      break;
+    case url.pathname === '/api/v2/mentions':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleV2Mentions(request, env);
+      break;
+    case url.pathname === '/api/v2/mention-lane':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleV2MentionLane(request, env);
+      break;
 
-      // Linkblog endpoints — sharing as portable site.standard.document records
-      case url.pathname === '/api/linkblog/share':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleCreateLinkblogShare(request, env);
-        break;
-      case url.pathname.startsWith('/api/linkblog/share/'):
-        if (!session) return unauthorizedResponse(headers);
-        response =
-          request.method === 'PATCH'
-            ? await handleUpdateLinkblogShare(request, env)
-            : await handleDeleteLinkblogShare(request, env);
-        break;
-      case url.pathname === '/api/linkblog/publication':
-        if (!session) return unauthorizedResponse(headers);
-        if (request.method === 'GET') {
-          response = await handleGetPublication(request, env);
-        } else if (request.method === 'DELETE') {
-          response = await handleDeletePublication(request, env);
-        } else if (request.method === 'POST') {
-          response = await handleRestorePublication(request, env);
-        } else {
-          response = await handleUpdatePublication(request, env);
-        }
-        break;
-      case url.pathname === '/api/linkblog/publications':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleListPublications(request, env);
-        break;
-      case url.pathname === '/api/linkblog/publication/connect':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleConnectPublication(request, env);
-        break;
-      case url.pathname === '/api/linkblog/publication/visibility':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleSetPageVisibility(request, env);
-        break;
-      case url.pathname.startsWith('/api/linkblog/resolve/'):
-        response = await handleResolvePublication(request, env);
-        break;
+    // Social routes
+    case url.pathname === '/api/social/detect-content':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleDetectContent(request, env);
+      break;
+    // Linkblog discovery — find friends with linkblogs / browse all (Phase 6)
+    case url.pathname === '/api/linkblog/discover/friends':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleDiscoverFriends(request, env);
+      break;
+    case url.pathname === '/api/linkblog/discover':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleDiscover(request, env);
+      break;
 
-      // Subscribe via the Atmosphere — writes the portable
-      // site.standard.graph.subscription record, and (for a signed-in user)
-      // also creates the matching local reader subscription.
-      case url.pathname === '/api/atmosphere/subscription':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleAtmosphereSubscription(request, env, ctx);
-        break;
-
-      // Subscriptions endpoints (new)
-      case url.pathname === '/api/subscriptions':
-        if (!session) return unauthorizedResponse(headers);
-        response =
-          request.method === 'GET'
-            ? await handleListSubscriptions(request, env)
-            : await handleCreateSubscription(request, env, ctx);
-        break;
-      case url.pathname === '/api/subscriptions/bulk':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleBulkCreateSubscriptions(request, env, ctx);
-        break;
-      case url.pathname === '/api/subscriptions/bulk-update':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleBulkUpdateSubscriptions(request, env, ctx);
-        break;
-      case url.pathname === '/api/subscriptions/bulk-delete':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleBulkDeleteSubscriptions(request, env, ctx);
-        break;
-      case url.pathname === '/api/subscriptions/parked':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleListParkedSubscriptions(request, env);
-        break;
-      case url.pathname.endsWith('/activate') && url.pathname.startsWith('/api/subscriptions/'):
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleSetSubscriptionActive(request, env, true);
-        break;
-      case url.pathname.endsWith('/park') && url.pathname.startsWith('/api/subscriptions/'):
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleSetSubscriptionActive(request, env, false);
-        break;
-      case url.pathname.startsWith('/api/subscriptions/'):
-        if (!session) return unauthorizedResponse(headers);
-        if (request.method === 'DELETE') {
-          response = await handleDeleteSubscription(request, env, ctx);
-        } else if (request.method === 'PATCH') {
-          response = await handleUpdateSubscription(request, env, ctx);
-        } else {
-          response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
-            status: 405,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-        break;
-
-      // Record list route (sync routes removed - use dedicated endpoints)
-      case url.pathname === '/api/records/list':
-        response = await handleRecordsList(request, env);
-        break;
-
-      // Reading routes (read positions)
-      case url.pathname === '/api/reading/positions':
-        response = await handleGetReadPositions(request, env);
-        break;
-      case url.pathname === '/api/reading/mark-read':
-        response = await handleMarkAsRead(request, env);
-        break;
-      case url.pathname === '/api/reading/mark-unread':
-        response = await handleMarkAsUnread(request, env);
-        break;
-      case url.pathname === '/api/reading/mark-read-bulk':
-        response = await handleBulkMarkAsRead(request, env);
-        break;
-
-      // Labels routes (unified item labels)
-      case url.pathname === '/api/labels':
-        if (!session) return unauthorizedResponse(headers);
-        if (request.method === 'GET') {
-          response = await handleGetLabels(request, env);
-        } else if (request.method === 'POST') {
-          response = await handleAddLabel(request, env);
-        } else if (request.method === 'DELETE') {
-          response = await handleDeleteLabel(request, env);
-        } else {
-          response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
-            status: 405,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-        break;
-      case url.pathname === '/api/labels/bulk':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleBulkAddLabels(request, env);
-        break;
-
-      // Article extraction route (fetch + Defuddle via the feed proxy)
-      case url.pathname === '/api/extract':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleExtract(request, env);
-        break;
-
-      // Saved routes
-      case url.pathname === '/api/saved':
-        if (!session) return unauthorizedResponse(headers);
-        if (request.method === 'GET') {
-          response = await handleGetSaved(request, env, ctx);
-        } else if (request.method === 'POST') {
-          response = await handleCreateSaved(request, env, ctx);
-        } else {
-          response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
-            status: 405,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-        break;
-      case url.pathname === '/api/saved/status':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleSavedStatus(request, env);
-        break;
-      case url.pathname.startsWith('/api/saved/by-guid/'):
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleDeleteSavedByGuid(request, env, ctx);
-        break;
-      case url.pathname === '/api/saved/backing':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleSetBacking(request, env);
-        break;
-      case url.pathname === '/api/saved/bodies':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleGetSavedBodies(request, env);
-        break;
-      case url.pathname.startsWith('/api/saved/'):
-        if (!session) return unauthorizedResponse(headers);
-        if (request.method === 'PATCH') {
-          response = await handleUpdateSaved(request, env);
-        } else {
-          response = await handleDeleteSaved(request, env, ctx);
-        }
-        break;
-
-      // Settings routes
-      case url.pathname === '/api/settings':
-        if (!session) return unauthorizedResponse(headers);
-        if (request.method === 'PUT') {
-          response = await handleUpdateSettings(request, env);
-        } else {
-          response = await handleGetSettings(request, env);
-        }
-        break;
-
-      // Magazine routes (durable, cross-device reading issues)
-      case url.pathname === '/api/magazines':
-        if (!session) return unauthorizedResponse(headers);
-        if (request.method === 'GET') {
-          response = await handleGetMagazines(request, env);
-        } else if (request.method === 'POST') {
-          response = await handleUpsertMagazine(request, env);
-        } else if (request.method === 'DELETE') {
-          response = await handleDeleteMagazine(request, env);
-        } else {
-          response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
-            status: 405,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-        break;
-      case url.pathname === '/api/magazines/position':
-        if (!session) return unauthorizedResponse(headers);
-        if (request.method === 'PATCH') {
-          response = await handleUpdateMagazinePosition(request, env);
-        } else {
-          response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
-            status: 405,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-        break;
-
-      // Integration routes
-      case url.pathname === '/api/integrations/status':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleIntegrationStatus(request, env);
-        break;
-      case url.pathname === '/api/integrations/semble/cards':
-        if (!session) return unauthorizedResponse(headers);
-        if (request.method !== 'POST') {
-          response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
-            status: 405,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        } else {
-          response = await handleCreateSembleCard(request, env);
-        }
-        break;
-      case url.pathname === '/api/integrations/semble/collections':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleListSembleCollections(request, env);
-        break;
-      case url.pathname === '/api/integrations/margin/bookmarks':
-        if (!session) return unauthorizedResponse(headers);
-        if (request.method !== 'POST') {
-          response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
-            status: 405,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        } else {
-          response = await handleCreateMarginBookmark(request, env);
-        }
-        break;
-      case url.pathname === '/api/integrations/margin/collections':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleListMarginCollections(request, env);
-        break;
-      case url.pathname === '/api/integrations/margin/notes':
-        if (!session) return unauthorizedResponse(headers);
-        if (request.method !== 'POST') {
-          response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
-            status: 405,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        } else {
-          response = await handleCreateMarginNote(request, env);
-        }
-        break;
-      case url.pathname.startsWith('/api/integrations/margin/notes/'):
-        if (!session) return unauthorizedResponse(headers);
-        if (request.method === 'DELETE') {
-          response = await handleDeleteMarginNote(request, env);
-        } else if (request.method === 'PUT') {
-          response = await handleUpdateMarginNote(request, env);
-        } else {
-          response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
-            status: 405,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-        break;
-
-      // Channels routes
-      case url.pathname === '/api/channels':
-        if (!session) return unauthorizedResponse(headers);
-        if (request.method === 'GET') {
-          response = await handleGetChannels(request, env);
-        } else if (request.method === 'PUT') {
-          response = await handleSyncChannels(request, env);
-        } else {
-          response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
-            status: 405,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-        break;
-      case url.pathname.startsWith('/api/channels/'): {
-        if (!session) return unauthorizedResponse(headers);
-        const channelUuid = url.pathname.split('/').pop()!;
-        if (request.method === 'PUT') {
-          response = await handleUpsertChannel(request, env, channelUuid);
-        } else if (request.method === 'DELETE') {
-          response = await handleDeleteChannel(request, env, channelUuid);
-        } else {
-          response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
-            status: 405,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-        break;
+    // Linkblog endpoints — sharing as portable site.standard.document records
+    case url.pathname === '/api/linkblog/share':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleCreateLinkblogShare(request, env);
+      break;
+    case url.pathname.startsWith('/api/linkblog/share/'):
+      if (!session) return unauthorizedResponse(headers);
+      response =
+        request.method === 'PATCH'
+          ? await handleUpdateLinkblogShare(request, env)
+          : await handleDeleteLinkblogShare(request, env);
+      break;
+    case url.pathname === '/api/linkblog/publication':
+      if (!session) return unauthorizedResponse(headers);
+      if (request.method === 'GET') {
+        response = await handleGetPublication(request, env);
+      } else if (request.method === 'DELETE') {
+        response = await handleDeletePublication(request, env);
+      } else if (request.method === 'POST') {
+        response = await handleRestorePublication(request, env);
+      } else {
+        response = await handleUpdatePublication(request, env);
       }
+      break;
+    case url.pathname === '/api/linkblog/publications':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleListPublications(request, env);
+      break;
+    case url.pathname === '/api/linkblog/publication/connect':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleConnectPublication(request, env);
+      break;
+    case url.pathname === '/api/linkblog/publication/visibility':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleSetPageVisibility(request, env);
+      break;
+    case url.pathname.startsWith('/api/linkblog/resolve/'):
+      response = await handleResolvePublication(request, env);
+      break;
 
-      // Sync routes
-      case url.pathname === '/api/sync/full':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleFullSync(request, env, ctx);
-        break;
-      case url.pathname === '/api/sync/subscriptions':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleSyncSubscriptions(request, env);
-        break;
-      case url.pathname === '/api/sync/status':
-        if (!session) return unauthorizedResponse(headers);
-        response = await handleSyncStatus(request, env);
-        break;
+    // Subscribe via the Atmosphere — writes the portable
+    // site.standard.graph.subscription record, and (for a signed-in user)
+    // also creates the matching local reader subscription.
+    case url.pathname === '/api/atmosphere/subscription':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleAtmosphereSubscription(request, env, ctx);
+      break;
 
-      // AT Intents service endpoints (XRPC procedures). No top-level session guard:
-      // the handlers return XRPC-shaped `{ error, message }` auth errors themselves.
-      case url.pathname === '/xrpc/app.skyreader.feed.save':
-        response = await handleXrpcSave(request, env, ctx);
-        break;
-      case url.pathname === '/xrpc/app.skyreader.feed.subscribe':
-        response = await handleXrpcSubscribe(request, env, ctx);
-        break;
-      case url.pathname === '/xrpc/app.skyreader.linkblog.share':
-        response = await handleXrpcLinkblogShare(request, env);
-        break;
-
-      default:
-        response = new Response(JSON.stringify({ error: 'Not found' }), {
-          status: 404,
+    // Subscriptions endpoints (new)
+    case url.pathname === '/api/subscriptions':
+      if (!session) return unauthorizedResponse(headers);
+      response =
+        request.method === 'GET'
+          ? await handleListSubscriptions(request, env)
+          : await handleCreateSubscription(request, env, ctx);
+      break;
+    case url.pathname === '/api/subscriptions/bulk':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleBulkCreateSubscriptions(request, env, ctx);
+      break;
+    case url.pathname === '/api/subscriptions/bulk-update':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleBulkUpdateSubscriptions(request, env, ctx);
+      break;
+    case url.pathname === '/api/subscriptions/bulk-delete':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleBulkDeleteSubscriptions(request, env, ctx);
+      break;
+    case url.pathname === '/api/subscriptions/parked':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleListParkedSubscriptions(request, env);
+      break;
+    case url.pathname.endsWith('/activate') && url.pathname.startsWith('/api/subscriptions/'):
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleSetSubscriptionActive(request, env, true);
+      break;
+    case url.pathname.endsWith('/park') && url.pathname.startsWith('/api/subscriptions/'):
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleSetSubscriptionActive(request, env, false);
+      break;
+    case url.pathname.startsWith('/api/subscriptions/'):
+      if (!session) return unauthorizedResponse(headers);
+      if (request.method === 'DELETE') {
+        response = await handleDeleteSubscription(request, env, ctx);
+      } else if (request.method === 'PATCH') {
+        response = await handleUpdateSubscription(request, env, ctx);
+      } else {
+        response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
           headers: { 'Content-Type': 'application/json' },
         });
+      }
+      break;
+
+    // Record list route (sync routes removed - use dedicated endpoints)
+    case url.pathname === '/api/records/list':
+      response = await handleRecordsList(request, env);
+      break;
+
+    // Reading routes (read positions)
+    case url.pathname === '/api/reading/positions':
+      response = await handleGetReadPositions(request, env);
+      break;
+    case url.pathname === '/api/reading/mark-read':
+      response = await handleMarkAsRead(request, env);
+      break;
+    case url.pathname === '/api/reading/mark-unread':
+      response = await handleMarkAsUnread(request, env);
+      break;
+    case url.pathname === '/api/reading/mark-read-bulk':
+      response = await handleBulkMarkAsRead(request, env);
+      break;
+
+    // Labels routes (unified item labels)
+    case url.pathname === '/api/labels':
+      if (!session) return unauthorizedResponse(headers);
+      if (request.method === 'GET') {
+        response = await handleGetLabels(request, env);
+      } else if (request.method === 'POST') {
+        response = await handleAddLabel(request, env);
+      } else if (request.method === 'DELETE') {
+        response = await handleDeleteLabel(request, env);
+      } else {
+        response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      break;
+    case url.pathname === '/api/labels/bulk':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleBulkAddLabels(request, env);
+      break;
+
+    // Article extraction route (fetch + Defuddle via the feed proxy)
+    case url.pathname === '/api/extract':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleExtract(request, env);
+      break;
+
+    // Saved routes
+    case url.pathname === '/api/saved':
+      if (!session) return unauthorizedResponse(headers);
+      if (request.method === 'GET') {
+        response = await handleGetSaved(request, env, ctx);
+      } else if (request.method === 'POST') {
+        response = await handleCreateSaved(request, env, ctx);
+      } else {
+        response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      break;
+    case url.pathname === '/api/saved/status':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleSavedStatus(request, env);
+      break;
+    case url.pathname.startsWith('/api/saved/by-guid/'):
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleDeleteSavedByGuid(request, env, ctx);
+      break;
+    case url.pathname === '/api/saved/backing':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleSetBacking(request, env);
+      break;
+    case url.pathname === '/api/saved/bodies':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleGetSavedBodies(request, env);
+      break;
+    case url.pathname.startsWith('/api/saved/'):
+      if (!session) return unauthorizedResponse(headers);
+      if (request.method === 'PATCH') {
+        response = await handleUpdateSaved(request, env);
+      } else {
+        response = await handleDeleteSaved(request, env, ctx);
+      }
+      break;
+
+    // Settings routes
+    case url.pathname === '/api/settings':
+      if (!session) return unauthorizedResponse(headers);
+      if (request.method === 'PUT') {
+        response = await handleUpdateSettings(request, env);
+      } else {
+        response = await handleGetSettings(request, env);
+      }
+      break;
+
+    // Magazine routes (durable, cross-device reading issues)
+    case url.pathname === '/api/magazines':
+      if (!session) return unauthorizedResponse(headers);
+      if (request.method === 'GET') {
+        response = await handleGetMagazines(request, env);
+      } else if (request.method === 'POST') {
+        response = await handleUpsertMagazine(request, env);
+      } else if (request.method === 'DELETE') {
+        response = await handleDeleteMagazine(request, env);
+      } else {
+        response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      break;
+    case url.pathname === '/api/magazines/position':
+      if (!session) return unauthorizedResponse(headers);
+      if (request.method === 'PATCH') {
+        response = await handleUpdateMagazinePosition(request, env);
+      } else {
+        response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      break;
+
+    // Integration routes
+    case url.pathname === '/api/integrations/status':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleIntegrationStatus(request, env);
+      break;
+    case url.pathname === '/api/integrations/semble/cards':
+      if (!session) return unauthorizedResponse(headers);
+      if (request.method !== 'POST') {
+        response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      } else {
+        response = await handleCreateSembleCard(request, env);
+      }
+      break;
+    case url.pathname === '/api/integrations/semble/collections':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleListSembleCollections(request, env);
+      break;
+    case url.pathname === '/api/integrations/margin/bookmarks':
+      if (!session) return unauthorizedResponse(headers);
+      if (request.method !== 'POST') {
+        response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      } else {
+        response = await handleCreateMarginBookmark(request, env);
+      }
+      break;
+    case url.pathname === '/api/integrations/margin/collections':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleListMarginCollections(request, env);
+      break;
+    case url.pathname === '/api/integrations/margin/notes':
+      if (!session) return unauthorizedResponse(headers);
+      if (request.method !== 'POST') {
+        response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      } else {
+        response = await handleCreateMarginNote(request, env);
+      }
+      break;
+    case url.pathname.startsWith('/api/integrations/margin/notes/'):
+      if (!session) return unauthorizedResponse(headers);
+      if (request.method === 'DELETE') {
+        response = await handleDeleteMarginNote(request, env);
+      } else if (request.method === 'PUT') {
+        response = await handleUpdateMarginNote(request, env);
+      } else {
+        response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      break;
+
+    // Channels routes
+    case url.pathname === '/api/channels':
+      if (!session) return unauthorizedResponse(headers);
+      if (request.method === 'GET') {
+        response = await handleGetChannels(request, env);
+      } else if (request.method === 'PUT') {
+        response = await handleSyncChannels(request, env);
+      } else {
+        response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      break;
+    case url.pathname.startsWith('/api/channels/'): {
+      if (!session) return unauthorizedResponse(headers);
+      const channelUuid = url.pathname.split('/').pop()!;
+      if (request.method === 'PUT') {
+        response = await handleUpsertChannel(request, env, channelUuid);
+      } else if (request.method === 'DELETE') {
+        response = await handleDeleteChannel(request, env, channelUuid);
+      } else {
+        response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      break;
     }
 
-    // Add CORS headers to response
-    const newHeaders = new Headers(response.headers);
-    Object.entries(headers).forEach(([key, value]) => {
-      newHeaders.set(key, value);
-    });
+    // Sync routes
+    case url.pathname === '/api/sync/full':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleFullSync(request, env, ctx);
+      break;
+    case url.pathname === '/api/sync/subscriptions':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleSyncSubscriptions(request, env);
+      break;
+    case url.pathname === '/api/sync/status':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleSyncStatus(request, env);
+      break;
 
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: newHeaders,
-    });
-  } catch (error) {
-    // Workers Logs stays the quick-look tool; Sentry is what groups, dedupes,
-    // and notifies. Both, deliberately — and both carry the request id, which
-    // is what lets a Sentry event find its log line.
-    log.error('request_error', { method: request.method, ...serializeError(error) });
-    reportError(error, {
-      tags: { source: 'fetch', route: classifyRoute(url.pathname) },
-      extra: { method: request.method, path: url.pathname },
-    });
-    return new Response(JSON.stringify({ error: 'Internal server error' }), {
-      status: 500,
-      headers: { ...headers, 'Content-Type': 'application/json' },
-    });
+    // AT Intents service endpoints (XRPC procedures). No top-level session guard:
+    // the handlers return XRPC-shaped `{ error, message }` auth errors themselves.
+    case url.pathname === '/xrpc/app.skyreader.feed.save':
+      response = await handleXrpcSave(request, env, ctx);
+      break;
+    case url.pathname === '/xrpc/app.skyreader.feed.subscribe':
+      response = await handleXrpcSubscribe(request, env, ctx);
+      break;
+    case url.pathname === '/xrpc/app.skyreader.linkblog.share':
+      response = await handleXrpcLinkblogShare(request, env);
+      break;
+
+    default:
+      response = new Response(JSON.stringify({ error: 'Not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
   }
+
+  // Add CORS headers to response
+  const newHeaders = new Headers(response.headers);
+  Object.entries(headers).forEach(([key, value]) => {
+    newHeaders.set(key, value);
+  });
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: newHeaders,
+  });
 }
 
 const handler = {
@@ -690,30 +714,39 @@ const handler = {
       { requestId, route: classifyRoute(url.pathname), method: request.method },
       async () => {
         tagRequestId(requestId);
-        const response = await serveRequest(request, env, ctx);
 
         // One summary line per request — route class, status, duration. This is
         // the raw material for "what's slow" and "what's erroring" until metrics
         // land, and it's why the log is worth querying at all.
         //
+        // In a `finally` so that "every request produces a line" survives a throw
+        // that somehow gets past serveRequest's catch: the line then reports the
+        // 500 the runtime is about to serve.
+        //
         // The shallow health check is exempt: an uptime poller hits it every 30s
         // forever and the line carries no information the check's own history
         // doesn't already have.
-        if (url.pathname !== '/api/health') {
-          log.info('request', {
-            method: request.method,
-            status: response.status,
-            durationMs: Date.now() - started,
-          });
-        }
+        let status = 500;
+        try {
+          const response = await serveRequest(request, env, ctx);
+          status = response.status;
 
-        const headers = new Headers(response.headers);
-        headers.set('X-Request-Id', requestId);
-        return new Response(response.body, {
-          status: response.status,
-          statusText: response.statusText,
-          headers,
-        });
+          const headers = new Headers(response.headers);
+          headers.set('X-Request-Id', requestId);
+          return new Response(response.body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers,
+          });
+        } finally {
+          if (url.pathname !== '/api/health') {
+            log.info('request', {
+              method: request.method,
+              status,
+              durationMs: Date.now() - started,
+            });
+          }
+        }
       }
     );
   },

@@ -103,6 +103,9 @@ export function reportMessage(
         ...options.tags,
       },
       extra: options.extra,
+      // Same reasoning as reportError: a DID is public, and it's what turns a
+      // client error report into "which account is seeing this".
+      user: requestContext?.did ? { id: requestContext.did } : undefined,
     });
   } catch (reportingError) {
     console.error('[Observability] Failed to report message:', reportingError);
@@ -116,7 +119,13 @@ export function reportMessage(
  */
 export function tagRequestId(requestId: string): void {
   try {
-    Sentry.getCurrentScope().setTag('requestId', requestId);
+    // The *isolation* scope, not the current one. `@sentry/cloudflare` forks an
+    // isolation scope per invocation (fetch — including OPTIONS/HEAD — scheduled,
+    // and the DO), but only clones the current scope on the request path that
+    // runs `continueTrace`, which it skips for preflights. Tagging the current
+    // scope there would write to the isolate-global singleton, and a later
+    // SDK-captured exception would inherit some unrelated preflight's id.
+    Sentry.getIsolationScope().setTag('requestId', requestId);
   } catch {
     // Scope access before init, or a vendor swap that doesn't have scopes.
   }
