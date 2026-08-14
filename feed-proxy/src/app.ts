@@ -14,6 +14,7 @@ import {
 import type { FirehoseStatus } from './jetstream';
 import { getSocialContext, type SocialContext, type SocialContextQuery } from './constellation';
 import { getLinkblogRegistry } from './linkblog-registry';
+import { getConstellationStats } from './constellation-client';
 import { readCachedMentions, enrichMentions } from './mentions';
 import { getMentionLaneItems, type MentionLaneEntry } from './mention-lane';
 import type { LaneId } from './lanes';
@@ -1833,6 +1834,10 @@ export function createApp(db: Database, config: AppConfig) {
       stale: stale?.count || 0,
       inFlight: inFlight.size,
       extract: { inUse: extractSemaphore.inUse, queued: extractSemaphore.queued },
+      // Constellation health from *our* side: breaker state, gate occupancy, and
+      // the retry/shed counters. `retriesRecovered` ≫ `failures` means the
+      // connection resets are being absorbed rather than blanking adornments.
+      constellation: getConstellationStats(),
       cacheTtlSeconds: cacheTtlMs / 1000,
       staleTtlSeconds: staleTtlMs / 1000,
       errors: {

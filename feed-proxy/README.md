@@ -245,6 +245,21 @@ Cache statistics (requires authentication).
   "fresh": 80,
   "stale": 50,
   "inFlight": 2,
+  "extract": { "inUse": 1, "queued": 0 },
+  "constellation": {
+    "breakerOpen": false,
+    "consecutiveFailures": 0,
+    "inUse": 2,
+    "queued": 0,
+    "requests": 8421,
+    "resets": 37,
+    "retries": 37,
+    "retriesRecovered": 36,
+    "failures": 1,
+    "shed": 0,
+    "breakerOpens": 0,
+    "shortCircuited": 0
+  },
   "cacheTtlSeconds": 900,
   "staleTtlSeconds": 3600,
   "errors": {
@@ -296,6 +311,14 @@ curl "/feed?url=...&since_guids=old-guid&limit=50"
 | `STALE_TTL_SECONDS`  | `3600`   | Stale cache max age (1 hour)              |
 | `PORT`               | `3000`   | HTTP server port                          |
 
+Constellation (mentions, social context, linkblog registry):
+
+| Environment Variable        | Default | Description                                       |
+| --------------------------- | ------- | ------------------------------------------------- |
+| `CONSTELLATION_CONCURRENCY` | `6`     | Concurrent requests allowed against Constellation |
+| `CONSTELLATION_QUEUE_MAX`   | `200`   | Callers that may queue before requests are shed   |
+| `WARM_MENTIONS`             | `true`  | Set `false` to stop pre-warming mentions entirely |
+
 ## Cache Behavior
 
 | Cache State | Age       | Behavior                    |
@@ -344,6 +367,30 @@ When a feed is in backoff:
 2. Cached data (if available) is returned immediately
 3. After backoff expires, a single fetch is attempted
 4. On success, error tracking resets to zero
+
+### Constellation Client
+
+Every Constellation caller (mentions, social context, mention lanes, the linkblog
+registry) shares one client with three defenses, since they all hit one
+small community-run host:
+
+1. **Circuit breaker** — 5 consecutive failing calls (timeout, network, 5xx/429)
+   open it for 30 s; calls short-circuit to `null` instead of each eating the
+   10 s timeout. A clean 4xx is a healthy "no data" and does not count. The check
+   runs again after a call gets its concurrency permit, so callers that were
+   queued when the breaker opened short-circuit too.
+2. **Concurrency cap** — `CONSTELLATION_CONCURRENCY` requests in flight, the rest
+   queued up to `CONSTELLATION_QUEUE_MAX` and then shed to `null`. Shedding is our
+   own backpressure, so it does **not** count toward the breaker.
+3. **One retry on connection resets** — a reset pooled keep-alive socket
+   (`ECONNRESET` / "socket connection was closed unexpectedly") is retried once
+   after ~250 ms. Timeouts are not retried. A reset-then-reset call counts as
+   exactly one breaker failure.
+
+Everything degrades to `null` (never throws); mentions and social adornments
+simply render empty. `GET /stats` reports `constellation`: breaker state, gate
+occupancy, and `resets` / `retriesRecovered` / `failures` / `shed` counters —
+`retriesRecovered` ≫ `failures` means resets are being absorbed.
 
 ### Error Response in Bulk Endpoint
 

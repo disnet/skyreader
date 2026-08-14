@@ -25,8 +25,7 @@
  * whole for /discover.
  */
 import { Database } from 'bun:sqlite';
-
-const CONSTELLATION_BASE = 'https://constellation.microcosm.blue';
+import { constellationGet } from './constellation-client';
 
 // The constant marker — MUST match backend LINKBLOG_MARKER_URL exactly, or the
 // registry won't find the publications it stamps.
@@ -45,11 +44,6 @@ const REGISTRY_TTL_MS = 15 * 60 * 1000;
 const EMPTY_TTL_MS = 60 * 1000;
 const PAGE_LIMIT = 200;
 const MAX_PAGES = 25; // hard cap (~5k authors) so a runaway cursor can't loop.
-const FETCH_TIMEOUT_MS = 10 * 1000;
-
-const CONSTELLATION_HEADERS = {
-  'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)',
-};
 
 interface ConstellationDistinctDidsResponse {
   linking_dids?: string[];
@@ -68,30 +62,30 @@ interface RegistryCacheRow {
 // on a *total* failure (first page errored) so the caller can fall back to a
 // stale cache; a mid-pagination failure returns whatever resolved so far (better
 // a partial registry than none).
+//
+// Goes through the shared Constellation client, so registry refreshes share the
+// host's circuit breaker, concurrency gate and connection-reset retry with every
+// other caller instead of hammering the service on their own. A `null` from the
+// client (breaker open, shed, error) lands on the same failure paths as the old
+// raw fetch did — during an outage the registry now falls back to its stale cache
+// immediately instead of eating timeouts.
 async function fetchCollectionFromConstellation(collection: string): Promise<string[] | null> {
   const seen = new Set<string>();
   let cursor: string | undefined;
 
   for (let page = 0; page < MAX_PAGES; page++) {
-    const params = new URLSearchParams({
+    const params: Record<string, string> = {
       target: MARKER_URL,
       collection,
       path: MARKER_PATH,
       limit: String(PAGE_LIMIT),
-    });
-    if (cursor) params.set('cursor', cursor);
+    };
+    if (cursor) params.cursor = cursor;
 
-    let data: ConstellationDistinctDidsResponse | null = null;
-    try {
-      const res = await fetch(`${CONSTELLATION_BASE}/links/distinct-dids?${params}`, {
-        headers: CONSTELLATION_HEADERS,
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
-      if (res.ok) data = (await res.json()) as ConstellationDistinctDidsResponse;
-      else console.error(`[linkblog-registry] Constellation returned HTTP ${res.status}`);
-    } catch (error) {
-      console.error('[linkblog-registry] fetch error:', error);
-    }
+    const data = await constellationGet<ConstellationDistinctDidsResponse>(
+      '/links/distinct-dids',
+      params
+    );
     if (!data) return seen.size > 0 ? [...seen] : null;
 
     for (const did of data.linking_dids ?? []) {
