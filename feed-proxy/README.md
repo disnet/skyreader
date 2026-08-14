@@ -315,7 +315,7 @@ Constellation (mentions, social context, linkblog registry):
 
 | Environment Variable        | Default | Description                                       |
 | --------------------------- | ------- | ------------------------------------------------- |
-| `CONSTELLATION_CONCURRENCY` | `6`     | Concurrent requests allowed against Constellation |
+| `CONSTELLATION_CONCURRENCY` | `3`     | Concurrent requests allowed against Constellation |
 | `CONSTELLATION_QUEUE_MAX`   | `200`   | Callers that may queue before requests are shed   |
 | `WARM_MENTIONS`             | `true`  | Set `false` to stop pre-warming mentions entirely |
 
@@ -381,11 +381,18 @@ small community-run host:
    queued when the breaker opened short-circuit too.
 2. **Concurrency cap** — `CONSTELLATION_CONCURRENCY` requests in flight, the rest
    queued up to `CONSTELLATION_QUEUE_MAX` and then shed to `null`. Shedding is our
-   own backpressure, so it does **not** count toward the breaker.
-3. **One retry on connection resets** — a reset pooled keep-alive socket
-   (`ECONNRESET` / "socket connection was closed unexpectedly") is retried once
-   after ~250 ms. Timeouts are not retried. A reset-then-reset call counts as
-   exactly one breaker failure.
+   own backpressure, so it does **not** count toward the breaker. Keep this low:
+   it governs how many sockets we hold open, and resets scale with socket churn
+   (measured reset rate over a fixed request count — 1 concurrent: 2%, 2: 0%,
+   4: 8%, 6: 8%, 12: 14%).
+3. **One retry on connection resets** — `ECONNRESET` / "socket connection was
+   closed unexpectedly" is retried once after ~250 ms. Timeouts are not retried.
+   A reset-then-reset call counts as exactly one breaker failure. What resets is
+   connection _setup_, not idle keep-alive reuse: a warm pooled socket served 47
+   of 48 sequential requests cleanly, while forcing a fresh connection per request
+   (`keepalive: false` / `Connection: close`) reset 60-76% of the time. So fewer,
+   longer-lived sockets is the fix; disabling keep-alive makes it far worse, and
+   some residual failure remains because a retry also has to open a socket.
 
 Everything degrades to `null` (never throws); mentions and social adornments
 simply render empty. `GET /stats` reports `constellation`: breaker state, gate
