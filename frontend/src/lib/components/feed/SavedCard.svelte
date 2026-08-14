@@ -8,6 +8,7 @@
   import { savesStore } from '$lib/stores/saves.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { auth } from '$lib/stores/auth.svelte';
+  import { preferences } from '$lib/stores/preferences.svelte';
   import { formatQuoteSeed } from '$lib/utils/linkPost';
   import type { Article } from '$lib/types';
   import { db } from '$lib/services/db';
@@ -15,6 +16,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
+  import ShareConfirmModal from '$lib/components/feed/ShareConfirmModal.svelte';
 
   let {
     displayItem,
@@ -343,7 +345,7 @@
   // card and reader use. Discussion counts stay a reader-only concern; the saved
   // list keeps just the share toggle, so the row stays quiet.
   let isShared = $derived(Boolean(url) && linkblogStore.isShared(url));
-  let canShare = $derived(Boolean(auth.user) && Boolean(url));
+  let canShare = $derived(Boolean(auth.user) && Boolean(url) && !preferences.linkblogDisabled);
 
   // The article record to share, built from whichever item type this card shows.
   // A document carries its recordUri as repostUri so a reshare credits the original.
@@ -385,14 +387,26 @@
     };
   }
 
-  async function toggleShare() {
-    if (isShared) {
-      await linkblogStore.unshare(url);
-      return;
-    }
+  async function performShare() {
     const t = buildShareTarget();
     if (!t) return;
     await linkblogStore.shareLink(t.article, formatQuoteSeed(t.article.summary) ?? '', t.repostUri);
+  }
+
+  // A share from the saved list is as public as one from a feed card or the
+  // reader, so it takes the same first-share confirmation.
+  let showShareConfirm = $state(false);
+
+  function toggleShare() {
+    if (isShared) {
+      void linkblogStore.unshare(url);
+      return;
+    }
+    if (!preferences.linkblogShareConfirmed) {
+      showShareConfirm = true;
+      return;
+    }
+    void performShare();
   }
 
   let popoverMenuItems = $derived.by(() => {
@@ -545,6 +559,15 @@
     />
   {/if}
 </article>
+
+<ShareConfirmModal
+  open={showShareConfirm}
+  onconfirm={() => {
+    showShareConfirm = false;
+    void performShare();
+  }}
+  oncancel={() => (showShareConfirm = false)}
+/>
 
 <style>
   .bookmark-card {

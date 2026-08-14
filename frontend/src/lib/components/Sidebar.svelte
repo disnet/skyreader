@@ -31,6 +31,7 @@
   import Tooltip from './Tooltip.svelte';
   import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
+  import { preferences } from '$lib/stores/preferences.svelte';
 
   function handleFeedContextMenu(e: MouseEvent, feedId: number) {
     e.preventDefault();
@@ -513,16 +514,19 @@
       {/if}
     </div>
 
-    <!-- Bottom nav -->
-    <a
-      href="/linkblog"
-      class="nav-item nav-link"
-      class:active={$page.url.pathname === '/linkblog'}
-      onclick={() => sidebarStore.closeMobile()}
-    >
-      <span class="nav-icon"><Icon name="share" /></span>
-      <span class="nav-label">Linkblog</span>
-    </a>
+    <!-- Bottom nav. The linkblog entry hides once the user deletes their
+         linkblog; the rest of the nav is unrelated to it and always shows. -->
+    {#if !preferences.linkblogDisabled}
+      <a
+        href="/linkblog"
+        class="nav-item nav-link"
+        class:active={$page.url.pathname === '/linkblog'}
+        onclick={() => sidebarStore.closeMobile()}
+      >
+        <span class="nav-icon"><Icon name="share" /></span>
+        <span class="nav-label">Linkblog</span>
+      </a>
+    {/if}
 
     <a
       href="/highlights"

@@ -15,6 +15,7 @@ import {
   type PutRecordResponse,
 } from './pds-client';
 import { resolveHandle } from './oauth';
+import { OFFPRINT_SCOPES, PCKT_SCOPES } from '../config/scopes';
 import { parseHandleTokens, buildMentionFacet, type MentionFacet } from '../utils/mention-facets';
 
 // Cap on the number of distinct handles we resolve per note. Each unique handle
@@ -300,6 +301,7 @@ export interface PublicationMeta {
   exists: boolean;
   external: boolean;
   format: ContentFormat;
+  disabled: boolean;
 }
 
 // PDS records are user-controlled, so a `url` can be any string. Only surface it
@@ -322,7 +324,10 @@ function iconUrlFromBlob(did: string, icon: BlobRef | undefined): string | undef
 // Read the current linkblog publication, or synthesize sensible defaults when it
 // doesn't exist yet (so the settings UI can render before the first share).
 export async function getPublicationMeta(session: Session, env: Env): Promise<PublicationMeta> {
-  const target = await getLinkblogTarget(env, session.did);
+  const [target, disabled] = await Promise.all([
+    getLinkblogTarget(env, session.did),
+    isLinkblogDisabled(env, session.did),
+  ]);
   const pdsClient = createPDSClient(session);
   const rkey = target.siteUri.split('/').pop() || LINKBLOG_RKEY;
   const result = await pdsClient.getRecord<PublicationRecord>(PUBLICATION_COLLECTION, rkey);
@@ -336,6 +341,7 @@ export async function getPublicationMeta(session: Session, env: Env): Promise<Pu
       exists: false,
       external: target.external,
       format: target.format,
+      disabled,
     };
   }
 
@@ -355,6 +361,7 @@ export async function getPublicationMeta(session: Session, env: Env): Promise<Pu
     exists: true,
     external: target.external,
     format: target.format,
+    disabled,
   };
 }
 
@@ -498,11 +505,48 @@ interface DocumentRecord {
 // Whether a `site.standard.document` is one of OUR link posts: it carries the
 // marker, or it lives in the user's own Skyreader publication (where everything
 // is ours, marker or not — pre-marker records still count).
-function isSkyreaderShareRecord(
+export function isSkyreaderShareRecord(
   did: string,
   rec: Pick<DocumentRecord, 'site' | 'skyreaderLinkblog'>
 ): boolean {
   return rec.skyreaderLinkblog === LINKBLOG_MARKER_URL || rec.site === publicationUri(did);
+}
+
+export async function isLinkblogDisabled(env: Env, did: string): Promise<boolean> {
+  try {
+    const row = await env.DB.prepare(
+      'SELECT linkblog_disabled FROM user_settings WHERE user_did = ?'
+    )
+      .bind(did)
+      .first<{ linkblog_disabled: number }>();
+    return row?.linkblog_disabled === 1;
+  } catch {
+    return false;
+  }
+}
+
+export async function getDisabledLinkblogAuthors(env: Env, dids: string[]): Promise<string[]> {
+  const candidates = [...new Set(dids)];
+  if (candidates.length === 0) return [];
+  try {
+    const disabled: string[] = [];
+    // Stay comfortably below SQLite/D1's bind-parameter ceiling while filtering
+    // exactly the registry candidates; no global row cap can leak disabled blogs.
+    for (let i = 0; i < candidates.length; i += 100) {
+      const chunk = candidates.slice(i, i + 100);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = await env.DB.prepare(
+        `SELECT user_did FROM user_settings
+         WHERE linkblog_disabled = 1 AND user_did IN (${placeholders})`
+      )
+        .bind(...chunk)
+        .all<{ user_did: string }>();
+      disabled.push(...(rows.results ?? []).map((row) => row.user_did));
+    }
+    return disabled;
+  } catch {
+    return [];
+  }
 }
 
 // The article excerpt stored on a record's website link-card block. The card is
@@ -974,6 +1018,269 @@ export async function writeLinkblogShare(
 // A read that came back "no such record" — a normal outcome, not a failure.
 function isNotFoundError(error: string): boolean {
   return /RecordNotFound|could not locate record/i.test(error);
+}
+
+const DELETE_BATCH_SIZE = 200;
+
+// Total one-at-a-time companion deletes a single purge may spend across the whole
+// walk. The per-record fallback exists so a companion batch that fails for a
+// reason we can't pre-check still gets cleaned up, but it's the one part of the
+// delete whose cost isn't bounded by the repo size: a companion collection whose
+// batch keeps failing (transient 5xx, one rejected write) would spend a
+// subrequest per record for every page, and exhausting the Worker's budget
+// partway leaves the linkblog half-deleted. Orphaned companions are untidy;
+// a stalled delete is worse, so the fallback yields first.
+const MAX_COMPANION_FALLBACK_DELETES = 200;
+
+interface FallbackBudget {
+  remaining: number;
+  exhaustedLogged: boolean;
+}
+
+// `fallback` present = best-effort: a failed batch degrades to per-record deletes
+// against the shared budget. Absent = strict, and the batch error is returned.
+async function deleteRecordBatch(
+  client: ReturnType<typeof createPDSClient>,
+  collection: string,
+  rkeys: string[],
+  fallback?: FallbackBudget
+): Promise<PDSResult<void>> {
+  for (let i = 0; i < rkeys.length; i += DELETE_BATCH_SIZE) {
+    const chunk = rkeys.slice(i, i + DELETE_BATCH_SIZE);
+    const batch = await client.applyWrites(
+      chunk.map((rkey) => ({
+        $type: 'com.atproto.repo.applyWrites#delete' as const,
+        collection,
+        rkey,
+      }))
+    );
+    if (batch.success) continue;
+    if (!fallback) return batch;
+    if (fallback.remaining <= 0) {
+      if (!fallback.exhaustedLogged) {
+        fallback.exhaustedLogged = true;
+        console.warn(
+          `[linkblog] companion fallback budget spent; leaving remaining ${collection} companions orphaned`
+        );
+      }
+      continue;
+    }
+    for (const rkey of chunk) {
+      if (fallback.remaining <= 0) break;
+      fallback.remaining--;
+      const result = await client.deleteRecord(collection, rkey);
+      if (!result.success && !isNotFoundError(result.error)) {
+        console.warn(`[linkblog] ${collection} delete failed for ${rkey}: ${result.error}`);
+      }
+    }
+  }
+  return { success: true, data: undefined };
+}
+
+// Upper bound on pages walked in one delete. listRecords' cursor is the rkey of
+// the last record returned and is an exclusive key bound, not an offset: a PDS
+// hands back the same page for a cursor whose record no longer exists (verified
+// against a live PDS). So deleting as we page can neither invalidate the cursor
+// nor shift a record past it, and the walk is linear in the size of the repo's
+// document collection. The cap is a backstop against a PDS that keeps returning
+// records we just deleted, not a ceiling on a real linkblog: at 100 records a
+// page it covers 10k documents for 100 subrequests.
+const MAX_DELETE_PAGES = 100;
+
+// Companion collections we can only touch while the session still holds the
+// host app's scope (see COMPANION_SCOPES in routes/linkblog.ts, which gates the
+// write the same way). Deleting from a collection we were never granted costs a
+// guaranteed-failing applyWrites plus, because companion deletes are best-effort,
+// one deleteRecord per rkey behind it — enough to exhaust the Worker's
+// subrequest budget partway through a large linkblog.
+const COMPANION_SCOPES: Partial<Record<ContentFormat, string[]>> = {
+  pckt: PCKT_SCOPES,
+  offprint: OFFPRINT_SCOPES,
+};
+
+function canWriteCompanion(session: Session, format: ContentFormat): boolean {
+  const required = COMPANION_SCOPES[format];
+  if (!required) return false;
+  const granted = new Set((session.grantedScopes ?? '').split(' '));
+  return required.every((scope) => granted.has(scope));
+}
+
+// The companion deletes a page of documents actually calls for, keyed by
+// collection. Only the format a record was written in gets one, so an offprint
+// linkblog never addresses blog.pckt.document, and a leaflet or markpub share —
+// which has no companion at all — costs nothing.
+function companionDeletes(
+  session: Session,
+  records: Array<{ rkey: string; value: DocumentRecord }>
+): Map<string, string[]> {
+  const byCollection = new Map<string, string[]>();
+  const unauthorized = new Set<string>();
+  for (const { rkey, value } of records) {
+    const format = contentFormatOf(value.content);
+    const collection = format ? COMPANION_COLLECTIONS[format] : undefined;
+    if (!format || !collection) continue;
+    if (!canWriteCompanion(session, format)) {
+      // The grant is gone (revoked, or an older session): the document goes, and
+      // its companion is left pointing at nothing. Worth a line — it's the one
+      // way this path leaves the user's repo untidy.
+      unauthorized.add(collection);
+      continue;
+    }
+    const existing = byCollection.get(collection);
+    if (existing) existing.push(rkey);
+    else byCollection.set(collection, [rkey]);
+  }
+  for (const collection of unauthorized) {
+    console.warn(`[linkblog] no scope for ${collection}; leaving its companions orphaned`);
+  }
+  return byCollection;
+}
+
+// How far a delete got before it failed. `deletedPosts` is what separates "the
+// user's linkblog is untouched" from "it's already half gone", which is what the
+// caller needs to decide whether disabling it can be taken back.
+type PurgeResult =
+  | { success: true; deletedPosts: number }
+  | { success: false; error: string; retryable: boolean; deletedPosts: number };
+
+async function purgeLinkblogRecords(session: Session): Promise<PurgeResult> {
+  const client = createPDSClient(session);
+  let cursor: string | undefined;
+  let deletedPosts = 0;
+  // Shared across every page: the cap is on the whole delete, not per page.
+  const companionFallback: FallbackBudget = {
+    remaining: MAX_COMPANION_FALLBACK_DELETES,
+    exhaustedLogged: false,
+  };
+
+  for (let page = 0; page < MAX_DELETE_PAGES; page++) {
+    const listed = await client.listRecords<DocumentRecord>(DOCUMENT_COLLECTION, cursor);
+    if (!listed.success) {
+      return { success: false, error: listed.error, retryable: !!listed.retryable, deletedPosts };
+    }
+    const ours = listed.data.records
+      .filter((record) => isSkyreaderShareRecord(session.did, record.value))
+      .map((record) => ({ rkey: record.uri.split('/').pop() ?? '', value: record.value }))
+      .filter((record) => record.rkey);
+    if (ours.length > 0) {
+      const rkeys = ours.map((record) => record.rkey);
+      const documents = await deleteRecordBatch(client, DOCUMENT_COLLECTION, rkeys);
+      if (!documents.success) {
+        return {
+          success: false,
+          error: documents.error,
+          retryable: !!documents.retryable,
+          deletedPosts,
+        };
+      }
+      for (const [collection, companionRkeys] of companionDeletes(session, ours)) {
+        await deleteRecordBatch(client, collection, companionRkeys, companionFallback);
+      }
+      deletedPosts += rkeys.length;
+    }
+
+    const nextCursor = listed.data.cursor || undefined;
+    if (!nextCursor || listed.data.records.length === 0) {
+      const publication = await client.deleteRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY);
+      if (!publication.success && !isNotFoundError(publication.error)) {
+        return {
+          success: false,
+          error: publication.error,
+          retryable: !!publication.retryable,
+          deletedPosts,
+        };
+      }
+      return { success: true, deletedPosts };
+    }
+    cursor = nextCursor;
+  }
+
+  return {
+    success: false,
+    error: 'Too many document pages while deleting linkblog',
+    retryable: true,
+    deletedPosts,
+  };
+}
+
+// Delete every link post, then the publication record. Returns the publication
+// the linkblog pointed at, so the caller can move followers off it.
+export async function deleteLinkblog(
+  session: Session,
+  env: Env
+): Promise<PDSResult<{ deletedPosts: number; previousSiteUri: string }>> {
+  const now = Math.floor(Date.now() / 1000);
+  // Read the flag BEFORE setting it: a delete that starts already-disabled is
+  // resuming an earlier one that got partway, which changes what a failure here
+  // is allowed to undo (see the rollback below).
+  const [previous, alreadyDisabled] = await Promise.all([
+    getLinkblogTarget(env, session.did),
+    isLinkblogDisabled(env, session.did),
+  ]);
+
+  // Disable first: every write path checks the flag, so this is what stops a
+  // share racing the walk and landing a document behind it. The connected
+  // publication is deliberately NOT cleared yet — it's the one setting a failed
+  // delete could not give back (restore doesn't know it), so it waits until the
+  // PDS side is actually gone.
+  await env.DB.prepare(
+    `INSERT INTO user_settings (user_did, linkblog_disabled, created_at, updated_at)
+     VALUES (?, 1, ?, ?) ON CONFLICT(user_did) DO UPDATE SET linkblog_disabled = 1,
+     updated_at = excluded.updated_at`
+  )
+    .bind(session.did, now, now)
+    .run();
+
+  let purged: PurgeResult;
+  try {
+    purged = await purgeLinkblogRecords(session);
+  } catch (e) {
+    // purgeLinkblogRecords reports PDS failures as values, but an unexpected
+    // throw (a D1 error, a client it couldn't build) would escape past the
+    // rollback below and leave the flag on with nothing deleted. Fold it into
+    // the same shape so every failure exits through one path.
+    purged = {
+      success: false,
+      error: e instanceof Error ? e.message : 'Could not delete your linkblog',
+      retryable: true,
+      deletedPosts: 0,
+    };
+  }
+
+  if (!purged.success) {
+    // Nothing went yet, so the linkblog is exactly as the user left it: take the
+    // flag back rather than strand them with a live blog that every write path
+    // rejects. Two cases keep it. A partial purge — that blog is already half
+    // gone. And a delete that was ALREADY disabled when it started: it is
+    // retrying an earlier partial one, so "this call deleted nothing" says
+    // nothing about the posts the first attempt took. Restoring on that would
+    // hand back a linkblog silently missing them.
+    if (purged.deletedPosts === 0 && !alreadyDisabled) await restoreLinkblog(session, env);
+    return { success: false, error: purged.error, retryable: purged.retryable };
+  }
+
+  await env.DB.prepare(
+    `UPDATE user_settings SET linkblog_publication = NULL, linkblog_content_format = NULL,
+     updated_at = ? WHERE user_did = ?`
+  )
+    .bind(now, session.did)
+    .run();
+
+  return {
+    success: true,
+    data: { deletedPosts: purged.deletedPosts, previousSiteUri: previous.siteUri },
+  };
+}
+
+export async function restoreLinkblog(session: Session, env: Env): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(
+    `INSERT INTO user_settings (user_did, linkblog_disabled, created_at, updated_at)
+     VALUES (?, 0, ?, ?) ON CONFLICT(user_did) DO UPDATE SET linkblog_disabled = 0,
+     updated_at = excluded.updated_at`
+  )
+    .bind(session.did, now, now)
+    .run();
 }
 
 // Returned when a mutation targets a record Skyreader didn't write. The routes

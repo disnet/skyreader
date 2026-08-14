@@ -9,6 +9,7 @@
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
+  import { preferences } from '$lib/stores/preferences.svelte';
   import { channelPath, feedPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
   import Icon from './Icon.svelte';
   import AddDropdownMenu from './AddDropdownMenu.svelte';
@@ -230,7 +231,9 @@
       icon: 'bookmark',
     };
     const otherViews: NavItem[] = [
-      { type: 'utility', id: 'linkblog', label: 'Linkblog', icon: 'share' },
+      ...(!preferences.linkblogDisabled
+        ? [{ type: 'utility' as const, id: 'linkblog', label: 'Linkblog', icon: 'share' as const }]
+        : []),
       { type: 'utility', id: 'highlights', label: 'Highlights', icon: 'highlighter' },
       { type: 'utility', id: 'discover', label: 'Discover', icon: 'users' },
       { type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' },

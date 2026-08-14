@@ -8,10 +8,12 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+  import { preferences } from '$lib/stores/preferences.svelte';
   import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
   import { getExternalArticleLink, formatQuoteSeed } from '$lib/utils/linkPost';
   import { normalizeDisplayItem } from '$lib/utils/displayItem';
   import AtmospherePanel from './AtmospherePanel.svelte';
+  import ShareConfirmModal from './ShareConfirmModal.svelte';
   import Icon from '$lib/components/Icon.svelte';
 
   let {
@@ -52,7 +54,7 @@
   );
   let sharedNow = $derived(linkblogStore.isShared(itemUrl));
   let currentShareNote = $derived(linkblogStore.getNote(itemUrl));
-  let canShareLinkblog = $derived(Boolean(auth.user));
+  let canShareLinkblog = $derived(Boolean(auth.user) && !preferences.linkblogDisabled);
   let shareHighlights = $derived(itemLabelsStore.getHighlights(readerItem.key));
 
   let shareTarget = $derived.by((): { article: Article; repostUri?: string } | null => {
@@ -97,10 +99,22 @@
 
   let seededQuote = $derived(formatQuoteSeed(shareTarget?.article.summary));
 
-  async function shareNow() {
+  async function performShare() {
     const target = shareTarget;
     if (!target) return;
     await linkblogStore.shareLink(target.article, seededQuote ?? '', target.repostUri);
+  }
+
+  // Sharing from the reader publishes exactly as publicly as sharing from a
+  // card, so it takes the same first-share confirmation.
+  let showShareConfirm = $state(false);
+
+  function shareNow() {
+    if (!preferences.linkblogShareConfirmed) {
+      showShareConfirm = true;
+      return;
+    }
+    void performShare();
   }
 
   function laneCanCreate(id: LaneId): boolean {
@@ -118,7 +132,7 @@
 
   function createInLane(id: LaneId) {
     if (id === 'linkblog') {
-      if (!sharedNow) void shareNow();
+      if (!sharedNow) shareNow();
     } else if (id === 'semble') {
       onSaveToSemble?.();
     } else if (id === 'margin') {
@@ -136,7 +150,7 @@
 <section class="reader-discussion" aria-label="Discussion">
   <div class="reader-discussion-divider"></div>
   {#if !sharedNow && canShareLinkblog}
-    <button type="button" class="reader-share-cta" onclick={() => void shareNow()}>
+    <button type="button" class="reader-share-cta" onclick={shareNow}>
       <Icon name="share" size={16} />
       <span>Share to your linkblog</span>
     </button>
@@ -167,6 +181,15 @@
     {/snippet}
   </AtmospherePanel>
 </section>
+
+<ShareConfirmModal
+  open={showShareConfirm}
+  onconfirm={() => {
+    showShareConfirm = false;
+    void performShare();
+  }}
+  oncancel={() => (showShareConfirm = false)}
+/>
 
 <style>
   .reader-discussion {

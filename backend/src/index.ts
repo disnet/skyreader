@@ -28,6 +28,8 @@ import {
   handleListPublications,
   handleConnectPublication,
   handleResolvePublication,
+  handleDeletePublication,
+  handleRestorePublication,
 } from './routes/linkblog';
 import { handleAtmosphereSubscription } from './routes/atmosphere';
 import {
@@ -307,6 +309,10 @@ const handler = {
           if (!session) return unauthorizedResponse(headers);
           if (request.method === 'GET') {
             response = await handleGetPublication(request, env);
+          } else if (request.method === 'DELETE') {
+            response = await handleDeletePublication(request, env);
+          } else if (request.method === 'POST') {
+            response = await handleRestorePublication(request, env);
           } else {
             response = await handleUpdatePublication(request, env);
           }

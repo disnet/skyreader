@@ -39,7 +39,7 @@
   const FORMATS: Array<{ value: Format; label: string }> = [
     { value: 'leaflet', label: 'Leaflet blocks' },
     { value: 'offprint', label: 'Offprint blocks' },
-    { value: 'markpub', label: 'Markdown' },
+    { value: 'markpub', label: 'Markdown (markpub.at)' },
   ];
 
   const formatLabel = (format: Format) =>
