@@ -18,6 +18,7 @@
  */
 import { Database } from 'bun:sqlite';
 import {
+  isValidDid,
   recordToProxyDocument,
   MAX_DOCUMENTS_PER_AUTHOR,
   type DocumentRecord,
@@ -44,6 +45,10 @@ const PING_INTERVAL_MS = 30_000;
 // Treat the socket as dead if no frame (pong/message/ping) arrives within this
 // window (≈3 missed pings). Drives both isHealthy() and a forced reconnect.
 const PING_TIMEOUT_MS = 90_000;
+// How long a socket must stay open before we treat the connection as good and
+// clear the reconnect backoff. Anything shorter is a failed attempt, however far
+// into the handshake it got.
+const STABLE_CONNECTION_MS = 60_000;
 
 /** Status accessor handed to the serve path so it can trust the cache for
  *  authors the firehose is actively keeping fresh. */
@@ -103,6 +108,12 @@ export class DocumentFirehose {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
+  // Fires once a connection has stayed up long enough to count as good; only
+  // then is the reconnect backoff cleared.
+  private stableTimer: ReturnType<typeof setTimeout> | null = null;
+  // The malformed-DID set last reported, so the periodic reconcile doesn't
+  // re-log an unchanged one every tick.
+  private lastInvalidKey = '';
   // Serialize message processing so events for the same record apply in order
   // (the async publication resolution would otherwise let them interleave).
   private queue: Promise<void> = Promise.resolve();
@@ -179,15 +190,40 @@ export class DocumentFirehose {
       )
       .all(now - this.activeWindowMs);
 
-    if (rows.length > MAX_WANTED_DIDS) {
-      console.warn(
-        `[Firehose] ${rows.length} active authors exceed wantedDids cap ${MAX_WANTED_DIDS}; ` +
-          `watching the ${MAX_WANTED_DIDS} most recently requested ` +
-          `(${rows.length - MAX_WANTED_DIDS} fall back to age-based refresh)`
-      );
-      return rows.slice(0, MAX_WANTED_DIDS).map((r) => r.did);
+    // Jetstream validates every entry in `wantedDids` and rejects the *whole*
+    // options_update if any one is malformed — it answers with a close, so a
+    // single junk row in document_cache would otherwise put the stream in a
+    // permanent connect/close/reconnect loop. Drop them here instead.
+    const dids: string[] = [];
+    const invalid: string[] = [];
+    for (const row of rows) {
+      if (isValidDid(row.did)) dids.push(row.did);
+      else invalid.push(row.did);
     }
-    return rows.map((r) => r.did);
+    // Reconcile runs on a timer, so only report a *change* — the same bad rows
+    // are otherwise re-announced every minute forever.
+    const invalidKey = invalid.join(' ');
+    if (invalid.length > 0 && invalidKey !== this.lastInvalidKey) {
+      console.warn(
+        `[Firehose] skipping ${invalid.length} cached author(s) with a malformed DID: ` +
+          invalid
+            .slice(0, 5)
+            .map((d) => JSON.stringify(d))
+            .join(', ') +
+          (invalid.length > 5 ? ', …' : '')
+      );
+    }
+    this.lastInvalidKey = invalidKey;
+
+    if (dids.length > MAX_WANTED_DIDS) {
+      console.warn(
+        `[Firehose] ${dids.length} active authors exceed wantedDids cap ${MAX_WANTED_DIDS}; ` +
+          `watching the ${MAX_WANTED_DIDS} most recently requested ` +
+          `(${dids.length - MAX_WANTED_DIDS} fall back to age-based refresh)`
+      );
+      return dids.slice(0, MAX_WANTED_DIDS);
+    }
+    return dids;
   }
 
   /** Recompute the active set; reconnect only if it actually changed (the
@@ -342,13 +378,21 @@ export class DocumentFirehose {
 
     ws.addEventListener('open', () => {
       this.connected = true;
-      this.reconnectAttempts = 0;
       const now = Date.now();
       this.lastEventAt = now;
       this.lastActivityAt = now;
       console.log(`[Firehose] connected, watching ${this.subscribedDids.size} author(s)`);
       this.sendOptionsUpdate(ws);
       this.startPingTimer(ws);
+      // Clear the backoff only once the connection has *held*. Resetting on
+      // `open` alone turns any instant-close condition (a rejected
+      // options_update, an upstream refusing us) into a 1s hammer loop against
+      // the public endpoint, because every attempt reaches `open` first.
+      this.clearStableTimer();
+      this.stableTimer = setTimeout(() => {
+        this.stableTimer = null;
+        if (this.ws === ws) this.reconnectAttempts = 0;
+      }, STABLE_CONNECTION_MS);
     });
 
     ws.addEventListener('message', (event: MessageEvent) => {
@@ -368,13 +412,21 @@ export class DocumentFirehose {
       this.lastActivityAt = Date.now();
     });
 
-    ws.addEventListener('close', () => {
+    ws.addEventListener('close', (event: CloseEvent) => {
       // Ignore the close of a socket we've already superseded (intentional
       // reconnect/stop sets this.ws elsewhere first).
       if (this.ws !== ws) return;
       this.ws = null;
       this.connected = false;
       this.clearPingTimer();
+      this.clearStableTimer();
+      // Always say *why*. Jetstream reports rejected subscriber options as a
+      // normal (1000) close with the reason in the payload, so without this a
+      // fatal misconfiguration is indistinguishable from an idle disconnect.
+      console.warn(
+        `[Firehose] socket closed: code=${event?.code ?? 'n/a'} ` +
+          `reason=${JSON.stringify(event?.reason ?? '')}`
+      );
       this.flushCursor();
       this.scheduleReconnect();
     });
@@ -440,6 +492,13 @@ export class DocumentFirehose {
     }
   }
 
+  private clearStableTimer(): void {
+    if (this.stableTimer) {
+      clearTimeout(this.stableTimer);
+      this.stableTimer = null;
+    }
+  }
+
   private reconnect(): void {
     this.closeSocket();
     this.connect();
@@ -447,6 +506,7 @@ export class DocumentFirehose {
 
   private closeSocket(): void {
     this.clearPingTimer();
+    this.clearStableTimer();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

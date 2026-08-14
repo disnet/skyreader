@@ -209,6 +209,19 @@ interface PublicationThemeRecord {
   fonts?: PublicationFonts;
 }
 
+// AT Protocol DID syntax (https://atproto.com/specs/did). Deliberately the same
+// shape the upstream Go implementation enforces, because a value that only looks
+// like a DID ("did:" + anything) is accepted by our request path but *rejected*
+// by Jetstream — and Jetstream rejects the whole `options_update`, closing the
+// socket, so one bad row in the cache can take the firehose down entirely.
+const DID_RE = /^did:[a-z]+:[a-zA-Z0-9._:%-]*[a-zA-Z0-9._-]$/;
+const MAX_DID_LENGTH = 2048;
+
+/** True if `did` is a syntactically valid AT Protocol DID. */
+export function isValidDid(did: unknown): did is string {
+  return typeof did === 'string' && did.length <= MAX_DID_LENGTH && DID_RE.test(did);
+}
+
 /** Parse `at://did/collection/rkey` into its components, or null if malformed. */
 export function parseAtUri(uri: string): ParsedAtUri | null {
   if (!uri.startsWith('at://')) return null;
