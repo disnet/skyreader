@@ -8,6 +8,7 @@ import {
   fetchSingleDocument,
   filterByPublication,
   digestScope,
+  isValidDid,
   MAX_DOCUMENTS_PER_AUTHOR,
   type ProxyDocument,
 } from './standard-site';
@@ -2437,7 +2438,10 @@ export function createApp(db: Database, config: AppConfig) {
       authors.map(async (entry): Promise<DocumentResult> => {
         const { did, siteUri } = entry;
 
-        if (!did || typeof did !== 'string' || !did.startsWith('did:')) {
+        // Full DID syntax, not just the `did:` prefix: a near-miss would earn a
+        // document_cache row here and then poison the firehose's wantedDids,
+        // which Jetstream rejects wholesale.
+        if (!isValidDid(did)) {
           return {
             did: String(did),
             siteUri,
