@@ -96,6 +96,11 @@ Use a three-event threshold because `kind` arrives through a deliberately public
 endpoint and is therefore forgeable. A cluster still catches a broken deploy
 quickly without letting one anonymous POST page the operator.
 
+**Scope every Sentry rule to `environment: production`.** Staging and production
+share one project and are separated only by the `SENTRY_ENVIRONMENT` tag, so a rule
+without that condition pages you for an environment nobody is relying on. Staging
+errors stay visible in the issue stream; they just don't ring.
+
 ---
 
 ## 3. Secrets and variables
@@ -204,10 +209,20 @@ deploy workflow.
 
 ### `firehose_lag_high` (Sentry message, not an exception)
 
-**Means:** the Jetstream cursor is more than **15 minutes** behind real time. The
-poller is running — a dead poller shows up as a missed cron heartbeat or a deep
-health 503 — but it isn't keeping up, so shares and documents from follows are
-arriving late or not at all. Users see a social feed that's quietly frozen.
+**Means:** a Jetstream stream has gone more than **15 minutes** without being
+confirmed current — the poller has not managed a cycle that connected and then
+drained to idle. Either it can't keep up or it can't reach Jetstream at all, so
+shares and documents from follows are arriving late or not at all. Users see a
+social feed that's quietly frozen.
+
+Lag is measured from the last confirmed drain, **not from the cursor** (see
+`streamLagMs` in `backend/src/durable-objects/jetstream-poller.ts`). A cursor only
+moves when an event arrives, and each stream filters on one collection, so cursor
+age reports how busy the network is rather than how we're doing: staging showed a
+36h "lag" against a poller doing a clean 3s cycle every minute. It also went blind
+in the case that matters most, since an unreachable Jetstream and a quiet
+collection both leave the cursor untouched. The raw cursors are still on the DO's
+`/status` for debugging.
 
 Sent by the every-minute cron with a fixed fingerprint, so it's **one issue, not
 one per minute**: first crossing, then a reminder every 30 minutes while it lasts.
@@ -215,9 +230,10 @@ Recovery is silent by design — the admin's Firehose Lag tile goes green and
 `event = firehose_lag_recovered` appears in the logs.
 
 **Check:** the Ops panel (Firehose Lag, Last Poll, Poll Errors), then
-`event = jetstream_poll` in Workers Logs — `subscriptionsLagMs` climbing with
-`durationMs` at the 8s poll timeout means the stream is delivering faster than one
-cycle can drain. Jetstream itself being down looks like errors, not lag.
+`event = jetstream_poll` in Workers Logs. `durationMs` at the 8s poll timeout with
+events processing means the stream is delivering faster than one cycle can drain;
+a short `durationMs` with lag still climbing means cycles are ending without ever
+connecting, which is Jetstream being unreachable.
 **Fix:** usually none — a backlog after a Jetstream outage drains on its own; watch
 that the number is falling. If it's flat or growing over 30 minutes, redeploy the
 backend to recycle the DO (it resumes from its stored cursor, so nothing is lost).
