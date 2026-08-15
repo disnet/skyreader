@@ -20,8 +20,12 @@ import {
 } from '../services/backing/enable';
 import { hasIntegrationScopes } from './integrations';
 import { normalizeArticleUrl } from '../utils/url-normalize';
+import { chunkArray } from './reading';
 
 const COLLECTION = 'app.skyreader.feed.saved';
+
+// Conservative cap on bound parameters per D1 statement (see reading.ts).
+const BODIES_SQL_PARAMS = 90;
 
 interface SavedRow {
   id: number;
@@ -905,12 +909,14 @@ export async function handleGetSavedBodies(request: Request, env: Env): Promise<
   }
 
   const bodies: Record<string, string | null> = {};
-  if (rkeys.length > 0) {
-    const placeholders = rkeys.map(() => '?').join(',');
+  // D1 caps bound parameters per statement well below SQLite's 999, so a full
+  // MAX_RKEYS request has to go out as several IN (...) queries.
+  for (const chunk of chunkArray(rkeys, BODIES_SQL_PARAMS - 1)) {
+    const placeholders = chunk.map(() => '?').join(',');
     const result = await env.DB.prepare(
       `SELECT rkey, content FROM saved_articles WHERE user_did = ? AND rkey IN (${placeholders})`
     )
-      .bind(session.did, ...rkeys)
+      .bind(session.did, ...chunk)
       .all<{ rkey: string; content: string | null }>();
     for (const row of result.results) {
       bodies[row.rkey] = row.content;
