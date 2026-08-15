@@ -37,6 +37,29 @@ jobs:
       - name: Run type check
         run: npm run check
 
+  # The unit suite existed before CI ran it. Client error reporting is the first
+  # thing here whose whole job is to behave correctly on a page that's already
+  # broken — untested restraints (sampling, caps, offline) are no restraints.
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
   build:
     name: Build
     runs-on: ubuntu-latest

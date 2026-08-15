@@ -45,6 +45,19 @@ All stores use Svelte 5 runes (`.svelte.ts` files):
 | `db.ts`         | Dexie (IndexedDB) schema for offline storage       |
 | `sync-queue.ts` | Queue operations when offline, process when online |
 | `realtime.ts`   | WebSocket connection management                    |
+| `telemetry.ts`  | Sampled client error reports → our backend         |
+
+### Error reporting
+
+`hooks.client.ts` wires three channels — SvelteKit's `handleError`, `window.onerror`
+and `unhandledrejection` — into `reportClientError()`, which posts to the backend's
+`/api/telemetry/error`. No Sentry SDK ships in the bundle and no third party is
+contacted; the backend decides what reaches the error tracker.
+
+It is sampled at 10%, capped per page load, silent in dev and offline, and sends
+no query strings. The exception is `preload_recovery_failed` — the stale-chunk
+guard tripping twice, i.e. a deploy that bricked the PWA — which always sends.
+See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) §4c.
 
 ### Key Routes
 

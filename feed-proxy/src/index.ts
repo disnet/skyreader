@@ -1,10 +1,11 @@
 // Must be first: initializes Sentry before any other module loads so its global
 // error handlers and instrumentation are in place when the app boots.
-import { Sentry } from './instrument';
+import { reportError } from './instrument';
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'fs';
 import { createApp, initDatabase, cleanupCache } from './app';
 import { DocumentFirehose } from './jetstream';
+import { pingHeartbeat } from './heartbeat';
 
 // Config
 const PROXY_SECRET = process.env.PROXY_SECRET;
@@ -46,6 +47,9 @@ const WARM_CONCURRENCY = parseInt(process.env.WARM_CONCURRENCY || '8', 10);
 // Pre-warm Phase 5 article mention counts as feeds are warmed (extra
 // Constellation load); on by default in production, disable with WARM_MENTIONS=false.
 const WARM_MENTIONS_ENABLED = (process.env.WARM_MENTIONS ?? 'true') !== 'false';
+// Dead-man's switch for the warm loop (Healthchecks.io / Better Stack). Unset in
+// local dev, so the ping is a no-op there.
+const WARM_HEARTBEAT_URL = process.env.WARM_HEARTBEAT_URL;
 
 // /extract is the heaviest request (fetch + Defuddle DOM build). Cap concurrent
 // extractions so a burst of distinct heavy articles can't OOM the 512MB machine;
@@ -137,10 +141,14 @@ if (WARM_ENABLED) {
       .then(([feeds, docs]) => {
         if (feeds > 0) console.log(`[Proxy] Warmer refreshed ${feeds} feed(s)`);
         if (docs > 0) console.log(`[Proxy] Warmer refreshed ${docs} author document set(s)`);
+        // Dead-man's switch: only a tick that completed pings. A warmer that
+        // wedges without throwing produces no Sentry event and no error log —
+        // the missing heartbeat is the only thing that would ever notice.
+        void pingHeartbeat(WARM_HEARTBEAT_URL, 'warmer');
       })
       .catch((err) => {
         console.error('[Proxy] Warmer error:', err);
-        Sentry.captureException(err, { tags: { source: 'warmer' } });
+        reportError(err, { tags: { source: 'warmer' } });
       })
       .finally(() => {
         warmRunning = false;

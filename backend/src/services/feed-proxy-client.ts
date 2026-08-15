@@ -1,4 +1,11 @@
 import type { Env, FeedItem } from '../types';
+import { getRequestId } from '../utils/request-context';
+
+/** Stamp the in-flight request id on an outbound proxy call, when there is one. */
+function setRequestIdHeader(headers: Headers): void {
+  const requestId = getRequestId();
+  if (requestId) headers.set('X-Request-Id', requestId);
+}
 
 // Default ceiling on a single proxy round-trip. Generous because endpoints like
 // /extract legitimately fetch + parse large pages.
@@ -299,6 +306,10 @@ export class FeedProxyClient {
     const headers = new Headers(options.headers);
     headers.set('X-Proxy-Secret', this.proxySecret);
     headers.set('Content-Type', 'application/json');
+    // Cross-service correlation for the cost of one header: the proxy echoes this
+    // into its own logs and Sentry tags, so a slow or failing feed fetch can be
+    // followed from the Worker's request line into the proxy.
+    setRequestIdHeader(headers);
 
     // Hard ceiling on a single proxy round-trip. The proxy self-bounds each feed
     // in a batch (BATCH_INLINE_FETCH_BUDGET_MS), so under normal load it answers
@@ -598,6 +609,7 @@ export class FeedProxyClient {
     const headers = new Headers();
     headers.set('X-Proxy-Secret', this.proxySecret);
     headers.set('Content-Type', 'application/json');
+    setRequestIdHeader(headers);
 
     const response = await fetch(proxyUrl, {
       method: 'POST',

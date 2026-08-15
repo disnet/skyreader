@@ -175,6 +175,16 @@ These are **separate** from the main E2E suite (`playwright.pwa.config.ts`, spec
 - **What's covered:** `build-output.spec.ts` (the built SW precaches the shell as `/` not `index.html`, every precache URL exists, custom handlers present — fast disk-only checks), `service-worker.spec.ts` (registers → full precache → activated → controls; no-skew invariant), `offline.spec.ts` (offline reload + deep-link still render the shell; recovery overlay stays hidden).
 - **webkit caveat:** Playwright webkit throws an internal error when navigating with `setOffline(true)`, so the offline-navigation tests are chromium-only (guarded with `test.skip`). webkit still verifies SW lifecycle + healthy load. True installed iOS Safari PWA behavior still needs manual device testing.
 
+## Operations
+
+[`docs/RUNBOOK.md`](docs/RUNBOOK.md) is the operational source of truth: health
+endpoints, the external check list and thresholds, dead-man's-switch heartbeats,
+error-tracking setup, per-alert response procedures, the SLOs those thresholds
+answer to, and the alert-pruning ritual that keeps "silence means healthy" true.
+Read it before changing anything under `backend/src/observability/`, the health or
+telemetry routes, the client error reporter (`frontend/src/lib/services/telemetry.ts`),
+or a deploy workflow's smoke-check step.
+
 ## Architecture Overview
 
 ```
@@ -205,8 +215,9 @@ AT Protocol (Bluesky PDS) + Fly.io Feed Proxy + Jetstream Firehose
 - **Framework:** SvelteKit 2.x with Svelte 5 runes
 - **Runtime:** Cloudflare Pages
 - **Database:** D1 (SQLite) - reads the same database as the backend
-- **Features:** System metrics dashboard, user management, feed health monitoring, search/sort/pagination
-- **Pages:** Dashboard (metrics overview), Users (list + detail), Feeds (health + error tracking)
+- **Features:** Ops panel (cron liveness, firehose lag, proxy cache health) with 30-day trend
+  sparklines, system metrics, user management, feed health monitoring, search/sort/pagination
+- **Pages:** Dashboard (ops + metrics + trends), Users (list + detail), Feeds (health + error tracking)
 - **Deploy:** Cloudflare Pages via GitHub Actions (staging on push to main, production on release)
 
 ### Key Data Flow

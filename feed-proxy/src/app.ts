@@ -22,7 +22,7 @@ import type { LaneId } from './lanes';
 import { normalizeArticleUrl } from './url-normalize';
 import { Semaphore, OverloadError } from './semaphore';
 import { safeFetch } from './ssrf-guard';
-import { Sentry } from './instrument';
+import { reportError, VERSION } from './instrument';
 
 export interface AppConfig {
   proxySecret?: string;
@@ -1765,7 +1765,26 @@ export function createApp(db: Database, config: AppConfig) {
     return result;
   }
 
-  const app = new Hono();
+  const app = new Hono<{ Variables: { requestId: string } }>();
+
+  // Cross-service correlation. The backend Worker stamps X-Request-Id on every
+  // proxy call (backend/src/services/feed-proxy-client.ts); we adopt it, echo it
+  // back on the response, and tag anything we report with it — so one id follows
+  // a slow feed fetch from the Worker's request line into this process's error.
+  // A direct caller without the header still gets an id, just an unlinked one.
+  app.use('*', async (c, next) => {
+    const inbound = c.req.header('X-Request-Id');
+    const requestId =
+      inbound && /^[A-Za-z0-9_-]{8,64}$/.test(inbound) ? inbound : crypto.randomUUID();
+    c.set('requestId', requestId);
+    await next();
+    try {
+      c.header('X-Request-Id', requestId);
+    } catch {
+      // A handler that returns an upstream `Response` directly has immutable
+      // headers. Echoing the id is a convenience; never fail a good response for it.
+    }
+  });
 
   // Report any error that escapes a route handler to Sentry, then answer 500.
   // Routes handle their own expected failures (upstream 502s, 503 load-shed,
@@ -1773,19 +1792,26 @@ export function createApp(db: Database, config: AppConfig) {
   // a thrown bug, an unhandled rejection inside a handler — so it surfaces in
   // Sentry instead of vanishing into a bare 500. No-op send when Sentry is off.
   app.onError((err, c) => {
-    console.error(`[Proxy] Unhandled error on ${c.req.method} ${c.req.path}:`, err);
-    Sentry.captureException(err, {
-      tags: { source: 'route' },
+    const requestId = c.get('requestId');
+    console.error(
+      `[Proxy] Unhandled error on ${c.req.method} ${c.req.path} (requestId=${requestId}):`,
+      err
+    );
+    reportError(err, {
+      tags: { source: 'route', ...(requestId ? { requestId } : {}) },
       extra: { method: c.req.method, path: c.req.path },
     });
     return c.json({ error: 'Internal server error' }, 500);
   });
 
-  // Health check (no auth)
+  // Health check (no auth). `version` is the deployed commit — the post-deploy
+  // smoke check asserts it matches the SHA it just shipped, which proves the new
+  // code is serving rather than just that something answers.
   app.get('/health', (c) => {
     const cacheCount = db.query<{ count: number }, []>('SELECT COUNT(*) as count FROM cache').get();
     return c.json({
       status: 'ok',
+      version: VERSION,
       timestamp: Date.now(),
       cachedFeeds: cacheCount?.count || 0,
     });

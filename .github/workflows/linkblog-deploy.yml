@@ -72,6 +72,15 @@ jobs:
           command: pages deploy --project-name=skyreader-linkblog-staging --commit-dirty=true
           workingDirectory: linkblog-site
 
+      # The bare subdomain renders the "linkblogs live at /<handle>" placeholder;
+      # a 200 containing it means SSR is alive, not just that Pages answered.
+      - name: Smoke check staging
+        env:
+          SMOKE_URL: https://staging-linkblogs.skyreader.app
+        run: |
+          node ../scripts/smoke-check.mjs "$SMOKE_URL/_app/version.json" --version "$GITHUB_SHA"
+          node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains 'Skyreader'
+
   deploy-production:
     name: Deploy to Production
     needs: typecheck
@@ -102,3 +111,10 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy --project-name=skyreader-linkblog --branch=main --commit-dirty=true
           workingDirectory: linkblog-site
+
+      - name: Smoke check production
+        env:
+          SMOKE_URL: https://linkblogs.skyreader.app
+        run: |
+          node ../scripts/smoke-check.mjs "$SMOKE_URL/_app/version.json" --version "$GITHUB_SHA"
+          node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains 'Skyreader'
