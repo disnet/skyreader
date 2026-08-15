@@ -78,15 +78,11 @@ jobs:
           command: pages deploy .svelte-kit/cloudflare --project-name=skyreader-admin-staging --commit-dirty=true
           workingDirectory: admin
 
-      # Hits the pages.dev origin on purpose: if the admin is later put behind
-      # Cloudflare Access on a custom domain, an unauthenticated check there would
-      # follow the login redirect and go red for the wrong reason.
-      - name: Smoke check staging
-        env:
-          SMOKE_URL: https://skyreader-admin-staging.pages.dev
-        run: |
-          node ../scripts/smoke-check.mjs "$SMOKE_URL/_app/version.json" --version "$GITHUB_SHA"
-          node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains 'Skyreader Admin'
+      # No post-deploy smoke check: both admin pages.dev hostnames sit behind
+      # Cloudflare Access, so an unauthenticated probe follows the login redirect
+      # and gets a 200 HTML sign-in page — it can never see /_app/version.json.
+      # Don't re-add one without also giving CI a way through Access (a service
+      # token with a Service Auth policy, or a bypass policy on that one path).
 
   deploy-production:
     name: Deploy to Production
@@ -124,9 +120,4 @@ jobs:
           command: pages deploy .svelte-kit/cloudflare --project-name=skyreader-admin --branch=main --commit-dirty=true
           workingDirectory: admin
 
-      - name: Smoke check production
-        env:
-          SMOKE_URL: https://skyreader-admin.pages.dev
-        run: |
-          node ../scripts/smoke-check.mjs "$SMOKE_URL/_app/version.json" --version "$GITHUB_SHA"
-          node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains 'Skyreader Admin'
+      # No post-deploy smoke check — see the staging job for why.
