@@ -7,7 +7,7 @@ import type {
   ArticleMentionsResult,
 } from '../services/feed-proxy-client';
 import { resolveStandardSite } from '../utils/canonical-url';
-import { getReadKeys } from './reading';
+import { chunkArray, getReadKeys } from './reading';
 import {
   getLinkblogTargets,
   publicationUri as linkblogPublicationUri,
@@ -338,18 +338,21 @@ async function subscribedDocumentScopes(
 ): Promise<Map<string, Set<string>>> {
   const out = new Map<string, Set<string>>();
   if (dids.length === 0) return out;
-  const placeholders = dids.map(() => '?').join(',');
-  const rows = await env.DB.prepare(
-    `SELECT subject_did, feed_url FROM subscriptions_cache
-     WHERE user_did = ? AND source_type = 'atproto.documents' AND subject_did IN (${placeholders})`
-  )
-    .bind(userDid, ...dids)
-    .all<{ subject_did: string; feed_url: string | null }>();
-  for (const row of rows.results ?? []) {
-    if (!row.feed_url) continue;
-    const scopes = out.get(row.subject_did) ?? new Set<string>();
-    scopes.add(row.feed_url);
-    out.set(row.subject_did, scopes);
+  // Chunked: a heavy document subscriber can exceed D1's bound-parameter cap.
+  for (const chunk of chunkArray(dids, 89)) {
+    const placeholders = chunk.map(() => '?').join(',');
+    const rows = await env.DB.prepare(
+      `SELECT subject_did, feed_url FROM subscriptions_cache
+       WHERE user_did = ? AND source_type = 'atproto.documents' AND subject_did IN (${placeholders})`
+    )
+      .bind(userDid, ...chunk)
+      .all<{ subject_did: string; feed_url: string | null }>();
+    for (const row of rows.results ?? []) {
+      if (!row.feed_url) continue;
+      const scopes = out.get(row.subject_did) ?? new Set<string>();
+      scopes.add(row.feed_url);
+      out.set(row.subject_did, scopes);
+    }
   }
   return out;
 }
