@@ -61,6 +61,11 @@ proxy just GET whatever URL you give them.
 | Feed proxy    | `https://skyreader-feed-proxy.fly.dev/health` | 60s      | 2 consecutive failures |
 | Admin         | `https://skyreader-admin.pages.dev`           | 5 min    | 2 consecutive failures |
 
+Read the admin row narrowly: that host is behind Cloudflare Access, so an
+unauthenticated probe gets a `200` sign-in page and reports healthy even when the
+app itself is broken. It catches Cloudflare being down and nothing else. Give the
+prober an Access service token if you want it to mean more.
+
 The deep check needs the header `X-Health-Secret: <HEALTH_CHECK_SECRET>`. It
 returns **503 with a per-dependency breakdown** when anything is down, so it
 alerts on its own status code — no response-body assertion needed.
@@ -380,7 +385,7 @@ shape of most PWA weirdness, and a reload fixes it.
 
 ## 5. Post-deploy smoke checks
 
-Every deploy workflow ends with `scripts/smoke-check.mjs`:
+Every deploy workflow except the admin's ends with `scripts/smoke-check.mjs`:
 
 - Workers/proxy: asserts `200` **and** `version === <the SHA just deployed>` on the
   health endpoint. This proves the new code is serving — not merely that something
@@ -393,6 +398,16 @@ Every deploy workflow ends with `scripts/smoke-check.mjs`:
 
 It retries 6× at 10s intervals (`SMOKE_ATTEMPTS` / `SMOKE_DELAY_SECONDS` to
 override) to absorb propagation delay.
+
+**The admin is the exception.** Both `skyreader-admin.pages.dev` and
+`skyreader-admin-staging.pages.dev` are behind Cloudflare Access, which answers an
+unauthenticated probe with a redirect to a sign-in page — a `200` full of HTML, so
+the check reports "version is undefined" no matter how healthy the deploy is. Its
+smoke steps were removed rather than made to lie. A green admin deploy therefore
+means "wrangler accepted the upload", not "staging is serving this commit"; verify
+by hand in the browser after an admin change that matters. To restore a real check,
+give CI a way through Access first (a service token plus a Service Auth policy, or
+a bypass policy scoped to `/_app/version.json`).
 
 Run it by hand during an incident:
 
