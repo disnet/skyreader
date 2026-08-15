@@ -349,8 +349,8 @@ Key tables:
 | `feed_metadata`               | Feed caching metadata (ETags, errors, subscriber count, shard_id)                |
 | `feed_cache`                  | D1-based parsed feed cache                                                       |
 | `feed_items`                  | Individual feed items for efficient querying                                     |
-| `documents`                   | `site.standard.document` records from followed users                             |
-| `publications_cache`          | Publication metadata cache (24h TTL)                                             |
+| `documents`                   | orphaned — documents moved to on-demand proxy fetch; table left in place         |
+| `publications_cache`          | orphaned — the publication cache moved to the feed proxy                         |
 | `social_read_positions_cache` | Unified social read tracking (shares + documents)                                |
 | `item_labels_cache`           | Unified labels: read/starred/archived/tag: for all item types                    |
 | `saved_articles`              | Saved/bookmarked articles                                                        |

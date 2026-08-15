@@ -2,7 +2,6 @@ import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   decideLagAlert,
-  worstLagMs,
   readSystemStatus,
   writeSystemStatus,
   recordPollerStatus,
@@ -38,10 +37,9 @@ function envWithPollerStatus(status: Record<string, unknown>): Env {
 }
 
 const pollerStatusBody = (lagMs: number | null) => ({
-  lag: { subscriptionsMs: lagMs, documentsMs: lagMs === null ? null : Math.max(0, lagMs - 1000) },
+  lag: { subscriptionsMs: lagMs },
   lastStats: {
     subscriptions: { processed: 3, errors: 1 },
-    documents: { processed: 2, errors: 0 },
     duration: 4200,
     lastPollAt: 1_700_000_000_000,
   },
@@ -79,13 +77,6 @@ describe('system_status storage', () => {
 });
 
 describe('firehose lag alerting', () => {
-  it('takes the worse of the two stream lags, ignoring a stream with no cursor', () => {
-    expect(worstLagMs(1000, 5000)).toBe(5000);
-    expect(worstLagMs(null, 5000)).toBe(5000);
-    expect(worstLagMs(1000, null)).toBe(1000);
-    expect(worstLagMs(null, null)).toBeNull();
-  });
-
   it('does not alert on unknown lag — a poller with no cursor yet is not late', () => {
     expect(decideLagAlert(null, null, 1000)).toEqual({
       alert: false,
@@ -126,9 +117,7 @@ describe('recordPollerStatus', () => {
     const value = await recordPollerStatus(envWithPollerStatus(pollerStatusBody(30_000)), 5000);
 
     expect(value.lagMs).toBe(30_000);
-    expect(value.subscriptionsLagMs).toBe(30_000);
-    expect(value.documentsLagMs).toBe(29_000);
-    expect(value.processed).toBe(5);
+    expect(value.processed).toBe(3);
     expect(value.errors).toBe(1);
     expect(value.alarmScheduled).toBe(true);
     expect(value.lagAlertAt).toBeNull();

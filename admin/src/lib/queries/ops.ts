@@ -10,8 +10,6 @@
 
 export interface PollerStatusValue {
   lagMs: number | null;
-  subscriptionsLagMs: number | null;
-  documentsLagMs: number | null;
   lastPollAt: number | null;
   lastPollDurationMs: number | null;
   processed: number;

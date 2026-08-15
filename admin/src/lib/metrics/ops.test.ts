@@ -23,8 +23,6 @@ const status = (overrides: Partial<OpsStatus> = {}): OpsStatus => ({
     updatedAt: NOW - 30 * 1000,
     value: {
       lagMs: 20_000,
-      subscriptionsLagMs: 20_000,
-      documentsLagMs: 15_000,
       lastPollAt: NOW - 45 * 1000,
       lastPollDurationMs: 4200,
       processed: 12,

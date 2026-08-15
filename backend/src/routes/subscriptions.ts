@@ -1,7 +1,6 @@
 import type { Env, Session } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
 import { warmProxyCache, warmProxyCacheBatch } from './feeds-v2';
-import { backfillDocumentsForUser } from './social';
 import { getUserSettings } from './settings';
 import { pushSubscriptionToPds, deleteSubscriptionFromPds } from '../services/subscription-sync';
 import {
@@ -559,12 +558,6 @@ export async function ensureLocalDocumentSubscription(
     .bind(session.did, recordUri, publicationUri, title, siteUrl, subjectDid, active)
     .run();
 
-  // Pull the author's existing link posts so the feed isn't empty on first open.
-  // Parked feeds aren't serviced or shown, so don't spend a backfill on them.
-  if (active) {
-    ctx.waitUntil(backfillDocumentsForUser(env, subjectDid));
-  }
-
   // Mirror to the user's PDS subscription list when Atmospheric sync is on, so the
   // reader follow behaves exactly like an in-app one (best-effort, background).
   const settings = await getUserSettings(env, session.did);
@@ -821,11 +814,6 @@ export async function handleCreateSubscription(
       } else {
         console.error(`Failed to warm cache for ${feedUrl}: ${cacheResult.error}`);
       }
-    }
-
-    // Backfill content for AT Proto subscriptions
-    if (subjectDid && sourceType === 'atproto.documents') {
-      ctx.waitUntil(backfillDocumentsForUser(env, subjectDid));
     }
 
     // Push to PDS in background if sync is enabled (fire and forget)

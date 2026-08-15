@@ -47,7 +47,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | ----------------------------- | ----------------------------------------------------- |
 | `src/routes/auth.ts`          | OAuth flow (login, callback, logout, client metadata) |
 | `src/routes/feeds-v2.ts`      | RSS fetching via Fly.io proxy                         |
-| `src/routes/social.ts`        | Social feed, popular, grouped, detect-content         |
+| `src/routes/social.ts`        | Content detection for a DID (detect-content)          |
 | `src/routes/shares.ts`        | User shares CRUD (with PDS sync)                      |
 | `src/routes/subscriptions.ts` | Subscription CRUD (with PDS sync)                     |
 | `src/routes/records.ts`       | PDS record listing                                    |
@@ -117,9 +117,9 @@ procedures: [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 
 ### Durable Objects
 
-| File                                      | Purpose                                               |
-| ----------------------------------------- | ----------------------------------------------------- |
-| `src/durable-objects/jetstream-poller.ts` | Long-running Jetstream firehose connection via alarms |
+| File                                      | Purpose                                                           |
+| ----------------------------------------- | ----------------------------------------------------------------- |
+| `src/durable-objects/jetstream-poller.ts` | Jetstream firehose for `app.skyreader.feed.subscription` (alarms) |
 
 ### Storage
 
@@ -134,7 +134,11 @@ Key tables:
 - `feed_metadata` - Feed caching metadata (ETags, errors, shard_id)
 - `feed_cache` - Parsed feed cache
 - `feed_items` - Individual feed items
-- `documents` - `site.standard.document` records from follows
+- `documents` - orphaned. Nothing reads or writes it since documents moved to
+  on-demand proxy fetch; the table is left in place (as `shares` was) rather than
+  dropped
+- `publications_cache` - orphaned too. The publication metadata cache it backed
+  now lives in the feed proxy (`feed-proxy/src/standard-site.ts`)
 - `item_labels_cache` - Unified labels (read/starred/archived/tags)
 - `saved_articles` - Saved/bookmarked articles
 - `social_read_positions_cache` - Legacy social read tracking (superseded; document

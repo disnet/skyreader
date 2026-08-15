@@ -1,31 +1,43 @@
 import { describe, it, expect } from 'vitest';
 import { streamLagMs } from '../src/durable-objects/jetstream-poller';
 
-// The firehose lag metric. Cursor age was the original measure and it reported a
-// 36h lag on a staging poller that was polling every minute, draining in ~3s, with
-// zero errors — because both streams filter on one collection, and a collection
-// nobody writes to leaves its cursor frozen. Lag is now time since the stream was
-// last confirmed drained, so it measures us rather than the network's activity.
+// The firehose lag metric: time since the most recent proof the stream was
+// current, from either a drain or a fresh event. Both real traffic patterns broke
+// a single-signal version of this. Cursor age alone reported a 36h lag on a
+// staging poller doing clean 3s cycles, because nobody had written the collection
+// in 36h. Drains alone reported climbing lag on a production stream busy enough
+// that no 2s gap ever landed inside the 8s poll window.
 
 const NOW = 1_700_000_000_000;
 const usAt = (ms: number) => (ms * 1000).toString();
 
 describe('streamLagMs', () => {
-  it('measures from the last confirmed drain, not the cursor', () => {
-    // The staging case: cursor 36h old, but the stream drained a minute ago.
+  it('trusts a recent drain over a frozen cursor', () => {
+    // Staging: nobody wrote the collection in 36h, but the stream drained a minute
+    // ago, so it is current and the cursor's age means nothing.
     const cursor = usAt(NOW - 36 * 60 * 60 * 1000);
     expect(streamLagMs(NOW - 60_000, cursor, NOW)).toBe(60_000);
   });
 
-  it('climbs while a stream fails to drain', () => {
-    // Poll timeouts and connection failures never mark caught-up, so this is what
-    // a poller that genuinely cannot keep up looks like: past the 15m threshold.
-    expect(streamLagMs(NOW - 20 * 60_000, usAt(NOW), NOW)).toBe(20 * 60_000);
+  it('trusts a fresh cursor over a stale drain', () => {
+    // Production: a collection busy enough that no 2s gap falls inside the 8s poll
+    // window never exits idle, so it has no recent drain while being fully caught
+    // up. Without this, lag climbs from the moment of deploy.
+    expect(streamLagMs(NOW - 6 * 60 * 60 * 1000, usAt(NOW - 500), NOW)).toBe(500);
   });
 
-  it('falls back to cursor age before the first drain', () => {
+  it('climbs only when neither signal is current', () => {
+    // Genuinely behind: draining a backlog, so the cursor sits on the old events
+    // being worked through and cycles end on the poll timeout, never idle.
+    expect(streamLagMs(NOW - 20 * 60_000, usAt(NOW - 18 * 60_000), NOW)).toBe(18 * 60_000);
+    // Jetstream unreachable: no events and no drains, both climbing together.
+    expect(streamLagMs(NOW - 30 * 60_000, usAt(NOW - 30 * 60_000), NOW)).toBe(30 * 60_000);
+  });
+
+  it('uses whichever signal exists when only one does', () => {
     expect(streamLagMs(null, usAt(NOW - 5_000), NOW)).toBe(5_000);
     expect(streamLagMs(undefined, usAt(NOW - 5_000), NOW)).toBe(5_000);
+    expect(streamLagMs(NOW - 5_000, null, NOW)).toBe(5_000);
   });
 
   it('reports unknown rather than zero when there is nothing to measure', () => {

@@ -209,20 +209,28 @@ deploy workflow.
 
 ### `firehose_lag_high` (Sentry message, not an exception)
 
-**Means:** a Jetstream stream has gone more than **15 minutes** without being
-confirmed current — the poller has not managed a cycle that connected and then
-drained to idle. Either it can't keep up or it can't reach Jetstream at all, so
-shares and documents from follows are arriving late or not at all. Users see a
-social feed that's quietly frozen.
+**Means:** the poller's `app.skyreader.feed.subscription` stream has gone more than
+**15 minutes** without being confirmed current. Either it can't keep up or it can't
+reach Jetstream at all, so subscription records written on a user's PDS (another
+device, another Atmospheric app) stop reaching Skyreader. Their feed list quietly
+stops converging.
 
-Lag is measured from the last confirmed drain, **not from the cursor** (see
-`streamLagMs` in `backend/src/durable-objects/jetstream-poller.ts`). A cursor only
-moves when an event arrives, and each stream filters on one collection, so cursor
-age reports how busy the network is rather than how we're doing: staging showed a
-36h "lag" against a poller doing a clean 3s cycle every minute. It also went blind
-in the case that matters most, since an unreachable Jetstream and a quiet
-collection both leave the cursor untouched. The raw cursors are still on the DO's
-`/status` for debugging.
+This is the poller's **only** stream. The `site.standard.document` stream that used
+to run beside it was removed when documents moved to on-demand proxy fetch
+(`fetchDocumentsBatch` in `backend/src/routes/feeds-v2.ts`); the alert that surfaced
+its 32h backlog is what found the leftover.
+
+Lag is time since the most recent **proof** the stream was current, from either of
+two one-sided signals (see `streamLagMs` in
+`backend/src/durable-objects/jetstream-poller.ts`): a cycle that drained to idle,
+or a cursor holding a recent event. Whichever is more recent wins, because each
+signal is blind to a traffic pattern the other catches. Cursor age alone measures
+how busy the collection is — staging showed a 36h "lag" against a poller doing
+clean 3s cycles, since nobody had written that collection in 36h. Drains alone
+measure how bursty it is — a collection busy enough that no 2s gap lands inside the
+8s poll window never exits idle while being perfectly caught up. A stream that is
+genuinely behind, or a Jetstream that can't be reached, has neither signal, and the
+number climbs. The raw cursors stay on the DO's `/status` for debugging.
 
 Sent by the every-minute cron with a fixed fingerprint, so it's **one issue, not
 one per minute**: first crossing, then a reminder every 30 minutes while it lasts.
@@ -233,7 +241,9 @@ Recovery is silent by design — the admin's Firehose Lag tile goes green and
 `event = jetstream_poll` in Workers Logs. `durationMs` at the 8s poll timeout with
 events processing means the stream is delivering faster than one cycle can drain;
 a short `durationMs` with lag still climbing means cycles are ending without ever
-connecting, which is Jetstream being unreachable.
+connecting, which is Jetstream being unreachable. Cross-check the poller's
+`/status` cursors: a cursor pinned in the past while events process is a real
+backlog, and one at the live edge points at the drain signal instead.
 **Fix:** usually none — a backlog after a Jetstream outage drains on its own; watch
 that the number is falling. If it's flat or growing over 30 minutes, redeploy the
 backend to recycle the DO (it resumes from its stored cursor, so nothing is lost).

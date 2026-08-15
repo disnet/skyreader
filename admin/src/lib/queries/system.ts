@@ -3,13 +3,15 @@ export interface TableCount {
   count: number;
 }
 
+// Only tables something still writes. An orphaned one (`documents`,
+// `publications_cache`, `shares`) shows a frozen number next to live ones, which
+// reads as a working subsystem during an incident.
 export async function getTableRowCounts(db: D1Database): Promise<TableCount[]> {
   const tables = [
     'users',
     'sessions',
     'subscriptions_cache',
     'item_labels_cache',
-    'documents',
     'feed_metadata',
     'feed_items',
     'feed_cache',
