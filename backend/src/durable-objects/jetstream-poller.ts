@@ -60,6 +60,60 @@ const ALARM_INTERVAL_MS = 60000; // 60 seconds between polls
 // enough that a genuinely dead poller is caught within a couple of minutes.
 export const ALARM_ACTIVE_WINDOW_MS = 2 * ALARM_INTERVAL_MS;
 
+type StreamName = 'subscriptions' | 'documents';
+
+/** Why a poll cycle stopped reading. Only `idle` means "Jetstream had nothing left". */
+type PollExit = 'idle' | 'poll-timeout' | 'closed' | 'socket-error';
+
+const CURSOR_KEY = {
+  subscriptions: 'cursor_subscriptions',
+  documents: 'cursor_documents',
+} as const;
+
+// When each stream was last *confirmed current* — a cycle that opened the socket
+// and then went IDLE_TIMEOUT_MS without a commit, which is Jetstream saying it has
+// nothing more for us.
+const CAUGHT_UP_KEY = {
+  subscriptions: 'caughtup_subscriptions',
+  documents: 'caughtup_documents',
+} as const;
+
+/**
+ * How far behind the stream is, in ms.
+ *
+ * Cursor age is the intuitive measure and it is wrong here. A cursor only moves
+ * when an event arrives, and both streams filter on a single collection, so a
+ * quiet collection freezes its cursor while the poller is perfectly healthy —
+ * staging sat at a 36h "lag" against a poller that was polling every minute,
+ * draining to idle in ~3s, with zero errors. Alerting on that measures how busy
+ * the network is, not whether we are keeping up.
+ *
+ * So lag is time since the stream was last confirmed current. An idle exit proves
+ * we were current at that instant (the file's own IDLE_TIMEOUT_MS comment has said
+ * "caught up" all along); a cycle that hits the poll timeout while events are
+ * still arriving, or that never opens the socket at all, proves nothing and lets
+ * this number keep climbing until it crosses the alert threshold. That also fixes
+ * a gap in the old measure: with a rare collection, Jetstream being unreachable
+ * produced no lag signal whatsoever, because a cursor that never advances looks
+ * identical whether the stream is quiet or gone.
+ *
+ * Cursor age remains the fallback for a stream that has never once drained, and
+ * the raw cursors stay on /status for debugging. Null means "unknown", not "zero".
+ */
+export function streamLagMs(
+  caughtUpAt: number | null | undefined,
+  cursor: string | null | undefined,
+  now: number
+): number | null {
+  if (typeof caughtUpAt === 'number' && Number.isFinite(caughtUpAt) && caughtUpAt > 0) {
+    return Math.max(0, now - caughtUpAt);
+  }
+  if (!cursor) return null;
+  const cursorUs = Number(cursor);
+  if (!Number.isFinite(cursorUs) || cursorUs <= 0) return null;
+  return Math.max(0, now - Math.round(cursorUs / 1000));
+}
+
 class JetstreamPollerBase implements DurableObject {
   private state: DurableObjectState;
   private env: Env;
@@ -118,8 +172,8 @@ class JetstreamPollerBase implements DurableObject {
         this.state.storage.get<PollStats>('last_stats'),
         this.state.storage.getAlarm(),
         this.state.storage.get<number>('last_alarm_start'),
-        this.cursorLagMs('cursor_subscriptions'),
-        this.cursorLagMs('cursor_documents'),
+        this.streamLag('subscriptions'),
+        this.streamLag('documents'),
       ]);
 
       return new Response(
@@ -128,10 +182,9 @@ class JetstreamPollerBase implements DurableObject {
             subscriptions: subscriptionsCursor,
             documents: documentsCursor,
           },
-          // Lag is derived here rather than by each caller: turning a cursor into
-          // a number of milliseconds behind real time takes knowing that Jetstream
-          // cursors are microsecond timestamps, and that knowledge should live in
-          // exactly one place. Null means "no cursor yet", not "zero lag".
+          // Lag is derived here rather than by each caller: knowing what "behind"
+          // means for a filtered Jetstream stream (see `streamLagMs`) should live
+          // in exactly one place. Null means "unknown", not "zero lag".
           lag: {
             subscriptionsMs: subscriptionsLagMs,
             documentsMs: documentsLagMs,
@@ -205,13 +258,12 @@ class JetstreamPollerBase implements DurableObject {
         console.error('[JetstreamPoller] Error saving stats:', error);
       }
 
-      // Jetstream cursors are microsecond timestamps, so `now - cursor` is how far
-      // behind the firehose we are. Logging it every cycle turns "the firehose is
-      // stalled" from something you notice when shares stop appearing into a
-      // number with a history.
+      // Time since each stream last drained to idle. Logging it every cycle turns
+      // "the firehose is stalled" from something you notice when shares stop
+      // appearing into a number with a history.
       const [subscriptionsLagMs, documentsLagMs] = await Promise.all([
-        this.cursorLagMs('cursor_subscriptions'),
-        this.cursorLagMs('cursor_documents'),
+        this.streamLag('subscriptions'),
+        this.streamLag('documents'),
       ]);
 
       log.info('jetstream_poll', {
@@ -241,20 +293,31 @@ class JetstreamPollerBase implements DurableObject {
   }
 
   /**
-   * How far behind real time the stored cursor is, in ms. Null when the stream
-   * has no cursor yet (first ever poll) — that's "unknown", not "zero lag".
+   * How far behind a stream is, in ms. See `streamLagMs` for why this is measured
+   * from the last confirmed drain rather than from the cursor.
    */
-  private async cursorLagMs(
-    key: 'cursor_subscriptions' | 'cursor_documents'
-  ): Promise<number | null> {
+  private async streamLag(stream: StreamName): Promise<number | null> {
     try {
-      const cursor = await this.state.storage.get<string>(key);
-      if (!cursor) return null;
-      const cursorUs = Number(cursor);
-      if (!Number.isFinite(cursorUs) || cursorUs <= 0) return null;
-      return Math.max(0, Date.now() - Math.round(cursorUs / 1000));
+      const [caughtUpAt, cursor] = await Promise.all([
+        this.state.storage.get<number>(CAUGHT_UP_KEY[stream]),
+        this.state.storage.get<string>(CURSOR_KEY[stream]),
+      ]);
+      return streamLagMs(caughtUpAt, cursor, Date.now());
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Record that a stream is current as of now. Best effort: losing this write
+   * costs one cycle's worth of freshness in a metric, and must never take down a
+   * poll cycle that otherwise succeeded.
+   */
+  private async markCaughtUp(stream: StreamName): Promise<void> {
+    try {
+      await this.state.storage.put(CAUGHT_UP_KEY[stream], Date.now());
+    } catch (error) {
+      console.error(`[JetstreamPoller] Error recording ${stream} caught-up time:`, error);
     }
   }
 
@@ -286,20 +349,23 @@ class JetstreamPollerBase implements DurableObject {
       let errors = 0;
       let lastEventTime = Date.now();
       let cleanedUp = false;
+      let opened = false;
 
-      const cleanupWithCatch = () =>
-        cleanup().catch((e) => console.error('[JetstreamPoller] subscriptions cleanup error:', e));
+      const cleanupWithCatch = (exit: PollExit) =>
+        cleanup(exit).catch((e) =>
+          console.error('[JetstreamPoller] subscriptions cleanup error:', e)
+        );
 
-      const pollTimeout = setTimeout(cleanupWithCatch, POLL_TIMEOUT_MS);
+      const pollTimeout = setTimeout(() => cleanupWithCatch('poll-timeout'), POLL_TIMEOUT_MS);
       const idleCheck = setInterval(() => {
         if (Date.now() - lastEventTime > IDLE_TIMEOUT_MS) {
-          cleanupWithCatch();
+          cleanupWithCatch('idle');
         }
       }, 500);
 
       let ws: WebSocket | null = null;
 
-      const cleanup = async () => {
+      const cleanup = async (exit: PollExit) => {
         if (cleanedUp) return;
         cleanedUp = true;
 
@@ -316,6 +382,10 @@ class JetstreamPollerBase implements DurableObject {
         }
 
         await this.state.storage.put('cursor_subscriptions', lastCursor);
+        // `opened` matters as much as the exit reason: the idle check starts
+        // running before the socket connects, so a Jetstream that never answers
+        // would otherwise idle out and be recorded as "caught up".
+        if (opened && exit === 'idle') await this.markCaughtUp('subscriptions');
         resolve({ processed, errors });
       };
 
@@ -323,6 +393,7 @@ class JetstreamPollerBase implements DurableObject {
         ws = new WebSocket(wsUrl.toString());
 
         ws.addEventListener('open', () => {
+          opened = true;
           lastEventTime = Date.now();
         });
 
@@ -351,10 +422,10 @@ class JetstreamPollerBase implements DurableObject {
           }
         });
 
-        ws.addEventListener('close', cleanupWithCatch);
-        ws.addEventListener('error', cleanupWithCatch);
+        ws.addEventListener('close', () => cleanupWithCatch('closed'));
+        ws.addEventListener('error', () => cleanupWithCatch('socket-error'));
       } catch {
-        cleanupWithCatch();
+        cleanupWithCatch('socket-error');
       }
     });
   }
@@ -422,6 +493,10 @@ class JetstreamPollerBase implements DurableObject {
 
     if (followedDids.size === 0) {
       console.log('[JetstreamPoller] No followed users to poll documents for');
+      // A stream with nothing to watch is current by definition. Without this the
+      // lag would climb forever on an instance that simply has no follows yet —
+      // which is every fresh staging database.
+      await this.markCaughtUp('documents');
       return { processed: 0, errors: 0 };
     }
 
@@ -443,20 +518,21 @@ class JetstreamPollerBase implements DurableObject {
       let errors = 0;
       let lastEventTime = Date.now();
       let cleanedUp = false;
+      let opened = false;
 
-      const cleanupWithCatch = () =>
-        cleanup().catch((e) => console.error('[JetstreamPoller] documents cleanup error:', e));
+      const cleanupWithCatch = (exit: PollExit) =>
+        cleanup(exit).catch((e) => console.error('[JetstreamPoller] documents cleanup error:', e));
 
-      const pollTimeout = setTimeout(cleanupWithCatch, POLL_TIMEOUT_MS);
+      const pollTimeout = setTimeout(() => cleanupWithCatch('poll-timeout'), POLL_TIMEOUT_MS);
       const idleCheck = setInterval(() => {
         if (Date.now() - lastEventTime > IDLE_TIMEOUT_MS) {
-          cleanupWithCatch();
+          cleanupWithCatch('idle');
         }
       }, 500);
 
       let ws: WebSocket | null = null;
 
-      const cleanup = async () => {
+      const cleanup = async (exit: PollExit) => {
         if (cleanedUp) return;
         cleanedUp = true;
 
@@ -473,6 +549,9 @@ class JetstreamPollerBase implements DurableObject {
         }
 
         await this.state.storage.put('cursor_documents', lastCursor);
+        // See the same guard in pollSubscriptionsStream: only a cycle that
+        // actually connected and then went quiet proves we are current.
+        if (opened && exit === 'idle') await this.markCaughtUp('documents');
         resolve({ processed, errors });
       };
 
@@ -480,6 +559,7 @@ class JetstreamPollerBase implements DurableObject {
         ws = new WebSocket(wsUrl.toString());
 
         ws.addEventListener('open', () => {
+          opened = true;
           lastEventTime = Date.now();
         });
 
@@ -505,10 +585,10 @@ class JetstreamPollerBase implements DurableObject {
           }
         });
 
-        ws.addEventListener('close', cleanupWithCatch);
-        ws.addEventListener('error', cleanupWithCatch);
+        ws.addEventListener('close', () => cleanupWithCatch('closed'));
+        ws.addEventListener('error', () => cleanupWithCatch('socket-error'));
       } catch {
-        cleanupWithCatch();
+        cleanupWithCatch('socket-error');
       }
     });
   }
