@@ -38,7 +38,6 @@ import {
   writeAtmosphereSubscription,
 } from './atmosphere-subscription';
 import { pushSubscriptionToPds, deleteSubscriptionFromPds } from './subscription-sync';
-import { backfillDocumentsForUser } from '../routes/social';
 
 const SUBSCRIPTION_NSID = 'app.skyreader.feed.subscription';
 
@@ -49,12 +48,6 @@ const MAX_LIST_PAGES = 20;
 // per run to stay well under the Worker subrequest budget. When more remain,
 // `hasMore` is set so the caller loops — exactly like syncSubscriptions batching.
 const MAX_OPS = 20;
-
-// Cap how many author feeds we eagerly warm per run. Each backfill fetches up to
-// ~10 pages plus per-document URL resolution, all charged to this request's
-// subrequest budget; firing one per import (up to MAX_OPS) could blow it. The
-// rest load lazily on first open — the warning surfaces what was deferred.
-const MAX_BACKFILLS = 8;
 
 export interface AtmosphereSyncResult {
   success: boolean;
@@ -224,9 +217,7 @@ export async function reconcileAtmosphereSubscriptions(
     let totalCount = totalSubsRow?.count || 0;
     const maxMirrored = limits.maxMirroredSubscriptions;
 
-    // Step 3: import graph edges that aren't local yet. Authors to warm are
-    // collected (deduped) and backfilled after the loop, bounded by MAX_BACKFILLS.
-    const authorsToBackfill = new Set<string>();
+    // Step 3: import graph edges that aren't local yet.
     let parkedOnImport = 0;
     let droppedOverCap = 0;
     for (const pubUri of graphPubs) {
@@ -290,8 +281,6 @@ export async function reconcileAtmosphereSubscriptions(
 
       totalCount++;
       if (active) {
-        // Only warm feeds we'll actually show.
-        authorsToBackfill.add(meta.subjectDid);
         liveCount++;
       } else {
         parkedOnImport++;
@@ -316,20 +305,9 @@ export async function reconcileAtmosphereSubscriptions(
       );
     }
 
-    // Warm the imported feeds so they aren't empty on first open — deduped by
-    // author (one backfill covers all of an author's publications) and capped so
-    // a large first import can't exhaust the request's subrequest budget.
-    let backfilled = 0;
-    for (const did of authorsToBackfill) {
-      if (backfilled >= MAX_BACKFILLS) break;
-      ctx.waitUntil(backfillDocumentsForUser(env, did));
-      backfilled++;
-    }
-    if (authorsToBackfill.size > backfilled) {
-      result.warnings.push(
-        `Deferred feed warm-up for ${authorsToBackfill.size - backfilled} author(s); their posts load on first open.`
-      );
-    }
+    // No backfill step: an imported follow's posts are fetched from the proxy on
+    // first open (POST /api/v2/documents/batch in routes/feeds-v2.ts), so there is
+    // nothing to warm ahead of time.
 
     // Step 4: reconcile each local pub-sub against the graph.
     for (const [pubUri, sub] of localByPub) {

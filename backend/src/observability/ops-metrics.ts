@@ -51,10 +51,8 @@ export interface StatusRow<T> {
 }
 
 export interface PollerStatusValue {
-  /** The worse of the two streams — the number that means "how far behind are we". */
+  /** How far behind the firehose is — see `streamLagMs` in the poller. */
   lagMs: number | null;
-  subscriptionsLagMs: number | null;
-  documentsLagMs: number | null;
   lastPollAt: number | null;
   lastPollDurationMs: number | null;
   processed: number;
@@ -117,22 +115,14 @@ export async function readSystemStatus<T>(
 }
 
 interface PollerStatusResponse {
-  lag?: { subscriptionsMs?: number | null; documentsMs?: number | null };
+  lag?: { subscriptionsMs?: number | null };
   lastStats?: {
     subscriptions?: { processed?: number; errors?: number };
-    documents?: { processed?: number; errors?: number };
     duration?: number;
     lastPollAt?: number;
   };
   nextPoll?: number | null;
   isRunning?: boolean;
-}
-
-/** The worse of two lags, ignoring streams that have no cursor yet. */
-export function worstLagMs(a: number | null, b: number | null): number | null {
-  if (a === null) return b;
-  if (b === null) return a;
-  return Math.max(a, b);
 }
 
 export interface LagAlertDecision {
@@ -178,24 +168,17 @@ export async function recordPollerStatus(env: Env, now = Date.now()): Promise<Po
   }
   const status = (await response.json()) as PollerStatusResponse;
 
-  const subscriptionsLagMs = status.lag?.subscriptionsMs ?? null;
-  const documentsLagMs = status.lag?.documentsMs ?? null;
-  const lagMs = worstLagMs(subscriptionsLagMs, documentsLagMs);
+  const lagMs = status.lag?.subscriptionsMs ?? null;
 
   const previous = await readSystemStatus<PollerStatusValue>(env, 'poller_status');
   const decision = decideLagAlert(lagMs, previous?.value.lagAlertAt ?? null, now);
 
   const value: PollerStatusValue = {
     lagMs,
-    subscriptionsLagMs,
-    documentsLagMs,
     lastPollAt: status.lastStats?.lastPollAt ?? null,
     lastPollDurationMs: status.lastStats?.duration ?? null,
-    processed:
-      (status.lastStats?.subscriptions?.processed ?? 0) +
-      (status.lastStats?.documents?.processed ?? 0),
-    errors:
-      (status.lastStats?.subscriptions?.errors ?? 0) + (status.lastStats?.documents?.errors ?? 0),
+    processed: status.lastStats?.subscriptions?.processed ?? 0,
+    errors: status.lastStats?.subscriptions?.errors ?? 0,
     alarmScheduled: Boolean(status.isRunning),
     lagAlertAt: decision.lagAlertAt,
   };
@@ -205,8 +188,6 @@ export async function recordPollerStatus(env: Env, now = Date.now()): Promise<Po
   if (decision.alert) {
     log.error('firehose_lag_high', {
       lagMs,
-      subscriptionsLagMs,
-      documentsLagMs,
       thresholdMs: FIREHOSE_LAG_ALERT_MS,
       lastPollAt: value.lastPollAt,
     });
@@ -215,7 +196,7 @@ export async function recordPollerStatus(env: Env, now = Date.now()): Promise<Po
       // One issue for the condition, not one per occurrence.
       fingerprint: ['firehose-lag-high'],
       tags: { source: 'cron', check: 'firehose-lag' },
-      extra: { lagMs, subscriptionsLagMs, documentsLagMs, lastPollAt: value.lastPollAt },
+      extra: { lagMs, lastPollAt: value.lastPollAt },
     });
   } else if (decision.recovered) {
     log.info('firehose_lag_recovered', { lagMs, thresholdMs: FIREHOSE_LAG_ALERT_MS });
