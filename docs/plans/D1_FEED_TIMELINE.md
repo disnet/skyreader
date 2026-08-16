@@ -38,7 +38,7 @@ read state (`getReadKeys`). Now:
 
 **Backend** (`backend/`)
 
-- Migration `0061_feed_timeline.sql`: drops the dormant pre-Fly trio (`feed_items`, `feed_cache`,
+- Migration `0068_feed_timeline.sql`: drops the dormant pre-Fly trio (`feed_items`, `feed_cache`,
   `feed_metadata` — zero references in `src/`), creates `feeds` + `feed_items` (AUTOINCREMENT
   `seq`, `UNIQUE(feed_url, guid)`, `content_hash NOT NULL`), the `(user_did, feed_url)`
   subscription index, and mints `sync_state.items_generation`.
@@ -64,7 +64,7 @@ read state (`getReadKeys`). Now:
 
 **Proxy** (`feed-proxy/`)
 
-- `ingest-push.ts`: the durable log *is* the outbox. `push_state(seq, pushed_hash)` marks what has
+- `ingest-push.ts`: the durable log _is_ the outbox. `push_state(seq, pushed_hash)` marks what has
   been delivered; a row is dirty when it's missing there or the hashes differ (race-free against a
   mid-flight edit). Seq-ordered batches of 100 every 15 s, capped exponential backoff on failure.
 - Crawl-set pull every 5 min: registers each feed's `cache` row and stamps `last_requested_at`, so

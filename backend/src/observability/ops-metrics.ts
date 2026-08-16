@@ -270,8 +270,9 @@ export async function recordCronRun(
 }
 
 /**
- * One row per hour: the counts the admin shows as tiles, plus the two health
- * numbers that only exist in `system_status`. Same job prunes the tail, so the
+ * One row per hour: the counts the admin shows as tiles, plus the three health
+ * numbers that only exist in `system_status` (firehose lag, proxy cache
+ * freshness, feeds the crawler has in error). Same job prunes the tail, so the
  * table can't grow without an owner.
  */
 export async function writeMetricsSnapshot(env: Env, now = Date.now()): Promise<void> {
@@ -282,11 +283,10 @@ export async function writeMetricsSnapshot(env: Env, now = Date.now()): Promise<
 
   const counts = await env.DB.batch<{ count: number }>([
     env.DB.prepare('SELECT COUNT(*) AS count FROM users'),
-    env.DB.prepare('SELECT COUNT(*) AS count FROM feed_metadata'),
+    env.DB.prepare('SELECT COUNT(*) AS count FROM feeds'),
     env.DB.prepare('SELECT COUNT(*) AS count FROM feed_items'),
     env.DB.prepare('SELECT COUNT(*) AS count FROM subscriptions_cache'),
     env.DB.prepare('SELECT COUNT(*) AS count FROM saved_articles'),
-    env.DB.prepare('SELECT COUNT(*) AS count FROM feed_metadata WHERE error_count > 0'),
     env.DB.prepare('SELECT COUNT(*) AS count FROM sessions WHERE expires_at > ?').bind(
       sessionCutoff
     ),
@@ -299,6 +299,11 @@ export async function writeMetricsSnapshot(env: Env, now = Date.now()): Promise<
   ]);
   const usable = <T>(row: StatusRow<T> | null): T | null =>
     row && now - row.updatedAt <= SNAPSHOT_MAX_AGE_MS ? row.value : null;
+
+  // Per-feed fetch errors live in the crawler, not in D1: `feeds` carries ingest
+  // metadata only. So the trend point reads the same number the live tile does,
+  // and is null — not 0 — when the proxy row is missing or stale (see 0069).
+  const feedsWithErrors = usable(proxy)?.feedsInError ?? null;
 
   await env.DB.prepare(
     `INSERT OR REPLACE INTO metrics_snapshots
@@ -313,8 +318,8 @@ export async function writeMetricsSnapshot(env: Env, now = Date.now()): Promise<
       at(2),
       at(3),
       at(4),
+      feedsWithErrors,
       at(5),
-      at(6),
       usable(poller)?.lagMs ?? null,
       usable(proxy)?.freshPct ?? null
     )
@@ -328,7 +333,7 @@ export async function writeMetricsSnapshot(env: Env, now = Date.now()): Promise<
     capturedAt,
     users: at(0),
     feeds: at(1),
-    feedsWithErrors: at(5),
+    feedsWithErrors,
     prunedRows: pruned.meta?.changes ?? 0,
   });
 }
