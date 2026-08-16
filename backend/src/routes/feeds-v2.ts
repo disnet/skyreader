@@ -7,9 +7,13 @@ import type {
   ArticleMentionsResult,
 } from '../services/feed-proxy-client';
 import { resolveStandardSite } from '../utils/canonical-url';
-import { getReadKeys } from './reading';
+import { chunkArray, getReadKeys } from './reading';
 import { ingestProxyFeed } from './ingest';
 import { readFeedMetadata, readFeedSlice } from './timeline';
+import {
+  getLinkblogTargets,
+  publicationUri as linkblogPublicationUri,
+} from '../services/linkblog-sync';
 
 interface V2FeedResponse {
   title: string;
@@ -372,6 +376,95 @@ interface V2BatchDocumentResponse {
   readCursor?: number;
 }
 
+interface DocumentScopeRequest {
+  did: string;
+  siteUri?: string;
+  since_digest?: string;
+}
+
+// The publication scopes this user's own subscription rows point at, per author.
+// That's the migrated truth: when an author connects (or disconnects) a
+// publication, migrateLinkblogFollowers rewrites these rows immediately, while a
+// follower's device keeps requesting whatever scope it cached.
+async function subscribedDocumentScopes(
+  env: Env,
+  userDid: string,
+  dids: string[]
+): Promise<Map<string, Set<string>>> {
+  const out = new Map<string, Set<string>>();
+  if (dids.length === 0) return out;
+  // Chunked: a heavy document subscriber can exceed D1's bound-parameter cap.
+  for (const chunk of chunkArray(dids, 89)) {
+    const placeholders = chunk.map(() => '?').join(',');
+    const rows = await env.DB.prepare(
+      `SELECT subject_did, feed_url FROM subscriptions_cache
+       WHERE user_did = ? AND source_type = 'atproto.documents' AND subject_did IN (${placeholders})`
+    )
+      .bind(userDid, ...chunk)
+      .all<{ subject_did: string; feed_url: string | null }>();
+    for (const row of rows.results ?? []) {
+      if (!row.feed_url) continue;
+      const scopes = out.get(row.subject_did) ?? new Set<string>();
+      scopes.add(row.feed_url);
+      out.set(row.subject_did, scopes);
+    }
+  }
+  return out;
+}
+
+/**
+ * Re-point requests that name a linkblog publication its author has moved off.
+ *
+ * A follower's scope lives on their device (the local subscription's feedUrl) and
+ * in their PDS record, neither of which we can rewrite synchronously when an
+ * author connects an existing publication. Left alone, that client asks for the
+ * abandoned publication forever: the proxy filters by site URI, so the feed just
+ * stops updating — no error, no signal. Correcting it here means every client,
+ * on every device, self-heals on its next poll.
+ *
+ * Deliberately narrow. A scope is only stale when it names the author's own
+ * Skyreader publication (`skyreader-links`, unambiguously a linkblog follow) or
+ * when this user's subscription row has already been migrated to the author's
+ * current target. An ordinary publication subscription is never touched.
+ *
+ * Returns the requests to forward plus a `did\ncorrectedScope → requestedScope`
+ * map, so the response still echoes the scope the client asked for and its
+ * per-scope digests/reconciliation keys stay stable.
+ */
+async function correctLinkblogScopes(
+  env: Env,
+  userDid: string,
+  entries: DocumentScopeRequest[]
+): Promise<{ requests: DocumentScopeRequest[]; restore: Map<string, string> }> {
+  const restore = new Map<string, string>();
+  // Own-linkblog pulls resolve their own target client-side, and an unscoped
+  // request already gets everything the author wrote.
+  const scoped = entries.filter((e) => e.siteUri && e.did !== userDid);
+  if (scoped.length === 0) return { requests: entries, restore };
+
+  const dids = [...new Set(scoped.map((e) => e.did))];
+  const [targets, subscribed] = await Promise.all([
+    getLinkblogTargets(env, dids),
+    subscribedDocumentScopes(env, userDid, dids),
+  ]);
+  const requested = new Set(entries.map((e) => `${e.did}\n${e.siteUri ?? ''}`));
+
+  const requests = entries.map((entry) => {
+    if (!entry.siteUri || entry.did === userDid) return entry;
+    const target = targets.get(entry.did);
+    if (!target || target.siteUri === entry.siteUri) return entry;
+    const rows = subscribed.get(entry.did);
+    const stale =
+      entry.siteUri === linkblogPublicationUri(entry.did) ||
+      (!!rows && !rows.has(entry.siteUri) && rows.has(target.siteUri));
+    // Don't collapse two requested scopes onto one — the client asked for both.
+    if (!stale || requested.has(`${entry.did}\n${target.siteUri}`)) return entry;
+    restore.set(`${entry.did}\n${target.siteUri}`, entry.siteUri);
+    return { ...entry, siteUri: target.siteUri };
+  });
+  return { requests, restore };
+}
+
 /**
  * POST /api/v2/documents/batch
  *
@@ -461,8 +554,23 @@ export async function handleV2BatchDocumentFetch(
   }
 
   try {
+    // Re-point any scope whose author has since moved their linkblog, echoing the
+    // requested scope back so the client's keys are untouched. Best-effort: a D1
+    // hiccup here must not cost the user their documents.
+    let requests = valid;
+    let restore = new Map<string, string>();
+    try {
+      ({ requests, restore } = await correctLinkblogScopes(env, session.did, valid));
+    } catch (e) {
+      console.error('Linkblog scope correction failed; forwarding scopes as-is:', e);
+    }
+
     const client = new FeedProxyClient(env);
-    const proxyEntries = await client.fetchDocumentsBatch(valid);
+    const proxyEntries = await client.fetchDocumentsBatch(requests);
+    for (const entry of proxyEntries) {
+      const requestedScope = entry.siteUri && restore.get(`${entry.did}\n${entry.siteUri}`);
+      if (requestedScope) entry.siteUri = requestedScope;
+    }
     authors.push(...proxyEntries);
 
     // Inline read annotation, identical to the feed path but keyed by recordUri

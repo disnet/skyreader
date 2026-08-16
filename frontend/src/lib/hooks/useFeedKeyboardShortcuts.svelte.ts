@@ -7,6 +7,7 @@ import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { linkblogStore } from '$lib/stores/linkblog.svelte';
 import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
+import { preferences } from '$lib/stores/preferences.svelte';
 import type { Article, Subscription } from '$lib/types';
 
 interface KeyboardShortcutsParams {
@@ -128,6 +129,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 
   // Share/unshare selected item to the linkblog (article items only)
   function toggleSelectedShare() {
+    if (preferences.linkblogDisabled) return;
     const selected = getSelectedArticle();
     if (!selected) return;
 

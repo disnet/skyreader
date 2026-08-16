@@ -8,6 +8,7 @@
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
+  import { preferences } from '$lib/stores/preferences.svelte';
   import {
     channelSuggestions,
     type ChannelSuggestion,
@@ -150,7 +151,7 @@
   }
 
   function sourceToNavItem(s: Subscription, indent = false): NavItem {
-    const sourceDisplay = getSourceDisplay(s.sourceType, s.feedUrl);
+    const sourceDisplay = getSourceDisplay(s.sourceType, s.feedUrl, s.siteUrl);
     return {
       type: 'feed',
       id: s.id!,
@@ -194,12 +195,16 @@
       icon: 'bookmark',
     };
     const otherItems: NavItem[] = [
-      {
-        type: 'utility',
-        id: 'linkblog',
-        label: 'Linkblog',
-        icon: 'share' as IconName,
-      },
+      ...(!preferences.linkblogDisabled
+        ? [
+            {
+              type: 'utility',
+              id: 'linkblog',
+              label: 'Linkblog',
+              icon: 'share' as IconName,
+            } as NavItem,
+          ]
+        : []),
       {
         type: 'utility',
         id: 'highlights',

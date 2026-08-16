@@ -1,8 +1,12 @@
 <script lang="ts">
   import { keyboardStore } from '$lib/stores/keyboard.svelte';
   import Modal from '$lib/components/common/Modal.svelte';
+  import { preferences } from '$lib/stores/preferences.svelte';
 
-  const shortcuts = [
+  // Derived, not a const: the modal is mounted once for the app's lifetime, so a
+  // plain array would be built before `linkblogDisabled` is hydrated from the
+  // server and would keep listing linkblog keys for a deleted one.
+  const shortcuts = $derived([
     // Navigation
     { category: 'Navigation', key: '/', description: 'Open switcher' },
     { category: 'Navigation', key: 'j', description: 'Next item' },
@@ -15,7 +19,9 @@
     { category: 'Views', key: '0', description: 'Home' },
     { category: 'Views', key: '1', description: 'Feeds' },
     { category: 'Views', key: '2', description: 'Saved' },
-    { category: 'Views', key: '3', description: 'Linkblog' },
+    ...(!preferences.linkblogDisabled
+      ? [{ category: 'Views', key: '3', description: 'Linkblog' }]
+      : []),
     { category: 'Views', key: '4', description: 'Highlights' },
     { category: 'Views', key: '5', description: 'Discover' },
     { category: 'Views', key: '6', description: 'Manage Sources' },
@@ -27,7 +33,9 @@
 
     // Article actions
     { category: 'Article', key: 's', description: 'Toggle save' },
-    { category: 'Article', key: 'S', description: 'Share/unshare' },
+    ...(!preferences.linkblogDisabled
+      ? [{ category: 'Article', key: 'S', description: 'Share/unshare' }]
+      : []),
     { category: 'Article', key: 'm', description: 'Mark read/unread' },
     { category: 'Article', key: 'A', description: 'Mark all as read' },
     { category: 'Article', key: 't', description: 'Tag item' },
@@ -43,7 +51,7 @@
     { category: 'Other', key: 'a', description: 'Toggle add menu' },
     { category: 'Other', key: '?', description: 'Show shortcuts' },
     { category: 'Other', key: 'Esc', description: 'Close modal / Deselect' },
-  ];
+  ]);
 
   const categories = ['Navigation', 'Views', 'Feed', 'Article', 'Other'];
 </script>

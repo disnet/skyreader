@@ -2,7 +2,12 @@
   import Icon from '$lib/components/Icon.svelte';
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
 
-  let publicUrl = $derived(myLinkblogStore.publicUrl());
+  // The Skyreader page can be turned off while links keep going to a connected
+  // publication. The publication's `url` still describes where that page would
+  // be, so it stays populated — but the page itself 404s, and there's nothing
+  // to hand anyone.
+  let pageHidden = $derived(myLinkblogStore.publication?.pageHidden === true);
+  let publicUrl = $derived(pageHidden ? null : myLinkblogStore.publicUrl());
   let publicLabel = $derived(
     publicUrl ? publicUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') : ''
   );
@@ -22,9 +27,9 @@
 
 <section class="linkblog-intro">
   <p class="intro-desc">
-    Every article you share becomes a post in your own <strong>standard.site</strong> publication — stored
-    in your PDS, and portable across the Atmosphere. Read it in any Atmospheric app, or share the page
-    below.
+    Every article you share becomes a post in your own <strong>standard.site</strong> publication —
+    stored in your PDS, and portable across the Atmosphere. Read it in any Atmospheric app{#if !pageHidden},
+      or share the page below{/if}.
   </p>
 
   {#if publicUrl}

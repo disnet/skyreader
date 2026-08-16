@@ -1,7 +1,7 @@
 // Identity + publication-metadata lookups for the public linkblog. All best-effort
 // and read-only: a public page loader stays fast and degrades to profile defaults.
 
-import { PUBLICATION_COLLECTION, LINKBLOG_RKEY } from '$lib/fields';
+import { PUBLICATION_COLLECTION, LINKBLOG_RKEY, safeHttpUrl } from '$lib/fields';
 import type { Profile, PublicationMeta } from '$lib/types';
 
 // Resolve a handle to a DID via the Bluesky public AppView. Returns null if it
@@ -82,17 +82,25 @@ async function resolvePdsUrl(did: string): Promise<string | null> {
   }
 }
 
-// Read the user's linkblog publication record (if it exists yet) for a customized
-// name/description/icon. Falls back silently — when the record is absent the page
-// renders fine from the profile defaults.
-export async function fetchPublicationMeta(did: string): Promise<PublicationMeta | null> {
+// Read the selected publication record (if it exists) for its name, description,
+// and icon. The URI comes from the backend's linkblog target resolver; validate it
+// again here so this public reader never fetches a record outside the user's repo.
+export async function fetchPublicationMeta(
+  did: string,
+  siteUri = `at://${did}/${PUBLICATION_COLLECTION}/${LINKBLOG_RKEY}`
+): Promise<PublicationMeta | null> {
+  const prefix = `at://${did}/${PUBLICATION_COLLECTION}/`;
+  if (!siteUri.startsWith(prefix)) return null;
+  const rkey = siteUri.slice(prefix.length);
+  if (!rkey || rkey.includes('/')) return null;
+
   const pdsUrl = await resolvePdsUrl(did);
   if (!pdsUrl) return null;
   try {
     const params = new URLSearchParams({
       repo: did,
       collection: PUBLICATION_COLLECTION,
-      rkey: LINKBLOG_RKEY,
+      rkey,
     });
     const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${params}`);
     if (!res.ok) return null;
@@ -100,6 +108,7 @@ export async function fetchPublicationMeta(did: string): Promise<PublicationMeta
       value?: {
         name?: string;
         description?: string;
+        url?: string;
         icon?: { ref?: { $link?: string } };
       };
     };
@@ -109,6 +118,9 @@ export async function fetchPublicationMeta(did: string): Promise<PublicationMeta
     return {
       name: value.name,
       description: value.description,
+      // A PDS record is user-controlled and this ends up in an href, so only pass
+      // through a real http(s) URL.
+      url: safeHttpUrl(value.url) ?? undefined,
       icon: iconCid ? `https://cdn.bsky.app/img/avatar/plain/${did}/${iconCid}@jpeg` : undefined,
     };
   } catch {

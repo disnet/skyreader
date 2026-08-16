@@ -47,6 +47,7 @@ export interface UserSettings {
   lastPdsSyncSubscriptions: number | null;
   /** External-backed saves: which engine backs the Saved list (one per account). */
   backing: SaveBacking;
+  linkblogDisabled: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -56,6 +57,7 @@ interface UserSettingsRow {
   pds_sync_enabled: number;
   last_pds_sync_subscriptions: number | null;
   backing: string | null;
+  linkblog_disabled: number;
   created_at: number;
   updated_at: number;
 }
@@ -66,6 +68,7 @@ function rowToSettings(row: UserSettingsRow | null): UserSettings {
       pdsSyncEnabled: false,
       lastPdsSyncSubscriptions: null,
       backing: { provider: 'skyreader' },
+      linkblogDisabled: false,
       createdAt: Math.floor(Date.now() / 1000),
       updatedAt: Math.floor(Date.now() / 1000),
     };
@@ -74,6 +77,7 @@ function rowToSettings(row: UserSettingsRow | null): UserSettings {
     pdsSyncEnabled: row.pds_sync_enabled === 1,
     lastPdsSyncSubscriptions: row.last_pds_sync_subscriptions,
     backing: parseBacking(row.backing),
+    linkblogDisabled: row.linkblog_disabled === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

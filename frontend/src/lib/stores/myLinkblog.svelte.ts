@@ -1,18 +1,25 @@
 // "My Linkblog" page state.
 //
-// Loads the current user's own portable linkblog: the `skyreader-links`
-// publication metadata plus the `site.standard.document` records the user has
-// shared, pulled (newest-first) from the feed proxy scoped to that publication.
-// This is the same pull path the public linkblog site (linkblogs.skyreader.app)
-// uses, so it reflects what's actually in the user's PDS — not just this session's
-// optimistic shares.
+// Loads the current user's own portable linkblog: the publication metadata plus
+// the `site.standard.document` records the user has shared, pulled (newest-first)
+// from the feed proxy scoped to that publication. This is the same pull path the
+// public linkblog site (linkblogs.skyreader.app) uses, so it reflects what's
+// actually in the user's PDS — not just this session's optimistic shares.
+//
+// The scope is NOT fixed: a user can connect an existing standard.site
+// publication, and new shares are then written there. We pull the resolved target
+// AND the default `skyreader-links` publication (mirroring the public site's
+// dual-scope read) so pre-switch shares stay visible — and, more importantly, so
+// linkblogStore.reconcile() never sees a complete-but-empty pull and prunes live
+// shares out of IndexedDB.
 
 import { api } from '$lib/services/api';
 import { auth } from '$lib/stores/auth.svelte';
-import { getExternalArticleLink } from '$lib/utils/linkPost';
+import { buildOptimisticLinkPost, getExternalArticleLink } from '$lib/utils/linkPost';
 import { noteToLeafletBlocks } from '$lib/utils/linkPostNote';
 import { loadDigests, saveDigests, scopeKey } from '$lib/services/documentDigests';
 import type { LinkblogPublication, SocialDocument } from '$lib/types';
+import { preferences } from '$lib/stores/preferences.svelte';
 
 const PUBLICATION_COLLECTION = 'site.standard.publication';
 const LINKBLOG_RKEY = 'skyreader-links';
@@ -28,53 +35,150 @@ function createMyLinkblogStore() {
   let loaded = $state(false);
   let error = $state<string | null>(null);
   // Whether the last successful pull returned the user's COMPLETE document set
-  // (fit under the proxy's per-author cap). When true, a share absent from the
-  // pull was deleted — not merely beyond the cap — so consumers can safely prune.
+  // (fit under the proxy's per-author cap) across EVERY scope. When true, a share
+  // absent from the pull was deleted — not merely beyond the cap — so consumers
+  // can safely prune.
   let lastPullComplete = $state(false);
   // recordUris of locally-inserted optimistic shares the pull path hasn't
   // surfaced yet. Kept across loads (the proxy lags the PDS write by an indexing
   // round-trip) and retired once the real document arrives.
   let optimisticUris = new Set<string>();
+  // Last result per scope, so a bodyless `unchanged` for one publication doesn't
+  // drop its documents while the other scope refreshes.
+  const scopeResults = new Map<string, { documents: SocialDocument[]; complete: boolean }>();
+
+  // A forced load has to await the pull in flight rather than return past it:
+  // callers chain reconcile() onto load(true), and resolving early runs the
+  // prune against whatever state the unfinished pull hasn't written yet.
+  let inFlight: Promise<void> | null = null;
 
   async function load(force = false) {
-    if ((loaded || loading) && !force) return;
+    // An unforced load piggybacks on the pull already running. A forced one can't:
+    // that pull may itself be unforced and skip the refresh (`loaded && !force`),
+    // so wait for it to settle and then do the real thing.
+    while (inFlight) {
+      if (!force) return;
+      await inFlight.catch(() => {});
+    }
+    const run = loadOnce(force);
+    inFlight = run.finally(() => {
+      inFlight = null;
+    });
+    await inFlight;
+  }
+
+  async function loadOnce(force = false) {
     const user = auth.user;
     if (!user) return;
 
     loading = true;
     error = null;
     try {
-      const siteUri = publicationUri(user.did);
+      // Resolve the publication first: shares go to the connected one, so a pull
+      // scoped to the default alone would come back (completely) empty for a user
+      // who has switched.
+      const pub = await api.getLinkblogPublication().catch(() => null);
+      if (pub) {
+        publication = pub;
+        preferences.setLinkblogDisabled(pub.disabled);
+        if (pub.disabled) {
+          documents = [];
+          loaded = true;
+          // A deleted linkblog is an authoritative empty set, not an unfinished
+          // pull: the posts are gone from the PDS. Say so, or reconcile() bails
+          // on a stale `false` and leaves every share sitting in IndexedDB,
+          // still rendering its card as shared.
+          lastPullComplete = true;
+          scopeResults.clear();
+          optimisticUris.clear();
+          return;
+        }
+      }
+      // The disabled preference is device-global, so publication metadata must
+      // be refreshed before honoring the in-memory document cache. This also
+      // corrects state after switching accounts or restoring on another device.
+      if (loaded && !force) return;
+      const target = pub ?? publication;
+      const defaultUri = publicationUri(user.did);
+      const scopes = [...new Set([target?.uri || defaultUri, defaultUri])];
+
       // Echo the per-scope content digest so an unchanged linkblog short-circuits
       // (bodyless `unchanged`) instead of re-downloading the full set every forced
-      // refresh. Only send it when we already hold an in-memory set to keep on a
-      // match: this list is memory-only (no IndexedDB hydration), so it resets to []
-      // on a page reload — sending a digest on that first empty load would let an
-      // `unchanged` response render the linkblog blank. With a non-empty set in
-      // hand, `unchanged` safely means "keep exactly what's shown."
+      // refresh. Only send it when we already hold that scope's set to keep on a
+      // match: this list is memory-only (no IndexedDB hydration), so it resets on a
+      // page reload — sending a digest on that first empty load would let an
+      // `unchanged` response render the linkblog blank. With a set in hand,
+      // `unchanged` safely means "keep exactly what's shown."
       const digests = loadDigests();
-      const key = scopeKey(user.did, siteUri);
-      const since_digest = documents.length > 0 ? digests[key] : undefined;
+      const batch = await api.fetchDocumentsBatchV2(
+        scopes.map((siteUri) => {
+          const since_digest = scopeResults.has(siteUri)
+            ? digests[scopeKey(user.did, siteUri)]
+            : undefined;
+          return { did: user.did, siteUri, ...(since_digest ? { since_digest } : {}) };
+        })
+      );
 
-      const [pub, batch] = await Promise.all([
-        api.getLinkblogPublication().catch(() => null),
-        api.fetchDocumentsBatchV2([
-          { did: user.did, siteUri, ...(since_digest ? { since_digest } : {}) },
-        ]),
-      ]);
-      publication = pub;
-      const author = batch.authors[0];
+      // The batch endpoint doesn't preserve request order (invalid entries are
+      // emitted first), so reconcile each scope by its echoed siteUri.
+      const byScope = new Map(
+        batch.authors.filter((a) => a.did === user.did && a.siteUri).map((a) => [a.siteUri!, a])
+      );
 
-      // Unchanged: nothing changed upstream since the digest we sent, so keep the
-      // current documents, their optimistic carry-forward, and `lastPullComplete`
-      // exactly as-is. (Reached only when documents was non-empty, so there is a
-      // real set to preserve.)
-      if (author?.status === 'unchanged') {
-        loaded = true;
-        return;
+      let digestsChanged = false;
+      scopes.forEach((siteUri) => {
+        const author = byScope.get(siteUri);
+        // Unchanged: nothing moved upstream since the digest we sent, so keep this
+        // scope's documents and `complete` exactly as they were. A missing or
+        // errored entry likewise keeps whatever this scope last held.
+        if (!author || author.status === 'unchanged') return;
+        if (author.status === 'error') {
+          error = author.error ?? 'Could not load your linkblog.';
+          // Keep this scope's documents (a transient failure must not blank the
+          // view), but it is no longer authoritative: leaving a stale `complete`
+          // in place would let reconcile() prune live shares against a snapshot
+          // this pull could not confirm.
+          const previous = scopeResults.get(siteUri);
+          if (previous?.complete) scopeResults.set(siteUri, { ...previous, complete: false });
+          return;
+        }
+        scopeResults.set(siteUri, {
+          documents: author.documents ?? [],
+          complete: author.complete === true,
+        });
+        // Store the new digest for this scope so the next forced refresh can
+        // short-circuit. Kept regardless of `complete`: a capped set still hashes
+        // its live window, and `complete` is preserved verbatim on `unchanged`.
+        if (author.digest) {
+          digests[scopeKey(user.did, siteUri)] = author.digest;
+          digestsChanged = true;
+        }
+      });
+      if (digestsChanged) saveDigests(digests);
+
+      // A connected publication is the user's linkblog, but it may also hold posts
+      // its home app wrote (essays, not link posts). Only entries that link out
+      // belong on the linkblog; the default publication is Skyreader's own, so
+      // everything in it qualifies.
+      const fetched = [
+        ...new Map(
+          scopes
+            .flatMap((siteUri) =>
+              (scopeResults.get(siteUri)?.documents ?? []).filter(
+                (d) => siteUri === defaultUri || getExternalArticleLink(d)
+              )
+            )
+            .map((d) => [d.recordUri, d])
+        ).values(),
+      ];
+      // Newest-shared-first across scopes — the proxy orders each scope by the
+      // article's publish date, which interleaves wrongly once there are two.
+      if (scopes.length > 1) {
+        fetched.sort(
+          (a, b) => (new Date(b.createdAt).getTime() || 0) - (new Date(a.createdAt).getTime() || 0)
+        );
       }
 
-      const fetched = author?.status === 'ready' ? (author.documents ?? []) : [];
       // Carry forward optimistic shares the pull path hasn't indexed yet, deduped
       // by external article link, so a just-shared link doesn't vanish on the
       // first load of the linkblog view. Retire ones that have now arrived.
@@ -84,17 +188,12 @@ function createMyLinkblogStore() {
       );
       optimisticUris = new Set(stillPending.map((d) => d.recordUri));
       documents = [...stillPending, ...fetched];
-      lastPullComplete = author?.status === 'ready' && author.complete === true;
-      // Store the new digest for this scope so the next forced refresh can
-      // short-circuit. Kept regardless of `complete`: a capped set still hashes its
-      // live window, and `lastPullComplete` is preserved verbatim on `unchanged`.
-      if (author?.status === 'ready' && author.digest) {
-        digests[key] = author.digest;
-        saveDigests(digests);
-      }
-      if (author?.status === 'error') {
-        error = author.error ?? 'Could not load your linkblog.';
-      }
+      // Only authoritative when EVERY scope reported a complete set — and only
+      // when we know which scopes those are. If the publication lookup failed we
+      // may have missed a connected publication entirely, and treating the pull as
+      // complete would let reconcile() prune live shares.
+      lastPullComplete =
+        !!target && scopes.every((siteUri) => scopeResults.get(siteUri)?.complete === true);
       loaded = true;
     } catch (e) {
       error = e instanceof Error ? e.message : 'Could not load your linkblog.';
@@ -119,31 +218,7 @@ function createMyLinkblogStore() {
   }) {
     const did = auth.user?.did;
     if (!did) return;
-    const note = input.note?.trim();
-    const doc: SocialDocument = {
-      authorDid: did,
-      recordUri: input.recordUri,
-      siteUri: input.siteUri,
-      title: input.articleTitle || input.articleUrl,
-      publishedAt: input.publishedAt || input.createdAt,
-      createdAt: input.createdAt,
-      // New shares carry the quote inside the note (the body), not a top-level
-      // `description` — leaving it unset so this optimistic doc renders exactly
-      // like the pulled one (no standalone legacy quote, just the note body).
-      description: undefined,
-      links: [{ uri: input.articleUrl, rel: 'related' }],
-      content: note
-        ? {
-            $type: 'pub.leaflet.content',
-            pages: [
-              {
-                $type: 'pub.leaflet.pages.linearDocument',
-                blocks: noteToLeafletBlocks(note),
-              },
-            ],
-          }
-        : undefined,
-    };
+    const doc = buildOptimisticLinkPost(did, input);
     optimisticUris.add(doc.recordUri);
     documents = [doc, ...documents.filter((d) => getExternalArticleLink(d) !== input.articleUrl)];
   }

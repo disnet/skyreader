@@ -103,11 +103,15 @@
 {#snippet personRow(p: LinkblogPerson)}
   {@const subscribed = subscribedPubUris.has(p.publicationUri)}
   <li class="person">
-    <a
+    <!-- No blogUrl means this author turned their Skyreader page off: the avatar
+         and name go flat rather than linking somewhere that 404s. Adding them
+         still works — that goes through `publicationUri`. -->
+    <svelte:element
+      this={p.blogUrl ? 'a' : 'span'}
       class="avatar"
       href={p.blogUrl}
-      target="_blank"
-      rel="noopener"
+      target={p.blogUrl ? '_blank' : undefined}
+      rel={p.blogUrl ? 'noopener' : undefined}
       tabindex="-1"
       aria-hidden="true"
     >
@@ -116,9 +120,13 @@
       {:else}
         <span class="avatar-fallback">{initial(p)}</span>
       {/if}
-    </a>
+    </svelte:element>
     <div class="who">
-      <a class="name" href={p.blogUrl} target="_blank" rel="noopener">{displayName(p)}</a>
+      {#if p.blogUrl}
+        <a class="name" href={p.blogUrl} target="_blank" rel="noopener">{displayName(p)}</a>
+      {:else}
+        <span class="name">{displayName(p)}</span>
+      {/if}
       {#if p.handle}
         <span class="handle">@{p.handle}</span>
       {/if}
@@ -271,7 +279,9 @@
     white-space: nowrap;
   }
 
-  .name:hover {
+  /* Only when it's actually a link — an author with no public page renders the
+     name as a span, which shouldn't offer a hover affordance. */
+  a.name:hover {
     text-decoration: underline;
   }
 

@@ -32,6 +32,15 @@ export const MARGIN_SCOPES = [
 // Linkblog scopes — sharing writes standard.site records to the user's PDS.
 export const LINKBLOG_SCOPES = ['repo:site.standard.publication', 'repo:site.standard.document'];
 
+// Extra scopes for a linkblog connected to a pckt or Offprint publication. Those
+// apps only show posts that carry a companion record in their own collection (see
+// COMPANION_COLLECTIONS), so sharing there needs write access to it.
+// Deliberately NOT part of LINKBLOG_SCOPES: that set gates every share, and
+// folding these in would push everyone who never touches those apps through a
+// re-auth. Each is checked only when it's the user's chosen target.
+export const PCKT_SCOPES = ['repo:blog.pckt.document'];
+export const OFFPRINT_SCOPES = ['repo:app.offprint.document.article'];
+
 // Atmosphere subscription scope — "subscribe via the Atmosphere" writes a
 // portable site.standard.graph.subscription follow edge to the user's PDS.
 // Kept separate from LINKBLOG_SCOPES (which is also used as a required-scope
@@ -53,6 +62,8 @@ export const ALL_POSSIBLE_SCOPES = [
   ...SEMBLE_SCOPES,
   ...MARGIN_SCOPES,
   ...LINKBLOG_SCOPES,
+  ...PCKT_SCOPES,
+  ...OFFPRINT_SCOPES,
   ...ATMOSPHERE_SCOPES,
   ...AT_INTENT_SCOPES,
 ].join(' ');

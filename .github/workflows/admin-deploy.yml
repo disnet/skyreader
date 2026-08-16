@@ -20,7 +20,7 @@ defaults:
 
 jobs:
   typecheck:
-    name: Type Check
+    name: Type Check & Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -38,6 +38,9 @@ jobs:
 
       - name: Run type check
         run: npm run check
+
+      - name: Run tests
+        run: npm test
 
   deploy-staging:
     name: Deploy to Staging
@@ -75,6 +78,12 @@ jobs:
           command: pages deploy .svelte-kit/cloudflare --project-name=skyreader-admin-staging --commit-dirty=true
           workingDirectory: admin
 
+      # No post-deploy smoke check: both admin pages.dev hostnames sit behind
+      # Cloudflare Access, so an unauthenticated probe follows the login redirect
+      # and gets a 200 HTML sign-in page — it can never see /_app/version.json.
+      # Don't re-add one without also giving CI a way through Access (a service
+      # token with a Service Auth policy, or a bypass policy on that one path).
+
   deploy-production:
     name: Deploy to Production
     needs: typecheck
@@ -110,3 +119,5 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy .svelte-kit/cloudflare --project-name=skyreader-admin --branch=main --commit-dirty=true
           workingDirectory: admin
+
+      # No post-deploy smoke check — see the staging job for why.

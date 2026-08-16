@@ -195,6 +195,23 @@ img {
   color: var(--ink);
   text-decoration-color: currentColor;
 }
+/* "Published on leaflet.pub" — where a connected publication's posts actually
+   live. Quiet: it's provenance, not a call to action. */
+.pubhome {
+  color: var(--muted);
+  font-size: 0.8125rem;
+  margin: 0.75rem 0 0;
+}
+.pubhome a {
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--line);
+}
+.pubhome a:hover {
+  color: var(--ink);
+  text-decoration-color: currentColor;
+}
 .pubdesc {
   color: var(--ink-soft);
   margin: 1.125rem 0 0;

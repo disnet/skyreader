@@ -68,6 +68,26 @@ async function call(path: string, sessionId?: string, method = 'GET') {
   return response;
 }
 
+/** One client error report, optionally carrying a session cookie. */
+async function postTelemetry(workerEnv: Env, sessionId?: string) {
+  const ctx = createExecutionContext();
+  const response = await worker.fetch(
+    new IncomingRequest('http://localhost/api/telemetry/error', {
+      method: 'POST',
+      headers: {
+        ...(sessionId ? { Cookie: `session_id=${sessionId}` } : {}),
+        'Content-Type': 'application/json',
+        Origin: env.FRONTEND_URL,
+      },
+      body: JSON.stringify({ kind: 'render', message: 'auth resolution failed' }),
+    }),
+    workerEnv,
+    ctx
+  );
+  await waitOnExecutionContext(ctx);
+  return response;
+}
+
 beforeEach(async () => {
   await setupUser();
 });
@@ -160,6 +180,62 @@ describe('auth gate: transient refresh failure (503, retryable)', () => {
     expect(res.status).toBe(200);
     // Cookie is cleared regardless of refresh state.
     expect(res.headers.get('Set-Cookie')).toContain('session_id=');
+  });
+
+  it('does NOT block client error telemetry for a transient session', async () => {
+    await insertSession('transient-telemetry', transientOpts());
+    const res = await postTelemetry(env, 'transient-telemetry');
+    expect(res.status).toBe(204);
+  });
+});
+
+// The client error report is worth most when auth is broken, so it is routed
+// *before* session resolution rather than merely exempted from the auth gate.
+// Behind the gate, a D1 read failure in getSessionWithRefreshState() becomes the
+// 500 from serveRequest's catch — and the reporter never retries, so the signal
+// is simply lost in the incident it exists to describe.
+describe('client telemetry is answered before session resolution', () => {
+  // Every D1 call throws: the state a degraded database actually puts us in.
+  const brokenDb = new Proxy(
+    {},
+    {
+      get() {
+        return () => {
+          throw new Error('D1_ERROR: no such table (simulated outage)');
+        };
+      },
+    }
+  ) as D1Database;
+
+  beforeEach(() => {
+    // The handler logs the report; the 500 path logs the D1 failure.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('accepts a report from a signed-in client while D1 is down', async () => {
+    const res = await postTelemetry({ ...env, DB: brokenDb } as Env, 'any-session-id');
+    expect(res.status).toBe(204);
+  });
+
+  it('accepts a report with no session at all while D1 is down', async () => {
+    const res = await postTelemetry({ ...env, DB: brokenDb } as Env);
+    expect(res.status).toBe(204);
+  });
+
+  it('is the exception: a session-backed route still 500s in that state', async () => {
+    // Pins the contrast — the broken DB really does break session resolution, so
+    // the 204s above come from the routing order and not from a lenient stub.
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      request('/api/auth/me', 'any-session-id'),
+      { ...env, DB: brokenDb } as Env,
+      ctx
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(500);
   });
 });
 

@@ -299,6 +299,11 @@ curl "/feed?url=...&since_guids=old-guid&limit=50"
 | `INGEST_INTERVAL_SECONDS`    | `15`     | Push cycle                                              |
 | `INGEST_BATCH_SIZE`          | `100`    | Items per push request                                  |
 | `CRAWL_SET_INTERVAL_SECONDS` | `300`    | How often to pull the crawl set                         |
+| `SENTRY_DSN`                 | (none)   | Error reporting; unset ⇒ no-op                          |
+| `WARM_HEARTBEAT_URL`         | (none)   | Dead-man ping after each successful warm tick           |
+| `GIT_COMMIT_SHA`             | `dev`    | Build stamp, reported by `/health`                      |
+
+Observability setup and incident procedures live in [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 
 ## Ingest push (crawler mode)
 

@@ -6,9 +6,9 @@
 
 import { redirect } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
-import { feedUrlFor, isDid } from '$lib/fields';
+import { apiBaseFor, feedUrlFor, isDid } from '$lib/fields';
 import { fetchPublicationMeta, getProfile, resolveHandleToDid } from '$lib/server/identity';
-import { fetchLinkblogDocuments, type ProxyConfig } from '$lib/server/proxy';
+import { fetchLinkblogDocuments, resolveLinkblogTarget, type ProxyConfig } from '$lib/server/proxy';
 import { emptyFeed, renderFeed } from '$lib/server/rss';
 import type { RequestHandler } from './$types';
 
@@ -40,10 +40,14 @@ export const GET: RequestHandler = async ({ params, url }) => {
     feedProxySecret: env.FEED_PROXY_SECRET,
   };
 
+  const target = await resolveLinkblogTarget(apiBaseFor(origin, env.API_URL), did);
+  // A hidden linkblog has no feed either — a subscriber polling an old URL should
+  // see it stop, not keep receiving posts from a page that's been taken down.
+  if (target.hidden) return rss(emptyFeed(origin), 404);
   const [profile, pub, docs] = await Promise.all([
     getProfile(did),
-    fetchPublicationMeta(did),
-    fetchLinkblogDocuments(cfg, did),
+    fetchPublicationMeta(did, target.siteUri),
+    fetchLinkblogDocuments(cfg, did, [target.siteUri, target.defaultSiteUri]),
   ]);
 
   // Cap the feed length — readers only need the recent window.

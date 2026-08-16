@@ -419,14 +419,14 @@ function renderImageBlock(block: LeafletImageBlock, authorDid: string): string {
  * Render a website preview block
  */
 function renderWebsiteBlock(block: LeafletWebsiteBlock, authorDid: string): string {
-  const url = block.url;
+  const url = block.src;
   if (!url) {
     return '';
   }
 
   const title = block.title || url;
   const description = block.description || '';
-  const thumbCid = block.thumb?.ref?.$link;
+  const thumbCid = block.previewImage?.ref?.$link;
 
   let html =
     '<div class="website-preview" style="border: 1px solid var(--border, #e5e5e5); border-radius: 8px; overflow: hidden; margin: 1em 0">';

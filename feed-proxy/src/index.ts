@@ -1,10 +1,11 @@
 // Must be first: initializes Sentry before any other module loads so its global
 // error handlers and instrumentation are in place when the app boots.
-import { Sentry } from './instrument';
+import { reportError } from './instrument';
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'fs';
 import { createApp, initDatabase, cleanupCache } from './app';
 import { DocumentFirehose } from './jetstream';
+import { pingHeartbeat } from './heartbeat';
 import { pushDirtyItems, pullCrawlSet, type IngestConfig } from './ingest-push';
 
 // Config
@@ -47,30 +48,29 @@ const WARM_CONCURRENCY = parseInt(process.env.WARM_CONCURRENCY || '8', 10);
 // Pre-warm Phase 5 article mention counts as feeds are warmed (extra
 // Constellation load); on by default in production, disable with WARM_MENTIONS=false.
 const WARM_MENTIONS_ENABLED = (process.env.WARM_MENTIONS ?? 'true') !== 'false';
+// Dead-man's switch for the warm loop (Healthchecks.io / Better Stack). Unset in
+// local dev, so the ping is a no-op there.
+const WARM_HEARTBEAT_URL = process.env.WARM_HEARTBEAT_URL;
 
-// /extract is the heaviest request (fetch + Defuddle DOM build). Cap concurrent
-// extractions so a burst of distinct heavy articles can't OOM the 512MB machine;
-// excess callers queue, then are shed with a 503 once the queue fills.
-const EXTRACT_CONCURRENCY = parseInt(process.env.EXTRACT_CONCURRENCY || '4', 10);
-const EXTRACT_QUEUE_MAX = parseInt(process.env.EXTRACT_QUEUE_MAX || '20', 10);
-
-// Ingest push (ingest-push.ts): this proxy is the crawler for exactly one
-// Worker + D1 pair. INGEST_URL unset ⇒ both the pusher and the crawl-set pull are
-// disabled — the safe default for local dev and the gate for a staged rollout.
+// This proxy crawls for one Worker/D1 pair. Leaving INGEST_URL unset disables
+// both directions, which keeps local development and staged rollout safe.
 const INGEST_URL = process.env.INGEST_URL?.replace(/\/$/, '') || '';
 const INGEST_ENABLED = INGEST_URL.length > 0;
 const INGEST_INTERVAL_MS = parseInt(process.env.INGEST_INTERVAL_SECONDS || '15', 10) * 1000;
 const INGEST_BATCH_SIZE = parseInt(process.env.INGEST_BATCH_SIZE || '100', 10);
 const CRAWL_SET_INTERVAL_MS = parseInt(process.env.CRAWL_SET_INTERVAL_SECONDS || '300', 10) * 1000;
-// Backoff for a failing push. Shaped for a 15 s loop (the feed fetcher's
-// 5-minute base would stall ingest for ten minutes over one blip), capped so a
-// long Worker outage still retries a few times an hour.
 const PUSH_BACKOFF_BASE_MS = 30 * 1000;
 const PUSH_BACKOFF_MAX_MS = 10 * 60 * 1000;
 
 function pushBackoff(failures: number): number {
   return Math.min(PUSH_BACKOFF_BASE_MS * 2 ** (failures - 1), PUSH_BACKOFF_MAX_MS);
 }
+
+// /extract is the heaviest request (fetch + Defuddle DOM build). Cap concurrent
+// extractions so a burst of distinct heavy articles can't OOM the 512MB machine;
+// excess callers queue, then are shed with a 503 once the queue fills.
+const EXTRACT_CONCURRENCY = parseInt(process.env.EXTRACT_CONCURRENCY || '4', 10);
+const EXTRACT_QUEUE_MAX = parseInt(process.env.EXTRACT_QUEUE_MAX || '20', 10);
 
 // Jetstream document firehose: keeps standard.site documents fresh via the AT
 // Proto firehose (push) instead of re-listing every active author (pull). The
@@ -157,10 +157,14 @@ if (WARM_ENABLED) {
       .then(([feeds, docs]) => {
         if (feeds > 0) console.log(`[Proxy] Warmer refreshed ${feeds} feed(s)`);
         if (docs > 0) console.log(`[Proxy] Warmer refreshed ${docs} author document set(s)`);
+        // Dead-man's switch: only a tick that completed pings. A warmer that
+        // wedges without throwing produces no Sentry event and no error log —
+        // the missing heartbeat is the only thing that would ever notice.
+        void pingHeartbeat(WARM_HEARTBEAT_URL, 'warmer');
       })
       .catch((err) => {
         console.error('[Proxy] Warmer error:', err);
-        Sentry.captureException(err, { tags: { source: 'warmer' } });
+        reportError(err, { tags: { source: 'warmer' } });
       })
       .finally(() => {
         warmRunning = false;
@@ -170,50 +174,33 @@ if (WARM_ENABLED) {
   console.log('[Proxy] Warmer: disabled');
 }
 
-// Ingest loops: push the durable item log into the paired Worker's D1, and pull
-// the crawl set back so registered feeds stay warm now that read traffic no
-// longer stamps them. Backfill is not a special case — on first enable every row
-// is dirty and drains through the same loop.
+// Push the durable item log into D1 and pull the registered crawl set back.
 if (INGEST_ENABLED) {
   const ingestConfig: IngestConfig = {
     ingestUrl: INGEST_URL,
     secret: PROXY_SECRET,
     batchSize: INGEST_BATCH_SIZE,
   };
-
-  console.log(
-    `[Proxy] Ingest push: → ${INGEST_URL}, every ${INGEST_INTERVAL_MS / 1000}s, ` +
-      `batch ${INGEST_BATCH_SIZE}; crawl set every ${CRAWL_SET_INTERVAL_MS / 1000}s`
-  );
-
   let pushRunning = false;
   let pushFailures = 0;
   let pushBlockedUntil = 0;
   setInterval(() => {
-    // Skip-if-running (same guard as the warm loop) + capped exponential backoff
-    // on failure, so a wedged Worker doesn't turn into a hot retry loop.
     if (pushRunning || Date.now() < pushBlockedUntil) return;
     pushRunning = true;
     pushDirtyItems(db, ingestConfig)
       .then((result) => {
         if (result.error) {
           pushFailures++;
-          const delay = pushBackoff(pushFailures);
-          pushBlockedUntil = Date.now() + delay;
-          console.error(
-            `[Proxy] Ingest push failed (${pushFailures}): ${result.error}; ` +
-              `retrying after ${Math.round(delay / 1000)}s`
-          );
-          return;
-        }
-        pushFailures = 0;
-        if (result.pushed > 0) {
-          console.log(`[Proxy] Ingest pushed ${result.pushed} item(s)`);
+          pushBlockedUntil = Date.now() + pushBackoff(pushFailures);
+          console.error(`[Proxy] Ingest push failed (${pushFailures}): ${result.error}`);
+        } else {
+          pushFailures = 0;
+          if (result.pushed > 0) console.log(`[Proxy] Ingest pushed ${result.pushed} item(s)`);
         }
       })
-      .catch((err) => {
-        console.error('[Proxy] Ingest push error:', err);
-        Sentry.captureException(err, { tags: { source: 'ingest-push' } });
+      .catch((error) => {
+        console.error('[Proxy] Ingest push error:', error);
+        reportError(error, { tags: { source: 'ingest-push' } });
       })
       .finally(() => {
         pushRunning = false;
@@ -226,22 +213,17 @@ if (INGEST_ENABLED) {
     crawlSetRunning = true;
     pullCrawlSet(db, ingestConfig)
       .then((result) => {
-        if (result.error) {
-          console.error(`[Proxy] Crawl-set pull failed: ${result.error}`);
-        } else {
-          console.log(`[Proxy] Crawl set: ${result.registered} feed(s) registered`);
-        }
+        if (result.error) console.error(`[Proxy] Crawl-set pull failed: ${result.error}`);
+        else console.log(`[Proxy] Crawl set: ${result.registered} feed(s) registered`);
       })
-      .catch((err) => {
-        console.error('[Proxy] Crawl-set pull error:', err);
-        Sentry.captureException(err, { tags: { source: 'crawl-set' } });
+      .catch((error) => {
+        console.error('[Proxy] Crawl-set pull error:', error);
+        reportError(error, { tags: { source: 'crawl-set' } });
       })
       .finally(() => {
         crawlSetRunning = false;
       });
   };
-  // Pull once at boot so a restarted (or brand-new) machine has its crawl set
-  // before the first warm tick, then on the interval.
   refreshCrawlSet();
   setInterval(refreshCrawlSet, CRAWL_SET_INTERVAL_MS);
 } else {

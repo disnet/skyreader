@@ -1,6 +1,6 @@
 import type { LeafletContent, SocialDocument } from '$lib/types';
 import { isLeafletContent } from '$lib/utils/leaflet-renderer';
-import { reconstructLinkPostNote } from '$lib/utils/linkPostNote';
+import { noteToLeafletBlocks, reconstructLinkPostNote } from '$lib/utils/linkPostNote';
 
 /**
  * Link-post helpers (Linkblog Phase 2).
@@ -28,6 +28,81 @@ export function isLinkPost(doc: SocialDocument): boolean {
   return Boolean(getExternalArticleLink(doc));
 }
 
+// The constant marker Skyreader stamps on the records it writes (publications and
+// link posts alike). MUST match backend LINKBLOG_MARKER_URL.
+export const LINKBLOG_MARKER_URL = 'https://skyreader.app/linkblog';
+const DEFAULT_LINKBLOG_PUB_SUFFIX = '/site.standard.publication/skyreader-links';
+
+/**
+ * Whether SKYREADER wrote this document — the gate for every affordance that
+ * mutates it (un-share/delete, in-place note edit, the "already shared" overlay).
+ *
+ * "Has an outbound link and lives in my linkblog" is not enough: a linkblog
+ * connected to an existing publication shares that publication with everything
+ * its home app publishes there, and an essay that happens to link out looks
+ * identical. Deleting one of those is unrecoverable, so the test is the marker we
+ * write, or the document living in the user's own Skyreader publication (where
+ * everything is ours — including shares written before the marker existed).
+ */
+export function isSkyreaderShare(doc: SocialDocument): boolean {
+  return (
+    doc.skyreaderLinkblog === LINKBLOG_MARKER_URL ||
+    (doc.siteUri?.endsWith(DEFAULT_LINKBLOG_PUB_SUFFIX) ?? false)
+  );
+}
+
+/**
+ * The document a just-written share looks like, before the PDS → indexer → proxy
+ * round-trip surfaces the real one. Shaped to match what the link-post card
+ * reads: the external URL in `links`, the note as leading native Leaflet blocks.
+ *
+ * It carries the marker because we just wrote the record with it. That matters
+ * beyond the card: without it `isSkyreaderShare` rejects the optimistic document
+ * (a connected publication's siteUri isn't the `skyreader-links` fallback), which
+ * drops the share out of the cross-device overlay — and reconcile() would then
+ * read "not on the server" and prune the local row while the write is still
+ * being indexed.
+ */
+export function buildOptimisticLinkPost(
+  did: string,
+  input: {
+    recordUri: string;
+    siteUri: string;
+    articleUrl: string;
+    articleTitle?: string;
+    publishedAt?: string;
+    note?: string;
+    createdAt: string;
+  }
+): SocialDocument {
+  const note = input.note?.trim();
+  return {
+    authorDid: did,
+    recordUri: input.recordUri,
+    siteUri: input.siteUri,
+    skyreaderLinkblog: LINKBLOG_MARKER_URL,
+    title: input.articleTitle || input.articleUrl,
+    publishedAt: input.publishedAt || input.createdAt,
+    createdAt: input.createdAt,
+    // New shares carry the quote inside the note (the body), not a top-level
+    // `description` — leaving it unset so this optimistic doc renders exactly
+    // like the pulled one (no standalone legacy quote, just the note body).
+    description: undefined,
+    links: [{ uri: input.articleUrl, rel: 'related' }],
+    content: note
+      ? {
+          $type: 'pub.leaflet.content',
+          pages: [
+            {
+              $type: 'pub.leaflet.pages.linearDocument',
+              blocks: noteToLeafletBlocks(note),
+            },
+          ],
+        }
+      : undefined,
+  };
+}
+
 /**
  * The URL a document effectively represents for opening/saving/reading:
  * - link post → the external article
@@ -40,15 +115,94 @@ export function getDocumentEffectiveUrl(doc: SocialDocument): string {
 /**
  * The user's commentary on a link post, reconstructed from the native text and
  * blockquote blocks before the website card. Returns undefined when there's no note.
+ *
+ * A linkblog connected to an existing standard.site publication writes the same
+ * shape in that publication's own content lexicon (pckt, Offprint, Markdown), so
+ * all four are read here — otherwise the commentary, which is the point of a
+ * linkblog, would render blank on every Skyreader surface.
  */
 export function getLinkPostNote(doc: SocialDocument): string | undefined {
-  if (!doc.content || !isLeafletContent(doc.content)) return undefined;
-  const content = doc.content as LeafletContent;
-  for (const page of content.pages ?? []) {
-    const note = reconstructLinkPostNote(page.blocks ?? []).note;
-    if (note) return note;
+  if (!doc.content) return undefined;
+  if (isLeafletContent(doc.content)) {
+    const content = doc.content as LeafletContent;
+    for (const page of content.pages ?? []) {
+      const note = reconstructLinkPostNote(page.blocks ?? []).note;
+      if (note) return note;
+    }
+    return undefined;
   }
-  return undefined;
+  return foreignNote(doc.content, getExternalArticleLink(doc));
+}
+
+// ── Notes in a connected publication's own content lexicon ───────────────────
+//
+// pckt and Offprint share an `items` array of text/blockquote blocks; Markdown
+// (at.markpub) stores one string. In each, the note leads and the shared article
+// closes the post — as a native link card (pckt, Offprint) or a trailing Markdown
+// link. Rendered back into the same small Markdown subset the Leaflet reader
+// produces (`> ` for quotes).
+
+interface ForeignBlock {
+  $type?: string;
+  plaintext?: string;
+  content?: ForeignBlock[];
+}
+
+function blockText(block: ForeignBlock): string {
+  if (typeof block.plaintext === 'string') return block.plaintext;
+  return (block.content ?? []).map(blockText).filter(Boolean).join('\n');
+}
+
+function itemsNote(items: ForeignBlock[], prefix: string, articleUrl?: string): string | undefined {
+  const parts: string[] = [];
+  for (const item of items) {
+    const isQuote = item?.$type === `${prefix}blockquote`;
+    if (!isQuote && item?.$type !== `${prefix}text`) break;
+    const text = blockText(item).trim();
+    if (!text) continue;
+    // A link card ends the note by not being a text block at all. Shares written
+    // before Offprint's card was used put the article in a trailing text line
+    // instead, so a text block carrying the URL ends it too.
+    if (!isQuote && articleUrl && text.includes(articleUrl)) break;
+    parts.push(
+      isQuote
+        ? text
+            .split('\n')
+            .map((line) => `> ${line}`)
+            .join('\n')
+        : text
+    );
+  }
+  const note = parts.join('\n\n').trim();
+  return note || undefined;
+}
+
+function markdownNote(markdown: string, articleUrl?: string): string | undefined {
+  const lines = markdown.split('\n');
+  if (articleUrl) {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].includes(`](${articleUrl})`)) {
+        lines.splice(i, 1);
+        break;
+      }
+    }
+  }
+  const note = lines.join('\n').trim();
+  return note || undefined;
+}
+
+function foreignNote(content: unknown, articleUrl?: string): string | undefined {
+  const shape = content as { $type?: string; items?: ForeignBlock[]; text?: { markdown?: string } };
+  switch (shape?.$type) {
+    case 'blog.pckt.content':
+      return itemsNote(shape.items ?? [], 'blog.pckt.block.', articleUrl);
+    case 'app.offprint.content':
+      return itemsNote(shape.items ?? [], 'app.offprint.block.', articleUrl);
+    case 'at.markpub.markdown':
+      return markdownNote(shape.text?.markdown ?? '', articleUrl);
+    default:
+      return undefined;
+  }
 }
 
 // A resolved @mention in a note: the UTF-8 byte range of the `@handle` token within

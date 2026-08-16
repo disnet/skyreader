@@ -47,6 +47,7 @@ All stores use Svelte 5 runes (`.svelte.ts` files):
 | `timelineSync.ts` | Pure helpers for the timeline sync (unit-tested)   |
 | `sync-queue.ts`   | Queue operations when offline, process when online |
 | `realtime.ts`     | WebSocket connection management                    |
+| `telemetry.ts`    | Sampled client error reports to the backend        |
 
 ### Feed refresh
 
@@ -63,6 +64,9 @@ The legacy per-feed `/api/v2/feeds/batch` path (`fetchAllFeedsViaBatch`, with pe
 `feedCursors`) is kept for one release as a fallback: it runs when the timeline 404s and whenever
 the server reports `ingestActive: false` (this environment's crawler isn't pushing into D1). See
 `docs/plans/D1_FEED_TIMELINE.md`.
+
+Client errors flow through `/api/telemetry/error`; no Sentry SDK ships in the frontend bundle.
+See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for sampling and recovery details.
 
 ### Key Routes
 

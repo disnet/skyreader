@@ -14,12 +14,17 @@
   } from '$lib/stores/preferences.svelte';
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
   import SaveBackingPicker from '$lib/components/settings/SaveBackingPicker.svelte';
+  import LinkblogTargetPicker from '$lib/components/settings/LinkblogTargetPicker.svelte';
+  import DeleteLinkblogModal from '$lib/components/settings/DeleteLinkblogModal.svelte';
+  import Diagnostics from '$lib/components/settings/Diagnostics.svelte';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
+  import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
+  import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { downloadOPML } from '$lib/utils/opml-exporter';
   import { api, RateLimitError } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
-  import type { LinkblogPublication, SaveBacking } from '$lib/types';
+  import type { LinkblogPublication, LinkblogPublicationChoice, SaveBacking } from '$lib/types';
 
   $effect(() => {
     viewTitleStore.set('Settings');
@@ -101,6 +106,28 @@
   let isSavingLinkblog = $state(false);
   let linkblogError = $state<string | null>(null);
   let linkblogSuccess = $state<string | null>(null);
+  let linkblogChoices = $state<LinkblogPublicationChoice[]>([]);
+  let showDeleteLinkblogConfirm = $state(false);
+  // Just the host of the Skyreader linkblog page, to name it in copy without
+  // spelling out a DID-keyed URL. Falls back to the bare label if `url` is ever
+  // unparseable.
+  const linkblogPageHost = $derived.by(() => {
+    try {
+      return new URL(linkblogPub?.url ?? '').hostname;
+    } catch {
+      return 'Skyreader';
+    }
+  });
+  // The page toggle is bound to a local mirror rather than read straight off
+  // `linkblogPub`. A click moves the checkbox itself, so a save that fails leaves
+  // no server change for a one-way `checked={...}` to re-assert — the box would
+  // sit in the position the user chose while the server still said the opposite.
+  // The failure paths write this back; the effect re-syncs it whenever the server
+  // value does change.
+  let showLinkblogPage = $state(true);
+  $effect(() => {
+    showLinkblogPage = !linkblogPub?.pageHidden;
+  });
 
   onMount(async () => {
     if (!auth.isAuthenticated) {
@@ -121,14 +148,140 @@
     if (!syncStore.isOnline) return;
     isLinkblogLoading = true;
     try {
-      const pub = await api.getLinkblogPublication();
+      const [pub, choices] = await Promise.all([
+        api.getLinkblogPublication(),
+        api.listLinkblogPublications(),
+      ]);
       linkblogPub = pub;
+      preferences.setLinkblogDisabled(pub.disabled);
+      linkblogChoices = choices.publications;
       linkblogName = pub.name;
       linkblogDescription = pub.description ?? '';
     } catch (error) {
       console.error('Failed to load linkblog publication:', error);
     } finally {
       isLinkblogLoading = false;
+    }
+  }
+
+  function handleDeleteLinkblog() {
+    if (isSavingLinkblog) return;
+    linkblogSuccess = null;
+    if (!syncStore.isOnline) {
+      linkblogError = 'You are offline. Connect to the internet to delete your linkblog.';
+      return;
+    }
+    linkblogError = null;
+    showDeleteLinkblogConfirm = true;
+  }
+
+  async function confirmDeleteLinkblog() {
+    if (isSavingLinkblog) return;
+    isSavingLinkblog = true;
+    linkblogError = null;
+    try {
+      const result = await api.deleteLinkblog();
+      preferences.setLinkblogDisabled(true);
+      if (linkblogPub) linkblogPub = { ...linkblogPub, disabled: true, exists: false };
+      linkblogSuccess = `Linkblog deleted. ${result.deletedPosts} post${result.deletedPosts === 1 ? '' : 's'} removed.`;
+      showDeleteLinkblogConfirm = false;
+      // The posts are gone from the PDS, but every card still holds its local
+      // share state: without this they keep rendering as shared, with a Remove
+      // that would address a record that no longer exists. Same pair the app
+      // runs on boot — do it now rather than leaving the window open until then.
+      await myLinkblogStore.load(true);
+      await linkblogStore.reconcile();
+    } catch (error) {
+      // A delete that fails partway leaves the linkblog disabled server-side, so
+      // re-read the publication rather than trusting the pre-delete copy: the
+      // section then shows the deleted state (and its Restore) instead of
+      // offering edits that every write path now rejects.
+      linkblogError = error instanceof Error ? error.message : 'Could not delete your linkblog.';
+      showDeleteLinkblogConfirm = false;
+      await loadLinkblog();
+    } finally {
+      isSavingLinkblog = false;
+    }
+  }
+
+  async function handleRestoreLinkblog() {
+    if (isSavingLinkblog) return;
+    linkblogSuccess = null;
+    if (!syncStore.isOnline) {
+      linkblogError = 'You are offline. Connect to the internet to restore your linkblog.';
+      return;
+    }
+    isSavingLinkblog = true;
+    linkblogError = null;
+    try {
+      linkblogPub = await api.restoreLinkblog();
+      preferences.setLinkblogDisabled(false);
+      linkblogSuccess = 'Linkblog restored. Deleted posts do not come back.';
+    } catch (error) {
+      linkblogError = error instanceof Error ? error.message : 'Could not restore your linkblog.';
+    } finally {
+      isSavingLinkblog = false;
+    }
+  }
+
+  async function handleConnectLinkblog(selection: {
+    uri: string;
+    isDefault: boolean;
+    format: LinkblogPublication['format'];
+  }) {
+    if (!selection.uri || isSavingLinkblog) return;
+    if (!syncStore.isOnline) {
+      linkblogError = 'You are offline. Connect to the internet to change this.';
+      return;
+    }
+    isSavingLinkblog = true;
+    linkblogError = null;
+    linkblogSuccess = null;
+    try {
+      // Choosing the Skyreader linkblog is a disconnect — it's always offered,
+      // even before its record exists (first share creates it), so there's always
+      // a way back from a connected publication.
+      const pub = selection.isDefault
+        ? await api.disconnectLinkblogPublication()
+        : await api.connectLinkblogPublication(selection.uri, selection.format);
+      linkblogPub = pub;
+      linkblogName = pub.name;
+      linkblogDescription = pub.description ?? '';
+      linkblogSuccess = pub.external
+        ? `New links will publish to ${pub.name}.`
+        : 'New links will publish to your Skyreader linkblog.';
+    } catch (error) {
+      linkblogError = error instanceof Error ? error.message : 'Failed to connect publication.';
+    } finally {
+      isSavingLinkblog = false;
+    }
+  }
+
+  // A connected publication already has a public site, so the Skyreader page
+  // becomes a second home for the same posts. Worth keeping for most people (it's
+  // a stable DID-keyed address with an RSS feed, and it survives switching
+  // publications), but it's their call, not ours to infer from the connection.
+  async function handleToggleLinkblogPage(show: boolean) {
+    // Nothing below saved, so put the checkbox back where the server has it.
+    const revert = () => (showLinkblogPage = !linkblogPub?.pageHidden);
+    if (isSavingLinkblog) return revert();
+    if (!syncStore.isOnline) {
+      linkblogError = 'You are offline. Connect to the internet to change this.';
+      return revert();
+    }
+    isSavingLinkblog = true;
+    linkblogError = null;
+    linkblogSuccess = null;
+    try {
+      linkblogPub = await api.setLinkblogPageHidden(!show);
+      linkblogSuccess = show
+        ? 'Your links are showing on Skyreader again.'
+        : 'Your Skyreader page is off. Links keep publishing as before.';
+    } catch (error) {
+      linkblogError = error instanceof Error ? error.message : 'Could not change this.';
+      revert();
+    } finally {
+      isSavingLinkblog = false;
     }
   }
 
@@ -165,6 +318,10 @@
       const settings = await api.getSettings();
       pdsSyncEnabled = settings.pdsSyncEnabled;
       lastSyncSubscriptions = settings.lastPdsSyncSubscriptions;
+      // Runs before loadLinkblog and doesn't touch the PDS, so on a device that
+      // has never seen this account the linkblog nav hides a beat sooner —
+      // and still corrects itself if the publication fetch disagrees.
+      preferences.setLinkblogDisabled(settings.linkblogDisabled);
     } catch (error) {
       console.error('Failed to load sync settings:', error);
     } finally {
@@ -535,43 +692,110 @@
     </p>
     {#if isLinkblogLoading}
       <p class="loading">Loading linkblog…</p>
+    {:else if linkblogPub?.disabled}
+      <p class="setting-description">Your linkblog is deleted. Deleted posts cannot be restored.</p>
+      <button class="btn btn-secondary" onclick={handleRestoreLinkblog} disabled={isSavingLinkblog}>
+        {isSavingLinkblog ? 'Restoring…' : 'Restore linkblog'}
+      </button>
     {:else}
       {#if linkblogPub}
         <p class="setting-description" style="margin-top: 0;">
-          <a href={linkblogPub.url} target="_blank" rel="noopener noreferrer"
-            >View your linkblog →</a
-          >
+          {#if linkblogPub.pageHidden}
+            Your Skyreader page is off.
+          {:else}
+            <a href={linkblogPub.url} target="_blank" rel="noopener noreferrer"
+              >View your linkblog →</a
+            >
+          {/if}
+          {#if linkblogPub.externalUrl}
+            <br />
+            Your links are going into
+            <a href={linkblogPub.externalUrl} target="_blank" rel="noopener noreferrer"
+              >{linkblogPub.name}</a
+            >, alongside whatever else that publication holds.
+          {/if}
         </p>
-      {/if}
-      <div class="linkblog-field">
-        <label for="linkblog-name">Name</label>
-        <input
-          id="linkblog-name"
-          type="text"
-          bind:value={linkblogName}
-          maxlength="120"
-          placeholder="My links"
+
+        <LinkblogTargetPicker
+          current={linkblogPub}
+          choices={linkblogChoices}
+          busy={isSavingLinkblog}
+          onapply={handleConnectLinkblog}
         />
-      </div>
-      <div class="linkblog-field">
-        <label for="linkblog-description">Description</label>
-        <textarea
-          id="linkblog-description"
-          bind:value={linkblogDescription}
-          rows="2"
-          maxlength="500"
-          placeholder="Optional"
-        ></textarea>
-      </div>
-      <button class="btn btn-secondary" onclick={handleSaveLinkblog} disabled={isSavingLinkblog}>
-        {#if isSavingLinkblog}Saving…{:else}Save{/if}
-      </button>
-      {#if linkblogError}
-        <p class="sync-error">{linkblogError}</p>
+
+        <!-- Only with a connected publication: without one, this page is the only
+             public address the links have, and turning it off would be a second,
+             quieter way to spell "delete". -->
+        {#if linkblogPub.external}
+          <label class="toggle-setting">
+            <input
+              type="checkbox"
+              bind:checked={showLinkblogPage}
+              disabled={isSavingLinkblog}
+              onchange={(e) => handleToggleLinkblogPage(e.currentTarget.checked)}
+            />
+            <span>Also show my links on Skyreader</span>
+          </label>
+          <p class="setting-description">
+            A page at {linkblogPageHost} that lists only your links, with its own RSS feed. It keeps working
+            if you change publications later. Turn it off to send readers to {linkblogPub.name}
+            only.
+          </p>
+        {/if}
       {/if}
-      {#if linkblogSuccess}
-        <p class="sync-success">{linkblogSuccess}</p>
+
+      <!-- Name/description belong to the Skyreader linkblog only. A connected
+           publication is its home app's record; Skyreader doesn't rename it. -->
+      {#if linkblogPub?.external}
+        <p class="setting-description">
+          <strong>{linkblogPub.name}</strong> is managed by its own app — change its name, description
+          and appearance there. Your Skyreader linkblog keeps its own name, ready if you switch back.
+        </p>
+      {:else}
+        <h3 class="subhead">Your Skyreader linkblog</h3>
+        <div class="linkblog-field">
+          <label for="linkblog-name">Name</label>
+          <input
+            id="linkblog-name"
+            type="text"
+            bind:value={linkblogName}
+            maxlength="120"
+            placeholder="My links"
+          />
+        </div>
+        <div class="linkblog-field">
+          <label for="linkblog-description">Description</label>
+          <textarea
+            id="linkblog-description"
+            bind:value={linkblogDescription}
+            rows="2"
+            maxlength="500"
+            placeholder="Optional"
+          ></textarea>
+        </div>
+        <button class="btn btn-secondary" onclick={handleSaveLinkblog} disabled={isSavingLinkblog}>
+          {#if isSavingLinkblog}Saving…{:else}Save{/if}
+        </button>
       {/if}
+      <div class="danger-section">
+        <h3 class="subhead">Delete linkblog</h3>
+        <p class="setting-description">
+          Deletes every link post from your PDS and removes the linkblog from Skyreader. This cannot
+          be undone.
+        </p>
+        <button class="btn btn-danger" onclick={handleDeleteLinkblog} disabled={isSavingLinkblog}>
+          Delete linkblog
+        </button>
+      </div>
+    {/if}
+    <!-- Outside the branches above: delete and restore both report here, and each
+         one switches which branch is rendered. Nested in either, the delete's
+         "N posts removed" and a failed restore's error would never be seen. -->
+    {#if linkblogError}
+      <p class="sync-error">{linkblogError}</p>
+    {/if}
+    {#if linkblogSuccess}
+      <p class="sync-success">{linkblogSuccess}</p>
     {/if}
   </section>
 
@@ -761,6 +985,8 @@
     </div>
   </section>
 
+  <Diagnostics />
+
   <section class="card debug-section">
     <h2>Debug</h2>
     <p>Development tools for testing.</p>
@@ -779,6 +1005,13 @@
 </div>
 
 <ImportOPMLModal open={showImportModal} onclose={() => (showImportModal = false)} />
+
+<DeleteLinkblogModal
+  open={showDeleteLinkblogConfirm}
+  busy={isSavingLinkblog}
+  onconfirm={confirmDeleteLinkblog}
+  oncancel={() => (showDeleteLinkblogConfirm = false)}
+/>
 
 <style>
   .settings-page {
@@ -1252,6 +1485,21 @@
     margin-top: 1rem;
     padding-top: 1rem;
     border-top: 1px solid var(--color-border);
+  }
+
+  /* Sets the destructive action apart from the settings above it, on the same
+     divider rhythm as .about-links / .sync-toggle-section. (It replaced a bare
+     <hr>, which drew the UA's grooved 2px line on ~8px of margin — too tight
+     above, and the wrong rule.) The subhead drops its own top margin so the
+     spacing is the section's, not the sum of both. */
+  .danger-section {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .danger-section .subhead {
+    margin-top: 0;
   }
 
   .sync-status {

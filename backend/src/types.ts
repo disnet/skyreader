@@ -70,26 +70,6 @@ export interface ParsedFeed {
   fetchedAt: number;
 }
 
-export interface Document {
-  id: number;
-  authorDid: string;
-  recordUri: string;
-  siteUri: string;
-  title: string;
-  publishedAt: string;
-  path?: string;
-  description?: string;
-  coverImageCid?: string;
-  textContent?: string;
-  bskyPostUri?: string;
-  tags?: string[];
-  updatedAt?: string;
-  canonicalUrl?: string;
-  indexedAt: string;
-  createdAt: string;
-  siteIcon?: string;
-}
-
 export interface Publication {
   id: number;
   publicationUri: string;

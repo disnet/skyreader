@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { blogTitle, feedUrlFor, publicationUri, safeHttpUrl } from '$lib/fields';
+  import { blogTitle, feedUrlFor, hostnameOf, publicationUri, safeHttpUrl } from '$lib/fields';
   import BlogEntry from '$lib/components/BlogEntry.svelte';
   import SubscribeActions from '$lib/components/SubscribeActions.svelte';
   import type { PageData } from './$types';
@@ -15,7 +15,7 @@
   const countLabel = $derived(count > 0 ? `${count} ${count === 1 ? 'link' : 'links'}` : '');
 
   const feedUrl = $derived(feedUrlFor(data.origin, data.did));
-  const publication = $derived(publicationUri(data.did));
+  const publication = $derived(data.publication || publicationUri(data.did));
   const pageUrl = $derived(`${data.origin}/${encodeURIComponent(data.did)}`);
   const ogDescription = $derived(
     data.pub?.description || `Links shared by ${data.profile?.displayName || data.did}.`
@@ -24,6 +24,14 @@
   const who = $derived(
     data.profile?.displayName || (handle ? `@${handle}` : 'This reader')
   );
+
+  // These posts live in a publication the reader already runs somewhere else — say
+  // where. The canonical is a narrower question and the server answers it
+  // separately: it only points away when that site holds everything this page
+  // lists, otherwise this page is its own canonical.
+  const externalUrl = $derived(safeHttpUrl(data.externalUrl ?? undefined));
+  const externalHost = $derived(hostnameOf(externalUrl ?? undefined));
+  const canonicalUrl = $derived(safeHttpUrl(data.canonicalUrl ?? undefined) ?? pageUrl);
 </script>
 
 <svelte:head>
@@ -42,6 +50,7 @@
   <meta name="twitter:title" content={title} />
   <meta name="twitter:description" content={ogDescription} />
   {#if icon}<meta name="twitter:image" content={icon} />{/if}
+  <link rel="canonical" href={canonicalUrl} />
   <link rel="alternate" type="application/rss+xml" {title} href={feedUrl} />
 </svelte:head>
 
@@ -65,6 +74,11 @@
     <SubscribeActions apiBase={data.apiBase} appUrl={data.appUrl} {publication} {feedUrl} />
   </div>
   {#if description}<p class="pubdesc">{description}</p>{/if}
+  {#if externalUrl}
+    <p class="pubhome">
+      Published on <a href={externalUrl} rel="noopener noreferrer">{externalHost}</a>
+    </p>
+  {/if}
 </header>
 <hr class="divider" />
 

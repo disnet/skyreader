@@ -1,15 +1,36 @@
 import { describe, expect, it, afterEach, beforeEach, spyOn } from 'bun:test';
 import {
   constellationGet,
+  getConstellationStats,
   isConstellationBreakerOpen,
   resetConstellationBreaker,
+  setConstellationLimits,
 } from './constellation-client';
 
-beforeEach(() => resetConstellationBreaker());
+beforeEach(() => {
+  resetConstellationBreaker();
+  setConstellationLimits();
+});
 afterEach(() => {
   (globalThis.fetch as ReturnType<typeof spyOn>).mockRestore?.();
   resetConstellationBreaker();
+  setConstellationLimits();
 });
+
+/** The shape Bun surfaces when a pooled keep-alive socket is reset mid-request. */
+function connectionReset(): Error {
+  const error = new Error(
+    'The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()'
+  );
+  (error as Error & { code: string }).code = 'ECONNRESET';
+  return error;
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => (resolve = r));
+  return { promise, resolve };
+}
 
 describe('constellationGet', () => {
   it('returns parsed JSON on success and keeps the breaker closed', async () => {
@@ -72,5 +93,175 @@ describe('constellationGet', () => {
 
     for (let i = 0; i < 12; i++) await constellationGet('/links/all', { target: 'x' });
     expect(isConstellationBreakerOpen()).toBe(false);
+  });
+});
+
+describe('constellationGet connection-reset retry', () => {
+  it('retries once after a reset and returns the data', async () => {
+    let call = 0;
+    const spy = spyOn(globalThis, 'fetch').mockImplementation((async () => {
+      call++;
+      if (call === 1) throw connectionReset();
+      return new Response(JSON.stringify({ total: 3 }));
+    }) as unknown as typeof fetch);
+
+    const data = await constellationGet<{ total: number }>('/links/distinct-dids', { target: 'x' });
+    expect(data?.total).toBe(3);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(isConstellationBreakerOpen()).toBe(false);
+    const stats = getConstellationStats();
+    expect(stats.retriesRecovered).toBe(1);
+    expect(stats.failures).toBe(0);
+  });
+
+  it('recognises the reset by message alone when no code is attached', async () => {
+    let call = 0;
+    spyOn(globalThis, 'fetch').mockImplementation((async () => {
+      call++;
+      if (call === 1) throw new Error('The socket connection was closed unexpectedly.');
+      return new Response(JSON.stringify({ ok: true }));
+    }) as unknown as typeof fetch);
+
+    expect(await constellationGet<{ ok: boolean }>('/links/all', { target: 'x' })).toEqual({
+      ok: true,
+    });
+    expect(call).toBe(2);
+  });
+
+  it('retries a second time — a retry opens a socket too, so it can reset as well', async () => {
+    let call = 0;
+    const spy = spyOn(globalThis, 'fetch').mockImplementation((async () => {
+      call++;
+      if (call <= 2) throw connectionReset();
+      return new Response(JSON.stringify({ total: 7 }));
+    }) as unknown as typeof fetch);
+
+    const data = await constellationGet<{ total: number }>('/links/distinct-dids', { target: 'x' });
+    expect(data?.total).toBe(7);
+    expect(spy).toHaveBeenCalledTimes(3);
+    const stats = getConstellationStats();
+    expect(stats.retries).toBe(2);
+    // One logical call recovered, however many sockets it burned getting there.
+    expect(stats.retriesRecovered).toBe(1);
+    expect(stats.failures).toBe(0);
+  });
+
+  it('counts an all-attempts-reset call as exactly one breaker failure', async () => {
+    const spy = spyOn(globalThis, 'fetch').mockImplementation((async () => {
+      throw connectionReset();
+    }) as unknown as typeof fetch);
+
+    // Four logical calls = 12 sockets died, but only 4 breaker failures.
+    for (let i = 0; i < 4; i++) {
+      expect(await constellationGet('/links/all', { target: 'x' })).toBeNull();
+    }
+    expect(spy).toHaveBeenCalledTimes(12);
+    expect(isConstellationBreakerOpen()).toBe(false);
+    expect(getConstellationStats().failures).toBe(4);
+
+    // The fifth logical call is what opens it.
+    expect(await constellationGet('/links/all', { target: 'x' })).toBeNull();
+    expect(isConstellationBreakerOpen()).toBe(true);
+  });
+
+  it('does not retry a timeout — the caller already waited out the full budget', async () => {
+    const spy = spyOn(globalThis, 'fetch').mockImplementation((async () => {
+      const error = new Error('The operation timed out.');
+      error.name = 'TimeoutError';
+      throw error;
+    }) as unknown as typeof fetch);
+
+    expect(await constellationGet('/links/all', { target: 'x' })).toBeNull();
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(getConstellationStats().failures).toBe(1);
+  });
+
+  it('does not retry an HTTP-level failure', async () => {
+    const spy = spyOn(globalThis, 'fetch').mockImplementation(
+      (async () => new Response('err', { status: 503 })) as unknown as typeof fetch
+    );
+    expect(await constellationGet('/links/all', { target: 'x' })).toBeNull();
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('constellationGet concurrency cap', () => {
+  it('never runs more than the cap in flight, and all callers still resolve', async () => {
+    setConstellationLimits(3, 200);
+    let active = 0;
+    let peak = 0;
+    const gate = deferred();
+    spyOn(globalThis, 'fetch').mockImplementation((async () => {
+      active++;
+      peak = Math.max(peak, active);
+      await gate.promise;
+      active--;
+      return new Response(JSON.stringify({ ok: true }));
+    }) as unknown as typeof fetch);
+
+    const calls = Array.from({ length: 12 }, () =>
+      constellationGet<{ ok: boolean }>('/links/all', { target: 'x' })
+    );
+    // Let everything that can start, start.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(getConstellationStats().inUse).toBe(3);
+    expect(getConstellationStats().queued).toBe(9);
+
+    gate.resolve();
+    const results = await Promise.all(calls);
+    expect(peak).toBe(3);
+    expect(results.every((r) => r?.ok === true)).toBe(true);
+    expect(getConstellationStats().inUse).toBe(0);
+  });
+
+  it('sheds on queue overflow, returning null without counting a breaker failure', async () => {
+    setConstellationLimits(1, 1);
+    const gate = deferred();
+    const spy = spyOn(globalThis, 'fetch').mockImplementation((async () => {
+      await gate.promise;
+      return new Response(JSON.stringify({ ok: true }));
+    }) as unknown as typeof fetch);
+
+    // 1 in flight + 1 queued is the whole capacity; the rest are shed.
+    const calls = Array.from({ length: 6 }, () => constellationGet('/links/all', { target: 'x' }));
+    const results = await Promise.all([...calls.slice(2)]);
+    expect(results.every((r) => r === null)).toBe(true);
+    expect(getConstellationStats().shed).toBe(4);
+    // Shedding is our own backpressure, not a Constellation health signal.
+    expect(getConstellationStats().failures).toBe(0);
+    expect(isConstellationBreakerOpen()).toBe(false);
+
+    gate.resolve();
+    expect(await Promise.all(calls.slice(0, 2))).toEqual([{ ok: true }, { ok: true }]);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('short-circuits callers that were queued when the breaker opened', async () => {
+    // Serial handoff, so the queue drains in a deterministic order: the first
+    // five calls fail and open the breaker while the other five are parked.
+    setConstellationLimits(1, 200);
+    const spy = spyOn(globalThis, 'fetch').mockImplementation(
+      (async () => new Response('err', { status: 503 })) as unknown as typeof fetch
+    );
+
+    // All ten pass the pre-queue breaker check (it is still closed) before any
+    // of them reaches the network.
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => constellationGet('/links/all', { target: 'x' }))
+    );
+
+    expect(results.every((r) => r === null)).toBe(true);
+    expect(isConstellationBreakerOpen()).toBe(true);
+    // Without the post-acquire re-check the queued five would each have spent a
+    // full request against an already-failing host.
+    expect(spy).toHaveBeenCalledTimes(5);
+    const stats = getConstellationStats();
+    expect(stats.requests).toBe(5);
+    expect(stats.failures).toBe(5);
+    expect(stats.breakerOpens).toBe(1);
+    expect(stats.shortCircuited).toBe(5);
+    // Short-circuiting is not shedding: the queue never overflowed.
+    expect(stats.shed).toBe(0);
   });
 });

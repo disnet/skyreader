@@ -294,7 +294,7 @@ function renderTableBlock(block: PcktBlogTableBlock, authorDid: string): string 
  * Render a Bluesky post embed
  */
 function renderBlueskyEmbed(block: PcktBlogBlueskyEmbedBlock): string {
-  const postUri = block.attrs?.postRef?.uri;
+  const postUri = block.postRef?.uri;
   if (!postUri) {
     return '';
   }
@@ -316,12 +316,12 @@ function renderBlueskyEmbed(block: PcktBlogBlueskyEmbedBlock): string {
  * Render an iframe embed
  */
 function renderIframeBlock(block: PcktBlogIframeBlock): string {
-  const url = block.attrs?.url;
+  const url = block.url;
   if (!url) {
     return '';
   }
 
-  const height = block.attrs?.height || 315;
+  const height = block.height || 315;
 
   // Security: only allow https URLs
   if (!url.startsWith('https://')) {
@@ -335,14 +335,14 @@ function renderIframeBlock(block: PcktBlogIframeBlock): string {
  * Render a website preview card
  */
 function renderWebsiteBlock(block: PcktBlogWebsiteBlock): string {
-  const url = block.attrs?.src;
+  const url = block.src;
   if (!url) {
     return '';
   }
 
-  const title = block.attrs?.title || url;
-  const description = block.attrs?.description || '';
-  const previewImage = block.attrs?.previewImage;
+  const title = block.title || url;
+  const description = block.description || '';
+  const previewImage = block.previewImage;
 
   let html =
     '<div class="website-preview" style="border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin: 1em 0">';

@@ -60,7 +60,9 @@ function createLinkblogDiscoveryStore() {
       sourceType: 'atproto.documents',
       subjectDid: person.did,
       feedUrl: person.publicationUri,
-      siteUrl: person.blogUrl,
+      // Omitted when the author turned their Skyreader page off: storing a URL
+      // that 404s outlives the moment, and the subscription works without one.
+      siteUrl: person.blogUrl ?? undefined,
     });
     if (person.avatar) {
       await subscriptionsStore.updateLocal(id, {

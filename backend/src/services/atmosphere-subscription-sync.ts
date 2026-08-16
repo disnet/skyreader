@@ -33,11 +33,11 @@ import { resolvePdsUrl } from '../utils/did-resolver';
 import { generateTid } from '../utils/tid';
 import {
   SUBSCRIPTION_COLLECTION,
+  deleteAtmosphereSubscription,
   isPublicationUri,
   writeAtmosphereSubscription,
 } from './atmosphere-subscription';
 import { pushSubscriptionToPds, deleteSubscriptionFromPds } from './subscription-sync';
-import { backfillDocumentsForUser } from '../routes/social';
 
 const SUBSCRIPTION_NSID = 'app.skyreader.feed.subscription';
 
@@ -48,12 +48,6 @@ const MAX_LIST_PAGES = 20;
 // per run to stay well under the Worker subrequest budget. When more remain,
 // `hasMore` is set so the caller loops — exactly like syncSubscriptions batching.
 const MAX_OPS = 20;
-
-// Cap how many author feeds we eagerly warm per run. Each backfill fetches up to
-// ~10 pages plus per-document URL resolution, all charged to this request's
-// subrequest budget; firing one per import (up to MAX_OPS) could blow it. The
-// rest load lazily on first open — the warning surfaces what was deferred.
-const MAX_BACKFILLS = 8;
 
 export interface AtmosphereSyncResult {
   success: boolean;
@@ -75,6 +69,7 @@ interface LocalDocSub {
   record_uri: string;
   feed_url: string;
   atmosphere_synced: number | null;
+  atmosphere_previous_feed_url: string | null;
 }
 
 interface PublicationMeta {
@@ -184,7 +179,7 @@ export async function reconcileAtmosphereSubscriptions(
 
     // Step 2: local atproto.documents subs, keyed by publication URI (feedUrl).
     const localResult = await env.DB.prepare(
-      `SELECT record_uri, feed_url, atmosphere_synced
+      `SELECT record_uri, feed_url, atmosphere_synced, atmosphere_previous_feed_url
          FROM subscriptions_cache
         WHERE user_did = ? AND source_type = 'atproto.documents'`
     )
@@ -192,8 +187,12 @@ export async function reconcileAtmosphereSubscriptions(
       .all<LocalDocSub>();
     const localSubs = localResult.results || [];
     const localByPub = new Map<string, LocalDocSub>();
+    const supersededGraphPubs = new Set<string>();
     for (const sub of localSubs) {
       if (isPublicationUri(sub.feed_url)) localByPub.set(sub.feed_url, sub);
+      if (isPublicationUri(sub.atmosphere_previous_feed_url)) {
+        supersededGraphPubs.add(sub.atmosphere_previous_feed_url);
+      }
     }
 
     // Tier-aware headroom for imports — counts ACTIVE subs only, since the limit
@@ -218,13 +217,15 @@ export async function reconcileAtmosphereSubscriptions(
     let totalCount = totalSubsRow?.count || 0;
     const maxMirrored = limits.maxMirroredSubscriptions;
 
-    // Step 3: import graph edges that aren't local yet. Authors to warm are
-    // collected (deduped) and backfilled after the loop, bounded by MAX_BACKFILLS.
-    const authorsToBackfill = new Set<string>();
+    // Step 3: import graph edges that aren't local yet.
     let parkedOnImport = 0;
     let droppedOverCap = 0;
     for (const pubUri of graphPubs) {
       if (localByPub.has(pubUri)) continue;
+      // A publication switch deliberately superseded this edge. Its destination
+      // row below owns deleting it; importing it here would resurrect the old
+      // follower scope and prevent the migration from converging.
+      if (supersededGraphPubs.has(pubUri)) continue;
       if (ops >= MAX_OPS) {
         result.hasMore = true;
         break;
@@ -280,8 +281,6 @@ export async function reconcileAtmosphereSubscriptions(
 
       totalCount++;
       if (active) {
-        // Only warm feeds we'll actually show.
-        authorsToBackfill.add(meta.subjectDid);
         liveCount++;
       } else {
         parkedOnImport++;
@@ -306,23 +305,57 @@ export async function reconcileAtmosphereSubscriptions(
       );
     }
 
-    // Warm the imported feeds so they aren't empty on first open — deduped by
-    // author (one backfill covers all of an author's publications) and capped so
-    // a large first import can't exhaust the request's subrequest budget.
-    let backfilled = 0;
-    for (const did of authorsToBackfill) {
-      if (backfilled >= MAX_BACKFILLS) break;
-      ctx.waitUntil(backfillDocumentsForUser(env, did));
-      backfilled++;
-    }
-    if (authorsToBackfill.size > backfilled) {
-      result.warnings.push(
-        `Deferred feed warm-up for ${authorsToBackfill.size - backfilled} author(s); their posts load on first open.`
-      );
-    }
+    // No backfill step: an imported follow's posts are fetched from the proxy on
+    // first open (POST /api/v2/documents/batch in routes/feeds-v2.ts), so there is
+    // nothing to warm ahead of time.
 
     // Step 4: reconcile each local pub-sub against the graph.
     for (const [pubUri, sub] of localByPub) {
+      if (sub.atmosphere_previous_feed_url) {
+        const previousPubUri = sub.atmosphere_previous_feed_url;
+        if (graphPubs.has(previousPubUri)) {
+          if (ops >= MAX_OPS) {
+            result.hasMore = true;
+            break;
+          }
+          const removeOld = await deleteAtmosphereSubscription(session, previousPubUri);
+          if (!removeOld.success) {
+            result.warnings.push(
+              `Failed to replace old publication follow ${previousPubUri}: ${removeOld.error}`
+            );
+            continue;
+          }
+          graphPubs.delete(previousPubUri);
+          ops++;
+        }
+
+        if (!graphPubs.has(pubUri)) {
+          if (ops >= MAX_OPS) {
+            result.hasMore = true;
+            break;
+          }
+          const writeNew = await writeAtmosphereSubscription(session, pubUri);
+          if (!writeNew.success) {
+            result.warnings.push(
+              `Failed to push replacement edge for ${pubUri}: ${writeNew.error}`
+            );
+            continue;
+          }
+          graphPubs.add(pubUri);
+          result.pushed++;
+          ops++;
+        }
+
+        await env.DB.prepare(
+          `UPDATE subscriptions_cache
+           SET atmosphere_synced = unixepoch(), atmosphere_previous_feed_url = NULL
+           WHERE record_uri = ?`
+        )
+          .bind(sub.record_uri)
+          .run();
+        continue;
+      }
+
       if (graphPubs.has(pubUri)) {
         // Present both places — claim it if not yet marked (e.g. an in-app follow).
         if (sub.atmosphere_synced === null) {

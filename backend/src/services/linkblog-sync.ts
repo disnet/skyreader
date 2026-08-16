@@ -8,8 +8,14 @@
 // See LINKBLOG_PLAN.md. This replaces the old app.skyreader.social.share write.
 
 import type { Env, Session } from '../types';
-import { createPDSClient, type PDSResult, type PutRecordResponse } from './pds-client';
+import {
+  createPDSClient,
+  type PDSClient,
+  type PDSResult,
+  type PutRecordResponse,
+} from './pds-client';
 import { resolveHandle } from './oauth';
+import { OFFPRINT_SCOPES, PCKT_SCOPES } from '../config/scopes';
 import { parseHandleTokens, buildMentionFacet, type MentionFacet } from '../utils/mention-facets';
 
 // Cap on the number of distinct handles we resolve per note. Each unique handle
@@ -60,6 +66,33 @@ async function resolveNoteMentionHandles(note: string | undefined): Promise<Map<
 export const PUBLICATION_COLLECTION = 'site.standard.publication';
 export const DOCUMENT_COLLECTION = 'site.standard.document';
 
+// Companion records.
+//
+// standard.site is the shared surface, but pckt and Offprint don't index it
+// directly: every post they host has a second record in the app's OWN collection,
+// holding a strongRef to the document. That companion is what marks a
+// site.standard.document as theirs, so a document written without one is a valid
+// standard.site post their sites will never show. Both were read off the apps'
+// own posts and their published lexicons (pckt: did:plc:revjuqmkvrw6fnkxppqtszpv,
+// Offprint: did:plc:pgjkomf37an4czloay5zeth6).
+//
+// The two differ in what else the companion carries. pckt's names the pckt-side
+// publication (itself a companion to the site.standard.publication), so it takes
+// a lookup to build. Offprint's is the strongRef alone — the publication comes
+// from the document's own `site`.
+//
+// markpub has no companion because it isn't an app: at.markpub.* is a content
+// lexicon meant to be embedded in someone else's record, with no publication or
+// document type of its own. Leaflet indexes site.standard.document directly.
+export const PCKT_DOCUMENT_COLLECTION = 'blog.pckt.document';
+export const PCKT_PUBLICATION_COLLECTION = 'blog.pckt.publication';
+export const OFFPRINT_ARTICLE_COLLECTION = 'app.offprint.document.article';
+
+export const COMPANION_COLLECTIONS: Partial<Record<ContentFormat, string>> = {
+  pckt: PCKT_DOCUMENT_COLLECTION,
+  offprint: OFFPRINT_ARTICLE_COLLECTION,
+};
+
 // One dedicated linkblog publication per user, at a fixed rkey.
 export const LINKBLOG_RKEY = 'skyreader-links';
 
@@ -78,6 +111,128 @@ export const LINKBLOG_RKEY = 'skyreader-links';
 // See LINKBLOG_PLAN.md Phase 6.
 export const LINKBLOG_MARKER_URL = 'https://skyreader.app/linkblog';
 
+export type ContentFormat = 'leaflet' | 'pckt' | 'offprint' | 'markpub';
+export interface LinkblogTarget {
+  siteUri: string;
+  format: ContentFormat;
+  external: boolean;
+}
+
+const CONTENT_FORMATS = new Set<ContentFormat>(['leaflet', 'pckt', 'offprint', 'markpub']);
+
+export function defaultLinkblogTarget(did: string): LinkblogTarget {
+  return { siteUri: publicationUri(did), format: 'leaflet', external: false };
+}
+
+// Turn a stored `linkblog_publication` setting into a target, ignoring anything
+// that isn't a publication in this user's own repo.
+function targetFromRow(
+  did: string,
+  publication: string | null | undefined,
+  contentFormat: string | null | undefined
+): LinkblogTarget {
+  const fallback = defaultLinkblogTarget(did);
+  if (!publication) return fallback;
+  const match = publication.match(/^at:\/\/([^/]+)\/site\.standard\.publication\/([^/]+)$/);
+  if (!match || match[1] !== did) return fallback;
+  const format = CONTENT_FORMATS.has(contentFormat as ContentFormat)
+    ? (contentFormat as ContentFormat)
+    : 'leaflet';
+  return {
+    siteUri: publication,
+    format,
+    external: publication !== fallback.siteUri,
+  };
+}
+
+export async function getLinkblogTarget(env: Env, did: string): Promise<LinkblogTarget> {
+  try {
+    const row = await env.DB.prepare(
+      'SELECT linkblog_publication, linkblog_content_format FROM user_settings WHERE user_did = ?'
+    )
+      .bind(did)
+      .first<{ linkblog_publication: string | null; linkblog_content_format: string | null }>();
+    return targetFromRow(did, row?.linkblog_publication, row?.linkblog_content_format);
+  } catch {
+    // Deploys remain usable while a migration is rolling out.
+    return defaultLinkblogTarget(did);
+  }
+}
+
+// D1 caps bound parameters per statement; chunk the IN (...) list well under it.
+const TARGET_LOOKUP_CHUNK = 80;
+
+// Batch form of getLinkblogTarget for list endpoints (discovery). Every requested
+// DID is present in the result — DIDs with no (or an unusable) setting map to the
+// default Skyreader publication, same as the single-DID resolver.
+export async function getLinkblogTargets(
+  env: Env,
+  dids: string[]
+): Promise<Map<string, LinkblogTarget>> {
+  const out = new Map<string, LinkblogTarget>();
+  const unique = [...new Set(dids)];
+  for (const did of unique) out.set(did, defaultLinkblogTarget(did));
+  if (unique.length === 0) return out;
+
+  try {
+    for (let i = 0; i < unique.length; i += TARGET_LOOKUP_CHUNK) {
+      const chunk = unique.slice(i, i + TARGET_LOOKUP_CHUNK);
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = await env.DB.prepare(
+        `SELECT user_did, linkblog_publication, linkblog_content_format
+         FROM user_settings WHERE user_did IN (${placeholders})`
+      )
+        .bind(...chunk)
+        .all<{
+          user_did: string;
+          linkblog_publication: string | null;
+          linkblog_content_format: string | null;
+        }>();
+      for (const row of rows.results ?? []) {
+        out.set(
+          row.user_did,
+          targetFromRow(row.user_did, row.linkblog_publication, row.linkblog_content_format)
+        );
+      }
+    }
+  } catch {
+    // Best-effort: discovery falls back to the default publication for everyone.
+  }
+  return out;
+}
+
+// Bound on the connected-linkblog list below. Far above any plausible count of
+// users who've connected an existing publication; a cap only so a runaway table
+// can't be loaded whole into a discovery request.
+const MAX_CONNECTED_AUTHORS = 2000;
+
+// The DIDs whose linkblog is an EXISTING publication they connected.
+//
+// These users are invisible to the Constellation marker registry: the marker is
+// stamped on the `skyreader-links` publication we create, and connecting is
+// deliberately non-mutating — we never touch a publication the home app owns. A
+// user who connects before their first share therefore never creates a marked
+// record at all. Discovery unions this local list over the registry so they're
+// still findable (see linkblog-discovery.ts). Best-effort, like everything in
+// discovery: a failure yields a shorter list, not an error.
+export async function getConnectedLinkblogAuthors(env: Env): Promise<string[]> {
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT user_did, linkblog_publication FROM user_settings
+       WHERE linkblog_publication IS NOT NULL LIMIT ?`
+    )
+      .bind(MAX_CONNECTED_AUTHORS)
+      .all<{ user_did: string; linkblog_publication: string }>();
+    // Only rows that actually resolve to a target (a publication in that user's
+    // own repo) count — targetFromRow rejects anything else.
+    return (rows.results ?? [])
+      .filter((row) => targetFromRow(row.user_did, row.linkblog_publication, null).external)
+      .map((row) => row.user_did);
+  } catch {
+    return [];
+  }
+}
+
 // Generous excerpt cap — the excerpt is the only durable copy if the source
 // link-rots or paywalls, so keep it roomy, but bound it so a record can't bloat.
 const MAX_EXCERPT_CHARS = 1500;
@@ -91,7 +246,9 @@ interface BlobRef {
 
 interface PublicationRecord {
   $type?: string;
-  url: string;
+  // Optional: a foreign publication (Leaflet, pckt, …) isn't guaranteed to carry
+  // one, and we never depend on it for our own records.
+  url?: string;
   name?: string;
   description?: string;
   icon?: BlobRef;
@@ -129,11 +286,38 @@ function truncate(text: string, max: number): string {
 
 export interface PublicationMeta {
   uri: string;
+  // ALWAYS the Skyreader linkblog page for this user (<linkblogs origin>/<did>/).
+  // Clients build the handle alias off its origin and present it as "your public
+  // page", so it must stay on the linkblog site even when the documents live in a
+  // connected publication — that page renders them too.
   url: string;
+  // For a connected publication only: its own site, as stored on the record
+  // (e.g. https://leaflet.pub/lish/…). Absent when there is none, or when it
+  // isn't an http(s) URL. Purely informational — never the "your linkblog" link.
+  externalUrl?: string;
   name: string;
   description?: string;
   iconUrl?: string;
   exists: boolean;
+  external: boolean;
+  format: ContentFormat;
+  disabled: boolean;
+  // The user turned off the Skyreader-hosted page at `url`. Only reachable with a
+  // connected publication; `url` still describes where the page WOULD be, so the
+  // setting can be undone.
+  pageHidden: boolean;
+}
+
+// PDS records are user-controlled, so a `url` can be any string. Only surface it
+// when it's a real http(s) URL (it ends up in an href).
+export function httpUrlOrUndefined(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function iconUrlFromBlob(did: string, icon: BlobRef | undefined): string | undefined {
@@ -144,34 +328,52 @@ function iconUrlFromBlob(did: string, icon: BlobRef | undefined): string | undef
 // Read the current linkblog publication, or synthesize sensible defaults when it
 // doesn't exist yet (so the settings UI can render before the first share).
 export async function getPublicationMeta(session: Session, env: Env): Promise<PublicationMeta> {
+  const [target, visibility] = await Promise.all([
+    getLinkblogTarget(env, session.did),
+    getLinkblogVisibility(env, session.did),
+  ]);
+  const disabled = visibility.disabled;
+  // Hiding the page is only offered alongside a connected publication, so a stored
+  // `true` with no connection is stale (a direct API call, or a disconnect path
+  // that didn't clear it). Read it as false rather than leaving a linkblog dark
+  // with no visible control to turn it back on.
+  const pageHidden = visibility.pageHidden && target.external;
   const pdsClient = createPDSClient(session);
-  const result = await pdsClient.getRecord<PublicationRecord>(
-    PUBLICATION_COLLECTION,
-    LINKBLOG_RKEY
-  );
+  const rkey = target.siteUri.split('/').pop() || LINKBLOG_RKEY;
+  const result = await pdsClient.getRecord<PublicationRecord>(PUBLICATION_COLLECTION, rkey);
 
   const url = linkblogBaseUrl(env, session.did);
   if (!result.success) {
     return {
-      uri: publicationUri(session.did),
+      uri: target.siteUri,
       url,
       name: defaultPublicationName(session),
       exists: false,
+      external: target.external,
+      format: target.format,
+      disabled,
+      pageHidden,
     };
   }
 
   const value = result.data.value;
   return {
-    uri: publicationUri(session.did),
+    uri: target.siteUri,
     // Report the current canonical public URL, not the record's stored `value.url`
     // — older records still point at the previous origin (skyreader.app/blogs/…)
     // until lazy-backfilled, and the UI should always show where the linkblog
     // actually lives now (the stored field self-corrects on the user's next share).
+    // A connected publication's own site rides along separately as `externalUrl`.
     url,
+    externalUrl: target.external ? httpUrlOrUndefined(value.url) : undefined,
     name: value.name || defaultPublicationName(session),
     description: value.description,
     iconUrl: iconUrlFromBlob(session.did, value.icon),
     exists: true,
+    external: target.external,
+    format: target.format,
+    disabled,
+    pageHidden,
   };
 }
 
@@ -300,6 +502,138 @@ interface DocumentRecord {
   tags?: string[];
   links?: Array<{ uri: string; rel: string }>;
   content?: unknown;
+  // Provenance marker: "Skyreader wrote this link post" (same constant the
+  // publication carries — see LINKBLOG_MARKER_URL). Load-bearing once a linkblog
+  // is connected to an existing publication: that publication also holds posts
+  // its HOME app wrote, and a home-app post that happens to link out is otherwise
+  // indistinguishable from a share. Everything Skyreader offers to *mutate* — the
+  // un-share/delete, the in-place note edit, the "already shared" overlay — keys
+  // off this, so we never rewrite or destroy someone's Leaflet/pckt essay.
+  // Absent on documents in the default publication written before the marker
+  // existed; those are covered by the publication check instead.
+  skyreaderLinkblog?: string;
+}
+
+// Whether a `site.standard.document` is one of OUR link posts: it carries the
+// marker, or it lives in the user's own Skyreader publication (where everything
+// is ours, marker or not — pre-marker records still count).
+export function isSkyreaderShareRecord(
+  did: string,
+  rec: Pick<DocumentRecord, 'site' | 'skyreaderLinkblog'>
+): boolean {
+  return rec.skyreaderLinkblog === LINKBLOG_MARKER_URL || rec.site === publicationUri(did);
+}
+
+export interface LinkblogVisibility {
+  /** The linkblog was deleted (posts removed); restorable, but empty. */
+  disabled: boolean;
+  /**
+   * The user asked us not to serve their public page at linkblogs.skyreader.app.
+   * Only offered while a linkblog is connected to an existing publication, which
+   * has a site of its own; disconnecting clears it.
+   */
+  pageHidden: boolean;
+}
+
+// Both public-visibility flags in one lookup. On error, falls back to reading
+// `linkblog_disabled` alone: a deploy that lands before migration 0066 would
+// otherwise fail the combined SELECT and report a DELETED linkblog as visible,
+// which is the one direction that must not happen.
+export async function getLinkblogVisibility(env: Env, did: string): Promise<LinkblogVisibility> {
+  try {
+    const row = await env.DB.prepare(
+      'SELECT linkblog_disabled, linkblog_page_hidden FROM user_settings WHERE user_did = ?'
+    )
+      .bind(did)
+      .first<{ linkblog_disabled: number; linkblog_page_hidden: number }>();
+    return {
+      disabled: row?.linkblog_disabled === 1,
+      pageHidden: row?.linkblog_page_hidden === 1,
+    };
+  } catch {
+    return { disabled: await isLinkblogDisabled(env, did), pageHidden: false };
+  }
+}
+
+export async function isLinkblogDisabled(env: Env, did: string): Promise<boolean> {
+  try {
+    const row = await env.DB.prepare(
+      'SELECT linkblog_disabled FROM user_settings WHERE user_did = ?'
+    )
+      .bind(did)
+      .first<{ linkblog_disabled: number }>();
+    return row?.linkblog_disabled === 1;
+  } catch {
+    return false;
+  }
+}
+
+// Set (or clear) the "don't serve my page at linkblogs.skyreader.app" choice.
+export async function setLinkblogPageHidden(env: Env, did: string, hidden: boolean): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(
+    `INSERT INTO user_settings (user_did, linkblog_page_hidden, created_at, updated_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_did) DO UPDATE SET linkblog_page_hidden=excluded.linkblog_page_hidden,
+     updated_at=excluded.updated_at`
+  )
+    .bind(did, hidden ? 1 : 0, now, now)
+    .run();
+}
+
+// The authors who turned off their Skyreader-hosted page. Unlike a disabled
+// linkblog these people still belong in discovery — their links are publishing
+// fine, into the publication they connected — so this only says "don't hand out
+// the linkblogs.skyreader.app address for them", which would 404.
+//
+// Not folded into getLinkblogTargets: that SELECT is the one every share path
+// depends on, and its catch exists so a deploy landing ahead of a migration still
+// resolves targets. A separate query keeps 0066's column out of that blast radius
+// — pre-migration this throws on its own and degrades to "nobody is hidden".
+export async function getPageHiddenAuthors(env: Env, dids: string[]): Promise<string[]> {
+  const candidates = [...new Set(dids)];
+  if (candidates.length === 0) return [];
+  try {
+    const hidden: string[] = [];
+    for (let i = 0; i < candidates.length; i += 100) {
+      const chunk = candidates.slice(i, i + 100);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = await env.DB.prepare(
+        `SELECT user_did FROM user_settings
+         WHERE linkblog_page_hidden = 1 AND user_did IN (${placeholders})`
+      )
+        .bind(...chunk)
+        .all<{ user_did: string }>();
+      hidden.push(...(rows.results ?? []).map((row) => row.user_did));
+    }
+    return hidden;
+  } catch {
+    return [];
+  }
+}
+
+export async function getDisabledLinkblogAuthors(env: Env, dids: string[]): Promise<string[]> {
+  const candidates = [...new Set(dids)];
+  if (candidates.length === 0) return [];
+  try {
+    const disabled: string[] = [];
+    // Stay comfortably below SQLite/D1's bind-parameter ceiling while filtering
+    // exactly the registry candidates; no global row cap can leak disabled blogs.
+    for (let i = 0; i < candidates.length; i += 100) {
+      const chunk = candidates.slice(i, i + 100);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = await env.DB.prepare(
+        `SELECT user_did FROM user_settings
+         WHERE linkblog_disabled = 1 AND user_did IN (${placeholders})`
+      )
+        .bind(...chunk)
+        .all<{ user_did: string }>();
+      disabled.push(...(rows.results ?? []).map((row) => row.user_did));
+    }
+    return disabled;
+  } catch {
+    return [];
+  }
 }
 
 // The article excerpt stored on a record's website link-card block. The card is
@@ -307,7 +641,10 @@ interface DocumentRecord {
 // as the legacy-quote marker, so the note-update path reads it back from here to
 // rebuild the card without dropping it.
 function websiteCardExcerpt(content: unknown): string {
-  const c = content as { pages?: Array<{ blocks?: Array<{ block?: Record<string, unknown> }> }> };
+  const c = content as {
+    pages?: Array<{ blocks?: Array<{ block?: Record<string, unknown> }> }>;
+    items?: Array<{ $type?: string; description?: unknown }>;
+  };
   for (const page of c?.pages ?? []) {
     for (const wrapper of page.blocks ?? []) {
       if (wrapper.block?.$type === 'pub.leaflet.blocks.website') {
@@ -315,6 +652,13 @@ function websiteCardExcerpt(content: unknown): string {
         if (typeof desc === 'string') return desc;
       }
     }
+  }
+  // pckt's and Offprint's link cards both keep the excerpt under a top-level
+  // `description`, differing only in the block name.
+  for (const item of c?.items ?? []) {
+    const isCard =
+      item?.$type === 'blog.pckt.block.website' || item?.$type === 'app.offprint.block.webBookmark';
+    if (isCard && typeof item.description === 'string') return item.description;
   }
   return '';
 }
@@ -325,49 +669,69 @@ function websiteCardExcerpt(content: unknown): string {
 // render and open it; the top-level `links` field is the machine-readable ref.
 type NoteBlock = { block: Record<string, unknown> };
 
-// Parse the editor's deliberately small Markdown subset into native Leaflet
-// blocks. Only a `>` at the beginning of a line is special; all other Markdown
-// remains plaintext for Leaflet-aware clients to interpret as they choose.
-export function noteToLeafletBlocks(
-  note: string | undefined,
-  resolvedHandles: Map<string, string> = new Map()
-): NoteBlock[] {
+// A contiguous run of note lines that share one kind — the unit every content
+// format turns into a single block. `plaintext` has the `> ` markers stripped.
+interface NoteRun {
+  quote: boolean;
+  plaintext: string;
+}
+
+// Split the editor's deliberately small Markdown subset into runs. Only a `>` at
+// the beginning of a line is special; all other Markdown stays in the plaintext
+// for a format-aware client to interpret as it chooses.
+//
+// A run ends at a blank line OR at a switch between quoted and unquoted lines —
+// the switch matters because the composer's cursor sits right under the seeded
+// quote, so `> quote` followed immediately by commentary (no blank line between)
+// is the ordinary shape of a note. Splitting on blank lines alone folded that
+// commentary into the quote (or, in the reverse order, dropped the quote's
+// markers and rendered it as prose).
+function noteRuns(note: string | undefined): NoteRun[] {
   const text = note?.trim();
   if (!text) return [];
 
-  const blocks: NoteBlock[] = [];
-  let kind: 'text' | 'blockquote' | undefined;
+  const runs: NoteRun[] = [];
+  let quote: boolean | undefined;
   let lines: string[] = [];
   const flush = () => {
-    if (!kind || lines.length === 0) return;
-    const plaintext = lines.join('\n');
-    const block: Record<string, unknown> = {
-      $type: `pub.leaflet.blocks.${kind}`,
-      plaintext,
-    };
-    const facets = parseHandleTokens(plaintext).flatMap((token) => {
-      const did = resolvedHandles.get(token.handle);
-      return did ? [buildMentionFacet(token.byteStart, token.byteEnd, did)] : [];
-    });
-    if (facets.length > 0) block.facets = facets;
-    blocks.push({ block });
-    kind = undefined;
+    if (quote === undefined || lines.length === 0) return;
+    runs.push({ quote, plaintext: lines.join('\n') });
+    quote = undefined;
     lines = [];
   };
 
   for (const line of text.split('\n')) {
-    const quote = line.match(/^> ?(.*)$/);
-    if (!quote && line.trim() === '') {
+    const marked = line.match(/^> ?(.*)$/);
+    if (!marked && line.trim() === '') {
       flush();
       continue;
     }
-    const nextKind = quote ? 'blockquote' : 'text';
-    if (kind && kind !== nextKind) flush();
-    kind = nextKind;
-    lines.push(quote ? quote[1] : line);
+    const isQuote = Boolean(marked);
+    if (quote !== undefined && quote !== isQuote) flush();
+    quote = isQuote;
+    lines.push(marked ? marked[1] : line);
   }
   flush();
-  return blocks;
+  return runs;
+}
+
+// Parse the note into native Leaflet text/blockquote blocks, one per run.
+export function noteToLeafletBlocks(
+  note: string | undefined,
+  resolvedHandles: Map<string, string> = new Map()
+): NoteBlock[] {
+  return noteRuns(note).map((run) => {
+    const block: Record<string, unknown> = {
+      $type: `pub.leaflet.blocks.${run.quote ? 'blockquote' : 'text'}`,
+      plaintext: run.plaintext,
+    };
+    const facets = parseHandleTokens(run.plaintext).flatMap((token) => {
+      const did = resolvedHandles.get(token.handle);
+      return did ? [buildMentionFacet(token.byteStart, token.byteEnd, did)] : [];
+    });
+    if (facets.length > 0) block.facets = facets;
+    return { block };
+  });
 }
 
 export function replaceLeafletNoteRegion(
@@ -405,9 +769,13 @@ function buildLeafletContent(
 ): unknown {
   const blocks: Array<{ block: unknown }> = noteToLeafletBlocks(input.note, resolvedHandles);
 
+  // `src` is the field name pub.leaflet.blocks.website requires. Getting it
+  // wrong is silent and total: Leaflet's appview runs every site.standard.document
+  // through lexicon validation before indexing, and a website card missing its
+  // required field drops the whole post on the floor — no post, no error.
   const website: Record<string, unknown> = {
     $type: 'pub.leaflet.blocks.website',
-    url: input.articleUrl,
+    src: input.articleUrl,
   };
   if (input.articleTitle) website.title = input.articleTitle;
   if (excerpt) website.description = excerpt;
@@ -423,7 +791,9 @@ export function buildLinkblogDocument(
   did: string,
   rkey: string,
   input: LinkblogShareInput,
-  resolvedHandles?: Map<string, string>
+  resolvedHandles?: Map<string, string>,
+  siteUri = publicationUri(did),
+  format: ContentFormat = 'leaflet'
 ): DocumentRecord {
   const now = new Date().toISOString();
   const excerpt = input.excerpt ? truncate(input.excerpt, MAX_EXCERPT_CHARS) : '';
@@ -435,7 +805,7 @@ export function buildLinkblogDocument(
 
   return {
     $type: DOCUMENT_COLLECTION,
-    site: publicationUri(did),
+    site: siteUri,
     title: input.articleTitle?.trim() || input.articleUrl,
     path: `/${rkey}`,
     publishedAt: input.articlePublishedAt || now,
@@ -450,8 +820,265 @@ export function buildLinkblogDocument(
     textContent,
     tags: input.tags && input.tags.length > 0 ? input.tags : undefined,
     links,
-    content: buildLeafletContent(input, excerpt, resolvedHandles),
+    content: buildContent(format, input, excerpt, resolvedHandles),
+    // See DocumentRecord.skyreaderLinkblog — the tell that separates a Skyreader
+    // share from a post the connected publication's home app wrote.
+    skyreaderLinkblog: LINKBLOG_MARKER_URL,
   };
+}
+
+// The block-item formats (pckt, Offprint) share a shape — an ordered `items`
+// array of `<prefix>text` / `<prefix>blockquote` blocks — and differ only in the
+// NSID prefix and in how they carry the shared article.
+const ITEM_PREFIX: Record<'pckt' | 'offprint', string> = {
+  pckt: 'blog.pckt.block.',
+  offprint: 'app.offprint.block.',
+};
+
+const ITEM_CONTENT_TYPE: Record<'pckt' | 'offprint', string> = {
+  pckt: 'blog.pckt.content',
+  offprint: 'app.offprint.content',
+};
+
+// The note as native blocks: one item per run, quoted runs wrapped in the
+// format's blockquote container (the same deliberately small Markdown subset the
+// editor speaks, split the same way as for Leaflet).
+function noteToBlockItems(
+  prefix: string,
+  note: string | undefined
+): Array<Record<string, unknown>> {
+  return noteRuns(note).map((run) => {
+    const textBlock = { $type: `${prefix}text`, plaintext: run.plaintext };
+    return run.quote ? { $type: `${prefix}blockquote`, content: [textBlock] } : textBlock;
+  });
+}
+
+// The shared article itself, trailing the note. Both apps have a native link
+// card, so the article is a card in both — a text line carrying a URL would be
+// the linkblog's whole point rendered as an afterthought.
+function articleItem(
+  format: 'pckt' | 'offprint',
+  article: { url: string; title?: string; excerpt?: string }
+): Record<string, unknown> {
+  if (format === 'pckt') {
+    // Flat, not wrapped in `attrs`. pckt uses a tiptap-shaped `attrs` bag on some
+    // blocks (image, tableCell) but not on this one — both its published lexicon
+    // and every website card in its own posts put src/title/description at the
+    // top level.
+    return {
+      $type: 'blog.pckt.block.website',
+      src: article.url,
+      title: article.title,
+      description: article.excerpt || undefined,
+    };
+  }
+  // Offprint's card names the fields differently (`href`, and `title` is required
+  // rather than optional), so fall back to the URL when the article has no title.
+  return {
+    $type: 'app.offprint.block.webBookmark',
+    href: article.url,
+    title: article.title || article.url,
+    description: article.excerpt || undefined,
+  };
+}
+
+function markpubLinkLine(url: string, title?: string): string {
+  return `[${(title || url).replace(/([\\[\]()])/g, '\\$1')}](${url})`;
+}
+
+function buildContent(
+  format: ContentFormat,
+  input: LinkblogShareInput,
+  excerpt: string,
+  handles?: Map<string, string>
+): unknown {
+  if (format === 'leaflet') return buildLeafletContent(input, excerpt, handles);
+  if (format === 'markpub') {
+    // No companion record here, and none needed: at.markpub.* is a content
+    // lexicon designed to sit inside someone else's record (its own docs say so),
+    // with no publication or document type and so no app of its own to index it.
+    return {
+      $type: 'at.markpub.markdown',
+      // The plain Markdown we emit is CommonMark, and stating the flavor is what
+      // the lexicon asks of a writer that knows its own output.
+      flavor: 'commonmark',
+      text: {
+        $type: 'at.markpub.text',
+        markdown: [input.note?.trim(), markpubLinkLine(input.articleUrl, input.articleTitle)]
+          .filter(Boolean)
+          .join('\n\n'),
+      },
+    };
+  }
+  const items = [
+    ...noteToBlockItems(ITEM_PREFIX[format], input.note),
+    articleItem(format, { url: input.articleUrl, title: input.articleTitle, excerpt }),
+  ];
+  return { $type: ITEM_CONTENT_TYPE[format], items };
+}
+
+// Which content shape a stored record uses, or null for anything we can't edit.
+export function contentFormatOf(content: unknown): ContentFormat | null {
+  switch ((content as { $type?: string } | undefined)?.$type) {
+    case 'pub.leaflet.content':
+      return 'leaflet';
+    case 'blog.pckt.content':
+      return 'pckt';
+    case 'app.offprint.content':
+      return 'offprint';
+    case 'at.markpub.markdown':
+      return 'markpub';
+    default:
+      return null;
+  }
+}
+
+// Is this item part of the leading note region (as opposed to the article that
+// closes the post)? A link card ends the region by not being a text block. Older
+// Offprint shares closed with an ordinary text line instead, so a text block
+// carrying the article URL ends it too.
+function isNoteItem(item: unknown, prefix: string, articleUrl: string | undefined): boolean {
+  const block = item as { $type?: string; plaintext?: unknown } | undefined;
+  if (block?.$type === `${prefix}blockquote`) return true;
+  if (block?.$type !== `${prefix}text`) return false;
+  const plaintext = typeof block.plaintext === 'string' ? block.plaintext : '';
+  return !(articleUrl && plaintext.includes(articleUrl));
+}
+
+// Swap the note region of a pckt/Offprint body, preserving the article block and
+// anything the home app appended after it.
+export function replaceItemsNoteRegion(
+  existing: unknown,
+  format: 'pckt' | 'offprint',
+  note: string,
+  article: { url?: string; title?: string }
+): unknown {
+  const content = existing as { $type?: string; items?: unknown[] } | undefined;
+  const prefix = ITEM_PREFIX[format];
+  const items = Array.isArray(content?.items) ? content.items : [];
+  const firstPreserved = items.findIndex((item) => !isNoteItem(item, prefix, article.url));
+  const preserved = firstPreserved < 0 ? [] : items.slice(firstPreserved);
+  return {
+    ...content,
+    $type: content?.$type || ITEM_CONTENT_TYPE[format],
+    items: [
+      ...noteToBlockItems(prefix, note),
+      // The article block should always be there; rebuild it if the record somehow
+      // arrived without one, so an edit can't drop the link itself.
+      ...(preserved.length > 0
+        ? preserved
+        : article.url
+          ? [articleItem(format, { url: article.url, title: article.title })]
+          : []),
+    ],
+  };
+}
+
+// Swap the note in a Markdown body: everything before the trailing article link,
+// which is kept verbatim when present.
+export function replaceMarkpubNote(
+  existing: unknown,
+  note: string,
+  article: { url?: string; title?: string }
+): unknown {
+  const content = existing as { text?: { markdown?: string } } | undefined;
+  const markdown = content?.text?.markdown ?? '';
+  let tail = article.url ? markpubLinkLine(article.url, article.title) : '';
+  if (article.url) {
+    const lines = markdown.split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].includes(`](${article.url})`)) {
+        tail = lines[i].trim();
+        break;
+      }
+    }
+  }
+  return {
+    ...content,
+    $type: 'at.markpub.markdown',
+    text: {
+      ...(content?.text ?? {}),
+      markdown: [note.trim(), tail].filter(Boolean).join('\n\n'),
+    },
+  };
+}
+
+interface PcktPublicationRecord {
+  publication?: { uri?: string; cid?: string };
+}
+
+// The pckt-side publication fronting a standard.site one. pckt writes the pair at
+// a shared rkey, which makes for a cheap first guess — but that's a convention we
+// observed, not a guarantee, so the guess only counts when the record's own
+// backref agrees, and a scan of the collection is the fallback.
+async function pcktPublicationUri(
+  client: PDSClient,
+  did: string,
+  siteUri: string
+): Promise<string | null> {
+  const rkey = siteUri.split('/').pop();
+  if (rkey) {
+    const paired = await client.getRecord<PcktPublicationRecord>(PCKT_PUBLICATION_COLLECTION, rkey);
+    if (paired.success && paired.data.value?.publication?.uri === siteUri) {
+      return `at://${did}/${PCKT_PUBLICATION_COLLECTION}/${rkey}`;
+    }
+  }
+  const all = await client.listRecords<PcktPublicationRecord>(PCKT_PUBLICATION_COLLECTION);
+  if (!all.success) return null;
+  return all.data.records.find((record) => record.value?.publication?.uri === siteUri)?.uri ?? null;
+}
+
+// Mirror a written share into its host app's own collection (see
+// COMPANION_COLLECTIONS). No-op for the formats that don't have one.
+//
+// Best-effort on purpose: the standard.site document is the portable record and
+// it's already written by the time this runs, so a failure costs the post its
+// appearance on one host rather than costing the user their share. The create
+// route checks the scope up front, which is where a missing grant gets a real
+// answer instead of a log line.
+//
+// Both companions are written at the DOCUMENT's rkey. Neither app does that
+// itself (their companions carry independent TIDs), but nothing in either lexicon
+// asks them to match, and pairing them turns every later edit and delete into a
+// direct addressing instead of a scan for whichever record points back here.
+export async function syncCompanionRecord(
+  client: PDSClient,
+  did: string,
+  format: ContentFormat,
+  siteUri: string,
+  rkey: string,
+  document: PutRecordResponse
+): Promise<void> {
+  const collection = COMPANION_COLLECTIONS[format];
+  if (!collection) return;
+
+  let record: Record<string, unknown>;
+  if (format === 'pckt') {
+    const site = await pcktPublicationUri(client, did, siteUri);
+    if (!site) {
+      console.warn(`[linkblog] no ${PCKT_PUBLICATION_COLLECTION} found for ${siteUri}`);
+      return;
+    }
+    // A strongRef pins one exact revision of the document, so every companion has
+    // to be rewritten on edit — otherwise the app keeps serving the superseded one.
+    record = { $type: collection, site, document: { uri: document.uri, cid: document.cid } };
+  } else {
+    // Offprint's companion is the ref alone; the publication comes from the
+    // document's `site`. It spells out the strongRef's $type, so match that.
+    record = {
+      $type: collection,
+      document: {
+        $type: 'com.atproto.repo.strongRef',
+        uri: document.uri,
+        cid: document.cid,
+      },
+    };
+  }
+
+  const written = await client.putRecord(collection, rkey, record);
+  if (!written.success) {
+    console.warn(`[linkblog] ${collection} companion write failed for ${rkey}: ${written.error}`);
+  }
 }
 
 // Ensure the publication exists, then write the share document. The rkey is
@@ -462,19 +1089,346 @@ export async function writeLinkblogShare(
   rkey: string,
   input: LinkblogShareInput
 ): Promise<PDSResult<PutRecordResponse>> {
-  const ensured = await ensureLinkblogPublication(session, env);
-  if (!ensured.success) return ensured;
+  const target = await getLinkblogTarget(env, session.did);
+  if (!target.external) {
+    const ensured = await ensureLinkblogPublication(session, env);
+    if (!ensured.success) return ensured;
+  }
 
   const resolvedHandles = await resolveNoteMentionHandles(input.note);
-  const record = buildLinkblogDocument(session.did, rkey, input, resolvedHandles);
-  return createPDSClient(session).putRecord(DOCUMENT_COLLECTION, rkey, record);
+  const record = buildLinkblogDocument(
+    session.did,
+    rkey,
+    input,
+    resolvedHandles,
+    target.siteUri,
+    target.format
+  );
+  const client = createPDSClient(session);
+  const written = await client.putRecord(DOCUMENT_COLLECTION, rkey, record);
+  if (written.success) {
+    await syncCompanionRecord(
+      client,
+      session.did,
+      target.format,
+      target.siteUri,
+      rkey,
+      written.data
+    );
+  }
+  return written;
 }
 
+// A read that came back "no such record" — a normal outcome, not a failure.
+function isNotFoundError(error: string): boolean {
+  return /RecordNotFound|could not locate record/i.test(error);
+}
+
+const DELETE_BATCH_SIZE = 200;
+
+// Total one-at-a-time companion deletes a single purge may spend across the whole
+// walk. The per-record fallback exists so a companion batch that fails for a
+// reason we can't pre-check still gets cleaned up, but it's the one part of the
+// delete whose cost isn't bounded by the repo size: a companion collection whose
+// batch keeps failing (transient 5xx, one rejected write) would spend a
+// subrequest per record for every page, and exhausting the Worker's budget
+// partway leaves the linkblog half-deleted. Orphaned companions are untidy;
+// a stalled delete is worse, so the fallback yields first.
+const MAX_COMPANION_FALLBACK_DELETES = 200;
+
+interface FallbackBudget {
+  remaining: number;
+  exhaustedLogged: boolean;
+}
+
+// `fallback` present = best-effort: a failed batch degrades to per-record deletes
+// against the shared budget. Absent = strict, and the batch error is returned.
+async function deleteRecordBatch(
+  client: ReturnType<typeof createPDSClient>,
+  collection: string,
+  rkeys: string[],
+  fallback?: FallbackBudget
+): Promise<PDSResult<void>> {
+  for (let i = 0; i < rkeys.length; i += DELETE_BATCH_SIZE) {
+    const chunk = rkeys.slice(i, i + DELETE_BATCH_SIZE);
+    const batch = await client.applyWrites(
+      chunk.map((rkey) => ({
+        $type: 'com.atproto.repo.applyWrites#delete' as const,
+        collection,
+        rkey,
+      }))
+    );
+    if (batch.success) continue;
+    if (!fallback) return batch;
+    if (fallback.remaining <= 0) {
+      if (!fallback.exhaustedLogged) {
+        fallback.exhaustedLogged = true;
+        console.warn(
+          `[linkblog] companion fallback budget spent; leaving remaining ${collection} companions orphaned`
+        );
+      }
+      continue;
+    }
+    for (const rkey of chunk) {
+      if (fallback.remaining <= 0) break;
+      fallback.remaining--;
+      const result = await client.deleteRecord(collection, rkey);
+      if (!result.success && !isNotFoundError(result.error)) {
+        console.warn(`[linkblog] ${collection} delete failed for ${rkey}: ${result.error}`);
+      }
+    }
+  }
+  return { success: true, data: undefined };
+}
+
+// Upper bound on pages walked in one delete. listRecords' cursor is the rkey of
+// the last record returned and is an exclusive key bound, not an offset: a PDS
+// hands back the same page for a cursor whose record no longer exists (verified
+// against a live PDS). So deleting as we page can neither invalidate the cursor
+// nor shift a record past it, and the walk is linear in the size of the repo's
+// document collection. The cap is a backstop against a PDS that keeps returning
+// records we just deleted, not a ceiling on a real linkblog: at 100 records a
+// page it covers 10k documents for 100 subrequests.
+const MAX_DELETE_PAGES = 100;
+
+// Companion collections we can only touch while the session still holds the
+// host app's scope (see COMPANION_SCOPES in routes/linkblog.ts, which gates the
+// write the same way). Deleting from a collection we were never granted costs a
+// guaranteed-failing applyWrites plus, because companion deletes are best-effort,
+// one deleteRecord per rkey behind it — enough to exhaust the Worker's
+// subrequest budget partway through a large linkblog.
+const COMPANION_SCOPES: Partial<Record<ContentFormat, string[]>> = {
+  pckt: PCKT_SCOPES,
+  offprint: OFFPRINT_SCOPES,
+};
+
+function canWriteCompanion(session: Session, format: ContentFormat): boolean {
+  const required = COMPANION_SCOPES[format];
+  if (!required) return false;
+  const granted = new Set((session.grantedScopes ?? '').split(' '));
+  return required.every((scope) => granted.has(scope));
+}
+
+// The companion deletes a page of documents actually calls for, keyed by
+// collection. Only the format a record was written in gets one, so an offprint
+// linkblog never addresses blog.pckt.document, and a leaflet or markpub share —
+// which has no companion at all — costs nothing.
+function companionDeletes(
+  session: Session,
+  records: Array<{ rkey: string; value: DocumentRecord }>
+): Map<string, string[]> {
+  const byCollection = new Map<string, string[]>();
+  const unauthorized = new Set<string>();
+  for (const { rkey, value } of records) {
+    const format = contentFormatOf(value.content);
+    const collection = format ? COMPANION_COLLECTIONS[format] : undefined;
+    if (!format || !collection) continue;
+    if (!canWriteCompanion(session, format)) {
+      // The grant is gone (revoked, or an older session): the document goes, and
+      // its companion is left pointing at nothing. Worth a line — it's the one
+      // way this path leaves the user's repo untidy.
+      unauthorized.add(collection);
+      continue;
+    }
+    const existing = byCollection.get(collection);
+    if (existing) existing.push(rkey);
+    else byCollection.set(collection, [rkey]);
+  }
+  for (const collection of unauthorized) {
+    console.warn(`[linkblog] no scope for ${collection}; leaving its companions orphaned`);
+  }
+  return byCollection;
+}
+
+// How far a delete got before it failed. `deletedPosts` is what separates "the
+// user's linkblog is untouched" from "it's already half gone", which is what the
+// caller needs to decide whether disabling it can be taken back.
+type PurgeResult =
+  | { success: true; deletedPosts: number }
+  | { success: false; error: string; retryable: boolean; deletedPosts: number };
+
+async function purgeLinkblogRecords(session: Session): Promise<PurgeResult> {
+  const client = createPDSClient(session);
+  let cursor: string | undefined;
+  let deletedPosts = 0;
+  // Shared across every page: the cap is on the whole delete, not per page.
+  const companionFallback: FallbackBudget = {
+    remaining: MAX_COMPANION_FALLBACK_DELETES,
+    exhaustedLogged: false,
+  };
+
+  for (let page = 0; page < MAX_DELETE_PAGES; page++) {
+    const listed = await client.listRecords<DocumentRecord>(DOCUMENT_COLLECTION, cursor);
+    if (!listed.success) {
+      return { success: false, error: listed.error, retryable: !!listed.retryable, deletedPosts };
+    }
+    const ours = listed.data.records
+      .filter((record) => isSkyreaderShareRecord(session.did, record.value))
+      .map((record) => ({ rkey: record.uri.split('/').pop() ?? '', value: record.value }))
+      .filter((record) => record.rkey);
+    if (ours.length > 0) {
+      const rkeys = ours.map((record) => record.rkey);
+      const documents = await deleteRecordBatch(client, DOCUMENT_COLLECTION, rkeys);
+      if (!documents.success) {
+        return {
+          success: false,
+          error: documents.error,
+          retryable: !!documents.retryable,
+          deletedPosts,
+        };
+      }
+      for (const [collection, companionRkeys] of companionDeletes(session, ours)) {
+        await deleteRecordBatch(client, collection, companionRkeys, companionFallback);
+      }
+      deletedPosts += rkeys.length;
+    }
+
+    const nextCursor = listed.data.cursor || undefined;
+    if (!nextCursor || listed.data.records.length === 0) {
+      const publication = await client.deleteRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY);
+      if (!publication.success && !isNotFoundError(publication.error)) {
+        return {
+          success: false,
+          error: publication.error,
+          retryable: !!publication.retryable,
+          deletedPosts,
+        };
+      }
+      return { success: true, deletedPosts };
+    }
+    cursor = nextCursor;
+  }
+
+  return {
+    success: false,
+    error: 'Too many document pages while deleting linkblog',
+    retryable: true,
+    deletedPosts,
+  };
+}
+
+// Delete every link post, then the publication record. Returns the publication
+// the linkblog pointed at, so the caller can move followers off it.
+export async function deleteLinkblog(
+  session: Session,
+  env: Env
+): Promise<PDSResult<{ deletedPosts: number; previousSiteUri: string }>> {
+  const now = Math.floor(Date.now() / 1000);
+  // Read the flag BEFORE setting it: a delete that starts already-disabled is
+  // resuming an earlier one that got partway, which changes what a failure here
+  // is allowed to undo (see the rollback below).
+  const [previous, alreadyDisabled] = await Promise.all([
+    getLinkblogTarget(env, session.did),
+    isLinkblogDisabled(env, session.did),
+  ]);
+
+  // Disable first: every write path checks the flag, so this is what stops a
+  // share racing the walk and landing a document behind it. The connected
+  // publication is deliberately NOT cleared yet — it's the one setting a failed
+  // delete could not give back (restore doesn't know it), so it waits until the
+  // PDS side is actually gone.
+  await env.DB.prepare(
+    `INSERT INTO user_settings (user_did, linkblog_disabled, created_at, updated_at)
+     VALUES (?, 1, ?, ?) ON CONFLICT(user_did) DO UPDATE SET linkblog_disabled = 1,
+     updated_at = excluded.updated_at`
+  )
+    .bind(session.did, now, now)
+    .run();
+
+  let purged: PurgeResult;
+  try {
+    purged = await purgeLinkblogRecords(session);
+  } catch (e) {
+    // purgeLinkblogRecords reports PDS failures as values, but an unexpected
+    // throw (a D1 error, a client it couldn't build) would escape past the
+    // rollback below and leave the flag on with nothing deleted. Fold it into
+    // the same shape so every failure exits through one path.
+    purged = {
+      success: false,
+      error: e instanceof Error ? e.message : 'Could not delete your linkblog',
+      retryable: true,
+      deletedPosts: 0,
+    };
+  }
+
+  if (!purged.success) {
+    // Nothing went yet, so the linkblog is exactly as the user left it: take the
+    // flag back rather than strand them with a live blog that every write path
+    // rejects. Two cases keep it. A partial purge — that blog is already half
+    // gone. And a delete that was ALREADY disabled when it started: it is
+    // retrying an earlier partial one, so "this call deleted nothing" says
+    // nothing about the posts the first attempt took. Restoring on that would
+    // hand back a linkblog silently missing them.
+    if (purged.deletedPosts === 0 && !alreadyDisabled) await restoreLinkblog(session, env);
+    return { success: false, error: purged.error, retryable: purged.retryable };
+  }
+
+  // `linkblog_page_hidden` goes with the connection it belonged to. Leaving it set
+  // would re-arm silently: restore, connect a different publication, and the page
+  // is dark again without the user having asked for it this time.
+  await env.DB.prepare(
+    `UPDATE user_settings SET linkblog_publication = NULL, linkblog_content_format = NULL,
+     linkblog_page_hidden = 0, updated_at = ? WHERE user_did = ?`
+  )
+    .bind(now, session.did)
+    .run();
+
+  return {
+    success: true,
+    data: { deletedPosts: purged.deletedPosts, previousSiteUri: previous.siteUri },
+  };
+}
+
+export async function restoreLinkblog(session: Session, env: Env): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(
+    `INSERT INTO user_settings (user_did, linkblog_disabled, created_at, updated_at)
+     VALUES (?, 0, ?, ?) ON CONFLICT(user_did) DO UPDATE SET linkblog_disabled = 0,
+     updated_at = excluded.updated_at`
+  )
+    .bind(session.did, now, now)
+    .run();
+}
+
+// Returned when a mutation targets a record Skyreader didn't write. The routes
+// map it to 409 (a policy answer, not a PDS failure).
+export const FOREIGN_RECORD_ERROR =
+  'That post was written by this publication’s own app, so Skyreader won’t change it';
+
+// Delete one of the user's own link posts. A connected publication also holds
+// posts its HOME app wrote, so the record is read back first and only deleted
+// when it's actually a Skyreader share — deleting a user's Leaflet/pckt essay
+// because it happened to carry an outbound link is unrecoverable.
 export async function deleteLinkblogShare(
   session: Session,
   rkey: string
 ): Promise<PDSResult<void>> {
-  return createPDSClient(session).deleteRecord(DOCUMENT_COLLECTION, rkey);
+  const pdsClient = createPDSClient(session);
+  const existing = await pdsClient.getRecord<DocumentRecord>(DOCUMENT_COLLECTION, rkey);
+  if (!existing.success) {
+    // Already gone — un-sharing is idempotent (deleteRecord is too).
+    if (isNotFoundError(existing.error)) return { success: true, data: undefined };
+    return existing;
+  }
+  if (!isSkyreaderShareRecord(session.did, existing.data.value)) {
+    return { success: false, error: FOREIGN_RECORD_ERROR, retryable: false };
+  }
+  const deleted = await pdsClient.deleteRecord(DOCUMENT_COLLECTION, rkey);
+  // Take the companion down with the document it points at, so the host app isn't
+  // left holding a strongRef to a record that no longer exists. Unlike the write
+  // path this isn't gated on the scope: being unable to tidy up the other app's
+  // side is a bad reason to refuse someone their un-share.
+  const format = contentFormatOf(existing.data.value.content);
+  const companionCollection = format ? COMPANION_COLLECTIONS[format] : undefined;
+  if (deleted.success && companionCollection) {
+    const companion = await pdsClient.deleteRecord(companionCollection, rkey);
+    if (!companion.success) {
+      console.warn(
+        `[linkblog] ${companionCollection} companion delete failed for ${rkey}: ${companion.error}`
+      );
+    }
+  }
+  return deleted;
 }
 
 // Update just the note on an existing share document, leaving everything else
@@ -491,6 +1445,20 @@ export async function updateLinkblogShareNote(
   if (!existing.success) return existing;
 
   const rec = existing.data.value;
+  // Same guard as the delete path: rewriting the note region of a post the home
+  // app wrote would replace its leading blocks with our commentary.
+  if (!isSkyreaderShareRecord(session.did, rec)) {
+    return { success: false, error: FOREIGN_RECORD_ERROR, retryable: false };
+  }
+  const format = contentFormatOf(rec.content);
+  if (!format) {
+    const contentType = (rec.content as { $type?: string } | undefined)?.$type;
+    return {
+      success: false,
+      error: `Editing ${contentType || 'unknown'} linkblog content is not supported yet`,
+      retryable: false,
+    };
+  }
   // Reconstruct the article link-card inputs from the stored record so the
   // rebuilt content keeps the same external link, title, and excerpt. The excerpt
   // comes from the website card (its durable home); `rec.description` is the
@@ -498,16 +1466,36 @@ export async function updateLinkblogShareNote(
   // preserves that legacy `description` as-is — we never add one to a new record.
   const excerpt = websiteCardExcerpt(rec.content) || rec.description || '';
   const trimmedNote = note.trim();
+  const article = {
+    url: rec.links?.find((l) => /^https?:\/\//i.test(l.uri))?.uri,
+    title: rec.title,
+  };
   // Re-resolve mentions on edit so added/removed @handles re-encode; recipients
-  // pick up the change on their next Constellation poll.
-  const resolvedHandles = await resolveNoteMentionHandles(trimmedNote);
+  // pick up the change on their next Constellation poll. (Facets are a Leaflet
+  // richtext feature; the other formats store the note as plain text.)
+  const resolvedHandles =
+    format === 'leaflet' ? await resolveNoteMentionHandles(trimmedNote) : new Map<string, string>();
 
   const updated: DocumentRecord = {
     ...rec,
     $type: DOCUMENT_COLLECTION,
+    // Backfill the marker onto pre-marker shares while we're rewriting anyway.
+    skyreaderLinkblog: LINKBLOG_MARKER_URL,
     textContent: [trimmedNote, excerpt].filter(Boolean).join('\n\n') || undefined,
-    content: replaceLeafletNoteRegion(rec.content, trimmedNote, resolvedHandles),
+    content:
+      format === 'leaflet'
+        ? replaceLeafletNoteRegion(rec.content, trimmedNote, resolvedHandles)
+        : format === 'markpub'
+          ? replaceMarkpubNote(rec.content, trimmedNote, article)
+          : replaceItemsNoteRegion(rec.content, format, trimmedNote, article),
   };
 
-  return pdsClient.putRecord(DOCUMENT_COLLECTION, rkey, updated);
+  const written = await pdsClient.putRecord(DOCUMENT_COLLECTION, rkey, updated);
+  // The edit changed the document's cid, so the companion's strongRef is now
+  // pointing at the pre-edit revision. Rewrite it (this also backfills a
+  // companion onto shares written before Skyreader wrote one at all).
+  if (written.success && rec.site) {
+    await syncCompanionRecord(pdsClient, session.did, format, rec.site, rkey, written.data);
+  }
+  return written;
 }

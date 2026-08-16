@@ -3,9 +3,13 @@
  */
 
 /**
- * TID (Timestamp Identifier) format regex
- * TIDs are base32-sortable identifiers used as record keys in AT Protocol
- * Format: lowercase alphanumeric, at least 13 characters
+ * Record key format regex.
+ *
+ * Deliberately looser than the TID syntax utils/tid.ts now generates: rkeys
+ * written before that (base36 millis + a random suffix, 18 chars) are already in
+ * D1 and on users' PDSes, and every PATCH/DELETE addresses a record by its rkey.
+ * Tightening this to strict TID would 400 every mutation of an existing record.
+ * This is a sanity gate on untrusted input, not a statement about what we mint.
  */
 export const TID_REGEX = /^[a-z0-9]{13,}$/;
 

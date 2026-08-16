@@ -120,6 +120,9 @@ describe('Integration Tests', () => {
       expect(json.status).toBe('ok');
       expect(json.cachedFeeds).toBe(0);
       expect(json.timestamp).toBeTypeOf('number');
+      // Deploy stamp the post-deploy smoke check asserts against; 'dev' when the
+      // GIT_COMMIT_SHA build arg isn't set (local, tests).
+      expect(json.version).toBe(process.env.GIT_COMMIT_SHA || 'dev');
     });
 
     it('reports cached feed count', async () => {

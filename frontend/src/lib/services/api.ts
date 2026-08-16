@@ -667,6 +667,44 @@ class ApiClient {
     });
   }
 
+  async deleteLinkblog(): Promise<{ success: true; deletedPosts: number }> {
+    return this.fetch('/api/linkblog/publication', { method: 'DELETE' });
+  }
+
+  async restoreLinkblog(): Promise<LinkblogPublication> {
+    return this.fetch('/api/linkblog/publication', { method: 'POST' });
+  }
+
+  async listLinkblogPublications(): Promise<{
+    publications: import('$lib/types').LinkblogPublicationChoice[];
+  }> {
+    return this.fetch('/api/linkblog/publications');
+  }
+
+  async connectLinkblogPublication(
+    publicationUri: string,
+    format: LinkblogPublication['format']
+  ): Promise<LinkblogPublication> {
+    return this.fetch('/api/linkblog/publication/connect', {
+      method: 'PUT',
+      body: JSON.stringify({ publicationUri, format }),
+    });
+  }
+
+  async disconnectLinkblogPublication(): Promise<LinkblogPublication> {
+    return this.fetch('/api/linkblog/publication/connect', { method: 'DELETE' });
+  }
+
+  // Whether Skyreader serves the public linkblog page. Only accepted while a
+  // publication is connected — otherwise that page is the only public address the
+  // links have, and the backend refuses.
+  async setLinkblogPageHidden(pageHidden: boolean): Promise<LinkblogPublication> {
+    return this.fetch('/api/linkblog/publication/visibility', {
+      method: 'PUT',
+      body: JSON.stringify({ pageHidden }),
+    });
+  }
+
   // Subscribe via the Atmosphere — writes/reads/deletes only the portable
   // site.standard.graph.subscription record (no Skyreader subscription).
   async getAtmosphereSubscription(publication: string): Promise<{ subscribed: boolean }> {
@@ -920,6 +958,7 @@ class ApiClient {
     pdsSyncEnabled: boolean;
     lastPdsSyncSubscriptions: number | null;
     backing: SaveBacking;
+    linkblogDisabled: boolean;
     createdAt: number;
     updatedAt: number;
   }> {

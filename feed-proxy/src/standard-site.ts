@@ -65,6 +65,9 @@ export interface ProxyDocument {
   // Standard Reader "Collection": a curated magazine edition. Each item points to
   // another document; we resolve them to previews (see `ProxyReaderCollection`).
   readerCollection?: ProxyReaderCollection;
+  // Passed through verbatim from the record (see DocumentRecord). Clients use it
+  // to decide whether a document is theirs to edit or delete.
+  skyreaderLinkblog?: string;
 }
 
 /**
@@ -162,6 +165,11 @@ export interface DocumentRecord {
   updatedAt?: string;
   content?: unknown;
   links?: Array<{ uri?: string; rel?: string }>;
+  // Skyreader's provenance marker on a link post it wrote (a constant URL, the
+  // same one its publications carry). A linkblog connected to an existing
+  // publication shares that publication with the posts its home app writes, so
+  // this is the only thing separating "a share" from "an essay that links out".
+  skyreaderLinkblog?: string;
 }
 
 interface PublicationRecord {
@@ -199,6 +207,19 @@ interface PublicationThemeRecord {
   $type?: string;
   publication?: string;
   fonts?: PublicationFonts;
+}
+
+// AT Protocol DID syntax (https://atproto.com/specs/did). Deliberately the same
+// shape the upstream Go implementation enforces, because a value that only looks
+// like a DID ("did:" + anything) is accepted by our request path but *rejected*
+// by Jetstream — and Jetstream rejects the whole `options_update`, closing the
+// socket, so one bad row in the cache can take the firehose down entirely.
+const DID_RE = /^did:[a-z]+:[a-zA-Z0-9._:%-]*[a-zA-Z0-9._-]$/;
+const MAX_DID_LENGTH = 2048;
+
+/** True if `did` is a syntactically valid AT Protocol DID. */
+export function isValidDid(did: unknown): did is string {
+  return typeof did === 'string' && did.length <= MAX_DID_LENGTH && DID_RE.test(did);
 }
 
 /** Parse `at://did/collection/rkey` into its components, or null if malformed. */
@@ -536,6 +557,8 @@ export async function recordToProxyDocument(
     siteIcon: meta.icon || undefined,
     links: links.length > 0 ? links : undefined,
     readerCollection: readerCollection || undefined,
+    skyreaderLinkblog:
+      typeof doc.skyreaderLinkblog === 'string' ? doc.skyreaderLinkblog : undefined,
   };
 }
 

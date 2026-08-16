@@ -105,7 +105,8 @@ Key tables:
 - `feed_items` - The feed archive the timeline serves: every item the crawler has ever pushed,
   keyed `(feed_url, guid)` with a monotonic `seq`. Never pruned in ordinary operation — see
   `docs/plans/D1_FEED_TIMELINE.md`
-- `documents` - `site.standard.document` records from follows
+- `documents` / `publications_cache` - orphaned after standard.site document reads moved to the
+  feed proxy; retained in place but no longer read or written
 - `item_labels_cache` - Unified labels (read/starred/archived/tags)
 - `saved_articles` - Saved/bookmarked articles
 - `social_read_positions_cache` - Legacy social read tracking (superseded; document

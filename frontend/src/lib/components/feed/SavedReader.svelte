@@ -1164,7 +1164,7 @@
   }
 
   .reading-progress-fill {
-    height: 100%;
+    height: 2px;
     background: var(--reader-rail-fill, var(--color-primary, #0066cc));
     transform-origin: left;
     /* No transition — scroll drives the fill frame-by-frame for smooth motion. */
@@ -1173,10 +1173,16 @@
 
   @media (max-width: 1000px) {
     /* Pinned to the bottom, above the home indicator: it stands in for the
-       mobile bar's top rail, so it belongs at that bar's edge. */
+       mobile bar's top rail, so it belongs at that bar's edge. Opaque, and
+       carrying the inset as padding rather than as an offset, so like the bar
+       it replaces it occludes the article moving beneath it instead of leaving
+       a sliver of text visible under the home indicator. */
     .reading-progress {
       top: auto;
-      bottom: env(safe-area-inset-bottom, 0px);
+      bottom: 0;
+      height: auto;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      background: var(--reader-chrome-bg, var(--color-bg, #fff));
     }
 
     .reading-progress.visible.bar-hidden {

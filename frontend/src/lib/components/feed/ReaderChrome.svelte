@@ -432,7 +432,7 @@
     }
   }
   .reading-progress-fill {
-    height: 100%;
+    height: 2px;
     background: var(--color-primary, #0066cc);
     transform-origin: left;
     will-change: transform;
@@ -634,10 +634,16 @@
       display: none !important;
     }
     /* The rail lives at the bottom here, so its understudy does too — above the
-       home indicator, and only once the bar has slid away. */
+       home indicator, and only once the bar has slid away. Opaque, and carrying
+       the inset as padding rather than offset, so it occludes the article
+       sliding beneath it instead of letting a sliver of text show through
+       under the home indicator. */
     .reading-progress {
       top: auto;
-      bottom: env(safe-area-inset-bottom, 0px);
+      bottom: 0;
+      height: auto;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      background: var(--reader-chrome-bg, var(--color-bg, #fff));
     }
     .reading-progress.visible.bar-hidden {
       opacity: 1;

@@ -67,12 +67,24 @@
     />
   </Case>
 
-  <Case name="SourceRow · error" note="hasError badge on a subscribed feed." frame>
+  <Case
+    name="SourceRow · error"
+    note="Hover or focus the badge for full error details; Tab reaches Technical details, Escape closes."
+    frame
+  >
     <SourceRow
       iconUrl={FAVICON}
       title="Flaky Feed"
       subtitle="flaky.example.com · last fetch failed"
       hasError
+      errorDetails={{
+        title: 'Service Unavailable',
+        description: "The feed's server is temporarily unavailable for maintenance.",
+        isPermanent: false,
+        errorCount: 3,
+        errorCode: 'HTTP 503',
+        rawError: 'Feed fetch failed (HTTP 503)',
+      }}
       onToggleSelect={() => {}}
       onRefresh={() => {}}
       onRemove={() => {}}

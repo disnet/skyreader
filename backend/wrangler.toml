@@ -1,7 +1,18 @@
 name = "skyreader-api"
 main = "src/index.ts"
 compatibility_date = "2025-09-27"
-compatibility_flags = ["global_fetch_strictly_public"]
+# nodejs_als: AsyncLocalStorage. Two consumers — @sentry/cloudflare's scopes, and
+# our own per-request context (src/utils/request-context.ts), which is what lets a
+# request id reach a log line or an outbound header without threading a parameter
+# through every handler.
+#
+# This is a deliberately narrower flag than the `nodejs_compat` the SDK's README
+# asks for: ALS is all it needs today (the full vitest suite runs under workerd
+# with just this), and nodejs_compat additionally injects Node globals we don't
+# want to depend on by accident. Re-check on every @sentry/cloudflare upgrade — if
+# a bump starts needing more of the Node API surface, widen this to nodejs_compat.
+# It coexists with global_fetch_strictly_public — different subsystems, no overlap.
+compatibility_flags = ["global_fetch_strictly_public", "nodejs_als"]
 
 [observability]
 enabled = true
@@ -53,6 +64,10 @@ FEED_PROXY_URL = "https://skyreader-feed-proxy.fly.dev"
 # Public base for users' linkblogs, baked into their site.standard.publication
 # record's `url` field (DID-based so it survives handle changes).
 LINKBLOG_PUBLIC_URL = "https://linkblogs.skyreader.app"
+# Tags every Sentry event so prod and staging errors never get confused for one
+# another. The DSN itself is a secret (`wrangler secret put SENTRY_DSN`); without
+# it error reporting is a no-op.
+SENTRY_ENVIRONMENT = "production"
 
 # Production routes
 routes = [{ pattern = "api.skyreader.app", custom_domain = true }]
@@ -80,7 +95,7 @@ name = "skyreader-api-staging"
 # FEED_PROXY_SECRET, once Phase 3 of docs/plans/D1_FEED_TIMELINE.md has actually
 # provisioned the app. Until then staging clients stay on the legacy batch path
 # by themselves (the timeline reports ingestActive: false).
-vars = { FRONTEND_URL = "https://staging.skyreader.app", ALLOWED_ORIGINS = "https://staging.skyreader.app,https://staging-linkblogs.skyreader.app", FEED_PROXY_URL = "https://skyreader-feed-proxy.fly.dev", LINKBLOG_PUBLIC_URL = "https://staging-linkblogs.skyreader.app" }
+vars = { FRONTEND_URL = "https://staging.skyreader.app", ALLOWED_ORIGINS = "https://staging.skyreader.app,https://staging-linkblogs.skyreader.app", FEED_PROXY_URL = "https://skyreader-feed-proxy.fly.dev", LINKBLOG_PUBLIC_URL = "https://staging-linkblogs.skyreader.app", SENTRY_ENVIRONMENT = "staging" }
 routes = [{ pattern = "api-staging.skyreader.app", custom_domain = true }]
 
 [env.staging.durable_objects]

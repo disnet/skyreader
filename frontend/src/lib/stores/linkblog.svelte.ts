@@ -19,7 +19,7 @@ import { db } from '$lib/services/db';
 import { safeAdd } from '$lib/services/safeDb.svelte';
 import { generateTid } from '$lib/utils/tid';
 import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
-import { getExternalArticleLink, getLinkPostNote } from '$lib/utils/linkPost';
+import { getExternalArticleLink, getLinkPostNote, isSkyreaderShare } from '$lib/utils/linkPost';
 import type { Article, LinkblogShare } from '$lib/types';
 
 function createLinkblogStore() {
@@ -33,6 +33,10 @@ function createLinkblogStore() {
   const serverShares = $derived.by(() => {
     const map = new Map<string, { recordUri: string; note?: string; title?: string }>();
     for (const doc of myLinkblogStore.documents) {
+      // Only OUR link posts. A connected publication also lists the posts its home
+      // app wrote; treating one of those as a share would make the reader's Share
+      // button offer to "un-share" — i.e. delete — someone's own essay.
+      if (!isSkyreaderShare(doc)) continue;
       const url = getExternalArticleLink(doc);
       if (url)
         map.set(url, { recordUri: doc.recordUri, note: getLinkPostNote(doc), title: doc.title });
@@ -67,12 +71,21 @@ function createLinkblogStore() {
   // deleted, not merely beyond the cap. Scoped to CONFIRMED shares (those with a
   // recordUri): a local-only optimistic share still in flight has no server
   // identity yet and must not be pruned.
+  //
+  // Deliberately checks EVERY pulled document, not just the marker-gated
+  // `serverShares`. Deleting a local row is the destructive direction: an
+  // unmarked document pointing at the article (a share written before the marker
+  // existed, or one pulled through a proxy that doesn't forward the field yet)
+  // is ambiguous, not proof of deletion. Being wrong the other way only leaves a
+  // stale "shared" pill until the next pull.
   async function reconcile() {
     if (!myLinkblogStore.lastPullComplete) return;
-    const live = serverShares;
+    const present = new Set(
+      myLinkblogStore.documents.map((doc) => getExternalArticleLink(doc)).filter(Boolean)
+    );
     const stale: LinkblogShare[] = [];
     for (const entry of shares.values()) {
-      if (entry.recordUri && !live.has(entry.articleUrl)) stale.push(entry);
+      if (entry.recordUri && !present.has(entry.articleUrl)) stale.push(entry);
     }
     if (stale.length === 0) return;
     for (const entry of stale) {

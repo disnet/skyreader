@@ -169,12 +169,16 @@ export interface LeafletImageBlock {
   alt?: string;
 }
 
+// Field names here are the lexicon's, not ours: `src` for the URL and
+// `previewImage` for the card image. Both are what Leaflet writes and what its
+// appview validates against, so a Skyreader-invented name would render blank on
+// every card written by any other app.
 export interface LeafletWebsiteBlock {
   $type: 'pub.leaflet.blocks.website';
-  url: string;
+  src: string;
   title?: string;
   description?: string;
-  thumb?: {
+  previewImage?: {
     ref: { $link: string };
     mimeType: string;
   };
@@ -308,32 +312,29 @@ export interface PcktBlogTableBlock {
   content?: PcktBlogTableRowBlock[];
 }
 
+// pckt puts a tiptap-shaped `attrs` bag on some blocks (image, ordered list,
+// table cells) but not on these three, which carry their fields at the top level
+// — in its published lexicons and in the posts its editor writes alike.
 export interface PcktBlogBlueskyEmbedBlock {
   $type: 'blog.pckt.block.blueskyEmbed';
-  attrs?: {
-    postRef?: {
-      uri: string;
-      cid: string;
-    };
+  postRef?: {
+    uri: string;
+    cid: string;
   };
 }
 
 export interface PcktBlogIframeBlock {
   $type: 'blog.pckt.block.iframe';
-  attrs?: {
-    url?: string;
-    height?: number;
-  };
+  url?: string;
+  height?: number;
 }
 
 export interface PcktBlogWebsiteBlock {
   $type: 'blog.pckt.block.website';
-  attrs?: {
-    src?: string;
-    title?: string;
-    description?: string;
-    previewImage?: string;
-  };
+  src?: string;
+  title?: string;
+  description?: string;
+  previewImage?: string;
 }
 
 // Union of all supported pckt.blog block types
@@ -485,6 +486,18 @@ export interface OffprintImageDiffBlock {
   alignment?: 'left' | 'center' | 'right';
 }
 
+// Offprint's link card. The one Offprint block a Skyreader linkblog writes
+// itself, and the shape every shared article takes on an Offprint publication.
+export interface OffprintWebBookmarkBlock {
+  $type: 'app.offprint.block.webBookmark';
+  href: string;
+  title: string;
+  description?: string;
+  siteName?: string;
+  // Open Graph image, stored as a blob on the author's PDS.
+  preview?: { ref: { $link: string }; mimeType: string; size?: number };
+}
+
 // Union of all supported Offprint block types
 export type OffprintBlock =
   | OffprintTextBlock
@@ -499,7 +512,8 @@ export type OffprintBlock =
   | OffprintImageBlock
   | OffprintImageGridBlock
   | OffprintImageCarouselBlock
-  | OffprintImageDiffBlock;
+  | OffprintImageDiffBlock
+  | OffprintWebBookmarkBlock;
 
 export interface OffprintContent {
   $type: 'app.offprint.content';
@@ -579,6 +593,11 @@ export interface SocialDocument {
   // Per-user read state stamped onto the document batch response by the backend
   // (inline read annotation, keyed by recordUri). Consumed additively on merge.
   read?: boolean;
+  // Skyreader's provenance marker (a constant URL) on a link post it wrote. A
+  // linkblog connected to an existing publication shares that publication with
+  // whatever its home app publishes there, so this is what separates a share from
+  // someone's essay — see isSkyreaderShare in utils/linkPost.
+  skyreaderLinkblog?: string;
 }
 
 // A single curated piece in a Collection, resolved by the proxy to a renderable
@@ -648,7 +667,9 @@ export interface LinkblogPerson {
   // The publication to subscribe to (at://did/site.standard.publication/skyreader-links).
   publicationUri: string;
   // The public linkblog page — used as the subscription's siteUrl.
-  blogUrl: string;
+  // Null when the author turned their Skyreader page off — there's no public page
+  // to link to (adding them still works, that goes through `publicationUri`).
+  blogUrl: string | null;
   // Whether the current user already follows this person on Bluesky.
   isFollow: boolean;
 }
@@ -781,6 +802,52 @@ export interface LinkblogPublication {
   description?: string;
   iconUrl?: string;
   exists: boolean;
+  external: boolean;
+  format: 'leaflet' | 'pckt' | 'offprint' | 'markpub';
+  disabled: boolean;
+  // The user turned off the Skyreader-hosted page at `url`. Only ever true with a
+  // connected publication, which has a public site of its own; `url` still says
+  // where the page would be, so the choice can be undone.
+  pageHidden: boolean;
+  // For a connected publication only: its own site (e.g. https://leaflet.pub/…).
+  // Informational — `url` above is always the Skyreader linkblog page, which
+  // renders the connected publication's link posts too.
+  externalUrl?: string;
+}
+
+// One publication the user could publish their links to, as offered by
+// GET /api/linkblog/publications. Everything past `isDefault` is descriptive —
+// it exists so the picker can say what a publication actually is instead of
+// showing a bare name.
+export interface LinkblogPublicationChoice {
+  uri: string;
+  rkey: string;
+  name: string;
+  description?: string;
+  url?: string;
+  isDefault: boolean;
+  /** Which standard.site app this publication belongs to, when we can tell. */
+  appId?: string;
+  appLabel?: string;
+  /** The content format that app's posts use — pre-selected on connect. */
+  detectedFormat?: LinkblogPublication['format'];
+  /**
+   * True when that app reads only its own content type (Leaflet, pckt,
+   * Offprint), so `detectedFormat` is the one format that renders there and the
+   * picker states it instead of offering a choice. The backend enforces it too.
+   */
+  formatLocked?: boolean;
+  /**
+   * False when this publication's app can't host a Skyreader linkblog at all —
+   * pckt renders only the posts it wrote itself, so ours would land in the repo
+   * and never show. Listed anyway, but the picker offers it disabled with
+   * `unsupportedReason`; the connect endpoint refuses it too.
+   */
+  supported?: boolean;
+  /** Why it can't be connected, in the user's terms. */
+  unsupportedReason?: string;
+  /** How many documents already live in this publication (capped by the scan). */
+  posts?: number;
 }
 
 export interface ParsedFeed {
