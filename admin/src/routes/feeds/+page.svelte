@@ -3,22 +3,24 @@
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import Pagination from '$lib/components/Pagination.svelte';
   import { page as pageState } from '$app/state';
+  import { feedHealth } from '$lib/metrics/feeds';
 
   let { data } = $props();
 
   const filters = [
     { value: 'all', label: 'All' },
-    { value: 'healthy', label: 'Ingesting' },
-    { value: 'stale', label: 'Stale' },
+    { value: 'erroring', label: 'Erroring' },
+    { value: 'starved', label: 'Not Crawled' },
+    { value: 'ok', label: 'OK' },
   ] as const;
 
-  // Mirrors the backend/admin stale-ingest threshold: an hour without a push
-  // from the crawler means this feed isn't being crawled any more.
-  const STALE_INGEST_SECONDS = 60 * 60;
-
-  function isStale(lastIngestAt: number | null): boolean {
-    if (!lastIngestAt) return true;
-    return lastIngestAt < Math.floor(Date.now() / 1000) - STALE_INGEST_SECONDS;
+  function formatRetry(nextRetryAt: number | null): string {
+    if (!nextRetryAt) return '';
+    const minutes = Math.round((nextRetryAt * 1000 - Date.now()) / 60000);
+    if (minutes <= 0) return 'retrying';
+    if (minutes < 60) return `retry in ${minutes}m`;
+    const hours = Math.round(minutes / 60);
+    return hours < 48 ? `retry in ${hours}h` : `retry in ${Math.round(hours / 24)}d`;
   }
 
   function filterUrl(filter: string): string {
@@ -83,11 +85,12 @@
     <th>URL</th>
     <th><a href={sortUrl('subscriber_count')}>Subs{sortIndicator('subscriber_count')}</a></th>
     <th><a href={sortUrl('item_count')}>Archived{sortIndicator('item_count')}</a></th>
-    <th><a href={sortUrl('last_ingest_at')}>Last Ingest{sortIndicator('last_ingest_at')}</a></th>
-    <th>Status</th>
+    <th><a href={sortUrl('last_ingest_at')}>Last Item{sortIndicator('last_ingest_at')}</a></th>
+    <th><a href={sortUrl('error_count')}>Status{sortIndicator('error_count')}</a></th>
   {/snippet}
 
   {#each data.rows as feed}
+    {@const state = feedHealth(feed)}
     <tr>
       <td>{feed.title ?? '—'}</td>
       <td class="url-cell">{feed.feed_url}</td>
@@ -95,7 +98,23 @@
       <td>{feed.item_count}</td>
       <td>{formatDate(feed.last_ingest_at)}</td>
       <td>
-        <StatusBadge status={isStale(feed.last_ingest_at) ? 'error' : 'healthy'} />
+        <StatusBadge status={state.status} label={state.label} />
+        {#if feed.error_count > 0}
+          <div class="fault-detail" title={feed.last_error ?? ''}>
+            {feed.last_error ?? 'Unknown error'}
+          </div>
+          <div class="fault-meta">
+            {feed.error_count}
+            {feed.error_count === 1 ? 'failure' : 'failures'}
+            {#if formatRetry(feed.next_retry_at)}· {formatRetry(feed.next_retry_at)}{/if}
+            {#if feed.last_fetch_at}· last ok {formatDate(feed.last_fetch_at)}{/if}
+          </div>
+        {:else if feed.crawl_stale}
+          <div class="fault-meta">
+            In the crawl set, not being fetched
+            {#if feed.last_fetch_at}· last ok {formatDate(feed.last_fetch_at)}{/if}
+          </div>
+        {/if}
       </td>
     </tr>
   {:else}
@@ -148,5 +167,28 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 0.85rem;
+  }
+
+  /* The crawler's message, verbatim — the whole reason the health report exists.
+     Clamped rather than truncated to one line: an operator needs enough of it to
+     tell a 404 from a bot filter without hovering. */
+  .fault-detail {
+    max-width: 320px;
+    margin-top: 0.35rem;
+    font-size: 0.85rem;
+    color: var(--color-error);
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .fault-meta {
+    max-width: 320px;
+    margin-top: 0.2rem;
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
   }
 </style>

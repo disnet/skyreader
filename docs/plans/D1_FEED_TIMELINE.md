@@ -56,11 +56,26 @@ read state (`getReadKeys`). Now:
   `getReadKeys` is never called on the feed path. Every response carries `ingestActive`, derived
   from the heartbeat: false means this deployment has no crawler filling D1, and clients stay on
   the legacy batch path. A cursor above the archive head cold-starts (rewound-archive guard).
+- `routes/ingest.ts` also serves `POST /api/internal/feed-health`: the crawler's periodic report of
+  every feed it currently considers broken, which the timeline hands to readers. On the batch path
+  a failing feed came back with `status: 'error'` inline; reads no longer touch the proxy, and a
+  broken feed pushes no items, so without this a dead feed and a quiet feed look identical to the
+  client. The payload is the **complete trouble set, not a delta** — recovery is inferred from a
+  feed's absence, so nothing has to announce that it started working. `feeds` carries the state
+  (`error_count`, `last_error`, `last_error_at`, `next_retry_at`, `last_fetch_at`, `crawl_stale`,
+  migration `0070`), and a report inserts rather than assumes a row, because a feed broken from its
+  first crawl has never ingested an item. Two distinct faults ride the same report: `error_count`
+  (the fetch fails — readers see this) and `crawl_stale` (the feed is in the crawl set but going
+  unfetched for hours — an operator signal only, invisible to readers and deliberately excluded from
+  `feed_health_rev` so crawl-capacity churn can't make every client re-download the payload).
 - `GET /api/v2/feeds/fetch` re-backed with D1 + **pull-through**: if a feed isn't in the archive
   yet (first subscriber), fetch it from the proxy once, ingest it, then serve. The pull-through is
   gated on the caller's own subscription, so the shared never-pruned archive can't be written with
   arbitrary feeds. Subscribe time already crawls + ingests the feed (`warmFeedIntoArchive`, which
-  replaced the old warm-and-discard), so the pull-through is normally not needed at all.
+  replaced the old warm-and-discard), so the pull-through is normally not needed at all. The
+  response carries the feed's `health` when it has any, and a successful pull-through clears it
+  (`clearFeedHealth`) — that path *is* the user's "retry this feed" action, so it must show a result
+  now rather than after the crawler's next report.
 
 **Proxy** (`feed-proxy/`)
 
@@ -70,6 +85,11 @@ read state (`getReadKeys`). Now:
 - Crawl-set pull every 5 min: registers each feed's `cache` row and stamps `last_requested_at`, so
   the existing warm loop / active window / eviction machinery keeps working now that read traffic
   no longer stamps anything.
+- A feed-health report rides the same 5-minute timer, sent right **after** the crawl-set pull so a
+  feed registered this cycle is already in the set. `selectFeedHealth` reads the crawl-set `cache`
+  rows that are either erroring (`error_count > 0`) or unfetched for `CRAWL_STALE_MS` (2 h — the
+  warm loop works on a minutes-long cadence, so hours means the feed is losing its turn every tick),
+  converting its millisecond timestamps to seconds once, at this boundary.
 - `INGEST_URL` unset ⇒ both loops disabled. `push_state` cascades on the K = 200 cap trim, the
   redelivery delete, and `cleanupCache` eviction. `/stats` reports `ingest.{items,pushed,pending}`.
 
@@ -90,10 +110,27 @@ read state (`getReadKeys`). Now:
   time, 1 s apart) and no longer force a crawl, so a 250-feed import stays inside the rate limit.
 - An article whose body was dropped at ingest (`contentTruncated`) is extracted automatically when
   its card opens, so the reader shows the whole article rather than an RSS summary.
+- Per-feed error badges come from the response's `feedHealth` (`reconcileFeedHealth` →
+  `feedStatusStore.applyHealthSnapshot`). Absence from that map is what CLEARS an error, so the
+  reconcile runs after the "these feeds delivered items, so they're fine" pass and overrides it — a
+  cold start replays archived items from feeds that may have broken since. To keep the steady-state
+  poll at one query, the payload is only sent when the client's echoed `health_rev` is stale, plus
+  unconditionally on a cold start (whose status store may be empty).
 
-**Admin** (`admin/`) — feed health is re-pointed at `feeds`/`feed_items`: crawled feeds, subscribed
-feeds not ingesting (the R1 alarm), archived item count, estimated archive size with a 6 GB alert,
-and a churn detector for feeds nearing the sanity cap.
+**Admin** (`admin/`) — feed health is re-pointed at `feeds`/`feed_items`: crawled feeds, archived
+item count, estimated archive size with a 6 GB alert, and a churn detector for feeds nearing the
+sanity cap. Health itself is the **crawler's verdict**, not an inference:
+
+- **Subscribed Feeds Erroring** (`error_count > 0`) and **Subscribed Feeds Not Being Crawled**
+  (`crawl_stale = 1`) replace the single "Subscribed Feeds Not Ingesting" tile. That tile keyed off
+  `last_ingest_at`, which only moves when a fetch yields a NEW item — so it counted every feed that
+  simply hadn't published in an hour, warned permanently, and told an operator nothing.
+- The Feeds page filters on All / Erroring / Not Crawled / OK, sorts by `error_count`, and shows the
+  crawler's actual message, failure count, retry time and last good fetch on the row. `last_ingest_at`
+  stays, relabelled "Last Item", as what it really is: publishing cadence.
+- The existing "Proxy Feeds in Error" tile and its trend series are untouched. They count the
+  proxy's whole cache, orphaned feeds included, and stay sourced from `proxy_stats` so the series
+  keeps matching its tile; the new tiles are subscriber-scoped and read D1.
 
 ## Operator steps (not code)
 
@@ -178,6 +215,18 @@ step deleting `feeds`/`feed_items` rows whose feed has had **zero active subscri
   joins on that exact string.
 - **Ordinary ingest deletes nothing.** A feed at the sanity cap is a bug signal (GUID churn), not
   steady state — investigate the feed rather than letting it rotate.
+- **A health report is the whole trouble set, never a delta.** Recovery is inferred from absence,
+  so a partial report silently marks feeds healthy. The recovery sweep is a set difference against
+  the currently flagged feeds (small, partially indexed) rather than a `NOT IN` list of every
+  healthy feed, which at ~1,300 feeds is the bound-parameter wall `/batch` already hit once.
+- **`last_ingest_at` is publishing cadence, not health.** It only moves when a fetch produces a new
+  or edited item, so a healthy monthly newsletter looks identical to a feed that 404s. Anything
+  asking "is this feed alive?" has to read `error_count` / `crawl_stale`, which is exactly what the
+  admin's old stale-ingest alarm got wrong.
+- **`nextRetryAt` is milliseconds everywhere the client sees it.** The crawler computes it as
+  `Date.now() + backoff`; D1 stores seconds like the rest of the backend and converts back on the
+  way out. Rescaling it a second time is what put every retry ~50,000 years out and made
+  `canFetch` retire a feed permanently after one transient error.
 
 ## Known scaling knob
 

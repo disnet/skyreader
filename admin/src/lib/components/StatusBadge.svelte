@@ -1,9 +1,13 @@
 <script lang="ts">
   interface Props {
     status: 'healthy' | 'warning' | 'error';
+    // Overrides the generic severity word. Worth setting wherever the severity
+    // alone is ambiguous — "Erroring" and "Not crawled" are different faults that
+    // would both read as "Error"/"Warning".
+    label?: string;
   }
 
-  let { status }: Props = $props();
+  let { status, label }: Props = $props();
 
   const labels: Record<string, string> = {
     healthy: 'Healthy',
@@ -12,7 +16,7 @@
   };
 </script>
 
-<span class="badge {status}">{labels[status]}</span>
+<span class="badge {status}">{label ?? labels[status]}</span>
 
 <style>
   .badge {

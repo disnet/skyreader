@@ -12,7 +12,10 @@ import {
   pushDirtyItems,
   pullCrawlSet,
   registerCrawlFeeds,
+  reportFeedHealth,
+  CRAWL_STALE_MS,
   selectDirtyRows,
+  selectFeedHealth,
   countDirtyRows,
   type IngestConfig,
 } from './ingest-push';
@@ -331,5 +334,128 @@ describe('crawl-set registration', () => {
     expect(result.registered).toBe(0);
     expect(result.error).toContain('503');
     expect(db.query<{ c: number }, []>('SELECT COUNT(*) AS c FROM cache').get()?.c).toBe(0);
+  });
+});
+
+describe('feed health reporting', () => {
+  let db: Database;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initDatabase(db);
+    seedCache(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  function breakFeed(
+    url: string,
+    opts: { errorCount?: number; error?: string; at?: number; retryAt?: number } = {}
+  ): void {
+    const at = opts.at ?? Date.now();
+    db.run(
+      'UPDATE cache SET error_count = ?, last_error = ?, last_error_at = ?, next_retry_at = ? WHERE url_hash = ?',
+      [
+        opts.errorCount ?? 3,
+        opts.error ?? 'Failed to fetch (HTTP 404)',
+        at,
+        opts.retryAt ?? at + 600_000,
+        hashUrl(url),
+      ]
+    );
+  }
+
+  it('reports only broken feeds, converting milliseconds to seconds', () => {
+    const at = 1_770_000_000_000;
+    breakFeed(FEED_URL, { errorCount: 4, at, retryAt: at + 600_000 });
+
+    const health = selectFeedHealth(db);
+    expect(health).toHaveLength(1);
+    expect(health[0]).toMatchObject({
+      feedUrl: FEED_URL,
+      errorCount: 4,
+      lastError: 'Failed to fetch (HTTP 404)',
+      lastErrorAt: Math.floor(at / 1000),
+      nextRetryAt: Math.floor((at + 600_000) / 1000),
+    });
+  });
+
+  it('leaves healthy feeds out entirely — absence is the recovery signal', () => {
+    seedCache(db, 'https://other.example/feed.xml', 'Other');
+    breakFeed(FEED_URL);
+
+    expect(selectFeedHealth(db).map((f) => f.feedUrl)).toEqual([FEED_URL]);
+  });
+
+  it('flags a crawl-set feed the warm loop has not fetched in hours', () => {
+    // Nothing is erroring; the feed is simply losing its turn every tick, which
+    // is what a capped warm batch does and what the admin needs to see.
+    const now = Date.now();
+    db.run('UPDATE cache SET fetched_at = ? WHERE url_hash = ?', [
+      now - CRAWL_STALE_MS - 60_000,
+      URL_HASH,
+    ]);
+
+    const health = selectFeedHealth(db, now);
+    expect(health).toHaveLength(1);
+    expect(health[0]).toMatchObject({ feedUrl: FEED_URL, errorCount: 0, crawlStale: true });
+  });
+
+  it('does not flag a feed fetched within the window', () => {
+    const now = Date.now();
+    db.run('UPDATE cache SET fetched_at = ? WHERE url_hash = ?', [now - 60_000, URL_HASH]);
+    expect(selectFeedHealth(db, now)).toHaveLength(0);
+  });
+
+  it('reports a feed that is both erroring and starved', () => {
+    const now = Date.now();
+    breakFeed(FEED_URL);
+    db.run('UPDATE cache SET fetched_at = ? WHERE url_hash = ?', [
+      now - CRAWL_STALE_MS - 60_000,
+      URL_HASH,
+    ]);
+
+    const health = selectFeedHealth(db, now);
+    expect(health[0]).toMatchObject({ errorCount: 3, crawlStale: true });
+  });
+
+  it('skips feeds that have dropped out of the crawl set', () => {
+    // last_requested_at NULL = evicted / never registered, so nobody is
+    // subscribed and its errors are not the reader's problem.
+    breakFeed(FEED_URL);
+    db.run('UPDATE cache SET last_requested_at = NULL WHERE url_hash = ?', [URL_HASH]);
+
+    expect(selectFeedHealth(db)).toHaveLength(0);
+  });
+
+  it('posts the set to the Worker, and posts an empty set too', async () => {
+    const endpoint = mockIngestEndpoint();
+    await reportFeedHealth(db, CONFIG);
+
+    expect(endpoint.calls[0].url).toBe('https://api.example/api/internal/feed-health');
+    expect(endpoint.calls[0].headers['X-Proxy-Secret']).toBe('test-secret');
+    // Everything is healthy: the empty list is what clears the Worker's flags.
+    expect((endpoint.calls[0].body as unknown as { feeds: unknown[] }).feeds).toEqual([]);
+
+    breakFeed(FEED_URL);
+    const result = await reportFeedHealth(db, CONFIG);
+    endpoint.restore();
+
+    expect(result.reported).toBe(1);
+    expect(
+      (endpoint.calls[1].body as unknown as { feeds: Array<{ feedUrl: string }> }).feeds[0].feedUrl
+    ).toBe(FEED_URL);
+  });
+
+  it('surfaces a rejected report instead of pretending it landed', async () => {
+    breakFeed(FEED_URL);
+    const endpoint = mockIngestEndpoint(503);
+    const result = await reportFeedHealth(db, CONFIG);
+    endpoint.restore();
+
+    expect(result.reported).toBe(0);
+    expect(result.error).toContain('503');
   });
 });

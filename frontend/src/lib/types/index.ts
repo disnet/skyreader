@@ -857,6 +857,17 @@ export interface ParsedFeed {
   imageUrl?: string;
   items: FeedItem[];
   fetchedAt: number;
+  // Set only when the crawler currently considers this feed broken. A single-feed
+  // read is served from the archive, so it can succeed (with stale items) for a
+  // feed that has been failing to crawl for days — this is what says so.
+  // Timestamps are unix ms.
+  health?: {
+    errorCount: number;
+    error?: string;
+    lastErrorAt?: number;
+    nextRetryAt?: number;
+    lastFetchedAt?: number;
+  };
 }
 
 export interface FeedItem {

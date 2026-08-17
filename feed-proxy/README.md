@@ -317,6 +317,15 @@ for exactly ONE Worker + D1 pair (prod proxy → prod Worker, staging proxy → 
 - **Pull:** every `CRAWL_SET_INTERVAL_SECONDS` the proxy fetches
   `GET {INGEST_URL}/api/internal/crawl-set` and stamps `last_requested_at` on each feed, which is
   what keeps the warm loop working now that reads no longer touch this box.
+- **Health:** immediately after each crawl-set pull, the proxy posts every crawl-set feed with
+  something wrong with it to `POST {INGEST_URL}/api/internal/feed-health` — erroring
+  (`error_count > 0`), starved (not fetched in `CRAWL_STALE_MS`, 2 h), or both. The erroring ones
+  are how a reader learns its feed is dead rather than idle, since reads no longer come through here
+  and a failing feed is otherwise indistinguishable from one that hasn't published; the starved ones
+  are the admin's alarm that this box can't keep up with its crawl set. The payload is the
+  **complete** trouble set: the Worker infers recovery from a feed's absence, so a partial report
+  silently marks feeds healthy. Timestamps are converted from this box's milliseconds to seconds
+  here, once.
 - The per-feed cap (`FEED_ITEMS_CAP = 200`) bounds the **outbox**, not the archive: D1 retains
   everything it has ingested. `push_state` cascades with every `feed_items` delete.
 

@@ -16,7 +16,7 @@ import {
   handleV2Mentions,
   handleV2MentionLane,
 } from './routes/feeds-v2';
-import { handleIngest, handleCrawlSet } from './routes/ingest';
+import { handleIngest, handleCrawlSet, handleFeedHealth } from './routes/ingest';
 import { handleTimeline } from './routes/timeline';
 import { handleDetectContent } from './routes/social';
 import {
@@ -324,6 +324,9 @@ async function route(
       break;
     case url.pathname === '/api/internal/crawl-set':
       response = await handleCrawlSet(request, env);
+      break;
+    case url.pathname === '/api/internal/feed-health':
+      response = await handleFeedHealth(request, env);
       break;
 
     // The reader's whole refresh, served from the D1 archive in one query.

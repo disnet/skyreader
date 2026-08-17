@@ -7,10 +7,14 @@
 Skyreader backend is a Cloudflare Workers API that serves as a gateway between the frontend and the AT Protocol ecosystem. It handles authentication, the feed timeline, social features, saved articles, labels, and background Jetstream polling.
 
 **Feed reads are served from D1, not the proxy.** The Fly.io proxy is the crawler: it pushes new
-and edited items into `feed_items` (`POST /api/internal/ingest`) and pulls the set of feeds to
-crawl (`GET /api/internal/crawl-set`), both authenticated with the shared `FEED_PROXY_SECRET`
+and edited items into `feed_items` (`POST /api/internal/ingest`), pulls the set of feeds to
+crawl (`GET /api/internal/crawl-set`), and reports which feeds are failing to crawl
+(`POST /api/internal/feed-health`) — all authenticated with the shared `FEED_PROXY_SECRET`
 (fail-closed when unset). A client refresh is one `GET /api/v2/timeline` — a single query joining
-subscriptions and read state. Both internal endpoints stamp `sync_state.crawler_heartbeat_at`, and
+subscriptions and read state. Because reads never touch the crawler, a broken feed just goes quiet;
+the health report is the only thing that tells a reader its feed is dead rather than idle, and its
+payload is the COMPLETE unhealthy set (recovery = absence from the next report). All three internal
+endpoints stamp `sync_state.crawler_heartbeat_at`, and
 the timeline reports `ingestActive` from it: an environment whose proxy has no `INGEST_URL` tells
 clients to stay on the legacy batch path instead of reading an archive nothing fills. See
 `docs/plans/D1_FEED_TIMELINE.md`. The proxy is still on the path for `/api/extract`, feed
@@ -54,24 +58,24 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 
 ### Routes
 
-| File                          | Purpose                                               |
-| ----------------------------- | ----------------------------------------------------- |
-| `src/routes/auth.ts`          | OAuth flow (login, callback, logout, client metadata) |
-| `src/routes/timeline.ts`      | `GET /api/v2/timeline` — the whole refresh, one query |
-| `src/routes/ingest.ts`        | Crawler endpoints: item ingest + crawl set            |
-| `src/routes/feeds-v2.ts`      | Single-feed read (D1 + pull-through), discover, docs  |
-| `src/routes/social.ts`        | Social feed, popular, grouped, detect-content         |
-| `src/routes/shares.ts`        | User shares CRUD (with PDS sync)                      |
-| `src/routes/subscriptions.ts` | Subscription CRUD (with PDS sync)                     |
-| `src/routes/records.ts`       | PDS record listing                                    |
-| `src/routes/reading.ts`       | Article + document read positions (forward delta)     |
-| `src/routes/labels.ts`        | Unified item labels (read/starred/archived/tags)      |
-| `src/routes/saved.ts`         | Saved articles CRUD                                   |
-| `src/routes/settings.ts`      | User settings                                         |
-| `src/routes/sync.ts`          | PDS full sync, subscription sync, sync status         |
-| `src/routes/lexicons.ts`      | Serve lexicon schemas at /.well-known/lexicons        |
-| `src/routes/health.ts`        | `/api/health` (shallow) + `/api/health/deep` (gated)  |
-| `src/routes/telemetry.ts`     | `/api/telemetry/error` — sampled client error reports |
+| File                          | Purpose                                                |
+| ----------------------------- | ------------------------------------------------------ |
+| `src/routes/auth.ts`          | OAuth flow (login, callback, logout, client metadata)  |
+| `src/routes/timeline.ts`      | `GET /api/v2/timeline` — the whole refresh, one query  |
+| `src/routes/ingest.ts`        | Crawler endpoints: item ingest, crawl set, feed health |
+| `src/routes/feeds-v2.ts`      | Single-feed read (D1 + pull-through), discover, docs   |
+| `src/routes/social.ts`        | Social feed, popular, grouped, detect-content          |
+| `src/routes/shares.ts`        | User shares CRUD (with PDS sync)                       |
+| `src/routes/subscriptions.ts` | Subscription CRUD (with PDS sync)                      |
+| `src/routes/records.ts`       | PDS record listing                                     |
+| `src/routes/reading.ts`       | Article + document read positions (forward delta)      |
+| `src/routes/labels.ts`        | Unified item labels (read/starred/archived/tags)       |
+| `src/routes/saved.ts`         | Saved articles CRUD                                    |
+| `src/routes/settings.ts`      | User settings                                          |
+| `src/routes/sync.ts`          | PDS full sync, subscription sync, sync status          |
+| `src/routes/lexicons.ts`      | Serve lexicon schemas at /.well-known/lexicons         |
+| `src/routes/health.ts`        | `/api/health` (shallow) + `/api/health/deep` (gated)   |
+| `src/routes/telemetry.ts`     | `/api/telemetry/error` — sampled client error reports  |
 
 ### Services
 
@@ -147,7 +151,11 @@ Key tables:
 - `sessions` - Server-side sessions (tokens, DPoP key, expiry)
 - `subscriptions_cache` - Cached feed subscriptions from PDS
 - `shares` - Aggregated share data from Jetstream
-- `feeds` - One row per crawled feed (title/site/image + `last_ingest_at`)
+- `feeds` - One row per crawled feed (title/site/image + `last_ingest_at`), plus the crawler's
+  health verdict: `error_count`/`last_error`/`next_retry_at`/`last_fetch_at` (unix seconds), which
+  the timeline serves to readers as `feedHealth`, and `crawl_stale` for a feed the crawler isn't
+  reaching at all (operator-only; the admin alarms on it). `last_ingest_at` is publishing cadence,
+  NOT health — it only moves when a fetch yields a new item
 - `feed_items` - The feed archive the timeline serves: every item the crawler has ever pushed,
   keyed `(feed_url, guid)` with a monotonic `seq`. Never pruned in ordinary operation — see
   `docs/plans/D1_FEED_TIMELINE.md`

@@ -6,7 +6,7 @@ import { mkdirSync } from 'fs';
 import { createApp, initDatabase, cleanupCache } from './app';
 import { DocumentFirehose } from './jetstream';
 import { pingHeartbeat } from './heartbeat';
-import { pushDirtyItems, pullCrawlSet, type IngestConfig } from './ingest-push';
+import { pushDirtyItems, pullCrawlSet, reportFeedHealth, type IngestConfig } from './ingest-push';
 
 // Config
 const PROXY_SECRET = process.env.PROXY_SECRET;
@@ -215,6 +215,14 @@ if (INGEST_ENABLED) {
       .then((result) => {
         if (result.error) console.error(`[Proxy] Crawl-set pull failed: ${result.error}`);
         else console.log(`[Proxy] Crawl set: ${result.registered} feed(s) registered`);
+        // Report health AFTER the pull, so a feed registered for the first time
+        // this cycle is already in the crawl set and its errors are reportable.
+        // Reads no longer pass through here, so this is the only way a broken
+        // feed reaches the reader's error badge.
+        return reportFeedHealth(db, ingestConfig).then((health) => {
+          if (health.error) console.error(`[Proxy] Feed-health report failed: ${health.error}`);
+          else console.log(`[Proxy] Feed health: ${health.reported} feed(s) in error`);
+        });
       })
       .catch((error) => {
         console.error('[Proxy] Crawl-set pull error:', error);

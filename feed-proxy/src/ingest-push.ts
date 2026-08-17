@@ -216,6 +216,112 @@ export interface CrawlSetResult {
 }
 
 /**
+ * One broken feed, as reported to the Worker. Timestamps are unix SECONDS on the
+ * wire — the cache stores milliseconds (everything here compares against
+ * `Date.now()`), and the Worker's `feeds` table is in seconds like the rest of
+ * the backend, so the conversion happens once, here.
+ */
+export interface FeedHealthReport {
+  feedUrl: string;
+  errorCount: number;
+  lastError: string | null;
+  lastErrorAt: number | null;
+  nextRetryAt: number | null;
+  lastFetchAt: number | null;
+  // In the crawl set but not fetched in CRAWL_STALE_MS — starved by a saturated
+  // warm loop rather than failing. `errorCount` can be 0 while this is true.
+  crawlStale: boolean;
+}
+
+// How long a crawl-set feed may go unfetched before it counts as starved. The
+// warm loop works on a minutes-long cadence (a 300s cache TTL refreshed at
+// ~180s), so hours without a fetch means this feed is losing its turn every
+// tick — the failure mode a capped warm batch produces.
+export const CRAWL_STALE_MS = 2 * 60 * 60 * 1000;
+
+function toSeconds(ms: number | null | undefined): number | null {
+  return ms ? Math.floor(ms / 1000) : null;
+}
+
+/**
+ * Every crawl-set feed with something wrong with it: failing to fetch, starved
+ * of fetches, or both.
+ *
+ * Deliberately the whole trouble set rather than a delta: the Worker infers
+ * recovery from a feed's ABSENCE here, so a feed that starts working again needs
+ * no message of its own. Only rows still in the crawl set count — a feed evicted
+ * by `cleanupCache` is nobody's problem any more.
+ */
+export function selectFeedHealth(db: Database, now = Date.now()): FeedHealthReport[] {
+  const staleBefore = now - CRAWL_STALE_MS;
+  return db
+    .query<
+      {
+        url: string;
+        error_count: number;
+        last_error: string | null;
+        last_error_at: number | null;
+        next_retry_at: number | null;
+        fetched_at: number | null;
+      },
+      [number]
+    >(
+      `SELECT url, error_count, last_error, last_error_at, next_retry_at, fetched_at
+			   FROM cache
+			  WHERE last_requested_at IS NOT NULL
+			    AND (error_count > 0 OR COALESCE(fetched_at, 0) < ?)`
+    )
+    .all(staleBefore)
+    .map((row) => ({
+      feedUrl: row.url,
+      errorCount: row.error_count,
+      lastError: row.last_error,
+      lastErrorAt: toSeconds(row.last_error_at),
+      nextRetryAt: toSeconds(row.next_retry_at),
+      // 0 means never fetched — an error placeholder from a first-crawl failure,
+      // or a row the crawl set just registered. Not a timestamp.
+      lastFetchAt: toSeconds(row.fetched_at),
+      crawlStale: (row.fetched_at ?? 0) < staleBefore,
+    }));
+}
+
+export interface FeedHealthResult {
+  reported: number;
+  error?: string;
+}
+
+/**
+ * Push the trouble set to the paired Worker: the erroring feeds it serves to
+ * readers, and the starved ones the admin alarms on. An empty list is a
+ * meaningful report — it is how "everything recovered" is communicated — so this
+ * always posts.
+ */
+export async function reportFeedHealth(
+  db: Database,
+  config: IngestConfig
+): Promise<FeedHealthResult> {
+  const feeds = selectFeedHealth(db);
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (config.secret) headers['X-Proxy-Secret'] = config.secret;
+
+  try {
+    const response = await fetch(`${config.ingestUrl}/api/internal/feed-health`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ feeds }),
+      signal: AbortSignal.timeout(config.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+    });
+    if (!response.ok) return { reported: 0, error: `HTTP ${response.status}` };
+    return { reported: feeds.length };
+  } catch (error) {
+    return {
+      reported: 0,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
  * Pull the crawl set from the paired Worker and stamp every feed in it.
  */
 export async function pullCrawlSet(db: Database, config: IngestConfig): Promise<CrawlSetResult> {

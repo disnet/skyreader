@@ -8,8 +8,8 @@ import type {
 } from '../services/feed-proxy-client';
 import { resolveStandardSite } from '../utils/canonical-url';
 import { chunkArray, getReadKeys } from './reading';
-import { ingestProxyFeed } from './ingest';
-import { readFeedMetadata, readFeedSlice } from './timeline';
+import { clearFeedHealth, ingestProxyFeed } from './ingest';
+import { readFeedMetadata, readFeedSlice, type FeedHealth } from './timeline';
 import {
   getLinkblogTargets,
   publicationUri as linkblogPublicationUri,
@@ -24,6 +24,8 @@ interface V2FeedResponse {
   // Unix ms of the last ingest for this feed (freshness, for the client's UI) —
   // no longer a live upstream fetch time, since reads never touch the proxy.
   fetchedAt: number;
+  // Present only when the crawler currently considers this feed broken.
+  health?: FeedHealth;
 }
 
 interface V2BatchFeedResult {
@@ -148,6 +150,10 @@ export async function handleV2FeedFetch(
         const client = new FeedProxyClient(env);
         const feed = await client.fetchFeed(feedUrl);
         await ingestProxyFeed(env, feedUrl, feed);
+        // We just fetched it, so whatever the crawler last recorded is stale.
+        // Clearing here is what makes the user's "retry this feed" action show a
+        // result now rather than after the next health report.
+        await clearFeedHealth(env, feedUrl);
         items = await readFeedSlice(env, session.did, feedUrl, limit);
         metadata = await readFeedMetadata(env, feedUrl);
       } catch (error) {
@@ -164,6 +170,19 @@ export async function handleV2FeedFetch(
       imageUrl: metadata?.image_url ?? undefined,
       items,
       fetchedAt: (metadata?.last_ingest_at ?? Math.floor(Date.now() / 1000)) * 1000,
+      // The crawler's verdict on this feed, so a per-feed read reports a broken
+      // feed even when the archive still has old items to serve. Timestamps in
+      // ms, matching the timeline's health payload.
+      health:
+        metadata && metadata.error_count > 0
+          ? {
+              errorCount: metadata.error_count,
+              error: metadata.last_error ?? undefined,
+              lastErrorAt: metadata.last_error_at ? metadata.last_error_at * 1000 : undefined,
+              nextRetryAt: metadata.next_retry_at ? metadata.next_retry_at * 1000 : undefined,
+              lastFetchedAt: metadata.last_fetch_at ? metadata.last_fetch_at * 1000 : undefined,
+            }
+          : undefined,
     };
 
     return new Response(JSON.stringify(response), {

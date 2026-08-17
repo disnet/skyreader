@@ -1,18 +1,21 @@
 import type { FeedRow, PaginatedResult } from '$lib/types';
 
-// Matches the dashboard's stale-ingest metric: a subscribed feed that hasn't
-// been ingested within an hour isn't being crawled.
-const STALE_INGEST_SECONDS = 60 * 60;
+export type FeedFilter = 'all' | 'erroring' | 'starved' | 'ok';
 
 /**
- * Feed health from the D1 archive. Fetch errors and backoff now live with the
- * crawler (the Fly proxy), so "healthy" here means "still ingesting": the last
- * push we received for the feed is recent.
+ * Feed health from the D1 archive.
+ *
+ * The crawler reports which feeds it can't fetch (`error_count`) and which it
+ * isn't reaching at all (`crawl_stale`), so health is now the crawler's own
+ * verdict rather than an inference. It used to be inferred from `last_ingest_at`,
+ * which only moves when a fetch yields a NEW item — that flagged every
+ * low-frequency feed in the archive as broken, so the page's alarm meant nothing.
+ * `last_ingest_at` stays on the table as what it actually is: publishing cadence.
  */
 export async function listFeeds(
   db: D1Database,
   opts: {
-    filter?: 'all' | 'healthy' | 'stale';
+    filter?: FeedFilter;
     sort?: string;
     order?: 'asc' | 'desc';
     page?: number;
@@ -28,24 +31,31 @@ export async function listFeeds(
   } = opts;
   const offset = (page - 1) * perPage;
 
-  const allowedSorts = ['feed_url', 'title', 'subscriber_count', 'item_count', 'last_ingest_at'];
+  const allowedSorts = [
+    'feed_url',
+    'title',
+    'subscriber_count',
+    'item_count',
+    'last_ingest_at',
+    'error_count',
+  ];
   const sortCol = allowedSorts.includes(sort) ? sort : 'subscriber_count';
   const sortDir = order === 'asc' ? 'ASC' : 'DESC';
 
-  const cutoff = Math.floor(Date.now() / 1000) - STALE_INGEST_SECONDS;
   let where = '';
-  if (filter === 'healthy') where = 'WHERE f.last_ingest_at IS NOT NULL AND f.last_ingest_at >= ?';
-  else if (filter === 'stale') where = 'WHERE f.last_ingest_at IS NULL OR f.last_ingest_at < ?';
-  const filterBindings = filter === 'all' ? [] : [cutoff];
+  if (filter === 'erroring') where = 'WHERE f.error_count > 0';
+  else if (filter === 'starved') where = 'WHERE f.crawl_stale = 1 AND f.error_count = 0';
+  else if (filter === 'ok') where = 'WHERE f.error_count = 0 AND f.crawl_stale = 0';
 
   const countResult = await db
     .prepare(`SELECT COUNT(*) as count FROM feeds f ${where}`)
-    .bind(...filterBindings)
     .first<{ count: number }>();
 
   const rows = await db
     .prepare(
       `SELECT f.feed_url, f.title, f.site_url, f.last_ingest_at,
+			        f.error_count, f.last_error, f.last_error_at, f.next_retry_at,
+			        f.last_fetch_at, f.crawl_stale,
 			        (SELECT COUNT(*) FROM subscriptions_cache sc
 			          WHERE sc.feed_url = f.feed_url AND sc.active = 1) AS subscriber_count,
 			        (SELECT COUNT(*) FROM feed_items fi
@@ -55,7 +65,7 @@ export async function listFeeds(
 			  ORDER BY ${sortCol} ${sortDir}
 			  LIMIT ? OFFSET ?`
     )
-    .bind(...filterBindings, perPage, offset)
+    .bind(perPage, offset)
     .all<FeedRow>();
 
   return {

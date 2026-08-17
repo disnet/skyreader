@@ -220,7 +220,10 @@ AT Protocol (Bluesky PDS) + Fly.io Feed Proxy + Jetstream Firehose
 - **Database:** D1 (SQLite) - reads the same database as the backend
 - **Features:** Ops panel (cron liveness, firehose lag, proxy cache health) with 30-day trend
   sparklines, system metrics, user management, feed health monitoring, search/sort/pagination
-- **Pages:** Dashboard (ops + metrics + trends), Users (list + detail), Feeds (health + error tracking)
+- **Pages:** Dashboard (ops + metrics + trends), Users (list + detail), Feeds (health + error tracking).
+  Feed health is the crawler's own verdict from `feeds.error_count` / `feeds.crawl_stale`, not an
+  inference from `last_ingest_at` — that only moves when a feed publishes, so it says nothing about
+  whether the feed still works.
 - **Deploy:** Cloudflare Pages via GitHub Actions (staging on push to main, production on release)
 
 ### Key Data Flow

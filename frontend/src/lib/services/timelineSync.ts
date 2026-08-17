@@ -156,6 +156,61 @@ export function pruneAttemptedBackfills(
   return [...attempted].filter((url) => live.has(url));
 }
 
+/** One broken feed as the timeline reports it. Timestamps are unix ms. */
+export interface TimelineFeedHealth {
+  errorCount: number;
+  error?: string;
+  lastErrorAt?: number;
+  nextRetryAt?: number;
+  lastFetchedAt?: number;
+}
+
+export type FeedHealthDecision =
+  | { feedUrl: string; kind: 'error'; health: TimelineFeedHealth }
+  | { feedUrl: string; kind: 'recovered' };
+
+/**
+ * Reconcile the client's per-feed status against the crawler's health report.
+ *
+ * The batch path learned a feed was broken from the response that failed to
+ * fetch it. Timeline reads are served from the archive and never touch the
+ * crawler, so "this feed returned nothing" carries no information — a dead feed
+ * and a quiet feed look identical. The server therefore sends the set it
+ * considers broken, and everything else the caller subscribes to is healthy by
+ * omission. That omission is what clears an error, including one left over from
+ * the batch path.
+ *
+ * A feed with no status yet (never fetched, or still 'pending') is left alone
+ * when it isn't in the report: absence means "not broken", not "confirmed
+ * fetched", and inventing a success would show a fetch that never happened.
+ */
+export function reconcileFeedHealth(
+  unhealthy: Record<string, TimelineFeedHealth>,
+  subscribedFeedUrls: Iterable<string>,
+  hasError: (feedUrl: string) => boolean
+): FeedHealthDecision[] {
+  const decisions: FeedHealthDecision[] = [];
+  for (const feedUrl of subscribedFeedUrls) {
+    const health = unhealthy[feedUrl];
+    if (health) decisions.push({ feedUrl, kind: 'error', health });
+    else if (hasError(feedUrl)) decisions.push({ feedUrl, kind: 'recovered' });
+  }
+  return decisions;
+}
+
+/**
+ * Is this feed in its retry cooldown?
+ *
+ * `nextRetryAt` is unix MILLISECONDS all the way from the crawler, which
+ * computes it as `Date.now() + backoff`. It used to be compared against (and
+ * rescaled by) seconds, which put every retry roughly fifty thousand years out:
+ * the feed then failed `canFetch` forever, so one transient error retired it for
+ * the life of the tab and the error popover offered a nonsense countdown.
+ */
+export function isCircuitOpen(nextRetryAt: number | undefined, now: number): boolean {
+  return !!nextRetryAt && nextRetryAt > now;
+}
+
 /**
  * Whether a subscription's title should be updated from feed metadata.
  * Returns true when the current title is a fallback (URL, hostname, etc.)

@@ -2,6 +2,7 @@ import type { Env, FeedItem, Session } from '../types';
 import {
   CRAWLER_HEARTBEAT_KEY,
   CRAWLER_HEARTBEAT_FRESH_SECONDS,
+  FEED_HEALTH_REV_KEY,
   rssSubscriptionPredicate,
 } from './ingest';
 
@@ -103,11 +104,20 @@ export interface FeedMetadataRow {
   description: string | null;
   image_url: string | null;
   last_ingest_at: number | null;
+  // Crawl health (unix seconds), so a single-feed read can report a broken feed
+  // even while it serves the archived items the feed still has.
+  error_count: number;
+  last_error: string | null;
+  last_error_at: number | null;
+  next_retry_at: number | null;
+  last_fetch_at: number | null;
 }
 
 export async function readFeedMetadata(env: Env, feedUrl: string): Promise<FeedMetadataRow | null> {
   return env.DB.prepare(
-    `SELECT title, site_url, description, image_url, last_ingest_at FROM feeds WHERE feed_url = ?`
+    `SELECT title, site_url, description, image_url, last_ingest_at,
+            error_count, last_error, last_error_at, next_retry_at, last_fetch_at
+       FROM feeds WHERE feed_url = ?`
   )
     .bind(feedUrl)
     .first<FeedMetadataRow>();
@@ -119,28 +129,98 @@ export interface ArchiveState {
   // nothing is filling this D1 (no INGEST_URL on the paired proxy, or the proxy
   // is down), so the client must not treat an empty/partial archive as the truth.
   ingestActive: boolean;
+  // Revision of the unhealthy-feed set. A client that echoes this back unchanged
+  // already holds current health and is sent no health payload.
+  healthRev: string;
 }
 
 /**
- * Generation token + crawler liveness in one `sync_state` read (the timeline
- * needs both on every request, and they live one row apart).
+ * Generation token, crawler liveness and the feed-health revision in one
+ * `sync_state` read (the timeline needs all three on every request, and they are
+ * three rows of the same small table).
  */
 export async function readArchiveState(env: Env): Promise<ArchiveState> {
   const rows = await env.DB.prepare(
-    `SELECT key, value FROM sync_state WHERE key IN ('items_generation', ?)`
+    `SELECT key, value FROM sync_state WHERE key IN ('items_generation', ?, ?)`
   )
-    .bind(CRAWLER_HEARTBEAT_KEY)
+    .bind(CRAWLER_HEARTBEAT_KEY, FEED_HEALTH_REV_KEY)
     .all<{ key: string; value: string }>();
 
   let generation = '';
   let heartbeat = 0;
+  let healthRev = '';
   for (const row of rows.results) {
     if (row.key === 'items_generation') generation = row.value;
     else if (row.key === CRAWLER_HEARTBEAT_KEY) heartbeat = parseInt(row.value, 10) || 0;
+    else if (row.key === FEED_HEALTH_REV_KEY) healthRev = row.value;
   }
 
   const age = Math.floor(Date.now() / 1000) - heartbeat;
-  return { generation, ingestActive: heartbeat > 0 && age <= CRAWLER_HEARTBEAT_FRESH_SECONDS };
+  return {
+    generation,
+    ingestActive: heartbeat > 0 && age <= CRAWLER_HEARTBEAT_FRESH_SECONDS,
+    healthRev,
+  };
+}
+
+/**
+ * Per-feed crawl health for the caller's subscriptions — the timeline path's
+ * replacement for the per-feed `status: 'error'` the legacy batch response
+ * carried inline.
+ *
+ * Only broken feeds are returned: the client treats absence as healthy, which is
+ * what makes recovery work without sending a row per subscription. Driven from
+ * the (small, partially indexed) unhealthy set rather than from the caller's
+ * subscriptions, because on a healthy system that set is empty and this costs
+ * nothing.
+ *
+ * Timestamps go out in MILLISECONDS — D1 stores seconds like the rest of the
+ * backend, but the client's FeedStatus contract has always been ms.
+ */
+export async function subscribedFeedHealth(
+  env: Env,
+  userDid: string
+): Promise<Record<string, FeedHealth>> {
+  const rows = await env.DB.prepare(
+    `SELECT f.feed_url, f.error_count, f.last_error, f.last_error_at, f.next_retry_at, f.last_fetch_at
+       FROM feeds f
+      WHERE f.error_count > 0
+        AND EXISTS (
+              SELECT 1 FROM subscriptions_cache sc
+               WHERE sc.user_did = ? AND sc.feed_url = f.feed_url AND sc.active = 1
+                 AND ${rssSubscriptionPredicate('sc')}
+            )`
+  )
+    .bind(userDid)
+    .all<{
+      feed_url: string;
+      error_count: number;
+      last_error: string | null;
+      last_error_at: number | null;
+      next_retry_at: number | null;
+      last_fetch_at: number | null;
+    }>();
+
+  const health: Record<string, FeedHealth> = {};
+  for (const row of rows.results) {
+    health[row.feed_url] = {
+      errorCount: row.error_count,
+      error: row.last_error ?? undefined,
+      lastErrorAt: row.last_error_at ? row.last_error_at * 1000 : undefined,
+      nextRetryAt: row.next_retry_at ? row.next_retry_at * 1000 : undefined,
+      lastFetchedAt: row.last_fetch_at ? row.last_fetch_at * 1000 : undefined,
+    };
+  }
+  return health;
+}
+
+/** One broken feed as the timeline reports it. Timestamps are unix ms. */
+export interface FeedHealth {
+  errorCount: number;
+  error?: string;
+  lastErrorAt?: number;
+  nextRetryAt?: number;
+  lastFetchedAt?: number;
 }
 
 /** The archive's current head; 0 when nothing has ever been ingested. */
@@ -221,6 +301,9 @@ export async function handleTimeline(
   const generationParam = url.searchParams.get('generation');
   const limitParam = url.searchParams.get('limit');
   const coldOffsetParam = url.searchParams.get('cold_offset');
+  // The feed-health revision this client already holds. Absent (a fresh page
+  // load, whose status store is empty) means "send it".
+  const healthRevParam = url.searchParams.get('health_rev');
 
   const parsedLimit = limitParam ? parseInt(limitParam, 10) : DEFAULT_LIMIT;
   const limit = Number.isInteger(parsedLimit)
@@ -235,7 +318,12 @@ export async function handleTimeline(
   const coldOffset =
     Number.isInteger(parsedColdOffset) && parsedColdOffset > 0 ? parsedColdOffset : 0;
 
-  const { generation, ingestActive } = await readArchiveState(env);
+  const { generation, ingestActive, healthRev } = await readArchiveState(env);
+  // Send health when the client's copy is stale. A cold start always gets it:
+  // it is the one page that delivers already-archived items for a feed that may
+  // have broken since, and its blanket "these feeds delivered, so they're fine"
+  // pass would otherwise clear a live error.
+  const healthStale = healthRevParam !== healthRev;
   // Server time (unix seconds) at annotation. The client seeds its forward
   // read-delta cursor from this, exactly as /batch does today, so the delta
   // starts from bootstrap with no client/server clock skew.
@@ -303,6 +391,8 @@ export async function handleTimeline(
           readCursor,
           coldStart: false,
           feeds: items.length > 0 ? await subscribedFeedMetadata(env, session.did) : undefined,
+          healthRev,
+          feedHealth: healthStale ? await subscribedFeedHealth(env, session.did) : undefined,
         });
       }
     }
@@ -361,6 +451,8 @@ export async function handleTimeline(
       readCursor,
       coldStart: true,
       feeds: items.length > 0 ? await subscribedFeedMetadata(env, session.did) : undefined,
+      healthRev,
+      feedHealth: await subscribedFeedHealth(env, session.did),
     });
   } catch (error) {
     console.error('[timeline] Query error:', error);

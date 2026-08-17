@@ -105,6 +105,23 @@ export interface TimelineResponse {
   // Feed-level metadata for the caller's subscriptions; present only on a page
   // that carried items.
   feeds?: Record<string, { title?: string; siteUrl?: string; imageUrl?: string }>;
+  // Revision of the server's unhealthy-feed set. Echoed back as `health_rev` so
+  // the payload below is only re-sent when it actually changed.
+  healthRev?: string;
+  // Per-feed crawl health for the caller's subscriptions — ONLY the broken ones.
+  // A subscribed feed missing from this map is healthy, which is how recovery is
+  // communicated. Present on every cold start and whenever `healthRev` moved.
+  // Absent entirely on a backend that predates feed-health reporting.
+  feedHealth?: Record<string, TimelineFeedHealth>;
+}
+
+/** One broken feed as the timeline reports it. Timestamps are unix ms. */
+export interface TimelineFeedHealth {
+  errorCount: number;
+  error?: string;
+  lastErrorAt?: number;
+  nextRetryAt?: number;
+  lastFetchedAt?: number;
 }
 
 export interface ExtractedArticle {
@@ -338,12 +355,14 @@ class ApiClient {
     generation?: string;
     limit?: number;
     cold_offset?: number;
+    health_rev?: string;
   }): Promise<TimelineResponse> {
     const search = new URLSearchParams();
     if (params.since_seq !== undefined) search.set('since_seq', String(params.since_seq));
     if (params.generation) search.set('generation', params.generation);
     if (params.limit) search.set('limit', String(params.limit));
     if (params.cold_offset) search.set('cold_offset', String(params.cold_offset));
+    if (params.health_rev) search.set('health_rev', params.health_rev);
     const query = search.toString();
     return this.fetch(`/api/v2/timeline${query ? `?${query}` : ''}`);
   }

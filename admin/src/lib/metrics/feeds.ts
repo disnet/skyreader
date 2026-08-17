@@ -1,10 +1,26 @@
-import type { MetricDefinition } from '$lib/types';
+import type { FeedRow, MetricDefinition } from '$lib/types';
 
-// A subscribed feed whose last ingest is older than this isn't being crawled any
-// more — the headline failure mode of the ingest architecture (nothing stamps
-// the crawl set, so feeds silently age out of the proxy's warm loop). The warm
-// loop refreshes on the order of minutes, so an hour is a real alarm, not noise.
-const STALE_INGEST_SECONDS = 60 * 60;
+export interface FeedHealthVerdict {
+  status: 'healthy' | 'warning' | 'error';
+  label: string;
+}
+
+/**
+ * How one feed's row reads on the Feeds page.
+ *
+ * The crawler's verdict, not an inference. Health used to be derived from
+ * `last_ingest_at`, which only moves when a fetch produces a NEW item — so every
+ * feed that simply hadn't published in an hour showed as broken, and the page's
+ * status column carried no information. The two faults are also genuinely
+ * different: erroring means the fetch fails (actionable per feed), starved means
+ * the crawler never gets to it (actionable on capacity), so they don't collapse
+ * into one severity.
+ */
+export function feedHealth(feed: Pick<FeedRow, 'error_count' | 'crawl_stale'>): FeedHealthVerdict {
+  if (feed.error_count > 0) return { status: 'error', label: 'Erroring' };
+  if (feed.crawl_stale) return { status: 'warning', label: 'Not crawled' };
+  return { status: 'healthy', label: 'OK' };
+}
 
 // D1's hard ceiling is 10 GB. Alert well before it, so there's time to act
 // (lower the ingest content cap → tier old bodies to R2 → revisit retention).
@@ -24,24 +40,50 @@ export const feedMetrics: MetricDefinition[] = [
     },
   },
   {
-    id: 'stale_ingest_feeds',
+    id: 'erroring_feeds',
     category: 'Feeds',
+    // Feeds a real user subscribes to that the crawler cannot fetch. This
+    // replaces the old "Subscribed Feeds Not Ingesting", which keyed off
+    // `last_ingest_at` and therefore counted every feed that simply hadn't
+    // published in an hour — it warned permanently and told an operator nothing.
+    // The crawler's own error verdict is the actionable number.
     query: async (db) => {
-      const cutoff = Math.floor(Date.now() / 1000) - STALE_INGEST_SECONDS;
       const r = await db
         .prepare(
           `SELECT COUNT(*) as count FROM feeds f
-            WHERE (f.last_ingest_at IS NULL OR f.last_ingest_at < ?)
+            WHERE f.error_count > 0
               AND EXISTS (SELECT 1 FROM subscriptions_cache sc
                            WHERE sc.feed_url = f.feed_url AND sc.active = 1)`
         )
-        .bind(cutoff)
         .first<{ count: number }>();
       const count = r?.count ?? 0;
       return {
-        label: 'Subscribed Feeds Not Ingesting',
+        label: 'Subscribed Feeds Erroring',
         value: count,
         status: count > 0 ? 'warning' : 'healthy',
+      };
+    },
+  },
+  {
+    id: 'starved_feeds',
+    category: 'Feeds',
+    // In the crawl set, not erroring, and still not fetched for hours: the
+    // crawler is not keeping up. This is the failure the warm-loop batch cap
+    // produces, and the one the old stale-ingest metric was reaching for.
+    query: async (db) => {
+      const r = await db
+        .prepare(
+          `SELECT COUNT(*) as count FROM feeds f
+            WHERE f.crawl_stale = 1 AND f.error_count = 0
+              AND EXISTS (SELECT 1 FROM subscriptions_cache sc
+                           WHERE sc.feed_url = f.feed_url AND sc.active = 1)`
+        )
+        .first<{ count: number }>();
+      const count = r?.count ?? 0;
+      return {
+        label: 'Subscribed Feeds Not Being Crawled',
+        value: count,
+        status: count > 0 ? 'error' : 'healthy',
       };
     },
   },

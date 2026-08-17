@@ -32,7 +32,24 @@ export interface FeedRow {
   // Rows this feed holds in the D1 archive.
   item_count: number;
   // Unix seconds of the last push we received from the crawler for this feed.
+  // Moves only when a fetch produced a NEW item, so it measures the feed's
+  // publishing cadence, not its health — most healthy feeds sit here for weeks.
   last_ingest_at: number | null;
+  // The crawler's verdict, reported every 5 minutes (see
+  // `POST /api/internal/feed-health`). Consecutive fetch failures; 0 = fetching
+  // fine.
+  error_count: number;
+  last_error: string | null;
+  // Unix seconds.
+  last_error_at: number | null;
+  next_retry_at: number | null;
+  // Unix seconds of the crawler's last successful FETCH — the actual liveness
+  // signal, unlike `last_ingest_at`. Only written for feeds in a health report,
+  // so a healthy feed leaves it null.
+  last_fetch_at: number | null;
+  // 1 when the feed is in the crawl set but going unfetched — starved by a
+  // saturated warm loop rather than failing. The real "not being crawled" alarm.
+  crawl_stale: number;
 }
 
 export interface SubscriptionRow {

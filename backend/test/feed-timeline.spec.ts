@@ -3,9 +3,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   handleIngest,
   handleCrawlSet,
+  handleFeedHealth,
+  clearFeedHealth,
   trimFeedsToSanityCap,
   ingestProxyFeed,
   CRAWLER_HEARTBEAT_KEY,
+  FEED_HEALTH_REV_KEY,
 } from '../src/routes/ingest';
 import { handleTimeline, readFeedSlice } from '../src/routes/timeline';
 import type { Env, FeedItem, Session } from '../src/types';
@@ -114,11 +117,48 @@ async function timeline(params: Record<string, string> = {}) {
     readCursor: number;
     coldStart: boolean;
     feeds?: Record<string, { title?: string }>;
+    healthRev?: string;
+    feedHealth?: Record<
+      string,
+      {
+        errorCount: number;
+        error?: string;
+        lastErrorAt?: number;
+        nextRetryAt?: number;
+        lastFetchedAt?: number;
+      }
+    >;
   };
 }
 
 async function clearCrawlerHeartbeat() {
   await env.DB.prepare('DELETE FROM sync_state WHERE key = ?').bind(CRAWLER_HEARTBEAT_KEY).run();
+}
+
+async function reportHealth(feeds: unknown[], secret: string | null = SECRET) {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (secret !== null) headers['X-Proxy-Secret'] = secret;
+  return handleFeedHealth(
+    new Request('https://api.example/api/internal/feed-health', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ feeds }),
+    }),
+    env
+  );
+}
+
+function brokenFeed(feedUrl: string, overrides: Record<string, unknown> = {}) {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  return {
+    feedUrl,
+    errorCount: 3,
+    lastError: 'Failed to fetch (HTTP 404)',
+    lastErrorAt: nowSeconds,
+    nextRetryAt: nowSeconds + 600,
+    lastFetchAt: nowSeconds - 7200,
+    ...overrides,
+  };
 }
 
 describe('feed timeline (D1 ingest + serve)', () => {
@@ -144,6 +184,7 @@ describe('feed timeline (D1 ingest + serve)', () => {
     await env.DB.prepare('DELETE FROM subscriptions_cache').run();
     await env.DB.prepare('DELETE FROM item_labels_cache').run();
     await clearCrawlerHeartbeat();
+    await env.DB.prepare('DELETE FROM sync_state WHERE key = ?').bind(FEED_HEALTH_REV_KEY).run();
   });
 
   describe('ingest auth', () => {
@@ -577,6 +618,213 @@ describe('feed timeline (D1 ingest + serve)', () => {
         .run();
 
       expect((await timeline()).ingestActive).toBe(false);
+    });
+  });
+
+  describe('feed health', () => {
+    it('requires the shared secret', async () => {
+      expect((await reportHealth([brokenFeed(FEED_A)], null)).status).toBe(401);
+      expect((await reportHealth([brokenFeed(FEED_A)], 'nope')).status).toBe(401);
+    });
+
+    it('stamps the crawler heartbeat like the other internal endpoints', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await clearCrawlerHeartbeat();
+      expect((await reportHealth([])).status).toBe(200);
+      expect((await timeline()).ingestActive).toBe(true);
+    });
+
+    it('serves a broken feed to its subscribers, in milliseconds', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      const report = brokenFeed(FEED_A);
+      await reportHealth([report]);
+
+      const body = await timeline();
+      expect(body.feedHealth?.[FEED_A]).toEqual({
+        errorCount: 3,
+        error: 'Failed to fetch (HTTP 404)',
+        lastErrorAt: report.lastErrorAt * 1000,
+        nextRetryAt: report.nextRetryAt * 1000,
+        lastFetchedAt: report.lastFetchAt * 1000,
+      });
+    });
+
+    it('records a feed that has never ingested a single item', async () => {
+      // Broken from its first crawl: no items were ever pushed, so there is no
+      // `feeds` row for the health report to update.
+      await addSubscription(TEST_DID, FEED_B);
+      await reportHealth([brokenFeed(FEED_B)]);
+      expect((await timeline()).feedHealth?.[FEED_B]?.errorCount).toBe(3);
+    });
+
+    it('does not leak another user’s broken feeds', async () => {
+      await addSubscription(OTHER_DID, FEED_B);
+      await addSubscription(TEST_DID, FEED_A);
+      await reportHealth([brokenFeed(FEED_A), brokenFeed(FEED_B)]);
+
+      const body = await timeline();
+      expect(Object.keys(body.feedHealth ?? {})).toEqual([FEED_A]);
+    });
+
+    it('clears a feed that recovers, by absence from the next report', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await reportHealth([brokenFeed(FEED_A)]);
+      expect((await timeline()).feedHealth?.[FEED_A]).toBeDefined();
+
+      // The crawler no longer lists it — that is the whole recovery signal.
+      await reportHealth([]);
+      expect((await timeline()).feedHealth?.[FEED_A]).toBeUndefined();
+    });
+
+    it('recovers one feed without disturbing another that is still broken', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await addSubscription(TEST_DID, FEED_B);
+      await reportHealth([brokenFeed(FEED_A), brokenFeed(FEED_B)]);
+      await reportHealth([brokenFeed(FEED_B)]);
+
+      const body = await timeline();
+      expect(Object.keys(body.feedHealth ?? {})).toEqual([FEED_B]);
+    });
+
+    it('omits the payload when the client already holds the current revision', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await reportHealth([brokenFeed(FEED_A)]);
+
+      const first = await timeline();
+      expect(first.feedHealth).toBeDefined();
+      expect(first.healthRev).toBeTruthy();
+
+      // Steady state: the client echoes the revision back and pays nothing.
+      const second = await timeline({
+        since_seq: String(first.cursor),
+        generation: first.generation,
+        health_rev: first.healthRev!,
+      });
+      expect(second.feedHealth).toBeUndefined();
+      expect(second.healthRev).toBe(first.healthRev);
+    });
+
+    it('re-sends the payload once the unhealthy set changes', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await addSubscription(TEST_DID, FEED_B);
+      await reportHealth([brokenFeed(FEED_A)]);
+      const first = await timeline();
+
+      await reportHealth([brokenFeed(FEED_A), brokenFeed(FEED_B, { errorCount: 1 })]);
+      const second = await timeline({
+        since_seq: String(first.cursor),
+        generation: first.generation,
+        health_rev: first.healthRev!,
+      });
+
+      expect(second.healthRev).not.toBe(first.healthRev);
+      expect(Object.keys(second.feedHealth ?? {}).sort()).toEqual([FEED_A, FEED_B].sort());
+    });
+
+    it('always sends health on a cold start, whatever revision the client claims', async () => {
+      // A cold start replays already-archived items, including from a feed that
+      // has broken since — so its blanket "these delivered, they're fine" pass
+      // must be corrected in the same response.
+      await addSubscription(TEST_DID, FEED_A);
+      await ingest(FEED_A, [{ item: item('c1'), contentHash: 'c1' }]);
+      await reportHealth([brokenFeed(FEED_A)]);
+
+      const rev = (await timeline()).healthRev!;
+      const cold = await timeline({ health_rev: rev });
+      expect(cold.coldStart).toBe(true);
+      expect(cold.items).toHaveLength(1);
+      expect(cold.feedHealth?.[FEED_A]).toBeDefined();
+    });
+
+    it('clearFeedHealth clears one feed and moves the revision', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await addSubscription(TEST_DID, FEED_B);
+      await reportHealth([brokenFeed(FEED_A), brokenFeed(FEED_B)]);
+      const before = (await timeline()).healthRev;
+
+      await clearFeedHealth(env as Env, FEED_A);
+
+      const body = await timeline();
+      expect(Object.keys(body.feedHealth ?? {})).toEqual([FEED_B]);
+      expect(body.healthRev).not.toBe(before);
+    });
+
+    it('flags a starved feed without telling readers anything', async () => {
+      // `crawl_stale` is an operator signal: the crawler isn't reaching the feed,
+      // but nothing is erroring, so the reader has no error to show.
+      await addSubscription(TEST_DID, FEED_A);
+      await reportHealth([{ feedUrl: FEED_A, errorCount: 0, crawlStale: true }]);
+
+      const body = await timeline();
+      expect(body.feedHealth?.[FEED_A]).toBeUndefined();
+
+      const row = await env.DB.prepare(
+        'SELECT error_count, crawl_stale FROM feeds WHERE feed_url = ?'
+      )
+        .bind(FEED_A)
+        .first<{ error_count: number; crawl_stale: number }>();
+      expect(row).toMatchObject({ error_count: 0, crawl_stale: 1 });
+    });
+
+    it('clears a starved flag once the crawler catches up', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await reportHealth([{ feedUrl: FEED_A, errorCount: 0, crawlStale: true }]);
+      await reportHealth([]);
+
+      const row = await env.DB.prepare('SELECT crawl_stale FROM feeds WHERE feed_url = ?')
+        .bind(FEED_A)
+        .first<{ crawl_stale: number }>();
+      expect(row?.crawl_stale).toBe(0);
+    });
+
+    it('carries both flags for a feed that is erroring and starved', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await reportHealth([brokenFeed(FEED_A, { crawlStale: true })]);
+
+      const row = await env.DB.prepare(
+        'SELECT error_count, crawl_stale FROM feeds WHERE feed_url = ?'
+      )
+        .bind(FEED_A)
+        .first<{ error_count: number; crawl_stale: number }>();
+      expect(row).toMatchObject({ error_count: 3, crawl_stale: 1 });
+      // Readers still see the error, which is the part they can act on.
+      expect((await timeline()).feedHealth?.[FEED_A]?.errorCount).toBe(3);
+    });
+
+    it('ignores an entry that claims no fault at all', async () => {
+      // Otherwise a healthy feed listed by mistake would stay flagged forever.
+      await addSubscription(TEST_DID, FEED_A);
+      await reportHealth([{ feedUrl: FEED_A, errorCount: 0, crawlStale: false }]);
+
+      const row = await env.DB.prepare('SELECT feed_url FROM feeds WHERE feed_url = ?')
+        .bind(FEED_A)
+        .first();
+      expect(row).toBeNull();
+    });
+
+    it('leaves the revision alone when only the starved flag moves', async () => {
+      // The reader payload holds erroring feeds only, so a crawl-capacity change
+      // must not make every client re-download it.
+      await addSubscription(TEST_DID, FEED_A);
+      await reportHealth([brokenFeed(FEED_A)]);
+      const before = (await timeline()).healthRev;
+
+      await addSubscription(TEST_DID, FEED_B);
+      await reportHealth([
+        brokenFeed(FEED_A),
+        { feedUrl: FEED_B, errorCount: 0, crawlStale: true },
+      ]);
+      expect((await timeline()).healthRev).toBe(before);
+    });
+
+    it('leaves the revision alone when a report changes nothing', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      const report = brokenFeed(FEED_A);
+      await reportHealth([report]);
+      const first = (await timeline()).healthRev;
+
+      await reportHealth([report]);
+      expect((await timeline()).healthRev).toBe(first);
     });
   });
 });

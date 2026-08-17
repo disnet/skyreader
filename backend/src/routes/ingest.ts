@@ -31,6 +31,11 @@ export const MAX_ITEM_CONTENT_BYTES = 8 * 1024;
 export const CRAWLER_HEARTBEAT_KEY = 'crawler_heartbeat_at';
 export const CRAWLER_HEARTBEAT_FRESH_SECONDS = 30 * 60;
 
+// Revision token for the set of feeds the crawler currently considers broken.
+// The timeline sends the per-feed health payload only when the client's echoed
+// revision differs from this, so a steady-state poll costs no extra query.
+export const FEED_HEALTH_REV_KEY = 'feed_health_rev';
+
 // Bounds on one ingest call. The pusher chunks to ~100 items; these are abuse
 // guards, not tuning knobs.
 const MAX_INGEST_ITEMS = 1000;
@@ -322,6 +327,210 @@ export async function stampCrawlerHeartbeat(env: Env): Promise<void> {
   } catch (error) {
     // Observability only — never fail an ingest because the stamp didn't land.
     console.error('[ingest] Failed to stamp crawler heartbeat:', error);
+  }
+}
+
+/**
+ * Per-feed crawl health, as the crawler reports it. Unix SECONDS on this wire
+ * (the proxy keeps milliseconds internally and converts on send); the timeline
+ * converts back to milliseconds for the client.
+ */
+export interface FeedHealthReport {
+  feedUrl: string;
+  errorCount: number;
+  lastError?: string | null;
+  lastErrorAt?: number | null;
+  nextRetryAt?: number | null;
+  lastFetchAt?: number | null;
+  // In the crawl set but going unfetched — starved, not failing. Independent of
+  // `errorCount`, which can be 0 while this is true.
+  crawlStale?: boolean;
+}
+
+// A report carries only the unhealthy feeds, so this is far above any plausible
+// real number — an abuse guard, not a tuning knob.
+const MAX_HEALTH_FEEDS = 2000;
+// Error strings are rendered in a popover and matched against substrings; the
+// crawler's messages are short, so anything longer is a runaway.
+const MAX_HEALTH_ERROR_CHARS = 500;
+// Feed URLs per recovery statement. Well under D1's per-statement bind limit,
+// and the recovered set is normally a handful anyway.
+const HEALTH_CLEAR_CHUNK = 50;
+
+/**
+ * A cheap fingerprint of the whole unhealthy set, used as the `feed_health_rev`
+ * token. Clients echo the revision they last saw and the timeline re-sends the
+ * health payload only when it differs, which keeps a steady-state poll at the
+ * one query the architecture promises.
+ *
+ * Aggregates rather than a real hash: the partial index makes this a scan of the
+ * handful of broken feeds, not of the archive. Two genuinely different sets can
+ * alias only if they share a count, an error-count sum, and both timestamps — and
+ * the cost of that is one poll showing yesterday's error, self-healing on the
+ * next change.
+ */
+async function readFeedHealthRev(env: Env): Promise<string> {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS n, COALESCE(SUM(error_count), 0) AS errors,
+            COALESCE(MAX(last_error_at), 0) AS newest, COALESCE(MAX(next_retry_at), 0) AS retry
+       FROM feeds WHERE error_count > 0`
+  ).first<{ n: number; errors: number; newest: number; retry: number }>();
+  return `${row?.n ?? 0}:${row?.errors ?? 0}:${row?.newest ?? 0}:${row?.retry ?? 0}`;
+}
+
+/**
+ * Clear one feed's error state because we just fetched it successfully.
+ *
+ * The pull-through in `/api/v2/feeds/fetch` is the user's explicit "retry this
+ * feed" action, and it is proof the feed works — but the crawler's next health
+ * report is up to five minutes away, so without this the reader would keep
+ * showing the error the user just cleared. Refreshes the revision so every other
+ * client picks the recovery up too.
+ */
+export async function clearFeedHealth(env: Env, feedUrl: string): Promise<void> {
+  try {
+    const result = await env.DB.prepare(
+      `UPDATE feeds
+          SET error_count = 0, last_error = NULL, last_error_at = NULL, next_retry_at = NULL,
+              crawl_stale = 0, last_fetch_at = ?
+        WHERE feed_url = ? AND (error_count > 0 OR crawl_stale = 1)`
+    )
+      .bind(Math.floor(Date.now() / 1000), feedUrl)
+      .run();
+    if (!result.meta?.changes) return;
+
+    await env.DB.prepare(
+      `INSERT INTO sync_state (key, value, updated_at) VALUES (?, ?, unixepoch())
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    )
+      .bind(FEED_HEALTH_REV_KEY, await readFeedHealthRev(env))
+      .run();
+  } catch (error) {
+    // Health is observability, not the read itself — never fail a fetch over it.
+    console.error('[ingest] Failed to clear feed health:', error);
+  }
+}
+
+/**
+ * POST /api/internal/feed-health
+ *
+ * The crawler's periodic report of every feed it currently considers broken.
+ *
+ * This is the timeline path's replacement for what the legacy batch response
+ * carried inline: on `/api/v2/feeds/batch` a failing feed came back with
+ * `status: 'error'` plus its error, count and retry time, which is what fed the
+ * reader's per-feed error badge and popover. Reads no longer touch the proxy, and
+ * a feed that fails to crawl pushes no items, so without this a broken feed is
+ * indistinguishable from a quiet one and the user gets no signal at all.
+ *
+ * The payload is the COMPLETE unhealthy set, not a delta: recovery is inferred
+ * from absence (see the sweep below), so a feed that starts working again clears
+ * without the crawler having to say anything about it.
+ */
+export async function handleFeedHealth(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') return badRequest('Method not allowed', 405);
+  if (!isAuthorizedProxyRequest(request, env)) return unauthorized();
+
+  const declaredLength = Number(request.headers.get('Content-Length') ?? '0');
+  if (declaredLength > MAX_INGEST_BODY_BYTES) return badRequest('Payload too large', 413);
+
+  let body: { feeds?: FeedHealthReport[] };
+  try {
+    body = await request.json();
+  } catch {
+    return badRequest('Invalid JSON body');
+  }
+
+  // A report entry means "something is wrong with this feed" — it is erroring,
+  // or the crawler isn't reaching it, or both. An entry claiming neither is
+  // noise and would keep the feed flagged forever.
+  const reports = (Array.isArray(body.feeds) ? body.feeds : []).filter(
+    (f) => f?.feedUrl && ((Number.isFinite(f.errorCount) && f.errorCount > 0) || f.crawlStale)
+  );
+  if (reports.length > MAX_HEALTH_FEEDS) return badRequest('Too many feeds');
+
+  try {
+    const before = await readFeedHealthRev(env);
+
+    // Which feeds are flagged right now. Read BEFORE the upserts so the
+    // difference against this report is exactly "was in trouble, isn't any more".
+    // Small by construction (the partial index covers only flagged feeds), so the
+    // chunked IN list below can never approach the bound-parameter limit.
+    const flagged = await env.DB.prepare(
+      `SELECT feed_url FROM feeds WHERE error_count > 0 OR crawl_stale = 1`
+    ).all<{ feed_url: string }>();
+
+    const stillTroubled = new Set(reports.map((r) => r.feedUrl));
+    const recovered = flagged.results
+      .map((r) => r.feed_url)
+      .filter((url) => !stillTroubled.has(url));
+
+    // A feed can be broken from its very first crawl, in which case it has never
+    // been ingested and has no `feeds` row at all — so this inserts rather than
+    // assuming one exists. Such a row carries health only (NULL title/site_url),
+    // which the metadata backfill already skips.
+    const upserts = reports.map((report) =>
+      env.DB.prepare(
+        `INSERT INTO feeds (feed_url, error_count, last_error, last_error_at, next_retry_at,
+                            last_fetch_at, crawl_stale)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT(feed_url) DO UPDATE SET
+           error_count   = excluded.error_count,
+           last_error    = excluded.last_error,
+           last_error_at = excluded.last_error_at,
+           next_retry_at = excluded.next_retry_at,
+           last_fetch_at = COALESCE(excluded.last_fetch_at, feeds.last_fetch_at),
+           crawl_stale   = excluded.crawl_stale`
+      ).bind(
+        report.feedUrl,
+        Number.isFinite(report.errorCount) ? Math.max(report.errorCount, 0) : 0,
+        report.lastError ? report.lastError.slice(0, MAX_HEALTH_ERROR_CHARS) : null,
+        report.lastErrorAt ?? null,
+        report.nextRetryAt ?? null,
+        report.lastFetchAt ?? null,
+        report.crawlStale ? 1 : 0
+      )
+    );
+    for (let i = 0; i < upserts.length; i += INGEST_BATCH_SIZE) {
+      await env.DB.batch(upserts.slice(i, i + INGEST_BATCH_SIZE));
+    }
+
+    // Recovery: a feed the crawler stopped listing is fine again. Absence is the
+    // entire signal, which is why the report has to be the complete set.
+    // Chunked well under D1's per-statement bind limit — the same limit a
+    // subscription-sized IN list walked into once already.
+    for (let i = 0; i < recovered.length; i += HEALTH_CLEAR_CHUNK) {
+      const chunk = recovered.slice(i, i + HEALTH_CLEAR_CHUNK);
+      await env.DB.prepare(
+        `UPDATE feeds
+            SET error_count = 0, last_error = NULL, last_error_at = NULL, next_retry_at = NULL,
+                crawl_stale = 0
+          WHERE feed_url IN (${chunk.map(() => '?').join(',')})`
+      )
+        .bind(...chunk)
+        .run();
+    }
+
+    const after = await readFeedHealthRev(env);
+    if (after !== before) {
+      await env.DB.prepare(
+        `INSERT INTO sync_state (key, value, updated_at) VALUES (?, ?, unixepoch())
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+      )
+        .bind(FEED_HEALTH_REV_KEY, after)
+        .run();
+    }
+
+    await stampCrawlerHeartbeat(env);
+    return new Response(JSON.stringify({ ok: true, unhealthy: reports.length, rev: after }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('[ingest] Feed-health write error:', error);
+    return new Response(JSON.stringify({ error: 'Feed health update failed' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 }
 

@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   buildSubscriptionIndex,
   groupTimelineItems,
+  isCircuitOpen,
   isRssSubscription,
   pruneAttemptedBackfills,
+  reconcileFeedHealth,
   selectBackfillTargets,
   shouldFallBackToBatch,
   shouldUpdateTitle,
@@ -178,6 +180,66 @@ describe('selectBackfillTargets', () => {
 describe('pruneAttemptedBackfills', () => {
   it('keeps only feeds still subscribed', () => {
     expect(pruneAttemptedBackfills([FEED_A, FEED_B], [sub({ feedUrl: FEED_A })])).toEqual([FEED_A]);
+  });
+});
+
+describe('reconcileFeedHealth', () => {
+  const broken = { errorCount: 3, error: 'Failed to fetch (HTTP 404)' };
+
+  it('flags every subscribed feed the crawler reports broken', () => {
+    const decisions = reconcileFeedHealth(
+      { 'https://a.example/f': broken },
+      ['https://a.example/f'],
+      () => false
+    );
+    expect(decisions).toEqual([{ feedUrl: 'https://a.example/f', kind: 'error', health: broken }]);
+  });
+
+  it('clears a feed that has dropped out of the report', () => {
+    const decisions = reconcileFeedHealth({}, ['https://a.example/f'], () => true);
+    expect(decisions).toEqual([{ feedUrl: 'https://a.example/f', kind: 'recovered' }]);
+  });
+
+  it('leaves a healthy feed with no error alone, so pending never becomes a fake success', () => {
+    expect(reconcileFeedHealth({}, ['https://a.example/f'], () => false)).toEqual([]);
+  });
+
+  it('ignores broken feeds the caller does not subscribe to', () => {
+    const decisions = reconcileFeedHealth(
+      { 'https://other.example/f': broken },
+      ['https://a.example/f'],
+      () => false
+    );
+    expect(decisions).toEqual([]);
+  });
+
+  it('handles a mixed report in one pass', () => {
+    const decisions = reconcileFeedHealth(
+      { 'https://a.example/f': broken },
+      ['https://a.example/f', 'https://b.example/f', 'https://c.example/f'],
+      (url) => url === 'https://b.example/f'
+    );
+    expect(decisions).toEqual([
+      { feedUrl: 'https://a.example/f', kind: 'error', health: broken },
+      { feedUrl: 'https://b.example/f', kind: 'recovered' },
+    ]);
+  });
+});
+
+describe('isCircuitOpen', () => {
+  const now = 1_770_000_000_000;
+
+  it('treats nextRetryAt as milliseconds, not seconds', () => {
+    // The crawler sends `Date.now() + backoff`. Rescaling this by 1000 (the old
+    // behaviour) put the retry ~50,000 years out and retired the feed for good.
+    expect(isCircuitOpen(now + 600_000, now)).toBe(true);
+    expect(isCircuitOpen(now - 600_000, now)).toBe(false);
+    expect(isCircuitOpen(Math.floor(now / 1000), now)).toBe(false);
+  });
+
+  it('is closed when there is no retry time at all', () => {
+    expect(isCircuitOpen(undefined, now)).toBe(false);
+    expect(isCircuitOpen(0, now)).toBe(false);
   });
 });
 

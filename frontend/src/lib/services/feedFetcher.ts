@@ -79,6 +79,12 @@ interface TimelineCursor {
 // or rolled-back Worker), so we stop probing and stay on the legacy batch path.
 let timelineUnavailable = false;
 
+// Revision of the feed-health set this client has already applied. In memory on
+// purpose: feedStatusStore is in-memory too, so a fresh page load starts with no
+// revision and the server sends the full health payload — exactly what an empty
+// status store needs.
+let feedHealthRev: string | undefined;
+
 /**
  * The whole refresh in ONE request (plus drain pages): `GET /api/v2/timeline`
  * returns every item newer than the client's global cursor across every
@@ -139,8 +145,13 @@ async function fetchTimeline(
     try {
       page = await api.fetchTimeline(
         coldOffset === undefined
-          ? { since_seq: cursor, generation, limit: TIMELINE_PAGE_LIMIT }
-          : { cold_offset: coldOffset, limit: TIMELINE_PAGE_LIMIT }
+          ? {
+              since_seq: cursor,
+              generation,
+              limit: TIMELINE_PAGE_LIMIT,
+              health_rev: feedHealthRev,
+            }
+          : { cold_offset: coldOffset, limit: TIMELINE_PAGE_LIMIT, health_rev: feedHealthRev }
       );
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) {
@@ -186,10 +197,22 @@ async function fetchTimeline(
       }
     }
 
-    // A feed that just delivered items is demonstrably healthy; clear any stale
-    // error state. Feeds that delivered nothing are left alone — the archive
-    // carries no per-feed fetch status (that lives with the crawler).
+    // A feed that just delivered NEW items is demonstrably healthy. This can't
+    // stand on its own, though: a broken feed produces nothing, and the archive
+    // keeps serving its old items, so "delivered nothing" says nothing at all.
+    // The health payload below is the authoritative signal — applied second, so
+    // it wins over a cold start replaying archived items from a feed that has
+    // since broken.
     for (const feedUrl of feedUrls) feedStatusStore.markReady(feedUrl);
+
+    // Per-feed crawl health, as the crawler reports it. Sent on every cold start
+    // and whenever the unhealthy set changed since our last poll; absent
+    // otherwise (and on a backend that predates health reporting), in which case
+    // what we already hold is still current.
+    if (page.feedHealth) {
+      feedStatusStore.applyHealthSnapshot(page.feedHealth, subIdByUrl.keys());
+    }
+    if (page.healthRev !== undefined) feedHealthRev = page.healthRev;
 
     if (page.coldStart) {
       // Keep the first cold page's cursor; page through the rest before committing.
@@ -675,8 +698,16 @@ export async function fetchSingleFeed(
     // (a fresh subscription, or the user retrying a feed that looked broken).
     const feed = await api.fetchFeedV2(subscription.feedUrl, recentGuids, undefined, force);
 
-    // Mark as ready
-    feedStatusStore.markReady(subscription.feedUrl);
+    // The read succeeded, but reads come from the archive: a feed can serve its
+    // last-known items for days after it stopped crawling. Trust the crawler's
+    // verdict when there is one, and only claim "ready" when there isn't.
+    if (feed.health) {
+      feedStatusStore.applyHealthSnapshot({ [subscription.feedUrl]: feed.health }, [
+        subscription.feedUrl,
+      ]);
+    } else {
+      feedStatusStore.markReady(subscription.feedUrl);
+    }
 
     // Update subscription title/siteUrl from feed metadata
     if (feed.title && shouldUpdateTitle(subscription.title, subscription.feedUrl, feed.title)) {
