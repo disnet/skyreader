@@ -163,6 +163,11 @@ export async function seedFeedItems(
     // reports `ingestActive: false` and the client (correctly) stays on the legacy
     // batch path, which is not what these tests are exercising.
     `INSERT INTO sync_state (key, value, updated_at) VALUES ('crawler_heartbeat_at', ${sqlString(String(nowSeconds))}, ${nowSeconds}) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    // The other half of the same gate: a heartbeat says a crawler is attached,
+    // this says readers may use what it wrote. Migration 0071 leaves it open on a
+    // fresh database, but a test DB that predates the migration with users in it
+    // starts closed — so set it rather than depend on which case this one is.
+    `INSERT INTO sync_state (key, value, updated_at) VALUES ('timeline_enabled', '1', ${nowSeconds}) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
   ];
 
   items.forEach((item, index) => {

@@ -9,6 +9,7 @@ import {
   ingestProxyFeed,
   CRAWLER_HEARTBEAT_KEY,
   FEED_HEALTH_REV_KEY,
+  TIMELINE_ENABLED_KEY,
 } from '../src/routes/ingest';
 import { handleTimeline, readFeedSlice } from '../src/routes/timeline';
 import type { Env, FeedItem, Session } from '../src/types';
@@ -135,6 +136,19 @@ async function clearCrawlerHeartbeat() {
   await env.DB.prepare('DELETE FROM sync_state WHERE key = ?').bind(CRAWLER_HEARTBEAT_KEY).run();
 }
 
+async function setTimelineGate(value: string) {
+  await env.DB.prepare(
+    `INSERT INTO sync_state (key, value, updated_at) VALUES (?, ?, unixepoch())
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  )
+    .bind(TIMELINE_ENABLED_KEY, value)
+    .run();
+}
+
+async function clearTimelineGate() {
+  await env.DB.prepare('DELETE FROM sync_state WHERE key = ?').bind(TIMELINE_ENABLED_KEY).run();
+}
+
 async function reportHealth(feeds: unknown[], secret: string | null = SECRET) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (secret !== null) headers['X-Proxy-Secret'] = secret;
@@ -185,6 +199,9 @@ describe('feed timeline (D1 ingest + serve)', () => {
     await env.DB.prepare('DELETE FROM item_labels_cache').run();
     await clearCrawlerHeartbeat();
     await env.DB.prepare('DELETE FROM sync_state WHERE key = ?').bind(FEED_HEALTH_REV_KEY).run();
+    // Absent is the open position, so this restores the default the rest of the
+    // suite runs under.
+    await clearTimelineGate();
   });
 
   describe('ingest auth', () => {
@@ -617,6 +634,53 @@ describe('feed timeline (D1 ingest + serve)', () => {
         .bind(CRAWLER_HEARTBEAT_KEY, String(Math.floor(Date.now() / 1000) - 4 * 3600))
         .run();
 
+      expect((await timeline()).ingestActive).toBe(false);
+    });
+  });
+
+  describe('rollout gate (timeline_enabled)', () => {
+    it('holds clients on the batch path while the gate is shut, however live the crawler', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await ingest(FEED_A, [{ item: item('g1'), contentHash: 'g1' }]);
+      expect((await timeline()).ingestActive).toBe(true);
+
+      await setTimelineGate('0');
+      const gated = await timeline();
+      expect(gated.ingestActive).toBe(false);
+      // The whole point of the short-circuit: a page the client is about to throw
+      // away is never built, so the gated window costs one sync_state read.
+      expect(gated.items).toEqual([]);
+      // Both fallback signals agree, so a client reading either one stays put.
+      expect(gated.coldStart).toBe(true);
+      expect(gated.hasMore).toBe(false);
+    });
+
+    it('reopens without a deploy, serving the archive that filled while it was shut', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await setTimelineGate('0');
+      // Ingest keeps running while the gate is shut — that is the sequencing the
+      // gate exists to allow: fill the archive first, admit readers second.
+      await ingest(FEED_A, [{ item: item('g2'), contentHash: 'g2' }]);
+      expect((await timeline()).items).toEqual([]);
+
+      await setTimelineGate('1');
+      const open = await timeline();
+      expect(open.ingestActive).toBe(true);
+      expect(open.items.map((i) => i.guid)).toEqual(['g2']);
+    });
+
+    it('is open when the row is absent, so an environment that never set it is unaffected', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await ingest(FEED_A, [{ item: item('g3'), contentHash: 'g3' }]);
+      await clearTimelineGate();
+      expect((await timeline()).ingestActive).toBe(true);
+    });
+
+    it('still requires a live crawler when open', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await ingest(FEED_A, [{ item: item('g4'), contentHash: 'g4' }]);
+      await setTimelineGate('1');
+      await clearCrawlerHeartbeat();
       expect((await timeline()).ingestActive).toBe(false);
     });
   });

@@ -53,9 +53,11 @@ read state (`getReadKeys`). Now:
   incremental drain (cursor derived from returned rows, `hasMore` via `limit+1`) and a **paged**
   per-feed newest-30 cold start (feeds walked in a stable order, `COLD_START_MAX_ITEMS` per page,
   continuation via `nextColdOffset`). Read state is an `EXISTS` probe in the same query;
-  `getReadKeys` is never called on the feed path. Every response carries `ingestActive`, derived
-  from the heartbeat: false means this deployment has no crawler filling D1, and clients stay on
-  the legacy batch path. A cursor above the archive head cold-starts (rewound-archive guard).
+  `getReadKeys` is never called on the feed path. Every response carries `ingestActive` — the AND of
+  a fresh crawler heartbeat (this deployment has a crawler filling D1) and the `timeline_enabled`
+  rollout gate (an operator has admitted readers to it; see Phase 4). False on either half means
+  clients stay on the legacy batch path, and the request short-circuits rather than building a page
+  they will discard. A cursor above the archive head cold-starts (rewound-archive guard).
 - `routes/ingest.ts` also serves `POST /api/internal/feed-health`: the crawler's periodic report of
   every feed it currently considers broken, which the timeline hands to readers. On the batch path
   a failing feed came back with `status: 'error'` inline; reads no longer touch the proxy, and a
@@ -74,7 +76,7 @@ read state (`getReadKeys`). Now:
   arbitrary feeds. Subscribe time already crawls + ingests the feed (`warmFeedIntoArchive`, which
   replaced the old warm-and-discard), so the pull-through is normally not needed at all. The
   response carries the feed's `health` when it has any, and a successful pull-through clears it
-  (`clearFeedHealth`) — that path *is* the user's "retry this feed" action, so it must show a result
+  (`clearFeedHealth`) — that path _is_ the user's "retry this feed" action, so it must show a result
   now rather than after the crawler's next report.
 
 **Proxy** (`feed-proxy/`)
@@ -181,10 +183,32 @@ client commits a cursor. That signal is server-side on purpose — subscribe-tim
 pull-through both write to the archive, so "the archive is empty for this user" would stop being
 true long before the crawler existed.
 
+### Phase 4 — open the gate
+
 The heartbeat means a crawler is attached; it does **not** mean the initial archive backfill is
-complete. After enabling prod, watch `/stats` and wait for `ingest.pending` to trend to ~0 before
-announcing the rollout. New or cleared clients remain correct while it drains, but their first cold
-start can be sparse and will fill in over subsequent syncs.
+complete, and the first stamp lands _seconds_ after the release (the proxy pulls the crawl set
+immediately at boot). On its own it would therefore switch every reader onto the timeline at the
+moment the archive is emptiest, and each of them would then drag the entire backfill through the
+incremental drain — the fan-out-on-read scan at its worst case, for the hours the drain takes,
+surfacing back-catalogue items as unread along the way.
+
+`sync_state.timeline_enabled` (migration `0071`) separates the two. `ingestActive` is the AND of a
+fresh heartbeat and this flag, so:
+
+1. Enable `INGEST_URL`; the crawler fills the archive while every client stays on the batch path.
+2. Watch `/stats` until `ingest.pending` trends to ~0.
+3. Open the gate — one `UPDATE sync_state`, no deploy (commands in
+   [`RUNBOOK.md` §4d](../RUNBOOK.md)). Clients switch on their next poll.
+
+Only an explicit `'0'` gates; an absent row means enabled, so a hand-built schema or a future
+environment is never silently held back. The migration writes `'0'` for a database that already has
+users, so prod and staging start shut while local dev, e2e and CI start open.
+
+Setting it back to `'0'` is the **fast rollback for the read path** — every client returns to the
+batch path at its next poll, with no Worker deploy and no waiting out the 30-minute heartbeat
+freshness window, and the crawler keeps ingesting throughout. A gated timeline request
+short-circuits: it answers with the state and an empty page rather than building one the client is
+about to discard, so the gated window costs one `sync_state` read per poll.
 
 ### Phase 5 — cleanup (a later release, once no legacy traffic remains)
 
@@ -200,6 +224,10 @@ step deleting `feeds`/`feed_items` rows whose feed has had **zero active subscri
   and silently skips rows. A cold start is the one exception, and only because it reads the head
   BEFORE its per-feed slices: anything ingested while it pages lands above that head and arrives on
   the next poll.
+- **The heartbeat and the gate answer different questions.** "Is a crawler attached?" is not "is
+  the archive ready for readers?" — the first stamp arrives seconds into a backfill that takes
+  hours. Anything that collapses the two back into one signal reintroduces a rollout where every
+  client switches at the emptiest moment and then drains the entire backfill.
 - **Any D1 restore bumps `items_generation`** (one `UPDATE sync_state`): Time Travel rewinds seqs
   while the token would otherwise stay the same. The timeline also self-heals a cursor that sits
   above the head by cold-starting that client, so a forgotten bump degrades to one extra cold start

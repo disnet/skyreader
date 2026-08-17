@@ -3,6 +3,7 @@ import {
   CRAWLER_HEARTBEAT_KEY,
   CRAWLER_HEARTBEAT_FRESH_SECONDS,
   FEED_HEALTH_REV_KEY,
+  TIMELINE_ENABLED_KEY,
   rssSubscriptionPredicate,
 } from './ingest';
 
@@ -128,37 +129,47 @@ export interface ArchiveState {
   // True when this environment's crawler has checked in recently. False means
   // nothing is filling this D1 (no INGEST_URL on the paired proxy, or the proxy
   // is down), so the client must not treat an empty/partial archive as the truth.
-  ingestActive: boolean;
+  crawlerFresh: boolean;
+  // The operator's rollout gate (`timeline_enabled`, migration 0071). A fresh
+  // heartbeat only proves a crawler is attached — it arrives seconds into a
+  // backfill that takes hours — so this is the switch that actually moves readers
+  // onto the timeline, and the switch that moves them back.
+  timelineEnabled: boolean;
   // Revision of the unhealthy-feed set. A client that echoes this back unchanged
   // already holds current health and is sent no health payload.
   healthRev: string;
 }
 
 /**
- * Generation token, crawler liveness and the feed-health revision in one
- * `sync_state` read (the timeline needs all three on every request, and they are
- * three rows of the same small table).
+ * Generation token, crawler liveness, the rollout gate and the feed-health
+ * revision in one `sync_state` read (the timeline needs all four on every
+ * request, and they are four rows of the same small table).
  */
 export async function readArchiveState(env: Env): Promise<ArchiveState> {
   const rows = await env.DB.prepare(
-    `SELECT key, value FROM sync_state WHERE key IN ('items_generation', ?, ?)`
+    `SELECT key, value FROM sync_state WHERE key IN ('items_generation', ?, ?, ?)`
   )
-    .bind(CRAWLER_HEARTBEAT_KEY, FEED_HEALTH_REV_KEY)
+    .bind(CRAWLER_HEARTBEAT_KEY, FEED_HEALTH_REV_KEY, TIMELINE_ENABLED_KEY)
     .all<{ key: string; value: string }>();
 
   let generation = '';
   let heartbeat = 0;
   let healthRev = '';
+  // Absent means enabled: only an explicit '0' holds clients on the batch path,
+  // so an environment that never learned about this key behaves as it did before.
+  let timelineEnabled = true;
   for (const row of rows.results) {
     if (row.key === 'items_generation') generation = row.value;
     else if (row.key === CRAWLER_HEARTBEAT_KEY) heartbeat = parseInt(row.value, 10) || 0;
     else if (row.key === FEED_HEALTH_REV_KEY) healthRev = row.value;
+    else if (row.key === TIMELINE_ENABLED_KEY) timelineEnabled = row.value !== '0';
   }
 
   const age = Math.floor(Date.now() / 1000) - heartbeat;
   return {
     generation,
-    ingestActive: heartbeat > 0 && age <= CRAWLER_HEARTBEAT_FRESH_SECONDS,
+    crawlerFresh: heartbeat > 0 && age <= CRAWLER_HEARTBEAT_FRESH_SECONDS,
+    timelineEnabled,
     healthRev,
   };
 }
@@ -318,16 +329,41 @@ export async function handleTimeline(
   const coldOffset =
     Number.isInteger(parsedColdOffset) && parsedColdOffset > 0 ? parsedColdOffset : 0;
 
-  const { generation, ingestActive, healthRev } = await readArchiveState(env);
+  const { generation, crawlerFresh, timelineEnabled, healthRev } = await readArchiveState(env);
+  // Two independent conditions, one wire field. The client's contract is
+  // unchanged — `ingestActive: false` has always meant "stay on the batch path" —
+  // and it does not need to know WHY, only the operator does.
+  const ingestActive = timelineEnabled && crawlerFresh;
+
+  // Server time (unix seconds) at annotation. The client seeds its forward
+  // read-delta cursor from this, exactly as /batch does today, so the delta
+  // starts from bootstrap with no client/server clock skew.
+  const readCursor = Math.floor(Date.now() / 1000);
+
+  // A client told `ingestActive: false` discards the page and refetches through
+  // /batch, so building one is pure waste — and during a gated rollout that waste
+  // is every reader, every poll, for as long as the gate stays shut. Answer with
+  // the state and nothing else. `coldStart: true` keeps the older
+  // empty-cold-start heuristic pointing the same way as the flag, so a client
+  // reading either signal reaches the same conclusion.
+  if (!ingestActive) {
+    return json({
+      items: [],
+      cursor: 0,
+      generation,
+      ingestActive,
+      hasMore: false,
+      readCursor,
+      coldStart: true,
+      healthRev,
+    });
+  }
+
   // Send health when the client's copy is stale. A cold start always gets it:
   // it is the one page that delivers already-archived items for a feed that may
   // have broken since, and its blanket "these feeds delivered, so they're fine"
   // pass would otherwise clear a live error.
   const healthStale = healthRevParam !== healthRev;
-  // Server time (unix seconds) at annotation. The client seeds its forward
-  // read-delta cursor from this, exactly as /batch does today, so the delta
-  // starts from bootstrap with no client/server clock skew.
-  const readCursor = Math.floor(Date.now() / 1000);
 
   const incremental =
     sinceSeq !== undefined &&

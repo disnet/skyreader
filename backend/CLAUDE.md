@@ -14,10 +14,13 @@ crawl (`GET /api/internal/crawl-set`), and reports which feeds are failing to cr
 subscriptions and read state. Because reads never touch the crawler, a broken feed just goes quiet;
 the health report is the only thing that tells a reader its feed is dead rather than idle, and its
 payload is the COMPLETE unhealthy set (recovery = absence from the next report). All three internal
-endpoints stamp `sync_state.crawler_heartbeat_at`, and
-the timeline reports `ingestActive` from it: an environment whose proxy has no `INGEST_URL` tells
-clients to stay on the legacy batch path instead of reading an archive nothing fills. See
-`docs/plans/D1_FEED_TIMELINE.md`. The proxy is still on the path for `/api/extract`, feed
+endpoints stamp `sync_state.crawler_heartbeat_at`, and the timeline reports `ingestActive` as the
+AND of that heartbeat and `sync_state.timeline_enabled` — the operator's rollout gate. A crawler
+heartbeat only says a crawler is attached; it arrives seconds into a backfill that takes hours, so
+the gate is what actually admits readers to the archive (and, set back to `'0'`, is the fast
+rollback that returns every client to the legacy batch path with no deploy). Either half false and
+clients stay on `/batch`; the request short-circuits rather than building a page they will discard.
+See `docs/plans/D1_FEED_TIMELINE.md`. The proxy is still on the path for `/api/extract`, feed
 discovery, standard.site documents, and social context — plus the one crawl per new subscription
 (`warmFeedIntoArchive`) and the subscription-gated pull-through in `/api/v2/feeds/fetch`.
 
@@ -167,7 +170,8 @@ Key tables:
   reads now live in `item_labels_cache` as `item_type='document'`/`label='read'`)
 - `user_settings` - User preferences
 - `rate_limits` - Per-user rate limiting
-- `sync_state` - Jetstream cursor, the archive generation token, and the crawler heartbeat
+- `sync_state` - Jetstream cursor, the archive generation token, the crawler heartbeat, and
+  `timeline_enabled` (the rollout gate: only an explicit `'0'` holds clients on the batch path)
 - `system_status` - Cron-written health board (cron liveness, poller lag, proxy stats)
 - `metrics_snapshots` - Hourly trend points behind the admin's sparklines (90-day retention)
 

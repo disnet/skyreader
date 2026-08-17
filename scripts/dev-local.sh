@@ -60,6 +60,15 @@ if ! echo "y" | npx wrangler d1 migrations apply skyreader --local; then
 fi
 echo -e "${GREEN}Migrations applied.${NC}\n"
 
+# Open the timeline rollout gate locally. Migration 0071 gates any database that
+# already has users, which is the right default for prod and staging but wrong
+# here: a local DB you've logged into before would silently serve the legacy
+# batch path, so you'd develop against the path we're retiring without noticing.
+npx wrangler d1 execute skyreader --local --command \
+    "INSERT INTO sync_state (key, value, updated_at) VALUES ('timeline_enabled', '1', unixepoch())
+     ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = unixepoch()" >/dev/null 2>&1 \
+    || echo -e "${YELLOW}Could not open the timeline gate; the reader will use the legacy batch path.${NC}"
+
 # Start feed proxy (crawler + ingest pusher pointed at the local Worker)
 echo -e "${YELLOW}[1/4] Starting feed proxy...${NC}"
 cd "$FEED_PROXY_DIR"

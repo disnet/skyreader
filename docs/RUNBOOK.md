@@ -424,6 +424,7 @@ walk when the reader looks stale but every tile above is green.
 | --------------------------- | ----------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | Crawler talking to us       | `sync_state.crawler_heartbeat_at` (D1)          | stamped within ~5 min              | `npx wrangler d1 execute skyreader --remote --command "SELECT * FROM sync_state WHERE key = 'crawler_heartbeat_at'"` |
 | Clients reading the archive | `GET /api/v2/timeline` → `ingestActive`         | `true` in an ingesting environment | Any authenticated timeline response                                                                                  |
+| Rollout gate                | `sync_state.timeline_enabled` (D1)              | `'1'` once rolled out              | `npx wrangler d1 execute skyreader --remote --command "SELECT * FROM sync_state WHERE key = 'timeline_enabled'"`     |
 | Push backlog (outbox)       | proxy `GET /stats` → `ingest.pending`           | near zero in steady state          | `curl -H "X-Proxy-Secret: $SECRET" https://skyreader-feed-proxy.fly.dev/stats`                                       |
 | Push failing                | Sentry `source: ingest-push`, proxy logs        | silent                             | `fly logs -a skyreader-feed-proxy` → `Ingest push failed`                                                            |
 | Feeds gone quiet            | Admin → Feeds, "Subscribed Feeds Not Ingesting" | small and stable                   | The dashboard's Feeds metrics                                                                                        |
@@ -452,6 +453,41 @@ Reading these correctly:
 Fix, once you know which one it is: a wedged warm loop or push loop is
 `fly machine restart <id>` (never `fly scale count` — see §4's proxy-warmer entry);
 a heartbeat that never arrives is configuration, not a restart.
+
+### The timeline rollout gate
+
+`ingestActive` is the AND of two things: a fresh crawler heartbeat and
+`sync_state.timeline_enabled`. They are separate because the heartbeat lands
+_seconds_ into the first backfill of an environment and that backfill takes hours
+— without the gate, every reader switches to the timeline at the moment the
+archive is emptiest and then drags the whole backfill through the incremental
+drain (the expensive global scan, at its worst case, for the duration).
+
+Only an explicit `'0'` gates. Migration 0071 sets it for a database that already
+has users, so prod and staging start shut and a fresh environment (local dev,
+e2e, CI) starts open.
+
+```bash
+# Open it — after ingest.pending has trended to ~0.
+npx wrangler d1 execute skyreader --remote --command \
+  "UPDATE sync_state SET value='1', updated_at=unixepoch() WHERE key='timeline_enabled'"
+
+# Shut it — every client is back on the legacy batch path at its next poll.
+npx wrangler d1 execute skyreader --remote --command \
+  "UPDATE sync_state SET value='0', updated_at=unixepoch() WHERE key='timeline_enabled'"
+```
+
+Shutting it is the **fast rollback for the read path**, and the first thing to
+reach for if the timeline misbehaves after a rollout: no Worker deploy, no waiting
+out the 30-minute heartbeat freshness window, and the crawler keeps filling the
+archive the whole time. It is not a fix for a bad Worker deploy generally — only
+for "readers should not be on the timeline right now".
+
+One caveat when shutting it: clients hold a committed `timelineCursor` and stop
+advancing their per-subscription `feedCursors` while on the timeline, so the
+batch path re-drains from wherever those cursors were left. The proxy's K=200
+window bounds that, and the merge dedupes by GUID, so the cost is one heavier
+sync, not duplicates.
 
 ---
 

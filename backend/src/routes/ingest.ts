@@ -31,6 +31,17 @@ export const MAX_ITEM_CONTENT_BYTES = 8 * 1024;
 export const CRAWLER_HEARTBEAT_KEY = 'crawler_heartbeat_at';
 export const CRAWLER_HEARTBEAT_FRESH_SECONDS = 30 * 60;
 
+// The rollout gate (migration 0071). A crawler heartbeat says a crawler is
+// ATTACHED; it says nothing about whether the archive it fills is complete, and
+// the first heartbeat lands seconds into a backfill that takes hours. This key is
+// what actually moves readers onto the timeline, so the two can be sequenced:
+// enable ingest, let the archive fill, then open the gate. Setting it back to '0'
+// is also the fast rollback — every client is on the batch path at its next poll.
+//
+// Only an explicit '0' gates. An absent row means enabled, so a hand-built schema
+// (the unit-test harness) or a new environment is never silently held back.
+export const TIMELINE_ENABLED_KEY = 'timeline_enabled';
+
 // Revision token for the set of feeds the crawler currently considers broken.
 // The timeline sends the per-feed health payload only when the client's echoed
 // revision differs from this, so a steady-state poll costs no extra query.
