@@ -112,6 +112,7 @@ import {
   runRecordingStep,
 } from './observability/ops-metrics';
 import { log, serializeError } from './utils/logger';
+import { d1Summary } from './utils/d1-timing';
 import { classifyRoute, runWithRequestContext, setContextDid } from './utils/request-context';
 
 export { JetstreamPoller } from './durable-objects/jetstream-poller';
@@ -770,6 +771,11 @@ const handler = {
               method: request.method,
               status,
               durationMs: Date.now() - started,
+              // D1 round trips and their execution time, for routes that go
+              // through `utils/d1-timing`. Absent on a route that made none —
+              // spreading undefined adds no fields. `durationMs - d1WallMs` is
+              // Worker-side work; `d1WallMs - d1Ms` is Worker↔D1 network.
+              ...d1Summary(),
             });
           }
         }

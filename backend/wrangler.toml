@@ -90,6 +90,23 @@ name = "skyreader-api-staging"
 vars = { FRONTEND_URL = "https://staging.skyreader.app", ALLOWED_ORIGINS = "https://staging.skyreader.app,https://staging-linkblogs.skyreader.app", FEED_PROXY_URL = "https://skyreader-feed-proxy-staging.fly.dev", LINKBLOG_PUBLIC_URL = "https://staging-linkblogs.skyreader.app", SENTRY_ENVIRONMENT = "staging" }
 routes = [{ pattern = "api-staging.skyreader.app", custom_domain = true }]
 
+# Smart Placement — STAGING ONLY, deliberately, until it is measured.
+#
+# Without it the Worker runs at the edge nearest the reader while D1 lives in one
+# region, so every D1 call pays a full cross-network round trip. The read path is
+# several *sequential* calls (session → sync_state → items → head), which is the
+# shape Smart Placement exists for: it relocates the Worker next to the database,
+# trading one slightly longer client→Worker leg for several much shorter
+# Worker→D1 legs.
+#
+# It is a whole-Worker setting, not per-route, so it is scoped to `[env.staging]`
+# rather than the top level: staging deploys on every push to main and prod only
+# on release, which is exactly the window needed to compare `d1WallMs` against
+# `d1Ms` in the `timeline_timing` / `request` log lines before prod inherits it.
+# Promote it to the top level (and delete this block) once the numbers say so.
+[env.staging.placement]
+mode = "smart"
+
 [env.staging.durable_objects]
 bindings = [
   { name = "JETSTREAM_POLLER", class_name = "JetstreamPoller" }

@@ -1,4 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+// Type-only, so the cycle with `d1-timing` (which imports getRequestContext
+// from here) is erased at build rather than being a real import cycle.
+import type { D1QueryTiming } from './d1-timing';
 
 // Per-request (and per-cron-run, per-poll-cycle) context, carried in
 // AsyncLocalStorage rather than threaded through every function signature.
@@ -23,6 +26,12 @@ export interface RequestContext {
   /** Set once the session resolves. DIDs are public identifiers; keeping one is
    *  what turns "an error happened" into "this user hit it". */
   did?: string;
+  /** D1 calls made by this task, appended by `utils/d1-timing`. Lazily created,
+   *  so a task that touches no database carries no array. */
+  d1?: D1QueryTiming[];
+  /** Region that served this task's D1 reads. Constant per task, so it is kept
+   *  here rather than repeated on every query timing. */
+  d1Region?: string;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
