@@ -2,6 +2,7 @@ import type { Env, OAuthState, Session } from '../types';
 import { createClientAssertion } from './client-auth';
 import { parseCookies, SESSION_COOKIE_NAME } from '../utils/cookies';
 import { ALL_POSSIBLE_SCOPES } from '../config/scopes';
+import { timedFirst } from '../utils/d1-timing';
 
 // Constants for refresh retry logic
 const MAX_REFRESH_FAILURES = 5;
@@ -524,8 +525,29 @@ async function getSessionWithRefreshState(
   env: Env,
   sessionId: string
 ): Promise<SessionWithRefreshState | null> {
-  const row = await env.DB.prepare(
-    `
+  // Timed like the rest of the read path: this runs before every authenticated
+  // route, so it is one of the sequential D1 round trips any per-request latency
+  // budget has to account for.
+  const row = await timedFirst<{
+    did: string;
+    handle: string;
+    display_name: string | null;
+    avatar_url: string | null;
+    pds_url: string;
+    access_token: string;
+    refresh_token: string;
+    dpop_private_key: string;
+    expires_at: number;
+    refresh_failures: number | null;
+    last_refresh_attempt: number | null;
+    last_refresh_error: string | null;
+    refresh_locked_until: number | null;
+    refresh_in_progress: number | null;
+    granted_scopes: string | null;
+  }>(
+    'session_lookup',
+    env.DB.prepare(
+      `
     SELECT
       did, handle, display_name, avatar_url, pds_url,
       access_token, refresh_token, dpop_private_key, expires_at,
@@ -534,25 +556,8 @@ async function getSessionWithRefreshState(
     FROM sessions
     WHERE session_id = ?
   `
-  )
-    .bind(sessionId)
-    .first<{
-      did: string;
-      handle: string;
-      display_name: string | null;
-      avatar_url: string | null;
-      pds_url: string;
-      access_token: string;
-      refresh_token: string;
-      dpop_private_key: string;
-      expires_at: number;
-      refresh_failures: number | null;
-      last_refresh_attempt: number | null;
-      last_refresh_error: string | null;
-      refresh_locked_until: number | null;
-      refresh_in_progress: number | null;
-      granted_scopes: string | null;
-    }>();
+    ).bind(sessionId)
+  );
 
   if (!row) return null;
 

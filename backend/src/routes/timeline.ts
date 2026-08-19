@@ -1,4 +1,6 @@
 import type { Env, FeedItem, Session } from '../types';
+import { log } from '../utils/logger';
+import { timedAll, timedBatch, timedFirst, getD1Timings, d1Summary } from '../utils/d1-timing';
 import {
   CRAWLER_HEARTBEAT_KEY,
   CRAWLER_HEARTBEAT_FRESH_SECONDS,
@@ -87,15 +89,16 @@ export async function readFeedSlice(
   feedUrl: string,
   limit: number
 ): Promise<TimelineItem[]> {
-  const rows = await env.DB.prepare(
-    `SELECT fi.seq, fi.feed_url, fi.item_json, ${READ_FLAG_SQL}
-       FROM feed_items fi
-      WHERE fi.feed_url = ?2
-      ORDER BY fi.published_at DESC, fi.seq DESC
-      LIMIT ?3`
-  )
-    .bind(userDid, feedUrl, limit)
-    .all<ItemRow>();
+  const rows = await timedAll<ItemRow>(
+    'feed_slice',
+    env.DB.prepare(
+      `SELECT fi.seq, fi.feed_url, fi.item_json, ${READ_FLAG_SQL}
+         FROM feed_items fi
+        WHERE fi.feed_url = ?2
+        ORDER BY fi.published_at DESC, fi.seq DESC
+        LIMIT ?3`
+    ).bind(userDid, feedUrl, limit)
+  );
   return toTimelineItems(rows.results);
 }
 
@@ -115,13 +118,14 @@ export interface FeedMetadataRow {
 }
 
 export async function readFeedMetadata(env: Env, feedUrl: string): Promise<FeedMetadataRow | null> {
-  return env.DB.prepare(
-    `SELECT title, site_url, description, image_url, last_ingest_at,
-            error_count, last_error, last_error_at, next_retry_at, last_fetch_at
-       FROM feeds WHERE feed_url = ?`
-  )
-    .bind(feedUrl)
-    .first<FeedMetadataRow>();
+  return timedFirst<FeedMetadataRow>(
+    'feed_meta_row',
+    env.DB.prepare(
+      `SELECT title, site_url, description, image_url, last_ingest_at,
+              error_count, last_error, last_error_at, next_retry_at, last_fetch_at
+         FROM feeds WHERE feed_url = ?`
+    ).bind(feedUrl)
+  );
 }
 
 export interface ArchiveState {
@@ -146,11 +150,12 @@ export interface ArchiveState {
  * request, and they are four rows of the same small table).
  */
 export async function readArchiveState(env: Env): Promise<ArchiveState> {
-  const rows = await env.DB.prepare(
-    `SELECT key, value FROM sync_state WHERE key IN ('items_generation', ?, ?, ?)`
-  )
-    .bind(CRAWLER_HEARTBEAT_KEY, FEED_HEALTH_REV_KEY, TIMELINE_ENABLED_KEY)
-    .all<{ key: string; value: string }>();
+  const rows = await timedAll<{ key: string; value: string }>(
+    'archive_state',
+    env.DB.prepare(
+      `SELECT key, value FROM sync_state WHERE key IN ('items_generation', ?, ?, ?)`
+    ).bind(CRAWLER_HEARTBEAT_KEY, FEED_HEALTH_REV_KEY, TIMELINE_ENABLED_KEY)
+  );
 
   let generation = '';
   let heartbeat = 0;
@@ -192,25 +197,26 @@ export async function subscribedFeedHealth(
   env: Env,
   userDid: string
 ): Promise<Record<string, FeedHealth>> {
-  const rows = await env.DB.prepare(
-    `SELECT f.feed_url, f.error_count, f.last_error, f.last_error_at, f.next_retry_at, f.last_fetch_at
-       FROM feeds f
-      WHERE f.error_count > 0
-        AND EXISTS (
-              SELECT 1 FROM subscriptions_cache sc
-               WHERE sc.user_did = ? AND sc.feed_url = f.feed_url AND sc.active = 1
-                 AND ${rssSubscriptionPredicate('sc')}
-            )`
-  )
-    .bind(userDid)
-    .all<{
-      feed_url: string;
-      error_count: number;
-      last_error: string | null;
-      last_error_at: number | null;
-      next_retry_at: number | null;
-      last_fetch_at: number | null;
-    }>();
+  const rows = await timedAll<{
+    feed_url: string;
+    error_count: number;
+    last_error: string | null;
+    last_error_at: number | null;
+    next_retry_at: number | null;
+    last_fetch_at: number | null;
+  }>(
+    'feed_health',
+    env.DB.prepare(
+      `SELECT f.feed_url, f.error_count, f.last_error, f.last_error_at, f.next_retry_at, f.last_fetch_at
+         FROM feeds f
+        WHERE f.error_count > 0
+          AND EXISTS (
+                SELECT 1 FROM subscriptions_cache sc
+                 WHERE sc.user_did = ? AND sc.feed_url = f.feed_url AND sc.active = 1
+                   AND ${rssSubscriptionPredicate('sc')}
+              )`
+    ).bind(userDid)
+  );
 
   const health: Record<string, FeedHealth> = {};
   for (const row of rows.results) {
@@ -236,9 +242,10 @@ export interface FeedHealth {
 
 /** The archive's current head; 0 when nothing has ever been ingested. */
 async function archiveHead(env: Env): Promise<number> {
-  const row = await env.DB.prepare('SELECT MAX(seq) AS max_seq FROM feed_items').first<{
-    max_seq: number | null;
-  }>();
+  const row = await timedFirst<{ max_seq: number | null }>(
+    'archive_head',
+    env.DB.prepare('SELECT MAX(seq) AS max_seq FROM feed_items')
+  );
   return row?.max_seq ?? 0;
 }
 
@@ -247,15 +254,16 @@ async function archiveHead(env: Env): Promise<number> {
  * list by index, so the ordering has to be the same from one page to the next.
  */
 async function subscribedFeedUrls(env: Env, userDid: string): Promise<string[]> {
-  const rows = await env.DB.prepare(
-    `SELECT DISTINCT feed_url FROM subscriptions_cache
-      WHERE user_did = ? AND active = 1
-        AND feed_url IS NOT NULL AND feed_url <> ''
-        AND ${rssSubscriptionPredicate()}
-      ORDER BY feed_url`
-  )
-    .bind(userDid)
-    .all<{ feed_url: string }>();
+  const rows = await timedAll<{ feed_url: string }>(
+    'cold_feed_urls',
+    env.DB.prepare(
+      `SELECT DISTINCT feed_url FROM subscriptions_cache
+        WHERE user_did = ? AND active = 1
+          AND feed_url IS NOT NULL AND feed_url <> ''
+          AND ${rssSubscriptionPredicate()}
+        ORDER BY feed_url`
+    ).bind(userDid)
+  );
   return rows.results.map((r) => r.feed_url);
 }
 
@@ -268,21 +276,22 @@ async function subscribedFeedMetadata(
   env: Env,
   userDid: string
 ): Promise<Record<string, { title?: string; siteUrl?: string; imageUrl?: string }>> {
-  const rows = await env.DB.prepare(
-    `SELECT f.feed_url, f.title, f.site_url, f.image_url
-       FROM feeds f
-       JOIN (SELECT DISTINCT feed_url FROM subscriptions_cache
-              WHERE user_did = ? AND active = 1
-                AND ${rssSubscriptionPredicate()}) sc
-         ON sc.feed_url = f.feed_url`
-  )
-    .bind(userDid)
-    .all<{
-      feed_url: string;
-      title: string | null;
-      site_url: string | null;
-      image_url: string | null;
-    }>();
+  const rows = await timedAll<{
+    feed_url: string;
+    title: string | null;
+    site_url: string | null;
+    image_url: string | null;
+  }>(
+    'feed_metadata',
+    env.DB.prepare(
+      `SELECT f.feed_url, f.title, f.site_url, f.image_url
+         FROM feeds f
+         JOIN (SELECT DISTINCT feed_url FROM subscriptions_cache
+                WHERE user_did = ? AND active = 1
+                  AND ${rssSubscriptionPredicate()}) sc
+           ON sc.feed_url = f.feed_url`
+    ).bind(userDid)
+  );
 
   const feeds: Record<string, { title?: string; siteUrl?: string; imageUrl?: string }> = {};
   for (const row of rows.results) {
@@ -307,6 +316,61 @@ export async function handleTimeline(
     });
   }
 
+  const startedAt = Date.now();
+  try {
+    return await runTimeline(request, env, session);
+  } finally {
+    logTimelineTiming(Date.now() - startedAt);
+  }
+}
+
+/**
+ * One `timeline_timing` line per request: which of the three shapes ran, and the
+ * per-query breakdown underneath it.
+ *
+ * `d1WallMs - d1Ms` is the gap between the round trip the Worker measured and
+ * the execution time D1 reports — i.e. the network between them. On a route that
+ * makes four *sequential* round trips that gap is what dominates, and it is what
+ * `[placement] mode = "smart"` moves, so this line is the before/after for that
+ * change.
+ *
+ * Mind the windows: `handlerMs` is time inside this handler, while the `d1*`
+ * fields cover every query in the REQUEST — including the `session_lookup` that
+ * ran in the dispatcher before the handler was reached. That is deliberate (the
+ * session round trip is part of what a reader waits for) but it means
+ * `handlerMs - d1WallMs` is not Worker-side work and can go negative. For the
+ * whole-request arithmetic use the `request` line, whose `durationMs` and `d1*`
+ * fields do share a window.
+ *
+ * Logged unconditionally: `index.ts` already emits a `request` line per request,
+ * so this is one extra line on one route rather than a step change in volume. If
+ * it ever needs gating, threshold it on `handlerMs` here — nothing else reads it.
+ */
+function logTimelineTiming(handlerMs: number): void {
+  const timings = getD1Timings();
+  const summary = d1Summary();
+
+  // Derived from which queries ran rather than threaded back out of the handler:
+  // the cold-start path is the only one that lists feed URLs, and the incremental
+  // query only runs when a valid cursor and generation arrived.
+  const labels = new Set(timings.map((t) => t.label));
+  const path = labels.has('cold_feed_urls')
+    ? 'cold_start'
+    : labels.has('timeline_incremental')
+      ? 'incremental'
+      : 'gated';
+
+  log.info('timeline_timing', {
+    path,
+    handlerMs,
+    ...summary,
+    // Per-query breakdown, so a regression names the query instead of just the
+    // route: label → [round-trip ms, D1 execution ms, rows read].
+    queries: timings.map((t) => [t.label, t.wallMs, t.d1Ms, t.rowsRead]),
+  });
+}
+
+async function runTimeline(request: Request, env: Env, session: Session): Promise<Response> {
   const url = new URL(request.url);
   const sinceSeqParam = url.searchParams.get('since_seq');
   const generationParam = url.searchParams.get('generation');
@@ -383,20 +447,21 @@ export async function handleTimeline(
       // constraint, the fix is to bound the scan with per-feed `(feed_url, seq)`
       // seeks (idx_feed_items_feed_seq already supports them), not to materialize
       // per-user timelines.
-      const rows = await env.DB.prepare(
-        `SELECT fi.seq, fi.feed_url, fi.item_json, ${READ_FLAG_SQL}
-           FROM feed_items fi
-          WHERE fi.seq > ?2
-            AND EXISTS (
-                  SELECT 1 FROM subscriptions_cache sc
-                   WHERE sc.user_did = ?1 AND sc.feed_url = fi.feed_url AND sc.active = 1
-                     AND ${rssSubscriptionPredicate('sc')}
-                )
-          ORDER BY fi.seq ASC
-          LIMIT ?3`
-      )
-        .bind(session.did, sinceSeq, limit + 1)
-        .all<ItemRow>();
+      const rows = await timedAll<ItemRow>(
+        'timeline_incremental',
+        env.DB.prepare(
+          `SELECT fi.seq, fi.feed_url, fi.item_json, ${READ_FLAG_SQL}
+             FROM feed_items fi
+            WHERE fi.seq > ?2
+              AND EXISTS (
+                    SELECT 1 FROM subscriptions_cache sc
+                     WHERE sc.user_did = ?1 AND sc.feed_url = fi.feed_url AND sc.active = 1
+                       AND ${rssSubscriptionPredicate('sc')}
+                  )
+            ORDER BY fi.seq ASC
+            LIMIT ?3`
+        ).bind(session.did, sinceSeq, limit + 1)
+      );
 
       const hasMore = rows.results.length > limit;
       const page = hasMore ? rows.results.slice(0, limit) : rows.results;
@@ -470,7 +535,7 @@ export async function handleTimeline(
             LIMIT ?3`
         ).bind(session.did, feedUrl, COLD_START_PER_FEED)
       );
-      const results = await env.DB.batch<ItemRow>(statements);
+      const results = await timedBatch<ItemRow>('cold_slice', env.DB, statements);
       for (const result of results) rows.push(...(result.results ?? []));
       nextIndex += chunk.length;
     }
