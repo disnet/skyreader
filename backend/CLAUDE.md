@@ -4,7 +4,25 @@
 
 ## Project Overview
 
-Skyreader backend is a Cloudflare Workers API that serves as a gateway between the frontend and the AT Protocol ecosystem. It handles authentication, RSS feed fetching via a Fly.io proxy, social features, saved articles, labels, and background Jetstream polling.
+Skyreader backend is a Cloudflare Workers API that serves as a gateway between the frontend and the AT Protocol ecosystem. It handles authentication, the feed timeline, social features, saved articles, labels, and background Jetstream polling.
+
+**Feed reads are served from D1, not the proxy.** The Fly.io proxy is the crawler: it pushes new
+and edited items into `feed_items` (`POST /api/internal/ingest`), pulls the set of feeds to
+crawl (`GET /api/internal/crawl-set`), and reports which feeds are failing to crawl
+(`POST /api/internal/feed-health`) — all authenticated with the shared `FEED_PROXY_SECRET`
+(fail-closed when unset). A client refresh is one `GET /api/v2/timeline` — a single query joining
+subscriptions and read state. Because reads never touch the crawler, a broken feed just goes quiet;
+the health report is the only thing that tells a reader its feed is dead rather than idle, and its
+payload is the COMPLETE unhealthy set (recovery = absence from the next report). All three internal
+endpoints stamp `sync_state.crawler_heartbeat_at`, and the timeline reports `ingestActive` as the
+AND of that heartbeat and `sync_state.timeline_enabled` — the operator's rollout gate. A crawler
+heartbeat only says a crawler is attached; it arrives seconds into a backfill that takes hours, so
+the gate is what actually admits readers to the archive (and, set back to `'0'`, is the fast
+rollback that returns every client to the legacy batch path with no deploy). Either half false and
+clients stay on `/batch`; the request short-circuits rather than building a page they will discard.
+See `docs/plans/D1_FEED_TIMELINE.md`. The proxy is still on the path for `/api/extract`, feed
+discovery, standard.site documents, and social context — plus the one crawl per new subscription
+(`warmFeedIntoArchive`) and the subscription-gated pull-through in `/api/v2/feeds/fetch`.
 
 ## Key Concepts
 
@@ -43,22 +61,24 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 
 ### Routes
 
-| File                          | Purpose                                               |
-| ----------------------------- | ----------------------------------------------------- |
-| `src/routes/auth.ts`          | OAuth flow (login, callback, logout, client metadata) |
-| `src/routes/feeds-v2.ts`      | RSS fetching via Fly.io proxy                         |
-| `src/routes/social.ts`        | Content detection for a DID (detect-content)          |
-| `src/routes/shares.ts`        | User shares CRUD (with PDS sync)                      |
-| `src/routes/subscriptions.ts` | Subscription CRUD (with PDS sync)                     |
-| `src/routes/records.ts`       | PDS record listing                                    |
-| `src/routes/reading.ts`       | Article + document read positions (forward delta)     |
-| `src/routes/labels.ts`        | Unified item labels (read/starred/archived/tags)      |
-| `src/routes/saved.ts`         | Saved articles CRUD                                   |
-| `src/routes/settings.ts`      | User settings                                         |
-| `src/routes/sync.ts`          | PDS full sync, subscription sync, sync status         |
-| `src/routes/lexicons.ts`      | Serve lexicon schemas at /.well-known/lexicons        |
-| `src/routes/health.ts`        | `/api/health` (shallow) + `/api/health/deep` (gated)  |
-| `src/routes/telemetry.ts`     | `/api/telemetry/error` — sampled client error reports |
+| File                          | Purpose                                                |
+| ----------------------------- | ------------------------------------------------------ |
+| `src/routes/auth.ts`          | OAuth flow (login, callback, logout, client metadata)  |
+| `src/routes/timeline.ts`      | `GET /api/v2/timeline` — the whole refresh, one query  |
+| `src/routes/ingest.ts`        | Crawler endpoints: item ingest, crawl set, feed health |
+| `src/routes/feeds-v2.ts`      | Single-feed read (D1 + pull-through), discover, docs   |
+| `src/routes/social.ts`        | Social feed, popular, grouped, detect-content          |
+| `src/routes/shares.ts`        | User shares CRUD (with PDS sync)                       |
+| `src/routes/subscriptions.ts` | Subscription CRUD (with PDS sync)                      |
+| `src/routes/records.ts`       | PDS record listing                                     |
+| `src/routes/reading.ts`       | Article + document read positions (forward delta)      |
+| `src/routes/labels.ts`        | Unified item labels (read/starred/archived/tags)       |
+| `src/routes/saved.ts`         | Saved articles CRUD                                    |
+| `src/routes/settings.ts`      | User settings                                          |
+| `src/routes/sync.ts`          | PDS full sync, subscription sync, sync status          |
+| `src/routes/lexicons.ts`      | Serve lexicon schemas at /.well-known/lexicons         |
+| `src/routes/health.ts`        | `/api/health` (shallow) + `/api/health/deep` (gated)   |
+| `src/routes/telemetry.ts`     | `/api/telemetry/error` — sampled client error reports  |
 
 ### Services
 
@@ -91,7 +111,7 @@ never `Sentry.captureException` directly, so the vendor stays a one-file decisio
 
 Logging: use `log.*` with a stable low-cardinality `event` slug and put the details
 in fields. Workers Logs indexes the fields of a logged object but treats a string
-as opaque text, so `log.info('feed_fetched', { feedCount })` is queryable and an
+as opaque text, so `log.info('feed_ingested', { itemCount })` is queryable and an
 interpolated `console.log` sentence is not. Never log a credential — there is no
 redaction layer on this path.
 
@@ -102,8 +122,11 @@ and outbound feed-proxy calls.
 The every-minute cron also _records_: poller lag and cron liveness to
 `system_status`, the proxy's cache stats every 5th minute, and an hourly row in
 `metrics_snapshots` (pruned at 90 days). The admin renders those tables directly.
-Recording failures never withhold the cron heartbeat — losing a data point is not
-an outage; see the note on `runRecordingStep()`.
+The snapshot's counts come from D1 (`users`, `feeds`, `feed_items`, …) and its
+health numbers from the `system_status` rows — including `feeds_with_errors`,
+which is the crawler's `feedsInError` and is recorded NULL, not 0, when the proxy
+row is stale. Recording failures never withhold the cron heartbeat — losing a data
+point is not an outage; see the note on `runRecordingStep()`.
 
 The browser reports its own errors to `/api/telemetry/error` (unauthenticated by
 design — an error on the login screen counts, and the route is answered before
@@ -117,9 +140,9 @@ procedures: [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 
 ### Durable Objects
 
-| File                                      | Purpose                                                           |
-| ----------------------------------------- | ----------------------------------------------------------------- |
-| `src/durable-objects/jetstream-poller.ts` | Jetstream firehose for `app.skyreader.feed.subscription` (alarms) |
+| File                                      | Purpose                                               |
+| ----------------------------------------- | ----------------------------------------------------- |
+| `src/durable-objects/jetstream-poller.ts` | Long-running Jetstream firehose connection via alarms |
 
 ### Storage
 
@@ -131,21 +154,24 @@ Key tables:
 - `sessions` - Server-side sessions (tokens, DPoP key, expiry)
 - `subscriptions_cache` - Cached feed subscriptions from PDS
 - `shares` - Aggregated share data from Jetstream
-- `feed_metadata` - Feed caching metadata (ETags, errors, shard_id)
-- `feed_cache` - Parsed feed cache
-- `feed_items` - Individual feed items
-- `documents` - orphaned. Nothing reads or writes it since documents moved to
-  on-demand proxy fetch; the table is left in place (as `shares` was) rather than
-  dropped
-- `publications_cache` - orphaned too. The publication metadata cache it backed
-  now lives in the feed proxy (`feed-proxy/src/standard-site.ts`)
+- `feeds` - One row per crawled feed (title/site/image + `last_ingest_at`), plus the crawler's
+  health verdict: `error_count`/`last_error`/`next_retry_at`/`last_fetch_at` (unix seconds), which
+  the timeline serves to readers as `feedHealth`, and `crawl_stale` for a feed the crawler isn't
+  reaching at all (operator-only; the admin alarms on it). `last_ingest_at` is publishing cadence,
+  NOT health — it only moves when a fetch yields a new item
+- `feed_items` - The feed archive the timeline serves: every item the crawler has ever pushed,
+  keyed `(feed_url, guid)` with a monotonic `seq`. Never pruned in ordinary operation — see
+  `docs/plans/D1_FEED_TIMELINE.md`
+- `documents` / `publications_cache` - orphaned after standard.site document reads moved to the
+  feed proxy; retained in place but no longer read or written
 - `item_labels_cache` - Unified labels (read/starred/archived/tags)
 - `saved_articles` - Saved/bookmarked articles
 - `social_read_positions_cache` - Legacy social read tracking (superseded; document
   reads now live in `item_labels_cache` as `item_type='document'`/`label='read'`)
 - `user_settings` - User preferences
 - `rate_limits` - Per-user rate limiting
-- `sync_state` - Jetstream cursor and other sync state
+- `sync_state` - Jetstream cursor, the archive generation token, the crawler heartbeat, and
+  `timeline_enabled` (the rollout gate: only an explicit `'0'` holds clients on the batch path)
 - `system_status` - Cron-written health board (cron liveness, poller lag, proxy stats)
 - `metrics_snapshots` - Hourly trend points behind the admin's sparklines (90-day retention)
 
@@ -181,7 +207,10 @@ FEED_PROXY_URL = "https://skyreader-feed-proxy.fly.dev"
 SENTRY_ENVIRONMENT = "production"   # "staging" in [env.staging]
 
 # Secrets (set via `wrangler secret put`):
-# FEED_PROXY_SECRET   - authenticates with the Fly.io feed proxy
+# FEED_PROXY_SECRET   - shared with the Fly.io proxy, both directions: outbound
+#                       proxy calls and the inbound crawler endpoints
+#                       (/api/internal/ingest, /api/internal/crawl-set), which
+#                       are fail-closed when it is unset
 # SENTRY_DSN          - error reporting (unset ⇒ silent no-op)
 # HEARTBEAT_URL       - dead-man ping for the every-minute cron
 # HEALTH_CHECK_SECRET - gates /api/health/deep (X-Health-Secret header)

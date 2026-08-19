@@ -245,21 +245,6 @@ Cache statistics (requires authentication).
   "fresh": 80,
   "stale": 50,
   "inFlight": 2,
-  "extract": { "inUse": 1, "queued": 0 },
-  "constellation": {
-    "breakerOpen": false,
-    "consecutiveFailures": 0,
-    "inUse": 2,
-    "queued": 0,
-    "requests": 8421,
-    "resets": 37,
-    "retries": 37,
-    "retriesRecovered": 36,
-    "failures": 1,
-    "shed": 0,
-    "breakerOpens": 0,
-    "shortCircuited": 0
-  },
   "cacheTtlSeconds": 900,
   "staleTtlSeconds": 3600,
   "errors": {
@@ -303,27 +288,48 @@ curl "/feed?url=...&since_guids=old-guid&limit=50"
 
 ## Configuration
 
-| Environment Variable | Default  | Description                               |
-| -------------------- | -------- | ----------------------------------------- |
-| `PROXY_SECRET`       | (none)   | Shared secret for `X-Proxy-Secret` header |
-| `DATA_DIR`           | `./data` | SQLite database location                  |
-| `CACHE_TTL_SECONDS`  | `900`    | Fresh cache duration (15 min)             |
-| `STALE_TTL_SECONDS`  | `3600`   | Stale cache max age (1 hour)              |
-| `PORT`               | `3000`   | HTTP server port                          |
-| `SENTRY_DSN`         | (none)   | Error reporting; unset ⇒ no-op            |
-| `WARM_HEARTBEAT_URL` | (none)   | Dead-man ping after each warm tick        |
-| `GIT_COMMIT_SHA`     | `dev`    | Build stamp, reported by `/health`        |
+| Environment Variable         | Default  | Description                                             |
+| ---------------------------- | -------- | ------------------------------------------------------- |
+| `PROXY_SECRET`               | (none)   | Shared secret for `X-Proxy-Secret` (inbound + outbound) |
+| `DATA_DIR`                   | `./data` | SQLite database location                                |
+| `CACHE_TTL_SECONDS`          | `900`    | Fresh cache duration (15 min)                           |
+| `STALE_TTL_SECONDS`          | `3600`   | Stale cache max age (1 hour)                            |
+| `PORT`                       | `3000`   | HTTP server port                                        |
+| `INGEST_URL`                 | (none)   | Paired Worker base URL. **Unset ⇒ ingest disabled**     |
+| `INGEST_INTERVAL_SECONDS`    | `15`     | Push cycle                                              |
+| `INGEST_BATCH_SIZE`          | `100`    | Items per push request                                  |
+| `CRAWL_SET_INTERVAL_SECONDS` | `300`    | How often to pull the crawl set                         |
+| `SENTRY_DSN`                 | (none)   | Error reporting; unset ⇒ no-op                          |
+| `WARM_HEARTBEAT_URL`         | (none)   | Dead-man ping after each successful warm tick           |
+| `GIT_COMMIT_SHA`             | `dev`    | Build stamp, reported by `/health`                      |
 
-Observability setup, alert thresholds, and incident procedures live in
-[`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
+Observability setup and incident procedures live in [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 
-Constellation (mentions, social context, linkblog registry):
+## Ingest push (crawler mode)
 
-| Environment Variable        | Default | Description                                       |
-| --------------------------- | ------- | ------------------------------------------------- |
-| `CONSTELLATION_CONCURRENCY` | `3`     | Concurrent requests allowed against Constellation |
-| `CONSTELLATION_QUEUE_MAX`   | `200`   | Callers that may queue before requests are shed   |
-| `WARM_MENTIONS`             | `true`  | Set `false` to stop pre-warming mentions entirely |
+With `INGEST_URL` set, this proxy stops being a read path for the reader and becomes the crawler
+for exactly ONE Worker + D1 pair (prod proxy → prod Worker, staging proxy → staging Worker):
+
+- **Push:** the durable item log _is_ the outbox. `push_state(seq, pushed_hash)` records what has
+  reached D1; a row is dirty when it's missing there or its `content_hash` has changed since. Dirty
+  rows drain in seq order to `POST {INGEST_URL}/api/internal/ingest`; delivery is at-least-once and
+  the Worker's upsert is idempotent. Failures back off and retry the same rows.
+- **Pull:** every `CRAWL_SET_INTERVAL_SECONDS` the proxy fetches
+  `GET {INGEST_URL}/api/internal/crawl-set` and stamps `last_requested_at` on each feed, which is
+  what keeps the warm loop working now that reads no longer touch this box.
+- **Health:** immediately after each crawl-set pull, the proxy posts every crawl-set feed with
+  something wrong with it to `POST {INGEST_URL}/api/internal/feed-health` — erroring
+  (`error_count > 0`), starved (not fetched in `CRAWL_STALE_MS`, 2 h), or both. The erroring ones
+  are how a reader learns its feed is dead rather than idle, since reads no longer come through here
+  and a failing feed is otherwise indistinguishable from one that hasn't published; the starved ones
+  are the admin's alarm that this box can't keep up with its crawl set. The payload is the
+  **complete** trouble set: the Worker infers recovery from a feed's absence, so a partial report
+  silently marks feeds healthy. Timestamps are converted from this box's milliseconds to seconds
+  here, once.
+- The per-feed cap (`FEED_ITEMS_CAP = 200`) bounds the **outbox**, not the archive: D1 retains
+  everything it has ingested. `push_state` cascades with every `feed_items` delete.
+
+See `docs/plans/D1_FEED_TIMELINE.md`.
 
 ## Cache Behavior
 
@@ -374,37 +380,6 @@ When a feed is in backoff:
 3. After backoff expires, a single fetch is attempted
 4. On success, error tracking resets to zero
 
-### Constellation Client
-
-Every Constellation caller (mentions, social context, mention lanes, the linkblog
-registry) shares one client with three defenses, since they all hit one
-small community-run host:
-
-1. **Circuit breaker** — 5 consecutive failing calls (timeout, network, 5xx/429)
-   open it for 30 s; calls short-circuit to `null` instead of each eating the
-   10 s timeout. A clean 4xx is a healthy "no data" and does not count. The check
-   runs again after a call gets its concurrency permit, so callers that were
-   queued when the breaker opened short-circuit too.
-2. **Concurrency cap** — `CONSTELLATION_CONCURRENCY` requests in flight, the rest
-   queued up to `CONSTELLATION_QUEUE_MAX` and then shed to `null`. Shedding is our
-   own backpressure, so it does **not** count toward the breaker. Keep this low:
-   it governs how many sockets we hold open, and resets scale with socket churn
-   (measured reset rate over a fixed request count — 1 concurrent: 2%, 2: 0%,
-   4: 8%, 6: 8%, 12: 14%).
-3. **One retry on connection resets** — `ECONNRESET` / "socket connection was
-   closed unexpectedly" is retried once after ~250 ms. Timeouts are not retried.
-   A reset-then-reset call counts as exactly one breaker failure. What resets is
-   connection _setup_, not idle keep-alive reuse: a warm pooled socket served 47
-   of 48 sequential requests cleanly, while forcing a fresh connection per request
-   (`keepalive: false` / `Connection: close`) reset 60-76% of the time. So fewer,
-   longer-lived sockets is the fix; disabling keep-alive makes it far worse, and
-   some residual failure remains because a retry also has to open a socket.
-
-Everything degrades to `null` (never throws); mentions and social adornments
-simply render empty. `GET /stats` reports `constellation`: breaker state, gate
-occupancy, and `resets` / `retriesRecovered` / `failures` / `shed` counters —
-`retriesRecovered` ≫ `failures` means resets are being absorbed.
-
 ### Error Response in Bulk Endpoint
 
 The `/feeds` endpoint includes error information even when returning cached data:
@@ -448,6 +423,11 @@ The `/stats` endpoint includes error statistics:
 
 ### Fly.io
 
+Two apps, one per environment — `skyreader-feed-proxy` (prod, `fly.toml`) and
+`skyreader-feed-proxy-staging` (staging, `fly.staging.toml`). Each pushes into its own Worker's D1
+and holds its own `PROXY_SECRET`; keep the two config files in sync apart from `app` and
+`INGEST_URL`. Each app runs exactly ONE machine (see the singleton invariant in `fly.toml`).
+
 ```bash
 # Create app
 fly apps create skyreader-feed-proxy
@@ -455,7 +435,7 @@ fly apps create skyreader-feed-proxy
 # Set secret
 fly secrets set PROXY_SECRET=your-secret-here
 
-# Deploy
+# Deploy (staging: add --config fly.staging.toml)
 fly deploy
 ```
 

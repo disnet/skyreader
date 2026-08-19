@@ -6,6 +6,7 @@ import { mkdirSync } from 'fs';
 import { createApp, initDatabase, cleanupCache } from './app';
 import { DocumentFirehose } from './jetstream';
 import { pingHeartbeat } from './heartbeat';
+import { pushDirtyItems, pullCrawlSet, reportFeedHealth, type IngestConfig } from './ingest-push';
 
 // Config
 const PROXY_SECRET = process.env.PROXY_SECRET;
@@ -50,6 +51,20 @@ const WARM_MENTIONS_ENABLED = (process.env.WARM_MENTIONS ?? 'true') !== 'false';
 // Dead-man's switch for the warm loop (Healthchecks.io / Better Stack). Unset in
 // local dev, so the ping is a no-op there.
 const WARM_HEARTBEAT_URL = process.env.WARM_HEARTBEAT_URL;
+
+// This proxy crawls for one Worker/D1 pair. Leaving INGEST_URL unset disables
+// both directions, which keeps local development and staged rollout safe.
+const INGEST_URL = process.env.INGEST_URL?.replace(/\/$/, '') || '';
+const INGEST_ENABLED = INGEST_URL.length > 0;
+const INGEST_INTERVAL_MS = parseInt(process.env.INGEST_INTERVAL_SECONDS || '15', 10) * 1000;
+const INGEST_BATCH_SIZE = parseInt(process.env.INGEST_BATCH_SIZE || '100', 10);
+const CRAWL_SET_INTERVAL_MS = parseInt(process.env.CRAWL_SET_INTERVAL_SECONDS || '300', 10) * 1000;
+const PUSH_BACKOFF_BASE_MS = 30 * 1000;
+const PUSH_BACKOFF_MAX_MS = 10 * 60 * 1000;
+
+function pushBackoff(failures: number): number {
+  return Math.min(PUSH_BACKOFF_BASE_MS * 2 ** (failures - 1), PUSH_BACKOFF_MAX_MS);
+}
 
 // /extract is the heaviest request (fetch + Defuddle DOM build). Cap concurrent
 // extractions so a burst of distinct heavy articles can't OOM the 512MB machine;
@@ -96,6 +111,7 @@ const { app, warmStaleFeeds, warmStaleDocuments } = createApp(db, {
   extractConcurrency: EXTRACT_CONCURRENCY,
   extractQueueMax: EXTRACT_QUEUE_MAX,
   getFirehoseStatus: () => firehose?.status() ?? { healthy: false, isSubscribed: () => false },
+  ingestEnabled: INGEST_ENABLED,
 });
 
 // Document firehose: push-based freshness for standard.site documents.
@@ -156,6 +172,70 @@ if (WARM_ENABLED) {
   }, WARM_INTERVAL_MS);
 } else {
   console.log('[Proxy] Warmer: disabled');
+}
+
+// Push the durable item log into D1 and pull the registered crawl set back.
+if (INGEST_ENABLED) {
+  const ingestConfig: IngestConfig = {
+    ingestUrl: INGEST_URL,
+    secret: PROXY_SECRET,
+    batchSize: INGEST_BATCH_SIZE,
+  };
+  let pushRunning = false;
+  let pushFailures = 0;
+  let pushBlockedUntil = 0;
+  setInterval(() => {
+    if (pushRunning || Date.now() < pushBlockedUntil) return;
+    pushRunning = true;
+    pushDirtyItems(db, ingestConfig)
+      .then((result) => {
+        if (result.error) {
+          pushFailures++;
+          pushBlockedUntil = Date.now() + pushBackoff(pushFailures);
+          console.error(`[Proxy] Ingest push failed (${pushFailures}): ${result.error}`);
+        } else {
+          pushFailures = 0;
+          if (result.pushed > 0) console.log(`[Proxy] Ingest pushed ${result.pushed} item(s)`);
+        }
+      })
+      .catch((error) => {
+        console.error('[Proxy] Ingest push error:', error);
+        reportError(error, { tags: { source: 'ingest-push' } });
+      })
+      .finally(() => {
+        pushRunning = false;
+      });
+  }, INGEST_INTERVAL_MS);
+
+  let crawlSetRunning = false;
+  const refreshCrawlSet = () => {
+    if (crawlSetRunning) return;
+    crawlSetRunning = true;
+    pullCrawlSet(db, ingestConfig)
+      .then((result) => {
+        if (result.error) console.error(`[Proxy] Crawl-set pull failed: ${result.error}`);
+        else console.log(`[Proxy] Crawl set: ${result.registered} feed(s) registered`);
+        // Report health AFTER the pull, so a feed registered for the first time
+        // this cycle is already in the crawl set and its errors are reportable.
+        // Reads no longer pass through here, so this is the only way a broken
+        // feed reaches the reader's error badge.
+        return reportFeedHealth(db, ingestConfig).then((health) => {
+          if (health.error) console.error(`[Proxy] Feed-health report failed: ${health.error}`);
+          else console.log(`[Proxy] Feed health: ${health.reported} feed(s) in error`);
+        });
+      })
+      .catch((error) => {
+        console.error('[Proxy] Crawl-set pull error:', error);
+        reportError(error, { tags: { source: 'crawl-set' } });
+      })
+      .finally(() => {
+        crawlSetRunning = false;
+      });
+  };
+  refreshCrawlSet();
+  setInterval(refreshCrawlSet, CRAWL_SET_INTERVAL_MS);
+} else {
+  console.log('[Proxy] Ingest push: disabled (INGEST_URL unset)');
 }
 
 // Flush the firehose cursor + close its socket cleanly on shutdown so we resume

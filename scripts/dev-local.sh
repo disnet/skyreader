@@ -28,12 +28,25 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM
 
+# Local dev is its own environment "pair": the proxy pushes its item log into the
+# local Worker's D1 and pulls the crawl set back from it. Ingest is fail-closed on
+# the Worker side, so both halves must share this secret.
+DEV_PROXY_SECRET="dev-proxy-secret"
+
 # Check for required .dev.vars
 if [ ! -f "$BACKEND_DIR/.dev.vars" ]; then
     echo -e "${RED}Missing $BACKEND_DIR/.dev.vars${NC}"
     echo "Create it with:"
     echo "  FRONTEND_URL=http://127.0.0.1:5173"
+    echo "  FEED_PROXY_URL=http://127.0.0.1:3000"
+    echo "  FEED_PROXY_SECRET=$DEV_PROXY_SECRET"
     exit 1
+fi
+
+if ! grep -q "^FEED_PROXY_SECRET=" "$BACKEND_DIR/.dev.vars"; then
+    echo -e "${YELLOW}Warning: $BACKEND_DIR/.dev.vars has no FEED_PROXY_SECRET.${NC}"
+    echo -e "${YELLOW}Feed ingest is fail-closed, so the proxy's pushes will 401 and the${NC}"
+    echo -e "${YELLOW}reader will stay empty. Add: FEED_PROXY_SECRET=$DEV_PROXY_SECRET${NC}"
 fi
 
 echo -e "${GREEN}Starting local development environment...${NC}\n"
@@ -47,11 +60,20 @@ if ! echo "y" | npx wrangler d1 migrations apply skyreader --local; then
 fi
 echo -e "${GREEN}Migrations applied.${NC}\n"
 
-# Start feed proxy (no auth needed locally)
+# Open the timeline rollout gate locally. Migration 0071 gates any database that
+# already has users, which is the right default for prod and staging but wrong
+# here: a local DB you've logged into before would silently serve the legacy
+# batch path, so you'd develop against the path we're retiring without noticing.
+npx wrangler d1 execute skyreader --local --command \
+    "INSERT INTO sync_state (key, value, updated_at) VALUES ('timeline_enabled', '1', unixepoch())
+     ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = unixepoch()" >/dev/null 2>&1 \
+    || echo -e "${YELLOW}Could not open the timeline gate; the reader will use the legacy batch path.${NC}"
+
+# Start feed proxy (crawler + ingest pusher pointed at the local Worker)
 echo -e "${YELLOW}[1/4] Starting feed proxy...${NC}"
 cd "$FEED_PROXY_DIR"
 bun install --frozen-lockfile 2>/dev/null || bun install
-bun run dev &
+INGEST_URL=http://127.0.0.1:8787 PROXY_SECRET="$DEV_PROXY_SECRET" bun run dev &
 FEED_PROXY_PID=$!
 sleep 2
 

@@ -161,7 +161,10 @@ const seriesDefinitions: { key: keyof SnapshotRow; label: string; unit?: string 
   { key: 'users', label: 'Users' },
   { key: 'active_sessions', label: 'Active Sessions' },
   { key: 'feeds', label: 'Feeds' },
-  { key: 'feeds_with_errors', label: 'Feeds with Errors' },
+  // Same number as the live tile above, hour by hour: per-feed fetch errors are
+  // the crawler's to know, so this series is empty for any hour whose proxy
+  // stats were missing or stale.
+  { key: 'feeds_with_errors', label: 'Proxy Feeds in Error' },
   { key: 'subscriptions', label: 'Subscriptions' },
   { key: 'saved_articles', label: 'Saved Articles' },
   { key: 'feed_items', label: 'Feed Items' },

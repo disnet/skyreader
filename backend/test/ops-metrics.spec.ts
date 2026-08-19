@@ -49,6 +49,7 @@ const pollerStatusBody = (lagMs: number | null) => ({
 beforeEach(async () => {
   await env.DB.prepare('DELETE FROM system_status').run();
   await env.DB.prepare('DELETE FROM metrics_snapshots').run();
+  await env.DB.prepare('DELETE FROM feeds').run();
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -226,17 +227,19 @@ describe('writeMetricsSnapshot', () => {
     await writeSystemStatus(
       env as Env,
       'proxy_stats',
-      { freshPct: 88.5 } as ProxyStatsValue,
+      { freshPct: 88.5, feedsInError: 7 } as ProxyStatsValue,
       now - 60_000
     );
 
     await writeMetricsSnapshot(env as Env, now);
 
     const row = await env.DB.prepare(
-      'SELECT firehose_lag_ms, proxy_fresh_pct FROM metrics_snapshots'
-    ).first<{ firehose_lag_ms: number; proxy_fresh_pct: number }>();
+      'SELECT firehose_lag_ms, proxy_fresh_pct, feeds_with_errors FROM metrics_snapshots'
+    ).first<{ firehose_lag_ms: number; proxy_fresh_pct: number; feeds_with_errors: number }>();
     expect(row?.firehose_lag_ms).toBe(42_000);
     expect(row?.proxy_fresh_pct).toBe(88.5);
+    // Per-feed errors come from the crawler now — `feeds` has no error column.
+    expect(row?.feeds_with_errors).toBe(7);
   });
 
   it('records null rather than a stale value nobody refreshed', async () => {
@@ -250,10 +253,31 @@ describe('writeMetricsSnapshot', () => {
 
     await writeMetricsSnapshot(env as Env, now);
 
-    const row = await env.DB.prepare('SELECT firehose_lag_ms FROM metrics_snapshots').first<{
-      firehose_lag_ms: number | null;
-    }>();
+    const row = await env.DB.prepare(
+      'SELECT firehose_lag_ms, feeds_with_errors FROM metrics_snapshots'
+    ).first<{ firehose_lag_ms: number | null; feeds_with_errors: number | null }>();
     expect(row?.firehose_lag_ms).toBeNull();
+    // No proxy row at all: unknown, not "zero feeds are erroring".
+    expect(row?.feeds_with_errors).toBeNull();
+  });
+
+  it('counts the feeds the crawler ingests into, not the dropped feed_metadata', async () => {
+    const now = 300 * HOUR_MS;
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO feeds (feed_url, title, last_ingest_at) VALUES ('https://a.example/f', 'A', 1)"
+      ),
+      env.DB.prepare(
+        "INSERT INTO feeds (feed_url, title, last_ingest_at) VALUES ('https://b.example/f', 'B', 2)"
+      ),
+    ]);
+
+    await writeMetricsSnapshot(env as Env, now);
+
+    const row = await env.DB.prepare('SELECT feeds FROM metrics_snapshots').first<{
+      feeds: number;
+    }>();
+    expect(row?.feeds).toBe(2);
   });
 
   it('prunes points past the retention window', async () => {

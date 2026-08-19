@@ -1,6 +1,10 @@
 app = "skyreader-feed-proxy"
 primary_region = "sjc"
 
+# KEEP IN SYNC WITH fly.staging.toml. The two files must differ only in `app` and
+# the `INGEST_URL` in [env]; everything else is deliberately identical so staging
+# soaks what prod will run.
+#
 # SINGLETON INVARIANT — run exactly ONE machine. This app is not horizontally
 # scalable as written: the cache is a SQLite DB on the per-machine `proxy_data`
 # volume (volumes can't be shared between machines), and the Jetstream firehose,
@@ -35,6 +39,11 @@ primary_region = "sjc"
 
 [env]
   DATA_DIR = "/data"
+  # Ingest push into the prod Worker's D1. Commented out until the staging pair
+  # has soaked (see docs/plans/D1_FEED_TIMELINE.md, Phase 3): with it unset this
+  # machine crawls exactly as before and pushes nothing. Enabling it is this one
+  # line plus a release — prod's backfill then drains through the normal pusher.
+  # INGEST_URL = "https://api.skyreader.app"
   # Fresh window. The self-warming loop refreshes active feeds before they reach
   # this age, so user requests stay HITs even at a tight 5-minute freshness.
   CACHE_TTL_SECONDS = "300"

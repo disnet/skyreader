@@ -136,6 +136,65 @@ export async function seedSavedArticle(
   return rkey;
 }
 
+export interface SeedFeedItemOpts {
+  guid: string;
+  title: string;
+  url?: string;
+  publishedAt?: string;
+  summary?: string;
+}
+
+/**
+ * Seed the server-side archive the timeline serves from: a `feeds` row plus its
+ * `feed_items`. Feed-scoped rather than user-scoped (the archive is shared by
+ * every subscriber), so it's cleaned up with `cleanupFeedItems`.
+ */
+export async function seedFeedItems(
+  feedUrl: string,
+  items: SeedFeedItemOpts[],
+  opts: { title?: string; siteUrl?: string } = {}
+): Promise<void> {
+  const nowMs = Date.now();
+  const nowSeconds = Math.floor(nowMs / 1000);
+
+  const statements = [
+    `INSERT OR REPLACE INTO feeds (feed_url, title, site_url, last_ingest_at, created_at) VALUES (${sqlString(feedUrl)}, ${sqlNullableString(opts.title ?? null)}, ${sqlNullableString(opts.siteUrl ?? null)}, ${nowSeconds}, ${nowSeconds})`,
+    // Stand in for the crawler's check-in. Without a fresh heartbeat the timeline
+    // reports `ingestActive: false` and the client (correctly) stays on the legacy
+    // batch path, which is not what these tests are exercising.
+    `INSERT INTO sync_state (key, value, updated_at) VALUES ('crawler_heartbeat_at', ${sqlString(String(nowSeconds))}, ${nowSeconds}) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    // The other half of the same gate: a heartbeat says a crawler is attached,
+    // this says readers may use what it wrote. Migration 0071 leaves it open on a
+    // fresh database, but a test DB that predates the migration with users in it
+    // starts closed — so set it rather than depend on which case this one is.
+    `INSERT INTO sync_state (key, value, updated_at) VALUES ('timeline_enabled', '1', ${nowSeconds}) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ];
+
+  items.forEach((item, index) => {
+    const publishedAt = item.publishedAt ?? new Date(nowMs - index * 60_000).toISOString();
+    const itemJson = JSON.stringify({
+      guid: item.guid,
+      url: item.url ?? `https://example.com/${item.guid}`,
+      title: item.title,
+      summary: item.summary ?? `Summary for ${item.title}`,
+      publishedAt,
+    });
+    statements.push(
+      `INSERT OR REPLACE INTO feed_items (feed_url, guid, item_json, published_at, first_seen_at, content_hash) VALUES (${sqlString(feedUrl)}, ${sqlString(item.guid)}, ${sqlString(itemJson)}, ${Date.parse(publishedAt)}, ${nowMs}, ${sqlString(`hash-${item.guid}`)})`
+    );
+  });
+
+  await execD1(statements);
+}
+
+export async function cleanupFeedItems(feedUrl: string): Promise<void> {
+  await execD1([
+    `DELETE FROM feed_items WHERE feed_url = ${sqlString(feedUrl)}`,
+    `DELETE FROM feeds WHERE feed_url = ${sqlString(feedUrl)}`,
+    `DELETE FROM sync_state WHERE key = 'crawler_heartbeat_at'`,
+  ]);
+}
+
 export interface SeedItemLabelOpts {
   itemKey: string;
   itemType: string;

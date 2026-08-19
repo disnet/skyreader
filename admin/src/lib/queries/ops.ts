@@ -77,7 +77,8 @@ export interface SnapshotRow {
   feed_items: number;
   subscriptions: number;
   saved_articles: number;
-  feeds_with_errors: number;
+  /** The proxy's `feedsInError` at that hour; null when the proxy row was stale. */
+  feeds_with_errors: number | null;
   active_sessions: number;
   firehose_lag_ms: number | null;
   proxy_fresh_pct: number | null;

@@ -1,5 +1,11 @@
 # Durable Item Retention: Catch Everything Since Last Visit
 
+> **Superseded in part by `D1_FEED_TIMELINE.md`.** Everything below shipped and still runs — but
+> the durable log's *serving* role has moved to D1. The proxy log is now the crawler's **outbox**
+> (a bounded K = 200 delivery window pushed into D1); the **archive** clients read from is
+> `feed_items` in D1, which never prunes, and the cursor clients hold is a single global one
+> against that table rather than one per feed.
+
 > Supersedes `BATCH_CURSOR_PLAN.md`. That plan optimized the *request payload* (500 GUIDs →
 > a cursor) but kept the proxy's replace-the-blob storage model, which structurally cannot
 > retain items beyond the source feed's live window. This plan changes the storage model so

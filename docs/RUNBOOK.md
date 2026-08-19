@@ -23,7 +23,7 @@ it rather than learning to ignore it.
 | Backend Worker              | Structured logs (Workers Logs)        | One JSON object per event, keyed by `requestId`.  |
 | Backend cron (every minute) | Heartbeat ping (`HEARTBEAT_URL`)      | Dead-man's switch; also guards the firehose.      |
 | Feed proxy                  | `GET /health`                         | Status, version, cached feed count. No auth.      |
-| Feed proxy                  | `GET /stats`                          | Cache freshness + per-feed error counts. Secret.  |
+| Feed proxy                  | `GET /stats`                          | Cache freshness, per-feed errors, ingest backlog. |
 | Feed proxy                  | Sentry (`@sentry/bun`)                | Route escapes, warmer failures.                   |
 | Feed proxy warmer           | Heartbeat ping (`WARM_HEARTBEAT_URL`) | Dead-man's switch for the warm loop.              |
 | Backend cron (every minute) | `system_status` rows (D1)             | Cron liveness, poller lag, proxy cache stats.     |
@@ -306,17 +306,17 @@ poll cycle — a `requestId`, plus `route` and `did` when known.
 
 Query patterns that pay for themselves:
 
-| Question                         | Filter                                            |
-| -------------------------------- | ------------------------------------------------- |
-| Everything about one failure     | `requestId = <id from Sentry or X-Request-Id>`    |
-| Error rate on one endpoint       | `event = request AND route = /api/v2/feeds/batch` |
-| Slow requests                    | `event = request AND durationMs > 3000`           |
-| Is the cron doing its work?      | `event = cron_run`                                |
-| Is the firehose keeping up?      | `event = jetstream_poll` → `subscriptionsLagMs`   |
-| What failed inside a cron run?   | `event = cron_phase_failed` → `phase`             |
-| Why is the ops panel stale?      | `event = ops_metrics_failed` → `step`             |
-| Did the hourly trend point land? | `event = metrics_snapshot` → `prunedRows`         |
-| Are browsers throwing?           | `event = client_error` → `kind`, `appVersion`     |
+| Question                         | Filter                                          |
+| -------------------------------- | ----------------------------------------------- |
+| Everything about one failure     | `requestId = <id from Sentry or X-Request-Id>`  |
+| Error rate on one endpoint       | `event = request AND route = /api/v2/timeline`  |
+| Slow requests                    | `event = request AND durationMs > 3000`         |
+| Is the cron doing its work?      | `event = cron_run`                              |
+| Is the firehose keeping up?      | `event = jetstream_poll` → `subscriptionsLagMs` |
+| What failed inside a cron run?   | `event = cron_phase_failed` → `phase`           |
+| Why is the ops panel stale?      | `event = ops_metrics_failed` → `step`           |
+| Did the hourly trend point land? | `event = metrics_snapshot` → `prunedRows`       |
+| Are browsers throwing?           | `event = client_error` → `kind`, `appVersion`   |
 
 The id is also returned to callers as the `X-Request-Id` response header (exposed
 via CORS), so a user-reported failure can be traced if they can quote it. The
@@ -371,6 +371,9 @@ days, pruned by the job that writes it; the panel shows the most recent 30.
 Cadence, if a number looks older than expected: poller status every minute, proxy
 stats every 5th minute, snapshot once an hour on the hour.
 
+The **Feeds** tiles in the metrics section below the ops panel cover the ingest
+side; §4d says what they mean and how to check the pieces they can't see.
+
 ---
 
 ## 4c. Client signal
@@ -406,6 +409,85 @@ successful sync, with a Copy button.
 Ask for it in any "it's broken" report. The single most useful line is the service
 worker one — "differs from app" means an update is half-applied, which is the
 shape of most PWA weirdness, and a reload fixes it.
+
+---
+
+## 4d. Ingest health
+
+Feed reads are served from D1, so what a reader sees is only as fresh as the
+crawler's **push**, not the crawler's cache. Proxy cache freshness (§4b) is the
+first hop of two; this section is the second. **None of it is wired to an alert
+yet** — the signals are on the admin and on the proxy, and this is the list to
+walk when the reader looks stale but every tile above is green.
+
+| Signal                      | Where                                           | Healthy                            | How to check                                                                                                         |
+| --------------------------- | ----------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Crawler talking to us       | `sync_state.crawler_heartbeat_at` (D1)          | stamped within ~5 min              | `npx wrangler d1 execute skyreader --remote --command "SELECT * FROM sync_state WHERE key = 'crawler_heartbeat_at'"` |
+| Clients reading the archive | `GET /api/v2/timeline` → `ingestActive`         | `true` in an ingesting environment | Any authenticated timeline response                                                                                  |
+| Rollout gate                | `sync_state.timeline_enabled` (D1)              | `'1'` once rolled out              | `npx wrangler d1 execute skyreader --remote --command "SELECT * FROM sync_state WHERE key = 'timeline_enabled'"`     |
+| Push backlog (outbox)       | proxy `GET /stats` → `ingest.pending`           | near zero in steady state          | `curl -H "X-Proxy-Secret: $SECRET" https://skyreader-feed-proxy.fly.dev/stats`                                       |
+| Push failing                | Sentry `source: ingest-push`, proxy logs        | silent                             | `fly logs -a skyreader-feed-proxy` → `Ingest push failed`                                                            |
+| Feeds gone quiet            | Admin → Feeds, "Subscribed Feeds Not Ingesting" | small and stable                   | The dashboard's Feeds metrics                                                                                        |
+
+Reading these correctly:
+
+- **`crawler_heartbeat_at` is per-environment and stamped by _both_ internal
+  endpoints** (`/api/internal/ingest` and the 5-minutely `/api/internal/crawl-set`
+  pull), so it keeps ticking through a quiet period with no new items. A missing
+  stamp means the proxy isn't talking to this Worker at all — usually `INGEST_URL`
+  unset or pointed at the wrong environment, which is also the deliberate state
+  before Phase 3. The consequence is not an outage: `ingestActive` goes false and
+  clients fall back to the legacy batch path.
+- **`ingest.pending` is the outbox depth**, and the push loop drains 100 items
+  every 15s (~400/min). A few hundred is churn. A number that holds in the
+  thousands across two readings means the push is erroring, not busy — check
+  Sentry before touching the machine. The exception is the **first** enablement of
+  `INGEST_URL` in an environment: the whole item log is dirty at once and the
+  backfill legitimately takes hours to drain.
+- **`feeds.last_ingest_at` is the last time that feed produced _new or changed_
+  items**, not the last time it was crawled — nothing stamps it on a fetch that
+  found nothing. A feed that publishes weekly therefore looks "not ingesting" for
+  a week, so read the admin's count as a trend (a jump means the crawl set or the
+  push stopped) rather than as a per-feed verdict.
+
+Fix, once you know which one it is: a wedged warm loop or push loop is
+`fly machine restart <id>` (never `fly scale count` — see §4's proxy-warmer entry);
+a heartbeat that never arrives is configuration, not a restart.
+
+### The timeline rollout gate
+
+`ingestActive` is the AND of two things: a fresh crawler heartbeat and
+`sync_state.timeline_enabled`. They are separate because the heartbeat lands
+_seconds_ into the first backfill of an environment and that backfill takes hours
+— without the gate, every reader switches to the timeline at the moment the
+archive is emptiest and then drags the whole backfill through the incremental
+drain (the expensive global scan, at its worst case, for the duration).
+
+Only an explicit `'0'` gates. Migration 0071 sets it for a database that already
+has users, so prod and staging start shut and a fresh environment (local dev,
+e2e, CI) starts open.
+
+```bash
+# Open it — after ingest.pending has trended to ~0.
+npx wrangler d1 execute skyreader --remote --command \
+  "UPDATE sync_state SET value='1', updated_at=unixepoch() WHERE key='timeline_enabled'"
+
+# Shut it — every client is back on the legacy batch path at its next poll.
+npx wrangler d1 execute skyreader --remote --command \
+  "UPDATE sync_state SET value='0', updated_at=unixepoch() WHERE key='timeline_enabled'"
+```
+
+Shutting it is the **fast rollback for the read path**, and the first thing to
+reach for if the timeline misbehaves after a rollout: no Worker deploy, no waiting
+out the 30-minute heartbeat freshness window, and the crawler keeps filling the
+archive the whole time. It is not a fix for a bad Worker deploy generally — only
+for "readers should not be on the timeline right now".
+
+One caveat when shutting it: clients hold a committed `timelineCursor` and stop
+advancing their per-subscription `feedCursors` while on the timeline, so the
+batch path re-drains from wherever those cursors were left. The proxy's K=200
+window bounds that, and the merge dedupes by GUID, so the cost is one heavier
+sync, not duplicates.
 
 ---
 
@@ -509,13 +591,22 @@ admire, and not promises to anyone outside the project. Their only job is to mak
 | ------------------ | ------------------------------------ | ----------------------------------- | ------- |
 | API availability   | 99.5%                                | Uptime check on `/api/health`       | 30 days |
 | Firehose freshness | lag < 5 min, p95 of hourly snapshots | `metrics_snapshots.firehose_lag_ms` | 30 days |
-| Feed freshness     | ≥95% fresh, p05 of hourly snapshots  | `metrics_snapshots.proxy_fresh_pct` | 30 days |
+| Crawl freshness    | ≥95% fresh, p05 of hourly snapshots  | `metrics_snapshots.proxy_fresh_pct` | 30 days |
 | Cron liveness      | gap < 5 min                          | Heartbeat check history             | 30 days |
 
 99.5% is ~3.6 hours a month. That is a deliberately loose target for a
 single-operator project on a singleton proxy: it says "a couple of short outages a
 month is survivable, a daily one is not." Tighten it only if you're also willing
 to change the architecture it's measuring.
+
+**Crawl freshness is the first of two hops, not the whole of feed freshness.**
+`proxy_fresh_pct` says the crawler's own cache is current; since reads moved to D1,
+what a reader actually sees also depends on the push that carries those items into
+`feed_items` (§4d). The second hop has no SLO here because nothing records it
+hourly — the outbox depth lives on the proxy's `/stats` and is read by hand. Making
+it one means recording `ingest.pending` into `metrics_snapshots` beside the numbers
+above; until then, say "crawl freshness" and mean it, rather than claiming a
+reader-facing number this table can't compute.
 
 Both freshness rows aggregate the **hourly** trend points, not the live tile: the
 tile is a point-in-time reading and "95% fresh right now" says nothing about a
@@ -534,7 +625,7 @@ npx wrangler d1 execute skyreader --remote --command "
   LIMIT 1 OFFSET (SELECT CAST(COUNT(*) * 95 / 100 AS INT) FROM metrics_snapshots
     WHERE captured_at > (unixepoch() - 30*86400) * 1000 AND firehose_lag_ms IS NOT NULL)"
 
-# Proxy cache freshness, p05 (the 5th-worst-percent hour). Passes if >= 95.
+# Crawl freshness (proxy cache), p05 (the 5th-worst-percent hour). Passes if >= 95.
 npx wrangler d1 execute skyreader --remote --command "
   SELECT proxy_fresh_pct FROM metrics_snapshots
   WHERE captured_at > (unixepoch() - 30*86400) * 1000 AND proxy_fresh_pct IS NOT NULL

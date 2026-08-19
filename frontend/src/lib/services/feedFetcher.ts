@@ -1,10 +1,20 @@
-import { api } from './api';
+import { api, ApiError } from './api';
 import { liveDb } from './liveDb.svelte';
-import { db, type FeedCursorEntry } from './db';
+import { db, getMetadata, setMetadata, type FeedCursorEntry } from './db';
 import { feedStatusStore, type V2FeedResult } from '$lib/stores/feedStatus.svelte';
 import { socialStore } from '$lib/stores/social.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { buildDocumentRequests, collectDocumentBatches } from './documentSync';
+import {
+  buildSubscriptionIndex,
+  groupTimelineItems,
+  isRssSubscription,
+  pruneAttemptedBackfills,
+  selectBackfillTargets,
+  shouldFallBackToBatch,
+  shouldUpdateTitle,
+  subscriptionMetaUpdate,
+} from './timelineSync';
 import { loadDigests, saveDigests, scopeKey } from './documentDigests';
 import type { Subscription } from '$lib/types';
 
@@ -30,33 +40,6 @@ const COLD_START_LIMIT = 30;
 // it just continues on the next sync. Logged when hit (no silent truncation).
 const MAX_DRAIN_ROUNDS = 5;
 
-/**
- * Check if a subscription's title should be updated from feed metadata.
- * Returns true when the current title is a fallback (URL, hostname, etc.)
- * and the feed provides a real title.
- */
-function shouldUpdateTitle(
-  currentTitle: string,
-  feedUrl: string | undefined,
-  fetchedTitle: string
-): boolean {
-  if (!fetchedTitle || fetchedTitle === 'Untitled Feed') return false;
-  if (currentTitle === fetchedTitle) return false;
-
-  // Update if current title is the feed URL
-  if (feedUrl && currentTitle === feedUrl) return true;
-
-  // Update if current title is just a hostname
-  try {
-    const hostname = feedUrl ? new URL(feedUrl).hostname : '';
-    if (currentTitle === hostname) return true;
-  } catch {
-    // ignore invalid URL
-  }
-
-  return false;
-}
-
 export interface FetchResult {
   totalFeeds: number;
   successfulFeeds: number;
@@ -64,18 +47,300 @@ export interface FetchResult {
   newArticles: number;
 }
 
+// Dexie `metadata` key holding the global timeline cursor (one per client, not
+// one per subscription — that's the whole point of the timeline).
+const TIMELINE_CURSOR_KEY = 'timelineCursor';
+
+// Dexie `metadata` key holding the feed URLs we've already tried to backfill
+// through the per-feed endpoint (see backfillMissingSubscriptions).
+const TIMELINE_BACKFILL_KEY = 'timelineBackfilledFeeds';
+// Last feed selected for a backfill attempt. This rotates retryable failures so
+// a broken prefix cannot consume every sync's bounded backfill budget.
+const TIMELINE_BACKFILL_CURSOR_KEY = 'timelineBackfillCursor';
+
+// Items per timeline page (the server caps at 200 too).
+const TIMELINE_PAGE_LIMIT = 200;
+
+// Cold-start pages are per-feed slices bounded by a server-side item budget, so a
+// large subscription list takes several of them. A cold start is a one-time
+// bootstrap, so it gets a much larger round budget than an incremental drain.
+const MAX_COLD_START_ROUNDS = 25;
+
+// Per-sync cap on the one-off per-feed backfills for subscriptions that arrived
+// from another device. The rest continue on the next sync.
+const MAX_BACKFILLS_PER_SYNC = 10;
+
+interface TimelineCursor {
+  cursor: number;
+  generation: string;
+}
+
+// Set for the session once the backend answers 404 for /api/v2/timeline (an old
+// or rolled-back Worker), so we stop probing and stay on the legacy batch path.
+let timelineUnavailable = false;
+
+// Revision of the feed-health set this client has already applied. In memory on
+// purpose: feedStatusStore is in-memory too, so a fresh page load starts with no
+// revision and the server sends the full health payload — exactly what an empty
+// status store needs.
+let feedHealthRev: string | undefined;
+
 /**
- * Fetch all subscribed feeds using V2 batch API
+ * The whole refresh in ONE request (plus drain pages): `GET /api/v2/timeline`
+ * returns every item newer than the client's global cursor across every
+ * subscription, with read state already joined in.
  *
- * - Chunks feeds into batches of 50
- * - Uses GUID-based incremental sync (last 10 GUIDs per feed)
- * - Updates feedStatusStore with results
- * - Merges new articles into liveDb
+ * Returns null when the caller should fall back to the legacy per-feed batch
+ * path — either the endpoint doesn't exist (old/rolled-back backend) or the
+ * server says its crawler isn't filling the archive (`ingestActive: false`, the
+ * whole pre-rollout window). The cursor is never committed in that case, so a
+ * later switch to the timeline still cold-starts correctly.
+ */
+async function fetchTimeline(
+  subscriptions: Subscription[],
+  savedGuids: Set<string>
+): Promise<FetchResult | null> {
+  const rssSubs = subscriptions.filter(isRssSubscription);
+  const result: FetchResult = {
+    totalFeeds: rssSubs.length,
+    successfulFeeds: 0,
+    failedFeeds: 0,
+    newArticles: 0,
+  };
+  if (rssSubs.length === 0) return result;
+
+  // feedUrl → subscriptionId. Items for feeds we don't hold locally are skipped;
+  // races with an unsubscribe are benign.
+  const subIdByUrl = buildSubscriptionIndex(rssSubs);
+
+  const stored = await getMetadata<TimelineCursor>(TIMELINE_CURSOR_KEY);
+  let cursor = stored?.cursor;
+  let generation = stored?.generation;
+
+  // Cold-start paging state. The server hands back a continuation index into the
+  // caller's feed list; the cursor to keep is the FIRST page's (the archive head
+  // as of the moment the cold start began), committed only once the last page has
+  // merged — a cold start abandoned halfway simply starts over next sync rather
+  // than committing a cursor past feeds it never delivered.
+  let coldOffset: number | undefined;
+  let coldCursor: TimelineCursor | undefined;
+  let incrementalRounds = 0;
+  let coldRounds = 0;
+  // Set when we stop because of a round cap rather than because we're done.
+  let cappedOut = false;
+
+  for (;;) {
+    if (
+      coldOffset === undefined
+        ? incrementalRounds >= MAX_DRAIN_ROUNDS
+        : coldRounds >= MAX_COLD_START_ROUNDS
+    ) {
+      cappedOut = true;
+      break;
+    }
+    if (coldOffset === undefined) incrementalRounds++;
+    else coldRounds++;
+
+    let page;
+    try {
+      page = await api.fetchTimeline(
+        coldOffset === undefined
+          ? {
+              since_seq: cursor,
+              generation,
+              limit: TIMELINE_PAGE_LIMIT,
+              health_rev: feedHealthRev,
+            }
+          : { cold_offset: coldOffset, limit: TIMELINE_PAGE_LIMIT, health_rev: feedHealthRev }
+      );
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) {
+        // Backend predates the timeline (or was rolled back): stay on /batch.
+        timelineUnavailable = true;
+        return null;
+      }
+      throw e;
+    }
+
+    // The server says whether this environment's crawler is actually filling the
+    // archive. Until it is, use the legacy batch path and commit no cursor.
+    if (shouldFallBackToBatch(page, rssSubs.length)) return null;
+
+    if (page.readCursor) await itemLabelsStore.seedReadCursor(page.readCursor);
+
+    const { toMerge, readGuids, feedUrls } = groupTimelineItems(page.items, subIdByUrl);
+
+    // One merge per page (rebuild + re-sort the in-memory array once), same
+    // discipline as the batch path. If it throws, the cursor below is NOT
+    // committed, so the next poll re-requests these items instead of skipping them.
+    if (toMerge.length > 0) {
+      result.newArticles += await liveDb.mergeArticlesBatch(toMerge, savedGuids);
+    }
+    if (readGuids.length > 0) {
+      await itemLabelsStore.applyAnnotatedReads(readGuids, 'article');
+    }
+
+    // Backfill subscription title/siteUrl from the archive's feed metadata.
+    if (page.feeds) {
+      for (const [feedUrl, meta] of Object.entries(page.feeds)) {
+        const subscriptionId = subIdByUrl.get(feedUrl);
+        if (!subscriptionId) continue;
+        const sub = liveDb.getSubscriptionById(subscriptionId);
+        if (!sub) continue;
+        const updates = subscriptionMetaUpdate(sub, meta);
+        if (updates) {
+          await liveDb.updateSubscription(subscriptionId, {
+            ...updates,
+            localUpdatedAt: Date.now(),
+          });
+        }
+      }
+    }
+
+    // A feed that just delivered NEW items is demonstrably healthy. This can't
+    // stand on its own, though: a broken feed produces nothing, and the archive
+    // keeps serving its old items, so "delivered nothing" says nothing at all.
+    // The health payload below is the authoritative signal — applied second, so
+    // it wins over a cold start replaying archived items from a feed that has
+    // since broken.
+    for (const feedUrl of feedUrls) feedStatusStore.markReady(feedUrl);
+
+    // Per-feed crawl health, as the crawler reports it. Sent on every cold start
+    // and whenever the unhealthy set changed since our last poll; absent
+    // otherwise (and on a backend that predates health reporting), in which case
+    // what we already hold is still current.
+    if (page.feedHealth) {
+      feedStatusStore.applyHealthSnapshot(page.feedHealth, subIdByUrl.keys());
+    }
+    if (page.healthRev !== undefined) feedHealthRev = page.healthRev;
+
+    if (page.coldStart) {
+      // Keep the first cold page's cursor; page through the rest before committing.
+      if (!coldCursor) coldCursor = { cursor: page.cursor, generation: page.generation };
+      if (page.hasMore && page.nextColdOffset != null) {
+        coldOffset = page.nextColdOffset;
+        continue;
+      }
+      await setMetadata<TimelineCursor>(TIMELINE_CURSOR_KEY, coldCursor);
+      coldOffset = undefined;
+      break;
+    }
+
+    // Merge succeeded — commit the cursor.
+    cursor = page.cursor;
+    generation = page.generation;
+    await setMetadata<TimelineCursor>(TIMELINE_CURSOR_KEY, { cursor, generation });
+
+    if (!page.hasMore) break;
+  }
+
+  if (cappedOut) {
+    console.warn(
+      coldOffset !== undefined
+        ? `[feedFetcher] Cold-start page cap (${MAX_COLD_START_ROUNDS} rounds) reached; the rest continues on the next sync.`
+        : `[feedFetcher] Timeline drain cap (${MAX_DRAIN_ROUNDS} rounds) reached; the rest continues on the next sync.`
+    );
+  }
+
+  // Subscriptions that arrived from another device sit below the global cursor,
+  // so only the per-feed endpoint can deliver their history.
+  result.newArticles += await backfillMissingSubscriptions(rssSubs, savedGuids);
+
+  result.successfulFeeds = rssSubs.length;
+  return result;
+}
+
+/**
+ * One-off per-feed backfill for subscriptions the timeline can't reach.
+ *
+ * A subscription synced in from another device is already below the global
+ * cursor, so the drain will never deliver its existing items — the legacy path
+ * got this for free because every subscription carried its own cursor. Each feed
+ * is successfully checked once (the success is recorded in Dexie), and only a
+ * handful per sync, so this can't turn into a request storm after a large sync.
+ */
+async function backfillMissingSubscriptions(
+  rssSubs: Subscription[],
+  savedGuids: Set<string>
+): Promise<number> {
+  const hasArticles = (sub: Subscription) => liveDb.getRecentGuids(sub.id!, 1).length > 0;
+  // Steady state: every subscription holds articles, so this costs one in-memory
+  // scan and never touches Dexie metadata.
+  if (!rssSubs.some((sub) => sub.id && !hasArticles(sub))) return 0;
+
+  const attempted = new Set((await getMetadata<string[]>(TIMELINE_BACKFILL_KEY)) ?? []);
+  const afterFeedUrl = (await getMetadata<string>(TIMELINE_BACKFILL_CURSOR_KEY)) ?? undefined;
+  const targets = selectBackfillTargets(
+    rssSubs,
+    attempted,
+    hasArticles,
+    MAX_BACKFILLS_PER_SYNC,
+    afterFeedUrl
+  );
+  if (targets.length === 0) return 0;
+
+  let newArticles = 0;
+  for (const sub of targets) {
+    // Not `force`: the archive read is already current, and the backend still
+    // pulls the feed through the crawler if it holds nothing for it.
+    const fetched = await fetchSingleFeed(sub, false, savedGuids);
+    newArticles += fetched.newArticles;
+    // A successful empty response is still a completed backfill. Failures are
+    // left eligible for a later sync (for example after reconnecting or after a
+    // circuit-breaker cooldown expires).
+    if (fetched.success) attempted.add(sub.feedUrl!);
+  }
+
+  await setMetadata<string>(TIMELINE_BACKFILL_CURSOR_KEY, targets.at(-1)!.feedUrl!);
+  await setMetadata<string[]>(TIMELINE_BACKFILL_KEY, pruneAttemptedBackfills(attempted, rssSubs));
+  return newArticles;
+}
+
+/**
+ * Fetch all subscribed feeds.
+ *
+ * Preferred path: one `GET /api/v2/timeline` request (plus drain pages) served
+ * from the server-side archive, with read state joined in. Falls back to the
+ * legacy per-feed `POST /api/v2/feeds/batch` fan-out when the timeline isn't
+ * available — an older backend, a rollback, or an environment whose crawler
+ * isn't pushing into D1 yet.
  *
  * @param subscriptions - Array of subscriptions to fetch
  * @param savedGuids - Set of starred article GUIDs (to preserve during cleanup)
  */
 export async function fetchAllFeeds(
+  subscriptions: Subscription[],
+  savedGuids: Set<string> = new Set()
+): Promise<FetchResult> {
+  // Skip network requests when offline - cached articles are already loaded
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return { totalFeeds: subscriptions.length, successfulFeeds: 0, failedFeeds: 0, newArticles: 0 };
+  }
+
+  if (!timelineUnavailable) {
+    try {
+      const timelineResult = await fetchTimeline(subscriptions, savedGuids);
+      if (timelineResult) return timelineResult;
+    } catch (e) {
+      console.error('[feedFetcher] Timeline sync failed, falling back to batch fetch:', e);
+    }
+  }
+
+  return fetchAllFeedsViaBatch(subscriptions, savedGuids);
+}
+
+/**
+ * Legacy path: per-feed batches against the proxy-backed `/api/v2/feeds/batch`,
+ * with per-subscription durable-log cursors. Kept for one release so a rollback
+ * (or a not-yet-ingesting environment) can't strand clients; removed in the
+ * timeline cleanup phase.
+ *
+ * - Chunks feeds into batches of 50
+ * - Uses GUID-based incremental sync (last 10 GUIDs per feed)
+ * - Updates feedStatusStore with results
+ * - Merges new articles into liveDb
+ */
+async function fetchAllFeedsViaBatch(
   subscriptions: Subscription[],
   savedGuids: Set<string> = new Set()
 ): Promise<FetchResult> {
@@ -401,10 +666,15 @@ export interface FetchSingleFeedResult {
 }
 
 /**
- * Fetch a single feed using V2 API
+ * Fetch a single feed's newest slice from the server-side archive.
+ *
+ * This is how a brand-new subscription gets its history: its items sit BELOW the
+ * client's global timeline cursor, so the timeline alone would never deliver
+ * them. The backend pulls the feed through the crawler on a first-ever fetch.
  *
  * @param subscription - Subscription to fetch
- * @param force - If true, fetch from source ignoring cache
+ * @param force - Skips the client-side circuit-breaker check (the archive read
+ *   itself is always current; there is no cache to bypass any more)
  * @param savedGuids - Set of starred article GUIDs
  */
 export async function fetchSingleFeed(
@@ -424,10 +694,20 @@ export async function fetchSingleFeed(
   try {
     const recentGuids = force ? undefined : liveDb.getRecentGuids(subscription.id, GUIDS_PER_FEED);
 
-    const feed = await api.fetchFeedV2(subscription.feedUrl, recentGuids);
+    // `force` asks the backend to re-crawl the feed before serving the archive
+    // (a fresh subscription, or the user retrying a feed that looked broken).
+    const feed = await api.fetchFeedV2(subscription.feedUrl, recentGuids, undefined, force);
 
-    // Mark as ready
-    feedStatusStore.markReady(subscription.feedUrl);
+    // The read succeeded, but reads come from the archive: a feed can serve its
+    // last-known items for days after it stopped crawling. Trust the crawler's
+    // verdict when there is one, and only claim "ready" when there isn't.
+    if (feed.health) {
+      feedStatusStore.applyHealthSnapshot({ [subscription.feedUrl]: feed.health }, [
+        subscription.feedUrl,
+      ]);
+    } else {
+      feedStatusStore.markReady(subscription.feedUrl);
+    }
 
     // Update subscription title/siteUrl from feed metadata
     if (feed.title && shouldUpdateTitle(subscription.title, subscription.feedUrl, feed.title)) {
@@ -457,9 +737,21 @@ export async function fetchSingleFeed(
   }
 }
 
+// Pacing for the new-subscription backfill (OPML import is the big case: one
+// per-feed request each). Small concurrent groups with a pause between them keep
+// a 250-feed import comfortably under the endpoint's per-minute limit — the old
+// unpaced loop would 429 partway through and finish with a screen of "broken"
+// feeds that were only rate-limited.
+const NEW_SUBSCRIPTION_CONCURRENCY = 3;
+const NEW_SUBSCRIPTION_DELAY_MS = 1000;
+
 /**
- * Fetch feeds for newly added subscriptions
- * These are fetched one by one since they don't have any cached content yet
+ * Fetch feeds for newly added subscriptions.
+ *
+ * These need the per-feed endpoint: their items sit below the global timeline
+ * cursor, so the timeline alone would never deliver them. The backend already
+ * crawled and ingested the first feeds at subscribe time, so this is normally a
+ * plain archive read — no `force`, which would make each one a synchronous crawl.
  *
  * @param subscriptions - New subscriptions to fetch
  * @param savedGuids - Set of starred article GUIDs
@@ -477,16 +769,25 @@ export async function fetchNewSubscriptionFeeds(
     newArticles: 0,
   };
 
-  for (let i = 0; i < subscriptions.length; i++) {
-    const sub = subscriptions[i];
+  for (let i = 0; i < subscriptions.length; i += NEW_SUBSCRIPTION_CONCURRENCY) {
     onProgress?.(i, subscriptions.length);
+    const group = subscriptions.slice(i, i + NEW_SUBSCRIPTION_CONCURRENCY);
 
-    const fetchResult = await fetchSingleFeed(sub, true, savedGuids);
-    if (fetchResult.success) {
-      result.successfulFeeds++;
-      result.newArticles += fetchResult.newArticles;
-    } else {
-      result.failedFeeds++;
+    const groupResults = await Promise.allSettled(
+      group.map((sub) => fetchSingleFeed(sub, false, savedGuids))
+    );
+
+    for (const groupResult of groupResults) {
+      if (groupResult.status === 'fulfilled' && groupResult.value.success) {
+        result.successfulFeeds++;
+        result.newArticles += groupResult.value.newArticles;
+      } else {
+        result.failedFeeds++;
+      }
+    }
+
+    if (i + NEW_SUBSCRIPTION_CONCURRENCY < subscriptions.length) {
+      await new Promise((resolve) => setTimeout(resolve, NEW_SUBSCRIPTION_DELAY_MS));
     }
   }
 

@@ -47,6 +47,10 @@ export interface Article {
   imageUrl?: string;
   publishedAt: string;
   fetchedAt: number;
+  // The archive dropped this item's body at ingest (over the per-item content
+  // cap), so `content` here is absent or just the RSS summary. The reader
+  // extracts the full text on demand when the card opens.
+  contentTruncated?: boolean;
   // Precomputed body stats. The full `content` HTML is dropped from the
   // in-memory copy of an article (see toLightArticle) to keep the heap small —
   // it stays in IndexedDB and is lazy-loaded on expand. These numbers let the
@@ -853,6 +857,17 @@ export interface ParsedFeed {
   imageUrl?: string;
   items: FeedItem[];
   fetchedAt: number;
+  // Set only when the crawler currently considers this feed broken. A single-feed
+  // read is served from the archive, so it can succeed (with stale items) for a
+  // feed that has been failing to crawl for days — this is what says so.
+  // Timestamps are unix ms.
+  health?: {
+    errorCount: number;
+    error?: string;
+    lastErrorAt?: number;
+    nextRetryAt?: number;
+    lastFetchedAt?: number;
+  };
 }
 
 export interface FeedItem {
@@ -868,6 +883,9 @@ export interface FeedItem {
   // (inline read annotation). Consumed additively on merge, then discarded — it
   // is not an Article column. Absent on un-annotated responses.
   read?: boolean;
+  // The stored body exceeded the archive's per-item content cap and was dropped
+  // at ingest; the reader falls back to on-demand extraction for full text.
+  contentTruncated?: boolean;
 }
 
 // Combined feed item for unified "all" view

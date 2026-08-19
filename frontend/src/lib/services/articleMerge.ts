@@ -84,6 +84,9 @@ export function selectNewArticles(
         imageUrl: item.imageUrl,
         publishedAt: item.publishedAt,
         fetchedAt: now,
+        // Carried through so the reader knows to extract the full text on open
+        // (the archive dropped an oversized body at ingest).
+        contentTruncated: item.contentTruncated || undefined,
       });
     }
   }

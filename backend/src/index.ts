@@ -16,6 +16,8 @@ import {
   handleV2Mentions,
   handleV2MentionLane,
 } from './routes/feeds-v2';
+import { handleIngest, handleCrawlSet, handleFeedHealth } from './routes/ingest';
+import { handleTimeline } from './routes/timeline';
 import { handleDetectContent } from './routes/social';
 import {
   handleCreateLinkblogShare,
@@ -315,10 +317,28 @@ async function route(
       response = await handleAuthMe(request, env);
       break;
 
+    // Internal crawler endpoints authenticate with FEED_PROXY_SECRET in their
+    // handlers; they intentionally do not require a user session.
+    case url.pathname === '/api/internal/ingest':
+      response = await handleIngest(request, env);
+      break;
+    case url.pathname === '/api/internal/crawl-set':
+      response = await handleCrawlSet(request, env);
+      break;
+    case url.pathname === '/api/internal/feed-health':
+      response = await handleFeedHealth(request, env);
+      break;
+
+    // The reader's whole refresh, served from the D1 archive in one query.
+    case url.pathname === '/api/v2/timeline':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleTimeline(request, env, session);
+      break;
+
     // Feed routes (v2 via Fly.io proxy)
     case url.pathname === '/api/v2/feeds/fetch':
       if (!session) return unauthorizedResponse(headers);
-      response = await handleV2FeedFetch(request, env);
+      response = await handleV2FeedFetch(request, env, session);
       break;
     case url.pathname === '/api/v2/feeds/batch':
       if (!session) return unauthorizedResponse(headers);

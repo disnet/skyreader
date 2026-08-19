@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   // Container for the article card. Owns ALL store/service/hook wiring and the
   // interaction logic; resolves a flat view-model + callbacks and hands them to
   // the PURE presentational <ArticleCardView/>. The card's markup + styles live
@@ -590,6 +591,22 @@
     return () => {
       cancelled = true;
     };
+  });
+
+  // The archive drops oversized bodies at ingest (per-item content cap) and marks
+  // the item `contentTruncated`. Without this the reader would silently show the
+  // RSS summary — often two sentences — in place of a full-text post. So when
+  // such an article opens, extract the original automatically; the result flows
+  // into displayContent above (fetchedOriginal wins) and the extract cache means
+  // it happens once per URL.
+  // Gated on `expanded` rather than `isOpen`: a keyboard cursor moving across the
+  // list shouldn't fire an extraction per card it passes over.
+  $effect(() => {
+    if (!expanded || !article?.contentTruncated || !itemUrl) return;
+    // `fetch` reads and mutates its reactive entry map. Keep those reads out of
+    // this effect's dependency graph so deleting a failed entry doesn't turn an
+    // extraction error (or offline mode) into an unbounded retry loop.
+    untrack(() => linkPostContentStore.fetch(itemUrl));
   });
 
   // Same lazy-load for a document's flat text (stripped from memory). Only

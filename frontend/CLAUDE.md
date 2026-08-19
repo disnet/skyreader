@@ -39,25 +39,42 @@ All stores use Svelte 5 runes (`.svelte.ts` files):
 
 ### Services
 
-| Service         | Purpose                                            |
-| --------------- | -------------------------------------------------- |
-| `api.ts`        | HTTP client for backend API                        |
-| `db.ts`         | Dexie (IndexedDB) schema for offline storage       |
-| `sync-queue.ts` | Queue operations when offline, process when online |
-| `realtime.ts`   | WebSocket connection management                    |
-| `telemetry.ts`  | Sampled client error reports → our backend         |
+| Service           | Purpose                                            |
+| ----------------- | -------------------------------------------------- |
+| `api.ts`          | HTTP client for backend API                        |
+| `db.ts`           | Dexie (IndexedDB) schema for offline storage       |
+| `feedFetcher.ts`  | Feed refresh (timeline sync + legacy batch path)   |
+| `timelineSync.ts` | Pure helpers for the timeline sync (unit-tested)   |
+| `sync-queue.ts`   | Queue operations when offline, process when online |
+| `realtime.ts`     | WebSocket connection management                    |
+| `telemetry.ts`    | Sampled client error reports to the backend        |
 
-### Error reporting
+### Feed refresh
 
-`hooks.client.ts` wires three channels — SvelteKit's `handleError`, `window.onerror`
-and `unhandledrejection` — into `reportClientError()`, which posts to the backend's
-`/api/telemetry/error`. No Sentry SDK ships in the bundle and no third party is
-contacted; the backend decides what reaches the error tracker.
+A refresh is **one** `GET /api/v2/timeline` request (plus drain pages while `hasMore`), served from
+the backend's D1 archive with read state already stamped on each item. The client holds a single
+global cursor in Dexie `metadata` (`timelineCursor` = `{cursor, generation}`), committed only after
+a successful merge; a `generation` change cold-starts. A cold start is paged (`cold_offset`), and
+commits the first page's cursor only once the last page has merged. New subscriptions are
+backfilled through `fetchSingleFeed` → `GET /api/v2/feeds/fetch`, since their items sit below the
+global cursor — including ones that arrive from another device (`backfillMissingSubscriptions`,
+once per feed, ≤ 10 per sync).
 
-It is sampled at 10%, capped per page load, silent in dev and offline, and sends
-no query strings. The exception is `preload_recovery_failed` — the stale-chunk
-guard tripping twice, i.e. a deploy that bricked the PWA — which always sends.
-See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) §4c.
+Per-feed error state (the sidebar badge and the Manage Sources popover) comes from the response's
+`feedHealth`: the set of feeds the crawler currently considers broken. Reads are served from the
+archive, so "this feed returned nothing" means nothing — a dead feed and a quiet feed look
+identical, and only the server's health verdict distinguishes them. **Absence from that map is what
+clears an error**, so `applyHealthSnapshot` runs after the per-feed `markReady` pass and overrides
+it. The payload is sent on every cold start and whenever the echoed `health_rev` is stale, so a
+steady-state poll pays nothing for it.
+
+The legacy per-feed `/api/v2/feeds/batch` path (`fetchAllFeedsViaBatch`, with per-subscription
+`feedCursors`) is kept for one release as a fallback: it runs when the timeline 404s and whenever
+the server reports `ingestActive: false` (this environment's crawler isn't pushing into D1). See
+`docs/plans/D1_FEED_TIMELINE.md`.
+
+Client errors flow through `/api/telemetry/error`; no Sentry SDK ships in the frontend bundle.
+See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for sampling and recovery details.
 
 ### Key Routes
 

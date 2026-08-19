@@ -8,6 +8,12 @@
  * - nextRetryAt?: number (Unix timestamp)
  */
 
+import {
+  isCircuitOpen,
+  reconcileFeedHealth,
+  type TimelineFeedHealth,
+} from '$lib/services/timelineSync';
+
 export type FeedStatusType = 'ready' | 'pending' | 'error' | 'circuit-open';
 export type ErrorType = 'transient' | 'permanent';
 
@@ -97,6 +103,12 @@ export interface V2FeedResult {
   hasMore?: boolean;
 }
 
+/**
+ * One broken feed as the timeline reports it (`feedHealth` on the response).
+ * Timestamps are unix ms.
+ */
+export type FeedHealthSnapshot = TimelineFeedHealth;
+
 function createFeedStatusStore() {
   let statuses = $state<Map<string, FeedStatus>>(new Map());
 
@@ -149,22 +161,83 @@ function createFeedStatusStore() {
         lastCheckedAt: now,
       });
     } else {
-      // Error response
-      const errorType = classifyError(result.error);
-      const isCircuitOpen = result.nextRetryAt && result.nextRetryAt > now / 1000;
-
-      statuses.set(feedUrl, {
-        status: isCircuitOpen ? 'circuit-open' : 'error',
-        errorCount: result.errorCount || 1,
-        errorMessage: result.error,
-        errorType,
-        nextRetryAt: result.nextRetryAt ? result.nextRetryAt * 1000 : undefined, // Convert to ms
-        lastFetchedAt: result.lastFetchedAt,
-        lastCheckedAt: now,
-      });
+      // Error response. `nextRetryAt` is already unix MILLISECONDS — the proxy
+      // computes it as `Date.now() + backoff` and passes it through untouched.
+      // It used to be re-scaled by 1000 here, which put every retry ~50,000 years
+      // out: `canFetch` then refused the feed forever and the popover offered an
+      // absurd countdown, so a feed that hit one transient error was never
+      // retried again for the life of the tab.
+      statuses.set(
+        feedUrl,
+        buildErrorStatus(feedUrl, now, {
+          errorCount: result.errorCount || 1,
+          error: result.error,
+          nextRetryAt: result.nextRetryAt,
+          lastFetchedAt: result.lastFetchedAt,
+        })
+      );
     }
 
     // Trigger reactivity
+    statuses = new Map(statuses);
+  }
+
+  /**
+   * Shared shape for "this feed is broken", from either the legacy batch
+   * response or the timeline's health payload.
+   */
+  function buildErrorStatus(feedUrl: string, now: number, health: FeedHealthSnapshot): FeedStatus {
+    return {
+      status: isCircuitOpen(health.nextRetryAt, now) ? 'circuit-open' : 'error',
+      errorCount: health.errorCount || 1,
+      errorMessage: health.error,
+      errorType: classifyError(health.error),
+      nextRetryAt: health.nextRetryAt,
+      lastFetchedAt: health.lastFetchedAt ?? statuses.get(feedUrl)?.lastFetchedAt,
+      lastCheckedAt: now,
+    };
+  }
+
+  /**
+   * Apply the timeline's per-feed health for a whole subscription set.
+   *
+   * The timeline path has no per-request feed status to report — reads are served
+   * from the archive and never touch the crawler — so the server sends the set of
+   * feeds it currently considers broken and this reconciles against it. Only the
+   * broken ones are listed, so a subscribed feed that is ABSENT is healthy: that
+   * is what clears an error once a feed starts working again, including one
+   * inherited from the legacy batch path.
+   *
+   * Feeds the crawler hasn't reached yet are simply not in `subscribedFeedUrls`'s
+   * intersection with any known status, so they keep whatever state they had
+   * (usually 'pending') rather than being asserted healthy.
+   */
+  function applyHealthSnapshot(
+    unhealthy: Record<string, FeedHealthSnapshot>,
+    subscribedFeedUrls: Iterable<string>
+  ): void {
+    const now = Date.now();
+    const decisions = reconcileFeedHealth(unhealthy, subscribedFeedUrls, (feedUrl) => {
+      const status = statuses.get(feedUrl)?.status;
+      return status === 'error' || status === 'circuit-open';
+    });
+    if (decisions.length === 0) return;
+
+    for (const decision of decisions) {
+      if (decision.kind === 'error') {
+        statuses.set(decision.feedUrl, buildErrorStatus(decision.feedUrl, now, decision.health));
+      } else {
+        // Recovered. Keep the last known fetch time rather than stamping one:
+        // the report says the feed is no longer broken, not that we just read it.
+        statuses.set(decision.feedUrl, {
+          status: 'ready',
+          errorCount: 0,
+          lastFetchedAt: statuses.get(decision.feedUrl)?.lastFetchedAt,
+          lastCheckedAt: now,
+        });
+      }
+    }
+
     statuses = new Map(statuses);
   }
 
@@ -402,6 +475,7 @@ function createFeedStatusStore() {
       return permanentErrorFeeds;
     },
     updateFromV2Result,
+    applyHealthSnapshot,
     markPending,
     markReady,
     markError,

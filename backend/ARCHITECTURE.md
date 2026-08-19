@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Skyreader backend is a Cloudflare Worker that serves as an API gateway between the frontend and the AT Protocol ecosystem. It handles authentication, RSS feed fetching/parsing via a Fly.io proxy, social features, saved articles, and background Jetstream polling.
+The Skyreader backend is a Cloudflare Worker that serves as an API gateway between the frontend and the AT Protocol ecosystem. It handles authentication, the D1-served feed timeline (crawled and pushed by a Fly.io proxy), social features, saved articles, and background Jetstream polling.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -17,8 +17,8 @@ The Skyreader backend is a Cloudflare Worker that serves as an API gateway betwe
 │                         CLOUDFLARE WORKER                                 │
 │                                                                           │
 │  ┌──────────┐  ┌──────────────┐  ┌───────────────┐  ┌──────────────────┐  │
-│  │ auth.ts  │  │ feeds-v2.ts  │  │ social.ts     │  │ subscriptions.ts │  │
-│  │ OAuth    │  │ Feed proxy   │  │ Social feed   │  │ CRUD             │  │
+│  │ auth.ts  │  │ timeline.ts  │  │ social.ts     │  │ subscriptions.ts │  │
+│  │ OAuth    │  │ D1 timeline  │  │ Social feed   │  │ CRUD             │  │
 │  └────┬─────┘  └──────┬───────┘  └───────┬───────┘  └────────┬─────────┘  │
 │       │               │                  │                   │           │
 │  ┌────┴────┐  ┌───────┴──────┐  ┌────────┴───────┐  ┌───────┴────────┐ │
@@ -51,7 +51,7 @@ The Skyreader backend is a Cloudflare Worker that serves as an API gateway betwe
         ↓                          ↓                       │
 ┌───────────────────┐  ┌───────────────────┐  ┌─────────────────────────┐
 │ BLUESKY PDS       │  │ FLY.IO FEED PROXY │  │ JETSTREAM FIREHOSE      │
-│ (user's data)     │  │ (RSS caching)     │  │ (AT Protocol events)    │
+│ (user's data)     │  │ (crawler)         │  │ (AT Protocol events)    │
 └───────────────────┘  └───────────────────┘  └─────────────────────────┘
 ```
 
@@ -134,15 +134,18 @@ Upsert user in D1
 Redirect to frontend with auth exchange code
 ```
 
-### Feeds (`src/routes/feeds-v2.ts`)
+### Feeds (`src/routes/timeline.ts`, `src/routes/ingest.ts`, `src/routes/feeds-v2.ts`)
 
-All feed fetching is proxied through a Fly.io feed proxy service (`FEED_PROXY_URL`), authenticated with `FEED_PROXY_SECRET`.
+Reads are served from D1. The Fly.io feed proxy (`FEED_PROXY_URL`) is the crawler: it pushes new and edited items into `feed_items` and pulls the set of feeds to crawl, both authenticated with the shared `FEED_PROXY_SECRET`. A client refresh is one `/api/v2/timeline` request — a single query joining subscriptions and read state. See `docs/plans/D1_FEED_TIMELINE.md`.
 
-| Endpoint                 | Method | Auth   | Description                       |
-| ------------------------ | ------ | ------ | --------------------------------- |
-| `/api/v2/feeds/fetch`    | GET    | Bearer | Fetch and parse a single RSS feed |
-| `/api/v2/feeds/batch`    | POST   | Bearer | Batch fetch multiple feeds        |
-| `/api/v2/feeds/discover` | GET    | Bearer | Discover feeds on a website URL   |
+| Endpoint                  | Method | Auth   | Description                                  |
+| ------------------------- | ------ | ------ | -------------------------------------------- |
+| `/api/v2/timeline`        | GET    | Bearer | The whole refresh: items since a cursor      |
+| `/api/internal/ingest`    | POST   | Secret | Crawler pushes new/edited items into D1      |
+| `/api/internal/crawl-set` | GET    | Secret | Crawler pulls the feeds to crawl             |
+| `/api/v2/feeds/fetch`     | GET    | Bearer | Single feed from D1, with proxy pull-through |
+| `/api/v2/feeds/batch`     | POST   | Bearer | Legacy batch fetch (fallback path)           |
+| `/api/v2/feeds/discover`  | GET    | Bearer | Discover feeds on a website URL              |
 
 ### Social (`src/routes/social.ts`)
 
@@ -346,9 +349,8 @@ Key tables:
 | `auth_exchange_codes`         | Short-lived auth exchange codes                                                  |
 | `subscriptions_cache`         | RSS feed subscriptions cached from PDS                                           |
 | `shares`                      | Aggregated share data from Jetstream (with reshare tracking)                     |
-| `feed_metadata`               | Feed caching metadata (ETags, errors, subscriber count, shard_id)                |
-| `feed_cache`                  | D1-based parsed feed cache                                                       |
-| `feed_items`                  | Individual feed items for efficient querying                                     |
+| `feeds`                       | One row per crawled feed (title/site/image + `last_ingest_at`)                   |
+| `feed_items`                  | The item archive the timeline serves, keyed `(feed_url, guid)` with `seq`        |
 | `documents`                   | orphaned — documents moved to on-demand proxy fetch; table left in place         |
 | `publications_cache`          | orphaned — the publication cache moved to the feed proxy                         |
 | `social_read_positions_cache` | Unified social read tracking (shares + documents)                                |
@@ -357,8 +359,10 @@ Key tables:
 | `rate_limits`                 | Per-user per-endpoint rate limiting                                              |
 | `user_settings`               | User feature preferences (Leaflet sync, PDS sync)                                |
 | `did_handle_cache`            | Handle resolution cache                                                          |
-| `sync_state`                  | Jetstream cursor and other sync state                                            |
+| `sync_state`                  | Jetstream cursor, archive generation token, crawler heartbeat                    |
 | `reshares`                    | Reshare tracking                                                                 |
+| `system_status`               | Cron-written health board (cron liveness, poller lag, proxy stats)               |
+| `metrics_snapshots`           | Hourly trend points behind the admin's sparklines (90-day retention)             |
 
 ---
 
@@ -421,8 +425,8 @@ crons = ["* * * * *"]  # Every minute
 
 ### Feed Errors
 
-- Feed proxy handles caching and error tracking
-- `feed_metadata` tracks `error_count` and `fetch_error`
+- The feed proxy (the crawler) owns caching, retries and per-feed error tracking; its `/stats` is where `feedsInError` comes from
+- D1 keeps only ingest state: `feeds.last_ingest_at` per feed, `sync_state.crawler_heartbeat_at` for the crawler as a whole
 
 ### OAuth Errors
 
