@@ -254,7 +254,7 @@ function toSeconds(ms: number | null | undefined): number | null {
  */
 export function selectFeedHealth(db: Database, now = Date.now()): FeedHealthReport[] {
   const staleBefore = now - CRAWL_STALE_MS;
-  return db
+  const all = db
     .query<
       {
         url: string;
@@ -283,6 +283,53 @@ export function selectFeedHealth(db: Database, now = Date.now()): FeedHealthRepo
       lastFetchAt: toSeconds(row.fetched_at),
       crawlStale: (row.fetched_at ?? 0) < staleBefore,
     }));
+
+  return boundHealthReport(all);
+}
+
+/**
+ * Keep the report under the Worker's `MAX_HEALTH_FEEDS` (2000), which rejects an
+ * oversized body outright with `400 Too many feeds` — turning "some feeds are
+ * stale" into "feed health stops updating at all, in both directions, forever".
+ *
+ * Whole-set-not-a-delta is the invariant here: the Worker infers recovery from a
+ * feed's ABSENCE, so anything dropped is marked healthy. That makes WHAT gets
+ * dropped a correctness question, not a preference:
+ *
+ * - `error_count > 0` entries are ALWAYS kept. They drive the reader's per-feed
+ *   error badges, so dropping one silently clears a real error. This set is small
+ *   by construction (a few hundred) — it has never approached the cap.
+ * - `crawlStale`-only entries fill whatever budget is left. Dropping one is
+ *   survivable: `crawl_stale` is an operator signal, deliberately excluded from
+ *   `feed_health_rev`, and invisible to readers.
+ *
+ * The stale set is what actually balloons — a full warm cycle longer than
+ * CRAWL_STALE_MS marks every unvisited feed stale at once, and with ~5,600 feeds
+ * registered that is three times the cap. Never truncate silently: the log line
+ * is the only thing that would tell an operator the crawler is falling behind.
+ */
+export const MAX_HEALTH_REPORT_FEEDS = 1500;
+
+function boundHealthReport(reports: FeedHealthReport[]): FeedHealthReport[] {
+  if (reports.length <= MAX_HEALTH_REPORT_FEEDS) return reports;
+
+  const erroring = reports.filter((r) => r.errorCount > 0);
+  const staleOnly = reports.filter((r) => r.errorCount === 0);
+  const budget = Math.max(0, MAX_HEALTH_REPORT_FEEDS - erroring.length);
+  const dropped = staleOnly.length - Math.min(staleOnly.length, budget);
+
+  if (dropped > 0) {
+    console.warn(
+      `[Proxy] Feed health: ${reports.length} feeds in trouble exceeds the ${MAX_HEALTH_REPORT_FEEDS} cap; ` +
+        `reporting ${erroring.length} erroring + ${Math.min(staleOnly.length, budget)} stale, ` +
+        `dropping ${dropped} stale-only. The warm loop is not keeping up with the crawl set.`
+    );
+  }
+
+  // Erroring feeds first so they survive even if they alone were to exceed the
+  // cap — an over-cap body is rejected wholesale, so a truncated report always
+  // beats no report.
+  return [...erroring, ...staleOnly.slice(0, budget)].slice(0, MAX_HEALTH_REPORT_FEEDS);
 }
 
 export interface FeedHealthResult {

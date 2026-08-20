@@ -16,6 +16,7 @@ import {
   CRAWL_STALE_MS,
   selectDirtyRows,
   selectFeedHealth,
+  MAX_HEALTH_REPORT_FEEDS,
   countDirtyRows,
   type IngestConfig,
 } from './ingest-push';
@@ -366,6 +367,50 @@ describe('feed health reporting', () => {
       ]
     );
   }
+
+  it('caps an oversized report, keeping every erroring feed and dropping stale-only ones', () => {
+    // The Worker rejects a body over MAX_HEALTH_FEEDS (2000) outright, so an
+    // uncapped report is not "a big report" — it is no report at all, in both
+    // directions, until the crawler catches up.
+    const now = Date.now();
+    const staleAt = now - CRAWL_STALE_MS - 1;
+    const total = MAX_HEALTH_REPORT_FEEDS + 500;
+    const erroringCount = 50;
+
+    const insert = db.query(
+      `INSERT INTO cache (url_hash, url, parsed_json, parser_version, parser_upgrade_attempted_version,
+                          cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
+       VALUES (?, ?, '{"title":"","items":[],"fetchedAt":0}', 0, 0, 0, ?, ?, ?, ?, ?, ?)`
+    );
+    db.transaction(() => {
+      for (let i = 0; i < total; i++) {
+        const url = `https://example.com/bulk-${i}.xml`;
+        const erroring = i < erroringCount;
+        insert.run(
+          hashUrl(url),
+          url,
+          staleAt,
+          erroring ? 3 : 0,
+          erroring ? 'boom' : null,
+          erroring ? now : null,
+          erroring ? now + 600_000 : null,
+          now
+        );
+      }
+    })();
+
+    const health = selectFeedHealth(db, now);
+
+    expect(health).toHaveLength(MAX_HEALTH_REPORT_FEEDS);
+    // Every erroring feed survives: dropping one silently clears a real error
+    // badge, because the Worker infers recovery from a feed's absence.
+    expect(health.filter((f) => f.errorCount > 0)).toHaveLength(erroringCount);
+    // The rest of the budget goes to stale-only entries, which are an operator
+    // signal (excluded from feed_health_rev) and safe to shed.
+    expect(health.filter((f) => f.errorCount === 0 && f.crawlStale)).toHaveLength(
+      MAX_HEALTH_REPORT_FEEDS - erroringCount
+    );
+  });
 
   it('reports only broken feeds, converting milliseconds to seconds', () => {
     const at = 1_770_000_000_000;
