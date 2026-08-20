@@ -51,12 +51,26 @@ primary_region = "sjc"
   WARM_ENABLED = "true"
   WARM_INTERVAL_SECONDS = "60"
   WARM_ACTIVE_WINDOW_SECONDS = "1209600"
-  # Sized to keep the whole active set fresh: ~1330 active feeds at a 180s refresh
-  # threshold need ~440 refreshes/tick (1330 × 60/180) to never go stale. Cap 500
-  # covers that with margin. Cheap now that WARM_MENTIONS is off (load dropped from
-  # ~0.8 to ~0.04 once the mention fan-out was removed). Concurrency raised so a few
-  # 30s-timeout feeds can't stall the drain within a 60s tick.
-  WARM_BATCH_CAP = "500"
+  # Lowered 500 → 200 on 2026-08-20, during the initial prod ingest backfill.
+  #
+  # The old 500 was sized for "~1330 active feeds need ~440 refreshes/tick to
+  # never go stale". That premise is gone: the crawl-set pull now stamps
+  # last_requested_at on EVERY subscribed feed, so the active set is ~5,586 and
+  # keeping it all fresh would need ~1,860/tick — unreachable at any cap this box
+  # can afford. Freshness is already best-effort, so the cap's real job is now to
+  # bound per-tick CPU rather than to chase a fresh-everything target.
+  #
+  # 200/tick cycles all 5,586 feeds in ~28 minutes (5586/200 ticks × 60s), against
+  # ~11 minutes at 500. That is the accepted trade: the box was event-loop starved
+  # at 500 (health checks timing out for minutes at a stretch, post-deploy smoke
+  # failing) on 2 shared vCPUs while also draining the backfill.
+  #
+  # Raise it back once the backfill has drained and CPU headroom is measurable —
+  # `/stats` reports rssMb now, and the warmer logs a saturation line every tick
+  # it fills the cap, so both sides of the trade are visible.
+  WARM_BATCH_CAP = "200"
+  # Left at 16 deliberately: this bounds PEAK parallelism, not total work, and one
+  # variable at a time makes the effect of the cap change readable.
   WARM_CONCURRENCY = "16"
   # Pre-warming network-wide mention counts (Constellation fan-out) is OFF. It was a
   # pathological amplification — 25 items × ~1330 feeds × ~14 Constellation calls per

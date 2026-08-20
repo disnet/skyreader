@@ -48,7 +48,10 @@ primary_region = "sjc"
   WARM_ENABLED = "true"
   WARM_INTERVAL_SECONDS = "60"
   WARM_ACTIVE_WINDOW_SECONDS = "1209600"
-  WARM_BATCH_CAP = "500"
+  # Lowered 500 → 200 alongside prod; see fly.toml for the full rationale
+  # (crawl set is ~5,586 feeds, so the cap now bounds per-tick CPU rather
+  # than chasing a fresh-everything target).
+  WARM_BATCH_CAP = "200"
   WARM_CONCURRENCY = "16"
   WARM_MENTIONS = "false"
   EXTRACT_CONCURRENCY = "4"
