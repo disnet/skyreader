@@ -50,6 +50,20 @@ export interface AppConfig {
   warmBatchCap?: number;
   // Max concurrent upstream fetches during a warm tick.
   warmConcurrency?: number;
+  // How often a warm tick fires. Passed in only so the warmer can report its own
+  // crawl cycle in terms an operator can act on; the timer itself lives in
+  // index.ts. Optional; defaults to WARM_INTERVAL_MS in createApp.
+  warmIntervalMs?: number;
+  // Crawl cycle we are willing to accept — how long a full pass over the active
+  // feed set may take before it is worth telling someone. NOT a target the warmer
+  // tries to hit; it is purely the threshold for the warning.
+  //
+  // Post-D1-timeline this is the number that matters, replacing "how many feeds
+  // are inside the 300s fresh window". Reads are served from D1 and never touch
+  // this proxy, so a feed falling out of the fresh window costs nobody a blocking
+  // fetch — it only means newly published items reach readers up to one cycle
+  // late. Optional; defaults to DEFAULT_WARM_TARGET_CYCLE_MS.
+  warmTargetCycleMs?: number;
   // Pre-warm Phase 5 mention counts for a refreshed feed's items (extra
   // Constellation load). Off by default; enabled in production via index.ts.
   warmMentionsEnabled?: boolean;
@@ -225,6 +239,13 @@ const FETCH_TIMEOUT_MS = 30 * 1000; // 30 seconds
 // in the background (it warms the cache for the next poll) and return what we
 // have. Much shorter than FETCH_TIMEOUT_MS on purpose.
 const BATCH_INLINE_FETCH_BUDGET_MS = 6 * 1000; // 6 seconds
+
+// Default acceptable crawl cycle: half the crawler's own CRAWL_STALE_MS (2h, in
+// ingest-push.ts — deliberately NOT imported, since the dependency runs one way,
+// ingest-push -> app). Half, because this log line is the EARLY signal and
+// `crawl_stale` (with the admin tile it feeds) is the escalation: this must fire
+// first, with an hour of margin, or it tells you nothing you did not already know.
+const DEFAULT_WARM_TARGET_CYCLE_MS = 60 * 60 * 1000;
 // How long a firehose-covered author may go without a full PDS re-list. Long,
 // because the stream really does carry everything written while it is connected
 // — this only has to close the gaps it can't see (a reconnect, a cursor reset,
@@ -1568,6 +1589,8 @@ export function createApp(db: Database, config: AppConfig) {
   const warmActiveWindowMs = config.warmActiveWindowMs ?? 14 * 24 * 60 * 60 * 1000;
   const warmBatchCap = config.warmBatchCap ?? 200;
   const warmConcurrency = config.warmConcurrency ?? 8;
+  const warmIntervalMs = config.warmIntervalMs ?? 60_000;
+  const warmTargetCycleMs = config.warmTargetCycleMs ?? DEFAULT_WARM_TARGET_CYCLE_MS;
   const warmMentionsEnabled = config.warmMentionsEnabled ?? false;
 
   // Surface silent warm-loop saturation: when a tick fills the batch cap there
@@ -1582,6 +1605,41 @@ export function createApp(db: Database, config: AppConfig) {
   // on a fresh cache (a HIT) instead of triggering a blocking upstream fetch.
   // Reuses the on-demand fetch path (and its circuit breaker / conditional
   // requests) and dedups against in-flight refreshes via the same inFlight map.
+  /**
+   * Observed crawl cycle: how far behind the warmer actually is, measured rather
+   * than modelled.
+   *
+   * The warmer takes the oldest feeds first (`ORDER BY fetched_at ASC`), so the
+   * age of the OLDEST still-eligible feed is, by construction, how long a full
+   * pass is currently taking. That beats computing `feeds x interval / cap`,
+   * because the real number absorbs everything the formula ignores: ticks that
+   * overran, slow upstreams holding concurrency slots, feeds skipped this pass.
+   *
+   * Two exclusions, both deliberate:
+   *   - Feeds in error backoff. The crawler is declining to fetch those ON
+   *     PURPOSE, and a 7-day permanent backoff would otherwise dominate the
+   *     result and make the cycle look infinite forever.
+   *   - `fetched_at = 0`, i.e. never fetched. A feed the crawl set registered
+   *     seconds ago starts at 0, which would read as "infinitely behind" the
+   *     moment anyone subscribes to something new.
+   */
+  function crawlCycle(now: number): { cycleMs: number; active: number } {
+    const row = db
+      .query<{ oldest: number | null; active: number }, [number, number]>(
+        `SELECT MIN(fetched_at) AS oldest, COUNT(*) AS active
+				   FROM cache
+				  WHERE last_requested_at IS NOT NULL
+				    AND last_requested_at > ?
+				    AND fetched_at > 0
+				    AND (next_retry_at IS NULL OR next_retry_at < ?)`
+      )
+      .get(now - warmActiveWindowMs, now);
+    return {
+      cycleMs: row?.oldest ? now - row.oldest : 0,
+      active: row?.active ?? 0,
+    };
+  }
+
   async function warmStaleFeeds(): Promise<number> {
     const now = Date.now();
     // Deliberately NOT `SELECT *`: the batch is up to WARM_BATCH_CAP rows and
@@ -1613,33 +1671,17 @@ export function createApp(db: Database, config: AppConfig) {
 
     if (rows.length === 0) return 0;
 
-    if (
-      rows.length >= warmBatchCap &&
-      now - lastFeedSaturationWarn > WARM_SATURATION_WARN_THROTTLE_MS
-    ) {
-      lastFeedSaturationWarn = now;
-      const eligible = db
-        .query<{ count: number }, [number, number, number, number, number]>(
-          `SELECT COUNT(*) as count FROM cache
-					WHERE (
-							(parser_version <> ? AND parser_upgrade_attempted_version <> ?)
-							OR (fetched_at < ? AND (next_retry_at IS NULL OR next_retry_at < ?))
-						)
-						AND last_requested_at IS NOT NULL
-						AND last_requested_at > ?`
-        )
-        .get(
-          FEED_PARSER_VERSION,
-          FEED_PARSER_VERSION,
-          now - warmRefreshThresholdMs,
-          now,
-          now - warmActiveWindowMs
-        );
-      const total = eligible?.count ?? rows.length;
-      if (total > warmBatchCap) {
+    if (now - lastFeedSaturationWarn > WARM_SATURATION_WARN_THROTTLE_MS) {
+      const cycle = crawlCycle(now);
+      if (cycle.cycleMs > warmTargetCycleMs) {
+        lastFeedSaturationWarn = now;
         console.warn(
-          `[Proxy] Warmer saturated: ${total} feeds due for refresh but cap is ${warmBatchCap}; ` +
-            `${total - warmBatchCap} wait this tick and may go stale. Raise WARM_BATCH_CAP/WARM_CONCURRENCY.`
+          `[Proxy] Crawl cycle ${Math.round(cycle.cycleMs / 60000)}m exceeds the ` +
+            `${Math.round(warmTargetCycleMs / 60000)}m target: ${cycle.active} active feed(s) at ` +
+            `${warmBatchCap}/tick every ${warmIntervalMs / 1000}s. New items reach readers up to a ` +
+            `cycle late. Cycle ~= feeds x interval / cap, so raise WARM_BATCH_CAP to ` +
+            `~${Math.ceil((cycle.active * warmIntervalMs) / warmTargetCycleMs)} to hit the target, ` +
+            `or raise WARM_TARGET_CYCLE_SECONDS if this cadence is acceptable.`
         );
       }
     }
@@ -2013,6 +2055,21 @@ export function createApp(db: Database, config: AppConfig) {
         pending: pendingCount?.count || 0,
       },
       extract: { inUse: extractSemaphore.inUse, queued: extractSemaphore.queued },
+      // Observed crawl cycle — how long a full pass over the active feed set is
+      // actually taking. This is the freshness number that means something now
+      // that reads are served from D1: it bounds how late a newly published item
+      // reaches a reader. `fresh`/`stale` above describe the proxy's own cache,
+      // which only the pull-through path still reads.
+      warm: (() => {
+        const cycle = crawlCycle(now);
+        return {
+          cycleSeconds: Math.round(cycle.cycleMs / 1000),
+          targetCycleSeconds: Math.round(warmTargetCycleMs / 1000),
+          activeFeeds: cycle.active,
+          batchCap: warmBatchCap,
+          intervalSeconds: warmIntervalMs / 1000,
+        };
+      })(),
       // Demand-driven feed fetches. `inFlight` above counts coalesced fetches of
       // any origin; this is specifically the governed subset. `enabled: false`
       // means unbounded — the number to watch before deciding to turn it on.
