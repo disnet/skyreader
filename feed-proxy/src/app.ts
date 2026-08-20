@@ -1529,9 +1529,15 @@ export function createApp(db: Database, config: AppConfig) {
   // requests) and dedups against in-flight refreshes via the same inFlight map.
   async function warmStaleFeeds(): Promise<number> {
     const now = Date.now();
+    // Deliberately NOT `SELECT *`: the batch is up to WARM_BATCH_CAP rows and
+    // `parsed_json` is a whole serialised feed (up to K=200 items with bodies).
+    // Selecting it here held the entire batch's feed content live for the whole
+    // tick — hundreds of MB on a large crawl set, and the OOM that took the prod
+    // box down on 2026-08-20. The worker re-reads the one row it needs instead,
+    // so at most WARM_CONCURRENCY blobs are resident at a time.
     const rows = db
-      .query<CacheRow, [number, number, number, number, number, number]>(
-        `SELECT * FROM cache
+      .query<Pick<CacheRow, 'url_hash' | 'url'>, [number, number, number, number, number, number]>(
+        `SELECT url_hash, url FROM cache
 				WHERE (
 						(parser_version <> ? AND parser_upgrade_attempted_version <> ?)
 						OR (fetched_at < ? AND (next_retry_at IS NULL OR next_retry_at < ?))
@@ -1586,11 +1592,18 @@ export function createApp(db: Database, config: AppConfig) {
     const queue = [...rows];
     let refreshed = 0;
 
+    // One prepared statement shared by the workers. `.get()` is synchronous and
+    // returns before any await, so concurrent workers never interleave inside it.
+    const readCacheRow = db.query<CacheRow, [string]>('SELECT * FROM cache WHERE url_hash = ?');
+
     async function worker(): Promise<void> {
       for (let row = queue.shift(); row; row = queue.shift()) {
         // Skip feeds an on-demand request is already refreshing.
         if (inFlight.has(row.url_hash)) continue;
-        const promise = fetchParseAndCache(row.url, row.url_hash, row).finally(() => {
+        // Read the full row (parsed_json included) for THIS feed only, at the
+        // moment it is about to be fetched — see the note on the query above.
+        const cached = readCacheRow.get(row.url_hash) ?? undefined;
+        const promise = fetchParseAndCache(row.url, row.url_hash, cached).finally(() => {
           inFlight.delete(row.url_hash);
         });
         inFlight.set(row.url_hash, promise);
@@ -1713,9 +1726,11 @@ export function createApp(db: Database, config: AppConfig) {
   // warmStaleFeeds.
   async function warmStaleDocuments(): Promise<number> {
     const now = Date.now();
+    // Same reasoning as warmStaleFeeds: `SELECT *` would hold every author's
+    // whole serialised document set live for the tick.
     const rows = db
-      .query<DocumentCacheRow, [number, number, number, number]>(
-        `SELECT * FROM document_cache
+      .query<Pick<DocumentCacheRow, 'did'>, [number, number, number, number]>(
+        `SELECT did FROM document_cache
 				WHERE fetched_at < ?
 					AND (next_retry_at IS NULL OR next_retry_at < ?)
 					AND last_requested_at IS NOT NULL
@@ -1753,10 +1768,15 @@ export function createApp(db: Database, config: AppConfig) {
     const queue = [...rows];
     let refreshed = 0;
 
+    const readDocumentRow = db.query<DocumentCacheRow, [string]>(
+      'SELECT * FROM document_cache WHERE did = ?'
+    );
+
     async function worker(): Promise<void> {
       for (let row = queue.shift(); row; row = queue.shift()) {
         if (inFlightDocs.has(row.did)) continue;
-        const promise = fetchAndCacheDocuments(row.did, row).finally(() => {
+        const cached = readDocumentRow.get(row.did) ?? undefined;
+        const promise = fetchAndCacheDocuments(row.did, cached).finally(() => {
           inFlightDocs.delete(row.did);
         });
         inFlightDocs.set(row.did, promise);
@@ -1912,11 +1932,25 @@ export function createApp(db: Database, config: AppConfig) {
       )
       .get();
 
+    // Process memory, in MB. Not decoration: this box is a 1 GB singleton whose
+    // realistic failure mode is the OOM killer, and `fly status` reports a
+    // restarted machine as healthy — the kill only shows up in
+    // `fly machine status <id>`. Sampling `rss` here is what turns "is it about
+    // to die" into a question you can answer before it does.
+    const mem = process.memoryUsage();
+    const mb = (bytes: number): number => Math.round(bytes / 1024 / 1024);
+
     return c.json({
       total: total?.count || 0,
       fresh: fresh?.count || 0,
       stale: stale?.count || 0,
       inFlight: inFlight.size,
+      memory: {
+        rssMb: mb(mem.rss),
+        heapUsedMb: mb(mem.heapUsed),
+        heapTotalMb: mb(mem.heapTotal),
+        externalMb: mb(mem.external),
+      },
       ingest: {
         enabled: config.ingestEnabled ?? false,
         items: itemCount?.count || 0,
