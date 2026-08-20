@@ -3134,3 +3134,64 @@ describe('Durable item retention (feed_items cursor)', () => {
     expect(next.feed.items).toHaveLength(0);
   });
 });
+
+describe('demand-driven fetch governor', () => {
+  let fetchSpy: ReturnType<typeof spyOn> | undefined;
+
+  afterEach(() => {
+    fetchSpy?.mockRestore();
+    fetchSpy = undefined;
+  });
+
+  it('sheds an over-capacity fetch without marking the feed broken', async () => {
+    // One permit, no queue: the second distinct feed in the batch is shed
+    // immediately rather than waiting.
+    const { db, app } = createTestApp({
+      feedFetchConcurrency: 1,
+      feedFetchQueueMax: 0,
+      batchInlineFetchBudgetMs: 50,
+    });
+
+    // Never resolves, so the first feed holds the only permit for the whole test.
+    fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(
+      (() => new Promise(() => {})) as unknown as typeof fetch
+    );
+
+    const held = 'https://example.com/held.xml';
+    const shed = 'https://example.com/shed.xml';
+
+    const res = await app.request('/feeds', {
+      method: 'POST',
+      headers: { 'X-Proxy-Secret': 'test-secret', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls: [held, shed] }),
+    });
+
+    // A shed fetch must not fail the request: the batch still answers for both.
+    expect(res.status).toBe(200);
+    const json = (await res.json()).feeds;
+    expect(Object.keys(json).sort()).toEqual([held, shed].sort());
+
+    // The invariant that matters. Shedding means "we declined to fetch right
+    // now", not "this feed is broken" — recording an error here would set a
+    // retry backoff and surface a bogus error badge to every subscriber.
+    for (const url of [held, shed]) {
+      const row = db
+        .query<
+          { error_count: number; next_retry_at: number | null },
+          [string]
+        >('SELECT error_count, next_retry_at FROM cache WHERE url_hash = ?')
+        .get(hashUrl(url));
+      expect(row?.error_count ?? 0).toBe(0);
+      expect(row?.next_retry_at ?? null).toBeNull();
+    }
+
+    db.close();
+  });
+
+  it('is unbounded unless configured, preserving historical behaviour', async () => {
+    const { db, app } = createTestApp();
+    const res = await app.request('/stats', { headers: { 'X-Proxy-Secret': 'test-secret' } });
+    expect((await res.json()).feedFetch).toEqual({ enabled: false });
+    db.close();
+  });
+});

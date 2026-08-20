@@ -33,6 +33,10 @@ primary_region = "sjc"
   # in-process on timers and can only work while a machine is up.
   min_machines_running = 1
 
+# Staging stays on shared/2/1024 while prod is temporarily on performance/2/4096
+# (2026-08-20, ingest backfill). Deliberate divergence — see fly.toml. Keeping
+# staging on the smaller profile is the point: it is the configuration prod
+# intends to return to, so this is where regressions in it will surface first.
 [vm]
   cpu_kind = "shared"
   cpus = 2
@@ -57,5 +61,22 @@ primary_region = "sjc"
   WARM_BATCH_CAP = "200"
   WARM_CONCURRENCY = "16"
   WARM_MENTIONS = "false"
+  # Governor on demand-driven feed fetches (batch inline misses + the background
+  # refresh a STALE read fires). Turned ON 2026-08-20 on evidence: /stats showed
+  # inFlight=87 with the warmer paused, i.e. 87 concurrent upstream fetches driven
+  # purely by reader polling, on 2 vCPUs, while the backfill was trying to drain.
+  #
+  # Set deliberately LOW during the backfill. With `fresh: 0` in the cache every
+  # read already falls through to the past-stale path and gets served prior
+  # content, so throttling fetches costs almost nothing user-visible right now —
+  # and the CPU it frees goes to the ingest pusher, which is the thing actually
+  # blocking progress. Excess fetches queue (up to FEED_FETCH_QUEUE_MAX, default
+  # 500) and are shed as "no fresh content", never as a feed error.
+  #
+  # Raise toward WARM_CONCURRENCY (16) or above once the backfill has drained and
+  # freshness matters again. Watch `feedFetch.queued` on /stats: persistently deep
+  # means this is too tight for real demand.
+  FEED_FETCH_CONCURRENCY = "8"
+
   EXTRACT_CONCURRENCY = "4"
   EXTRACT_QUEUE_MAX = "20"

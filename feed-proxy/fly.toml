@@ -5,9 +5,12 @@ primary_region = "sjc"
 # the `INGEST_URL` in [env]; everything else is deliberately identical so staging
 # soaks what prod will run.
 #
-# TEMPORARY EXCEPTION (2026-08-20): WARM_ENABLED is "false" here and "true" in
-# staging, while the prod backfill drains. See the block on that setting below.
-# This is the only permitted divergence and it is meant to be short-lived.
+# TEMPORARY EXCEPTIONS (2026-08-20), both while the prod backfill drains, both
+# meant to be short-lived — see the block above each setting:
+#   - WARM_ENABLED is "false" here, "true" in staging.
+#   - [vm] is performance/2/4096 here, shared/2/1024 in staging.
+# Staging crawls ~100 feeds and was never the box under pressure, so it stays on
+# the cheaper profile and keeps soaking the configuration prod will return to.
 #
 # SINGLETON INVARIANT — run exactly ONE machine. This app is not horizontally
 # scalable as written: the cache is a SQLite DB on the per-machine `proxy_data`
@@ -36,10 +39,30 @@ primary_region = "sjc"
   # would stop warming whenever traffic is idle, defeating the purpose.
   min_machines_running = 1
 
+# ┌─ TEMPORARY, 2026-08-20 ────────────────────────────────────────────────────┐
+# │ Upgraded shared/2/1024 → performance/2/4096 for the initial ingest backfill.│
+# │                                                                             │
+# │ Why: shared vCPUs run on burst credits, and hours of sustained crawl +      │
+# │ backfill exhausts them, after which Fly throttles hard. The symptom was a   │
+# │ trivial /health JSON response taking 12-25s (or timing out) while the box   │
+# │ was otherwise alive — event-loop starvation, not memory. Post-deploy smoke  │
+# │ checks failed six attempts straight on two consecutive releases.            │
+# │                                                                             │
+# │ REVERT to shared/2/1024 once the backfill has drained AND the crawl set     │
+# │ stops growing — 5,586 feeds is already 4x what this box was sized for, so   │
+# │ check that number before assuming the old size still fits. Downgrading is   │
+# │ the same three lines in reverse plus a deploy (~13s restart, volume stays   │
+# │ attached).                                                                  │
+# │                                                                             │
+# │ Note the memory jump is incidental: performance presets carry 2 GB/core     │
+# │ minimums, so this also lifts the 1 GB ceiling that OOM'd the box earlier    │
+# │ today. Do not read the absence of OOMs afterwards as proof the allocation    │
+# │ fix worked — that was already proven on 1 GB before this change.            │
+# └─────────────────────────────────────────────────────────────────────────────┘
 [vm]
-  cpu_kind = "shared"
+  cpu_kind = "performance"
   cpus = 2
-  memory_mb = 1024
+  memory_mb = 4096
 
 [env]
   DATA_DIR = "/data"
@@ -110,5 +133,22 @@ primary_region = "sjc"
   # concurrency is the realistic OOM path on this 1 GB machine. Excess callers
   # queue up to EXTRACT_QUEUE_MAX, then are shed with a 503. Raise alongside [vm]
   # memory if extractions start shedding under normal load.
+  # Governor on demand-driven feed fetches (batch inline misses + the background
+  # refresh a STALE read fires). Turned ON 2026-08-20 on evidence: /stats showed
+  # inFlight=87 with the warmer paused, i.e. 87 concurrent upstream fetches driven
+  # purely by reader polling, on 2 vCPUs, while the backfill was trying to drain.
+  #
+  # Set deliberately LOW during the backfill. With `fresh: 0` in the cache every
+  # read already falls through to the past-stale path and gets served prior
+  # content, so throttling fetches costs almost nothing user-visible right now —
+  # and the CPU it frees goes to the ingest pusher, which is the thing actually
+  # blocking progress. Excess fetches queue (up to FEED_FETCH_QUEUE_MAX, default
+  # 500) and are shed as "no fresh content", never as a feed error.
+  #
+  # Raise toward WARM_CONCURRENCY (16) or above once the backfill has drained and
+  # freshness matters again. Watch `feedFetch.queued` on /stats: persistently deep
+  # means this is too tight for real demand.
+  FEED_FETCH_CONCURRENCY = "8"
+
   EXTRACT_CONCURRENCY = "4"
   EXTRACT_QUEUE_MAX = "20"

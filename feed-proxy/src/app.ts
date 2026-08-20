@@ -58,6 +58,22 @@ export interface AppConfig {
   // are shed with a 503 rather than risking OOM on the single machine.
   extractConcurrency?: number;
   extractQueueMax?: number;
+  // Max concurrent DEMAND-DRIVEN feed fetches (batch inline misses and the
+  // background refreshes a STALE read fires). Unset = unbounded, which is the
+  // historical behaviour.
+  //
+  // Why this exists: per-URL coalescing dedupes the same feed, but nothing caps
+  // how many DISTINCT feeds are fetched at once. One batch request carries up to
+  // 50 feeds and fans out with Promise.all, so a few readers polling a mostly
+  // stale cache can put hundreds of upstream fetches in flight. The warm loop was
+  // implicitly acting as the governor here (warmConcurrency); pausing it removes
+  // that, which is exactly when this is worth turning on.
+  //
+  // Does NOT apply to the warm loop (which has warmConcurrency) or to the
+  // single-feed inline fetch (one per request, and the "retry this feed" action
+  // is expected to block).
+  feedFetchConcurrency?: number;
+  feedFetchQueueMax?: number;
   // Live status of the Jetstream document firehose. When it's healthy and
   // watching an author, the /documents serve path trusts the cache regardless of
   // age (the stream keeps it current) instead of triggering an age-based re-list.
@@ -1185,6 +1201,13 @@ export function createApp(db: Database, config: AppConfig) {
     config.extractQueueMax ?? 20
   );
 
+  // Opt-in governor on demand-driven feed fetches — see AppConfig. Null means
+  // unbounded (the default), so enabling this is a config change, not a code
+  // change, and the deploy that introduces it changes nothing on its own.
+  const feedFetchSemaphore = config.feedFetchConcurrency
+    ? new Semaphore(config.feedFetchConcurrency, config.feedFetchQueueMax ?? 500)
+    : null;
+
   // Fire-and-forget background enrichment of an article's mention breakdown,
   // deduped per normalized URL. The decay gate inside enrichMentions makes most
   // of these no-ops (fresh/settled rows), so callers can trigger liberally.
@@ -1465,12 +1488,44 @@ export function createApp(db: Database, config: AppConfig) {
     const existing = inFlight.get(urlHash);
     if (existing) return existing;
 
-    const promise = fetchParseAndCache(url, urlHash, cached).finally(() => {
+    const promise = (
+      feedFetchSemaphore
+        ? fetchWithFeedPermit(url, urlHash, cached)
+        : fetchParseAndCache(url, urlHash, cached)
+    ).finally(() => {
       inFlight.delete(urlHash);
     });
 
     inFlight.set(urlHash, promise);
     return promise;
+  }
+
+  /**
+   * `fetchParseAndCache` behind the demand-driven fetch governor.
+   *
+   * Shedding here returns null rather than throwing, because every caller
+   * already has a correct answer for "no fresh content": the batch path serves
+   * the prior cached feed as STALE, and a background refresh simply doesn't
+   * happen this round. Critically it records NO error and sets NO backoff — the
+   * feed is fine, we just declined to fetch it right now, and marking it broken
+   * would surface a bogus error badge to every subscriber.
+   */
+  async function fetchWithFeedPermit(
+    url: string,
+    urlHash: string,
+    cached?: CacheRow
+  ): Promise<ParsedFeed | null> {
+    try {
+      await feedFetchSemaphore!.acquire();
+    } catch (err) {
+      if (err instanceof OverloadError) return null;
+      throw err;
+    }
+    try {
+      return await fetchParseAndCache(url, urlHash, cached);
+    } finally {
+      feedFetchSemaphore!.release();
+    }
   }
 
   function triggerBackgroundRefresh(url: string, urlHash: string, cached?: CacheRow): void {
@@ -1958,6 +2013,12 @@ export function createApp(db: Database, config: AppConfig) {
         pending: pendingCount?.count || 0,
       },
       extract: { inUse: extractSemaphore.inUse, queued: extractSemaphore.queued },
+      // Demand-driven feed fetches. `inFlight` above counts coalesced fetches of
+      // any origin; this is specifically the governed subset. `enabled: false`
+      // means unbounded — the number to watch before deciding to turn it on.
+      feedFetch: feedFetchSemaphore
+        ? { enabled: true, inUse: feedFetchSemaphore.inUse, queued: feedFetchSemaphore.queued }
+        : { enabled: false },
       // Constellation health from *our* side: breaker state, gate occupancy, and
       // the retry/shed counters. `retriesRecovered` ≫ `failures` means the
       // connection resets are being absorbed rather than blanking adornments.
