@@ -70,6 +70,15 @@ function pushBackoff(failures: number): number {
 // extractions so a burst of distinct heavy articles can't OOM the 512MB machine;
 // excess callers queue, then are shed with a 503 once the queue fills.
 const EXTRACT_CONCURRENCY = parseInt(process.env.EXTRACT_CONCURRENCY || '4', 10);
+// Governor on demand-driven feed fetches. UNSET = unbounded (historical
+// behaviour), so shipping this changes nothing until it is deliberately set.
+// Watch `feedFetch`/`inFlight` on /stats to decide. See AppConfig.
+const FEED_FETCH_CONCURRENCY = process.env.FEED_FETCH_CONCURRENCY
+  ? parseInt(process.env.FEED_FETCH_CONCURRENCY, 10)
+  : undefined;
+const FEED_FETCH_QUEUE_MAX = process.env.FEED_FETCH_QUEUE_MAX
+  ? parseInt(process.env.FEED_FETCH_QUEUE_MAX, 10)
+  : undefined;
 const EXTRACT_QUEUE_MAX = parseInt(process.env.EXTRACT_QUEUE_MAX || '20', 10);
 
 // Jetstream document firehose: keeps standard.site documents fresh via the AT
@@ -110,6 +119,8 @@ const { app, warmStaleFeeds, warmStaleDocuments } = createApp(db, {
   warmMentionsEnabled: WARM_MENTIONS_ENABLED,
   extractConcurrency: EXTRACT_CONCURRENCY,
   extractQueueMax: EXTRACT_QUEUE_MAX,
+  feedFetchConcurrency: FEED_FETCH_CONCURRENCY,
+  feedFetchQueueMax: FEED_FETCH_QUEUE_MAX,
   getFirehoseStatus: () => firehose?.status() ?? { healthy: false, isSubscribed: () => false },
   ingestEnabled: INGEST_ENABLED,
 });
