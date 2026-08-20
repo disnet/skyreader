@@ -5,10 +5,6 @@ primary_region = "sjc"
 # the `INGEST_URL` in [env]; everything else is deliberately identical so staging
 # soaks what prod will run.
 #
-# TEMPORARY EXCEPTION (2026-08-20): [vm] is performance/2/4096 here and
-# shared/2/1024 in staging, pending the post-backfill downgrade — see the block
-# above [vm]. Warming was also paused here during the backfill and has since been
-# restored, so that divergence is closed.
 #
 # SINGLETON INVARIANT — run exactly ONE machine. This app is not horizontally
 # scalable as written: the cache is a SQLite DB on the per-machine `proxy_data`
@@ -37,30 +33,21 @@ primary_region = "sjc"
   # would stop warming whenever traffic is idle, defeating the purpose.
   min_machines_running = 1
 
-# ┌─ TEMPORARY, 2026-08-20 ────────────────────────────────────────────────────┐
-# │ Upgraded shared/2/1024 → performance/2/4096 for the initial ingest backfill.│
-# │                                                                             │
-# │ Why: shared vCPUs run on burst credits, and hours of sustained crawl +      │
-# │ backfill exhausts them, after which Fly throttles hard. The symptom was a   │
-# │ trivial /health JSON response taking 12-25s (or timing out) while the box   │
-# │ was otherwise alive — event-loop starvation, not memory. Post-deploy smoke  │
-# │ checks failed six attempts straight on two consecutive releases.            │
-# │                                                                             │
-# │ REVERT to shared/2/1024 once the backfill has drained AND the crawl set     │
-# │ stops growing — 5,586 feeds is already 4x what this box was sized for, so   │
-# │ check that number before assuming the old size still fits. Downgrading is   │
-# │ the same three lines in reverse plus a deploy (~13s restart, volume stays   │
-# │ attached).                                                                  │
-# │                                                                             │
-# │ Note the memory jump is incidental: performance presets carry 2 GB/core     │
-# │ minimums, so this also lifts the 1 GB ceiling that OOM'd the box earlier    │
-# │ today. Do not read the absence of OOMs afterwards as proof the allocation    │
-# │ fix worked — that was already proven on 1 GB before this change.            │
-# └─────────────────────────────────────────────────────────────────────────────┘
+# Sized against the post-timeline steady state, not the backfill. Reads are served
+# from D1 and never reach this box, so its whole job is: crawl the active set on a
+# WARM_BATCH_CAP cadence, push deltas, and hold the firehose. Measured at ~123 MB
+# resident under exactly that load.
+#
+# It ran temporarily on performance/2/4096 during the 2026-08-20 initial backfill,
+# when sustained crawl + push exhausted the shared-CPU burst credits and the event
+# loop starved (a trivial /health taking 12-25s). That was a one-off: the backfill
+# is a fixed cost paid once. If this box ever needs performance CPUs again in
+# STEADY state, that is a signal the crawl set has outgrown it — check
+# `warm.cycleSeconds` on /stats before reaching for a bigger VM.
 [vm]
-  cpu_kind = "performance"
+  cpu_kind = "shared"
   cpus = 2
-  memory_mb = 4096
+  memory_mb = 1024
 
 [env]
   DATA_DIR = "/data"

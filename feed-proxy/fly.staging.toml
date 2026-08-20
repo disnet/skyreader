@@ -33,10 +33,6 @@ primary_region = "sjc"
   # in-process on timers and can only work while a machine is up.
   min_machines_running = 1
 
-# Staging stays on shared/2/1024 while prod is temporarily on performance/2/4096
-# (2026-08-20, ingest backfill). Deliberate divergence — see fly.toml. Keeping
-# staging on the smaller profile is the point: it is the configuration prod
-# intends to return to, so this is where regressions in it will surface first.
 [vm]
   cpu_kind = "shared"
   cpus = 2
