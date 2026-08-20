@@ -5,6 +5,10 @@ primary_region = "sjc"
 # the `INGEST_URL` in [env]; everything else is deliberately identical so staging
 # soaks what prod will run.
 #
+# TEMPORARY EXCEPTION (2026-08-20): WARM_ENABLED is "false" here and "true" in
+# staging, while the prod backfill drains. See the block on that setting below.
+# This is the only permitted divergence and it is meant to be short-lived.
+#
 # SINGLETON INVARIANT — run exactly ONE machine. This app is not horizontally
 # scalable as written: the cache is a SQLite DB on the per-machine `proxy_data`
 # volume (volumes can't be shared between machines), and the Jetstream firehose,
@@ -48,7 +52,28 @@ primary_region = "sjc"
   # Self-warming loop. WARM_REFRESH_THRESHOLD defaults to a margin below CACHE_TTL;
   # set explicitly only to override. Feeds not requested within WARM_ACTIVE_WINDOW
   # stop being polled so abandoned feeds age out.
-  WARM_ENABLED = "true"
+  # ┌─ TEMPORARY, 2026-08-20 ─────────────────────────────────────────────────┐
+  # │ Warming is PAUSED for the initial prod ingest backfill.                 │
+  # │                                                                          │
+  # │ Why: on 2 shared vCPUs a 200-feed warm tick was taking ~5 minutes and    │
+  # │ starving the ingest pusher (268s between pushes against a 15s interval), │
+  # │ which is the backfill we are actually waiting on. The pusher drains the  │
+  # │ item log the proxy has ALREADY cached, so it does not need the warmer to │
+  # │ finish. Freshness is the deliberate sacrifice until the archive fills.   │
+  # │                                                                          │
+  # │ REVERT THIS once `ingest.pending` on /stats trends to ~0:                │
+  # │   1. Set WARM_ENABLED back to "true".                                    │
+  # │   2. Un-pause the `proxy-warmer` heartbeat check (see below).            │
+  # │   3. Re-sync with fly.staging.toml, which deliberately still warms.      │
+  # │                                                                          │
+  # │ ALSO PAUSE THE ALERT: the `proxy-warmer` dead-man's switch (RUNBOOK §4,  │
+  # │ 1 min period / 5 min grace, email + phone push) is pinged from INSIDE    │
+  # │ this loop, so disabling it stops the heartbeat and the check will fire   │
+  # │ within ~5 minutes. That page would be reporting a condition we created   │
+  # │ on purpose. Pause the check for the duration rather than letting a real  │
+  # │ alert cry wolf — "silence means healthy" only survives if we keep it so. │
+  # └──────────────────────────────────────────────────────────────────────────┘
+  WARM_ENABLED = "false"
   WARM_INTERVAL_SECONDS = "60"
   WARM_ACTIVE_WINDOW_SECONDS = "1209600"
   # Lowered 500 → 200 on 2026-08-20, during the initial prod ingest backfill.
