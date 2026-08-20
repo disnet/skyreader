@@ -7,6 +7,7 @@ import type {
   ArticleMentionsResult,
 } from '../services/feed-proxy-client';
 import { resolveStandardSite } from '../utils/canonical-url';
+import { log, serializeError } from '../utils/logger';
 import { chunkArray, getReadKeys } from './reading';
 import { clearFeedHealth, ingestProxyFeed } from './ingest';
 import { readFeedMetadata, readFeedSlice, type FeedHealth } from './timeline';
@@ -74,6 +75,28 @@ async function callerSubscribes(env: Env, userDid: string, feedUrl: string): Pro
   return !!row;
 }
 
+// Shown when an error reaches the client with no message of its own. A blank
+// `error` string renders as an empty failure in the reader, which is worse than
+// a generic one.
+const FEED_FETCH_FALLBACK_ERROR = 'Failed to fetch feed';
+
+/**
+ * The queryable half of a `FeedProxyError`, for a log line. `serializeError`
+ * covers name/message/stack; these are the fields that say WHICH failure it was
+ * — an unparseable body from Fly's edge (`status` + `bodySnippet`) versus the
+ * proxy's own verdict on a broken feed (`errorCount` + `nextRetryAt`).
+ */
+function proxyErrorFields(error: unknown): Record<string, unknown> {
+  if (!(error instanceof FeedProxyError)) return {};
+  return {
+    status: error.status,
+    bodySnippet: error.bodySnippet,
+    errorCount: error.errorCount,
+    nextRetryAt: error.nextRetryAt,
+    blocked: error.blocked,
+  };
+}
+
 /**
  * GET /api/v2/feeds/fetch
  *
@@ -134,6 +157,11 @@ export async function handleV2FeedFetch(
 
   const forceRefresh = url.searchParams.get('refresh') === '1';
 
+  // Hoisted out of the try so the outer catch can log it. Whether the archive
+  // had anything is what separates a fatal pull-through (nothing to serve, so
+  // the error is the response) from a refresh failure we swallow.
+  let archiveEmpty = false;
+
   try {
     let items = await readFeedSlice(env, session.did, feedUrl, limit);
     let metadata = await readFeedMetadata(env, feedUrl);
@@ -143,7 +171,7 @@ export async function handleV2FeedFetch(
     // fetch. One synchronous proxy call, ingested so every later read — and
     // every other user — comes from D1. Gated on the caller's own subscription
     // (see the note above); a non-subscriber just reads whatever D1 already holds.
-    const archiveEmpty = items.length === 0;
+    archiveEmpty = items.length === 0;
     const wantsPullThrough = archiveEmpty || forceRefresh;
     if (wantsPullThrough && (await callerSubscribes(env, session.did, feedUrl))) {
       try {
@@ -159,7 +187,13 @@ export async function handleV2FeedFetch(
       } catch (error) {
         // A failed refresh of a feed we already hold is not a failed read.
         if (archiveEmpty) throw error;
-        console.error('V2 feed refresh failed, serving the archive:', error);
+        // warn, not error: this path serves the archive and answers 200. The
+        // level is the honest one for "degraded, not broken".
+        log.warn('feed_refresh_failed', {
+          feedUrl,
+          ...proxyErrorFields(error),
+          ...serializeError(error),
+        });
       }
     }
 
@@ -189,12 +223,21 @@ export async function handleV2FeedFetch(
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error) {
-    console.error('V2 feed fetch error:', error);
+    log.error('feed_fetch_failed', {
+      feedUrl,
+      // True here means the pull-through was the whole response — there was
+      // nothing in the archive to fall back to.
+      archiveEmpty,
+      ...proxyErrorFields(error),
+      ...serializeError(error),
+    });
 
     if (error instanceof FeedProxyError) {
       return new Response(
         JSON.stringify({
-          error: error.message,
+          // An error whose message is empty must not become `{"error": ""}` on
+          // the wire — the client renders it as a blank failure.
+          error: error.message || FEED_FETCH_FALLBACK_ERROR,
           errorCount: error.errorCount,
           nextRetryAt: error.nextRetryAt,
         }),
@@ -207,7 +250,7 @@ export async function handleV2FeedFetch(
 
     return new Response(
       JSON.stringify({
-        error: error instanceof Error ? error.message : 'Failed to fetch feed',
+        error: (error instanceof Error && error.message) || FEED_FETCH_FALLBACK_ERROR,
       }),
       {
         status: 502,

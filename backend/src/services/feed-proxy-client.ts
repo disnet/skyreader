@@ -1,5 +1,6 @@
 import type { Env, FeedItem } from '../types';
 import { getRequestId } from '../utils/request-context';
+import { scrubText } from '../observability/scrub';
 
 /** Stamp the in-flight request id on an outbound proxy call, when there is one. */
 function setRequestIdHeader(headers: Headers): void {
@@ -15,12 +16,44 @@ const DEFAULT_PROXY_TIMEOUT_MS = 25_000;
 // batch returns in well under this. Exceeding it means the proxy is wedged.
 const BATCH_PROXY_TIMEOUT_MS = 12_000;
 
+// Characters of an unparseable body kept for diagnosis. Long enough to tell a
+// Fly edge error ("error code: 502") from an HTML page from an empty body, short
+// enough to stay well inside a Workers Logs line.
+const MAX_BODY_SNIPPET = 200;
+
+/**
+ * Bounded, single-line, scrubbed prefix of a response body we could not parse.
+ * `scrubText` runs first because an error body routinely echoes the request URL
+ * back, and ours carries the feed URL in its query string.
+ *
+ * Expect redaction inside the snippet: `scrubText` rewrites `key: value` pairs
+ * whose key looks like a credential, and `code` is one of them — so Fly's edge
+ * body arrives as `error code: [redacted]`. That is the scrubber working, not a
+ * lost status. The status is carried separately on `FeedProxyError.status`,
+ * which is what to read; the snippet's job is only to identify the SHAPE of the
+ * body (edge error vs HTML page vs empty).
+ */
+function toBodySnippet(text: string): string {
+  const snippet = scrubText(text).replace(/\s+/g, ' ').trim().slice(0, MAX_BODY_SNIPPET);
+  // Distinguish "the body was empty" from "the body scrubbed away to nothing".
+  return snippet || '<empty body>';
+}
+
 export class FeedProxyError extends Error {
   errorCount?: number;
   nextRetryAt?: number;
   // True when the failure is the target site refusing our automated fetcher
   // (e.g. a bot filter / CDN 403), as opposed to our proxy being unavailable.
   blocked?: boolean;
+  /**
+   * HTTP status of the proxy response, when the failure came with one. Kept as a
+   * field rather than only interpolated into the message so a log line can be
+   * grouped and filtered on it — the difference between a 502 from Fly's edge
+   * and a 429 from the proxy is the whole diagnosis, and prose can't be queried.
+   */
+  status?: number;
+  /** See `toBodySnippet`. Set when the failure was an unparseable body. */
+  bodySnippet?: string;
 
   constructor(message: string, errorCount?: number, nextRetryAt?: number, blocked?: boolean) {
     super(message);
@@ -345,9 +378,17 @@ export class FeedProxyClient {
     try {
       return JSON.parse(text) as T;
     } catch {
-      throw new FeedProxyError(
+      // Every error path in the proxy app itself answers with `c.json(...)`, so
+      // an unparseable body means something in FRONT of it replied — Fly's edge,
+      // a gateway timeout. Carry the status and a snippet out with the error:
+      // without them this failure is indistinguishable from every other one at
+      // this call site.
+      const error = new FeedProxyError(
         `Couldn't load the feed (HTTP ${response.status}). The source may be blocking automated access or temporarily unavailable.`
       );
+      error.status = response.status;
+      error.bodySnippet = toBodySnippet(text);
+      throw error;
     }
   }
 
