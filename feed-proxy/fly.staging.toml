@@ -49,9 +49,6 @@ primary_region = "sjc"
   INGEST_URL = "https://api-staging.skyreader.app"
   CACHE_TTL_SECONDS = "300"
   STALE_TTL_SECONDS = "3600"
-  # Staging keeps warming ON while prod has it paused for the backfill
-  # (2026-08-20). Deliberate, temporary divergence — see fly.toml. Staging
-  # crawls ~100 feeds, so it was never the box under pressure.
   WARM_ENABLED = "true"
   WARM_INTERVAL_SECONDS = "60"
   WARM_ACTIVE_WINDOW_SECONDS = "1209600"
