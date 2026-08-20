@@ -1,4 +1,5 @@
 import type { Env, FeedItem } from '../types';
+import { timedAll } from '../utils/d1-timing';
 
 /**
  * Internal (proxy → Worker) endpoints for the D1-served feed timeline.
@@ -601,14 +602,21 @@ export async function handleCrawlSet(request: Request, env: Env): Promise<Respon
   // whether or not any feed produced an item).
   await stampCrawlerHeartbeat(env);
 
-  const rows = await env.DB.prepare(
-    `SELECT feed_url, COUNT(*) AS subscribers
-       FROM subscriptions_cache
-      WHERE active = 1
-        AND feed_url IS NOT NULL AND feed_url <> ''
-        AND ${rssSubscriptionPredicate()}
-      GROUP BY feed_url`
-  ).all<{ feed_url: string; subscribers: number }>();
+  // Timed: this runs every 5 minutes forever and is the heaviest query on the
+  // ingest path. `idx_subscriptions_cache_active_feed` (migration 0072) makes it
+  // a covering index search; the `d1Ms`/`d1RowsRead` fields on this request's log
+  // line are how you confirm it stayed that way as the table grows.
+  const rows = await timedAll<{ feed_url: string; subscribers: number }>(
+    'crawl_set',
+    env.DB.prepare(
+      `SELECT feed_url, COUNT(*) AS subscribers
+         FROM subscriptions_cache
+        WHERE active = 1
+          AND feed_url IS NOT NULL AND feed_url <> ''
+          AND ${rssSubscriptionPredicate()}
+        GROUP BY feed_url`
+    )
+  );
 
   const feeds = rows.results.map((row) => ({
     feedUrl: row.feed_url,

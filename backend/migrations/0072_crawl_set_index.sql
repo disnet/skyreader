@@ -1,0 +1,23 @@
+-- Covering index for the crawler's crawl-set pull.
+--
+-- `GET /api/internal/crawl-set` runs every 5 minutes, for the lifetime of the
+-- deployment, and asks:
+--
+--   SELECT feed_url, COUNT(*) FROM subscriptions_cache
+--    WHERE active = 1 AND feed_url <> '' AND source_type NOT LIKE 'atproto.%'
+--    GROUP BY feed_url
+--
+-- Nothing indexed that. The existing indexes are all `user_did`-leading except a
+-- bare `(feed_url)`, so the planner's best option was to walk every subscription
+-- row and fetch `active`/`source_type` from the table for each one. At prod scale
+-- (5,586 distinct feeds across every user's subscriptions) that is the slowest
+-- query on the ingest path, and it runs whether or not anything changed.
+--
+-- Column order is the point:
+--   active      — equality first, so the scan starts inside the matching range
+--   feed_url    — GROUP BY key second, so rows arrive already grouped and SQLite
+--                 needs no temporary b-tree to sort them
+--   source_type — carried only so the NOT LIKE filter is answerable from the
+--                 index, making it covering: no table row is touched at all
+CREATE INDEX IF NOT EXISTS idx_subscriptions_cache_active_feed
+    ON subscriptions_cache(active, feed_url, source_type);
