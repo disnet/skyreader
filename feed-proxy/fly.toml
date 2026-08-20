@@ -1,9 +1,14 @@
 app = "skyreader-feed-proxy"
 primary_region = "sjc"
 
-# KEEP IN SYNC WITH fly.staging.toml. The two files must differ only in `app` and
-# the `INGEST_URL` in [env]; everything else is deliberately identical so staging
-# soaks what prod will run.
+# KEEP IN SYNC WITH fly.staging.toml. The two files must differ only in `app`, the
+# `INGEST_URL` in [env], and `[vm]`; everything else is deliberately identical so
+# staging soaks what prod will run.
+#
+# `[vm]` diverges permanently: prod crawls ~5,586 feeds and needs dedicated CPU
+# (see the block above [vm]); staging crawls ~100 and shared is ample. Note the
+# consequence — staging CANNOT reproduce prod's CPU behaviour, so a change that
+# affects per-tick crawl cost has to be reasoned about, not soaked.
 #
 #
 # SINGLETON INVARIANT — run exactly ONE machine. This app is not horizontally
@@ -33,21 +38,27 @@ primary_region = "sjc"
   # would stop warming whenever traffic is idle, defeating the purpose.
   min_machines_running = 1
 
-# Sized against the post-timeline steady state, not the backfill. Reads are served
-# from D1 and never reach this box, so its whole job is: crawl the active set on a
-# WARM_BATCH_CAP cadence, push deltas, and hold the firehose. Measured at ~123 MB
-# resident under exactly that load.
+# performance/2, NOT shared — this is the steady-state size, not a backfill
+# accommodation. Two attempts on shared/2/1024 (2026-08-20) both starved the event
+# loop within minutes: /health timing out at 12s+, and the 5-minutely crawl-set
+# pull taking 93s instead of 2s. The second attempt was AFTER the allocation fix
+# (resident memory 862 MB -> 123 MB) and AFTER the D1 timeline moved reads off this
+# box entirely, so neither memory nor read traffic explains it. Shared vCPUs run on
+# burst credits and this workload is sustained, so it simply cannot hold them.
 #
-# It ran temporarily on performance/2/4096 during the 2026-08-20 initial backfill,
-# when sustained crawl + push exhausted the shared-CPU burst credits and the event
-# loop starved (a trivial /health taking 12-25s). That was a one-off: the backfill
-# is a fixed cost paid once. If this box ever needs performance CPUs again in
-# STEADY state, that is a signal the crawl set has outgrown it — check
-# `warm.cycleSeconds` on /stats before reaching for a bigger VM.
+# Memory is oversized as a side effect: performance presets carry a 2 GB/core
+# minimum, and actual usage is ~123 MB. Do not read the headroom as needed.
+#
+# The real driver is that the crawl set is ~5,586 feeds — roughly 4x the ~1,330
+# this box was originally sized for. That grew because the crawl-set pull stamps
+# `last_requested_at` on EVERY subscribed feed, where read traffic used to stamp
+# only feeds someone actually opened. Shrinking the crawl set back toward real
+# demand is the change that would make shared viable again; until then, this needs
+# dedicated CPU. Check `warm.cycleSeconds` on /stats before revisiting.
 [vm]
-  cpu_kind = "shared"
+  cpu_kind = "performance"
   cpus = 2
-  memory_mb = 1024
+  memory_mb = 4096
 
 [env]
   DATA_DIR = "/data"
