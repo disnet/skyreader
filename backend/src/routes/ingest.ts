@@ -1,5 +1,5 @@
 import type { Env, FeedItem } from '../types';
-import { timedAll } from '../utils/d1-timing';
+import { timedAll, timedBatch } from '../utils/d1-timing';
 
 /**
  * Internal (proxy → Worker) endpoints for the D1-served feed timeline.
@@ -221,7 +221,14 @@ export async function ingestBatch(
   let inserted = 0;
   let updated = 0;
   for (let i = 0; i < statements.length; i += INGEST_BATCH_SIZE) {
-    const results = await env.DB.batch<{ seq: number }>(statements.slice(i, i + INGEST_BATCH_SIZE));
+    // Timed: this is the write path the whole backfill runs through, and D1 is
+    // shared with everything user-facing. `d1Ms` on this request's log line is
+    // what says whether the drain rate is safe to raise (or must come down).
+    const results = await timedBatch<{ seq: number }>(
+      'ingest_items',
+      env.DB,
+      statements.slice(i, i + INGEST_BATCH_SIZE)
+    );
     for (const result of results) {
       for (const row of result.results ?? []) {
         if (row.seq > maxSeqBefore) inserted++;
@@ -257,7 +264,9 @@ export async function trimFeedsToSanityCap(
     ).bind(feedUrl, cap)
   );
   for (let i = 0; i < trims.length; i += INGEST_BATCH_SIZE) {
-    await env.DB.batch(trims.slice(i, i + INGEST_BATCH_SIZE));
+    // Separately labelled from the upserts: a feed churning GUIDs shows up as
+    // trim time climbing while ingest time stays flat.
+    await timedBatch('ingest_trim', env.DB, trims.slice(i, i + INGEST_BATCH_SIZE));
   }
 }
 

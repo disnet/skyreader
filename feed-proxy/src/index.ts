@@ -57,6 +57,12 @@ const WARM_HEARTBEAT_URL = process.env.WARM_HEARTBEAT_URL;
 const INGEST_URL = process.env.INGEST_URL?.replace(/\/$/, '') || '';
 const INGEST_ENABLED = INGEST_URL.length > 0;
 const INGEST_INTERVAL_MS = parseInt(process.env.INGEST_INTERVAL_SECONDS || '15', 10) * 1000;
+// Gap between back-to-back pushes while draining a backlog (see runPush). Small
+// on purpose — the work per push is already bounded by INGEST_BATCH_SIZE, so this
+// is the dial for how hard the drain leans on the paired Worker's D1, which is
+// the SHARED production database. Raise it if ingest writes start showing up in
+// user-facing latency.
+const INGEST_CHAIN_DELAY_MS = parseInt(process.env.INGEST_CHAIN_DELAY_MS || '1000', 10);
 const INGEST_BATCH_SIZE = parseInt(process.env.INGEST_BATCH_SIZE || '100', 10);
 const CRAWL_SET_INTERVAL_MS = parseInt(process.env.CRAWL_SET_INTERVAL_SECONDS || '300', 10) * 1000;
 const PUSH_BACKOFF_BASE_MS = 30 * 1000;
@@ -195,19 +201,42 @@ if (INGEST_ENABLED) {
   let pushRunning = false;
   let pushFailures = 0;
   let pushBlockedUntil = 0;
-  setInterval(() => {
+
+  /**
+   * One push, which re-schedules itself while a backlog remains.
+   *
+   * INGEST_INTERVAL_MS is tuned for steady state — a trickle of freshly crawled
+   * items — and at 100 items per tick it drains ~400/min. That is the wrong shape
+   * for a backlog: the first prod backfill queued 175k items, where the interval
+   * (not the work) was the bottleneck and the pusher sat idle ~90% of the time.
+   *
+   * So when a push comes back with `hasMore`, go again after a short delay
+   * instead of waiting out the interval. This self-limits: the moment the backlog
+   * clears, `hasMore` is false and the loop reverts to the plain interval, with
+   * no configuration to remember to change back.
+   *
+   * Two guards keep it from spinning:
+   *   - Only chain on `pushed > 0`. A push that moved nothing cannot have made
+   *     progress, so chaining on it would busy-loop against D1 forever if
+   *     anything ever left rows permanently dirty.
+   *   - Only chain on success. A failure sets `pushBlockedUntil`, and the
+   *     existing exponential backoff must own the retry timing.
+   */
+  const runPush = (): void => {
     if (pushRunning || Date.now() < pushBlockedUntil) return;
     pushRunning = true;
+    let drainMore = false;
     pushDirtyItems(db, ingestConfig)
       .then((result) => {
         if (result.error) {
           pushFailures++;
           pushBlockedUntil = Date.now() + pushBackoff(pushFailures);
           console.error(`[Proxy] Ingest push failed (${pushFailures}): ${result.error}`);
-        } else {
-          pushFailures = 0;
-          if (result.pushed > 0) console.log(`[Proxy] Ingest pushed ${result.pushed} item(s)`);
+          return;
         }
+        pushFailures = 0;
+        if (result.pushed > 0) console.log(`[Proxy] Ingest pushed ${result.pushed} item(s)`);
+        drainMore = result.hasMore && result.pushed > 0;
       })
       .catch((error) => {
         console.error('[Proxy] Ingest push error:', error);
@@ -215,8 +244,10 @@ if (INGEST_ENABLED) {
       })
       .finally(() => {
         pushRunning = false;
+        if (drainMore) setTimeout(runPush, INGEST_CHAIN_DELAY_MS);
       });
-  }, INGEST_INTERVAL_MS);
+  };
+  setInterval(runPush, INGEST_INTERVAL_MS);
 
   let crawlSetRunning = false;
   const refreshCrawlSet = () => {
