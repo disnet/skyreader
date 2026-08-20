@@ -10,6 +10,7 @@ import {
   CRAWLER_HEARTBEAT_KEY,
   FEED_HEALTH_REV_KEY,
   TIMELINE_ENABLED_KEY,
+  CRAWL_ACTIVE_USER_WINDOW_SECONDS,
 } from '../src/routes/ingest';
 import { handleTimeline, readFeedSlice } from '../src/routes/timeline';
 import type { Env, FeedItem, Session } from '../src/types';
@@ -438,6 +439,62 @@ describe('feed timeline (D1 ingest + serve)', () => {
         feeds: Array<{ feedUrl: string; subscribers: number }>;
       };
       expect(body.feeds).toEqual([{ feedUrl: FEED_A, subscribers: 2 }]);
+    });
+
+    describe('activity scoping', () => {
+      const DORMANT_DID = 'did:plc:timelinedormant';
+      // Comfortably outside the window, so neither timestamp counts as demand.
+      const STALE = Math.floor(Date.now() / 1000) - CRAWL_ACTIVE_USER_WINDOW_SECONDS - 86400;
+
+      async function seedUser(did: string, createdAt: number, lastActiveAt: number) {
+        await env.DB.prepare(
+          `INSERT INTO users (did, handle, pds_url, tier, created_at, last_active_at)
+           VALUES (?, ?, 'https://test.pds.example', 'free', ?, ?)`
+        )
+          .bind(did, `${did}.test`, createdAt, lastActiveAt)
+          .run();
+      }
+
+      async function crawlSet(): Promise<Array<{ feedUrl: string; subscribers: number }>> {
+        const res = await handleCrawlSet(
+          new Request('https://api.example/api/internal/crawl-set', {
+            headers: { 'X-Proxy-Secret': SECRET },
+          }),
+          env
+        );
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as {
+          feeds: Array<{ feedUrl: string; subscribers: number }>;
+        };
+        return body.feeds;
+      }
+
+      afterEach(async () => {
+        await env.DB.prepare('DELETE FROM users WHERE did = ?').bind(DORMANT_DID).run();
+      });
+
+      it('drops a feed whose only subscribers are dormant', async () => {
+        await seedUser(DORMANT_DID, STALE, STALE);
+        await addSubscription(TEST_DID, FEED_A);
+        await addSubscription(DORMANT_DID, FEED_B);
+
+        expect(await crawlSet()).toEqual([{ feedUrl: FEED_A, subscribers: 1 }]);
+      });
+
+      it('counts only recently-active subscribers, keeping the feed for the active one', async () => {
+        await seedUser(DORMANT_DID, STALE, STALE);
+        await addSubscription(TEST_DID, FEED_A);
+        await addSubscription(DORMANT_DID, FEED_A);
+
+        expect(await crawlSet()).toEqual([{ feedUrl: FEED_A, subscribers: 1 }]);
+      });
+
+      it('a stamped last_active_at keeps an old account in, without recent created_at', async () => {
+        await seedUser(DORMANT_DID, STALE, Math.floor(Date.now() / 1000) - 60);
+        await addSubscription(DORMANT_DID, FEED_B);
+
+        expect(await crawlSet()).toEqual([{ feedUrl: FEED_B, subscribers: 1 }]);
+      });
     });
   });
 
