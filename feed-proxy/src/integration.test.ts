@@ -2791,6 +2791,105 @@ describe('Self-warming loop', () => {
     expect(row?.next_retry_at).toBeNull();
   });
 
+  describe('crawl cycle warning', () => {
+    let warnSpy: ReturnType<typeof spyOn> | undefined;
+
+    afterEach(() => {
+      warnSpy?.mockRestore();
+      warnSpy = undefined;
+    });
+
+    const cycleWarnings = (): string[] =>
+      ((warnSpy?.mock.calls ?? []) as unknown[][])
+        .map((args) => String(args[0]))
+        .filter((line: string) => line.includes('Crawl cycle'));
+
+    it('stays silent while the crawl cycle is within target', async () => {
+      const { db, warmStaleFeeds } = createTestApp({
+        warmRefreshThresholdMs: 1000,
+        warmBatchCap: 1,
+        warmTargetCycleMs: 60 * 60 * 1000,
+      });
+      fetchMock = mockFetch(() => new Response(SAMPLE_RSS));
+      warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+
+      const now = Date.now();
+      // Cap is 1 against 3 due feeds — saturated, which the OLD warning fired on.
+      // The cycle is minutes, well inside target, so this must say nothing.
+      for (let i = 0; i < 3; i++) {
+        insertCacheRow(db, `https://example.com/recent-${i}`, {
+          fetchedAt: now - 60_000,
+          lastRequestedAt: now - 5_000,
+        });
+      }
+
+      await warmStaleFeeds();
+
+      expect(cycleWarnings()).toHaveLength(0);
+      db.close();
+    });
+
+    it('warns when the observed cycle exceeds target', async () => {
+      const { db, warmStaleFeeds } = createTestApp({
+        warmRefreshThresholdMs: 1000,
+        warmBatchCap: 1,
+        warmTargetCycleMs: 60 * 1000,
+      });
+      fetchMock = mockFetch(() => new Response(SAMPLE_RSS));
+      warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+
+      const now = Date.now();
+      insertCacheRow(db, 'https://example.com/way-behind', {
+        fetchedAt: now - 90 * 60 * 1000,
+        lastRequestedAt: now - 5_000,
+      });
+
+      await warmStaleFeeds();
+
+      const warnings = cycleWarnings();
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('90m');
+      // The message must carry an actionable cap, not the old unreachable advice.
+      expect(warnings[0]).toContain('WARM_BATCH_CAP');
+      expect(warnings[0]).not.toContain('Warmer saturated');
+      db.close();
+    });
+
+    it('excludes backed-off and never-fetched feeds from the cycle', async () => {
+      const { db, warmStaleFeeds } = createTestApp({
+        warmRefreshThresholdMs: 1000,
+        warmBatchCap: 5,
+        warmTargetCycleMs: 60 * 1000,
+      });
+      fetchMock = mockFetch(() => new Response(SAMPLE_RSS));
+      warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+
+      const now = Date.now();
+      // Ancient, but the crawler is declining to fetch it on purpose — a 7-day
+      // permanent backoff must not read as "infinitely behind" forever.
+      insertCacheRow(db, 'https://example.com/backed-off', {
+        fetchedAt: now - 7 * 24 * 60 * 60 * 1000,
+        lastRequestedAt: now - 5_000,
+        errorCount: 5,
+        nextRetryAt: now + 7 * 24 * 60 * 60 * 1000,
+      });
+      // Registered by the crawl set seconds ago and never fetched (fetched_at 0).
+      insertCacheRow(db, 'https://example.com/never-fetched', {
+        fetchedAt: 0,
+        lastRequestedAt: now - 5_000,
+      });
+      insertCacheRow(db, 'https://example.com/healthy', {
+        fetchedAt: now - 30_000,
+        lastRequestedAt: now - 5_000,
+      });
+
+      await warmStaleFeeds();
+
+      expect(cycleWarnings()).toHaveLength(0);
+      db.close();
+    });
+  });
+
   it('honors the batch cap', async () => {
     const { db, warmStaleFeeds } = createTestApp({
       warmRefreshThresholdMs: 1000,

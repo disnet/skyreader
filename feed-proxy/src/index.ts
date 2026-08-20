@@ -36,6 +36,12 @@ const DEFAULT_LIMIT = 100;
 // user requests are (nearly) always cache hits instead of blocking on upstream.
 const WARM_ENABLED = (process.env.WARM_ENABLED ?? 'true') !== 'false';
 const WARM_INTERVAL_MS = parseInt(process.env.WARM_INTERVAL_SECONDS || '60', 10) * 1000;
+// Crawl cycle we accept before the warmer says something. See AppConfig — this is
+// a warning threshold, not a goal the warmer chases. Unset uses the app default
+// (1h, half of CRAWL_STALE_MS).
+const WARM_TARGET_CYCLE_MS = process.env.WARM_TARGET_CYCLE_SECONDS
+  ? parseInt(process.env.WARM_TARGET_CYCLE_SECONDS, 10) * 1000
+  : undefined;
 // Refresh feeds older than this. Default leaves a margin below cacheTtl so a feed
 // is refreshed (worst case ~threshold + interval old) before it ever expires.
 const WARM_REFRESH_THRESHOLD_MS = process.env.WARM_REFRESH_THRESHOLD_SECONDS
@@ -123,6 +129,8 @@ const { app, warmStaleFeeds, warmStaleDocuments } = createApp(db, {
   warmBatchCap: WARM_BATCH_CAP,
   warmConcurrency: WARM_CONCURRENCY,
   warmMentionsEnabled: WARM_MENTIONS_ENABLED,
+  warmIntervalMs: WARM_INTERVAL_MS,
+  warmTargetCycleMs: WARM_TARGET_CYCLE_MS,
   extractConcurrency: EXTRACT_CONCURRENCY,
   extractQueueMax: EXTRACT_QUEUE_MAX,
   feedFetchConcurrency: FEED_FETCH_CONCURRENCY,
