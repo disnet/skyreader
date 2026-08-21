@@ -80,6 +80,74 @@ export const DIRTY_COUNT_SQL = `SELECT COUNT(*) AS count
 		     LEFT JOIN push_state ps ON ps.seq = fi.seq
 		    WHERE ps.seq IS NULL OR ps.pushed_hash <> COALESCE(fi.content_hash, '')`;
 
+export interface PushLoopDeps {
+  /** One push attempt — pushDirtyItems bound to this proxy's db/config. */
+  push: () => Promise<PushResult>;
+  /** Gap between back-to-back pushes while draining a backlog. */
+  chainDelayMs: number;
+  /** Backoff schedule after `failures` consecutive failed pushes. */
+  backoff: (failures: number) => number;
+  schedule: (fn: () => void, delayMs: number) => void;
+  now: () => number;
+  /** Unexpected-rejection hook (Sentry in prod). */
+  onError?: (error: unknown) => void;
+}
+
+/**
+ * The push loop: one push, which re-schedules itself while a backlog remains.
+ * The caller drives the steady-state cadence (setInterval in index.ts); this
+ * owns the drain chaining, the failure backoff, and the re-entrancy guard.
+ *
+ * The steady-state interval is tuned for a trickle of freshly crawled items —
+ * at 100 items per tick it drains ~400/min. That is the wrong shape for a
+ * backlog: the first prod backfill queued 175k items, where the interval (not
+ * the work) was the bottleneck and the pusher sat idle ~90% of the time. So
+ * when a push comes back with `hasMore`, go again after `chainDelayMs` instead
+ * of waiting out the interval. This self-limits: the moment the backlog clears,
+ * `hasMore` is false and the loop reverts to the plain interval, with no
+ * configuration to remember to change back.
+ *
+ * Two guards keep it from spinning:
+ *   - Only chain on `pushed > 0`. A push that moved nothing cannot have made
+ *     progress, so chaining on it would busy-loop against D1 forever if
+ *     anything ever left rows permanently dirty.
+ *   - Only chain on success. A failure blocks the loop until `backoff` elapses,
+ *     and the backoff owns the retry timing.
+ */
+export function createPushLoop(deps: PushLoopDeps): () => void {
+  let running = false;
+  let failures = 0;
+  let blockedUntil = 0;
+
+  const runPush = (): void => {
+    if (running || deps.now() < blockedUntil) return;
+    running = true;
+    let drainMore = false;
+    deps
+      .push()
+      .then((result) => {
+        if (result.error) {
+          failures++;
+          blockedUntil = deps.now() + deps.backoff(failures);
+          console.error(`[Proxy] Ingest push failed (${failures}): ${result.error}`);
+          return;
+        }
+        failures = 0;
+        if (result.pushed > 0) console.log(`[Proxy] Ingest pushed ${result.pushed} item(s)`);
+        drainMore = result.hasMore && result.pushed > 0;
+      })
+      .catch((error) => {
+        console.error('[Proxy] Ingest push error:', error);
+        deps.onError?.(error);
+      })
+      .finally(() => {
+        running = false;
+        if (drainMore) deps.schedule(runPush, deps.chainDelayMs);
+      });
+  };
+  return runPush;
+}
+
 export function selectDirtyRows(db: Database, limit: number): DirtyRow[] {
   return db.query<DirtyRow, [number]>(DIRTY_ROWS_SQL).all(limit);
 }

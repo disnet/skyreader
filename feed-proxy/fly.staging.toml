@@ -51,28 +51,14 @@ primary_region = "sjc"
   # (the 5-minutely crawl-set pull is the stamper now, so this window only
   # governs descope lag and pull-outage tolerance).
   WARM_ACTIVE_WINDOW_SECONDS = "86400"
-  # Lowered 500 → 200 alongside prod; see fly.toml for the full rationale
-  # (crawl set is ~5,586 feeds, so the cap now bounds per-tick CPU rather
-  # than chasing a fresh-everything target).
+  # 200/tick over prod's ~1,630-feed scoped crawl set = ~8-minute cycle,
+  # accepted 2026-08-21; see fly.toml for the freshness/CPU math.
   WARM_BATCH_CAP = "200"
   WARM_CONCURRENCY = "16"
   WARM_MENTIONS = "false"
-  # Governor on demand-driven feed fetches (batch inline misses + the background
-  # refresh a STALE read fires). Turned ON 2026-08-20 on evidence: /stats showed
-  # inFlight=87 with the warmer paused, i.e. 87 concurrent upstream fetches driven
-  # purely by reader polling, on 2 vCPUs, while the backfill was trying to drain.
-  #
-  # Set deliberately LOW during the backfill. With `fresh: 0` in the cache every
-  # read already falls through to the past-stale path and gets served prior
-  # content, so throttling fetches costs almost nothing user-visible right now —
-  # and the CPU it frees goes to the ingest pusher, which is the thing actually
-  # blocking progress. Excess fetches queue (up to FEED_FETCH_QUEUE_MAX, default
-  # 500) and are shed as "no fresh content", never as a feed error.
-  #
-  # Raise toward WARM_CONCURRENCY (16) or above once the backfill has drained and
-  # freshness matters again. Watch `feedFetch.queued` on /stats: persistently deep
-  # means this is too tight for real demand.
-  FEED_FETCH_CONCURRENCY = "8"
+  # Governor on demand-driven feed fetches; 16 matches WARM_CONCURRENCY
+  # (raised from the backfill-era 8 on 2026-08-21). See fly.toml.
+  FEED_FETCH_CONCURRENCY = "16"
 
   EXTRACT_CONCURRENCY = "4"
   EXTRACT_QUEUE_MAX = "20"

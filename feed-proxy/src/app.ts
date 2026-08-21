@@ -1987,9 +1987,13 @@ export function createApp(db: Database, config: AppConfig) {
         .get(now - warmRefreshThresholdMs, now, now - warmActiveWindowMs);
       const total = eligible?.count ?? rows.length;
       if (total > warmBatchCap) {
+        const ticks = Math.ceil(total / warmBatchCap);
         console.warn(
-          `[Proxy] Warmer saturated: ${total} author document sets due for refresh but cap is ${warmBatchCap}; ` +
-            `${total - warmBatchCap} wait this tick and may go stale. Raise WARM_BATCH_CAP/WARM_CONCURRENCY.`
+          `[Proxy] Document warm cycle: ${total} author set(s) due at ${warmBatchCap}/tick ` +
+            `every ${warmIntervalMs / 1000}s — a full pass takes ~${ticks} tick(s), so ` +
+            `documents missed by the firehose surface up to that late. This lane only ` +
+            `carries the load while the firehose is down; raise WARM_BATCH_CAP only if ` +
+            `that staleness is actually hurting readers.`
         );
       }
     }
