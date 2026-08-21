@@ -20,19 +20,13 @@
 
   interface Props {
     onToggleSave: (article: Article) => void;
-    onShare: (
-      article: Article,
-      sub: (typeof subscriptionsStore.subscriptions)[0],
-      note?: string
-    ) => void;
     onUnshare: (guid: string) => void;
     onReaderChange?: (open: boolean) => void;
     onSaveToSemble?: (data: SembleMetadata) => void;
     onSaveToMargin?: (data: MarginMetadata) => void;
   }
 
-  let { onToggleSave, onShare, onUnshare, onReaderChange, onSaveToSemble, onSaveToMargin }: Props =
-    $props();
+  let { onToggleSave, onUnshare, onReaderChange, onSaveToSemble, onSaveToMargin }: Props = $props();
 
   // Resolve the atproto.documents subscription a document belongs to, so its
   // publication label can link and filter like an RSS feed title. Mirrors the
@@ -266,7 +260,6 @@
           highlighted={feedViewStore.selectedKey === displayItem.key}
           onToggleSave={() => onToggleSave(article)}
           onToggleRead={() => handleToggleRead(article)}
-          onShare={(note) => sub && onShare(article, sub, note)}
           onUnshare={() => onUnshare(article.url)}
           onSelect={() => handleSelect(index)}
           onExpand={() => handleExpand(index)}

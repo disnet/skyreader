@@ -33,7 +33,6 @@
     getLinkPostNoteMentions,
     isSkyreaderShare,
     linkifyNoteMentions,
-    formatQuoteSeed,
     noteHasBlockquote,
   } from '$lib/utils/linkPost';
   import { api } from '$lib/services/api';
@@ -43,11 +42,12 @@
   import { socialStore } from '$lib/stores/social.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
+  import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
+  import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
   import { socialContextStore } from '$lib/stores/socialContext.svelte';
   import { profileService } from '$lib/services/profiles';
   import { auth } from '$lib/stores/auth.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
-  import ShareConfirmModal from './feed/ShareConfirmModal.svelte';
   import ArticleCardView from './ArticleCardView.svelte';
   import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
   import type { LaneId } from './articleCardView.types';
@@ -82,7 +82,6 @@
     highlighted = false,
     onToggleSave,
     onToggleRead,
-    onShare,
     onUnshare,
     onSelect,
     onExpand,
@@ -106,7 +105,6 @@
     highlighted?: boolean;
     onToggleSave?: () => void;
     onToggleRead?: () => void;
-    onShare?: (note?: string) => void;
     onUnshare?: () => void;
     onSelect?: () => void;
     onExpand?: () => void;
@@ -357,7 +355,6 @@
   // ── Resharing a document (Phase 7) ──────────────────────────────────────────
   // Every reshare is one shape: a site.standard.document in your own linkblog,
   // keyed by the article URL and toggled by the Share button (note optional).
-  let isQuoting = $state(false);
   // The URL under which this document's linkblog entry is keyed: the external
   // article for a link post, else the document's own canonical URL.
   let quoteKey = $derived(
@@ -406,12 +403,12 @@
     canCreate: laneCanCreate,
   });
 
-  // Contribute to a lane: note → the share flow (composer below), Margin/Semble
-  // → their save handlers, Bluesky → a compose intent in a new tab.
+  // Contribute to a lane: linkblog → the share composer, Margin/Semble → their
+  // save handlers, Bluesky → a compose intent in a new tab.
   function createInLane(id: LaneId) {
     switch (id) {
       case 'linkblog':
-        if (!currentlyShared) shareNow();
+        if (!currentlyShared) composeShare();
         break;
       case 'semble':
         onSaveToSemble?.();
@@ -433,11 +430,11 @@
   // overflow copies are kept for documents (which have no Atmosphere row).
   let showActionBarIntegrations = $derived(isDocumentMode);
 
-  // Write a linkblog entry for the current document (repostUri = the doc's AT URI,
+  // The Article a document-mode share points at (repostUri = the doc's AT URI,
   // so a reshared link post credits the original).
-  async function handleQuote(note: string) {
-    if (!document || !quoteKey) return;
-    const quoteArticle: Article = {
+  function buildQuoteArticle(): Article | null {
+    if (!document || !quoteKey) return null;
+    return {
       subscriptionId: 0,
       guid: quoteKey,
       url: quoteKey,
@@ -450,7 +447,6 @@
       publishedAt: document.publishedAt,
       fetchedAt: Date.now(),
     };
-    await linkblogStore.shareLink(quoteArticle, note, document.recordUri);
   }
 
   // ── Unified share + comment + remove (all surfaces) ─────────────────────────
@@ -466,75 +462,57 @@
     return shareNote;
   });
 
-  // Whether sharing is offered (the Blogs lane's [+]): document sharing requires
-  // sign-in; a plain article share is gated by whether the page wired up onShare.
-  let showShareAction = $derived(isDocumentMode ? Boolean(auth.user) : Boolean(onShare));
+  // Whether sharing is offered (the Blogs lane's [+]): you're signed in and
+  // haven't turned the linkblog off. Same gate in both modes.
+  let showShareAction = $derived(Boolean(auth.user) && !preferences.linkblogDisabled);
 
-  // The article's own excerpt, formatted as an editable Markdown quote to seed a
-  // new share with — the user trims, rewrites, or deletes it from the note box.
-  let shareQuoteSource = $derived(
-    isDocumentMode ? document?.description : (article?.summary ?? localArticle?.summary)
-  );
-  let seededQuote = $derived(formatQuoteSeed(shareQuoteSource));
+  // The URL the share (and its local draft) is keyed by in the current mode.
+  let shareUrl = $derived(isDocumentMode ? quoteKey : itemUrl);
+  let hasShareDraft = $derived(shareUrl ? shareDraftsStore.hasDraft(shareUrl) : false);
 
-  // The very first share is gated on the "this is public" dialog
-  // (ShareConfirmModal owns the copy, the acknowledgment and the target).
-  let showShareConfirm = $state(false);
-
-  // Fire the share for the current mode (the Blogs lane [+]), seeding the note
-  // with the article's quote so it lands in the persistent note box ready to
-  // edit or remove. Submitting from the feed is one tap; refinement happens there.
-  async function performShare() {
-    if (isDocumentMode) {
-      isQuoting = true;
-      try {
-        await handleQuote(seededQuote ?? '');
-      } finally {
-        isQuoting = false;
-      }
-      return;
-    }
-    onShare?.(seededQuote);
+  // The Article object a share of this card points at.
+  function shareArticle(): Article | null {
+    if (isDocumentMode) return buildQuoteArticle();
+    return article ?? null;
   }
 
-  function shareNow() {
-    if (!preferences.linkblogShareConfirmed) {
-      showShareConfirm = true;
-      return;
-    }
-    performShare();
+  // Open the composer drawer to draft this share (resumes any saved draft).
+  function composeShare() {
+    const target = shareArticle();
+    if (!target) return;
+    shareComposerStore.open({
+      article: target,
+      repostUri: isDocumentMode ? document?.recordUri : undefined,
+      itemKey: itemGuid,
+      mode: 'create',
+    });
   }
 
-  function confirmShare() {
-    showShareConfirm = false;
-    performShare();
+  // Open the composer on the posted note (edit mode). The user's own linkblog
+  // post edits by rkey (it may live in a connected publication the URL-keyed
+  // store path can't reach); everything else uses the default setNote path.
+  function editShare() {
+    const target = shareArticle();
+    if (!target) return;
+    shareComposerStore.open({
+      article: target,
+      itemKey: itemGuid,
+      mode: 'edit',
+      initialNote: currentNote ?? '',
+      submit: isOwnLinkblogPost ? submitOwnNote : undefined,
+    });
   }
 
-  // Attach/update the note. The box stays visible after saving — it's persistent
-  // while shared.
-  async function applyComment(note: string) {
-    if (isOwnLinkblogPost) {
-      if (!ownRkey) return;
-      const trimmed = note.trim();
-      // Reflect locally, then persist (empty string clears the note).
-      ownNoteOverride = trimmed || undefined;
-      ownNoteEdited = true;
-      // Also update the listed document so the edit survives a remount and the
-      // overlay/My-Linkblog page reflect it ahead of the next pull.
-      if (document) myLinkblogStore.setNote(document.recordUri, trimmed);
-      try {
-        await api.updateLinkblogShareNote(ownRkey, trimmed);
-      } catch (e) {
-        console.error('Failed to update linkblog note:', e);
-      }
-      return;
-    }
-    if (isDocumentMode) {
-      if (isQuoted && quoteKey) linkblogStore.setNote(quoteKey, note);
-      else await handleQuote(note);
-    } else {
-      linkblogStore.setNote(itemUrl, note);
-    }
+  async function submitOwnNote(note: string) {
+    if (!ownRkey) return;
+    const trimmed = note.trim();
+    // Reflect locally, then persist (empty string clears the note).
+    ownNoteOverride = trimmed || undefined;
+    ownNoteEdited = true;
+    // Also update the listed document so the edit survives a remount and the
+    // overlay/My-Linkblog page reflect it ahead of the next pull.
+    if (document) myLinkblogStore.setNote(document.recordUri, trimmed);
+    await api.updateLinkblogShareNote(ownRkey, trimmed);
   }
 
   // Remove the share entirely (the Remove control in the persistent note box, or
@@ -865,6 +843,23 @@
     }
   }
 
+  // While the composer drawer is open for this article, the highlight popover
+  // offers "quote in your share draft" — select text (or tap a highlight) and
+  // it lands in the draft as a quote block.
+  let composerOpenHere = $derived(shareUrl ? shareComposerStore.isOpenFor(shareUrl) : false);
+
+  function quoteSelectionToShare() {
+    const state = highlights.popoverState;
+    if (!state) return;
+    const text =
+      state.pendingSelector?.exact ??
+      (state.highlightId
+        ? itemLabelsStore.getHighlights(itemGuid).find((h) => h.id === state.highlightId)?.selector
+            .exact
+        : undefined);
+    if (text) shareComposerStore.appendQuote(text);
+  }
+
   function handleOverflowSemble() {
     overflowMenuOpen = false;
     onSaveToSemble?.();
@@ -917,7 +912,7 @@
   {isTruncated}
   {currentlyShared}
   {currentNote}
-  highlights={itemLabelsStore.getHighlights(itemGuid)}
+  {hasShareDraft}
   {showActionBarIntegrations}
   {overflowMenuOpen}
   {showFetchOriginal}
@@ -957,7 +952,8 @@
   onFollowSource={handleFollowSource}
   onToggleLane={atmosphere.toggleLane}
   onCreateInLane={createInLane}
-  onApplyComment={applyComment}
+  onComposeShare={composeShare}
+  onEditShare={editShare}
   onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
   onMentionClick={(did) => sidebarStore.openAddFeedModalForDid(did)}
   onCloseOverflow={() => (overflowMenuOpen = false)}
@@ -998,6 +994,7 @@
       onRemove={highlights.removeHighlightFromPopover}
       onSaveToMargin={highlights.savePopoverHighlightToMargin}
       onSaveNote={highlights.saveNoteFromPopover}
+      onQuoteToShare={composerOpenHere ? quoteSelectionToShare : undefined}
       existingNote={highlights.popoverHighlightNote}
       marginSaved={highlights.popoverHighlightSavedToMargin}
       onClose={highlights.closePopover}
@@ -1008,9 +1005,3 @@
     <NotePeek note={highlights.notePeek.note} anchorRect={highlights.notePeek.anchorRect} />
   {/if}
 {/if}
-
-<ShareConfirmModal
-  open={showShareConfirm}
-  onconfirm={confirmShare}
-  oncancel={() => (showShareConfirm = false)}
-/>

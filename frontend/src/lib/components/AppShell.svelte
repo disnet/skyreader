@@ -19,6 +19,7 @@
   import Sidebar from '$lib/components/Sidebar.svelte';
   import KeyboardShortcutsModal from '$lib/components/KeyboardShortcutsModal.svelte';
   import RefreshProgressBar from '$lib/components/RefreshProgressBar.svelte';
+  import ShareComposer from '$lib/components/feed/ShareComposer.svelte';
 
   let { children }: { children: Snippet } = $props();
 
@@ -238,6 +239,7 @@
 
 <KeyboardShortcutsModal />
 <RefreshProgressBar />
+<ShareComposer />
 
 <div class="app-container">
   <Sidebar />

@@ -52,7 +52,7 @@
     isTruncated = false,
     currentlyShared = false,
     currentNote,
-    highlights = [],
+    hasShareDraft = false,
     showActionBarIntegrations = false,
     overflowMenuOpen = false,
     showFetchOriginal = false,
@@ -93,7 +93,8 @@
     onFollowSource,
     onToggleLane,
     onCreateInLane,
-    onApplyComment,
+    onComposeShare,
+    onEditShare,
     onOpenAuthor,
     onMentionClick,
     onCloseOverflow,
@@ -430,12 +431,11 @@
         {expandedLaneItems}
         {currentlyShared}
         {currentNote}
-        {highlights}
         lanesOpen={panelOpen}
         panelId="discussion-panel"
         {onToggleLane}
         {onCreateInLane}
-        {onApplyComment}
+        {onEditShare}
         {onOpenAuthor}
       />
       <div class="article-actions">
@@ -455,29 +455,42 @@
             class="action-label">{isSaved ? 'Saved' : 'Save'}</span
           >
         </button>
-        <!-- Share: a toggle for the Blogs lane, surfaced in the bar so sharing is
-             one tap from the card. Not shared → the same create path as the
-             lane's [+]; already shared → remove the share. Reads active while
-             shared (the Discussion note box still owns editing the note). -->
+        <!-- Share: not yet shared → one button that opens the composer (a saved
+             draft turns the label into "Draft"); commentary is optional there.
+             Already shared → remove (with confirm); note editing lives in the
+             Discussion lead's Edit affordance. -->
         {#if canShare}
           <div class="share-btn-wrapper">
-            <button
-              class="action-btn share-btn"
-              class:saved={currentlyShared}
-              class:confirming={confirmingRemove}
-              title={currentlyShared
-                ? 'Shared to your linkblog. Tap to remove'
-                : (shareRow?.createLabel ?? 'Share to your linkblog')}
-              onclick={(e) => {
-                e.stopPropagation();
-                if (currentlyShared) confirmingRemove = !confirmingRemove;
-                else onCreateInLane?.('linkblog');
-              }}
-            >
-              <span class="action-icon"><Icon name="share" size={16} /></span><span
-                class="action-label">{currentlyShared ? 'Shared' : 'Share'}</span
+            {#if currentlyShared}
+              <button
+                class="action-btn share-btn saved"
+                class:confirming={confirmingRemove}
+                title="Shared to your linkblog. Tap to remove"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  confirmingRemove = !confirmingRemove;
+                }}
               >
-            </button>
+                <span class="action-icon"><Icon name="share" size={16} /></span><span
+                  class="action-label">Shared</span
+                >
+              </button>
+            {:else}
+              <button
+                class="action-btn share-btn"
+                title={hasShareDraft
+                  ? 'Resume your share draft'
+                  : 'Write a share for your linkblog'}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  onComposeShare?.();
+                }}
+              >
+                <span class="action-icon"><Icon name="share" size={16} /></span><span
+                  class="action-label">{hasShareDraft ? 'Draft' : 'Share'}</span
+                >
+              </button>
+            {/if}
             {#if confirmingRemove}
               <!-- Confirm popover above the button, so it works even when the
                    action bar collapses to icon-only on small viewports. -->
@@ -1768,6 +1781,7 @@
   .share-btn-wrapper {
     position: relative;
     display: inline-flex;
+    align-items: center;
   }
 
   .confirm-pop {

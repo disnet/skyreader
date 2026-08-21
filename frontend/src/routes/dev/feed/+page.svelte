@@ -1,12 +1,26 @@
 <script lang="ts">
   // Harness for presentational feed surfaces — filter popover, highlight popover,
-  // share-note box, and the welcome screen. No auth, no backend (see ../+layout.ts).
+  // the share composer drawer, and the welcome screen. No auth, no backend (see
+  // ../+layout.ts).
   import FilterPopover from '$lib/components/feed/FilterPopover.svelte';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
-  import ShareCommentBox from '$lib/components/feed/ShareCommentBox.svelte';
+  import ShareComposer from '$lib/components/feed/ShareComposer.svelte';
   import WelcomePage from '$lib/components/feed/WelcomePage.svelte';
+  import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
   import Showcase from '../_harness/Showcase.svelte';
   import Case from '../_harness/Case.svelte';
+
+  const mockArticle = {
+    subscriptionId: 0,
+    guid: 'https://example.com/essay',
+    url: 'https://example.com/essay',
+    title: 'The Library as an Argument',
+    summary:
+      'A library is not a warehouse of books but an argument about what is worth keeping. ' +
+      'Every collection is a claim; every catalog, a thesis.',
+    publishedAt: new Date().toISOString(),
+    fetchedAt: Date.now(),
+  };
 
   let filterOpen = $state(false);
 
@@ -86,20 +100,41 @@
   {/if}
 
   <Case
-    name="ShareCommentBox · empty"
-    note="Fresh share — placeholder, Save hidden until focused & dirty."
+    name="ShareComposer · create"
+    note="The docked drawer, drafting a share. Opens over the page; minimize it to the slim bar."
     frame
     pad
   >
-    <ShareCommentBox onsubmit={() => {}} />
+    <button
+      class="passage"
+      onclick={() => shareComposerStore.open({ article: mockArticle, mode: 'create' })}
+    >
+      Open the composer drawer
+    </button>
   </Case>
 
-  <Case name="ShareCommentBox · seeded" note="Editing an existing note." frame pad>
-    <ShareCommentBox
-      initialNote="The second half is the strongest argument for an owned library I've read."
-      onsubmit={() => {}}
-    />
+  <Case
+    name="ShareComposer · edit"
+    note="Editing a posted note — quotes render as blockquotes, Post reads Update."
+    frame
+    pad
+  >
+    <button
+      class="passage"
+      onclick={() =>
+        shareComposerStore.open({
+          article: mockArticle,
+          mode: 'edit',
+          initialNote:
+            '> Every collection is a claim; every catalog, a thesis.\n\nThe second half is the strongest argument for an owned library I’ve read.',
+          submit: () => {},
+        })}
+    >
+      Open the composer in edit mode
+    </button>
   </Case>
+
+  <ShareComposer />
 
   <Case name="WelcomePage" note="Static unauthenticated landing — links to /auth/login." frame>
     <WelcomePage />

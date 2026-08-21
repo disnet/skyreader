@@ -46,6 +46,7 @@
   import { goto } from '$app/navigation';
   import { channelPath, FEEDS_PATH } from '$lib/utils/viewNav';
   import LinkblogIntro from '$lib/components/feed/LinkblogIntro.svelte';
+  import ShareDraftsSection from '$lib/components/feed/ShareDraftsSection.svelte';
 
   // `linkblog` renders the current user's own linkblog (their shared documents)
   // through the same feed UI as the main feed.
@@ -625,6 +626,7 @@
     <div class="feed-page-body">
       {#if mode === 'linkblog'}
         <LinkblogIntro />
+        <ShareDraftsSection />
       {/if}
 
       <PullToRefresh
@@ -715,7 +717,6 @@
                 imageUrl: article.imageUrl,
                 publishedAt: article.publishedAt,
               })}
-            onShare={(article, _sub, note) => linkblogStore.shareLink(article, note)}
             onUnshare={(url) => linkblogStore.unshare(url)}
             onReaderChange={(open) => (readerOpen = open)}
             onSaveToSemble={handleSaveToSemble}

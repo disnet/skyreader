@@ -30,6 +30,8 @@
     isArchived = false,
     onToggleSave,
     isSaved = false,
+    onShare,
+    shareActive = false,
     onTag,
     tagCount = 0,
     tagActive = false,
@@ -48,6 +50,10 @@
     isArchived?: boolean;
     onToggleSave?: () => void;
     isSaved?: boolean;
+    /** Open the share composer (or edit the posted share). */
+    onShare?: () => void;
+    /** The item is already shared to the linkblog. */
+    shareActive?: boolean;
     onTag?: () => void;
     tagCount?: number;
     tagActive?: boolean;
@@ -99,6 +105,18 @@
         title={isSaved ? 'Unsave' : 'Save (s)'}
       >
         <Icon name="bookmark" size={20} />
+      </button>
+    {/if}
+
+    {#if onShare}
+      <button
+        class="bar-btn"
+        class:active={shareActive}
+        onclick={onShare}
+        aria-label={shareActive ? 'Shared — edit your note' : 'Share to your linkblog'}
+        title={shareActive ? 'Shared — edit your note' : 'Share to your linkblog'}
+      >
+        <Icon name="share" size={20} />
       </button>
     {/if}
 

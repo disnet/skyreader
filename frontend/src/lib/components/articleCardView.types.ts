@@ -1,5 +1,5 @@
 import type { IconName } from './Icon.svelte';
-import type { Highlight, ReaderCollection, ReaderCollectionItem } from '$lib/types';
+import type { ReaderCollection, ReaderCollectionItem } from '$lib/types';
 
 /**
  * View-model types for the PURE presentational `ArticleCardView.svelte`.
@@ -122,8 +122,8 @@ export interface ArticleCardViewProps {
   isTruncated?: boolean;
   currentlyShared?: boolean;
   currentNote?: string;
-  /** Highlights on the article, offered as quick blockquotes in the share note. */
-  highlights?: Highlight[];
+  /** A local share draft exists for this article (unposted composer content). */
+  hasShareDraft?: boolean;
   showActionBarIntegrations?: boolean;
   overflowMenuOpen?: boolean;
   /** Offer the inline "fetch original article" action (short-excerpt articles). */
@@ -178,7 +178,10 @@ export interface ArticleCardViewProps {
   onFollowSource?: () => void;
   onToggleLane?: (id: LaneId) => void;
   onCreateInLane?: (id: LaneId) => void;
-  onApplyComment?: (note: string) => void;
+  /** Open the share composer (drafting; resumes an existing draft). */
+  onComposeShare?: () => void;
+  /** Open the share composer on the posted note (edit mode). */
+  onEditShare?: () => void;
   onOpenAuthor?: (did: string) => void;
   // A @mention in the note/body was clicked — open the add-feed dialog for the DID.
   onMentionClick?: (did: string) => void;

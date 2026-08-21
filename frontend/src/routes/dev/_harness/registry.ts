@@ -79,6 +79,6 @@ export const harnesses: HarnessEntry[] = [
     title: 'Feed surfaces',
     description:
       'Presentational feed pieces: filter popover, highlight popover, share-note box, and the welcome screen.',
-    components: ['FilterPopover', 'HighlightPopover', 'ShareCommentBox', 'WelcomePage'],
+    components: ['FilterPopover', 'HighlightPopover', 'ShareComposer', 'WelcomePage'],
   },
 ];

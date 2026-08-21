@@ -7,6 +7,7 @@ import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { linkblogStore } from '$lib/stores/linkblog.svelte';
 import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
+import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
 import { preferences } from '$lib/stores/preferences.svelte';
 import type { Article, Subscription } from '$lib/types';
 
@@ -127,7 +128,8 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     }
   }
 
-  // Share/unshare selected item to the linkblog (article items only)
+  // Share/unshare selected item to the linkblog (article items only). Sharing
+  // opens the composer — same one door as the Share button; commentary optional.
   function toggleSelectedShare() {
     if (preferences.linkblogDisabled) return;
     const selected = getSelectedArticle();
@@ -137,7 +139,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     if (linkblogStore.isShared(article.url)) {
       linkblogStore.unshare(article.url);
     } else {
-      linkblogStore.shareLink(article);
+      shareComposerStore.open({ article, itemKey: article.guid, mode: 'create' });
     }
   }
 

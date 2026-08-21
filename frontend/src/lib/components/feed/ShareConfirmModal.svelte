@@ -16,10 +16,13 @@
     open,
     onconfirm,
     oncancel,
+    zIndex,
   }: {
     open: boolean;
     onconfirm: () => void;
     oncancel: () => void;
+    /** Raise above hosts that themselves float (e.g. the share composer drawer). */
+    zIndex?: number;
   } = $props();
 
   let dontAskAgain = $state(false);
@@ -37,7 +40,7 @@
   }
 </script>
 
-<Modal {open} onclose={oncancel} title="Share to your linkblog?" maxWidth="420px">
+<Modal {open} onclose={oncancel} title="Share to your linkblog?" maxWidth="420px" {zIndex}>
   <p class="share-confirm-text">
     This publishes to {#if target.external}<strong>{target.name}</strong>{:else}your public linkblog{/if}{#if target.address}
       at

@@ -9,14 +9,14 @@
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
-  import { formatQuoteSeed } from '$lib/utils/linkPost';
+  import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
+  import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
   import type { Article } from '$lib/types';
   import { db } from '$lib/services/db';
   import { decodeEntities } from '$lib/utils/entities';
   import Icon from '$lib/components/Icon.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
-  import ShareConfirmModal from '$lib/components/feed/ShareConfirmModal.svelte';
 
   let {
     displayItem,
@@ -387,26 +387,24 @@
     };
   }
 
-  async function performShare() {
-    const t = buildShareTarget();
-    if (!t) return;
-    await linkblogStore.shareLink(t.article, formatQuoteSeed(t.article.summary) ?? '', t.repostUri);
-  }
+  let hasShareDraft = $derived(Boolean(url) && shareDraftsStore.hasDraft(url));
 
-  // A share from the saved list is as public as one from a feed card or the
-  // reader, so it takes the same first-share confirmation.
-  let showShareConfirm = $state(false);
-
+  // Sharing from the saved list opens the composer drawer (drafting, quotes,
+  // the works — instant is one Post away). Removal stays here as the toggle's
+  // shared-state action.
   function toggleShare() {
     if (isShared) {
       void linkblogStore.unshare(url);
       return;
     }
-    if (!preferences.linkblogShareConfirmed) {
-      showShareConfirm = true;
-      return;
-    }
-    void performShare();
+    const t = buildShareTarget();
+    if (!t) return;
+    shareComposerStore.open({
+      article: t.article,
+      repostUri: t.repostUri,
+      itemKey,
+      mode: 'create',
+    });
   }
 
   let popoverMenuItems = $derived.by(() => {
@@ -434,7 +432,11 @@
     ];
     if (canShare) {
       items.push({
-        label: isShared ? 'Remove from linkblog' : 'Share to your linkblog',
+        label: isShared
+          ? 'Remove from linkblog'
+          : hasShareDraft
+            ? 'Resume share draft'
+            : 'Share to your linkblog',
         icon: 'share',
         active: isShared,
         onclick: () => {
@@ -559,15 +561,6 @@
     />
   {/if}
 </article>
-
-<ShareConfirmModal
-  open={showShareConfirm}
-  onconfirm={() => {
-    showShareConfirm = false;
-    void performShare();
-  }}
-  oncancel={() => (showShareConfirm = false)}
-/>
 
 <style>
   .bookmark-card {

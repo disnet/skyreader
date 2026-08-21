@@ -1,6 +1,7 @@
 import { liveDb } from '$lib/services/liveDb.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
 import { linkblogStore } from './linkblog.svelte';
+import { shareDraftsStore } from './shareDrafts.svelte';
 import { myLinkblogStore } from './myLinkblog.svelte';
 import { socialStore } from './social.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
@@ -71,6 +72,7 @@ function createAppManager() {
         liveDb.loadArticles(),
         itemLabelsStore.load(),
         linkblogStore.load(),
+        shareDraftsStore.load(),
         filteredViewsStore.load(),
         savesStore.load(),
         magazineStore.load(),

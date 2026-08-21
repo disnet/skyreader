@@ -10,6 +10,7 @@ import type {
   SavedItem,
   FollowingPublication,
   Magazine,
+  ShareDraft,
 } from '$lib/types';
 
 // Sync queue for offline operations
@@ -89,6 +90,7 @@ class SkyreaderDatabase extends Dexie {
   followingPublications!: Table<FollowingPublication>;
   feedCursors!: Table<FeedCursorEntry>;
   magazines!: Table<Magazine>;
+  shareDrafts!: Table<ShareDraft>;
 
   constructor() {
     super('skyreader');
@@ -433,6 +435,13 @@ class SkyreaderDatabase extends Dexie {
     this.version(37).stores({
       magazines: 'rkey, createdAt, updatedAt',
     });
+
+    // Share composer: local drafts of linkblog shares, keyed by the external
+    // article URL (the linkblog dedup key). Device-local only — a draft becomes
+    // public the moment it's posted, never before.
+    this.version(38).stores({
+      shareDrafts: 'articleUrl, updatedAt',
+    });
   }
 }
 
@@ -456,6 +465,7 @@ export async function clearAllData(): Promise<void> {
     db.followingPublications.clear(),
     db.feedCursors.clear(),
     db.magazines.clear(),
+    db.shareDrafts.clear(),
   ]);
 }
 

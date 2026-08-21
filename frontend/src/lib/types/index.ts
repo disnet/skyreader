@@ -705,6 +705,34 @@ export interface LinkblogShare {
   createdAt: string;
 }
 
+// One block of a share draft. The composer edits a share as an ordered list of
+// commentary text and quoted passages; quotes serialize to the `> ` Markdown
+// subset the linkblog write path already speaks (see utils/shareNote.ts).
+export interface ShareDraftBlock {
+  kind: 'text' | 'quote';
+  text: string;
+}
+
+// A local (device-only) draft of a linkblog share, keyed by the external
+// article URL — the same key the linkblog dedups on. Carries enough article
+// metadata to post the share later without the original Article object (so a
+// draft can be resumed from the drafts list long after the feed item is gone).
+export interface ShareDraft {
+  articleUrl: string; // primary key
+  articleTitle?: string;
+  articleAuthor?: string;
+  articleSummary?: string;
+  articleImage?: string;
+  articlePublishedAt?: string;
+  /** at:// URI of the source document when the share is a quote-reshare. */
+  repostUri?: string;
+  /** The item key highlights are stored under (guid / recordUri), for the quote picker. */
+  itemKey?: string;
+  blocks: ShareDraftBlock[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 // One other person who linked the same external article (Constellation), with
 // their commentary if available. Powers the "also linked by …" context line.
 export interface AlsoLinkedEntry {
