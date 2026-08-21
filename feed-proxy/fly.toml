@@ -70,7 +70,7 @@ primary_region = "sjc"
 [vm]
   cpu_kind = "performance"
   cpus = 1
-  memory_mb = 4096
+  memory_mb = 2048
 
 [env]
   DATA_DIR = "/data"
