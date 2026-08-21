@@ -38,27 +38,36 @@ primary_region = "sjc"
   # would stop warming whenever traffic is idle, defeating the purpose.
   min_machines_running = 1
 
-# performance/2, NOT shared — this is the steady-state size, not a backfill
-# accommodation. Two attempts on shared/2/1024 (2026-08-20) both starved the event
-# loop within minutes: /health timing out at 12s+, and the 5-minutely crawl-set
-# pull taking 93s instead of 2s. The second attempt was AFTER the allocation fix
-# (resident memory 862 MB -> 123 MB) and AFTER the D1 timeline moved reads off this
-# box entirely, so neither memory nor read traffic explains it. Shared vCPUs run on
-# burst credits and this workload is sustained, so it simply cannot hold them.
+# performance, NOT shared. Two attempts on shared/2/1024 (2026-08-20) both starved
+# the event loop within minutes: /health timing out at 12s+, and the 5-minutely
+# crawl-set pull taking 93s instead of 2s. The second attempt was AFTER the
+# allocation fix (resident memory 862 MB -> 123 MB) and AFTER the D1 timeline moved
+# reads off this box entirely, so neither memory nor read traffic explains it.
+# Shared vCPUs run on burst credits and this workload is sustained, so it simply
+# cannot hold them.
+#
+# One core, down from two (also 2026-08-20): the hot path is a single-threaded
+# JavaScript event loop, so the second dedicated core mostly idled — Bun's GC and
+# IO threads now share this core instead of running alongside it. If starvation
+# returns (/health in seconds, crawl-set pull >> 2s, `warm.cycleSeconds` on /stats
+# drifting up), going back to cpus = 2 is the known-good rollback.
 #
 # Memory is oversized as a side effect: performance presets carry a 2 GB/core
 # minimum, and actual usage is ~123 MB. Do not read the headroom as needed.
 #
-# The real driver is that the crawl set is ~5,586 feeds — roughly 4x the ~1,330
-# this box was originally sized for. That grew because the crawl-set pull stamps
+# The underlying driver was a crawl set of ~5,586 feeds — roughly 4x the ~1,330
+# this box was originally sized for. It grew because the crawl-set pull stamped
 # `last_requested_at` on EVERY subscribed feed, where read traffic used to stamp
-# only feeds someone actually opened. Shrinking the crawl set back toward real
-# demand is the change that would make shared viable again; until then, this needs
-# dedicated CPU. Check `warm.cycleSeconds` on /stats before revisiting.
+# only feeds someone actually opened. The backend now scopes the crawl set to
+# feeds with a recently-active subscriber (handleCrawlSet in
+# backend/src/routes/ingest.ts); once the registered set settles back near that
+# original size, re-testing shared is on the table. Check the proxy's
+# "Crawl set: N feed(s) registered" log line and `warm.cycleSeconds` on /stats
+# before revisiting.
 [vm]
   cpu_kind = "performance"
-  cpus = 2
-  memory_mb = 4096
+  cpus = 1
+  memory_mb = 2048
 
 [env]
   DATA_DIR = "/data"

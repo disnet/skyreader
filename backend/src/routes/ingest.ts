@@ -596,12 +596,34 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
 }
 
 /**
+ * How recently a subscriber must have used the app for their subscriptions to
+ * count as crawl demand. `users.last_active_at` is stamped on every
+ * authenticated request (src/index.ts), so this is "opened the app within the
+ * window", not any finer-grained read signal. `created_at` is the fallback for
+ * accounts that predate their first stamped request.
+ *
+ * This gate exists because the crawl-set pull replaced read traffic as what
+ * keeps a feed warm (see below), which silently changed "active feed" from
+ * "somebody reads this" to "somebody is subscribed to this" and grew the prod
+ * crawl set ~4x past what the crawler was sized for (2026-08-20 incident; see
+ * feed-proxy/fly.toml). A returning dormant user is re-included by their first
+ * authenticated request: the next 5-minutely pull re-registers their feeds,
+ * which are then fresh within one warm cycle.
+ */
+export const CRAWL_ACTIVE_USER_WINDOW_SECONDS = 30 * 24 * 60 * 60;
+
+/**
  * GET /api/internal/crawl-set
  *
  * The feeds this environment wants crawled. Replaces the proxy's request-driven
  * warmth: once clients stop reading through Fly, nothing stamps
  * `last_requested_at`, so every feed would silently age out of the warm loop.
  * The proxy polls this and stamps the rows itself.
+ *
+ * Scoped to feeds with at least one recently-active subscriber
+ * (CRAWL_ACTIVE_USER_WINDOW_SECONDS), so crawl load tracks reading rather than
+ * accumulated signups. Feeds that drop out of this set stop being stamped and
+ * age out of the proxy's warm loop via its own WARM_ACTIVE_WINDOW.
  */
 export async function handleCrawlSet(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'GET') return badRequest('Method not allowed', 405);
@@ -612,18 +634,23 @@ export async function handleCrawlSet(request: Request, env: Env): Promise<Respon
   await stampCrawlerHeartbeat(env);
 
   // Timed: this runs every 5 minutes forever and is the heaviest query on the
-  // ingest path. `idx_subscriptions_cache_active_feed` (migration 0072) makes it
-  // a covering index search; the `d1Ms`/`d1RowsRead` fields on this request's log
-  // line are how you confirm it stayed that way as the table grows.
+  // ingest path. `idx_subscriptions_cache_active_feed` (migration 0072) keeps the
+  // subscription scan a covering index search; the activity gate adds one `users`
+  // primary-key probe per subscription row on top of it, so `d1RowsRead` counts
+  // both. The `d1Ms`/`d1RowsRead` fields on this request's log line are how you
+  // confirm the shape held as the tables grow.
   const rows = await timedAll<{ feed_url: string; subscribers: number }>(
     'crawl_set',
     env.DB.prepare(
-      `SELECT feed_url, COUNT(*) AS subscribers
-         FROM subscriptions_cache
-        WHERE active = 1
-          AND feed_url IS NOT NULL AND feed_url <> ''
-          AND ${rssSubscriptionPredicate()}
-        GROUP BY feed_url`
+      `SELECT sc.feed_url, COUNT(*) AS subscribers
+         FROM subscriptions_cache sc
+         JOIN users u ON u.did = sc.user_did
+        WHERE sc.active = 1
+          AND sc.feed_url IS NOT NULL AND sc.feed_url <> ''
+          AND ${rssSubscriptionPredicate('sc')}
+          AND (u.last_active_at >= unixepoch() - ${CRAWL_ACTIVE_USER_WINDOW_SECONDS}
+               OR u.created_at >= unixepoch() - ${CRAWL_ACTIVE_USER_WINDOW_SECONDS})
+        GROUP BY sc.feed_url`
     )
   );
 
