@@ -199,11 +199,25 @@
   // buys some clearance — enough to clear the pill and leave a sliver of
   // article between the two. Phones only: iPad and desktop Safari keep the URL
   // bar at the top, where it overlays nothing.
+  //
+  // And the card has to be lifted over the keyboard itself. iOS doesn't shrink
+  // the layout viewport for the keyboard, so `bottom: 0` is behind it; what
+  // usually saves us is Safari panning the page to reveal the focused field,
+  // which drags fixed elements up with it. That pan is best-effort — when it
+  // doesn't fire (open the composer at the wrong moment and it sometimes
+  // doesn't) the card sits under the keyboard and all you see is the feed with
+  // a keyboard over it. So the gap between the layout bottom and the visible
+  // bottom is measured and added to the card's offset: it comes out ~0 once
+  // Safari has panned, and a keyboard's-worth when it hasn't, which puts the
+  // card on screen either way. Keyboard-up only — the URL bar makes the same
+  // gap in the resting state, and fixed elements already clear that on their
+  // own (correcting for it too is the double-count noted in the CSS below).
   const KEYBOARD_CLEARANCE = 44;
   const PHONE_WIDTH = 640;
 
   let visibleHeight = $state(0);
   let keyboardClearance = $state(0);
+  let keyboardInset = $state(0);
   let composerMax = $derived(
     visibleHeight > 0
       ? `${Math.max(Math.round(visibleHeight) - 16 - keyboardClearance, 0)}px`
@@ -220,6 +234,9 @@
       // between the layout and visual viewports, so the threshold separates them.
       const keyboardUp = window.innerHeight - vv.height > 150;
       keyboardClearance = keyboardUp && window.innerWidth <= PHONE_WIDTH ? KEYBOARD_CLEARANCE : 0;
+      keyboardInset = keyboardUp
+        ? Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop))
+        : 0;
     };
     measure();
     vv.addEventListener('resize', measure);
@@ -463,6 +480,7 @@
       bind:this={composerEl}
       style:--composer-max={composerMax}
       style:--kb-clear={keyboardClearance ? `${keyboardClearance}px` : undefined}
+      style:--kb-inset={keyboardInset ? `${keyboardInset}px` : undefined}
       aria-label={isEdit ? 'Edit your share' : 'Share to your linkblog'}
     >
       <header class="composer-head">
@@ -697,7 +715,10 @@
     --float-gap: 0.5rem;
     --composer-inset: var(--sidebar-width, 320px);
     position: fixed;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--float-gap) + var(--kb-clear, 0px));
+    bottom: calc(
+      env(safe-area-inset-bottom, 0px) + var(--float-gap) + var(--kb-clear, 0px) +
+        var(--kb-inset, 0px)
+    );
     left: var(--composer-inset);
     right: 0;
     margin: 0 auto;
