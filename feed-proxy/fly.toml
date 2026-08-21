@@ -46,12 +46,6 @@ primary_region = "sjc"
 # Shared vCPUs run on burst credits and this workload is sustained, so it simply
 # cannot hold them.
 #
-# One core, down from two (also 2026-08-20): the hot path is a single-threaded
-# JavaScript event loop, so the second dedicated core mostly idled — Bun's GC and
-# IO threads now share this core instead of running alongside it. If starvation
-# returns (/health in seconds, crawl-set pull >> 2s, `warm.cycleSeconds` on /stats
-# drifting up), going back to cpus = 2 is the known-good rollback.
-#
 # Memory is oversized as a side effect: performance presets carry a 2 GB/core
 # minimum, and actual usage is ~123 MB. Do not read the headroom as needed.
 #
@@ -82,7 +76,18 @@ primary_region = "sjc"
   # stop being polled so abandoned feeds age out.
   WARM_ENABLED = "true"
   WARM_INTERVAL_SECONDS = "60"
-  WARM_ACTIVE_WINDOW_SECONDS = "1209600"
+  # 1 day, down from 14 (2026-08-21). The 14-day window was sized for HUMAN request
+  # patterns, back when read traffic was what stamped last_requested_at. The
+  # primary stamper is now the 5-minutely crawl-set pull, so in-set feeds are
+  # re-stamped ~300s apart and any window over a few minutes keeps them active.
+  # What the window actually governs now is (a) how long a feed DESCOPED from the
+  # crawl set keeps being crawled — at 14 days the backend's activity scoping took
+  # two weeks to shrink the warm loop's real workload, which is what invalidated
+  # the first performance-1x attempt — and (b) how long warming survives a
+  # crawl-set-pull outage before the whole set ages out (self-heals when the pull
+  # resumes, but the drained-window restart is a full re-crawl burst). One day
+  # keeps (a) responsive and (b) comfortable.
+  WARM_ACTIVE_WINDOW_SECONDS = "86400"
   # Lowered 500 → 200 on 2026-08-20, during the initial prod ingest backfill.
   #
   # The old 500 was sized for "~1330 active feeds need ~440 refreshes/tick to

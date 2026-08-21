@@ -47,7 +47,10 @@ primary_region = "sjc"
   STALE_TTL_SECONDS = "3600"
   WARM_ENABLED = "true"
   WARM_INTERVAL_SECONDS = "60"
-  WARM_ACTIVE_WINDOW_SECONDS = "1209600"
+  # 1 day, down from 14, alongside prod; see fly.toml for the full rationale
+  # (the 5-minutely crawl-set pull is the stamper now, so this window only
+  # governs descope lag and pull-outage tolerance).
+  WARM_ACTIVE_WINDOW_SECONDS = "86400"
   # Lowered 500 → 200 alongside prod; see fly.toml for the full rationale
   # (crawl set is ~5,586 feeds, so the cap now bounds per-tick CPU rather
   # than chasing a fresh-everything target).
