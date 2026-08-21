@@ -615,9 +615,10 @@
     line-height: var(--leading-normal);
   }
 
+  /* Held to the muted-ink token at full strength: at 0.6 the placeholder lands
+     near 2.5:1, under the contrast bar placeholders are held to. */
   .text-input::placeholder {
     color: var(--color-text-secondary);
-    opacity: 0.6;
   }
 
   /* A quote is a real blockquote in the editor: the gold quotation rule (the
