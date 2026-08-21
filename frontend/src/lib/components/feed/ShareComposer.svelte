@@ -182,6 +182,175 @@
     const ok = await composer.post();
     if (!ok) postError = true;
   }
+
+  // ── Height budget ───────────────────────────────────────────────────────────
+  // The card is capped to the *visible* viewport, not the layout one. On mobile
+  // the keyboard overlays the window without shrinking it — 100dvh still
+  // reports the full screen — so a long draft grows the card down behind the
+  // keyboard and takes the foot row (Post included) with it.
+  // visualViewport.height is the strip actually left on screen. The blocks
+  // region is the only part with min-height:0, so the whole squeeze lands there
+  // and it scrolls; head, link card and foot keep their content height.
+  //
+  // The bottom of that strip isn't free either: with the keyboard up, iOS
+  // Safari shrinks its URL bar into a floating pill that sits *over* the page
+  // instead of below it, so a card resting at the usual float gap comes out
+  // with the address bar across its foot row. Keyboard-up on a phone therefore
+  // buys some clearance — enough to clear the pill and leave a sliver of
+  // article between the two. Phones only: iPad and desktop Safari keep the URL
+  // bar at the top, where it overlays nothing.
+  const KEYBOARD_CLEARANCE = 44;
+  const PHONE_WIDTH = 640;
+
+  let visibleHeight = $state(0);
+  let keyboardClearance = $state(0);
+  let composerMax = $derived(
+    visibleHeight > 0
+      ? `${Math.max(Math.round(visibleHeight) - 16 - keyboardClearance, 0)}px`
+      : undefined
+  );
+
+  $effect(() => {
+    if (!session || composer.minimized) return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const measure = () => {
+      visibleHeight = vv.height;
+      // The keyboard takes a big bite; the URL bar alone is a much smaller gap
+      // between the layout and visual viewports, so the threshold separates them.
+      const keyboardUp = window.innerHeight - vv.height > 150;
+      keyboardClearance = keyboardUp && window.innerWidth <= PHONE_WIDTH ? KEYBOARD_CLEARANCE : 0;
+    };
+    measure();
+    vv.addEventListener('resize', measure);
+    vv.addEventListener('scroll', measure);
+    return () => {
+      vv.removeEventListener('resize', measure);
+      vv.removeEventListener('scroll', measure);
+    };
+  });
+
+  // ── Keep drags inside the card ──────────────────────────────────────────────
+  // A finger drag on the card would otherwise fall through to the feed behind
+  // it, so the page scrolls while you're trying to move around the draft. The
+  // blocks region is the one part that legitimately scrolls; when it has room
+  // to move in the drag's direction the browser handles it (and
+  // overscroll-behavior:contain stops the chain at its edges). Every other drag
+  // — head, foot, link card, or the blocks region when the draft is short
+  // enough to fit — gets swallowed.
+  //
+  // The listener is non-passive by necessity, so it's registered here rather
+  // than as an event attribute. A live text selection is left alone: dragging
+  // an iOS selection handle fires touchmove too, and preventing it there would
+  // freeze the handle.
+  $effect(() => {
+    if (!session || composer.minimized) return;
+    const card = composerEl;
+    if (!card) return;
+
+    let lastY = 0;
+
+    function onStart(e: TouchEvent) {
+      lastY = e.touches[0]?.clientY ?? 0;
+    }
+
+    function onMove(e: TouchEvent) {
+      const y = e.touches[0]?.clientY ?? lastY;
+      const dy = y - lastY;
+      lastY = y;
+
+      const selection = window.getSelection();
+      if (selection && !selection.isCollapsed) return;
+
+      const el = blocksEl;
+      if (!el || !(e.target instanceof Node) || !el.contains(e.target)) {
+        e.preventDefault();
+        return;
+      }
+      const room = el.scrollHeight - el.clientHeight;
+      // Dragging down reveals earlier content (scrollTop falls), and vice versa.
+      const atTop = el.scrollTop <= 0;
+      const atBottom = el.scrollTop >= room - 1;
+      if (room <= 0 || (dy > 0 && atTop) || (dy < 0 && atBottom)) e.preventDefault();
+    }
+
+    card.addEventListener('touchstart', onStart, { passive: true });
+    card.addEventListener('touchmove', onMove, { passive: false });
+    return () => {
+      card.removeEventListener('touchstart', onStart);
+      card.removeEventListener('touchmove', onMove);
+    };
+  });
+
+  // ── Dismiss on touch outside ────────────────────────────────────────────────
+  // On mobile the soft keyboard shifts the visual viewport out from under
+  // fixed positioning, so an expanded composer drifts with the page as soon as
+  // you scroll the feed behind it. Rather than fight the browser for that,
+  // treat any touch outside the card as a signal to put the draft away: the
+  // start of a scroll minimizes immediately, a plain tap minimizes once it
+  // lands (so the tap still reaches whatever it hit). Blurring first sends the
+  // keyboard down. Nothing is lost — the draft keeps saving, and quotes picked
+  // from the article still land in it while it rests.
+  //
+  // Touch events only, so a desktop pointer selecting text in the article
+  // leaves the composer alone.
+  let composerEl = $state<HTMLElement | null>(null);
+  const DRAG_SLOP = 8;
+
+  $effect(() => {
+    if (!session || composer.minimized || showShareConfirm) return;
+
+    let tracking = false;
+    let startX = 0;
+    let startY = 0;
+
+    function isOutside(target: EventTarget | null): boolean {
+      return !(target instanceof Node) || !composerEl || !composerEl.contains(target);
+    }
+
+    function dismiss() {
+      tracking = false;
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && composerEl?.contains(active)) active.blur();
+      quotesOpen = false;
+      composer.setMinimized(true);
+    }
+
+    function onTouchStart(e: TouchEvent) {
+      if (e.touches.length !== 1 || !isOutside(e.target)) {
+        tracking = false;
+        return;
+      }
+      tracking = true;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+    }
+
+    function onTouchMove(e: TouchEvent) {
+      if (!tracking) return;
+      const t = e.touches[0];
+      if (!t) return;
+      if (Math.abs(t.clientX - startX) > DRAG_SLOP || Math.abs(t.clientY - startY) > DRAG_SLOP) {
+        dismiss();
+      }
+    }
+
+    function onTouchEnd() {
+      if (tracking) dismiss();
+    }
+
+    const opts = { capture: true, passive: true } as const;
+    document.addEventListener('touchstart', onTouchStart, opts);
+    document.addEventListener('touchmove', onTouchMove, opts);
+    document.addEventListener('touchend', onTouchEnd, opts);
+    document.addEventListener('touchcancel', onTouchEnd, opts);
+    return () => {
+      document.removeEventListener('touchstart', onTouchStart, opts);
+      document.removeEventListener('touchmove', onTouchMove, opts);
+      document.removeEventListener('touchend', onTouchEnd, opts);
+      document.removeEventListener('touchcancel', onTouchEnd, opts);
+    };
+  });
 </script>
 
 {#if session && article}
@@ -222,7 +391,13 @@
       </button>
     </div>
   {:else}
-    <section class="composer" aria-label={isEdit ? 'Edit your share' : 'Share to your linkblog'}>
+    <section
+      class="composer"
+      bind:this={composerEl}
+      style:--composer-max={composerMax}
+      style:--kb-clear={keyboardClearance ? `${keyboardClearance}px` : undefined}
+      aria-label={isEdit ? 'Edit your share' : 'Share to your linkblog'}
+    >
       <header class="composer-head">
         <div class="composer-head-text">
           <span class="composer-title">
@@ -455,7 +630,7 @@
     --float-gap: 0.5rem;
     --composer-inset: var(--sidebar-width, 320px);
     position: fixed;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--float-gap));
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--float-gap) + var(--kb-clear, 0px));
     left: var(--composer-inset);
     right: 0;
     margin: 0 auto;
@@ -470,9 +645,12 @@
   .composer {
     display: flex;
     flex-direction: column;
-    /* Never taller than the window, so a long draft scrolls its blocks instead of
-       running the foot row off the top. The blocks region absorbs the squeeze. */
-    max-height: calc(100dvh - 2 * var(--float-gap));
+    /* Never taller than what's on screen, so a long draft scrolls its blocks
+       instead of running the foot row off the top or down behind the keyboard.
+       The blocks region absorbs the squeeze. --composer-max is the measured
+       visual viewport (see the script); the dvh fallback covers first paint and
+       browsers without visualViewport. */
+    max-height: var(--composer-max, calc(100dvh - 2 * var(--float-gap)));
     animation: composer-in 0.25s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
@@ -995,6 +1173,19 @@
 
     .quotes-popup {
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    }
+  }
+
+  /* Safari paints its own translucent chrome over the bottom of the window, and
+     a soft shadow crossing into it tears along that boundary instead of fading.
+     On phones the expanded card rides on its border alone — flat-by-default is
+     the house rule anyway, and the card is large enough there to read as a
+     surface without one. The minibar keeps its shadow: it's small, it floats
+     clear of the chrome, and it needs the lift to separate from the feed.
+     Last in the file so it also wins over the dark-mode shadow above. */
+  @media (max-width: 640px) {
+    .composer {
+      box-shadow: none;
     }
   }
 </style>
