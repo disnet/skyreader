@@ -297,26 +297,91 @@
   let composerEl = $state<HTMLElement | null>(null);
   const DRAG_SLOP = 8;
 
+  /** The scroll container a touch landed in — the one a flick would move. */
+  function nearestScroller(target: EventTarget | null): Element | null {
+    let el =
+      target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+    while (el) {
+      const overflowY = getComputedStyle(el).overflowY;
+      if (/(auto|scroll|overlay)/.test(overflowY) && el.scrollHeight > el.clientHeight) return el;
+      el = el.parentElement;
+    }
+    return document.scrollingElement;
+  }
+
   $effect(() => {
     if (!session || composer.minimized || showShareConfirm) return;
 
     let tracking = false;
+    let touching = false;
     let startX = 0;
     let startY = 0;
+    let startScroller: Element | null = null;
 
     function isOutside(target: EventTarget | null): boolean {
       return !(target instanceof Node) || !composerEl || !composerEl.contains(target);
     }
 
+    // iOS pans the whole page up to hold a focused field clear of the keyboard.
+    // WebKit normally animates that pan back on blur, but when the blur lands
+    // mid-gesture the restore is sometimes dropped: the keyboard leaves and the
+    // page stays panned, so every fixed element — the reader's bottom bar, our
+    // own minibar — draws a keyboard's-worth too high with article text running
+    // on underneath. Any scroll re-syncs it. So once the keyboard is really
+    // gone and the finger is off, if the page is still panned, scroll the
+    // container the touch was in by a pixel and back. Only in that broken
+    // state: the pan check keeps this off the normal path entirely.
+    function restoreViewportPan(scroller: Element | null) {
+      const vv = window.visualViewport;
+      if (!vv || !scroller) return;
+
+      // The gesture that set this off is usually still under way, and this
+      // effect's own listeners come down the moment the card minimizes — so the
+      // wait keeps its own eye on the finger.
+      let fingerDown = touching;
+      const watch = { capture: true, passive: true } as const;
+      const onEnd = (e: TouchEvent) => {
+        if (e.touches.length === 0) fingerDown = false;
+      };
+      if (fingerDown) {
+        document.addEventListener('touchend', onEnd, watch);
+        document.addEventListener('touchcancel', onEnd, watch);
+      }
+      const stopWatching = () => {
+        document.removeEventListener('touchend', onEnd, watch);
+        document.removeEventListener('touchcancel', onEnd, watch);
+      };
+
+      let tries = 0;
+      const check = () => {
+        const keyboardUp = window.innerHeight - vv.height > 150;
+        if ((keyboardUp || fingerDown) && tries++ < 12) {
+          setTimeout(check, 120);
+          return;
+        }
+        stopWatching();
+        if (keyboardUp || fingerDown || vv.offsetTop <= 0) return;
+        const top = scroller.scrollTop;
+        scroller.scrollTo({ top: top + (top > 0 ? -1 : 1), behavior: 'instant' });
+        scroller.scrollTo({ top, behavior: 'instant' });
+      };
+      setTimeout(check, 150);
+    }
+
     function dismiss() {
       tracking = false;
+      // Blur before the field unmounts with the expanded card: WebKit has
+      // nothing to restore the pan against once the focused node is gone.
       const active = document.activeElement;
-      if (active instanceof HTMLElement && composerEl?.contains(active)) active.blur();
+      const wasFocused = active instanceof HTMLElement && composerEl?.contains(active);
+      if (wasFocused) active.blur();
       quotesOpen = false;
       composer.setMinimized(true);
+      if (wasFocused) restoreViewportPan(startScroller);
     }
 
     function onTouchStart(e: TouchEvent) {
+      touching = true;
       if (e.touches.length !== 1 || !isOutside(e.target)) {
         tracking = false;
         return;
@@ -324,6 +389,7 @@
       tracking = true;
       startX = e.touches[0].clientX;
       startY = e.touches[0].clientY;
+      startScroller = nearestScroller(e.target);
     }
 
     function onTouchMove(e: TouchEvent) {
@@ -335,7 +401,8 @@
       }
     }
 
-    function onTouchEnd() {
+    function onTouchEnd(e: TouchEvent) {
+      if (e.touches.length === 0) touching = false;
       if (tracking) dismiss();
     }
 
