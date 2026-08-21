@@ -58,14 +58,18 @@ primary_region = "sjc"
 # original size, re-testing shared is on the table. Check the proxy's
 # "Crawl set: N feed(s) registered" log line and `warm.cycleSeconds` on /stats
 # before revisiting.
-# Steady-state demand measured at ~0.35 cores on 2026-08-21 (after the crawl-set
-# scoping + warm-set drain), so performance-1x is expected to hold with headroom
-# once the no-change fast path proves out — drop cpus to 1 (memory_mb 2048) as
-# the next step-down. The earlier same-day 1x failure was measured during backlog
-# catch-up and doesn't count against it.
+# performance-1x/4096, matching the live machine — one variable changes per
+# deploy. CPU demand measured ~0.05 cores after the no-change fast path
+# (2026-08-21). Memory is deliberately ABOVE the 1x preset: with the DB bigger
+# than a 2 GB machine's page cache, the periodic scans went disk-bound (~1.3
+# GB/min reads, event loop in D-state on sync SQLite — the iowait incident).
+# The covering indexes (idx_cache_warm etc.) remove that dependence; once
+# diskstats confirms reads collapsed, step memory_mb to 2048, verify, and only
+# then try shared-cpu-2x/1024 — judged by /health latency and crawl-set pull
+# duration over 30+ minutes, never by loadavg (throttling inflates it).
 [vm]
   cpu_kind = "performance"
-  cpus = 2
+  cpus = 1
   memory_mb = 4096
 
 [env]

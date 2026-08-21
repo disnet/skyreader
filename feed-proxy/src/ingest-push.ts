@@ -59,33 +59,33 @@ export interface PushResult {
   error?: string;
 }
 
-export function selectDirtyRows(db: Database, limit: number): DirtyRow[] {
-  return db
-    .query<DirtyRow, [number]>(
-      `SELECT fi.seq, fi.url_hash, fi.guid, fi.item_json, fi.published_at, fi.first_seen_at,
+// The dirty-scan walks the WHOLE item log every push cycle, almost always to
+// find nothing. It must stay on idx_feed_items_push (seq, content_hash,
+// url_hash) so filtering and the cache join never touch item_json row pages —
+// only genuinely dirty rows get fetched. Exported so the query-plan tests can
+// pin that; app.ts's /stats pending count inlines the same shape (it can't
+// import from here — circular).
+export const DIRTY_ROWS_SQL = `SELECT fi.seq, fi.url_hash, fi.guid, fi.item_json, fi.published_at, fi.first_seen_at,
 			        COALESCE(fi.content_hash, '') AS content_hash, c.url AS feed_url
 			   FROM feed_items fi
 			   JOIN cache c ON c.url_hash = fi.url_hash
 			   LEFT JOIN push_state ps ON ps.seq = fi.seq
 			  WHERE ps.seq IS NULL OR ps.pushed_hash <> COALESCE(fi.content_hash, '')
 			  ORDER BY fi.seq ASC
-			  LIMIT ?`
-    )
-    .all(limit);
-}
+			  LIMIT ?`;
 
-export function countDirtyRows(db: Database): number {
-  return (
-    db
-      .query<{ count: number }, []>(
-        `SELECT COUNT(*) AS count
+export const DIRTY_COUNT_SQL = `SELECT COUNT(*) AS count
 		     FROM feed_items fi
 		     JOIN cache c ON c.url_hash = fi.url_hash
 		     LEFT JOIN push_state ps ON ps.seq = fi.seq
-		    WHERE ps.seq IS NULL OR ps.pushed_hash <> COALESCE(fi.content_hash, '')`
-      )
-      .get()?.count ?? 0
-  );
+		    WHERE ps.seq IS NULL OR ps.pushed_hash <> COALESCE(fi.content_hash, '')`;
+
+export function selectDirtyRows(db: Database, limit: number): DirtyRow[] {
+  return db.query<DirtyRow, [number]>(DIRTY_ROWS_SQL).all(limit);
+}
+
+export function countDirtyRows(db: Database): number {
+  return db.query<{ count: number }, []>(DIRTY_COUNT_SQL).get()?.count ?? 0;
 }
 
 function feedMetadata(db: Database, urlHashes: string[]): FeedMetaRow[] {
@@ -269,7 +269,7 @@ export function selectFeedHealth(db: Database, now = Date.now()): FeedHealthRepo
       `SELECT url, error_count, last_error, last_error_at, next_retry_at, fetched_at
 			   FROM cache
 			  WHERE last_requested_at IS NOT NULL
-			    AND (error_count > 0 OR COALESCE(fetched_at, 0) < ?)`
+			    AND (error_count > 0 OR fetched_at < ?)`
     )
     .all(staleBefore)
     .map((row) => ({

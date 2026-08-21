@@ -208,6 +208,43 @@ export function hashFeedBody(content: string): string {
   return hasher.digest('hex');
 }
 
+// ---------------------------------------------------------------------------
+// Hot periodic scans, exported so tests can pin their EXPLAIN QUERY PLAN to the
+// covering indexes below. These run every tick/interval against whole tables
+// whose rows carry multi-hundred-KB blobs; if a plan regresses to touching row
+// pages the box goes disk-bound — sustained ~1.3 GB/min of reads and an
+// event-loop starved on synchronous SQLite (the 2026-08-21 iowait incident).
+// Every column these queries touch must stay inside their covering index.
+// ---------------------------------------------------------------------------
+
+/** Warm loop due-scan (every WARM_INTERVAL): covered by idx_cache_warm. */
+export const WARM_DUE_FEEDS_SQL = `SELECT url_hash, url FROM cache
+				WHERE (
+						(parser_version <> ? AND parser_upgrade_attempted_version <> ?)
+						OR (fetched_at < ? AND (next_retry_at IS NULL OR next_retry_at < ?))
+					)
+					AND last_requested_at IS NOT NULL
+					AND last_requested_at > ?
+				ORDER BY fetched_at ASC
+				LIMIT ?`;
+
+/** Crawl-cycle stat behind /stats and the saturation warning: idx_cache_warm. */
+export const CRAWL_CYCLE_SQL = `SELECT MIN(fetched_at) AS oldest, COUNT(*) AS active
+				   FROM cache
+				  WHERE last_requested_at IS NOT NULL
+				    AND last_requested_at > ?
+				    AND fetched_at > 0
+				    AND (next_retry_at IS NULL OR next_retry_at < ?)`;
+
+/** Document warm due-scan: covered by idx_document_cache_warm. */
+export const WARM_DUE_DOCUMENTS_SQL = `SELECT did FROM document_cache
+				WHERE fetched_at < ?
+					AND (next_retry_at IS NULL OR next_retry_at < ?)
+					AND last_requested_at IS NOT NULL
+					AND last_requested_at > ?
+				ORDER BY fetched_at ASC
+				LIMIT ?`;
+
 export type ErrorType = 'transient' | 'permanent' | 'recoverable';
 
 export function classifyError(status: number): ErrorType {
@@ -860,7 +897,6 @@ export function initDatabase(db: Database): void {
 			next_retry_at INTEGER
 		)
 	`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_cache_fetched_at ON cache(fetched_at)`);
 
   // Migration: add error tracking columns if they don't exist
   const columns = db.query<{ name: string }, []>(`PRAGMA table_info(cache)`).all();
@@ -904,6 +940,27 @@ export function initDatabase(db: Database): void {
     db.run(`ALTER TABLE cache ADD COLUMN body_hash TEXT`);
   }
 
+  // Covering index for every periodic scan over `cache` (warm due-scan, crawl
+  // cycle, /stats freshness counts, cleanup's eviction subqueries). The table's
+  // rows are dominated by the parsed_json blob, so any plan that touches row
+  // pages to evaluate these queries re-reads the whole cache from disk each
+  // tick once the DB outgrows the page cache — the 2026-08-21 iowait incident.
+  // Column set = exactly what WARM_DUE_FEEDS_SQL / CRAWL_CYCLE_SQL reference;
+  // keep them in sync (the query-plan tests enforce this). Subsumes the old
+  // idx_cache_fetched_at (same leading column), which is dropped below.
+  db.run(`CREATE INDEX IF NOT EXISTS idx_cache_warm ON cache(
+	    fetched_at, last_requested_at, next_retry_at,
+	    parser_version, parser_upgrade_attempted_version, url_hash, url)`);
+  db.run(`DROP INDEX IF EXISTS idx_cache_fetched_at`);
+  // Tiny partial indexes for the error-side counts (/stats, feed-health
+  // report): only broken feeds have entries, so these stay a few hundred rows
+  // and spare those queries a full-table (= full-blob) scan.
+  db.run(`CREATE INDEX IF NOT EXISTS idx_cache_errors ON cache(error_count) WHERE error_count > 0`);
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_cache_backoff ON cache(next_retry_at, error_count)
+	    WHERE next_retry_at IS NOT NULL`
+  );
+
   // Durable item log. Unlike `cache` (which mirrors the source feed and is
   // replaced wholesale on each parse), this *retains* every item the proxy has
   // observed, bounded by a per-feed row cap, so a returning reader catches items
@@ -924,6 +981,14 @@ export function initDatabase(db: Database): void {
 	`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_feed_items_feed_seq ON feed_items(url_hash, seq)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_feed_items_first_seen ON feed_items(first_seen_at)`);
+  // For the pusher's dirty-scan (ingest-push.ts DIRTY_*_SQL and the /stats
+  // pending count): a seq-ordered walk that needs content_hash for the
+  // push_state comparison and url_hash for the cache join. With all three in
+  // the index, the every-cycle scan over the whole log never touches a row's
+  // item_json pages — only actually-dirty rows (normally zero) are fetched.
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_feed_items_push ON feed_items(seq, content_hash, url_hash)`
+  );
 
   // Ingest delivery state (ingest-push.ts): which seqs, at which content hash,
   // have reached the paired Worker's D1. A row is dirty when it's missing here or
@@ -1035,7 +1100,13 @@ export function initDatabase(db: Database): void {
 			last_requested_at INTEGER
 		)
 	`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_document_cache_fetched_at ON document_cache(fetched_at)`);
+  // Covering index for the document warm due-scan (WARM_DUE_DOCUMENTS_SQL) —
+  // same reasoning as idx_cache_warm: documents_json rows are blobs, so the
+  // periodic scan must be answerable from the index alone. Subsumes the old
+  // idx_document_cache_fetched_at (same leading column), dropped below.
+  db.run(`CREATE INDEX IF NOT EXISTS idx_document_cache_warm ON document_cache(
+	    fetched_at, next_retry_at, last_requested_at, did)`);
+  db.run(`DROP INDEX IF EXISTS idx_document_cache_fetched_at`);
   db.run(
     `CREATE INDEX IF NOT EXISTS idx_document_cache_last_requested_at ON document_cache(last_requested_at)`
   );
@@ -1688,14 +1759,7 @@ export function createApp(db: Database, config: AppConfig) {
    */
   function crawlCycle(now: number): { cycleMs: number; active: number } {
     const row = db
-      .query<{ oldest: number | null; active: number }, [number, number]>(
-        `SELECT MIN(fetched_at) AS oldest, COUNT(*) AS active
-				   FROM cache
-				  WHERE last_requested_at IS NOT NULL
-				    AND last_requested_at > ?
-				    AND fetched_at > 0
-				    AND (next_retry_at IS NULL OR next_retry_at < ?)`
-      )
+      .query<{ oldest: number | null; active: number }, [number, number]>(CRAWL_CYCLE_SQL)
       .get(now - warmActiveWindowMs, now);
     return {
       cycleMs: row?.oldest ? now - row.oldest : 0,
@@ -1712,17 +1776,10 @@ export function createApp(db: Database, config: AppConfig) {
     // box down on 2026-08-20. The worker re-reads the one row it needs instead,
     // so at most WARM_CONCURRENCY blobs are resident at a time.
     const rows = db
-      .query<Pick<CacheRow, 'url_hash' | 'url'>, [number, number, number, number, number, number]>(
-        `SELECT url_hash, url FROM cache
-				WHERE (
-						(parser_version <> ? AND parser_upgrade_attempted_version <> ?)
-						OR (fetched_at < ? AND (next_retry_at IS NULL OR next_retry_at < ?))
-					)
-					AND last_requested_at IS NOT NULL
-					AND last_requested_at > ?
-				ORDER BY fetched_at ASC
-				LIMIT ?`
-      )
+      .query<
+        Pick<CacheRow, 'url_hash' | 'url'>,
+        [number, number, number, number, number, number]
+      >(WARM_DUE_FEEDS_SQL)
       .all(
         FEED_PARSER_VERSION,
         FEED_PARSER_VERSION,
@@ -1906,15 +1963,10 @@ export function createApp(db: Database, config: AppConfig) {
     // Same reasoning as warmStaleFeeds: `SELECT *` would hold every author's
     // whole serialised document set live for the tick.
     const rows = db
-      .query<Pick<DocumentCacheRow, 'did'>, [number, number, number, number]>(
-        `SELECT did FROM document_cache
-				WHERE fetched_at < ?
-					AND (next_retry_at IS NULL OR next_retry_at < ?)
-					AND last_requested_at IS NOT NULL
-					AND last_requested_at > ?
-				ORDER BY fetched_at ASC
-				LIMIT ?`
-      )
+      .query<
+        Pick<DocumentCacheRow, 'did'>,
+        [number, number, number, number]
+      >(WARM_DUE_DOCUMENTS_SQL)
       .all(now - warmRefreshThresholdMs, now, now - warmActiveWindowMs, warmBatchCap);
 
     if (rows.length === 0) return 0;
