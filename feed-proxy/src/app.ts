@@ -114,7 +114,20 @@ export interface CacheRow {
   last_error_at: number | null;
   next_retry_at: number | null;
   last_requested_at: number | null;
+  /** SHA-256 of the last successfully parsed raw body. NULL on rows written
+   *  before the column existed — those take the full parse path once, which
+   *  populates it. Drives the no-change fast path in fetchParseAndCache. */
+  body_hash: string | null;
 }
+
+/**
+ * What fetchParseAndCache needs from the existing cache row. `parsed_json` is
+ * optional: the warm loop passes a row WITHOUT the blob (and wantParsed=false),
+ * because reading + JSON.parsing a whole serialised feed per refresh, only to
+ * discard it, was most of the warm loop's steady-state CPU. Serve paths pass a
+ * full CacheRow, which satisfies this shape.
+ */
+export type CachedFeedState = Omit<CacheRow, 'parsed_json'> & { parsed_json?: string };
 
 interface FilterResult {
   items: FeedItem[];
@@ -184,6 +197,15 @@ export function hashUrl(url: string): string {
   const hasher = new Bun.CryptoHasher('sha256');
   hasher.update(url);
   return hasher.digest('hex').slice(0, 16);
+}
+
+// Fingerprint of a feed's raw response body, stored as cache.body_hash. Full
+// digest (unlike hashUrl's truncation): this decides whether to skip a parse,
+// so collisions must stay cryptographically improbable.
+export function hashFeedBody(content: string): string {
+  const hasher = new Bun.CryptoHasher('sha256');
+  hasher.update(content);
+  return hasher.digest('hex');
 }
 
 export type ErrorType = 'transient' | 'permanent' | 'recoverable';
@@ -875,6 +897,12 @@ export function initDatabase(db: Database): void {
     db.run(`ALTER TABLE cache ADD COLUMN last_requested_at INTEGER`);
   }
   db.run(`CREATE INDEX IF NOT EXISTS idx_cache_last_requested_at ON cache(last_requested_at)`);
+  // Raw-body fingerprint for the no-change fast path. Pre-existing rows read as
+  // NULL, which never matches, so their next fetch takes the full parse path and
+  // stores the hash.
+  if (!columnNames.has('body_hash')) {
+    db.run(`ALTER TABLE cache ADD COLUMN body_hash TEXT`);
+  }
 
   // Durable item log. Unlike `cache` (which mirrors the source feed and is
   // replaced wholesale on each parse), this *retains* every item the proxy has
@@ -1251,10 +1279,20 @@ export function createApp(db: Database, config: AppConfig) {
     }
   }
 
+  /**
+   * `wantParsed=false` (warm loop only) means the caller will discard the
+   * return value: every path that would JSON.parse the cached blob purely to
+   * return it resolves null instead, and `cached` may omit `parsed_json`
+   * entirely. All cache side effects are identical in both modes. A demand
+   * caller that joins a warm fetch via the inFlight map can therefore see null
+   * from a healthy refresh — every such caller already treats null as "serve
+   * prior content", which the refresh has just updated.
+   */
   async function fetchParseAndCache(
     url: string,
     urlHash: string,
-    cached?: CacheRow
+    cached?: CachedFeedState,
+    wantParsed = true
   ): Promise<ParsedFeed | null> {
     const now = Date.now();
     const parserIsCurrent = cached?.parser_version === FEED_PARSER_VERSION;
@@ -1270,7 +1308,9 @@ export function createApp(db: Database, config: AppConfig) {
       console.log(
         `[Proxy] ${url}: in backoff until ${new Date(cached.next_retry_at).toISOString()}, skipping fetch`
       );
-      return cached.parsed_json ? (JSON.parse(cached.parsed_json) as ParsedFeed) : null;
+      return wantParsed && cached.parsed_json
+        ? (JSON.parse(cached.parsed_json) as ParsedFeed)
+        : null;
     }
 
     if (parserUpgradeNeedsAttempt) {
@@ -1296,7 +1336,9 @@ export function createApp(db: Database, config: AppConfig) {
           'UPDATE cache SET fetched_at = ?, error_count = 0, last_error = NULL, last_error_at = NULL, next_retry_at = NULL WHERE url_hash = ?',
           [now, urlHash]
         );
-        return JSON.parse(cached.parsed_json) as ParsedFeed;
+        return wantParsed && cached.parsed_json
+          ? (JSON.parse(cached.parsed_json) as ParsedFeed)
+          : null;
       }
 
       if (!response.ok) {
@@ -1354,7 +1396,7 @@ export function createApp(db: Database, config: AppConfig) {
         }
 
         // Only return cached content if it has real content (not an error placeholder)
-        if (cached?.parsed_json) {
+        if (wantParsed && cached?.parsed_json) {
           const cachedFeed = JSON.parse(cached.parsed_json) as ParsedFeed;
           if (cachedFeed.items.length > 0 || cachedFeed.title !== '') {
             return cachedFeed;
@@ -1366,6 +1408,25 @@ export function createApp(db: Database, config: AppConfig) {
       const content = await readResponseWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
       const etag = response.headers.get('ETag');
       const lastModified = response.headers.get('Last-Modified');
+
+      // No-change fast path: a 200 whose bytes are identical to the last parse
+      // (common for the many feeds that send no validators, so never 304). Skip
+      // parse/serialize/rewrite/retention entirely — items can't have changed —
+      // and just bump freshness + validators + error state, mirroring the 304
+      // branch. Requires a current parser: a version bump must re-parse even an
+      // unchanged body, and NULL body_hash (pre-migration rows) never matches.
+      const bodyHash = hashFeedBody(content);
+      if (cached && parserIsCurrent && cached.body_hash === bodyHash) {
+        db.run(
+          `UPDATE cache SET fetched_at = ?, etag = ?, last_modified = ?,
+                  error_count = 0, last_error = NULL, last_error_at = NULL, next_retry_at = NULL
+            WHERE url_hash = ?`,
+          [now, etag, lastModified, urlHash]
+        );
+        return wantParsed && cached.parsed_json
+          ? (JSON.parse(cached.parsed_json) as ParsedFeed)
+          : null;
+      }
 
       let parsed: ParsedFeed;
       try {
@@ -1385,7 +1446,7 @@ export function createApp(db: Database, config: AppConfig) {
         }
 
         // Only return cached content if it has real content (not an error placeholder)
-        if (cached?.parsed_json) {
+        if (wantParsed && cached?.parsed_json) {
           const cachedFeed = JSON.parse(cached.parsed_json) as ParsedFeed;
           if (cachedFeed.items.length > 0 || cachedFeed.title !== '') {
             return cachedFeed;
@@ -1401,8 +1462,8 @@ export function createApp(db: Database, config: AppConfig) {
       // deliberately NOT in DO UPDATE, so warm-loop refreshes preserve the real
       // last-requested time rather than keeping abandoned feeds alive forever.
       db.run(
-        `INSERT INTO cache (url_hash, url, parsed_json, parser_version, parser_upgrade_attempted_version, etag, last_modified, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?)
+        `INSERT INTO cache (url_hash, url, parsed_json, parser_version, parser_upgrade_attempted_version, etag, last_modified, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at, body_hash)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?)
 				ON CONFLICT(url_hash) DO UPDATE SET
 					parsed_json = excluded.parsed_json,
 					parser_version = excluded.parser_version,
@@ -1414,7 +1475,8 @@ export function createApp(db: Database, config: AppConfig) {
 					error_count = 0,
 					last_error = NULL,
 					last_error_at = NULL,
-					next_retry_at = NULL`,
+					next_retry_at = NULL,
+					body_hash = excluded.body_hash`,
         [
           urlHash,
           url,
@@ -1426,6 +1488,7 @@ export function createApp(db: Database, config: AppConfig) {
           now,
           now,
           now,
+          bodyHash,
         ]
       );
 
@@ -1486,7 +1549,7 @@ export function createApp(db: Database, config: AppConfig) {
       }
 
       // Only return cached content if it has real content (not an error placeholder)
-      if (cached?.parsed_json) {
+      if (wantParsed && cached?.parsed_json) {
         const cachedFeed = JSON.parse(cached.parsed_json) as ParsedFeed;
         if (cachedFeed.items.length > 0 || cachedFeed.title !== '') {
           return cachedFeed;
@@ -1691,16 +1754,33 @@ export function createApp(db: Database, config: AppConfig) {
 
     // One prepared statement shared by the workers. `.get()` is synchronous and
     // returns before any await, so concurrent workers never interleave inside it.
-    const readCacheRow = db.query<CacheRow, [string]>('SELECT * FROM cache WHERE url_hash = ?');
+    // parsed_json is read ONLY when mention warming will consume the parsed
+    // result — otherwise the warm path never touches the blob: fetchParseAndCache
+    // with wantParsed=false skips every JSON.parse whose output would be
+    // discarded, which together with the body-hash fast path is what makes a
+    // no-change refresh cheap.
+    const readCacheRow = db.query<CachedFeedState, [string]>(
+      warmMentionsEnabled
+        ? 'SELECT * FROM cache WHERE url_hash = ?'
+        : `SELECT url_hash, url, parser_version, parser_upgrade_attempted_version,
+                  etag, last_modified, cached_at, fetched_at, error_count,
+                  last_error, last_error_at, next_retry_at, last_requested_at, body_hash
+             FROM cache WHERE url_hash = ?`
+    );
 
     async function worker(): Promise<void> {
       for (let row = queue.shift(); row; row = queue.shift()) {
         // Skip feeds an on-demand request is already refreshing.
         if (inFlight.has(row.url_hash)) continue;
-        // Read the full row (parsed_json included) for THIS feed only, at the
-        // moment it is about to be fetched — see the note on the query above.
+        // Read the row for THIS feed only, at the moment it is about to be
+        // fetched — see the note on the query above.
         const cached = readCacheRow.get(row.url_hash) ?? undefined;
-        const promise = fetchParseAndCache(row.url, row.url_hash, cached).finally(() => {
+        const promise = fetchParseAndCache(
+          row.url,
+          row.url_hash,
+          cached,
+          /* wantParsed */ warmMentionsEnabled
+        ).finally(() => {
           inFlight.delete(row.url_hash);
         });
         inFlight.set(row.url_hash, promise);

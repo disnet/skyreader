@@ -5,6 +5,7 @@ import {
   initDatabase,
   cleanupCache,
   hashUrl,
+  hashFeedBody,
   classifyError,
   describeFetchFailure,
   calculateBackoff,
@@ -2937,6 +2938,180 @@ describe('Self-warming loop', () => {
     const row = db.query<CacheRow, [string]>('SELECT * FROM cache WHERE url = ?').get(url);
     expect(row!.last_requested_at).not.toBeNull();
     expect(row!.last_requested_at!).toBeGreaterThanOrEqual(now - 1000);
+  });
+});
+
+describe('No-change fast path (body_hash)', () => {
+  let fetchMock: ReturnType<typeof spyOn>;
+
+  afterEach(() => {
+    fetchMock?.mockRestore();
+  });
+
+  const FEED_URL = 'https://example.com/quiet-feed.xml';
+
+  // Seed through the real pipeline: a stale placeholder row plus one warm
+  // refresh of SAMPLE_RSS, so parsed_json, body_hash, and feed_items are all
+  // exactly what production would hold.
+  async function seedViaWarm(db: Database, warmStaleFeeds: () => Promise<number>) {
+    fetchMock = mockFetch(() => new Response(SAMPLE_RSS));
+    const now = Date.now();
+    db.run(
+      `INSERT INTO cache (url_hash, url, parsed_json, cached_at, fetched_at, last_requested_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        hashUrl(FEED_URL),
+        FEED_URL,
+        JSON.stringify({ title: 'Cached', items: [], fetchedAt: 0 }),
+        now - 10_000,
+        now - 10_000,
+        now,
+      ]
+    );
+    expect(await warmStaleFeeds()).toBe(1);
+    fetchMock.mockRestore();
+    return db.query<CacheRow, [string]>('SELECT * FROM cache WHERE url = ?').get(FEED_URL)!;
+  }
+
+  // Backdates BOTH timestamps and returns the backdated value, so tests can
+  // distinguish "bumped to now" from "left alone" without racing the clock's
+  // millisecond resolution.
+  function makeStale(db: Database): number {
+    const staleAt = Date.now() - 10_000;
+    db.run('UPDATE cache SET fetched_at = ?, cached_at = ? WHERE url = ?', [
+      staleAt,
+      staleAt,
+      FEED_URL,
+    ]);
+    return staleAt;
+  }
+
+  function readRow(db: Database) {
+    return db.query<CacheRow, [string]>('SELECT * FROM cache WHERE url = ?').get(FEED_URL)!;
+  }
+
+  function itemCount(db: Database): number {
+    return db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM feed_items').get()!.n;
+  }
+
+  it('a warm refresh with identical bytes bumps freshness without rewriting row or item log', async () => {
+    const { db, warmStaleFeeds } = createTestApp({ warmRefreshThresholdMs: 1000 });
+    const seeded = await seedViaWarm(db, warmStaleFeeds);
+    expect(seeded.body_hash).toBe(hashFeedBody(SAMPLE_RSS));
+    const itemsBefore = itemCount(db);
+
+    const staleAt = makeStale(db);
+    fetchMock = mockFetch(() => new Response(SAMPLE_RSS, { headers: { ETag: 'W/"rotated"' } }));
+    expect(await warmStaleFeeds()).toBe(1);
+
+    const row = readRow(db);
+    expect(row.fetched_at).toBeGreaterThan(staleAt);
+    expect(row.cached_at).toBe(staleAt); // blob untouched
+    expect(row.parsed_json).toBe(seeded.parsed_json);
+    expect(row.etag).toBe('W/"rotated"'); // validators still tracked
+    expect(itemCount(db)).toBe(itemsBefore);
+  });
+
+  it('the warm path never reads or parses the cached blob when mentions are off', async () => {
+    const { db, warmStaleFeeds } = createTestApp({ warmRefreshThresholdMs: 1000 });
+    await seedViaWarm(db, warmStaleFeeds);
+
+    // Poison the blob: any code path that JSON.parses it would throw, land in
+    // the catch, and record an error on the row.
+    db.run(`UPDATE cache SET parsed_json = 'NOT JSON' WHERE url = ?`, [FEED_URL]);
+    const staleAt = makeStale(db);
+    fetchMock = mockFetch(() => new Response(SAMPLE_RSS));
+    expect(await warmStaleFeeds()).toBe(1);
+
+    const row = readRow(db);
+    expect(row.error_count).toBe(0);
+    expect(row.fetched_at).toBeGreaterThan(staleAt);
+  });
+
+  it('a changed body still takes the full parse path', async () => {
+    const { db, warmStaleFeeds } = createTestApp({ warmRefreshThresholdMs: 1000 });
+    await seedViaWarm(db, warmStaleFeeds);
+
+    const changed = SAMPLE_RSS.replace(
+      '<item>',
+      `<item>
+      <title>Post 4</title>
+      <link>https://example.com/post-4</link>
+      <guid>guid-4</guid>
+    </item>
+    <item>`
+    );
+    const staleAt = makeStale(db);
+    fetchMock = mockFetch(() => new Response(changed));
+    expect(await warmStaleFeeds()).toBe(1);
+
+    const row = readRow(db);
+    expect(row.body_hash).toBe(hashFeedBody(changed));
+    expect(row.cached_at).toBeGreaterThan(staleAt);
+    expect(itemCount(db)).toBe(4);
+  });
+
+  it('a parser version bump re-parses an unchanged body', async () => {
+    const { db, warmStaleFeeds } = createTestApp({ warmRefreshThresholdMs: 1000 });
+    await seedViaWarm(db, warmStaleFeeds);
+
+    db.run(
+      'UPDATE cache SET parser_version = 0, parser_upgrade_attempted_version = 0 WHERE url = ?',
+      [FEED_URL]
+    );
+    const staleAt = makeStale(db);
+    fetchMock = mockFetch(() => new Response(SAMPLE_RSS));
+    expect(await warmStaleFeeds()).toBe(1);
+
+    const row = readRow(db);
+    expect(row.parser_version).toBe(FEED_PARSER_VERSION);
+    expect(row.cached_at).toBeGreaterThan(staleAt);
+  });
+
+  it('the fast path clears error state, like a 304', async () => {
+    const { db, warmStaleFeeds } = createTestApp({ warmRefreshThresholdMs: 1000 });
+    await seedViaWarm(db, warmStaleFeeds);
+
+    db.run('UPDATE cache SET error_count = 3, last_error = ?, next_retry_at = ? WHERE url = ?', [
+      'HTTP 500',
+      Date.now() - 1000,
+      FEED_URL,
+    ]);
+    makeStale(db);
+    fetchMock = mockFetch(() => new Response(SAMPLE_RSS));
+    expect(await warmStaleFeeds()).toBe(1);
+
+    const row = readRow(db);
+    expect(row.error_count).toBe(0);
+    expect(row.last_error).toBeNull();
+    expect(row.next_retry_at).toBeNull();
+  });
+
+  it('a serve-path revalidation through the fast path still returns the full feed', async () => {
+    const { db, app, warmStaleFeeds } = createTestApp({
+      warmRefreshThresholdMs: 1000,
+      cacheTtlMs: 1000,
+      staleTtlMs: 2000,
+    });
+    await seedViaWarm(db, warmStaleFeeds);
+
+    // Past staleTtl, so GET /feed must go through fetchParseAndCache inline.
+    db.run('UPDATE cache SET fetched_at = ?, cached_at = ? WHERE url = ?', [
+      Date.now() - 5_000,
+      Date.now() - 5_000,
+      FEED_URL,
+    ]);
+    fetchMock = mockFetch(() => new Response(SAMPLE_RSS));
+
+    const res = await app.request(`/feed?url=${encodeURIComponent(FEED_URL)}`, {
+      headers: { 'X-Proxy-Secret': 'test-secret' },
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.cache).toBe('REVALIDATED');
+    expect(json.feed.title).toBe('Test Blog');
+    expect(json.feed.items.length).toBe(3);
   });
 });
 

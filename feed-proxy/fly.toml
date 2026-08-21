@@ -58,6 +58,11 @@ primary_region = "sjc"
 # original size, re-testing shared is on the table. Check the proxy's
 # "Crawl set: N feed(s) registered" log line and `warm.cycleSeconds` on /stats
 # before revisiting.
+# Steady-state demand measured at ~0.35 cores on 2026-08-21 (after the crawl-set
+# scoping + warm-set drain), so performance-1x is expected to hold with headroom
+# once the no-change fast path proves out — drop cpus to 1 (memory_mb 2048) as
+# the next step-down. The earlier same-day 1x failure was measured during backlog
+# catch-up and doesn't count against it.
 [vm]
   cpu_kind = "performance"
   cpus = 2
