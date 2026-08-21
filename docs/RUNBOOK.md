@@ -420,6 +420,16 @@ first hop of two; this section is the second. **None of it is wired to an alert
 yet** — the signals are on the admin and on the proxy, and this is the list to
 walk when the reader looks stale but every tile above is green.
 
+> **Running any `wrangler d1 execute` in this runbook by hand:** run it from the
+> **repo root** (or any directory with no `wrangler.toml` in scope), not from
+> `backend/`. The checked-in `backend/wrangler.toml` carries a
+> `YOUR_D1_DATABASE_ID` placeholder that CI substitutes at deploy time, so from
+> `backend/` every command fails with `Invalid uuid`. With no config in scope,
+> wrangler resolves `skyreader` / `skyreader-staging` by **name** against the
+> account, which is what these commands want. This applies to every D1 command
+> below — including the rollback commands, which is the worst moment to
+> discover it.
+
 | Signal                      | Where                                           | Healthy                            | How to check                                                                                                         |
 | --------------------------- | ----------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | Crawler talking to us       | `sync_state.crawler_heartbeat_at` (D1)          | stamped within ~5 min              | `npx wrangler d1 execute skyreader --remote --command "SELECT * FROM sync_state WHERE key = 'crawler_heartbeat_at'"` |

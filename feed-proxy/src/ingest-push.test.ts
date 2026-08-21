@@ -18,7 +18,9 @@ import {
   selectFeedHealth,
   MAX_HEALTH_REPORT_FEEDS,
   countDirtyRows,
+  createPushLoop,
   type IngestConfig,
+  type PushResult,
 } from './ingest-push';
 import type { FeedItem } from './types';
 
@@ -502,5 +504,167 @@ describe('feed health reporting', () => {
 
     expect(result.reported).toBe(0);
     expect(result.error).toContain('503');
+  });
+});
+
+describe('push loop (drain chaining, backoff, re-entrancy)', () => {
+  interface Deferred {
+    promise: Promise<PushResult>;
+    resolve: (r: PushResult) => void;
+    reject: (e: unknown) => void;
+  }
+
+  function deferred(): Deferred {
+    let resolve!: (r: PushResult) => void;
+    let reject!: (e: unknown) => void;
+    const promise = new Promise<PushResult>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  // Let the loop's .then/.finally microtasks run.
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  interface Harness {
+    runPush: () => void;
+    pushes: Deferred[];
+    scheduled: Array<{ fn: () => void; delayMs: number }>;
+    backoffCalls: number[];
+    clock: { now: number };
+  }
+
+  function harness(): Harness {
+    const pushes: Deferred[] = [];
+    const scheduled: Array<{ fn: () => void; delayMs: number }> = [];
+    const backoffCalls: number[] = [];
+    const clock = { now: 1_000_000 };
+    const runPush = createPushLoop({
+      push: () => {
+        const d = deferred();
+        pushes.push(d);
+        return d.promise;
+      },
+      chainDelayMs: 1000,
+      backoff: (failures) => {
+        backoffCalls.push(failures);
+        return 30_000;
+      },
+      schedule: (fn, delayMs) => scheduled.push({ fn, delayMs }),
+      now: () => clock.now,
+    });
+    return { runPush, pushes, scheduled, backoffCalls, clock };
+  }
+
+  it('chains with the configured delay while a backlog remains, then stops', async () => {
+    const h = harness();
+
+    h.runPush();
+    expect(h.pushes.length).toBe(1);
+    h.pushes[0].resolve({ pushed: 100, hasMore: true });
+    await settle();
+
+    expect(h.scheduled.length).toBe(1);
+    expect(h.scheduled[0].delayMs).toBe(1000);
+
+    // The chained run drains the rest; no further chaining once hasMore=false.
+    h.scheduled[0].fn();
+    expect(h.pushes.length).toBe(2);
+    h.pushes[1].resolve({ pushed: 50, hasMore: false });
+    await settle();
+    expect(h.scheduled.length).toBe(1);
+  });
+
+  it('never chains on a push that moved nothing, even with hasMore set', async () => {
+    const h = harness();
+
+    h.runPush();
+    h.pushes[0].resolve({ pushed: 0, hasMore: true });
+    await settle();
+
+    expect(h.scheduled.length).toBe(0);
+  });
+
+  it('is a no-op while a push is already in flight', async () => {
+    const h = harness();
+
+    h.runPush();
+    h.runPush();
+    h.runPush();
+    expect(h.pushes.length).toBe(1);
+
+    h.pushes[0].resolve({ pushed: 1, hasMore: false });
+    await settle();
+    h.runPush();
+    expect(h.pushes.length).toBe(2);
+  });
+
+  it('a failed push blocks the loop until the backoff elapses, without chaining', async () => {
+    const h = harness();
+
+    h.runPush();
+    h.pushes[0].resolve({ pushed: 0, hasMore: false, error: 'HTTP 503' });
+    await settle();
+    expect(h.scheduled.length).toBe(0);
+
+    // Inside the backoff window: refused.
+    h.clock.now += 29_999;
+    h.runPush();
+    expect(h.pushes.length).toBe(1);
+
+    // Past it: allowed again.
+    h.clock.now += 2;
+    h.runPush();
+    expect(h.pushes.length).toBe(2);
+  });
+
+  it('the failure streak feeds the backoff and resets on success', async () => {
+    const h = harness();
+
+    h.runPush();
+    h.pushes[0].resolve({ pushed: 0, hasMore: false, error: 'boom' });
+    await settle();
+    h.clock.now += 60_000;
+
+    h.runPush();
+    h.pushes[1].resolve({ pushed: 0, hasMore: false, error: 'boom' });
+    await settle();
+    h.clock.now += 60_000;
+
+    h.runPush();
+    h.pushes[2].resolve({ pushed: 5, hasMore: false });
+    await settle();
+
+    h.runPush();
+    h.pushes[3].resolve({ pushed: 0, hasMore: false, error: 'boom' });
+    await settle();
+
+    expect(h.backoffCalls).toEqual([1, 2, 1]);
+  });
+
+  it('a rejected push reports the error and leaves the loop runnable', async () => {
+    const errors: unknown[] = [];
+    const pushes: Deferred[] = [];
+    const runPush = createPushLoop({
+      push: () => {
+        const d = deferred();
+        pushes.push(d);
+        return d.promise;
+      },
+      chainDelayMs: 1000,
+      backoff: () => 30_000,
+      schedule: () => {},
+      now: () => 0,
+      onError: (e) => errors.push(e),
+    });
+
+    runPush();
+    pushes[0].reject(new Error('network down'));
+    await settle();
+    expect(errors.length).toBe(1);
+
+    runPush();
+    expect(pushes.length).toBe(2);
   });
 });

@@ -2,14 +2,10 @@ app = "skyreader-feed-proxy"
 primary_region = "sjc"
 
 # KEEP IN SYNC WITH fly.staging.toml. The two files must differ only in `app`, the
-# `INGEST_URL` in [env], and `[vm]`; everything else is deliberately identical so
-# staging soaks what prod will run.
-#
-# `[vm]` diverges permanently: prod crawls ~5,586 feeds and needs dedicated CPU
-# (see the block above [vm]); staging crawls ~100 and shared is ample. Note the
-# consequence — staging CANNOT reproduce prod's CPU behaviour, so a change that
-# affects per-tick crawl cost has to be reasoned about, not soaked.
-#
+# `INGEST_URL` in [env], and (if ever needed) `[vm]`; everything else is
+# deliberately identical so staging soaks what prod will run. As of 2026-08-21
+# the [vm] blocks are identical too (both shared-cpu-2x/1024, see below), so
+# staging genuinely reproduces prod's CPU behaviour again.
 #
 # SINGLETON INVARIANT — run exactly ONE machine. This app is not horizontally
 # scalable as written: the cache is a SQLite DB on the per-machine `proxy_data`
@@ -38,35 +34,28 @@ primary_region = "sjc"
   # would stop warming whenever traffic is idle, defeating the purpose.
   min_machines_running = 1
 
-# performance, NOT shared. Two attempts on shared/2/1024 (2026-08-20) both starved
-# the event loop within minutes: /health timing out at 12s+, and the 5-minutely
-# crawl-set pull taking 93s instead of 2s. The second attempt was AFTER the
-# allocation fix (resident memory 862 MB -> 123 MB) and AFTER the D1 timeline moved
-# reads off this box entirely, so neither memory nor read traffic explains it.
-# Shared vCPUs run on burst credits and this workload is sustained, so it simply
-# cannot hold them.
+# shared-2x/1024, settled 2026-08-21 after the capacity incident. Steady-state
+# demand is ~0.05 cores against shared-2x's ~0.125-core sustained budget
+# (2 vCPUs x 1/16 burst baseline). Three fixes made this size honest, each
+# verified by measurement before the next:
+#   1. Crawl-set scoping (backend handleCrawlSet): ~5,586 feeds -> ~1,630, only
+#      feeds with a recently-active subscriber are crawled.
+#   2. No-change fast path (cache.body_hash + wantParsed=false on the warm
+#      path): per-poll CPU ~105ms -> ~15ms.
+#   3. Covering indexes (idx_cache_warm, idx_feed_items_push, ...): the
+#      periodic scans stopped re-reading ~1.3 GB/min of blob pages, so the DB
+#      no longer needs to fit in page cache and 1 GB is plenty (rss ~160 MB).
+#      src/query-plans.test.ts pins every hot query to its index.
 #
-# Memory is oversized as a side effect: performance presets carry a 2 GB/core
-# minimum, and actual usage is ~123 MB. Do not read the headroom as needed.
+# Before resizing on a bad-looking graph, know the instruments: loadavg on
+# shared VMs counts throttle-queueing, and everywhere counts D-state disk
+# waits — high load + idle CPU means iowait, not demand. Judge this box by
+# /health latency (~0.12s good), the crawl-set pull duration in logs (2s good,
+# 90s starved), and diskstats deltas. Changing cpu_kind migrates the machine to
+# a different host and forks the volume. One variable per deploy.
 #
-# The underlying driver was a crawl set of ~5,586 feeds — roughly 4x the ~1,330
-# this box was originally sized for. It grew because the crawl-set pull stamped
-# `last_requested_at` on EVERY subscribed feed, where read traffic used to stamp
-# only feeds someone actually opened. The backend now scopes the crawl set to
-# feeds with a recently-active subscriber (handleCrawlSet in
-# backend/src/routes/ingest.ts); once the registered set settles back near that
-# original size, re-testing shared is on the table. Check the proxy's
-# "Crawl set: N feed(s) registered" log line and `warm.cycleSeconds` on /stats
-# before revisiting.
-# performance-1x/4096, matching the live machine — one variable changes per
-# deploy. CPU demand measured ~0.05 cores after the no-change fast path
-# (2026-08-21). Memory is deliberately ABOVE the 1x preset: with the DB bigger
-# than a 2 GB machine's page cache, the periodic scans went disk-bound (~1.3
-# GB/min reads, event loop in D-state on sync SQLite — the iowait incident).
-# The covering indexes (idx_cache_warm etc.) remove that dependence; once
-# diskstats confirms reads collapsed, step memory_mb to 2048, verify, and only
-# then try shared-cpu-2x/1024 — judged by /health latency and crawl-set pull
-# duration over 30+ minutes, never by loadavg (throttling inflates it).
+# Rollback ladder if starvation returns: performance-1x/2048, then
+# performance-2x/4096 (both held this workload on 2026-08-21).
 [vm]
   cpu_kind = "shared"
   cpus = 2
@@ -97,23 +86,16 @@ primary_region = "sjc"
   # resumes, but the drained-window restart is a full re-crawl burst). One day
   # keeps (a) responsive and (b) comfortable.
   WARM_ACTIVE_WINDOW_SECONDS = "86400"
-  # Lowered 500 → 200 on 2026-08-20, during the initial prod ingest backfill.
+  # Deliberate: 200/tick over the ~1,630-feed scoped crawl set gives a full
+  # cycle of ~8 minutes — new items reach readers up to ~8 minutes after
+  # publish, slightly over the 5-minute CACHE_TTL and accepted (2026-08-21).
+  # The warmer is therefore permanently "saturated" by design; that log line is
+  # only news if cycleSeconds drifts well past ~500s.
   #
-  # The old 500 was sized for "~1330 active feeds need ~440 refreshes/tick to
-  # never go stale". That premise is gone: the crawl-set pull now stamps
-  # last_requested_at on EVERY subscribed feed, so the active set is ~5,586 and
-  # keeping it all fresh would need ~1,860/tick — unreachable at any cap this box
-  # can afford. Freshness is already best-effort, so the cap's real job is now to
-  # bound per-tick CPU rather than to chase a fresh-everything target.
-  #
-  # 200/tick cycles all 5,586 feeds in ~28 minutes (5586/200 ticks × 60s), against
-  # ~11 minutes at 500. That is the accepted trade: the box was event-loop starved
-  # at 500 (health checks timing out for minutes at a stretch, post-deploy smoke
-  # failing) on 2 shared vCPUs while also draining the backfill.
-  #
-  # Raise it back once the backfill has drained and CPU headroom is measurable —
-  # `/stats` reports rssMb now, and the warmer logs a saturation line every tick
-  # it fills the cap, so both sides of the trade are visible.
+  # Raising it buys freshness at a linear CPU price: ~330/tick restores true
+  # 5-minute freshness but lifts warm-loop load from ~0.05 to ~0.08 cores
+  # against shared-2x's ~0.125 sustained budget — affordable, but do it as its
+  # own watched deploy, not as a rider.
   WARM_BATCH_CAP = "200"
   # Left at 16 deliberately: this bounds PEAK parallelism, not total work, and one
   # variable at a time makes the effect of the cap change readable.
@@ -133,20 +115,14 @@ primary_region = "sjc"
   # memory if extractions start shedding under normal load.
   # Governor on demand-driven feed fetches (batch inline misses + the background
   # refresh a STALE read fires). Turned ON 2026-08-20 on evidence: /stats showed
-  # inFlight=87 with the warmer paused, i.e. 87 concurrent upstream fetches driven
-  # purely by reader polling, on 2 vCPUs, while the backfill was trying to drain.
+  # inFlight=87 with the warmer paused — 87 concurrent upstream fetches driven
+  # purely by reader polling. Excess fetches queue (up to FEED_FETCH_QUEUE_MAX,
+  # default 500) and are shed as "no fresh content", never as a feed error.
   #
-  # Set deliberately LOW during the backfill. With `fresh: 0` in the cache every
-  # read already falls through to the past-stale path and gets served prior
-  # content, so throttling fetches costs almost nothing user-visible right now —
-  # and the CPU it frees goes to the ingest pusher, which is the thing actually
-  # blocking progress. Excess fetches queue (up to FEED_FETCH_QUEUE_MAX, default
-  # 500) and are shed as "no fresh content", never as a feed error.
-  #
-  # Raise toward WARM_CONCURRENCY (16) or above once the backfill has drained and
-  # freshness matters again. Watch `feedFetch.queued` on /stats: persistently deep
-  # means this is too tight for real demand.
-  FEED_FETCH_CONCURRENCY = "8"
+  # 16 matches WARM_CONCURRENCY (raised from the backfill-era 8 on 2026-08-21;
+  # the backfill is long drained and fetches are cheap now). Watch
+  # `feedFetch.queued` on /stats: persistently deep means this is too tight.
+  FEED_FETCH_CONCURRENCY = "16"
 
   EXTRACT_CONCURRENCY = "4"
   EXTRACT_QUEUE_MAX = "20"

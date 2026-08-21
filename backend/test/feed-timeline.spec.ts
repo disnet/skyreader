@@ -925,16 +925,17 @@ describe('feed timeline (D1 ingest + serve)', () => {
 
     it('leaves the revision alone when only the starved flag moves', async () => {
       // The reader payload holds erroring feeds only, so a crawl-capacity change
-      // must not make every client re-download it.
+      // must not make every client re-download it. One shared report object: the
+      // rev hashes last_error_at/next_retry_at, so calling brokenFeed() twice
+      // flakes whenever the wall clock crosses a second between the two reports
+      // (CI run 32431095138).
       await addSubscription(TEST_DID, FEED_A);
-      await reportHealth([brokenFeed(FEED_A)]);
+      const report = brokenFeed(FEED_A);
+      await reportHealth([report]);
       const before = (await timeline()).healthRev;
 
       await addSubscription(TEST_DID, FEED_B);
-      await reportHealth([
-        brokenFeed(FEED_A),
-        { feedUrl: FEED_B, errorCount: 0, crawlStale: true },
-      ]);
+      await reportHealth([report, { feedUrl: FEED_B, errorCount: 0, crawlStale: true }]);
       expect((await timeline()).healthRev).toBe(before);
     });
 

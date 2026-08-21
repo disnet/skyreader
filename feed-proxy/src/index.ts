@@ -6,7 +6,13 @@ import { mkdirSync } from 'fs';
 import { createApp, initDatabase, cleanupCache } from './app';
 import { DocumentFirehose } from './jetstream';
 import { pingHeartbeat } from './heartbeat';
-import { pushDirtyItems, pullCrawlSet, reportFeedHealth, type IngestConfig } from './ingest-push';
+import {
+  pushDirtyItems,
+  pullCrawlSet,
+  reportFeedHealth,
+  createPushLoop,
+  type IngestConfig,
+} from './ingest-push';
 
 // Config
 const PROXY_SECRET = process.env.PROXY_SECRET;
@@ -206,55 +212,17 @@ if (INGEST_ENABLED) {
     secret: PROXY_SECRET,
     batchSize: INGEST_BATCH_SIZE,
   };
-  let pushRunning = false;
-  let pushFailures = 0;
-  let pushBlockedUntil = 0;
-
-  /**
-   * One push, which re-schedules itself while a backlog remains.
-   *
-   * INGEST_INTERVAL_MS is tuned for steady state — a trickle of freshly crawled
-   * items — and at 100 items per tick it drains ~400/min. That is the wrong shape
-   * for a backlog: the first prod backfill queued 175k items, where the interval
-   * (not the work) was the bottleneck and the pusher sat idle ~90% of the time.
-   *
-   * So when a push comes back with `hasMore`, go again after a short delay
-   * instead of waiting out the interval. This self-limits: the moment the backlog
-   * clears, `hasMore` is false and the loop reverts to the plain interval, with
-   * no configuration to remember to change back.
-   *
-   * Two guards keep it from spinning:
-   *   - Only chain on `pushed > 0`. A push that moved nothing cannot have made
-   *     progress, so chaining on it would busy-loop against D1 forever if
-   *     anything ever left rows permanently dirty.
-   *   - Only chain on success. A failure sets `pushBlockedUntil`, and the
-   *     existing exponential backoff must own the retry timing.
-   */
-  const runPush = (): void => {
-    if (pushRunning || Date.now() < pushBlockedUntil) return;
-    pushRunning = true;
-    let drainMore = false;
-    pushDirtyItems(db, ingestConfig)
-      .then((result) => {
-        if (result.error) {
-          pushFailures++;
-          pushBlockedUntil = Date.now() + pushBackoff(pushFailures);
-          console.error(`[Proxy] Ingest push failed (${pushFailures}): ${result.error}`);
-          return;
-        }
-        pushFailures = 0;
-        if (result.pushed > 0) console.log(`[Proxy] Ingest pushed ${result.pushed} item(s)`);
-        drainMore = result.hasMore && result.pushed > 0;
-      })
-      .catch((error) => {
-        console.error('[Proxy] Ingest push error:', error);
-        reportError(error, { tags: { source: 'ingest-push' } });
-      })
-      .finally(() => {
-        pushRunning = false;
-        if (drainMore) setTimeout(runPush, INGEST_CHAIN_DELAY_MS);
-      });
-  };
+  // Drain chaining, failure backoff, and the re-entrancy guard live in
+  // createPushLoop (ingest-push.ts), where they are unit-tested; this wires in
+  // the real clock, timer, pusher, and Sentry.
+  const runPush = createPushLoop({
+    push: () => pushDirtyItems(db, ingestConfig),
+    chainDelayMs: INGEST_CHAIN_DELAY_MS,
+    backoff: pushBackoff,
+    schedule: (fn, delayMs) => setTimeout(fn, delayMs),
+    now: Date.now,
+    onError: (error) => reportError(error, { tags: { source: 'ingest-push' } }),
+  });
   setInterval(runPush, INGEST_INTERVAL_MS);
 
   let crawlSetRunning = false;
