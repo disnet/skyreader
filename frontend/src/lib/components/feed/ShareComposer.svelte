@@ -77,12 +77,27 @@
     });
   }
 
+  // Using the picker must not take focus off the editor. Focus moves on
+  // mousedown — iOS synthesizes one after the tap — so swallowing that one
+  // default leaves the caret, and with it the keyboard, exactly where they
+  // were; the click still fires. Without it the keyboard drops the moment you
+  // reach for a quote and slams back when the quote lands, which is a lot of
+  // motion for what should be a quiet insert.
+  function keepEditorFocus(e: Event) {
+    e.preventDefault();
+  }
+
   $effect(() => {
     if (!quotesOpen) return;
+    const popup = quotesPopupEl;
     const reposition = () => positionQuotesPopup();
     requestAnimationFrame(reposition);
     window.addEventListener('resize', reposition);
-    return () => window.removeEventListener('resize', reposition);
+    popup?.addEventListener('mousedown', keepEditorFocus);
+    return () => {
+      window.removeEventListener('resize', reposition);
+      popup?.removeEventListener('mousedown', keepEditorFocus);
+    };
   });
 
   function pickQuote(text: string) {
@@ -92,13 +107,17 @@
   }
 
   // ── Blocks editing ──────────────────────────────────────────────────────────
-  let blocksEl = $state<HTMLDivElement | null>(null);
   let textareaEls = $state<(HTMLTextAreaElement | null)[]>([]);
 
+  // Every block is shown whole. A capped textarea becomes a scroller inside a
+  // scroller — you drag a long quote and the passage moves inside its own box
+  // while the draft stays put, which reads as broken. The blocks region is the
+  // one thing that scrolls here; the blocks themselves are just as tall as
+  // their text.
   function autosize(el: HTMLTextAreaElement | null) {
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 320)}px`;
+    el.style.height = `${el.scrollHeight}px`;
   }
 
   function autosizeAll() {
@@ -120,8 +139,19 @@
     }
   }
 
-  // Textarea heights are set inline from their content, so a width change
-  // (viewport resize, rotation) must re-measure every block.
+  // Textarea heights are set inline from their content, so any change to the
+  // block list has to re-measure: a quote appended from a selection in the
+  // article arrives without going through the composer at all, and an unmeasured
+  // textarea sits at its one declared row with the rest of the passage hidden
+  // (and, being clipped, quietly eats drags meant for the region behind it).
+  // Typing takes care of itself in `oninput`.
+  $effect(() => {
+    if (!session || composer.minimized) return;
+    void composer.blocks.length;
+    void tick().then(autosizeAll);
+  });
+
+  // A width change (viewport resize, rotation) re-measures every block too.
   $effect(() => {
     if (!session || composer.minimized) return;
     const remeasure = () => autosizeAll();
@@ -247,14 +277,52 @@
     };
   });
 
+  /**
+   * The scroll container a touch landed in: the nearest ancestor that scrolls
+   * and has somewhere left to go. Stops at `stopAt` when given, so a drag
+   * inside the card can't claim a scroller outside it. With `dy` (the drag's
+   * vertical delta) the search keeps climbing past a container already at the
+   * end of its travel in that direction — which is what lets a drag started on
+   * a quote, whose own textarea may be scrolled to its end, still move the
+   * blocks region behind it, the way it would with no handler at all.
+   */
+  function scrollableAt(
+    target: EventTarget | null,
+    stopAt?: Element | null,
+    dy?: number
+  ): Element | null {
+    let el =
+      target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+    while (el) {
+      if (stopAt && !stopAt.contains(el)) return null;
+      const overflowY = getComputedStyle(el).overflowY;
+      const room = el.scrollHeight - el.clientHeight;
+      if (/(auto|scroll|overlay)/.test(overflowY) && room > 0) {
+        // Dragging down reveals earlier content (scrollTop falls), and vice versa.
+        const spent =
+          dy === undefined
+            ? false
+            : dy > 0
+              ? el.scrollTop <= 0
+              : dy < 0
+                ? el.scrollTop >= room - 1
+                : true;
+        if (!spent) return el;
+      }
+      el = el.parentElement;
+    }
+    return null;
+  }
+
   // ── Keep drags inside the card ──────────────────────────────────────────────
   // A finger drag on the card would otherwise fall through to the feed behind
   // it, so the page scrolls while you're trying to move around the draft. The
-  // blocks region is the one part that legitimately scrolls; when it has room
-  // to move in the drag's direction the browser handles it (and
-  // overscroll-behavior:contain stops the chain at its edges). Every other drag
-  // — head, foot, link card, or the blocks region when the draft is short
-  // enough to fit — gets swallowed.
+  // parts that legitimately scroll — the blocks region, a long quote's own
+  // textarea, the quote picker's list — handle their own drags whenever they
+  // have room to move in that direction, and a nested one that's out of travel
+  // hands off to the region behind it (overscroll-behavior:contain stops the
+  // chain at the card's own edge). A drag with nothing left to move anywhere in
+  // the card gets swallowed.
   //
   // The listener is non-passive by necessity, so it's registered here rather
   // than as an event attribute. A live text selection is left alone: dragging
@@ -279,16 +347,7 @@
       const selection = window.getSelection();
       if (selection && !selection.isCollapsed) return;
 
-      const el = blocksEl;
-      if (!el || !(e.target instanceof Node) || !el.contains(e.target)) {
-        e.preventDefault();
-        return;
-      }
-      const room = el.scrollHeight - el.clientHeight;
-      // Dragging down reveals earlier content (scrollTop falls), and vice versa.
-      const atTop = el.scrollTop <= 0;
-      const atBottom = el.scrollTop >= room - 1;
-      if (room <= 0 || (dy > 0 && atTop) || (dy < 0 && atBottom)) e.preventDefault();
+      if (!scrollableAt(e.target, card, dy)) e.preventDefault();
     }
 
     card.addEventListener('touchstart', onStart, { passive: true });
@@ -313,18 +372,6 @@
   // leaves the composer alone.
   let composerEl = $state<HTMLElement | null>(null);
   const DRAG_SLOP = 8;
-
-  /** The scroll container a touch landed in — the one a flick would move. */
-  function nearestScroller(target: EventTarget | null): Element | null {
-    let el =
-      target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
-    while (el) {
-      const overflowY = getComputedStyle(el).overflowY;
-      if (/(auto|scroll|overlay)/.test(overflowY) && el.scrollHeight > el.clientHeight) return el;
-      el = el.parentElement;
-    }
-    return document.scrollingElement;
-  }
 
   $effect(() => {
     if (!session || composer.minimized || showShareConfirm) return;
@@ -406,7 +453,7 @@
       tracking = true;
       startX = e.touches[0].clientX;
       startY = e.touches[0].clientY;
-      startScroller = nearestScroller(e.target);
+      startScroller = scrollableAt(e.target) ?? document.scrollingElement;
     }
 
     function onTouchMove(e: TouchEvent) {
@@ -512,7 +559,7 @@
         </div>
       </header>
 
-      <div class="composer-blocks" bind:this={blocksEl}>
+      <div class="composer-blocks">
         {#each composer.blocks as block, i (i)}
           {#if block.kind === 'quote'}
             <div class="quote-block">
@@ -578,6 +625,7 @@
                 class:active={quotesOpen}
                 aria-expanded={quotesOpen}
                 aria-label="Insert a quote from your highlights"
+                onmousedown={keepEditorFocus}
                 onclick={() => (quotesOpen = !quotesOpen)}
               >
                 <Icon name="quote" size={15} />
@@ -898,6 +946,10 @@
     display: block;
     width: 100%;
     resize: none;
+    /* Heights are set inline to fit the content, so there is nothing to scroll.
+       Held hidden anyway: a stray pixel of overflow would make the field a
+       scroll container and swallow drags meant for the blocks region. */
+    overflow-y: hidden;
     border: none;
     outline: none;
     padding: 0;
@@ -1240,6 +1292,14 @@
 
     .draft-hint {
       display: none;
+    }
+
+    /* Less of each passage on a phone: with the keyboard up the picker has only
+       a few rows to work with, so three lines apiece keeps more quotes in view
+       and still shows enough to tell them apart. */
+    .quote-exact {
+      -webkit-line-clamp: 3;
+      line-clamp: 3;
     }
   }
 
