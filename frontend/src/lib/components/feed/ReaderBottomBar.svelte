@@ -8,6 +8,8 @@
 <script lang="ts">
   import Icon from '$lib/components/Icon.svelte';
   import { bottomRail } from '$lib/stores/bottomRail.svelte';
+  import { bottomBarInset } from '$lib/stores/bottomBarInset.svelte';
+  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
 
   // The mobile reader's chrome: one flat bar anchored to the bottom edge, with
   // the reading rail as its top edge — the edge that faces the text. It is the
@@ -66,9 +68,21 @@
   // open: a refresh behind the text is not the reader's business. Claiming for
   // the reader's whole life keeps the app-wide bar down even as this one slides.
   $effect(() => bottomRail.claim());
+
+  // The bottom edge, unlike the rail, is only claimed while the bar is actually
+  // on screen — it slides away on scroll-down, and above the breakpoint the bar
+  // isn't rendered at all, so a blanket claim would push the composer's minibar
+  // off a bar that isn't there. Claimed by measured height, which includes the
+  // safe-area inset the bar absorbs.
+  let barHeight = $state(0);
+
+  $effect(() => {
+    if (!visible || !mobileStore.isMobile || barHeight === 0) return;
+    return bottomBarInset.claim(barHeight);
+  });
 </script>
 
-<div class="reader-bottom-bar" class:hidden={!visible}>
+<div class="reader-bottom-bar" class:hidden={!visible} bind:clientHeight={barHeight}>
   <div class="reader-bar-rail" aria-hidden="true">
     <div class="reader-bar-rail-fill" class:eased style:transform={`scaleX(${progress})`}></div>
   </div>

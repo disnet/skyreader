@@ -1,9 +1,9 @@
 <script lang="ts">
-  // The share composer: a docked, non-modal bottom drawer for drafting a
-  // linkblog share. The article stays scrollable behind it — that's the point:
-  // draft on one side of your attention, gather quotes with the other. Minimize
-  // it to a slim bar to read; quotes added from the article land in the draft
-  // either way.
+  // The share composer: a non-modal card floating at the bottom of the screen
+  // for drafting a linkblog share. The article stays scrollable behind and below
+  // it — that's the point: draft on one side of your attention, gather quotes
+  // with the other. Minimize it to a slim bar to read; quotes added from the
+  // article land in the draft either way.
   //
   // The draft is an ordered list of blocks: commentary text and atomic quoted
   // passages. Quotes render as real blockquotes (the gold quotation rule), not
@@ -17,6 +17,7 @@
   import MentionAutocomplete from './MentionAutocomplete.svelte';
   import ShareConfirmModal from './ShareConfirmModal.svelte';
   import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
+  import { bottomBarInset } from '$lib/stores/bottomBarInset.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
@@ -186,7 +187,11 @@
 {#if session && article}
   {#if composer.minimized}
     <!-- Slim resting bar: the draft stays in reach while you read. -->
-    <div class="composer-minibar">
+    <div
+      class="composer-minibar"
+      class:lifted={bottomBarInset.height > 0}
+      style:--bar-inset={`${bottomBarInset.height}px`}
+    >
       <button
         type="button"
         class="minibar-main"
@@ -421,37 +426,53 @@
 {/if}
 
 <style>
-  /* The drawer floats above the page plane (reader overlay included), so the
-     upward sheet shadow is sanctioned. Centered on the reading column at that
-     band's width, lifting from the bottom edge with sheet corners. */
-  /* Centered by auto margins, not a transform: a transformed ancestor would
+  /* A card that floats over the page plane (reader overlay included) rather than
+     a sheet welded to the bottom edge. That's a deliberate retreat from fighting
+     mobile browsers for the last row of pixels: the keyboard, Safari's URL bar
+     and the home indicator all claim that strip and none of them agree on where
+     `bottom: 0` lands, so the card keeps clear of the whole zone and lets the
+     feed show beneath it — which reads as depth once the card has air, corners
+     and a shadow on every side.
+
+     `bottom` is the plain offset on purpose. Mobile Safari anchors fixed
+     elements to the *visible* viewport, above its own URL bar, so a correction
+     of `100lvh - 100dvh` (or any measured equivalent) double-counts the chrome
+     and parks the card a bar's height too high whenever that bar is expanded.
+     Tried, reverted, don't re-add. What's left is Safari moving fixed elements
+     with the page while the URL bar animates between states and settling them
+     after: browser behavior, not ours to correct.
+
+     Centered by auto margins, not a transform: a transformed ancestor would
      become the containing block for the fixed-position quote picker and pin it
-     to the drawer instead of the viewport. */
-  /* Inset by the sidebar so the drawer centers on the content column, not the
+     to the drawer instead of the viewport.
+
+     Inset by the sidebar so the card centers on the content column, not the
      whole window — .app-container is a centered max-width band, so insetting the
-     left edge by the sidebar width lands the drawer's center exactly on the
-     feed column's center at every viewport size. */
+     left edge by the sidebar width lands the card's center exactly on the feed
+     column's center at every viewport size. */
   .composer,
   .composer-minibar {
-    position: fixed;
-    bottom: 0;
+    --float-gap: 0.5rem;
     --composer-inset: var(--sidebar-width, 320px);
+    position: fixed;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--float-gap));
     left: var(--composer-inset);
     right: 0;
     margin: 0 auto;
     z-index: 140;
-    width: min(800px, calc(100vw - var(--composer-inset)));
+    width: min(800px, calc(100vw - var(--composer-inset) - 2 * var(--float-gap)));
     background: var(--color-bg, #fff);
     border: 1px solid var(--color-border, #e0e0e0);
-    border-bottom: none;
-    border-radius: 12px 12px 0 0;
-    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.15);
+    border-radius: 12px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
   }
 
   .composer {
     display: flex;
     flex-direction: column;
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+    /* Never taller than the window, so a long draft scrolls its blocks instead of
+       running the foot row off the top. The blocks region absorbs the squeeze. */
+    max-height: calc(100dvh - 2 * var(--float-gap));
     animation: composer-in 0.25s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
@@ -470,7 +491,7 @@
   .composer-minibar {
     display: flex;
     align-items: stretch;
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+    overflow: hidden;
   }
 
   .minibar-main {
@@ -504,7 +525,10 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* Takes the slack, so the chevron that follows it lands against the close
+     button's divider instead of trailing a short title mid-bar. */
   .minibar-title {
+    flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -590,6 +614,9 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+    /* min-height:0 so this is what gives when the drawer is capped to the
+       visible viewport — the head, link row and foot keep their content height. */
+    min-height: 0;
     max-height: min(42vh, 22rem);
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -904,13 +931,27 @@
     }
   }
 
+  /* On mobile the bottom edge belongs to whichever app bar is up — the feed's
+     MobileBottomBar or the reader's. The resting minibar floats clear above that
+     bar rather than over it, so the bar's controls stay tappable. `--bar-inset`
+     is the bar's measured height, which already includes the safe-area inset it
+     absorbs — hence no env() on top of it here. When the bar slides away on
+     scroll the minibar settles back to its own float gap, matching the bar's
+     0.25s travel so the two move as one. */
+  @media (max-width: 1000px) {
+    .composer-minibar {
+      transition: bottom 0.25s ease;
+    }
+
+    .composer-minibar.lifted {
+      bottom: calc(var(--bar-inset, 0px) + var(--float-gap));
+    }
+  }
+
   @media (max-width: 640px) {
     .composer,
     .composer-minibar {
-      width: 100vw;
-      border-left: none;
-      border-right: none;
-      border-radius: 16px 16px 0 0;
+      border-radius: 16px;
     }
 
     /* 16px keeps iOS Safari from auto-zooming the field on focus. */
@@ -940,12 +981,16 @@
     .composer {
       animation: none;
     }
+
+    .composer-minibar {
+      transition: none;
+    }
   }
 
   @media (prefers-color-scheme: dark) {
     .composer,
     .composer-minibar {
-      box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.4);
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
     }
 
     .quotes-popup {
