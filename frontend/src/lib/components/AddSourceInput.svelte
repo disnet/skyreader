@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { on } from 'svelte/events';
   import { goto } from '$app/navigation';
   import Icon from '$lib/components/Icon.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
@@ -46,15 +47,25 @@
   }
 
   // On open (from a click or the keyboard shortcut), reset the input, position
-  // the menu, and focus the field.
+  // the menu, and focus the field. Effects run after the DOM update, so the
+  // input and the trigger are both measurable here — doing this synchronously
+  // rather than in a rAF keeps the reset, the position and the focus in one
+  // step, so nothing can land in the field between the reset and the focus.
   $effect(() => {
     if (isOpen) {
       inputValue = '';
-      requestAnimationFrame(() => {
-        updateMenuPosition();
-        inputRef?.focus();
-      });
+      updateMenuPosition();
+      inputRef?.focus();
     }
+  });
+
+  // The menu is portaled to <body>, outside the app's mount root, so Svelte's
+  // delegated handlers reach it only through the document-level fallback
+  // listener. Bind keydown straight to the node instead: submitting with Enter
+  // shouldn't depend on that path.
+  $effect(() => {
+    if (!inputRef) return;
+    return on(inputRef, 'keydown', handleKeydown);
   });
 
   function close() {
@@ -169,7 +180,6 @@
             bind:value={inputValue}
             placeholder="Paste URL or @handle..."
             class="menu-input"
-            onkeydown={handleKeydown}
           />
           {#if inputValue.trim()}
             <button class="go-btn" onclick={handleSubmit}>
