@@ -1388,15 +1388,21 @@
   }
 
   /* Safari paints its own translucent chrome over the bottom of the window, and
-     a soft shadow crossing into it tears along that boundary instead of fading.
-     On phones the expanded card rides on its border alone — flat-by-default is
-     the house rule anyway, and the card is large enough there to read as a
-     surface without one. The minibar keeps its shadow: it's small, it floats
-     clear of the chrome, and it needs the lift to separate from the feed.
+     a wide soft shadow crossing into it tears along that boundary instead of
+     fading. So on phones the expanded card gets a tighter, lighter shadow than
+     the desktop one: enough lift to read as a floating surface over the feed,
+     small enough that little of it reaches the chrome. The minibar keeps the
+     full shadow — it's small and floats clear of that zone.
      Last in the file so it also wins over the dark-mode shadow above. */
   @media (max-width: 640px) {
     .composer {
-      box-shadow: none;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+  }
+
+  @media (max-width: 640px) and (prefers-color-scheme: dark) {
+    .composer {
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
     }
   }
 </style>
