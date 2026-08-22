@@ -199,8 +199,9 @@ function createShareComposerStore() {
 
   /**
    * Post (create) or update (edit) the share. The caller handles the
-   * first-share public acknowledgment before calling this. Returns true when
-   * the write path was invoked (the linkblog store handles its own rollback).
+   * first-share public acknowledgment before calling this. Returns true only
+   * when the words made it out; false leaves the drawer open with the draft
+   * intact, so nothing the user wrote is lost to a failed write.
    */
   async function post(): Promise<boolean> {
     if (!session || posting) return false;
@@ -213,11 +214,15 @@ function createShareComposerStore() {
       } else if (mode === 'edit') {
         await linkblogStore.setNote(article.url, noteText);
       } else {
-        await linkblogStore.shareLink(article, noteText || undefined, repostUri);
-        // shareLink swallows write failures (it rolls its optimistic state
-        // back). If the share didn't stick, keep the draft instead of deleting
-        // the user's words on a failed post.
-        if (!linkblogStore.isShared(article.url)) return false;
+        // shareLink swallows write failures (it rolls its optimistic state back)
+        // and no-ops on an article already shared — from another device, say,
+        // reconciled in while this draft sat open. Both used to read as success
+        // through `isShared`, which deleted the draft without the note ever
+        // being written. So act on what it reports: a failure keeps the draft, a
+        // duplicate attaches these words to the entry that already exists.
+        const result = await linkblogStore.shareLink(article, noteText || undefined, repostUri);
+        if (result === 'failed') return false;
+        if (result === 'duplicate') await linkblogStore.setNote(article.url, noteText);
       }
       clearTimeout(saveTimer);
       if (mode === 'create') await shareDraftsStore.remove(article.url);

@@ -14,7 +14,12 @@ function toPlain(draft: ShareDraft): ShareDraft {
 
 function createShareDraftsStore() {
   let drafts = $state<Map<string, ShareDraft>>(new Map());
-  let hasLoaded = false;
+  // The in-flight (or settled) hydration. Memoizing the promise rather than a
+  // `hasLoaded` flag is what makes `await load()` mean "the drafts are here":
+  // a flag set before the await lets a second caller through while the read is
+  // still running, and the composer would then open blank over a saved draft
+  // and overwrite it on the first keystroke.
+  let loadPromise: Promise<void> | null = null;
 
   const list = $derived(
     [...drafts.values()]
@@ -22,15 +27,21 @@ function createShareDraftsStore() {
       .sort((a, b) => b.updatedAt - a.updatedAt)
   );
 
-  async function load() {
-    if (hasLoaded) return;
-    hasLoaded = true;
+  async function hydrate() {
     try {
       const rows = await db.shareDrafts.toArray();
-      drafts = new Map(rows.map((d) => [d.articleUrl, d]));
+      // Merge under anything already in memory: a draft saved while the read was
+      // in flight is newer than the row it came from.
+      const next = new Map(rows.map((d) => [d.articleUrl, d]));
+      for (const [url, draft] of drafts) next.set(url, draft);
+      drafts = next;
     } catch (e) {
       console.error('Failed to load share drafts:', e);
     }
+  }
+
+  function load(): Promise<void> {
+    return (loadPromise ??= hydrate());
   }
 
   function get(articleUrl: string): ShareDraft | undefined {

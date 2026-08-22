@@ -202,6 +202,22 @@
   let showShareConfirm = $state(false);
   let postError = $state(false);
 
+  // Transient per-draft UI state, cleared whenever the drawer changes hands.
+  // None of it describes the new draft: a failed post on the last article must
+  // not greet the next one with "Couldn't post", and an armed Discard or an open
+  // picker belongs to the draft it was armed on.
+  let lastSessionKey = '';
+  $effect(() => {
+    const key = session ? `${session.article.url}:${session.mode}` : '';
+    if (key === lastSessionKey) return;
+    lastSessionKey = key;
+    postError = false;
+    showShareConfirm = false;
+    quotesOpen = false;
+    clearTimeout(discardTimer);
+    confirmingDiscard = false;
+  });
+
   async function handlePost() {
     if (!session || composer.posting || overLimit) return;
     if (session.mode === 'create' && !preferences.linkblogShareConfirmed) {

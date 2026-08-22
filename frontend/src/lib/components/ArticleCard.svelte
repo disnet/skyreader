@@ -504,7 +504,9 @@
   }
 
   async function submitOwnNote(note: string) {
-    if (!ownRkey) return;
+    // Throw rather than return: the composer reads a resolved submit as "saved"
+    // and closes on it, so a quiet return would drop the edit and say it worked.
+    if (!ownRkey) throw new Error('This post has no record to edit.');
     const trimmed = note.trim();
     // Reflect locally, then persist (empty string clears the note).
     ownNoteOverride = trimmed || undefined;

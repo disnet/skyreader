@@ -218,6 +218,13 @@
           {/if}
         </div>
       {/each}
+    {:else}
+      <!-- Nothing to switch to. Say why, or the disclosure that opened this
+           resolves to a single row and no explanation. -->
+      <p class="picker-hint">
+        Publications you make in Leaflet, Offprint or another standard.site app show up here, and
+        your links can go into one of them instead.
+      </p>
     {/if}
   </div>
 

@@ -176,7 +176,10 @@
   // The linkblog's own write path: edit by rkey, because the entry may live in a
   // connected publication the URL-keyed share store can't reach.
   async function submitNote(next: string) {
-    if (!ownRkey || !doc) return;
+    // Throw rather than return: the composer reads a resolved submit as "your
+    // edit is saved" and closes on it, so returning quietly here would drop the
+    // user's words and tell them it worked.
+    if (!ownRkey || !doc) throw new Error('This post has no record to edit.');
     const trimmed = next.trim();
     await api.updateLinkblogShareNote(ownRkey, trimmed);
     // Reflect it in the listed document so this page updates ahead of the next

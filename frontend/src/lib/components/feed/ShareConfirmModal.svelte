@@ -177,6 +177,14 @@
         where they are.
       </p>
     {/if}
+  {:else}
+    <!-- The list came back with nothing usable. The disclosure has already
+         replaced the button that opened it, so this branch has to resolve it —
+         otherwise the dialog just loses a control and says nothing. -->
+    <p class="share-confirm-aside">
+      Skyreader found no other publication to publish to. Ones you make in Leaflet, Offprint or
+      another standard.site app show up here.
+    </p>
   {/if}
 
   {#if applyError}
