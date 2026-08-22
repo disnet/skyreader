@@ -9,17 +9,8 @@
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
-  import {
-    channelSuggestions,
-    type ChannelSuggestion,
-  } from '$lib/stores/channelSuggestions.svelte';
-  import {
-    savedChannelSuggestions,
-    type SavedChannelSuggestion,
-  } from '$lib/stores/savedChannelSuggestions.svelte';
   import { channelPath, feedPath, categoryPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
   import Icon from '$lib/components/Icon.svelte';
-  import Tooltip from '$lib/components/Tooltip.svelte';
   import type { Subscription } from '$lib/types';
 
   interface Props {
@@ -310,9 +301,9 @@
       sections.push({ section: '', groupId: 'home', items: [homeItem] });
     }
 
-    // Everything group: Everything + source channels (+ suggestions rendered inline in template)
+    // Everything group: Everything + source channels
     const everythingGroup = [everythingItem, ...sourceChannelItems].filter(filterItem);
-    if (everythingGroup.length > 0 || (!query && channelSuggestions.suggestions.length > 0)) {
+    if (everythingGroup.length > 0) {
       sections.push({
         section: '',
         groupId: 'everything',
@@ -320,9 +311,9 @@
       });
     }
 
-    // Saved group: Saved + saved channels (+ suggestions rendered inline in template)
+    // Saved group: Saved + saved channels
     const savedGroup = [savedItem, ...savedChannelItems].filter(filterItem);
-    if (savedGroup.length > 0 || (!query && savedChannelSuggestions.suggestions.length > 0)) {
+    if (savedGroup.length > 0) {
       sections.push({ section: '', groupId: 'saved', items: savedGroup });
     }
 
@@ -376,35 +367,6 @@
     if (item.type === 'filteredView' && filter.type === 'filteredView' && filter.id === item.id)
       return true;
     return false;
-  }
-
-  async function acceptSuggestion(suggestion: ChannelSuggestion) {
-    const id = await filteredViewsStore.create({
-      name: suggestion.name,
-      sourceMode: suggestion.sourceMode,
-      sourceKeys: suggestion.sourceKeys,
-      typeFilter: suggestion.typeFilter.length > 0 ? suggestion.typeFilter : undefined,
-      autoRule: suggestion.autoRule,
-      readFilter: 'unread',
-      sortOrder: 'newest',
-    });
-    goto(channelPath(id));
-    onclose();
-  }
-
-  async function acceptSavedSuggestion(suggestion: SavedChannelSuggestion) {
-    const id = await filteredViewsStore.create({
-      name: suggestion.name,
-      mode: 'saved',
-      savedSourceFilter: suggestion.savedSourceFilter,
-      savedDomainFilter: suggestion.savedDomainFilter,
-      savedReadingLength: suggestion.savedReadingLength,
-      savedDateFilter: suggestion.savedDateFilter,
-      readFilter: suggestion.readFilter ?? 'unread',
-      sortOrder: suggestion.sortOrder ?? 'newest',
-    });
-    goto(channelPath(id));
-    onclose();
   }
 
   function selectItem(item: NavItem) {
@@ -532,25 +494,6 @@
           {/if}
         {/each}
         {#if groupId === 'everything' && !searchQuery}
-          {#each channelSuggestions.suggestions as suggestion (suggestion.id)}
-            <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-            <div class="nav-item suggestion-accept" onclick={() => acceptSuggestion(suggestion)}>
-              <span class="item-icon suggestion-icon"><Icon name="plus" size={16} /></span>
-              <span class="item-label">{suggestion.name}</span>
-              <span class="suggestion-actions" onclick={(e) => e.stopPropagation()}>
-                <Tooltip text={suggestion.description} />
-                <button
-                  class="suggestion-dismiss"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    channelSuggestions.dismiss(suggestion.id);
-                  }}
-                >
-                  <Icon name="x" size={14} />
-                </button>
-              </span>
-            </div>
-          {/each}
           <a
             href="/channels/discover"
             class="nav-item more-suggestions-link"
@@ -561,28 +504,6 @@
           </a>
         {/if}
         {#if groupId === 'saved' && !searchQuery}
-          {#each savedChannelSuggestions.suggestions as suggestion (suggestion.id)}
-            <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-            <div
-              class="nav-item suggestion-accept"
-              onclick={() => acceptSavedSuggestion(suggestion)}
-            >
-              <span class="item-icon suggestion-icon"><Icon name="plus" size={16} /></span>
-              <span class="item-label">{suggestion.name}</span>
-              <span class="suggestion-actions" onclick={(e) => e.stopPropagation()}>
-                <Tooltip text={suggestion.description} />
-                <button
-                  class="suggestion-dismiss"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    savedChannelSuggestions.dismiss(suggestion.id);
-                  }}
-                >
-                  <Icon name="x" size={14} />
-                </button>
-              </span>
-            </div>
-          {/each}
           <a
             href="/channels/discover"
             class="nav-item more-suggestions-link"
@@ -896,43 +817,6 @@
 
   .source-type-icon.pill-collection {
     --source-accent: #557f89;
-  }
-
-  .suggestion-accept {
-    color: var(--color-text-secondary);
-  }
-
-  .suggestion-icon {
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    border: 1.5px dashed currentColor;
-  }
-
-  .suggestion-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-    flex-shrink: 0;
-  }
-
-  .suggestion-dismiss {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.5rem;
-    height: 1.5rem;
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--color-text-secondary);
-    border-radius: 6px;
-    flex-shrink: 0;
-    padding: 0;
-  }
-
-  .suggestion-dismiss:active {
-    background: var(--color-bg-secondary);
   }
 
   .more-suggestions-link {
