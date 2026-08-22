@@ -575,7 +575,7 @@
         </div>
       </header>
 
-      <div class="composer-blocks">
+      <div class="composer-blocks" class:picking={quotesOpen}>
         {#each composer.blocks as block, i (i)}
           {#if block.kind === 'quote'}
             <div class="quote-block">
@@ -955,6 +955,15 @@
 
   .text-block {
     position: relative;
+  }
+
+  /* iOS Safari paints the caret of a focused field above everything, ignoring
+     stacking order, so the picker — which deliberately keeps the editor focused
+     to hold the keyboard up — gets a caret blinking across the quotes it lists.
+     Hide it while the picker is open; focus, selection and keyboard all stay. */
+  .composer-blocks.picking .text-input,
+  .composer-blocks.picking .quote-input {
+    caret-color: transparent;
   }
 
   .text-input,
