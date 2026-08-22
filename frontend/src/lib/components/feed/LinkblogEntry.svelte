@@ -293,7 +293,9 @@
          is the reading content; the headline names what the post is about. -->
     <header class="entry-head">
       {#if isDraft}
-        <span class="entry-chip">Draft</span>
+        <!-- Desktop only. At phone width the same chip renders in the meta row
+             below instead, where there's room for it. -->
+        <span class="entry-chip entry-chip-head">Draft</span>
       {/if}
       <a
         class="entry-title"
@@ -328,6 +330,10 @@
          out of the gap between the headline and your words. -->
     <footer class="entry-foot">
       <div class="entry-meta">
+        {#if isDraft}
+          <!-- Phone only; the desktop chip leads the headline. -->
+          <span class="entry-chip entry-chip-meta">Draft</span>
+        {/if}
         <a
           class="entry-source"
           href={articleUrl}
@@ -442,9 +448,11 @@
     border-radius: 2px;
   }
 
-  /* Leads the headline it belongs to. On the tinted draft panel a filled chip
-     would compete with the title, so it reads as a quiet label in the app's own
-     blue — the surface already says "draft", this just names it. */
+  /* On the tinted draft panel a filled chip would compete with the title, so it
+     reads as a quiet label in the app's own blue — the surface already says
+     "draft", this just names it. It leads the headline on desktop and the meta
+     row on a phone; rendered in both places, one hidden per breakpoint, because
+     the two live under different parents and can't be reordered by CSS. */
   .entry-chip {
     flex-shrink: 0;
     align-self: center;
@@ -456,6 +464,10 @@
     font-weight: var(--weight-medium);
     letter-spacing: var(--tracking-wider);
     text-transform: uppercase;
+  }
+
+  .entry-chip-meta {
+    display: none;
   }
 
   /* ── The closing row ──────────────────────────────────────────────────────
@@ -684,10 +696,11 @@
   }
 
   @media (max-width: 640px) {
-    /* Phone width: the entry keeps its shape — nothing needs to wrap or hide,
-       because the headline owns its own lines and the closing row holds only two
-       things. What changes is the touch target: the actions grow to the 44px
-       floor, and the Edit label stays visible because the row has room for it. */
+    /* Phone width: the entry keeps its shape. The one move is the Draft chip,
+       which drops to the meta row so the headline gets the full width of a
+       narrow column. What else changes is the touch target: the actions grow to
+       the 44px floor, and the Edit label stays visible because the row has room
+       for it. */
     .entry {
       padding: 1.5rem 0;
     }
@@ -708,6 +721,24 @@
 
     .entry-source {
       margin-left: -0.625rem;
+    }
+
+    /* The chip moves down to the meta row, where the headline has the full width
+       to itself and the status still reads at a glance. */
+    .entry-chip-head {
+      display: none;
+    }
+
+    .entry-chip-meta {
+      display: inline-flex;
+      align-items: center;
+    }
+
+    /* The source's negative margin exists to sit its text on the column's left
+       edge. With the chip ahead of it, the chip owns that edge instead — leaving
+       the pull in would crowd the two together. */
+    .entry-chip-meta + .entry-source {
+      margin-left: 0;
     }
 
     .entry-actions :global(.menu-trigger) {
