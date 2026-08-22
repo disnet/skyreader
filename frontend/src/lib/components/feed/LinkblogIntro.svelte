@@ -107,6 +107,27 @@
     white-space: nowrap;
   }
 
+  @media (max-width: 640px) {
+    /* The address is the one thing on this page you hand to someone, and half an
+       address is useless — so at phone width it wraps to a second line rather
+       than ellipsizing away the handle that identifies it. */
+    .address {
+      flex-wrap: wrap;
+      row-gap: 0;
+    }
+
+    .address-text {
+      overflow: visible;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .address,
+    .address-copy {
+      min-height: 40px;
+    }
+  }
+
   .address-copy {
     display: inline-flex;
     flex-shrink: 0;
