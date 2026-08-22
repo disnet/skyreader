@@ -72,7 +72,6 @@
     onContentTap,
     onToggleRead,
     onToggleSave,
-    onRemoveShare,
     onOpenUrl,
     onOpenFullscreen,
     onOpenCollectionPiece,
@@ -170,26 +169,19 @@
   const atmosphereCapped = $derived(laneRow.some((l) => l.capped));
   const atmosphereMine = $derived(laneRow.some((l) => l.isMine));
 
-  // The action-bar Share button is a toggle for the Blogs lane: when not yet
-  // shared it runs the same create path as the lane's [+] (createInLane), and
-  // once shared it removes the share (the same as the note box's Remove). It
-  // shows whenever sharing is possible at all — the lane offers a create OR the
-  // item is already shared — so pressing it never makes the button vanish.
+  // The action-bar Share button is the whole linkblog affordance: not yet shared
+  // it opens the composer to draft one, already shared it reopens the composer
+  // on what you posted (where editing and removal live). It shows whenever
+  // sharing is possible at all — the lane offers a create OR the item is already
+  // shared — so pressing it never makes the button vanish.
   const shareRow = $derived(laneRow.find((l) => l.id === 'linkblog'));
   const canShare = $derived(Boolean(shareRow?.canCreate) || currentlyShared);
-
-  // Removing a share is a small destructive step (it deletes a PDS record), so
-  // the Share toggle asks for an inline confirm rather than removing on first
-  // click. Reset whenever the card closes or its shared state changes.
-  let confirmingRemove = $state(false);
-  $effect(() => {
-    if (!isOpen || !currentlyShared) confirmingRemove = false;
-  });
+  // Shared with commentary vs. shared bare: the button carries that distinction
+  // now that the note itself no longer sits under the article.
+  const hasShareNote = $derived(Boolean(currentNote?.trim()));
 
   // Are the Discussion lanes rendered? Gated on the toggle plus having lanes to
-  // show. The shared-note box is NOT gated on this — it shows whenever the item is
-  // shared (just above the lanes), so the note stays put as Discussion opens and
-  // closes beneath it.
+  // show.
   let panelOpen = $derived(atmosphereOpen && laneRow.length > 0);
 </script>
 
@@ -417,25 +409,20 @@
 
            …article body
            ── drop shadow ──
-           [ note ]
            [ discussion lanes ]
            [ action row ]
     -->
     <div class="article-actions-container" class:floating={actionBarFloating}>
-      <!-- The shared-note box + Discussion lanes, in flow above the action row so
-           they ride the same sticky band. The note box shows whenever shared; the
-           lanes only when Discussion is toggled (panelOpen). -->
+      <!-- The Discussion lanes, in flow above the action row so they ride the
+           same sticky band. Shown when Discussion is toggled (panelOpen). -->
       <AtmospherePanel
         {laneRow}
         {expandedLane}
         {expandedLaneItems}
-        {currentlyShared}
-        {currentNote}
         lanesOpen={panelOpen}
         panelId="discussion-panel"
         {onToggleLane}
         {onCreateInLane}
-        {onEditShare}
         {onOpenAuthor}
       />
       <div class="article-actions">
@@ -455,69 +442,36 @@
             class="action-label">{isSaved ? 'Saved' : 'Save'}</span
           >
         </button>
-        <!-- Share: not yet shared → one button that opens the composer (a saved
-             draft turns the label into "Draft"); commentary is optional there.
-             Already shared → remove (with confirm); note editing lives in the
-             Discussion lead's Edit affordance. -->
+        <!-- Share: one button, one destination — the composer. Not yet shared it
+             drafts one (a saved draft turns the label into "Draft"); already
+             shared it reads "Shared", carries a dot when there's commentary
+             behind it, and reopens what you posted for editing or removal. -->
         {#if canShare}
-          <div class="share-btn-wrapper">
-            {#if currentlyShared}
-              <button
-                class="action-btn share-btn saved"
-                class:confirming={confirmingRemove}
-                title="Shared to your linkblog. Tap to remove"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  confirmingRemove = !confirmingRemove;
-                }}
-              >
-                <span class="action-icon"><Icon name="share" size={16} /></span><span
-                  class="action-label">Shared</span
-                >
-              </button>
-            {:else}
-              <button
-                class="action-btn share-btn"
-                title={hasShareDraft
-                  ? 'Resume your share draft'
-                  : 'Write a share for your linkblog'}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  onComposeShare?.();
-                }}
-              >
-                <span class="action-icon"><Icon name="share" size={16} /></span><span
-                  class="action-label">{hasShareDraft ? 'Draft' : 'Share'}</span
-                >
-              </button>
-            {/if}
-            {#if confirmingRemove}
-              <!-- Confirm popover above the button, so it works even when the
-                   action bar collapses to icon-only on small viewports. -->
-              <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-              <div class="overflow-backdrop" onclick={() => (confirmingRemove = false)}></div>
-              <div class="confirm-pop">
-                <p class="confirm-pop-title">Remove this share?</p>
-                <div class="confirm-pop-actions">
-                  <button
-                    class="confirm-pop-btn cancel"
-                    onclick={(e) => {
-                      e.stopPropagation();
-                      confirmingRemove = false;
-                    }}>Cancel</button
-                  >
-                  <button
-                    class="confirm-pop-btn danger"
-                    onclick={(e) => {
-                      e.stopPropagation();
-                      confirmingRemove = false;
-                      onRemoveShare?.();
-                    }}>Remove</button
-                  >
-                </div>
-              </div>
-            {/if}
-          </div>
+          <button
+            class="action-btn share-btn"
+            class:saved={currentlyShared}
+            title={currentlyShared
+              ? hasShareNote
+                ? 'Shared with a note. Tap to edit'
+                : 'Shared without a note. Tap to add one'
+              : hasShareDraft
+                ? 'Resume your share draft'
+                : 'Write a share for your linkblog'}
+            onclick={(e) => {
+              e.stopPropagation();
+              if (currentlyShared) onEditShare?.();
+              else onComposeShare?.();
+            }}
+          >
+            <span class="action-icon"
+              ><Icon name="share" size={16} />{#if currentlyShared && hasShareNote}<span
+                  class="note-dot"
+                  aria-hidden="true"
+                ></span>{/if}</span
+            ><span class="action-label"
+              >{currentlyShared ? 'Shared' : hasShareDraft ? 'Draft' : 'Share'}</span
+            >
+          </button>
         {/if}
         <!-- Discussion: the social hub. The total reference count rides the
              button, which reads active while open and tints when one of those
@@ -1761,6 +1715,7 @@
   }
 
   .action-icon {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1776,79 +1731,17 @@
     fill: none;
   }
 
-  /* Confirm-remove popover, anchored above the Share button (mirrors the
-     overflow menu) so it never depends on inline space in the action bar. */
-  .share-btn-wrapper {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-  }
-
-  .confirm-pop {
+  /* Shared *with commentary*: a small dot on the share icon. The label already
+     says "Shared" — this is the quiet second bit, that there are words behind
+     it, and it survives the icon-only collapse on narrow cards. */
+  .note-dot {
     position: absolute;
-    bottom: calc(100% + 0.5rem);
-    left: 0;
-    z-index: 100;
-    min-width: 12rem;
-    background: var(--color-bg, #fff);
-    border: 1px solid var(--color-border, #e5e7eb);
-    border-radius: 8px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-    padding: 0.625rem 0.75rem 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .confirm-pop-title {
-    margin: 0;
-    font-size: var(--text-sm);
-    color: var(--color-text);
-    white-space: nowrap;
-  }
-
-  .confirm-pop-actions {
-    display: flex;
-    gap: 0.5rem;
-    justify-content: flex-end;
-  }
-
-  .confirm-pop-btn {
-    padding: 0.3125rem 0.75rem;
-    font: inherit;
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-    border-radius: 6px;
-    cursor: pointer;
-    border: 1px solid var(--color-border, #e5e7eb);
-    background: none;
-    color: var(--color-text);
-  }
-
-  .confirm-pop-btn.cancel:hover {
-    background: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
-  }
-
-  .confirm-pop-btn.danger {
-    background: var(--color-danger, #c0392b);
-    border-color: transparent;
-    color: #fff;
-  }
-
-  .confirm-pop-btn.danger:hover {
-    opacity: 0.9;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .confirm-pop {
-      background: var(--color-bg, #1a1a1a);
-      border-color: var(--color-border, #404040);
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-    }
-
-    .confirm-pop-btn.cancel:hover {
-      background: var(--color-bg-hover, rgba(255, 255, 255, 0.08));
-    }
+    top: -1px;
+    right: -2px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
   }
 
   .action-label {

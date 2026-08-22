@@ -205,10 +205,10 @@
   let rawLinkPostNote = $derived(
     isLinkPostMode && document ? getLinkPostNote(document) : undefined
   );
-  // The user's commentary on a link post, in the author's own voice. For the
-  // user's own post the note is shown (and edited) in the note box above the
-  // action bar, so don't also render it as prose in the body.
-  let linkPostNote = $derived(!isOwnLinkblogPost ? rawLinkPostNote : undefined);
+  // The commentary on a link post, in the author's own voice — the post's own
+  // body, so it renders the same whoever wrote it. Your own post reads through
+  // `ownNote` so an in-place edit shows before the next pull lands.
+  let linkPostNote = $derived(isOwnLinkblogPost ? ownNote : rawLinkPostNote);
   // @mention facets on the note, used to linkify handles to Bluesky profiles.
   let linkPostMentions = $derived(document ? getLinkPostNoteMentions(document) : []);
   // Notes are authored as Markdown — splice profile links over any @mention facets,
@@ -383,7 +383,7 @@
     switch (id) {
       case 'linkblog':
         // Sharing is the lane's own [+]: offered until you've shared, after which
-        // the persistent note box (panel lead) owns editing/removal instead.
+        // the action bar's Share button owns editing/removal instead.
         return showShareAction && !currentlyShared;
       case 'semble':
         return Boolean(onSaveToSemble);
@@ -500,6 +500,7 @@
       mode: 'edit',
       initialNote: currentNote ?? '',
       submit: isOwnLinkblogPost ? submitOwnNote : undefined,
+      remove: removeShare,
     });
   }
 
@@ -517,18 +518,15 @@
     await api.updateLinkblogShareNote(ownRkey, trimmed);
   }
 
-  // Remove the share entirely (the Remove control in the persistent note box, or
-  // the action-bar Share toggle after its inline confirm).
+  // Remove the share entirely — the composer's Remove control in edit mode.
+  // Throws rather than swallowing: the composer reads a resolved remove as
+  // "gone" and closes on it, so a quiet failure would look like a removal.
   async function removeShare() {
     if (isOwnLinkblogPost) {
-      if (!ownRkey || !document) return;
+      if (!ownRkey || !document) throw new Error('This post has no record to remove.');
       const recordUri = document.recordUri;
-      try {
-        await api.deleteLinkblogShare(ownRkey);
-        myLinkblogStore.removeByRecordUri(recordUri);
-      } catch (e) {
-        console.error('Failed to delete linkblog post:', e);
-      }
+      await api.deleteLinkblogShare(ownRkey);
+      myLinkblogStore.removeByRecordUri(recordUri);
       onUnshare?.();
       return;
     }
@@ -932,7 +930,6 @@
   onContentTap={handleContentTap}
   onToggleRead={() => onToggleRead?.()}
   onToggleSave={() => onToggleSave?.()}
-  onRemoveShare={() => removeShare()}
   onOpenUrl={handleOpenUrl}
   onOpenFullscreen={() => onOpenFullscreen?.()}
   {onOpenCollectionPiece}
