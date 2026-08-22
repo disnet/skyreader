@@ -437,8 +437,8 @@ export const fixtures: CardFixture[] = [
     },
   },
   {
-    name: 'Shared · note box',
-    note: 'Once shared, your note persists below the card (open or not). The box owns Edit (focus it) and Remove (unshare). The Discussion button tints to show one of the references is yours.',
+    name: 'Shared · with a note',
+    note: 'Once shared, the Share button carries it: it reads “Shared”, wears a dot when there is commentary behind it, and reopens the composer (where the note is edited and the share removed). The note itself is not reprinted under the article. The Discussion button tints to show one of the references is yours.',
     props: {
       ...base,
       expanded: true,
@@ -449,16 +449,15 @@ export const fixtures: CardFixture[] = [
       hasOpenFullscreen: true,
       currentlyShared: true,
       currentNote: 'Sharing this for the framing in the second half.',
-      onRemoveShare: () => {},
       // Once shared you appear in the Linkblogs lane (isMine), and the Discussion
-      // button picks up the "mine" tint. The panel drops its composer in this
-      // state — your note lives in the persistent box above.
+      // button picks up the "mine" tint. The lane drops its [+] — the Share
+      // button is the one way in.
       laneRow: [
         {
           id: 'linkblog',
           count: 4,
           capped: false,
-          // Already shared: the lane drops its [+] (the note box owns editing).
+          // Already shared: the lane drops its [+] (the Share button owns it).
           canCreate: false,
           icon: 'standard-site',
           label: 'Blogs',

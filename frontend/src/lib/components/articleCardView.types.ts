@@ -121,6 +121,8 @@ export interface ArticleCardViewProps {
   highlighted?: boolean;
   isTruncated?: boolean;
   currentlyShared?: boolean;
+  /** The posted note. Not rendered — it decides whether the Share button shows
+   *  its "has commentary" dot, and what its title says. */
   currentNote?: string;
   /** A local share draft exists for this article (unposted composer content). */
   hasShareDraft?: boolean;
@@ -149,8 +151,6 @@ export interface ArticleCardViewProps {
   onContentTap?: () => void;
   onToggleRead?: () => void;
   onToggleSave?: () => void;
-  /** Remove the share (unshare), from the persistent note box. */
-  onRemoveShare?: () => void;
   onOpenUrl?: () => void;
   onOpenFullscreen?: () => void;
   /** Open a curated edition piece in the in-app reader (CollectionReader). */
@@ -180,7 +180,8 @@ export interface ArticleCardViewProps {
   onCreateInLane?: (id: LaneId) => void;
   /** Open the share composer (drafting; resumes an existing draft). */
   onComposeShare?: () => void;
-  /** Open the share composer on the posted note (edit mode). */
+  /** Open the share composer on the posted note (edit mode) — where editing the
+   *  note and removing the share both live. */
   onEditShare?: () => void;
   onOpenAuthor?: (did: string) => void;
   // A @mention in the note/body was clicked — open the add-feed dialog for the DID.

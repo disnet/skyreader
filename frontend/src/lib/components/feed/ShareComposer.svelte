@@ -183,7 +183,9 @@
     }
   }
 
-  // ── Discard (two-step) ──────────────────────────────────────────────────────
+  // ── Discard / Remove (two-step) ─────────────────────────────────────────────
+  // Create mode discards the local draft; edit mode takes the posted share down.
+  // Same two-step arm-then-confirm, since both are one-way.
   let confirmingDiscard = $state(false);
   let discardTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -195,6 +197,20 @@
     } else {
       confirmingDiscard = true;
       discardTimer = setTimeout(() => (confirmingDiscard = false), 3000);
+    }
+  }
+
+  let confirmingRemove = $state(false);
+  let removeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function handleRemove() {
+    if (confirmingRemove) {
+      clearTimeout(removeTimer);
+      confirmingRemove = false;
+      void composer.removeShare();
+    } else {
+      confirmingRemove = true;
+      removeTimer = setTimeout(() => (confirmingRemove = false), 3000);
     }
   }
 
@@ -216,6 +232,8 @@
     quotesOpen = false;
     clearTimeout(discardTimer);
     confirmingDiscard = false;
+    clearTimeout(removeTimer);
+    confirmingRemove = false;
   });
 
   async function handlePost() {
@@ -697,7 +715,22 @@
               {/if}
             </div>
           {/if}
-          {#if !isEdit && composer.hasContent}
+          {#if isEdit}
+            <!-- Taking the share down lives here: the Share control opens this
+                 composer, so removal has to be reachable from inside it. -->
+            <button
+              type="button"
+              class="foot-btn discard"
+              class:confirming={confirmingRemove}
+              disabled={composer.posting}
+              onclick={handleRemove}
+            >
+              <Icon name="trash" size={14} />
+              <span class="foot-btn-label"
+                >{confirmingRemove ? 'Remove share?' : 'Remove share'}</span
+              >
+            </button>
+          {:else if composer.hasContent}
             <button
               type="button"
               class="foot-btn discard"
@@ -1110,6 +1143,11 @@
   .foot-btn.discard.confirming {
     color: var(--color-error, #f44336);
     background: transparent;
+  }
+
+  .foot-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 
   .draft-hint {

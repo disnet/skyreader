@@ -28,6 +28,13 @@ export interface ComposerOpenOptions {
    * Receives the serialized note ('' clears).
    */
   submit?: (note: string) => Promise<void> | void;
+  /**
+   * Edit mode: unshare this article. The composer owns removal now that the
+   * note no longer sits under the article — the Share control opens the
+   * composer, and taking the share down happens here. Defaults to
+   * `linkblogStore.unshare(article.url)`.
+   */
+  remove?: () => Promise<void> | void;
 }
 
 interface ComposerSession {
@@ -36,6 +43,7 @@ interface ComposerSession {
   itemKey?: string;
   mode: 'create' | 'edit';
   submit?: (note: string) => Promise<void> | void;
+  remove?: () => Promise<void> | void;
 }
 
 function createShareComposerStore() {
@@ -112,6 +120,7 @@ function createShareComposerStore() {
       itemKey: options.itemKey,
       mode,
       submit: options.submit,
+      remove: options.remove,
     };
     minimized = false;
     posting = false;
@@ -238,12 +247,38 @@ function createShareComposerStore() {
     }
   }
 
+  /**
+   * Edit mode: take the share down and close. Uses the host's own removal path
+   * when it gave one (e.g. deleting your own /linkblog post by rkey), else the
+   * URL-keyed unshare. Returns false if the write failed, leaving the drawer
+   * open with the note intact.
+   */
+  async function removeShare(): Promise<boolean> {
+    if (!session || session.mode !== 'edit' || posting) return false;
+    posting = true;
+    const { article, remove } = session;
+    try {
+      if (remove) await remove();
+      else await linkblogStore.unshare(article.url);
+      session = null;
+      blocks = [];
+      minimized = false;
+      return true;
+    } catch (e) {
+      console.error('Failed to remove share:', e);
+      return false;
+    } finally {
+      posting = false;
+    }
+  }
+
   return {
     open,
     openDraft,
     close,
     discard,
     post,
+    removeShare,
     appendQuote,
     removeBlock,
     touch,

@@ -57,6 +57,7 @@
   let currentShareNote = $derived(linkblogStore.getNote(itemUrl));
   let canShareLinkblog = $derived(Boolean(auth.user) && !preferences.linkblogDisabled);
   let hasShareDraft = $derived(itemUrl ? shareDraftsStore.hasDraft(itemUrl) : false);
+  let hasShareNote = $derived(Boolean(currentShareNote?.trim()));
 
   let shareTarget = $derived.by((): { article: Article; repostUri?: string } | null =>
     shareTargetForDisplayItem(
@@ -79,6 +80,9 @@
     });
   }
 
+  // Reopen what you posted: the composer owns editing the note and taking the
+  // share down (its Remove control), so this is the only affordance the reader
+  // needs once shared.
   function editShare() {
     const target = shareTarget;
     if (!target) return;
@@ -122,11 +126,27 @@
 
 <section class="reader-discussion" aria-label="Discussion">
   <div class="reader-discussion-divider"></div>
-  {#if !sharedNow && canShareLinkblog}
+  <!-- One control for the linkblog, in both states: it says where the article
+       stands and opens the composer on it. What you wrote isn't reprinted under
+       the article you just read — it's a click away, in the place you edit it. -->
+  {#if canShareLinkblog}
     <div class="reader-share-row">
-      <button type="button" class="reader-share-cta" onclick={composeShare}>
+      <button
+        type="button"
+        class="reader-share-cta"
+        class:shared={sharedNow}
+        onclick={sharedNow ? editShare : composeShare}
+      >
         <Icon name="share" size={16} />
-        <span>{hasShareDraft ? 'Resume your share draft' : 'Share to your linkblog'}</span>
+        <span>
+          {#if sharedNow}
+            {hasShareNote ? 'Shared with a note' : 'Shared without a note'}
+          {:else if hasShareDraft}
+            Resume your share draft
+          {:else}
+            Share to your linkblog
+          {/if}
+        </span>
       </button>
     </div>
   {/if}
@@ -134,26 +154,12 @@
     laneRow={atmosphere.laneRow}
     expandedLane={atmosphere.expandedLane}
     expandedLaneItems={atmosphere.expandedLaneItems}
-    currentlyShared={sharedNow}
-    currentNote={currentShareNote}
     lanesOpen={true}
     {panelId}
     onToggleLane={atmosphere.toggleLane}
     onCreateInLane={createInLane}
-    onEditShare={editShare}
     onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
-  >
-    {#snippet leadExtra()}
-      <button
-        type="button"
-        class="discussion-remove"
-        onclick={() => void linkblogStore.unshare(itemUrl)}
-      >
-        <Icon name="trash" size={14} />
-        <span>Remove from your linkblog</span>
-      </button>
-    {/snippet}
-  </AtmospherePanel>
+  />
 </section>
 
 <style>
@@ -174,22 +180,25 @@
     gap: 0.5rem;
   }
 
-  .reader-share-cta,
-  .discussion-remove {
+  .reader-share-cta {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
+    padding: 0.5rem 0.875rem;
     border: 1px solid var(--color-border, #e0e0e0);
+    border-radius: 8px;
     background: none;
     color: var(--color-text);
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
     cursor: pointer;
   }
 
-  .reader-share-cta {
-    padding: 0.5rem 0.875rem;
-    border-radius: 8px;
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
+  /* Already shared: the control reads as state, not an invitation — the border
+     picks up the interaction blue and stays there. */
+  .reader-share-cta.shared {
+    border-color: var(--color-primary, #0066cc);
+    color: var(--color-primary, #0066cc);
   }
 
   .reader-share-cta:hover {
@@ -199,20 +208,5 @@
 
   .reader-share-cta :global(.icon) {
     color: currentColor;
-  }
-
-  .discussion-remove {
-    gap: 0.375rem;
-    margin-top: 0.75rem;
-    padding: 0.375rem 0.625rem;
-    border-radius: 6px;
-    color: var(--color-text-secondary);
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-  }
-
-  .discussion-remove:hover {
-    border-color: var(--color-error, #f44336);
-    color: var(--color-error, #f44336);
   }
 </style>

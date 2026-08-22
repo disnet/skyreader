@@ -135,7 +135,7 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
         isMine,
         createLabel: meta.createLabel,
         // Once shared, the Blogs lane drops its [+] (canCreate=false) and the
-        // note box owns editing — so the create button is never "edit".
+        // Share control owns editing — so the create button is never "edit".
         createIsEdit: false,
       });
     }
