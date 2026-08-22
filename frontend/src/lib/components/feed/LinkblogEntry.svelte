@@ -7,17 +7,19 @@
   its read/unread dot, and the "Shared by" attribution on your own publication.
 
   OWN-WORLD: Skyreader's flat system, unchanged. Entries are separated by rhythm
-  alone, never rules or boxes, and fill the page's 800px band. The header row is
-  chrome in system sans; the words you wrote carry the reader's own article face.
-  Quotes keep the gold quotation rule. Drafts sit on the Sunken layer; published
-  entries sit on the true-white publication surface.
+  alone, never rules or boxes, and fill the page's 800px band. The whole entry —
+  headline and prose — carries the reader's own article face, because on your own
+  linkblog the post IS the article; only the dateline and the closing source row
+  are chrome in system sans. Quotes keep the gold quotation rule. A draft is
+  marked, not boxed: it sits on the same left edge as everything published, so the
+  column keeps one spine.
 
   STORY: You see what you published, recognize your own voice, and can fix a
   sentence or kill a post without leaving the page.
 
   FIRST VIEWPORT: Masthead with the public address, then entries newest first;
-  each is a composer box — linked title left with date and controls right, your
-  prose beneath, the link card closing it.
+  each reads top-down as a post — headline, dateline, your prose, then a quiet
+  source-and-actions row closing it.
 
   FORM: Editing hands off to the real composer drawer rather than reproducing it
   inline. The drawer is non-modal and survives navigation, so an edit stays open
@@ -27,7 +29,7 @@
 <script lang="ts">
   // One entry on your own linkblog: a published `site.standard.document` link
   // post, or a local ShareDraft that has not been posted yet. Both render in the
-  // same shape — the linked title, your commentary, your quotes, the link card —
+  // same shape — the headline, your commentary, your quotes, the source row —
   // and both hand editing to the shared ShareComposer drawer, which is mounted
   // once in AppShell. That drawer outlives this page, so you can open the article
   // and reread it with your draft still sitting there.
@@ -282,10 +284,10 @@
   });
 </script>
 
-<article class="entry" class:draft={isDraft} class:editing={inComposer}>
+<article class="entry" class:draft={isDraft} class:editing={inComposer} class:menu-open={menuOpen}>
   <div class="entry-column">
-    <!-- The composer's own header: what the post is on the left, the controls
-         that act on it on the right. -->
+    <!-- The headline leads, the way a post's headline does. It is the subject of
+         the entry, so it outranks the prose beneath rather than labelling it. -->
     <header class="entry-head">
       <a
         class="entry-title"
@@ -302,11 +304,39 @@
           onOpenReader();
         }}>{articleTitle}</a
       >
-      <div class="entry-controls">
+      <p class="entry-dateline">
         {#if isDraft}
           <span class="entry-chip">Draft</span>
         {/if}
         <span class="entry-date">{isDraft ? `edited ${dateLabel}` : dateLabel}</span>
+      </p>
+    </header>
+
+    {#if noteHtml}
+      <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+      <div class="entry-note">{@html noteHtml}</div>
+    {:else}
+      <p class="entry-bare">
+        {isDraft ? 'No commentary yet.' : 'Shared without a comment.'}
+      </p>
+    {/if}
+
+    <!-- The row that closes the entry: where the post points on the left, what
+         you can do to it on the right. The article's title is the headline above,
+         so this row carries the domain alone rather than repeating it truncated. -->
+    <footer class="entry-foot">
+      <a
+        class="entry-source"
+        href={articleUrl}
+        target="_blank"
+        rel="noopener"
+        title={articleUrl}
+        aria-label={domain ? `Open ${articleTitle} at ${domain}` : `Open ${articleTitle}`}
+      >
+        {#if faviconUrl}<img src={faviconUrl} alt="" class="entry-source-favicon" />{/if}
+        <span class="entry-source-domain">{domain || 'Open link'}</span>
+      </a>
+      <div class="entry-actions">
         {#if canEdit}
           <button
             type="button"
@@ -321,42 +351,16 @@
         {/if}
         <PopoverMenu items={menuItems} bind:open={menuOpen} />
       </div>
-    </header>
-
-    {#if noteHtml}
-      <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-      <div class="entry-note">{@html noteHtml}</div>
-    {:else}
-      <p class="entry-bare">
-        {isDraft ? 'No commentary yet.' : 'Shared without a comment.'}
-      </p>
-    {/if}
-
-    <!-- The card is the address: it goes to the article at its source, in a new
-         tab. The title above reads it here instead. -->
-    <a class="entry-link" href={articleUrl} target="_blank" rel="noopener" title={articleUrl}>
-      {#if faviconUrl}<img src={faviconUrl} alt="" class="entry-link-favicon" />{/if}
-      <span class="entry-link-title">{articleTitle}</span>
-      {#if domain}<span class="entry-link-domain">{domain}</span>{/if}
-    </a>
+    </footer>
   </div>
 </article>
 
 <style>
   /* Entries are separated by rhythm alone — no rules, no boxes. A linkblog is a
-     page of posts, not a grid of cards, and each entry already closes on its
-     link card, which ends it without a line's help. */
+     page of posts, not a grid of cards, and the next headline is emphatic enough
+     to end the one above it without a line's help. */
   .entry {
-    padding: 1.75rem 0;
-  }
-
-  /* A draft is not on the page yet, so it does not sit on the publication's
-     white surface — it rests on the Sunken layer, inset from the column. */
-  .entry.draft {
-    margin: 0.5rem 0;
-    padding: 1.25rem;
-    background: var(--color-bg-secondary);
-    border-radius: 8px;
+    padding: 2.25rem 0;
   }
 
   /* The entry fills the page's 800px band, like every other surface in the app.
@@ -365,34 +369,66 @@
   .entry-column {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
     min-width: 0;
     font-family: var(--article-font);
     font-size: var(--article-font-size);
   }
 
-  .entry-head {
+  /* ── The headline ─────────────────────────────────────────────────────────
+     The subject of the post, in the reader's own article face one step above
+     the prose it heads. A post whose title reads smaller than its body is a
+     caption with a paragraph under it, not a post. */
+  .entry-title {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    min-width: 0;
+    font-family: var(--article-font);
+    font-size: 1.2em;
+    font-weight: var(--weight-semibold);
+    line-height: var(--leading-tight);
+    letter-spacing: var(--tracking-tight);
+    color: var(--color-text);
+    text-decoration: none;
+    text-wrap: pretty;
+    overflow-wrap: break-word;
+    transition: color 0.15s;
+  }
+
+  .entry-title:hover {
+    color: var(--color-primary);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .entry-title:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* Sits with the headline, not floating between headline and prose: tight
+     group above, generous separation below. */
+  .entry-dateline {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.375rem 0 0;
     font-family: var(--font-sans-serif);
     font-size: var(--text-sm);
+    line-height: var(--leading-snug);
+    color: var(--color-text-secondary);
   }
 
-  /* The composer's header row: subject left, controls right. */
-  .entry-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 0.75rem;
-    min-height: 32px;
-  }
-
-  /* Wraps rather than truncates: a domain clipped to "exa…" tells you nothing,
-     so on a narrow entry the source drops to its own line instead. */
+  /* The whole marker for an unposted draft. A draft keeps the column's left edge
+     and its full measure; being unfinished is said, not fenced off. */
   .entry-chip {
     flex-shrink: 0;
     padding: 2px 7px;
-    margin: 0.25rem 0.125rem 0.25rem 0;
     border-radius: 999px;
-    background: var(--color-bg);
+    background: var(--color-bg-secondary);
     color: var(--color-text-secondary);
     font-size: var(--text-2xs);
     font-weight: var(--weight-medium);
@@ -401,25 +437,96 @@
   }
 
   .entry-date {
-    flex-shrink: 0;
-    padding: 0.3125rem 0;
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
     font-variant-numeric: tabular-nums;
   }
 
-  .entry-controls {
+  /* ── The closing row ──────────────────────────────────────────────────────
+     Where the post points, and what you can do to it. */
+  .entry-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-width: 0;
+    margin-top: 1rem;
+    font-family: var(--font-sans-serif);
+    font-size: var(--text-sm);
+  }
+
+  .entry-source {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4375rem;
+    min-width: 0;
+    padding: 0.375rem 0.5rem;
+    margin-left: -0.5rem;
+    border-radius: 6px;
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    transition:
+      background-color 0.15s,
+      color 0.15s;
+  }
+
+  .entry-source:hover {
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .entry-source:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 1px;
+  }
+
+  .entry-source-favicon {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+  }
+
+  .entry-source-domain {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .entry-actions {
     display: flex;
     flex-shrink: 0;
     align-items: center;
-    gap: 0.375rem;
+    gap: 0.25rem;
+  }
+
+  /* On a mouse, the controls are quiet until you reach for the post they act on:
+     the page at rest is your writing, not a column of buttons beside it. They
+     stay put for touch, for keyboard focus, and whenever an entry is actually
+     open in the composer or holding its menu — a control you are using never
+     fades out from under you. Opacity only, so tab order is unchanged.
+
+     Bounded below 641px as well as by pointer: a hybrid device can report a fine
+     pointer while being used by thumb, and at phone width there is no hover to
+     reveal anything with. */
+  @media (hover: hover) and (pointer: fine) and (min-width: 641px) {
+    .entry-actions {
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+
+    .entry:hover .entry-actions,
+    .entry:focus-within .entry-actions,
+    .entry.editing .entry-actions,
+    .entry.menu-open .entry-actions {
+      opacity: 1;
+    }
   }
 
   .entry-edit {
     display: inline-flex;
     align-items: center;
     gap: 0.375rem;
-    padding: 0.3125rem 0.5rem;
+    padding: 0.375rem 0.5rem;
     background: none;
     border: none;
     border-radius: 6px;
@@ -434,16 +541,8 @@
   }
 
   .entry-edit:hover {
-    background: var(--color-bg);
-    color: var(--color-text);
-  }
-
-  .entry.draft .entry-edit:hover {
-    background: var(--color-bg);
-  }
-
-  .entry:not(.draft) .entry-edit:hover {
     background: var(--color-bg-secondary);
+    color: var(--color-text);
   }
 
   .entry-edit:focus-visible {
@@ -466,6 +565,7 @@
      it will be, or the text reflows the moment you click Edit. The page's 800px
      band is the measure, as it is for article prose everywhere else. */
   .entry-note {
+    margin-top: 0.875rem;
     font-family: var(--article-font);
     font-size: var(--article-font-size);
     line-height: 1.7;
@@ -534,135 +634,50 @@
   }
 
   .entry-bare {
-    margin: 0;
+    margin: 0.875rem 0 0;
     font-size: var(--text-md);
     font-style: italic;
     color: var(--color-text-secondary);
   }
 
-  /* ── The subject ──────────────────────────────────────────────────────────
-     The linked title, in the header row where the composer names the article it
-     is drafting against. UI sans at the Title step, because this row is chrome;
-     the article face belongs to the words you wrote, below. Wraps to two lines
-     rather than clipping — a linkblog entry is known by its title, and half of
-     one is not a title. */
-  .entry-title {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    min-width: 0;
-    padding: 0.3125rem 0;
-    font-family: var(--font-sans-serif);
-    font-size: var(--text-lg);
-    font-weight: var(--weight-semibold);
-    line-height: var(--leading-snug);
-    color: var(--color-text);
-    text-decoration: none;
-    overflow-wrap: break-word;
-    transition: color 0.15s;
-  }
-
-  .entry-title:hover {
-    color: var(--color-primary);
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  }
-
-  .entry-title:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: 2px;
-    border-radius: 2px;
-  }
-
-  /* ── The link card ────────────────────────────────────────────────────────
-     The composer's own trailing card, so the entry reads as the finished post
-     the composer promised: your words, then the article. */
-  .entry-link {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-top: 0.125rem;
-    padding: 0.4375rem 0.625rem;
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    font-family: var(--font-sans-serif);
-    font-size: var(--text-sm);
-    text-decoration: none;
-    transition: background-color 0.15s;
-  }
-
-  .entry-link:hover {
-    background: var(--color-bg-secondary);
-  }
-
-  .entry.draft .entry-link {
-    background: var(--color-bg);
-  }
-
-  .entry.draft .entry-link:hover {
-    border-color: var(--color-text-secondary);
-  }
-
-  .entry-link:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: 1px;
-  }
-
-  .entry-link-favicon {
-    flex-shrink: 0;
-    width: 14px;
-    height: 14px;
-    border-radius: 3px;
-  }
-
-  .entry-link-title {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--color-text);
-    font-weight: var(--weight-medium);
-  }
-
-  .entry-link-domain {
-    flex-shrink: 0;
-    color: var(--color-text-secondary);
-  }
-
   @media (max-width: 640px) {
-    /* The header can't hold a title and four controls at phone width — the title
-       gets crushed to a couple of characters. Give it the whole first line and
-       let the stamp and actions read as one meta line beneath it. */
-    .entry-head {
-      flex-wrap: wrap;
-      gap: 0.125rem 0.5rem;
+    /* Phone width: the entry keeps its shape — nothing needs to wrap or hide,
+       because the headline owns its own lines and the closing row holds only two
+       things. What changes is the touch target: the actions grow to the 44px
+       floor, and the Edit label stays visible because the row has room for it. */
+    .entry {
+      padding: 1.75rem 0;
     }
 
     .entry-title {
-      flex: 1 1 100%;
-      padding-bottom: 0;
+      font-size: 1.15em;
     }
 
-    .entry-controls {
-      flex: 1 1 100%;
+    .entry-foot {
+      min-height: 44px;
     }
 
-    .entry-edit-label {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-      white-space: nowrap;
+    .entry-source,
+    .entry-edit {
+      min-height: 40px;
+      padding-inline: 0.625rem;
+    }
+
+    .entry-source {
+      margin-left: -0.625rem;
+    }
+
+    .entry-actions :global(.menu-trigger) {
+      width: 40px;
+      height: 40px;
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
     .entry-edit,
     .entry-title,
-    .entry-link {
+    .entry-source,
+    .entry-actions {
       transition: none;
     }
   }
