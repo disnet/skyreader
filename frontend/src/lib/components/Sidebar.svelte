@@ -10,9 +10,6 @@
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-  import { channelSuggestions } from '$lib/stores/channelSuggestions.svelte';
-  import { savedChannelSuggestions } from '$lib/stores/savedChannelSuggestions.svelte';
-  import type { SavedChannelSuggestion } from '$lib/stores/savedChannelSuggestions.svelte';
   import { syncAutoRuleChannels } from '$lib/stores/channelAutoUpdate.svelte';
   import { onMount, onDestroy } from 'svelte';
   import AddFeedModal from './AddFeedModal.svelte';
@@ -28,7 +25,6 @@
   import FeedItem from './sidebar/FeedItem.svelte';
   import Icon from './Icon.svelte';
   import NotificationBell from './NotificationBell.svelte';
-  import Tooltip from './Tooltip.svelte';
   import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import { preferences } from '$lib/stores/preferences.svelte';
@@ -189,33 +185,6 @@
     if (confirm('Are you sure you want to delete this channel?')) {
       await filteredViewsStore.remove(viewId);
     }
-  }
-
-  async function acceptSuggestion(suggestion: (typeof channelSuggestions.suggestions)[0]) {
-    const id = await filteredViewsStore.create({
-      name: suggestion.name,
-      sourceMode: suggestion.sourceMode,
-      sourceKeys: suggestion.sourceKeys,
-      typeFilter: suggestion.typeFilter.length > 0 ? suggestion.typeFilter : undefined,
-      autoRule: suggestion.autoRule,
-      readFilter: 'unread',
-      sortOrder: 'newest',
-    });
-    selectFilter('view', id);
-  }
-
-  async function acceptSavedSuggestion(suggestion: SavedChannelSuggestion) {
-    const id = await filteredViewsStore.create({
-      name: suggestion.name,
-      mode: 'saved',
-      savedSourceFilter: suggestion.savedSourceFilter,
-      savedDomainFilter: suggestion.savedDomainFilter,
-      savedReadingLength: suggestion.savedReadingLength,
-      savedDateFilter: suggestion.savedDateFilter,
-      readFilter: suggestion.readFilter ?? 'unread',
-      sortOrder: suggestion.sortOrder ?? 'newest',
-    });
-    selectFilter('view', id);
   }
 
   function selectFilter(type: string, id?: string | number) {
@@ -388,26 +357,7 @@
               onRenameCancel={() => (renamingViewId = null)}
             />
           {/each}
-          {#each channelSuggestions.suggestions as suggestion (suggestion.id)}
-            <div class="suggestion-item">
-              <button class="suggestion-accept" onclick={() => acceptSuggestion(suggestion)}>
-                <span class="suggestion-icon"><Icon name="plus" size={12} /></span>
-                <span class="suggestion-name">{suggestion.name}</span>
-              </button>
-              <Tooltip text={suggestion.description} />
-              <button
-                class="suggestion-dismiss"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  channelSuggestions.dismiss(suggestion.id);
-                }}
-                title="Dismiss"
-              >
-                <Icon name="x" size={12} />
-              </button>
-            </div>
-          {/each}
-          {#if sourceChannels.length === 0 && channelSuggestions.suggestions.length === 0}
+          {#if sourceChannels.length === 0}
             <div class="empty-section">No channels yet</div>
           {/if}
           <a
@@ -480,26 +430,7 @@
               onRenameCancel={() => (renamingViewId = null)}
             />
           {/each}
-          {#each savedChannelSuggestions.suggestions as suggestion (suggestion.id)}
-            <div class="suggestion-item">
-              <button class="suggestion-accept" onclick={() => acceptSavedSuggestion(suggestion)}>
-                <span class="suggestion-icon"><Icon name="plus" size={12} /></span>
-                <span class="suggestion-name">{suggestion.name}</span>
-              </button>
-              <Tooltip text={suggestion.description} />
-              <button
-                class="suggestion-dismiss"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  savedChannelSuggestions.dismiss(suggestion.id);
-                }}
-                title="Dismiss"
-              >
-                <Icon name="x" size={12} />
-              </button>
-            </div>
-          {/each}
-          {#if savedChannels.length === 0 && savedChannelSuggestions.suggestions.length === 0}
+          {#if savedChannels.length === 0}
             <div class="empty-section">No saved channels yet</div>
           {/if}
           <a
@@ -1009,56 +940,6 @@
     font-style: italic;
   }
 
-  .suggestion-item {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.5rem 0.75rem;
-  }
-
-  .suggestion-accept {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 0;
-    color: var(--color-text-secondary);
-    font: inherit;
-    font-size: var(--text-md);
-    text-align: left;
-    transition: color 0.15s;
-  }
-
-  @media (hover: hover) {
-    .suggestion-accept:hover {
-      color: var(--color-primary);
-    }
-  }
-
-  .suggestion-icon {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    border: 1px dashed currentColor;
-  }
-
-  .suggestion-name {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-weight: var(--weight-medium);
-  }
-
   .more-suggestions-link {
     display: flex;
     align-items: center;
@@ -1073,38 +954,6 @@
   @media (hover: hover) {
     .more-suggestions-link:hover {
       color: var(--color-primary);
-    }
-  }
-
-  .suggestion-dismiss {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.25rem;
-    height: 1.25rem;
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--color-text-secondary);
-    padding: 0;
-    opacity: 0.6;
-    transition: opacity 0.15s;
-    border-radius: 4px;
-  }
-
-  @media (hover: hover) {
-    .suggestion-dismiss {
-      opacity: 0;
-    }
-
-    .suggestion-item:hover .suggestion-dismiss {
-      opacity: 0.6;
-    }
-
-    .suggestion-dismiss:hover {
-      opacity: 1 !important;
-      color: var(--color-text);
     }
   }
 
