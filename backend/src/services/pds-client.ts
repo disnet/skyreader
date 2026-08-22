@@ -72,6 +72,23 @@ export interface PDSError {
 }
 
 /**
+ * Parse a session's stored DPoP key, returning null when it isn't a usable
+ * private JWK. Sessions can carry a placeholder (the E2E seed writes `{}`) or a
+ * corrupted row, and neither can ever sign a DPoP proof.
+ */
+function parseDpopKey(stored: string | undefined): JsonWebKey | null {
+  if (!stored) return null;
+  try {
+    const jwk = JSON.parse(stored) as JsonWebKey;
+    return jwk && typeof jwk === 'object' && jwk.kty === 'EC' && typeof jwk.d === 'string'
+      ? jwk
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Result of a PDS operation
  */
 export type PDSResult<T> =
@@ -195,12 +212,24 @@ export class PDSClient {
     endpoint: string,
     body?: unknown
   ): Promise<{ result: PDSResult<T>; staleEndpoint: boolean }> {
+    // A session whose stored DPoP key isn't a usable private JWK can't sign
+    // anything, so there is no request to attempt. Fail closed on one line
+    // rather than letting WebCrypto throw a stack per call: nothing about it is
+    // actionable, and the E2E harness seeds exactly this kind of session (a
+    // placeholder key) so tests never reach a real PDS.
+    const privateKeyJwk = parseDpopKey(this.session.dpopPrivateKey);
+    if (!privateKeyJwk) {
+      console.warn(`[PDSClient] ${method} ${endpoint}: session has no usable DPoP key`);
+      return {
+        result: { success: false, error: 'Session has no usable DPoP key', retryable: false },
+        staleEndpoint: false,
+      };
+    }
+
     const url = `${this.session.pdsUrl}/xrpc/${endpoint}`;
     console.log(`[PDSClient] ${method} ${url}`);
 
     try {
-      // Import the DPoP key
-      const privateKeyJwk = JSON.parse(this.session.dpopPrivateKey);
       const privateKey = await importPrivateKey(privateKeyJwk);
       const publicKeyJwk = { ...privateKeyJwk };
       delete (publicKeyJwk as Record<string, unknown>).d;
