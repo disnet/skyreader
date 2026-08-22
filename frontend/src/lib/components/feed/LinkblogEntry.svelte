@@ -6,20 +6,22 @@
   it is laid out. It refuses the river's collapsed row, its bottom action bar,
   its read/unread dot, and the "Shared by" attribution on your own publication.
 
-  OWN-WORLD: Skyreader's flat system, unchanged. Entries are separated by rhythm
-  alone, never rules or boxes, and fill the page's 800px band. The whole entry —
-  headline and prose — carries the reader's own article face, because on your own
-  linkblog the post IS the article; only the dateline and the closing source row
-  are chrome in system sans. Quotes keep the gold quotation rule. A draft is
-  marked, not boxed: it sits on the same left edge as everything published, so the
-  column keeps one spine.
+  OWN-WORLD: Skyreader's flat system, unchanged. Published entries are separated
+  by rhythm alone, never rules or boxes, and fill the page's 800px band. The
+  headline and the closing meta row are chrome, sized exactly like a row in the
+  river so the two pages read as one app; only your prose carries the reader's
+  own article face, because your commentary is the one thing here that is
+  actually prose. Quotes keep the gold quotation rule. A draft IS boxed — it is
+  pinned above the stream, where a post-shaped thing that isn't posted would
+  otherwise pass for published; a flat tint and a hairline, no shadow.
 
   STORY: You see what you published, recognize your own voice, and can fix a
   sentence or kill a post without leaving the page.
 
-  FIRST VIEWPORT: Masthead with the public address, then entries newest first;
-  each reads top-down as a post — headline, dateline, your prose, then a quiet
-  source-and-actions row closing it.
+  FIRST VIEWPORT: Masthead with the public address, then any unposted drafts
+  pinned on their own tinted panels, then published entries newest first; each
+  reads top-down as a post — headline, your prose, then a quiet
+  source-time-and-actions row closing it.
 
   FORM: Editing hands off to the real composer drawer rather than reproducing it
   inline. The drawer is non-modal and survives navigation, so an edit stays open
@@ -286,9 +288,13 @@
 
 <article class="entry" class:draft={isDraft} class:editing={inComposer} class:menu-open={menuOpen}>
   <div class="entry-column">
-    <!-- The headline leads, the way a post's headline does. It is the subject of
-         the entry, so it outranks the prose beneath rather than labelling it. -->
+    <!-- The headline leads, the way a post's headline does — but as the same row
+         title the river uses, not a display size of its own. Your prose below it
+         is the reading content; the headline names what the post is about. -->
     <header class="entry-head">
+      {#if isDraft}
+        <span class="entry-chip">Draft</span>
+      {/if}
       <a
         class="entry-title"
         href={articleUrl}
@@ -304,12 +310,6 @@
           onOpenReader();
         }}>{articleTitle}</a
       >
-      <p class="entry-dateline">
-        {#if isDraft}
-          <span class="entry-chip">Draft</span>
-        {/if}
-        <span class="entry-date">{isDraft ? `edited ${dateLabel}` : dateLabel}</span>
-      </p>
     </header>
 
     {#if noteHtml}
@@ -321,21 +321,28 @@
       </p>
     {/if}
 
-    <!-- The row that closes the entry: where the post points on the left, what
-         you can do to it on the right. The article's title is the headline above,
-         so this row carries the domain alone rather than repeating it truncated. -->
+    <!-- The row that closes the entry: where the post points and when it went up
+         on the left, what you can do to it on the right. The article's title is
+         the headline above, so this row carries the domain alone rather than
+         repeating it truncated. The time lives here with the rest of the meta,
+         out of the gap between the headline and your words. -->
     <footer class="entry-foot">
-      <a
-        class="entry-source"
-        href={articleUrl}
-        target="_blank"
-        rel="noopener"
-        title={articleUrl}
-        aria-label={domain ? `Open ${articleTitle} at ${domain}` : `Open ${articleTitle}`}
-      >
-        {#if faviconUrl}<img src={faviconUrl} alt="" class="entry-source-favicon" />{/if}
-        <span class="entry-source-domain">{domain || 'Open link'}</span>
-      </a>
+      <div class="entry-meta">
+        <a
+          class="entry-source"
+          href={articleUrl}
+          target="_blank"
+          rel="noopener"
+          title={articleUrl}
+          aria-label={domain ? `Open ${articleTitle} at ${domain}` : `Open ${articleTitle}`}
+        >
+          {#if faviconUrl}<img src={faviconUrl} alt="" class="entry-source-favicon" />{/if}
+          <span class="entry-source-domain">{domain || 'Open link'}</span>
+        </a>
+        {#if dateLabel}
+          <span class="entry-date">{isDraft ? `edited ${dateLabel}` : dateLabel}</span>
+        {/if}
+      </div>
       <div class="entry-actions">
         {#if canEdit}
           <button
@@ -356,28 +363,55 @@
 </article>
 
 <style>
-  /* Entries are separated by rhythm alone — no rules, no boxes. A linkblog is a
-     page of posts, not a grid of cards, and the next headline is emphatic enough
-     to end the one above it without a line's help. */
+  /* Published entries are separated by rhythm alone — no rules, no boxes. A
+     linkblog is a page of posts, not a grid of cards, and the next headline is
+     emphatic enough to end the one above it without a line's help. */
   .entry {
-    padding: 2.25rem 0;
+    padding: 2rem 0;
+  }
+
+  /* Drafts are the exception, and they earn it: pinned above the stream, they'd
+     otherwise read as posts you already published. A tinted panel says "not out
+     yet" at a glance and groups the pinned run into one block. Flat — a tint and
+     a hairline, no shadow: nothing here floats. */
+  .entry.draft {
+    padding: 1.5rem 1.25rem;
+    margin: 0.5rem 0;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+  }
+
+  /* Consecutive drafts stack as one block rather than a ladder of gaps. */
+  .entry.draft + :global(.entry.draft) {
+    margin-top: -0.25rem;
   }
 
   /* The entry fills the page's 800px band, like every other surface in the app.
-     It carries the article face so the headline and note can size themselves in
-     `em` against the reader's chosen size; chrome re-declares the UI face. */
+     Chrome face by default — the headline and the meta row are UI, sized like
+     the river's rows so the two pages read as one app; the note re-declares the
+     reader's article face, because your commentary is the one thing here that is
+     actually prose. */
   .entry-column {
     display: flex;
     flex-direction: column;
     min-width: 0;
-    font-family: var(--article-font);
-    font-size: var(--article-font-size);
+    font-family: var(--font-sans-serif);
+  }
+
+  /* The chip sits on the headline's line, not above it. */
+  .entry-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    min-width: 0;
   }
 
   /* ── The headline ─────────────────────────────────────────────────────────
-     The subject of the post, in the reader's own article face one step above
-     the prose it heads. A post whose title reads smaller than its body is a
-     caption with a paragraph under it, not a post. */
+     The same title as a row in the river: system sans at --text-base, regular
+     weight. It is a fixed UI size rather than tracking the reader's article
+     size, so it stays in step with the meta row it shares the entry with — and
+     so moving between the linkblog and the feed doesn't re-scale the titles. */
   .entry-title {
     display: -webkit-box;
     -webkit-line-clamp: 3;
@@ -385,11 +419,10 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
     min-width: 0;
-    font-family: var(--article-font);
-    font-size: 1.2em;
-    font-weight: var(--weight-semibold);
-    line-height: var(--leading-tight);
-    letter-spacing: var(--tracking-tight);
+    font-family: var(--font-sans-serif);
+    font-size: var(--text-base);
+    font-weight: var(--weight-regular);
+    line-height: var(--leading-snug);
     color: var(--color-text);
     text-decoration: none;
     text-wrap: pretty;
@@ -409,39 +442,24 @@
     border-radius: 2px;
   }
 
-  /* Sits with the headline, not floating between headline and prose: tight
-     group above, generous separation below. */
-  .entry-dateline {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin: 0.375rem 0 0;
-    font-family: var(--font-sans-serif);
-    font-size: var(--text-sm);
-    line-height: var(--leading-snug);
-    color: var(--color-text-secondary);
-  }
-
-  /* The whole marker for an unposted draft. A draft keeps the column's left edge
-     and its full measure; being unfinished is said, not fenced off. */
+  /* Leads the headline it belongs to. On the tinted draft panel a filled chip
+     would compete with the title, so it reads as a quiet label in the app's own
+     blue — the surface already says "draft", this just names it. */
   .entry-chip {
     flex-shrink: 0;
+    align-self: center;
     padding: 2px 7px;
     border-radius: 999px;
-    background: var(--color-bg-secondary);
-    color: var(--color-text-secondary);
+    background: var(--color-sidebar-active);
+    color: var(--color-primary);
     font-size: var(--text-2xs);
     font-weight: var(--weight-medium);
     letter-spacing: var(--tracking-wider);
     text-transform: uppercase;
   }
 
-  .entry-date {
-    font-variant-numeric: tabular-nums;
-  }
-
   /* ── The closing row ──────────────────────────────────────────────────────
-     Where the post points, and what you can do to it. */
+     Where the post points and when it went up, and what you can do to it. */
   .entry-foot {
     display: flex;
     align-items: center;
@@ -451,6 +469,31 @@
     margin-top: 1rem;
     font-family: var(--font-sans-serif);
     font-size: var(--text-sm);
+  }
+
+  /* Domain and time, one group: the facts about the post, in the river's own
+     meta size. The domain gives up width before the time does — a truncated
+     host still identifies the source, a truncated date says nothing. */
+  .entry-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    color: var(--color-text-secondary);
+  }
+
+  .entry-date {
+    flex-shrink: 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* A dot between the source and the time, the way the river separates its own
+     meta. Drawn by the row, so it never appears with nothing after it. */
+  .entry-date::before {
+    content: '·';
+    margin-right: 0.5rem;
   }
 
   .entry-source {
@@ -646,11 +689,11 @@
        things. What changes is the touch target: the actions grow to the 44px
        floor, and the Edit label stays visible because the row has room for it. */
     .entry {
-      padding: 1.75rem 0;
+      padding: 1.5rem 0;
     }
 
-    .entry-title {
-      font-size: 1.15em;
+    .entry.draft {
+      padding: 1.25rem 1rem;
     }
 
     .entry-foot {
