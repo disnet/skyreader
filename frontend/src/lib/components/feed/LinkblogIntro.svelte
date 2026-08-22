@@ -1,4 +1,8 @@
 <script lang="ts">
+  // The linkblog's masthead. The address leads, because that's the thing you
+  // actually do something with (hand it to someone); the explanation follows as
+  // quiet reassurance. No bottom rule: the first entry's own top hairline is the
+  // line between the masthead and the stream.
   import Icon from '$lib/components/Icon.svelte';
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
 
@@ -25,21 +29,15 @@
   }
 </script>
 
-<section class="linkblog-intro">
-  <p class="intro-desc">
-    Every article you share becomes a post in your own <strong>standard.site</strong> publication —
-    stored in your PDS, and portable across the Atmosphere. Read it in any Atmospheric app{#if !pageHidden},
-      or share the page below{/if}.
-  </p>
-
+<section class="masthead">
   {#if publicUrl}
-    <div class="public-link">
-      <a href={publicUrl} target="_blank" rel="noopener" class="public-url">
+    <div class="address-row">
+      <a href={publicUrl} target="_blank" rel="noopener" class="address">
         <Icon name="globe" size={15} />
-        <span class="public-url-text">{publicLabel}</span>
+        <span class="address-text">{publicLabel}</span>
         <Icon name="external-link" size={13} />
       </a>
-      <button class="copy-btn" onclick={copyPublicUrl} title="Copy link">
+      <button class="address-copy" onclick={copyPublicUrl} title="Copy the address of your page">
         {#if copied}
           <Icon name="check" size={14} /> Copied
         {:else}
@@ -48,74 +46,113 @@
       </button>
     </div>
   {/if}
+
+  <p class="masthead-note">
+    {#if pageHidden}
+      Your public page is off. Everything you share still posts to your
+      <strong>standard.site</strong> publication and stays readable in any Atmospheric app.
+    {:else}
+      Every article you share becomes a post in your own <strong>standard.site</strong> publication, stored
+      in your PDS and readable in any Atmospheric app.
+    {/if}
+  </p>
 </section>
 
 <style>
-  .linkblog-intro {
+  .masthead {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
     padding: 0 0 1.25rem;
-    margin-bottom: 0.5rem;
-    border-bottom: 1px solid var(--color-border);
   }
 
-  .intro-desc {
-    font-size: var(--text-md);
-    color: var(--color-text-secondary);
-    line-height: 1.55;
-    margin: 0;
-    max-width: 60ch;
-  }
-
-  .intro-desc strong {
-    color: var(--color-text);
-    font-weight: var(--weight-semibold);
-  }
-
-  .public-link {
+  .address-row {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    margin-top: 0.875rem;
+    gap: 0.375rem;
     flex-wrap: wrap;
-  }
-
-  .public-url {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-size: var(--text-sm);
-    color: var(--color-primary);
-    text-decoration: none;
-    padding: 0.375rem 0.625rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md, 6px);
     min-width: 0;
   }
 
-  .public-url:hover {
-    background: var(--color-bg-secondary, rgba(0, 0, 0, 0.03));
+  /* The address is the page's headline. Held to the Title step rather than a
+     hero size: this is app chrome, and the entries below are the content. */
+  .address {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4375rem;
+    min-width: 0;
+    padding: 0.25rem 0.5rem;
+    margin-left: -0.5rem;
+    border-radius: 6px;
+    color: var(--color-primary);
+    font-size: var(--text-lg);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-tight);
+    text-decoration: none;
+    transition: background-color 0.15s;
   }
 
-  .public-url-text {
+  .address:hover {
+    background: var(--color-bg-secondary);
+  }
+
+  .address:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 1px;
+  }
+
+  .address-text {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .copy-btn {
+  .address-copy {
     display: inline-flex;
+    flex-shrink: 0;
     align-items: center;
     gap: 0.3rem;
+    padding: 0.25rem 0.5rem;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: var(--color-text-secondary);
     font: inherit;
     font-size: var(--text-sm);
-    color: var(--color-text-secondary);
-    background: none;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md, 6px);
-    padding: 0.375rem 0.625rem;
+    font-weight: var(--weight-medium);
     cursor: pointer;
+    transition:
+      background-color 0.15s,
+      color 0.15s;
   }
 
-  .copy-btn:hover {
-    background: var(--color-bg-secondary, rgba(0, 0, 0, 0.03));
+  .address-copy:hover {
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .address-copy:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 1px;
+  }
+
+  .masthead-note {
+    max-width: 60ch;
+    margin: 0;
+    font-size: var(--text-md);
+    line-height: var(--leading-normal);
+    color: var(--color-text-secondary);
+  }
+
+  .masthead-note strong {
+    color: var(--color-text);
+    font-weight: var(--weight-semibold);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .address,
+    .address-copy {
+      transition: none;
+    }
   }
 </style>

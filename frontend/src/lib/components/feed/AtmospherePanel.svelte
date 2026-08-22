@@ -6,15 +6,14 @@
   // wiring lives in useAtmosphere (the container/host owns it).
   //
   // Two independent regions:
-  //  • the note box — shown whenever the item is shared, the Discussion lead.
+  //  • the note lead — shown whenever the item is shared, the Discussion lead.
   //  • the lanes (tabs + expanded panel) — shown when `lanesOpen`.
   // Both are root-level (no wrapper) so the host's flex-column layout sees them as
   // direct children, exactly as when this markup lived inline in the card.
   import Icon from '$lib/components/Icon.svelte';
-  import ShareCommentBox from '$lib/components/feed/ShareCommentBox.svelte';
   import { safeHref } from '$lib/utils/sanitize';
+  import { noteToBlocks } from '$lib/utils/shareNote';
   import type { Snippet } from 'svelte';
-  import type { Highlight } from '$lib/types';
   import type { LaneId, LaneRowVM, ExpandedLaneItemsVM } from '../articleCardView.types';
 
   let {
@@ -23,17 +22,15 @@
     expandedLaneItems,
     currentlyShared = false,
     currentNote,
-    highlights = [],
-    /** Render the lane tabs + expanded panel. The note box is independent of this. */
+    /** Render the lane tabs + expanded panel. The note lead is independent of this. */
     lanesOpen = true,
-    notePlaceholder = 'Add a note to your share…',
     /** Optional DOM id for the lanes region (so a toggle can aria-control it). */
     panelId,
-    /** Optional content slotted between the note box and the lanes (when shared). */
+    /** Optional content slotted between the note lead and the lanes (when shared). */
     leadExtra,
     onToggleLane,
     onCreateInLane,
-    onApplyComment,
+    onEditShare,
     onOpenAuthor,
   }: {
     laneRow?: LaneRowVM[];
@@ -41,31 +38,53 @@
     expandedLaneItems?: ExpandedLaneItemsVM;
     currentlyShared?: boolean;
     currentNote?: string;
-    /** Highlights on the shared article, offered as quick blockquotes in the note. */
-    highlights?: Highlight[];
     lanesOpen?: boolean;
-    notePlaceholder?: string;
     panelId?: string;
     leadExtra?: Snippet;
     onToggleLane?: (id: LaneId) => void;
     onCreateInLane?: (id: LaneId) => void;
-    onApplyComment?: (note: string) => void;
+    /** Open the share composer to edit the posted note. */
+    onEditShare?: () => void;
     onOpenAuthor?: (did: string) => void;
   } = $props();
+
+  // The posted note as display blocks: quotes get the gold quotation rule, so
+  // the note reads here exactly as it does on the linkblog — no `> ` Markdown.
+  let noteBlocks = $derived(
+    currentNote ? noteToBlocks(currentNote).filter((b) => b.text.trim()) : []
+  );
 </script>
 
 {#if currentlyShared}
-  <!-- Your note on a shared item: always shown while shared (not gated on the
-       lanes), so the note box is there to read or edit the moment you share. A
-       fixed slot (min-height) keeps its metrics constant whether or not a lane is
-       expanded below, so it never jumps. -->
+  <!-- Your posted note, read-only: editing happens in the share composer (the
+       Edit affordance), so the note here is a record, not a form. -->
   <div class="atmosphere-lead">
-    <ShareCommentBox
-      initialNote={currentNote ?? ''}
-      placeholder={notePlaceholder}
-      {highlights}
-      onsubmit={(note) => onApplyComment?.(note)}
-    />
+    <div class="share-note" class:empty={noteBlocks.length === 0}>
+      {#if noteBlocks.length > 0}
+        <div class="share-note-body">
+          {#each noteBlocks as block, i (i)}
+            {#if block.kind === 'quote'}
+              <p class="share-note-quote">{block.text}</p>
+            {:else}
+              <p class="share-note-text">{block.text}</p>
+            {/if}
+          {/each}
+        </div>
+      {:else}
+        <span class="share-note-placeholder">Shared without a note.</span>
+      {/if}
+      <button
+        type="button"
+        class="share-note-edit"
+        onclick={(e) => {
+          e.stopPropagation();
+          onEditShare?.();
+        }}
+      >
+        <Icon name="edit" size={14} />
+        <span>{noteBlocks.length > 0 ? 'Edit note' : 'Add a note'}</span>
+      </button>
+    </div>
   </div>
   <!-- Host-supplied affordance (e.g. Remove) sitting under your note, above the
        wider discussion. -->
@@ -246,23 +265,90 @@
     flex-direction: column;
   }
 
-  /* Your-note box, the Discussion area's lead once shared. A fixed slot
+  /* Your posted note, the Discussion area's lead once shared. A fixed slot
      (min-height) keeps its metrics constant whether or not a lane is expanded
-     below, so the note never shifts; the box grows past the floor once it wraps. */
+     below, so the note never shifts; it grows past the floor once it wraps. */
   .atmosphere-lead {
     display: flex;
     flex-direction: column;
     justify-content: center;
     min-height: 3.25rem;
+    padding: 0.5rem 0;
+    text-align: left;
   }
 
-  /* The note box fills the slot width; drop its own top margin so the slot's
-     centering is symmetric, and its horizontal padding so the note icon aligns
-     to the same content edge as the lanes and the article body. */
-  .atmosphere-lead :global(.comment-box) {
-    margin-top: 0;
-    padding-left: 0;
-    padding-right: 0;
+  .share-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .share-note.empty {
+    align-items: center;
+  }
+
+  .share-note-body {
+    flex: 1;
+    min-width: 0;
+    /* Long notes stay in their lane: cap and scroll rather than swallowing the
+       card. Comfortable measure for short commentary. */
+    max-height: 10rem;
+    max-width: 60ch;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .share-note-text,
+  .share-note-quote {
+    margin: 0 0 0.375rem;
+    font-size: var(--text-lg);
+    line-height: var(--leading-normal);
+    color: var(--color-text);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+  }
+
+  .share-note-text:last-child,
+  .share-note-quote:last-child {
+    margin-bottom: 0;
+  }
+
+  /* The gold quotation rule — same convention as the composer and the
+     highlights page: a quotation mark, not a status accent. */
+  .share-note-quote {
+    padding-left: 0.75rem;
+    border-left: 3px solid color-mix(in srgb, #f5c518 70%, transparent);
+    color: var(--color-text-secondary);
+  }
+
+  .share-note-placeholder {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--text-md);
+    color: var(--color-text-secondary);
+  }
+
+  .share-note-edit {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.3125rem 0.625rem;
+    background: none;
+    border: 1px solid var(--color-border, #e0e0e0);
+    border-radius: 6px;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    cursor: pointer;
+    transition:
+      color 0.15s,
+      border-color 0.15s;
+  }
+
+  .share-note-edit:hover {
+    border-color: var(--color-primary, #0066cc);
+    color: var(--color-primary, #0066cc);
   }
 
   /* Tab strip: lanes laid out horizontally, wrapping on narrow cards. Each tab

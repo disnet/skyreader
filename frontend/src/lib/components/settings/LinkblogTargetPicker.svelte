@@ -24,13 +24,31 @@
     current,
     choices,
     busy = false,
+    showActions = true,
     onapply,
+    onselect,
   }: {
     /** The publication links are being written to right now. */
     current: LinkblogPublication;
     choices: LinkblogPublicationChoice[];
     busy?: boolean;
-    onapply: (selection: { uri: string; isDefault: boolean; format: Format }) => void;
+    /**
+     * Settings owns the Apply button. Embedded in a dialog that already has a
+     * confirming button of its own (the first-share confirmation), the picker
+     * only reports the selection and lets its host apply it.
+     */
+    showActions?: boolean;
+    onapply?: (selection: { uri: string; isDefault: boolean; format: Format }) => void;
+    /** Every change to the selection, for a host that applies it itself. */
+    onselect?: (selection: {
+      uri: string;
+      isDefault: boolean;
+      format: Format;
+      /** There is something to apply: a different publication, or a different format. */
+      changed: boolean;
+      /** The selected publication can actually be published to. */
+      selectable: boolean;
+    }) => void;
   } = $props();
 
   // No pckt: pckt shows only the posts it wrote itself, so pckt blocks render
@@ -78,6 +96,19 @@
   // whatever format is chosen and may show none of it, which the user should
   // hear before sharing rather than after.
   const compatibilityUnknown = $derived(publicationCompatibilityUnknown(selected));
+
+  // Report the live selection to a host that owns the apply step. Depends only
+  // on the selection itself, so a host re-rendering off this callback doesn't
+  // feed back into it.
+  $effect(() => {
+    onselect?.({
+      uri: selectedUri,
+      isDefault: selectedIsDefault,
+      format: selectedFormat,
+      changed,
+      selectable,
+    });
+  });
 </script>
 
 <div class="target-picker">
@@ -188,6 +219,8 @@
         </div>
       {/each}
     {:else}
+      <!-- Nothing to switch to. Say why, or the disclosure that opened this
+           resolves to a single row and no explanation. -->
       <p class="picker-hint">
         Publications you make in Leaflet, Offprint or another standard.site app show up here, and
         your links can go into one of them instead.
@@ -246,12 +279,12 @@
     </div>
   {/if}
 
-  {#if externalChoices.length > 0}
+  {#if showActions && externalChoices.length > 0}
     <div class="picker-actions">
       <button
         class="btn btn-primary"
         onclick={() =>
-          onapply({ uri: selectedUri, isDefault: selectedIsDefault, format: selectedFormat })}
+          onapply?.({ uri: selectedUri, isDefault: selectedIsDefault, format: selectedFormat })}
         disabled={busy || !changed}
       >
         {#if busy}

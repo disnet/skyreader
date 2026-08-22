@@ -5,15 +5,16 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
-  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
+  import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
-  import { getExternalArticleLink, formatQuoteSeed } from '$lib/utils/linkPost';
+  import { getExternalArticleLink } from '$lib/utils/linkPost';
+  import { shareTargetForDisplayItem } from '$lib/utils/shareTarget';
   import { normalizeDisplayItem } from '$lib/utils/displayItem';
   import AtmospherePanel from './AtmospherePanel.svelte';
-  import ShareConfirmModal from './ShareConfirmModal.svelte';
   import Icon from '$lib/components/Icon.svelte';
 
   let {
@@ -55,66 +56,38 @@
   let sharedNow = $derived(linkblogStore.isShared(itemUrl));
   let currentShareNote = $derived(linkblogStore.getNote(itemUrl));
   let canShareLinkblog = $derived(Boolean(auth.user) && !preferences.linkblogDisabled);
-  let shareHighlights = $derived(itemLabelsStore.getHighlights(readerItem.key));
+  let hasShareDraft = $derived(itemUrl ? shareDraftsStore.hasDraft(itemUrl) : false);
 
-  let shareTarget = $derived.by((): { article: Article; repostUri?: string } | null => {
-    if (!itemUrl) return null;
-    if (readerItem.type === 'article') return { article: readerItem.item };
-    if (readerItem.type === 'saved') {
-      const saved = readerItem.item;
-      return {
-        article: {
-          subscriptionId: 0,
-          guid: saved.url,
-          url: saved.url,
-          title: saved.title ?? saved.url,
-          author: saved.author ?? undefined,
-          summary: saved.description ?? undefined,
-          imageUrl: saved.image ?? undefined,
-          publishedAt: saved.publishedAt ?? saved.savedAt,
-          fetchedAt: Date.now(),
-        },
-      };
-    }
+  let shareTarget = $derived.by((): { article: Article; repostUri?: string } | null =>
+    shareTargetForDisplayItem(
+      readerItem,
+      { url: itemUrl, title, publishedAt },
+      linkPostArticle?.author ?? undefined
+    )
+  );
 
-    const document = readerItem.item;
-    const image = document.coverImageCid
-      ? `https://cdn.bsky.app/img/feed_fullsize/plain/${document.authorDid}/${document.coverImageCid}@jpeg`
-      : undefined;
-    return {
-      article: {
-        subscriptionId: 0,
-        guid: itemUrl,
-        url: itemUrl,
-        title: title || itemUrl,
-        author: linkPostArticle?.author ?? undefined,
-        summary: document.description ?? undefined,
-        imageUrl: image,
-        publishedAt,
-        fetchedAt: Date.now(),
-      },
-      repostUri: document.recordUri,
-    };
-  });
-
-  let seededQuote = $derived(formatQuoteSeed(shareTarget?.article.summary));
-
-  async function performShare() {
+  // Open the composer drawer (drafting; resumes any saved draft). The drawer
+  // docks under the article so quotes can be gathered while it's open.
+  function composeShare() {
     const target = shareTarget;
     if (!target) return;
-    await linkblogStore.shareLink(target.article, seededQuote ?? '', target.repostUri);
+    shareComposerStore.open({
+      article: target.article,
+      repostUri: target.repostUri,
+      itemKey: readerItem.key,
+      mode: 'create',
+    });
   }
 
-  // Sharing from the reader publishes exactly as publicly as sharing from a
-  // card, so it takes the same first-share confirmation.
-  let showShareConfirm = $state(false);
-
-  function shareNow() {
-    if (!preferences.linkblogShareConfirmed) {
-      showShareConfirm = true;
-      return;
-    }
-    void performShare();
+  function editShare() {
+    const target = shareTarget;
+    if (!target) return;
+    shareComposerStore.open({
+      article: target.article,
+      itemKey: readerItem.key,
+      mode: 'edit',
+      initialNote: currentShareNote ?? '',
+    });
   }
 
   function laneCanCreate(id: LaneId): boolean {
@@ -132,7 +105,7 @@
 
   function createInLane(id: LaneId) {
     if (id === 'linkblog') {
-      if (!sharedNow) shareNow();
+      if (!sharedNow) composeShare();
     } else if (id === 'semble') {
       onSaveToSemble?.();
     } else if (id === 'margin') {
@@ -150,10 +123,12 @@
 <section class="reader-discussion" aria-label="Discussion">
   <div class="reader-discussion-divider"></div>
   {#if !sharedNow && canShareLinkblog}
-    <button type="button" class="reader-share-cta" onclick={shareNow}>
-      <Icon name="share" size={16} />
-      <span>Share to your linkblog</span>
-    </button>
+    <div class="reader-share-row">
+      <button type="button" class="reader-share-cta" onclick={composeShare}>
+        <Icon name="share" size={16} />
+        <span>{hasShareDraft ? 'Resume your share draft' : 'Share to your linkblog'}</span>
+      </button>
+    </div>
   {/if}
   <AtmospherePanel
     laneRow={atmosphere.laneRow}
@@ -161,12 +136,11 @@
     expandedLaneItems={atmosphere.expandedLaneItems}
     currentlyShared={sharedNow}
     currentNote={currentShareNote}
-    highlights={shareHighlights}
     lanesOpen={true}
     {panelId}
     onToggleLane={atmosphere.toggleLane}
     onCreateInLane={createInLane}
-    onApplyComment={(note) => linkblogStore.setNote(itemUrl, note)}
+    onEditShare={editShare}
     onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
   >
     {#snippet leadExtra()}
@@ -182,15 +156,6 @@
   </AtmospherePanel>
 </section>
 
-<ShareConfirmModal
-  open={showShareConfirm}
-  onconfirm={() => {
-    showShareConfirm = false;
-    void performShare();
-  }}
-  oncancel={() => (showShareConfirm = false)}
-/>
-
 <style>
   .reader-discussion {
     margin-top: 2.5rem;
@@ -200,6 +165,13 @@
     height: 1px;
     margin-bottom: 1.25rem;
     background: var(--color-border, #e8e8e8);
+  }
+
+  .reader-share-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
   }
 
   .reader-share-cta,
@@ -242,11 +214,5 @@
   .discussion-remove:hover {
     border-color: var(--color-error, #f44336);
     color: var(--color-error, #f44336);
-  }
-
-  @media (max-width: 1000px) {
-    .reader-discussion:has(:global(textarea:focus)) {
-      padding-bottom: calc(50vh + env(safe-area-inset-bottom, 0px));
-    }
   }
 </style>

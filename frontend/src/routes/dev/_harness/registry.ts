@@ -75,10 +75,17 @@ export const harnesses: HarnessEntry[] = [
     components: ['ReaderBottomBar', 'MobileBottomBar', 'ReadingModeToggle', 'BottomSheet'],
   },
   {
+    slug: 'linkblog',
+    title: 'Linkblog',
+    description:
+      'Your own linkblog: the masthead plus every entry state — published, bare, foreign publication, draft — each handing Edit off to the docked ShareComposer.',
+    components: ['LinkblogIntro', 'LinkblogEntry', 'ShareComposer'],
+  },
+  {
     slug: 'feed',
     title: 'Feed surfaces',
     description:
       'Presentational feed pieces: filter popover, highlight popover, share-note box, and the welcome screen.',
-    components: ['FilterPopover', 'HighlightPopover', 'ShareCommentBox', 'WelcomePage'],
+    components: ['FilterPopover', 'HighlightPopover', 'ShareComposer', 'WelcomePage'],
   },
 ];

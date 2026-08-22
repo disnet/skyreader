@@ -22,6 +22,15 @@ import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
 import { getExternalArticleLink, getLinkPostNote, isSkyreaderShare } from '$lib/utils/linkPost';
 import type { Article, LinkblogShare } from '$lib/types';
 
+/**
+ * What `shareLink` actually did. Callers carrying the user's words (the share
+ * composer) need to tell "written" from "there was already one" from "the write
+ * failed" — all three used to look alike from the outside, and a caller that
+ * only asked `isShared()` afterwards read the first two as the same success and
+ * dropped the note.
+ */
+export type ShareLinkResult = 'created' | 'duplicate' | 'failed';
+
 function createLinkblogStore() {
   // Keyed by external article URL (the linkblog dedup key).
   let shares = $state<Map<string, LinkblogShare>>(new Map());
@@ -123,10 +132,15 @@ function createLinkblogStore() {
   // document via the backend, and rolls back the optimistic state on failure.
   // Pass `repostUri` (an at:// link post URI) to make this a quote-reshare — the
   // entry still lives in the user's own linkblog, keyed by the article URL.
-  async function shareLink(article: Article, note?: string, repostUri?: string) {
+  async function shareLink(
+    article: Article,
+    note?: string,
+    repostUri?: string
+  ): Promise<ShareLinkResult> {
     // Guard against both a local duplicate and one already shared on another
     // device (surfaced via the overlay) — re-sharing would create a second copy.
-    if (!article.url || shares.has(article.url) || serverShares.has(article.url)) return;
+    if (!article.url) return 'failed';
+    if (shares.has(article.url) || serverShares.has(article.url)) return 'duplicate';
 
     const rkey = generateTid();
     const now = new Date().toISOString();
@@ -177,6 +191,7 @@ function createLinkblogStore() {
         note,
         createdAt: now,
       });
+      return 'created';
     } catch (e) {
       // Roll back the optimistic insert — the share didn't land.
       console.error('Failed to write linkblog share:', e);
@@ -189,7 +204,8 @@ function createLinkblogStore() {
       myLinkblogStore.removeByArticleUrl(article.url);
       // Already handled: optimistic state rolled back, and a scope-upgrade
       // failure surfaces the global "log in again" banner via the api client.
-      // Don't rethrow — this runs from an onclick handler.
+      // Don't rethrow — this runs from an onclick handler; the result says so.
+      return 'failed';
     }
   }
 

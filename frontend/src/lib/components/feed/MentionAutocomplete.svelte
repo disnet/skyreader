@@ -123,7 +123,7 @@
     await tick();
     el.focus();
     el.setSelectionRange(caret, caret);
-    // Let the host's oninput run (e.g. ShareCommentBox autosize) off the change.
+    // Let the host's oninput run (e.g. the share composer's autosize) off the change.
     el.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
@@ -195,7 +195,9 @@
   function onBlur() {
     // A real focus-out closes the menu; picking a result uses mousedown
     // (preventDefault) so focus never leaves and this doesn't fire.
-    close();
+    // Deferred a tick: unmounting a focused textarea fires blur synchronously
+    // inside Svelte's effect teardown, where mutating $state is forbidden.
+    setTimeout(close, 0);
   }
 
   // (Re)bind whenever the textarea element changes.

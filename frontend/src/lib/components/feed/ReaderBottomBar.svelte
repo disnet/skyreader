@@ -8,6 +8,8 @@
 <script lang="ts">
   import Icon from '$lib/components/Icon.svelte';
   import { bottomRail } from '$lib/stores/bottomRail.svelte';
+  import { bottomBarInset } from '$lib/stores/bottomBarInset.svelte';
+  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
 
   // The mobile reader's chrome: one flat bar anchored to the bottom edge, with
   // the reading rail as its top edge — the edge that faces the text. It is the
@@ -30,6 +32,8 @@
     isArchived = false,
     onToggleSave,
     isSaved = false,
+    onShare,
+    shareActive = false,
     onTag,
     tagCount = 0,
     tagActive = false,
@@ -48,6 +52,10 @@
     isArchived?: boolean;
     onToggleSave?: () => void;
     isSaved?: boolean;
+    /** Open the share composer (or edit the posted share). */
+    onShare?: () => void;
+    /** The item is already shared to the linkblog. */
+    shareActive?: boolean;
     onTag?: () => void;
     tagCount?: number;
     tagActive?: boolean;
@@ -60,9 +68,21 @@
   // open: a refresh behind the text is not the reader's business. Claiming for
   // the reader's whole life keeps the app-wide bar down even as this one slides.
   $effect(() => bottomRail.claim());
+
+  // The bottom edge, unlike the rail, is only claimed while the bar is actually
+  // on screen — it slides away on scroll-down, and above the breakpoint the bar
+  // isn't rendered at all, so a blanket claim would push the composer's minibar
+  // off a bar that isn't there. Claimed by measured height, which includes the
+  // safe-area inset the bar absorbs.
+  let barHeight = $state(0);
+
+  $effect(() => {
+    if (!visible || !mobileStore.isMobile || barHeight === 0) return;
+    return bottomBarInset.claim(barHeight);
+  });
 </script>
 
-<div class="reader-bottom-bar" class:hidden={!visible}>
+<div class="reader-bottom-bar" class:hidden={!visible} bind:clientHeight={barHeight}>
   <div class="reader-bar-rail" aria-hidden="true">
     <div class="reader-bar-rail-fill" class:eased style:transform={`scaleX(${progress})`}></div>
   </div>
@@ -99,6 +119,18 @@
         title={isSaved ? 'Unsave' : 'Save (s)'}
       >
         <Icon name="bookmark" size={20} />
+      </button>
+    {/if}
+
+    {#if onShare}
+      <button
+        class="bar-btn"
+        class:active={shareActive}
+        onclick={onShare}
+        aria-label={shareActive ? 'Shared — edit your note' : 'Share to your linkblog'}
+        title={shareActive ? 'Shared — edit your note' : 'Share to your linkblog'}
+      >
+        <Icon name="share" size={20} />
       </button>
     {/if}
 

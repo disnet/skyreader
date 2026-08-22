@@ -5,6 +5,7 @@
   import { notificationsStore } from '$lib/stores/notifications.svelte';
   import { appManager } from '$lib/stores/app.svelte';
   import { bottomRail } from '$lib/stores/bottomRail.svelte';
+  import { bottomBarInset } from '$lib/stores/bottomBarInset.svelte';
 
   interface Props {
     controlsVisible: boolean;
@@ -60,6 +61,16 @@
     return bottomRail.claim();
   });
 
+  // While the bar is up it owns the bottom edge, so anything else anchored there
+  // (the share composer's minibar) stacks above it instead of sharing the strip.
+  // Claimed by measured height — it includes the safe-area inset the bar absorbs.
+  let barHeight = $state(0);
+
+  $effect(() => {
+    if (!controlsVisible || barHeight === 0) return;
+    return bottomBarInset.claim(barHeight);
+  });
+
   // A scroll that hides the bar has to take the menu with it. The menu stands
   // taller than the bar's own travel, so it would be left hanging over the list —
   // visible, untappable — and a touch scroll fires no click for the outside-click
@@ -84,7 +95,7 @@
   });
 </script>
 
-<div class="mobile-bottom-bar" class:hidden={!controlsVisible}>
+<div class="mobile-bottom-bar" class:hidden={!controlsVisible} bind:clientHeight={barHeight}>
   <div class="bar-rail" class:refreshing class:completing aria-hidden="true">
     <div class="bar-rail-sweep"></div>
   </div>

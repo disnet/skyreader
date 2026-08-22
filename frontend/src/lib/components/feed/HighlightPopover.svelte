@@ -12,6 +12,9 @@
     onRemove?: () => void;
     onSaveToMargin?: () => void;
     onSaveNote?: (note: string) => void;
+    /** Present while a share draft is open for this article: add the selected
+     *  passage (or this highlight) to the draft as a quote block. */
+    onQuoteToShare?: () => void;
     existingNote?: string;
     marginSaved?: boolean;
     // Which sub-view to open into: 'toolbar' (action buttons, the default) or
@@ -29,6 +32,7 @@
     onRemove,
     onSaveToMargin,
     onSaveNote,
+    onQuoteToShare,
     existingNote = '',
     marginSaved = false,
     initialView = 'toolbar',
@@ -213,6 +217,19 @@
     >
       <Icon name="message-circle" size={20} />
     </button>
+    {#if onQuoteToShare}
+      <button
+        class="popover-btn icon-only"
+        use:tooltip={'Quote in your share draft'}
+        aria-label="Quote in your share draft"
+        onclick={() => {
+          onQuoteToShare?.();
+          onClose();
+        }}
+      >
+        <Icon name="quote" size={20} />
+      </button>
+    {/if}
   {:else if mode === 'view'}
     <p class="note-read">{existingNote}</p>
     <div class="note-actions">
@@ -274,6 +291,19 @@
         onclick={openNoteEditor}
       >
         <Icon name="message-circle" size={20} />
+      </button>
+    {/if}
+    {#if onQuoteToShare}
+      <button
+        class="popover-btn icon-only"
+        use:tooltip={'Quote in your share draft'}
+        aria-label="Quote in your share draft"
+        onclick={() => {
+          onQuoteToShare?.();
+          onClose();
+        }}
+      >
+        <Icon name="quote" size={20} />
       </button>
     {/if}
   {/if}

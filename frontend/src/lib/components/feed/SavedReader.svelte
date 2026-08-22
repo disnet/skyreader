@@ -25,6 +25,11 @@
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
+  import { linkblogStore } from '$lib/stores/linkblog.svelte';
+  import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
+  import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
+  import { shareTargetForDisplayItem } from '$lib/utils/shareTarget';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import NotePeek from '$lib/components/feed/NotePeek.svelte';
   import CollectionMagazine from '$lib/components/feed/CollectionMagazine.svelte';
@@ -342,6 +347,57 @@
   let isArchived = $derived(itemLabelsStore.isArchived(itemKey));
   let isSaved = $derived(itemLabelsStore.isSaved(itemKey));
 
+  // ── Share from the reader chrome ────────────────────────────────────────────
+  // A share control lives in the bar (desktop and mobile) so sharing is in
+  // reach at any scroll position — and on any page in paged mode — instead of
+  // only at the end of the article. It opens the same composer drawer the
+  // Discussion rail uses; drafting docks under the article.
+  let canShareLinkblog = $derived(
+    Boolean(auth.user) && !preferences.linkblogDisabled && Boolean(itemUrl)
+  );
+  let sharedNow = $derived(itemUrl ? linkblogStore.isShared(itemUrl) : false);
+  let hasShareDraft = $derived(itemUrl ? shareDraftsStore.hasDraft(itemUrl) : false);
+
+  function openShareComposer() {
+    const target = shareTargetForDisplayItem(
+      readerItem,
+      { url: itemUrl, title, publishedAt },
+      linkPostArticle?.author ?? undefined
+    );
+    if (!target) return;
+    if (sharedNow) {
+      shareComposerStore.open({
+        article: target.article,
+        itemKey: readerItem.key,
+        mode: 'edit',
+        initialNote: linkblogStore.getNote(itemUrl) ?? '',
+      });
+    } else {
+      shareComposerStore.open({
+        article: target.article,
+        repostUri: target.repostUri,
+        itemKey: readerItem.key,
+        mode: 'create',
+      });
+    }
+  }
+
+  // While the composer drawer is open for this article, the highlight popover
+  // offers "quote in your share draft".
+  let composerOpenHere = $derived(itemUrl ? shareComposerStore.isOpenFor(itemUrl) : false);
+
+  function quoteSelectionToShare() {
+    const state = highlightsHook.popoverState;
+    if (!state) return;
+    const text =
+      state.pendingSelector?.exact ??
+      (state.highlightId
+        ? itemLabelsStore.getHighlights(itemKey).find((h) => h.id === state.highlightId)?.selector
+            .exact
+        : undefined);
+    if (text) shareComposerStore.appendQuote(text);
+  }
+
   let sanitizedContent = $derived(sanitizeHtml(displayContent, itemUrl));
 
   // Kindle-style paged reading. When on, the article flows into columns turned a
@@ -559,6 +615,10 @@
 
   onMount(() => {
     document.body.style.overflow = 'hidden';
+    // The overlay covers the sidebar, so anything that normally centers on the
+    // content column (the share composer) has to center on the viewport while
+    // it's up. This class is that signal.
+    document.body.classList.add('reader-open');
     document.addEventListener('keydown', handleKeydown, true);
     document.addEventListener('click', handleClickOutside);
     // The reader is a DOM child of PullToRefresh, so touch events bubble up
@@ -575,6 +635,7 @@
   });
   onDestroy(() => {
     document.body.style.overflow = '';
+    document.body.classList.remove('reader-open');
     if (progressRaf != null) {
       cancelAnimationFrame(progressRaf);
       progressRaf = null;
@@ -756,6 +817,24 @@
 
         <span class="action-separator"></span>
 
+        {#if canShareLinkblog}
+          <button
+            class="action-btn"
+            class:active={sharedNow}
+            onclick={openShareComposer}
+            title={sharedNow
+              ? 'Shared to your linkblog — edit your note'
+              : hasShareDraft
+                ? 'Resume your share draft'
+                : 'Share to your linkblog'}
+          >
+            <Icon name="share" size={16} />
+            <span class="action-label">
+              {sharedNow ? 'Shared' : hasShareDraft ? 'Draft' : 'Share'}
+            </span>
+          </button>
+        {/if}
+
         {#if onArchive}
           <button
             class="action-btn"
@@ -837,6 +916,8 @@
     {isArchived}
     {onToggleSave}
     {isSaved}
+    onShare={canShareLinkblog ? openShareComposer : undefined}
+    shareActive={sharedNow}
     onTag={() => (tagMenuOpen = !tagMenuOpen)}
     tagCount={itemTags.length}
     tagActive={tagMenuOpen}
@@ -1052,6 +1133,7 @@
     onRemove={highlightsHook.removeHighlightFromPopover}
     onSaveToMargin={highlightsHook.savePopoverHighlightToMargin}
     onSaveNote={highlightsHook.saveNoteFromPopover}
+    onQuoteToShare={composerOpenHere ? quoteSelectionToShare : undefined}
     existingNote={highlightsHook.popoverHighlightNote}
     marginSaved={highlightsHook.popoverHighlightSavedToMargin}
     onClose={highlightsHook.closePopover}

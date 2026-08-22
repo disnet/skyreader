@@ -46,6 +46,8 @@
   import { goto } from '$app/navigation';
   import { channelPath, FEEDS_PATH } from '$lib/utils/viewNav';
   import LinkblogIntro from '$lib/components/feed/LinkblogIntro.svelte';
+  import LinkblogListView from '$lib/components/feed/LinkblogListView.svelte';
+  import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
 
   // `linkblog` renders the current user's own linkblog (their shared documents)
   // through the same feed UI as the main feed.
@@ -554,6 +556,10 @@
     lastVisibleTime = Date.now();
   });
 
+  // The linkblog stream carries unposted drafts alongside published entries, so
+  // an empty published set is not an empty page.
+  let hasLinkblogDrafts = $derived(mode === 'linkblog' && shareDraftsStore.list.length > 0);
+
   // Reset selection when any filter changes
   $effect(() => {
     const _ = [
@@ -601,12 +607,14 @@
         expandAllItems={preferences.expandAllItems}
         lastRefreshAt={appManager.lastRefreshAt}
         isRefreshing={appManager.isRefreshing}
-        onToggleExpandAll={(value) => {
-          preferences.setExpandAllItems(value);
-          if (!value) {
-            feedViewStore.resetSelection();
-          }
-        }}
+        onToggleExpandAll={mode === 'linkblog'
+          ? undefined
+          : (value) => {
+              preferences.setExpandAllItems(value);
+              if (!value) {
+                feedViewStore.resetSelection();
+              }
+            }}
         onRefresh={handleRefreshWithToast}
         onMarkAllAsRead={!feedViewStore.savedFilter ? markAllAsReadInCurrentView : undefined}
         onEdit={feedViewStore.feedFilter ? handleEditFeed : undefined}
@@ -631,14 +639,14 @@
         onRefresh={handleRefreshWithToast}
         disabled={!syncStore.isOnline || appManager.isRefreshing}
       >
-        {#if (appManager.isHydrating || appManager.isRefreshing || (mode === 'linkblog' && myLinkblogStore.loading && !myLinkblogStore.loaded)) && feedViewStore.currentItems.length === 0}
+        {#if (appManager.isHydrating || appManager.isRefreshing || (mode === 'linkblog' && myLinkblogStore.loading && !myLinkblogStore.loaded)) && feedViewStore.currentItems.length === 0 && !hasLinkblogDrafts}
           <LoadingState />
-        {:else if !isSavedView && feedViewStore.currentItems.length === 0}
+        {:else if !isSavedView && feedViewStore.currentItems.length === 0 && !hasLinkblogDrafts}
           {#if mode === 'linkblog'}
             <!-- Linkblog always shows all shares, so there's no "no unread" case. -->
             <EmptyState
-              title="No shares yet"
-              description="Share an article from your feed and it'll appear here — and on your public page."
+              title="Nothing posted yet"
+              description="Share an article from your feed and it lands here, and on your public page."
             />
           {:else if feedViewStore.viewFilter}
             <EmptyState
@@ -693,6 +701,8 @@
               description="Your feeds haven't published anything yet. Check back later."
             />
           {/if}
+        {:else if mode === 'linkblog'}
+          <LinkblogListView onReaderChange={(open) => (readerOpen = open)} />
         {:else if isSavedView}
           <SavedListView
             bind:this={savedListView}
@@ -715,7 +725,6 @@
                 imageUrl: article.imageUrl,
                 publishedAt: article.publishedAt,
               })}
-            onShare={(article, _sub, note) => linkblogStore.shareLink(article, note)}
             onUnshare={(url) => linkblogStore.unshare(url)}
             onReaderChange={(open) => (readerOpen = open)}
             onSaveToSemble={handleSaveToSemble}
