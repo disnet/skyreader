@@ -32,7 +32,7 @@
 <section class="masthead">
   {#if publicUrl}
     <div class="address-row">
-      <a href={publicUrl} target="_blank" rel="noopener" class="address">
+      <a href={publicUrl} target="_blank" rel="noopener" class="address" title={publicUrl}>
         <Icon name="globe" size={15} />
         <span class="address-text">{publicLabel}</span>
         <Icon name="external-link" size={13} />
@@ -72,11 +72,14 @@
     border-radius: 10px;
   }
 
+  /* One line, always. The address plus its Copy button is a single fact about
+     the page — wrapping it into two rows makes the box look like it holds two
+     things. The address gives up width instead; the button never does. */
   .address-row {
     display: flex;
     align-items: center;
     gap: 0.375rem;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     min-width: 0;
     /* The address and the copy button carry their own padding so they can take a
        hover tint. Pulling the row back by that padding puts the address text on
@@ -111,26 +114,22 @@
   }
 
   .address-text {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
+  /* The globe and the external-link glyph hold their size; only the text
+     truncates, so a clipped address still reads as a link that opens. */
+  .address :global(.icon) {
+    flex-shrink: 0;
+  }
+
   @media (max-width: 640px) {
-    /* The address is the one thing on this page you hand to someone, and half an
-       address is useless — so at phone width it wraps to a second line rather
-       than ellipsizing away the handle that identifies it. */
-    .address {
-      flex-wrap: wrap;
-      row-gap: 0;
-    }
-
-    .address-text {
-      overflow: visible;
-      white-space: normal;
-      overflow-wrap: anywhere;
-    }
-
+    /* Still one line at phone width. A truncated address is recoverable — the
+       link opens it and Copy puts the whole thing on the clipboard — where a
+       two-line address turns the box into a paragraph. */
     .address,
     .address-copy {
       min-height: 40px;
