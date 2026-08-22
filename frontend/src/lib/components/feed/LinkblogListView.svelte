@@ -29,8 +29,10 @@
     | { kind: 'post'; key: string; at: number; item: FeedDisplayItem };
 
   // Published entries arrive already filtered, sorted and paginated by the feed
-  // view; drafts are spliced into that order by edit time. A draft for a URL that
-  // has since been posted would read as a duplicate, so the post wins.
+  // view. Drafts are not spliced into that order: they are unfinished work with
+  // somewhere still to go, so they are pinned above the stream where you'll see
+  // them, rather than sinking under whatever you posted since. A draft for a URL
+  // that has since been posted would read as a duplicate, so the post wins.
   let rows = $derived.by((): Row[] => {
     const posts: Row[] = feedViewStore.currentItems
       .filter((i) => i.type === 'document')
@@ -51,7 +53,7 @@
     // Ordered by when the draft was STARTED, not last touched: autosave stamps
     // `updatedAt` on every keystroke, and sorting on that would slide the entry
     // you are typing in up the page out from under the cursor. The entry still
-    // reports its edit time in its own dateline.
+    // reports its edit time in its own meta row.
     const drafts: Row[] = shareDraftsStore.list
       .filter((d) => !postedUrls.has(d.articleUrl))
       .map((draft) => ({
@@ -61,10 +63,12 @@
         draft,
       }));
 
-    const merged = [...drafts, ...posts];
+    // Drafts keep the page's sort among themselves; posts keep the order the
+    // feed view already put them in. The two groups never interleave.
     const newestFirst = feedViewStore.currentSortOrder === 'newest';
-    merged.sort((a, b) => (newestFirst ? b.at - a.at : a.at - b.at));
-    return merged;
+    drafts.sort((a, b) => (newestFirst ? b.at - a.at : a.at - b.at));
+    posts.sort((a, b) => (newestFirst ? b.at - a.at : a.at - b.at));
+    return [...drafts, ...posts];
   });
 
   function handleReaderSave() {

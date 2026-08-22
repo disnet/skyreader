@@ -1,8 +1,8 @@
 <script lang="ts">
-  // The linkblog's masthead. The address leads, because that's the thing you
-  // actually do something with (hand it to someone); the explanation follows as
-  // quiet reassurance. No bottom rule: the first entry's own top hairline is the
-  // line between the masthead and the stream.
+  // The linkblog's masthead, as an info box. The address leads, because that's the
+  // thing you actually do something with (hand it to someone); the explanation
+  // follows as quiet reassurance. Boxing it is what separates it from the stream:
+  // it is a standing fact about the page, not the first item on it.
   import Icon from '$lib/components/Icon.svelte';
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
 
@@ -59,11 +59,17 @@
 </section>
 
 <style>
+  /* A flat info box: tinted panel, hairline, no shadow — it sits in the page, it
+     doesn't float over it. Sized to hold the address at its natural weight. */
   .masthead {
     display: flex;
     flex-direction: column;
-    gap: 0.625rem;
-    padding: 0 0 1.25rem;
+    gap: 0.5rem;
+    padding: 0.875rem 1rem;
+    margin-bottom: 1.5rem;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
   }
 
   .address-row {
@@ -72,6 +78,10 @@
     gap: 0.375rem;
     flex-wrap: wrap;
     min-width: 0;
+    /* The address and the copy button carry their own padding so they can take a
+       hover tint. Pulling the row back by that padding puts the address text on
+       the box's own left edge, in line with the note under it. */
+    margin-left: -0.5rem;
   }
 
   /* The address is the page's headline. Held to the Title step rather than a
@@ -82,7 +92,6 @@
     gap: 0.4375rem;
     min-width: 0;
     padding: 0.25rem 0.5rem;
-    margin-left: -0.5rem;
     border-radius: 6px;
     color: var(--color-primary);
     font-size: var(--text-lg);
@@ -93,7 +102,7 @@
   }
 
   .address:hover {
-    background: var(--color-bg-secondary);
+    background: var(--color-sidebar-active);
   }
 
   .address:focus-visible {
@@ -148,7 +157,7 @@
   }
 
   .address-copy:hover {
-    background: var(--color-bg-secondary);
+    background: var(--color-sidebar-active);
     color: var(--color-text);
   }
 
@@ -160,7 +169,7 @@
   .masthead-note {
     max-width: 60ch;
     margin: 0;
-    font-size: var(--text-md);
+    font-size: var(--text-sm);
     line-height: var(--leading-normal);
     color: var(--color-text-secondary);
   }
