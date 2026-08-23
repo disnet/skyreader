@@ -30,4 +30,8 @@ interface Env {
   // must NOT be redeclared here (merge conflict, per the note above).
   POLAR_ACCESS_TOKEN: string;
   POLAR_WEBHOOK_SECRET: string;
+  // atproto Spaces spike (docs/plans/SPACES_SAVES_SPIKE.md). `.dev.vars` only —
+  // deliberately absent from wrangler.toml, so the entire mirror/read-back path
+  // is unreachable in staging and production. Checked as `=== 'true'`.
+  SPACES_SAVES_ENABLED?: string;
 }

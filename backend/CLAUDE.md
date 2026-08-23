@@ -354,3 +354,20 @@ For staging, create a separate database with `npx wrangler d1 create skyreader-s
 
 Skyreader's lexicons live in the repo-root `lexicons/` directory, shared by every package. See
 the root `CLAUDE.md` and `docs/OAUTH_SCOPES.md` (publishing).
+
+The Spaces spike (`docs/plans/SPACES_SAVES_SPIKE.md`) adds two lexicons there:
+
+```
+feed/saved.json             - Saved article — METADATA ONLY, and only ever written
+                              into a user's personal atproto Space (never the
+                              public repo). Flag-gated spike.
+  - savedAt (required)
+  - url, title, description, author, domain, image
+  - contentType, wordCount, publishedAt, source, itemGuid
+  - NO article body: content stays in D1
+
+space/savedAccess.json      - permission-set lexicon naming the space access an
+                              OAuth client would request as
+                              `include:app.skyreader.space.savedAccess`.
+                              NOT requested by the live OAuth flow.
+```
