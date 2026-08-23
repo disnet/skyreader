@@ -54,9 +54,9 @@ export async function handleSpacesSavedDiff(request: Request, env: Env): Promise
 
   const rows = await readSavedRowsForSpace(env, session.did);
 
-  let records;
+  let listing;
   try {
-    records = await spacesClientForSession(session).listAllRecords({
+    listing = await spacesClientForSession(session).listAllRecords({
       space,
       repo: session.did,
       collection: SAVED_COLLECTION,
@@ -74,15 +74,19 @@ export async function handleSpacesSavedDiff(request: Request, env: Env): Promise
 
   const diff = diffSavedRecords(
     rows,
-    records.map((r) => ({ rkey: r.rkey, value: r.value ?? {} }))
+    listing.records.map((r) => ({ rkey: r.rkey, value: r.value ?? {} }))
   );
 
   return json({
     space,
     collection: SAVED_COLLECTION,
-    counts: { d1: rows.length, space: records.length },
+    counts: { d1: rows.length, space: listing.records.length },
+    truncated: listing.truncated,
     ...diff,
     inSync:
-      diff.onlyInD1.length === 0 && diff.onlyInSpace.length === 0 && diff.mismatched.length === 0,
+      !listing.truncated &&
+      diff.onlyInD1.length === 0 &&
+      diff.onlyInSpace.length === 0 &&
+      diff.mismatched.length === 0,
   });
 }

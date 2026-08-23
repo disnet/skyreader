@@ -36,7 +36,10 @@ export interface SessionXrpcClient {
     method: 'GET' | 'POST',
     endpoint: string,
     body?: unknown
-  ): Promise<{ success: true; data: T } | { success: false; error: string; retryable: boolean }>;
+  ): Promise<
+    | { success: true; data: T }
+    | { success: false; error: string; code?: string; status?: number; retryable: boolean }
+  >;
 }
 
 /** Session auth (OAuth access token + the session's own DPoP key). */
@@ -44,7 +47,11 @@ export function sessionCall(client: SessionXrpcClient): XrpcCall {
   return async <T>(method: 'GET' | 'POST', endpoint: string, body?: unknown): Promise<T> => {
     const result = await client.xrpc<T>(method, endpoint, body);
     if (!result.success) {
-      throw new SpaceXrpcError(result.error, endpoint.split('?')[0], undefined);
+      throw new SpaceXrpcError(
+        result.error,
+        result.code ?? `HTTP${result.status ?? 0}`,
+        result.status
+      );
     }
     return result.data;
   };

@@ -308,8 +308,18 @@ describe('SpacesClient request shapes', () => {
       ) as T;
     };
 
-    const records = await new SpacesClient(call).listAllRecords({ space: SPACE, repo: DID });
-    expect(records.map((r) => r.rkey)).toEqual(['a', 'b']);
+    const listing = await new SpacesClient(call).listAllRecords({ space: SPACE, repo: DID });
+    expect(listing.records.map((r) => r.rkey)).toEqual(['a', 'b']);
+    expect(listing.truncated).toBe(false);
+  });
+
+  it('marks a listing truncated when the page cap stops a pending cursor', async () => {
+    const call: XrpcCall = async <T>() =>
+      ({ records: [{ collection: 'c', rkey: 'a', cid: '1' }], cursor: 'next' }) as T;
+
+    const listing = await new SpacesClient(call).listAllRecords({ space: SPACE, repo: DID }, 1);
+    expect(listing.records).toHaveLength(1);
+    expect(listing.truncated).toBe(true);
   });
 });
 
@@ -321,6 +331,21 @@ describe('transports', () => {
     await expect(call('POST', 'com.atproto.space.createRecord', {})).rejects.toBeInstanceOf(
       SpaceXrpcError
     );
+  });
+
+  it('preserves the structured error code and status from a failed session call', async () => {
+    const call = sessionCall({
+      xrpc: async () => ({
+        success: false as const,
+        error: 'No such space',
+        code: 'SpaceNotFound',
+        status: 400,
+        retryable: false,
+      }),
+    });
+    const error = await call('GET', 'com.atproto.simplespace.getSpace?space=x').catch((e) => e);
+    expect(error).toMatchObject({ code: 'SpaceNotFound', status: 400 });
+    expect(isSpaceNotFound(error)).toBe(true);
   });
 
   it('presents the credential as DPoP on every credential-authed call', async () => {

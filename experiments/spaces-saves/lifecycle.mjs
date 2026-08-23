@@ -215,13 +215,15 @@ async function main() {
 
   s = step('listRecords sees the record');
   try {
-    const listed = await ownerClient.listAllRecords({
+    const listing = await ownerClient.listAllRecords({
       space,
       repo: owner.did,
       collection: SAVED_COLLECTION,
     });
-    if (!listed.some((r) => r.rkey === rkey)) throw new Error('record missing from listing');
-    s.ok(`${listed.length} record(s)`);
+    if (!listing.records.some((r) => r.rkey === rkey))
+      throw new Error('record missing from listing');
+    if (listing.truncated) throw new Error('record listing was truncated');
+    s.ok(`${listing.records.length} record(s)`);
   } catch (error) {
     s.fail(error);
   }
