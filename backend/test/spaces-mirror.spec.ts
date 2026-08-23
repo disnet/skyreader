@@ -3,6 +3,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import worker from '../src/index';
 import { GRANULAR_SCOPES } from '../src/config/scopes';
 import * as mirror from '../src/services/spaces/mirror';
+import { SpacesClient, type XrpcCall } from '../src/services/spaces/client';
+import { SpaceXrpcError } from '../src/services/spaces/transport';
 
 // Verification criteria 5 and 6 of the atproto Spaces spike:
 //   - with SPACES_SAVES_ENABLED unset, no spaces code runs at all;
@@ -159,6 +161,36 @@ describe('spaces mirror — best effort with the flag on', () => {
     expect(res.body.error).toBe('spaces_unavailable');
   });
 
+  it('creates and caches the personal space when the probe returns SpaceNotFound', async () => {
+    const endpoints: string[] = [];
+    const call: XrpcCall = async <T>(_method, endpoint) => {
+      endpoints.push(endpoint);
+      if (endpoint.startsWith('com.atproto.simplespace.getSpace')) {
+        throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
+      }
+      if (endpoint === 'com.atproto.simplespace.createSpace') {
+        return { uri: `at://${DID}/space/app.skyreader.space.saved/self` } as T;
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`);
+    };
+    const session = {
+      did: DID,
+      handle: 'sm.bsky.social',
+      pdsUrl: 'https://pds.test',
+      accessToken: 'tok',
+      refreshToken: 'rtok',
+      dpopPrivateKey: JSON.stringify({ kty: 'EC' }),
+      expiresAt: Date.now() + 3_600_000,
+    };
+
+    const expected = `at://${DID}/space/app.skyreader.space.saved/self`;
+    expect(await mirror.ensureSavedSpace(session, new SpacesClient(call))).toBe(expected);
+    expect(endpoints).toHaveLength(2);
+
+    expect(await mirror.ensureSavedSpace(session, new SpacesClient(call))).toBe(expected);
+    expect(endpoints).toHaveLength(2);
+  });
+
   it('caches the capability verdict so an ordinary PDS is probed once, not per save', async () => {
     const session = {
       did: DID,
@@ -170,10 +202,13 @@ describe('spaces mirror — best effort with the flag on', () => {
       expiresAt: Date.now() + 3_600_000,
     };
 
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    expect(await mirror.ensureSavedSpace(session)).toBeNull();
-    const afterFirst = fetchSpy.mock.calls.length;
-    expect(await mirror.ensureSavedSpace(session)).toBeNull();
-    expect(fetchSpy.mock.calls.length).toBe(afterFirst);
+    let calls = 0;
+    const unsupported: XrpcCall = async () => {
+      calls++;
+      throw new SpaceXrpcError('Unknown method', 'MethodNotImplemented', 501);
+    };
+    expect(await mirror.ensureSavedSpace(session, new SpacesClient(unsupported))).toBeNull();
+    expect(await mirror.ensureSavedSpace(session, new SpacesClient(unsupported))).toBeNull();
+    expect(calls).toBe(1);
   });
 });
