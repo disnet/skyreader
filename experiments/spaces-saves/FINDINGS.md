@@ -145,6 +145,10 @@ Not measurable without a live PDS. A live run should record:
 - whether `getDelegationToken` is issued to any session (as our fake assumes) or
   gated on membership — that determines whether "outsider denied" fails at leg 1
   or leg 2.
+- whether a permission set accepts `authority: "*"`. The reference app uses a
+  fixed authority, but Skyreader's personal-space authority is each user's DID;
+  rejection would make the proposed `include:app.skyreader.space.savedAccess`
+  scope require a different permission shape.
 
 ## Alpha operational reality
 

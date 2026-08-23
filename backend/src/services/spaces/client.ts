@@ -56,6 +56,12 @@ export interface SpaceListedRecord {
   value?: Record<string, unknown>;
 }
 
+export interface SpaceRecordListing {
+  records: SpaceListedRecord[];
+  /** True when the safety page cap stopped a listing that still had a cursor. */
+  truncated: boolean;
+}
+
 export class SpacesClient {
   // Plain field assignment, not a parameter property: `experiments/spaces-saves/`
   // imports this module directly under Node's (erasable-syntax-only) type
@@ -167,16 +173,16 @@ export class SpacesClient {
   async listAllRecords(
     input: { space: string; repo: string; collection?: string },
     maxPages = 20
-  ): Promise<SpaceListedRecord[]> {
+  ): Promise<SpaceRecordListing> {
     const records: SpaceListedRecord[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < maxPages; page++) {
       const result = await this.listRecords({ ...input, limit: 100, cursor });
       records.push(...result.records);
-      if (!result.cursor || result.records.length === 0) break;
+      if (!result.cursor || result.records.length === 0) return { records, truncated: false };
       cursor = result.cursor;
     }
-    return records;
+    return { records, truncated: cursor !== undefined };
   }
 }
 
