@@ -1,0 +1,23 @@
+{
+  "lexicon": 1,
+  "id": "app.skyreader.space.savedAccess",
+  "defs": {
+    "main": {
+      "type": "permission-set",
+      "title": "Skyreader saves",
+      "detail": "Read and write the saved articles in your private Skyreader space",
+      "permissions": [
+        {
+          "type": "permission",
+          "resource": "space",
+          "spaceType": "app.skyreader.space.saved",
+          "authority": "*",
+          "skey": "self",
+          "collection": ["app.skyreader.feed.saved"],
+          "action": ["read", "create", "update", "delete"],
+          "manage": ["create", "update", "delete"]
+        }
+      ]
+    }
+  }
+}

@@ -40,4 +40,8 @@ interface Env {
   // Secret, staging only; handles and/or DIDs allowed to sign in, comma- or
   // space-separated (services/signin-allowlist.ts). Unset = anyone may sign in.
   SIGNIN_ALLOWLIST?: string;
+  // atproto Spaces spike (docs/plans/SPACES_SAVES_SPIKE.md). `.dev.vars` only —
+  // deliberately absent from wrangler.toml, so the entire mirror/read-back path
+  // is unreachable in staging and production. Checked as `=== 'true'`.
+  SPACES_SAVES_ENABLED?: string;
 }
