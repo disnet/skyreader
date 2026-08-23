@@ -21,7 +21,12 @@ import { createPDSClient } from '../pds-client';
 import { SpacesClient, PERSONAL_SPACE_APP_ACCESS, PERSONAL_SPACE_POLICY } from './client';
 import { savedRowToSpaceRecord, type SavedRowForSpace } from './record';
 import { SAVED_COLLECTION, SAVED_SPACE_SKEY, SAVED_SPACE_TYPE, savedSpaceRef } from './refs';
-import { isSpaceNotFound, sessionCall } from './transport';
+import {
+  isSpaceAccessDenied,
+  isSpaceNotFound,
+  isSpacesUnsupported,
+  sessionCall,
+} from './transport';
 
 /** The one switch. Absent in `wrangler.toml`, so production never enters this file. */
 export function spacesSavesEnabled(env: Env): boolean {
@@ -58,15 +63,18 @@ export function clearSpaceCapabilityCache(): void {
  * Returns null for "not available", which covers both "this PDS doesn't do
  * Spaces" and "the call failed" — the caller treats them identically.
  */
-export async function ensureSavedSpace(session: Session): Promise<string | null> {
+export async function ensureSavedSpace(
+  session: Session,
+  client: SpacesClient = spacesClientForSession(session)
+): Promise<string | null> {
   const cached = capabilityCache.get(session.did);
   if (cached && Date.now() - cached.checkedAt < CAPABILITY_TTL_MS) {
     return cached.space;
   }
 
   const space = savedSpaceRef(session.did);
-  const client = spacesClientForSession(session);
   let verdict: string | null = null;
+  let cacheVerdict = true;
 
   try {
     await client.getSpace(space);
@@ -82,16 +90,26 @@ export async function ensureSavedSpace(session: Session): Promise<string | null>
         });
         verdict = created.uri || space;
       } catch (createError) {
+        // Creation may have failed after the capability probe succeeded. Let a
+        // later save retry instead of turning that outage into a negative TTL.
+        cacheVerdict = false;
         console.warn('[spaces] createSpace failed', describe(createError));
       }
-    } else {
-      // Everything else — including "this PDS has never heard of simplespace",
-      // which is the expected answer for every production PDS today.
+    } else if (isSpacesUnsupported(error)) {
+      // Expected for ordinary PDSes. Cache this so a developer with the spike
+      // enabled pays for the capability probe only once per TTL.
+      console.warn('[spaces] PDS does not support Spaces', describe(error));
+    } else if (isSpaceAccessDenied(error)) {
       console.warn('[spaces] getSpace unavailable', describe(error));
+    } else {
+      // A network or server failure says nothing about capability. Do not turn
+      // it into a ten-minute negative verdict; the next save should retry.
+      cacheVerdict = false;
+      console.warn('[spaces] getSpace failed transiently', describe(error));
     }
   }
 
-  capabilityCache.set(session.did, { space: verdict, checkedAt: Date.now() });
+  if (cacheVerdict) capabilityCache.set(session.did, { space: verdict, checkedAt: Date.now() });
   return verdict;
 }
 
@@ -118,7 +136,7 @@ export async function mirrorSaveToSpace(env: Env, session: Session, rkey: string
     if (!space) return;
 
     const record = savedRowToSpaceRecord(row);
-    await spacesClientForSession(session).createRecord({
+    await spacesClientForSession(session).putRecord({
       space,
       repo: session.did,
       collection: SAVED_COLLECTION,
