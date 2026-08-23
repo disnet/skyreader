@@ -72,6 +72,7 @@ import {
   handleSetBacking,
 } from './routes/saved';
 import { handleExtract } from './routes/extract';
+import { handleSpacesSavedDiff } from './routes/dev-spaces';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
 import {
   handleGetMagazines,
@@ -523,6 +524,15 @@ async function route(
     case url.pathname === '/api/extract':
       if (!session) return unauthorizedResponse(headers);
       response = await handleExtract(request, env);
+      break;
+
+    // atproto Spaces spike: read-back diff of the saved-space mirror against D1.
+    // Mounted only when the dev-only SPACES_SAVES_ENABLED var is set, so this
+    // case never matches in production (see routes/dev-spaces.ts).
+    case url.pathname === '/api/dev/spaces/saved-diff' &&
+      env.SPACES_SAVES_ENABLED === 'true' &&
+      request.method === 'GET':
+      response = await handleSpacesSavedDiff(request, env);
       break;
 
     // Saved routes

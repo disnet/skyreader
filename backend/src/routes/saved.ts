@@ -21,6 +21,7 @@ import {
 import { hasIntegrationScopes } from './integrations';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { chunkArray } from './reading';
+import { mirrorDeleteFromSpace, mirrorSaveToSpace } from '../services/spaces/mirror';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -235,7 +236,7 @@ export async function handleCreateSaved(
 async function handleMetadataSave(
   _request: Request,
   env: Env,
-  _ctx: ExecutionContext,
+  ctx: ExecutionContext,
   session: Session,
   body: CreateSavedBody,
   source: string
@@ -281,6 +282,10 @@ async function handleMetadataSave(
     )
     .run();
 
+  // Spike: project the save into the user's personal atproto Space. Flag-gated
+  // (SPACES_SAVES_ENABLED), best-effort, never awaited — D1 above is the save.
+  ctx.waitUntil(mirrorSaveToSpace(env, session, body.rkey));
+
   return new Response(
     JSON.stringify({
       rkey: body.rkey,
@@ -308,6 +313,12 @@ async function handleMetadataSave(
 // COALESCE shape as the backed-save upsert — so a sparse extraction never
 // blanks existing metadata. The rkey and record_uri are unchanged: this is the
 // same save, with better content.
+//
+// No space mirror here (nor in handleUpdateSaved): the space record is metadata
+// only, and what a content upgrade actually changes is the body plus a word
+// count. The drift it leaves is a stale wordCount/title, which the dev
+// saved-diff route reports as `mismatched` — see the spike memo's list of what a
+// real ship would need (a reconciliation pass, not more write hooks).
 async function handleContentUpdate(
   env: Env,
   session: Session,
@@ -393,6 +404,9 @@ async function handleUrlSave(
     )
     .run();
 
+  // Spike: same best-effort space mirror as the metadata path. See mirror.ts.
+  ctx.waitUntil(mirrorSaveToSpace(env, session, body.rkey));
+
   return new Response(
     JSON.stringify({
       uri: recordUri,
@@ -407,6 +421,12 @@ async function handleUrlSave(
  * collection and record it in the two stores. No app.skyreader.feed.saved export —
  * membership in the collection IS the save. The enrichment row stays canonical for
  * reading work (content, word count); the membership row holds the foreign handles.
+ *
+ * Deliberately OUT of the atproto Spaces spike: backing already makes the save
+ * portable (publicly, as a Semble/Margin collection member), so layering a private
+ * space mirror on top is a product question — "which store is the save?" — not a
+ * protocol one. A tester with backing on will therefore see an empty space; start
+ * from an account with backing off. See docs/plans/SPACES_SAVES_SPIKE.md.
  */
 async function handleBackedSave(
   env: Env,
@@ -1055,6 +1075,9 @@ export async function handleDeleteSaved(
       .bind(session.did, rkey)
       .run();
 
+    // Spike: retract the mirrored space record. Flag-gated, best-effort.
+    ctx.waitUntil(mirrorDeleteFromSpace(env, session, rkey));
+
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && row.url_normalized) {
       // Backed: remove the membership from the foreign collection (+ tombstone).
@@ -1129,6 +1152,10 @@ export async function handleDeleteSavedByGuid(
     await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ? AND item_guid = ?')
       .bind(session.did, guid)
       .run();
+
+    // Spike: retract the mirrored space record (keyed by the row's rkey, which is
+    // the space record's rkey too). Flag-gated, best-effort.
+    ctx.waitUntil(mirrorDeleteFromSpace(env, session, row.rkey));
 
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && row.url_normalized) {

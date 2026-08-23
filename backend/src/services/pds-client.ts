@@ -375,6 +375,22 @@ export class PDSClient {
   }
 
   /**
+   * Call an arbitrary XRPC method on this session's PDS with the session's auth.
+   * The typed helpers below cover `com.atproto.repo.*`; this is the escape hatch
+   * for namespaces that don't warrant their own method here (the Spaces spike
+   * calls `com.atproto.simplespace.*` / `com.atproto.space.*` through it).
+   *
+   * `endpoint` is the NSID plus, for GETs, an already-encoded query string.
+   */
+  async xrpc<T = unknown>(
+    method: 'GET' | 'POST',
+    endpoint: string,
+    body?: unknown
+  ): Promise<PDSResult<T>> {
+    return this.request<T>(method, endpoint, body);
+  }
+
+  /**
    * List records in a collection with pagination support
    */
   async listRecords<T = unknown>(
