@@ -98,6 +98,23 @@
   const showSemble = $derived(
     Boolean(sembleContext) && (activeFilter === 'all' || activeFilter === 'semble')
   );
+  // Whether Semble actually returned something to read. A context object that
+  // came back empty (the saver fallback, or an API answer with nothing in it) is
+  // not content: it must not stand in for the people who aren't there, or the
+  // panel would go silent instead of saying nobody wrote about this.
+  const hasSembleContent = $derived(
+    showSemble &&
+      Boolean(
+        sembleContext &&
+        (sembleContext.notes.length ||
+          sembleContext.collections.length ||
+          sembleContext.connections.length ||
+          (sembleContext.stats?.saves ?? 0) ||
+          (sembleContext.stats?.notes ?? 0) ||
+          (sembleContext.stats?.collections ?? 0) ||
+          (sembleContext.stats?.connections.total ?? 0))
+      )
+  );
   const sembleSummary = $derived.by(() => {
     if (!sembleContext?.stats) return [];
     const s = sembleContext.stats;
@@ -179,7 +196,7 @@
       </div>
     {/if}
 
-    {#if showSemble && sembleContext}
+    {#if showSemble && sembleContext && (hasSembleContent || sembleContext.incomplete)}
       <section class="semble-context" aria-label="Semble context">
         {#if sembleSummary.length}
           <p class="semble-summary">{sembleSummary.join(' · ')}</p>
@@ -227,18 +244,29 @@
                       ? `This article connects ${connection.type ?? 'to'} ${connectionLabel(connection)}`
                       : `${connectionLabel(connection)} connects ${connection.type ?? 'to'} this article`}
                   >
-                    {#if connection.direction === 'out'}<span>this</span><span aria-hidden="true"
-                        >→</span
-                      >{/if}
-                    <span class="connection-type">{connection.type ?? 'connected'}</span>
-                    {#if connection.direction === 'in'}<span aria-hidden="true">→</span>{/if}
-                    <a
-                      href={safeHref(connection.other.url)}
-                      target="_blank"
-                      rel="noopener"
-                      onclick={(e) => e.stopPropagation()}>{connectionLabel(connection)}</a
-                    >
-                    {#if connection.direction === 'in'}<span aria-hidden="true">→ this</span>{/if}
+                    {#if connection.direction === 'out'}
+                      <span>this</span>
+                      <span aria-hidden="true">→</span>
+                      <span class="connection-type">{connection.type ?? 'connected'}</span>
+                      <span aria-hidden="true">→</span>
+                      <a
+                        href={safeHref(connection.other.url)}
+                        target="_blank"
+                        rel="noopener"
+                        onclick={(e) => e.stopPropagation()}>{connectionLabel(connection)}</a
+                      >
+                    {:else}
+                      <a
+                        href={safeHref(connection.other.url)}
+                        target="_blank"
+                        rel="noopener"
+                        onclick={(e) => e.stopPropagation()}>{connectionLabel(connection)}</a
+                      >
+                      <span aria-hidden="true">→</span>
+                      <span class="connection-type">{connection.type ?? 'connected'}</span>
+                      <span aria-hidden="true">→</span>
+                      <span>this</span>
+                    {/if}
                   </div>
                   {#if connection.note}<p class="connection-note">{connection.note}</p>{/if}
                   <button
@@ -450,16 +478,22 @@
       </div>
     {/if}
 
-    {#if undisclosed > 0 && shown > 0 && !showSemble}
+    {#if undisclosed > 0 && shown > 0 && !hasSembleContent}
       <p class="discussion-more">
         {undisclosed}{capped ? '+' : ''} more, further back.
       </p>
     {/if}
 
-    {#if settled && shown === 0 && !showSemble}
+    <!-- Semble context that carries something counts as readable content, so a
+         connections-only article never claims nothing came back. A lane that
+         failed still gets its retry either way — losing it behind context from a
+         different network would strand the reader on a partial answer. -->
+    {#if settled && shown === 0 && (stream.failed || !hasSembleContent)}
       {#if stream.failed}
         <p class="discussion-empty">
-          Couldn't reach the Atmosphere just now.
+          {hasSembleContent
+            ? "Some of the Atmosphere didn't answer."
+            : "Couldn't reach the Atmosphere just now."}
           <button type="button" class="discussion-retry" onclick={() => onRetry?.()}>
             Try again
           </button>

@@ -5,7 +5,7 @@
   // backend (see ../+layout.ts).
   import AtmospherePanel from '$lib/components/feed/AtmospherePanel.svelte';
   import { hoursAgo, laneVM, splitStream, streamEntry } from '../cards/fixtures';
-  import type { DiscussionFilterId } from '$lib/components/articleCardView.types';
+  import type { DiscussionFilterId, SembleContextVM } from '$lib/components/articleCardView.types';
   import Showcase from '../_harness/Showcase.svelte';
   import Case from '../_harness/Case.svelte';
 
@@ -114,6 +114,98 @@
     }),
   ];
 
+  // What Semble knows about the URL beyond the people already in the stream:
+  // aggregate counts, collection placements, standalone notes, and the typed
+  // edges in both directions. Savers arrive as ordinary stream entries (Erin,
+  // above), so they are deliberately absent here — the block never repeats them.
+  const sembleAuthor = (handle: string, name: string) => ({
+    did: `did:plc:${handle.split('.')[0]}`,
+    handle,
+    name,
+    avatarUrl: null,
+  });
+  const emptyContext: SembleContextVM = {
+    stats: null,
+    savers: [],
+    notes: [],
+    collections: [],
+    connections: [],
+    truncated: { savers: false, notes: false, collections: false, connections: false },
+    incomplete: false,
+    source: 'semble-api',
+  };
+  const outgoing = {
+    id: 'conn-out',
+    direction: 'out' as const,
+    type: 'supports',
+    note: 'The measurement here is the evidence the argument in the article leans on.',
+    curator: sembleAuthor('erin.bsky.social', 'Erin Vasquez'),
+    createdAt: hoursAgo(9),
+    other: {
+      url: 'https://example.org/measuring-the-open-web',
+      title: 'Measuring the open web',
+      description: null,
+      siteName: 'example.org',
+      imageUrl: null,
+    },
+  };
+  const incoming = {
+    id: 'conn-in',
+    direction: 'in' as const,
+    type: 'refutes',
+    note: null,
+    curator: sembleAuthor('dana.margin.at', 'Dana Okafor'),
+    createdAt: hoursAgo(30),
+    other: {
+      url: 'https://another.example/the-counterargument',
+      title: 'The counterargument, at length',
+      description: null,
+      siteName: 'another.example',
+      imageUrl: null,
+    },
+  };
+  // Direction is carried by the row's order as well as its label: an outgoing
+  // edge reads this → type → other, an incoming one other → type → this.
+  const untypedIncoming = {
+    ...incoming,
+    id: 'conn-in-untyped',
+    type: null,
+    createdAt: hoursAgo(40),
+    other: { ...incoming.other, title: null, siteName: null },
+  };
+  const sembleContext: SembleContextVM = {
+    ...emptyContext,
+    stats: {
+      saves: 4,
+      notes: 2,
+      collections: 2,
+      connections: { total: 3, incoming: 2, outgoing: 1 },
+    },
+    notes: [
+      {
+        id: 'note-1',
+        text: 'Pairs badly with the piece it cites in the third section — that study says the opposite.',
+        author: sembleAuthor('gia.bsky.social', 'Gia Ferrante'),
+        createdAt: hoursAgo(12),
+      },
+    ],
+    collections: [
+      {
+        id: 'col-1',
+        name: 'AI & the open web',
+        url: 'https://semble.so/profile/erin.bsky.social/collections/3kread',
+        author: { did: 'did:plc:erin', handle: 'erin.bsky.social' },
+      },
+      {
+        id: 'col-2',
+        name: 'Protocol design',
+        url: null,
+        author: { did: 'did:plc:erin', handle: 'erin.bsky.social' },
+      },
+    ],
+    connections: [outgoing, incoming, untypedIncoming],
+  };
+
   let activeFilter = $state<DiscussionFilterId>('all');
   const filtered = $derived(
     activeFilter === 'all' ? entries : entries.filter((e) => e.lane === activeFilter)
@@ -139,7 +231,78 @@
       {filters}
       {activeFilter}
       {stream}
+      {sembleContext}
       onSelectFilter={(id) => (activeFilter = id)}
+    />
+  </Case>
+
+  <Case
+    name="Semble · everything it knows"
+    note="What Semble holds about this URL that isn't a person in the stream: the counts, where it's filed, notes nobody attached to a save, and the typed edges. Outbound reads this → type → other; inbound reads other → type → this, so the arrow never lies about which way the claim points. Shown under All and Semble only — switch the chips above to watch it leave."
+    width="800px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={lanes}
+      filters={[]}
+      {sembleContext}
+      stream={{ loading: false, ...splitStream(entries.filter((e) => e.lane === 'semble')) }}
+    />
+  </Case>
+
+  <Case
+    name="Semble · connections only"
+    note="Nobody said anything and nobody saved it — the URL exists in Semble purely as the endpoint of other people's edges. That still counts as readable content, so the panel must not claim nothing came back."
+    width="800px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={[laneVM('semble', { count: 2 })]}
+      filters={[]}
+      sembleContext={{
+        ...emptyContext,
+        stats: {
+          saves: 0,
+          notes: 0,
+          collections: 0,
+          connections: { total: 2, incoming: 1, outgoing: 1 },
+        },
+        connections: [outgoing, incoming],
+      }}
+      stream={{ loading: false, entries: [] }}
+    />
+  </Case>
+
+  <Case
+    name="Semble · partial and truncated"
+    note="One category timed out and another had more than one page. Both are disclosed in a line rather than silently rounded off — what returned still renders."
+    width="800px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={lanes}
+      filters={[]}
+      sembleContext={{
+        ...sembleContext,
+        notes: [],
+        truncated: { savers: false, notes: false, collections: false, connections: true },
+        incomplete: true,
+      }}
+      stream={{ loading: false, ...splitStream(entries.filter((e) => e.lane === 'semble')) }}
+    />
+  </Case>
+
+  <Case
+    name="Semble · saver fallback"
+    note="The API was unreachable and the Constellation/PDS resolver answered instead: the people it found still read normally, and no aggregate is invented to fill the space."
+    width="800px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={[laneVM('semble', { count: 1 })]}
+      filters={[]}
+      sembleContext={{ ...emptyContext, incomplete: true, source: 'constellation-fallback' }}
+      stream={{ loading: false, ...splitStream(entries.filter((e) => e.lane === 'semble')) }}
     />
   </Case>
 
