@@ -782,6 +782,14 @@ export interface ArticleMentions {
 export interface MentionLaneEntry {
   did: string;
   handle: string | null;
+  // The author's name + avatar, resolved from their app.bsky.actor.profile
+  // record proxy-side. Both null when they have no profile record — the
+  // discussion falls back to a monogram and the handle.
+  displayName: string | null;
+  avatar: string | null;
+  // When the reference itself was written (ISO). The merged discussion sorts on
+  // it; entries without one sort last.
+  createdAt: string | null;
   note: string | null;
   url: string | null;
   // Named Semble collection(s) the saver filed the card into, each with a link

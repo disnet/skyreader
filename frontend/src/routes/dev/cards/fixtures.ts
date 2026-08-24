@@ -1,4 +1,12 @@
-import type { ArticleCardViewProps } from '$lib/components/articleCardView.types';
+import type {
+  ArticleCardViewProps,
+  DiscussionEntryVM,
+  LaneId,
+  LaneRowVM,
+} from '$lib/components/articleCardView.types';
+import { LANE_META } from '$lib/hooks/useAtmosphere.svelte';
+import { cleanDiscussionNote } from '$lib/utils/discussionNote';
+import { formatRelativeDate } from '$lib/utils/date';
 import { renderLeafletContent } from '$lib/utils/leaflet-renderer';
 
 /**
@@ -10,6 +18,85 @@ export interface CardFixture {
   name: string;
   note: string;
   props: ArticleCardViewProps;
+}
+
+// ── Discussion fixture helpers ───────────────────────────────────────────────
+// The panel renders pre-resolved view-models, so the harness builds them the
+// same way useAtmosphere does: LANE_META folded in, the note cleaned against the
+// article's title, the date pre-formatted. Keeping that here means the fixtures
+// exercise the real derivation rather than a hand-written approximation.
+
+const FIXTURE_TITLE = 'The Article Title';
+// The publication's name, which the hosts pass alongside the headline — a bridge
+// reprints either one, so the harness cleans against both.
+const FIXTURE_SOURCE = 'The Publication Name';
+
+/** An ISO timestamp N hours before the page rendered. */
+export function hoursAgo(hours: number): string {
+  return new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+}
+
+export function laneVM(id: LaneId, over: Partial<LaneRowVM> = {}): LaneRowVM {
+  const meta = LANE_META[id];
+  const count = over.count ?? 0;
+  const capped = over.capped ?? false;
+  return {
+    id,
+    count,
+    capped,
+    canCreate: true,
+    icon: meta.icon,
+    label: meta.label,
+    verb: meta.verb,
+    title:
+      count > 0
+        ? `${count}${capped ? '+' : ''} ${meta.verb} this · ${meta.label}`
+        : `${meta.label} — add yours`,
+    isMine: false,
+    createLabel: meta.createLabel,
+    createIsEdit: false,
+    ...over,
+  };
+}
+
+export type StreamEntrySeed = Partial<DiscussionEntryVM> & Pick<DiscussionEntryVM, 'did'>;
+
+export function splitStream(entries: DiscussionEntryVM[]): {
+  entries: DiscussionEntryVM[];
+  linkOnly: DiscussionEntryVM[];
+} {
+  const said: DiscussionEntryVM[] = [];
+  const linkOnly: DiscussionEntryVM[] = [];
+  for (const entry of entries) {
+    const saidSomething = Boolean(entry.cleanNote || entry.quote || entry.collections?.length);
+    (saidSomething ? said : linkOnly).push(entry);
+  }
+  return { entries: said, linkOnly };
+}
+
+export function streamEntry(lane: LaneId, seed: StreamEntrySeed): DiscussionEntryVM {
+  const meta = LANE_META[lane];
+  const createdAt = seed.createdAt ?? null;
+  return {
+    handle: null,
+    displayName: null,
+    avatar: null,
+    note: null,
+    url: null,
+    collections: [],
+    verb: null,
+    quote: null,
+    ...seed,
+    createdAt,
+    headVerb: seed.verb ?? (seed.collections?.length ? null : meta.verb),
+    key: `${lane}|${seed.did}|${seed.url ?? ''}`,
+    lane,
+    laneLabel: meta.label,
+    laneIcon: meta.icon,
+    relativeTime: createdAt ? formatRelativeDate(createdAt) : null,
+    isoTime: createdAt,
+    cleanNote: cleanDiscussionNote(seed.note ?? null, [FIXTURE_TITLE, FIXTURE_SOURCE]),
+  };
 }
 
 const FAVICON = 'https://icons.duckduckgo.com/ip3/arstechnica.com.ico';
@@ -127,6 +214,10 @@ const base: ArticleCardViewProps = {
   itemTagCount: 0,
   itemTags: [],
   isOpen: false,
+  // Signed in with a linkblog, so the action bar carries Share. On a card that
+  // button IS the linkblog affordance — the discussion's compose row never
+  // repeats it (see ArticleCard.laneCanCreate).
+  canShare: true,
 };
 
 export const fixtures: CardFixture[] = [
@@ -211,7 +302,7 @@ export const fixtures: CardFixture[] = [
   },
   {
     name: 'Expanded · atmosphere',
-    note: 'Tap "Discussion" to open the panel: lanes are a tab strip, each chip fused to its own [+] create. The Blogs [+] shares to your linkblog (no-note share is the default); sharing then reveals the "Add your note…" box. Picking a tab reveals that lane\'s posts below.',
+    note: 'Tap "Discussion" to open the panel: one chronological stream of everyone who wrote about this, whichever network they used, each entry wearing its source. The chips filter that stream; they are not four lists to click between. The bridge post that is nothing but the headline and two links keeps its person and its link, and loses its text.',
     props: {
       ...base,
       expanded: true,
@@ -225,7 +316,9 @@ export const fixtures: CardFixture[] = [
           id: 'linkblog',
           count: 3,
           capped: false,
-          canCreate: true,
+          // On a card the action bar's Share button is the linkblog affordance,
+          // so the lane never offers its own (see ArticleCard.laneCanCreate).
+          canCreate: false,
           icon: 'standard-site',
           label: 'Blogs',
           verb: 'noted',
@@ -274,35 +367,110 @@ export const fixtures: CardFixture[] = [
           createIsEdit: false,
         },
       ],
-      expandedLane: 'linkblog',
-      expandedLaneItems: {
+      filters: [
+        { id: 'all', label: 'All', count: 15, capped: true, icon: null },
+        { id: 'linkblog', label: 'Blogs', count: 3, capped: false, icon: 'standard-site' },
+        { id: 'bluesky', label: 'Bluesky', count: 12, capped: true, icon: 'bluesky' },
+      ],
+      activeFilter: 'all',
+      stream: {
         loading: false,
-        entries: [
-          {
+        ...splitStream([
+          streamEntry('bluesky', {
             did: 'did:plc:alice',
             handle: 'alice.bsky.social',
-            note: 'Best take on this I have read all year.',
-            url: 'https://example.com/alice',
-            collections: [],
-            verb: null,
-            quote: null,
-          },
-          {
+            displayName: 'Alice Mbeki',
+            avatar: null,
+            createdAt: hoursAgo(3),
+            note: 'Best take on this I have read all year. The second half is the part worth arguing with.',
+            url: 'https://bsky.app/profile/alice.bsky.social/post/3kabc',
+          }),
+          streamEntry('linkblog', {
             did: 'did:plc:bob',
             handle: 'bob.example.com',
-            note: null,
-            url: 'https://example.com/bob',
-            collections: [],
-            verb: null,
-            quote: null,
-          },
-        ],
+            displayName: 'Bob Iwu',
+            avatar: null,
+            createdAt: hoursAgo(19),
+            note: 'Filed under things I will quote at someone this week.',
+            url: 'https://bob.example.com/links/the-article',
+          }),
+          // A bridge post: the headline again, then two links. Nothing the reader
+          // hasn't already got — cleanDiscussionNote empties it, and the entry
+          // stands on its person, source, and link out.
+          streamEntry('bluesky', {
+            did: 'did:plc:hn',
+            handle: 'betterhn20.e-work.xyz',
+            displayName: null,
+            avatar: null,
+            createdAt: hoursAgo(26),
+            note: 'The Article Title https://example.com/the-article (https://news.ycombinator.com/item?id=49396811)',
+            url: 'https://bsky.app/profile/betterhn20.e-work.xyz/post/3kbot',
+          }),
+          streamEntry('bluesky', {
+            did: 'did:plc:carol',
+            handle: 'carol.test',
+            displayName: 'Carol Nakamura',
+            avatar: null,
+            createdAt: null,
+            note: 'Undated record — sorts last rather than pretending to be new.',
+            url: 'https://bsky.app/profile/carol.test/post/3kold',
+          }),
+        ]),
       },
     },
   },
   {
+    name: 'Discussion · resolving',
+    note: 'The people are still coming back from their PDSes. The stream shows its own silhouette rather than a spinner, since the stream IS the content here.',
+    props: {
+      ...base,
+      expanded: true,
+      isOpen: true,
+      hasContent: true,
+      readTimeMinutes: 4,
+      sanitizedContent: BODY_HTML,
+      hasOpenFullscreen: true,
+      laneRow: [
+        laneVM('bluesky', { count: 12, capped: true }),
+        laneVM('margin', { count: 2 }),
+        laneVM('semble', { count: 0 }),
+      ],
+      // The counts are always-on, so the chips are already there while the
+      // people are still resolving.
+      filters: [
+        { id: 'all', label: 'All', count: 14, capped: true, icon: null },
+        { id: 'bluesky', label: 'Bluesky', count: 12, capped: true, icon: 'bluesky' },
+        { id: 'margin', label: 'margin.at', count: 2, capped: false, icon: 'margin' },
+      ],
+      activeFilter: 'all',
+      stream: { loading: true, entries: [] },
+    },
+  },
+  {
+    name: 'Discussion · nobody yet',
+    note: 'No one has written about this article anywhere. The panel says so plainly and hands over the ways to be first — the empty state teaches the surface instead of showing four zeroes.',
+    props: {
+      ...base,
+      expanded: true,
+      isOpen: true,
+      hasContent: true,
+      readTimeMinutes: 4,
+      sanitizedContent: BODY_HTML,
+      hasOpenFullscreen: true,
+      laneRow: [
+        laneVM('linkblog', { count: 0 }),
+        laneVM('bluesky', { count: 0 }),
+        laneVM('margin', { count: 0 }),
+        laneVM('semble', { count: 0 }),
+      ],
+      filters: [],
+      activeFilter: 'all',
+      stream: { loading: false, entries: [] },
+    },
+  },
+  {
     name: 'Semble · saves',
-    note: 'The Semble lane: saves aren\'t notes, so they render as a wrapping flow of "<who> saved to <collection>" pills instead of the per-person list. A saver in several collections produces one pill each; a saver with none reads "<who> saved this". Collection names link out to Semble.',
+    note: 'Semble saves aren\'t notes: the body says which collection the article was filed into, so the head drops the verb. A saver in several collections names each one; a saver with none reads "Saved this". Collection names link out to Semble.',
     props: {
       ...base,
       expanded: true,
@@ -326,14 +494,17 @@ export const fixtures: CardFixture[] = [
           createIsEdit: false,
         },
       ],
-      expandedLane: 'semble',
-      expandedLaneItems: {
+      filters: [],
+      activeFilter: 'all',
+      stream: {
         loading: false,
-        entries: [
-          {
+        ...splitStream([
+          streamEntry('semble', {
             did: 'did:plc:alice',
             handle: 'alice.bsky.social',
-            note: null,
+            displayName: 'Alice Mbeki',
+            avatar: null,
+            createdAt: hoursAgo(5),
             url: 'https://semble.so/profile/alice.bsky.social',
             collections: [
               {
@@ -341,13 +512,13 @@ export const fixtures: CardFixture[] = [
                 url: 'https://semble.so/profile/alice.bsky.social/collections/3kreadlist',
               },
             ],
-            verb: null,
-            quote: null,
-          },
-          {
+          }),
+          streamEntry('semble', {
             did: 'did:plc:bob',
             handle: 'bob.example.com',
-            note: null,
+            displayName: 'Bob Iwu',
+            avatar: null,
+            createdAt: hoursAgo(30),
             url: 'https://semble.so/profile/bob.example.com',
             collections: [
               {
@@ -359,25 +530,22 @@ export const fixtures: CardFixture[] = [
                 url: 'https://semble.so/profile/bob.example.com/collections/3kproto',
               },
             ],
-            verb: null,
-            quote: null,
-          },
-          {
+          }),
+          streamEntry('semble', {
             did: 'did:plc:carol',
             handle: 'carol.test',
-            note: null,
+            displayName: null,
+            avatar: null,
+            createdAt: hoursAgo(72),
             url: 'https://semble.so/profile/carol.test',
-            collections: [],
-            verb: null,
-            quote: null,
-          },
-        ],
+          }),
+        ]),
       },
     },
   },
   {
     name: 'margin.at · annotations',
-    note: 'The margin.at lane: each annotation is its own subtly-filled card — a "<who> <motivation>" head (the verb comes from the note\'s W3C motivation), then the highlighted passage and/or the reader\'s comment. Keeps the annotation content rather than collapsing to a bare handle.',
+    note: "A margin.at annotation carries its own verb in the head (the note's W3C motivation), then the passage it points at, then the annotator's comment. The passage leads, because the passage is the point.",
     props: {
       ...base,
       expanded: true,
@@ -401,38 +569,40 @@ export const fixtures: CardFixture[] = [
           createIsEdit: false,
         },
       ],
-      expandedLane: 'margin',
-      expandedLaneItems: {
+      filters: [],
+      activeFilter: 'all',
+      stream: {
         loading: false,
-        entries: [
-          {
+        ...splitStream([
+          streamEntry('margin', {
             did: 'did:plc:alice',
             handle: 'alice.bsky.social',
-            note: null,
-            url: null,
-            collections: [],
+            displayName: 'Alice Mbeki',
+            avatar: null,
+            createdAt: hoursAgo(2),
             verb: 'highlighted',
             quote: 'the things you read are yours, and the place you keep them is yours too',
-          },
-          {
+          }),
+          streamEntry('margin', {
             did: 'did:plc:bob',
             handle: 'bob.example.com',
-            note: 'Best framing of ownership I have seen in a while.',
-            url: null,
-            collections: [],
+            displayName: 'Bob Iwu',
+            avatar: null,
+            createdAt: hoursAgo(21),
             verb: 'commented',
-            quote: null,
-          },
-          {
+            note: 'Best framing of ownership I have seen in a while.',
+          }),
+          streamEntry('margin', {
             did: 'did:plc:carol',
             handle: 'carol.test',
-            note: 'But what happens when the PDS goes offline?',
-            url: null,
-            collections: [],
+            displayName: 'Carol Nakamura',
+            avatar: null,
+            createdAt: hoursAgo(50),
             verb: 'questioned',
+            note: 'But what happens when the PDS goes offline?',
             quote: 'Not rented from a feed, not subject to a ranking change overnight.',
-          },
-        ],
+          }),
+        ]),
       },
     },
   },
@@ -562,20 +732,6 @@ export const fixtures: CardFixture[] = [
         },
       ],
       socialContext: { quoteCount: 2 },
-      alsoLinkedBy: [
-        {
-          recordUri: 'at://did:plc:dave/x/1',
-          did: 'did:plc:dave',
-          handle: 'dave.bsky.social',
-          note: 'A classic.',
-        },
-        {
-          recordUri: 'at://did:plc:erin/x/2',
-          did: 'did:plc:erin',
-          handle: 'erin.example.com',
-          note: null,
-        },
-      ],
     },
   },
   {

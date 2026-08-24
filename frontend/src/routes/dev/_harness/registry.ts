@@ -82,6 +82,13 @@ export const harnesses: HarnessEntry[] = [
     components: ['LinkblogIntro', 'LinkblogEntry', 'ShareComposer'],
   },
   {
+    slug: 'discussion',
+    title: 'Discussion',
+    description:
+      'The merged Atmosphere discussion under an article: filter chips, the chronological stream of people, and the compose row — plus its resolving, empty, and unreachable states.',
+    components: ['AtmospherePanel'],
+  },
+  {
     slug: 'feed',
     title: 'Feed surfaces',
     description:

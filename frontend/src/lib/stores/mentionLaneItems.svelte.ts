@@ -14,10 +14,17 @@ import type { MentionLaneEntry } from '$lib/types';
 export type LaneItemsState = {
   loading: boolean;
   loaded: boolean;
+  /**
+   * The resolve failed. Kept (rather than dropping the key) so the surface can
+   * say so instead of showing an empty lane or spinning forever — and so an
+   * automatic re-read can't turn a failing lane into a retry loop. `load` skips
+   * a failed lane unless the caller forces it.
+   */
+  failed: boolean;
   entries: MentionLaneEntry[];
 };
 
-const LOADING: LaneItemsState = { loading: true, loaded: false, entries: [] };
+const LOADING: LaneItemsState = { loading: true, loaded: false, failed: false, entries: [] };
 
 function keyFor(url: string, lane: string): string {
   return `${lane}|${url}`;
@@ -36,24 +43,24 @@ function createMentionLaneItemsStore() {
 
   // Kick off resolution for a lane. No-op once loaded or in flight. Safe to call
   // every time a lane is expanded.
-  function load(url: string, lane: string): void {
+  function load(url: string, lane: string, options?: { force?: boolean }): void {
     if (!url) return;
     const key = keyFor(url, lane);
     const existing = cache.get(key);
     if (existing?.loaded || inFlight.has(key)) return;
+    if (existing?.failed && !options?.force) return;
 
     set(key, LOADING);
     const p = api
       .fetchMentionLaneItems(url, lane)
       .then((res) => {
-        set(key, { loading: false, loaded: true, entries: res.entries ?? [] });
+        set(key, { loading: false, loaded: true, failed: false, entries: res.entries ?? [] });
       })
       .catch((e) => {
         console.error('Failed to fetch mention lane items:', e);
-        // Silent degradation — leave it unloaded so a later expand can retry.
-        const next = new Map(cache);
-        next.delete(key);
-        cache = next;
+        // Adornment, so this never breaks the read — but it is recorded, so the
+        // surface can offer the retry rather than pretending nobody wrote.
+        set(key, { loading: false, loaded: false, failed: true, entries: [] });
       })
       .finally(() => {
         inFlight.delete(key);

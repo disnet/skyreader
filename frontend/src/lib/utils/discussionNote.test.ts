@@ -1,0 +1,102 @@
+import { describe, it, expect } from 'vitest';
+import { cleanDiscussionNote } from './discussionNote';
+
+const TITLE = 'Never Be Angry at Work';
+
+describe('cleanDiscussionNote', () => {
+  it('keeps a real note untouched', () => {
+    expect(cleanDiscussionNote('Best take on this I have read all year.', TITLE)).toBe(
+      'Best take on this I have read all year.'
+    );
+  });
+
+  it('drops a bare URL post to nothing', () => {
+    expect(
+      cleanDiscussionNote('https://www.seangoedecke.com/you-should-never-be-angry/', TITLE)
+    ).toBe(null);
+  });
+
+  it('drops a post that is only the article title', () => {
+    expect(cleanDiscussionNote('Never be angry at work!', TITLE)).toBe(null);
+  });
+
+  it('strips the title and both links from a bridge post', () => {
+    const bot =
+      'Never Be Angry at Work https://www.seangoedecke.com/you-should-never-be-angry-at-work/ (https://news.ycombinator.com/item?id=49396811)';
+    expect(cleanDiscussionNote(bot, TITLE)).toBe(null);
+  });
+
+  it('keeps the commentary a bot adds after the headline', () => {
+    expect(cleanDiscussionNote('Never Be Angry at Work comments · 4 points', TITLE)).toBe(
+      'comments · 4 points'
+    );
+  });
+
+  it('strips a trailing headline too', () => {
+    expect(cleanDiscussionNote('Worth reading: Never Be Angry at Work', TITLE)).toBe(
+      'Worth reading'
+    );
+  });
+
+  it('lines up when the title punctuation splits differently', () => {
+    expect(cleanDiscussionNote('A/B testing is underrated', 'A/B testing')).toBe('is underrated');
+  });
+
+  it('leaves a quoted phrase alone when it is not the whole headline', () => {
+    expect(cleanDiscussionNote('The bit about anger at work is the good part', TITLE)).toBe(
+      'The bit about anger at work is the good part'
+    );
+  });
+
+  it('does not strip a headline too short to be unmistakable', () => {
+    expect(cleanDiscussionNote('Notes on the talk', 'Notes')).toBe('Notes on the talk');
+  });
+
+  it('strips a bare, truncated URL — what a Bluesky post actually stores', () => {
+    expect(
+      cleanDiscussionNote(
+        'Some weekend thoughts on how LLMs change the way we start new projects. lucumr.pocoo.org/2026/8/22/fa...',
+        TITLE
+      )
+    ).toBe('Some weekend thoughts on how LLMs change the way we start new projects.');
+  });
+
+  it('strips the publication name as well as the headline', () => {
+    // The real case: a bridge leads with the FEED title, not the article's.
+    expect(
+      cleanDiscussionNote(
+        "Armin Ronacher's Thoughts and Writings lucumr.pocoo.org/2026/8/22/fa... 的確有這種感覺",
+        ['Fast and Hard Code', "Armin Ronacher's Thoughts and Writings"]
+      )
+    ).toBe('的確有這種感覺');
+  });
+
+  it('drops a note that is only the link label left over from a link drop', () => {
+    expect(cleanDiscussionNote('Never Be Angry at Work Discussion', TITLE)).toBe(null);
+    expect(cleanDiscussionNote('Comments', TITLE)).toBe(null);
+    expect(cleanDiscussionNote('discussion: https://news.ycombinator.com/item?id=1', TITLE)).toBe(
+      null
+    );
+  });
+
+  it('leaves ordinary prose containing a dot alone', () => {
+    expect(cleanDiscussionNote('I rewrote it in node.js and regretted it.', TITLE)).toBe(
+      'I rewrote it in node.js and regretted it.'
+    );
+    expect(cleanDiscussionNote('Worth reading (etc.) if you have time', TITLE)).toBe(
+      'Worth reading (etc.) if you have time'
+    );
+  });
+
+  it('keeps a link label that is part of a real sentence', () => {
+    expect(cleanDiscussionNote('The comments are better than the post', TITLE)).toBe(
+      'The comments are better than the post'
+    );
+  });
+
+  it('handles a missing note and a missing title', () => {
+    expect(cleanDiscussionNote(null, TITLE)).toBe(null);
+    expect(cleanDiscussionNote('   ', TITLE)).toBe(null);
+    expect(cleanDiscussionNote('a plain thought', undefined)).toBe('a plain thought');
+  });
+});

@@ -17,7 +17,11 @@ import { getSocialContext, type SocialContext, type SocialContextQuery } from '.
 import { getLinkblogRegistry } from './linkblog-registry';
 import { getConstellationStats } from './constellation-client';
 import { readCachedMentions, enrichMentions } from './mentions';
-import { getMentionLaneItems, type MentionLaneEntry } from './mention-lane';
+import {
+  getMentionLaneItems,
+  MentionLaneUnavailableError,
+  type MentionLaneEntry,
+} from './mention-lane';
 import type { LaneId } from './lanes';
 import { normalizeArticleUrl } from './url-normalize';
 import { Semaphore, OverloadError } from './semaphore';
@@ -3109,8 +3113,18 @@ export function createApp(db: Database, config: AppConfig) {
       );
       inFlightLane.set(laneKey, pending);
     }
-    const entries = await pending;
-    return c.json({ entries });
+    try {
+      const entries = await pending;
+      return c.json({ entries });
+    } catch (error) {
+      // Constellation never answered. Say so rather than returning an empty
+      // list, which the reader would read as "nobody wrote about this" — and
+      // which the client would then cache as a settled answer.
+      if (error instanceof MentionLaneUnavailableError) {
+        return c.json({ error: 'Atmosphere unavailable' }, 503);
+      }
+      throw error;
+    }
   });
 
   return { app, inFlight, inFlightDocs, warmStaleFeeds, warmStaleDocuments };

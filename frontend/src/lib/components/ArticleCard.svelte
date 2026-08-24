@@ -365,11 +365,6 @@
   let socialContext = $derived(
     isLinkPostMode && document ? socialContextStore.get(document.recordUri) : undefined
   );
-  // Other linkers, minus this post's own author (already shown in the byline).
-  let alsoLinkedBy = $derived(
-    (socialContext?.alsoLinkedBy ?? []).filter((e) => e.did !== document?.authorDid)
-  );
-
   // ── The Atmosphere row (Phase 5) ────────────────────────────────────────────
   // For a regular article (only when open), one quiet row of source lanes — how
   // this URL is referenced across the Atmosphere. Each lane does double duty: it
@@ -382,9 +377,10 @@
   function laneCanCreate(id: LaneId): boolean {
     switch (id) {
       case 'linkblog':
-        // Sharing is the lane's own [+]: offered until you've shared, after which
-        // the action bar's Share button owns editing/removal instead.
-        return showShareAction && !currentlyShared;
+        // The action bar's Share button IS the linkblog affordance here, in both
+        // states — so the discussion's compose row never repeats it a few pixels
+        // away inside the same footer band.
+        return false;
       case 'semble':
         return Boolean(onSaveToSemble);
       case 'margin':
@@ -399,6 +395,8 @@
   // document's canonical URL.
   const atmosphere = useAtmosphere({
     itemUrl: () => itemUrl,
+    itemTitle: () => itemTitle,
+    sourceTitle: () => displayFeedTitle,
     isShared: () => currentlyShared,
     canCreate: laneCanCreate,
   });
@@ -895,10 +893,10 @@
   {authorAvatar}
   authorDid={document?.authorDid}
   socialContext={socialContext ? { quoteCount: socialContext.quoteCount } : undefined}
-  {alsoLinkedBy}
   laneRow={atmosphere.laneRow}
-  expandedLane={atmosphere.expandedLane}
-  expandedLaneItems={atmosphere.expandedLaneItems}
+  filters={atmosphere.filters}
+  activeFilter={atmosphere.activeFilter}
+  stream={atmosphere.stream}
   {itemTagCount}
   {itemTags}
   {collectionPieceCount}
@@ -911,6 +909,7 @@
   {highlighted}
   {isTruncated}
   {currentlyShared}
+  canShare={showShareAction}
   {currentNote}
   {hasShareDraft}
   {showActionBarIntegrations}
@@ -949,7 +948,9 @@
   onSaveToSemble={() => onSaveToSemble?.()}
   onSaveToMargin={() => onSaveToMargin?.()}
   onFollowSource={handleFollowSource}
-  onToggleLane={atmosphere.toggleLane}
+  onSelectFilter={atmosphere.setFilter}
+  onOpenStream={atmosphere.openStream}
+  onRetryStream={atmosphere.retry}
   onCreateInLane={createInLane}
   onComposeShare={composeShare}
   onEditShare={editShare}

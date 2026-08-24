@@ -292,21 +292,35 @@ async function attempt<T>(url: string): Promise<Attempt<T>> {
 }
 
 /**
- * GET a Constellation endpoint and parse JSON, or return null. Never throws —
- * every failure (breaker open, overload, timeout, network, non-OK, parse)
- * degrades to null so callers stay best-effort.
+ * The outcome of one logical call, for the callers that need to tell "the
+ * service answered, and the answer was nothing" apart from "we never got an
+ * answer". `reachable: false` covers every path where Constellation didn't
+ * speak: breaker open, our own queue overflow, timeout, network error, 5xx.
+ * A clean 4xx is a real answer from a healthy service, so it stays reachable
+ * with null data.
  *
- * A reset-then-success sequence counts as one success; a call whose every
- * attempt reset counts as exactly *one* breaker failure, so the threshold still
- * means "5 logical calls failed", not "5 sockets died".
+ * Most callers are adornments that treat both the same and should keep using
+ * `constellationGet`. Use this only where the difference is user-visible — the
+ * discussion surface, which offers a retry for one and says "nobody wrote about
+ * this" for the other.
  */
-export async function constellationGet<T>(
+export interface ConstellationResult<T> {
+  data: T | null;
+  reachable: boolean;
+}
+
+/**
+ * GET a Constellation endpoint and parse JSON, reporting whether the host
+ * actually answered. Never throws — see `constellationGet`, which is this with
+ * the verdict dropped.
+ */
+export async function constellationGetResult<T>(
   path: string,
   params: Record<string, string>
-): Promise<T | null> {
+): Promise<ConstellationResult<T>> {
   if (isConstellationBreakerOpen()) {
     counters.shortCircuited++;
-    return null;
+    return { data: null, reachable: false };
   }
 
   const qs = new URLSearchParams(params);
@@ -322,7 +336,7 @@ export async function constellationGet<T>(
       if (counters.shed === 1 || counters.shed % LOG_EVERY_N_FAILURES === 0) {
         console.warn(`[constellation] shed ${counters.shed} request(s): queue full (${path})`);
       }
-      return null;
+      return { data: null, reachable: false };
     }
     throw error;
   }
@@ -334,7 +348,7 @@ export async function constellationGet<T>(
     // storm the breaker exists to stop. Re-check now that it's our turn.
     if (isConstellationBreakerOpen()) {
       counters.shortCircuited++;
-      return null;
+      return { data: null, reachable: false };
     }
 
     counters.requests++;
@@ -372,18 +386,34 @@ export async function constellationGet<T>(
     switch (result.kind) {
       case 'ok':
         recordSuccess();
-        return result.data;
+        return { data: result.data, reachable: true };
       case 'null-ok':
         recordSuccess();
-        return null;
+        return { data: null, reachable: true };
       default: {
         const now = Date.now();
         recordFailure(now);
         logFailure(path, result.error, now);
-        return null;
+        return { data: null, reachable: false };
       }
     }
   } finally {
     semaphore.release();
   }
+}
+
+/**
+ * GET a Constellation endpoint and parse JSON, or return null. Never throws —
+ * every failure (breaker open, overload, timeout, network, non-OK, parse)
+ * degrades to null so callers stay best-effort.
+ *
+ * A reset-then-success sequence counts as one success; a call whose every
+ * attempt reset counts as exactly *one* breaker failure, so the threshold still
+ * means "5 logical calls failed", not "5 sockets died".
+ */
+export async function constellationGet<T>(
+  path: string,
+  params: Record<string, string>
+): Promise<T | null> {
+  return (await constellationGetResult<T>(path, params)).data;
 }
