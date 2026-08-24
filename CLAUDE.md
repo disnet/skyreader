@@ -241,7 +241,12 @@ Custom lexicons live per-package under `<package>/lexicons/app/skyreader/` (e.g.
 `frontend/lexicons/app/skyreader/feed/subscription.json`, `backend/lexicons/app/skyreader/...`):
 
 - `feed/subscription.json` - RSS subscription record
-- `feed/saved.json` - Saved article record
+- `feed/saved.json` - Saved article record — **metadata only, and not part of the live PDS
+  sync.** It exists for the flag-gated atproto Spaces spike, where it is written into a user's
+  personal _permissioned_ space (never the public repo). Nothing writes it in production; the
+  "saves live only in D1" rule above still holds. See
+  [the spike memo](docs/plans/SPACES_SAVES_SPIKE.md)
+- `space/savedAccess.json` - permission set for that space (spike; not requested by OAuth)
 - `feed/highlight.json` - Article highlight record (frontend)
 - `social/follow.json` - In-app follow relationship (frontend)
 

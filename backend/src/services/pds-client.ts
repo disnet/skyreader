@@ -96,7 +96,15 @@ export type PDSResult<T> =
   // `needsReauth` is set when the PDS host was re-resolved after a migration but
   // the existing OAuth tokens were still rejected — the user must re-authenticate
   // against the new PDS's auth server. Callers should surface this, not retry.
-  | { success: false; error: string; retryable: boolean; needsReauth?: boolean };
+  | {
+      success: false;
+      error: string;
+      /** Structured XRPC error code, when the server returned one. */
+      code?: string;
+      status?: number;
+      retryable: boolean;
+      needsReauth?: boolean;
+    };
 
 /**
  * Optional context that lets a PDSClient self-heal a stale PDS endpoint.
@@ -354,7 +362,16 @@ export class PDSClient {
             response.status === 403 ||
             errorData?.error === 'invalid_token');
 
-        return { result: { success: false, error: errorMessage, retryable }, staleEndpoint };
+        return {
+          result: {
+            success: false,
+            error: errorMessage,
+            code: errorData?.error,
+            status: response.status,
+            retryable,
+          },
+          staleEndpoint,
+        };
       }
 
       const data = (await response.json()) as T;
@@ -372,6 +389,22 @@ export class PDSClient {
         staleEndpoint: true,
       };
     }
+  }
+
+  /**
+   * Call an arbitrary XRPC method on this session's PDS with the session's auth.
+   * The typed helpers below cover `com.atproto.repo.*`; this is the escape hatch
+   * for namespaces that don't warrant their own method here (the Spaces spike
+   * calls `com.atproto.simplespace.*` / `com.atproto.space.*` through it).
+   *
+   * `endpoint` is the NSID plus, for GETs, an already-encoded query string.
+   */
+  async xrpc<T = unknown>(
+    method: 'GET' | 'POST',
+    endpoint: string,
+    body?: unknown
+  ): Promise<PDSResult<T>> {
+    return this.request<T>(method, endpoint, body);
   }
 
   /**
