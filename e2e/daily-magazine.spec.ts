@@ -87,7 +87,9 @@ test.describe('Daily magazine reader', () => {
       ).toBeVisible();
     }
 
-    await expect(authedPage.getByRole('button', { name: 'Share to your linkblog' })).toHaveCount(2);
+    // Each piece carries its own linkblog control, leading the discussion's
+    // "Add yours" row. Unshared and undrafted it reads as the destination.
+    await expect(authedPage.getByRole('button', { name: 'Your linkblog' })).toHaveCount(2);
 
     const firstParagraph = authedPage.locator('#article-1 .article-body p').first();
     const paragraphText = await firstParagraph.textContent();
