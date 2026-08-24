@@ -8,7 +8,7 @@
   // The draft is an ordered list of blocks: commentary text and atomic quoted
   // passages. Quotes render as real blockquotes (the gold quotation rule), not
   // `> ` Markdown — serialization to the wire format happens on post. Create
-  // mode auto-saves to a local draft; nothing is public until Post.
+  // mode auto-saves the draft privately to the account; nothing is public until Post.
   //
   // Mounted once in AppShell and driven by shareComposerStore, so the drawer —
   // and the draft — survive closing the reader or navigating.
@@ -184,7 +184,7 @@
   }
 
   // ── Discard / Remove (two-step) ─────────────────────────────────────────────
-  // Create mode discards the local draft; edit mode takes the posted share down.
+  // Create mode discards the draft (everywhere); edit mode takes the posted share down.
   // Same two-step arm-then-confirm, since both are one-way.
   let confirmingDiscard = $state(false);
   let discardTimer: ReturnType<typeof setTimeout> | undefined;

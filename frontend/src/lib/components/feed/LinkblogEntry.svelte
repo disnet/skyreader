@@ -30,7 +30,7 @@
 -->
 <script lang="ts">
   // One entry on your own linkblog: a published `site.standard.document` link
-  // post, or a local ShareDraft that has not been posted yet. Both render in the
+  // post, or a ShareDraft that has not been posted yet. Both render in the
   // same shape — the headline, your commentary, your quotes, the source row —
   // and both hand editing to the shared ShareComposer drawer, which is mounted
   // once in AppShell. That drawer outlives this page, so you can open the article
@@ -60,7 +60,7 @@
   interface Props {
     /** A published link post. Mutually exclusive with `draft`. */
     doc?: SocialDocument;
-    /** An unposted local draft. Mutually exclusive with `doc`. */
+    /** An unposted draft. Mutually exclusive with `doc`. */
     draft?: ShareDraft;
     /** Open the linked article in the in-app reader (published entries only). */
     onOpenReader?: () => void;

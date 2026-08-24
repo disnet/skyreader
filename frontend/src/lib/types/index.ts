@@ -713,10 +713,15 @@ export interface ShareDraftBlock {
   text: string;
 }
 
-// A local (device-only) draft of a linkblog share, keyed by the external
-// article URL — the same key the linkblog dedups on. Carries enough article
-// metadata to post the share later without the original Article object (so a
-// draft can be resumed from the drafts list long after the feed item is gone).
+// An unposted draft of a linkblog share, keyed by the external article URL —
+// the same key the linkblog dedups on. Carries enough article metadata to post
+// the share later without the original Article object (so a draft can be
+// resumed from the drafts list long after the feed item is gone).
+//
+// Stored privately on the Skyreader servers and cached in IndexedDB, so a draft
+// started on one device can be finished on another. It stays private until the
+// user posts it — nothing about a draft is public, and none of it goes to the
+// PDS. `updatedAt` (ms) is the clock the cross-device merge resolves on.
 export interface ShareDraft {
   articleUrl: string; // primary key
   articleTitle?: string;
@@ -731,6 +736,19 @@ export interface ShareDraft {
   blocks: ShareDraftBlock[];
   createdAt: number;
   updatedAt: number;
+}
+
+// One draft row as the server hands it back. `serverUpdatedAt` is the server's
+// second-resolution clock and is only a delta cursor — never a merge input; the
+// merge resolves on the client ms clock inside `draft.updatedAt`. A tombstone
+// (`deletedAt` set) carries no body: it says a draft died, not what it said.
+export interface RemoteShareDraft {
+  articleUrl: string;
+  draft: ShareDraft | null;
+  clientUpdatedAt: number;
+  createdAt: number;
+  serverUpdatedAt: number;
+  deletedAt: number | null;
 }
 
 // One other person who linked the same external article (Constellation), with
