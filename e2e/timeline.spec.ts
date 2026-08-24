@@ -103,7 +103,7 @@ test.describe('Timeline refresh', () => {
     expect(readGuids).not.toContain('timeline-item-2');
   });
 
-  test('reader extracts a truncated article once and reuses it on reopen', async ({
+  test('reader extracts a truncated article on open and reuses it on reopen', async ({
     authedPage,
     testUser,
   }) => {
@@ -148,12 +148,21 @@ test.describe('Timeline refresh', () => {
       has: authedPage.getByText('Truncated Reader Article', { exact: true }),
     });
     await expect(card).toBeVisible({ timeout: 15_000 });
-    await card.locator('button.article-header').click();
-    await card.getByRole('button', { name: 'Reader', exact: true }).click();
+
+    // Select and open the reader with the keyboard — no card expansion, so the
+    // reader's own on-open extract is what fires. (Expanding first would have
+    // ArticleCard fetch it and reduce the reader's call to a cache hit, which
+    // is the second half of this test, not the first.)
+    await authedPage.keyboard.press('j');
+    await expect(card.locator('.article-item.highlighted')).toBeVisible();
+    await authedPage.keyboard.press('f');
     await expect(authedPage.locator('.reader-body')).toContainText(extractedText);
     expect(extractCalls).toBe(1);
 
+    // Reopening through the card — which expands, firing ArticleCard's own
+    // truncated-article fetch — still serves the session-cached extract.
     await authedPage.getByRole('button', { name: 'Back', exact: true }).click();
+    await card.locator('button.article-header').click();
     await card.getByRole('button', { name: 'Reader', exact: true }).click();
     await expect(authedPage.locator('.reader-body')).toContainText(extractedText);
     expect(extractCalls).toBe(1);

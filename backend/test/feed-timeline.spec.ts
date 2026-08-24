@@ -325,11 +325,11 @@ describe('feed timeline (D1 ingest + serve)', () => {
     });
 
     it('caps stored content and marks it truncated, leaving small items alone', async () => {
-      const big = 'x'.repeat(32 * 1024 + 1);
-      const withinRaisedCap = 'y'.repeat(20 * 1024);
+      const big = 'x'.repeat(8 * 1024 + 1);
+      const justUnderCap = 'y'.repeat(8 * 1024 - 100);
       await ingest(FEED_A, [
         { item: item('big', { content: big, summary: 'kept' }), contentHash: 'hbig' },
-        { item: item('within-cap', { content: withinRaisedCap }), contentHash: 'hwithin' },
+        { item: item('within-cap', { content: justUnderCap }), contentHash: 'hwithin' },
         { item: item('small', { content: 'tiny' }), contentHash: 'hsmall' },
       ]);
 
@@ -344,7 +344,7 @@ describe('feed timeline (D1 ingest + serve)', () => {
       const withinCapRow = await env.DB.prepare('SELECT item_json FROM feed_items WHERE guid = ?')
         .bind('within-cap')
         .first<{ item_json: string }>();
-      expect(JSON.parse(withinCapRow!.item_json).content).toBe(withinRaisedCap);
+      expect(JSON.parse(withinCapRow!.item_json).content).toBe(justUnderCap);
 
       const smallRow = await env.DB.prepare('SELECT item_json FROM feed_items WHERE guid = ?')
         .bind('small')

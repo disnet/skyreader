@@ -235,8 +235,12 @@
   // body is often just an excerpt. Fall back to the feed body in IndexedDB (the
   // in-memory article is "light", its content stripped — see toLightArticle).
   let lazyArticleContent = $state<string | null>(null);
+  // Whether that body is the user's own saved snapshot rather than the feed's —
+  // the display ladder below treats the two differently.
+  let lazyArticleIsSavedCopy = $state(false);
   $effect(() => {
     lazyArticleContent = null;
+    lazyArticleIsSavedCopy = false;
     if (readerItem.type !== 'article') return;
     const {
       id,
@@ -253,7 +257,10 @@
         if (saved?.rkey) {
           const savedBody = await savesStore.getContent(saved.rkey);
           if (savedBody) {
-            if (!cancelled) lazyArticleContent = savedBody;
+            if (!cancelled) {
+              lazyArticleContent = savedBody;
+              lazyArticleIsSavedCopy = true;
+            }
             return;
           }
         }
@@ -311,14 +318,20 @@
     // Prefer the lazily-loaded body for saved items; normalized.displayContent
     // falls back to the description until it arrives.
     if (readerItem.type === 'saved' && lazySavedContent) return lazySavedContent;
-    // Same for a saved feed article rendered via the 'article' path — its body
-    // was stripped from memory and is read back from IndexedDB above.
-    if (readerItem.type === 'article' && lazyArticleContent) return lazyArticleContent;
-    // Oversized feed bodies are omitted from D1. When that ladder is empty, the
-    // on-open extract upgrades the interim RSS description in place.
+    // A save's own snapshot still outranks everything — it's the body the user
+    // kept (and what their highlights are anchored in).
+    if (readerItem.type === 'article' && lazyArticleIsSavedCopy && lazyArticleContent)
+      return lazyArticleContent;
+    // Otherwise an extract of the original wins over the feed's body, matching
+    // ArticleCard: the entry only exists because something asked for it (Shift+F,
+    // the ⋯ menu, the truncated-article nudge), and an RSS body is often just an
+    // excerpt. It's also how an oversized body — dropped at ingest — gets here.
     const extractedArticle =
       readerItem.type === 'article' ? linkPostContentStore.get(readerItem.item.url) : undefined;
     if (extractedArticle?.content) return extractedArticle.content;
+    // Else the feed body for an article rendered via the 'article' path — it was
+    // stripped from memory and is read back from IndexedDB above.
+    if (readerItem.type === 'article' && lazyArticleContent) return lazyArticleContent;
     // For a stripped document, re-render with the lazily-loaded textContent fed
     // back in — structured `content` still wins inside getDisplayContent, so this
     // only changes the unrecognized-format fallback (description → full text).
