@@ -102,4 +102,60 @@ test.describe('Timeline refresh', () => {
     expect(readGuids).toContain('timeline-item-1');
     expect(readGuids).not.toContain('timeline-item-2');
   });
+
+  test('reader extracts a truncated article once and reuses it on reopen', async ({
+    authedPage,
+    testUser,
+  }) => {
+    const articleUrl = 'https://example.com/truncated-reader';
+    const description = 'Short RSS description while the full article loads.';
+    const extractedText = 'Full extracted article text that was absent from the feed archive.';
+    await seedSubscription(testUser, { feedUrl: FEED_URL, title: FEED_TITLE });
+    await seedFeedItems(
+      FEED_URL,
+      [
+        {
+          guid: 'truncated-reader-item',
+          title: 'Truncated Reader Article',
+          url: articleUrl,
+          summary: description,
+          contentTruncated: true,
+        },
+      ],
+      { title: FEED_TITLE, siteUrl: 'https://example.com' }
+    );
+
+    let extractCalls = 0;
+    await authedPage.route('**/api/extract', async (route) => {
+      extractCalls += 1;
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          title: 'Truncated Reader Article',
+          author: null,
+          description,
+          content: `<p>${extractedText}</p>`,
+          domain: 'example.com',
+          image: null,
+          published: null,
+          wordCount: 12,
+        }),
+      });
+    });
+
+    await authedPage.goto('/feeds');
+    const card = authedPage.locator('.article-item-anchor', {
+      has: authedPage.getByText('Truncated Reader Article', { exact: true }),
+    });
+    await expect(card).toBeVisible({ timeout: 15_000 });
+    await card.locator('button.article-header').click();
+    await card.getByRole('button', { name: 'Reader', exact: true }).click();
+    await expect(authedPage.locator('.reader-body')).toContainText(extractedText);
+    expect(extractCalls).toBe(1);
+
+    await authedPage.getByRole('button', { name: 'Back', exact: true }).click();
+    await card.getByRole('button', { name: 'Reader', exact: true }).click();
+    await expect(authedPage.locator('.reader-body')).toContainText(extractedText);
+    expect(extractCalls).toBe(1);
+  });
 });

@@ -37,7 +37,7 @@
   import { magazineThemeVars } from '$lib/utils/magazineTheme';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
-  import { tick, onMount, onDestroy } from 'svelte';
+  import { tick, onMount, onDestroy, untrack } from 'svelte';
 
   let {
     readerItem,
@@ -238,7 +238,14 @@
   $effect(() => {
     lazyArticleContent = null;
     if (readerItem.type !== 'article') return;
-    const { id, guid, subscriptionId, content: inMemoryContent } = readerItem.item;
+    const {
+      id,
+      guid,
+      subscriptionId,
+      content: inMemoryContent,
+      contentTruncated,
+      url,
+    } = readerItem.item;
     let cancelled = false;
     (async () => {
       try {
@@ -262,9 +269,19 @@
             .filter((a) => a.subscriptionId === subscriptionId)
             .first();
         }
-        if (!cancelled) lazyArticleContent = row?.content ?? '';
+        const cachedContent = row?.content ?? '';
+        if (!cancelled) lazyArticleContent = cachedContent;
+        if (!cancelled && !cachedContent && contentTruncated && url) {
+          // Keep the store's reactive entry map out of this effect's dependency
+          // graph. Failed extracts delete their entry so a later open can retry;
+          // tracking that deletion here would create an immediate retry loop.
+          untrack(() => linkPostContentStore.fetch(url));
+        }
       } catch {
         if (!cancelled) lazyArticleContent = '';
+        if (!cancelled && contentTruncated && url) {
+          untrack(() => linkPostContentStore.fetch(url));
+        }
       }
     })();
     return () => {
@@ -297,6 +314,11 @@
     // Same for a saved feed article rendered via the 'article' path — its body
     // was stripped from memory and is read back from IndexedDB above.
     if (readerItem.type === 'article' && lazyArticleContent) return lazyArticleContent;
+    // Oversized feed bodies are omitted from D1. When that ladder is empty, the
+    // on-open extract upgrades the interim RSS description in place.
+    const extractedArticle =
+      readerItem.type === 'article' ? linkPostContentStore.get(readerItem.item.url) : undefined;
+    if (extractedArticle?.content) return extractedArticle.content;
     // For a stripped document, re-render with the lazily-loaded textContent fed
     // back in — structured `content` still wins inside getDisplayContent, so this
     // only changes the unrecognized-format fallback (description → full text).
