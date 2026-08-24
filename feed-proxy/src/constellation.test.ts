@@ -10,10 +10,7 @@ const DEFAULT_CONFIG: AppConfig = {
   defaultLimit: 100,
 };
 
-const LINKER = 'did:plc:linker1';
-const LINKER_PDS = 'https://pds.linker.example';
 const DOC_URI = 'at://did:plc:author/site.standard.document/doc1';
-const ARTICLE = 'https://example.com/the-article';
 
 function createTestApp(config: Partial<AppConfig> = {}) {
   const db = new Database(':memory:');
@@ -22,66 +19,12 @@ function createTestApp(config: Partial<AppConfig> = {}) {
   return { db, ...built };
 }
 
-// Mock the Constellation endpoints + the linker's PLC + getRecord calls.
-function mockConstellationFetch(
-  opts: {
-    quoteCount?: number;
-    linkingDids?: string[];
-    note?: string;
-  } = {}
-) {
+// Mock the one Constellation endpoint the context still reads.
+function mockConstellationFetch(opts: { quoteCount?: number } = {}) {
   return spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
     const url = String(input);
-
     if (url.includes('/links/count')) {
       return new Response(JSON.stringify({ total: opts.quoteCount ?? 0 }));
-    }
-    if (url.includes('/links?')) {
-      const linking_records = (opts.linkingDids ?? []).map((did, i) => ({
-        did,
-        collection: 'site.standard.document',
-        rkey: `rk${i}`,
-      }));
-      return new Response(JSON.stringify({ total: linking_records.length, linking_records }));
-    }
-    if (url.startsWith('https://plc.directory/')) {
-      return new Response(
-        JSON.stringify({
-          id: LINKER,
-          alsoKnownAs: ['at://linker.bsky.social'],
-          service: [
-            {
-              id: '#atproto_pds',
-              type: 'AtprotoPersonalDataServer',
-              serviceEndpoint: LINKER_PDS,
-            },
-          ],
-        })
-      );
-    }
-    if (url.includes('com.atproto.repo.getRecord')) {
-      return new Response(
-        JSON.stringify({
-          value: {
-            $type: 'site.standard.document',
-            content: {
-              $type: 'pub.leaflet.content',
-              pages: [
-                {
-                  blocks: [
-                    {
-                      block: {
-                        $type: 'pub.leaflet.blocks.text',
-                        plaintext: opts.note ?? 'great read',
-                      },
-                    },
-                  ],
-                },
-              ],
-            },
-          },
-        })
-      );
     }
     throw new Error(`Unexpected fetch: ${url}`);
   }) as unknown as typeof fetch);
@@ -95,47 +38,32 @@ describe('getSocialContext', () => {
   it('returns empty without throwing when query is empty', async () => {
     const { db } = createTestApp();
     const ctx = await getSocialContext(db, {});
-    expect(ctx).toEqual({ quoteCount: 0, alsoLinkedBy: [] });
+    expect(ctx).toEqual({ quoteCount: 0 });
   });
 
-  it('assembles counts + also-linked-by with resolved handles and notes', async () => {
+  it('counts the posts quoting this one', async () => {
     const { db } = createTestApp();
-    mockConstellationFetch({
-      quoteCount: 1,
-      linkingDids: [LINKER],
-      note: 'love this',
-    });
+    mockConstellationFetch({ quoteCount: 1 });
 
-    const ctx = await getSocialContext(db, {
-      docUri: DOC_URI,
-      articleUrl: ARTICLE,
-    });
-    expect(ctx.quoteCount).toBe(1);
-    expect(ctx.alsoLinkedBy).toHaveLength(1);
-    expect(ctx.alsoLinkedBy[0]).toMatchObject({
-      did: LINKER,
-      handle: 'linker.bsky.social',
-      note: 'love this',
-    });
+    const ctx = await getSocialContext(db, { docUri: DOC_URI });
+    expect(ctx).toEqual({ quoteCount: 1 });
   });
 
-  it('excludes the link post author from also-linked-by', async () => {
+  // The context used to fan out to every linker's PDS for their note. Nothing
+  // renders that now, so nothing should fetch it: one call, to /links/count.
+  it('reads only the quote count — no per-linker PDS fan-out', async () => {
     const { db } = createTestApp();
-    mockConstellationFetch({ linkingDids: [LINKER] });
-    const ctx = await getSocialContext(db, {
-      docUri: DOC_URI,
-      articleUrl: ARTICLE,
-      excludeDid: LINKER,
-    });
-    expect(ctx.alsoLinkedBy).toHaveLength(0);
+    const spy = mockConstellationFetch({ quoteCount: 2 });
+    await getSocialContext(db, { docUri: DOC_URI });
+    expect(spy.mock.calls.length).toBe(1);
   });
 
   it('serves a cached bundle on the second call (no extra fetches)', async () => {
     const { db } = createTestApp();
-    const spy = mockConstellationFetch({ quoteCount: 5, linkingDids: [] });
-    await getSocialContext(db, { docUri: DOC_URI, articleUrl: ARTICLE });
+    const spy = mockConstellationFetch({ quoteCount: 5 });
+    await getSocialContext(db, { docUri: DOC_URI });
     const callsAfterFirst = spy.mock.calls.length;
-    await getSocialContext(db, { docUri: DOC_URI, articleUrl: ARTICLE });
+    await getSocialContext(db, { docUri: DOC_URI });
     expect(spy.mock.calls.length).toBe(callsAfterFirst);
   });
 });
@@ -164,10 +92,8 @@ describe('POST /social-context', () => {
 
   it('returns a per-item context keyed back to the request', async () => {
     const { app } = createTestApp();
-    mockConstellationFetch({ quoteCount: 2, linkingDids: [] });
-    const res = await post(app, {
-      items: [{ key: 'a', docUri: DOC_URI, articleUrl: ARTICLE }],
-    });
+    mockConstellationFetch({ quoteCount: 2 });
+    const res = await post(app, { items: [{ key: 'a', docUri: DOC_URI }] });
     expect(res.status).toBe(200);
     const json = (await res.json()) as {
       items: Array<{ key: string; quoteCount: number }>;

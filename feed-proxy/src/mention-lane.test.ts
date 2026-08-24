@@ -1,7 +1,8 @@
 import { describe, expect, it, afterEach, spyOn } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { initDatabase } from './app';
-import { getMentionLaneItems } from './mention-lane';
+import { getMentionLaneItems, MentionLaneUnavailableError } from './mention-lane';
+import { resetConstellationBreaker } from './constellation-client';
 
 const ARTICLE = 'https://example.com/the-article';
 const PDS = 'https://pds.example';
@@ -53,6 +54,9 @@ function mockConstellation(
 describe('getMentionLaneItems', () => {
   afterEach(() => {
     (globalThis.fetch as ReturnType<typeof spyOn>).mockRestore?.();
+    // The breaker is module state shared across the whole file: the failure
+    // tests below would otherwise open it and short-circuit whatever runs next.
+    resetConstellationBreaker();
   });
 
   it('resolves a Bluesky lane: permalink + note, deduped across paths', async () => {
@@ -84,6 +88,9 @@ describe('getMentionLaneItems', () => {
     expect(entries[0]).toEqual({
       did: 'did:plc:alice',
       handle: 'alice.test',
+      displayName: null,
+      avatar: null,
+      createdAt: null,
       note: 'great read',
       url: 'https://bsky.app/profile/did:plc:alice/post/post1',
       collections: [],
@@ -120,6 +127,9 @@ describe('getMentionLaneItems', () => {
       {
         did: 'did:plc:bob',
         handle: 'bob.test',
+        displayName: null,
+        avatar: null,
+        createdAt: null,
         note: 'my take',
         url: 'https://skyreader.app/blogs/did:plc:bob/doc1',
         collections: [],
@@ -152,6 +162,9 @@ describe('getMentionLaneItems', () => {
       {
         did: 'did:plc:carol',
         handle: 'carol.test',
+        displayName: null,
+        avatar: null,
+        createdAt: null,
         note: 'a foreign note',
         url: 'https://carol.example/essays/the-essay',
         collections: [],
@@ -215,6 +228,9 @@ describe('getMentionLaneItems', () => {
       {
         did: 'did:plc:eve',
         handle: 'eve.test',
+        displayName: null,
+        avatar: null,
+        createdAt: null,
         note: 'A saved card',
         url: 'https://semble.so/profile/eve.test',
         collections: [
@@ -250,6 +266,9 @@ describe('getMentionLaneItems', () => {
       {
         did: 'did:plc:frank',
         handle: 'frank.test',
+        displayName: null,
+        avatar: null,
+        createdAt: null,
         note: 'this is the part that matters',
         url: null,
         collections: [],
@@ -280,5 +299,137 @@ describe('getMentionLaneItems', () => {
     const db = freshDb();
     const entries = await getMentionLaneItems(db, 'at://did:plc:x/app/rk', 'bluesky');
     expect(entries).toEqual([]);
+  });
+
+  // "Nobody wrote about this" and "we couldn't ask" look identical as an empty
+  // list, and the reader acts on the first. These three pin the difference.
+  it('throws rather than claiming nobody wrote about it when discovery is unreachable', async () => {
+    const db = freshDb();
+    const spy = spyOn(globalThis, 'fetch').mockImplementation(
+      (async () => new Response('upstream is down', { status: 503 })) as unknown as typeof fetch
+    );
+
+    await expect(getMentionLaneItems(db, ARTICLE, 'bluesky')).rejects.toThrow(
+      MentionLaneUnavailableError
+    );
+
+    // And nothing is cached, so the reader's retry actually re-asks.
+    const callsAfterFirst = spy.mock.calls.length;
+    await getMentionLaneItems(db, ARTICLE, 'bluesky').catch(() => {});
+    expect(spy.mock.calls.length).toBeGreaterThan(callsAfterFirst);
+  });
+
+  it('throws when the index says a lane has people but the record lookup is unreachable', async () => {
+    const db = freshDb();
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/links/all') {
+        return new Response(
+          JSON.stringify({
+            links: { 'app.bsky.feed.post': { '.embed.external.uri': { distinct_dids: 1 } } },
+          })
+        );
+      }
+      // The lane exists; asking *who* is what fails.
+      return new Response('upstream is down', { status: 503 });
+    }) as unknown as typeof fetch);
+
+    await expect(getMentionLaneItems(db, ARTICLE, 'bluesky')).rejects.toThrow(
+      MentionLaneUnavailableError
+    );
+  });
+
+  it('does not throw when one source is unreachable but people still resolved', async () => {
+    const db = freshDb();
+    seedDid(db, 'did:plc:judy', 'judy.test');
+    let linksCalls = 0;
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/links/all') {
+        return new Response(
+          JSON.stringify({
+            links: {
+              'app.bsky.feed.post': {
+                '.embed.external.uri': { distinct_dids: 1 },
+                '.facets[].features[app.bsky.richtext.facet#link].uri': { distinct_dids: 1 },
+              },
+            },
+          })
+        );
+      }
+      if (url.pathname === '/links') {
+        // First source answers, second is down — a partial outage that still has
+        // somebody to show, so it degrades quietly instead of erroring.
+        linksCalls++;
+        if (linksCalls > 1) return new Response('upstream is down', { status: 503 });
+        return new Response(
+          JSON.stringify({
+            linking_records: [
+              { did: 'did:plc:judy', collection: 'app.bsky.feed.post', rkey: 'post12' },
+            ],
+          })
+        );
+      }
+      return new Response(JSON.stringify({ value: { text: 'still here' } }));
+    }) as unknown as typeof fetch);
+
+    const entries = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+    expect(entries.length).toBe(1);
+    expect(entries[0].note).toBe('still here');
+  });
+
+  it('carries the author profile and the record date so a merged view can show people in order', async () => {
+    const db = freshDb();
+    seedDid(db, 'did:plc:grace', 'grace.test');
+
+    mockConstellation(
+      { 'app.bsky.feed.post': { '.embed.external.uri': { distinct_dids: 1 } } },
+      { 'app.bsky.feed.post|.embed.external.uri': [{ did: 'did:plc:grace', rkey: 'post9' }] },
+      {
+        post9: { text: 'worth your time', createdAt: '2026-08-22T01:26:11.000Z' },
+        // The author's app.bsky.actor.profile record (rkey 'self').
+        self: {
+          displayName: 'Grace Hopper',
+          avatar: { ref: { $link: 'bafyavatarcid' } },
+        },
+      }
+    );
+
+    const [entry] = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+    expect(entry.displayName).toBe('Grace Hopper');
+    expect(entry.avatar).toBe(
+      'https://cdn.bsky.app/img/avatar/plain/did:plc:grace/bafyavatarcid@jpeg'
+    );
+    expect(entry.createdAt).toBe('2026-08-22T01:26:11.000Z');
+  });
+
+  it('degrades to a null profile and null date when the records carry neither', async () => {
+    const db = freshDb();
+    seedDid(db, 'did:plc:heidi', 'heidi.test');
+
+    mockConstellation(
+      { 'app.bsky.feed.post': { '.embed.external.uri': { distinct_dids: 1 } } },
+      { 'app.bsky.feed.post|.embed.external.uri': [{ did: 'did:plc:heidi', rkey: 'post10' }] },
+      { post10: { text: 'no date here' } }
+    );
+
+    const [entry] = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+    expect(entry.displayName).toBeNull();
+    expect(entry.avatar).toBeNull();
+    expect(entry.createdAt).toBeNull();
+  });
+
+  it('ignores an unparseable record date rather than passing it through', async () => {
+    const db = freshDb();
+    seedDid(db, 'did:plc:ivan', 'ivan.test');
+
+    mockConstellation(
+      { 'app.bsky.feed.post': { '.embed.external.uri': { distinct_dids: 1 } } },
+      { 'app.bsky.feed.post|.embed.external.uri': [{ did: 'did:plc:ivan', rkey: 'post11' }] },
+      { post11: { text: 'bad date', createdAt: 'not a date' } }
+    );
+
+    const [entry] = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+    expect(entry.createdAt).toBeNull();
   });
 });

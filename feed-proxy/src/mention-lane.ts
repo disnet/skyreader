@@ -16,9 +16,15 @@
  * Link-outs and notes are best-effort and lane-specific: a Bluesky post and a
  * linkblog entry have stable permalinks we can build from did+rkey, while
  * margin.at / Semble degrade to handle-only when their shape isn't known. The
- * whole thing is adornment — any failure degrades to an empty list, and the
- * assembled result is cached briefly in `constellation_cache` (shared with the
- * Phase 3 context bundle; same short TTL since the index is firehose-fresh).
+ * whole thing is adornment — a per-record failure degrades to an emptier entry,
+ * and the assembled result is cached briefly in `constellation_cache` (shared
+ * with the Phase 3 context bundle; same short TTL since the index is
+ * firehose-fresh).
+ *
+ * The one failure that does NOT degrade silently is the index itself being
+ * unreachable: an empty list is a claim ("nobody wrote about this") the reader
+ * acts on, so we raise MentionLaneUnavailableError instead and let the surface
+ * offer a retry.
  */
 import { Database } from 'bun:sqlite';
 import { normalizeArticleUrl, constellationTargets } from './url-normalize';
@@ -26,7 +32,7 @@ import { laneForSource, type LaneId } from './lanes';
 import { resolveHandle, resolvePdsUrl } from './did-resolver';
 import { safeFetch } from './ssrf-guard';
 import { resolveSiteMeta, buildCanonicalUrl, parseAtUri } from './standard-site';
-import { constellationGet } from './constellation-client';
+import { constellationGet, constellationGetResult } from './constellation-client';
 import { extractContentText } from './document-content';
 
 // The one-per-user Skyreader linkblog publication rkey (see backend
@@ -37,6 +43,10 @@ const FETCH_TIMEOUT_MS = 10 * 1000;
 
 // Firehose-fresh index → keep the assembled list only briefly.
 const CACHE_TTL_MS = 5 * 60 * 1000;
+// A person's name and avatar change far more slowly than the link index, and the
+// lookup costs a PDS round trip per author, so it gets its own long TTL. Held
+// well inside the table's 24h sweep (see app.ts).
+const PROFILE_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 // One entry per author; bound the per-record PDS fetches behind an expand.
 const MAX_ENTRIES = 8;
 // Over-fetch linking records before dedup-by-author so the cap is met after dups.
@@ -59,6 +69,16 @@ export interface SembleCollection {
 export interface MentionLaneEntry {
   did: string;
   handle: string | null;
+  // The author's own name + avatar from their app.bsky.actor.profile record, so
+  // a lane reads as people rather than as a list of DIDs. Both null when they
+  // have no profile record (or it can't be resolved) — the UI falls back to a
+  // monogram and the handle.
+  displayName: string | null;
+  avatar: string | null;
+  // When the reference itself was written (the record's own timestamp, ISO), so
+  // the surface can sort one merged discussion chronologically across lanes.
+  // Null when the record carries no usable date.
+  createdAt: string | null;
   note: string | null;
   url: string | null;
   // Which Semble collection(s) the saver filed this card into (Semble lane only).
@@ -216,6 +236,63 @@ async function resolveSembleCollections(
   return out;
 }
 
+// The author's public profile, as the reader would recognize them: the display
+// name and avatar from their app.bsky.actor.profile record. Read straight from
+// their PDS (the same path every other record here takes) rather than through an
+// appview, so a person with no Bluesky presence still resolves. Cached on its own
+// long TTL because a name and face outlive the link index by a wide margin.
+async function resolveProfile(db: Database, did: string): Promise<AuthorProfile> {
+  const key = `profile:${did}`;
+  const now = Date.now();
+  const cached = db
+    .query<
+      CacheRow,
+      [string]
+    >('SELECT cache_key, context_json, cached_at FROM constellation_cache WHERE cache_key = ?')
+    .get(key);
+  if (cached && now - cached.cached_at < PROFILE_CACHE_TTL_MS) {
+    try {
+      return JSON.parse(cached.context_json) as AuthorProfile;
+    } catch {
+      // fall through and re-resolve
+    }
+  }
+
+  const value = await getRecordValue(db, did, 'app.bsky.actor.profile', 'self');
+  const displayName = firstString(value?.displayName);
+  const cid = firstString((value?.avatar as { ref?: { $link?: unknown } })?.ref?.$link);
+  const profile: AuthorProfile = {
+    displayName,
+    // The Bluesky CDN serves any repo's avatar blob by DID + CID (same shape the
+    // backend uses for publication icons), which keeps us off the PDS for images.
+    avatar: cid ? `https://cdn.bsky.app/img/avatar/plain/${did}/${cid}@jpeg` : null,
+  };
+  // Cache the miss too — a DID with no profile record shouldn't re-fetch on
+  // every expand.
+  writeCacheJson(db, key, profile, now);
+  return profile;
+}
+
+interface AuthorProfile {
+  displayName: string | null;
+  avatar: string | null;
+}
+
+// The record's own timestamp, normalized to ISO. Each lexicon spells it
+// differently (a post has `createdAt`, a standard.site document `publishedAt`, a
+// margin.at note `created`), so the caller passes the keys in priority order.
+// Anything unparseable degrades to null and simply sorts last.
+function recordDate(value: Record<string, unknown> | null, ...keys: string[]): string | null {
+  if (!value) return null;
+  for (const key of keys) {
+    const raw = firstString(value[key]);
+    if (!raw) continue;
+    const ms = Date.parse(raw);
+    if (!Number.isNaN(ms)) return new Date(ms).toISOString();
+  }
+  return null;
+}
+
 // Build a lane entry from one linking record: a stable link-out where the lane
 // has one, plus a note pulled from the record (best-effort, lane-specific).
 async function resolveEntry(
@@ -224,26 +301,33 @@ async function resolveEntry(
   rec: { did: string; collection: string; rkey: string }
 ): Promise<MentionLaneEntry> {
   const { did, collection, rkey } = rec;
-  const handle = await resolveHandle(db, did);
+  // Identity and the record itself are independent lookups — run them together
+  // so adding the profile doesn't add a round trip to the entry's latency.
+  const [handle, profile, value] = await Promise.all([
+    resolveHandle(db, did),
+    resolveProfile(db, did),
+    getRecordValue(db, did, collection, rkey),
+  ]);
   let url: string | null = null;
   let note: string | null = null;
   let collections: SembleCollection[] = [];
   let verb: string | null = null;
   let quote: string | null = null;
+  let createdAt: string | null = null;
 
   switch (laneId) {
     case 'bluesky': {
       url = `https://bsky.app/profile/${did}/post/${rkey}`;
-      const value = await getRecordValue(db, did, collection, rkey);
       if (value) note = firstString(value.text);
+      createdAt = recordDate(value, 'createdAt');
       break;
     }
     case 'linkblog': {
-      const value = await getRecordValue(db, did, collection, rkey);
       if (value) {
         note = extractDocumentSnippet(value);
         url = await resolveDocumentUrl(db, did, rkey, value);
       }
+      createdAt = recordDate(value, 'publishedAt', 'createdAt');
       break;
     }
     case 'margin': {
@@ -252,7 +336,6 @@ async function resolveEntry(
       // `.target.selector.exact`) as the quote, and the user's own words
       // (`.body.value`) as the comment. No stable public permalink, so no
       // link-out.
-      const value = await getRecordValue(db, did, collection, rkey);
       if (value) {
         verb = marginVerb(value.motivation);
         const body = value.body as Record<string, unknown> | undefined;
@@ -261,6 +344,7 @@ async function resolveEntry(
         const selector = target?.selector as Record<string, unknown> | undefined;
         quote = firstString(selector?.exact);
       }
+      createdAt = recordDate(value, 'created', 'createdAt');
       break;
     }
     case 'semble': {
@@ -268,17 +352,28 @@ async function resolveEntry(
       // profile (the per-card page isn't built), and resolve which named
       // collection(s) they filed it into.
       if (handle) url = `${SEMBLE_WEB_BASE}/profile/${handle}`;
-      const value = await getRecordValue(db, did, collection, rkey);
       if (value) {
         const content = value.content as Record<string, unknown> | undefined;
         note = firstString(content?.title, content?.note, value.title, value.note);
       }
+      createdAt = recordDate(value, 'createdAt', 'created');
       collections = await resolveSembleCollections(db, `at://${did}/${collection}/${rkey}`);
       break;
     }
   }
 
-  return { did, handle, note, url, collections, verb, quote };
+  return {
+    did,
+    handle,
+    displayName: profile.displayName,
+    avatar: profile.avatar,
+    createdAt,
+    note,
+    url,
+    collections,
+    verb,
+    quote,
+  };
 }
 
 function cacheKey(laneId: LaneId, normUrl: string): string {
@@ -286,9 +381,26 @@ function cacheKey(laneId: LaneId, normUrl: string): string {
 }
 
 /**
+ * Constellation never answered, so we don't know whether anyone wrote about this
+ * article. Thrown rather than returned as `[]` because the two are different
+ * things to a reader: an empty list says "nobody", and the surface is entitled
+ * to say that plainly. Only raised when we came back with nothing at all — a
+ * partial outage that still yielded people resolves normally.
+ */
+export class MentionLaneUnavailableError extends Error {
+  constructor() {
+    super('Constellation unavailable');
+    this.name = 'MentionLaneUnavailableError';
+  }
+}
+
+/**
  * Resolve the people inside one lane for an article URL, served from
- * `constellation_cache` when fresh. Returns an empty list (never throws) on a
- * bad URL, an unknown lane, or any Constellation/PDS failure.
+ * `constellation_cache` when fresh. Returns an empty list for a bad URL, an
+ * unknown lane, or a PDS failure on an individual record. Throws
+ * `MentionLaneUnavailableError` when Constellation itself couldn't be reached
+ * and nothing resolved — nothing is cached in that case, so the reader's retry
+ * hits the network rather than a cached "nobody".
  */
 export async function getMentionLaneItems(
   db: Database,
@@ -319,9 +431,13 @@ export async function getMentionLaneItems(
   // (see constellationTargets) — keeping only those that bucket into the
   // requested lane, with the target form that actually carries the links.
   const sources: Array<{ target: string; collection: string; path: string }> = [];
+  // Set by any call the host didn't answer. An empty result that carries this is
+  // "we don't know", not "nobody" — see MentionLaneUnavailableError.
+  let unreachable = false;
   for (const target of constellationTargets(normUrl)) {
-    const all = await constellationGet<LinksAllResponse>('/links/all', { target });
-    for (const [collection, paths] of Object.entries(all?.links ?? {})) {
+    const all = await constellationGetResult<LinksAllResponse>('/links/all', { target });
+    if (!all.reachable) unreachable = true;
+    for (const [collection, paths] of Object.entries(all.data?.links ?? {})) {
       for (const [path, stats] of Object.entries(paths)) {
         if (!stats?.distinct_dids) continue;
         if (laneForSource(collection, path)?.id === laneId)
@@ -330,6 +446,7 @@ export async function getMentionLaneItems(
     }
   }
   if (sources.length === 0) {
+    if (unreachable) throw new MentionLaneUnavailableError();
     // Cache the empty result too, so a lane with no people isn't re-queried on
     // every expand within the TTL.
     writeCache(db, key, [], now);
@@ -342,19 +459,24 @@ export async function getMentionLaneItems(
   const picked: Array<{ did: string; collection: string; rkey: string }> = [];
   for (const src of sources) {
     if (picked.length >= MAX_ENTRIES) break;
-    const data = await constellationGet<LinksResponse>('/links', {
+    const links = await constellationGetResult<LinksResponse>('/links', {
       target: src.target,
       collection: src.collection,
       path: src.path,
       limit: String(LINKS_PAGE_LIMIT),
     });
-    for (const rec of data?.linking_records ?? []) {
+    if (!links.reachable) unreachable = true;
+    for (const rec of links.data?.linking_records ?? []) {
       if (seen.has(rec.did)) continue;
       seen.add(rec.did);
       picked.push({ did: rec.did, collection: rec.collection, rkey: rec.rkey });
       if (picked.length >= MAX_ENTRIES) break;
     }
   }
+  // The index said this lane has people; if we then couldn't reach it to ask who,
+  // an empty list would read as "nobody" — which is the one thing we know is
+  // false here.
+  if (picked.length === 0 && unreachable) throw new MentionLaneUnavailableError();
 
   const entries = await Promise.all(picked.map((rec) => resolveEntry(db, laneId, rec)));
   writeCache(db, key, entries, now);
@@ -362,9 +484,16 @@ export async function getMentionLaneItems(
 }
 
 function writeCache(db: Database, key: string, entries: MentionLaneEntry[], now: number): void {
+  writeCacheJson(db, key, entries, now);
+}
+
+// Shared upsert for anything this module parks in `constellation_cache` (the
+// assembled lane list, a resolved author profile). Each key carries its own TTL
+// on read.
+function writeCacheJson(db: Database, key: string, value: unknown, now: number): void {
   db.run(
     `INSERT INTO constellation_cache (cache_key, context_json, cached_at) VALUES (?, ?, ?)
 		ON CONFLICT(cache_key) DO UPDATE SET context_json = excluded.context_json, cached_at = excluded.cached_at`,
-    [key, JSON.stringify(entries), now]
+    [key, JSON.stringify(value), now]
   );
 }

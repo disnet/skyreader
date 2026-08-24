@@ -17,7 +17,11 @@ import { getSocialContext, type SocialContext, type SocialContextQuery } from '.
 import { getLinkblogRegistry } from './linkblog-registry';
 import { getConstellationStats } from './constellation-client';
 import { readCachedMentions, enrichMentions } from './mentions';
-import { getMentionLaneItems, type MentionLaneEntry } from './mention-lane';
+import {
+  getMentionLaneItems,
+  MentionLaneUnavailableError,
+  type MentionLaneEntry,
+} from './mention-lane';
 import type { LaneId } from './lanes';
 import { normalizeArticleUrl } from './url-normalize';
 import { Semaphore, OverloadError } from './semaphore';
@@ -3001,15 +3005,11 @@ export function createApp(db: Database, config: AppConfig) {
 
     const results = await Promise.all(
       items.map(async (item) => {
-        const query: SocialContextQuery = {
-          docUri: item.docUri,
-          articleUrl: item.articleUrl,
-          excludeDid: item.excludeDid,
-        };
+        const query: SocialContextQuery = { docUri: item.docUri };
         // Key the response back to the request (the client's own `key`, or the
         // docUri, so it can reconcile by position-independent id).
-        const key = item.key || item.docUri || item.articleUrl || '';
-        const inflightKey = `${query.docUri || ''}|${query.articleUrl || ''}|${query.excludeDid || ''}`;
+        const key = item.key || item.docUri || '';
+        const inflightKey = query.docUri || '';
 
         let pending = inFlightContext.get(inflightKey);
         if (!pending) {
@@ -3025,7 +3025,7 @@ export function createApp(db: Database, config: AppConfig) {
         } catch (error) {
           // Best-effort: never fail the batch over one item.
           console.error('[social-context] item error:', error);
-          return { key, quoteCount: 0, alsoLinkedBy: [] };
+          return { key, quoteCount: 0 };
         }
       })
     );
@@ -3109,8 +3109,18 @@ export function createApp(db: Database, config: AppConfig) {
       );
       inFlightLane.set(laneKey, pending);
     }
-    const entries = await pending;
-    return c.json({ entries });
+    try {
+      const entries = await pending;
+      return c.json({ entries });
+    } catch (error) {
+      // Constellation never answered. Say so rather than returning an empty
+      // list, which the reader would read as "nobody wrote about this" — and
+      // which the client would then cache as a settled answer.
+      if (error instanceof MentionLaneUnavailableError) {
+        return c.json({ error: 'Atmosphere unavailable' }, 503);
+      }
+      throw error;
+    }
   });
 
   return { app, inFlight, inFlightDocs, warmStaleFeeds, warmStaleDocuments };

@@ -103,18 +103,45 @@
 
   const atmosphere = useAtmosphere({
     itemUrl: () => itemUrl,
+    itemTitle: () => title,
+    // A bridge posts the publication's name as often as the headline, so the
+    // note cleaner needs both to recognize a bare relink.
+    sourceTitle: () => sub?.title,
     isShared: () => sharedNow,
     canCreate: laneCanCreate,
   });
 
+  // Resolving who wrote about this costs a PDS fetch per record, and the section
+  // sits below a whole article — so it waits until the reader is nearly there.
+  // The margin means the stream is usually resolved by the time it's on screen.
+  function loadWhenNear(node: HTMLElement) {
+    if (typeof IntersectionObserver === 'undefined') {
+      atmosphere.openStream();
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          atmosphere.openStream();
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '600px 0px' }
+    );
+    observer.observe(node);
+    return {
+      destroy() {
+        observer.disconnect();
+      },
+    };
+  }
+
   function createInLane(id: LaneId) {
-    if (id === 'linkblog') {
-      if (!sharedNow) composeShare();
-    } else if (id === 'semble') {
+    if (id === 'semble') {
       onSaveToSemble?.();
     } else if (id === 'margin') {
       onSaveToMargin?.();
-    } else {
+    } else if (id === 'bluesky') {
       window.open(
         `https://bsky.app/intent/compose?text=${encodeURIComponent(itemUrl)}`,
         '_blank',
@@ -124,43 +151,47 @@
   }
 </script>
 
-<section class="reader-discussion" aria-label="Discussion">
+<section class="reader-discussion" aria-label="Discussion" use:loadWhenNear>
   <div class="reader-discussion-divider"></div>
-  <!-- One control for the linkblog, in both states: it says where the article
-       stands and opens the composer on it. What you wrote isn't reprinted under
-       the article you just read — it's a click away, in the place you edit it. -->
-  {#if canShareLinkblog}
-    <div class="reader-share-row">
-      <button
-        type="button"
-        class="reader-share-cta"
-        class:shared={sharedNow}
-        onclick={sharedNow ? editShare : composeShare}
-      >
-        <Icon name="share" size={16} />
-        <span>
-          {#if sharedNow}
-            {hasShareNote ? 'Shared with a note' : 'Shared without a note'}
-          {:else if hasShareDraft}
-            Resume your share draft
-          {:else}
-            Share to your linkblog
-          {/if}
-        </span>
-      </button>
-    </div>
-  {/if}
   <AtmospherePanel
     laneRow={atmosphere.laneRow}
-    expandedLane={atmosphere.expandedLane}
-    expandedLaneItems={atmosphere.expandedLaneItems}
+    filters={atmosphere.filters}
+    activeFilter={atmosphere.activeFilter}
+    stream={atmosphere.stream}
     lanesOpen={true}
     {panelId}
-    onToggleLane={atmosphere.toggleLane}
+    onSelectFilter={atmosphere.setFilter}
+    onRetry={atmosphere.retry}
     onCreateInLane={createInLane}
     onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
+    composeLead={canShareLinkblog ? shareControl : undefined}
   />
 </section>
+
+<!-- One control for the linkblog, in both states: it says where the article
+     stands and opens the composer on it. It leads the "Add yours" row because
+     this is the reader's own network — what you write here is your linkblog.
+     What you wrote isn't reprinted under the article you just read: it's a
+     click away, in the place you edit it. -->
+{#snippet shareControl()}
+  <button
+    type="button"
+    class="reader-share-cta"
+    class:shared={sharedNow}
+    onclick={sharedNow ? editShare : composeShare}
+  >
+    <Icon name="share" size={14} />
+    <span>
+      {#if sharedNow}
+        {hasShareNote ? 'Shared with a note' : 'Shared without a note'}
+      {:else if hasShareDraft}
+        Resume draft
+      {:else}
+        Your linkblog
+      {/if}
+    </span>
+  </button>
+{/snippet}
 
 <style>
   .reader-discussion {
@@ -169,44 +200,56 @@
 
   .reader-discussion-divider {
     height: 1px;
-    margin-bottom: 1.25rem;
-    background: var(--color-border, #e8e8e8);
+    margin-bottom: 1.5rem;
+    background: var(--color-border);
   }
 
-  .reader-share-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
+  /* The linkblog's own control, in the compose row's vocabulary but carrying
+     more weight than its neighbours — it is the one that writes to the reader's
+     own publication. */
   .reader-share-cta {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.875rem;
-    border: 1px solid var(--color-border, #e0e0e0);
-    border-radius: 8px;
+    gap: 0.375rem;
+    padding: 0.3125rem 0.625rem;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
     background: none;
-    color: var(--color-text);
-    font-size: var(--text-md);
+    font: inherit;
+    font-size: var(--text-sm);
     font-weight: var(--weight-medium);
+    line-height: var(--leading-none);
+    color: var(--color-text);
     cursor: pointer;
+    transition:
+      border-color 0.15s ease,
+      color 0.15s ease;
   }
 
   /* Already shared: the control reads as state, not an invitation — the border
      picks up the interaction blue and stays there. */
   .reader-share-cta.shared {
-    border-color: var(--color-primary, #0066cc);
-    color: var(--color-primary, #0066cc);
+    border-color: var(--color-primary);
+    color: var(--color-primary);
   }
 
   .reader-share-cta:hover {
-    border-color: var(--color-primary, #0066cc);
-    color: var(--color-primary, #0066cc);
+    border-color: var(--color-primary);
+    color: var(--color-primary);
   }
 
   .reader-share-cta :global(.icon) {
     color: currentColor;
+  }
+
+  .reader-share-cta:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reader-share-cta {
+      transition: none;
+    }
   }
 </style>

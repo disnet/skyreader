@@ -34,6 +34,12 @@ export interface LaneRowVM {
 export interface LanePersonVM {
   did: string;
   handle: string | null;
+  /** The author's own name, when their profile record carries one. */
+  displayName: string | null;
+  /** Their avatar image URL, or null — the entry falls back to a monogram. */
+  avatar: string | null;
+  /** When the reference was written (ISO). Null when the record had no date. */
+  createdAt: string | null;
   note: string | null;
   url: string | null;
   /** Named Semble collection(s) the saver filed the card into (Semble lane only). */
@@ -44,16 +50,65 @@ export interface LanePersonVM {
   quote: string | null;
 }
 
-export interface ExpandedLaneItemsVM {
-  loading: boolean;
-  entries: LanePersonVM[];
+/** `all` is the resting state of the discussion: every lane, one stream. */
+export type DiscussionFilterId = LaneId | 'all';
+
+/** One chip in the discussion's filter row. `all` carries no icon. */
+export interface DiscussionFilterVM {
+  id: DiscussionFilterId;
+  label: string;
+  count: number;
+  capped: boolean;
+  icon: IconName | null;
 }
 
-export interface AlsoLinkedEntryVM {
-  recordUri: string;
-  did: string;
-  handle: string | null;
-  note: string | null;
+/**
+ * One reference in the merged discussion — a lane entry that has been told
+ * which lane it came from, had its note cleaned of the article's own title and
+ * links, and had its date pre-formatted. The panel renders these directly.
+ */
+export interface DiscussionEntryVM extends LanePersonVM {
+  /** Stable list key across lanes. */
+  key: string;
+  lane: LaneId;
+  laneLabel: string;
+  laneIcon: IconName;
+  /**
+   * What this person did, in the head line: the lane's verb ('posted', 'noted'),
+   * or margin.at's per-note motivation ('highlighted'). Null where the body
+   * already says it — a Semble save names its collections.
+   */
+  headVerb: string | null;
+  /** Pre-formatted relative time ('2d ago'), or null when undated. */
+  relativeTime: string | null;
+  /** Full timestamp for the `datetime` attribute / tooltip. */
+  isoTime: string | null;
+  /** `note` with the article's title and bare URLs stripped; null when nothing
+      of substance was left. */
+  cleanNote: string | null;
+}
+
+/** The merged, filtered, chronologically ordered discussion. */
+export interface DiscussionStreamVM {
+  /**
+   * Nobody has asked for the people yet — the host hasn't opened the stream (the
+   * card's Discussion toggle, the reader's section scrolling into range). Not the
+   * same as `loading`: there is no request in flight and nothing to say yet, so
+   * the surface renders neither skeletons nor an empty state.
+   */
+  idle?: boolean;
+  /** At least one lane in view is still resolving its people. */
+  loading: boolean;
+  /** Every lane in view failed to resolve and none produced entries. */
+  failed?: boolean;
+  /** People who said something: a note, a quoted passage, or a named collection. */
+  entries: DiscussionEntryVM[];
+  /**
+   * People who only dropped the link — a bridge or a bot whose whole post was
+   * the headline and the URL. They are distribution, not discussion, so the
+   * surface collects them into one line instead of giving each an empty row.
+   */
+  linkOnly?: DiscussionEntryVM[];
 }
 
 export interface SocialContextVM {
@@ -77,6 +132,14 @@ export interface ArticleCardViewProps {
   sanitizedContent: string;
   hasContent: boolean;
 
+  /**
+   * Whether the Share control belongs in the action bar at all — the user is
+   * signed in with a linkblog. Resolved by the container: the discussion's
+   * compose row deliberately does NOT offer the linkblog on a card (the Share
+   * button owns it), so this can't be inferred from the lane VM.
+   */
+  canShare?: boolean;
+
   isDocumentMode: boolean;
   isLinkPostMode: boolean;
 
@@ -92,11 +155,12 @@ export interface ArticleCardViewProps {
   authorDid?: string;
 
   socialContext?: SocialContextVM;
-  alsoLinkedBy?: AlsoLinkedEntryVM[];
 
   laneRow?: LaneRowVM[];
-  expandedLane?: LaneId | null;
-  expandedLaneItems?: ExpandedLaneItemsVM;
+  /** The discussion's filter chips, its active chip, and the merged stream. */
+  filters?: DiscussionFilterVM[];
+  activeFilter?: DiscussionFilterId;
+  stream?: DiscussionStreamVM;
 
   itemTagCount: number;
   itemTags?: string[];
@@ -176,7 +240,10 @@ export interface ArticleCardViewProps {
   onSaveToSemble?: () => void;
   onSaveToMargin?: () => void;
   onFollowSource?: () => void;
-  onToggleLane?: (id: LaneId) => void;
+  onSelectFilter?: (id: DiscussionFilterId) => void;
+  /** Opening Discussion is what starts resolving the people in it. */
+  onOpenStream?: () => void;
+  onRetryStream?: () => void;
   onCreateInLane?: (id: LaneId) => void;
   /** Open the share composer (drafting; resumes an existing draft). */
   onComposeShare?: () => void;

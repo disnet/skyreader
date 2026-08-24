@@ -34,10 +34,10 @@
     authorAvatar,
     authorDid,
     socialContext,
-    alsoLinkedBy = [],
     laneRow = [],
-    expandedLane = null,
-    expandedLaneItems,
+    filters = [],
+    activeFilter = 'all',
+    stream = { idle: true, loading: false, entries: [] },
     itemTagCount,
     itemTags = [],
     collectionPieceCount = 0,
@@ -51,6 +51,7 @@
     highlighted = false,
     isTruncated = false,
     currentlyShared = false,
+    canShare = false,
     currentNote,
     hasShareDraft = false,
     showActionBarIntegrations = false,
@@ -90,7 +91,9 @@
     onSaveToSemble,
     onSaveToMargin,
     onFollowSource,
-    onToggleLane,
+    onSelectFilter,
+    onOpenStream,
+    onRetryStream,
     onCreateInLane,
     onComposeShare,
     onEditShare,
@@ -169,13 +172,12 @@
   const atmosphereCapped = $derived(laneRow.some((l) => l.capped));
   const atmosphereMine = $derived(laneRow.some((l) => l.isMine));
 
-  // The action-bar Share button is the whole linkblog affordance: not yet shared
-  // it opens the composer to draft one, already shared it reopens the composer
-  // on what you posted (where editing and removal live). It shows whenever
-  // sharing is possible at all — the lane offers a create OR the item is already
-  // shared — so pressing it never makes the button vanish.
-  const shareRow = $derived(laneRow.find((l) => l.id === 'linkblog'));
-  const canShare = $derived(Boolean(shareRow?.canCreate) || currentlyShared);
+  // The action-bar Share button is the whole linkblog affordance on a card: not
+  // yet shared it opens the composer to draft one, already shared it reopens the
+  // composer on what you posted (where editing and removal live). It shows
+  // whenever sharing is possible at all — the container says so, OR the item is
+  // already shared — so pressing it never makes the button vanish.
+  const showShare = $derived(canShare || currentlyShared);
   // Shared with commentary vs. shared bare: the button carries that distinction
   // now that the note itself no longer sits under the article.
   const hasShareNote = $derived(Boolean(currentNote?.trim()));
@@ -371,32 +373,17 @@
       {/if}
     </div>
 
-    <!-- Link-post social context (Constellation): recommends, quotes, and who
-         else across the Atmosphere linked this article. Adornment only. -->
-    {#if isLinkPostMode && socialContext && (socialContext.quoteCount > 0 || alsoLinkedBy.length > 0)}
+    <!-- Link-post social context (Constellation): how often this post itself was
+         quoted. Who ELSE linked the article is the discussion's subject, not
+         this row's — it used to be repeated here from the same standard.site
+         index the linkblog lane reads, so the same people appeared twice on one
+         card under the same words. The panel owns them now. Adornment only. -->
+    {#if isLinkPostMode && socialContext && socialContext.quoteCount > 0}
       <div class="link-post-context">
-        {#if socialContext.quoteCount > 0}
-          <span class="context-stat">
-            {socialContext.quoteCount}
-            {socialContext.quoteCount === 1 ? 'quote' : 'quotes'}
-          </span>
-        {/if}
-        {#if alsoLinkedBy.length > 0}
-          <div class="context-also-linked">
-            <span class="context-also-label">also linked by</span>
-            {#each alsoLinkedBy as entry (entry.recordUri)}
-              <span class="context-also-entry">
-                <button
-                  class="context-handle"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    onOpenAuthor?.(entry.did);
-                  }}>@{entry.handle ?? entry.did.slice(0, 16)}</button
-                >{#if entry.note}<span class="context-note">“{entry.note}”</span>{/if}
-              </span>
-            {/each}
-          </div>
-        {/if}
+        <span class="context-stat">
+          {socialContext.quoteCount}
+          {socialContext.quoteCount === 1 ? 'quote' : 'quotes'}
+        </span>
       </div>
     {/if}
 
@@ -417,11 +404,14 @@
            same sticky band. Shown when Discussion is toggled (panelOpen). -->
       <AtmospherePanel
         {laneRow}
-        {expandedLane}
-        {expandedLaneItems}
+        {filters}
+        {activeFilter}
+        {stream}
         lanesOpen={panelOpen}
         panelId="discussion-panel"
-        {onToggleLane}
+        showHeading={false}
+        {onSelectFilter}
+        onRetry={onRetryStream}
         {onCreateInLane}
         {onOpenAuthor}
       />
@@ -446,7 +436,7 @@
              drafts one (a saved draft turns the label into "Draft"); already
              shared it reads "Shared", carries a dot when there's commentary
              behind it, and reopens what you posted for editing or removal. -->
-        {#if canShare}
+        {#if showShare}
           <button
             class="action-btn share-btn"
             class:saved={currentlyShared}
@@ -489,6 +479,9 @@
             onclick={(e) => {
               e.stopPropagation();
               atmosphereOpen = !atmosphereOpen;
+              // Opening is the request to resolve who wrote about this — the
+              // counts are always-on, the people are not.
+              if (atmosphereOpen) onOpenStream?.();
             }}
           >
             <span class="action-icon"><Icon name="activity" size={16} /></span><span
@@ -984,45 +977,6 @@
 
   .context-stat {
     color: var(--color-text-secondary);
-  }
-
-  .context-also-linked {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0.375rem;
-    line-height: var(--leading-snug);
-  }
-
-  .context-also-label {
-    color: var(--color-text-secondary);
-  }
-
-  .context-also-entry {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 0.3125rem;
-    min-width: 0;
-  }
-
-  .context-handle {
-    color: var(--color-text-secondary);
-    text-decoration: none;
-    background: none;
-    border: none;
-    padding: 0;
-    font: inherit;
-    cursor: pointer;
-  }
-
-  .context-handle:hover {
-    color: var(--color-primary);
-    text-decoration: underline;
-  }
-
-  .context-note {
-    color: var(--color-text);
-    font-style: italic;
   }
 
   .article-header-row {

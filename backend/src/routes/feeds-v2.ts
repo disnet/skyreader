@@ -768,9 +768,8 @@ export async function handleV2SocialContext(request: Request, env: Env): Promise
   }
 
   const emptyFor = (item: SocialContextQuery): SocialContextResult => ({
-    key: item.key || item.docUri || item.articleUrl || '',
+    key: item.key || item.docUri || '',
     quoteCount: 0,
-    alsoLinkedBy: [],
   });
 
   try {
@@ -855,9 +854,10 @@ export async function handleV2Mentions(request: Request, env: Env): Promise<Resp
  *
  * Resolve the people inside one mention lane (Phase 5 "see existing items") via
  * the Fly.io proxy: who referenced this article URL via that lane, each with
- * their note + a link out. Thin pass-through — no D1. Lazily called when a lane
- * is expanded. Best-effort: on any proxy failure we return an empty list rather
- * than erroring, so the read never depends on it.
+ * their note + a link out. Thin pass-through — no D1. Lazily called when the
+ * discussion is opened. Adornment, so the read never depends on it — but a
+ * failure answers 503, not an empty list: "we couldn't ask" and "nobody wrote
+ * about this" are different claims, and only one of them deserves a retry.
  */
 export async function handleV2MentionLane(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') {
@@ -892,9 +892,15 @@ export async function handleV2MentionLane(request: Request, env: Env): Promise<R
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error) {
-    // Adornment only — degrade to an empty list instead of failing the request.
+    // Adornment, so this never breaks the read — but it fails loudly rather than
+    // returning `[]`, which the client would show as "nobody wrote about this"
+    // and then cache as settled. The surface turns a 503 into a retry.
     console.error('V2 mention-lane fetch error:', error);
-    return new Response(JSON.stringify({ entries: [] }), {
+    // No `entries` key at all: a caller that reads the body can't mistake this
+    // for an answer. (No `retryable` either — that flag means "session refresh
+    // pending" to the client's fetch wrapper and would trigger a silent retry.)
+    return new Response(JSON.stringify({ error: 'Atmosphere unavailable' }), {
+      status: 503,
       headers: { 'Content-Type': 'application/json' },
     });
   }

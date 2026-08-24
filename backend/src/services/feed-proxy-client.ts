@@ -211,25 +211,17 @@ interface RawDocumentBatchResponse {
   error?: string;
 }
 
-// Social context (Constellation) request/response shapes (Phase 3).
+// Social context (Constellation) request/response shapes (Phase 3). Just the
+// quote count now: "who else linked this article" moved to the discussion
+// surface (/api/v2/mention-lane), which resolves it across all four lanes.
 export interface SocialContextQuery {
   key?: string;
   docUri?: string;
-  articleUrl?: string;
-  excludeDid?: string;
-}
-
-export interface AlsoLinkedEntry {
-  did: string;
-  handle: string | null;
-  note: string | null;
-  recordUri: string;
 }
 
 export interface SocialContextResult {
   key: string;
   quoteCount: number;
-  alsoLinkedBy: AlsoLinkedEntry[];
 }
 
 interface RawSocialContextResponse {
@@ -265,6 +257,13 @@ interface RawMentionsResponse {
 export interface MentionLaneEntryResult {
   did: string;
   handle: string | null;
+  // The author's name + avatar from their app.bsky.actor.profile record, so the
+  // discussion reads as people. Null when they have no profile record.
+  displayName: string | null;
+  avatar: string | null;
+  // The reference's own timestamp (ISO) — what the merged discussion sorts on.
+  // Null when the record carries no usable date.
+  createdAt: string | null;
   note: string | null;
   url: string | null;
   // Named Semble collection(s) the saver filed the card into (Semble lane only).
