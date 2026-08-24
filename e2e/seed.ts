@@ -215,10 +215,40 @@ export async function seedItemLabel(user: TestUser, opts: SeedItemLabelOpts): Pr
   return rkey;
 }
 
+export interface SeedShareDraftOpts {
+  articleUrl: string;
+  articleTitle?: string;
+  text: string;
+  /** Client ms clock. Drives last-write-wins and the drafts-list sort. */
+  updatedAt?: number;
+}
+
+/**
+ * Write a share draft straight into D1, standing in for "the user typed this on
+ * another device." The `draft` column is the opaque ShareDraft blob the client
+ * stores; the backend never interprets it.
+ */
+export async function seedShareDraft(user: TestUser, opts: SeedShareDraftOpts): Promise<void> {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const updatedAt = opts.updatedAt ?? Date.now();
+  const draft = JSON.stringify({
+    articleUrl: opts.articleUrl,
+    articleTitle: opts.articleTitle,
+    blocks: [{ kind: 'text', text: opts.text }],
+    createdAt: updatedAt,
+    updatedAt,
+  });
+
+  await execD1([
+    `INSERT OR REPLACE INTO share_drafts (user_did, article_url, draft, client_updated_at, created_at, updated_at) VALUES (${sqlString(user.did)}, ${sqlString(opts.articleUrl)}, ${sqlString(draft)}, ${updatedAt}, ${nowSeconds}, ${nowSeconds})`,
+  ]);
+}
+
 export async function cleanupTestData(user: TestUser) {
   await execD1([
     `DELETE FROM item_labels_cache WHERE user_did = '${user.did}'`,
     `DELETE FROM saved_articles WHERE user_did = '${user.did}'`,
+    `DELETE FROM share_drafts WHERE user_did = '${user.did}'`,
     `DELETE FROM subscriptions_cache WHERE user_did = '${user.did}'`,
     `DELETE FROM user_settings WHERE user_did = '${user.did}'`,
     `DELETE FROM sessions WHERE did = '${user.did}'`,

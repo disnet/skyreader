@@ -3,8 +3,9 @@
   //
   // One chronological stream: unposted local drafts sit alongside the published
   // entries they will become, in the same entry shape, so there is no second
-  // design for "not finished yet". Drafts are device-local and carry no server
-  // pagination, so they are merged in client-side by their own edit time.
+  // design for "not finished yet". Drafts sync across the user's devices but
+  // carry no server pagination of their own — the store holds the whole set —
+  // so they are merged into this list client-side by their own edit time.
   import LinkblogEntry from './LinkblogEntry.svelte';
   import SavedReader from './SavedReader.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';

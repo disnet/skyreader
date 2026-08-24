@@ -134,6 +134,7 @@ function createAppManager() {
         syncSubscriptions(),
         itemLabelsStore.load(),
         magazineStore.load(),
+        shareDraftsStore.sync(),
         socialStore.loadFeed(true),
         filteredViewsStore.syncWithBackend(),
         // Pull the user's own linkblog so share-state reconciles across devices.

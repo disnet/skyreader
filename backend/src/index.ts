@@ -34,6 +34,11 @@ import {
   handleDeletePublication,
   handleRestorePublication,
 } from './routes/linkblog';
+import {
+  handleGetShareDrafts,
+  handleUpsertShareDraft,
+  handleDeleteShareDraft,
+} from './routes/share-drafts';
 import { handleAtmosphereSubscription } from './routes/atmosphere';
 import {
   handleCreateSubscription,
@@ -383,6 +388,24 @@ async function route(
     case url.pathname === '/api/linkblog/discover':
       if (!session) return unauthorizedResponse(headers);
       response = await handleDiscover(request, env);
+      break;
+
+    // Unposted share drafts — private to the account, D1 only, delta-synced so
+    // a draft started on one device can be finished on another.
+    case url.pathname === '/api/linkblog/drafts':
+      if (!session) return unauthorizedResponse(headers);
+      if (request.method === 'GET') {
+        response = await handleGetShareDrafts(request, env);
+      } else if (request.method === 'PUT') {
+        response = await handleUpsertShareDraft(request, env);
+      } else if (request.method === 'DELETE') {
+        response = await handleDeleteShareDraft(request, env);
+      } else {
+        response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
       break;
 
     // Linkblog endpoints — sharing as portable site.standard.document records
@@ -937,6 +960,23 @@ async function runScheduled(
           ...serializeError(error),
         });
         reportError(error, { tags: { source: 'cron', phase: 'magazine-tombstone-purge' } });
+      }
+
+      // Purge old share-draft tombstones (same 90-day retention, same reason:
+      // a client that was offline across the deletion still has to replay it).
+      try {
+        const shareDraftCutoff = Math.floor(now / 1000) - 90 * 24 * 60 * 60;
+        await env.DB.prepare(
+          'DELETE FROM share_drafts WHERE deleted_at IS NOT NULL AND deleted_at < ?'
+        )
+          .bind(shareDraftCutoff)
+          .run();
+      } catch (error) {
+        log.error('cron_phase_failed', {
+          phase: 'share-draft-tombstone-purge',
+          ...serializeError(error),
+        });
+        reportError(error, { tags: { source: 'cron', phase: 'share-draft-tombstone-purge' } });
       }
 
       d1CleanupDuration = Date.now() - cleanupStart;

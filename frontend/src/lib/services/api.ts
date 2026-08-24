@@ -11,6 +11,8 @@ import type {
   MagazinePosition,
   MarginCollection,
   ParsedFeed,
+  RemoteShareDraft,
+  ShareDraft,
   SaveBacking,
   SembleCollection,
   SocialContextResult,
@@ -969,6 +971,48 @@ class ApiClient {
     return this.fetch('/api/magazines', {
       method: 'DELETE',
       body: JSON.stringify({ rkey }),
+    });
+  }
+
+  // Share drafts (unposted linkblog shares, private to the account)
+  async getShareDrafts(
+    options: { since?: number; cursor?: string; limit?: number } = {}
+  ): Promise<{ drafts: RemoteShareDraft[]; cursor?: string }> {
+    const params = new URLSearchParams();
+    if (options.since !== undefined) params.set('since', String(options.since));
+    if (options.cursor) params.set('cursor', options.cursor);
+    if (options.limit) params.set('limit', String(options.limit));
+    const query = params.toString();
+    return this.fetch(`/api/linkblog/drafts${query ? `?${query}` : ''}`);
+  }
+
+  // Paginate the full draft set (or delta when `since` is given).
+  async getAllShareDrafts(options: { since?: number } = {}): Promise<RemoteShareDraft[]> {
+    const all: RemoteShareDraft[] = [];
+    let cursor: string | undefined;
+    do {
+      const response = await this.getShareDrafts({ ...options, cursor, limit: 500 });
+      all.push(...response.drafts);
+      cursor = response.cursor;
+    } while (cursor);
+    return all;
+  }
+
+  async upsertShareDraft(draft: ShareDraft): Promise<{ success: boolean; articleUrl: string }> {
+    return this.fetch('/api/linkblog/drafts', {
+      method: 'PUT',
+      body: JSON.stringify({
+        articleUrl: draft.articleUrl,
+        draft,
+        updatedAt: draft.updatedAt,
+      }),
+    });
+  }
+
+  async deleteShareDraft(articleUrl: string, updatedAt: number): Promise<{ success: boolean }> {
+    return this.fetch('/api/linkblog/drafts', {
+      method: 'DELETE',
+      body: JSON.stringify({ articleUrl, updatedAt }),
     });
   }
 

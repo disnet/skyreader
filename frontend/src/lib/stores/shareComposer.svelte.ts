@@ -3,9 +3,9 @@
 // card, reader chrome, saved list, drafts list — and mounted once in AppShell,
 // so a draft survives closing the reader or navigating while it's open.
 //
-// Create mode edits a local ShareDraft (auto-saved to IndexedDB, public only on
-// Post). Edit mode edits the note of an already-posted share; those edits go to
-// the live record on Update and are not drafted.
+// Create mode edits a ShareDraft (auto-saved privately, public only on Post).
+// Edit mode edits the note of an already-posted share; those edits go to the
+// live record on Update and are not drafted.
 
 import { linkblogStore } from '$lib/stores/linkblog.svelte';
 import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
@@ -79,23 +79,26 @@ function createShareComposerStore() {
 
   // Persist the create-mode draft, debounced off keystrokes. An emptied-out
   // draft deletes its row instead, so clearing the composer clears the marker.
-  function persistDraft() {
+  async function persistDraft() {
     const draft = currentDraft();
     if (!draft) return;
-    if (draftHasContent(draft.blocks)) void shareDraftsStore.save(draft);
-    else void shareDraftsStore.remove(draft.articleUrl);
+    if (draftHasContent(draft.blocks)) await shareDraftsStore.save(draft);
+    else await shareDraftsStore.remove(draft.articleUrl);
   }
 
   function touch() {
     if (!session || session.mode !== 'create') return;
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(persistDraft, 600);
+    saveTimer = setTimeout(() => void persistDraft(), 600);
   }
 
+  // Save now and push now: closing, switching articles, or posting is the point
+  // where the draft should already be on the user's other devices, not up to
+  // five seconds from it.
   function flush() {
     clearTimeout(saveTimer);
     saveTimer = undefined;
-    persistDraft();
+    void persistDraft().then(() => shareDraftsStore.flushServer());
   }
 
   function open(options: ComposerOpenOptions) {

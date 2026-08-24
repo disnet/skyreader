@@ -24,7 +24,8 @@ export interface SyncQueueEntry {
     | 'label'
     | 'saved'
     | 'integration'
-    | 'magazine';
+    | 'magazine'
+    | 'shareDraft';
   key: string; // Deduplication key (e.g., articleGuid, rkey)
   payload: string; // JSON-serialized data
   timestamp: number;
