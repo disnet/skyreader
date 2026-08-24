@@ -23,7 +23,9 @@ import { auth } from './auth.svelte';
 import { draftHasContent } from '$lib/utils/shareNote';
 import type { RemoteShareDraft, ShareDraft } from '$lib/types';
 
-// Persisted delta cursor: the max server `updated_at` (unix seconds) seen.
+// Persisted delta cursor: the max server `updated_at` (unix seconds) seen. The
+// backend overlaps this second on the next delta, and the LWW merge below makes
+// those boundary replays idempotent while catching same-second late writes.
 // `db.metadata.clear()` on logout wipes it, so the next account starts cold.
 const CURSOR_KEY = 'shareDraftsCursor';
 
