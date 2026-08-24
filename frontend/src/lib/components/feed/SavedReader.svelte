@@ -37,7 +37,7 @@
   import { magazineThemeVars } from '$lib/utils/magazineTheme';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
-  import { tick, onMount, onDestroy } from 'svelte';
+  import { tick, onMount, onDestroy, untrack } from 'svelte';
 
   let {
     readerItem,
@@ -235,10 +235,21 @@
   // body is often just an excerpt. Fall back to the feed body in IndexedDB (the
   // in-memory article is "light", its content stripped — see toLightArticle).
   let lazyArticleContent = $state<string | null>(null);
+  // Whether that body is the user's own saved snapshot rather than the feed's —
+  // the display ladder below treats the two differently.
+  let lazyArticleIsSavedCopy = $state(false);
   $effect(() => {
     lazyArticleContent = null;
+    lazyArticleIsSavedCopy = false;
     if (readerItem.type !== 'article') return;
-    const { id, guid, subscriptionId, content: inMemoryContent } = readerItem.item;
+    const {
+      id,
+      guid,
+      subscriptionId,
+      content: inMemoryContent,
+      contentTruncated,
+      url,
+    } = readerItem.item;
     let cancelled = false;
     (async () => {
       try {
@@ -246,7 +257,10 @@
         if (saved?.rkey) {
           const savedBody = await savesStore.getContent(saved.rkey);
           if (savedBody) {
-            if (!cancelled) lazyArticleContent = savedBody;
+            if (!cancelled) {
+              lazyArticleContent = savedBody;
+              lazyArticleIsSavedCopy = true;
+            }
             return;
           }
         }
@@ -262,9 +276,19 @@
             .filter((a) => a.subscriptionId === subscriptionId)
             .first();
         }
-        if (!cancelled) lazyArticleContent = row?.content ?? '';
+        const cachedContent = row?.content ?? '';
+        if (!cancelled) lazyArticleContent = cachedContent;
+        if (!cancelled && !cachedContent && contentTruncated && url) {
+          // Keep the store's reactive entry map out of this effect's dependency
+          // graph. Failed extracts delete their entry so a later open can retry;
+          // tracking that deletion here would create an immediate retry loop.
+          untrack(() => linkPostContentStore.fetch(url));
+        }
       } catch {
         if (!cancelled) lazyArticleContent = '';
+        if (!cancelled && contentTruncated && url) {
+          untrack(() => linkPostContentStore.fetch(url));
+        }
       }
     })();
     return () => {
@@ -294,8 +318,19 @@
     // Prefer the lazily-loaded body for saved items; normalized.displayContent
     // falls back to the description until it arrives.
     if (readerItem.type === 'saved' && lazySavedContent) return lazySavedContent;
-    // Same for a saved feed article rendered via the 'article' path — its body
-    // was stripped from memory and is read back from IndexedDB above.
+    // A save's own snapshot still outranks everything — it's the body the user
+    // kept (and what their highlights are anchored in).
+    if (readerItem.type === 'article' && lazyArticleIsSavedCopy && lazyArticleContent)
+      return lazyArticleContent;
+    // Otherwise an extract of the original wins over the feed's body, matching
+    // ArticleCard: the entry only exists because something asked for it (Shift+F,
+    // the ⋯ menu, the truncated-article nudge), and an RSS body is often just an
+    // excerpt. It's also how an oversized body — dropped at ingest — gets here.
+    const extractedArticle =
+      readerItem.type === 'article' ? linkPostContentStore.get(readerItem.item.url) : undefined;
+    if (extractedArticle?.content) return extractedArticle.content;
+    // Else the feed body for an article rendered via the 'article' path — it was
+    // stripped from memory and is read back from IndexedDB above.
     if (readerItem.type === 'article' && lazyArticleContent) return lazyArticleContent;
     // For a stripped document, re-render with the lazily-loaded textContent fed
     // back in — structured `content` still wins inside getDisplayContent, so this

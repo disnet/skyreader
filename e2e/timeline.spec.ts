@@ -102,4 +102,69 @@ test.describe('Timeline refresh', () => {
     expect(readGuids).toContain('timeline-item-1');
     expect(readGuids).not.toContain('timeline-item-2');
   });
+
+  test('reader extracts a truncated article on open and reuses it on reopen', async ({
+    authedPage,
+    testUser,
+  }) => {
+    const articleUrl = 'https://example.com/truncated-reader';
+    const description = 'Short RSS description while the full article loads.';
+    const extractedText = 'Full extracted article text that was absent from the feed archive.';
+    await seedSubscription(testUser, { feedUrl: FEED_URL, title: FEED_TITLE });
+    await seedFeedItems(
+      FEED_URL,
+      [
+        {
+          guid: 'truncated-reader-item',
+          title: 'Truncated Reader Article',
+          url: articleUrl,
+          summary: description,
+          contentTruncated: true,
+        },
+      ],
+      { title: FEED_TITLE, siteUrl: 'https://example.com' }
+    );
+
+    let extractCalls = 0;
+    await authedPage.route('**/api/extract', async (route) => {
+      extractCalls += 1;
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          title: 'Truncated Reader Article',
+          author: null,
+          description,
+          content: `<p>${extractedText}</p>`,
+          domain: 'example.com',
+          image: null,
+          published: null,
+          wordCount: 12,
+        }),
+      });
+    });
+
+    await authedPage.goto('/feeds');
+    const card = authedPage.locator('.article-item-anchor', {
+      has: authedPage.getByText('Truncated Reader Article', { exact: true }),
+    });
+    await expect(card).toBeVisible({ timeout: 15_000 });
+
+    // Select and open the reader with the keyboard — no card expansion, so the
+    // reader's own on-open extract is what fires. (Expanding first would have
+    // ArticleCard fetch it and reduce the reader's call to a cache hit, which
+    // is the second half of this test, not the first.)
+    await authedPage.keyboard.press('j');
+    await expect(card.locator('.article-item.highlighted')).toBeVisible();
+    await authedPage.keyboard.press('f');
+    await expect(authedPage.locator('.reader-body')).toContainText(extractedText);
+    expect(extractCalls).toBe(1);
+
+    // Reopening through the card — which expands, firing ArticleCard's own
+    // truncated-article fetch — still serves the session-cached extract.
+    await authedPage.getByRole('button', { name: 'Back', exact: true }).click();
+    await card.locator('button.article-header').click();
+    await card.getByRole('button', { name: 'Reader', exact: true }).click();
+    await expect(authedPage.locator('.reader-body')).toContainText(extractedText);
+    expect(extractCalls).toBe(1);
+  });
 });

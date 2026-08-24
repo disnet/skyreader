@@ -142,6 +142,8 @@ export interface SeedFeedItemOpts {
   url?: string;
   publishedAt?: string;
   summary?: string;
+  content?: string;
+  contentTruncated?: boolean;
 }
 
 /**
@@ -177,6 +179,8 @@ export async function seedFeedItems(
       url: item.url ?? `https://example.com/${item.guid}`,
       title: item.title,
       summary: item.summary ?? `Summary for ${item.title}`,
+      ...(item.content == null ? {} : { content: item.content }),
+      ...(item.contentTruncated == null ? {} : { contentTruncated: item.contentTruncated }),
       publishedAt,
     });
     statements.push(

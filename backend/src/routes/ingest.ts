@@ -20,9 +20,15 @@ export const SANITY_CAP = 5000;
 // than optional: D1 has a hard 10 GB database ceiling, so storage grows with
 // ingest velocity × item size × time. Oversized bodies are dropped at ingest
 // (summary/title/url/image kept) and `contentTruncated` is set, which the reader
-// acts on: ArticleCard auto-extracts the full text via /api/extract when a
-// truncated article is opened, so the body the user sees is still the whole
-// article (see frontend/src/lib/components/ArticleCard.svelte).
+// acts on: ArticleCard and SavedReader auto-extract the full text via /api/extract
+// when a truncated article is opened, so the body the user sees is still the
+// whole article (see frontend/src/lib/components/{ArticleCard,feed/SavedReader}.svelte).
+// Extraction, not a bigger cap, is what makes long-form feeds readable: raising
+// this to 32 KB was tried and still dropped 19 of 20 posts on the feed that
+// motivated it, while quadrupling archive growth and the weight of a timeline
+// page. The page budgets in routes/timeline.ts (MAX_LIMIT, COLD_START_MAX_ITEMS)
+// bound response size in rows and are sized against this constant — raising it
+// means re-deriving them.
 export const MAX_ITEM_CONTENT_BYTES = 8 * 1024;
 
 // How long a crawler heartbeat stays "fresh". The proxy pulls the crawl set every
