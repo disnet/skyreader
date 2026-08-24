@@ -893,6 +893,7 @@
   filters={atmosphere.filters}
   activeFilter={atmosphere.activeFilter}
   stream={atmosphere.stream}
+  sembleContext={atmosphere.sembleContext}
   {itemTagCount}
   {itemTags}
   {collectionPieceCount}

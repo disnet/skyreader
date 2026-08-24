@@ -26,6 +26,7 @@ import type {
   DiscussionFilterId,
   DiscussionFilterVM,
   DiscussionStreamVM,
+  SembleContextVM,
 } from '$lib/components/articleCardView.types';
 import { articleMentionsStore } from '$lib/stores/articleMentions.svelte';
 import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
@@ -63,7 +64,7 @@ export const LANE_META: Record<
   semble: {
     icon: 'semble',
     label: 'Semble',
-    verb: 'saved',
+    verb: 'referenced',
     noun: 'save',
     createLabel: 'Save to Semble',
   },
@@ -107,6 +108,7 @@ export interface AtmosphereApi {
   readonly activeFilter: DiscussionFilterId;
   /** The merged, filtered, newest-first discussion. */
   readonly stream: DiscussionStreamVM;
+  readonly sembleContext: SembleContextVM | undefined;
   /** Total references across lanes — the headline count on the Discussion button. */
   readonly total: number;
   /** Whether any lane hit its lookup cap (renders the count as "N+"). */
@@ -207,6 +209,15 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
   });
 
   let activeFilter = $state<DiscussionFilterId>('all');
+
+  const sembleContext = $derived(laneItems.get('semble')?.sembleContext);
+
+  let previousUrl = $state('');
+  $effect(() => {
+    const url = opts.itemUrl();
+    if (previousUrl && url !== previousUrl) activeFilter = 'all';
+    previousUrl = url;
+  });
 
   // Only lanes that actually have people can filter anything, so the chip row
   // never offers a filter that empties the stream. `All` leads and carries the
@@ -353,6 +364,9 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     },
     get stream() {
       return stream;
+    },
+    get sembleContext() {
+      return sembleContext;
     },
     get total() {
       return total;

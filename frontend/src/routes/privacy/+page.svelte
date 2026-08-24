@@ -125,8 +125,13 @@
         choose to sync. Public social data may be read from the Bluesky firehose and related public directories.
       </li>
       <li>
-        <strong>Semble, Margin, Leaflet, and Standard.site</strong> receive data only if you connect one
-        of those integrations.
+        <strong>Semble</strong> receives an article's URL when its Discussion section nears the screen,
+        so Skyreader can show public saves, notes, collections, and connections for that article. No Skyreader
+        account data or Semble login is sent with this lookup.
+      </li>
+      <li>
+        <strong>Margin, Leaflet, and Standard.site</strong> receive data only if you connect one of those
+        integrations.
       </li>
     </ul>
     <p>

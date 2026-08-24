@@ -78,11 +78,11 @@ export const LANES: Lane[] = [
   {
     id: 'semble',
     label: 'Semble',
-    verb: 'saved',
+    verb: 'referenced',
     noun: 'Semble save',
     icon: 'semble',
     // Semble writes the shared Cosmik card lexicon (.content.url / .url).
-    collections: ['network.cosmik.card'],
+    collections: ['network.cosmik.card', 'network.cosmik.connection'],
   },
 ];
 

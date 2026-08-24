@@ -158,6 +158,7 @@
     filters={atmosphere.filters}
     activeFilter={atmosphere.activeFilter}
     stream={atmosphere.stream}
+    sembleContext={atmosphere.sembleContext}
     lanesOpen={true}
     {panelId}
     onSelectFilter={atmosphere.setFilter}

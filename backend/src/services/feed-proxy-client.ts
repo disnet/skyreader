@@ -274,8 +274,61 @@ export interface MentionLaneEntryResult {
   quote: string | null;
 }
 
+export interface SembleContextResult {
+  stats: {
+    saves: number;
+    notes: number;
+    collections: number;
+    connections: { total: number; incoming: number; outgoing: number };
+  } | null;
+  savers: Array<{
+    cardId: string;
+    cardUri: string | null;
+    author: { did: string; handle: string; name: string | null; avatarUrl: string | null };
+    note: string | null;
+    savedAt: string | null;
+    collections: Array<{ id: string; name: string; url: string | null }>;
+  }>;
+  notes: Array<{
+    id: string;
+    text: string;
+    author: { did: string; handle: string; name: string | null; avatarUrl: string | null };
+    createdAt: string | null;
+  }>;
+  collections: Array<{
+    id: string;
+    name: string;
+    url: string | null;
+    author: { did: string; handle: string };
+  }>;
+  connections: Array<{
+    id: string;
+    direction: 'out' | 'in';
+    type: string | null;
+    note: string | null;
+    curator: { did: string; handle: string; name: string | null; avatarUrl: string | null };
+    createdAt: string | null;
+    other: {
+      url: string;
+      title: string | null;
+      description: string | null;
+      siteName: string | null;
+      imageUrl: string | null;
+    };
+  }>;
+  truncated: { savers: boolean; notes: boolean; collections: boolean; connections: boolean };
+  incomplete: boolean;
+  source: 'semble-api' | 'constellation-fallback';
+}
+
+export interface MentionLaneItemsResult {
+  entries: MentionLaneEntryResult[];
+  sembleContext?: SembleContextResult;
+}
+
 interface RawMentionLaneResponse {
   entries?: MentionLaneEntryResult[];
+  sembleContext?: SembleContextResult;
   error?: string;
 }
 
@@ -613,7 +666,7 @@ export class FeedProxyClient {
    * to the post / card / highlight. Resolved lazily on lane expand. Best-effort —
    * the proxy returns an empty list rather than error on a Constellation outage.
    */
-  async fetchMentionLaneItems(url: string, lane: string): Promise<MentionLaneEntryResult[]> {
+  async fetchMentionLaneItems(url: string, lane: string): Promise<MentionLaneItemsResult> {
     const raw = await this.fetch<RawMentionLaneResponse>('/mention-lane', {
       method: 'POST',
       body: JSON.stringify({ url, lane }),
@@ -623,7 +676,10 @@ export class FeedProxyClient {
       throw new FeedProxyError(raw.error || 'Invalid response from feed proxy');
     }
 
-    return raw.entries;
+    return {
+      entries: raw.entries,
+      ...(raw.sembleContext ? { sembleContext: raw.sembleContext } : {}),
+    };
   }
 
   /**

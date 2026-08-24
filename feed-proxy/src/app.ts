@@ -20,7 +20,7 @@ import { readCachedMentions, enrichMentions } from './mentions';
 import {
   getMentionLaneItems,
   MentionLaneUnavailableError,
-  type MentionLaneEntry,
+  type MentionLaneItemsResult,
 } from './mention-lane';
 import type { LaneId } from './lanes';
 import { normalizeArticleUrl } from './url-normalize';
@@ -1315,7 +1315,7 @@ export function createApp(db: Database, config: AppConfig) {
   const inFlightDiscover = new Map<string, Promise<DiscoverResult>>();
   // Collapse concurrent lane expansions for the same (url, lane): each does a
   // full Constellation + per-author PDS fan-out before the result is cached.
-  const inFlightLane = new Map<string, Promise<MentionLaneEntry[]>>();
+  const inFlightLane = new Map<string, Promise<MentionLaneItemsResult>>();
 
   // Bound the heaviest request (fetch + Defuddle DOM build). Per-URL coalescing
   // (inFlightExtract) dedups identical extractions; this caps the number of
@@ -3110,8 +3110,7 @@ export function createApp(db: Database, config: AppConfig) {
       inFlightLane.set(laneKey, pending);
     }
     try {
-      const entries = await pending;
-      return c.json({ entries });
+      return c.json(await pending);
     } catch (error) {
       // Constellation never answered. Say so rather than returning an empty
       // list, which the reader would read as "nobody wrote about this" — and

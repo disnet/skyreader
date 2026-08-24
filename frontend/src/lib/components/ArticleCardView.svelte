@@ -38,6 +38,7 @@
     filters = [],
     activeFilter = 'all',
     stream = { idle: true, loading: false, entries: [] },
+    sembleContext,
     itemTagCount,
     itemTags = [],
     collectionPieceCount = 0,
@@ -407,6 +408,7 @@
         {filters}
         {activeFilter}
         {stream}
+        {sembleContext}
         lanesOpen={panelOpen}
         panelId="discussion-panel"
         showHeading={false}

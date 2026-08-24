@@ -38,6 +38,7 @@
     DiscussionFilterId,
     DiscussionFilterVM,
     DiscussionStreamVM,
+    SembleContextVM,
   } from '../articleCardView.types';
 
   let {
@@ -45,6 +46,7 @@
     filters = [],
     activeFilter = 'all',
     stream = { idle: true, loading: false, entries: [] },
+    sembleContext,
     /** Render the discussion at all. */
     lanesOpen = true,
     /** Optional DOM id for the region (so a toggle can aria-control it). */
@@ -64,6 +66,7 @@
     filters?: DiscussionFilterVM[];
     activeFilter?: DiscussionFilterId;
     stream?: DiscussionStreamVM;
+    sembleContext?: SembleContextVM;
     lanesOpen?: boolean;
     panelId?: string;
     showHeading?: boolean;
@@ -92,6 +95,33 @@
     activeFilter === 'all' && settled && total > shown ? total - shown : 0
   );
   const hasComposeRow = $derived(Boolean(composeLead) || creatable.length > 0);
+  const showSemble = $derived(
+    Boolean(sembleContext) && (activeFilter === 'all' || activeFilter === 'semble')
+  );
+  const sembleSummary = $derived.by(() => {
+    if (!sembleContext?.stats) return [];
+    const s = sembleContext.stats;
+    return [
+      [s.saves, 'save'],
+      [s.notes, 'note'],
+      [s.collections, 'collection'],
+      [s.connections.total, 'connection'],
+    ]
+      .filter(([n]) => Number(n) > 0)
+      .map(([n, label]) => `${n} ${label}${Number(n) === 1 ? '' : 's'}`);
+  });
+
+  function connectionLabel(connection: SembleContextVM['connections'][number]): string {
+    try {
+      return (
+        connection.other.title ||
+        connection.other.siteName ||
+        new URL(connection.other.url).hostname
+      );
+    } catch {
+      return connection.other.title || 'Connected article';
+    }
+  }
 
   function displayNameFor(entry: DiscussionEntryVM): string {
     return entry.displayName?.trim() || `@${entry.handle ?? entry.did.slice(0, 18)}`;
@@ -147,6 +177,90 @@
           </button>
         {/each}
       </div>
+    {/if}
+
+    {#if showSemble && sembleContext}
+      <section class="semble-context" aria-label="Semble context">
+        {#if sembleSummary.length}
+          <p class="semble-summary">{sembleSummary.join(' · ')}</p>
+        {/if}
+        {#if sembleContext.collections.length}
+          <div class="semble-section">
+            <h3>In collections</h3>
+            <div class="semble-collections">
+              {#each sembleContext.collections as collection (collection.id)}
+                {#if collection.url}
+                  <a
+                    href={safeHref(collection.url)}
+                    target="_blank"
+                    rel="noopener"
+                    onclick={(e) => e.stopPropagation()}
+                    ><Icon name="folder" size={12} />{collection.name}</a
+                  >
+                {:else}<span><Icon name="folder" size={12} />{collection.name}</span>{/if}
+              {/each}
+            </div>
+          </div>
+        {/if}
+        {#if sembleContext.notes.length}
+          <div class="semble-section">
+            <h3>Notes</h3>
+            {#each sembleContext.notes as note (note.id)}
+              <div class="semble-note">
+                <p>{note.text}</p>
+                <button type="button" onclick={() => onOpenAuthor?.(note.author.did)}
+                  >@{note.author.handle || note.author.did.slice(0, 18)}</button
+                >
+              </div>
+            {/each}
+          </div>
+        {/if}
+        {#if sembleContext.connections.length}
+          <div class="semble-section">
+            <h3>Connections</h3>
+            <ul class="semble-connections">
+              {#each sembleContext.connections as connection (connection.id)}
+                <li>
+                  <div
+                    class="connection-line"
+                    aria-label={connection.direction === 'out'
+                      ? `This article connects ${connection.type ?? 'to'} ${connectionLabel(connection)}`
+                      : `${connectionLabel(connection)} connects ${connection.type ?? 'to'} this article`}
+                  >
+                    {#if connection.direction === 'out'}<span>this</span><span aria-hidden="true"
+                        >→</span
+                      >{/if}
+                    <span class="connection-type">{connection.type ?? 'connected'}</span>
+                    {#if connection.direction === 'in'}<span aria-hidden="true">→</span>{/if}
+                    <a
+                      href={safeHref(connection.other.url)}
+                      target="_blank"
+                      rel="noopener"
+                      onclick={(e) => e.stopPropagation()}>{connectionLabel(connection)}</a
+                    >
+                    {#if connection.direction === 'in'}<span aria-hidden="true">→ this</span>{/if}
+                  </div>
+                  {#if connection.note}<p class="connection-note">{connection.note}</p>{/if}
+                  <button
+                    class="connection-curator"
+                    type="button"
+                    onclick={() => onOpenAuthor?.(connection.curator.did)}
+                    >by @{connection.curator.handle || connection.curator.did.slice(0, 18)}</button
+                  >
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/if}
+        {#if sembleContext.incomplete}<p class="semble-incomplete">
+            Some Semble context is unavailable.
+          </p>{/if}
+        {#if Object.values(sembleContext.truncated).some(Boolean)}
+          <a class="semble-more" href="https://semble.so" target="_blank" rel="noopener"
+            >Show more on Semble</a
+          >
+        {/if}
+      </section>
     {/if}
 
     {#if stream.entries.length > 0}
@@ -336,13 +450,13 @@
       </div>
     {/if}
 
-    {#if undisclosed > 0 && shown > 0}
+    {#if undisclosed > 0 && shown > 0 && !showSemble}
       <p class="discussion-more">
         {undisclosed}{capped ? '+' : ''} more, further back.
       </p>
     {/if}
 
-    {#if settled && shown === 0}
+    {#if settled && shown === 0 && !showSemble}
       {#if stream.failed}
         <p class="discussion-empty">
           Couldn't reach the Atmosphere just now.
@@ -479,6 +593,119 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
+  }
+
+  .semble-context {
+    margin: 0 0 1rem;
+    padding: 0.75rem 0;
+    border-block: 1px solid var(--color-border);
+  }
+  .semble-summary,
+  .semble-incomplete {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+  .semble-section {
+    margin-top: 0.75rem;
+  }
+  .semble-section h3 {
+    margin: 0 0 0.375rem;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
+    color: var(--color-text);
+  }
+  .semble-collections {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+  }
+  .semble-collections a,
+  .semble-collections span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.1875rem 0.5rem;
+    border-radius: 999px;
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    text-decoration: none;
+  }
+  .semble-collections a:hover,
+  .semble-more:hover {
+    color: var(--color-primary);
+    text-decoration: underline;
+  }
+  .semble-note {
+    margin-top: 0.5rem;
+  }
+  .semble-note p,
+  .connection-note {
+    margin: 0;
+    font-size: var(--text-sm);
+    line-height: var(--leading-normal);
+    color: var(--color-text);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .semble-note button,
+  .connection-curator {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--color-text-secondary);
+    font: inherit;
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+  .semble-note button:hover,
+  .connection-curator:hover {
+    color: var(--color-primary);
+  }
+  .semble-connections {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .connection-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3125rem;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+  .connection-line a,
+  .semble-more {
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+  .connection-type {
+    padding: 0.125rem 0.4375rem;
+    border-radius: 999px;
+    background: var(--color-bg-secondary);
+    font-size: var(--text-xs);
+  }
+  .connection-note {
+    margin-top: 0.25rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .connection-curator {
+    margin-top: 0.1875rem;
+  }
+  .semble-incomplete,
+  .semble-more {
+    display: block;
+    margin-top: 0.75rem;
+    font-size: var(--text-sm);
   }
 
   .entry {

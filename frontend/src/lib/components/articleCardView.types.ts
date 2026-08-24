@@ -1,5 +1,5 @@
 import type { IconName } from './Icon.svelte';
-import type { ReaderCollection, ReaderCollectionItem } from '$lib/types';
+import type { ReaderCollection, ReaderCollectionItem, SembleContext } from '$lib/types';
 
 /**
  * View-model types for the PURE presentational `ArticleCardView.svelte`.
@@ -111,6 +111,8 @@ export interface DiscussionStreamVM {
   linkOnly?: DiscussionEntryVM[];
 }
 
+export type SembleContextVM = SembleContext;
+
 export interface SocialContextVM {
   quoteCount: number;
 }
@@ -161,6 +163,7 @@ export interface ArticleCardViewProps {
   filters?: DiscussionFilterVM[];
   activeFilter?: DiscussionFilterId;
   stream?: DiscussionStreamVM;
+  sembleContext?: SembleContextVM;
 
   itemTagCount: number;
   itemTags?: string[];

@@ -34,6 +34,7 @@ import { safeFetch } from './ssrf-guard';
 import { resolveSiteMeta, buildCanonicalUrl, parseAtUri } from './standard-site';
 import { constellationGet, constellationGetResult } from './constellation-client';
 import { extractContentText } from './document-content';
+import { fetchSembleContext, type SembleContext } from './semble-client';
 
 // The one-per-user Skyreader linkblog publication rkey (see backend
 // linkblog-sync). Used only as a link-out fallback for our own docs.
@@ -89,6 +90,11 @@ export interface MentionLaneEntry {
   // The highlighted passage a margin.at note targets (its TextQuoteSelector),
   // distinct from the user's own comment in `note`. Null elsewhere.
   quote: string | null;
+}
+
+export interface MentionLaneItemsResult {
+  entries: MentionLaneEntry[];
+  sembleContext?: SembleContext;
 }
 
 // margin.at note motivations (W3C Web Annotation) → an honest past-tense verb.
@@ -245,10 +251,9 @@ async function resolveProfile(db: Database, did: string): Promise<AuthorProfile>
   const key = `profile:${did}`;
   const now = Date.now();
   const cached = db
-    .query<
-      CacheRow,
-      [string]
-    >('SELECT cache_key, context_json, cached_at FROM constellation_cache WHERE cache_key = ?')
+    .query<CacheRow, [string]>(
+      'SELECT cache_key, context_json, cached_at FROM constellation_cache WHERE cache_key = ?'
+    )
     .get(key);
   if (cached && now - cached.cached_at < PROFILE_CACHE_TTL_MS) {
     try {
@@ -377,7 +382,7 @@ async function resolveEntry(
 }
 
 function cacheKey(laneId: LaneId, normUrl: string): string {
-  return `lane-items:${laneId}|${normUrl}`;
+  return `lane-items2:${laneId}|${normUrl}`;
 }
 
 /**
@@ -406,23 +411,48 @@ export async function getMentionLaneItems(
   db: Database,
   rawUrl: string,
   laneId: LaneId
-): Promise<MentionLaneEntry[]> {
+): Promise<MentionLaneItemsResult> {
   const normUrl = normalizeArticleUrl(rawUrl);
-  if (!normUrl) return [];
+  if (!normUrl) return { entries: [] };
 
   const key = cacheKey(laneId, normUrl);
   const now = Date.now();
   const cached = db
-    .query<
-      CacheRow,
-      [string]
-    >('SELECT cache_key, context_json, cached_at FROM constellation_cache WHERE cache_key = ?')
+    .query<CacheRow, [string]>(
+      'SELECT cache_key, context_json, cached_at FROM constellation_cache WHERE cache_key = ?'
+    )
     .get(key);
   if (cached && now - cached.cached_at < CACHE_TTL_MS) {
     try {
-      return JSON.parse(cached.context_json) as MentionLaneEntry[];
+      const parsed = JSON.parse(cached.context_json) as MentionLaneItemsResult;
+      if (parsed && Array.isArray(parsed.entries)) return parsed;
     } catch {
       // fall through and recompute
+    }
+  }
+
+  // Semble's URL API already hydrates all public categories. Keep the legacy
+  // entries alongside the richer context so the merged human stream remains
+  // backward compatible. If every API category fails we continue into the
+  // existing Constellation/PDS saver resolver below.
+  if (laneId === 'semble') {
+    const sembleContext = await fetchSembleContext(normUrl);
+    if (sembleContext) {
+      const entries: MentionLaneEntry[] = sembleContext.savers.map((saver) => ({
+        did: saver.author.did,
+        handle: saver.author.handle || null,
+        displayName: saver.author.name,
+        avatar: saver.author.avatarUrl,
+        createdAt: saver.savedAt,
+        note: saver.note,
+        url: saver.author.handle ? `${SEMBLE_WEB_BASE}/profile/${saver.author.handle}` : null,
+        collections: saver.collections.map((c) => ({ name: c.name, url: c.url })),
+        verb: null,
+        quote: null,
+      }));
+      const result = { entries, sembleContext };
+      writeCacheJson(db, key, result, now);
+      return result;
     }
   }
 
@@ -449,8 +479,9 @@ export async function getMentionLaneItems(
     if (unreachable) throw new MentionLaneUnavailableError();
     // Cache the empty result too, so a lane with no people isn't re-queried on
     // every expand within the TTL.
-    writeCache(db, key, [], now);
-    return [];
+    const result: MentionLaneItemsResult = { entries: [] };
+    writeCacheJson(db, key, result, now);
+    return result;
   }
 
   // Gather linking records across this lane's sources, dedup by author (a person
@@ -479,12 +510,24 @@ export async function getMentionLaneItems(
   if (picked.length === 0 && unreachable) throw new MentionLaneUnavailableError();
 
   const entries = await Promise.all(picked.map((rec) => resolveEntry(db, laneId, rec)));
-  writeCache(db, key, entries, now);
-  return entries;
-}
-
-function writeCache(db: Database, key: string, entries: MentionLaneEntry[], now: number): void {
-  writeCacheJson(db, key, entries, now);
+  const result: MentionLaneItemsResult =
+    laneId === 'semble'
+      ? {
+          entries,
+          sembleContext: {
+            stats: null,
+            savers: [],
+            notes: [],
+            collections: [],
+            connections: [],
+            truncated: { savers: false, notes: false, collections: false, connections: false },
+            incomplete: true,
+            source: 'constellation-fallback',
+          },
+        }
+      : { entries };
+  writeCacheJson(db, key, result, now);
+  return result;
 }
 
 // Shared upsert for anything this module parks in `constellation_cache` (the
