@@ -210,6 +210,31 @@ describe('/api/linkblog/drafts', () => {
     expect(delta.body.drafts[0].draft).toBeNull();
   });
 
+  it('replays the checkpoint second so a later same-second mutation is not missed', async () => {
+    await mutate('PUT', {
+      articleUrl: 'https://example.com/a',
+      draft: draftBody('first'),
+      updatedAt: 1000,
+    });
+    await backdate('https://example.com/a', 700);
+
+    const checkpoint = await getDrafts('/api/linkblog/drafts');
+    expect(checkpoint.body.drafts[0].serverUpdatedAt).toBe(700);
+
+    await mutate('PUT', {
+      articleUrl: 'https://example.com/b',
+      draft: draftBody('same second, later', 'https://example.com/b'),
+      updatedAt: 2000,
+    });
+    await backdate('https://example.com/b', 700);
+
+    const delta = await getDrafts('/api/linkblog/drafts?since=700');
+    expect(delta.body.drafts.map((draft) => draft.articleUrl).sort()).toEqual([
+      'https://example.com/a',
+      'https://example.com/b',
+    ]);
+  });
+
   it('deleting a draft that was never pushed succeeds', async () => {
     const del = await mutate('DELETE', { articleUrl: 'https://example.com/never', updatedAt: 1 });
     expect(del.status).toBe(200);

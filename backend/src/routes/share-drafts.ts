@@ -8,8 +8,11 @@ import { getSessionFromRequest } from '../services/oauth';
 // drafts are private to the account and never become a PDS record; they go
 // public only when the user posts, through the linkblog write path.
 //
-// Sync is delta-based like magazines: `?since=` returns rows changed since the
-// client's cursor, tombstones included so deletions replay to other devices.
+// Sync is delta-based like magazines: `?since=` returns rows changed at or
+// after the client's cursor, tombstones included so deletions replay to other
+// devices. The inclusive boundary is deliberate: updated_at has second
+// precision, so a mutation can land in the same second after a client has
+// checkpointed it. Clients merge the replayed boundary rows idempotently.
 //
 // Two clocks. `updated_at` is the server clock (unix seconds) and drives the
 // delta cursor. `client_updated_at` is the client's ms clock and drives
@@ -98,7 +101,10 @@ export async function handleGetShareDrafts(request: Request, env: Env): Promise<
     const params: (string | number)[] = [session.did];
 
     if (Number.isFinite(since)) {
-      query += ' AND updated_at > ?';
+      // Overlap the checkpoint second. A strict `>` can permanently miss a row
+      // written later in the same second as the last sync. Pagination remains
+      // collision-safe through the (updated_at, id) page cursor below.
+      query += ' AND updated_at >= ?';
       params.push(since);
     } else {
       query += ' AND deleted_at IS NULL';
