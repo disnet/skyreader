@@ -636,15 +636,10 @@ class ApiClient {
     });
   }
 
-  // Social context (Constellation) for link posts — recommend/quote counts +
-  // "who else linked this article". Best-effort adornment; degrades to empty.
+  // Social context (Constellation) for link posts — how many posts quote this
+  // one. Best-effort adornment; degrades to empty.
   async fetchSocialContext(
-    items: Array<{
-      key?: string;
-      docUri?: string;
-      articleUrl?: string;
-      excludeDid?: string;
-    }>
+    items: Array<{ key?: string; docUri?: string }>
   ): Promise<{ items: SocialContextResult[] }> {
     return this.fetch('/api/v2/social-context', {
       method: 'POST',

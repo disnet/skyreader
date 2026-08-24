@@ -329,11 +329,7 @@
     // Note: onRead is NOT called here - selectArticle in +page.svelte handles marking as read
     // Lazily pull Constellation social context for a link post (adornment only).
     if (isLinkPostMode && document && !wasSelected) {
-      socialContextStore.fetch({
-        docUri: document.recordUri,
-        articleUrl: linkPostUrl,
-        excludeDid: document.authorDid,
-      });
+      socialContextStore.fetch({ docUri: document.recordUri });
     }
   }
 

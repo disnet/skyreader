@@ -2,22 +2,23 @@
  * Constellation backlink lookups for linkblog social context (Phase 3).
  *
  * Constellation (constellation.microcosm.blue) indexes the whole AT Protocol
- * firehose into a backlink graph, so we can ask network-wide questions about a
- * link post without running our own indexer:
+ * firehose into a backlink graph, so we can ask a network-wide question about a
+ * link post without running our own indexer: how many other posts quote it.
  *
- *  - who quoted it                                          (a `repost` count)
- *  - who else across the Atmosphere linked the same article (with their notes)
+ * This once also answered "who else across the Atmosphere linked the same
+ * article", with each linker's note pulled from their PDS. The discussion surface
+ * asks that question properly now — across all four lanes rather than just
+ * standard.site, in mention-lane.ts — so the card stopped rendering this copy of
+ * it and the lookup was removed rather than left to cost a Constellation query
+ * plus a PDS fetch per linker on every link post nobody reads it from.
  *
- * These are *adornments*: every lookup degrades silently (returns 0 / empty) so a
- * slow or down Constellation never blocks the read. Assembled results are cached
- * in SQLite (`constellation_cache`) with a short TTL since the index is firehose-
- * fresh. Notes/handles for "also linked by" are fetched from each linker's PDS.
+ * This is an *adornment*: the lookup degrades silently (returns 0) so a slow or
+ * down Constellation never blocks the read. Assembled results are cached in
+ * SQLite (`constellation_cache`) with a short TTL since the index is
+ * firehose-fresh.
  */
 import { Database } from 'bun:sqlite';
-import { resolveHandle, resolvePdsUrl } from './did-resolver';
-import { safeFetch } from './ssrf-guard';
 import { constellationGet } from './constellation-client';
-import { extractContentText } from './document-content';
 
 const DOCUMENT_COLLECTION = 'site.standard.document';
 // JSON path of the external/at-uri ref in a link-post document's `links` array.
@@ -25,40 +26,18 @@ const LINKS_PATH = '.links[].uri';
 
 // Firehose-fresh index → keep the assembled bundle only briefly.
 const CONTEXT_CACHE_TTL_MS = 5 * 60 * 1000;
-// Cap "also linked by" — we fetch each linker's record for its note, so bound the
-// work. A handful is plenty for the context line.
-const MAX_ALSO_LINKED = 6;
-const FETCH_TIMEOUT_MS = 10 * 1000;
-
-export interface AlsoLinkedEntry {
-  did: string;
-  handle: string | null;
-  note: string | null;
-  recordUri: string;
-}
 
 export interface SocialContext {
   quoteCount: number;
-  alsoLinkedBy: AlsoLinkedEntry[];
 }
 
 export interface SocialContextQuery {
-  // The link post's own record AT URI — for recommend + quote counts.
+  // The link post's own record AT URI — the only thing the context keys off.
   docUri?: string;
-  // The external article URL the link post points at — for "also linked by".
-  articleUrl?: string;
-  // Omit this DID from "also linked by" (typically the link post's own author).
-  excludeDid?: string;
 }
 
 interface ConstellationCountResponse {
   total?: number;
-}
-
-interface ConstellationLinksResponse {
-  total?: number;
-  linking_records?: Array<{ did: string; collection: string; rkey: string }>;
-  cursor?: string;
 }
 
 interface CacheRow {
@@ -67,10 +46,7 @@ interface CacheRow {
   cached_at: number;
 }
 
-const EMPTY: SocialContext = {
-  quoteCount: 0,
-  alsoLinkedBy: [],
-};
+const EMPTY: SocialContext = { quoteCount: 0 };
 
 // Count of documents whose `links` ref points at this doc (quote-reshares of it).
 async function fetchQuoteCount(docUri: string): Promise<number> {
@@ -82,98 +58,23 @@ async function fetchQuoteCount(docUri: string): Promise<number> {
   return data?.total ?? 0;
 }
 
-interface RawDocValue {
-  description?: string;
-  textContent?: string;
-  content?: unknown;
-}
-
-// Extract the note (commentary) from a link-post document record: the leading
-// body text block, falling back to description/textContent. The body walk is
-// format-aware (leaflet/pckt/offprint/greengale/markpub) so "also linked by" notes read
-// the same regardless of which Atmospheric app published the post.
-function extractNote(value: RawDocValue): string | null {
-  const text = extractContentText(value.content);
-  if (text) return text;
-  const fallback = (value.description || value.textContent || '').trim();
-  return fallback || null;
-}
-
-// Fetch a single linker's document record to pull its note, and resolve a handle.
-async function resolveAlsoLinked(
-  db: Database,
-  rec: { did: string; rkey: string }
-): Promise<AlsoLinkedEntry | null> {
-  const recordUri = `at://${rec.did}/${DOCUMENT_COLLECTION}/${rec.rkey}`;
-  const [pdsUrl, handle] = await Promise.all([
-    resolvePdsUrl(db, rec.did),
-    resolveHandle(db, rec.did),
-  ]);
-  let note: string | null = null;
-  if (pdsUrl) {
-    try {
-      const qs = new URLSearchParams({
-        repo: rec.did,
-        collection: DOCUMENT_COLLECTION,
-        rkey: rec.rkey,
-      });
-      const res = await safeFetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${qs}`, {
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
-      if (res.ok) {
-        const data = (await res.json()) as { value?: RawDocValue };
-        if (data.value) note = extractNote(data.value);
-      }
-    } catch (error) {
-      console.error(`[constellation] getRecord error for ${recordUri}:`, error);
-    }
-  }
-  return { did: rec.did, handle, note, recordUri };
-}
-
-// Other link posts across the Atmosphere pointing at the same external article.
-async function fetchAlsoLinkedBy(
-  db: Database,
-  articleUrl: string,
-  excludeDid?: string
-): Promise<AlsoLinkedEntry[]> {
-  const data = await constellationGet<ConstellationLinksResponse>('/links', {
-    target: articleUrl,
-    collection: DOCUMENT_COLLECTION,
-    path: LINKS_PATH,
-    limit: String(MAX_ALSO_LINKED * 2), // over-fetch; we filter + dedup below
-  });
-  const records = data?.linking_records ?? [];
-
-  // One entry per distinct author (a user may have linked the article more than
-  // once), excluding the link post's own author, capped.
-  const seen = new Set<string>();
-  const picked: Array<{ did: string; rkey: string }> = [];
-  for (const rec of records) {
-    if (rec.did === excludeDid || seen.has(rec.did)) continue;
-    seen.add(rec.did);
-    picked.push({ did: rec.did, rkey: rec.rkey });
-    if (picked.length >= MAX_ALSO_LINKED) break;
-  }
-
-  const resolved = await Promise.all(picked.map((rec) => resolveAlsoLinked(db, rec)));
-  return resolved.filter((e): e is AlsoLinkedEntry => e !== null);
-}
-
+// Namespaced like the table's other tenants (`lane-items:`, `profile:`), which
+// also retires the old `docUri|articleUrl|excludeDid` keys: nothing reads them,
+// so the rows written before this simply age out on the sweep.
 function cacheKey(query: SocialContextQuery): string {
-  return `${query.docUri || ''}|${query.articleUrl || ''}|${query.excludeDid || ''}`;
+  return `social:${query.docUri}`;
 }
 
 /**
  * Assemble the social context for one link post, served from `constellation_cache`
- * when fresh. Each sub-lookup degrades to its empty value independently, so a
- * partial Constellation/PDS outage still returns whatever resolved.
+ * when fresh. The lookup degrades to its empty value, so a Constellation outage
+ * still returns a well-formed bundle.
  */
 export async function getSocialContext(
   db: Database,
   query: SocialContextQuery
 ): Promise<SocialContext> {
-  if (!query.docUri && !query.articleUrl) return EMPTY;
+  if (!query.docUri) return EMPTY;
 
   const key = cacheKey(query);
   const now = Date.now();
@@ -187,14 +88,7 @@ export async function getSocialContext(
     return JSON.parse(cached.context_json) as SocialContext;
   }
 
-  const [quoteCount, alsoLinkedBy] = await Promise.all([
-    query.docUri ? fetchQuoteCount(query.docUri) : Promise.resolve(0),
-    query.articleUrl
-      ? fetchAlsoLinkedBy(db, query.articleUrl, query.excludeDid)
-      : Promise.resolve([] as AlsoLinkedEntry[]),
-  ]);
-
-  const context: SocialContext = { quoteCount, alsoLinkedBy };
+  const context: SocialContext = { quoteCount: await fetchQuoteCount(query.docUri) };
   db.run(
     `INSERT INTO constellation_cache (cache_key, context_json, cached_at) VALUES (?, ?, ?)
 		ON CONFLICT(cache_key) DO UPDATE SET context_json = excluded.context_json, cached_at = excluded.cached_at`,

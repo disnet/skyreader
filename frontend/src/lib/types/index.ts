@@ -733,21 +733,13 @@ export interface ShareDraft {
   updatedAt: number;
 }
 
-// One other person who linked the same external article (Constellation), with
-// their commentary if available. Powers the "also linked by …" context line.
-export interface AlsoLinkedEntry {
-  did: string;
-  handle: string | null;
-  note: string | null;
-  recordUri: string;
-}
-
 // Constellation social context for a single link post (Phase 3). Adornment only;
-// all fields are best-effort and degrade to zero/empty.
+// best-effort, and degrades to zero. "Who else linked this article" used to ride
+// along here — the discussion surface owns that question now (MentionLaneEntry),
+// across every lane rather than standard.site alone.
 export interface SocialContextResult {
   key: string;
   quoteCount: number;
-  alsoLinkedBy: AlsoLinkedEntry[];
 }
 
 // One source lane of network-wide mentions for an article (Phase 5): a kind of

@@ -3005,15 +3005,11 @@ export function createApp(db: Database, config: AppConfig) {
 
     const results = await Promise.all(
       items.map(async (item) => {
-        const query: SocialContextQuery = {
-          docUri: item.docUri,
-          articleUrl: item.articleUrl,
-          excludeDid: item.excludeDid,
-        };
+        const query: SocialContextQuery = { docUri: item.docUri };
         // Key the response back to the request (the client's own `key`, or the
         // docUri, so it can reconcile by position-independent id).
-        const key = item.key || item.docUri || item.articleUrl || '';
-        const inflightKey = `${query.docUri || ''}|${query.articleUrl || ''}|${query.excludeDid || ''}`;
+        const key = item.key || item.docUri || '';
+        const inflightKey = query.docUri || '';
 
         let pending = inFlightContext.get(inflightKey);
         if (!pending) {
@@ -3029,7 +3025,7 @@ export function createApp(db: Database, config: AppConfig) {
         } catch (error) {
           // Best-effort: never fail the batch over one item.
           console.error('[social-context] item error:', error);
-          return { key, quoteCount: 0, alsoLinkedBy: [] };
+          return { key, quoteCount: 0 };
         }
       })
     );

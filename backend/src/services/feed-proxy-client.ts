@@ -211,25 +211,17 @@ interface RawDocumentBatchResponse {
   error?: string;
 }
 
-// Social context (Constellation) request/response shapes (Phase 3).
+// Social context (Constellation) request/response shapes (Phase 3). Just the
+// quote count now: "who else linked this article" moved to the discussion
+// surface (/api/v2/mention-lane), which resolves it across all four lanes.
 export interface SocialContextQuery {
   key?: string;
   docUri?: string;
-  articleUrl?: string;
-  excludeDid?: string;
-}
-
-export interface AlsoLinkedEntry {
-  did: string;
-  handle: string | null;
-  note: string | null;
-  recordUri: string;
 }
 
 export interface SocialContextResult {
   key: string;
   quoteCount: number;
-  alsoLinkedBy: AlsoLinkedEntry[];
 }
 
 interface RawSocialContextResponse {
