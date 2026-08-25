@@ -18,7 +18,7 @@ import { api, ScopeUpgradeError } from '$lib/services/api';
 import { syncQueue, type IntegrationPayload } from '$lib/services/sync-queue';
 import { syncStore } from '$lib/stores/sync.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
-import type { IntegrationKind } from '$lib/stores/collections.svelte';
+import { collectionsStore, type IntegrationKind } from '$lib/stores/collections.svelte';
 import type { CollectionPickerResult, CollectionSelection } from '$lib/types';
 
 export interface IntegrationSaveTarget {
@@ -49,6 +49,15 @@ function createIntegrationSaveStore() {
 
   /** Apply whatever the picker decided: a first save, or a membership edit. */
   async function confirm(result: CollectionPickerResult) {
+    const chosen = result.mode === 'edit' ? result.add : result.collections;
+    // Stamp recency from the choice, before the write — the picker leads with
+    // recently-used collections, and that ordering should reflect what the
+    // reader just decided even if the request is queued or fails.
+    void collectionsStore.markUsed(
+      integration,
+      chosen.map((c) => c.uri)
+    );
+
     if (result.mode === 'edit') {
       await applyEdit(result.add, result.remove);
       return;
