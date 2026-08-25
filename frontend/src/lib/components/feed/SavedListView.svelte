@@ -9,20 +9,12 @@
   import { savesStore } from '$lib/stores/saves.svelte';
   import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
   import type { ItemLabelType } from '$lib/types';
-  import {
-    extractSembleMetadata,
-    extractMarginMetadata,
-    type SembleMetadata,
-    type MarginMetadata,
-  } from '$lib/utils/displayItem';
 
   interface Props {
     onReaderChange?: (open: boolean) => void;
-    onSaveToSemble?: (data: SembleMetadata) => void;
-    onSaveToMargin?: (data: MarginMetadata) => void;
   }
 
-  let { onReaderChange, onSaveToSemble, onSaveToMargin }: Props = $props();
+  let { onReaderChange }: Props = $props();
 
   // Shared reader stack (same as the feed): curated Collection pieces open in-app
   // on top of the edition, with Back returning to it.
@@ -130,12 +122,6 @@
     onClose={closeReader}
     onArchive={() => handleArchive(readerItem!)}
     onRemove={() => handleRemoveBookmark(readerItem!)}
-    onSaveToSemble={onSaveToSemble
-      ? () => onSaveToSemble(extractSembleMetadata(readerItem!))
-      : undefined}
-    onSaveToMargin={onSaveToMargin
-      ? () => onSaveToMargin(extractMarginMetadata(readerItem!))
-      : undefined}
   />
 {/if}
 
@@ -149,12 +135,6 @@
         onHover={() => handleSelect(index)}
         onArchive={() => handleArchive(displayItem)}
         onRemove={() => handleRemoveBookmark(displayItem)}
-        onSaveToSemble={onSaveToSemble
-          ? () => onSaveToSemble(extractSembleMetadata(displayItem))
-          : undefined}
-        onSaveToMargin={onSaveToMargin
-          ? () => onSaveToMargin(extractMarginMetadata(displayItem))
-          : undefined}
       />
     </div>
   {/each}

@@ -14,8 +14,6 @@
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
   import { profileService } from '$lib/services/profiles';
-  import { api, ScopeUpgradeError } from '$lib/services/api';
-  import { syncQueue, type IntegrationPayload } from '$lib/services/sync-queue';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import LibraryEmptyState from '$lib/components/LibraryEmptyState.svelte';
   import LoadingState from '$lib/components/LoadingState.svelte';
@@ -28,10 +26,6 @@
   import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
   import MobileFilterSheet from '$lib/components/feed/MobileFilterSheet.svelte';
   import PullToRefresh from '$lib/components/PullToRefresh.svelte';
-  import CollectionPicker, {
-    type CollectionSelection,
-  } from '$lib/components/CollectionPicker.svelte';
-
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import NotificationList from '$lib/components/NotificationList.svelte';
   import { notificationsStore } from '$lib/stores/notifications.svelte';
@@ -82,98 +76,6 @@
     channelCreateInitialType = type;
     filterSheetInitialTab = 'channel';
     filterSheetOpen = true;
-  }
-
-  // Integration collection picker state
-  let collectionPickerOpen = $state(false);
-  let collectionPickerIntegration = $state<'semble' | 'margin'>('semble');
-  let pendingIntegrationData = $state<{
-    url: string;
-    title?: string;
-    description?: string;
-    author?: string;
-    publishedAt?: string;
-  } | null>(null);
-
-  function handleSaveToSemble(data: {
-    url: string;
-    title?: string;
-    description?: string;
-    author?: string;
-    publishedAt?: string;
-  }) {
-    pendingIntegrationData = data;
-    collectionPickerIntegration = 'semble';
-    collectionPickerOpen = true;
-  }
-
-  function handleSaveToMargin(data: { url: string; title?: string; description?: string }) {
-    pendingIntegrationData = data;
-    collectionPickerIntegration = 'margin';
-    collectionPickerOpen = true;
-  }
-
-  async function handleCollectionSelected(selection: CollectionSelection[]) {
-    collectionPickerOpen = false;
-    const data = pendingIntegrationData;
-    if (!data) return;
-    pendingIntegrationData = null;
-
-    const integrationType = collectionPickerIntegration;
-    const isMargin = integrationType === 'margin';
-    const label = isMargin ? 'Margin' : 'Semble';
-
-    const payload: IntegrationPayload = {
-      type: integrationType,
-      url: data.url,
-      title: data.title,
-      description: data.description,
-      author: data.author,
-      publishedAt: data.publishedAt,
-      collections: selection,
-    };
-
-    const savedSuffix =
-      selection.length > 0
-        ? ` (${selection.length} collection${selection.length === 1 ? '' : 's'})`
-        : '';
-
-    if (syncStore.isOnline) {
-      const id = toastStore.add(`Saving to ${label}...`);
-      try {
-        if (isMargin) {
-          await api.createMarginBookmark({
-            url: data.url,
-            title: data.title,
-            description: data.description,
-            collectionUris: selection.map((c) => c.uri),
-          });
-        } else {
-          await api.createSembleCard({
-            ...data,
-            collections: selection,
-          });
-        }
-        toastStore.update(id, 'success', `Saved to ${label}${savedSuffix}`);
-      } catch (err) {
-        if (err instanceof ScopeUpgradeError) {
-          toastStore.update(id, 'error', 'Please log in again to grant integration permissions');
-          return;
-        }
-        console.error(`Failed to save to ${label}, queueing:`, err);
-        await syncQueue.enqueue('create', 'integration', data.url, payload);
-        toastStore.update(id, 'success', `Queued save to ${label}`);
-      }
-    } else {
-      await syncQueue.enqueue('create', 'integration', data.url, payload);
-      const id = toastStore.add(`Queued save to ${label}`);
-      toastStore.update(id, 'success');
-    }
-  }
-
-  function handleCollectionPickerClose() {
-    collectionPickerOpen = false;
-    pendingIntegrationData = null;
   }
 
   function scrollToTop() {
@@ -582,12 +484,6 @@
 </script>
 
 <EditFeedModal open={editModalOpen} subscription={editingSubscription} onclose={closeEditModal} />
-<CollectionPicker
-  open={collectionPickerOpen}
-  integration={collectionPickerIntegration}
-  onselect={handleCollectionSelected}
-  onclose={handleCollectionPickerClose}
-/>
 
 {#if !auth.isAuthenticated}
   <WelcomePage />
@@ -704,12 +600,7 @@
         {:else if mode === 'linkblog'}
           <LinkblogListView onReaderChange={(open) => (readerOpen = open)} />
         {:else if isSavedView}
-          <SavedListView
-            bind:this={savedListView}
-            onReaderChange={(open) => (readerOpen = open)}
-            onSaveToSemble={handleSaveToSemble}
-            onSaveToMargin={handleSaveToMargin}
-          />
+          <SavedListView bind:this={savedListView} onReaderChange={(open) => (readerOpen = open)} />
         {:else}
           <FeedListView
             bind:this={feedListView}
@@ -727,8 +618,6 @@
               })}
             onUnshare={(url) => linkblogStore.unshare(url)}
             onReaderChange={(open) => (readerOpen = open)}
-            onSaveToSemble={handleSaveToSemble}
-            onSaveToMargin={handleSaveToMargin}
           />
         {/if}
       </PullToRefresh>

@@ -10,24 +10,25 @@
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
   import { getExternalArticleLink } from '$lib/utils/linkPost';
   import { shareTargetForDisplayItem } from '$lib/utils/shareTarget';
-  import { normalizeDisplayItem } from '$lib/utils/displayItem';
+  import {
+    normalizeDisplayItem,
+    extractSembleMetadata,
+    extractMarginMetadata,
+  } from '$lib/utils/displayItem';
   import { toggleSavedLink } from '$lib/utils/saveLink';
   import AtmospherePanel from './AtmospherePanel.svelte';
   import Icon from '$lib/components/Icon.svelte';
 
   let {
     readerItem,
-    onSaveToSemble,
-    onSaveToMargin,
     panelId = 'reader-discussion-panel',
   }: {
     readerItem: FeedDisplayItem;
-    onSaveToSemble?: () => void;
-    onSaveToMargin?: () => void;
     panelId?: string;
   } = $props();
 
@@ -96,10 +97,13 @@
     });
   }
 
+  // Semble and Margin are offered wherever the reader is signed in: the picker
+  // is global, so the affordance no longer depends on which page happens to host
+  // this reader. Already having saved the article doesn't retire the control —
+  // saving again is how you put it in another collection.
   function laneCanCreate(id: LaneId): boolean {
     if (id === 'linkblog') return false;
-    if (id === 'semble') return Boolean(onSaveToSemble);
-    if (id === 'margin') return Boolean(onSaveToMargin);
+    if (id === 'semble' || id === 'margin') return Boolean(auth.user);
     return true;
   }
 
@@ -140,9 +144,9 @@
 
   function createInLane(id: LaneId) {
     if (id === 'semble') {
-      onSaveToSemble?.();
+      integrationSaveStore.openPicker('semble', extractSembleMetadata(readerItem));
     } else if (id === 'margin') {
-      onSaveToMargin?.();
+      integrationSaveStore.openPicker('margin', extractMarginMetadata(readerItem));
     } else if (id === 'bluesky') {
       window.open(
         `https://bsky.app/intent/compose?text=${encodeURIComponent(itemUrl)}`,
