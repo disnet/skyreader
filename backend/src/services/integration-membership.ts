@@ -285,14 +285,30 @@ export async function editMemberships(
   const lookup = await findMemberships(pds, provider, input.url);
   if (!lookup.success) throw new MembershipEditError(lookup.error, 502);
   const allowedRemovals = new Set(lookup.data.memberships.map((m) => m.linkUri));
+  const alreadyRemoved = new Set<string>();
   for (const { uri } of removeRkeys) {
-    if (!allowedRemovals.has(uri)) {
-      throw new MembershipEditError('membership does not belong to this URL', 403);
+    if (allowedRemovals.has(uri)) continue;
+
+    // A membership can disappear after the picker opens. Preserve idempotency
+    // without weakening URL authorization: only a confirmed 404 is accepted as
+    // already removed; an existing record outside the URL-scoped lookup is still
+    // forbidden, and an inconclusive read is an upstream failure.
+    const ref = parseAtUri(uri)!;
+    const current = await pds.getRecord(ref.collection, ref.rkey);
+    if (!current.success && isRecordNotFound(current.error)) {
+      alreadyRemoved.add(uri);
+      continue;
     }
+    if (!current.success) throw new MembershipEditError(current.error, 502);
+    throw new MembershipEditError('membership does not belong to this URL', 403);
   }
 
   const removed: MembershipEditResult['removed'] = [];
   for (const { uri, rkey } of removeRkeys) {
+    if (alreadyRemoved.has(uri)) {
+      removed.push({ linkUri: uri });
+      continue;
+    }
     const res = await pds.deleteRecord(membershipCollection(provider), rkey);
     if (res.success || isRecordNotFound(res.error)) {
       removed.push({ linkUri: uri });

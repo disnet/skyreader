@@ -222,6 +222,33 @@ describe('editMemberships — removal validation', () => {
     ).rejects.toMatchObject({ status: 403 });
     expect(pds.deleteRecord).not.toHaveBeenCalled();
   });
+
+  it('treats a membership missing before authorization as already removed and still adds', async () => {
+    const gone = `at://${DID}/${LINK}/gone`;
+    const pds = fakeClient(
+      { [CARD]: [card('c1', URL_A)], [LINK]: [] },
+      {
+        getRecord: vi.fn(async (collection: string, rkey: string) =>
+          collection === LINK && rkey === 'gone'
+            ? { success: false, error: 'Could not locate record', retryable: false }
+            : {
+                success: true,
+                data: { uri: `at://${DID}/${collection}/${rkey}`, cid: `cid-${rkey}`, value: {} },
+              }
+        ),
+      }
+    );
+
+    const res = await editMemberships(pds, DID, 'semble', {
+      url: URL_A,
+      add: [{ uri: COL_A, cid: 'x' }],
+      remove: [gone],
+    });
+
+    expect(pds.deleteRecord).not.toHaveBeenCalled();
+    expect(res.removed).toEqual([{ linkUri: gone }]);
+    expect(res.added).toEqual([{ collectionUri: COL_A, linkUri: expect.stringContaining(LINK) }]);
+  });
 });
 
 describe('editMemberships — Semble', () => {

@@ -69,8 +69,8 @@
   // Edit mode = this URL already has a card/note in the user's repo.
   let isEdit = $derived((memberships?.items.length ?? 0) > 0);
   // A capped item listing that found no match is not proof this is a first save.
-  // Block creation until a complete lookup can distinguish that from an older
-  // existing item; otherwise the warning still permits the duplicate it describes.
+  // Keep the lookup honest, but don't permanently block established users whose
+  // repos are larger than the bounded scan: a possible duplicate is recoverable.
   let lookupIncomplete = $derived(memberships?.truncated === true && !isEdit);
   /** collections the save currently belongs to (the diff baseline) */
   let initialUris = $derived(new Set((memberships?.memberships ?? []).map((m) => m.collectionUri)));
@@ -90,7 +90,9 @@
 
   let canSave = $derived.by(() => {
     if (membershipsLoading) return false;
-    if (lookupIncomplete) return false;
+    // Until this settles, the row whose membership IS the user's Saved entry is
+    // unknown and must not be editable (or removable through "remove all").
+    if (!saveBackingStore.loaded) return false;
     if (isEdit) return changed;
     return noCollection || selectedUris.size > 0;
   });
@@ -243,7 +245,7 @@
         </div>
       {:else if lookupIncomplete}
         <div class="picker-note">
-          Couldn't check all older saves. Refresh and try again before creating a new one.
+          Couldn't check all older saves. Saving may create another {integrationName} item.
         </div>
       {:else if membershipsFailed}
         <div class="picker-note">Couldn't check existing saves — saving will create a new one.</div>
@@ -295,7 +297,7 @@
               class:selected={checked}
               class:locked
               onclick={() => toggleCollection(collection.uri)}
-              disabled={locked}
+              disabled={locked || !saveBackingStore.loaded}
               type="button"
             >
               <span class="checkbox" aria-hidden="true">

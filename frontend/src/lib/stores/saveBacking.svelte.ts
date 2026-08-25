@@ -13,6 +13,7 @@ import type { SaveBacking } from '$lib/types';
 
 function createSaveBackingStore() {
   let backing = $state<SaveBacking | null>(null);
+  let loaded = $state(false);
   let inFlight: Promise<void> | null = null;
 
   /** Refresh from the server, deduping concurrent callers. Never throws. */
@@ -25,6 +26,7 @@ function createSaveBackingStore() {
       } catch (err) {
         console.error('Failed to load save backing:', err);
       } finally {
+        loaded = true;
         inFlight = null;
       }
     })();
@@ -39,6 +41,9 @@ function createSaveBackingStore() {
   return {
     get backing() {
       return backing;
+    },
+    get loaded() {
+      return loaded;
     },
     load,
     set,
