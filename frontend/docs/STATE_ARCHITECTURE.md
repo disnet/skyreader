@@ -126,13 +126,14 @@ function createAppManager() {
 ```
 
 **Phases:**
-| Phase | Description | UI State |
-|-------|-------------|----------|
-| `idle` | Not started | - |
-| `hydrating` | Loading from IndexedDB | Show loading if no cached data |
-| `refreshing` | Syncing with backend | Show cached data, fetch in background |
-| `ready` | Fully loaded | Normal operation |
-| `error` | Initialization failed | Show error state |
+
+| Phase        | Description            | UI State                              |
+| ------------ | ---------------------- | ------------------------------------- |
+| `idle`       | Not started            | -                                     |
+| `hydrating`  | Loading from IndexedDB | Show loading if no cached data        |
+| `refreshing` | Syncing with backend   | Show cached data, fetch in background |
+| `ready`      | Fully loaded           | Normal operation                      |
+| `error`      | Initialization failed  | Show error state                      |
 
 ---
 
@@ -170,11 +171,12 @@ function createFeedStatusStore() {
 ```
 
 **Error Classification:**
-| Error Type | HTTP Codes | UI Display |
-|------------|------------|------------|
-| Permanent | 401, 403, 404, 410 | "Feed unavailable" |
-| Transient | 429, 5xx | "Temporarily unavailable" |
-| Circuit Open | Has `nextRetryAt` | "Retry in X min" |
+
+| Error Type   | HTTP Codes         | UI Display                |
+| ------------ | ------------------ | ------------------------- |
+| Permanent    | 401, 403, 404, 410 | "Feed unavailable"        |
+| Transient    | 429, 5xx           | "Temporarily unavailable" |
+| Circuit Open | Has `nextRetryAt`  | "Retry in X min"          |
 
 ---
 

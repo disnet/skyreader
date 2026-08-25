@@ -20,16 +20,14 @@ export const systemMetrics: MetricDefinition[] = [
       return { label: 'Active Sessions', value: r?.count ?? 0 };
     },
   },
-  ...rowCountTables.map(
-    ({ table, label }): MetricDefinition => ({
-      id: `rows_${table}`,
-      category: 'System',
-      query: async (db) => {
-        const r = await db
-          .prepare(`SELECT COUNT(*) as count FROM ${table}`)
-          .first<{ count: number }>();
-        return { label: `${label} Rows`, value: r?.count ?? 0 };
-      },
-    })
-  ),
+  ...rowCountTables.map(({ table, label }): MetricDefinition => ({
+    id: `rows_${table}`,
+    category: 'System',
+    query: async (db) => {
+      const r = await db
+        .prepare(`SELECT COUNT(*) as count FROM ${table}`)
+        .first<{ count: number }>();
+      return { label: `${label} Rows`, value: r?.count ?? 0 };
+    },
+  })),
 ];

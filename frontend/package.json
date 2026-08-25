@@ -18,30 +18,29 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
-    "@sveltejs/adapter-auto": "^7.0.0",
-    "@sveltejs/kit": "^2.49.1",
-    "@sveltejs/vite-plugin-svelte": "^6.2.1",
-    "@types/dompurify": "^3.0.5",
-    "@types/node": "^22.19.19",
+    "@sveltejs/adapter-auto": "^7.0.1",
+    "@sveltejs/kit": "^2.70.3",
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@types/node": "^26.3.0",
     "@vite-pwa/sveltekit": "^1.1.0",
-    "jsdom": "^29.1.1",
-    "prettier": "^3.8.1",
-    "prettier-plugin-svelte": "^3.4.1",
-    "svelte": "^5.45.6",
-    "svelte-check": "^4.3.4",
+    "jsdom": "^30.0.1",
+    "prettier": "^3.9.6",
+    "prettier-plugin-svelte": "^4.1.1",
+    "svelte": "^5.56.10",
+    "svelte-check": "^4.7.6",
     "typescript": "^5.9.3",
-    "vite": "^7.2.6",
-    "vitest": "^4.1.2",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11",
     "workbox-core": "^7.4.1",
     "workbox-precaching": "^7.4.1",
     "workbox-routing": "^7.4.1",
     "workbox-strategies": "^7.4.1"
   },
   "dependencies": {
-    "@atproto/api": "^0.18.13",
+    "@atproto/api": "^0.20.41",
     "@sveltejs/adapter-static": "^3.0.10",
-    "dexie": "^4.2.1",
-    "dompurify": "^3.3.1",
-    "marked": "^17.0.1"
+    "dexie": "^4.4.5",
+    "dompurify": "^3.4.14",
+    "marked": "^18.0.11"
   }
 }

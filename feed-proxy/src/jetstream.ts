@@ -302,10 +302,9 @@ export class DocumentFirehose {
    *  list (replace-by-uri / insert), re-sort newest-first, trim to the cap. */
   private spliceDocument(authorDid: string, doc: ProxyDocument): void {
     const row = this.db
-      .query<
-        { documents_json: string },
-        [string]
-      >('SELECT documents_json FROM document_cache WHERE did = ?')
+      .query<{ documents_json: string }, [string]>(
+        'SELECT documents_json FROM document_cache WHERE did = ?'
+      )
       .get(authorDid);
     // No cache row → author not backfilled (or aged out). Don't synthesize a
     // partial history here; the request path backfills the full list.
@@ -326,10 +325,9 @@ export class DocumentFirehose {
 
   private removeDocument(authorDid: string, recordUri: string): void {
     const row = this.db
-      .query<
-        { documents_json: string },
-        [string]
-      >('SELECT documents_json FROM document_cache WHERE did = ?')
+      .query<{ documents_json: string }, [string]>(
+        'SELECT documents_json FROM document_cache WHERE did = ?'
+      )
       .get(authorDid);
     if (!row?.documents_json) return;
 

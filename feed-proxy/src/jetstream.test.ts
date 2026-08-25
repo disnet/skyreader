@@ -26,10 +26,9 @@ function seedAuthor(
 
 function getDocs(db: Database, did: string): ProxyDocument[] {
   const row = db
-    .query<
-      { documents_json: string },
-      [string]
-    >('SELECT documents_json FROM document_cache WHERE did = ?')
+    .query<{ documents_json: string }, [string]>(
+      'SELECT documents_json FROM document_cache WHERE did = ?'
+    )
     .get(did);
   return row ? (JSON.parse(row.documents_json) as ProxyDocument[]) : [];
 }

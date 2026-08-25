@@ -233,8 +233,7 @@ const PDS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 function extractPdsFromDidDoc(didDoc: Record<string, unknown>, did: string): string {
   const services = didDoc.service as
-    | { id: string; type: string; serviceEndpoint: string }[]
-    | undefined;
+    { id: string; type: string; serviceEndpoint: string }[] | undefined;
   const pdsService = services?.find(
     (s) => s.type === 'AtprotoPersonalDataServer' || s.id === '#atproto_pds'
   );

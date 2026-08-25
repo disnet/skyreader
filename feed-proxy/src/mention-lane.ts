@@ -251,10 +251,9 @@ async function resolveProfile(db: Database, did: string): Promise<AuthorProfile>
   const key = `profile:${did}`;
   const now = Date.now();
   const cached = db
-    .query<
-      CacheRow,
-      [string]
-    >('SELECT cache_key, context_json, cached_at FROM constellation_cache WHERE cache_key = ?')
+    .query<CacheRow, [string]>(
+      'SELECT cache_key, context_json, cached_at FROM constellation_cache WHERE cache_key = ?'
+    )
     .get(key);
   if (cached && now - cached.cached_at < PROFILE_CACHE_TTL_MS) {
     try {
@@ -419,10 +418,9 @@ export async function getMentionLaneItems(
   const key = cacheKey(laneId, normUrl);
   const now = Date.now();
   const cached = db
-    .query<
-      CacheRow,
-      [string]
-    >('SELECT cache_key, context_json, cached_at FROM constellation_cache WHERE cache_key = ?')
+    .query<CacheRow, [string]>(
+      'SELECT cache_key, context_json, cached_at FROM constellation_cache WHERE cache_key = ?'
+    )
     .get(key);
   if (cached && now - cached.cached_at < CACHE_TTL_MS) {
     try {

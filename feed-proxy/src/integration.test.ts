@@ -348,10 +348,9 @@ describe('Integration Tests', () => {
       );
       writeFeedItems(db, urlHash, oldFeed.items, Date.now());
       const oldCursor = db
-        .query<
-          { seq: number },
-          [string]
-        >('SELECT seq FROM feed_items WHERE url_hash = ? AND guid = "math-1"')
+        .query<{ seq: number }, [string]>(
+          'SELECT seq FROM feed_items WHERE url_hash = ? AND guid = "math-1"'
+        )
         .get(urlHash)?.seq;
       const generation = db
         .query<{ value: string }, []>(`SELECT value FROM sync_state WHERE key = 'items_generation'`)
@@ -3164,10 +3163,9 @@ describe('Durable item retention (feed_items cursor)', () => {
 
   function feedItemGuids(db: Database): Array<{ seq: number; guid: string }> {
     return db
-      .query<
-        { seq: number; guid: string },
-        [string]
-      >('SELECT seq, guid FROM feed_items WHERE url_hash = ? ORDER BY seq ASC')
+      .query<{ seq: number; guid: string }, [string]>(
+        'SELECT seq, guid FROM feed_items WHERE url_hash = ? ORDER BY seq ASC'
+      )
       .all(hashUrl(URL));
   }
 
@@ -3450,10 +3448,9 @@ describe('demand-driven fetch governor', () => {
     // retry backoff and surface a bogus error badge to every subscriber.
     for (const url of [held, shed]) {
       const row = db
-        .query<
-          { error_count: number; next_retry_at: number | null },
-          [string]
-        >('SELECT error_count, next_retry_at FROM cache WHERE url_hash = ?')
+        .query<{ error_count: number; next_retry_at: number | null }, [string]>(
+          'SELECT error_count, next_retry_at FROM cache WHERE url_hash = ?'
+        )
         .get(hashUrl(url));
       expect(row?.error_count ?? 0).toBe(0);
       expect(row?.next_retry_at ?? null).toBeNull();

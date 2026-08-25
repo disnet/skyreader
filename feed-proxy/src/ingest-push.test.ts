@@ -291,10 +291,9 @@ describe('crawl-set registration', () => {
     registerCrawlFeeds(db, [FEED_URL], now);
 
     const row = db
-      .query<
-        { last_requested_at: number; parsed_json: string; parser_version: number },
-        [string]
-      >('SELECT last_requested_at, parsed_json, parser_version FROM cache WHERE url_hash = ?')
+      .query<{ last_requested_at: number; parsed_json: string; parser_version: number }, [string]>(
+        'SELECT last_requested_at, parsed_json, parser_version FROM cache WHERE url_hash = ?'
+      )
       .get(URL_HASH);
     expect(row?.last_requested_at).toBe(now);
     // The existing cached parse is untouched.

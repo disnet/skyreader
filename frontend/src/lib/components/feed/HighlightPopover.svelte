@@ -145,8 +145,7 @@
       onkeydown={(e) => {
         // Keep typing from triggering reader keyboard shortcuts.
         if (e.key !== 'Escape') e.stopPropagation();
-      }}
-    ></textarea>
+      }}></textarea>
     <div class="note-actions">
       {#if mode === 'create'}
         <button

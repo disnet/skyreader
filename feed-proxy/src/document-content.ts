@@ -61,8 +61,7 @@ function firstTextInBlocks(blocks: unknown, depth: number, quotes: 'skip' | 'tak
     // leaflet wraps each block as `{ block: {...} }`; pckt/offprint list its
     // blocks directly. Handle both by unwrapping a `.block` if present.
     const block = ('block' in entry ? (entry as { block?: unknown }).block : entry) as
-      | TextishBlock
-      | undefined;
+      TextishBlock | undefined;
     if (!block || typeof block !== 'object') continue;
     const isQuote = typeof block.$type === 'string' && QUOTE_BLOCK_TYPES.has(block.$type);
     if (isQuote && quotes === 'skip') continue;

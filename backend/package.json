@@ -16,16 +16,16 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
-    "@noble/curves": "^2.2.0",
-    "@scure/base": "^2.2.0",
-    "@sentry/cloudflare": "^10.70.0",
-    "fast-xml-parser": "^5.2.0"
+    "@noble/curves": "^2.3.0",
+    "@scure/base": "^2.3.0",
+    "@sentry/cloudflare": "^10.71.0",
+    "fast-xml-parser": "^5.11.0"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.8.19",
-    "prettier": "^3.8.1",
-    "typescript": "^5.5.2",
-    "vitest": "~3.2.0",
-    "wrangler": "^4.58.0"
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.125.0"
   }
 }

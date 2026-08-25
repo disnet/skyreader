@@ -77,9 +77,11 @@ routes = [{ pattern = "api.skyreader.app", custom_domain = true }]
 [triggers]
 crons = ["* * * * *"]
 
-# Development environment
-[env.dev]
-vars = { FRONTEND_URL = "http://127.0.0.1:5173" }
+# Local development overrides live in `.dev.vars`, not a named environment: nothing
+# ever runs `wrangler … --env dev`. A named environment inherits nothing, so an
+# `[env.dev]` carrying only FRONTEND_URL also told `wrangler types` that DB, the
+# Durable Object, and the rest of `[vars]` are absent in some environment — which
+# made every binding optional in the generated Env.
 
 # Staging environment
 [env.staging]

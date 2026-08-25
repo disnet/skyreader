@@ -239,8 +239,7 @@ function foreignMarkdownNote(markdown: string, articleUrl?: string): string {
 // a Leaflet richtext feature; the other formats store the note as plain text.
 function noteOf(doc: ProxyDocument): { note: string; mentions: MentionFacet[] } {
   const content = doc.content as
-    | (LeafletContent & { items?: ForeignBlock[]; text?: { markdown?: string } })
-    | undefined;
+    (LeafletContent & { items?: ForeignBlock[]; text?: { markdown?: string } }) | undefined;
   const articleUrl = externalArticleUrl(doc);
   switch (content?.$type) {
     case 'pub.leaflet.content': {
