@@ -52,6 +52,9 @@
     lanesOpen = true,
     /** Optional DOM id for the region (so a toggle can aria-control it). */
     panelId,
+    /** The article this discussion belongs to. Used only as an identity: moving
+        to another article refolds everything the reader had opened here. */
+    itemUrl,
     /** The reader frames the section with a heading; the card's own Discussion
         button already names it, so it opts out. */
     showHeading = true,
@@ -72,6 +75,7 @@
     sembleContext?: SembleContextVM;
     lanesOpen?: boolean;
     panelId?: string;
+    itemUrl?: string;
     showHeading?: boolean;
     composeLead?: Snippet;
     onSelectFilter?: (id: DiscussionFilterId) => void;
@@ -114,6 +118,44 @@
   // people as if that were all of them.
   const linkOnly = $derived(stream.linkOnly ?? []);
   const shown = $derived(stream.entries.length + linkOnly.length);
+
+  // ── The long discussion, folded ─────────────────────────────────────────
+  // A widely-read article can bring back dozens of people. All of them at once
+  // buries whatever follows (the ways to add yours, the rest of the reader) under
+  // a wall the reader never asked to scroll. The first handful is the discussion;
+  // the rest is available on request, in the panel's own disclosure grammar.
+  /** Entries read before the stream asks to be opened. */
+  const STREAM_PREVIEW = 6;
+  /** Linkers named before the line asks to be opened. */
+  const LINKS_PREVIEW = 8;
+
+  let streamExpanded = $state(false);
+  let linksExpanded = $state(false);
+  // A different article is a different discussion: nothing stays open across it.
+  let expandedFor: string | undefined = undefined;
+  $effect(() => {
+    if (itemUrl !== expandedFor) {
+      expandedFor = itemUrl;
+      streamExpanded = false;
+      linksExpanded = false;
+    }
+  });
+  // Narrowing to a lane is its own request to see that lane: it starts folded too.
+  let expandedFilter: DiscussionFilterId = 'all';
+  $effect(() => {
+    if (activeFilter !== expandedFilter) {
+      expandedFilter = activeFilter;
+      streamExpanded = false;
+      linksExpanded = false;
+    }
+  });
+
+  const visibleEntries = $derived(
+    streamExpanded ? stream.entries : stream.entries.slice(0, STREAM_PREVIEW)
+  );
+  const foldedEntries = $derived(stream.entries.length - visibleEntries.length);
+  const visibleLinks = $derived(linksExpanded ? linkOnly : linkOnly.slice(0, LINKS_PREVIEW));
+  const foldedLinks = $derived(linkOnly.length - visibleLinks.length);
   // Only once the stream has actually settled: while it is idle or loading,
   // `shown` is 0 for reasons that have nothing to do with how many there are.
   const settled = $derived(!stream.idle && !stream.loading);
@@ -515,9 +557,9 @@
       </section>
     {/if}
 
-    {#if stream.entries.length > 0}
+    {#if visibleEntries.length > 0}
       <ul class="discussion-stream">
-        {#each stream.entries as entry (entry.key)}
+        {#each visibleEntries as entry (entry.key)}
           <li class="entry">
             {@render person(
               entry.did,
@@ -608,6 +650,32 @@
           </li>
         {/each}
       </ul>
+
+      {#if foldedEntries > 0}
+        <button
+          type="button"
+          class="semble-disclose semble-disclose-block discussion-disclose"
+          aria-expanded={false}
+          onclick={(e) => {
+            e.stopPropagation();
+            streamExpanded = true;
+          }}
+        >
+          Show {foldedEntries} more {foldedEntries === 1 ? 'reply' : 'replies'}
+        </button>
+      {:else if streamExpanded && stream.entries.length > STREAM_PREVIEW}
+        <button
+          type="button"
+          class="semble-disclose semble-disclose-block discussion-disclose"
+          aria-expanded={true}
+          onclick={(e) => {
+            e.stopPropagation();
+            streamExpanded = false;
+          }}
+        >
+          Show fewer
+        </button>
+      {/if}
     {/if}
 
     <!-- People are still resolving. Show the shape of what's coming rather than
@@ -632,9 +700,9 @@
          they read as what they are — distribution, not discussion — and the
          people who said something keep the stream to themselves. -->
     {#if linkOnly.length > 0}
-      <div class="also-linked" class:leading={stream.entries.length === 0}>
+      <div class="also-linked" class:leading={visibleEntries.length === 0}>
         <span class="also-linked-label">Also linked by</span>
-        {#each linkOnly as entry (entry.key)}
+        {#each visibleLinks as entry (entry.key)}
           {@const label = displayNameFor(entry)}
           {@const hint = entry.relativeTime
             ? `${label} · ${entry.laneLabel} · ${entry.relativeTime}`
@@ -682,6 +750,33 @@
             </span>
           {/if}
         {/each}
+        <!-- The rest of the linkers stay one click away rather than wrapping the
+             line into a paragraph of names. -->
+        {#if foldedLinks > 0}
+          <button
+            type="button"
+            class="also-link also-more"
+            aria-expanded="false"
+            onclick={(e) => {
+              e.stopPropagation();
+              linksExpanded = true;
+            }}
+          >
+            <span class="also-name">{foldedLinks} more</span>
+          </button>
+        {:else if linksExpanded && linkOnly.length > LINKS_PREVIEW}
+          <button
+            type="button"
+            class="also-link also-more"
+            aria-expanded="true"
+            onclick={(e) => {
+              e.stopPropagation();
+              linksExpanded = false;
+            }}
+          >
+            <span class="also-name">Show fewer</span>
+          </button>
+        {/if}
       </div>
     {/if}
 
@@ -1380,6 +1475,25 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* The disclosure under the stream sits where the next reply would be, at the
+     stream's own left edge — it continues the list rather than labelling it. */
+  .discussion-disclose {
+    margin-top: 0.75rem;
+  }
+
+  .also-more {
+    border: 0;
+    font: inherit;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    padding-left: 0.5rem;
+  }
+
+  .also-more:hover {
+    color: var(--color-primary);
   }
 
   .discussion-more {

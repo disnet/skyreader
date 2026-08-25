@@ -413,6 +413,7 @@
         {sembleContext}
         lanesOpen={panelOpen}
         panelId="discussion-panel"
+        {itemUrl}
         showHeading={false}
         {onSelectFilter}
         onRetry={onRetryStream}
