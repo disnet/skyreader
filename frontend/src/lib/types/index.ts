@@ -801,6 +801,49 @@ export interface SembleCollectionRef {
   url: string | null;
 }
 
+export interface SembleAuthor {
+  did: string;
+  handle: string;
+  name: string | null;
+  avatarUrl: string | null;
+}
+export interface SembleContext {
+  stats: {
+    saves: number;
+    notes: number;
+    collections: number;
+    connections: { total: number; incoming: number; outgoing: number };
+  } | null;
+  notes: Array<{ id: string; text: string; author: SembleAuthor; createdAt: string | null }>;
+  collections: Array<{
+    id: string;
+    name: string;
+    url: string | null;
+    author: { did: string; handle: string };
+  }>;
+  connections: Array<{
+    id: string;
+    direction: 'out' | 'in';
+    type: string | null;
+    note: string | null;
+    curator: SembleAuthor;
+    createdAt: string | null;
+    other: {
+      url: string;
+      title: string | null;
+      description: string | null;
+      siteName: string | null;
+      imageUrl: string | null;
+    };
+  }>;
+  truncated: { savers: boolean; notes: boolean; collections: boolean; connections: boolean };
+  incomplete: boolean;
+  source: 'semble-api' | 'constellation-fallback';
+  /** This URL's card page on semble.so — the page these counts were read from.
+   *  Built by the feed proxy; null when the URL couldn't be normalized. */
+  cardUrl: string | null;
+}
+
 // An in-app notification (currently only @mention-on-a-share). `actor*` fields
 // are the sharer who mentioned you; `sourceUri` is the mentioning
 // site.standard.document; `title` is the shared article's title. Sourced

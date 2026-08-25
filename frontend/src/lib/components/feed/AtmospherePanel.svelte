@@ -31,6 +31,7 @@
   import type { Snippet } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { safeHref } from '$lib/utils/sanitize';
+  import type { IconName } from '$lib/components/Icon.svelte';
   import type {
     LaneId,
     LaneRowVM,
@@ -38,6 +39,7 @@
     DiscussionFilterId,
     DiscussionFilterVM,
     DiscussionStreamVM,
+    SembleContextVM,
   } from '../articleCardView.types';
 
   let {
@@ -45,6 +47,7 @@
     filters = [],
     activeFilter = 'all',
     stream = { idle: true, loading: false, entries: [] },
+    sembleContext,
     /** Render the discussion at all. */
     lanesOpen = true,
     /** Optional DOM id for the region (so a toggle can aria-control it). */
@@ -59,11 +62,14 @@
     onCreateInLane,
     onOpenAuthor,
     onRetry,
+    onSaveConnection,
+    isConnectionSaved,
   }: {
     laneRow?: LaneRowVM[];
     filters?: DiscussionFilterVM[];
     activeFilter?: DiscussionFilterId;
     stream?: DiscussionStreamVM;
+    sembleContext?: SembleContextVM;
     lanesOpen?: boolean;
     panelId?: string;
     showHeading?: boolean;
@@ -72,7 +78,30 @@
     onCreateInLane?: (id: LaneId) => void;
     onOpenAuthor?: (did: string) => void;
     onRetry?: () => void;
+    /** Toggle a connected article into the reader's own Saved list. Absent when
+     *  the reader can't save (signed out), and the control doesn't render at
+     *  all. Async — a save fetches and extracts the article first. */
+    onSaveConnection?: (url: string) => void | Promise<void>;
+    /** Reactive saved-state predicate, so the control reads as state rather than
+     *  as an invitation the reader has already accepted. */
+    isConnectionSaved?: (url: string) => boolean;
   } = $props();
+
+  // The connections whose saves are in flight. A save costs a fetch and an
+  // extraction, so each control has to say it is working, and re-entry on the
+  // same one is blocked so a double-click can't create two saves. Different
+  // connections save concurrently — keeping three in a row is the normal case.
+  let savingUrls = $state<string[]>([]);
+
+  async function toggleSave(url: string) {
+    if (!onSaveConnection || savingUrls.includes(url)) return;
+    savingUrls = [...savingUrls, url];
+    try {
+      await onSaveConnection(url);
+    } finally {
+      savingUrls = savingUrls.filter((u) => u !== url);
+    }
+  }
 
   // The headline count: every reference across every lane, before filtering.
   const total = $derived(laneRow.reduce((sum, lane) => sum + lane.count, 0));
@@ -92,14 +121,132 @@
     activeFilter === 'all' && settled && total > shown ? total - shown : 0
   );
   const hasComposeRow = $derived(Boolean(composeLead) || creatable.length > 0);
+  const showSemble = $derived(
+    Boolean(sembleContext) && (activeFilter === 'all' || activeFilter === 'semble')
+  );
+  // Whether Semble actually returned something to read. A context object that
+  // came back empty (the saver fallback, or an API answer with nothing in it) is
+  // not content: it must not stand in for the people who aren't there, or the
+  // panel would go silent instead of saying nobody wrote about this.
+  const hasSembleContent = $derived(
+    showSemble &&
+      Boolean(
+        sembleContext &&
+        (sembleContext.notes.length ||
+          sembleContext.collections.length ||
+          sembleContext.connections.length)
+      )
+  );
+
+  // ── Semble's graph, folded ──────────────────────────────────────────────
+  // A curator mapping a topic makes the same edge over and over: same person,
+  // same relation, same direction, twenty different targets. Rendered one row
+  // each that is twenty repetitions of the sentence and one line of payload.
+  // Folded on (curator, direction, type) it is one sentence and twenty titles,
+  // which is what the reader came for.
+  type SembleConnection = SembleContextVM['connections'][number];
+  interface ConnectionGroup {
+    key: string;
+    direction: 'in' | 'out';
+    type: string | null;
+    curator: SembleConnection['curator'];
+    items: SembleConnection[];
+  }
+  /** Targets listed inside a group before it asks to be opened. */
+  const GROUP_PREVIEW = 3;
+  /** Groups listed before the block asks to be opened. */
+  const BLOCK_PREVIEW = 5;
+
+  const connectionGroups = $derived.by(() => {
+    const groups = new Map<string, ConnectionGroup>();
+    for (const connection of sembleContext?.connections ?? []) {
+      const key = `${connection.direction}|${connection.type ?? ''}|${connection.curator.did}`;
+      const existing = groups.get(key);
+      if (existing) existing.items.push(connection);
+      else
+        groups.set(key, {
+          key,
+          direction: connection.direction,
+          type: connection.type,
+          curator: connection.curator,
+          items: [connection],
+        });
+    }
+    return [...groups.values()];
+  });
+
+  let openGroups = $state<string[]>([]);
+  let allGroupsOpen = $state(false);
+  // A different article is a different graph: nothing stays open across it.
+  let openedFor: SembleContextVM | undefined = undefined;
+  $effect(() => {
+    if (sembleContext !== openedFor) {
+      openedFor = sembleContext;
+      openGroups = [];
+      allGroupsOpen = false;
+    }
+  });
+
+  const visibleGroups = $derived(
+    allGroupsOpen ? connectionGroups : connectionGroups.slice(0, BLOCK_PREVIEW)
+  );
+  const foldedConnections = $derived(
+    connectionGroups.slice(visibleGroups.length).reduce((n, group) => n + group.items.length, 0)
+  );
+
+  function toggleGroup(key: string) {
+    openGroups = openGroups.includes(key)
+      ? openGroups.filter((k) => k !== key)
+      : [...openGroups, key];
+  }
+
+  // Semble hands back a page of edges, not all of them. Say which, once, where
+  // the reader can act on it — rather than as a headline count that contradicts
+  // the panel's own.
+  const connectionsHeld = $derived(sembleContext?.stats?.connections.total ?? 0);
+  const connectionsGot = $derived(sembleContext?.connections.length ?? 0);
+  const connectionsBeyond = $derived(
+    connectionsHeld > connectionsGot ? connectionsHeld - connectionsGot : 0
+  );
+  const sembleTruncated = $derived(
+    Boolean(sembleContext && Object.values(sembleContext.truncated).some(Boolean))
+  );
+
+  function groupSentence(group: ConnectionGroup): string {
+    const type = group.type ?? 'connected';
+    const n = group.items.length;
+    const other = n === 1 ? 'one piece' : `${n} pieces`;
+    return group.direction === 'out'
+      ? `This article ${type} ${other}, connected by ${authorName(group.curator)}`
+      : `${other[0].toUpperCase()}${other.slice(1)} ${type} this article, connected by ${authorName(group.curator)}`;
+  }
+
+  function authorName(author: { name?: string | null; handle?: string | null; did: string }) {
+    return author.name?.trim() || `@${author.handle || author.did.slice(0, 18)}`;
+  }
+
+  function connectionLabel(connection: SembleContextVM['connections'][number]): string {
+    try {
+      return (
+        connection.other.title ||
+        connection.other.siteName ||
+        new URL(connection.other.url).hostname
+      );
+    } catch {
+      return connection.other.title || 'Connected article';
+    }
+  }
 
   function displayNameFor(entry: DiscussionEntryVM): string {
     return entry.displayName?.trim() || `@${entry.handle ?? entry.did.slice(0, 18)}`;
   }
 
-  function monogramFor(entry: DiscussionEntryVM): string {
-    const source = entry.displayName?.trim() || entry.handle || entry.did.replace('did:plc:', '');
+  function monogram(source: string): string {
     return source.charAt(0).toUpperCase();
+  }
+
+  function monogramFor(entry: DiscussionEntryVM): string {
+    return monogram(entry.displayName?.trim() || entry.handle || entry.did.replace('did:plc:', ''));
   }
 
   // A broken avatar URL (a deleted blob, a CDN miss) hides the image and lets the
@@ -108,6 +255,47 @@
     (event.currentTarget as HTMLImageElement).style.display = 'none';
   }
 </script>
+
+<!-- The person: a 30px avatar wearing its network as a small glyph, and a hit
+     target that follows them in Skyreader. Shared by the stream's entries and by
+     Semble's curators, so the two can never drift apart. -->
+{#snippet person(
+  did: string,
+  handle: string | null | undefined,
+  name: string | null | undefined,
+  avatar: string | null | undefined,
+  laneIcon: IconName = 'semble',
+  laneLabel: string = 'Semble'
+)}
+  {@const label = name?.trim() || `@${handle || did.slice(0, 18)}`}
+  <button
+    type="button"
+    class="entry-avatar"
+    title="Follow {handle || did} in Skyreader"
+    aria-label="Follow {label} in Skyreader"
+    onclick={(e) => {
+      e.stopPropagation();
+      onOpenAuthor?.(did);
+    }}
+  >
+    <span class="entry-monogram" aria-hidden="true"
+      >{monogram(name?.trim() || handle || did.replace('did:plc:', ''))}</span
+    >
+    {#if avatar}
+      <img
+        class="entry-photo"
+        src={avatar}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        onerror={hideBrokenAvatar}
+      />
+    {/if}
+    <span class="entry-source" title={laneLabel}>
+      <Icon name={laneIcon} size={10} />
+    </span>
+  </button>
+{/snippet}
 
 {#if lanesOpen && (total > 0 || hasComposeRow)}
   <section class="discussion" class:no-heading={!showHeading} id={panelId} aria-label="Discussion">
@@ -149,35 +337,196 @@
       </div>
     {/if}
 
+    <!-- Semble's side is a graph, not a conversation, but it is made of the same
+         material: a person, and what they did with this article. Rendering it in
+         the stream's own grammar (avatar, head line, payload beneath) keeps it
+         from reading as a second document bolted above the discussion. -->
+    {#if showSemble && sembleContext && (hasSembleContent || sembleContext.incomplete)}
+      <section class="semble-context" aria-label="What Semble holds about this article">
+        {#if sembleContext.collections.length}
+          <p class="semble-filed">
+            <span class="semble-filed-label">Filed in</span>
+            {#each sembleContext.collections as collection (collection.id)}
+              {#if collection.url}
+                <a
+                  class="semble-collection"
+                  href={safeHref(collection.url)}
+                  target="_blank"
+                  rel="noopener"
+                  onclick={(e) => e.stopPropagation()}
+                  ><Icon name="folder" size={11} />{collection.name}</a
+                >
+              {:else}
+                <span class="semble-collection"
+                  ><Icon name="folder" size={11} />{collection.name}</span
+                >
+              {/if}
+            {/each}
+          </p>
+        {/if}
+
+        {#if sembleContext.notes.length || visibleGroups.length}
+          <ul class="discussion-stream">
+            {#each sembleContext.notes as note (note.id)}
+              <li class="entry">
+                {@render person(
+                  note.author.did,
+                  note.author.handle,
+                  note.author.name,
+                  note.author.avatarUrl
+                )}
+                <div class="entry-body">
+                  <div class="entry-head">
+                    <span class="entry-name">{authorName(note.author)}</span>
+                    {#if note.author.name?.trim() && note.author.handle}
+                      <span class="entry-handle">@{note.author.handle}</span>
+                    {/if}
+                    <span class="entry-verb">noted</span>
+                  </div>
+                  <p class="entry-note">{note.text}</p>
+                </div>
+              </li>
+            {/each}
+
+            <!-- One row per (curator, relation, direction). The sentence is said
+                 once in the head line and the arrow still points the way the
+                 edge does; the titles beneath are the only part that varies. -->
+            {#each visibleGroups as group (group.key)}
+              {@const open = openGroups.includes(group.key)}
+              {@const shown = open ? group.items : group.items.slice(0, GROUP_PREVIEW)}
+              {@const folded = group.items.length - shown.length}
+              <li class="entry">
+                {@render person(
+                  group.curator.did,
+                  group.curator.handle,
+                  group.curator.name,
+                  group.curator.avatarUrl
+                )}
+                <div class="entry-body">
+                  <div class="entry-head">
+                    <span class="entry-name">{authorName(group.curator)}</span>
+                    <span class="relation" aria-label={groupSentence(group)}>
+                      {#if group.direction === 'out'}
+                        <span class="relation-self">this</span>
+                        <span class="relation-arrow" aria-hidden="true">&rarr;</span>
+                        <span class="relation-type">{group.type ?? 'connected'}</span>
+                      {:else}
+                        <span class="relation-type">{group.type ?? 'connected'}</span>
+                        <span class="relation-arrow" aria-hidden="true">&rarr;</span>
+                        <span class="relation-self">this</span>
+                      {/if}
+                    </span>
+                    {#if group.items.length > 1}
+                      <span class="relation-count">{group.items.length}</span>
+                    {/if}
+                  </div>
+                  <ul class="connection-list">
+                    {#each shown as connection (connection.id)}
+                      {@const saved = isConnectionSaved?.(connection.other.url) ?? false}
+                      {@const busy = savingUrls.includes(connection.other.url)}
+                      <li>
+                        <div class="connection-row">
+                          <a
+                            class="connection-target"
+                            href={safeHref(connection.other.url)}
+                            target="_blank"
+                            rel="noopener"
+                            onclick={(e) => e.stopPropagation()}>{connectionLabel(connection)}</a
+                          >
+                          <!-- The one thing a reader wants to do with someone
+                               else's connected article is keep it. The control
+                               stays put rather than appearing on hover: which of
+                               these twenty are already yours is information, not
+                               an affordance to be discovered. -->
+                          {#if onSaveConnection}
+                            <button
+                              type="button"
+                              class="connection-save"
+                              class:saved
+                              class:busy
+                              disabled={busy}
+                              aria-busy={busy}
+                              aria-pressed={saved}
+                              title={saved
+                                ? 'In your Saved list. Remove it'
+                                : 'Save to read in Skyreader'}
+                              aria-label={saved
+                                ? `Remove “${connectionLabel(connection)}” from Saved`
+                                : `Save “${connectionLabel(connection)}” to read in Skyreader`}
+                              onclick={(e) => {
+                                e.stopPropagation();
+                                toggleSave(connection.other.url);
+                              }}
+                            >
+                              <Icon name="bookmark" size={14} />
+                            </button>
+                          {/if}
+                        </div>
+                        {#if connection.note}<p class="connection-note">{connection.note}</p>{/if}
+                      </li>
+                    {/each}
+                  </ul>
+                  {#if group.items.length > GROUP_PREVIEW}
+                    <button
+                      type="button"
+                      class="semble-disclose"
+                      aria-expanded={open}
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        toggleGroup(group.key);
+                      }}
+                    >
+                      {open ? 'Show fewer' : `Show ${folded} more`}
+                    </button>
+                  {/if}
+                </div>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+
+        {#if foldedConnections > 0}
+          <button
+            type="button"
+            class="semble-disclose semble-disclose-block"
+            onclick={(e) => {
+              e.stopPropagation();
+              allGroupsOpen = true;
+            }}
+          >
+            {foldedConnections} more {foldedConnections === 1 ? 'connection' : 'connections'}
+          </button>
+        {/if}
+
+        {#if sembleContext.cardUrl && (connectionsBeyond > 0 || sembleContext.incomplete || sembleTruncated)}
+          <p class="semble-foot">
+            {#if connectionsBeyond > 0}Showing {connectionsGot} of {connectionsHeld} connections.{/if}
+            {#if sembleContext.incomplete}Some Semble context is unavailable.{/if}
+            {#if sembleContext.cardUrl}
+              <a
+                href={safeHref(sembleContext.cardUrl)}
+                target="_blank"
+                rel="noopener"
+                onclick={(e) => e.stopPropagation()}>See all on Semble</a
+              >
+            {/if}
+          </p>
+        {/if}
+      </section>
+    {/if}
+
     {#if stream.entries.length > 0}
       <ul class="discussion-stream">
         {#each stream.entries as entry (entry.key)}
           <li class="entry">
-            <button
-              type="button"
-              class="entry-avatar"
-              title="Follow {entry.handle ?? entry.did} in Skyreader"
-              aria-label="Follow {displayNameFor(entry)} in Skyreader"
-              onclick={(e) => {
-                e.stopPropagation();
-                onOpenAuthor?.(entry.did);
-              }}
-            >
-              <span class="entry-monogram" aria-hidden="true">{monogramFor(entry)}</span>
-              {#if entry.avatar}
-                <img
-                  class="entry-photo"
-                  src={entry.avatar}
-                  alt=""
-                  loading="lazy"
-                  decoding="async"
-                  onerror={hideBrokenAvatar}
-                />
-              {/if}
-              <span class="entry-source" title={entry.laneLabel}>
-                <Icon name={entry.laneIcon} size={10} />
-              </span>
-            </button>
+            {@render person(
+              entry.did,
+              entry.handle,
+              entry.displayName,
+              entry.avatar,
+              entry.laneIcon,
+              entry.laneLabel
+            )}
 
             <div class="entry-body">
               <div class="entry-head">
@@ -336,16 +685,22 @@
       </div>
     {/if}
 
-    {#if undisclosed > 0 && shown > 0}
+    {#if undisclosed > 0 && shown > 0 && !hasSembleContent}
       <p class="discussion-more">
         {undisclosed}{capped ? '+' : ''} more, further back.
       </p>
     {/if}
 
-    {#if settled && shown === 0}
+    <!-- Semble context that carries something counts as readable content, so a
+         connections-only article never claims nothing came back. A lane that
+         failed still gets its retry either way — losing it behind context from a
+         different network would strand the reader on a partial answer. -->
+    {#if settled && shown === 0 && (stream.failed || !hasSembleContent)}
       {#if stream.failed}
         <p class="discussion-empty">
-          Couldn't reach the Atmosphere just now.
+          {hasSembleContent
+            ? "Some of the Atmosphere didn't answer."
+            : "Couldn't reach the Atmosphere just now."}
           <button type="button" class="discussion-retry" onclick={() => onRetry?.()}>
             Try again
           </button>
@@ -479,6 +834,277 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
+  }
+
+  /* Bracketed in hairlines, not boxed. Semble's graph is a different kind of
+     content from the conversation, and a rule above and below says so without
+     lifting it off the page. */
+  .semble-context {
+    margin: 0 0 1rem;
+    padding: 0.875rem 0;
+    border-block: 1px solid var(--color-border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.875rem;
+  }
+
+  /* When the compose row follows immediately it draws its own rule, and two
+     rules with nothing between them is an empty box. This one stands down. */
+  .semble-context:has(+ .discussion-compose) {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  /* Where the article is filed. One line of pills reading as a set, with a
+     lead-in rather than a heading — a heading here would compete with the
+     panel's own, for two words of wayfinding. */
+  .semble-filed {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.375rem;
+    margin: 0;
+    font-size: var(--text-sm);
+    line-height: var(--leading-snug);
+  }
+
+  .semble-filed-label {
+    color: var(--color-text-secondary);
+  }
+
+  .semble-collection {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.1875rem 0.5rem;
+    border-radius: 999px;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    text-decoration: none;
+  }
+
+  .semble-collection :global(.icon) {
+    color: var(--color-text-secondary);
+  }
+
+  a.semble-collection:hover {
+    color: var(--color-primary);
+  }
+
+  a.semble-collection:hover :global(.icon) {
+    color: var(--color-primary);
+  }
+
+  /* The relation, said once per group. `this` is a token of the article itself,
+     so it takes the sunken pill; the arrow between them is the sentence, and it
+     points the way the edge does. */
+  .relation {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.25rem;
+    min-width: 0;
+    color: var(--color-text-secondary);
+  }
+
+  .relation-self {
+    flex-shrink: 0;
+    padding: 0.0625rem 0.4375rem;
+    border-radius: 999px;
+    background: var(--color-bg-secondary);
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+  }
+
+  .relation-count {
+    flex-shrink: 0;
+    color: var(--color-text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .relation-type {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .relation-arrow {
+    flex-shrink: 0;
+    color: var(--color-text-secondary);
+    opacity: 0.7;
+  }
+
+  /* The payload. Titles are the only part of a group that varies, so they are
+     the only part in ink — twenty blue links would be a colour event twenty
+     times over, and the article is what the reader is here for. */
+  .connection-list {
+    list-style: none;
+    margin: 0.25rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  /* Title takes the room; the keep control holds a fixed column at the trailing
+     edge so twenty of them line up instead of ragging with the text. */
+  .connection-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  /* Quiet at rest and quiet in a column of twenty: the bookmark carries no fill
+     and no chrome until it is either hovered or holding something. */
+  .connection-save {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    margin: -0.125rem -0.25rem -0.125rem 0;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: var(--color-text-secondary);
+    /* Quiet, but not below the 3:1 bar a control has to clear: 0.75 lands the
+       resting glyph at ~3.4:1 on white and ~4.1:1 on the night surface. */
+    opacity: 0.75;
+    cursor: pointer;
+    transition:
+      color 0.15s ease,
+      opacity 0.15s ease,
+      background-color 0.15s ease;
+  }
+
+  .connection-save:hover {
+    background: var(--color-bg-secondary);
+    color: var(--color-primary);
+    opacity: 1;
+  }
+
+  /* Kept. The bookmark fills so the state survives a glance down the column,
+     and it is never the only signal — aria-pressed and the label say it too. */
+  .connection-save.saved {
+    color: var(--color-primary);
+    opacity: 1;
+  }
+
+  .connection-save.saved :global(.icon) {
+    fill: currentColor;
+  }
+
+  /* A save fetches and extracts the article, so this is a real wait. The
+     bookmark pulses rather than swapping in a spinner the row has no room for. */
+  .connection-save.busy {
+    color: var(--color-primary);
+    opacity: 1;
+    cursor: default;
+    animation: connection-save-pulse 1.1s ease-in-out infinite;
+  }
+
+  @keyframes connection-save-pulse {
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  /* Two lines, not one: at phone width a single clipped line turns most of
+     these into an ellipsis, and the title is the whole payload of the row. */
+  .connection-target {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--text-sm);
+    line-height: var(--leading-snug);
+    color: var(--color-text);
+    text-decoration: none;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .connection-target:hover {
+    color: var(--color-primary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .connection-note {
+    margin: 0.125rem 0 0;
+    font-size: var(--text-sm);
+    line-height: var(--leading-snug);
+    color: var(--color-text-secondary);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .semble-disclose {
+    align-self: flex-start;
+    margin-top: 0.375rem;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+
+  .semble-disclose:hover {
+    color: var(--color-primary);
+  }
+
+  .semble-disclose-block {
+    margin-top: 0;
+  }
+
+  .semble-foot {
+    margin: 0;
+    font-size: var(--text-sm);
+    line-height: var(--leading-snug);
+    color: var(--color-text-secondary);
+  }
+
+  .semble-foot a {
+    color: var(--color-text-secondary);
+    text-decoration: underline;
+    text-decoration-color: var(--color-border);
+    text-underline-offset: 2px;
+  }
+
+  .semble-foot a:hover {
+    color: var(--color-primary);
+    text-decoration-color: currentColor;
+  }
+
+  .connection-target:focus-visible,
+  .connection-save:focus-visible,
+  .semble-collection:focus-visible,
+  .semble-disclose:focus-visible,
+  .semble-foot a:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .connection-save {
+      transition: none;
+    }
+
+    .connection-save.busy {
+      animation: none;
+      opacity: 0.6;
+    }
   }
 
   .entry {

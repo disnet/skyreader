@@ -5,7 +5,7 @@
   // backend (see ../+layout.ts).
   import AtmospherePanel from '$lib/components/feed/AtmospherePanel.svelte';
   import { hoursAgo, laneVM, splitStream, streamEntry } from '../cards/fixtures';
-  import type { DiscussionFilterId } from '$lib/components/articleCardView.types';
+  import type { DiscussionFilterId, SembleContextVM } from '$lib/components/articleCardView.types';
   import Showcase from '../_harness/Showcase.svelte';
   import Case from '../_harness/Case.svelte';
 
@@ -114,6 +114,169 @@
     }),
   ];
 
+  // What Semble knows about the URL beyond the people already in the stream:
+  // aggregate counts, collection placements, standalone notes, and the typed
+  // edges in both directions. Savers arrive as ordinary stream entries (Erin,
+  // above), so they are deliberately absent here — the block never repeats them.
+  const sembleAuthor = (handle: string, name: string) => ({
+    did: `did:plc:${handle.split('.')[0]}`,
+    handle,
+    name,
+    avatarUrl: null,
+  });
+  const emptyContext: SembleContextVM = {
+    stats: null,
+    notes: [],
+    collections: [],
+    connections: [],
+    truncated: { savers: false, notes: false, collections: false, connections: false },
+    incomplete: false,
+    source: 'semble-api',
+    cardUrl: 'https://semble.so/url/https%3A%2F%2Fexample.com%2Fthe-article',
+  };
+  const outgoing = {
+    id: 'conn-out',
+    direction: 'out' as const,
+    type: 'supports',
+    note: 'The measurement here is the evidence the argument in the article leans on.',
+    curator: sembleAuthor('erin.bsky.social', 'Erin Vasquez'),
+    createdAt: hoursAgo(9),
+    other: {
+      url: 'https://example.org/measuring-the-open-web',
+      title: 'Measuring the open web',
+      description: null,
+      siteName: 'example.org',
+      imageUrl: null,
+    },
+  };
+  const incoming = {
+    id: 'conn-in',
+    direction: 'in' as const,
+    type: 'refutes',
+    note: null,
+    curator: sembleAuthor('dana.margin.at', 'Dana Okafor'),
+    createdAt: hoursAgo(30),
+    other: {
+      url: 'https://another.example/the-counterargument',
+      title: 'The counterargument, at length',
+      description: null,
+      siteName: 'another.example',
+      imageUrl: null,
+    },
+  };
+  // Direction is carried by the row's order as well as its label: an outgoing
+  // edge reads this → type → other, an incoming one other → type → this.
+  const untypedIncoming = {
+    ...incoming,
+    id: 'conn-in-untyped',
+    type: null,
+    createdAt: hoursAgo(40),
+    other: { ...incoming.other, title: null, siteName: null },
+  };
+  const sembleContext: SembleContextVM = {
+    ...emptyContext,
+    stats: {
+      saves: 4,
+      notes: 2,
+      collections: 2,
+      connections: { total: 3, incoming: 2, outgoing: 1 },
+    },
+    notes: [
+      {
+        id: 'note-1',
+        text: 'Pairs badly with the piece it cites in the third section — that study says the opposite.',
+        author: sembleAuthor('gia.bsky.social', 'Gia Ferrante'),
+        createdAt: hoursAgo(12),
+      },
+    ],
+    collections: [
+      {
+        id: 'col-1',
+        name: 'AI & the open web',
+        url: 'https://semble.so/profile/erin.bsky.social/collections/3kread',
+        author: { did: 'did:plc:erin', handle: 'erin.bsky.social' },
+      },
+      {
+        id: 'col-2',
+        name: 'Protocol design',
+        url: null,
+        author: { did: 'did:plc:erin', handle: 'erin.bsky.social' },
+      },
+    ],
+    connections: [outgoing, incoming, untypedIncoming],
+  };
+
+  // The shape that forced this fold: one curator mapping a topic. Twenty edges
+  // come back, all outgoing, all "supplement", all theirs — only the title
+  // varies — and Semble holds seven more it did not return.
+  const mappedTitles = [
+    'The Rise of Faceless YouTube Channels in 2025, and How AI Is Powering the Revolution',
+    'Mark Zuckerberg \u2018Loves\u2019 AI-Generated \u2018Challah Horse\u2019 On Facebook',
+    'Facebook\u2019s AI-Generated \u2018Shrimp Jesus,\u2019 Explained',
+    'AI Slop Is a Brute Force Attack on the Algorithms That Control Reality',
+    "As many as 48 million Twitter accounts aren't people, says study",
+    'The spreading of misinformation online',
+    "Vote Leave's targeted Brexit ads released by Facebook",
+    "The saga of 'Pizzagate': The fake story that shows how conspiracy theories spread",
+    'How Facebook got addicted to spreading misinformation',
+    'Engagement is the enemy of a shared reality',
+    'The attention economy has no brakes',
+    'Recommender systems and the collapse of the public square',
+    'What the Twitter Files actually showed',
+    'Synthetic personas at scale',
+    'A short history of the feed',
+    'The bot problem nobody wants to measure',
+    'Polarization is a product decision',
+    'Why platforms cannot moderate their way out',
+    'The half-life of an online lie',
+    'Reading in the age of the algorithm',
+  ];
+  const mapper = sembleAuthor('justinm.one', 'Justin Mavromatis');
+  const mappedContext: SembleContextVM = {
+    ...emptyContext,
+    stats: {
+      saves: 1,
+      notes: 0,
+      collections: 1,
+      connections: { total: 27, incoming: 0, outgoing: 27 },
+    },
+    collections: [
+      {
+        id: 'col-pol',
+        name: 'Social Media \u2014 Algorithmic Distortions and Polarization',
+        url: 'https://semble.so/profile/justinm.one/collections/3kpol',
+        author: { did: 'did:plc:justinm', handle: 'justinm.one' },
+      },
+    ],
+    connections: mappedTitles.map((title, i) => ({
+      id: `mapped-${i}`,
+      direction: 'out' as const,
+      type: 'supplement',
+      note: null,
+      curator: mapper,
+      createdAt: hoursAgo(i + 3),
+      other: {
+        url: `https://example.org/mapped-${i}`,
+        title,
+        description: null,
+        siteName: 'example.org',
+        imageUrl: null,
+      },
+    })),
+    truncated: { savers: false, notes: false, collections: false, connections: true },
+  };
+
+  // Saving a connected article is a real fetch in the app; here it is a stubbed
+  // delay so the pending state, the toggle, and the kept state are all reachable.
+  let savedLinks = $state<string[]>([]);
+  async function toggleSavedLink(url: string) {
+    await new Promise((r) => setTimeout(r, 700));
+    savedLinks = savedLinks.includes(url)
+      ? savedLinks.filter((u) => u !== url)
+      : [...savedLinks, url];
+  }
+  const isLinkSaved = (url: string) => savedLinks.includes(url);
+
   let activeFilter = $state<DiscussionFilterId>('all');
   const filtered = $derived(
     activeFilter === 'all' ? entries : entries.filter((e) => e.lane === activeFilter)
@@ -139,7 +302,100 @@
       {filters}
       {activeFilter}
       {stream}
+      {sembleContext}
+      onSaveConnection={toggleSavedLink}
+      isConnectionSaved={isLinkSaved}
       onSelectFilter={(id) => (activeFilter = id)}
+    />
+  </Case>
+
+  <Case
+    name="Semble · a mapped topic"
+    note="The shape that forced the fold: one curator, twenty outgoing edges of the same type, only the title varying. Unfolded that was sixty lines of the same sentence. Folded on (curator, relation, direction) the sentence is said once and the titles are the only thing left. Semble held twenty-seven and returned twenty; the foot says so where the reader can act on it."
+    width="800px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={[laneVM('semble', { count: 1 })]}
+      filters={[]}
+      sembleContext={mappedContext}
+      stream={{ loading: false, entries: [] }}
+      onSaveConnection={toggleSavedLink}
+      isConnectionSaved={isLinkSaved}
+    />
+  </Case>
+
+  <Case
+    name="Semble · everything it knows"
+    note="What Semble holds about this URL that isn't a person in the stream: the counts, where it's filed, notes nobody attached to a save, and the typed edges. Outbound reads this → type → other; inbound reads other → type → this, so the arrow never lies about which way the claim points. Shown under All and Semble only — switch the chips above to watch it leave."
+    width="800px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={lanes}
+      filters={[]}
+      {sembleContext}
+      onSaveConnection={toggleSavedLink}
+      isConnectionSaved={isLinkSaved}
+      stream={{ loading: false, ...splitStream(entries.filter((e) => e.lane === 'semble')) }}
+    />
+  </Case>
+
+  <Case
+    name="Semble · connections only"
+    note="Nobody said anything and nobody saved it — the URL exists in Semble purely as the endpoint of other people's edges. That still counts as readable content, so the panel must not claim nothing came back."
+    width="800px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={[laneVM('semble', { count: 2 })]}
+      filters={[]}
+      sembleContext={{
+        ...emptyContext,
+        stats: {
+          saves: 0,
+          notes: 0,
+          collections: 0,
+          connections: { total: 2, incoming: 1, outgoing: 1 },
+        },
+        connections: [outgoing, incoming],
+      }}
+      onSaveConnection={toggleSavedLink}
+      isConnectionSaved={isLinkSaved}
+      stream={{ loading: false, entries: [] }}
+    />
+  </Case>
+
+  <Case
+    name="Semble · partial and truncated"
+    note="One category timed out and another had more than one page. Both are disclosed in a line rather than silently rounded off — what returned still renders."
+    width="800px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={lanes}
+      filters={[]}
+      sembleContext={{
+        ...sembleContext,
+        notes: [],
+        truncated: { savers: false, notes: false, collections: false, connections: true },
+        incomplete: true,
+      }}
+      stream={{ loading: false, ...splitStream(entries.filter((e) => e.lane === 'semble')) }}
+    />
+  </Case>
+
+  <Case
+    name="Semble · saver fallback"
+    note="The API was unreachable and the Constellation/PDS resolver answered instead: the people it found still read normally, and no aggregate is invented to fill the space."
+    width="800px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={[laneVM('semble', { count: 1 })]}
+      filters={[]}
+      sembleContext={{ ...emptyContext, incomplete: true, source: 'constellation-fallback' }}
+      stream={{ loading: false, ...splitStream(entries.filter((e) => e.lane === 'semble')) }}
     />
   </Case>
 

@@ -38,6 +38,7 @@
     filters = [],
     activeFilter = 'all',
     stream = { idle: true, loading: false, entries: [] },
+    sembleContext,
     itemTagCount,
     itemTags = [],
     collectionPieceCount = 0,
@@ -98,6 +99,8 @@
     onComposeShare,
     onEditShare,
     onOpenAuthor,
+    onSaveConnection,
+    isConnectionSaved,
     onMentionClick,
     onCloseOverflow,
   }: ArticleCardViewProps = $props();
@@ -407,6 +410,7 @@
         {filters}
         {activeFilter}
         {stream}
+        {sembleContext}
         lanesOpen={panelOpen}
         panelId="discussion-panel"
         showHeading={false}
@@ -414,6 +418,8 @@
         onRetry={onRetryStream}
         {onCreateInLane}
         {onOpenAuthor}
+        {onSaveConnection}
+        {isConnectionSaved}
       />
       <div class="article-actions">
         <!-- Save button. Label tracks state ("Save" → "Saved") and the bookmark

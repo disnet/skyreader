@@ -82,7 +82,7 @@ describe('getMentionLaneItems', () => {
       { post1: { text: 'great read' } }
     );
 
-    const entries = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+    const { entries } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
 
     expect(entries.length).toBe(1); // alice once, despite two paths
     expect(entries[0]).toEqual({
@@ -122,7 +122,7 @@ describe('getMentionLaneItems', () => {
       }
     );
 
-    const entries = await getMentionLaneItems(db, ARTICLE, 'linkblog');
+    const { entries } = await getMentionLaneItems(db, ARTICLE, 'linkblog');
     expect(entries).toEqual([
       {
         did: 'did:plc:bob',
@@ -157,7 +157,7 @@ describe('getMentionLaneItems', () => {
       }
     );
 
-    const entries = await getMentionLaneItems(db, ARTICLE, 'linkblog');
+    const { entries } = await getMentionLaneItems(db, ARTICLE, 'linkblog');
     expect(entries).toEqual([
       {
         did: 'did:plc:carol',
@@ -201,7 +201,7 @@ describe('getMentionLaneItems', () => {
       }
     );
 
-    const entries = await getMentionLaneItems(db, ARTICLE, 'linkblog');
+    const { entries } = await getMentionLaneItems(db, ARTICLE, 'linkblog');
     expect(entries[0].note).toBe('the summary');
   });
 
@@ -223,7 +223,7 @@ describe('getMentionLaneItems', () => {
       }
     );
 
-    const entries = await getMentionLaneItems(db, ARTICLE, 'semble');
+    const { entries } = await getMentionLaneItems(db, ARTICLE, 'semble');
     expect(entries).toEqual([
       {
         did: 'did:plc:eve',
@@ -261,7 +261,7 @@ describe('getMentionLaneItems', () => {
       }
     );
 
-    const entries = await getMentionLaneItems(db, ARTICLE, 'margin');
+    const { entries } = await getMentionLaneItems(db, ARTICLE, 'margin');
     expect(entries).toEqual([
       {
         did: 'did:plc:frank',
@@ -286,7 +286,7 @@ describe('getMentionLaneItems', () => {
     );
 
     // Ask for the margin lane — no margin source exists for this URL.
-    const empty = await getMentionLaneItems(db, ARTICLE, 'margin');
+    const { entries: empty } = await getMentionLaneItems(db, ARTICLE, 'margin');
     expect(empty).toEqual([]);
 
     // A second call for the same (lane, url) is served from cache (no new fetch).
@@ -297,7 +297,7 @@ describe('getMentionLaneItems', () => {
 
   it('returns empty (no throw) for a non-http URL', async () => {
     const db = freshDb();
-    const entries = await getMentionLaneItems(db, 'at://did:plc:x/app/rk', 'bluesky');
+    const { entries } = await getMentionLaneItems(db, 'at://did:plc:x/app/rk', 'bluesky');
     expect(entries).toEqual([]);
   });
 
@@ -373,7 +373,7 @@ describe('getMentionLaneItems', () => {
       return new Response(JSON.stringify({ value: { text: 'still here' } }));
     }) as unknown as typeof fetch);
 
-    const entries = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+    const { entries } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
     expect(entries.length).toBe(1);
     expect(entries[0].note).toBe('still here');
   });
@@ -395,7 +395,9 @@ describe('getMentionLaneItems', () => {
       }
     );
 
-    const [entry] = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+    const {
+      entries: [entry],
+    } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
     expect(entry.displayName).toBe('Grace Hopper');
     expect(entry.avatar).toBe(
       'https://cdn.bsky.app/img/avatar/plain/did:plc:grace/bafyavatarcid@jpeg'
@@ -413,7 +415,9 @@ describe('getMentionLaneItems', () => {
       { post10: { text: 'no date here' } }
     );
 
-    const [entry] = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+    const {
+      entries: [entry],
+    } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
     expect(entry.displayName).toBeNull();
     expect(entry.avatar).toBeNull();
     expect(entry.createdAt).toBeNull();
@@ -429,7 +433,9 @@ describe('getMentionLaneItems', () => {
       { post11: { text: 'bad date', createdAt: 'not a date' } }
     );
 
-    const [entry] = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+    const {
+      entries: [entry],
+    } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
     expect(entry.createdAt).toBeNull();
   });
 });

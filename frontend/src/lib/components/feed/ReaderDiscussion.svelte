@@ -9,11 +9,13 @@
   import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+  import { savesStore } from '$lib/stores/saves.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
   import { getExternalArticleLink } from '$lib/utils/linkPost';
   import { shareTargetForDisplayItem } from '$lib/utils/shareTarget';
   import { normalizeDisplayItem } from '$lib/utils/displayItem';
+  import { toggleSavedLink } from '$lib/utils/saveLink';
   import AtmospherePanel from './AtmospherePanel.svelte';
   import Icon from '$lib/components/Icon.svelte';
 
@@ -158,12 +160,15 @@
     filters={atmosphere.filters}
     activeFilter={atmosphere.activeFilter}
     stream={atmosphere.stream}
+    sembleContext={atmosphere.sembleContext}
     lanesOpen={true}
     {panelId}
     onSelectFilter={atmosphere.setFilter}
     onRetry={atmosphere.retry}
     onCreateInLane={createInLane}
     onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
+    onSaveConnection={auth.user ? toggleSavedLink : undefined}
+    isConnectionSaved={(url) => savesStore.isSaved(url)}
     composeLead={canShareLinkblog ? shareControl : undefined}
   />
 </section>

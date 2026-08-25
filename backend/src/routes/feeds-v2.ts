@@ -887,8 +887,8 @@ export async function handleV2MentionLane(request: Request, env: Env): Promise<R
 
   try {
     const client = new FeedProxyClient(env);
-    const entries = await client.fetchMentionLaneItems(url, lane);
-    return new Response(JSON.stringify({ entries }), {
+    const result = await client.fetchMentionLaneItems(url, lane);
+    return new Response(JSON.stringify(result), {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error) {

@@ -47,6 +47,8 @@
   import { socialContextStore } from '$lib/stores/socialContext.svelte';
   import { profileService } from '$lib/services/profiles';
   import { auth } from '$lib/stores/auth.svelte';
+  import { savesStore } from '$lib/stores/saves.svelte';
+  import { toggleSavedLink } from '$lib/utils/saveLink';
   import { preferences } from '$lib/stores/preferences.svelte';
   import ArticleCardView from './ArticleCardView.svelte';
   import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
@@ -893,6 +895,7 @@
   filters={atmosphere.filters}
   activeFilter={atmosphere.activeFilter}
   stream={atmosphere.stream}
+  sembleContext={atmosphere.sembleContext}
   {itemTagCount}
   {itemTags}
   {collectionPieceCount}
@@ -951,6 +954,8 @@
   onComposeShare={composeShare}
   onEditShare={editShare}
   onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
+  onSaveConnection={auth.user ? toggleSavedLink : undefined}
+  isConnectionSaved={(url) => savesStore.isSaved(url)}
   onMentionClick={(did) => sidebarStore.openAddFeedModalForDid(did)}
   onCloseOverflow={() => (overflowMenuOpen = false)}
 />

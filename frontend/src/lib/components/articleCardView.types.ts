@@ -1,5 +1,5 @@
 import type { IconName } from './Icon.svelte';
-import type { ReaderCollection, ReaderCollectionItem } from '$lib/types';
+import type { ReaderCollection, ReaderCollectionItem, SembleContext } from '$lib/types';
 
 /**
  * View-model types for the PURE presentational `ArticleCardView.svelte`.
@@ -111,6 +111,8 @@ export interface DiscussionStreamVM {
   linkOnly?: DiscussionEntryVM[];
 }
 
+export type SembleContextVM = SembleContext;
+
 export interface SocialContextVM {
   quoteCount: number;
 }
@@ -161,6 +163,7 @@ export interface ArticleCardViewProps {
   filters?: DiscussionFilterVM[];
   activeFilter?: DiscussionFilterId;
   stream?: DiscussionStreamVM;
+  sembleContext?: SembleContextVM;
 
   itemTagCount: number;
   itemTags?: string[];
@@ -251,6 +254,11 @@ export interface ArticleCardViewProps {
    *  note and removing the share both live. */
   onEditShare?: () => void;
   onOpenAuthor?: (did: string) => void;
+  /** Toggle a Semble-connected article into the reader's Saved list. Absent when
+   *  the reader can't save; the control then doesn't render. */
+  onSaveConnection?: (url: string) => void | Promise<void>;
+  /** Reactive saved-state predicate for a connected article's URL. */
+  isConnectionSaved?: (url: string) => boolean;
   // A @mention in the note/body was clicked — open the add-feed dialog for the DID.
   onMentionClick?: (did: string) => void;
   onCloseOverflow?: () => void;

@@ -83,6 +83,11 @@ describe('laneForSource', () => {
     expect(laneForSource('app.bsky.feed.post', '.embed.external.uri')?.id).toBe('bluesky');
     expect(laneForSource('at.margin.note', '.target.source')?.id).toBe('margin');
     expect(laneForSource('network.cosmik.card', '.content.url')?.id).toBe('semble');
+    expect(laneForSource('network.cosmik.connection', '.source')?.id).toBe('semble');
+    expect(laneForSource('network.cosmik.connection', '.target')?.id).toBe('semble');
+    expect(laneForSource('network.cosmik.dev.connection', '.source')).toBeNull();
+    expect(laneForSource('network.cosmik.local.connection', '.target')).toBeNull();
+    expect(laneForSource('network.cosmik.test.connection', '.source')).toBeNull();
     // A bare-text URL share counts toward Bluesky.
     expect(laneForSource('app.bsky.feed.post', '.text')?.id).toBe('bluesky');
     // Genuine incidentals stay excluded even though the collection is laned.

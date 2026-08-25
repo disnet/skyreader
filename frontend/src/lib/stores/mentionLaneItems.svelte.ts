@@ -9,7 +9,7 @@
 // only: a failure degrades to an empty list.
 
 import { api } from '$lib/services/api';
-import type { MentionLaneEntry } from '$lib/types';
+import type { MentionLaneEntry, SembleContext } from '$lib/types';
 
 export type LaneItemsState = {
   loading: boolean;
@@ -22,6 +22,7 @@ export type LaneItemsState = {
    */
   failed: boolean;
   entries: MentionLaneEntry[];
+  sembleContext?: SembleContext;
 };
 
 const LOADING: LaneItemsState = { loading: true, loaded: false, failed: false, entries: [] };
@@ -54,7 +55,13 @@ function createMentionLaneItemsStore() {
     const p = api
       .fetchMentionLaneItems(url, lane)
       .then((res) => {
-        set(key, { loading: false, loaded: true, failed: false, entries: res.entries ?? [] });
+        set(key, {
+          loading: false,
+          loaded: true,
+          failed: false,
+          entries: res.entries ?? [],
+          sembleContext: res.sembleContext,
+        });
       })
       .catch((e) => {
         console.error('Failed to fetch mention lane items:', e);
