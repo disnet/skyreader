@@ -70,6 +70,12 @@ test.describe('Saved search', () => {
     await expect(authedPage.locator('mark', { hasText: BODY_WORD })).toBeVisible();
     await expect(authedPage.getByText('sits the word')).toBeVisible();
 
+    // AND terms can be split across metadata and full text: "ownership" is
+    // only in the title, while BODY_WORD is only in the cached article body.
+    await input.fill(`ownership ${BODY_WORD}`);
+    await expect(authedPage.getByText('Ownership Explained')).toBeVisible({ timeout: 10_000 });
+    await expect(authedPage.getByText('Gardening Basics')).not.toBeVisible();
+
     // Diacritic-folded metadata match.
     await input.fill('cafe');
     await expect(authedPage.getByText('An Afternoon at the Café')).toBeVisible();

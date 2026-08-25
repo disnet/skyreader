@@ -219,11 +219,15 @@ function searchHaystack(item: FeedDisplayItem): string {
 function matchesSavedSearch(
   item: FeedDisplayItem,
   terms: string[],
-  bodyMatchKeys: Set<string> | null
+  bodyMatchTerms: Map<string, Set<string>> | null
 ): boolean {
-  if (matchesTerms(searchHaystack(item), terms)) return true;
-  if (!bodyMatchKeys) return false;
-  return searchKeysForItem(item).some((key) => bodyMatchKeys.has(key));
+  const metadata = searchHaystack(item);
+  const keys = searchKeysForItem(item);
+  return terms.every(
+    (term) =>
+      matchesTerms(metadata, [term]) ||
+      (bodyMatchTerms !== null && keys.some((key) => bodyMatchTerms.get(key)?.has(term) === true))
+  );
 }
 
 function createFeedViewStore() {
@@ -873,8 +877,8 @@ function createFeedViewStore() {
     // bookmark-vs-article dedup, and it composes with every channel filter.
     const searchTerms = savedSearchStore.terms;
     if (searchTerms.length > 0) {
-      const bodyMatchKeys = savedSearchStore.bodyMatchKeys;
-      items = items.filter((item) => matchesSavedSearch(item, searchTerms, bodyMatchKeys));
+      const bodyMatchTerms = savedSearchStore.bodyMatchTerms;
+      items = items.filter((item) => matchesSavedSearch(item, searchTerms, bodyMatchTerms));
     }
 
     return items;

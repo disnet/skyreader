@@ -33,9 +33,11 @@ function createSavedSearchStore() {
   let corpus: Map<string, string> | null = null;
   let building: Promise<void> | null = null;
 
-  // Keys (rkey/itemGuid) whose body matches the applied query. `null` means no
-  // active search. Always reassigned, never mutated, so the pipeline re-derives.
-  let bodyMatchKeys = $state<Set<string> | null>(null);
+  // Terms matched by each body, keyed by rkey/itemGuid. Keeping the individual
+  // terms lets the list satisfy an AND query across metadata and body text
+  // (for example, one term in the title and another in the article). `null`
+  // means no active search. Always reassigned so the pipeline re-derives.
+  let bodyMatchTerms = $state<Map<string, Set<string>> | null>(null);
 
   let terms = $derived(parseQuery(appliedQuery));
   let active = $derived(terms.length > 0);
@@ -121,19 +123,20 @@ function createSavedSearchStore() {
     const forQuery = appliedQuery;
     const forTerms = parseQuery(forQuery);
     if (forTerms.length === 0) {
-      bodyMatchKeys = null;
+      bodyMatchTerms = null;
       return;
     }
     await ensureCorpus();
     // A later keystroke already superseded this pass.
     if (appliedQuery !== forQuery) return;
-    const keys = new Set<string>();
+    const matches = new Map<string, Set<string>>();
     if (corpus) {
       for (const [key, text] of corpus) {
-        if (matchesTerms(text, forTerms)) keys.add(key);
+        const matchedTerms = forTerms.filter((term) => matchesTerms(text, [term]));
+        if (matchedTerms.length > 0) matches.set(key, new Set(matchedTerms));
       }
     }
-    bodyMatchKeys = keys;
+    bodyMatchTerms = matches;
   }
 
   function apply(value: string) {
@@ -189,8 +192,8 @@ function createSavedSearchStore() {
     get active() {
       return active;
     },
-    get bodyMatchKeys() {
-      return bodyMatchKeys;
+    get bodyMatchTerms() {
+      return bodyMatchTerms;
     },
     get open() {
       return open;
