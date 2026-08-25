@@ -145,28 +145,47 @@ export async function fetchSembleContext(rawUrl: string): Promise<SembleContext 
       .map((s) => `${s.author.did}|${s.note?.trim().toLowerCase()}`)
       .filter((x) => !x.endsWith('|undefined') && !x.endsWith('|null'))
   );
+  // Every id here keys a list on the reader's side, so it carries the same
+  // hazard the connections below do: a missing one must not key every row to the
+  // same empty string, and a repeat must not reach the reader at all. Who wrote
+  // it and what it says identifies a note on its own.
+  const noteSeen = new Set<string>();
   const notes = (Array.isArray(noteCards.notes) ? noteCards.notes : [])
     .slice(0, LIMIT)
-    .map((x: Obj) => ({
-      id: text(x.id, 256) ?? '',
-      text: text(x.note ?? x.text) ?? '',
-      author: author(x.author),
-      createdAt: date(x.createdAt),
-    }))
-    .filter(
-      (x: any) => x.text && !saverNotes.has(`${x.author.did}|${x.text.trim().toLowerCase()}`)
-    );
+    .flatMap((x: Obj) => {
+      const body = text(x.note ?? x.text);
+      if (!body) return [];
+      const a = author(x.author);
+      const fingerprint = `${a.did}|${body.trim().toLowerCase()}`;
+      // Already shown as this person's saver card, so it isn't a second voice.
+      if (saverNotes.has(fingerprint)) return [];
+      const id = text(x.id, 256) ?? fingerprint;
+      if (noteSeen.has(id) || noteSeen.has(fingerprint)) return [];
+      noteSeen.add(id);
+      noteSeen.add(fingerprint);
+      return [{ id, text: body, author: a, createdAt: date(x.createdAt) }];
+    });
+  const collectionSeen = new Set<string>();
   const collections = (Array.isArray(collectionData.collections) ? collectionData.collections : [])
     .slice(0, LIMIT)
-    .map((x: Obj) => {
+    .flatMap((x: Obj) => {
       const a = author(x.author);
       const rkey = text(x.uri, 512)?.split('/').pop();
-      return {
-        id: text(x.id, 256) ?? text(x.uri, 512) ?? '',
-        name: text(x.name, 256) ?? 'Untitled collection',
-        url: a.handle && rkey ? `https://semble.so/profile/${a.handle}/collections/${rkey}` : null,
-        author: { did: a.did, handle: a.handle },
-      };
+      const name = text(x.name, 256) ?? 'Untitled collection';
+      // Same rule as the notes above: prefer Semble's id, fall back to whose
+      // collection it is and what it's called, never to the empty string. A URL
+      // filed into the same collection twice arrives twice; it is one place.
+      const id = text(x.id, 256) ?? text(x.uri, 512) ?? `${a.did}|${name.toLowerCase()}`;
+      if (collectionSeen.has(id)) return [];
+      collectionSeen.add(id);
+      return [
+        {
+          id,
+          name,
+          url: a.handle && rkey ? `https://semble.so/profile/${a.handle}/collections/${rkey}` : null,
+          author: { did: a.did, handle: a.handle },
+        },
+      ];
     });
   const seen = new Set<string>();
   const connections = (Array.isArray(connectionData.connections) ? connectionData.connections : [])
