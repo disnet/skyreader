@@ -74,11 +74,19 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/reading.ts`       | Article + document read positions (forward delta)      |
 | `src/routes/labels.ts`        | Unified item labels (read/starred/archived/tags)       |
 | `src/routes/saved.ts`         | Saved articles CRUD                                    |
+| `src/routes/integrations.ts`  | Semble/Margin writes to the user's PDS                 |
 | `src/routes/settings.ts`      | User settings                                          |
 | `src/routes/sync.ts`          | PDS full sync, subscription sync, sync status          |
 | `src/routes/lexicons.ts`      | Serve lexicon schemas at /.well-known/lexicons         |
 | `src/routes/health.ts`        | `/api/health` (shallow) + `/api/health/deep` (gated)   |
 | `src/routes/telemetry.ts`     | `/api/telemetry/error` — sampled client error reports  |
+
+Integration writes are gated per-capability, not per-app: `POST /api/integrations/semble/connections`
+(a `network.cosmik.connection` edge between two URLs) checks `SEMBLE_CONNECTION_SCOPES`, which is
+deliberately **not** part of `SEMBLE_SCOPES` — folding it in would 403 every existing user's card
+saves until they re-authed. `GET /api/integrations/status` reports the two separately
+(`scopeStatus.semble` vs `scopeStatus.sembleConnections`). Same pattern as `PCKT_SCOPES` /
+`ATMOSPHERE_SCOPES`; see `src/config/scopes.ts`.
 
 ### Services
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { toastStore } from '$lib/stores/toast.svelte';
+  import { safeHref } from '$lib/utils/sanitize';
 </script>
 
 {#if toastStore.toasts.length > 0}
@@ -14,6 +15,11 @@
           <span class="icon">&#10007;</span>
         {/if}
         <span>{toast.message}</span>
+        {#if toast.action}
+          <a class="toast-action" href={safeHref(toast.action.href)} target="_blank" rel="noopener"
+            >{toast.action.label}</a
+          >
+        {/if}
       </div>
     {/each}
   </div>
@@ -43,6 +49,20 @@
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
     color: var(--color-text);
     animation: slide-in 0.2s ease-out;
+  }
+
+  /* The container is click-through so a toast never eats the page underneath;
+     a link has to opt itself back in. */
+  .toast-action {
+    pointer-events: auto;
+    margin-left: 0.25rem;
+    font-weight: var(--weight-medium);
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+
+  .toast-action:hover {
+    text-decoration: underline;
   }
 
   .toast-success {

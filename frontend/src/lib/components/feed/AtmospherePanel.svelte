@@ -66,6 +66,7 @@
     onOpenAuthor,
     onRetry,
     onSaveConnection,
+    onCreateConnection,
     isConnectionSaved,
   }: {
     laneRow?: LaneRowVM[];
@@ -86,6 +87,10 @@
      *  the reader can't save (signed out), and the control doesn't render at
      *  all. Async — a save fetches and extracts the article first. */
     onSaveConnection?: (url: string) => void | Promise<void>;
+    /** Draw a connection of the reader's own from this article. Absent when the
+     *  reader can't write one (signed out), and no control renders. Skyreader
+     *  could always *show* Semble's graph; this is the way into it. */
+    onCreateConnection?: () => void;
     /** Reactive saved-state predicate, so the control reads as state rather than
      *  as an invitation the reader has already accepted. */
     isConnectionSaved?: (url: string) => boolean;
@@ -165,7 +170,9 @@
   const undisclosed = $derived(
     activeFilter === 'all' && settled && total > shown ? total - shown : 0
   );
-  const hasComposeRow = $derived(Boolean(composeLead) || creatable.length > 0);
+  const hasComposeRow = $derived(
+    Boolean(composeLead) || creatable.length > 0 || Boolean(onCreateConnection)
+  );
   const showSemble = $derived(
     Boolean(sembleContext) && (activeFilter === 'all' || activeFilter === 'semble')
   );
@@ -584,6 +591,23 @@
           </button>
         {/if}
 
+        <!-- Where the graph already is, so adding to it doesn't mean scrolling
+             past everything to the compose row. Quiet, in the block's own
+             disclosure vocabulary — an offer, not a call to action. -->
+        {#if onCreateConnection}
+          <button
+            type="button"
+            class="semble-disclose semble-connect"
+            onclick={(e) => {
+              e.stopPropagation();
+              onCreateConnection?.();
+            }}
+          >
+            <Icon name="link" size={12} />
+            {connectionGroups.length ? 'Connect this to something' : 'Draw the first connection'}
+          </button>
+        {/if}
+
         {#if sembleContext.cardUrl && (connectionsBeyond > 0 || collectionsBeyond > 0 || sembleContext.incomplete || sembleTruncated)}
           <p class="semble-foot">
             {#if connectionsBeyond > 0}Showing {connectionsGot} of {connectionsHeld} connections.{/if}
@@ -885,6 +909,24 @@
             <span>{lane.label}</span>
           </button>
         {/each}
+        <!-- Drawing an edge is not "adding yours" in a lane — it says something
+             about how two pieces relate, not about this one. It sits last in the
+             row, in the same vocabulary, so it's reachable from every surface
+             even on an article Semble has never seen. -->
+        {#if onCreateConnection}
+          <button
+            type="button"
+            class="compose-btn"
+            title="Connect this to another article on Semble"
+            onclick={(e) => {
+              e.stopPropagation();
+              onCreateConnection?.();
+            }}
+          >
+            <span class="compose-icon"><Icon name="link" size={14} /></span>
+            <span>Connect</span>
+          </button>
+        {/if}
       </div>
     {/if}
   </section>
@@ -1230,6 +1272,12 @@
 
   .semble-disclose-block {
     margin-top: 0;
+  }
+
+  .semble-connect {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3125rem;
   }
 
   /* Reads as the last pill in the strip rather than a control beneath it. */
