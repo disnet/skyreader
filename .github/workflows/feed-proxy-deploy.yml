@@ -71,25 +71,65 @@ jobs:
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
 
       # The app is provisioned by hand (Phase 3 of docs/plans/D1_FEED_TIMELINE.md:
-      # app + volume + PROXY_SECRET). Until that happens this job would fail on
-      # every push to main, so skip it with a notice instead.
+      # app + volume + PROXY_SECRET), so a genuine "not provisioned yet" is allowed
+      # to skip the deploy rather than fail every push to main. NOTHING ELSE IS.
+      #
+      # This was `flyctl status … >/dev/null 2>&1`, which read *every* failure as
+      # "not provisioned" — a missing FLY_API_TOKEN included. Staging then skipped
+      # its deploy on every push and still reported success, so the proxy sat on a
+      # hand-deployed build while the frontend and backend moved on, and the
+      # Semble context those two depend on never reached staging. A deploy that
+      # cannot run has to be loud: the token and the app are checked separately,
+      # and anything that isn't a clean not-found fails the job.
       - name: Check staging app exists
         id: staging_app
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_APP: skyreader-feed-proxy-staging
         run: |
-          if flyctl status -a skyreader-feed-proxy-staging >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::skyreader-feed-proxy-staging not provisioned yet; skipping staging deploy (see docs/plans/D1_FEED_TIMELINE.md, Phase 3)."
+          set -euo pipefail
+
+          if [ -z "${FLY_API_TOKEN:-}" ]; then
+            echo "::error::FLY_API_TOKEN is not set for the 'staging' environment, so the staging proxy cannot be deployed. Add it with: gh secret set FLY_API_TOKEN --env staging"
+            exit 1
           fi
+
+          if ! whoami_out=$(flyctl auth whoami 2>&1); then
+            echo "::error::FLY_API_TOKEN is set but Fly rejected it — the staging deploy cannot authenticate."
+            printf '%s\n' "$whoami_out"
+            exit 1
+          fi
+          echo "Authenticated to Fly as: $whoami_out"
+
+          if status_out=$(flyctl status -a "$FLY_APP" 2>&1); then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif printf '%s' "$status_out" | grep -qiE 'could not find app|app not found|does not exist'; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$FLY_APP not provisioned yet; skipping staging deploy (see docs/plans/D1_FEED_TIMELINE.md, Phase 3)."
+          else
+            echo "::error::flyctl status failed for $FLY_APP for a reason other than the app not existing. Refusing to skip the deploy silently."
+            printf '%s\n' "$status_out"
+            exit 1
+          fi
+
+      # Stamped the same way prod is, so /health reports a real commit instead of
+      # the Dockerfile's `ARG GIT_COMMIT_SHA=dev` default — which is what let a
+      # stale staging machine look indistinguishable from a fresh one.
+      - name: Deploy
+        if: steps.staging_app.outputs.exists == 'true'
+        run: flyctl deploy --remote-only --config fly.staging.toml --build-arg GIT_COMMIT_SHA=${{ github.sha }}
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
-      - name: Deploy
+      # Staging gets the same assertion prod does: green means the staging machine
+      # is answering AND running this commit. Without it, "deployed" was only ever
+      # a claim about the workflow, never about the machine.
+      - name: Smoke check
         if: steps.staging_app.outputs.exists == 'true'
-        run: flyctl deploy --remote-only --config fly.staging.toml
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          HEALTH_URL: https://skyreader-feed-proxy-staging.fly.dev/health
+          EXPECTED_SHA: ${{ github.sha }}
+        run: node ../scripts/smoke-check.mjs "$HEALTH_URL" --version "$EXPECTED_SHA"
 
   deploy:
     name: Deploy to Production
