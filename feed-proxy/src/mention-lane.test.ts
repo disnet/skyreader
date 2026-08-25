@@ -27,6 +27,8 @@ function seedDid(db: Database, did: string, handle: string) {
 // the "no counts, sort by date" path every other case exercises.
 type AppviewMock = {
   likes?: Record<string, number>;
+  /** The post record's own createdAt, per at-URI. Absent → the appview serves none. */
+  dates?: Record<string, string>;
   /** Answer with this status instead of the counts (e.g. 500). */
   status?: number;
   /** Fail the connection outright. */
@@ -53,7 +55,11 @@ function mockConstellation(
       const posts = url.searchParams
         .getAll('uris')
         .filter((uri) => (appview.likes ?? {})[uri] !== undefined)
-        .map((uri) => ({ uri, likeCount: appview.likes![uri] }));
+        .map((uri) => ({
+          uri,
+          likeCount: appview.likes![uri],
+          record: { createdAt: (appview.dates ?? {})[uri] },
+        }));
       return new Response(JSON.stringify({ posts }));
     }
     if (url.pathname === '/links/all') {
@@ -195,6 +201,106 @@ describe('getMentionLaneItems', () => {
 
       const { entries } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
       expect(entries.length).toBe(2);
+      expect(entries.every((e) => e.likeCount === null)).toBe(true);
+    });
+
+    // Constellation returns linking records in its own index order, so the
+    // eight a busy article shows have to be chosen after the counts arrive —
+    // ranking a list that was already truncated would only reorder a sample.
+    function mockCrowdedPost(appview?: AppviewMock, db?: Database) {
+      const authors = Array.from({ length: 12 }, (_, i) => ({
+        did: `did:plc:u${i}`,
+        rkey: `post${i}`,
+      }));
+      if (db) for (const a of authors) seedDid(db, a.did, `${a.did.slice(8)}.test`);
+      return mockConstellation(
+        { 'app.bsky.feed.post': { '.embed.external.uri': { distinct_dids: authors.length } } },
+        { 'app.bsky.feed.post|.embed.external.uri': authors },
+        {},
+        appview
+      );
+    }
+
+    it('ranks the whole discovered pool, not just the first eight', async () => {
+      const db = freshDb();
+      // The one post everyone carried is the last one the index returns.
+      const spy = mockCrowdedPost(
+        {
+          likes: {
+            'at://did:plc:u11/app.bsky.feed.post/post11': 99,
+            'at://did:plc:u2/app.bsky.feed.post/post2': 5,
+          },
+        },
+        db
+      );
+
+      const { entries } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+
+      expect(entries.length).toBe(8);
+      expect(entries.map((e) => e.did).slice(0, 2)).toEqual(['did:plc:u11', 'did:plc:u2']);
+      // Unscored candidates fall in behind, still in index order.
+      expect(entries.map((e) => e.did).slice(2)).toEqual([
+        'did:plc:u0',
+        'did:plc:u1',
+        'did:plc:u3',
+        'did:plc:u4',
+        'did:plc:u5',
+        'did:plc:u6',
+      ]);
+      // One appview call, carrying every candidate — not one per post.
+      const appviewCalls = spy.mock.calls.filter((call) =>
+        String(call[0]).includes('public.api.bsky.app')
+      );
+      expect(appviewCalls.length).toBe(1);
+      expect(new URL(String(appviewCalls[0][0])).searchParams.getAll('uris').length).toBe(12);
+      // Only the survivors cost a PDS round trip for their post record.
+      const fetchedPosts = spy.mock.calls
+        .map((call) => new URL(String(call[0])))
+        .filter(
+          (url) =>
+            url.pathname === '/xrpc/com.atproto.repo.getRecord' &&
+            url.searchParams.get('collection') === 'app.bsky.feed.post'
+        )
+        .map((url) => url.searchParams.get('rkey'));
+      expect(fetchedPosts.sort()).toEqual(
+        ['post11', 'post2', 'post0', 'post1', 'post3', 'post4', 'post5', 'post6'].sort()
+      );
+    });
+
+    it('breaks like-count ties on the post date the same call returns', async () => {
+      const db = freshDb();
+      // Nobody liked anything, so the pool is chosen purely on recency — and the
+      // two newest posts are the last two the index returns.
+      const uri = (i: number) => `at://did:plc:u${i}/app.bsky.feed.post/post${i}`;
+      const likes: Record<string, number> = {};
+      const dates: Record<string, string> = {};
+      for (let i = 0; i < 12; i++) {
+        likes[uri(i)] = 0;
+        dates[uri(i)] = `2026-01-${String(i + 1).padStart(2, '0')}T00:00:00Z`;
+      }
+      mockCrowdedPost({ likes, dates }, db);
+
+      const { entries } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+      expect(entries.map((e) => e.did).slice(0, 2)).toEqual(['did:plc:u11', 'did:plc:u10']);
+      expect(entries.length).toBe(8);
+      expect(entries.some((e) => e.did === 'did:plc:u0')).toBeFalse();
+    });
+
+    it('falls back to the first eight in index order when the appview errors', async () => {
+      const db = freshDb();
+      mockCrowdedPost({ status: 500 }, db);
+
+      const { entries } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+      expect(entries.map((e) => e.did)).toEqual([
+        'did:plc:u0',
+        'did:plc:u1',
+        'did:plc:u2',
+        'did:plc:u3',
+        'did:plc:u4',
+        'did:plc:u5',
+        'did:plc:u6',
+        'did:plc:u7',
+      ]);
       expect(entries.every((e) => e.likeCount === null)).toBe(true);
     });
 
