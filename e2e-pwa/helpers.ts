@@ -12,7 +12,10 @@ export function waitForControl(page: Page, timeoutMs = 15000) {
       (await navigator.serviceWorker.register('/service-worker.js'));
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
-      if (reg.active && navigator.serviceWorker.controller) break;
+      // `reg.active` is populated the moment the worker enters *activating*, and
+      // clientsClaim() sets the controller during activation too — so both can be
+      // true while the state is still 'activating'. Wait for the terminal state.
+      if (reg.active?.state === 'activated' && navigator.serviceWorker.controller) break;
       await new Promise((r) => setTimeout(r, 200));
     }
     return {
