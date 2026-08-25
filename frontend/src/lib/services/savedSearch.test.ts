@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   htmlToText,
   makeSnippet,
+  matchesSearch,
   matchesTerms,
   normalize,
   parseQuery,
@@ -82,6 +83,58 @@ describe('matchesTerms', () => {
 
   it('never matches an empty haystack against real terms', () => {
     expect(matchesTerms('', ['a'])).toBe(false);
+  });
+});
+
+describe('matchesSearch', () => {
+  // "Ownership Explained": the title carries one term, the cached body another.
+  const metadata = normalize('Ownership Explained example.com');
+  const bodyTerms = new Map([['rkey1', new Set(['quokkatelemetry'])]]);
+  const keys = () => ['rkey1'];
+
+  it('lets each term of an AND query pick its own source', () => {
+    expect(matchesSearch(metadata, ['ownership', 'quokkatelemetry'], bodyTerms, keys)).toBe(true);
+  });
+
+  it('still requires every term to hit somewhere', () => {
+    expect(matchesSearch(metadata, ['ownership', 'sourdough'], bodyTerms, keys)).toBe(false);
+    expect(matchesSearch(metadata, ['gardening', 'quokkatelemetry'], bodyTerms, keys)).toBe(false);
+  });
+
+  it('matches on a single source alone', () => {
+    expect(matchesSearch(metadata, ['ownership'], bodyTerms, keys)).toBe(true);
+    expect(matchesSearch(metadata, ['quokkatelemetry'], bodyTerms, keys)).toBe(true);
+  });
+
+  it('checks every key an item can be indexed under', () => {
+    const byGuid = new Map([['guid-1', new Set(['quokkatelemetry'])]]);
+    expect(
+      matchesSearch(metadata, ['ownership', 'quokkatelemetry'], byGuid, () => ['rkey1', 'guid-1'])
+    ).toBe(true);
+    expect(matchesSearch(metadata, ['quokkatelemetry'], byGuid, () => ['rkey1'])).toBe(false);
+  });
+
+  it('degrades to metadata-only while the corpus is still building', () => {
+    expect(matchesSearch(metadata, ['ownership'], null, keys)).toBe(true);
+    expect(matchesSearch(metadata, ['ownership', 'quokkatelemetry'], null, keys)).toBe(false);
+  });
+
+  it('does not build the key list when metadata alone answers the query', () => {
+    let built = 0;
+    const counted = () => {
+      built++;
+      return ['rkey1'];
+    };
+    expect(matchesSearch(metadata, ['ownership'], bodyTerms, counted)).toBe(true);
+    expect(built).toBe(0);
+    expect(matchesSearch(metadata, ['ownership', 'quokkatelemetry'], bodyTerms, counted)).toBe(
+      true
+    );
+    expect(built).toBe(1);
+  });
+
+  it('treats an empty query as no filter', () => {
+    expect(matchesSearch(metadata, [], null, keys)).toBe(true);
   });
 });
 

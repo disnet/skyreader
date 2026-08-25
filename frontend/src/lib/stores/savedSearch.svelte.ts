@@ -22,6 +22,14 @@ function createSavedSearchStore() {
   let appliedQuery = $state('');
   // Whether the search row is showing. Cleared with the query.
   let open = $state(false);
+  // Whether a saved surface is mounted right now, i.e. whether there is a
+  // search row for a global entry point like `/` to open. The view filters
+  // can't answer that — they keep their last value after the page unmounts, so
+  // one visit to /saved would leave `/` hijacked on every other route. The
+  // saved page owns this flag; leaving the surface also drops the query, which
+  // is ephemeral session state and would otherwise silently filter the list on
+  // the next visit.
+  let surfaceActive = $state(false);
   // Bumped to ask the input to take focus (opening via `/` or the toolbar button).
   let focusRequest = $state(0);
 
@@ -32,6 +40,12 @@ function createSavedSearchStore() {
   // dedup — either representation must be able to hit on the save's body.
   let corpus: Map<string, string> | null = null;
   let building: Promise<void> | null = null;
+  // Bumped by every invalidation. A build that started under an older
+  // generation read a now-stale snapshot of `db.saved`, so it must not install
+  // its map — otherwise a sync that lands mid-build (savesStore.load() merges,
+  // writes, then invalidates) is quietly undone by the very build it discarded,
+  // and the freshly synced saves stay unsearchable by body text.
+  let generation = 0;
 
   // Terms matched by each body, keyed by rkey/itemGuid. Keeping the individual
   // terms lets the list satisfy an AND query across metadata and body text
@@ -56,6 +70,7 @@ function createSavedSearchStore() {
   }
 
   async function buildCorpus(): Promise<void> {
+    const forGeneration = generation;
     const next = new Map<string, string>();
     const missingBodies: SavedItem[] = [];
     let rows: SavedItem[] = [];
@@ -77,6 +92,13 @@ function createSavedSearchStore() {
       if (i + BUILD_CHUNK < rows.length) await new Promise((r) => setTimeout(r, 0));
     }
 
+    // Superseded mid-flight: drop this pass and let `ensureCorpus` start a fresh
+    // one. The rows we did fetch may still be missing bodies worth repairing.
+    if (forGeneration !== generation) {
+      void repairMissingBodies(missingBodies);
+      return;
+    }
+
     corpus = next;
     // Self-heal rows whose body never landed (failed hydration, an offline
     // save, a backed stub awaiting extraction) — same pattern savesStore's
@@ -84,14 +106,21 @@ function createSavedSearchStore() {
     void repairMissingBodies(missingBodies);
   }
 
-  function ensureCorpus(): Promise<void> {
-    if (corpus) return Promise.resolve();
-    if (!building) {
-      building = buildCorpus().finally(() => {
-        building = null;
-      });
+  // A build that an invalidation superseded resolves without installing a
+  // corpus, so awaiting the in-flight pass isn't enough — retry until one
+  // actually lands. Bounded, because a storm of writes could otherwise keep
+  // invalidating forever; a null corpus just degrades search to metadata-only.
+  const MAX_BUILD_ATTEMPTS = 5;
+
+  async function ensureCorpus(): Promise<void> {
+    for (let attempt = 0; !corpus && attempt < MAX_BUILD_ATTEMPTS; attempt++) {
+      if (!building) {
+        building = buildCorpus().finally(() => {
+          building = null;
+        });
+      }
+      await building;
     }
-    return building;
   }
 
   async function repairMissingBodies(rows: SavedItem[]) {
@@ -179,6 +208,12 @@ function createSavedSearchStore() {
     clear();
   }
 
+  function setSurfaceActive(on: boolean) {
+    if (surfaceActive === on) return;
+    surfaceActive = on;
+    if (!on) closeSearch();
+  }
+
   return {
     get query() {
       return query;
@@ -198,6 +233,12 @@ function createSavedSearchStore() {
     get open() {
       return open;
     },
+    /** True while a saved surface is mounted and can show the search row. */
+    get available() {
+      return surfaceActive;
+    },
+    /** Saved-surface lifecycle, owned by `FeedPage`. Leaving resets the search. */
+    setSurfaceActive,
     get focusRequest() {
       return focusRequest;
     },
@@ -229,6 +270,7 @@ function createSavedSearchStore() {
     /** Drop the corpus wholesale; the next search rebuilds it. */
     invalidate() {
       corpus = null;
+      generation++;
       if (active) void recomputeMatches();
     },
   };

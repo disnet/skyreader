@@ -105,6 +105,36 @@ export function matchesTerms(haystack: string, terms: string[]): boolean {
 }
 
 /**
+ * Does one item satisfy the query, given its normalized metadata haystack and
+ * the per-key term sets the body corpus matched?
+ *
+ * Every term must hit (AND), but each term picks its own source: one may come
+ * from the title while another only appears in the article text. Checking the
+ * two sources term-by-term rather than side-by-side is what makes
+ * "ownership <word-only-in-the-body>" find the piece.
+ *
+ * `bodyKeys` is a thunk because most items match entirely on metadata: the keys
+ * a save is indexed under are only built when a term misses the metadata.
+ * A `null` `bodyMatchTerms` means no corpus yet (the first search runs before
+ * it resolves) — the query then degrades to metadata-only AND.
+ */
+export function matchesSearch(
+  metadata: string,
+  terms: string[],
+  bodyMatchTerms: Map<string, Set<string>> | null,
+  bodyKeys: () => string[]
+): boolean {
+  if (terms.length === 0) return true;
+  let keys: string[] | null = null;
+  return terms.every((term) => {
+    if (matchesTerms(metadata, [term])) return true;
+    if (bodyMatchTerms === null) return false;
+    keys ??= bodyKeys();
+    return keys.some((key) => bodyMatchTerms.get(key)?.has(term) === true);
+  });
+}
+
+/**
  * Fold `text` the way `normalize` does while keeping a per-character map back
  * to the original string, so a hit found in folded space can be sliced out of
  * the original (right case, right accents). ASCII takes a fast path — the

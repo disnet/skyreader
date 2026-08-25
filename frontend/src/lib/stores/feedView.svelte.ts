@@ -19,7 +19,7 @@ import type {
   ReadingLengthFilter,
   SortOrder,
 } from '$lib/types';
-import { matchesTerms, normalize } from '$lib/services/savedSearch';
+import { htmlToText, matchesSearch, normalize } from '$lib/services/savedSearch';
 import {
   isRssSource,
   isDocumentsSource,
@@ -190,21 +190,39 @@ function searchKeysForItem(item: FeedDisplayItem): string[] {
   return keys;
 }
 
-/** Normalized metadata haystack for search: title, author, description, domain, url. */
-function searchHaystack(item: FeedDisplayItem): string {
+/**
+ * Normalized metadata haystack for search: title, author, summary, domain, url.
+ *
+ * Description/summary fields carry raw feed HTML, so they're stripped to
+ * visible text first — otherwise a query could hit a tag name or a URL inside
+ * an `img src` ("substack" matching a `substackcdn.com` image), which reads as
+ * a mystery match. Exported because `SavedCard` classifies a hit as
+ * metadata-vs-body against this exact document; two haystacks would let the
+ * filter and the card's explanation of it drift apart.
+ */
+export function searchHaystack(item: FeedDisplayItem): string {
   const parts: (string | null | undefined)[] = [];
   if (item.type === 'article') {
-    parts.push(item.item.title, item.item.author, item.item.summary, item.item.url);
+    parts.push(
+      item.item.title,
+      item.item.author,
+      htmlToText(item.item.summary ?? ''),
+      item.item.url
+    );
   } else if (item.type === 'saved') {
     parts.push(
       item.item.title,
       item.item.author,
-      item.item.description,
+      htmlToText(item.item.description ?? ''),
       item.item.domain,
       item.item.url
     );
   } else {
-    parts.push(item.item.title, item.item.description, item.item.canonicalUrl || item.item.path);
+    parts.push(
+      item.item.title,
+      htmlToText(item.item.description ?? ''),
+      item.item.canonicalUrl || item.item.path
+    );
   }
   const domain = getItemDomain(item);
   if (domain) parts.push(domain);
@@ -212,22 +230,17 @@ function searchHaystack(item: FeedDisplayItem): string {
 }
 
 /**
- * A saved item matches a search when its own metadata matches, or when the
- * save's full article text does (the corpus is built asynchronously, so body
- * hits land a beat after metadata hits on the very first search).
+ * A saved item matches a search when every term hits its metadata or the save's
+ * full article text — each term free to hit in either (the corpus is built
+ * asynchronously, so body hits land a beat after metadata hits on the very
+ * first search).
  */
 function matchesSavedSearch(
   item: FeedDisplayItem,
   terms: string[],
   bodyMatchTerms: Map<string, Set<string>> | null
 ): boolean {
-  const metadata = searchHaystack(item);
-  const keys = searchKeysForItem(item);
-  return terms.every(
-    (term) =>
-      matchesTerms(metadata, [term]) ||
-      (bodyMatchTerms !== null && keys.some((key) => bodyMatchTerms.get(key)?.has(term) === true))
-  );
+  return matchesSearch(searchHaystack(item), terms, bodyMatchTerms, () => searchKeysForItem(item));
 }
 
 function createFeedViewStore() {
@@ -1520,11 +1533,13 @@ function createFeedViewStore() {
     }) {
       // Any URL-driven filter change exits the "Your Linkblog" view.
       myLinkblogFilter = false;
-      // Search is ephemeral session state, scoped to one saved surface: leaving
-      // it (or switching to another saved channel) drops the query, so a stale
-      // search never silently empties a later visit. Compared rather than reset
-      // unconditionally because this runs on every URL change, including ones
-      // that don't move the view.
+      // Search is ephemeral session state, scoped to one saved surface, so
+      // switching to another saved channel drops the query — a stale search
+      // must never silently empty the list you land on. Compared rather than
+      // reset unconditionally because this runs on every URL change, including
+      // ones that don't move the view. Leaving the surface entirely is the page's
+      // job (`savedSearchStore.setSurfaceActive(false)` on unmount): this only
+      // runs while `FeedPage` is mounted, so it can't see that transition.
       const nextSavedKey = `${filters.saved ?? ''}|${filters.view ?? ''}`;
       if (nextSavedKey !== currentSavedKey) {
         currentSavedKey = nextSavedKey;

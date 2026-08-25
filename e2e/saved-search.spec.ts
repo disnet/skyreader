@@ -72,6 +72,12 @@ test.describe('Saved search', () => {
 
     // AND terms can be split across metadata and full text: "ownership" is
     // only in the title, while BODY_WORD is only in the cached article body.
+    // Entered from a query that hides the item, so the assertion below is a
+    // hidden → visible transition and not the state the list already sat in —
+    // matching each source as a whole (the bug this covers) leaves it hidden.
+    await input.fill('gardening');
+    await expect(authedPage.getByText('Ownership Explained')).not.toBeVisible();
+
     await input.fill(`ownership ${BODY_WORD}`);
     await expect(authedPage.getByText('Ownership Explained')).toBeVisible({ timeout: 10_000 });
     await expect(authedPage.getByText('Gardening Basics')).not.toBeVisible();
@@ -101,6 +107,44 @@ test.describe('Saved search', () => {
 
     await hint.click();
     await expect(authedPage.getByText('Sourdough Notes')).toBeVisible();
+  });
+
+  test('leaving Saved hands "/" back to the navigation switcher', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedLibrary(testUser);
+    await authedPage.goto('/saved');
+    await expect(authedPage.getByText('Gardening Basics')).toBeVisible({ timeout: 15_000 });
+
+    // Search on Saved, then leave the surface with the query still applied.
+    await authedPage.locator('body').press('/');
+    const input = authedPage.getByTestId('saved-search-input');
+    await expect(input).toBeFocused();
+    await input.fill('gardening');
+    await expect(authedPage.getByText('An Afternoon at the Café')).not.toBeVisible();
+
+    // Client-side navigation, deliberately: a full reload would rebuild every
+    // store and hide the residual-state bug this covers.
+    await authedPage.getByRole('link', { name: 'Home' }).click();
+    await expect(authedPage).toHaveURL(/\/home$/);
+    await expect(authedPage.getByTestId('saved-search-input')).toHaveCount(0);
+
+    // Off the saved surface, "/" is the switcher again.
+    await authedPage.locator('body').press('/');
+    await expect(authedPage.getByRole('listbox')).toBeVisible();
+    await expect(authedPage.getByTestId('saved-search-input')).toHaveCount(0);
+    await authedPage.keyboard.press('Escape');
+    await expect(authedPage.getByRole('listbox')).toHaveCount(0);
+
+    // And coming back is a clean list, not the query from last time.
+    await authedPage.getByRole('button', { name: 'Saved' }).first().click();
+    await expect(
+      authedPage
+        .getByLabel('Recently saved', { exact: true })
+        .getByRole('button', { name: 'An Afternoon at the Café' })
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(authedPage.getByTestId('saved-search-input')).toHaveCount(0);
   });
 
   test.describe('on a mobile viewport', () => {

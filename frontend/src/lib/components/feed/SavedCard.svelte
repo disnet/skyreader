@@ -4,13 +4,12 @@
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-  import { feedViewStore } from '$lib/stores/feedView.svelte';
+  import { feedViewStore, searchHaystack } from '$lib/stores/feedView.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
   import {
     makeSnippet,
     matchesTerms,
-    normalize,
     splitHighlights,
     type Snippet,
   } from '$lib/services/savedSearch';
@@ -277,15 +276,12 @@
     searchTerms.length > 0 ? splitHighlights(title, searchTerms) : [{ text: title, mark: false }]
   );
 
-  // Same haystack the saved-items pipeline filters on, so "matched by metadata"
-  // means the same thing on both sides.
+  // Literally the haystack the saved-items pipeline filters on — shared rather
+  // than rebuilt, so "matched by metadata" can't mean one thing to the filter
+  // and another to the caption explaining the match.
   let metadataMatched = $derived.by(() => {
     if (searchTerms.length === 0) return true;
-    const parts: (string | null | undefined)[] = [title, url, metaSummary];
-    if (displayItem.type === 'article') parts.push(displayItem.item.author, feedTitle);
-    else if (displayItem.type === 'saved')
-      parts.push(displayItem.item.author, displayItem.item.domain);
-    return matchesTerms(normalize(parts.filter(Boolean).join(' ')), searchTerms);
+    return matchesTerms(searchHaystack(displayItem), searchTerms);
   });
 
   // A body-only hit: pull the stored full text back (same sources the excerpt
@@ -845,6 +841,14 @@
   @media (prefers-color-scheme: dark) {
     .bookmark-card:hover {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
+    }
+
+    /* The light tint composites to near-black over the dark background, which
+       hides the one thing explaining why a result is in the list. Re-tint with
+       the dark-scheme blue, the same way --color-sidebar-active flips. */
+    .bookmark-title mark,
+    .bookmark-summary mark {
+      background: rgba(77, 166, 255, 0.22);
     }
   }
 </style>

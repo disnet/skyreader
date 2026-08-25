@@ -71,6 +71,13 @@
     color: var(--color-text-secondary);
   }
 
+  /* The input's own outline would ring a borderless field inside the pill; the
+     pill carries the focus treatment instead, so tabbing back in is still
+     visible (auto-focus on open only covers the mouse/`/` path). */
+  .search-wrapper:focus-within {
+    box-shadow: 0 0 0 2px var(--color-primary);
+  }
+
   .search-input {
     flex: 1;
     min-width: 0;
@@ -80,6 +87,13 @@
     font-size: var(--text-md);
     color: var(--color-text);
     outline: none;
+  }
+
+  /* iOS Safari zooms the viewport when a focused input is smaller than 16px. */
+  @media (hover: none) and (pointer: coarse) {
+    .search-input {
+      font-size: 1rem;
+    }
   }
 
   .search-input::placeholder {
