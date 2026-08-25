@@ -215,7 +215,9 @@ describe('GET /api/integrations/margin/highlights', () => {
     });
   });
 
-  it('matches legacy saves that predate url_normalized', async () => {
+  // url_normalized is only written on the backed-save path, so an un-keyed row is
+  // the normal state for a default-backing account — not a legacy tail.
+  it('matches un-keyed saves whose raw URL carries tracking params and a fragment', async () => {
     await seedSave({
       rkey: 'save2',
       url: 'https://example.com/legacy?utm_source=newsletter#section',
@@ -225,6 +227,46 @@ describe('GET /api/integrations/margin/highlights', () => {
 
     const res = await call();
     expect(res.body.notes[0].match?.uri).toBe(`at://${DID}/app.skyreader.feed.saved/save2`);
+  });
+
+  it('narrows the un-keyed read by host without dropping same-host matches', async () => {
+    // Same path on another host: reachable only if the host filter is per-host,
+    // and proof the filter doesn't leak a match across hosts.
+    await seedSave({ rkey: 'other', url: 'https://elsewhere.test/legacy', urlNormalized: null });
+    await seedSave({
+      rkey: 'same',
+      url: 'https://example.com/legacy?ref=twitter',
+      urlNormalized: null,
+    });
+    mockRecords([
+      highlightNote('one', 'https://example.com/legacy'),
+      highlightNote('two', 'https://nowhere.test/legacy'),
+    ]);
+
+    const res = await call();
+    expect(res.body.notes[0].match?.uri).toBe(`at://${DID}/app.skyreader.feed.saved/same`);
+    expect(res.body.notes[1].match).toBeNull();
+  });
+
+  it('resolves duplicate un-keyed saves of one article to the oldest row, every time', async () => {
+    // Two saves of the same article with different tracking params normalize to
+    // one key; ORDER BY id keeps the winner stable across polls.
+    await seedSave({
+      rkey: 'first',
+      url: 'https://example.com/dupe?utm_source=a',
+      urlNormalized: null,
+    });
+    await seedSave({
+      rkey: 'second',
+      url: 'https://example.com/dupe?fbclid=b',
+      urlNormalized: null,
+    });
+    mockRecords([highlightNote('one', 'https://example.com/dupe')]);
+
+    for (let i = 0; i < 3; i++) {
+      const res = await call();
+      expect(res.body.notes[0].match?.uri).toBe(`at://${DID}/app.skyreader.feed.saved/first`);
+    }
   });
 
   it('reports match: null when nothing is saved for that URL', async () => {

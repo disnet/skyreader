@@ -915,8 +915,8 @@ export async function handleListMarginCollections(request: Request, env: Env): P
 // so every field is parsed defensively — one malformed record is skipped, never
 // thrown, so a single bad note can't lose the whole poll.
 
-// How many normalized URLs one indexed lookup carries. Keep comfortably below
-// D1's 100 bound-parameter cap.
+// How many URLs (or host prefixes) one save-matching statement carries. Keep
+// comfortably below D1's 100 bound-parameter cap.
 export const MATCH_CHUNK = 40;
 
 export interface MarginHighlightNote {
@@ -995,9 +995,34 @@ export function parseMarginHighlightNote(
 }
 
 /**
- * Join parsed notes onto the user's saves by normalized URL. Legacy saves
- * predate `url_normalized`, so their raw `url` is normalized in-process and
- * matched too. Returns a lookup keyed by normalized URL.
+ * A LIKE prefix that every raw save URL keying to `normalized` must start with:
+ * scheme + host, the two parts normalization preserves (it lowercases the host —
+ * LIKE is ASCII-case-insensitive, so that still matches — and only ever edits the
+ * port, query, fragment and trailing slash after it). Narrowing the un-keyed read
+ * by host is what keeps it from being "every save this user has ever made".
+ */
+function hostLikePrefix(normalized: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(normalized);
+  } catch {
+    return null;
+  }
+  // `\` escapes LIKE's own wildcards so a host containing `_` or `%` (legal in a
+  // stored URL, rare in practice) stays a literal.
+  const literal = `${url.protocol}//${url.hostname}`.replace(/[\\%_]/g, '\\$&');
+  return `${literal}%`;
+}
+
+/**
+ * Join parsed notes onto the user's saves by normalized URL. Returns a lookup
+ * keyed by normalized URL.
+ *
+ * Two passes, because `url_normalized` is only written on the backed-save path
+ * (`saved.ts` — the native inserts omit it, and `backfillUrlNormalized` runs only
+ * when a user turns Semble/Margin backing on). So for a default-backing account
+ * every save has a NULL key and the second pass is the one that matches; for a
+ * backed account the first, indexed pass is. Neither is the "legacy tail".
  */
 async function matchNotesToSaves(
   env: Env,
@@ -1030,22 +1055,31 @@ async function matchNotesToSaves(
     }
   }
 
-  // Rows from before migration 0057 have no normalized key. Their raw URL may
-  // contain tracking parameters or a fragment, so it cannot be filtered by the
-  // already-normalized note URLs in SQL. Fetch this shrinking legacy subset once
-  // and normalize it before matching.
+  // Un-keyed rows: the raw URL may carry tracking parameters or a fragment, so it
+  // can't be compared to an already-normalized note URL in SQL. Filter by host in
+  // SQL — the one part both forms share — and normalize the survivors in-process.
+  // ORDER BY id so two rows normalizing to the same URL (the same article saved
+  // twice with different tracking params) always resolve to the same save, the
+  // oldest, exactly as `backfillUrlNormalized` picks it.
   const requested = new Set(urls);
-  const legacy = await env.DB.prepare(
-    `SELECT url, item_guid, record_uri FROM saved_articles
-     WHERE user_did = ? AND url_normalized IS NULL`
-  )
-    .bind(did)
-    .all<{ url: string | null; item_guid: string | null; record_uri: string | null }>();
+  const prefixes = [...new Set(urls.map(hostLikePrefix).filter((p): p is string => p !== null))];
 
-  for (const row of legacy.results || []) {
-    const key = row.url ? normalizeArticleUrl(row.url) : null;
-    if (!key || !requested.has(key) || matches.has(key)) continue;
-    matches.set(key, { itemGuid: row.item_guid, uri: row.record_uri });
+  for (let i = 0; i < prefixes.length; i += MATCH_CHUNK) {
+    const chunk = prefixes.slice(i, i + MATCH_CHUNK);
+    const clauses = chunk.map(() => `url LIKE ? ESCAPE '\\'`).join(' OR ');
+    const unkeyed = await env.DB.prepare(
+      `SELECT url, item_guid, record_uri FROM saved_articles
+       WHERE user_did = ? AND url_normalized IS NULL AND (${clauses})
+       ORDER BY id`
+    )
+      .bind(did, ...chunk)
+      .all<{ url: string | null; item_guid: string | null; record_uri: string | null }>();
+
+    for (const row of unkeyed.results || []) {
+      const key = row.url ? normalizeArticleUrl(row.url) : null;
+      if (!key || !requested.has(key) || matches.has(key)) continue;
+      matches.set(key, { itemGuid: row.item_guid, uri: row.record_uri });
+    }
   }
   return matches;
 }

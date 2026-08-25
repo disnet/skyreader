@@ -3,6 +3,7 @@ import type { Highlight } from '$lib/types';
 import {
   buildHighlightDeck,
   highlightDeckStatus,
+  shouldRedealAfterImport,
   startOfLocalDay,
   type HighlightEntry,
 } from './highlightReview';
@@ -102,5 +103,21 @@ describe('highlightDeckStatus', () => {
     expect(
       highlightDeckStatus([entry('a', { lastReviewedAt: startOfLocalDay(NOW) + 1 })], NOW)
     ).toBe('completed');
+  });
+});
+
+describe('shouldRedealAfterImport', () => {
+  it('redeals when the open-time poll imported into an untouched deck', () => {
+    expect(shouldRedealAfterImport({ imported: 2 }, { index: 0, reviewed: 0 })).toBe(true);
+  });
+
+  it("doesn't redeal when the poll didn't run or brought nothing new", () => {
+    expect(shouldRedealAfterImport(null, { index: 0, reviewed: 0 })).toBe(false);
+    expect(shouldRedealAfterImport({ imported: 0 }, { index: 0, reviewed: 0 })).toBe(false);
+  });
+
+  it('leaves a session in progress alone — the dealt deck is fixed', () => {
+    expect(shouldRedealAfterImport({ imported: 2 }, { index: 1, reviewed: 1 })).toBe(false);
+    expect(shouldRedealAfterImport({ imported: 2 }, { index: 0, reviewed: 3 })).toBe(false);
   });
 });

@@ -61,9 +61,13 @@ Skyreader has always pushed highlights _out_ as `at.margin.note` records. `GET
   `backend/test/margin-highlights.spec.ts` pins the shape, so drift shows up as a test failure rather
   than a silent import of nothing.
 - **Server-side URL match.** The backend normalizes each `target.source` and joins it against the
-  user's `saved_articles` (`url_normalized`, plus the raw `url` for rows predating migration 0057),
-  attaching `match: {itemGuid, uri} | null`. The client has neither the normalization logic nor the
-  saves table.
+  user's `saved_articles`, attaching `match: {itemGuid, uri} | null`. Two passes, because
+  `url_normalized` is only written on the backed-save path: an indexed `url_normalized IN (…)` lookup
+  (what a Semble/Margin-backed account has), then a host-prefix-narrowed `url_normalized IS NULL`
+  read normalized in-process (what a default-backing account has — every save, not a legacy tail).
+  The second pass filters by scheme+host in SQL, the one part a raw and a normalized URL always
+  share, so the poll never reads the whole saves table; `ORDER BY id` makes duplicate URLs resolve to
+  the same save every time. The client has neither the normalization logic nor the saves table.
 - **A partial poll says so.** `truncated` propagates from the page cap all the way to a quiet notice
   on `/highlights` — otherwise "these are your highlights" would be a lie.
 - **Symmetric lifecycle.** Imported highlights carry `marginUri`/`marginRkey` exactly like one

@@ -22,7 +22,11 @@
     updateHighlightNoteOnMargin,
   } from '$lib/services/marginHighlights';
   import { maybeImportMarginHighlights } from '$lib/services/marginHighlightImport';
-  import { buildHighlightDeck, type HighlightEntry } from '$lib/utils/highlightReview';
+  import {
+    buildHighlightDeck,
+    shouldRedealAfterImport,
+    type HighlightEntry,
+  } from '$lib/utils/highlightReview';
   import {
     buildHighlightSourceLookups,
     resolveHighlightSource,
@@ -50,35 +54,59 @@
   let index = $state(0);
   let reviewed = $state(0);
 
-  // Wait for the stores to hydrate and the initial Margin poll to finish before
-  // drawing. The deck remains fixed after that first draw, but highlights the
-  // poll imports on open must be eligible for this session.
+  // Deal as soon as the local stores hydrate — everything needed for a session is
+  // already on the device, so a Margin poll must never stand between the reader
+  // and their first card. The poll runs alongside it and redeals exactly once, if
+  // it actually imported something and the reader hasn't started yet.
   let storesReady = $derived(!itemLabelsStore.isLoading && !savesStore.loading);
   let initialImportComplete = $state(false);
   let importStarted = false;
-
-  $effect(() => {
-    if (!storesReady || importStarted) return;
-    importStarted = true;
-    void maybeImportMarginHighlights().finally(() => {
-      initialImportComplete = true;
-    });
-  });
-
-  let ready = $derived(storesReady && initialImportComplete);
 
   // Plain flag, not the `deck` state itself: the effect writes `deck`, so reading
   // it here as the guard would make the effect depend on its own write.
   let dealt = false;
 
-  $effect(() => {
-    if (dealt || !ready) return;
-    dealt = true;
+  // Tracked separately from `deck.length` so removing the last card of a real
+  // deck can't be mistaken for "the local pool was empty".
+  let emptyOnDeal = $state(false);
+
+  function dealDeck() {
     deck = buildHighlightDeck(
       itemLabelsStore.allHighlights,
       preferences.highlightReviewCount
     ).cards;
+    emptyOnDeal = deck.length === 0;
+  }
+
+  $effect(() => {
+    if (dealt || !storesReady) return;
+    dealt = true;
+    dealDeck();
   });
+
+  // An empty deck is the one case worth waiting on: the local pool has nothing to
+  // show, so the in-flight poll may be the whole session. The wait is bounded, so
+  // a stalled poll lands on the empty state instead of spinning forever.
+  const EMPTY_DECK_IMPORT_WAIT_MS = 6000;
+  let importWaitElapsed = $state(false);
+
+  $effect(() => {
+    if (!storesReady || importStarted) return;
+    importStarted = true;
+    const timer = setTimeout(() => (importWaitElapsed = true), EMPTY_DECK_IMPORT_WAIT_MS);
+    void maybeImportMarginHighlights()
+      .then((result) => {
+        if (shouldRedealAfterImport(result, { index, reviewed })) dealDeck();
+      })
+      .catch(() => {})
+      .finally(() => {
+        clearTimeout(timer);
+        initialImportComplete = true;
+      });
+  });
+
+  let awaitingImport = $derived(emptyOnDeal && !initialImportComplete && !importWaitElapsed);
+  let ready = $derived(storesReady && !awaitingImport);
 
   let total = $derived(deck?.length ?? 0);
   let current = $derived(deck && index < deck.length ? deck[index] : null);
