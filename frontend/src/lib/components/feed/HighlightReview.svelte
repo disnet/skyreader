@@ -53,6 +53,7 @@
   let deck = $state<HighlightEntry[] | null>(null);
   let index = $state(0);
   let reviewed = $state(0);
+  let interacted = $state(false);
 
   // Deal as soon as the local stores hydrate — everything needed for a session is
   // already on the device, so a Margin poll must never stand between the reader
@@ -96,7 +97,7 @@
     const timer = setTimeout(() => (importWaitElapsed = true), EMPTY_DECK_IMPORT_WAIT_MS);
     void maybeImportMarginHighlights()
       .then((result) => {
-        if (shouldRedealAfterImport(result, { index, reviewed })) dealDeck();
+        if (shouldRedealAfterImport(result, { index, reviewed, interacted })) dealDeck();
       })
       .catch(() => {})
       .finally(() => {
@@ -129,6 +130,7 @@
   function advance() {
     const entry = current;
     if (!entry) return;
+    interacted = true;
     void itemLabelsStore.markHighlightReviewed(entry.itemKey, entry.highlight.id);
     reviewed += 1;
     index += 1;
@@ -201,6 +203,10 @@
     const highlight = live;
     removePrompt = false;
     if (!entry || !highlight) return;
+    // Freeze the session before starting the cross-app deletion. The opening
+    // import can finish while that request is in flight and must not redeal the
+    // card the reader just confirmed removing.
+    interacted = true;
     void deleteHighlight(entry.itemKey, highlight);
     // Drop the card without stamping it reviewed — it no longer exists.
     if (deck) deck = deck.filter((card) => card.highlight.id !== entry.highlight.id);

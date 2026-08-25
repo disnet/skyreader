@@ -120,4 +120,10 @@ describe('shouldRedealAfterImport', () => {
     expect(shouldRedealAfterImport({ imported: 2 }, { index: 1, reviewed: 1 })).toBe(false);
     expect(shouldRedealAfterImport({ imported: 2 }, { index: 0, reviewed: 3 })).toBe(false);
   });
+
+  it('does not redeal after a removal while the import is still in flight', () => {
+    expect(
+      shouldRedealAfterImport({ imported: 2 }, { index: 0, reviewed: 0, interacted: true })
+    ).toBe(false);
+  });
 });

@@ -118,10 +118,10 @@ export function buildHighlightDeck(
  */
 export function shouldRedealAfterImport(
   result: { imported: number } | null,
-  progress: { index: number; reviewed: number }
+  progress: { index: number; reviewed: number; interacted?: boolean }
 ): boolean {
   if (!result || result.imported <= 0) return false;
-  return progress.index === 0 && progress.reviewed === 0;
+  return !progress.interacted && progress.index === 0 && progress.reviewed === 0;
 }
 
 /** Cheap status probe for entry points that only need "is there a deck?". */
