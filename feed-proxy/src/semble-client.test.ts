@@ -1,5 +1,5 @@
 import { describe, expect, it, afterEach, spyOn } from 'bun:test';
-import { fetchSembleContext } from './semble-client';
+import { fetchSembleContext, isEmptySembleContext } from './semble-client';
 
 const ARTICLE = 'https://example.com/the-article';
 
@@ -142,5 +142,67 @@ describe('fetchSembleContext collections and notes', () => {
     const context = await fetchSembleContext(ARTICLE);
     expect(context?.notes.map((n) => n.text)).toEqual(['First thought', 'Second thought']);
     expect(new Set(context!.notes.map((n) => n.id)).size).toBe(2);
+  });
+});
+
+// Semble keys a card by the URL string, so `/post` and `/post/` are two keys —
+// and a site whose canonical carries the slash holds everything under the form
+// our normalizer trims away. Asking only the trimmed form reads as "nobody
+// saved this" while the lane's own count says a dozen people did.
+describe('fetchSembleContext url variants', () => {
+  afterEach(() => {
+    (globalThis.fetch as ReturnType<typeof spyOn>).mockRestore?.();
+  });
+
+  const SLASHED = `${ARTICLE}/`;
+
+  // Answer per (nsid, url) instead of per nsid: only the named URL holds anything.
+  function mockSembleForUrl(held: string, bodies: Record<string, unknown>) {
+    return spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const parsed = new URL(String(input));
+      const nsid = parsed.pathname.split('/').pop()!;
+      const asked = parsed.searchParams.get('url');
+      const body = asked === held ? (bodies[nsid] ?? {}) : {};
+      return new Response(JSON.stringify(body), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch);
+  }
+
+  const library = {
+    user: { id: 'did:plc:erin', handle: 'erin.test', name: 'Erin' },
+    card: { note: { text: 'Filed this' }, createdAt: '2026-03-20T00:00:00.000Z' },
+  };
+
+  it('follows the trailing-slash form when that is the one Semble holds', async () => {
+    mockSembleForUrl(SLASHED, {
+      'network.cosmik.card.getUrlMetadata': { stats: { libraryCount: 15, collectionCount: 16 } },
+      'network.cosmik.card.getLibrariesForUrl': { libraries: [library] },
+    });
+
+    const context = await fetchSembleContext(ARTICLE);
+    expect(context?.savers.map((s) => s.author.handle)).toEqual(['erin.test']);
+    expect(context?.stats?.saves).toBe(15);
+    // The card page has to point at the URL the card actually lives under.
+    expect(context?.cardUrl).toBe(`https://semble.so/url/${encodeURIComponent(SLASHED)}`);
+  });
+
+  it('keeps the canonical trimmed form when that is the one Semble holds', async () => {
+    mockSembleForUrl(ARTICLE, {
+      'network.cosmik.card.getUrlMetadata': { stats: { libraryCount: 3 } },
+      'network.cosmik.card.getLibrariesForUrl': { libraries: [library] },
+    });
+
+    const context = await fetchSembleContext(ARTICLE);
+    expect(context?.savers).toHaveLength(1);
+    expect(context?.cardUrl).toBe(`https://semble.so/url/${encodeURIComponent(ARTICLE)}`);
+  });
+
+  it('reports an empty card as empty rather than picking a form at random', async () => {
+    mockSembleForUrl('https://nothing.example/', {});
+
+    const context = await fetchSembleContext(ARTICLE);
+    expect(context && isEmptySembleContext(context)).toBe(true);
+    expect(context?.cardUrl).toBe(`https://semble.so/url/${encodeURIComponent(ARTICLE)}`);
   });
 });
