@@ -4,6 +4,7 @@ import { itemLabelsStore } from './itemLabels.svelte';
 import { socialStore } from './social.svelte';
 import { myLinkblogStore } from './myLinkblog.svelte';
 import { savesStore } from './saves.svelte';
+import { savedSearchStore } from './savedSearch.svelte';
 import { preferences } from './preferences.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
 import { liveDb } from '$lib/services/liveDb.svelte';
@@ -18,6 +19,7 @@ import type {
   ReadingLengthFilter,
   SortOrder,
 } from '$lib/types';
+import { matchesTerms, normalize } from '$lib/services/savedSearch';
 import {
   isRssSource,
   isDocumentsSource,
@@ -168,6 +170,62 @@ export function matchesReadingLength(wc: number | null, bucket: ReadingLengthFil
   }
 }
 
+/**
+ * Every key a saved display-item can be indexed under in the body-search
+ * corpus. The list can present one save as a bookmark (keyed by uri/rkey) or as
+ * the feed article it came from (keyed by guid), depending on which
+ * representation survives dedup — so a body hit has to be checked under all of
+ * them, or the match would vanish for the surviving representation.
+ */
+function searchKeysForItem(item: FeedDisplayItem): string[] {
+  const keys = [item.key];
+  if (item.type === 'saved') {
+    keys.push(item.item.rkey);
+    if (item.item.itemGuid) keys.push(item.item.itemGuid);
+  } else if (item.type === 'article') {
+    keys.push(item.item.guid);
+  } else if (item.type === 'document') {
+    keys.push(item.item.recordUri);
+  }
+  return keys;
+}
+
+/** Normalized metadata haystack for search: title, author, description, domain, url. */
+function searchHaystack(item: FeedDisplayItem): string {
+  const parts: (string | null | undefined)[] = [];
+  if (item.type === 'article') {
+    parts.push(item.item.title, item.item.author, item.item.summary, item.item.url);
+  } else if (item.type === 'saved') {
+    parts.push(
+      item.item.title,
+      item.item.author,
+      item.item.description,
+      item.item.domain,
+      item.item.url
+    );
+  } else {
+    parts.push(item.item.title, item.item.description, item.item.canonicalUrl || item.item.path);
+  }
+  const domain = getItemDomain(item);
+  if (domain) parts.push(domain);
+  return normalize(parts.filter(Boolean).join(' '));
+}
+
+/**
+ * A saved item matches a search when its own metadata matches, or when the
+ * save's full article text does (the corpus is built asynchronously, so body
+ * hits land a beat after metadata hits on the very first search).
+ */
+function matchesSavedSearch(
+  item: FeedDisplayItem,
+  terms: string[],
+  bodyMatchKeys: Set<string> | null
+): boolean {
+  if (matchesTerms(searchHaystack(item), terms)) return true;
+  if (!bodyMatchKeys) return false;
+  return searchKeysForItem(item).some((key) => bodyMatchKeys.has(key));
+}
+
 function createFeedViewStore() {
   // UI state
   let showOnlyUnread = $state(true);
@@ -203,6 +261,10 @@ function createFeedViewStore() {
 
   // Bookmarks view sub-filter (inbox vs archive)
   let savedView = $state<'inbox' | 'archive'>('inbox');
+
+  // Identity of the saved surface the current search belongs to (`saved` param
+  // + channel id). Non-reactive — it only gates the reset in setFilters.
+  let currentSavedKey = '';
 
   // URL filters (set by component from $page store)
   let feedFilter = $state<string | null>(null);
@@ -610,15 +672,11 @@ function createFeedViewStore() {
   // loadedArticleCount, revealing older items of either type.
   let displayedCombined = $derived(combinedAll.slice(0, loadedArticleCount));
 
-  // Derived: full merged-and-filtered saved-items list (pre-pagination).
-  // Exposed separately from currentItems so the saved-view rendering path can
-  // slice into it for infinite scroll while hasMore/loadMore still see the
-  // total count.
-  let savedItemsAll = $derived.by((): FeedDisplayItem[] => {
-    if (!isSavedView) return [];
-
+  // The merged-and-filtered saved-items list for one sub-view. Parameterized on
+  // inbox-vs-archive so the search empty state can ask "how many matches are in
+  // the *other* tab?" without duplicating this pipeline.
+  function computeSavedItems(isArchiveView: boolean): FeedDisplayItem[] {
     const sortOrder = effectiveFilters.sortOrder;
-    const isArchiveView = savedView === 'archive';
 
     // Per-item predicate for saved-channel filters. Used both for the final
     // item list *and* for deciding whether an article should dedup a bookmark
@@ -654,10 +712,27 @@ function createFeedViewStore() {
     // filters (reading length, date, domain) are applied at the end of this
     // block, and pagination-before-filter would hide matches that fall outside
     // the current page window.
+    //
+    // filteredArticles is pinned to the *displayed* sub-view, so when this runs
+    // for the other one (the cross-view search count) the same filter has to be
+    // rebuilt here against the flipped archive test.
+    const savedArticles = (() => {
+      if (isArchiveView === (savedView === 'archive')) return filteredArticles;
+      if (!showArticles) return [];
+      const seen = new Set<string>();
+      return articlesStore.allArticles.filter((a) => {
+        if (!itemLabelsStore.isSaved(a.guid)) return false;
+        if (itemLabelsStore.isArchived(a.guid) !== isArchiveView) return false;
+        if (seen.has(a.guid)) return false;
+        seen.add(a.guid);
+        return true;
+      });
+    })();
+
     const articleItems: FeedDisplayItem[] =
       sourceFilter && !sourceFilter.has('feed')
         ? []
-        : filteredArticles.map((item) => ({
+        : savedArticles.map((item) => ({
             type: 'article' as const,
             item,
             key: item.guid,
@@ -794,7 +869,33 @@ function createFeedViewStore() {
       });
     }
 
+    // Search, last: it runs after the merge/dedup above so it can't perturb the
+    // bookmark-vs-article dedup, and it composes with every channel filter.
+    const searchTerms = savedSearchStore.terms;
+    if (searchTerms.length > 0) {
+      const bodyMatchKeys = savedSearchStore.bodyMatchKeys;
+      items = items.filter((item) => matchesSavedSearch(item, searchTerms, bodyMatchKeys));
+    }
+
     return items;
+  }
+
+  // Derived: full merged-and-filtered saved-items list (pre-pagination).
+  // Exposed separately from currentItems so the saved-view rendering path can
+  // slice into it for infinite scroll while hasMore/loadMore still see the
+  // total count.
+  let savedItemsAll = $derived.by((): FeedDisplayItem[] => {
+    if (!isSavedView) return [];
+    return computeSavedItems(savedView === 'archive');
+  });
+
+  // Derived: how many items the current search would match in the *other*
+  // sub-view (inbox ↔ archive). Powers the "N matches in Archive" hint on the
+  // search empty state — the thing that keeps "I know I saved it" findable once
+  // it's been archived. Only computed while a search is active.
+  let savedSearchOtherViewCount = $derived.by((): number => {
+    if (!isSavedView || !savedSearchStore.active) return 0;
+    return computeSavedItems(savedView !== 'archive').length;
   });
 
   // Derived: unified current items for the active view mode
@@ -1274,6 +1375,9 @@ function createFeedViewStore() {
     get isSavedChannel() {
       return isSavedChannel;
     },
+    get savedSearchOtherViewCount() {
+      return savedSearchOtherViewCount;
+    },
     get toolbarSavedSourceFilter() {
       return toolbarSavedSourceFilter;
     },
@@ -1412,6 +1516,16 @@ function createFeedViewStore() {
     }) {
       // Any URL-driven filter change exits the "Your Linkblog" view.
       myLinkblogFilter = false;
+      // Search is ephemeral session state, scoped to one saved surface: leaving
+      // it (or switching to another saved channel) drops the query, so a stale
+      // search never silently empties a later visit. Compared rather than reset
+      // unconditionally because this runs on every URL change, including ones
+      // that don't move the view.
+      const nextSavedKey = `${filters.saved ?? ''}|${filters.view ?? ''}`;
+      if (nextSavedKey !== currentSavedKey) {
+        currentSavedKey = nextSavedKey;
+        savedSearchStore.reset();
+      }
       feedFilter = filters.feed;
       savedFilter = filters.saved;
       sharerFilter = filters.sharer;

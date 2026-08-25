@@ -7,6 +7,7 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
   import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
   import type { ItemLabelType } from '$lib/types';
 
@@ -49,6 +50,10 @@
       if (readerItem?.key !== key) openReader(item);
     }
   });
+
+  // Cross-view search hint: matches sitting in the tab the user isn't looking at.
+  let otherViewCount = $derived(feedViewStore.savedSearchOtherViewCount);
+  let otherViewLabel = $derived(feedViewStore.savedView === 'inbox' ? 'Archive' : 'Inbox');
 
   function getItemType(item: FeedDisplayItem): ItemLabelType {
     return item.type;
@@ -140,7 +145,23 @@
   {/each}
 
   {#if feedViewStore.currentItems.length === 0}
-    {#if feedViewStore.savedView === 'inbox'}
+    {#if savedSearchStore.active}
+      <!-- Search is scoped to the current sub-view like every other filter, so
+           point at the other one when that's where the match actually is. -->
+      <EmptyState
+        title={`No matches for “${savedSearchStore.appliedQuery}”`}
+        description={otherViewCount > 0
+          ? `Nothing here matches. ${otherViewLabel} has ${otherViewCount} match${otherViewCount === 1 ? '' : 'es'}.`
+          : 'Try fewer or different words.'}
+        actionText={otherViewCount > 0
+          ? `${otherViewCount} match${otherViewCount === 1 ? '' : 'es'} in ${otherViewLabel}`
+          : undefined}
+        onAction={otherViewCount > 0
+          ? () =>
+              feedViewStore.setSavedView(feedViewStore.savedView === 'inbox' ? 'archive' : 'inbox')
+          : undefined}
+      />
+    {:else if feedViewStore.savedView === 'inbox'}
       <EmptyState
         title="No saved items"
         description="Save articles, shares, or documents to save them for later"

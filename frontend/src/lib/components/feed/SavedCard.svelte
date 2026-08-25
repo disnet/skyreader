@@ -6,6 +6,14 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
+  import {
+    makeSnippet,
+    matchesTerms,
+    normalize,
+    splitHighlights,
+    type Snippet,
+  } from '$lib/services/savedSearch';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { auth } from '$lib/stores/auth.svelte';
@@ -258,6 +266,79 @@
     return text.length > 200 ? text.slice(0, 200) + '...' : text;
   });
 
+  // --- Search presentation ---------------------------------------------------
+  // Why an item matched decides what the card shows: a metadata hit highlights
+  // the title in place, a body-only hit swaps the preview line for a snippet
+  // around the hit. Every `<mark>` below comes from this template, never from
+  // the data — extracted bodies are untrusted, so nothing here is `{@html}`.
+  let searchTerms = $derived(savedSearchStore.terms);
+
+  let titleParts = $derived(
+    searchTerms.length > 0 ? splitHighlights(title, searchTerms) : [{ text: title, mark: false }]
+  );
+
+  // Same haystack the saved-items pipeline filters on, so "matched by metadata"
+  // means the same thing on both sides.
+  let metadataMatched = $derived.by(() => {
+    if (searchTerms.length === 0) return true;
+    const parts: (string | null | undefined)[] = [title, url, metaSummary];
+    if (displayItem.type === 'article') parts.push(displayItem.item.author, feedTitle);
+    else if (displayItem.type === 'saved')
+      parts.push(displayItem.item.author, displayItem.item.domain);
+    return matchesTerms(normalize(parts.filter(Boolean).join(' ')), searchTerms);
+  });
+
+  // A body-only hit: pull the stored full text back (same sources the excerpt
+  // fallback uses) and cut a window around the first term.
+  let searchSnippet = $state<Snippet | null>(null);
+  let bodyMatchOnly = $derived(searchTerms.length > 0 && !metadataMatched);
+
+  $effect(() => {
+    const terms = searchTerms;
+    if (!bodyMatchOnly) {
+      searchSnippet = null;
+      return;
+    }
+
+    let savedRkey: string | undefined;
+    let articleRef: { id?: number; guid: string; subscriptionId: number } | undefined;
+    if (displayItem.type === 'saved') {
+      savedRkey = displayItem.item.rkey;
+    } else if (displayItem.type === 'article') {
+      const a = displayItem.item;
+      savedRkey = a.guid ? savesStore.getByGuid(a.guid)?.rkey : undefined;
+      articleRef = { id: a.id, guid: a.guid, subscriptionId: a.subscriptionId };
+    } else {
+      savedRkey = savesStore.getByGuid(displayItem.item.recordUri)?.rkey;
+    }
+
+    let cancelled = false;
+    (async () => {
+      let body = '';
+      try {
+        if (savedRkey) body = (await savesStore.getContent(savedRkey)) || '';
+        if (!body && articleRef) {
+          let row = articleRef.id != null ? await db.articles.get(articleRef.id) : undefined;
+          if (!row && articleRef.guid) {
+            row = await db.articles
+              .where('guid')
+              .equals(articleRef.guid)
+              .filter((a) => a.subscriptionId === articleRef!.subscriptionId)
+              .first();
+          }
+          body = row?.content || '';
+        }
+      } catch {
+        // Best effort — fall back to the plain "matches article text" caption.
+      }
+      if (cancelled) return;
+      searchSnippet = body ? makeSnippet(htmlToText(body), terms) : null;
+    })();
+    return () => {
+      cancelled = true;
+    };
+  });
+
   // Type badge
   let typeBadge = $derived.by(() => {
     if (displayItem.type === 'saved') return displayItem.item.domain || 'Saved';
@@ -503,8 +584,19 @@
           onOpen?.();
         }}
       >
-        <h3 class="bookmark-title">{title}</h3>
-        {#if summaryText}
+        <h3 class="bookmark-title">
+          {#each titleParts as part}{#if part.mark}<mark>{part.text}</mark
+              >{:else}{part.text}{/if}{/each}
+        </h3>
+        {#if bodyMatchOnly && searchSnippet}
+          <p class="bookmark-summary">
+            {searchSnippet.truncatedStart ? '…' : ''}{searchSnippet.before}<mark
+              >{searchSnippet.match}</mark
+            >{searchSnippet.after}{searchSnippet.truncatedEnd ? '…' : ''}
+          </p>
+        {:else if bodyMatchOnly}
+          <p class="bookmark-summary match-caption">Matches article text</p>
+        {:else if summaryText}
           <p class="bookmark-summary">{summaryText}</p>
         {/if}
         <div class="bookmark-meta">
@@ -663,6 +755,20 @@
     -webkit-line-clamp: 2;
     line-clamp: 2;
     -webkit-box-orient: vertical;
+  }
+
+  /* Search hits: a quiet tint, not a highlighter — the text stays the product. */
+  .bookmark-title mark,
+  .bookmark-summary mark {
+    background: rgba(0, 102, 204, 0.12);
+    color: inherit;
+    border-radius: 3px;
+    padding: 0 0.1em;
+  }
+
+  .match-caption {
+    font-style: italic;
+    opacity: 0.8;
   }
 
   .bookmark-meta {
