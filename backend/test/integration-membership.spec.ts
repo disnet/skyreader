@@ -196,7 +196,7 @@ describe('editMemberships — removal validation', () => {
   }
 
   it('rejects the whole batch before deleting anything', async () => {
-    const pds = fakeClient({});
+    const pds = fakeClient({ [CARD]: [card('c1', URL_A)], [LINK]: [link('l1', 'c1', COL_A)] });
     await expect(
       editMemberships(pds, DID, 'semble', {
         url: URL_A,
@@ -204,6 +204,22 @@ describe('editMemberships — removal validation', () => {
         remove: [`at://${DID}/${LINK}/l1`, `at://did:plc:other/${LINK}/l2`],
       })
     ).rejects.toBeInstanceOf(MembershipEditError);
+    expect(pds.deleteRecord).not.toHaveBeenCalled();
+  });
+
+  it('refuses a valid membership URI that belongs to another URL', async () => {
+    const pds = fakeClient({
+      [CARD]: [card('c1', URL_A), card('c2', 'https://example.test/posts/two')],
+      [LINK]: [link('l1', 'c1', COL_A), link('l2', 'c2', COL_B)],
+    });
+
+    await expect(
+      editMemberships(pds, DID, 'semble', {
+        url: URL_A,
+        add: [],
+        remove: [`at://${DID}/${LINK}/l2`],
+      })
+    ).rejects.toMatchObject({ status: 403 });
     expect(pds.deleteRecord).not.toHaveBeenCalled();
   });
 });
@@ -268,9 +284,26 @@ describe('editMemberships — Semble', () => {
     expect(res.added).toEqual([]);
   });
 
+  it('can replace a removed membership in the same collection', async () => {
+    const pds = fakeClient({
+      [CARD]: [card('c1', URL_A)],
+      [LINK]: [link('l1', 'c1', COL_A)],
+    });
+
+    const res = await editMemberships(pds, DID, 'semble', {
+      url: URL_A,
+      add: [{ uri: COL_A, cid: 'x' }],
+      remove: [`at://${DID}/${LINK}/l1`],
+    });
+
+    expect(pds.deleteRecord).toHaveBeenCalledWith(LINK, 'l1');
+    expect(pds.putRecord).toHaveBeenCalledWith(LINK, expect.any(String), expect.any(Object));
+    expect(res.added).toEqual([{ collectionUri: COL_A, linkUri: expect.stringContaining(LINK) }]);
+  });
+
   it('treats a link that is already gone as removed', async () => {
     const pds = fakeClient(
-      {},
+      { [CARD]: [card('c1', URL_A)], [LINK]: [link('gone', 'c1', COL_A)] },
       {
         deleteRecord: vi.fn(async () => ({
           success: false,

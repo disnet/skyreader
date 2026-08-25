@@ -173,7 +173,7 @@ export interface MembershipEditInput {
   url: string;
   /** collections to add the save to; `cid` is a hint, Semble re-resolves it live */
   add: Array<{ uri: string; cid?: string }>;
-  /** membership record uris to delete (validated against provider + owner) */
+  /** membership record uris to delete (validated against provider, owner, and URL) */
   remove: string[];
   /** used only when no item exists yet and we fall back to creating one */
   title?: string;
@@ -278,6 +278,19 @@ export async function editMemberships(
     rkey: validateRemoval(provider, did, uri),
   }));
 
+  // Authorize removals against the current server-side view for this URL. Repo +
+  // NSID validation alone is insufficient: otherwise a caller could name a link
+  // belonging to another article in their own repo. Do this once, before any
+  // writes, and reuse the same snapshot for duplicate-add protection below.
+  const lookup = await findMemberships(pds, provider, input.url);
+  if (!lookup.success) throw new MembershipEditError(lookup.error, 502);
+  const allowedRemovals = new Set(lookup.data.memberships.map((m) => m.linkUri));
+  for (const { uri } of removeRkeys) {
+    if (!allowedRemovals.has(uri)) {
+      throw new MembershipEditError('membership does not belong to this URL', 403);
+    }
+  }
+
   const removed: MembershipEditResult['removed'] = [];
   for (const { uri, rkey } of removeRkeys) {
     const res = await pds.deleteRecord(membershipCollection(provider), rkey);
@@ -293,12 +306,6 @@ export async function editMemberships(
     return { added, removed };
   }
 
-  // The adds need an item to point at. Re-run the lookup server-side rather than
-  // trusting a client-supplied uri — a stale client (or one whose save landed
-  // elsewhere) then still does the right thing instead of linking the wrong card.
-  const lookup = await findMemberships(pds, provider, input.url);
-  if (!lookup.success) throw new MembershipEditError(lookup.error, 502);
-
   const existing = lookup.data.items[0];
   const item = existing
     ? { uri: existing.uri, cid: existing.cid, created: false }
@@ -306,8 +313,11 @@ export async function editMemberships(
 
   // Don't create a second link for a collection the item is already in — a stale
   // picker (or a double-click) would otherwise duplicate the membership.
+  const removedUris = new Set(removeRkeys.map((r) => r.uri));
   const alreadyIn = new Set(
-    lookup.data.memberships.filter((m) => m.itemUri === item.uri).map((m) => m.collectionUri)
+    lookup.data.memberships
+      .filter((m) => m.itemUri === item.uri && !removedUris.has(m.linkUri))
+      .map((m) => m.collectionUri)
   );
   const toAdd = input.add.filter((c) => !alreadyIn.has(c.uri));
 

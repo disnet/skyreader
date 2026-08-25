@@ -39,6 +39,9 @@
   let noCollection = $state(false);
   let memberships = $state<IntegrationMemberships | null>(null);
   let membershipsLoading = $state(false);
+  // Non-reactive generation counter: changing it must not retrigger the open
+  // effect that starts membership requests.
+  let membershipRequestId = 0;
   // The lookup is advisory: if it fails we fall back to create mode rather than
   // block the save. A duplicate card is recoverable; a blocked save is annoying.
   let membershipsFailed = $state(false);
@@ -65,6 +68,10 @@
 
   // Edit mode = this URL already has a card/note in the user's repo.
   let isEdit = $derived((memberships?.items.length ?? 0) > 0);
+  // A capped item listing that found no match is not proof this is a first save.
+  // Block creation until a complete lookup can distinguish that from an older
+  // existing item; otherwise the warning still permits the duplicate it describes.
+  let lookupIncomplete = $derived(memberships?.truncated === true && !isEdit);
   /** collections the save currently belongs to (the diff baseline) */
   let initialUris = $derived(new Set((memberships?.memberships ?? []).map((m) => m.collectionUri)));
 
@@ -83,6 +90,7 @@
 
   let canSave = $derived.by(() => {
     if (membershipsLoading) return false;
+    if (lookupIncomplete) return false;
     if (isEdit) return changed;
     return noCollection || selectedUris.size > 0;
   });
@@ -101,6 +109,7 @@
       loadMemberships(integration, url);
     } else {
       // Reset picker state when modal closes.
+      membershipRequestId += 1;
       searchQuery = '';
       selectedUris = new Set();
       noCollection = false;
@@ -111,6 +120,7 @@
   });
 
   async function loadMemberships(kind: IntegrationKind, target: string | undefined) {
+    const requestId = ++membershipRequestId;
     memberships = null;
     membershipsFailed = false;
     // No URL, or offline: nothing readable, so stay in create mode.
@@ -123,15 +133,19 @@
       const res = await api.getIntegrationMemberships(kind, target);
       // The modal may have been closed (or reopened for another article) while the
       // request was in flight — only apply an answer that's still the current one.
-      if (!open || kind !== integration || target !== url) return;
+      if (requestId !== membershipRequestId || !open || kind !== integration || target !== url)
+        return;
       memberships = res;
       selectedUris = new Set(res.memberships.map((m) => m.collectionUri));
     } catch (err) {
       console.error('Failed to load existing saves:', err);
-      if (!open || kind !== integration || target !== url) return;
+      if (requestId !== membershipRequestId || !open || kind !== integration || target !== url)
+        return;
       membershipsFailed = true;
     } finally {
-      membershipsLoading = false;
+      // A request for an earlier article must not unlock the current picker while
+      // its membership lookup is still pending.
+      if (requestId === membershipRequestId) membershipsLoading = false;
     }
   }
 
@@ -226,6 +240,10 @@
           {#if memberships?.truncated}
             <span class="picker-note-soft">Some older saves may not be shown.</span>
           {/if}
+        </div>
+      {:else if lookupIncomplete}
+        <div class="picker-note">
+          Couldn't check all older saves. Refresh and try again before creating a new one.
         </div>
       {:else if membershipsFailed}
         <div class="picker-note">Couldn't check existing saves — saving will create a new one.</div>
