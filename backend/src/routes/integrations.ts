@@ -2,6 +2,7 @@ import type { Env, Session } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
 import { createPDSClient } from '../services/pds-client';
 import { generateTid } from '../utils/tid';
+import { normalizeArticleUrl } from '../utils/url-normalize';
 import {
   findMemberships,
   editMemberships,
@@ -475,13 +476,14 @@ interface MarginNoteBody {
  * annotation's comment body — Margin expects a `{ value, format }` shape — so
  * the note stays portable across the Atmosphere.
  */
-function buildMarginNoteRecord(body: MarginNoteBody, createdAt: string) {
+export function buildMarginNoteRecord(body: MarginNoteBody, createdAt: string) {
   const note = body.note?.trim();
+  const source = normalizeArticleUrl(body.source) ?? body.source.trim();
   return {
     $type: 'at.margin.note',
     motivation: 'highlighting',
     target: {
-      source: body.source,
+      source,
       ...(body.title ? { title: body.title } : {}),
       selector: {
         type: 'TextQuoteSelector',

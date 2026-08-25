@@ -58,7 +58,7 @@ describe('getMarginHighlights', () => {
       {
         one: {
           target: { selector: { exact: 'first', prefix: 'before', suffix: 'after' } },
-          body: 'Thoughtful note',
+          body: { value: 'Thoughtful note', format: 'text/plain' },
           motivation: 'commenting',
           createdAt: '2026-01-02T00:00:00Z',
         },
@@ -74,6 +74,72 @@ describe('getMarginHighlights', () => {
       suffix: 'after',
     });
     expect(result.notes[0].note).toBe('Thoughtful note');
+  });
+
+  it('probes the exact raw URL for notes written before source canonicalization', async () => {
+    const value = db();
+    const did = 'did:plc:alice';
+    seedDid(value, did);
+    const raw =
+      'https://chinaunread.substack.com/p/a-post?r=clku7&utm_campaign=post-expanded-share&utm_medium=post%20viewer';
+    const queried: string[] = [];
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/links/all') {
+        const target = url.searchParams.get('target') ?? '';
+        queried.push(target);
+        return Response.json({
+          links: target === raw ? { 'at.margin.note': { '.target.source': { records: 1 } } } : {},
+        });
+      }
+      if (url.pathname === '/links')
+        return Response.json({
+          linking_records: [{ did, collection: 'at.margin.note', rkey: 'one' }],
+        });
+      if (url.pathname.includes('getRecord'))
+        return Response.json({
+          value: { target: { selector: { exact: 'legacy passage' } } },
+        });
+      return new Response('{}', { status: 404 });
+    }) as typeof fetch);
+
+    expect((await getMarginHighlights(value, raw)).notes[0]?.selector.exact).toBe('legacy passage');
+    expect(queried).toContain('https://chinaunread.substack.com/p/a-post');
+    expect(queried).toContain(raw);
+  });
+
+  it('recovers tracked legacy notes through Margin using the canonical URL', async () => {
+    const value = db();
+    const source =
+      'https://chinaunread.substack.com/p/a-post?r=clku7&utm_campaign=post-expanded-share&utm_medium=post%20viewer';
+    let searchQuery = '';
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'margin.at' && url.pathname === '/api/search') {
+        searchQuery = url.searchParams.get('q') ?? '';
+        return Response.json({
+          items: [
+            {
+              motivation: 'highlighting',
+              creator: { did: 'did:plc:alice', handle: 'alice.test' },
+              body: { value: 'Underrated', format: 'text/plain' },
+              target: { source, selector: { exact: 'the recovered passage' } },
+              created: '2026-08-23T01:21:30.058Z',
+            },
+          ],
+        });
+      }
+      throw new Error(`Constellation should not be needed: ${url}`);
+    }) as typeof fetch);
+
+    const result = await getMarginHighlights(
+      value,
+      'https://chinaunread.substack.com/p/a-post?r=clku7'
+    );
+    expect(searchQuery).toBe('https://chinaunread.substack.com/p/a-post');
+    expect(result.notes).toHaveLength(1);
+    expect(result.notes[0].note).toBe('Underrated');
+    expect(result.notes[0].selector.exact).toBe('the recovered passage');
   });
 
   it('drops bookmarks and malformed notes without passage selectors', async () => {

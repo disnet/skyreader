@@ -78,6 +78,17 @@ describe('normalizeArticleUrl — the cross-app join key', () => {
     expect(normalizeArticleUrl('http://example.com/x')).toBe('http://example.com/x');
   });
 
+  it('strips Substack referral tokens without treating every r param as tracking', () => {
+    expect(
+      normalizeArticleUrl(
+        'https://chinaunread.substack.com/p/a-post?r=clku7&utm_medium=post%20viewer'
+      )
+    ).toBe('https://chinaunread.substack.com/p/a-post');
+    expect(normalizeArticleUrl('https://example.com/article?r=chapter-2')).toBe(
+      'https://example.com/article?r=chapter-2'
+    );
+  });
+
   it('returns null for non-http(s)', () => {
     expect(normalizeArticleUrl('at://did:plc:x/y/z')).toBeNull();
     expect(normalizeArticleUrl('not a url')).toBeNull();
