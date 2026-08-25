@@ -34,7 +34,12 @@ import { safeFetch } from './ssrf-guard';
 import { resolveSiteMeta, buildCanonicalUrl, parseAtUri } from './standard-site';
 import { constellationGet, constellationGetResult } from './constellation-client';
 import { extractContentText } from './document-content';
-import { fetchSembleContext, sembleCardUrl, type SembleContextWire } from './semble-client';
+import {
+  fetchSembleContext,
+  isEmptySembleContext,
+  sembleCardUrl,
+  type SembleContextWire,
+} from './semble-client';
 
 // The one-per-user Skyreader linkblog publication rkey (see backend
 // linkblog-sync). Used only as a link-out fallback for our own docs.
@@ -433,11 +438,14 @@ export async function getMentionLaneItems(
 
   // Semble's URL API already hydrates all public categories. Keep the legacy
   // entries alongside the richer context so the merged human stream remains
-  // backward compatible. If every API category fails we continue into the
-  // existing Constellation/PDS saver resolver below.
+  // backward compatible. If every API category fails — or it answers with a
+  // wholly empty card while the counts say otherwise (a URL form we asked
+  // wrong, a card the API hasn't caught up with) — we continue into the
+  // existing Constellation/PDS saver resolver below rather than cache a
+  // "nobody" the lane's own count contradicts.
   if (laneId === 'semble') {
     const context = await fetchSembleContext(normUrl);
-    if (context) {
+    if (context && !isEmptySembleContext(context)) {
       // The savers become the lane's people; everything else is the graph the
       // panel draws around them. Splitting them here is what keeps the same
       // person out of the payload twice.
