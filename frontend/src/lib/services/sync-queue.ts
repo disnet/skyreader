@@ -7,12 +7,7 @@ const MAX_RETRIES = 5;
 
 export type SyncOperation = 'create' | 'update' | 'delete';
 export type SyncCollection =
-  | 'reading'
-  | 'socialReading'
-  | 'label'
-  | 'saved'
-  | 'integration'
-  | 'magazine';
+  'reading' | 'socialReading' | 'label' | 'saved' | 'integration' | 'magazine';
 
 // Payload types for each collection
 export interface ReadingPayload {

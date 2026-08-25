@@ -18,13 +18,7 @@ export interface SyncQueueEntry {
   id?: number;
   operation: 'create' | 'update' | 'delete';
   collection:
-    | 'reading'
-    | 'socialReading'
-    | 'follows'
-    | 'label'
-    | 'saved'
-    | 'integration'
-    | 'magazine';
+    'reading' | 'socialReading' | 'follows' | 'label' | 'saved' | 'integration' | 'magazine';
   key: string; // Deduplication key (e.g., articleGuid, rkey)
   payload: string; // JSON-serialized data
   timestamp: number;

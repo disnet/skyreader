@@ -607,8 +607,7 @@
                   composer.touch();
                   autosize(e.currentTarget);
                 }}
-                onkeydown={handleBlockKeydown}
-              ></textarea>
+                onkeydown={handleBlockKeydown}></textarea>
               <button
                 type="button"
                 class="quote-remove"
@@ -633,8 +632,7 @@
                   composer.touch();
                   autosize(e.currentTarget);
                 }}
-                onkeydown={handleBlockKeydown}
-              ></textarea>
+                onkeydown={handleBlockKeydown}></textarea>
               <MentionAutocomplete textareaEl={textareaEls[i] ?? null} bind:value={block.text} />
             </div>
           {/if}

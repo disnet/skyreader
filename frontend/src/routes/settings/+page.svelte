@@ -770,8 +770,7 @@
             bind:value={linkblogDescription}
             rows="2"
             maxlength="500"
-            placeholder="Optional"
-          ></textarea>
+            placeholder="Optional"></textarea>
         </div>
         <button class="btn btn-secondary" onclick={handleSaveLinkblog} disabled={isSavingLinkblog}>
           {#if isSavingLinkblog}Saving…{:else}Save{/if}

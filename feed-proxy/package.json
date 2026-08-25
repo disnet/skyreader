@@ -13,16 +13,16 @@
     "test:watch": "bun test --watch"
   },
   "dependencies": {
-    "@sentry/bun": "^10.56.0",
-    "defuddle": "^0.19.1",
-    "fast-xml-parser": "^4.3.0",
-    "hono": "^4.4.0",
-    "linkedom": "^0.18.12",
-    "temml": "^0.13.3"
+    "@sentry/bun": "^10.71.0",
+    "defuddle": "^0.19.3",
+    "fast-xml-parser": "^5.11.0",
+    "hono": "^4.13.4",
+    "linkedom": "^0.18.13",
+    "temml": "^0.13.4"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "prettier": "^3.8.1",
-    "typescript": "^5.4.0"
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.3"
   }
 }

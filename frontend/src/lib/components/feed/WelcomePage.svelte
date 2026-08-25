@@ -317,8 +317,7 @@
             class="share-input"
             rows="2"
             bind:value={shareNote}
-            placeholder="Add a thought…"
-          ></textarea>
+            placeholder="Add a thought…"></textarea>
         </div>
       </div>
     </figure>

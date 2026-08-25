@@ -296,10 +296,9 @@ export async function resolveSiteMeta(db: Database, siteUri: string): Promise<Si
 
   const now = Date.now();
   const cached = db
-    .query<
-      PublicationCacheRow,
-      [string]
-    >('SELECT publication_uri, base_url, icon, name, theme, fonts, cached_at FROM publication_cache WHERE publication_uri = ?')
+    .query<PublicationCacheRow, [string]>(
+      'SELECT publication_uri, base_url, icon, name, theme, fonts, cached_at FROM publication_cache WHERE publication_uri = ?'
+    )
     .get(siteUri);
   if (cached) {
     const ttl = cached.base_url ? PUBLICATION_CACHE_TTL_MS : PUBLICATION_NEGATIVE_CACHE_TTL_MS;

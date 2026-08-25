@@ -14,17 +14,17 @@
     "deploy": "npm run build && wrangler pages deploy .svelte-kit/cloudflare"
   },
   "devDependencies": {
-    "@sveltejs/adapter-cloudflare": "^4.8.0",
-    "@sveltejs/kit": "^2.49.1",
-    "@sveltejs/vite-plugin-svelte": "^6.2.1",
-    "prettier": "^3.8.1",
-    "prettier-plugin-svelte": "^3.4.1",
-    "svelte": "^5.45.6",
-    "svelte-check": "^4.3.4",
+    "@sveltejs/adapter-cloudflare": "^7.2.9",
+    "@sveltejs/kit": "^2.70.3",
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "prettier": "^3.9.6",
+    "prettier-plugin-svelte": "^4.1.1",
+    "svelte": "^5.56.10",
+    "svelte-check": "^4.7.6",
     "typescript": "^5.9.3",
-    "vite": "^7.2.6",
-    "vitest": "^3.2.7",
-    "wrangler": "^3.0.0"
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.125.0"
   },
   "type": "module"
 }

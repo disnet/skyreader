@@ -559,10 +559,9 @@ describe('POST /documents cache lifecycle', () => {
     expect(inFlightDocs.size).toBeGreaterThan(0);
     await Promise.all(inFlightDocs.values());
     const refreshed = db
-      .query<
-        { documents_json: string },
-        [string]
-      >('SELECT documents_json FROM document_cache WHERE did = ?')
+      .query<{ documents_json: string }, [string]>(
+        'SELECT documents_json FROM document_cache WHERE did = ?'
+      )
       .get(AUTHOR);
     expect((JSON.parse(refreshed!.documents_json) as ProxyDocument[]).map((d) => d.title)).toEqual([
       'Fresh',
@@ -619,10 +618,9 @@ describe('POST /documents cache lifecycle', () => {
 
     // The failure was recorded with a backoff for next time.
     const row = db
-      .query<
-        { error_count: number; next_retry_at: number | null },
-        [string]
-      >('SELECT error_count, next_retry_at FROM document_cache WHERE did = ?')
+      .query<{ error_count: number; next_retry_at: number | null }, [string]>(
+        'SELECT error_count, next_retry_at FROM document_cache WHERE did = ?'
+      )
       .get(AUTHOR);
     expect(row!.error_count).toBe(1);
     expect(row!.next_retry_at).toBeGreaterThan(Date.now());
@@ -752,10 +750,9 @@ describe('POST /documents firehose-covered re-list floor', () => {
     expect(inFlightDocs.size).toBeGreaterThan(0);
     await Promise.all(inFlightDocs.values());
     const row = db
-      .query<
-        { documents_json: string; listed_at: number },
-        [string]
-      >('SELECT documents_json, listed_at FROM document_cache WHERE did = ?')
+      .query<{ documents_json: string; listed_at: number }, [string]>(
+        'SELECT documents_json, listed_at FROM document_cache WHERE did = ?'
+      )
       .get(AUTHOR);
     expect((JSON.parse(row!.documents_json) as ProxyDocument[]).map((d) => d.title)).toEqual([
       'Missed',
@@ -976,10 +973,9 @@ describe('warmStaleDocuments', () => {
     expect(refreshed).toBe(1);
 
     const row = db
-      .query<
-        { documents_json: string; fetched_at: number },
-        [string]
-      >('SELECT documents_json, fetched_at FROM document_cache WHERE did = ?')
+      .query<{ documents_json: string; fetched_at: number }, [string]>(
+        'SELECT documents_json, fetched_at FROM document_cache WHERE did = ?'
+      )
       .get(AUTHOR);
     expect((JSON.parse(row!.documents_json) as ProxyDocument[]).map((d) => d.title)).toEqual([
       'Warmed',

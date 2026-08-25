@@ -88,10 +88,9 @@ async function resolveDidUncached(did: string): Promise<ResolvedDid> {
 // Read a still-fresh cache row, or null if missing/stale.
 function readFreshCache(db: Database, did: string): DidCacheRow | null {
   const cached = db
-    .query<
-      DidCacheRow,
-      [string]
-    >('SELECT did, pds_url, handle, cached_at FROM did_cache WHERE did = ?')
+    .query<DidCacheRow, [string]>(
+      'SELECT did, pds_url, handle, cached_at FROM did_cache WHERE did = ?'
+    )
     .get(did);
   if (cached && Date.now() - cached.cached_at < DID_CACHE_TTL_MS) return cached;
   return null;

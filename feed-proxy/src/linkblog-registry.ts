@@ -122,10 +122,9 @@ async function fetchRegistryFromConstellation(): Promise<string[] | null> {
 export async function getLinkblogRegistry(db: Database): Promise<string[]> {
   const now = Date.now();
   const cached = db
-    .query<
-      RegistryCacheRow,
-      [string]
-    >('SELECT dids_json, cached_at FROM linkblog_registry_cache WHERE marker = ?')
+    .query<RegistryCacheRow, [string]>(
+      'SELECT dids_json, cached_at FROM linkblog_registry_cache WHERE marker = ?'
+    )
     .get(MARKER_URL);
   if (cached) {
     const parsed = JSON.parse(cached.dids_json) as string[];

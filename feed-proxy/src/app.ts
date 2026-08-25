@@ -804,19 +804,17 @@ export function queryFeedItems(db: Database, urlHash: string, q: FeedItemsQuery)
   // paged across polls, never skipped.
   const drainFrom = (boundary: number): FeedItemsResult => {
     const rows = db
-      .query<
-        { item_json: string; seq: number },
-        [string, number, number]
-      >(`SELECT item_json, seq FROM feed_items WHERE url_hash = ? AND seq > ? ORDER BY seq ASC LIMIT ?`)
+      .query<{ item_json: string; seq: number }, [string, number, number]>(
+        `SELECT item_json, seq FROM feed_items WHERE url_hash = ? AND seq > ? ORDER BY seq ASC LIMIT ?`
+      )
       .all(urlHash, boundary, q.limit);
     const cursor = rows.length > 0 ? rows[rows.length - 1].seq : boundary;
     let hasMore = false;
     if (rows.length >= q.limit) {
       const more = db
-        .query<
-          { seq: number },
-          [string, number]
-        >(`SELECT seq FROM feed_items WHERE url_hash = ? AND seq > ? LIMIT 1`)
+        .query<{ seq: number }, [string, number]>(
+          `SELECT seq FROM feed_items WHERE url_hash = ? AND seq > ? LIMIT 1`
+        )
         .get(urlHash, cursor);
       hasMore = more != null;
     }
@@ -828,10 +826,9 @@ export function queryFeedItems(db: Database, urlHash: string, q: FeedItemsQuery)
   // intentionally not delivered — catch-up is for returning readers, not new ones.
   const coldStart = (): FeedItemsResult => {
     const rows = db
-      .query<
-        { item_json: string; seq: number },
-        [string, number]
-      >(`SELECT item_json, seq FROM feed_items WHERE url_hash = ? ORDER BY seq DESC LIMIT ?`)
+      .query<{ item_json: string; seq: number }, [string, number]>(
+        `SELECT item_json, seq FROM feed_items WHERE url_hash = ? ORDER BY seq DESC LIMIT ?`
+      )
       .all(urlHash, q.limit);
     const cursor = rows.length > 0 ? rows[0].seq : 0;
     // Returned newest-first; client merges by GUID and re-sorts by date anyway.
@@ -869,10 +866,9 @@ export function queryFeedItems(db: Database, urlHash: string, q: FeedItemsQuery)
     const guids = [...q.sinceGuids];
     const placeholders = guids.map(() => '?').join(',');
     const boundary = db
-      .query<
-        { boundary: number | null },
-        string[]
-      >(`SELECT MAX(seq) AS boundary FROM feed_items WHERE url_hash = ? AND guid IN (${placeholders})`)
+      .query<{ boundary: number | null }, string[]>(
+        `SELECT MAX(seq) AS boundary FROM feed_items WHERE url_hash = ? AND guid IN (${placeholders})`
+      )
       .get(urlHash, ...guids);
     if (boundary?.boundary != null) {
       return drainFrom(boundary.boundary);
@@ -1780,10 +1776,9 @@ export function createApp(db: Database, config: AppConfig) {
     // box down on 2026-08-20. The worker re-reads the one row it needs instead,
     // so at most WARM_CONCURRENCY blobs are resident at a time.
     const rows = db
-      .query<
-        Pick<CacheRow, 'url_hash' | 'url'>,
-        [number, number, number, number, number, number]
-      >(WARM_DUE_FEEDS_SQL)
+      .query<Pick<CacheRow, 'url_hash' | 'url'>, [number, number, number, number, number, number]>(
+        WARM_DUE_FEEDS_SQL
+      )
       .all(
         FEED_PARSER_VERSION,
         FEED_PARSER_VERSION,
@@ -1967,10 +1962,9 @@ export function createApp(db: Database, config: AppConfig) {
     // Same reasoning as warmStaleFeeds: `SELECT *` would hold every author's
     // whole serialised document set live for the tick.
     const rows = db
-      .query<
-        Pick<DocumentCacheRow, 'did'>,
-        [number, number, number, number]
-      >(WARM_DUE_DOCUMENTS_SQL)
+      .query<Pick<DocumentCacheRow, 'did'>, [number, number, number, number]>(
+        WARM_DUE_DOCUMENTS_SQL
+      )
       .all(now - warmRefreshThresholdMs, now, now - warmActiveWindowMs, warmBatchCap);
 
     if (rows.length === 0) return 0;
@@ -2120,16 +2114,14 @@ export function createApp(db: Database, config: AppConfig) {
     const now = Date.now();
     const total = db.query<{ count: number }, []>('SELECT COUNT(*) as count FROM cache').get();
     const fresh = db
-      .query<
-        { count: number },
-        [number]
-      >('SELECT COUNT(*) as count FROM cache WHERE fetched_at > ?')
+      .query<{ count: number }, [number]>(
+        'SELECT COUNT(*) as count FROM cache WHERE fetched_at > ?'
+      )
       .get(now - cacheTtlMs);
     const stale = db
-      .query<
-        { count: number },
-        [number, number]
-      >('SELECT COUNT(*) as count FROM cache WHERE fetched_at <= ? AND fetched_at > ?')
+      .query<{ count: number }, [number, number]>(
+        'SELECT COUNT(*) as count FROM cache WHERE fetched_at <= ? AND fetched_at > ?'
+      )
       .get(now - cacheTtlMs, now - staleTtlMs);
 
     // Error statistics
@@ -2137,16 +2129,14 @@ export function createApp(db: Database, config: AppConfig) {
       .query<{ count: number }, []>('SELECT COUNT(*) as count FROM cache WHERE error_count > 0')
       .get();
     const inBackoff = db
-      .query<
-        { count: number },
-        [number]
-      >('SELECT COUNT(*) as count FROM cache WHERE next_retry_at > ?')
+      .query<{ count: number }, [number]>(
+        'SELECT COUNT(*) as count FROM cache WHERE next_retry_at > ?'
+      )
       .get(now);
     const permanentErrors = db
-      .query<
-        { count: number },
-        [number]
-      >('SELECT COUNT(*) as count FROM cache WHERE next_retry_at > ? AND error_count >= 5')
+      .query<{ count: number }, [number]>(
+        'SELECT COUNT(*) as count FROM cache WHERE next_retry_at > ? AND error_count >= 5'
+      )
       .get(now + 6 * 24 * 60 * 60 * 1000); // More than 6 days means it's a permanent error
 
     // Ingest push (see ingest-push.ts). `pending` is the outbox backlog — the
@@ -2447,10 +2437,9 @@ export function createApp(db: Database, config: AppConfig) {
     // version mismatch reads as a miss so an extractor change repairs old rows
     // on their next request instead of waiting out the 7-day TTL.
     const cached = db
-      .query<
-        { extracted_json: string; cached_at: number },
-        [string, number]
-      >('SELECT extracted_json, cached_at FROM extract_cache WHERE url_hash = ? AND extractor_version = ?')
+      .query<{ extracted_json: string; cached_at: number }, [string, number]>(
+        'SELECT extracted_json, cached_at FROM extract_cache WHERE url_hash = ? AND extractor_version = ?'
+      )
       .get(urlHash, EXTRACTOR_VERSION);
     if (cached && now - cached.cached_at < EXTRACT_CACHE_TTL_MS) {
       c.header('X-Cache', 'HIT');

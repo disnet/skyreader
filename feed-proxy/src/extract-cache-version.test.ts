@@ -6,10 +6,9 @@ import { initDatabase, hashUrl, EXTRACTOR_VERSION } from './app';
 // hit when its stored extractor_version matches the current one.
 function readFresh(db: Database, urlHash: string) {
   return db
-    .query<
-      { extracted_json: string; cached_at: number },
-      [string, number]
-    >('SELECT extracted_json, cached_at FROM extract_cache WHERE url_hash = ? AND extractor_version = ?')
+    .query<{ extracted_json: string; cached_at: number }, [string, number]>(
+      'SELECT extracted_json, cached_at FROM extract_cache WHERE url_hash = ? AND extractor_version = ?'
+    )
     .get(urlHash, EXTRACTOR_VERSION);
 }
 

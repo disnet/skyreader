@@ -29,8 +29,7 @@ const CLOCK_SKEW_SEC = 30;
 const MAX_LIFETIME_SEC = 2 * 60;
 
 export type VerifyResult =
-  | { ok: true; did: string }
-  | { ok: false; error: string; message: string };
+  { ok: true; did: string } | { ok: false; error: string; message: string };
 
 function fail(message: string): VerifyResult {
   return { ok: false, error: 'AuthenticationRequired', message };

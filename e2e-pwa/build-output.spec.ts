@@ -66,10 +66,14 @@ test.describe('built service worker', () => {
 
     for (const src of swRefs) {
       // Workbox is registered as `new <minified>("<url>",{scope:"<scope>",...})`.
-      const reg = src.match(/\(\s*"((?:\.\/)?\/?service-worker\.js)"\s*,\s*\{scope:"([^"]*)"/);
+      // Rolldown may emit string literals with quotes or backticks, so do not couple
+      // this safety assertion to a particular minifier delimiter.
+      const reg = src.match(
+        /\(\s*(["'`])((?:\.\/)?\/?service-worker\.js)\1\s*,\s*\{\s*scope\s*:\s*(["'`])([^"'`]*)\3/
+      );
       expect(reg, 'could not locate the Workbox registration call').not.toBeNull();
-      expect(reg![1], 'SW url must be root-absolute, not relative').toBe('/service-worker.js');
-      expect(reg![2], 'SW scope must be "/", not relative').toBe('/');
+      expect(reg![2], 'SW url must be root-absolute, not relative').toBe('/service-worker.js');
+      expect(reg![4], 'SW scope must be "/", not relative').toBe('/');
     }
   });
 

@@ -36,12 +36,7 @@
   };
 
   type Mode =
-    | 'idle'
-    | 'searching-actors'
-    | 'discovering-feeds'
-    | 'select-feeds'
-    | 'select-content'
-    | 'unify';
+    'idle' | 'searching-actors' | 'discovering-feeds' | 'select-feeds' | 'select-content' | 'unify';
 
   let inputValue = $state('');
   let mode = $state<Mode>('idle');
