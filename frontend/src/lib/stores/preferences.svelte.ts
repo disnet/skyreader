@@ -74,6 +74,7 @@ interface PreferencesState {
   cardDensity: CardDensity;
   dailyMagazineMinutes: DailyMagazineMinutes;
   dailyMagazineOrder: DailyMagazineOrder;
+  communityHighlights: boolean;
 }
 
 const STORAGE_KEY = 'skyreader-preferences';
@@ -98,6 +99,7 @@ function createPreferencesStore() {
     cardDensity: 'cozy',
     dailyMagazineMinutes: 20,
     dailyMagazineOrder: 'shuffle',
+    communityHighlights: false,
   });
 
   // Restore from localStorage on init
@@ -152,6 +154,8 @@ function createPreferencesStore() {
         if (DAILY_MAGAZINE_ORDER_OPTIONS.some((o) => o.value === parsed.dailyMagazineOrder)) {
           state.dailyMagazineOrder = parsed.dailyMagazineOrder;
         }
+        if (typeof parsed.communityHighlights === 'boolean')
+          state.communityHighlights = parsed.communityHighlights;
       } catch {
         localStorage.removeItem(STORAGE_KEY);
       }
@@ -262,6 +266,10 @@ function createPreferencesStore() {
     state.dailyMagazineOrder = order;
     save();
   }
+  function setCommunityHighlights(enabled: boolean) {
+    state.communityHighlights = enabled;
+    save();
+  }
 
   return {
     get articleFont() {
@@ -304,12 +312,16 @@ function createPreferencesStore() {
     get dailyMagazineOrder() {
       return state.dailyMagazineOrder;
     },
+    get communityHighlights() {
+      return state.communityHighlights;
+    },
     confirmLinkblogShare,
     setLinkblogDisabled,
     setDefaultView,
     setCardDensity,
     setDailyMagazineMinutes,
     setDailyMagazineOrder,
+    setCommunityHighlights,
     setArticleFont,
     setArticleFontSize,
     increaseFontSize,

@@ -118,6 +118,22 @@ export function createSelectorForElement(
  */
 export function findTextInDOM(selector: TextQuoteSelector, container: HTMLElement): Range | null {
   const { text, nodes } = buildTextMap(container);
+  return findInTextMap(selector, text, nodes);
+}
+
+export function findAllInDOM(
+  selectors: TextQuoteSelector[],
+  container: HTMLElement
+): Array<Range | null> {
+  const { text, nodes } = buildTextMap(container);
+  return selectors.map((selector) => findInTextMap(selector, text, nodes));
+}
+
+function findInTextMap(
+  selector: TextQuoteSelector,
+  text: string,
+  nodes: Array<{ node: Text; start: number; end: number }>
+): Range | null {
   if (nodes.length === 0 || !selector.exact) return null;
 
   // Find all matches of the exact text

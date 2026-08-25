@@ -22,6 +22,7 @@ import {
   MentionLaneUnavailableError,
   type MentionLaneItemsResult,
 } from './mention-lane';
+import { getMarginHighlights } from './margin-highlights';
 import type { LaneId } from './lanes';
 import { normalizeArticleUrl } from './url-normalize';
 import { Semaphore, OverloadError } from './semaphore';
@@ -3107,6 +3108,25 @@ export function createApp(db: Database, config: AppConfig) {
       if (error instanceof MentionLaneUnavailableError) {
         return c.json({ error: 'Atmosphere unavailable' }, 503);
       }
+      throw error;
+    }
+  });
+
+  app.post('/margin-highlights', async (c) => {
+    if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret)
+      return c.json({ error: 'Unauthorized' }, 401);
+    let body: { url?: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Invalid JSON body' }, 400);
+    }
+    if (!body.url || typeof body.url !== 'string') return c.json({ error: 'Missing url' }, 400);
+    try {
+      return c.json(await getMarginHighlights(db, body.url));
+    } catch (error) {
+      if (error instanceof MentionLaneUnavailableError)
+        return c.json({ error: 'Atmosphere unavailable' }, 503);
       throw error;
     }
   });

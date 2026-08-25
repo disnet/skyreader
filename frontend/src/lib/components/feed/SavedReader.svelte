@@ -32,6 +32,7 @@
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
+  import { useCommunityHighlights } from '$lib/hooks/useCommunityHighlights.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
@@ -723,6 +724,11 @@
     itemUrl: () => itemUrl,
     itemTitle: () => title,
   });
+  const communityHighlightsHook = useCommunityHighlights({
+    contentEl: () => readerBodyEl,
+    itemUrl: () => itemUrl,
+    enabled: () => readerItem.type === 'saved' && preferences.communityHighlights,
+  });
 
   // Set up observer when the reader body is mounted — and re-run it whenever the
   // rendered content changes. Saved/article bodies load lazily (see the lazy*
@@ -740,6 +746,7 @@
         paragraphTracking.setupObserver();
         linkInterception.attach();
         highlightsHook.attach();
+        communityHighlightsHook.attach();
         // The scroll-driven progress bar + paragraph position restore only apply
         // to scroll mode; paged mode handles its own page restore (see above).
         if (paged) return;
@@ -771,6 +778,7 @@
       paragraphTracking.cleanup();
       linkInterception.detach();
       highlightsHook.detach();
+      communityHighlightsHook.detach();
     };
   });
 
@@ -864,6 +872,18 @@
         </button>
 
         <span class="action-separator"></span>
+
+        {#if readerItem.type === 'saved'}
+          <button
+            class="action-btn"
+            class:active={preferences.communityHighlights}
+            onclick={() => preferences.setCommunityHighlights(!preferences.communityHighlights)}
+            title="Passages highlighted by readers on margin.at"
+          >
+            <Icon name="users" size={16} />
+            <span class="action-label">Community</span>
+          </button>
+        {/if}
 
         {#if canShareLinkblog}
           <button
@@ -1734,6 +1754,18 @@
 
   .reader-body :global(mark.highlight:hover) {
     background-color: color-mix(in srgb, #f5c518 40%, transparent);
+  }
+
+  .reader-body :global(mark.community-highlight) {
+    color: inherit;
+    background: transparent;
+    text-decoration: underline dotted #7a8694 1.5px;
+    text-underline-offset: 0.18em;
+    cursor: help;
+  }
+
+  :global([data-theme='dark']) .reader-body :global(mark.community-highlight) {
+    text-decoration-color: #9aa6b2;
   }
 
   /* Leaflet footnote styling is shared by every surface that renders leaflet

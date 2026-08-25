@@ -326,6 +326,22 @@ interface RawMentionLaneResponse {
   error?: string;
 }
 
+export interface MarginHighlightResult {
+  did: string;
+  handle: string | null;
+  displayName: string | null;
+  avatar: string | null;
+  createdAt: string | null;
+  motivation: string | null;
+  note: string | null;
+  selector: { type: 'TextQuoteSelector'; exact: string; prefix?: string; suffix?: string };
+}
+interface RawMarginHighlightsResponse {
+  notes?: MarginHighlightResult[];
+  capped?: boolean;
+  error?: string;
+}
+
 // Raw response types from the proxy
 interface RawFeedResponse {
   feed: {
@@ -674,6 +690,17 @@ export class FeedProxyClient {
       entries: raw.entries,
       ...(raw.sembleContext ? { sembleContext: raw.sembleContext } : {}),
     };
+  }
+
+  async fetchMarginHighlights(
+    url: string
+  ): Promise<{ notes: MarginHighlightResult[]; capped: boolean }> {
+    const raw = await this.fetch<RawMarginHighlightsResponse>('/margin-highlights', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    });
+    if (!raw.notes) throw new FeedProxyError(raw.error || 'Invalid response from feed proxy');
+    return { notes: raw.notes, capped: raw.capped === true };
   }
 
   /**
