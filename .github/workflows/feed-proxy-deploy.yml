@@ -4,12 +4,18 @@ permissions:
   contents: read
 
 on:
+  workflow_dispatch:
+
+  # The workflow file is in its own paths filter on purpose: a commit that only
+  # changes this file still has to run it. Without that, a fix to the deploy
+  # logic merges to main and never executes — which is exactly how the staging
+  # proxy sat on a hand-deployed `version: dev` build after #390.
   push:
     branches: [main]
-    paths: ['feed-proxy/**']
+    paths: ['feed-proxy/**', '.github/workflows/feed-proxy-deploy.yml']
   pull_request:
     branches: [main]
-    paths: ['feed-proxy/**']
+    paths: ['feed-proxy/**', '.github/workflows/feed-proxy-deploy.yml']
   release:
     types: [published]
 
@@ -60,7 +66,7 @@ jobs:
     # Same cadence as the staging Worker: every push to main. Staging has its own
     # Fly app (fly.staging.toml) so it never shares the prod machine or its cache,
     # and config drift between the two files surfaces here before a release.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: staging
     steps:

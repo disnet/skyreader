@@ -4,9 +4,15 @@ permissions:
   contents: read
 
 on:
+  workflow_dispatch:
+
+  # The workflow file is in its own paths filter on purpose: a commit that only
+  # changes this file still has to run it. Without that, a fix to the deploy
+  # logic merges to main and never executes — the fix looks shipped while every
+  # deploy keeps using the old logic. See feed-proxy-deploy.yml for the incident.
   push:
     branches: [main]
-    paths: ['backend/**']
+    paths: ['backend/**', '.github/workflows/backend-deploy.yml']
   release:
     types: [published]
 
@@ -42,7 +48,7 @@ jobs:
   deploy-staging:
     name: Deploy to Staging
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: staging
     steps:
