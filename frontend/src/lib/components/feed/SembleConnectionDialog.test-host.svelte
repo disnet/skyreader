@@ -1,10 +1,23 @@
 <script lang="ts">
   import SembleConnectionDialog from './SembleConnectionDialog.svelte';
-  import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
+  import {
+    sembleConnectionStore,
+    type SembleConnectionSource,
+  } from '$lib/stores/sembleConnection.svelte';
 
-  sembleConnectionStore.openFor({
-    url: 'https://example.test/the-article',
-    title: 'The Article',
+  interface Props {
+    source?: SembleConnectionSource;
+  }
+
+  let {
+    source = {
+      url: 'https://example.test/the-article',
+      title: 'The Article',
+    },
+  }: Props = $props();
+
+  $effect(() => {
+    sembleConnectionStore.openFor(source);
   });
 </script>
 

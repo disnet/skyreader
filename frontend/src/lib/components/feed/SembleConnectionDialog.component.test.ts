@@ -46,6 +46,21 @@ const savedArticles = [
     publishedAt: null,
     savedAt: '2026-01-01T00:00:00.000Z',
   },
+  {
+    rkey: 'r2',
+    uri: 'at://did:plc:reader/x/r2',
+    url: 'https://example.test/the-article/',
+    title: 'The resolved article variant',
+    author: null,
+    description: null,
+    content: null,
+    contentType: null,
+    domain: 'example.test',
+    image: null,
+    wordCount: null,
+    publishedAt: null,
+    savedAt: '2026-01-02T00:00:00.000Z',
+  },
 ];
 
 vi.mock('$lib/stores/saves.svelte', () => ({
@@ -62,10 +77,13 @@ const { sembleConnectionStore } = await import('$lib/stores/sembleConnection.sve
 
 let component: Record<string, unknown> | undefined;
 
-function render() {
+function render(source?: { url: string; title?: string; cardUrl?: string }) {
   const target = document.createElement('div');
   document.body.appendChild(target);
-  component = mount(Host, { target }) as Record<string, unknown>;
+  component = mount(Host, { target, props: source ? { source } : undefined }) as Record<
+    string,
+    unknown
+  >;
   flushSync();
 }
 
@@ -120,6 +138,29 @@ describe('SembleConnectionDialog', () => {
     typeInField('https://example.test/the-article');
     expect(document.body.textContent).toContain("That's the article you're on");
     expect(q<HTMLButtonElement>('.btn-primary')!.disabled).toBe(true);
+  });
+
+  it('refuses the exact URL variant resolved by the Semble card', () => {
+    render({
+      url: 'https://example.test/the-article',
+      title: 'The Article',
+      cardUrl: 'https://semble.so/url/https%3A%2F%2Fexample.test%2Fthe-article%2F',
+    });
+    typeInField('https://example.test/the-article/');
+
+    expect(document.body.textContent).toContain("That's the article you're on");
+    expect(q<HTMLButtonElement>('.btn-primary')!.disabled).toBe(true);
+  });
+
+  it('excludes the resolved Semble URL variant from Saved results', () => {
+    render({
+      url: 'https://example.test/the-article',
+      title: 'The Article',
+      cardUrl: 'https://semble.so/url/https%3A%2F%2Fexample.test%2Fthe-article%2F',
+    });
+    typeInField('resolved article variant');
+
+    expect(q('.result')).toBeNull();
   });
 
   it('finds the other end in the reader own saved list', () => {

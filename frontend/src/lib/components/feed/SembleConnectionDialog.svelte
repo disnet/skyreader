@@ -22,6 +22,7 @@
   import { savesStore } from '$lib/stores/saves.svelte';
   import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
   import { matchesTerms, normalize, parseQuery } from '$lib/services/savedSearch';
+  import { sembleSourceUrl } from '$lib/utils/semble';
   import {
     NON_DIRECTIONAL_CONNECTION_TYPES,
     SEMBLE_CONNECTION_TYPES,
@@ -36,6 +37,7 @@
 
   let open = $derived(sembleConnectionStore.open);
   let source = $derived(sembleConnectionStore.source);
+  let articleUrl = $derived(source ? sembleSourceUrl(source.cardUrl, source.url) : '');
   let submitting = $derived(sembleConnectionStore.submitting);
 
   let query = $state('');
@@ -124,7 +126,6 @@
   let results = $derived.by((): SavedItem[] => {
     const terms = parseQuery(query);
     if (terms.length === 0 || queryIsUrl) return [];
-    const articleUrl = source?.url;
     const out: SavedItem[] = [];
     for (const item of savesStore.articles) {
       if (item.url === articleUrl) continue;
@@ -159,7 +160,7 @@
   // ── The sentence, and whether it can be drawn ───────────────────────────
   let noteBytes = $derived(new TextEncoder().encode(note.trim()).length);
   let noteTooLong = $derived(noteBytes > MAX_NOTE_BYTES);
-  let sameUrl = $derived(Boolean(targetUrl) && targetUrl === source?.url);
+  let sameUrl = $derived(Boolean(targetUrl) && targetUrl === articleUrl);
   let canSubmit = $derived(
     Boolean(source) && Boolean(targetUrl) && !sameUrl && !noteTooLong && !submitting
   );
