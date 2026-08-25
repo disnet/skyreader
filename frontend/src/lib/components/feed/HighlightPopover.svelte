@@ -2,11 +2,19 @@
   import { onMount, onDestroy, tick, untrack } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { tooltip } from '$lib/actions/tooltip';
-  import { positionFloating } from '$lib/utils/floating';
+  import { followAnchor, positionFloating } from '$lib/utils/floating';
 
   interface Props {
     mode: 'create' | 'remove' | 'view';
     anchorRect: DOMRect;
+    /**
+     * Live position of the passage this popover belongs to. Supplied by callers
+     * whose anchor stays on screen (the reader body), so the popover tracks the
+     * text as it scrolls instead of hanging at the viewport spot it opened in.
+     * Without it the popover keeps the older behavior: closes once the reader
+     * scrolls.
+     */
+    getAnchorRect?: () => DOMRect | null;
     onHighlight?: (note?: string) => void;
     onHighlightToMargin?: (note?: string) => void;
     onRemove?: () => void;
@@ -27,6 +35,7 @@
   let {
     mode,
     anchorRect,
+    getAnchorRect,
     onHighlight,
     onHighlightToMargin,
     onRemove,
@@ -48,15 +57,21 @@
   let noteText = $state(untrack(() => (initialView === 'note' ? (existingNote ?? '') : '')));
   let scrollArmed = false;
   let scrollArmTimer: ReturnType<typeof setTimeout> | undefined;
+  let stopFollowing: (() => void) | undefined;
 
   function handleScroll() {
     // Don't dismiss while the user is editing a note (e.g. mobile keyboard scroll).
     if (scrollArmed && view === 'toolbar') onClose();
   }
 
+  /** The passage's current position, falling back to where it was at open. */
+  function currentAnchorRect(): DOMRect {
+    return getAnchorRect?.() ?? anchorRect;
+  }
+
   function positionMenu() {
     if (!menuEl) return;
-    positionFloating(anchorRect, menuEl, { gap: 4, align: 'center' });
+    positionFloating(currentAnchorRect(), menuEl, { gap: 4, align: 'center' });
   }
 
   // The on-screen keyboard (raised by focusing the note editor) shrinks the
@@ -95,7 +110,19 @@
     document.addEventListener('keydown', handleKeydown, true);
     document.addEventListener('mousedown', handleClickOutside, true);
     document.addEventListener('touchstart', handleClickOutside, true);
-    document.addEventListener('scroll', handleScroll, true);
+    // Tracking the anchor replaces scroll-to-close: the popover stays on its
+    // passage, and only leaves when the passage itself scrolls out of view.
+    if (getAnchorRect) {
+      stopFollowing = followAnchor(() => menuEl, getAnchorRect, {
+        gap: 4,
+        align: 'center',
+        onLost: () => {
+          if (view === 'toolbar') onClose();
+        },
+      });
+    } else {
+      document.addEventListener('scroll', handleScroll, true);
+    }
     window.visualViewport?.addEventListener('resize', handleViewportChange);
     window.visualViewport?.addEventListener('scroll', handleViewportChange);
     requestAnimationFrame(positionMenu);
@@ -117,6 +144,7 @@
 
   onDestroy(() => {
     clearTimeout(scrollArmTimer);
+    stopFollowing?.();
     document.removeEventListener('keydown', handleKeydown, true);
     document.removeEventListener('mousedown', handleClickOutside, true);
     document.removeEventListener('touchstart', handleClickOutside, true);

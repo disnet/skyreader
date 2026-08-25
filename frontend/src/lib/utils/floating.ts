@@ -105,3 +105,60 @@ export function positionFloating(
   el.style.top = `${top}px`;
   el.style.left = `${left}px`;
 }
+
+/**
+ * Keep a floating element pinned to a live anchor while the page scrolls.
+ *
+ * `positionFloating` places the element once, against the rect its anchor had
+ * when it opened. The reader body scrolls inside its own overlay while the
+ * popover is `position: fixed`, so the text a popover belongs to slides out from
+ * under it. Re-measuring each scroll frame keeps the two together, and `onLost`
+ * fires once the anchor is gone or has left the viewport entirely — at which
+ * point there is nothing left to pin to.
+ *
+ * Returns a cleanup function; call it when the floating element unmounts.
+ */
+export function followAnchor(
+  getEl: () => HTMLElement | null,
+  getAnchorRect: () => DOMRect | null,
+  opts: FloatingOptions & { onLost?: () => void } = {}
+): () => void {
+  let frame: number | null = null;
+
+  const update = () => {
+    frame = null;
+    const el = getEl();
+    if (!el) return;
+    const rect = getAnchorRect();
+    const vv = window.visualViewport;
+    const viewTop = vv?.offsetTop ?? 0;
+    const viewBottom = viewTop + (vv?.height ?? window.innerHeight);
+    // A detached anchor measures as an all-zero rect, which would pin the
+    // element to the top-left corner — treat that as lost too (the callers'
+    // rect getters return null for it).
+    if (!rect || rect.bottom < viewTop || rect.top > viewBottom) {
+      opts.onLost?.();
+      return;
+    }
+    positionFloating(rect, el, opts);
+  };
+
+  const schedule = () => {
+    if (frame == null) frame = requestAnimationFrame(update);
+  };
+
+  // Capture phase: the reader body scrolls in its own overlay, and scroll events
+  // from a nested scroller never reach window.
+  document.addEventListener('scroll', schedule, true);
+  window.addEventListener('resize', schedule);
+  window.visualViewport?.addEventListener('resize', schedule);
+  window.visualViewport?.addEventListener('scroll', schedule);
+
+  return () => {
+    if (frame != null) cancelAnimationFrame(frame);
+    document.removeEventListener('scroll', schedule, true);
+    window.removeEventListener('resize', schedule);
+    window.visualViewport?.removeEventListener('resize', schedule);
+    window.visualViewport?.removeEventListener('scroll', schedule);
+  };
+}

@@ -1,17 +1,24 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { positionFloating } from '$lib/utils/floating';
+  import { followAnchor, positionFloating } from '$lib/utils/floating';
   import type { CommunityHighlightGroup } from '$lib/stores/communityHighlights.svelte';
 
   let {
     group,
     anchorRect,
+    getAnchorRect,
     itemUrl,
     capped = false,
     onClose,
   }: {
     group: CommunityHighlightGroup;
     anchorRect: DOMRect;
+    /**
+     * Live position of the highlight this popover belongs to. Supplied so the
+     * popover tracks the passage as the reader scrolls instead of hanging at the
+     * viewport spot it opened in; it closes once the passage scrolls away.
+     */
+    getAnchorRect?: () => DOMRect | null;
     itemUrl: string;
     capped?: boolean;
     onClose: () => void;
@@ -24,13 +31,21 @@
   function keydown(event: KeyboardEvent) {
     if (event.key === 'Escape') onClose();
   }
+  let stopFollowing: (() => void) | undefined;
   onMount(() => {
     document.addEventListener('mousedown', outside, true);
     document.addEventListener('touchstart', outside, true);
     document.addEventListener('keydown', keydown, true);
     requestAnimationFrame(() => positionFloating(anchorRect, el, { gap: 6, align: 'center' }));
+    if (getAnchorRect)
+      stopFollowing = followAnchor(() => el, getAnchorRect, {
+        gap: 6,
+        align: 'center',
+        onLost: onClose,
+      });
   });
   onDestroy(() => {
+    stopFollowing?.();
     document.removeEventListener('mousedown', outside, true);
     document.removeEventListener('touchstart', outside, true);
     document.removeEventListener('keydown', keydown, true);

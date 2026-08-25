@@ -375,10 +375,12 @@ section.footnotes {
 /* Inline note marker — a small comment glyph appended after a highlight that
    carries a note. Injected as raw DOM into the reader body (in both the saved
    reader and the article card), so it's styled globally here rather than in a
-   single component's scope. Tinted into the highlight gold (a darker, legible
-   shade of the same hue) so it reads as part of the highlight; sized in `em` so
-   it scales with the reader's chosen article size. */
-.highlight-note-marker {
+   single component's scope. Sized in `em` so it scales with the reader's chosen
+   article size. Your own notes are tinted into the highlight gold; a community
+   note takes the same slate as its dotted underline, so the two read as the
+   same affordance without claiming to be yours. */
+.highlight-note-marker,
+.community-note-marker {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -392,7 +394,6 @@ section.footnotes {
   border: none;
   background: none;
   border-radius: 50%;
-  color: #9a7700;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   transition:
@@ -401,9 +402,18 @@ section.footnotes {
     transform 0.1s ease;
 }
 
-.highlight-note-marker svg {
+.highlight-note-marker svg,
+.community-note-marker svg {
   width: 100%;
   height: 100%;
+}
+
+.highlight-note-marker {
+  color: #9a7700;
+}
+
+.community-note-marker {
+  color: #7a8694;
 }
 
 .highlight-note-marker:hover {
@@ -411,25 +421,33 @@ section.footnotes {
   color: #6e5500;
 }
 
-.highlight-note-marker:active {
+.community-note-marker:hover {
+  background-color: color-mix(in srgb, #7a8694 18%, transparent);
+  color: #55606d;
+}
+
+.highlight-note-marker:active,
+.community-note-marker:active {
   transform: scale(0.9);
 }
 
-.highlight-note-marker:focus-visible {
+.highlight-note-marker:focus-visible,
+.community-note-marker:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--color-primary);
 }
 
 /* Grow the tap area on touch (no hover peek there). */
 @media (pointer: coarse) {
-  .highlight-note-marker {
+  .highlight-note-marker,
+  .community-note-marker {
     width: 1.2em;
     height: 1.2em;
     top: 0.12em;
   }
 }
 
-/* Lift the marker into a lighter gold so the stroke reads on the dark body. */
+/* Lift the markers so their strokes read on the dark body. */
 @media (prefers-color-scheme: dark) {
   .highlight-note-marker {
     color: #e3b94a;
@@ -438,14 +456,24 @@ section.footnotes {
   .highlight-note-marker:hover {
     color: #f0cf6b;
   }
+
+  .community-note-marker {
+    color: #9aa6b4;
+  }
+
+  .community-note-marker:hover {
+    color: #b7c2ce;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .highlight-note-marker {
+  .highlight-note-marker,
+  .community-note-marker {
     transition: none;
   }
 
-  .highlight-note-marker:active {
+  .highlight-note-marker:active,
+  .community-note-marker:active {
     transform: none;
   }
 }

@@ -58,6 +58,11 @@ export function useHighlights(params: HighlightParams) {
     anchorRect: DOMRect;
     pendingSelector?: TextQuoteSelector;
     highlightId?: string;
+    // Live anchors, so the popover can track what it points at while the reader
+    // scrolls: the mark/marker element for an existing highlight, or a cloned
+    // range for a selection (which outlives the selection being cleared).
+    anchorEl?: HTMLElement;
+    anchorRange?: Range;
   } | null>(null);
 
   // Desktop-only hover peek: a read-only preview of a note when the pointer
@@ -300,6 +305,7 @@ export function useHighlights(params: HighlightParams) {
         mode: 'create',
         anchorRect: rect,
         pendingSelector: selector,
+        anchorRange: range.cloneRange(),
       };
     }, 10);
   }
@@ -320,6 +326,7 @@ export function useHighlights(params: HighlightParams) {
         mode: 'view',
         anchorRect: marker.getBoundingClientRect(),
         highlightId,
+        anchorEl: marker,
       };
       return;
     }
@@ -338,6 +345,7 @@ export function useHighlights(params: HighlightParams) {
       mode: 'remove',
       anchorRect: rect,
       highlightId,
+      anchorEl: mark,
     };
   }
 
@@ -458,6 +466,33 @@ export function useHighlights(params: HighlightParams) {
     return !!hl?.marginUri;
   }
 
+  /**
+   * Where the open popover's anchor sits *now*. Re-applying the marks replaces
+   * the element the popover opened against, so fall back to whichever mark
+   * currently carries the highlight; `null` means the passage is gone from the
+   * body and the popover has nothing left to point at.
+   */
+  function popoverAnchorRect(): DOMRect | null {
+    const state = popoverState;
+    if (!state) return null;
+    if (state.anchorRange) {
+      const rect = state.anchorRange.getBoundingClientRect();
+      // A range whose nodes have been replaced measures as an empty rect.
+      return rect.width || rect.height ? rect : null;
+    }
+    const live =
+      state.anchorEl?.isConnected === true
+        ? state.anchorEl
+        : state.highlightId
+          ? (params
+              .contentEl()
+              ?.querySelector<HTMLElement>(
+                `mark.highlight[data-highlight-id="${CSS.escape(state.highlightId)}"]`
+              ) ?? null)
+          : null;
+    return live?.getBoundingClientRect() ?? null;
+  }
+
   /** The current note on the highlight targeted by the popover (for prefill). */
   function popoverHighlightNote(): string {
     if (!popoverState?.highlightId) return '';
@@ -573,6 +608,7 @@ export function useHighlights(params: HighlightParams) {
     attach,
     detach,
     applyHighlights,
+    popoverAnchorRect,
     createHighlightFromPopover,
     createHighlightFromPopoverToMargin,
     saveNoteFromPopover,

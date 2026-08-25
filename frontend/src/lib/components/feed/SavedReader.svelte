@@ -1219,6 +1219,7 @@
   <HighlightPopover
     mode={highlightsHook.popoverState.mode}
     anchorRect={highlightsHook.popoverState.anchorRect}
+    getAnchorRect={highlightsHook.popoverAnchorRect}
     onHighlight={highlightsHook.createHighlightFromPopover}
     onHighlightToMargin={highlightsHook.createHighlightFromPopoverToMargin}
     onRemove={highlightsHook.removeHighlightFromPopover}
@@ -1235,6 +1236,7 @@
   <CommunityHighlightPopover
     group={communityHighlightsHook.popoverState.group}
     anchorRect={communityHighlightsHook.popoverState.anchorRect}
+    getAnchorRect={communityHighlightsHook.popoverAnchorRect}
     {itemUrl}
     capped={communityHighlightsHook.capped}
     onClose={communityHighlightsHook.closePopover}

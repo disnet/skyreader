@@ -252,6 +252,7 @@
   <HighlightPopover
     mode={highlightsHook.popoverState.mode}
     anchorRect={highlightsHook.popoverState.anchorRect}
+    getAnchorRect={highlightsHook.popoverAnchorRect}
     onHighlight={highlightsHook.createHighlightFromPopover}
     onHighlightToMargin={highlightsHook.createHighlightFromPopoverToMargin}
     onRemove={highlightsHook.removeHighlightFromPopover}
