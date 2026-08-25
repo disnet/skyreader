@@ -281,14 +281,6 @@ export interface SembleContextResult {
     collections: number;
     connections: { total: number; incoming: number; outgoing: number };
   } | null;
-  savers: Array<{
-    cardId: string;
-    cardUri: string | null;
-    author: { did: string; handle: string; name: string | null; avatarUrl: string | null };
-    note: string | null;
-    savedAt: string | null;
-    collections: Array<{ id: string; name: string; url: string | null }>;
-  }>;
   notes: Array<{
     id: string;
     text: string;
@@ -319,6 +311,8 @@ export interface SembleContextResult {
   truncated: { savers: boolean; notes: boolean; collections: boolean; connections: boolean };
   incomplete: boolean;
   source: 'semble-api' | 'constellation-fallback';
+  /** This URL's card page on semble.so, built by the proxy. */
+  cardUrl: string | null;
 }
 
 export interface MentionLaneItemsResult {

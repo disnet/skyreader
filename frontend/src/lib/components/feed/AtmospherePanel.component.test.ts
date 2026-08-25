@@ -27,13 +27,13 @@ const sembleLane: LaneRowVM = {
 
 const emptyContext: SembleContextVM = {
   stats: null,
-  savers: [],
   notes: [],
   collections: [],
   connections: [],
   truncated: { savers: false, notes: false, collections: false, connections: false },
   incomplete: false,
   source: 'semble-api',
+  cardUrl: 'https://semble.so/url/https%3A%2F%2Fexample.com%2Fthe-article',
 };
 
 function connection(direction: 'in' | 'out'): SembleContextVM['connections'][number] {
@@ -57,6 +57,8 @@ function connection(direction: 'in' | 'out'): SembleContextVM['connections'][num
 function render(props: {
   sembleContext?: SembleContextVM;
   stream?: { loading: boolean; failed?: boolean; entries: [] };
+  onSaveConnection?: (url: string) => void | Promise<void>;
+  isConnectionSaved?: (url: string) => boolean;
 }): HTMLElement {
   const target = document.createElement('div');
   document.body.appendChild(target);
@@ -68,6 +70,8 @@ function render(props: {
       activeFilter: 'all',
       stream: props.stream ?? { loading: false, entries: [] },
       sembleContext: props.sembleContext,
+      onSaveConnection: props.onSaveConnection,
+      isConnectionSaved: props.isConnectionSaved,
     },
   });
   flushSync();
@@ -75,11 +79,11 @@ function render(props: {
   return target;
 }
 
-function connectionLine(direction: 'in' | 'out'): string {
+function relationLine(direction: 'in' | 'out'): string {
   const target = render({
     sembleContext: { ...emptyContext, connections: [connection(direction)] },
   });
-  const line = target.querySelector('.connection-line');
+  const line = target.querySelector('.relation');
   return (line?.textContent ?? '').replace(/\s+/g, ' ').trim();
 }
 
@@ -89,12 +93,82 @@ describe('AtmospherePanel Semble connections', () => {
     document.body.innerHTML = '';
   });
 
-  it('reads this → type → other for an outgoing edge', () => {
-    expect(connectionLine('out')).toBe('this → supports → The other piece');
+  it('reads this → type for an outgoing edge, with the target beneath', () => {
+    expect(relationLine('out')).toBe('this → supports');
   });
 
-  it('reads other → type → this for an incoming edge', () => {
-    expect(connectionLine('in')).toBe('The other piece → supports → this');
+  it('reads type → this for an incoming edge, so the claim never reverses', () => {
+    expect(relationLine('in')).toBe('supports → this');
+  });
+
+  it('folds many same-shaped edges into one row and holds the rest back', () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({
+      ...connection('out'),
+      id: `connection-${i}`,
+      other: { ...connection('out').other, title: `Piece ${i}` },
+    }));
+    const target = render({ sembleContext: { ...emptyContext, connections: many } });
+    // One curator, one relation, one direction: one row, one sentence.
+    expect(target.querySelectorAll('.relation').length).toBe(1);
+    expect(target.querySelector('.relation-count')?.textContent).toBe('12');
+    expect(target.querySelectorAll('.connection-target').length).toBe(3);
+    expect(target.querySelector('.semble-disclose')?.textContent?.trim()).toBe('Show 9 more');
+  });
+
+  it('keeps a differing curator, relation, or direction in its own row', () => {
+    const other = {
+      ...connection('out'),
+      id: 'connection-other-curator',
+      curator: { did: 'did:plc:second', handle: 'second.test', name: null, avatarUrl: null },
+    };
+    const target = render({
+      sembleContext: { ...emptyContext, connections: [connection('out'), connection('in'), other] },
+    });
+    expect(target.querySelectorAll('.relation').length).toBe(3);
+  });
+
+  it('says what Semble held back rather than passing a page off as the whole', () => {
+    const target = render({
+      sembleContext: {
+        ...emptyContext,
+        stats: {
+          saves: 0,
+          notes: 0,
+          collections: 0,
+          connections: { total: 27, incoming: 0, outgoing: 27 },
+        },
+        connections: [connection('out')],
+      },
+    });
+    expect(target.querySelector('.semble-foot')?.textContent).toContain('1 of 27 connections');
+  });
+
+  it('offers no keep control when the reader cannot save', () => {
+    const target = render({ sembleContext: { ...emptyContext, connections: [connection('out')] } });
+    expect(target.querySelector('.connection-save')).toBeNull();
+  });
+
+  it('gives every connected article its own keep control, reading saved state', () => {
+    const target = render({
+      sembleContext: { ...emptyContext, connections: [connection('out'), connection('in')] },
+      onSaveConnection: () => {},
+      isConnectionSaved: (url: string) => url === 'https://other.example/piece',
+    });
+    const controls = target.querySelectorAll('.connection-save');
+    expect(controls.length).toBe(2);
+    // Saved state is never carried by colour alone.
+    expect([...controls].every((c) => c.getAttribute('aria-pressed') === 'true')).toBe(true);
+    expect(controls[0].getAttribute('aria-label')).toContain('Remove');
+  });
+
+  it('hands the connected article\u2019s url to the save handler', () => {
+    const saved: string[] = [];
+    const target = render({
+      sembleContext: { ...emptyContext, connections: [connection('out')] },
+      onSaveConnection: (url: string) => void saved.push(url),
+    });
+    (target.querySelector('.connection-save') as HTMLButtonElement).click();
+    expect(saved).toEqual(['https://other.example/piece']);
   });
 
   it('treats connections as content, so a connections-only article claims no emptiness', () => {

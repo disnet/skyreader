@@ -34,7 +34,7 @@ import { safeFetch } from './ssrf-guard';
 import { resolveSiteMeta, buildCanonicalUrl, parseAtUri } from './standard-site';
 import { constellationGet, constellationGetResult } from './constellation-client';
 import { extractContentText } from './document-content';
-import { fetchSembleContext, type SembleContext } from './semble-client';
+import { fetchSembleContext, sembleCardUrl, type SembleContextWire } from './semble-client';
 
 // The one-per-user Skyreader linkblog publication rkey (see backend
 // linkblog-sync). Used only as a link-out fallback for our own docs.
@@ -94,7 +94,7 @@ export interface MentionLaneEntry {
 
 export interface MentionLaneItemsResult {
   entries: MentionLaneEntry[];
-  sembleContext?: SembleContext;
+  sembleContext?: SembleContextWire;
 }
 
 // margin.at note motivations (W3C Web Annotation) → an honest past-tense verb.
@@ -438,9 +438,13 @@ export async function getMentionLaneItems(
   // backward compatible. If every API category fails we continue into the
   // existing Constellation/PDS saver resolver below.
   if (laneId === 'semble') {
-    const sembleContext = await fetchSembleContext(normUrl);
-    if (sembleContext) {
-      const entries: MentionLaneEntry[] = sembleContext.savers.map((saver) => ({
+    const context = await fetchSembleContext(normUrl);
+    if (context) {
+      // The savers become the lane's people; everything else is the graph the
+      // panel draws around them. Splitting them here is what keeps the same
+      // person out of the payload twice.
+      const { savers, ...sembleContext } = context;
+      const entries: MentionLaneEntry[] = savers.map((saver) => ({
         did: saver.author.did,
         handle: saver.author.handle || null,
         displayName: saver.author.name,
@@ -448,7 +452,10 @@ export async function getMentionLaneItems(
         createdAt: saver.savedAt,
         note: saver.note,
         url: saver.author.handle ? `${SEMBLE_WEB_BASE}/profile/${saver.author.handle}` : null,
-        collections: saver.collections.map((c) => ({ name: c.name, url: c.url })),
+        // Which collection a given saver filed this into isn't something the
+        // URL API tells us, and the panel already names them all once in its
+        // "Filed in" line — so an entry carries none.
+        collections: [],
         verb: null,
         quote: null,
       }));
@@ -518,13 +525,13 @@ export async function getMentionLaneItems(
           entries,
           sembleContext: {
             stats: null,
-            savers: [],
             notes: [],
             collections: [],
             connections: [],
             truncated: { savers: false, notes: false, collections: false, connections: false },
             incomplete: true,
             source: 'constellation-fallback',
+            cardUrl: sembleCardUrl(normUrl),
           },
         }
       : { entries };

@@ -1,0 +1,93 @@
+import { describe, expect, it, afterEach, spyOn } from 'bun:test';
+import { fetchSembleContext } from './semble-client';
+
+const ARTICLE = 'https://example.com/the-article';
+
+// Answer each of the five URL-API calls with a canned body; anything not named
+// resolves empty, so a test only has to say the part it cares about.
+function mockSemble(bodies: Record<string, unknown>) {
+  return spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+    const nsid = new URL(String(input)).pathname.split('/').pop()!;
+    return new Response(JSON.stringify(bodies[nsid] ?? {}), {
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as unknown as typeof fetch);
+}
+
+const edge = (target: string, type: string, id?: string, curator = 'did:plc:eve') => ({
+  connection: { ...(id ? { id } : {}), type, curator: { id: curator, handle: 'eve.test' } },
+  source: { url: ARTICLE },
+  target: { url: target, metadata: { title: target } },
+});
+
+describe('fetchSembleContext connections', () => {
+  afterEach(() => {
+    (globalThis.fetch as ReturnType<typeof spyOn>).mockRestore?.();
+  });
+
+  it('keeps every edge when Semble sends no connection ids', async () => {
+    mockSemble({
+      'network.cosmik.connection.getForUrl': {
+        connections: [
+          edge('https://a.example/one', 'SUPPORTS'),
+          edge('https://b.example/two', 'SUPPORTS'),
+          edge('https://c.example/three', 'REFUTES'),
+        ],
+      },
+    });
+
+    const context = await fetchSembleContext(ARTICLE);
+    expect(context?.connections.map((c) => c.other.url)).toEqual([
+      'https://a.example/one',
+      'https://b.example/two',
+      'https://c.example/three',
+    ]);
+    // The fallback key still has to be a key: unique, so the reader can list them.
+    expect(new Set(context!.connections.map((c) => c.id)).size).toBe(3);
+  });
+
+  it('still collapses a genuine duplicate without an id', async () => {
+    mockSemble({
+      'network.cosmik.connection.getForUrl': {
+        connections: [
+          edge('https://a.example/one', 'SUPPORTS'),
+          edge('https://a.example/one', 'SUPPORTS'),
+        ],
+      },
+    });
+
+    const context = await fetchSembleContext(ARTICLE);
+    expect(context?.connections).toHaveLength(1);
+  });
+
+  it('keeps the same claim from two curators as two edges', async () => {
+    mockSemble({
+      'network.cosmik.connection.getForUrl': {
+        connections: [
+          edge('https://a.example/one', 'SUPPORTS', undefined, 'did:plc:eve'),
+          edge('https://a.example/one', 'SUPPORTS', undefined, 'did:plc:frank'),
+        ],
+      },
+    });
+
+    const context = await fetchSembleContext(ARTICLE);
+    expect(context?.connections.map((c) => c.curator.did)).toEqual([
+      'did:plc:eve',
+      'did:plc:frank',
+    ]);
+  });
+
+  it('prefers Semble’s own id when it sends one', async () => {
+    mockSemble({
+      'network.cosmik.connection.getForUrl': {
+        connections: [
+          edge('https://a.example/one', 'SUPPORTS', 'conn-1'),
+          edge('https://a.example/one', 'SUPPORTS', 'conn-2'),
+        ],
+      },
+    });
+
+    const context = await fetchSembleContext(ARTICLE);
+    expect(context?.connections.map((c) => c.id)).toEqual(['conn-1', 'conn-2']);
+  });
+});

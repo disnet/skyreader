@@ -126,13 +126,13 @@
   });
   const emptyContext: SembleContextVM = {
     stats: null,
-    savers: [],
     notes: [],
     collections: [],
     connections: [],
     truncated: { savers: false, notes: false, collections: false, connections: false },
     incomplete: false,
     source: 'semble-api',
+    cardUrl: 'https://semble.so/url/https%3A%2F%2Fexample.com%2Fthe-article',
   };
   const outgoing = {
     id: 'conn-out',
@@ -206,6 +206,77 @@
     connections: [outgoing, incoming, untypedIncoming],
   };
 
+  // The shape that forced this fold: one curator mapping a topic. Twenty edges
+  // come back, all outgoing, all "supplement", all theirs — only the title
+  // varies — and Semble holds seven more it did not return.
+  const mappedTitles = [
+    'The Rise of Faceless YouTube Channels in 2025, and How AI Is Powering the Revolution',
+    'Mark Zuckerberg \u2018Loves\u2019 AI-Generated \u2018Challah Horse\u2019 On Facebook',
+    'Facebook\u2019s AI-Generated \u2018Shrimp Jesus,\u2019 Explained',
+    'AI Slop Is a Brute Force Attack on the Algorithms That Control Reality',
+    "As many as 48 million Twitter accounts aren't people, says study",
+    'The spreading of misinformation online',
+    "Vote Leave's targeted Brexit ads released by Facebook",
+    "The saga of 'Pizzagate': The fake story that shows how conspiracy theories spread",
+    'How Facebook got addicted to spreading misinformation',
+    'Engagement is the enemy of a shared reality',
+    'The attention economy has no brakes',
+    'Recommender systems and the collapse of the public square',
+    'What the Twitter Files actually showed',
+    'Synthetic personas at scale',
+    'A short history of the feed',
+    'The bot problem nobody wants to measure',
+    'Polarization is a product decision',
+    'Why platforms cannot moderate their way out',
+    'The half-life of an online lie',
+    'Reading in the age of the algorithm',
+  ];
+  const mapper = sembleAuthor('justinm.one', 'Justin Mavromatis');
+  const mappedContext: SembleContextVM = {
+    ...emptyContext,
+    stats: {
+      saves: 1,
+      notes: 0,
+      collections: 1,
+      connections: { total: 27, incoming: 0, outgoing: 27 },
+    },
+    collections: [
+      {
+        id: 'col-pol',
+        name: 'Social Media \u2014 Algorithmic Distortions and Polarization',
+        url: 'https://semble.so/profile/justinm.one/collections/3kpol',
+        author: { did: 'did:plc:justinm', handle: 'justinm.one' },
+      },
+    ],
+    connections: mappedTitles.map((title, i) => ({
+      id: `mapped-${i}`,
+      direction: 'out' as const,
+      type: 'supplement',
+      note: null,
+      curator: mapper,
+      createdAt: hoursAgo(i + 3),
+      other: {
+        url: `https://example.org/mapped-${i}`,
+        title,
+        description: null,
+        siteName: 'example.org',
+        imageUrl: null,
+      },
+    })),
+    truncated: { savers: false, notes: false, collections: false, connections: true },
+  };
+
+  // Saving a connected article is a real fetch in the app; here it is a stubbed
+  // delay so the pending state, the toggle, and the kept state are all reachable.
+  let savedLinks = $state<string[]>([]);
+  async function toggleSavedLink(url: string) {
+    await new Promise((r) => setTimeout(r, 700));
+    savedLinks = savedLinks.includes(url)
+      ? savedLinks.filter((u) => u !== url)
+      : [...savedLinks, url];
+  }
+  const isLinkSaved = (url: string) => savedLinks.includes(url);
+
   let activeFilter = $state<DiscussionFilterId>('all');
   const filtered = $derived(
     activeFilter === 'all' ? entries : entries.filter((e) => e.lane === activeFilter)
@@ -232,7 +303,25 @@
       {activeFilter}
       {stream}
       {sembleContext}
+      onSaveConnection={toggleSavedLink}
+      isConnectionSaved={isLinkSaved}
       onSelectFilter={(id) => (activeFilter = id)}
+    />
+  </Case>
+
+  <Case
+    name="Semble · a mapped topic"
+    note="The shape that forced the fold: one curator, twenty outgoing edges of the same type, only the title varying. Unfolded that was sixty lines of the same sentence. Folded on (curator, relation, direction) the sentence is said once and the titles are the only thing left. Semble held twenty-seven and returned twenty; the foot says so where the reader can act on it."
+    width="800px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={[laneVM('semble', { count: 1 })]}
+      filters={[]}
+      sembleContext={mappedContext}
+      stream={{ loading: false, entries: [] }}
+      onSaveConnection={toggleSavedLink}
+      isConnectionSaved={isLinkSaved}
     />
   </Case>
 
@@ -246,6 +335,8 @@
       laneRow={lanes}
       filters={[]}
       {sembleContext}
+      onSaveConnection={toggleSavedLink}
+      isConnectionSaved={isLinkSaved}
       stream={{ loading: false, ...splitStream(entries.filter((e) => e.lane === 'semble')) }}
     />
   </Case>
@@ -269,6 +360,8 @@
         },
         connections: [outgoing, incoming],
       }}
+      onSaveConnection={toggleSavedLink}
+      isConnectionSaved={isLinkSaved}
       stream={{ loading: false, entries: [] }}
     />
   </Case>

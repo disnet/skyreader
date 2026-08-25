@@ -814,14 +814,6 @@ export interface SembleContext {
     collections: number;
     connections: { total: number; incoming: number; outgoing: number };
   } | null;
-  savers: Array<{
-    cardId: string;
-    cardUri: string | null;
-    author: SembleAuthor;
-    note: string | null;
-    savedAt: string | null;
-    collections: Array<{ id: string; name: string; url: string | null }>;
-  }>;
   notes: Array<{ id: string; text: string; author: SembleAuthor; createdAt: string | null }>;
   collections: Array<{
     id: string;
@@ -847,6 +839,9 @@ export interface SembleContext {
   truncated: { savers: boolean; notes: boolean; collections: boolean; connections: boolean };
   incomplete: boolean;
   source: 'semble-api' | 'constellation-fallback';
+  /** This URL's card page on semble.so — the page these counts were read from.
+   *  Built by the feed proxy; null when the URL couldn't be normalized. */
+  cardUrl: string | null;
 }
 
 // An in-app notification (currently only @mention-on-a-share). `actor*` fields

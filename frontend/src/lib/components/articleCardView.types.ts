@@ -254,6 +254,11 @@ export interface ArticleCardViewProps {
    *  note and removing the share both live. */
   onEditShare?: () => void;
   onOpenAuthor?: (did: string) => void;
+  /** Toggle a Semble-connected article into the reader's Saved list. Absent when
+   *  the reader can't save; the control then doesn't render. */
+  onSaveConnection?: (url: string) => void | Promise<void>;
+  /** Reactive saved-state predicate for a connected article's URL. */
+  isConnectionSaved?: (url: string) => boolean;
   // A @mention in the note/body was clicked — open the add-feed dialog for the DID.
   onMentionClick?: (did: string) => void;
   onCloseOverflow?: () => void;

@@ -2,6 +2,7 @@ import { db } from '$lib/services/db';
 import { safePut, safeBulkPut } from '$lib/services/safeDb.svelte';
 import { api, UrlSaveLimitError } from '$lib/services/api';
 import { generateTid } from '$lib/utils/tid';
+import { urlKey } from '$lib/utils/urlKey';
 import { syncQueue, type SavedPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
 import { extractArticle } from '$lib/services/extract';
@@ -42,16 +43,27 @@ function createSavesStore() {
   // O(1) lookup maps
   let savedByGuid = $state<Map<string, SavedItem>>(new Map());
   let savedByUrl = $state<Map<string, SavedItem>>(new Map());
+  // The same saves under their canonical form, so a link that arrives from
+  // another network (a Semble connection, a share) still finds the save the
+  // reader already has when only a trailing slash or a utm param differs.
+  // Exact matches always win; this is only consulted when one misses.
+  let savedByUrlKey = $state<Map<string, SavedItem>>(new Map());
 
   function rebuildMaps() {
     const byGuid = new Map<string, SavedItem>();
     const byUrl = new Map<string, SavedItem>();
+    const byUrlKey = new Map<string, SavedItem>();
     for (const bm of articles) {
       if (bm.itemGuid) byGuid.set(bm.itemGuid, bm);
-      if (bm.url) byUrl.set(bm.url, bm);
+      if (bm.url) {
+        byUrl.set(bm.url, bm);
+        const key = urlKey(bm.url);
+        if (key) byUrlKey.set(key, bm);
+      }
     }
     savedByGuid = byGuid;
     savedByUrl = byUrl;
+    savedByUrlKey = byUrlKey;
   }
 
   // Self-heal old saves that have a body but no stored word count (pre-fix
@@ -583,7 +595,9 @@ function createSavesStore() {
   }
 
   function isSaved(guidOrUrl: string): boolean {
-    return savedByGuid.has(guidOrUrl) || savedByUrl.has(guidOrUrl);
+    if (savedByGuid.has(guidOrUrl) || savedByUrl.has(guidOrUrl)) return true;
+    const key = urlKey(guidOrUrl);
+    return key !== null && savedByUrlKey.has(key);
   }
 
   function getByUri(uri: string): SavedItem | undefined {
@@ -591,7 +605,10 @@ function createSavesStore() {
   }
 
   function getByUrl(url: string): SavedItem | undefined {
-    return savedByUrl.get(url);
+    const exact = savedByUrl.get(url);
+    if (exact) return exact;
+    const key = urlKey(url);
+    return key ? savedByUrlKey.get(key) : undefined;
   }
 
   function getByGuid(guid: string): SavedItem | undefined {

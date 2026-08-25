@@ -11,6 +11,14 @@ export interface SembleAuthor {
   name: string | null;
   avatarUrl: string | null;
 }
+/** One person's card for this URL. Consumed only here, to build the lane's
+ *  human entries — it never crosses the wire (see `SembleContextWire`), so the
+ *  reader isn't shipped the same people twice. */
+export interface SembleSaver {
+  author: SembleAuthor;
+  note: string | null;
+  savedAt: string | null;
+}
 export interface SembleContext {
   stats: {
     saves: number;
@@ -18,14 +26,7 @@ export interface SembleContext {
     collections: number;
     connections: { total: number; incoming: number; outgoing: number };
   } | null;
-  savers: Array<{
-    cardId: string;
-    cardUri: string | null;
-    author: SembleAuthor;
-    note: string | null;
-    savedAt: string | null;
-    collections: Array<{ id: string; name: string; url: string | null }>;
-  }>;
+  savers: SembleSaver[];
   notes: Array<{ id: string; text: string; author: SembleAuthor; createdAt: string | null }>;
   collections: Array<{
     id: string;
@@ -51,6 +52,20 @@ export interface SembleContext {
   truncated: { savers: boolean; notes: boolean; collections: boolean; connections: boolean };
   incomplete: boolean;
   source: 'semble-api' | 'constellation-fallback';
+  /** This URL's own card on semble.so: the page these counts were read from,
+   *  with its own Connections and Notes tabs. Built here rather than in the
+   *  reader, so only this module has to know Semble's routes. */
+  cardUrl: string | null;
+}
+
+/** What the reader actually receives. The savers are already in the lane's
+ *  `entries`; sending them again would duplicate every person in the payload. */
+export type SembleContextWire = Omit<SembleContext, 'savers'>;
+
+/** Semble's card page is keyed by the article URL, not by a card id — every
+ *  saver's card for a URL rolls up into the one page. */
+export function sembleCardUrl(url: string | null): string | null {
+  return url ? `https://semble.so/url/${encodeURIComponent(url)}` : null;
 }
 
 type Obj = Record<string, any>;
@@ -121,12 +136,9 @@ export async function fetchSembleContext(rawUrl: string): Promise<SembleContext 
   const savers = (Array.isArray(libraries.libraries) ? libraries.libraries : [])
     .slice(0, LIMIT)
     .map((x: Obj) => ({
-      cardId: text(x.card?.id, 256) ?? text(x.card?.uri, 512) ?? '',
-      cardUri: text(x.card?.uri, 512),
       author: author(x.user ?? x.card?.author),
       note: text(x.card?.note?.text ?? x.card?.note),
       savedAt: date(x.card?.createdAt),
-      collections: [],
     }));
   const saverNotes = new Set(
     savers
@@ -160,25 +172,32 @@ export async function fetchSembleContext(rawUrl: string): Promise<SembleContext 
   const connections = (Array.isArray(connectionData.connections) ? connectionData.connections : [])
     .slice(0, LIMIT)
     .flatMap((x: Obj) => {
-      const id = text(x.connection?.id, 256) ?? '';
-      if (seen.has(id)) return [];
-      seen.add(id);
       const source = httpUrl(x.source?.url),
         target = httpUrl(x.target?.url);
-      const n = normalizeArticleUrl(url);
-      const sourceIsThis = source ? normalizeArticleUrl(source) === n : false;
-      const targetIsThis = target ? normalizeArticleUrl(target) === n : false;
+      const sourceIsThis = source ? normalizeArticleUrl(source) === url : false;
+      const targetIsThis = target ? normalizeArticleUrl(target) === url : false;
       if (sourceIsThis === targetIsThis) return [];
       const other = x[sourceIsThis ? 'target' : 'source'];
       const otherUrl = httpUrl(other?.url);
       if (!otherUrl) return [];
+      const type = text(x.connection?.type, 128)?.replaceAll('_', ' ').toLowerCase() ?? null;
+      const curator = author(x.connection?.curator);
+      // Prefer Semble's own id, but never let a missing one key every edge to the
+      // same empty string — that would silently collapse the whole graph to its
+      // first edge. Who drew it, between which two pages, saying what, identifies
+      // an edge on its own: two curators making the same claim are two edges.
+      const id =
+        text(x.connection?.id, 256) ??
+        `${source ?? ''}|${target ?? ''}|${type ?? ''}|${curator.did}`;
+      if (seen.has(id)) return [];
+      seen.add(id);
       return [
         {
           id,
           direction: sourceIsThis ? ('out' as const) : ('in' as const),
-          type: text(x.connection?.type, 128)?.replaceAll('_', ' ').toLowerCase() ?? null,
+          type,
           note: text(x.connection?.note),
-          curator: author(x.connection?.curator),
+          curator,
           createdAt: date(x.connection?.createdAt),
           other: {
             url: otherUrl,
@@ -211,5 +230,6 @@ export async function fetchSembleContext(rawUrl: string): Promise<SembleContext 
     },
     incomplete: calls.some((r) => r.status === 'rejected'),
     source: 'semble-api',
+    cardUrl: sembleCardUrl(url),
   };
 }

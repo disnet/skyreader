@@ -99,6 +99,8 @@
     onComposeShare,
     onEditShare,
     onOpenAuthor,
+    onSaveConnection,
+    isConnectionSaved,
     onMentionClick,
     onCloseOverflow,
   }: ArticleCardViewProps = $props();
@@ -416,6 +418,8 @@
         onRetry={onRetryStream}
         {onCreateInLane}
         {onOpenAuthor}
+        {onSaveConnection}
+        {isConnectionSaved}
       />
       <div class="article-actions">
         <!-- Save button. Label tracks state ("Save" → "Saved") and the bookmark
