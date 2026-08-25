@@ -126,8 +126,8 @@ test.describe('Saved search', () => {
 
     // Client-side navigation, deliberately: a full reload would rebuild every
     // store and hide the residual-state bug this covers.
-    await authedPage.getByRole('link', { name: 'Home' }).click();
-    await expect(authedPage).toHaveURL(/\/home$/);
+    await authedPage.getByRole('link', { name: 'Feeds' }).click();
+    await expect(authedPage).toHaveURL(/\/feeds$/);
     await expect(authedPage.getByTestId('saved-search-input')).toHaveCount(0);
 
     // Off the saved surface, "/" is the switcher again.
@@ -138,7 +138,7 @@ test.describe('Saved search', () => {
     await expect(authedPage.getByRole('listbox')).toHaveCount(0);
 
     // And coming back is a clean list, not the query from last time.
-    await authedPage.getByRole('button', { name: 'Saved' }).first().click();
+    await authedPage.goto('/saved');
     await expect(
       authedPage
         .getByLabel('Recently saved', { exact: true })

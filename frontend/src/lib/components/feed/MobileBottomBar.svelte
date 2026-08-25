@@ -16,7 +16,7 @@
     onOpenNotifications: () => void;
     hasActiveFilters: boolean;
     hideFilterButton?: boolean;
-    /** Saved views only: the header's search button isn't reachable down here. */
+    /** Saved and Home views: the header's search button isn't reachable down here. */
     onOpenSearch?: () => void;
     searchActive?: boolean;
   }

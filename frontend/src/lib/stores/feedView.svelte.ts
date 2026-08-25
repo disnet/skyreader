@@ -235,7 +235,7 @@ export function searchHaystack(item: FeedDisplayItem): string {
  * asynchronously, so body hits land a beat after metadata hits on the very
  * first search).
  */
-function matchesSavedSearch(
+export function matchesSavedSearch(
   item: FeedDisplayItem,
   terms: string[],
   bodyMatchTerms: Map<string, Set<string>> | null
@@ -1538,7 +1538,7 @@ function createFeedViewStore() {
       // must never silently empty the list you land on. Compared rather than
       // reset unconditionally because this runs on every URL change, including
       // ones that don't move the view. Leaving the surface entirely is the page's
-      // job (`savedSearchStore.setSurfaceActive(false)` on unmount): this only
+      // job (`savedSearchStore.releaseSurface('saved')` on unmount): this only
       // runs while `FeedPage` is mounted, so it can't see that transition.
       const nextSavedKey = `${filters.saved ?? ''}|${filters.view ?? ''}`;
       if (nextSavedKey !== currentSavedKey) {
