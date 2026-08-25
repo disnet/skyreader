@@ -39,6 +39,7 @@
   import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
   import { shareTargetForDisplayItem } from '$lib/utils/shareTarget';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
+  import CommunityHighlightPopover from '$lib/components/feed/CommunityHighlightPopover.svelte';
   import NotePeek from '$lib/components/feed/NotePeek.svelte';
   import CollectionMagazine from '$lib/components/feed/CollectionMagazine.svelte';
   import PagedView, { type PagedController } from '$lib/components/feed/PagedView.svelte';
@@ -877,7 +878,11 @@
           <button
             class="action-btn"
             class:active={preferences.communityHighlights}
-            onclick={() => preferences.setCommunityHighlights(!preferences.communityHighlights)}
+            aria-pressed={preferences.communityHighlights}
+            onclick={() => {
+              if (!preferences.communityHighlights) communityHighlightsHook.retry();
+              preferences.setCommunityHighlights(!preferences.communityHighlights);
+            }}
             title="Passages highlighted by readers on margin.at"
           >
             <Icon name="users" size={16} />
@@ -1203,6 +1208,15 @@
     existingNote={highlightsHook.popoverHighlightNote}
     marginSaved={highlightsHook.popoverHighlightSavedToMargin}
     onClose={highlightsHook.closePopover}
+  />
+{/if}
+
+{#if communityHighlightsHook.popoverState}
+  <CommunityHighlightPopover
+    group={communityHighlightsHook.popoverState.group}
+    anchorRect={communityHighlightsHook.popoverState.anchorRect}
+    capped={communityHighlightsHook.capped}
+    onClose={communityHighlightsHook.closePopover}
   />
 {/if}
 

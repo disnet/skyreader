@@ -6,6 +6,10 @@ import { resolveHandle } from './did-resolver';
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_NOTES = 50;
+const RECORD_CONCURRENCY = 6;
+const LINKS_PAGE_SIZE = 100;
+const inFlight = new WeakMap<Database, Map<string, Promise<MarginHighlightsResult>>>();
+export { MentionLaneUnavailableError };
 
 export interface MarginHighlightNote {
   did: string;
@@ -54,6 +58,25 @@ export async function getMarginHighlights(
     }
   }
 
+  let dbRequests = inFlight.get(db);
+  if (!dbRequests) inFlight.set(db, (dbRequests = new Map()));
+  const existing = dbRequests.get(key);
+  if (existing) return existing;
+  const request = resolveMarginHighlights(db, normUrl, key, now);
+  dbRequests.set(key, request);
+  try {
+    return await request;
+  } finally {
+    dbRequests.delete(key);
+  }
+}
+
+async function resolveMarginHighlights(
+  db: Database,
+  normUrl: string,
+  key: string,
+  now: number
+): Promise<MarginHighlightsResult> {
   const sources: Array<{ target: string; path: string }> = [];
   let unreachable = false;
   for (const target of constellationTargets(normUrl)) {
@@ -75,9 +98,10 @@ export async function getMarginHighlights(
       target: source.target,
       collection: 'at.margin.note',
       path: source.path,
-      limit: '100',
+      limit: String(LINKS_PAGE_SIZE),
     });
     if (!links.reachable) unreachable = true;
+    if ((links.data?.linking_records?.length ?? 0) >= LINKS_PAGE_SIZE) capped = true;
     for (const record of links.data?.linking_records ?? []) {
       const id = `${record.did}/${record.collection}/${record.rkey}`;
       if (seen.has(id)) continue;
@@ -92,12 +116,18 @@ export async function getMarginHighlights(
   }
   if (!records.length && unreachable) throw new MentionLaneUnavailableError();
 
-  const values = await Promise.all(
-    records.map(async (record) => ({
-      record,
-      value: await getRecordValue(db, record.did, record.collection, record.rkey),
-    }))
-  );
+  const values: Array<{ record: (typeof records)[number]; value: Record<string, unknown> | null }> =
+    [];
+  for (let offset = 0; offset < records.length; offset += RECORD_CONCURRENCY) {
+    values.push(
+      ...(await Promise.all(
+        records.slice(offset, offset + RECORD_CONCURRENCY).map(async (record) => ({
+          record,
+          value: await getRecordValue(db, record.did, record.collection, record.rkey),
+        }))
+      ))
+    );
+  }
   const profiles = new Map(
     await Promise.all(
       [...new Set(records.map((r) => r.did))].map(

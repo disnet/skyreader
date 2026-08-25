@@ -1,5 +1,7 @@
 import { communityHighlightsStore } from '$lib/stores/communityHighlights.svelte';
 import { findAllInDOM } from '$lib/utils/textSelector';
+import { wrapTextRange } from '$lib/utils/wrapTextRange';
+import type { CommunityHighlightGroup } from '$lib/stores/communityHighlights.svelte';
 
 export function useCommunityHighlights(params: {
   contentEl: () => HTMLElement | undefined;
@@ -7,11 +9,16 @@ export function useCommunityHighlights(params: {
   enabled: () => boolean;
 }) {
   let marks: HTMLElement[] = [];
+  let popoverState = $state<{ group: CommunityHighlightGroup; anchorRect: DOMRect } | null>(null);
+  let wasEnabled = false;
   $effect(() => {
     const url = params.itemUrl();
     const enabled = params.enabled();
     const state = communityHighlightsStore.get(url);
-    if (enabled && url && !state) communityHighlightsStore.load(url);
+    if (enabled && url && (!state || (!wasEnabled && state.failed))) {
+      communityHighlightsStore.load(url, { force: state?.failed });
+    }
+    wasEnabled = enabled;
     // Reading groups here makes the decoration react when the lazy request
     // settles. Defer until Svelte has committed the current article body.
     void state?.groups;
@@ -21,6 +28,22 @@ export function useCommunityHighlights(params: {
     for (const mark of marks) mark.replaceWith(...Array.from(mark.childNodes));
     marks = [];
     params.contentEl()?.normalize();
+  }
+  function handleClick(event: MouseEvent) {
+    if (window.getSelection()?.toString()) return;
+    const mark = (event.target as HTMLElement).closest<HTMLElement>('mark.community-highlight');
+    if (!mark) return;
+    const group = communityHighlightsStore
+      .get(params.itemUrl())
+      ?.groups.find((item) => item.id === mark.dataset.communityId);
+    if (!group) return;
+    event.preventDefault();
+    event.stopPropagation();
+    popoverState = { group, anchorRect: mark.getBoundingClientRect() };
+  }
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    handleClick(event as unknown as MouseEvent);
   }
   function apply() {
     clear();
@@ -36,28 +59,43 @@ export function useCommunityHighlights(params: {
     for (let i = ranges.length - 1; i >= 0; i--) {
       const range = ranges[i];
       if (!range) continue;
-      const mark = document.createElement('mark');
-      mark.className = 'community-highlight';
-      mark.dataset.communityId = groups[i].id;
       const names = groups[i].people.map((p) => p.displayName || p.handle || 'A reader');
-      mark.title = `${names.join(', ')} on margin.at`;
-      try {
-        if (range.startContainer === range.endContainer) range.surroundContents(mark);
-        else {
-          mark.appendChild(range.extractContents());
-          range.insertNode(mark);
-        }
-        marks.push(mark);
-      } catch {
-        /* adornment only */
-      }
+      marks.push(
+        ...wrapTextRange(range, el, () => {
+          const mark = document.createElement('mark');
+          mark.className = 'community-highlight';
+          mark.dataset.communityId = groups[i].id;
+          mark.title = `${names.join(', ')} on margin.at`;
+          mark.tabIndex = 0;
+          mark.setAttribute('role', 'button');
+          mark.setAttribute('aria-label', `Community highlight by ${names.join(', ')}`);
+          return mark;
+        })
+      );
     }
   }
   function attach() {
+    params.contentEl()?.addEventListener('click', handleClick);
+    params.contentEl()?.addEventListener('keydown', handleKeydown);
     apply();
   }
   function detach() {
+    params.contentEl()?.removeEventListener('click', handleClick);
+    params.contentEl()?.removeEventListener('keydown', handleKeydown);
+    popoverState = null;
     clear();
   }
-  return { attach, detach, apply };
+  return {
+    attach,
+    detach,
+    apply,
+    get popoverState() {
+      return popoverState;
+    },
+    get capped() {
+      return communityHighlightsStore.get(params.itemUrl())?.capped ?? false;
+    },
+    closePopover: () => (popoverState = null),
+    retry: () => communityHighlightsStore.load(params.itemUrl(), { force: true }),
+  };
 }

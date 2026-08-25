@@ -7,6 +7,7 @@ import {
   updateHighlightNoteOnMargin,
 } from '$lib/services/marginHighlights';
 import type { ItemLabelType, Highlight, TextQuoteSelector } from '$lib/types';
+import { wrapTextRange } from '$lib/utils/wrapTextRange';
 
 const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
 const INTERACTIVE_MEDIA_SELECTOR = 'video, audio, iframe, embed, object';
@@ -139,47 +140,16 @@ export function useHighlights(params: HighlightParams) {
   }
 
   function wrapRangeMultiNode(range: Range, highlightId: string) {
-    // Walk text nodes within the range and wrap each one
     const container = params.contentEl();
     if (!container) return;
-
-    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-    const textNodes: Text[] = [];
-    let node = walker.nextNode();
-    while (node) {
-      if (range.intersectsNode(node)) {
-        textNodes.push(node as Text);
-      }
-      node = walker.nextNode();
-    }
-
-    for (const textNode of textNodes) {
-      const nodeRange = document.createRange();
-
-      if (textNode === range.startContainer) {
-        nodeRange.setStart(textNode, range.startOffset);
-      } else {
-        nodeRange.setStart(textNode, 0);
-      }
-
-      if (textNode === range.endContainer) {
-        nodeRange.setEnd(textNode, range.endOffset);
-      } else {
-        nodeRange.setEnd(textNode, textNode.textContent?.length ?? 0);
-      }
-
-      if (nodeRange.toString().length === 0) continue;
-
-      const mark = document.createElement('mark');
-      mark.className = 'highlight';
-      mark.dataset.highlightId = highlightId;
-      try {
-        nodeRange.surroundContents(mark);
-        appliedMarks.push(mark);
-      } catch {
-        // Skip if we can't wrap this node
-      }
-    }
+    appliedMarks.push(
+      ...wrapTextRange(range, container, () => {
+        const mark = document.createElement('mark');
+        mark.className = 'highlight';
+        mark.dataset.highlightId = highlightId;
+        return mark;
+      })
+    );
   }
 
   function clearMarks() {
