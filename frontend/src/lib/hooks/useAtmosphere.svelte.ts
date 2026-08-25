@@ -4,9 +4,10 @@
 // highlighted / saved it, and who. This is the wiring the feed card, the
 // fullscreen reader, and any future surface have in common: fetching the
 // per-lane counts, folding LANE_META into a render-ready row VM, resolving the
-// people, and merging every lane into ONE chronological stream. The
-// mode-specific bits — whether a lane can be created from this surface, and what
-// "create" does — stay with the caller and are injected as getters.
+// people, and merging every lane into ONE engagement-ranked stream (most-liked
+// first, recency as the tiebreak — see discussionSort). The mode-specific bits —
+// whether a lane can be created from this surface, and what "create" does — stay
+// with the caller and are injected as getters.
 //
 // The merge is the point: an article's discussion is one conversation that
 // happens to be spread across four networks, not four lists to click between.
@@ -32,6 +33,7 @@ import { articleMentionsStore } from '$lib/stores/articleMentions.svelte';
 import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
 import { preferences } from '$lib/stores/preferences.svelte';
 import { cleanDiscussionNote } from '$lib/utils/discussionNote';
+import { byEngagement } from '$lib/utils/discussionSort';
 import { formatRelativeDate } from '$lib/utils/date';
 
 // Per-lane display metadata. The count + verb come from the network breakdown;
@@ -106,7 +108,7 @@ export interface AtmosphereApi {
   readonly filters: DiscussionFilterVM[];
   /** The chip currently in effect. */
   readonly activeFilter: DiscussionFilterId;
-  /** The merged, filtered, newest-first discussion. */
+  /** The merged, filtered discussion: most-liked first, newest as the tiebreak. */
   readonly stream: DiscussionStreamVM;
   readonly sembleContext: SembleContextVM | undefined;
   /** Total references across lanes — the headline count on the Discussion button. */
@@ -263,8 +265,8 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     }
   }
 
-  // The merge: every lane's people in one newest-first list, each entry told
-  // which lane it came from and cleaned of the titles and links the article
+  // The merge: every lane's people in one engagement-ranked list, each entry
+  // told which lane it came from and cleaned of the titles and links the article
   // already shows, then split into what people SAID and what merely relinked.
   const stream = $derived.by<DiscussionStreamVM>(() => {
     // Nothing has been asked for yet. Distinct from loading: with no request in
@@ -304,7 +306,7 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
         });
       }
     }
-    entries.sort(newestFirst);
+    entries.sort(byEngagement);
 
     // Split the conversation from the distribution. An entry with no words, no
     // quoted passage and no named collection is a bare link drop — a bridge or a
@@ -338,17 +340,6 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
       linkOnly,
     };
   });
-
-  // Newest first; an undated reference (a record with no timestamp we could
-  // parse) sorts to the end rather than pretending to be new.
-  function newestFirst(a: DiscussionEntryVM, b: DiscussionEntryVM): number {
-    const at = a.createdAt ? Date.parse(a.createdAt) : NaN;
-    const bt = b.createdAt ? Date.parse(b.createdAt) : NaN;
-    if (Number.isNaN(at) && Number.isNaN(bt)) return 0;
-    if (Number.isNaN(at)) return 1;
-    if (Number.isNaN(bt)) return -1;
-    return bt - at;
-  }
 
   function retry() {
     const url = opts.itemUrl();

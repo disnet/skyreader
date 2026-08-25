@@ -7,7 +7,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mount, unmount, flushSync } from 'svelte';
 import AtmospherePanel from './AtmospherePanel.svelte';
-import type { LaneRowVM, SembleContextVM } from '../articleCardView.types';
+import type { DiscussionEntryVM, LaneRowVM, SembleContextVM } from '../articleCardView.types';
 
 const mounted: Record<string, any>[] = [];
 
@@ -56,7 +56,7 @@ function connection(direction: 'in' | 'out'): SembleContextVM['connections'][num
 
 function render(props: {
   sembleContext?: SembleContextVM;
-  stream?: { loading: boolean; failed?: boolean; entries: [] };
+  stream?: { loading: boolean; failed?: boolean; entries: DiscussionEntryVM[] };
   onSaveConnection?: (url: string) => void | Promise<void>;
   isConnectionSaved?: (url: string) => boolean;
 }): HTMLElement {
@@ -259,5 +259,70 @@ describe('AtmospherePanel Semble collections', () => {
       },
     });
     expect(target.querySelector('.semble-foot')?.textContent).toContain('Semble holds more than');
+  });
+});
+
+// The stream leads with the most-liked references, and an invisible sort key
+// reads as random order — so the number that decided the rank is on the row.
+describe('AtmospherePanel entry engagement', () => {
+  afterEach(() => {
+    for (const component of mounted.splice(0)) unmount(component);
+    document.body.innerHTML = '';
+  });
+
+  function entry(did: string, likeCount: number | null): DiscussionEntryVM {
+    return {
+      did,
+      handle: `${did}.test`,
+      displayName: null,
+      avatar: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      note: 'said something',
+      url: null,
+      collections: [],
+      verb: null,
+      quote: null,
+      likeCount,
+      key: `bluesky|${did}|`,
+      lane: 'bluesky',
+      laneLabel: 'Bluesky',
+      laneIcon: 'bluesky',
+      headVerb: 'posted',
+      relativeTime: '2d ago',
+      isoTime: '2026-01-01T00:00:00.000Z',
+      cleanNote: 'said something',
+    };
+  }
+
+  function likeLines(entries: DiscussionEntryVM[]): (string | null)[] {
+    const target = render({ stream: { loading: false, entries } });
+    return [...target.querySelectorAll('.entry')].map(
+      (row) => row.querySelector('.entry-likes')?.textContent ?? null
+    );
+  }
+
+  it('names the count that ranked the entry, singular and plural', () => {
+    expect(likeLines([entry('did:plc:many', 12), entry('did:plc:one', 1)])).toEqual([
+      '12 likes',
+      '1 like',
+    ]);
+  });
+
+  it('scores nothing when there is nothing to score', () => {
+    // Zero likes and a lane with no metric at all read the same: no meta.
+    expect(likeLines([entry('did:plc:zero', 0), entry('did:plc:none', null)])).toEqual([
+      null,
+      null,
+    ]);
+  });
+
+  it('renders the entries in the order it was handed them', () => {
+    const target = render({
+      stream: { loading: false, entries: [entry('did:plc:top', 40), entry('did:plc:next', 2)] },
+    });
+    expect([...target.querySelectorAll('.entry-likes')].map((n) => n.textContent)).toEqual([
+      '40 likes',
+      '2 likes',
+    ]);
   });
 });

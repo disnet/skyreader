@@ -22,15 +22,40 @@ function seedDid(db: Database, did: string, handle: string) {
   );
 }
 
-// Mock /links/all (source discovery), /links (per-source records), and PDS
-// getRecord (the per-record note). `records` maps rkey → record value.
+// How the Bluesky appview answers `getPosts` for a case: which at-URIs it knows
+// a like count for, and whether it answers at all. Omitted → it 404s, which is
+// the "no counts, sort by date" path every other case exercises.
+type AppviewMock = {
+  likes?: Record<string, number>;
+  /** Answer with this status instead of the counts (e.g. 500). */
+  status?: number;
+  /** Fail the connection outright. */
+  throws?: boolean;
+};
+
+// Mock /links/all (source discovery), /links (per-source records), PDS
+// getRecord (the per-record note), and the Bluesky appview's getPosts (the
+// per-post like count). `records` maps rkey → record value.
 function mockConstellation(
   linksAll: Record<string, Record<string, { distinct_dids: number }>>,
   recsBySource: Record<string, Array<{ did: string; rkey: string }>>,
-  records: Record<string, Record<string, unknown>> = {}
+  records: Record<string, Record<string, unknown>> = {},
+  appview?: AppviewMock
 ) {
   return spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
     const url = new URL(String(input));
+    if (url.hostname === 'public.api.bsky.app') {
+      if (!appview) return new Response('{}', { status: 404 });
+      if (appview.throws) throw new TypeError('connection refused');
+      if (appview.status) return new Response('{}', { status: appview.status });
+      // The appview returns only the posts it can serve — a deleted or blocked
+      // one is simply missing from the list, not nulled out.
+      const posts = url.searchParams
+        .getAll('uris')
+        .filter((uri) => (appview.likes ?? {})[uri] !== undefined)
+        .map((uri) => ({ uri, likeCount: appview.likes![uri] }));
+      return new Response(JSON.stringify({ posts }));
+    }
     if (url.pathname === '/links/all') {
       return new Response(JSON.stringify({ links: linksAll }));
     }
@@ -96,6 +121,97 @@ describe('getMentionLaneItems', () => {
       collections: [],
       verb: null,
       quote: null,
+      // The appview isn't mocked in this case, so the count degrades to null
+      // and the lane still resolves — the whole failure mode, in one line.
+      likeCount: null,
+    });
+  });
+
+  // The Bluesky lane is the only one with a per-entry engagement number, and the
+  // discussion stream ranks on it — so the count has to arrive with the entries,
+  // and its absence has to be survivable.
+  describe('Bluesky like counts', () => {
+    // Two authors on one source, so the batched appview call has to key its
+    // counts by at-URI rather than by position.
+    function mockTwoPosts(appview?: AppviewMock) {
+      return mockConstellation(
+        { 'app.bsky.feed.post': { '.embed.external.uri': { distinct_dids: 2 } } },
+        {
+          'app.bsky.feed.post|.embed.external.uri': [
+            { did: 'did:plc:alice', rkey: 'post1' },
+            { did: 'did:plc:bob', rkey: 'post2' },
+          ],
+        },
+        { post1: { text: 'great read' }, post2: { text: 'also good' } },
+        appview
+      );
+    }
+
+    it('stamps each entry with its own post’s like count', async () => {
+      const db = freshDb();
+      seedDid(db, 'did:plc:alice', 'alice.test');
+      seedDid(db, 'did:plc:bob', 'bob.test');
+      mockTwoPosts({
+        likes: {
+          'at://did:plc:alice/app.bsky.feed.post/post1': 12,
+          'at://did:plc:bob/app.bsky.feed.post/post2': 0,
+        },
+      });
+
+      const { entries } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+      expect(entries.map((e) => [e.did, e.likeCount])).toEqual([
+        ['did:plc:alice', 12],
+        ['did:plc:bob', 0],
+      ]);
+    });
+
+    it('leaves a post the appview no longer serves at null', async () => {
+      const db = freshDb();
+      seedDid(db, 'did:plc:alice', 'alice.test');
+      seedDid(db, 'did:plc:bob', 'bob.test');
+      // Bob's post was deleted: the appview omits it from the response.
+      mockTwoPosts({ likes: { 'at://did:plc:alice/app.bsky.feed.post/post1': 3 } });
+
+      const { entries } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+      expect(entries.map((e) => e.likeCount)).toEqual([3, null]);
+    });
+
+    it('still resolves the lane when the appview errors', async () => {
+      const db = freshDb();
+      seedDid(db, 'did:plc:alice', 'alice.test');
+      seedDid(db, 'did:plc:bob', 'bob.test');
+      mockTwoPosts({ status: 500 });
+
+      const { entries } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+      expect(entries.map((e) => e.note)).toEqual(['great read', 'also good']);
+      expect(entries.every((e) => e.likeCount === null)).toBe(true);
+    });
+
+    it('still resolves the lane when the appview is unreachable', async () => {
+      const db = freshDb();
+      seedDid(db, 'did:plc:alice', 'alice.test');
+      seedDid(db, 'did:plc:bob', 'bob.test');
+      mockTwoPosts({ throws: true });
+
+      const { entries } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+      expect(entries.length).toBe(2);
+      expect(entries.every((e) => e.likeCount === null)).toBe(true);
+    });
+
+    it('asks the appview nothing for a lane that has no like counts', async () => {
+      const db = freshDb();
+      seedDid(db, 'did:plc:frank', 'frank.test');
+      const spy = mockConstellation(
+        { 'at.margin.note': { '.target.source': { distinct_dids: 1 } } },
+        { 'at.margin.note|.target.source': [{ did: 'did:plc:frank', rkey: 'note1' }] },
+        { note1: { motivation: 'commenting', body: { value: 'a note' } } }
+      );
+
+      const { entries } = await getMentionLaneItems(db, ARTICLE, 'margin');
+      expect(entries[0].likeCount).toBeNull();
+      expect(
+        spy.mock.calls.some((call) => String(call[0]).includes('public.api.bsky.app'))
+      ).toBeFalse();
     });
   });
 
@@ -135,6 +251,7 @@ describe('getMentionLaneItems', () => {
         collections: [],
         verb: null,
         quote: null,
+        likeCount: null,
       },
     ]);
   });
@@ -170,6 +287,7 @@ describe('getMentionLaneItems', () => {
         collections: [],
         verb: null,
         quote: null,
+        likeCount: null,
       },
     ]);
   });
@@ -238,6 +356,7 @@ describe('getMentionLaneItems', () => {
         ],
         verb: null,
         quote: null,
+        likeCount: null,
       },
     ]);
   });
@@ -274,6 +393,7 @@ describe('getMentionLaneItems', () => {
         collections: [],
         verb: 'highlighted',
         quote: 'the owned library',
+        likeCount: null,
       },
     ]);
   });

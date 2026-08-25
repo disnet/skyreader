@@ -95,6 +95,7 @@ export function streamEntry(lane: LaneId, seed: StreamEntrySeed): DiscussionEntr
     collections: [],
     verb: null,
     quote: null,
+    likeCount: null,
     ...seed,
     createdAt,
     headVerb: seed.verb ?? (seed.collections?.length ? null : meta.verb),

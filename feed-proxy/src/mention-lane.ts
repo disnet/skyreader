@@ -33,6 +33,7 @@ import { resolveHandle, resolvePdsUrl } from './did-resolver';
 import { safeFetch } from './ssrf-guard';
 import { resolveSiteMeta, buildCanonicalUrl, parseAtUri } from './standard-site';
 import { constellationGet, constellationGetResult } from './constellation-client';
+import { fetchPostLikeCounts } from './bsky-appview';
 import { extractContentText } from './document-content';
 import {
   fetchSembleContext,
@@ -95,6 +96,11 @@ export interface MentionLaneEntry {
   // The highlighted passage a margin.at note targets (its TextQuoteSelector),
   // distinct from the user's own comment in `note`. Null elsewhere.
   quote: string | null;
+  // How many likes the reference itself has — the surface's engagement sort key.
+  // Bluesky lane only, and best-effort even there: null when the appview didn't
+  // answer or no longer serves the post. Every other lane is null by nature,
+  // since a note or a save carries no second-order count (see bsky-appview.ts).
+  likeCount: number | null;
 }
 
 export interface MentionLaneItemsResult {
@@ -383,11 +389,14 @@ async function resolveEntry(
     collections,
     verb,
     quote,
+    // Stamped by the caller for the Bluesky lane, in one batched appview call
+    // across the whole lane rather than a fetch per entry.
+    likeCount: null,
   };
 }
 
 function cacheKey(laneId: LaneId, normUrl: string): string {
-  return `lane-items2:${laneId}|${normUrl}`;
+  return `lane-items3:${laneId}|${normUrl}`;
 }
 
 /**
@@ -464,6 +473,9 @@ export async function getMentionLaneItems(
         collections: [],
         verb: null,
         quote: null,
+        // A Semble card has no like count of its own — the article-level save
+        // count lives in `sembleContext.stats`, not on a person's entry.
+        likeCount: null,
       }));
       const result = { entries, sembleContext };
       writeCacheJson(db, key, result, now);
@@ -525,6 +537,20 @@ export async function getMentionLaneItems(
   if (picked.length === 0 && unreachable) throw new MentionLaneUnavailableError();
 
   const entries = await Promise.all(picked.map((rec) => resolveEntry(db, laneId, rec)));
+
+  // Rank material for the merged discussion: one batched appview call stamps the
+  // Bluesky lane's posts with their like counts. `picked` and `entries` are
+  // index-aligned (the map above), so the record's AT-URI keys the stamp. On any
+  // failure the counts stay null and the surface falls back to recency.
+  if (laneId === 'bluesky' && entries.length > 0) {
+    const uris = picked.map((rec) => `at://${rec.did}/${rec.collection}/${rec.rkey}`);
+    const likes = await fetchPostLikeCounts(uris);
+    entries.forEach((entry, i) => {
+      const count = likes.get(uris[i]);
+      if (count !== undefined) entry.likeCount = count;
+    });
+  }
+
   const result: MentionLaneItemsResult =
     laneId === 'semble'
       ? {

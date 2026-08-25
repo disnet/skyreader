@@ -308,6 +308,11 @@
     return source.charAt(0).toUpperCase();
   }
 
+  // The engagement number the stream ranked on, as it reads in the head line.
+  function likeLabel(count: number): string {
+    return `${count} ${count === 1 ? 'like' : 'likes'}`;
+  }
+
   function monogramFor(entry: DiscussionEntryVM): string {
     return monogram(entry.displayName?.trim() || entry.handle || entry.did.replace('did:plc:', ''));
   }
@@ -628,6 +633,14 @@
                   <time class="entry-time" datetime={entry.isoTime ?? undefined}
                     >{entry.relativeTime}</time
                   >
+                {/if}
+                <!-- The stream leads with the most-liked references, so the
+                     number that decided the order is on the row. Plain muted
+                     text, and absent entirely at zero — a quiet discussion
+                     shouldn't be scored. -->
+                {#if entry.likeCount}
+                  <span class="entry-sep" aria-hidden="true">·</span>
+                  <span class="entry-likes">{likeLabel(entry.likeCount)}</span>
                 {/if}
                 {#if entry.url}
                   <a
@@ -1367,6 +1380,7 @@
 
   .entry-verb,
   .entry-sep,
+  .entry-likes,
   .entry-time {
     flex-shrink: 0;
     white-space: nowrap;

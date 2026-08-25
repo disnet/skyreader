@@ -793,6 +793,12 @@ export interface MentionLaneEntry {
   // (distinct from the user's comment in `note`). Null for other lanes.
   verb: string | null;
   quote: string | null;
+  // Likes on the reference itself — the merged discussion's sort key. Bluesky
+  // lane only (no other network publishes a per-reference count) and
+  // best-effort even there: null when the appview didn't answer, and absent
+  // entirely from a payload an older proxy cached. Adornment, so a missing
+  // count ranks as 0 rather than failing anything.
+  likeCount: number | null;
 }
 
 export interface CommunityHighlightNote {

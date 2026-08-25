@@ -5,6 +5,7 @@
   // backend (see ../+layout.ts).
   import AtmospherePanel from '$lib/components/feed/AtmospherePanel.svelte';
   import { hoursAgo, laneVM, splitStream, streamEntry } from '../cards/fixtures';
+  import { byEngagement } from '$lib/utils/discussionSort';
   import type { DiscussionFilterId, SembleContextVM } from '$lib/components/articleCardView.types';
   import Showcase from '../_harness/Showcase.svelte';
   import Case from '../_harness/Case.svelte';
@@ -34,12 +35,29 @@
   // bridge post that is nothing but the headline and two links, an annotation
   // with a quoted passage, a save filed into named collections, an entry with no
   // profile record at all, and one with no date.
+  //
+  // Authored in date order and sorted below the way the hook sorts it — likes
+  // first, recency as the tiebreak — so the ranking is something you can see
+  // here rather than something you have to trust. Only Bluesky entries carry a
+  // count; every other lane is null and keeps its old newest-first order.
   const entries = [
+    streamEntry('bluesky', {
+      did: 'did:plc:grace',
+      handle: 'grace.bsky.social',
+      displayName: 'Grace Lindqvist',
+      createdAt: hoursAgo(1),
+      likeCount: 1,
+      // Newest in the list and still not the lead: one like doesn't outrank a
+      // post the network actually carried.
+      note: 'Just found this. Saving it for the train home.',
+      url: 'https://bsky.app/profile/grace.bsky.social/post/3kgrace',
+    }),
     streamEntry('bluesky', {
       did: 'did:plc:alice',
       handle: 'alice.bsky.social',
       displayName: 'Alice Mbeki',
       createdAt: hoursAgo(2),
+      likeCount: 12,
       note: 'Best take on this I have read all year. The second half is the part worth arguing with, and I think the author knows it.',
       url: 'https://bsky.app/profile/alice.bsky.social/post/3kabc',
     }),
@@ -75,8 +93,20 @@
       did: 'did:plc:hn',
       handle: 'betterhn20.e-work.xyz',
       createdAt: hoursAgo(31),
+      likeCount: 3,
       note: 'The Article Title https://example.com/the-article (https://news.ycombinator.com/item?id=49396811)',
       url: 'https://bsky.app/profile/betterhn20.e-work.xyz/post/3kbot',
+    }),
+    // A day and a half old, and still what the network actually carried — the
+    // whole point of ranking by likes rather than by clock.
+    streamEntry('bluesky', {
+      did: 'did:plc:frank',
+      handle: 'frank.bsky.social',
+      displayName: 'Frank Osei',
+      createdAt: hoursAgo(34),
+      likeCount: 128,
+      note: 'The argument in the second half is the one worth having, and almost nobody quoting this has got to it yet.',
+      url: 'https://bsky.app/profile/frank.bsky.social/post/3kfrank',
     }),
     streamEntry('bluesky', {
       did: 'did:plc:lobsters',
@@ -112,7 +142,7 @@
       note: 'The Publication Name example.com/the-article',
       url: 'https://bsky.app/profile/example.com.web.brid.gy/post/3kr3',
     }),
-  ];
+  ].sort(byEngagement);
 
   // What Semble knows about the URL beyond the people already in the stream:
   // aggregate counts, collection placements, standalone notes, and the typed
@@ -331,7 +361,7 @@
 
 <Showcase
   title="Discussion"
-  description="What the Atmosphere said about one article, merged into a single chronological stream. Lanes are filters over it, not four lists to click between. The filter chips below are live."
+  description="What the Atmosphere said about one article, merged into a single stream ranked by engagement — most-liked first, newest as the tiebreak. Lanes are filters over it, not four lists to click between. The filter chips below are live."
 >
   <Case
     name="Reader · the whole discussion"
