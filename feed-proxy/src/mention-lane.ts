@@ -33,6 +33,7 @@ import { resolveHandle, resolvePdsUrl } from './did-resolver';
 import { safeFetch } from './ssrf-guard';
 import { resolveSiteMeta, buildCanonicalUrl, parseAtUri } from './standard-site';
 import { constellationGet, constellationGetResult } from './constellation-client';
+import { fetchPostEngagement, GET_POSTS_MAX_URIS } from './bsky-appview';
 import { extractContentText } from './document-content';
 import {
   fetchSembleContext,
@@ -55,6 +56,14 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 const PROFILE_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 // One entry per author; bound the per-record PDS fetches behind an expand.
 const MAX_ENTRIES = 8;
+// The Bluesky lane discovers more candidates than it shows and keeps the
+// most-liked MAX_ENTRIES of them. Constellation returns linking records in its
+// own index order, not by engagement, so ranking a list already truncated to
+// eight would just reorder an arbitrary sample — and on a busy article the post
+// everyone carried is exactly the one sitting outside it. Capped at the
+// appview's batch limit so the wider pool still costs one call; only the eight
+// survivors are fetched from their PDS, so the expensive work is unchanged.
+const MAX_RANKED_CANDIDATES = GET_POSTS_MAX_URIS;
 // Over-fetch linking records before dedup-by-author so the cap is met after dups.
 const LINKS_PAGE_LIMIT = 30;
 
@@ -95,6 +104,11 @@ export interface MentionLaneEntry {
   // The highlighted passage a margin.at note targets (its TextQuoteSelector),
   // distinct from the user's own comment in `note`. Null elsewhere.
   quote: string | null;
+  // How many likes the reference itself has — the surface's engagement sort key.
+  // Bluesky lane only, and best-effort even there: null when the appview didn't
+  // answer or no longer serves the post. Every other lane is null by nature,
+  // since a note or a save carries no second-order count (see bsky-appview.ts).
+  likeCount: number | null;
 }
 
 export interface MentionLaneItemsResult {
@@ -126,8 +140,21 @@ interface LinksAllResponse {
   links?: Record<string, Record<string, { records?: number; distinct_dids?: number }>>;
 }
 
+interface LinkingRecord {
+  did: string;
+  collection: string;
+  rkey: string;
+}
+
 interface LinksResponse {
-  linking_records?: Array<{ did: string; collection: string; rkey: string }>;
+  linking_records?: LinkingRecord[];
+}
+
+// A candidate that survived selection, carrying whatever engagement number it
+// was ranked on so the resolved entry can be stamped with it.
+interface PickedRecord {
+  rec: LinkingRecord;
+  likeCount: number | null;
 }
 
 interface CacheRow {
@@ -383,11 +410,14 @@ async function resolveEntry(
     collections,
     verb,
     quote,
+    // Stamped by the caller for the Bluesky lane, in one batched appview call
+    // across the whole lane rather than a fetch per entry.
+    likeCount: null,
   };
 }
 
 function cacheKey(laneId: LaneId, normUrl: string): string {
-  return `lane-items2:${laneId}|${normUrl}`;
+  return `lane-items3:${laneId}|${normUrl}`;
 }
 
 /**
@@ -402,6 +432,53 @@ export class MentionLaneUnavailableError extends Error {
     super('Constellation unavailable');
     this.name = 'MentionLaneUnavailableError';
   }
+}
+
+/**
+ * Choose the MAX_ENTRIES records a lane will actually resolve, from the wider
+ * pool discovery turned up.
+ *
+ * The Bluesky lane scores its whole pool with one batched appview call and keeps
+ * the most-liked — so an article with thirty posts about it leads with the ones
+ * people carried, not with whichever eight the index happened to return first.
+ * Ties fall back to recency, using the post date the same call hands over (the
+ * entry's own createdAt still comes from the PDS record; asking every candidate
+ * for it is exactly the cost the cap exists to avoid). The sort is stable, so a
+ * candidate the appview never mentioned — or an appview that didn't answer at
+ * all, leaving every candidate unscored — keeps the index's order, which is the
+ * first-N list this lane returned before ranking existed.
+ *
+ * No other lane has a per-entry metric — a linkblog note, a margin.at annotation
+ * and a Semble card each *are* one save — so they take the head of the pool
+ * unscored.
+ */
+async function pickLaneRecords(
+  laneId: LaneId,
+  candidates: LinkingRecord[]
+): Promise<PickedRecord[]> {
+  if (laneId !== 'bluesky') {
+    return candidates.slice(0, MAX_ENTRIES).map((rec) => ({ rec, likeCount: null }));
+  }
+  const uris = candidates.map((rec) => `at://${rec.did}/${rec.collection}/${rec.rkey}`);
+  const engagement = await fetchPostEngagement(uris);
+  return candidates
+    .map((rec, i) => {
+      const post = engagement.get(uris[i]);
+      const at = post?.createdAt ? Date.parse(post.createdAt) : NaN;
+      return { rec, likeCount: post?.likeCount ?? null, postedAt: Number.isFinite(at) ? at : null };
+    })
+    .sort((a, b) => {
+      const byLikes = (b.likeCount ?? 0) - (a.likeCount ?? 0);
+      if (byLikes !== 0) return byLikes;
+      // Undated candidates sort last within their like bucket, matching the
+      // surface's own rule for an entry with no timestamp.
+      if (a.postedAt === null || b.postedAt === null) {
+        return a.postedAt === b.postedAt ? 0 : a.postedAt === null ? 1 : -1;
+      }
+      return b.postedAt - a.postedAt;
+    })
+    .slice(0, MAX_ENTRIES)
+    .map(({ rec, likeCount }) => ({ rec, likeCount }));
 }
 
 /**
@@ -464,6 +541,9 @@ export async function getMentionLaneItems(
         collections: [],
         verb: null,
         quote: null,
+        // A Semble card has no like count of its own — the article-level save
+        // count lives in `sembleContext.stats`, not on a person's entry.
+        likeCount: null,
       }));
       const result = { entries, sembleContext };
       writeCacheJson(db, key, result, now);
@@ -500,11 +580,14 @@ export async function getMentionLaneItems(
   }
 
   // Gather linking records across this lane's sources, dedup by author (a person
-  // may link via several paths), capped.
+  // may link via several paths), capped. A rankable lane gathers a wider pool
+  // than it will show and picks from it below; every other lane's cap is the
+  // number of entries it returns, since discovery order is all it has to go on.
+  const poolLimit = laneId === 'bluesky' ? MAX_RANKED_CANDIDATES : MAX_ENTRIES;
   const seen = new Set<string>();
-  const picked: Array<{ did: string; collection: string; rkey: string }> = [];
+  const candidates: LinkingRecord[] = [];
   for (const src of sources) {
-    if (picked.length >= MAX_ENTRIES) break;
+    if (candidates.length >= poolLimit) break;
     const links = await constellationGetResult<LinksResponse>('/links', {
       target: src.target,
       collection: src.collection,
@@ -515,16 +598,23 @@ export async function getMentionLaneItems(
     for (const rec of links.data?.linking_records ?? []) {
       if (seen.has(rec.did)) continue;
       seen.add(rec.did);
-      picked.push({ did: rec.did, collection: rec.collection, rkey: rec.rkey });
-      if (picked.length >= MAX_ENTRIES) break;
+      candidates.push({ did: rec.did, collection: rec.collection, rkey: rec.rkey });
+      if (candidates.length >= poolLimit) break;
     }
   }
   // The index said this lane has people; if we then couldn't reach it to ask who,
   // an empty list would read as "nobody" — which is the one thing we know is
   // false here.
-  if (picked.length === 0 && unreachable) throw new MentionLaneUnavailableError();
+  if (candidates.length === 0 && unreachable) throw new MentionLaneUnavailableError();
 
-  const entries = await Promise.all(picked.map((rec) => resolveEntry(db, laneId, rec)));
+  const picked = await pickLaneRecords(laneId, candidates);
+  const entries = await Promise.all(picked.map((p) => resolveEntry(db, laneId, p.rec)));
+  // `picked` and `entries` are index-aligned (the map above), so each entry
+  // carries the count its record was ranked on.
+  entries.forEach((entry, i) => {
+    entry.likeCount = picked[i].likeCount;
+  });
+
   const result: MentionLaneItemsResult =
     laneId === 'semble'
       ? {

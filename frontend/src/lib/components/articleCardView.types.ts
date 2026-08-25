@@ -48,6 +48,12 @@ export interface LanePersonVM {
   verb: string | null;
   /** margin.at lane only: the highlighted passage, distinct from the `note` comment. */
   quote: string | null;
+  /**
+   * Likes on the reference itself — what the discussion stream ranks on.
+   * Bluesky lane only and best-effort there; null elsewhere and for any payload
+   * resolved before the count existed.
+   */
+  likeCount: number | null;
 }
 
 /** `all` is the resting state of the discussion: every lane, one stream. */
@@ -88,7 +94,11 @@ export interface DiscussionEntryVM extends LanePersonVM {
   cleanNote: string | null;
 }
 
-/** The merged, filtered, chronologically ordered discussion. */
+/**
+ * The merged, filtered discussion, ranked by engagement: the most-liked
+ * references lead, with recency as the tiebreak (so the entries carrying no
+ * count — every lane but Bluesky — stay newest-first among themselves).
+ */
 export interface DiscussionStreamVM {
   /**
    * Nobody has asked for the people yet — the host hasn't opened the stream (the

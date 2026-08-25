@@ -272,6 +272,9 @@ export interface MentionLaneEntryResult {
   // highlighted passage it targets (distinct from the comment in `note`).
   verb: string | null;
   quote: string | null;
+  // The reference's own like count — what the merged discussion ranks on.
+  // Bluesky lane only and best-effort there; null everywhere else.
+  likeCount: number | null;
 }
 
 export interface SembleContextResult {

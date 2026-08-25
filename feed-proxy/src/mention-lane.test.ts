@@ -22,15 +22,46 @@ function seedDid(db: Database, did: string, handle: string) {
   );
 }
 
-// Mock /links/all (source discovery), /links (per-source records), and PDS
-// getRecord (the per-record note). `records` maps rkey → record value.
+// How the Bluesky appview answers `getPosts` for a case: which at-URIs it knows
+// a like count for, and whether it answers at all. Omitted → it 404s, which is
+// the "no counts, sort by date" path every other case exercises.
+type AppviewMock = {
+  likes?: Record<string, number>;
+  /** The post record's own createdAt, per at-URI. Absent → the appview serves none. */
+  dates?: Record<string, string>;
+  /** Answer with this status instead of the counts (e.g. 500). */
+  status?: number;
+  /** Fail the connection outright. */
+  throws?: boolean;
+};
+
+// Mock /links/all (source discovery), /links (per-source records), PDS
+// getRecord (the per-record note), and the Bluesky appview's getPosts (the
+// per-post like count). `records` maps rkey → record value.
 function mockConstellation(
   linksAll: Record<string, Record<string, { distinct_dids: number }>>,
   recsBySource: Record<string, Array<{ did: string; rkey: string }>>,
-  records: Record<string, Record<string, unknown>> = {}
+  records: Record<string, Record<string, unknown>> = {},
+  appview?: AppviewMock
 ) {
   return spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
     const url = new URL(String(input));
+    if (url.hostname === 'public.api.bsky.app') {
+      if (!appview) return new Response('{}', { status: 404 });
+      if (appview.throws) throw new TypeError('connection refused');
+      if (appview.status) return new Response('{}', { status: appview.status });
+      // The appview returns only the posts it can serve — a deleted or blocked
+      // one is simply missing from the list, not nulled out.
+      const posts = url.searchParams
+        .getAll('uris')
+        .filter((uri) => (appview.likes ?? {})[uri] !== undefined)
+        .map((uri) => ({
+          uri,
+          likeCount: appview.likes![uri],
+          record: { createdAt: (appview.dates ?? {})[uri] },
+        }));
+      return new Response(JSON.stringify({ posts }));
+    }
     if (url.pathname === '/links/all') {
       return new Response(JSON.stringify({ links: linksAll }));
     }
@@ -96,6 +127,197 @@ describe('getMentionLaneItems', () => {
       collections: [],
       verb: null,
       quote: null,
+      // The appview isn't mocked in this case, so the count degrades to null
+      // and the lane still resolves — the whole failure mode, in one line.
+      likeCount: null,
+    });
+  });
+
+  // The Bluesky lane is the only one with a per-entry engagement number, and the
+  // discussion stream ranks on it — so the count has to arrive with the entries,
+  // and its absence has to be survivable.
+  describe('Bluesky like counts', () => {
+    // Two authors on one source, so the batched appview call has to key its
+    // counts by at-URI rather than by position.
+    function mockTwoPosts(appview?: AppviewMock) {
+      return mockConstellation(
+        { 'app.bsky.feed.post': { '.embed.external.uri': { distinct_dids: 2 } } },
+        {
+          'app.bsky.feed.post|.embed.external.uri': [
+            { did: 'did:plc:alice', rkey: 'post1' },
+            { did: 'did:plc:bob', rkey: 'post2' },
+          ],
+        },
+        { post1: { text: 'great read' }, post2: { text: 'also good' } },
+        appview
+      );
+    }
+
+    it('stamps each entry with its own post’s like count', async () => {
+      const db = freshDb();
+      seedDid(db, 'did:plc:alice', 'alice.test');
+      seedDid(db, 'did:plc:bob', 'bob.test');
+      mockTwoPosts({
+        likes: {
+          'at://did:plc:alice/app.bsky.feed.post/post1': 12,
+          'at://did:plc:bob/app.bsky.feed.post/post2': 0,
+        },
+      });
+
+      const { entries } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+      expect(entries.map((e) => [e.did, e.likeCount])).toEqual([
+        ['did:plc:alice', 12],
+        ['did:plc:bob', 0],
+      ]);
+    });
+
+    it('leaves a post the appview no longer serves at null', async () => {
+      const db = freshDb();
+      seedDid(db, 'did:plc:alice', 'alice.test');
+      seedDid(db, 'did:plc:bob', 'bob.test');
+      // Bob's post was deleted: the appview omits it from the response.
+      mockTwoPosts({ likes: { 'at://did:plc:alice/app.bsky.feed.post/post1': 3 } });
+
+      const { entries } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+      expect(entries.map((e) => e.likeCount)).toEqual([3, null]);
+    });
+
+    it('still resolves the lane when the appview errors', async () => {
+      const db = freshDb();
+      seedDid(db, 'did:plc:alice', 'alice.test');
+      seedDid(db, 'did:plc:bob', 'bob.test');
+      mockTwoPosts({ status: 500 });
+
+      const { entries } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+      expect(entries.map((e) => e.note)).toEqual(['great read', 'also good']);
+      expect(entries.every((e) => e.likeCount === null)).toBe(true);
+    });
+
+    it('still resolves the lane when the appview is unreachable', async () => {
+      const db = freshDb();
+      seedDid(db, 'did:plc:alice', 'alice.test');
+      seedDid(db, 'did:plc:bob', 'bob.test');
+      mockTwoPosts({ throws: true });
+
+      const { entries } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+      expect(entries.length).toBe(2);
+      expect(entries.every((e) => e.likeCount === null)).toBe(true);
+    });
+
+    // Constellation returns linking records in its own index order, so the
+    // eight a busy article shows have to be chosen after the counts arrive —
+    // ranking a list that was already truncated would only reorder a sample.
+    function mockCrowdedPost(appview?: AppviewMock, db?: Database) {
+      const authors = Array.from({ length: 12 }, (_, i) => ({
+        did: `did:plc:u${i}`,
+        rkey: `post${i}`,
+      }));
+      if (db) for (const a of authors) seedDid(db, a.did, `${a.did.slice(8)}.test`);
+      return mockConstellation(
+        { 'app.bsky.feed.post': { '.embed.external.uri': { distinct_dids: authors.length } } },
+        { 'app.bsky.feed.post|.embed.external.uri': authors },
+        {},
+        appview
+      );
+    }
+
+    it('ranks the whole discovered pool, not just the first eight', async () => {
+      const db = freshDb();
+      // The one post everyone carried is the last one the index returns.
+      const spy = mockCrowdedPost(
+        {
+          likes: {
+            'at://did:plc:u11/app.bsky.feed.post/post11': 99,
+            'at://did:plc:u2/app.bsky.feed.post/post2': 5,
+          },
+        },
+        db
+      );
+
+      const { entries } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+
+      expect(entries.length).toBe(8);
+      expect(entries.map((e) => e.did).slice(0, 2)).toEqual(['did:plc:u11', 'did:plc:u2']);
+      // Unscored candidates fall in behind, still in index order.
+      expect(entries.map((e) => e.did).slice(2)).toEqual([
+        'did:plc:u0',
+        'did:plc:u1',
+        'did:plc:u3',
+        'did:plc:u4',
+        'did:plc:u5',
+        'did:plc:u6',
+      ]);
+      // One appview call, carrying every candidate — not one per post.
+      const appviewCalls = spy.mock.calls.filter((call) =>
+        String(call[0]).includes('public.api.bsky.app')
+      );
+      expect(appviewCalls.length).toBe(1);
+      expect(new URL(String(appviewCalls[0][0])).searchParams.getAll('uris').length).toBe(12);
+      // Only the survivors cost a PDS round trip for their post record.
+      const fetchedPosts = spy.mock.calls
+        .map((call) => new URL(String(call[0])))
+        .filter(
+          (url) =>
+            url.pathname === '/xrpc/com.atproto.repo.getRecord' &&
+            url.searchParams.get('collection') === 'app.bsky.feed.post'
+        )
+        .map((url) => url.searchParams.get('rkey'));
+      expect(fetchedPosts.sort()).toEqual(
+        ['post11', 'post2', 'post0', 'post1', 'post3', 'post4', 'post5', 'post6'].sort()
+      );
+    });
+
+    it('breaks like-count ties on the post date the same call returns', async () => {
+      const db = freshDb();
+      // Nobody liked anything, so the pool is chosen purely on recency — and the
+      // two newest posts are the last two the index returns.
+      const uri = (i: number) => `at://did:plc:u${i}/app.bsky.feed.post/post${i}`;
+      const likes: Record<string, number> = {};
+      const dates: Record<string, string> = {};
+      for (let i = 0; i < 12; i++) {
+        likes[uri(i)] = 0;
+        dates[uri(i)] = `2026-01-${String(i + 1).padStart(2, '0')}T00:00:00Z`;
+      }
+      mockCrowdedPost({ likes, dates }, db);
+
+      const { entries } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+      expect(entries.map((e) => e.did).slice(0, 2)).toEqual(['did:plc:u11', 'did:plc:u10']);
+      expect(entries.length).toBe(8);
+      expect(entries.some((e) => e.did === 'did:plc:u0')).toBeFalse();
+    });
+
+    it('falls back to the first eight in index order when the appview errors', async () => {
+      const db = freshDb();
+      mockCrowdedPost({ status: 500 }, db);
+
+      const { entries } = await getMentionLaneItems(db, ARTICLE, 'bluesky');
+      expect(entries.map((e) => e.did)).toEqual([
+        'did:plc:u0',
+        'did:plc:u1',
+        'did:plc:u2',
+        'did:plc:u3',
+        'did:plc:u4',
+        'did:plc:u5',
+        'did:plc:u6',
+        'did:plc:u7',
+      ]);
+      expect(entries.every((e) => e.likeCount === null)).toBe(true);
+    });
+
+    it('asks the appview nothing for a lane that has no like counts', async () => {
+      const db = freshDb();
+      seedDid(db, 'did:plc:frank', 'frank.test');
+      const spy = mockConstellation(
+        { 'at.margin.note': { '.target.source': { distinct_dids: 1 } } },
+        { 'at.margin.note|.target.source': [{ did: 'did:plc:frank', rkey: 'note1' }] },
+        { note1: { motivation: 'commenting', body: { value: 'a note' } } }
+      );
+
+      const { entries } = await getMentionLaneItems(db, ARTICLE, 'margin');
+      expect(entries[0].likeCount).toBeNull();
+      expect(
+        spy.mock.calls.some((call) => String(call[0]).includes('public.api.bsky.app'))
+      ).toBeFalse();
     });
   });
 
@@ -135,6 +357,7 @@ describe('getMentionLaneItems', () => {
         collections: [],
         verb: null,
         quote: null,
+        likeCount: null,
       },
     ]);
   });
@@ -170,6 +393,7 @@ describe('getMentionLaneItems', () => {
         collections: [],
         verb: null,
         quote: null,
+        likeCount: null,
       },
     ]);
   });
@@ -238,6 +462,7 @@ describe('getMentionLaneItems', () => {
         ],
         verb: null,
         quote: null,
+        likeCount: null,
       },
     ]);
   });
@@ -274,6 +499,7 @@ describe('getMentionLaneItems', () => {
         collections: [],
         verb: 'highlighted',
         quote: 'the owned library',
+        likeCount: null,
       },
     ]);
   });
