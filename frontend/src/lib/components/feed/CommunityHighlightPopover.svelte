@@ -6,14 +6,17 @@
   let {
     group,
     anchorRect,
+    itemUrl,
     capped = false,
     onClose,
   }: {
     group: CommunityHighlightGroup;
     anchorRect: DOMRect;
+    itemUrl: string;
     capped?: boolean;
     onClose: () => void;
   } = $props();
+  let marginUrl = $derived(`https://margin.at/url/${encodeURIComponent(itemUrl)}`);
   let el: HTMLDivElement;
   function outside(event: Event) {
     if (!el?.contains(event.target as Node)) onClose();
@@ -34,10 +37,12 @@
   });
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
 <div
   class="community-popover"
   bind:this={el}
   role="dialog"
+  tabindex="-1"
   aria-label="Community highlight"
   onclick={(e) => e.stopPropagation()}
 >
@@ -55,8 +60,14 @@
       </div>
     </div>
   {/each}
-  <div class="source">On margin.at</div>
-  {#if capped}<div class="source">More highlights may be available.</div>{/if}
+  <a
+    class="source"
+    href={marginUrl}
+    target="_blank"
+    rel="noopener noreferrer"
+    aria-label="View highlights for this article on margin.at">View on margin.at ↗</a
+  >
+  {#if capped}<div class="source-note">More highlights may be available.</div>{/if}
 </div>
 
 <style>
@@ -104,7 +115,17 @@
     overflow-wrap: anywhere;
   }
   .source {
+    display: inline-block;
     margin-top: 0.65rem;
+    color: var(--color-primary, #0066cc);
+    font-size: 0.75rem;
+    text-decoration: none;
+  }
+  .source:hover {
+    text-decoration: underline;
+  }
+  .source-note {
+    margin-top: 0.35rem;
     color: var(--text-muted, #717171);
     font-size: 0.75rem;
   }
