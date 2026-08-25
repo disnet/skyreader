@@ -231,6 +231,48 @@
     'The half-life of an online lie',
     'Reading in the age of the algorithm',
   ];
+  // The other shape that forced a fold: a URL every mapper has filed. Twenty
+  // collections came back, Semble holds forty-seven, and one of the names runs
+  // long enough to eat the panel on its own.
+  const filedNames = [
+    'Reading',
+    'AI & the open web',
+    'Protocol design',
+    'Social Media \u2014 Algorithmic Distortions and Polarization in the Feed Era',
+    'Attention',
+    'To read',
+    'Sensemaking',
+    'Open protocols',
+    'Media theory',
+    'Platform governance',
+    'Recommender systems',
+    'Misinformation',
+    'Public square',
+    'Feeds',
+    'Moderation',
+    'Synthetic media',
+    'Trust & safety',
+    'Network effects',
+    'Curation',
+    'Archive',
+  ];
+  const filedContext: SembleContextVM = {
+    ...emptyContext,
+    stats: {
+      saves: 30,
+      notes: 0,
+      collections: 47,
+      connections: { total: 0, incoming: 0, outgoing: 0 },
+    },
+    collections: filedNames.map((name, i) => ({
+      id: `filed-${i}`,
+      name,
+      url: `https://semble.so/profile/erin.bsky.social/collections/3kfiled${i}`,
+      author: { did: 'did:plc:erin', handle: 'erin.bsky.social' },
+    })),
+    truncated: { savers: false, notes: false, collections: true, connections: false },
+  };
+
   const mapper = sembleAuthor('justinm.one', 'Justin Mavromatis');
   const mappedContext: SembleContextVM = {
     ...emptyContext,
@@ -322,6 +364,20 @@
       stream={{ loading: false, entries: [] }}
       onSaveConnection={toggleSavedLink}
       isConnectionSaved={isLinkSaved}
+    />
+  </Case>
+
+  <Case
+    name="Semble · filed everywhere"
+    note="A URL every mapper has filed. Twenty collections came back and unfolded they were a wall of pills between the reader and the discussion they introduce; six read as a set, the rest open on request. A name long enough to eat the panel gives up its tail and keeps it in the title. Semble holds forty-seven, and the foot says so."
+    width="800px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={[laneVM('semble', { count: 1 })]}
+      filters={[]}
+      sembleContext={filedContext}
+      stream={{ loading: false, entries: [] }}
     />
   </Case>
 

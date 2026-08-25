@@ -194,3 +194,70 @@ describe('AtmospherePanel Semble connections', () => {
     expect(target.querySelector('.semble-context')).not.toBeNull();
   });
 });
+
+// A well-mapped URL sits in dozens of collections. Unfolded, the strip is a wall
+// of pills standing between the reader and the discussion it introduces.
+describe('AtmospherePanel Semble collections', () => {
+  afterEach(() => {
+    for (const component of mounted.splice(0)) unmount(component);
+    document.body.innerHTML = '';
+  });
+
+  const collections = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `collection-${i}`,
+      name: `Collection ${i}`,
+      url: `https://semble.so/profile/erin.test/collections/${i}`,
+      author: { did: 'did:plc:erin', handle: 'erin.test' },
+    }));
+
+  it('shows the first handful and holds the rest behind a disclosure', () => {
+    const target = render({ sembleContext: { ...emptyContext, collections: collections(20) } });
+    expect(target.querySelectorAll('.semble-collection').length).toBe(6);
+    expect(target.querySelector('.semble-disclose-inline')?.textContent?.trim()).toBe('14 more');
+  });
+
+  it('opens the whole strip on request', () => {
+    const target = render({ sembleContext: { ...emptyContext, collections: collections(20) } });
+    (target.querySelector('.semble-disclose-inline') as HTMLButtonElement).click();
+    flushSync();
+    expect(target.querySelectorAll('.semble-collection').length).toBe(20);
+    expect(target.querySelector('.semble-disclose-inline')).toBeNull();
+  });
+
+  it('leaves a short strip alone', () => {
+    const target = render({ sembleContext: { ...emptyContext, collections: collections(3) } });
+    expect(target.querySelectorAll('.semble-collection').length).toBe(3);
+    expect(target.querySelector('.semble-disclose-inline')).toBeNull();
+  });
+
+  it('says how many collections Semble holds beyond the page it sent', () => {
+    const target = render({
+      sembleContext: {
+        ...emptyContext,
+        collections: collections(20),
+        stats: {
+          saves: 30,
+          notes: 0,
+          collections: 47,
+          connections: { total: 0, incoming: 0, outgoing: 0 },
+        },
+        truncated: { savers: false, notes: false, collections: true, connections: false },
+      },
+    });
+    expect(target.querySelector('.semble-foot')?.textContent).toContain(
+      'Showing 20 of 47 collections.'
+    );
+  });
+
+  it('still admits the page is partial when Semble sent no count to quote', () => {
+    const target = render({
+      sembleContext: {
+        ...emptyContext,
+        collections: collections(20),
+        truncated: { savers: false, notes: false, collections: true, connections: false },
+      },
+    });
+    expect(target.querySelector('.semble-foot')?.textContent).toContain('Semble holds more than');
+  });
+});

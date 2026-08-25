@@ -91,3 +91,56 @@ describe('fetchSembleContext connections', () => {
     expect(context?.connections.map((c) => c.id)).toEqual(['conn-1', 'conn-2']);
   });
 });
+
+// Collections and notes key lists on the reader's side too, and a duplicate key
+// there is fatal, not cosmetic — Svelte throws on it in production as well.
+describe('fetchSembleContext collections and notes', () => {
+  afterEach(() => {
+    (globalThis.fetch as ReturnType<typeof spyOn>).mockRestore?.();
+  });
+
+  const collection = (name: string, id?: string) => ({
+    ...(id ? { id } : {}),
+    name,
+    author: { id: 'did:plc:erin', handle: 'erin.test' },
+  });
+
+  it('gives id-less collections distinct keys', async () => {
+    mockSemble({
+      'network.cosmik.collection.getForUrl': {
+        collections: [collection('Reading'), collection('Protocol design')],
+      },
+    });
+
+    const context = await fetchSembleContext(ARTICLE);
+    expect(context?.collections.map((c) => c.name)).toEqual(['Reading', 'Protocol design']);
+    expect(new Set(context!.collections.map((c) => c.id)).size).toBe(2);
+    expect(context!.collections.every((c) => c.id)).toBe(true);
+  });
+
+  it('collapses the same collection returned twice', async () => {
+    mockSemble({
+      'network.cosmik.collection.getForUrl': {
+        collections: [collection('Reading', 'col-1'), collection('Reading', 'col-1')],
+      },
+    });
+
+    expect((await fetchSembleContext(ARTICLE))?.collections).toHaveLength(1);
+  });
+
+  it('gives id-less notes distinct keys and drops a repeat', async () => {
+    mockSemble({
+      'network.cosmik.card.getNoteCardsForUrl': {
+        notes: [
+          { note: 'First thought', author: { id: 'did:plc:erin', handle: 'erin.test' } },
+          { note: 'Second thought', author: { id: 'did:plc:erin', handle: 'erin.test' } },
+          { note: 'First thought', author: { id: 'did:plc:erin', handle: 'erin.test' } },
+        ],
+      },
+    });
+
+    const context = await fetchSembleContext(ARTICLE);
+    expect(context?.notes.map((n) => n.text)).toEqual(['First thought', 'Second thought']);
+    expect(new Set(context!.notes.map((n) => n.id)).size).toBe(2);
+  });
+});

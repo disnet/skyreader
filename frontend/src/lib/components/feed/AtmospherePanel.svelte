@@ -128,6 +128,9 @@
   const STREAM_PREVIEW = 6;
   /** Linkers named before the line asks to be opened. */
   const LINKS_PREVIEW = 8;
+  /** Collections named before the strip asks to be opened. A well-mapped URL
+   *  sits in dozens; unfolded they are a wall of pills above the discussion. */
+  const COLLECTIONS_PREVIEW = 6;
 
   let streamExpanded = $state(false);
   let linksExpanded = $state(false);
@@ -219,6 +222,7 @@
 
   let openGroups = $state<string[]>([]);
   let allGroupsOpen = $state(false);
+  let collectionsExpanded = $state(false);
   // A different article is a different graph: nothing stays open across it.
   let openedFor: SembleContextVM | undefined = undefined;
   $effect(() => {
@@ -226,8 +230,18 @@
       openedFor = sembleContext;
       openGroups = [];
       allGroupsOpen = false;
+      collectionsExpanded = false;
     }
   });
+
+  const visibleCollections = $derived(
+    collectionsExpanded
+      ? (sembleContext?.collections ?? [])
+      : (sembleContext?.collections ?? []).slice(0, COLLECTIONS_PREVIEW)
+  );
+  const foldedCollections = $derived(
+    (sembleContext?.collections.length ?? 0) - visibleCollections.length
+  );
 
   const visibleGroups = $derived(
     allGroupsOpen ? connectionGroups : connectionGroups.slice(0, BLOCK_PREVIEW)
@@ -249,6 +263,13 @@
   const connectionsGot = $derived(sembleContext?.connections.length ?? 0);
   const connectionsBeyond = $derived(
     connectionsHeld > connectionsGot ? connectionsHeld - connectionsGot : 0
+  );
+  // Collections page the same way. The strip's own fold says how many we hold
+  // back; only this says how many we were never handed.
+  const collectionsHeld = $derived(sembleContext?.stats?.collections ?? 0);
+  const collectionsGot = $derived(sembleContext?.collections.length ?? 0);
+  const collectionsBeyond = $derived(
+    collectionsHeld > collectionsGot ? collectionsHeld - collectionsGot : 0
   );
   const sembleTruncated = $derived(
     Boolean(sembleContext && Object.values(sembleContext.truncated).some(Boolean))
@@ -388,22 +409,40 @@
         {#if sembleContext.collections.length}
           <p class="semble-filed">
             <span class="semble-filed-label">Filed in</span>
-            {#each sembleContext.collections as collection (collection.id)}
+            {#each visibleCollections as collection (collection.id)}
               {#if collection.url}
                 <a
                   class="semble-collection"
                   href={safeHref(collection.url)}
                   target="_blank"
                   rel="noopener"
+                  title={collection.name}
                   onclick={(e) => e.stopPropagation()}
-                  ><Icon name="folder" size={11} />{collection.name}</a
+                  ><Icon name="folder" size={11} /><span class="semble-collection-name"
+                    >{collection.name}</span
+                  ></a
                 >
               {:else}
-                <span class="semble-collection"
-                  ><Icon name="folder" size={11} />{collection.name}</span
+                <span class="semble-collection" title={collection.name}
+                  ><Icon name="folder" size={11} /><span class="semble-collection-name"
+                    >{collection.name}</span
+                  ></span
                 >
               {/if}
             {/each}
+            {#if foldedCollections > 0}
+              <button
+                type="button"
+                class="semble-disclose semble-disclose-inline"
+                aria-expanded={false}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  collectionsExpanded = true;
+                }}
+              >
+                {foldedCollections} more
+              </button>
+            {/if}
           </p>
         {/if}
 
@@ -540,10 +579,15 @@
           </button>
         {/if}
 
-        {#if sembleContext.cardUrl && (connectionsBeyond > 0 || sembleContext.incomplete || sembleTruncated)}
+        {#if sembleContext.cardUrl && (connectionsBeyond > 0 || collectionsBeyond > 0 || sembleContext.incomplete || sembleTruncated)}
           <p class="semble-foot">
             {#if connectionsBeyond > 0}Showing {connectionsGot} of {connectionsHeld} connections.{/if}
-            {#if sembleContext.incomplete}Some Semble context is unavailable.{/if}
+            {#if collectionsBeyond > 0}Showing {collectionsGot} of {collectionsHeld} collections.{/if}
+            {#if sembleContext.incomplete}
+              Some Semble context is unavailable.
+            {:else if sembleTruncated && connectionsBeyond === 0 && collectionsBeyond === 0}
+              Semble holds more than this.
+            {/if}
             {#if sembleContext.cardUrl}
               <a
                 href={safeHref(sembleContext.cardUrl)}
@@ -971,6 +1015,8 @@
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
+    min-width: 0;
+    max-width: 100%;
     padding: 0.1875rem 0.5rem;
     border-radius: 999px;
     background: var(--color-bg-secondary);
@@ -978,8 +1024,19 @@
     text-decoration: none;
   }
 
+  /* A collection name is user-written and can run to a paragraph. The pill keeps
+     its shape and gives up the tail; the full name stays in the title. */
+  .semble-collection-name {
+    min-width: 0;
+    max-width: 16rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .semble-collection :global(.icon) {
     color: var(--color-text-secondary);
+    flex-shrink: 0;
   }
 
   a.semble-collection:hover {
@@ -1159,6 +1216,12 @@
   }
 
   .semble-disclose-block {
+    margin-top: 0;
+  }
+
+  /* Reads as the last pill in the strip rather than a control beneath it. */
+  .semble-disclose-inline {
+    align-self: auto;
     margin-top: 0;
   }
 
