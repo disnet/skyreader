@@ -10,6 +10,7 @@
 <CollectionPicker
   open={integrationSaveStore.open}
   integration={integrationSaveStore.integration}
-  onselect={(collections) => integrationSaveStore.select(collections)}
+  url={integrationSaveStore.url}
+  onconfirm={(result) => integrationSaveStore.confirm(result)}
   onclose={() => integrationSaveStore.close()}
 />
