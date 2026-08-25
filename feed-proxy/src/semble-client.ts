@@ -1,4 +1,4 @@
-import { normalizeArticleUrl } from './url-normalize';
+import { normalizeArticleUrl, constellationTargets } from './url-normalize';
 
 const API_BASE = 'https://api.semble.so/xrpc';
 const LIMIT = 20;
@@ -108,19 +108,86 @@ async function call(nsid: string, url: string, extra: Record<string, string> = {
   return JSON.parse(raw) as Obj;
 }
 
+/** How much this URL form actually holds on Semble — the tiebreaker between the
+ *  two trailing-slash variants below. */
+function statsWeight(meta: Obj): number {
+  const s = meta?.stats;
+  if (!s) return 0;
+  return (
+    count(s.libraryCount) +
+    count(s.noteCount) +
+    count(s.collectionCount) +
+    count(s.connections?.all?.total)
+  );
+}
+
+/**
+ * Which spelling of this URL to ask Semble about.
+ *
+ * Semble keys a card by the URL **string**, exactly the way Constellation keys a
+ * target — so `/post` and `/post/` are two different keys there, and an article
+ * whose site canonicalizes *with* the slash has all of its saves under the slash
+ * form and none under the trimmed one. `normalizeArticleUrl` collapses to the
+ * trimmed form for a stable cache key, so asking only that form reads as "nobody
+ * saved this" for every slash-canonical article (verified live: 15 saves and 16
+ * collections under the slash, zeros without it).
+ *
+ * So probe both forms with the cheap stats call, keep whichever Semble actually
+ * holds, and hand its metadata back so the winner isn't fetched twice. One extra
+ * request, on a lookup the caller caches. All probes failing yields the canonical
+ * form and `metaOk: false` — the caller decides what an unreachable Semble means.
+ */
+async function pickUrlVariant(
+  normUrl: string
+): Promise<{ apiUrl: string; meta: Obj; metaOk: boolean }> {
+  const targets = constellationTargets(normUrl);
+  const probes = await Promise.allSettled(
+    targets.map((target) =>
+      call('network.cosmik.card.getUrlMetadata', target, { includeStats: 'true' })
+    )
+  );
+  let best: { apiUrl: string; meta: Obj; metaOk: boolean } | null = null;
+  let bestWeight = -1;
+  targets.forEach((target, i) => {
+    const probe = probes[i];
+    if (probe.status !== 'fulfilled') return;
+    const weight = statsWeight(probe.value);
+    // Strictly greater, so a tie (both empty) keeps the canonical trimmed form.
+    if (weight > bestWeight) {
+      bestWeight = weight;
+      best = { apiUrl: target, meta: probe.value, metaOk: true };
+    }
+  });
+  return best ?? { apiUrl: normUrl, meta: {}, metaOk: false };
+}
+
+/** Semble answered, but with nothing: no people, no notes, no collections, no
+ *  edges. Worth naming because it isn't the same as Semble being down, and the
+ *  lane treats it differently — see getMentionLaneItems. */
+export function isEmptySembleContext(context: SembleContext): boolean {
+  return (
+    context.savers.length === 0 &&
+    context.notes.length === 0 &&
+    context.collections.length === 0 &&
+    context.connections.length === 0
+  );
+}
+
 export async function fetchSembleContext(rawUrl: string): Promise<SembleContext | null> {
   const url = normalizeArticleUrl(rawUrl);
   if (!url) return null;
+  // Everything below asks about `apiUrl` (the form Semble holds); `url` stays the
+  // canonical key, so the connection self-comparison keeps comparing like to like.
+  const { apiUrl, meta, metaOk } = await pickUrlVariant(url);
   const calls = await Promise.allSettled([
-    call('network.cosmik.card.getUrlMetadata', url, { includeStats: 'true' }),
-    call('network.cosmik.card.getLibrariesForUrl', url),
-    call('network.cosmik.card.getNoteCardsForUrl', url),
-    call('network.cosmik.collection.getForUrl', url),
-    call('network.cosmik.connection.getForUrl', url, { direction: 'both' }),
+    call('network.cosmik.card.getLibrariesForUrl', apiUrl),
+    call('network.cosmik.card.getNoteCardsForUrl', apiUrl),
+    call('network.cosmik.collection.getForUrl', apiUrl),
+    call('network.cosmik.connection.getForUrl', apiUrl, { direction: 'both' }),
   ]);
-  if (calls.every((r) => r.status === 'rejected')) return null;
+  if (!metaOk && calls.every((r) => r.status === 'rejected')) return null;
   const value = (i: number): Obj => (calls[i].status === 'fulfilled' ? calls[i].value : {});
-  const [meta, libraries, noteCards, collectionData, connectionData] = [0, 1, 2, 3, 4].map(value);
+  const [libraries, noteCards, collectionData, connectionData] = [0, 1, 2, 3].map(value);
   const stats = meta.stats
     ? {
         saves: count(meta.stats.libraryCount),
@@ -248,8 +315,8 @@ export async function fetchSembleContext(rawUrl: string): Promise<SembleContext 
       collections: hasMore(collectionData),
       connections: hasMore(connectionData),
     },
-    incomplete: calls.some((r) => r.status === 'rejected'),
+    incomplete: !metaOk || calls.some((r) => r.status === 'rejected'),
     source: 'semble-api',
-    cardUrl: sembleCardUrl(url),
+    cardUrl: sembleCardUrl(apiUrl),
   };
 }
