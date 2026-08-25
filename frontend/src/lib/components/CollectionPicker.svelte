@@ -269,6 +269,7 @@
         class="collection-row no-collection"
         class:selected={!isEdit && noCollection}
         onclick={toggleNoCollection}
+        disabled={!saveBackingStore.loaded}
         type="button"
       >
         <span class="checkbox" aria-hidden="true">
