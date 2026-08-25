@@ -243,6 +243,11 @@ function createSavedSearchStore() {
     handoffPending = result.state.handoffPending;
   }
 
+  /** Reset for a URL-driven saved-surface change unless a handoff is in flight. */
+  function resetForSurfaceChange() {
+    if (!handoffPending) closeSearch();
+  }
+
   return {
     get query() {
       return query;
@@ -284,6 +289,7 @@ function createSavedSearchStore() {
     },
     /** Full reset, used when leaving the saved view. */
     reset: closeSearch,
+    resetForSurfaceChange,
     /**
      * Incremental cache maintenance, called from savesStore's write points. A
      * no-op until the corpus exists — the first search builds it from scratch.

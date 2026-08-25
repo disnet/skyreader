@@ -1543,7 +1543,10 @@ function createFeedViewStore() {
       const nextSavedKey = `${filters.saved ?? ''}|${filters.view ?? ''}`;
       if (nextSavedKey !== currentSavedKey) {
         currentSavedKey = nextSavedKey;
-        savedSearchStore.reset();
+        // Home can deliberately carry its query into the Saved archive. The
+        // pending handoff survives this URL initialization and is consumed by
+        // FeedPage's subsequent saved-surface claim.
+        savedSearchStore.resetForSurfaceChange();
       }
       feedFilter = filters.feed;
       savedFilter = filters.saved;
