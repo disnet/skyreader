@@ -88,6 +88,8 @@ import {
   handleCreateMarginNote,
   handleUpdateMarginNote,
   handleDeleteMarginNote,
+  handleGetIntegrationMemberships,
+  handleEditIntegrationMemberships,
 } from './routes/integrations';
 import { handleFullSync, handleSyncSubscriptions, handleSyncStatus } from './routes/sync';
 import {
@@ -646,6 +648,20 @@ async function route(
         });
       } else {
         response = await handleCreateMarginNote(request, env);
+      }
+      break;
+    case url.pathname === '/api/integrations/semble/memberships':
+    case url.pathname === '/api/integrations/margin/memberships':
+      if (!session) return unauthorizedResponse(headers);
+      if (request.method === 'GET') {
+        response = await handleGetIntegrationMemberships(request, env);
+      } else if (request.method === 'POST') {
+        response = await handleEditIntegrationMemberships(request, env);
+      } else {
+        response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json' },
+        });
       }
       break;
     case url.pathname.startsWith('/api/integrations/margin/notes/'):

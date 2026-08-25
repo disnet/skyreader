@@ -1,6 +1,13 @@
 import type { Env, Session } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
 import { createPDSClient } from '../services/pds-client';
+import { generateTid } from '../utils/tid';
+import {
+  findMemberships,
+  editMemberships,
+  MembershipEditError,
+  type IntegrationProvider,
+} from '../services/integration-membership';
 import { SEMBLE_SCOPES, MARGIN_SCOPES } from './auth';
 
 /**
@@ -57,23 +64,8 @@ function checkIntegrationScopes(
   return null;
 }
 
-// Generate a TID-compatible rkey (AT Protocol timestamp ID)
-function generateTID(): string {
-  // TID format: base32-sortable encoding of microsecond timestamp + clock ID
-  // For simplicity, use a random string that matches the pattern
-  const now = BigInt(Date.now()) * 1000n; // microseconds
-  const clockId = BigInt(Math.floor(Math.random() * 1024));
-  const tid = (now << 10n) | clockId;
-  // Encode as base32-sortable (charset: 234567abcdefghijklmnopqrstuvwxyz)
-  const charset = '234567abcdefghijklmnopqrstuvwxyz';
-  let result = '';
-  let val = tid;
-  for (let i = 0; i < 13; i++) {
-    result = charset[Number(val & 31n)] + result;
-    val >>= 5n;
-  }
-  return result;
-}
+// rkeys come from utils/tid's generateTid — the real spec TID (monotonic within a
+// session, decodes back to a timestamp), shared with the backing write path.
 
 /**
  * POST /api/integrations/semble/cards — create a network.cosmik.card on PDS
@@ -124,7 +116,7 @@ export async function handleCreateSembleCard(request: Request, env: Env): Promis
         ? [{ uri: body.collectionUri, cid: body.collectionCid }]
         : [];
 
-  const rkey = generateTID();
+  const rkey = generateTid();
   const metadata: Record<string, string> = {};
   if (body.title) metadata.title = body.title;
   if (body.description) metadata.description = body.description;
@@ -154,7 +146,7 @@ export async function handleCreateSembleCard(request: Request, env: Env): Promis
   // For each selected collection, create a collectionLink record.
   const collectionResults: { uri: string; error?: string }[] = [];
   for (const col of collections) {
-    const linkRkey = generateTID();
+    const linkRkey = generateTid();
     const collectionLink = {
       $type: 'network.cosmik.collectionLink',
       collection: { uri: col.uri, cid: col.cid },
@@ -225,6 +217,147 @@ export async function handleListSembleCollections(request: Request, env: Env): P
   });
 }
 
+/** `/api/integrations/<provider>/memberships` — the provider segment of the path. */
+function providerFromPath(request: Request): IntegrationProvider | null {
+  const parts = new URL(request.url).pathname.split('/');
+  const provider = parts[3];
+  return provider === 'semble' || provider === 'margin' ? provider : null;
+}
+
+/**
+ * GET /api/integrations/:provider/memberships?url=… — which collections this URL is
+ * already saved to. Read straight from the PDS: the picker opens on live state, not
+ * on a Skyreader-side memory of what it once wrote.
+ */
+export async function handleGetIntegrationMemberships(
+  request: Request,
+  env: Env
+): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const provider = providerFromPath(request);
+  if (!provider) {
+    return new Response(JSON.stringify({ error: 'Unknown integration' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const checkResult = checkIntegrationScopes(session, provider);
+  if (checkResult) return checkResult;
+
+  const url = new URL(request.url).searchParams.get('url');
+  if (!url) {
+    return new Response(JSON.stringify({ error: 'url is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const pdsClient = createPDSClient(session);
+  const result = await findMemberships(pdsClient, provider, url);
+  if (!result.success) {
+    return new Response(JSON.stringify({ error: result.error }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  return new Response(JSON.stringify(result.data), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+/**
+ * POST /api/integrations/:provider/memberships — apply a membership diff for one URL.
+ *
+ * Body: `{ url, add: [{ uri, cid? }], remove: [linkUri], title?, description?, … }`.
+ * Removals only ever delete membership records (validated to this provider's lexicon
+ * and the caller's own repo); the card/note itself is never deleted. The metadata
+ * fields are used only when the URL has no item yet and one has to be created.
+ */
+export async function handleEditIntegrationMemberships(
+  request: Request,
+  env: Env
+): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const provider = providerFromPath(request);
+  if (!provider) {
+    return new Response(JSON.stringify({ error: 'Unknown integration' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const checkResult = checkIntegrationScopes(session, provider);
+  if (checkResult) return checkResult;
+
+  let body: {
+    url?: string;
+    add?: { uri: string; cid?: string }[];
+    remove?: string[];
+    title?: string;
+    description?: string;
+    author?: string;
+    publishedAt?: string;
+  };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  if (!body.url) {
+    return new Response(JSON.stringify({ error: 'url is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const add = (body.add ?? []).filter((c) => c && typeof c.uri === 'string');
+  const remove = (body.remove ?? []).filter((uri) => typeof uri === 'string');
+
+  const pdsClient = createPDSClient(session);
+  try {
+    const result = await editMemberships(pdsClient, session.did, provider, {
+      url: body.url,
+      add,
+      remove,
+      title: body.title,
+      description: body.description,
+      author: body.author,
+      publishedAt: body.publishedAt,
+    });
+    return new Response(JSON.stringify(result), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    if (err instanceof MembershipEditError) {
+      return new Response(JSON.stringify({ error: err.message }), {
+        status: err.status,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    throw err;
+  }
+}
+
 /**
  * POST /api/integrations/margin/bookmarks — save a page to Margin.
  *
@@ -275,7 +408,7 @@ export async function handleCreateMarginBookmark(request: Request, env: Env): Pr
         ? [body.collectionUri]
         : [];
 
-  const rkey = generateTID();
+  const rkey = generateTid();
   const description = body.description?.trim();
   const record = {
     $type: 'at.margin.note',
@@ -303,7 +436,7 @@ export async function handleCreateMarginBookmark(request: Request, env: Env): Pr
   // For each selected collection, create a collectionItem record.
   const collectionResults: { uri: string; error?: string }[] = [];
   for (const uri of collectionUris) {
-    const itemRkey = generateTID();
+    const itemRkey = generateTid();
     const collectionItem = {
       $type: 'at.margin.collectionItem',
       collection: uri,
@@ -395,7 +528,7 @@ export async function handleCreateMarginNote(request: Request, env: Env): Promis
     });
   }
 
-  const rkey = generateTID();
+  const rkey = generateTid();
   const record = buildMarginNoteRecord(body, new Date().toISOString());
 
   const pdsClient = createPDSClient(session);

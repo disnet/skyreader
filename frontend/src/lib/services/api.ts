@@ -1,5 +1,7 @@
 import type {
   FeedItem,
+  IntegrationMembershipEditResult,
+  IntegrationMemberships,
   IntegrationStatus,
   ItemLabel,
   ItemLabelType,
@@ -1081,6 +1083,38 @@ class ApiClient {
 
   async listMarginCollections(): Promise<{ collections: MarginCollection[] }> {
     return this.fetch('/api/integrations/margin/collections');
+  }
+
+  /** Which collections this URL is already saved to (read live from the PDS). */
+  async getIntegrationMemberships(
+    integration: 'semble' | 'margin',
+    url: string
+  ): Promise<IntegrationMemberships> {
+    return this.fetch(
+      `/api/integrations/${integration}/memberships?url=${encodeURIComponent(url)}`
+    );
+  }
+
+  /**
+   * Apply a collection-membership diff for an already-saved URL. Removals delete
+   * only the membership records — the card/note itself always stays.
+   */
+  async editIntegrationMemberships(
+    integration: 'semble' | 'margin',
+    data: {
+      url: string;
+      add: { uri: string; cid?: string }[];
+      remove: string[];
+      title?: string;
+      description?: string;
+      author?: string;
+      publishedAt?: string;
+    }
+  ): Promise<IntegrationMembershipEditResult> {
+    return this.fetch(`/api/integrations/${integration}/memberships`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   }
 
   async createMarginNote(data: {
