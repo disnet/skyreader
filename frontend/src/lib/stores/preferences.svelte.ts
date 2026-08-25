@@ -1,5 +1,12 @@
 import { browser } from '$app/environment';
 import { auth } from '$lib/stores/auth.svelte';
+import {
+  HIGHLIGHT_REVIEW_COUNT_DEFAULT,
+  HIGHLIGHT_REVIEW_COUNT_OPTIONS,
+  type HighlightReviewCount,
+} from '$lib/utils/highlightReview';
+
+export { HIGHLIGHT_REVIEW_COUNT_OPTIONS, type HighlightReviewCount };
 
 export type ArticleFont = 'sans-serif' | 'serif' | 'mono' | 'literata';
 // Reader body size, in CSS pixels. Was a fixed xs…xl scale (12–20px); now a
@@ -78,6 +85,11 @@ interface PreferencesState {
   // Distinguishes an explicit opt-out from the former default-off value that
   // was written whenever any preference was saved.
   communityHighlightsConfigured: boolean;
+  // How many highlights one review session serves up.
+  highlightReviewCount: HighlightReviewCount;
+  // Pull the reader's own Margin highlights into Skyreader. Device-local: once
+  // one device imports, the highlights sync everywhere as normal label rows.
+  marginHighlightImport: boolean;
 }
 
 const STORAGE_KEY = 'skyreader-preferences';
@@ -104,6 +116,8 @@ function createPreferencesStore() {
     dailyMagazineOrder: 'shuffle',
     communityHighlights: true,
     communityHighlightsConfigured: false,
+    highlightReviewCount: HIGHLIGHT_REVIEW_COUNT_DEFAULT,
+    marginHighlightImport: false,
   });
 
   // Restore from localStorage on init
@@ -164,6 +178,12 @@ function createPreferencesStore() {
         ) {
           state.communityHighlights = parsed.communityHighlights;
           state.communityHighlightsConfigured = true;
+        }
+        if (HIGHLIGHT_REVIEW_COUNT_OPTIONS.includes(parsed.highlightReviewCount)) {
+          state.highlightReviewCount = parsed.highlightReviewCount;
+        }
+        if (typeof parsed.marginHighlightImport === 'boolean') {
+          state.marginHighlightImport = parsed.marginHighlightImport;
         }
       } catch {
         localStorage.removeItem(STORAGE_KEY);
@@ -281,6 +301,17 @@ function createPreferencesStore() {
     save();
   }
 
+  function setHighlightReviewCount(count: HighlightReviewCount) {
+    if (!HIGHLIGHT_REVIEW_COUNT_OPTIONS.includes(count)) return;
+    state.highlightReviewCount = count;
+    save();
+  }
+
+  function setMarginHighlightImport(enabled: boolean) {
+    state.marginHighlightImport = enabled;
+    save();
+  }
+
   return {
     get articleFont() {
       return state.articleFont;
@@ -325,6 +356,14 @@ function createPreferencesStore() {
     get communityHighlights() {
       return state.communityHighlights;
     },
+    get highlightReviewCount() {
+      return state.highlightReviewCount;
+    },
+    get marginHighlightImport() {
+      return state.marginHighlightImport;
+    },
+    setHighlightReviewCount,
+    setMarginHighlightImport,
     confirmLinkblogShare,
     setLinkblogDisabled,
     setDefaultView,

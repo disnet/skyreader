@@ -121,6 +121,14 @@
     });
 
     keyboardStore.register({
+      key: '8',
+      description: 'Review highlights',
+      category: 'Views',
+      action: () => goto('/highlights/review'),
+      condition: () => auth.isAuthenticated,
+    });
+
+    keyboardStore.register({
       key: '5',
       description: 'Discover',
       category: 'Views',

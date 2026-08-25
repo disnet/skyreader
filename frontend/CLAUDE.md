@@ -78,16 +78,27 @@ See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for sampling and recovery details.
 
 ### Key Routes
 
-| Route            | Purpose                                        |
-| ---------------- | ---------------------------------------------- |
-| `/`              | Main feed (all articles from subscribed feeds) |
-| `/social`        | Shares from followed users                     |
-| `/starred`       | Starred articles                               |
-| `/feeds`         | Manage feed subscriptions                      |
-| `/discover`      | Discover new feeds                             |
-| `/settings`      | Account and sync status                        |
-| `/auth/login`    | Bluesky handle input                           |
-| `/auth/callback` | OAuth callback handler                         |
+| Route                | Purpose                                        |
+| -------------------- | ---------------------------------------------- |
+| `/`                  | Main feed (all articles from subscribed feeds) |
+| `/social`            | Shares from followed users                     |
+| `/starred`           | Starred articles                               |
+| `/feeds`             | Manage feed subscriptions                      |
+| `/discover`          | Discover new feeds                             |
+| `/highlights`        | Every highlight, grouped by source article     |
+| `/highlights/review` | Review deck — a few highlights, one at a time  |
+| `/settings`          | Account and sync status                        |
+| `/auth/login`        | Bluesky handle input                           |
+| `/auth/callback`     | OAuth callback handler                         |
+
+### Highlights
+
+Highlights live in the `highlights` label's opaque `props.highlights` array, merged per-highlight by
+id across alias rows (`utils/highlightAliases.ts`). Two things ride that array beyond the quote
+itself: `lastReviewedAt` (the review deck's repeat-avoidance, synced for free) and
+`sourceUrl`/`sourceTitle` (source metadata for highlights imported from Margin whose article isn't in
+any local cache). `utils/highlightSource.ts` is the shared resolver both the list and the deck use so
+they degrade identically. See [`docs/plans/HIGHLIGHT_REVIEW.md`](../docs/plans/HIGHLIGHT_REVIEW.md).
 
 #### The `?read=` contract
 

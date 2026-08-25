@@ -11,6 +11,8 @@ import {
 } from '../services/integration-membership';
 import { SEMBLE_SCOPES, MARGIN_SCOPES } from './auth';
 import { SEMBLE_CONNECTION_SCOPES } from '../config/scopes';
+import { listAllRecordsPublic } from '../services/backing/read';
+import { resolvePdsUrl } from '../utils/did-resolver';
 
 /**
  * The scope sets a request can be gated on. `semble-connections` is a *separate*
@@ -895,6 +897,205 @@ export async function handleListMarginCollections(request: Request, env: Env): P
   }));
 
   return new Response(JSON.stringify({ collections }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+// --- Margin highlight import (the READ direction) -------------------------
+//
+// Skyreader has always pushed highlights out as at.margin.note records; this is
+// the only path that reads the user's own notes back, so the review deck can
+// cover everything they've highlighted across the Atmosphere. The read itself is
+// public XRPC against their own repo (same auth-free primitive the backed-saves
+// snapshot uses), but it is still gated on the margin scopes: without them a
+// note edit on an imported highlight would queue a PDS write the session can't
+// perform, which is a worse state than not importing at all.
+//
+// at.margin.note is a third-party lexicon that has already changed shape once,
+// so every field is parsed defensively — one malformed record is skipped, never
+// thrown, so a single bad note can't lose the whole poll.
+
+// How many URLs one lookup carries. Each is bound TWICE (url_normalized and the
+// legacy url column), and D1 caps a statement at 100 bound parameters — so 40
+// URLs is 81 params, comfortably under the cap.
+export const MATCH_CHUNK = 40;
+
+export interface MarginHighlightNote {
+  uri: string;
+  rkey: string;
+  url: string;
+  urlNormalized: string;
+  title?: string;
+  selector: { type: 'TextQuoteSelector'; exact: string; prefix?: string; suffix?: string };
+  note?: string;
+  createdAt?: string;
+  /** The user's save this note's URL landed on, when there is one. */
+  match: { itemGuid: string | null; uri: string | null } | null;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+/**
+ * Parse one at.margin.note into a highlight, or null when it isn't one we can
+ * use: a bookmarking note (that's a save, not a highlight), a missing or
+ * non-TextQuote selector, an empty quote, or a source that isn't an http(s) URL.
+ */
+export function parseMarginHighlightNote(
+  uri: string,
+  value: unknown
+): Omit<MarginHighlightNote, 'match'> | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  if (record.motivation !== 'highlighting') return null;
+
+  const target = record.target;
+  if (!target || typeof target !== 'object') return null;
+  const targetRecord = target as Record<string, unknown>;
+
+  const source = optionalString(targetRecord.source);
+  if (!source) return null;
+  const urlNormalized = normalizeArticleUrl(source);
+  if (!urlNormalized) return null;
+
+  const selector = targetRecord.selector;
+  if (!selector || typeof selector !== 'object') return null;
+  const selectorRecord = selector as Record<string, unknown>;
+  if (selectorRecord.type !== 'TextQuoteSelector') return null;
+  const exact = optionalString(selectorRecord.exact);
+  if (!exact) return null;
+
+  const rkey = uri.split('/').pop();
+  if (!rkey) return null;
+
+  // The note body is a W3C comment body ({ value, format }); older records may
+  // carry a bare string.
+  let note: string | undefined;
+  const body = record.body;
+  if (typeof body === 'string') note = optionalString(body);
+  else if (body && typeof body === 'object') {
+    note = optionalString((body as Record<string, unknown>).value);
+  }
+
+  return {
+    uri,
+    rkey,
+    url: source,
+    urlNormalized,
+    title: optionalString(targetRecord.title),
+    selector: {
+      type: 'TextQuoteSelector',
+      exact,
+      prefix: optionalString(selectorRecord.prefix),
+      suffix: optionalString(selectorRecord.suffix),
+    },
+    note,
+    createdAt: optionalString(record.createdAt),
+  };
+}
+
+/**
+ * Join parsed notes onto the user's saves by normalized URL. Legacy saves
+ * predate `url_normalized`, so their raw `url` is normalized in-process and
+ * matched too. Returns a lookup keyed by normalized URL.
+ */
+async function matchNotesToSaves(
+  env: Env,
+  did: string,
+  urls: string[]
+): Promise<Map<string, { itemGuid: string | null; uri: string | null }>> {
+  const matches = new Map<string, { itemGuid: string | null; uri: string | null }>();
+  if (urls.length === 0) return matches;
+
+  for (let i = 0; i < urls.length; i += MATCH_CHUNK) {
+    const chunk = urls.slice(i, i + MATCH_CHUNK);
+    const placeholders = chunk.map(() => '?').join(', ');
+    const result = await env.DB.prepare(
+      `SELECT url, url_normalized, item_guid, record_uri FROM saved_articles
+       WHERE user_did = ? AND (url_normalized IN (${placeholders}) OR url IN (${placeholders}))`
+    )
+      .bind(did, ...chunk, ...chunk)
+      .all<{
+        url: string | null;
+        url_normalized: string | null;
+        item_guid: string | null;
+        record_uri: string | null;
+      }>();
+
+    // Key by whichever candidate is actually one of the URLs we asked for — a
+    // row matched on the legacy `url` column must not be filed under a
+    // `url_normalized` the caller never looks up.
+    const requested = new Set(chunk);
+    for (const row of result.results || []) {
+      const candidates = [
+        row.url_normalized,
+        row.url ? normalizeArticleUrl(row.url) : null,
+        row.url,
+      ];
+      const key = candidates.find((value): value is string => !!value && requested.has(value));
+      if (!key || matches.has(key)) continue;
+      matches.set(key, { itemGuid: row.item_guid, uri: row.record_uri });
+    }
+  }
+  return matches;
+}
+
+/**
+ * GET /api/integrations/margin/highlights — the user's own at.margin.note
+ * highlights, matched against their saves. The client turns these into normal
+ * Skyreader highlights (see services/marginHighlightImport.ts).
+ */
+export async function handleListMarginHighlights(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const checkResult = checkIntegrationScopes(session, 'margin');
+  if (checkResult) return checkResult;
+
+  const pds = (await resolvePdsUrl(session.did)) || session.pdsUrl;
+  if (!pds) {
+    return new Response(JSON.stringify({ error: 'Could not resolve your PDS' }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  let records: { uri: string; value: unknown }[];
+  let truncated = false;
+  try {
+    const listed = await listAllRecordsPublic(pds, session.did, 'at.margin.note');
+    records = listed.records;
+    truncated = listed.truncated;
+  } catch (error) {
+    console.error('Failed to list at.margin.note records:', error);
+    return new Response(JSON.stringify({ error: 'Could not read your Margin highlights' }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const parsed: Omit<MarginHighlightNote, 'match'>[] = [];
+  for (const record of records) {
+    const note = parseMarginHighlightNote(record.uri, record.value);
+    if (note) parsed.push(note);
+  }
+
+  const matches = await matchNotesToSaves(env, session.did, [
+    ...new Set(parsed.map((note) => note.urlNormalized)),
+  ]);
+
+  const notes: MarginHighlightNote[] = parsed.map((note) => ({
+    ...note,
+    match: matches.get(note.urlNormalized) ?? null,
+  }));
+
+  return new Response(JSON.stringify({ notes, truncated }), {
     headers: { 'Content-Type': 'application/json' },
   });
 }

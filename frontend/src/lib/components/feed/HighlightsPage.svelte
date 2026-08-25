@@ -8,6 +8,7 @@
   import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
   import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
+  import RemoveHighlightModal from '$lib/components/feed/RemoveHighlightModal.svelte';
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import NotificationList from '$lib/components/NotificationList.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -26,9 +27,11 @@
     updateHighlightNoteOnMargin,
   } from '$lib/services/marginHighlights';
   import { formatRelativeTime } from '$lib/utils/date';
-  import { decodeEntities } from '$lib/utils/entities';
+  import { buildHighlightSourceLookups, resolveHighlightSource } from '$lib/utils/highlightSource';
+  import { highlightDeckStatus } from '$lib/utils/highlightReview';
+  import { maybeImportMarginHighlights } from '$lib/services/marginHighlightImport';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
-  import type { Highlight, ItemLabelType, SavedItem } from '$lib/types';
+  import type { Highlight, ItemLabelType } from '$lib/types';
 
   // Set the browser-tab title while this page is mounted.
   $effect(() => {
@@ -46,8 +49,19 @@
   onMount(() => {
     window.addEventListener('scroll', handleWindowScroll, { passive: true });
     handleWindowScroll();
+    // Opening the list is one of the two moments we poll Margin for highlights
+    // the reader made elsewhere. Minute-gated; silent when off or offline.
+    void maybeImportMarginHighlights().then((result) => {
+      if (result?.truncated) importTruncated = true;
+    });
   });
   onDestroy(() => window.removeEventListener('scroll', handleWindowScroll));
+
+  // A partial poll must say so — otherwise "these are my highlights" is a lie.
+  let importTruncated = $state(false);
+
+  // Drives the header's Review entry; hidden once today's deck is done.
+  let deckStatus = $derived(highlightDeckStatus(itemLabelsStore.allHighlights));
 
   interface HighlightRow {
     id: string;
@@ -72,26 +86,14 @@
     latest: number;
   }
 
-  function domainFromUrl(url: string | null | undefined): string | null {
-    if (!url) return null;
-    try {
-      return new URL(url).hostname.replace(/^www\./, '');
-    } catch {
-      return null;
-    }
-  }
-
   // Lookups for enriching a highlight's parent item with title/url/body.
-  let articlesByGuid = $derived(new Map(articlesStore.allArticles.map((a) => [a.guid, a])));
-  let documentsByUri = $derived(new Map(socialStore.documents.map((d) => [d.recordUri, d])));
-  let savedByKey = $derived.by(() => {
-    const m = new Map<string, SavedItem>();
-    for (const s of savesStore.articles) {
-      if (s.itemGuid) m.set(s.itemGuid, s);
-      if (s.uri) m.set(s.uri, s);
-    }
-    return m;
-  });
+  let sourceLookups = $derived(
+    buildHighlightSourceLookups(
+      articlesStore.allArticles,
+      socialStore.documents,
+      savesStore.articles
+    )
+  );
 
   // Group every highlight under its source item, newest-source first.
   let groups = $derived.by((): HighlightGroup[] => {
@@ -107,43 +109,18 @@
       const groupKey = itemLabelsStore.canonicalKey(itemKey);
       let group = byKey.get(groupKey);
       if (!group) {
-        let title = '';
-        let url: string | null = null;
-        let displayItem: FeedDisplayItem | null = null;
-
-        if (itemType === 'article') {
-          const a = articlesByGuid.get(groupKey);
-          if (a) {
-            title = a.title;
-            url = a.url;
-            displayItem = { type: 'article', item: a, key: a.guid };
-          }
-        } else if (itemType === 'document') {
-          const d = documentsByUri.get(groupKey);
-          if (d) {
-            title = d.title;
-            url = d.canonicalUrl ?? null;
-            displayItem = { type: 'document', item: d, key: d.recordUri };
-          }
-        }
-
-        // Fall back to a saved copy (carries title/url, and can open in the reader).
-        if (!displayItem) {
-          const s = savedByKey.get(groupKey);
-          if (s) {
-            title = title || s.title || '';
-            url = url || s.url || null;
-            displayItem = { type: 'saved', item: s, key: s.itemGuid || s.uri };
-          }
-        }
+        // Imported Margin highlights may have no local article at all — the
+        // resolver falls back to the metadata carried on the highlight so the
+        // group still renders a title and stays openable.
+        const source = resolveHighlightSource(groupKey, itemType, sourceLookups, highlight);
 
         group = {
           itemKey: groupKey,
           itemType,
-          title: decodeEntities(title) || 'Untitled',
-          url,
-          domain: domainFromUrl(url),
-          displayItem,
+          title: source.title,
+          url: source.url,
+          domain: source.domain,
+          displayItem: source.displayItem,
           rows: [],
           latest: 0,
         };
@@ -189,8 +166,15 @@
     }
   }
 
-  function handleRemove(group: HighlightGroup, row: HighlightRow) {
-    void deleteHighlight(group.itemKey, row.highlight);
+  // Removing a Margin-backed highlight deletes the user's own PDS record too —
+  // always confirm, so a cross-app delete can't happen on a stray tap.
+  let removePrompt = $state<{ group: HighlightGroup; row: HighlightRow } | null>(null);
+
+  function confirmRemove() {
+    const pending = removePrompt;
+    removePrompt = null;
+    if (!pending) return;
+    void deleteHighlight(pending.group.itemKey, pending.row.highlight);
   }
 
   function handleSaveToMargin(group: HighlightGroup, row: HighlightRow) {
@@ -250,10 +234,19 @@
   <header class="highlights-header" class:scrolled>
     <div class="header-inner">
       <NavigationDropdown currentTitle="Highlights" />
+      {#if deckStatus === 'available'}
+        <a class="review-link" href="/highlights/review">
+          <Icon name="highlighter" size={15} />
+          <span>Review</span>
+        </a>
+      {/if}
     </div>
   </header>
 
   <div class="highlights-body">
+    {#if importTruncated}
+      <p class="import-notice">Some Margin highlights couldn't be fetched yet.</p>
+    {/if}
     {#if totalHighlights === 0}
       <EmptyState
         title="No highlights yet"
@@ -319,7 +312,7 @@
                       {/if}
                       <button
                         class="action-btn danger"
-                        onclick={() => handleRemove(group, row)}
+                        onclick={() => (removePrompt = { group, row })}
                         title="Remove highlight"
                         aria-label="Remove highlight"
                       >
@@ -398,6 +391,13 @@
   />
 {/if}
 
+<RemoveHighlightModal
+  open={Boolean(removePrompt)}
+  onMargin={Boolean(removePrompt?.row.isMargin)}
+  onRemove={confirmRemove}
+  onclose={() => (removePrompt = null)}
+/>
+
 <style>
   .highlights-page {
     width: 100%;
@@ -454,12 +454,43 @@
     padding: 0.625rem 1rem;
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  /* Quiet entry into the review deck — a link, not a call to action. */
+  .review-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    min-height: 36px;
+    padding: 0.25rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    text-decoration: none;
+    transition:
+      color 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .review-link:hover {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
   }
 
   .highlights-body {
     max-width: 800px;
     margin: 0 auto;
     padding: 0.5rem;
+  }
+
+  .import-notice {
+    margin: 0.5rem 0.5rem 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
   }
 
   .group-list {

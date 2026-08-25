@@ -155,7 +155,8 @@
     | 'layers'
     | 'folder'
     | 'users'
-    | 'highlighter';
+    | 'highlighter'
+    | 'quote';
 
   // Navigation item type
   type NavItem =
@@ -235,6 +236,13 @@
         ? [{ type: 'utility' as const, id: 'linkblog', label: 'Linkblog', icon: 'share' as const }]
         : []),
       { type: 'utility', id: 'highlights', label: 'Highlights', icon: 'highlighter' },
+      {
+        type: 'utility',
+        id: 'highlights/review',
+        label: 'Review highlights',
+        icon: 'quote',
+        indent: true,
+      },
       { type: 'utility', id: 'discover', label: 'Discover', icon: 'users' },
       { type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' },
       { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' },

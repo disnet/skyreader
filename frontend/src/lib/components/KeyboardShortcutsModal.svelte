@@ -26,6 +26,7 @@
     { category: 'Views', key: '5', description: 'Discover' },
     { category: 'Views', key: '6', description: 'Manage Sources' },
     { category: 'Views', key: '7', description: 'Settings' },
+    { category: 'Views', key: '8', description: 'Review highlights' },
 
     // Feed cycling
     { category: 'Feed', key: '[', description: 'Previous feed' },

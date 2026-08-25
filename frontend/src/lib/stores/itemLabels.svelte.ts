@@ -1571,6 +1571,21 @@ function createItemLabelsStore() {
     await persistHighlightUnion(itemKey, itemType, mutation.highlights);
   }
 
+  /**
+   * Add several highlights to one item in a single union write. Used by the
+   * Margin import, where a heavily-annotated article can arrive with dozens of
+   * highlights at once and one write per highlight would mean one API round trip
+   * (and one full-array rewrite) each.
+   */
+  async function addHighlights(itemKey: string, itemType: ItemLabelType, highlights: Highlight[]) {
+    if (highlights.length === 0) return;
+    let merged = getHighlights(itemKey);
+    for (const highlight of highlights) {
+      merged = mutateHighlightUnion(merged, { type: 'add', highlight }).highlights;
+    }
+    await persistHighlightUnion(itemKey, itemType, merged);
+  }
+
   async function removeHighlight(itemKey: string, highlightId: string) {
     const context = highlightContext(itemKey);
     const mutation = mutateHighlightUnion(context.highlights, { type: 'remove', highlightId });
@@ -1617,6 +1632,26 @@ function createItemLabelsStore() {
       type: 'note',
       highlightId,
       note,
+    });
+    if (!mutation.changed) return;
+    await persistHighlightUnion(
+      itemKey,
+      context.labels[0]?.itemType || 'saved',
+      mutation.highlights
+    );
+  }
+
+  /**
+   * Stamp a highlight as reviewed (review deck). Rides the same union write as
+   * every other highlight mutation, so it syncs and queues offline for free.
+   * No-op when the stamp wouldn't move forward.
+   */
+  async function markHighlightReviewed(itemKey: string, highlightId: string, at = Date.now()) {
+    const context = highlightContext(itemKey);
+    const mutation = mutateHighlightUnion(context.highlights, {
+      type: 'reviewed',
+      highlightId,
+      at,
     });
     if (!mutation.changed) return;
     await persistHighlightUnion(
@@ -1736,9 +1771,11 @@ function createItemLabelsStore() {
     canonicalKey,
     hasHighlights,
     addHighlight,
+    addHighlights,
     removeHighlight,
     setHighlightMargin,
     setHighlightNote,
+    markHighlightReviewed,
     // Derived helpers
     getSavedArticles,
     getSavedItemKeys,

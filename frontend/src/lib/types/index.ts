@@ -1249,6 +1249,24 @@ export interface MarginCollection {
   createdAt?: string;
 }
 
+/**
+ * One of the user's own `at.margin.note` highlights, as returned by
+ * `GET /api/integrations/margin/highlights`. `match` is the save the note's URL
+ * landed on (server-side join on the normalized URL); null when the article
+ * isn't in the user's Saved list.
+ */
+export interface MarginHighlightNote {
+  uri: string;
+  rkey: string;
+  url: string;
+  urlNormalized: string;
+  title?: string;
+  selector: TextQuoteSelector;
+  note?: string;
+  createdAt?: string;
+  match: { itemGuid: string | null; uri: string | null } | null;
+}
+
 export interface TextQuoteSelector {
   type: 'TextQuoteSelector';
   exact: string;
@@ -1266,4 +1284,12 @@ export interface Highlight {
   // Set once the highlight has been pushed to Margin (at.margin.note on the user's PDS).
   marginUri?: string;
   marginRkey?: string;
+  // Last time this highlight came up in the review deck (epoch ms). Rides the
+  // normal label sync, so "already reviewed" follows the reader across devices.
+  lastReviewedAt?: number;
+  // Source metadata carried on the highlight itself, for highlights imported
+  // from Margin whose article isn't in any local cache — without these the
+  // highlight has no title or link to show.
+  sourceUrl?: string;
+  sourceTitle?: string;
 }
