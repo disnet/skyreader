@@ -3,7 +3,27 @@ import { api } from '$lib/services/api';
 import type { SembleCollection, MarginCollection } from '$lib/types';
 
 export type IntegrationKind = 'semble' | 'margin';
-export type CollectionEntry = SembleCollection | MarginCollection;
+
+/**
+ * A collection as the picker needs it. `lastUsedAt` is local-only: neither
+ * Semble nor Margin reports when a collection was last filed into, so the
+ * picker's "recently used" band is built from what this device remembers
+ * (stamped by markUsed, merged forward across every cache refresh).
+ */
+export type CollectionEntry = (SembleCollection | MarginCollection) & {
+  lastUsedAt?: number;
+};
+
+/**
+ * Keep the later of two recency stamps. Every merge point below is racing a
+ * possible markUsed, so "the one we happen to be holding" is never the right
+ * answer — the newer one is.
+ */
+function newerStamp(a: number | undefined, b: number | undefined): number | undefined {
+  if (typeof a !== 'number') return b;
+  if (typeof b !== 'number') return a;
+  return Math.max(a, b);
+}
 
 function createCollectionsStore() {
   const collections = $state<Record<IntegrationKind, CollectionEntry[]>>({
@@ -31,22 +51,35 @@ function createCollectionsStore() {
       name: r.name,
       description: r.description,
       createdAt: r.createdAt,
+      lastUsedAt: r.lastUsedAt,
     }));
   }
 
   async function writeCache(integration: IntegrationKind, list: CollectionEntry[]) {
     const now = Date.now();
-    const rows: IntegrationCollectionCacheEntry[] = list.map((c) => ({
-      integration,
-      uri: c.uri,
-      cid: c.cid,
-      name: c.name,
-      description: c.description,
-      createdAt: c.createdAt,
-      cachedAt: now,
-    }));
     // Replace the whole cache for this integration so deleted collections disappear.
     await db.transaction('rw', db.integrationCollections, async () => {
+      const existing = await db.integrationCollections
+        .where('integration')
+        .equals(integration)
+        .toArray();
+      // Recency is ours, not the server's, so it has to survive the wholesale
+      // replace below — otherwise every background refresh would erase the
+      // "recently used" band the picker leads with.
+      const usedAt = new Map(existing.map((r) => [r.uri, r.lastUsedAt]));
+      const rows: IntegrationCollectionCacheEntry[] = list.map((c) => ({
+        integration,
+        uri: c.uri,
+        cid: c.cid,
+        name: c.name,
+        description: c.description,
+        createdAt: c.createdAt,
+        cachedAt: now,
+        // Not `??`: the caller's stamp can be the stale one (it was read before
+        // its network round-trip), so a markUsed that landed in the meantime
+        // has to win rather than be overwritten by the older defined value.
+        lastUsedAt: newerStamp(c.lastUsedAt, usedAt.get(c.uri)),
+      }));
       await db.integrationCollections.where('integration').equals(integration).delete();
       if (rows.length > 0) await db.integrationCollections.bulkPut(rows);
     });
@@ -99,8 +132,18 @@ function createCollectionsStore() {
 
     try {
       const fresh = await fetchFromApi(integration);
-      collections[integration] = fresh;
-      await writeCache(integration, fresh);
+      // The API answer carries no lastUsedAt; carry it over from what we cached
+      // so the list doesn't lose its recency ordering mid-refresh. `cached` is a
+      // pre-fetch snapshot, so fold live state over it too: the user can confirm
+      // a save (markUsed) while a slow listing is still in flight, and that stamp
+      // must not be rolled back by this assignment.
+      const usedAt = new Map(cached.map((c) => [c.uri, c.lastUsedAt]));
+      for (const c of collections[integration]) {
+        usedAt.set(c.uri, newerStamp(c.lastUsedAt, usedAt.get(c.uri)));
+      }
+      const merged: CollectionEntry[] = fresh.map((c) => ({ ...c, lastUsedAt: usedAt.get(c.uri) }));
+      collections[integration] = merged;
+      await writeCache(integration, merged);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load collections';
       if (!hasCache) {
@@ -129,6 +172,31 @@ function createCollectionsStore() {
     }
   }
 
+  /**
+   * Stamp collections as just-used so the picker can lead with them next time.
+   * Called when a save is confirmed, not when it lands: an offline save that
+   * sits in the queue still reflects a choice the reader just made.
+   */
+  async function markUsed(integration: IntegrationKind, uris: string[]): Promise<void> {
+    if (uris.length === 0) return;
+    const now = Date.now();
+    const touched = new Set(uris);
+    collections[integration] = collections[integration].map((c) =>
+      touched.has(c.uri) ? { ...c, lastUsedAt: now } : c
+    );
+    try {
+      await db.transaction('rw', db.integrationCollections, async () => {
+        for (const uri of touched) {
+          await db.integrationCollections.update([integration, uri], { lastUsedAt: now });
+        }
+      });
+    } catch (err) {
+      // Recency is a convenience, never a correctness concern — a failed write
+      // costs one well-ordered list, not a save.
+      console.error(`Failed to record ${integration} collection use:`, err);
+    }
+  }
+
   return {
     get collections() {
       return collections;
@@ -143,6 +211,7 @@ function createCollectionsStore() {
       return error;
     },
     loadAndRefresh,
+    markUsed,
     invalidate,
   };
 }
