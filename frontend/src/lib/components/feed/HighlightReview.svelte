@@ -3,7 +3,6 @@
   // time. Deliberately not a durable issue like the daily magazine: a session is
   // a few minutes, so the deck is derived at open and repeat-avoidance rides the
   // per-highlight `lastReviewedAt` stamp, which syncs with the highlight itself.
-  import { onMount } from 'svelte';
   import { pushState } from '$app/navigation';
   import { page } from '$app/state';
   import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
@@ -51,9 +50,22 @@
   let index = $state(0);
   let reviewed = $state(0);
 
-  // Wait for the stores to hydrate before drawing, or a cold load deals an empty
-  // deck and immediately declares the review done.
-  let ready = $derived(!itemLabelsStore.isLoading && !savesStore.loading);
+  // Wait for the stores to hydrate and the initial Margin poll to finish before
+  // drawing. The deck remains fixed after that first draw, but highlights the
+  // poll imports on open must be eligible for this session.
+  let storesReady = $derived(!itemLabelsStore.isLoading && !savesStore.loading);
+  let initialImportComplete = $state(false);
+  let importStarted = false;
+
+  $effect(() => {
+    if (!storesReady || importStarted) return;
+    importStarted = true;
+    void maybeImportMarginHighlights().finally(() => {
+      initialImportComplete = true;
+    });
+  });
+
+  let ready = $derived(storesReady && initialImportComplete);
 
   // Plain flag, not the `deck` state itself: the effect writes `deck`, so reading
   // it here as the guard would make the effect depend on its own write.
@@ -66,12 +78,6 @@
       itemLabelsStore.allHighlights,
       preferences.highlightReviewCount
     ).cards;
-  });
-
-  onMount(() => {
-    // Opening the deck is a natural moment to pick up anything new from Margin.
-    // Minute-gated and silent when the toggle is off or the device is offline.
-    void maybeImportMarginHighlights();
   });
 
   let total = $derived(deck?.length ?? 0);

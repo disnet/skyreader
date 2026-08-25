@@ -216,8 +216,12 @@ describe('GET /api/integrations/margin/highlights', () => {
   });
 
   it('matches legacy saves that predate url_normalized', async () => {
-    await seedSave({ rkey: 'save2', url: 'https://example.com/legacy', urlNormalized: null });
-    mockRecords([highlightNote('one', 'https://example.com/legacy')]);
+    await seedSave({
+      rkey: 'save2',
+      url: 'https://example.com/legacy?utm_source=newsletter#section',
+      urlNormalized: null,
+    });
+    mockRecords([highlightNote('one', 'https://example.com/legacy#quote')]);
 
     const res = await call();
     expect(res.body.notes[0].match?.uri).toBe(`at://${DID}/app.skyreader.feed.saved/save2`);

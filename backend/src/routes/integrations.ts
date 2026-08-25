@@ -915,9 +915,8 @@ export async function handleListMarginCollections(request: Request, env: Env): P
 // so every field is parsed defensively — one malformed record is skipped, never
 // thrown, so a single bad note can't lose the whole poll.
 
-// How many URLs one lookup carries. Each is bound TWICE (url_normalized and the
-// legacy url column), and D1 caps a statement at 100 bound parameters — so 40
-// URLs is 81 params, comfortably under the cap.
+// How many normalized URLs one indexed lookup carries. Keep comfortably below
+// D1's 100 bound-parameter cap.
 export const MATCH_CHUNK = 40;
 
 export interface MarginHighlightNote {
@@ -1008,14 +1007,15 @@ async function matchNotesToSaves(
   const matches = new Map<string, { itemGuid: string | null; uri: string | null }>();
   if (urls.length === 0) return matches;
 
+  // Current rows have an indexed normalized key, so keep that lookup bounded.
   for (let i = 0; i < urls.length; i += MATCH_CHUNK) {
     const chunk = urls.slice(i, i + MATCH_CHUNK);
     const placeholders = chunk.map(() => '?').join(', ');
     const result = await env.DB.prepare(
       `SELECT url, url_normalized, item_guid, record_uri FROM saved_articles
-       WHERE user_did = ? AND (url_normalized IN (${placeholders}) OR url IN (${placeholders}))`
+       WHERE user_did = ? AND url_normalized IN (${placeholders})`
     )
-      .bind(did, ...chunk, ...chunk)
+      .bind(did, ...chunk)
       .all<{
         url: string | null;
         url_normalized: string | null;
@@ -1023,20 +1023,29 @@ async function matchNotesToSaves(
         record_uri: string | null;
       }>();
 
-    // Key by whichever candidate is actually one of the URLs we asked for — a
-    // row matched on the legacy `url` column must not be filed under a
-    // `url_normalized` the caller never looks up.
-    const requested = new Set(chunk);
     for (const row of result.results || []) {
-      const candidates = [
-        row.url_normalized,
-        row.url ? normalizeArticleUrl(row.url) : null,
-        row.url,
-      ];
-      const key = candidates.find((value): value is string => !!value && requested.has(value));
+      const key = row.url_normalized;
       if (!key || matches.has(key)) continue;
       matches.set(key, { itemGuid: row.item_guid, uri: row.record_uri });
     }
+  }
+
+  // Rows from before migration 0057 have no normalized key. Their raw URL may
+  // contain tracking parameters or a fragment, so it cannot be filtered by the
+  // already-normalized note URLs in SQL. Fetch this shrinking legacy subset once
+  // and normalize it before matching.
+  const requested = new Set(urls);
+  const legacy = await env.DB.prepare(
+    `SELECT url, item_guid, record_uri FROM saved_articles
+     WHERE user_did = ? AND url_normalized IS NULL`
+  )
+    .bind(did)
+    .all<{ url: string | null; item_guid: string | null; record_uri: string | null }>();
+
+  for (const row of legacy.results || []) {
+    const key = row.url ? normalizeArticleUrl(row.url) : null;
+    if (!key || !requested.has(key) || matches.has(key)) continue;
+    matches.set(key, { itemGuid: row.item_guid, uri: row.record_uri });
   }
   return matches;
 }
