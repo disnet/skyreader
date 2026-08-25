@@ -1122,6 +1122,51 @@ export type SaveBacking =
   | { provider: 'semble'; collectionUri: string }
   | { provider: 'margin'; collectionUri: string };
 
+// What a URL is already saved as in Semble/Margin. Read live from the PDS when the
+// collection picker opens (backend/src/services/integration-membership.ts) — a save
+// can be created or moved in Semble/Margin itself, so nothing local can be trusted.
+export interface IntegrationMembershipItem {
+  uri: string;
+  cid: string;
+  rkey: string;
+  createdAt?: string;
+}
+
+export interface IntegrationMembership {
+  collectionUri: string;
+  /** the membership record — this is what gets deleted when a box is unchecked */
+  linkUri: string;
+  itemUri: string;
+}
+
+export interface IntegrationMemberships {
+  items: IntegrationMembershipItem[];
+  memberships: IntegrationMembership[];
+  /** a listing hit its page cap: older saves may be missing from this answer */
+  truncated: boolean;
+}
+
+/** A collection the user picked, with the cid its strongRef needs (Semble). */
+export interface CollectionSelection {
+  uri: string;
+  cid: string;
+}
+
+/**
+ * What the collection picker hands back. `create` is a first save (card/note plus
+ * links); `edit` is a membership diff against an article that's already there —
+ * `remove` carries membership record uris, never item uris.
+ */
+export type CollectionPickerResult =
+  | { mode: 'create'; collections: CollectionSelection[] }
+  | { mode: 'edit'; add: CollectionSelection[]; remove: string[] };
+
+export interface IntegrationMembershipEditResult {
+  item?: { uri: string; cid: string; created: boolean };
+  added: Array<{ collectionUri: string; linkUri?: string; error?: string }>;
+  removed: Array<{ linkUri: string; error?: string }>;
+}
+
 export interface SembleCollection {
   uri: string;
   cid: string;
