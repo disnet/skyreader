@@ -32,12 +32,14 @@
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
+  import { useCommunityHighlights } from '$lib/hooks/useCommunityHighlights.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
   import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
   import { shareTargetForDisplayItem } from '$lib/utils/shareTarget';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
+  import CommunityHighlightPopover from '$lib/components/feed/CommunityHighlightPopover.svelte';
   import NotePeek from '$lib/components/feed/NotePeek.svelte';
   import CollectionMagazine from '$lib/components/feed/CollectionMagazine.svelte';
   import PagedView, { type PagedController } from '$lib/components/feed/PagedView.svelte';
@@ -78,11 +80,15 @@
   let tagMenuOpen = $state(false);
   let overflowMenuOpen = $state(false);
   let overflowRef = $state<HTMLDivElement | null>(null);
-  // Two anchors, one per breakpoint: the desktop header button and the mobile
-  // bar's. Both exist in the DOM at once (the breakpoint hides one with CSS), so
-  // sharing a single ref would anchor the tag menu to a zero-size element.
+  // The mobile Tag popover normally anchors to its bottom-bar button. Saved
+  // articles use that slot for Community instead, so Tag (reached from the
+  // actions sheet) anchors to that stable slot after the sheet closes.
   let tagBtnRef = $state<HTMLButtonElement | null>(null);
   let mobileTagBtnRef = $state<HTMLButtonElement | null>(null);
+  let mobileCommunityBtnRef = $state<HTMLButtonElement | null>(null);
+  let mobileTagAnchorRef = $derived(
+    readerItem.type === 'saved' ? mobileCommunityBtnRef : mobileTagBtnRef
+  );
   let controlsVisible = $state(true);
   // Desktop header hides on scroll-down, but stays put while a header-anchored
   // menu (Style/Tag/overflow ⋯) is open so its popover doesn't slide off-screen.
@@ -723,6 +729,17 @@
     itemUrl: () => itemUrl,
     itemTitle: () => title,
   });
+  const communityHighlightsHook = useCommunityHighlights({
+    contentEl: () => readerBodyEl,
+    itemUrl: () => itemUrl,
+    enabled: () => readerItem.type === 'saved' && preferences.communityHighlights,
+    load: () => readerItem.type === 'saved',
+  });
+
+  function toggleCommunityHighlights() {
+    if (!preferences.communityHighlights) communityHighlightsHook.retry();
+    preferences.setCommunityHighlights(!preferences.communityHighlights);
+  }
 
   // Set up observer when the reader body is mounted — and re-run it whenever the
   // rendered content changes. Saved/article bodies load lazily (see the lazy*
@@ -740,6 +757,7 @@
         paragraphTracking.setupObserver();
         linkInterception.attach();
         highlightsHook.attach();
+        communityHighlightsHook.attach();
         // The scroll-driven progress bar + paragraph position restore only apply
         // to scroll mode; paged mode handles its own page restore (see above).
         if (paged) return;
@@ -771,6 +789,7 @@
       paragraphTracking.cleanup();
       linkInterception.detach();
       highlightsHook.detach();
+      communityHighlightsHook.detach();
     };
   });
 
@@ -864,6 +883,27 @@
         </button>
 
         <span class="action-separator"></span>
+
+        {#if readerItem.type === 'saved'}
+          <button
+            class="action-btn"
+            class:active={preferences.communityHighlights}
+            aria-pressed={preferences.communityHighlights}
+            aria-label={communityHighlightsHook.count === undefined
+              ? 'Community highlights'
+              : `${communityHighlightsHook.count}${communityHighlightsHook.capped ? ' or more' : ''} community highlight${communityHighlightsHook.count === 1 ? '' : 's'}`}
+            onclick={toggleCommunityHighlights}
+            title="Passages highlighted by readers on margin.at"
+          >
+            <Icon name="users" size={16} />
+            <span class="action-label">Community</span>
+            {#if communityHighlightsHook.count !== undefined}
+              <span class="action-count">
+                ({communityHighlightsHook.count}{communityHighlightsHook.capped ? '+' : ''})
+              </span>
+            {/if}
+          </button>
+        {/if}
 
         {#if canShareLinkblog}
           <button
@@ -966,7 +1006,12 @@
     {isSaved}
     onShare={canShareLinkblog ? openShareComposer : undefined}
     shareActive={sharedNow}
-    onTag={() => (tagMenuOpen = !tagMenuOpen)}
+    onCommunity={readerItem.type === 'saved' ? toggleCommunityHighlights : undefined}
+    communityCount={communityHighlightsHook.count}
+    communityCapped={communityHighlightsHook.capped}
+    communityActive={preferences.communityHighlights}
+    bind:communityButtonEl={mobileCommunityBtnRef}
+    onTag={readerItem.type !== 'saved' ? () => (tagMenuOpen = !tagMenuOpen) : undefined}
     tagCount={itemTags.length}
     tagActive={tagMenuOpen}
     bind:tagButtonEl={mobileTagBtnRef}
@@ -1076,7 +1121,7 @@
         <TagMenu
           {itemKey}
           itemType={labelItemType}
-          anchorEl={mobileTagBtnRef}
+          anchorEl={mobileTagAnchorRef}
           onClose={() => (tagMenuOpen = false)}
         />
       {/if}
@@ -1174,6 +1219,7 @@
   <HighlightPopover
     mode={highlightsHook.popoverState.mode}
     anchorRect={highlightsHook.popoverState.anchorRect}
+    getAnchorRect={highlightsHook.popoverAnchorRect}
     onHighlight={highlightsHook.createHighlightFromPopover}
     onHighlightToMargin={highlightsHook.createHighlightFromPopoverToMargin}
     onRemove={highlightsHook.removeHighlightFromPopover}
@@ -1183,6 +1229,17 @@
     existingNote={highlightsHook.popoverHighlightNote}
     marginSaved={highlightsHook.popoverHighlightSavedToMargin}
     onClose={highlightsHook.closePopover}
+  />
+{/if}
+
+{#if communityHighlightsHook.popoverState}
+  <CommunityHighlightPopover
+    group={communityHighlightsHook.popoverState.group}
+    anchorRect={communityHighlightsHook.popoverState.anchorRect}
+    getAnchorRect={communityHighlightsHook.popoverAnchorRect}
+    {itemUrl}
+    capped={communityHighlightsHook.capped}
+    onClose={communityHighlightsHook.closePopover}
   />
 {/if}
 
@@ -1488,6 +1545,11 @@
     font-weight: var(--weight-medium);
   }
 
+  .action-count {
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+  }
+
   .action-btn:hover:not(.active) {
     color: var(--color-text);
   }
@@ -1734,6 +1796,18 @@
 
   .reader-body :global(mark.highlight:hover) {
     background-color: color-mix(in srgb, #f5c518 40%, transparent);
+  }
+
+  .reader-body :global(mark.community-highlight) {
+    color: inherit;
+    background: transparent;
+    text-decoration: underline dotted #7a8694 1.5px;
+    text-underline-offset: 0.18em;
+    cursor: pointer;
+  }
+
+  :global([data-theme='dark']) .reader-body :global(mark.community-highlight) {
+    text-decoration-color: #9aa6b2;
   }
 
   /* Leaflet footnote styling is shared by every surface that renders leaflet

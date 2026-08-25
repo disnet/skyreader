@@ -1011,6 +1011,7 @@
     <HighlightPopover
       mode={highlights.popoverState.mode}
       anchorRect={highlights.popoverState.anchorRect}
+      getAnchorRect={highlights.popoverAnchorRect}
       onHighlight={highlights.createHighlightFromPopover}
       onHighlightToMargin={highlights.createHighlightFromPopoverToMargin}
       onRemove={highlights.removeHighlightFromPopover}

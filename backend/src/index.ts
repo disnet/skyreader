@@ -15,6 +15,7 @@ import {
   handleV2SocialContext,
   handleV2Mentions,
   handleV2MentionLane,
+  handleV2MarginHighlights,
 } from './routes/feeds-v2';
 import { handleIngest, handleCrawlSet, handleFeedHealth } from './routes/ingest';
 import { handleTimeline } from './routes/timeline';
@@ -370,6 +371,10 @@ async function route(
     case url.pathname === '/api/v2/mention-lane':
       if (!session) return unauthorizedResponse(headers);
       response = await handleV2MentionLane(request, env);
+      break;
+    case url.pathname === '/api/v2/margin-highlights':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleV2MarginHighlights(request, env);
       break;
 
     // Social routes

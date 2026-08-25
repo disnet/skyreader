@@ -46,6 +46,13 @@ const TRACKING_PARAMS = new Set([
   'oly_enc_id',
 ]);
 
+// Short parameter names are too ambiguous to strip everywhere. Substack uses
+// `r` exclusively as a reader/referral token on post URLs, while another site
+// may use the same name to select real content.
+function isHostTrackingParam(hostname: string, key: string): boolean {
+  return key === 'r' && (hostname === 'substack.com' || hostname.endsWith('.substack.com'));
+}
+
 /**
  * Canonicalize an article URL for cross-app dedup. Returns `null` for inputs that
  * aren't http(s) URLs (skip them — e.g. a Semble `type:NOTE` card has no URL).
@@ -72,7 +79,8 @@ export function normalizeArticleUrl(input: string): string | null {
   // Strip tracking params, keep + sort the rest so equivalent URLs key the same.
   const kept: Array<[string, string]> = [];
   for (const [key, value] of url.searchParams) {
-    if (TRACKING_PARAMS.has(key.toLowerCase())) continue;
+    const lowerKey = key.toLowerCase();
+    if (TRACKING_PARAMS.has(lowerKey) || isHostTrackingParam(url.hostname, lowerKey)) continue;
     kept.push([key, value]);
   }
   kept.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));

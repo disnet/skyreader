@@ -52,6 +52,13 @@ const TRACKING_PARAMS = new Set([
   'oly_enc_id',
 ]);
 
+// Short parameter names are too ambiguous to strip everywhere. Substack uses
+// `r` exclusively as a reader/referral token on post URLs, while another site
+// may use the same name to select real content.
+function isHostTrackingParam(hostname: string, key: string): boolean {
+  return key === 'r' && (hostname === 'substack.com' || hostname.endsWith('.substack.com'));
+}
+
 /**
  * Canonicalize an article URL for mention matching. Returns `null` for inputs
  * that aren't http(s) URLs (skip them — no mentions to look up).
@@ -78,7 +85,8 @@ export function normalizeArticleUrl(input: string): string | null {
   // Strip tracking params, keep + sort the rest so equivalent URLs key the same.
   const kept: Array<[string, string]> = [];
   for (const [key, value] of url.searchParams) {
-    if (TRACKING_PARAMS.has(key.toLowerCase())) continue;
+    const lowerKey = key.toLowerCase();
+    if (TRACKING_PARAMS.has(lowerKey) || isHostTrackingParam(url.hostname, lowerKey)) continue;
     kept.push([key, value]);
   }
   kept.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
@@ -105,18 +113,35 @@ export function normalizeArticleUrl(input: string): string | null {
  * (a person who linked both forms is still one person), keeping the no-slash form
  * as the canonical cache key.
  *
- * Returns 1 target for the bare root (already its only sensible form), else 2.
+ * Returns the normalized slash variants plus, when supplied, the exact raw
+ * spelling and its slash variant for legacy records written before callers
+ * canonicalized their targets.
  */
-export function constellationTargets(normUrl: string): string[] {
-  let url: URL;
-  try {
-    url = new URL(normUrl);
-  } catch {
-    return [normUrl];
+export function constellationTargets(normUrl: string, rawUrl?: string): string[] {
+  const targets = new Set<string>();
+
+  const addSlashVariants = (input: string) => {
+    targets.add(input);
+    let url: URL;
+    try {
+      url = new URL(input);
+    } catch {
+      return;
+    }
+    if (url.pathname === '/') return;
+    url.pathname = url.pathname.endsWith('/') ? url.pathname.slice(0, -1) : `${url.pathname}/`;
+    targets.add(url.toString());
+  };
+
+  addSlashVariants(normUrl);
+
+  // Records written before callers canonicalized their target may still carry
+  // the exact tracked URL. Probe that spelling too when the request has it; the
+  // normalized forms remain first so current records take the cheap path.
+  const raw = rawUrl?.trim();
+  if (raw && raw !== normUrl && normalizeArticleUrl(raw) === normUrl) {
+    addSlashVariants(raw);
   }
-  if (url.pathname === '/') return [normUrl];
-  // normUrl is already slash-trimmed, so appending one always yields a distinct
-  // variant (the query string, if any, stays after the path).
-  url.pathname = `${url.pathname}/`;
-  return [normUrl, url.toString()];
+
+  return [...targets];
 }

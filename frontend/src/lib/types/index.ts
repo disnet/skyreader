@@ -795,6 +795,17 @@ export interface MentionLaneEntry {
   quote: string | null;
 }
 
+export interface CommunityHighlightNote {
+  did: string;
+  handle: string | null;
+  displayName: string | null;
+  avatar: string | null;
+  createdAt: string | null;
+  motivation: string | null;
+  note: string | null;
+  selector: TextQuoteSelector;
+}
+
 // One named Semble collection a card was filed into (see MentionLaneEntry).
 export interface SembleCollectionRef {
   name: string;

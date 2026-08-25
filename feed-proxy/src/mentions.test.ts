@@ -47,6 +47,17 @@ describe('normalizeArticleUrl', () => {
     );
   });
 
+  it('strips Substack referral tokens without treating every r param as tracking', () => {
+    expect(
+      normalizeArticleUrl(
+        'https://chinaunread.substack.com/p/a-post?r=clku7&utm_medium=post%20viewer'
+      )
+    ).toBe('https://chinaunread.substack.com/p/a-post');
+    expect(normalizeArticleUrl('https://example.com/article?r=chapter-2')).toBe(
+      'https://example.com/article?r=chapter-2'
+    );
+  });
+
   it('leaves the bare root slash intact', () => {
     expect(normalizeArticleUrl('https://example.com/')).toBe('https://example.com/');
   });
@@ -74,6 +85,18 @@ describe('constellationTargets', () => {
 
   it('does not vary the bare root', () => {
     expect(constellationTargets('https://example.com/')).toEqual(['https://example.com/']);
+  });
+
+  it('also probes an exact legacy tracked spelling when supplied', () => {
+    const normalized = 'https://chinaunread.substack.com/p/a-post';
+    const raw =
+      'https://chinaunread.substack.com/p/a-post?r=clku7&utm_campaign=post-expanded-share&utm_medium=post%20viewer';
+    expect(constellationTargets(normalized, raw)).toEqual([
+      normalized,
+      `${normalized}/`,
+      raw,
+      'https://chinaunread.substack.com/p/a-post/?r=clku7&utm_campaign=post-expanded-share&utm_medium=post%20viewer',
+    ]);
   });
 });
 

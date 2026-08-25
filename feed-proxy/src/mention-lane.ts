@@ -137,7 +137,7 @@ interface CacheRow {
 }
 
 // Fetch a single record value from the author's PDS (for its note/snippet).
-async function getRecordValue(
+export async function getRecordValue(
   db: Database,
   did: string,
   collection: string,
@@ -252,7 +252,7 @@ async function resolveSembleCollections(
 // their PDS (the same path every other record here takes) rather than through an
 // appview, so a person with no Bluesky presence still resolves. Cached on its own
 // long TTL because a name and face outlive the link index by a wide margin.
-async function resolveProfile(db: Database, did: string): Promise<AuthorProfile> {
+export async function resolveProfile(db: Database, did: string): Promise<AuthorProfile> {
   const key = `profile:${did}`;
   const now = Date.now();
   const cached = db

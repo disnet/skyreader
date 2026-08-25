@@ -18,6 +18,7 @@ import type {
   SocialContextResult,
   ArticleMentions,
   MentionLaneEntry,
+  CommunityHighlightNote,
   SembleContext,
   SocialDocument,
   User,
@@ -670,6 +671,15 @@ class ApiClient {
     return this.fetch('/api/v2/mention-lane', {
       method: 'POST',
       body: JSON.stringify({ url, lane }),
+    });
+  }
+
+  async fetchCommunityHighlights(
+    url: string
+  ): Promise<{ notes: CommunityHighlightNote[]; capped: boolean }> {
+    return this.fetch('/api/v2/margin-highlights', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
     });
   }
 

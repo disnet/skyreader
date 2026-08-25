@@ -22,6 +22,15 @@ describe('urlKey', () => {
     expect(urlKey('https://example.com/a')).not.toBe(urlKey('https://example.com/b'));
   });
 
+  it('strips Substack referral tokens without treating every r param as tracking', () => {
+    expect(
+      urlKey('https://chinaunread.substack.com/p/a-post?r=clku7&utm_medium=post%20viewer')
+    ).toBe('https://chinaunread.substack.com/p/a-post');
+    expect(urlKey('https://example.com/article?r=chapter-2')).toBe(
+      'https://example.com/article?r=chapter-2'
+    );
+  });
+
   it('leaves the bare root alone', () => {
     expect(urlKey('https://example.com/')).toBe('https://example.com/');
   });

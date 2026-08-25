@@ -46,6 +46,13 @@ const TRACKING_PARAMS = new Set([
   'oly_enc_id',
 ]);
 
+// Short parameter names are too ambiguous to strip everywhere. Substack uses
+// `r` exclusively as a reader/referral token on post URLs, while another site
+// may use the same name to select real content.
+function isHostTrackingParam(hostname: string, key: string): boolean {
+  return key === 'r' && (hostname === 'substack.com' || hostname.endsWith('.substack.com'));
+}
+
 /**
  * Canonicalize a URL for same-page matching. Returns `null` for anything that
  * isn't an http(s) URL — a guid, an at:// uri, a bare id — so callers that
@@ -71,7 +78,8 @@ export function urlKey(input: string): string | null {
 
   const kept: Array<[string, string]> = [];
   for (const [key, value] of url.searchParams) {
-    if (TRACKING_PARAMS.has(key.toLowerCase())) continue;
+    const lowerKey = key.toLowerCase();
+    if (TRACKING_PARAMS.has(lowerKey) || isHostTrackingParam(url.hostname, lowerKey)) continue;
     kept.push([key, value]);
   }
   kept.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
