@@ -108,6 +108,48 @@ describe('getMarginHighlights', () => {
     expect(result.capped).toBe(true);
   });
 
+  it('bounds profile PDS lookups for articles with many distinct authors', async () => {
+    const value = db();
+    const records = Array.from({ length: 20 }, (_, i) => ({
+      did: `did:plc:user${i}`,
+      rkey: `r${i}`,
+    }));
+    for (const record of records) seedDid(value, record.did);
+    let activeProfiles = 0;
+    let maxActiveProfiles = 0;
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/links/all')
+        return Response.json({
+          links: { 'at.margin.note': { '.target.source': { records: records.length } } },
+        });
+      if (url.pathname === '/links')
+        return Response.json({
+          linking_records: records.map((record) => ({
+            ...record,
+            collection: 'at.margin.note',
+          })),
+        });
+      if (url.pathname.includes('getRecord')) {
+        if (url.searchParams.get('rkey') === 'self') {
+          activeProfiles++;
+          maxActiveProfiles = Math.max(maxActiveProfiles, activeProfiles);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          activeProfiles--;
+          return Response.json({ value: {} });
+        }
+        return Response.json({
+          value: { target: { selector: { exact: url.searchParams.get('rkey') } } },
+        });
+      }
+      return new Response('{}', { status: 404 });
+    }) as typeof fetch);
+
+    expect((await getMarginHighlights(value, ARTICLE)).notes).toHaveLength(records.length);
+    expect(maxActiveProfiles).toBeGreaterThan(1);
+    expect(maxActiveProfiles).toBeLessThanOrEqual(6);
+  });
+
   it('serves a fresh cache entry without network work', async () => {
     const value = db();
     value.run('INSERT INTO constellation_cache (cache_key,context_json,cached_at) VALUES (?,?,?)', [
