@@ -34,7 +34,7 @@
   "homepage": "https://skyreader.app",
   "license": "MIT",
   "engines": {
-    "node": ">=18"
+    "node": ">=22.12.0"
   },
   "dependencies": {
     "commander": "^15.0.0",
