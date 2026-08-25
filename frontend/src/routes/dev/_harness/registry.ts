@@ -75,6 +75,13 @@ export const harnesses: HarnessEntry[] = [
     components: ['ReaderBottomBar', 'MobileBottomBar', 'ReadingModeToggle', 'BottomSheet'],
   },
   {
+    slug: 'collections',
+    title: 'Collection picker',
+    description:
+      'Save to Semble / Margin: the recently-used band, the locked Saved-list row, edit-mode diffs, and every load, empty, and failure state.',
+    components: ['CollectionPicker'],
+  },
+  {
     slug: 'linkblog',
     title: 'Linkblog',
     description:

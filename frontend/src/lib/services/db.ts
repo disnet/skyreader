@@ -66,6 +66,14 @@ export interface IntegrationCollectionCacheEntry {
   description?: string;
   createdAt?: string;
   cachedAt: number;
+  /**
+   * When this device last filed something into this collection. Semble and
+   * Margin expose no "last used" signal, so recency is ours to remember: it's
+   * stamped on confirm and merged forward across cache refreshes (see
+   * collections.svelte.ts writeCache). Unindexed — the picker sorts a list it
+   * already holds in memory.
+   */
+  lastUsedAt?: number;
 }
 
 class SkyreaderDatabase extends Dexie {
