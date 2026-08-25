@@ -6,6 +6,7 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
@@ -14,6 +15,7 @@
   import type { Article } from '$lib/types';
   import { db } from '$lib/services/db';
   import { decodeEntities } from '$lib/utils/entities';
+  import { extractSembleMetadata, extractMarginMetadata } from '$lib/utils/displayItem';
   import Icon from '$lib/components/Icon.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
@@ -25,8 +27,6 @@
     onArchive,
     onRemove,
     onHover,
-    onSaveToSemble,
-    onSaveToMargin,
   }: {
     displayItem: FeedDisplayItem;
     selected?: boolean;
@@ -34,8 +34,6 @@
     onArchive?: () => void;
     onRemove?: () => void;
     onHover?: () => void;
-    onSaveToSemble?: () => void;
-    onSaveToMargin?: () => void;
   } = $props();
 
   // Normalize data across item types
@@ -444,18 +442,18 @@
         },
       });
     }
-    if (onSaveToSemble) {
+    if (auth.user) {
       items.push({
         label: 'Save to Semble',
         icon: 'semble',
-        onclick: () => onSaveToSemble!(),
+        onclick: () =>
+          integrationSaveStore.openPicker('semble', extractSembleMetadata(displayItem)),
       });
-    }
-    if (onSaveToMargin) {
       items.push({
         label: 'Save to Margin',
         icon: 'margin',
-        onclick: () => onSaveToMargin!(),
+        onclick: () =>
+          integrationSaveStore.openPicker('margin', extractMarginMetadata(displayItem)),
       });
     }
     if (onRemove) {

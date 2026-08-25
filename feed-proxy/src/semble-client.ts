@@ -182,7 +182,8 @@ export async function fetchSembleContext(rawUrl: string): Promise<SembleContext 
         {
           id,
           name,
-          url: a.handle && rkey ? `https://semble.so/profile/${a.handle}/collections/${rkey}` : null,
+          url:
+            a.handle && rkey ? `https://semble.so/profile/${a.handle}/collections/${rkey}` : null,
           author: { did: a.did, handle: a.handle },
         },
       ];

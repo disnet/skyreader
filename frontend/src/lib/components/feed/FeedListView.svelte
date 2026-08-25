@@ -10,23 +10,15 @@
   import { preferences } from '$lib/stores/preferences.svelte';
   import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
   import type { Article, SocialDocument } from '$lib/types';
-  import {
-    extractSembleMetadata,
-    extractMarginMetadata,
-    type SembleMetadata,
-    type MarginMetadata,
-  } from '$lib/utils/displayItem';
   import { getDocumentEffectiveUrl } from '$lib/utils/linkPost';
 
   interface Props {
     onToggleSave: (article: Article) => void;
     onUnshare: (guid: string) => void;
     onReaderChange?: (open: boolean) => void;
-    onSaveToSemble?: (data: SembleMetadata) => void;
-    onSaveToMargin?: (data: MarginMetadata) => void;
   }
 
-  let { onToggleSave, onUnshare, onReaderChange, onSaveToSemble, onSaveToMargin }: Props = $props();
+  let { onToggleSave, onUnshare, onReaderChange }: Props = $props();
 
   // Resolve the atproto.documents subscription a document belongs to, so its
   // publication label can link and filter like an RSS feed title. Mirrors the
@@ -213,27 +205,11 @@
     return articleElements;
   }
 
-  function handleReaderSemble() {
-    if (!readerItem || !onSaveToSemble) return;
-    onSaveToSemble(extractSembleMetadata(readerItem));
-  }
-
-  function handleReaderMargin() {
-    if (!readerItem || !onSaveToMargin) return;
-    onSaveToMargin(extractMarginMetadata(readerItem));
-  }
-
   export { scrollToCenter };
 </script>
 
 {#if readerItem}
-  <SavedReader
-    {readerItem}
-    onClose={closeReader}
-    onToggleSave={handleReaderSave}
-    onSaveToSemble={onSaveToSemble ? handleReaderSemble : undefined}
-    onSaveToMargin={onSaveToMargin ? handleReaderMargin : undefined}
-  />
+  <SavedReader {readerItem} onClose={closeReader} onToggleSave={handleReaderSave} />
 {/if}
 
 <div
@@ -264,12 +240,6 @@
           onSelect={() => handleSelect(index)}
           onExpand={() => handleExpand(index)}
           onOpenFullscreen={() => openReader(displayItem)}
-          onSaveToSemble={onSaveToSemble
-            ? () => onSaveToSemble(extractSembleMetadata(displayItem))
-            : undefined}
-          onSaveToMargin={onSaveToMargin
-            ? () => onSaveToMargin(extractMarginMetadata(displayItem))
-            : undefined}
         />
       {:else if displayItem.type === 'document'}
         {@const doc = displayItem.item}
@@ -297,12 +267,6 @@
           onExpand={() => handleExpand(index)}
           onOpenFullscreen={() => openReader(displayItem)}
           onOpenCollectionPiece={openCollectionPiece}
-          onSaveToSemble={onSaveToSemble
-            ? () => onSaveToSemble(extractSembleMetadata(displayItem))
-            : undefined}
-          onSaveToMargin={onSaveToMargin
-            ? () => onSaveToMargin(extractMarginMetadata(displayItem))
-            : undefined}
         />
       {/if}
     </div>

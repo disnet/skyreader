@@ -20,6 +20,7 @@
     type DailyMagazineOrder,
   } from '$lib/stores/preferences.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
   import { decodeEntities } from '$lib/utils/entities';
   import { sanitizeHtml } from '$lib/utils/sanitize';
@@ -167,6 +168,24 @@
   let activeEntry = $derived(entries.find((entry) => entry.displayKey === activeKey) ?? entries[0]);
   let activeItem = $derived(activeEntry?.item);
   let activeDisplayKey = $derived(activeEntry?.displayKey ?? '');
+
+  // Saving the article you're on out to Semble / Margin. The picker is global
+  // (mounted in AppShell), so the magazine's own chrome can offer it.
+  function integrationTarget() {
+    if (!activeItem) return null;
+    return {
+      url: activeItem.url,
+      title: activeItem.title ?? undefined,
+      description: activeItem.description ?? undefined,
+      author: activeItem.author ?? undefined,
+      publishedAt: activeItem.publishedAt ?? undefined,
+    };
+  }
+
+  function saveActiveTo(kind: 'semble' | 'margin') {
+    const target = integrationTarget();
+    if (target) integrationSaveStore.openPicker(kind, target);
+  }
 
   onMount(() => {
     document.body.style.overflow = 'hidden';
@@ -435,6 +454,8 @@
     onClose={closeMagazine}
     onArchive={magazine ? archiveMagazine : undefined}
     onOpenUrl={() => activeItem && window.open(activeItem.url, '_blank', 'noopener')}
+    onSaveToSemble={() => saveActiveTo('semble')}
+    onSaveToMargin={() => saveActiveTo('margin')}
     onContents={() =>
       paged
         ? pagedController?.goToPage(0)

@@ -48,6 +48,7 @@
   import { profileService } from '$lib/services/profiles';
   import { auth } from '$lib/stores/auth.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { toggleSavedLink } from '$lib/utils/saveLink';
   import { preferences } from '$lib/stores/preferences.svelte';
   import ArticleCardView from './ArticleCardView.svelte';
@@ -89,8 +90,6 @@
     onExpand,
     onOpenFullscreen,
     onOpenCollectionPiece,
-    onSaveToSemble,
-    onSaveToMargin,
   }: {
     article?: Article;
     document?: SocialDocument;
@@ -114,8 +113,6 @@
     /** Open a curated edition piece in the in-app reader. Threaded from the list
      *  view, which owns the reader stack. */
     onOpenCollectionPiece?: (item: ReaderCollectionItem) => void | Promise<void>;
-    onSaveToSemble?: () => void;
-    onSaveToMargin?: () => void;
   } = $props();
 
   // Determine if we're in document mode (showing someone's published document)
@@ -380,9 +377,11 @@
         // away inside the same footer band.
         return false;
       case 'semble':
-        return Boolean(onSaveToSemble);
       case 'margin':
-        return Boolean(onSaveToMargin);
+        // The collection picker is global, so these are offered wherever the
+        // card is rendered. Having saved before doesn't retire the control:
+        // saving again is how the article joins another collection.
+        return Boolean(auth.user);
       case 'bluesky':
         return true; // compose intent — always available
     }
@@ -407,10 +406,10 @@
         if (!currentlyShared) composeShare();
         break;
       case 'semble':
-        onSaveToSemble?.();
+        saveToSemble();
         break;
       case 'margin':
-        onSaveToMargin?.();
+        saveToMargin();
         break;
       case 'bluesky':
         window.open(
@@ -856,14 +855,36 @@
     if (text) shareComposerStore.appendQuote(text);
   }
 
+  // What a Semble card / Margin bookmark records about this item. Mirrors
+  // extractSembleMetadata's shape for the display-item surfaces.
+  let integrationTarget = $derived({
+    url: itemUrl,
+    title: itemTitle,
+    description: article?.summary ?? document?.description,
+    author: article?.author,
+    publishedAt: itemPublishedAt || undefined,
+  });
+
+  function saveToSemble() {
+    integrationSaveStore.openPicker('semble', integrationTarget);
+  }
+
+  function saveToMargin() {
+    integrationSaveStore.openPicker('margin', {
+      url: integrationTarget.url,
+      title: integrationTarget.title,
+      description: integrationTarget.description,
+    });
+  }
+
   function handleOverflowSemble() {
     overflowMenuOpen = false;
-    onSaveToSemble?.();
+    saveToSemble();
   }
 
   function handleOverflowMargin() {
     overflowMenuOpen = false;
-    onSaveToMargin?.();
+    saveToMargin();
   }
 </script>
 
@@ -918,8 +939,8 @@
   {fetchingOriginal}
   {hasFetchedOriginal}
   {canFollowSource}
-  hasSaveToSemble={Boolean(onSaveToSemble)}
-  hasSaveToMargin={Boolean(onSaveToMargin)}
+  hasSaveToSemble={Boolean(auth.user)}
+  hasSaveToMargin={Boolean(auth.user)}
   hasOpenFullscreen={Boolean(onOpenFullscreen)}
   bind:bodyEl
   bind:tagBtnRef
@@ -944,8 +965,8 @@
   onOverflowTag={handleOverflowTag}
   onOverflowSemble={handleOverflowSemble}
   onOverflowMargin={handleOverflowMargin}
-  onSaveToSemble={() => onSaveToSemble?.()}
-  onSaveToMargin={() => onSaveToMargin?.()}
+  onSaveToSemble={saveToSemble}
+  onSaveToMargin={saveToMargin}
   onFollowSource={handleFollowSource}
   onSelectFilter={atmosphere.setFilter}
   onOpenStream={atmosphere.openStream}

@@ -1,9 +1,16 @@
 <script lang="ts">
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
-  import { normalizeDisplayItem, getAuthorLabel, getDisplayContent } from '$lib/utils/displayItem';
+  import {
+    normalizeDisplayItem,
+    getAuthorLabel,
+    getDisplayContent,
+    extractSembleMetadata,
+    extractMarginMetadata,
+  } from '$lib/utils/displayItem';
   import { getExternalArticleLink } from '$lib/utils/linkPost';
   import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
   import { db } from '$lib/services/db';
   import { saveCollectionPiece, isCollectionPieceSaved } from '$lib/utils/collectionPiece';
@@ -45,17 +52,26 @@
     onArchive,
     onRemove,
     onToggleSave,
-    onSaveToSemble,
-    onSaveToMargin,
   }: {
     readerItem: FeedDisplayItem;
     onClose: () => void;
     onArchive?: () => void;
     onRemove?: () => void;
     onToggleSave?: () => void;
-    onSaveToSemble?: () => void;
-    onSaveToMargin?: () => void;
   } = $props();
+
+  // Saving out to Semble / Margin. The picker is global (mounted in AppShell),
+  // so the reader offers these wherever it is hosted rather than only on the
+  // pages that used to own the picker's state.
+  let canSaveToIntegration = $derived(Boolean(auth.user));
+
+  function saveToSemble() {
+    integrationSaveStore.openPicker('semble', extractSembleMetadata(readerItem));
+  }
+
+  function saveToMargin() {
+    integrationSaveStore.openPicker('margin', extractMarginMetadata(readerItem));
+  }
 
   let styleMenuOpen = $state(false);
   let styleSheetOpen = $state(false);
@@ -547,19 +563,16 @@
       });
     }
 
-    if (onSaveToSemble) {
+    if (canSaveToIntegration) {
       items.push({
         label: 'Save to Semble',
         icon: 'semble',
-        onclick: () => onSaveToSemble!(),
+        onclick: saveToSemble,
       });
-    }
-
-    if (onSaveToMargin) {
       items.push({
         label: 'Save to Margin',
         icon: 'margin',
-        onclick: () => onSaveToMargin!(),
+        onclick: saveToMargin,
       });
     }
 
@@ -1003,23 +1016,21 @@
                   <span>{isSaved ? 'Unsave' : 'Save'}</span>
                 </button>
               {/if}
-              {#if onSaveToSemble}
+              {#if canSaveToIntegration}
                 <button
                   class="sheet-action-btn"
                   onclick={() => {
-                    onSaveToSemble!();
+                    saveToSemble();
                     styleSheetOpen = false;
                   }}
                 >
                   <Icon name="semble" size={18} />
                   <span>Save to Semble</span>
                 </button>
-              {/if}
-              {#if onSaveToMargin}
                 <button
                   class="sheet-action-btn"
                   onclick={() => {
-                    onSaveToMargin!();
+                    saveToMargin();
                     styleSheetOpen = false;
                   }}
                 >
@@ -1136,7 +1147,7 @@
       <!-- Share-to-linkblog + discussion rails. Part of the shared content so they
            sit at the end in scroll mode and flow onto the final page(s) when
            paged. -->
-      <ReaderDiscussion {readerItem} {onSaveToSemble} {onSaveToMargin} />
+      <ReaderDiscussion {readerItem} />
     {/snippet}
 
     {#if paged}
