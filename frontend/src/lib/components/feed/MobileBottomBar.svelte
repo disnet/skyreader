@@ -16,6 +16,9 @@
     onOpenNotifications: () => void;
     hasActiveFilters: boolean;
     hideFilterButton?: boolean;
+    /** Saved views only: the header's search button isn't reachable down here. */
+    onOpenSearch?: () => void;
+    searchActive?: boolean;
   }
 
   let {
@@ -27,6 +30,8 @@
     onOpenNotifications,
     hasActiveFilters,
     hideFilterButton = false,
+    onOpenSearch,
+    searchActive = false,
   }: Props = $props();
 
   let addMenuOpen = $state(false);
@@ -178,6 +183,20 @@
           >
         {/if}
       </button>
+      {#if onOpenSearch}
+        <button
+          class="bar-btn"
+          class:has-filters={searchActive}
+          onclick={onOpenSearch}
+          aria-label="Search saved items"
+          title="Search saved"
+        >
+          <Icon name="search" size={20} />
+          {#if searchActive}
+            <span class="filter-dot"></span>
+          {/if}
+        </button>
+      {/if}
       {#if !hideFilterButton}
         <button
           class="bar-btn"

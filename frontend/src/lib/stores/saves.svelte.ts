@@ -7,6 +7,7 @@ import { syncQueue, type SavedPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
 import { extractArticle } from '$lib/services/extract';
 import { computeContentStats } from '$lib/services/articleMerge';
+import { savedSearchStore } from './savedSearch.svelte';
 import type { SavedItem } from '$lib/types';
 
 // Derive a word count from the best available body text, returning null when
@@ -164,6 +165,9 @@ function createSavesStore() {
         if (snapshot.length > 0) {
           await safeBulkPut(db.saved, snapshot);
         }
+        // A batch landed: rebuild the search corpus on the next search rather
+        // than patching it row by row.
+        savedSearchStore.invalidate();
         pushWordCountBackfills(backfilled);
         return;
       }
@@ -205,6 +209,7 @@ function createSavesStore() {
       // the cache is left untouched.
       if (fresh.length > 0) {
         await safeBulkPut(db.saved, fresh);
+        savedSearchStore.invalidate();
       }
 
       pushWordCountBackfills(backfilled);
@@ -263,6 +268,7 @@ function createSavesStore() {
       articles = [toLightSaved(savedItem), ...articles];
       rebuildMaps();
       await safePut(db.saved, savedItem);
+      savedSearchStore.upsert(savedItem);
 
       return savedItem;
     } catch (err) {
@@ -337,6 +343,7 @@ function createSavesStore() {
       articles = [toLightSaved(savedItem), ...articles];
       rebuildMaps();
       await safePut(db.saved, savedItem);
+      savedSearchStore.upsert(savedItem);
 
       if (syncStore.isOnline) {
         try {
@@ -387,6 +394,10 @@ function createSavesStore() {
           articles = articles.map((a) => (a.rkey === rkey ? toLightSaved(updated) : a));
           rebuildMaps();
           await safePut(db.saved, updated);
+          // The backend can hand back a different rkey; drop the optimistic key
+          // so the corpus doesn't keep a stale copy of the same save.
+          if (updated.rkey !== rkey) savedSearchStore.remove(rkey);
+          savedSearchStore.upsert(updated);
 
           return updated;
         } catch (err) {
@@ -474,6 +485,7 @@ function createSavesStore() {
       articles = [savedItem, ...articles];
       rebuildMaps();
       await safePut(db.saved, savedItem);
+      savedSearchStore.upsert(savedItem);
 
       if (syncStore.isOnline) {
         try {
@@ -499,6 +511,8 @@ function createSavesStore() {
           articles = articles.map((a) => (a.rkey === rkey ? updated : a));
           rebuildMaps();
           await safePut(db.saved, updated);
+          if (updated.rkey !== rkey) savedSearchStore.remove(rkey);
+          savedSearchStore.upsert(updated);
           return updated;
         } catch (err) {
           console.error('Failed to save document to backend, queueing:', err);
@@ -545,6 +559,7 @@ function createSavesStore() {
     // Optimistically remove from local state
     articles = articles.filter((a) => a.itemGuid !== guid);
     rebuildMaps();
+    savedSearchStore.remove(item.rkey, guid);
     await db.saved.where('itemGuid').equals(guid).delete();
 
     if (syncStore.isOnline) {
@@ -574,6 +589,7 @@ function createSavesStore() {
     articles = articles.filter((a) => a.rkey !== rkey);
     rebuildMaps();
     contentCache.delete(rkey);
+    savedSearchStore.remove(rkey, item?.itemGuid);
     await db.saved.delete(rkey);
 
     if (syncStore.isOnline) {
@@ -655,7 +671,9 @@ function createSavesStore() {
       const { bodies } = await api.getSavedBodies([rkey]);
       const body = bodies[rkey] ?? null;
       if (body != null && row) {
-        await safePut(db.saved, { ...row, content: body });
+        const filled = { ...row, content: body };
+        await safePut(db.saved, filled);
+        savedSearchStore.upsert(filled);
       }
       if (body != null) contentCache.set(rkey, body);
       return body;

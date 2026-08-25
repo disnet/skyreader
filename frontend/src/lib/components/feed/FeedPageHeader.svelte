@@ -9,6 +9,7 @@
   import { syncStore } from '$lib/stores/sync.svelte';
   import { formatRelativeTime } from '$lib/utils/date';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
+  import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
 
   interface Props {
     title: string;
@@ -212,6 +213,17 @@
                 >
               </button>
             {/if}
+            <span class="toggle-divider"></span>
+            <button
+              class:active={savedSearchStore.open || savedSearchStore.active}
+              onclick={() => savedSearchStore.toggle()}
+              aria-label="Search saved items"
+              aria-pressed={savedSearchStore.open}
+              title="Search saved (/)"
+            >
+              <Icon name="search" size={16} />
+              <span class="btn-label">Search</span>
+            </button>
             <span class="toggle-divider"></span>
             <button
               onclick={() => sidebarStore.openSaveArticleModal()}

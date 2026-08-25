@@ -8,6 +8,7 @@
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
+  import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { appManager } from '$lib/stores/app.svelte';
@@ -21,6 +22,7 @@
   import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
   import FeedListView from '$lib/components/feed/FeedListView.svelte';
   import SavedListView from '$lib/components/feed/SavedListView.svelte';
+  import SavedSearchBar from '$lib/components/feed/SavedSearchBar.svelte';
   import EditFeedModal from '$lib/components/EditFeedModal.svelte';
   import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
   import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
@@ -475,10 +477,20 @@
     feedViewStore.resetSelection();
   });
 
+  // This page owns the saved search row, so it owns the window in which search
+  // exists at all: the global `/` shortcut asks the store whether there is a
+  // row to open. The view filters can't answer that — they survive unmount.
+  $effect(() => {
+    savedSearchStore.setSurfaceActive(isSavedView);
+  });
+
   onDestroy(() => {
     if (mode === 'linkblog') {
       feedViewStore.setMyLinkblogMode(false);
     }
+    // Leaving the surface ends the search; a stale query must not come back
+    // pre-applied (and silently emptying the list) on the next visit.
+    savedSearchStore.setSurfaceActive(false);
     document.removeEventListener('visibilitychange', handleVisibilityChange);
   });
 </script>
@@ -529,6 +541,13 @@
     <div class="feed-page-body">
       {#if mode === 'linkblog'}
         <LinkblogIntro />
+      {/if}
+
+      <!-- Sits here rather than inside the header because the header is hidden
+           below 1000px (the mobile bottom bar takes over) — this way the same
+           row serves desktop and mobile, directly beneath the header on both. -->
+      {#if isSavedView && savedSearchStore.open && !readerOpen}
+        <SavedSearchBar />
       {/if}
 
       <PullToRefresh
@@ -642,6 +661,8 @@
           filterSheetOpen = true;
         }}
         {hasActiveFilters}
+        onOpenSearch={isSavedView ? () => savedSearchStore.openSearch() : undefined}
+        searchActive={savedSearchStore.active}
       />
 
       <BottomSheet

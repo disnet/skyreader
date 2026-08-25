@@ -14,6 +14,7 @@
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { keyboardStore } from '$lib/stores/keyboard.svelte';
+  import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
   import { notificationsStore } from '$lib/stores/notifications.svelte';
   import { feedPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
   import Sidebar from '$lib/components/Sidebar.svelte';
@@ -164,12 +165,22 @@
       condition: () => auth.isAuthenticated,
     });
 
-    // Navigation switcher shortcut
+    // Navigation switcher shortcut. In a saved view "/" means what it means
+    // everywhere else — search this list — and falls back to the switcher
+    // otherwise. Registered once here rather than re-registered per page,
+    // because the store keys shortcuts by key: a second '/' registration would
+    // clobber this one and take the switcher with it when it unregistered.
+    // Gated on `available` (the saved page is mounted *now*) rather than on the
+    // view filters, which keep their last value after that page unmounts and
+    // would leave the switcher dead on every route after one Saved visit.
     keyboardStore.register({
       key: '/',
-      description: 'Open switcher',
+      description: 'Search saved / open switcher',
       category: 'Navigation',
-      action: () => sidebarStore.toggleNavigationDropdown(),
+      action: () => {
+        if (savedSearchStore.available) savedSearchStore.openSearch();
+        else sidebarStore.toggleNavigationDropdown();
+      },
       condition: () => auth.isAuthenticated,
     });
 
