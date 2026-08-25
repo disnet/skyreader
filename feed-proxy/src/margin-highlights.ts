@@ -129,22 +129,21 @@ async function resolveMarginHighlights(
     );
   }
   const profileEntries: Array<
-    readonly [
-      string,
-      Awaited<ReturnType<typeof resolveProfile>> & { handle: string | null },
-    ]
+    readonly [string, Awaited<ReturnType<typeof resolveProfile>> & { handle: string | null }]
   > = [];
   const dids = [...new Set(records.map((r) => r.did))];
   for (let offset = 0; offset < dids.length; offset += RECORD_CONCURRENCY) {
     profileEntries.push(
       ...(await Promise.all(
-        dids.slice(offset, offset + RECORD_CONCURRENCY).map(
-          async (did) =>
-            [
-              did,
-              { ...(await resolveProfile(db, did)), handle: await resolveHandle(db, did) },
-            ] as const
-        )
+        dids
+          .slice(offset, offset + RECORD_CONCURRENCY)
+          .map(
+            async (did) =>
+              [
+                did,
+                { ...(await resolveProfile(db, did)), handle: await resolveHandle(db, did) },
+              ] as const
+          )
       ))
     );
   }
