@@ -313,9 +313,20 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     // people who actually said something.
     const said: DiscussionEntryVM[] = [];
     const linkOnly: DiscussionEntryVM[] = [];
+    // One person, one name in that line. A bot that drops the same URL twice, or
+    // an account whose post the bridge mirrors into a second lane, is still one
+    // linker — and the line says who linked, not how many times.
+    const linkers = new Set<string>();
     for (const entry of entries) {
       const saidSomething = Boolean(entry.cleanNote || entry.quote || entry.collections?.length);
-      (saidSomething ? said : linkOnly).push(entry);
+      if (saidSomething) {
+        said.push(entry);
+        continue;
+      }
+      const who = entry.did || entry.handle || entry.url || entry.key;
+      if (linkers.has(who)) continue;
+      linkers.add(who);
+      linkOnly.push(entry);
     }
 
     // A lane that failed only matters while nothing else came back — one dead

@@ -163,6 +163,7 @@
     sembleContext={atmosphere.sembleContext}
     lanesOpen={true}
     {panelId}
+    {itemUrl}
     onSelectFilter={atmosphere.setFilter}
     onRetry={atmosphere.retry}
     onCreateInLane={createInLane}

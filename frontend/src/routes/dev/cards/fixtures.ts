@@ -67,9 +67,18 @@ export function splitStream(entries: DiscussionEntryVM[]): {
 } {
   const said: DiscussionEntryVM[] = [];
   const linkOnly: DiscussionEntryVM[] = [];
+  // Mirrors useAtmosphere: one person, one name in the "Also linked by" line.
+  const linkers = new Set<string>();
   for (const entry of entries) {
     const saidSomething = Boolean(entry.cleanNote || entry.quote || entry.collections?.length);
-    (saidSomething ? said : linkOnly).push(entry);
+    if (saidSomething) {
+      said.push(entry);
+      continue;
+    }
+    const who = entry.did || entry.handle || entry.url || entry.key;
+    if (linkers.has(who)) continue;
+    linkers.add(who);
+    linkOnly.push(entry);
   }
   return { entries: said, linkOnly };
 }
