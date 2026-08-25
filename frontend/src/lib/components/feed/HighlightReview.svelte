@@ -169,6 +169,9 @@
   let noteAnchor = $state<DOMRect | null>(null);
 
   function openNoteEditor(event: MouseEvent) {
+    // Freeze before opening the editor: the import can finish while the reader
+    // is typing, and the saved note must still belong to the selected card.
+    interacted = true;
     noteAnchor = (event.currentTarget as HTMLElement).getBoundingClientRect();
   }
 
@@ -192,11 +195,19 @@
     const entry = current;
     const target = source;
     if (!entry || !target || !live) return;
+    interacted = true;
     void saveHighlightToMargin(entry.itemKey, live, target.url, target.title);
   }
 
   // --- Remove (destructive across apps when the highlight is on Margin) ---
   let removePrompt = $state(false);
+
+  function openRemovePrompt() {
+    // Freeze before confirmation opens so a late import cannot swap the card
+    // underneath this destructive action.
+    interacted = true;
+    removePrompt = true;
+  }
 
   function confirmRemove() {
     const entry = current;
@@ -228,6 +239,7 @@
       openSource();
     } else if (event.key === 'e') {
       event.preventDefault();
+      interacted = true;
       const button = document.querySelector<HTMLElement>('[data-review-note]');
       noteAnchor = button?.getBoundingClientRect() ?? new DOMRect(0, 0, 0, 0);
     }
@@ -300,7 +312,7 @@
             </button>
             <button
               class="action-btn danger"
-              onclick={() => (removePrompt = true)}
+              onclick={openRemovePrompt}
               title="Remove highlight"
               aria-label="Remove highlight"
             >

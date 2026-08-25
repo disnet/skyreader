@@ -108,17 +108,25 @@ describe('highlightDeckStatus', () => {
 
 describe('shouldRedealAfterImport', () => {
   it('redeals when the open-time poll imported into an untouched deck', () => {
-    expect(shouldRedealAfterImport({ imported: 2 }, { index: 0, reviewed: 0 })).toBe(true);
+    expect(
+      shouldRedealAfterImport({ imported: 2 }, { index: 0, reviewed: 0, interacted: false })
+    ).toBe(true);
   });
 
   it("doesn't redeal when the poll didn't run or brought nothing new", () => {
-    expect(shouldRedealAfterImport(null, { index: 0, reviewed: 0 })).toBe(false);
-    expect(shouldRedealAfterImport({ imported: 0 }, { index: 0, reviewed: 0 })).toBe(false);
+    expect(shouldRedealAfterImport(null, { index: 0, reviewed: 0, interacted: false })).toBe(false);
+    expect(
+      shouldRedealAfterImport({ imported: 0 }, { index: 0, reviewed: 0, interacted: false })
+    ).toBe(false);
   });
 
   it('leaves a session in progress alone — the dealt deck is fixed', () => {
-    expect(shouldRedealAfterImport({ imported: 2 }, { index: 1, reviewed: 1 })).toBe(false);
-    expect(shouldRedealAfterImport({ imported: 2 }, { index: 0, reviewed: 3 })).toBe(false);
+    expect(
+      shouldRedealAfterImport({ imported: 2 }, { index: 1, reviewed: 1, interacted: false })
+    ).toBe(false);
+    expect(
+      shouldRedealAfterImport({ imported: 2 }, { index: 0, reviewed: 3, interacted: false })
+    ).toBe(false);
   });
 
   it('does not redeal after a removal while the import is still in flight', () => {

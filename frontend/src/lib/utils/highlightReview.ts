@@ -118,7 +118,7 @@ export function buildHighlightDeck(
  */
 export function shouldRedealAfterImport(
   result: { imported: number } | null,
-  progress: { index: number; reviewed: number; interacted?: boolean }
+  progress: { index: number; reviewed: number; interacted: boolean }
 ): boolean {
   if (!result || result.imported <= 0) return false;
   return !progress.interacted && progress.index === 0 && progress.reviewed === 0;
