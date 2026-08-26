@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy, tick, untrack } from 'svelte';
   import { page } from '$app/stores';
+  import { browser } from '$app/environment';
+  import { READ_PARAM } from '$lib/utils/readerLink';
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -464,6 +466,22 @@
   // an empty published set is not an empty page.
   let hasLinkblogDrafts = $derived(mode === 'linkblog' && shareDraftsStore.list.length > 0);
 
+  // Is a `?read=` link waiting to be honoured? The reader stack lives inside the
+  // list views, so a surface that swaps its list for an empty state would
+  // swallow the link — a shared or bookmarked article landing on a feed-less or
+  // filtered-empty page would show a bare empty state with an unexplained param
+  // still in the address bar. While the param is there the list mounts instead
+  // (empty, and covered by the reader anyway); the hook then either opens the
+  // article or toasts and strips the param, which brings the empty state back.
+  let readerLinkPending = $derived.by(() => {
+    // `$page` notifies on every push, pop and navigation and is the trigger; the
+    // live location is the truth, because shallow routing moves the address bar
+    // without touching `$page.url` (see `useReaderStack`).
+    void $page.state;
+    if (!browser) return false;
+    return new URL(location.href).searchParams.has(READ_PARAM);
+  });
+
   // Reset selection when any filter changes
   $effect(() => {
     const _ = [
@@ -556,7 +574,7 @@
       >
         {#if (appManager.isHydrating || appManager.isRefreshing || (mode === 'linkblog' && myLinkblogStore.loading && !myLinkblogStore.loaded)) && feedViewStore.currentItems.length === 0 && !hasLinkblogDrafts}
           <LoadingState />
-        {:else if !isSavedView && feedViewStore.currentItems.length === 0 && !hasLinkblogDrafts}
+        {:else if !isSavedView && feedViewStore.currentItems.length === 0 && !hasLinkblogDrafts && !readerLinkPending}
           {#if mode === 'linkblog'}
             <!-- Linkblog always shows all shares, so there's no "no unread" case. -->
             <EmptyState

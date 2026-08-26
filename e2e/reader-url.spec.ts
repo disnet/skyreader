@@ -129,6 +129,40 @@ test.describe('Reader URLs', () => {
     await expect(authedPage).toHaveURL('/saved?view=nonexistent-channel');
   });
 
+  test('a link still opens on a surface whose list is empty, and Save works there', async ({
+    authedPage,
+    testUser,
+  }) => {
+    // A save made from a feed article: it carries the article's guid, which is
+    // how a `?read=` restore finds it — and why it comes back typed 'saved'.
+    const rkey = await seedArticle(testUser, { source: 'feed', itemGuid: URL_ });
+    const key = `at://${testUser.did}/app.skyreader.feed.saved/${rkey}`;
+
+    // This user has no subscriptions, so /feeds would render an empty state —
+    // and an empty state hosts no reader stack for the link to land in.
+    await authedPage.goto(`/feeds?read=${encodeURIComponent(key)}`);
+    await expect(reader(authedPage)).toBeVisible({ timeout: 20_000 });
+    await expect(authedPage.locator('.reader-overlay').getByText(TITLE).first()).toBeVisible();
+
+    // Restored from a URL the item is the save it already is, not the feed
+    // article — the reader's Save control has to know that and still act.
+    const unsave = authedPage.locator('.reader-overlay').getByTitle('Unsave');
+    await expect(unsave).toBeVisible();
+    await unsave.click();
+    await expect(authedPage.locator('.reader-overlay').getByTitle('Save (s)')).toBeVisible();
+  });
+
+  test('an unresolvable link on an empty surface says so and restores the empty state', async ({
+    authedPage,
+  }) => {
+    await authedPage.goto('/feeds?read=https%3A%2F%2Fexample.com%2Fnever-seen-here');
+
+    await expect(authedPage.getByText('Article unavailable')).toBeVisible({ timeout: 20_000 });
+    await expect(authedPage).toHaveURL(/\/feeds$/);
+    await expect(reader(authedPage)).toBeHidden();
+    await expect(authedPage.getByText('Your library is empty')).toBeVisible();
+  });
+
   test('the list under the reader keeps its scroll position on close', async ({
     authedPage,
     testUser,

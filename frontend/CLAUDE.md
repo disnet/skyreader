@@ -101,12 +101,27 @@ param is what makes a reload, a bookmark, a shared link and Forward-reopen work 
 on a cold load the hook rewrites the current entry to the bare list URL and pushes
 the reader's, so closing always lands on the container list. Resolution
 (`src/lib/utils/readerLink.ts`) goes saves → articles → documents, with an
-`at://` network fallback; an unresolvable key toasts and strips the param.
+`at://` network fallback; an unresolvable key toasts and strips the param. The
+hook only gives up (network fallback, then toast) once `appManager.phase` reaches
+`ready`/`error` — `isInitialized` is already true all through `refreshing`, which
+is exactly when the sync that supplies a feed article is still running.
+
+Because saves are matched first, an article you saved comes back typed `'saved'`
+rather than `'article'` when the _URL_ is what opened it. Anything a reader host
+does per item type needs a `'saved'` branch: `src/lib/utils/readerSave.ts` is the
+shared one for Save/Unsave, and it keys off the save's guid/url, never its display
+key (usually the save's `at://` record uri, which the saves store doesn't index).
 
 Consequence for anything that reads the URL: an effect on `$page.url` now re-runs
 when a reader opens or closes. Keep such effects idempotent under an added or
 removed `read` param — `feedViewStore.setFilters` is the precedent (it no-ops when
-the filter set is unchanged; see `src/lib/utils/urlFilters.ts`).
+the filter set is unchanged; see `src/lib/utils/urlFilters.ts`). The deliberate
+trade there: re-selecting the channel you are already in no longer re-applies that
+channel's persisted toolbar configuration (leaving and coming back still does).
+
+A surface renders its list, not an empty state, while a `read` param is present
+(`FeedPage`) — otherwise a shared link landing on a feed-less or filtered-empty
+page would have no reader stack to receive it and would sit there inert.
 
 ## Common Tasks
 

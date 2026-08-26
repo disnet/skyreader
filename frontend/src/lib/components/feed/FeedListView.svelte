@@ -9,6 +9,7 @@
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
+  import { toggleSavedItemSave } from '$lib/utils/readerSave';
   import type { Article, SocialDocument } from '$lib/types';
   import { getDocumentEffectiveUrl } from '$lib/utils/linkPost';
 
@@ -182,6 +183,10 @@
     if (!readerItem) return;
     if (readerItem.type === 'article') {
       onToggleSave(readerItem.item);
+    } else if (readerItem.type === 'saved') {
+      // An article opened from its `?read=` URL (reload, Forward, a link) comes
+      // back as the save it already is, not as the feed article — see readerSave.
+      void toggleSavedItemSave(readerItem.item);
     } else if (readerItem.type === 'document') {
       const doc = readerItem.item;
       itemLabelsStore.toggleSave(

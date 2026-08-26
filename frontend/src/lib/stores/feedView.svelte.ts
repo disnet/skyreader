@@ -1533,6 +1533,14 @@ function createFeedViewStore() {
       // would truncate the list under an open reader and lose the scroll position
       // restored on close, so an unchanged filter set is a no-op. The linkblog
       // view isn't URL-driven, so leaving it always counts as a change.
+      //
+      // The deliberate trade: re-selecting the channel you are already in no
+      // longer re-applies that channel's persisted configuration (sort order,
+      // read filter, tag/type/source filters, the inbox-vs-archive tab below),
+      // so it can't be used to discard unsaved toolbar tweaks. Leaving the
+      // channel and coming back does re-apply it — that path changes the filter
+      // set and runs the whole body. A stable list under an open reader is worth
+      // more than an undocumented reset gesture.
       if (!myLinkblogFilter) {
         const current: UrlFilters = {
           feed: feedFilter,

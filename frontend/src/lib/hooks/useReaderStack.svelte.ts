@@ -113,7 +113,14 @@ export function useReaderStack(config: { onReaderChange?: (open: boolean) => voi
 
     // Nothing local yet. Hydration is still the likely explanation, so only reach
     // for the network (and only then give up) once the stores have settled.
-    if (!appManager.isInitialized) return;
+    //
+    // Settled means the *refresh* finished, not `isInitialized` — that flag is
+    // already true throughout `phase === 'refreshing'`, which is exactly the
+    // window in which the backend sync fills `articlesStore`. Giving up there
+    // would abandon a feed article's key seconds before the sync that supplies
+    // it, on precisely the devices that need the wait: a newly signed-in one, or
+    // one whose IndexedDB was evicted.
+    if (appManager.phase !== 'ready' && appManager.phase !== 'error') return;
     resolvingKey = key;
     void fetchReaderDocument(key, fetchCollectionDoc).then((fetched) => {
       resolvingKey = null;

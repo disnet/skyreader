@@ -41,6 +41,7 @@
   import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { shareTargetForDisplayItem } from '$lib/utils/shareTarget';
+  import { isSavedItemSaved } from '$lib/utils/readerSave';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import CommunityHighlightPopover from '$lib/components/feed/CommunityHighlightPopover.svelte';
   import NotePeek from '$lib/components/feed/NotePeek.svelte';
@@ -415,7 +416,14 @@
   });
 
   let isArchived = $derived(itemLabelsStore.isArchived(itemKey));
-  let isSaved = $derived(itemLabelsStore.isSaved(itemKey));
+  // A `'saved'` item is keyed by the save's `at://` record uri, which the saves
+  // store indexes by neither guid nor url — asking about that key would answer
+  // "Save" for something plainly already saved. Ask about the save itself.
+  let isSaved = $derived(
+    readerItem.type === 'saved'
+      ? isSavedItemSaved(readerItem.item)
+      : itemLabelsStore.isSaved(itemKey)
+  );
 
   // ── Share from the reader chrome ────────────────────────────────────────────
   // A share control lives in the bar (desktop and mobile) so sharing is in
