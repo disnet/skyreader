@@ -804,7 +804,7 @@ export async function handleV2Mentions(request: Request, env: Env): Promise<Resp
     });
   }
 
-  let body: { urls?: string[] };
+  let body: { urls?: string[]; docUris?: Record<string, string> };
   try {
     body = await request.json();
   } catch {
@@ -836,7 +836,7 @@ export async function handleV2Mentions(request: Request, env: Env): Promise<Resp
 
   try {
     const client = new FeedProxyClient(env);
-    const results = await client.fetchArticleMentions(urls);
+    const results = await client.fetchArticleMentions(urls, body.docUris);
     return new Response(JSON.stringify({ items: results }), {
       headers: { 'Content-Type': 'application/json' },
     });
@@ -867,7 +867,7 @@ export async function handleV2MentionLane(request: Request, env: Env): Promise<R
     });
   }
 
-  let body: { url?: string; lane?: string };
+  let body: { url?: string; lane?: string; docUri?: string };
   try {
     body = await request.json();
   } catch {
@@ -887,7 +887,7 @@ export async function handleV2MentionLane(request: Request, env: Env): Promise<R
 
   try {
     const client = new FeedProxyClient(env);
-    const result = await client.fetchMentionLaneItems(url, lane);
+    const result = await client.fetchMentionLaneItems(url, lane, body.docUri);
     return new Response(JSON.stringify(result), {
       headers: { 'Content-Type': 'application/json' },
     });

@@ -654,10 +654,13 @@ class ApiClient {
   // Network-wide article mentions (Phase 5) — per-lane breakdown of who across
   // the Atmosphere referenced these URLs. Best-effort adornment; degrades to
   // empty per URL.
-  async fetchArticleMentions(urls: string[]): Promise<{ items: ArticleMentions[] }> {
+  async fetchArticleMentions(
+    urls: string[],
+    docUris?: Record<string, string>
+  ): Promise<{ items: ArticleMentions[] }> {
     return this.fetch('/api/v2/mentions', {
       method: 'POST',
-      body: JSON.stringify({ urls }),
+      body: JSON.stringify({ urls, ...(docUris ? { docUris } : {}) }),
     });
   }
 
@@ -666,11 +669,12 @@ class ApiClient {
   // lane is expanded. Best-effort adornment; degrades to an empty list.
   async fetchMentionLaneItems(
     url: string,
-    lane: string
+    lane: string,
+    docUri?: string
   ): Promise<{ entries: MentionLaneEntry[]; sembleContext?: SembleContext }> {
     return this.fetch('/api/v2/mention-lane', {
       method: 'POST',
-      body: JSON.stringify({ url, lane }),
+      body: JSON.stringify({ url, lane, ...(docUri ? { docUri } : {}) }),
     });
   }
 

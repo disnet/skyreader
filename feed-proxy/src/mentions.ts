@@ -70,6 +70,7 @@ interface MentionCacheRow {
   lanes_json: string;
   first_seen_at: number;
   checked_at: number;
+  doc_uri: string | null;
 }
 
 function hashUrl(url: string): string {
@@ -119,13 +120,14 @@ async function fetchSourceDids(
  * `/links/all`, bucket them into lanes, union distinct DIDs per lane and across
  * all lanes. Returns lanes in registry (priority) order, non-empty only.
  */
-export async function computeMentions(normUrl: string): Promise<ArticleMentions> {
+export async function computeMentions(normUrl: string, docUri?: string): Promise<ArticleMentions> {
   // Probe both trailing-slash forms (Constellation matches the target string
   // exactly) and carry the matching target with each source so we fetch its DIDs
   // against the form that actually has links. See constellationTargets.
   const sources: Array<{ target: string; laneId: LaneId; collection: string; path: string }> = [];
   let queryCount = 0;
-  for (const target of constellationTargets(normUrl)) {
+  const targets = [...constellationTargets(normUrl), ...(docUri ? [docUri] : [])];
+  for (const target of targets) {
     const all = await constellationGet<LinksAllResponse>('/links/all', { target });
     if (!all?.links) continue;
     // Collect the laned (collection, path) sources Constellation actually reports,
@@ -214,7 +216,8 @@ function rowToMentions(row: MentionCacheRow): ArticleMentions {
 export function readCachedMentions(
   db: Database,
   rawUrl: string,
-  now: number
+  now: number,
+  docUri?: string
 ): {
   normUrl: string | null;
   mentions: ArticleMentions;
@@ -232,7 +235,7 @@ export function readCachedMentions(
   // Surface every real reference, down to a single linker — a row with zero DIDs
   // naturally renders empty (no lanes), so no threshold is needed to suppress it.
   const mentions = rowToMentions(row);
-  return { normUrl, mentions, shouldEnrich: isDue(row, now) };
+  return { normUrl, mentions, shouldEnrich: (Boolean(docUri) && !row.doc_uri) || isDue(row, now) };
 }
 
 /**
@@ -241,16 +244,21 @@ export function readCachedMentions(
  * a settled/fresh row). Preserves `first_seen_at` across updates so the decay
  * curve is anchored to first sighting, not last check. Best-effort — never throws.
  */
-export async function enrichMentions(db: Database, normUrl: string): Promise<void> {
+export async function enrichMentions(
+  db: Database,
+  normUrl: string,
+  docUri?: string
+): Promise<void> {
   const now = Date.now();
   const existing = db
     .query<MentionCacheRow, [string]>('SELECT * FROM mention_cache WHERE url_hash = ?')
     .get(hashUrl(normUrl));
-  if (existing && !isDue(existing, now)) return;
+  if (existing && !(docUri && !existing.doc_uri) && !isDue(existing, now)) return;
+  const effectiveDocUri = docUri ?? existing?.doc_uri ?? undefined;
 
   let mentions: ArticleMentions;
   try {
-    mentions = await computeMentions(normUrl);
+    mentions = await computeMentions(normUrl, effectiveDocUri);
   } catch (error) {
     console.error(`[mentions] enrich error for ${normUrl}:`, error);
     return;
@@ -258,12 +266,21 @@ export async function enrichMentions(db: Database, normUrl: string): Promise<voi
 
   const firstSeen = existing?.first_seen_at ?? now;
   db.run(
-    `INSERT INTO mention_cache (url_hash, url, total_dids, lanes_json, first_seen_at, checked_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO mention_cache (url_hash, url, total_dids, lanes_json, first_seen_at, checked_at, doc_uri)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(url_hash) DO UPDATE SET
 			total_dids = excluded.total_dids,
 			lanes_json = excluded.lanes_json,
-			checked_at = excluded.checked_at`,
-    [hashUrl(normUrl), normUrl, mentions.total, JSON.stringify(mentions.lanes), firstSeen, now]
+			checked_at = excluded.checked_at,
+			doc_uri = COALESCE(excluded.doc_uri, mention_cache.doc_uri)`,
+    [
+      hashUrl(normUrl),
+      normUrl,
+      mentions.total,
+      JSON.stringify(mentions.lanes),
+      firstSeen,
+      now,
+      effectiveDocUri ?? null,
+    ]
   );
 }

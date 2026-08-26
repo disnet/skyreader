@@ -367,6 +367,14 @@ async function resolveEntry(
       createdAt = recordDate(value, 'publishedAt', 'createdAt');
       break;
     }
+    case 'leaflet': {
+      if (value) {
+        note = firstString(value.plaintext);
+        verb = value.reply ? 'replied' : null;
+      }
+      createdAt = recordDate(value, 'createdAt');
+      break;
+    }
     case 'margin': {
       // at.margin.note — a W3C-style web annotation. Surface its motivation as
       // the honest per-note verb, the highlighted passage (TextQuoteSelector
@@ -416,8 +424,8 @@ async function resolveEntry(
   };
 }
 
-function cacheKey(laneId: LaneId, normUrl: string): string {
-  return `lane-items3:${laneId}|${normUrl}`;
+function cacheKey(laneId: LaneId, normUrl: string, docUri?: string): string {
+  return `lane-items3:${laneId}|${normUrl}${laneId === 'leaflet' ? `|${docUri ?? ''}` : ''}`;
 }
 
 /**
@@ -492,12 +500,13 @@ async function pickLaneRecords(
 export async function getMentionLaneItems(
   db: Database,
   rawUrl: string,
-  laneId: LaneId
+  laneId: LaneId,
+  docUri?: string
 ): Promise<MentionLaneItemsResult> {
   const normUrl = normalizeArticleUrl(rawUrl);
   if (!normUrl) return { entries: [] };
 
-  const key = cacheKey(laneId, normUrl);
+  const key = cacheKey(laneId, normUrl, docUri);
   const now = Date.now();
   const cached = db
     .query<CacheRow, [string]>(
@@ -559,7 +568,8 @@ export async function getMentionLaneItems(
   // Set by any call the host didn't answer. An empty result that carries this is
   // "we don't know", not "nobody" — see MentionLaneUnavailableError.
   let unreachable = false;
-  for (const target of constellationTargets(normUrl)) {
+  const targets = [...constellationTargets(normUrl), ...(docUri ? [docUri] : [])];
+  for (const target of targets) {
     const all = await constellationGetResult<LinksAllResponse>('/links/all', { target });
     if (!all.reachable) unreachable = true;
     for (const [collection, paths] of Object.entries(all.data?.links ?? {})) {

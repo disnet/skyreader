@@ -44,7 +44,7 @@ function createMentionLaneItemsStore() {
 
   // Kick off resolution for a lane. No-op once loaded or in flight. Safe to call
   // every time a lane is expanded.
-  function load(url: string, lane: string, options?: { force?: boolean }): void {
+  function load(url: string, lane: string, options?: { force?: boolean; docUri?: string }): void {
     if (!url) return;
     const key = keyFor(url, lane);
     const existing = cache.get(key);
@@ -53,7 +53,7 @@ function createMentionLaneItemsStore() {
 
     set(key, LOADING);
     const p = api
-      .fetchMentionLaneItems(url, lane)
+      .fetchMentionLaneItems(url, lane, options?.docUri)
       .then((res) => {
         set(key, {
           loading: false,

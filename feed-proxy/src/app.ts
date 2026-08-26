@@ -1160,6 +1160,10 @@ export function initDatabase(db: Database): void {
 		)
 	`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_mention_cache_checked_at ON mention_cache(checked_at)`);
+  const mentionColumns = db.query<{ name: string }, []>(`PRAGMA table_info(mention_cache)`).all();
+  if (!mentionColumns.some((column) => column.name === 'doc_uri')) {
+    db.run(`ALTER TABLE mention_cache ADD COLUMN doc_uri TEXT`);
+  }
 }
 
 // Discover RSS/Atom feeds and advertised standard.site URIs for a site URL.
@@ -1332,9 +1336,9 @@ export function createApp(db: Database, config: AppConfig) {
   // Fire-and-forget background enrichment of an article's mention breakdown,
   // deduped per normalized URL. The decay gate inside enrichMentions makes most
   // of these no-ops (fresh/settled rows), so callers can trigger liberally.
-  function triggerMentionEnrich(normUrl: string): void {
+  function triggerMentionEnrich(normUrl: string, docUri?: string): void {
     if (inFlightMentions.has(normUrl)) return;
-    const promise = enrichMentions(db, normUrl).finally(() => {
+    const promise = enrichMentions(db, normUrl, docUri).finally(() => {
       inFlightMentions.delete(normUrl);
     });
     inFlightMentions.set(normUrl, promise);
@@ -3033,7 +3037,7 @@ export function createApp(db: Database, config: AppConfig) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    let body: { urls?: string[] };
+    let body: { urls?: string[]; docUris?: Record<string, string> };
     try {
       body = await c.req.json();
     } catch {
@@ -3057,8 +3061,13 @@ export function createApp(db: Database, config: AppConfig) {
       // Dedup repeated URLs in one batch; only the first triggers enrichment.
       const fresh = !seen.has(url);
       seen.add(url);
-      const { normUrl, mentions, shouldEnrich } = readCachedMentions(db, url, now);
-      if (fresh && shouldEnrich && normUrl) triggerMentionEnrich(normUrl);
+      const candidate = body.docUris?.[url];
+      const docUri =
+        typeof candidate === 'string' && candidate.startsWith('at://') && candidate.length <= 2048
+          ? candidate
+          : undefined;
+      const { normUrl, mentions, shouldEnrich } = readCachedMentions(db, url, now, docUri);
+      if (fresh && shouldEnrich && normUrl) triggerMentionEnrich(normUrl, docUri);
       return { url, total: mentions.total, lanes: mentions.lanes };
     });
 
@@ -3068,13 +3077,13 @@ export function createApp(db: Database, config: AppConfig) {
   // "See existing items" for one mention lane (Phase 5). Resolves the people who
   // referenced an article URL via that lane — handle, note, link out — lazily
   // when the reader expands the lane. Adornment only: degrades to an empty list.
-  const KNOWN_LANES = new Set<LaneId>(['linkblog', 'bluesky', 'margin', 'semble']);
+  const KNOWN_LANES = new Set<LaneId>(['linkblog', 'leaflet', 'bluesky', 'margin', 'semble']);
   app.post('/mention-lane', async (c) => {
     if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    let body: { url?: string; lane?: string };
+    let body: { url?: string; lane?: string; docUri?: string };
     try {
       body = await c.req.json();
     } catch {
@@ -3088,13 +3097,19 @@ export function createApp(db: Database, config: AppConfig) {
     if (!lane || !KNOWN_LANES.has(lane as LaneId)) {
       return c.json({ error: 'Unknown lane' }, 400);
     }
+    const docUri =
+      typeof body.docUri === 'string' &&
+      body.docUri.startsWith('at://') &&
+      body.docUri.length <= 2048
+        ? body.docUri
+        : undefined;
 
     // Coalesce concurrent expansions of the same (url, lane): each runs a full
     // Constellation + per-author PDS fan-out before the result lands in the cache.
-    const laneKey = `${url}|${lane}`;
+    const laneKey = `${url}|${lane}|${lane === 'leaflet' ? (docUri ?? '') : ''}`;
     let pending = inFlightLane.get(laneKey);
     if (!pending) {
-      pending = getMentionLaneItems(db, url, lane as LaneId).finally(() =>
+      pending = getMentionLaneItems(db, url, lane as LaneId, docUri).finally(() =>
         inFlightLane.delete(laneKey)
       );
       inFlightLane.set(laneKey, pending);

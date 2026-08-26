@@ -660,10 +660,13 @@ export class FeedProxyClient {
    * original URL. Best-effort adornment — the proxy returns empty per URL on a
    * cold/sub-threshold lookup and enriches in the background for a later poll.
    */
-  async fetchArticleMentions(urls: string[]): Promise<ArticleMentionsResult[]> {
+  async fetchArticleMentions(
+    urls: string[],
+    docUris?: Record<string, string>
+  ): Promise<ArticleMentionsResult[]> {
     const raw = await this.fetch<RawMentionsResponse>('/mentions', {
       method: 'POST',
-      body: JSON.stringify({ urls }),
+      body: JSON.stringify({ urls, ...(docUris ? { docUris } : {}) }),
     });
 
     if (!raw.items) {
@@ -679,10 +682,14 @@ export class FeedProxyClient {
    * to the post / card / highlight. Resolved lazily on lane expand. Best-effort —
    * the proxy returns an empty list rather than error on a Constellation outage.
    */
-  async fetchMentionLaneItems(url: string, lane: string): Promise<MentionLaneItemsResult> {
+  async fetchMentionLaneItems(
+    url: string,
+    lane: string,
+    docUri?: string
+  ): Promise<MentionLaneItemsResult> {
     const raw = await this.fetch<RawMentionLaneResponse>('/mention-lane', {
       method: 'POST',
-      body: JSON.stringify({ url, lane }),
+      body: JSON.stringify({ url, lane, ...(docUri ? { docUri } : {}) }),
     });
 
     if (!raw.entries) {

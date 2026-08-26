@@ -90,6 +90,34 @@ describe('getMentionLaneItems', () => {
     resetConstellationBreaker();
   });
 
+  it('resolves Leaflet comments from a document URI and marks replies', async () => {
+    const db = freshDb();
+    const docUri = 'at://did:plc:publisher/site.standard.document/post1';
+    seedDid(db, 'did:plc:alice', 'alice.test');
+
+    mockConstellation(
+      { 'pub.leaflet.comment': { '.subject': { distinct_dids: 1 } } },
+      { 'pub.leaflet.comment|.subject': [{ did: 'did:plc:alice', rkey: 'comment1' }] },
+      {
+        comment1: {
+          plaintext: 'A thoughtful comment',
+          createdAt: '2026-08-25T12:00:00.000Z',
+          reply: { parent: 'at://did:plc:bob/pub.leaflet.comment/parent' },
+        },
+      }
+    );
+
+    const { entries } = await getMentionLaneItems(db, ARTICLE, 'leaflet', docUri);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      note: 'A thoughtful comment',
+      createdAt: '2026-08-25T12:00:00.000Z',
+      verb: 'replied',
+      url: null,
+      quote: null,
+    });
+  });
+
   it('resolves a Bluesky lane: permalink + note, deduped across paths', async () => {
     const db = freshDb();
     seedDid(db, 'did:plc:alice', 'alice.test');

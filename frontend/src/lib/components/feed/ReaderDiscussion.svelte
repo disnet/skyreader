@@ -103,12 +103,14 @@
   // saving again is how you put it in another collection.
   function laneCanCreate(id: LaneId): boolean {
     if (id === 'linkblog') return false;
+    if (id === 'leaflet') return false;
     if (id === 'semble' || id === 'margin') return Boolean(auth.user);
     return true;
   }
 
   const atmosphere = useAtmosphere({
     itemUrl: () => itemUrl,
+    itemAtUri: () => (readerItem.type === 'document' ? readerItem.item.recordUri : undefined),
     itemTitle: () => title,
     // A bridge posts the publication's name as often as the headline, so the
     // note cleaner needs both to recognize a bare relink.

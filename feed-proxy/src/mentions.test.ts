@@ -103,6 +103,8 @@ describe('constellationTargets', () => {
 describe('laneForSource', () => {
   it('buckets known collections and ignores excluded paths', () => {
     expect(laneForSource('site.standard.document', '.links[].uri')?.id).toBe('linkblog');
+    expect(laneForSource('pub.leaflet.comment', '.subject')?.id).toBe('leaflet');
+    expect(laneForSource('pub.leaflet.comment', '.attachment.document')).toBeNull();
     expect(laneForSource('app.bsky.feed.post', '.embed.external.uri')?.id).toBe('bluesky');
     expect(laneForSource('at.margin.note', '.target.source')?.id).toBe('margin');
     expect(laneForSource('network.cosmik.card', '.content.url')?.id).toBe('semble');
@@ -259,6 +261,25 @@ describe('computeMentions', () => {
 });
 
 describe('enrichMentions + readCachedMentions', () => {
+  it('marks a fresh URL-only row due when a document URI arrives', () => {
+    const db = freshDb();
+    const now = Date.now();
+    db.run(
+      `INSERT INTO mention_cache
+        (url_hash, url, total_dids, lanes_json, first_seen_at, checked_at, doc_uri)
+       VALUES (?, ?, 0, '[]', ?, ?, NULL)`,
+      ['11ddf42a96099890', ARTICLE, now, now]
+    );
+
+    const cached = readCachedMentions(
+      db,
+      ARTICLE,
+      now,
+      'at://did:plc:publisher/site.standard.document/post1'
+    );
+    expect(cached.shouldEnrich).toBe(true);
+  });
+
   afterEach(() => {
     (globalThis.fetch as ReturnType<typeof spyOn>).mockRestore?.();
   });

@@ -5,7 +5,7 @@
  * URL is the target of many record types. Rather than a flat 'who linked this'
  * count, we bucket each meaningful `(collection, path)` source into a named
  * **lane** with its own honest verb — a linkblog *note*, a Bluesky *post*, a
- * margin.at *highlight*, a Semble *save* are four different things, and lumping
+ * Leaflet *comment*, margin.at *highlight*, and Semble *save* are different things, and lumping
  * them into one number ('linked this') is dishonest (saving ≠ discussing).
  *
  * The whitelist is **path-precise, not collection-precise**: verified live,
@@ -16,12 +16,12 @@
  * discussing anything). A lane counts a path only if its collection is laned
  * AND the path isn't excluded.
  *
- * All four NSIDs/paths verified live against constellation.microcosm.blue
- * (2026-06-01). The registry is the only hardcoded surface; Constellation
+ * All five NSIDs/paths verified live against constellation.microcosm.blue
+ * (2026-08-25). The registry is the only hardcoded surface; Constellation
  * reports which sources actually exist per URL.
  */
 
-export type LaneId = 'linkblog' | 'bluesky' | 'margin' | 'semble';
+export type LaneId = 'linkblog' | 'leaflet' | 'bluesky' | 'margin' | 'semble';
 
 export interface Lane {
   id: LaneId;
@@ -53,6 +53,15 @@ export const LANES: Lane[] = [
     // site.standard.document links an article via the website-card ref
     // (.links[].uri) or an inline body facet — both are real references.
     collections: ['site.standard.document'],
+  },
+  {
+    id: 'leaflet',
+    label: 'Leaflet',
+    verb: 'commented',
+    noun: 'Leaflet comment',
+    icon: 'leaflet',
+    collections: ['pub.leaflet.comment'],
+    excludePaths: ['.attachment.document'],
   },
   {
     id: 'bluesky',

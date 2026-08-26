@@ -49,6 +49,7 @@
     | 'highlighter'
     | 'send'
     | 'semble'
+    | 'leaflet'
     | 'margin'
     | 'arrow-right'
     | 'at-sign'
@@ -298,6 +299,9 @@
         stroke="none"
       />
     </g>
+  {:else if name === 'leaflet'}
+    <path d="M20 4c-7 0-13 3.5-14.5 9.5C4.7 16.7 6.8 20 10 20c6 0 10-7 10-16Z" />
+    <path d="M5 21c2.5-5.5 6.5-9.5 12-12" />
   {:else if name === 'arrow-right'}
     <line x1="5" y1="12" x2="19" y2="12" />
     <polyline points="12 5 19 12 12 19" />

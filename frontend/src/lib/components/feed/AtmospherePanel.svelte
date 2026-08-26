@@ -8,7 +8,7 @@
   //
   // <!--
   // THESIS: an article's discussion is ONE conversation that happens to be
-  //   spread across four networks. It refuses the tab strip that made the reader
+  //   spread across several networks. It refuses the tab strip that made the reader
   //   click through four bordered boxes — two of them empty — to find out what
   //   anyone said, and refuses the handle-over-content list that came with it.
   // OWN-WORLD: the app's own reading-room system, at list density: flat,
