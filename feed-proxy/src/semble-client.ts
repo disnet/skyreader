@@ -49,6 +49,7 @@ export interface SembleContext {
       imageUrl: string | null;
     };
   }>;
+  similar: Array<{ url: string; title: string | null; siteName: string | null; saveCount: number }>;
   truncated: { savers: boolean; notes: boolean; collections: boolean; connections: boolean };
   incomplete: boolean;
   source: 'semble-api' | 'constellation-fallback';
@@ -161,15 +162,16 @@ async function pickUrlVariant(
   return best ?? { apiUrl: normUrl, meta: {}, metaOk: false };
 }
 
-/** Semble answered, but with nothing: no people, no notes, no collections, no
- *  edges. Worth naming because it isn't the same as Semble being down, and the
+/** Semble answered, but with nothing: no people, notes, collections, edges, or
+ *  recommendations. Worth naming because it isn't the same as Semble being down, and the
  *  lane treats it differently — see getMentionLaneItems. */
 export function isEmptySembleContext(context: SembleContext): boolean {
   return (
     context.savers.length === 0 &&
     context.notes.length === 0 &&
     context.collections.length === 0 &&
-    context.connections.length === 0
+    context.connections.length === 0 &&
+    context.similar.length === 0
   );
 }
 
@@ -184,10 +186,14 @@ export async function fetchSembleContext(rawUrl: string): Promise<SembleContext 
     call('network.cosmik.card.getNoteCardsForUrl', apiUrl),
     call('network.cosmik.collection.getForUrl', apiUrl),
     call('network.cosmik.connection.getForUrl', apiUrl, { direction: 'both' }),
+    call('network.cosmik.search.getSimilarUrls', apiUrl, { limit: '8' }),
   ]);
-  if (!metaOk && calls.every((r) => r.status === 'rejected')) return null;
+  const humanCalls = calls.slice(0, 4);
+  if (!metaOk && humanCalls.every((r) => r.status === 'rejected')) return null;
   const value = (i: number): Obj => (calls[i].status === 'fulfilled' ? calls[i].value : {});
-  const [libraries, noteCards, collectionData, connectionData] = [0, 1, 2, 3].map(value);
+  const [libraries, noteCards, collectionData, connectionData, similarData] = [0, 1, 2, 3, 4].map(
+    value
+  );
   const stats = meta.stats
     ? {
         saves: count(meta.stats.libraryCount),
@@ -303,19 +309,47 @@ export async function fetchSembleContext(rawUrl: string): Promise<SembleContext 
           ? -1
           : 1
     );
+  const connectedUrls = new Set(
+    connections.map((connection) => normalizeArticleUrl(connection.other.url))
+  );
+  const similarSeen = new Set<string>();
+  const similar = (Array.isArray(similarData.urls) ? similarData.urls : [])
+    .flatMap((entry: Obj) => {
+      const candidateUrl = httpUrl(entry.url);
+      if (!candidateUrl) return [];
+      const normalized = normalizeArticleUrl(candidateUrl);
+      if (
+        !normalized ||
+        normalized === url ||
+        connectedUrls.has(normalized) ||
+        similarSeen.has(normalized)
+      )
+        return [];
+      similarSeen.add(normalized);
+      return [
+        {
+          url: candidateUrl,
+          title: text(entry.metadata?.title, 500),
+          siteName: text(entry.metadata?.siteName, 256),
+          saveCount: count(entry.urlLibraryCount),
+        },
+      ];
+    })
+    .slice(0, 8);
   return {
     stats,
     savers,
     notes,
     collections,
     connections,
+    similar,
     truncated: {
       savers: hasMore(libraries),
       notes: hasMore(noteCards),
       collections: hasMore(collectionData),
       connections: hasMore(connectionData),
     },
-    incomplete: !metaOk || calls.some((r) => r.status === 'rejected'),
+    incomplete: !metaOk || humanCalls.some((r) => r.status === 'rejected'),
     source: 'semble-api',
     cardUrl: sembleCardUrl(apiUrl),
   };

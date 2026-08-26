@@ -92,6 +92,56 @@ describe('fetchSembleContext connections', () => {
   });
 });
 
+describe('fetchSembleContext similar URLs', () => {
+  afterEach(() => {
+    (globalThis.fetch as ReturnType<typeof spyOn>).mockRestore?.();
+  });
+
+  it('maps, filters, deduplicates, and caps recommendations', async () => {
+    const urls = [
+      { url: ARTICLE, metadata: { title: 'Self' }, urlLibraryCount: 9 },
+      { url: 'javascript:alert(1)', metadata: { title: 'Bad' } },
+      { url: 'https://connected.example/story', metadata: { title: 'Already connected' } },
+      ...Array.from({ length: 10 }, (_, i) => ({
+        url: `https://similar.example/${i}${i === 1 ? '/' : ''}`,
+        metadata: { title: `Similar ${i}`, siteName: 'Similar Site' },
+        urlLibraryCount: i + 1,
+      })),
+      { url: 'https://similar.example/1', metadata: { title: 'Duplicate' } },
+    ];
+    mockSemble({
+      'network.cosmik.connection.getForUrl': {
+        connections: [edge('https://connected.example/story', 'SUPPORTS')],
+      },
+      'network.cosmik.search.getSimilarUrls': { urls },
+    });
+
+    const context = await fetchSembleContext(ARTICLE);
+    expect(context?.similar).toHaveLength(8);
+    expect(context && isEmptySembleContext(context)).toBe(false);
+    expect(context?.similar[0]).toEqual({
+      url: 'https://similar.example/0',
+      title: 'Similar 0',
+      siteName: 'Similar Site',
+      saveCount: 1,
+    });
+    expect(context?.similar.some((item) => item.url.includes('connected.example'))).toBe(false);
+    expect(new Set(context?.similar.map((item) => item.url)).size).toBe(8);
+  });
+
+  it('silently omits recommendations when only that call fails', async () => {
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const nsid = new URL(String(input)).pathname.split('/').pop()!;
+      if (nsid === 'network.cosmik.search.getSimilarUrls') throw new Error('recommender down');
+      return new Response('{}', { headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch);
+
+    const context = await fetchSembleContext(ARTICLE);
+    expect(context?.similar).toEqual([]);
+    expect(context?.incomplete).toBe(false);
+  });
+});
+
 // Collections and notes key lists on the reader's side too, and a duplicate key
 // there is fatal, not cosmetic — Svelte throws on it in production as well.
 describe('fetchSembleContext collections and notes', () => {
