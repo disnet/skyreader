@@ -18,7 +18,14 @@
   } from '$lib/stores/preferences.svelte';
   import { maybeImportMarginHighlights } from '$lib/services/marginHighlightImport';
 
-  let { returnUrl = '/settings' }: { returnUrl?: string } = $props();
+  interface Props {
+    returnUrl?: string;
+    /** Fired when switching the toggle on actually brought highlights in, so a
+        host showing those highlights (the review deck) can react. */
+    onImported?: (imported: number) => void;
+  }
+
+  let { returnUrl = '/settings', onImported }: Props = $props();
 
   let loaded = $state(false);
   let hasMarginScopes = $state(false);
@@ -60,6 +67,7 @@
       } else {
         importNote = `Brought in ${result.imported} highlight${result.imported === 1 ? '' : 's'}.`;
       }
+      if (result && result.imported > 0) onImported?.(result.imported);
     } finally {
       importing = false;
     }

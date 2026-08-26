@@ -10,6 +10,7 @@
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { syncAutoRuleChannels } from '$lib/stores/channelAutoUpdate.svelte';
   import { onMount, onDestroy } from 'svelte';
   import AddFeedModal from './AddFeedModal.svelte';
@@ -468,6 +469,24 @@
       <span class="nav-icon"><Icon name="highlighter" /></span>
       <span class="nav-label">Highlights</span>
     </a>
+
+    <!-- Review: its own destination, not a mode of /highlights. The count is
+         today's deck and disappears when the deck is done — a badge you clear by
+         reading, never a streak. Hidden entirely until there's a corpus. -->
+    {#if highlightReviewStore.hasHighlights}
+      <a
+        href="/highlights/review"
+        class="nav-item nav-link"
+        class:active={$page.url.pathname === '/highlights/review'}
+        onclick={() => sidebarStore.closeMobile()}
+      >
+        <span class="nav-icon"><Icon name="quote" /></span>
+        <span class="nav-label">Review</span>
+        {#if highlightReviewStore.dueCount > 0}
+          <span class="nav-count">{highlightReviewStore.dueCount}</span>
+        {/if}
+      </a>
+    {/if}
 
     <a
       href="/discover"

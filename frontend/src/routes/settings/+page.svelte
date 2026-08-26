@@ -14,7 +14,6 @@
   } from '$lib/stores/preferences.svelte';
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
   import SaveBackingPicker from '$lib/components/settings/SaveBackingPicker.svelte';
-  import HighlightSettings from '$lib/components/settings/HighlightSettings.svelte';
   import LinkblogTargetPicker from '$lib/components/settings/LinkblogTargetPicker.svelte';
   import DeleteLinkblogModal from '$lib/components/settings/DeleteLinkblogModal.svelte';
   import Diagnostics from '$lib/components/settings/Diagnostics.svelte';
@@ -881,14 +880,14 @@
     </p>
   </section>
 
-  <!-- Highlights: the review deck, and the Margin ingest that feeds it -->
+  <!-- Highlights. Deck size and Margin ingest live with the deck they configure;
+       what stays here is the one place the app states where a highlight lives. -->
   <section class="card">
     <h2>Highlights</h2>
     <p class="setting-description" style="margin-top: 0;">
       Your highlights are private to Skyreader. Saving one to Margin publishes that note to your
-      PDS; the highlight itself stays here.
+      public PDS.
     </p>
-    <HighlightSettings />
   </section>
 
   <section class="card">

@@ -1,29 +1,14 @@
 <script lang="ts">
-  // The Home entry into the review deck. In v1 the view IS the reminder — there
-  // is no push/email stack — so this card is the thing that says "you have a few
-  // highlights to revisit." It hides itself once the deck is done or empty:
-  // calm, no streaks, no badges, nothing to clear.
+  // The Home entry into the review deck. In v1 the view IS the reminder — there is no push/email stack — so this card says
+  // "you have a few highlights to revisit." It hides itself once the deck is
+  // done or empty: calm, no streaks, nothing that lingers after you've read.
   import Icon from '$lib/components/Icon.svelte';
-  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-  import {
-    HIGHLIGHT_REVIEW_COUNT_OPTIONS,
-    preferences,
-    type HighlightReviewCount,
-  } from '$lib/stores/preferences.svelte';
-  import { buildHighlightDeck } from '$lib/utils/highlightReview';
+  import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
 
-  let deck = $derived(
-    buildHighlightDeck(itemLabelsStore.allHighlights, preferences.highlightReviewCount)
-  );
-  let count = $derived(deck.cards.length);
-
-  function updateCount(event: Event) {
-    const value = Number((event.currentTarget as HTMLSelectElement).value);
-    preferences.setHighlightReviewCount(value as HighlightReviewCount);
-  }
+  let count = $derived(highlightReviewStore.dueCount);
 </script>
 
-{#if deck.status === 'available' && count > 0}
+{#if highlightReviewStore.status === 'available' && count > 0}
   <section class="review-card" aria-label="Highlight review">
     <div class="text">
       <h2>
@@ -33,20 +18,10 @@
       <p>A few passages you've marked, one at a time.</p>
     </div>
 
-    <div class="controls">
-      <label class="control">
-        <span>Deck</span>
-        <select value={preferences.highlightReviewCount} onchange={updateCount}>
-          {#each HIGHLIGHT_REVIEW_COUNT_OPTIONS as option}
-            <option value={option}>{option}</option>
-          {/each}
-        </select>
-      </label>
-      <a class="start" href="/highlights/review">
-        <span>Review {count} highlight{count === 1 ? '' : 's'}</span>
-        <Icon name="arrow-right" size={15} />
-      </a>
-    </div>
+    <a class="start" href="/highlights/review">
+      <span>Review {count} highlight{count === 1 ? '' : 's'}</span>
+      <Icon name="arrow-right" size={15} />
+    </a>
   </section>
 {/if}
 
@@ -85,33 +60,6 @@
     color: var(--color-text-secondary);
   }
 
-  .controls {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  /* Matches MagazineRail's `.control` so the two Home panels read as one
-     control vocabulary. */
-  .control {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    font-size: var(--text-xs);
-    color: var(--color-text-secondary);
-  }
-
-  .control select {
-    min-height: 2rem;
-    padding: 0.2rem 1.5rem 0.2rem 0.5rem;
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
-    font-size: var(--text-xs);
-  }
-
   .start {
     display: inline-flex;
     align-items: center;
@@ -135,9 +83,9 @@
   }
 
   @media (max-width: 640px) {
-    .controls {
+    .start {
       width: 100%;
-      justify-content: space-between;
+      justify-content: center;
     }
   }
 </style>

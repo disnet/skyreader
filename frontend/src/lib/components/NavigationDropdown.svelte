@@ -6,6 +6,7 @@
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
@@ -236,13 +237,19 @@
         ? [{ type: 'utility' as const, id: 'linkblog', label: 'Linkblog', icon: 'share' as const }]
         : []),
       { type: 'utility', id: 'highlights', label: 'Highlights', icon: 'highlighter' },
-      {
-        type: 'utility',
-        id: 'highlights/review',
-        label: 'Review highlights',
-        icon: 'quote',
-        indent: true,
-      },
+      // Review is its own destination; the count is today's deck, and it goes
+      // quiet once the deck is done. Hidden until there's a corpus to review.
+      ...(highlightReviewStore.hasHighlights
+        ? [
+            {
+              type: 'utility' as const,
+              id: 'highlights/review',
+              label: 'Review',
+              count: highlightReviewStore.dueCount,
+              icon: 'quote' as const,
+            },
+          ]
+        : []),
       { type: 'utility', id: 'discover', label: 'Discover', icon: 'users' },
       { type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' },
       { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' },

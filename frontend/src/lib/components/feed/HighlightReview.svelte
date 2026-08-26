@@ -7,7 +7,12 @@
   import { page } from '$app/state';
   import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
+  import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
+  import BottomSheet from '$lib/components/common/BottomSheet.svelte';
+  import NotificationList from '$lib/components/NotificationList.svelte';
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
+  import HighlightSettings from '$lib/components/settings/HighlightSettings.svelte';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import RemoveHighlightModal from '$lib/components/feed/RemoveHighlightModal.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -15,6 +20,9 @@
   import { socialStore } from '$lib/stores/social.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
+  import { notificationsStore } from '$lib/stores/notifications.svelte';
+  import { sidebarStore } from '$lib/stores/sidebar.svelte';
+  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import {
     saveHighlightToMargin,
@@ -24,6 +32,7 @@
   import { maybeImportMarginHighlights } from '$lib/services/marginHighlightImport';
   import {
     buildHighlightDeck,
+    deckUntouched,
     shouldRedealAfterImport,
     type HighlightEntry,
   } from '$lib/utils/highlightReview';
@@ -71,11 +80,13 @@
   // deck can't be mistaken for "the local pool was empty".
   let emptyOnDeal = $state(false);
 
+  // The deck size this hand was dealt at. Plain, not `$state`: the redeal effect
+  // writes it, and it exists only to notice a change in the preference.
+  let dealtCount = 0;
+
   function dealDeck() {
-    deck = buildHighlightDeck(
-      itemLabelsStore.allHighlights,
-      preferences.highlightReviewCount
-    ).cards;
+    dealtCount = preferences.highlightReviewCount;
+    deck = buildHighlightDeck(itemLabelsStore.allHighlights, dealtCount).cards;
     emptyOnDeal = deck.length === 0;
   }
 
@@ -83,6 +94,16 @@
     if (dealt || !storesReady) return;
     dealt = true;
     dealDeck();
+  });
+
+  // Resizing the deck from the settings panel takes effect now if the reader
+  // hasn't started — otherwise it would look like the control did nothing — and
+  // waits for the next session once they have.
+  $effect(() => {
+    const size = preferences.highlightReviewCount;
+    if (!dealt || size === dealtCount) return;
+    if (deckUntouched({ index, reviewed, interacted })) dealDeck();
+    else dealtCount = size;
   });
 
   // An empty deck is the one case worth waiting on: the local pool has nothing to
@@ -244,6 +265,36 @@
       noteAnchor = button?.getBoundingClientRect() ?? new DOMRect(0, 0, 0, 0);
     }
   }
+
+  // --- Settings, in reach of the deck they configure (deck size, Margin
+  // ingest). An inline disclosure rather than an overlay: the page is one card
+  // tall, so there's nothing for a modal to protect.
+  let settingsOpen = $state(false);
+
+  // An import that lands while the reader hasn't started should join this
+  // session — turning the toggle on and still reading "nothing to review" is
+  // the opposite of what the control promised.
+  function handleSettingsImport() {
+    if (deckUntouched({ index, reviewed, interacted })) dealDeck();
+  }
+
+  // --- Mobile chrome. The installed PWA has no browser back button, so the
+  // bottom bar's switcher is the only way off this page down here. The deck
+  // doesn't scroll, so the bar stays put rather than riding scroll direction.
+  let feedSwitcherOpen = $state(false);
+  let notifSheetOpen = $state(false);
+
+  // Channel create/edit routes through the always-mounted sidebar modal, the
+  // same way the highlights list does it.
+  function handleCreateChannel(type: 'feed' | 'saved' = 'feed') {
+    feedSwitcherOpen = false;
+    sidebarStore.openChannelModal(null, type);
+  }
+
+  function handleEditChannel(id: number) {
+    feedSwitcherOpen = false;
+    sidebarStore.openChannelModal(id);
+  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -251,14 +302,33 @@
 <div class="review-page">
   <header class="review-header">
     <div class="header-inner">
-      <NavigationDropdown currentTitle="Review" />
-      {#if current}
-        <span class="progress">{index + 1} of {total}</span>
-      {/if}
+      <div class="header-nav"><NavigationDropdown currentTitle="Review" /></div>
+      <div class="header-actions">
+        {#if current}
+          <span class="progress">{index + 1} of {total}</span>
+        {/if}
+        <button
+          class="gear"
+          class:open={settingsOpen}
+          onclick={() => (settingsOpen = !settingsOpen)}
+          aria-expanded={settingsOpen}
+          aria-controls="review-settings"
+          title="Review settings"
+          aria-label="Review settings"
+        >
+          <Icon name="settings" size={16} />
+        </button>
+      </div>
     </div>
   </header>
 
   <div class="review-body">
+    {#if settingsOpen}
+      <section id="review-settings" class="settings-panel" aria-label="Review settings">
+        <HighlightSettings returnUrl="/highlights/review" onImported={handleSettingsImport} />
+      </section>
+    {/if}
+
     {#if !ready || !deck}
       <p class="state-note" aria-live="polite">Gathering your highlights…</p>
     {:else if current && source && live}
@@ -340,6 +410,46 @@
       </section>
     {/if}
   </div>
+
+  {#if mobileStore.isMobile && !readerItem}
+    <MobileBottomBar
+      controlsVisible={true}
+      currentTitle="Review"
+      onScrollToTop={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+      onOpenFeedSwitcher={() => (feedSwitcherOpen = true)}
+      onOpenNotifications={() => {
+        notifSheetOpen = true;
+        void notificationsStore.load();
+      }}
+      onOpenFilterSheet={() => {}}
+      hasActiveFilters={false}
+      hideFilterButton={true}
+    />
+
+    <BottomSheet
+      open={feedSwitcherOpen}
+      onclose={() => (feedSwitcherOpen = false)}
+      title="Switch Feed"
+    >
+      <MobileFeedSwitcher
+        onclose={() => (feedSwitcherOpen = false)}
+        currentTitle="Review"
+        onEditChannel={handleEditChannel}
+        onCreateChannel={handleCreateChannel}
+      />
+    </BottomSheet>
+
+    <BottomSheet
+      open={notifSheetOpen}
+      onclose={() => {
+        notifSheetOpen = false;
+        void notificationsStore.markAllSeen();
+      }}
+      title="Notifications"
+    >
+      <NotificationList onItemClick={() => (notifSheetOpen = false)} />
+    </BottomSheet>
+  {/if}
 </div>
 
 {#if noteAnchor}
@@ -387,16 +497,76 @@
     padding: 0.75rem 1rem;
   }
 
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
   .progress {
     font-size: var(--text-sm);
     color: var(--color-text-secondary);
     font-variant-numeric: tabular-nums;
   }
 
+  .gear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition:
+      color 0.15s ease,
+      background-color 0.15s ease;
+  }
+
+  .gear:hover,
+  .gear.open {
+    color: var(--color-text);
+    background: var(--color-bg-secondary, #f5f5f5);
+  }
+
+  /* Flat by default: a bordered panel in the column, not a floating sheet. */
+  .settings-panel {
+    margin-bottom: 1.5rem;
+    padding: 1rem 1.25rem;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+  }
+
   .review-body {
     max-width: 680px;
     margin: 0 auto;
     padding: 1.5rem 1rem 4rem;
+  }
+
+  @media (max-width: 1000px) {
+    /* The bottom bar owns navigation down here, so the header keeps only what
+       the bar can't carry: where you are in the deck, and the settings for it.
+       Those two take the full width rather than huddling on one side. */
+    .header-nav {
+      display: none;
+    }
+
+    .header-actions {
+      flex: 1;
+    }
+
+    /* Right-aligned whether or not there's a progress count beside it — the
+       end-of-deck states have no progress but still want their settings. */
+    .gear {
+      margin-left: auto;
+    }
+
+    .review-body {
+      padding-bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 1rem);
+    }
   }
 
   .card {

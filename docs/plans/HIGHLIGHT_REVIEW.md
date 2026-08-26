@@ -10,11 +10,30 @@ This records the decisions the implementation rests on. For where highlights the
 ## The shape of a review
 
 **The view is the reminder.** V1 has no push and no email — that delivery stack is entirely
-greenfield. Instead the deck surfaces through calm in-app entry points: a Home panel
-(`HighlightReviewCard.svelte`), a Review link in the `/highlights` header, a switcher entry, and the
-`8` shortcut. The Home panel hides itself once the deck is done or empty: no streaks, no badges,
-nothing to clear. A reader who never opens the app is never reminded — that gap is the price of not
-building Web Push, and it's what a follow-up would close.
+greenfield. Instead the deck surfaces through calm in-app entry points: a **Review entry in the
+nav** (sidebar, mobile switcher and nav dropdown), a Home panel (`HighlightReviewCard.svelte`), a
+Review link in the `/highlights` header, and the `8` shortcut. A reader who never opens the app is
+never reminded — that gap is the price of not building Web Push, and it's what a follow-up would
+close.
+
+The nav entry is the standing one, so it carries the only count: today's deck size, in the same
+muted `.nav-count` the unread counts use. It is a badge you clear by reading and nothing else —
+no streak, no lifetime total, no "unreviewed" backlog that can only grow. It goes quiet the moment
+the deck is done, and the entry hides entirely until the reader has highlighted something, so a new
+account never sees a dead tab. The Home panel keeps no count of its own beyond the button it already
+had; it still hides itself once the deck is done.
+
+All four entry points read one derived summary (`highlightReviewStore`, over
+`summarizeHighlightDeck`) rather than each walking the corpus, so they can't disagree about the
+number and the scan is paid once.
+
+**The deck is a page, so it wears the app's chrome.** On mobile it mounts `MobileBottomBar` and its
+switcher/notification sheets exactly as `/highlights` does — in the installed PWA there is no
+browser back button, so the bar's switcher is the only in-app way off the deck. The bar stays put
+rather than riding scroll direction (`controlsVisible={true}`): a card fits a screen, so there's no
+scroll to read intent from. Its desktop header drops the nav dropdown down there, keeping only the
+one thing the bar can't carry — `1 of 5` — and hides outright on the end-of-deck states, where
+there's no progress to show.
 
 **The deck is ephemeral and deterministic, not a frozen issue.** Unlike the daily magazine, a review
 session is a few minutes over a handful of cards, so the mid-read-shift and cross-device resume
@@ -41,6 +60,22 @@ forward, so a slow device flushing an older review can't make a highlight look d
 
 **Deck size is device-local** (`highlightReviewCount`, default 5, options 3/5/10), same posture as
 `dailyMagazineMinutes`.
+
+**The settings live with the deck, not in Settings.** Deck size and the Margin ingest toggle are
+behind a gear in the review header (`HighlightSettings.svelte`, rendered inline in the review body
+rather than in an overlay — the page is one card tall, so there's nothing for a modal to protect).
+Both configure a thing that is on screen while you change it, which is the whole argument for moving
+them: you can see what "5" means. `/settings` keeps no pointer to them — its Highlights section is
+now only the statement of where a highlight lives, which is the app's one place saying it. The Home
+panel's own deck-size select went with them; the count in its button already says how big the deck
+is.
+
+Changing either mid-session is governed by `deckUntouched`: an untouched deck redeals immediately —
+resizing a deck and watching nothing happen would make the control look broken — and a deck the
+reader has started keeps the hand it was dealt, with the change applying next session. That is the
+same predicate the open-time Margin poll uses (`shouldRedealAfterImport`), which is why they share
+it; turning ingest on from the panel redeals under exactly the same rule, so switching it on while
+staring at "Nothing to review right now" doesn't leave you staring at it.
 
 Two devices opening the deck before `lastReviewedAt` syncs will show overlapping decks. Harmless
 (you see a highlight twice), self-healing after sync; not worth a lock.
@@ -87,7 +122,7 @@ rows.
 ## Copy
 
 Highlights are private to Skyreader (D1 + IndexedDB). Saving one to Margin publishes _that note_ to
-the user's PDS; the highlight itself stays here. Never say highlights live on the PDS, and Margin
+the user's PDS. Never say highlights live on the PDS, and Margin
 ingest copy must surface that the source records are public. See the Copy & Voice rules in the root
 `CLAUDE.md`.
 

@@ -110,6 +110,97 @@ test.describe('highlight review', () => {
     ).toBeVisible({ timeout: 15_000 });
   });
 
+  test('the nav carries a quiet count that clears when the deck is done', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedHighlights(testUser, DECK_SIZE + 2);
+
+    await authedPage.goto('/home');
+    // Label + count: today's deck, not the whole corpus (7 highlights seeded).
+    const nav = authedPage.getByRole('link', { name: `Review ${DECK_SIZE}`, exact: true });
+    await expect(nav).toBeVisible({ timeout: 15_000 });
+    await nav.click();
+
+    for (let card = 1; card <= DECK_SIZE; card++) {
+      const written = authedPage.waitForResponse(
+        (res) => res.url().includes('/api/labels') && res.request().method() === 'POST'
+      );
+      await authedPage
+        .getByRole('button', { name: card === DECK_SIZE ? 'Finish' : 'Next' })
+        .click();
+      await written;
+    }
+
+    // 2 highlights still unreviewed today, so the count shrinks rather than clearing.
+    await expect(authedPage.getByRole('link', { name: 'Review 2', exact: true })).toBeVisible();
+  });
+
+  test('the mobile bottom bar is the way off the deck', async ({ authedPage, testUser }) => {
+    await seedHighlights(testUser, DECK_SIZE);
+    await authedPage.setViewportSize({ width: 390, height: 844 });
+
+    await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByText(`1 of ${DECK_SIZE}`)).toBeVisible({ timeout: 15_000 });
+
+    // The installed PWA has no back button, so the bar's switcher is the only
+    // in-app way out of the deck.
+    const bar = authedPage.locator('.mobile-bottom-bar');
+    await expect(bar).toBeVisible();
+    await expect(bar.getByRole('button', { name: 'Switch feed' })).toContainText('Review');
+
+    // The card clears the bar rather than sitting under it.
+    const gap = await authedPage.evaluate(() => {
+      const card = document.querySelector('.review-body .card');
+      const chrome = document.querySelector('.mobile-bottom-bar');
+      if (!card || !chrome) return null;
+      return chrome.getBoundingClientRect().top - card.getBoundingClientRect().bottom;
+    });
+    expect(gap).not.toBeNull();
+    expect(gap!).toBeGreaterThan(0);
+
+    await bar.getByRole('button', { name: 'Switch feed' }).click();
+    await authedPage.getByRole('button', { name: 'Highlights', exact: true }).click();
+    await expect(authedPage).toHaveURL(/\/highlights$/);
+  });
+
+  test('the gear opens the deck settings, and resizing redeals an untouched deck', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedHighlights(testUser, DECK_SIZE + 2);
+
+    await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByText(`1 of ${DECK_SIZE}`)).toBeVisible({ timeout: 15_000 });
+
+    const gear = authedPage.getByRole('button', { name: 'Review settings' });
+    await expect(gear).toHaveAttribute('aria-expanded', 'false');
+    await gear.click();
+
+    const deckSize = authedPage.getByLabel('Review deck');
+    await expect(deckSize).toBeVisible();
+    await expect(authedPage.getByText('Bring in highlights from Margin')).toBeVisible();
+
+    // Nothing has been reviewed yet, so a resize applies to the hand on screen
+    // rather than silently waiting for the next session.
+    await deckSize.selectOption('3');
+    await expect(authedPage.getByText('1 of 3')).toBeVisible();
+
+    // Once the reader is under way the dealt deck is theirs to finish: the new
+    // size waits for the next session instead of reshuffling mid-deck.
+    await gear.click();
+    const written = authedPage.waitForResponse(
+      (res) => res.url().includes('/api/labels') && res.request().method() === 'POST'
+    );
+    await authedPage.getByRole('button', { name: 'Next' }).click();
+    await written;
+    await expect(authedPage.getByText('2 of 3')).toBeVisible();
+
+    await gear.click();
+    await authedPage.getByLabel('Review deck').selectOption('10');
+    await expect(authedPage.getByText('2 of 3')).toBeVisible();
+  });
+
   test('a highlight with no local article still shows its source and quote', async ({
     authedPage,
     testUser,

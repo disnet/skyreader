@@ -65,21 +65,17 @@ export interface HighlightDeck {
   poolSize: number;
 }
 
+function deckSize(count: number): number {
+  return Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1;
+}
+
 /**
- * Build today's deck from the whole highlight corpus.
- *
- * Eligibility: not already reviewed today, and not created in the last 24 h. The
- * freshness filter RELAXES when it would empty an otherwise non-empty pool — a
- * reader whose only highlights are from this morning still gets a deck rather
- * than a confusing "nothing to review."
+ * The pool today's deck deals from: not already reviewed today, and not created
+ * in the last 24 h. The freshness filter RELAXES when it would empty an
+ * otherwise non-empty pool — a reader whose only highlights are from this
+ * morning still gets a deck rather than a confusing "nothing to review."
  */
-export function buildHighlightDeck(
-  entries: HighlightEntry[],
-  count: number,
-  now: Date = new Date()
-): HighlightDeck {
-  const dateKey = localDateKey(now);
-  const size = Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1;
+function eligiblePool(entries: HighlightEntry[], now: Date): HighlightEntry[] {
   const dayStart = startOfLocalDay(now);
   const nowMs = now.getTime();
 
@@ -87,7 +83,48 @@ export function buildHighlightDeck(
   const seasoned = unreviewedToday.filter(
     (entry) => nowMs - entry.highlight.createdAt >= HIGHLIGHT_REVIEW_FRESHNESS_MS
   );
-  const pool = seasoned.length > 0 ? seasoned : unreviewedToday;
+  return seasoned.length > 0 ? seasoned : unreviewedToday;
+}
+
+export interface HighlightDeckSummary {
+  status: HighlightDeckStatus;
+  /** Cards today's deck would deal right now — what the nav badge counts. */
+  dueCount: number;
+  /** Size of the eligible pool (>= dueCount). */
+  poolSize: number;
+}
+
+/**
+ * What today's deck holds, without paying to rank it. Entry points that only
+ * show a count or a presence use this; only the deck itself needs the order.
+ */
+export function summarizeHighlightDeck(
+  entries: HighlightEntry[],
+  count: number,
+  now: Date = new Date()
+): HighlightDeckSummary {
+  const pool = eligiblePool(entries, now);
+  if (pool.length === 0) {
+    return { status: entries.length > 0 ? 'completed' : 'empty', dueCount: 0, poolSize: 0 };
+  }
+  return {
+    status: 'available',
+    dueCount: Math.min(pool.length, deckSize(count)),
+    poolSize: pool.length,
+  };
+}
+
+/**
+ * Build today's deck from the whole highlight corpus. Eligibility is
+ * `eligiblePool`; order is least-recently-reviewed first.
+ */
+export function buildHighlightDeck(
+  entries: HighlightEntry[],
+  count: number,
+  now: Date = new Date()
+): HighlightDeck {
+  const dateKey = localDateKey(now);
+  const pool = eligiblePool(entries, now);
 
   if (pool.length === 0) {
     return {
@@ -101,7 +138,7 @@ export function buildHighlightDeck(
   return {
     dateKey,
     status: 'available',
-    cards: rankPool(pool, dateKey).slice(0, size),
+    cards: rankPool(pool, dateKey).slice(0, deckSize(count)),
     poolSize: pool.length,
   };
 }
@@ -118,9 +155,25 @@ export function buildHighlightDeck(
  */
 export function shouldRedealAfterImport(
   result: { imported: number } | null,
-  progress: { index: number; reviewed: number; interacted: boolean }
+  progress: DeckProgress
 ): boolean {
   if (!result || result.imported <= 0) return false;
+  return deckUntouched(progress);
+}
+
+export interface DeckProgress {
+  index: number;
+  reviewed: number;
+  interacted: boolean;
+}
+
+/**
+ * A deck the reader hasn't started yet is free to redeal — nothing is pulled out
+ * from under them. Once a card has been reviewed, opened or annotated, the deck
+ * they were dealt is the deck they keep, and a change (a Margin import, a new
+ * deck size) applies to the next session instead.
+ */
+export function deckUntouched(progress: DeckProgress): boolean {
   return !progress.interacted && progress.index === 0 && progress.reviewed === 0;
 }
 
@@ -129,5 +182,5 @@ export function highlightDeckStatus(
   entries: HighlightEntry[],
   now: Date = new Date()
 ): HighlightDeckStatus {
-  return buildHighlightDeck(entries, 1, now).status;
+  return summarizeHighlightDeck(entries, 1, now).status;
 }

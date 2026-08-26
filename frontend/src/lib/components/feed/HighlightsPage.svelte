@@ -28,7 +28,7 @@
   } from '$lib/services/marginHighlights';
   import { formatRelativeTime } from '$lib/utils/date';
   import { buildHighlightSourceLookups, resolveHighlightSource } from '$lib/utils/highlightSource';
-  import { highlightDeckStatus } from '$lib/utils/highlightReview';
+  import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { maybeImportMarginHighlights } from '$lib/services/marginHighlightImport';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import type { Highlight, ItemLabelType } from '$lib/types';
@@ -59,9 +59,6 @@
 
   // A partial poll must say so — otherwise "these are my highlights" is a lie.
   let importTruncated = $state(false);
-
-  // Drives the header's Review entry; hidden once today's deck is done.
-  let deckStatus = $derived(highlightDeckStatus(itemLabelsStore.allHighlights));
 
   interface HighlightRow {
     id: string;
@@ -234,7 +231,7 @@
   <header class="highlights-header" class:scrolled>
     <div class="header-inner">
       <NavigationDropdown currentTitle="Highlights" />
-      {#if deckStatus === 'available'}
+      {#if highlightReviewStore.status === 'available'}
         <a class="review-link" href="/highlights/review">
           <Icon name="highlighter" size={15} />
           <span>Review</span>

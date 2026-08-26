@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { Highlight } from '$lib/types';
 import {
   buildHighlightDeck,
+  deckUntouched,
   highlightDeckStatus,
   shouldRedealAfterImport,
   startOfLocalDay,
+  summarizeHighlightDeck,
   type HighlightEntry,
 } from './highlightReview';
 
@@ -133,5 +135,48 @@ describe('shouldRedealAfterImport', () => {
     expect(
       shouldRedealAfterImport({ imported: 2 }, { index: 0, reviewed: 0, interacted: true })
     ).toBe(false);
+  });
+});
+
+describe('summarizeHighlightDeck', () => {
+  it('counts what the deck would deal, capped by deck size', () => {
+    const pool = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((id) => entry(id));
+    expect(summarizeHighlightDeck(pool, 5, NOW)).toEqual({
+      status: 'available',
+      dueCount: 5,
+      poolSize: 7,
+    });
+    expect(summarizeHighlightDeck(pool.slice(0, 2), 5, NOW).dueCount).toBe(2);
+  });
+
+  it('agrees with the deck it summarizes', () => {
+    const pool = ['a', 'b', 'c'].map((id) => entry(id));
+    for (const size of [1, 3, 10]) {
+      const summary = summarizeHighlightDeck(pool, size, NOW);
+      const deck = buildHighlightDeck(pool, size, NOW);
+      expect(summary.dueCount).toBe(deck.cards.length);
+      expect(summary.status).toBe(deck.status);
+      expect(summary.poolSize).toBe(deck.poolSize);
+    }
+  });
+
+  it('goes quiet once everything eligible was reviewed today', () => {
+    const reviewed = entry('a', { lastReviewedAt: startOfLocalDay(NOW) + 60_000 });
+    expect(summarizeHighlightDeck([reviewed], 5, NOW)).toEqual({
+      status: 'completed',
+      dueCount: 0,
+      poolSize: 0,
+    });
+    expect(summarizeHighlightDeck([], 5, NOW).status).toBe('empty');
+  });
+});
+
+describe('deckUntouched', () => {
+  it('is true only before the reader has done anything with the deck', () => {
+    expect(deckUntouched({ index: 0, reviewed: 0, interacted: false })).toBe(true);
+    expect(deckUntouched({ index: 1, reviewed: 0, interacted: false })).toBe(false);
+    expect(deckUntouched({ index: 0, reviewed: 1, interacted: false })).toBe(false);
+    // Opening the article or the note editor counts, even with no card advanced.
+    expect(deckUntouched({ index: 0, reviewed: 0, interacted: true })).toBe(false);
   });
 });
