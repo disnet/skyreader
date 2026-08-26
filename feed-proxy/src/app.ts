@@ -1164,6 +1164,12 @@ export function initDatabase(db: Database): void {
   if (!mentionColumns.some((column) => column.name === 'doc_uri')) {
     db.run(`ALTER TABLE mention_cache ADD COLUMN doc_uri TEXT`);
   }
+  // When the article origin was last asked which standard.site document it
+  // advertises. NULL means never asked, which is what makes an existing row
+  // eligible for one document lookup on the next read (see mentions.ts).
+  if (!mentionColumns.some((column) => column.name === 'doc_checked_at')) {
+    db.run(`ALTER TABLE mention_cache ADD COLUMN doc_checked_at INTEGER`);
+  }
 }
 
 // Discover RSS/Atom feeds and advertised standard.site URIs for a site URL.
@@ -1311,6 +1317,9 @@ export function createApp(db: Database, config: AppConfig) {
   const inFlightContext = new Map<string, Promise<SocialContext>>();
   // Collapse concurrent mention enrichments for the same normalized URL.
   const inFlightMentions = new Map<string, Promise<void>>();
+  // Which of those in-flight enrichments will resolve the article's document
+  // target (see triggerMentionEnrich).
+  const inFlightResolvesDoc = new Set<string>();
   // Collapse concurrent feed-discovery probes for the same site URL (uncached:
   // each call fetches the site + HEAD-probes common paths).
   const inFlightDiscover = new Map<string, Promise<DiscoverResult>>();
@@ -1336,10 +1345,25 @@ export function createApp(db: Database, config: AppConfig) {
   // Fire-and-forget background enrichment of an article's mention breakdown,
   // deduped per normalized URL. The decay gate inside enrichMentions makes most
   // of these no-ops (fresh/settled rows), so callers can trigger liberally.
-  function triggerMentionEnrich(normUrl: string, docUri?: string): void {
-    if (inFlightMentions.has(normUrl)) return;
-    const promise = enrichMentions(db, normUrl, docUri).finally(() => {
-      inFlightMentions.delete(normUrl);
+  //
+  // Dedup is by URL *and strength*: a read-path trigger resolves the article's
+  // document target while a warm-loop one doesn't, so plain URL dedup would let
+  // an in-flight warm enrich swallow the only request that can find a Leaflet
+  // comment. A stronger request chains behind the weaker one instead of racing
+  // it on the same row.
+  function triggerMentionEnrich(
+    normUrl: string,
+    options: { docUri?: string; resolveDocument?: boolean } = {}
+  ): void {
+    const pending = inFlightMentions.get(normUrl);
+    if (pending && (!options.resolveDocument || inFlightResolvesDoc.has(normUrl))) return;
+    if (options.resolveDocument) inFlightResolvesDoc.add(normUrl);
+    const run = () => enrichMentions(db, normUrl, options);
+    const promise: Promise<void> = (pending ? pending.then(run, run) : run()).finally(() => {
+      if (inFlightMentions.get(normUrl) === promise) {
+        inFlightMentions.delete(normUrl);
+        inFlightResolvesDoc.delete(normUrl);
+      }
     });
     inFlightMentions.set(normUrl, promise);
   }
@@ -1351,6 +1375,9 @@ export function createApp(db: Database, config: AppConfig) {
   function warmFeedItemMentions(feed: ParsedFeed): void {
     for (const item of feed.items.slice(0, WARM_MENTION_ITEM_CAP)) {
       const normUrl = normalizeArticleUrl(item.url);
+      // No `resolveDocument`: pre-warming a whole feed must stay Constellation-only.
+      // Resolving document targets costs an origin fetch per URL, which the read
+      // path pays for the handful of articles someone actually opens.
       if (normUrl) triggerMentionEnrich(normUrl);
     }
   }
@@ -3066,9 +3093,20 @@ export function createApp(db: Database, config: AppConfig) {
         typeof candidate === 'string' && candidate.startsWith('at://') && candidate.length <= 2048
           ? candidate
           : undefined;
-      const { normUrl, mentions, shouldEnrich } = readCachedMentions(db, url, now, docUri);
-      if (fresh && shouldEnrich && normUrl) triggerMentionEnrich(normUrl, docUri);
-      return { url, total: mentions.total, lanes: mentions.lanes };
+      // The read path is the demand gate for document-target resolution: someone
+      // actually opened or scrolled to this article, so it can afford one bounded
+      // origin fetch (persisted, so it happens once per URL, not once per read).
+      const { normUrl, mentions, shouldEnrich } = readCachedMentions(db, url, now, {
+        docUri,
+        resolveDocument: true,
+      });
+      const enriching = Boolean(fresh && shouldEnrich && normUrl);
+      if (enriching) triggerMentionEnrich(normUrl!, { docUri, resolveDocument: true });
+      // `pending` tells the client these counts may still grow, so it knows to
+      // re-poll. A zero total is the obvious case, but not the only one: a URL
+      // with cached Bluesky mentions whose Leaflet lane is about to be discovered
+      // comes back non-zero and would otherwise look settled.
+      return { url, total: mentions.total, lanes: mentions.lanes, pending: enriching };
     });
 
     return c.json({ items });

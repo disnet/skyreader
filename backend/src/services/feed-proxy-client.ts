@@ -245,6 +245,10 @@ export interface ArticleMentionsResult {
   url: string;
   total: number;
   lanes: MentionLaneResult[];
+  // A background enrichment is in flight for this URL, so these counts may still
+  // grow (a cold URL, or one whose document target is only now being resolved).
+  // The client re-polls on it rather than guessing from a zero total.
+  pending?: boolean;
 }
 
 interface RawMentionsResponse {

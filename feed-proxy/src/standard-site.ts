@@ -26,6 +26,9 @@ const MAX_LIST_PAGES = 5; // listRecords pages of 100 → up to 500 scanned
 const FETCH_TIMEOUT_MS = 30 * 1000;
 const DOCUMENT_ADVERTISEMENT_TIMEOUT_MS = 10 * 1000;
 const DOCUMENT_ADVERTISEMENT_MAX_BYTES = 1024 * 1024;
+// A page advertising more than a couple of document records is malformed or
+// hostile; we only ever use the first, so bound the scan.
+const MAX_ADVERTISED_DOCUMENTS = 5;
 // A Standard Reader "Collection" (a site.standard.document carrying a
 // `readerCollection`) curates other documents by at:// URI. We resolve each to a
 // title/canonical-URL preview, bounded so a hostile or runaway edition can't fan
@@ -250,18 +253,20 @@ export function buildCanonicalUrl(baseUrl: string, path: string): string {
 }
 
 /**
- * Verify that an article origin advertises a caller-supplied standard.site
- * document URI. The document record's site/path fields are author-controlled,
- * so they cannot establish this binding: the public article itself must name
- * the exact record in a <link> tag, matching standard.site discovery.
+ * The standard.site document URIs an article origin advertises, in document
+ * order, read from the page's own <link> tags (matching standard.site
+ * discovery — see runDiscover's `standardSites`).
+ *
+ * This is the authority on which document a URL *is*. A document record's
+ * site/path fields are author-controlled, so they cannot establish the binding
+ * in either direction: the public article itself must name the exact record.
+ * Callers use it two ways — discovering a target for a URL-keyed item (a saved
+ * article, an RSS item, a link post's target), and verifying one a client
+ * supplied. Returns [] for an unreachable, oversized, or non-advertising page,
+ * which is a real answer ("this URL is not a document"), not an error.
  */
-export async function articleAdvertisesDocument(
-  articleUrl: string,
-  documentUri: string
-): Promise<boolean> {
-  const parsed = parseAtUri(documentUri);
-  if (!parsed || parsed.collection !== 'site.standard.document') return false;
-
+export async function advertisedDocuments(articleUrl: string): Promise<string[]> {
+  const documents: string[] = [];
   try {
     const response = await safeFetch(articleUrl, {
       headers: {
@@ -272,17 +277,17 @@ export async function articleAdvertisesDocument(
     });
     if (!response.ok) {
       await response.body?.cancel().catch(() => {});
-      return false;
+      return documents;
     }
 
     const contentLength = Number(response.headers.get('Content-Length'));
     if (Number.isFinite(contentLength) && contentLength > DOCUMENT_ADVERTISEMENT_MAX_BYTES) {
       await response.body?.cancel().catch(() => {});
-      return false;
+      return documents;
     }
 
     const reader = response.body?.getReader();
-    if (!reader) return false;
+    if (!reader) return documents;
     const decoder = new TextDecoder();
     let total = 0;
     let html = '';
@@ -292,20 +297,26 @@ export async function articleAdvertisesDocument(
       total += value.byteLength;
       if (total > DOCUMENT_ADVERTISEMENT_MAX_BYTES) {
         await reader.cancel().catch(() => {});
-        return false;
+        return documents;
       }
       html += decoder.decode(value, { stream: true });
     }
     html += decoder.decode();
 
+    // The at:// href is the reliable signal regardless of `rel` — Leaflet emits
+    // the same URI as both rel="alternate" and rel="site.standard.document".
     for (const match of html.matchAll(/<link\b[^>]*>/gi)) {
       const href = match[0].match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1];
-      if (href === documentUri) return true;
+      if (!href || documents.includes(href)) continue;
+      const parsed = parseAtUri(href);
+      if (parsed?.collection !== 'site.standard.document') continue;
+      documents.push(href);
+      if (documents.length >= MAX_ADVERTISED_DOCUMENTS) break;
     }
   } catch (error) {
-    console.error('[standard-site] document advertisement verification error:', error);
+    console.error('[standard-site] document advertisement lookup error:', error);
   }
-  return false;
+  return documents;
 }
 
 async function fetchRecord<T>(

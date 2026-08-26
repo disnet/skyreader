@@ -11,7 +11,8 @@
 // hours/days — so we fetch by URL, not off the cached article. Requests are
 // batched (cards mount in bursts) and deduped; results memoized per URL for the
 // session. The proxy caches the expensive work and enriches cold URLs in the
-// background, so a first miss is retried a couple times shortly after.
+// background, so a first miss — or any answer it flags as still enriching — is
+// retried a couple times shortly after.
 
 import { api } from '$lib/services/api';
 import type { ArticleMentions } from '$lib/types';
@@ -20,8 +21,9 @@ const FLUSH_DELAY_MS = 80;
 const MAX_BATCH = 50;
 const OFFLINE_RETRY_MS = 4000;
 // Cold URLs enrich in the background proxy-side; re-poll to catch them. A single
-// retry loses the race when Constellation is slow, so retry twice with a
-// lengthening backoff (5s, then 10s) before giving up until the card remounts.
+// retry loses the race when Constellation is slow — and a document-target lookup
+// adds an origin fetch on top — so retry twice with a lengthening backoff (5s,
+// then 10s) before giving up until the card remounts.
 const COLD_RETRY_MS = 5000;
 const MAX_COLD_RETRIES = 2;
 // Cap the session memo so a long scroll session can't grow it without bound.
@@ -78,9 +80,12 @@ function createArticleMentionsStore() {
         // FIFO eviction below (delete-then-set moves it to the end).
         next.delete(item.url);
         next.set(item.url, item);
-        // A zero may be genuine or just not-yet-enriched; retry a couple times
-        // with a lengthening backoff to outlast a slow background enrichment.
-        if (item.total === 0) {
+        // Re-poll while the proxy says an enrichment is in flight, and on a zero
+        // total (which also covers a proxy failure, where nothing is enriching
+        // and the field never arrives). A non-zero total is not proof the answer
+        // is settled: an article's Leaflet lane is discovered on the read path
+        // and can land after its Bluesky and Semble counts are already cached.
+        if (item.pending || item.total === 0) {
           const attempts = coldRetries.get(item.url) ?? 0;
           if (attempts < MAX_COLD_RETRIES) {
             coldRetries.set(item.url, attempts + 1);

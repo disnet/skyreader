@@ -305,13 +305,34 @@ describe('enrichMentions + readCachedMentions', () => {
       ['11ddf42a96099890', ARTICLE, now, now]
     );
 
-    const cached = readCachedMentions(
-      db,
-      ARTICLE,
-      now,
-      'at://did:plc:publisher/site.standard.document/post1'
-    );
+    const cached = readCachedMentions(db, ARTICLE, now, {
+      docUri: 'at://did:plc:publisher/site.standard.document/post1',
+      resolveDocument: true,
+    });
     expect(cached.shouldEnrich).toBe(true);
+  });
+
+  it('flags a fresh row whose document target was never looked up, with no client hint', () => {
+    const db = freshDb();
+    const now = Date.now();
+    db.run(
+      `INSERT INTO mention_cache
+        (url_hash, url, total_dids, lanes_json, first_seen_at, checked_at, doc_uri, doc_checked_at)
+       VALUES (?, ?, 3, '[]', ?, ?, NULL, NULL)`,
+      ['11ddf42a96099890', ARTICLE, now, now]
+    );
+
+    // The read path can resolve a document target, so an unlooked-at row is
+    // enrichable even though its counts are fresh and non-zero.
+    expect(readCachedMentions(db, ARTICLE, now, { resolveDocument: true }).shouldEnrich).toBe(true);
+    // The warm loop can't, so it must not be told to re-run for that reason.
+    expect(readCachedMentions(db, ARTICLE, now).shouldEnrich).toBe(false);
+
+    // Once looked at, the read path stops re-asking too.
+    db.run('UPDATE mention_cache SET doc_checked_at = ?', [now]);
+    expect(readCachedMentions(db, ARTICLE, now, { resolveDocument: true }).shouldEnrich).toBe(
+      false
+    );
   });
 
   afterEach(() => {
@@ -332,13 +353,102 @@ describe('enrichMentions + readCachedMentions', () => {
       return new Response(JSON.stringify({ links: {} }));
     }) as unknown as typeof fetch);
 
-    await enrichMentions(db, normalizeArticleUrl(ARTICLE)!, docUri);
+    await enrichMentions(db, normalizeArticleUrl(ARTICLE)!, { docUri, resolveDocument: true });
 
     const row = db.query<{ doc_uri: string | null }, []>('SELECT doc_uri FROM mention_cache').get();
     expect(row?.doc_uri).toBe(docUri);
     expect(
       spy.mock.calls.some(([input]) => new URL(String(input)).searchParams.get('target') === docUri)
     ).toBe(true);
+  });
+
+  it('discovers the document target from the article origin with no client hint', async () => {
+    const db = freshDb();
+    const docUri = 'at://did:plc:publisher/site.standard.document/post1';
+    // The case the whole feature exists for: a URL-keyed item (a saved article,
+    // an RSS item, a link post's target) whose page *is* a standard.site
+    // document. The client has no at:// URI to offer, and pub.leaflet.comment
+    // targets the document — never the https URL — so without discovery the
+    // Leaflet lane is unreachable.
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.href === ARTICLE) {
+        return new Response(`<html><head><link rel="alternate" href="${docUri}"></head></html>`);
+      }
+      if (url.pathname === '/links/all') {
+        return new Response(
+          JSON.stringify({
+            links:
+              url.searchParams.get('target') === docUri
+                ? { 'pub.leaflet.comment': { '.subject': { distinct_dids: 1 } } }
+                : {},
+          })
+        );
+      }
+      return new Response(JSON.stringify({ total: 1, linking_dids: ['did:plc:commenter'] }));
+    }) as unknown as typeof fetch);
+
+    await enrichMentions(db, normalizeArticleUrl(ARTICLE)!, { resolveDocument: true });
+
+    const row = db
+      .query<{ doc_uri: string | null; lanes_json: string }, []>(
+        'SELECT doc_uri, lanes_json FROM mention_cache'
+      )
+      .get();
+    expect(row?.doc_uri).toBe(docUri);
+    expect(JSON.parse(row?.lanes_json ?? '[]').map((l: { lane: string }) => l.lane)).toEqual([
+      'leaflet',
+    ]);
+  });
+
+  it('never fetches the article origin without resolveDocument', async () => {
+    const db = freshDb();
+    const originFetches: string[] = [];
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.href === ARTICLE) {
+        originFetches.push(url.href);
+        return new Response('<html><head></head></html>');
+      }
+      return new Response(JSON.stringify({ links: {} }));
+    }) as unknown as typeof fetch);
+
+    // The warm loop pre-warms up to 25 items per feed refresh; paying an origin
+    // fetch for each is exactly the load the demand gate exists to avoid.
+    await enrichMentions(db, normalizeArticleUrl(ARTICLE)!);
+
+    expect(originFetches).toHaveLength(0);
+    // And it must not claim the lookup was done, or the read path would skip it.
+    expect(
+      db
+        .query<{ doc_checked_at: number | null }, []>('SELECT doc_checked_at FROM mention_cache')
+        .get()?.doc_checked_at
+    ).toBeNull();
+  });
+
+  it("prefers the origin's own target over a mismatched client candidate", async () => {
+    const db = freshDb();
+    const real = 'at://did:plc:publisher/site.standard.document/post1';
+    const claimed = 'at://did:plc:attacker/site.standard.document/post1';
+    const queried: string[] = [];
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.href === ARTICLE) {
+        return new Response(`<html><head><link rel="alternate" href="${real}"></head></html>`);
+      }
+      const target = url.searchParams.get('target');
+      if (target?.startsWith('at://')) queried.push(target);
+      return new Response(JSON.stringify({ links: {} }));
+    }) as unknown as typeof fetch);
+
+    await enrichMentions(db, normalizeArticleUrl(ARTICLE)!, {
+      docUri: claimed,
+      resolveDocument: true,
+    });
+
+    const row = db.query<{ doc_uri: string | null }, []>('SELECT doc_uri FROM mention_cache').get();
+    expect(row?.doc_uri).toBe(real);
+    expect(queried).not.toContain(claimed);
   });
 
   it('rejects an attacker document that self-asserts the article URL', async () => {
@@ -357,7 +467,7 @@ describe('enrichMentions + readCachedMentions', () => {
       return new Response(JSON.stringify({ links: {} }));
     }) as unknown as typeof fetch);
 
-    await enrichMentions(db, normalizeArticleUrl(ARTICLE)!, docUri);
+    await enrichMentions(db, normalizeArticleUrl(ARTICLE)!, { docUri, resolveDocument: true });
 
     const row = db.query<{ doc_uri: string | null }, []>('SELECT doc_uri FROM mention_cache').get();
     expect(row?.doc_uri).toBeNull();
@@ -390,7 +500,7 @@ describe('enrichMentions + readCachedMentions', () => {
       return new Response(JSON.stringify({ links: {} }));
     }) as unknown as typeof fetch);
 
-    await enrichMentions(db, normalizeArticleUrl(ARTICLE)!, docUri);
+    await enrichMentions(db, normalizeArticleUrl(ARTICLE)!, { docUri, resolveDocument: true });
     expect(
       db.query<{ doc_uri: string | null }, []>('SELECT doc_uri FROM mention_cache').get()?.doc_uri
     ).toBe(docUri);
@@ -400,7 +510,7 @@ describe('enrichMentions + readCachedMentions', () => {
     db.run('UPDATE mention_cache SET checked_at = ?', [Date.now() - 2 * 60 * 60 * 1000]);
     const documentQueriesBeforeRecheck = queriedDocumentTargets.length;
 
-    await enrichMentions(db, normalizeArticleUrl(ARTICLE)!);
+    await enrichMentions(db, normalizeArticleUrl(ARTICLE)!, { resolveDocument: true });
 
     const row = db
       .query<{ doc_uri: string | null; lanes_json: string }, []>(
