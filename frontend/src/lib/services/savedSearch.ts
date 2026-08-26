@@ -104,6 +104,36 @@ export function matchesTerms(haystack: string, terms: string[]): boolean {
   return true;
 }
 
+export const RANK_TITLE = 0;
+export const RANK_METADATA = 1;
+export const RANK_BODY = 2;
+
+/** Tier of a match (lower sorts first), or null when the item doesn't match. */
+export function searchRank(
+  title: string,
+  metadata: string,
+  terms: string[],
+  bodyMatchTerms: Map<string, Set<string>> | null,
+  bodyKeys: () => string[]
+): number | null {
+  let rank = RANK_TITLE;
+  let keys: string[] | null = null;
+
+  for (const term of terms) {
+    if (matchesTerms(title, [term])) continue;
+    if (matchesTerms(metadata, [term])) {
+      rank = Math.max(rank, RANK_METADATA);
+      continue;
+    }
+    if (bodyMatchTerms === null) return null;
+    keys ??= bodyKeys();
+    if (!keys.some((key) => bodyMatchTerms.get(key)?.has(term) === true)) return null;
+    rank = RANK_BODY;
+  }
+
+  return rank;
+}
+
 /**
  * Does one item satisfy the query, given its normalized metadata haystack and
  * the per-key term sets the body corpus matched?
@@ -124,14 +154,7 @@ export function matchesSearch(
   bodyMatchTerms: Map<string, Set<string>> | null,
   bodyKeys: () => string[]
 ): boolean {
-  if (terms.length === 0) return true;
-  let keys: string[] | null = null;
-  return terms.every((term) => {
-    if (matchesTerms(metadata, [term])) return true;
-    if (bodyMatchTerms === null) return false;
-    keys ??= bodyKeys();
-    return keys.some((key) => bodyMatchTerms.get(key)?.has(term) === true);
-  });
+  return searchRank('', metadata, terms, bodyMatchTerms, bodyKeys) !== null;
 }
 
 /**
