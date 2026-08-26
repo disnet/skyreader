@@ -162,15 +162,16 @@ async function pickUrlVariant(
   return best ?? { apiUrl: normUrl, meta: {}, metaOk: false };
 }
 
-/** Semble answered, but with nothing: no people, no notes, no collections, no
- *  edges. Worth naming because it isn't the same as Semble being down, and the
+/** Semble answered, but with nothing: no people, notes, collections, edges, or
+ *  recommendations. Worth naming because it isn't the same as Semble being down, and the
  *  lane treats it differently — see getMentionLaneItems. */
 export function isEmptySembleContext(context: SembleContext): boolean {
   return (
     context.savers.length === 0 &&
     context.notes.length === 0 &&
     context.collections.length === 0 &&
-    context.connections.length === 0
+    context.connections.length === 0 &&
+    context.similar.length === 0
   );
 }
 

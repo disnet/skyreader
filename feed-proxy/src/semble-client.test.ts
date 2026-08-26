@@ -118,6 +118,7 @@ describe('fetchSembleContext similar URLs', () => {
 
     const context = await fetchSembleContext(ARTICLE);
     expect(context?.similar).toHaveLength(8);
+    expect(context && isEmptySembleContext(context)).toBe(false);
     expect(context?.similar[0]).toEqual({
       url: 'https://similar.example/0',
       title: 'Similar 0',

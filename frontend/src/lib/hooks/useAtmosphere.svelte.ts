@@ -181,8 +181,8 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
 
   // Resolving people costs a PDS fetch per record, so it stays off until the
   // host says the discussion is actually on screen. Once open, every lane that
-  // has people resolves in parallel — the stream is the whole conversation, so
-  // waiting for a lane to be picked would be waiting for nothing.
+  // has people resolves in parallel. Semble also resolves at zero because its
+  // article recommendations are useful without a human reference count.
   let streamOpen = $state(false);
 
   function openStream() {
@@ -196,6 +196,7 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     for (const lane of laneRow) {
       if (lane.count > 0) mentionLaneItemsStore.load(url, lane.id);
     }
+    mentionLaneItemsStore.load(url, 'semble');
   });
 
   // Per-lane resolved people, keyed by lane. Reading through the store here (not
@@ -207,6 +208,7 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     for (const lane of laneRow) {
       if (lane.count > 0) out.set(lane.id, mentionLaneItemsStore.get(url, lane.id));
     }
+    out.set('semble', mentionLaneItemsStore.get(url, 'semble'));
     return out;
   });
 
@@ -348,6 +350,7 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     for (const lane of laneRow) {
       if (lane.count > 0) mentionLaneItemsStore.load(url, lane.id, { force: true });
     }
+    mentionLaneItemsStore.load(url, 'semble', { force: true });
   }
 
   const total = $derived(laneRow.reduce((sum, l) => sum + l.count, 0));
