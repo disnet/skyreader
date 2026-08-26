@@ -27,8 +27,8 @@ export type LaneItemsState = {
 
 const LOADING: LaneItemsState = { loading: true, loaded: false, failed: false, entries: [] };
 
-function keyFor(url: string, lane: string): string {
-  return `${lane}|${url}`;
+function keyFor(url: string, lane: string, docUri?: string): string {
+  return `${lane}|${url}${lane === 'leaflet' ? `|${docUri ?? ''}` : ''}`;
 }
 
 function createMentionLaneItemsStore() {
@@ -44,16 +44,16 @@ function createMentionLaneItemsStore() {
 
   // Kick off resolution for a lane. No-op once loaded or in flight. Safe to call
   // every time a lane is expanded.
-  function load(url: string, lane: string, options?: { force?: boolean }): void {
+  function load(url: string, lane: string, options?: { force?: boolean; docUri?: string }): void {
     if (!url) return;
-    const key = keyFor(url, lane);
+    const key = keyFor(url, lane, options?.docUri);
     const existing = cache.get(key);
     if (existing?.loaded || inFlight.has(key)) return;
     if (existing?.failed && !options?.force) return;
 
     set(key, LOADING);
     const p = api
-      .fetchMentionLaneItems(url, lane)
+      .fetchMentionLaneItems(url, lane, options?.docUri)
       .then((res) => {
         set(key, {
           loading: false,
@@ -77,8 +77,8 @@ function createMentionLaneItemsStore() {
 
   // The resolved state for a (url, lane), or undefined before the first load.
   // Reactive.
-  function get(url: string, lane: string): LaneItemsState | undefined {
-    return cache.get(keyFor(url, lane));
+  function get(url: string, lane: string, docUri?: string): LaneItemsState | undefined {
+    return cache.get(keyFor(url, lane, docUri));
   }
 
   /**

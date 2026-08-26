@@ -10,7 +10,7 @@
 // with the caller and are injected as getters.
 //
 // The merge is the point: an article's discussion is one conversation that
-// happens to be spread across four networks, not four lists to click between.
+// happens to be spread across several networks, not separate lists to click between.
 // Lanes survive as filters over that stream. Resolving people is the expensive
 // path (a PDS fetch per record), so nothing loads until the host calls
 // `openStream()` — the card on its Discussion toggle, the reader when the
@@ -49,6 +49,13 @@ export const LANE_META: Record<
     noun: 'note',
     createLabel: 'Write a note',
   },
+  leaflet: {
+    icon: 'leaflet',
+    label: 'Leaflet',
+    verb: 'commented',
+    noun: 'comment',
+    createLabel: 'Comment on Leaflet',
+  },
   bluesky: {
     icon: 'bluesky',
     label: 'Bluesky',
@@ -71,11 +78,13 @@ export const LANE_META: Record<
     createLabel: 'Save to Semble',
   },
 };
-export const LANE_ORDER: LaneId[] = ['linkblog', 'bluesky', 'margin', 'semble'];
+export const LANE_ORDER: LaneId[] = ['linkblog', 'leaflet', 'bluesky', 'margin', 'semble'];
 
 export interface UseAtmosphereOptions {
   /** The URL whose Atmosphere references we resolve (reactive getter). */
   itemUrl: () => string;
+  /** The document AT-URI Leaflet comments target, when this is a document item. */
+  itemAtUri?: () => string | undefined;
   /**
    * Whether the item is shared to the user's own linkblog. Drives the "mine"
    * tint and keeps the Blogs lane visible the moment you share, before the
@@ -130,7 +139,7 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
   // Batched + deduped + memoized inside the store, so this is cheap to fire.
   $effect(() => {
     const url = opts.itemUrl();
-    if (url) articleMentionsStore.fetch(url);
+    if (url) articleMentionsStore.fetch(url, opts.itemAtUri?.());
   });
 
   const mentionLaneMap = $derived.by(() => {
@@ -194,7 +203,7 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     const url = opts.itemUrl();
     if (!url) return;
     for (const lane of laneRow) {
-      if (lane.count > 0) mentionLaneItemsStore.load(url, lane.id);
+      if (lane.count > 0) mentionLaneItemsStore.load(url, lane.id, { docUri: opts.itemAtUri?.() });
     }
     mentionLaneItemsStore.load(url, 'semble');
   });
@@ -206,7 +215,8 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     const out = new Map<LaneId, ReturnType<typeof mentionLaneItemsStore.get>>();
     if (!url || !streamOpen) return out;
     for (const lane of laneRow) {
-      if (lane.count > 0) out.set(lane.id, mentionLaneItemsStore.get(url, lane.id));
+      if (lane.count > 0)
+        out.set(lane.id, mentionLaneItemsStore.get(url, lane.id, opts.itemAtUri?.()));
     }
     out.set('semble', mentionLaneItemsStore.get(url, 'semble'));
     return out;
@@ -263,7 +273,8 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     if (id !== 'all') {
       const url = opts.itemUrl();
       const lane = laneRow.find((l) => l.id === id);
-      if (url && lane && lane.count > 0) mentionLaneItemsStore.load(url, id);
+      if (url && lane && lane.count > 0)
+        mentionLaneItemsStore.load(url, id, { docUri: opts.itemAtUri?.() });
     }
   }
 
@@ -348,7 +359,8 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     if (!url) return;
     streamOpen = true;
     for (const lane of laneRow) {
-      if (lane.count > 0) mentionLaneItemsStore.load(url, lane.id, { force: true });
+      if (lane.count > 0)
+        mentionLaneItemsStore.load(url, lane.id, { force: true, docUri: opts.itemAtUri?.() });
     }
     mentionLaneItemsStore.load(url, 'semble', { force: true });
   }

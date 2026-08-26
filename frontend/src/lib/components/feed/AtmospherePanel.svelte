@@ -8,7 +8,7 @@
   //
   // <!--
   // THESIS: an article's discussion is ONE conversation that happens to be
-  //   spread across four networks — and the network is a property of a row, not
+  //   spread across several networks — and the network is a property of a row, not
   //   a mode of the panel. So it still refuses the per-NETWORK tab strip that
   //   made the reader click through four bordered boxes, two of them empty, to
   //   find out what anyone said.

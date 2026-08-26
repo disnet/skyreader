@@ -743,11 +743,11 @@ export interface SocialContextResult {
 }
 
 // One source lane of network-wide mentions for an article (Phase 5): a kind of
-// reference (linkblog note / Bluesky post / margin.at highlight / Semble save)
+// reference (linkblog note / Leaflet comment / Bluesky post / margin.at highlight / Semble save)
 // with its honest verb and a distinct-DID count. `capped` marks a count that hit
 // the lookup page cap and is a lower bound.
 export interface MentionLane {
-  lane: 'linkblog' | 'bluesky' | 'margin' | 'semble';
+  lane: 'linkblog' | 'leaflet' | 'bluesky' | 'margin' | 'semble';
   label: string;
   verb: string;
   noun: string;
@@ -764,6 +764,10 @@ export interface ArticleMentions {
   url: string;
   total: number;
   lanes: MentionLane[];
+  // A background enrichment is still running for this URL, so these counts may
+  // grow. Drives the store's re-poll — a non-zero total is not proof the answer
+  // is settled (a URL's Leaflet lane can arrive after its Bluesky one).
+  pending?: boolean;
 }
 
 // One resolved reference inside a lane (Phase 5 "see existing items"): a person

@@ -10,7 +10,7 @@ import type { ReaderCollection, ReaderCollectionItem, SembleContext } from '$lib
  * card's visual design iterable from mock data (see /dev/cards).
  */
 
-export type LaneId = 'linkblog' | 'bluesky' | 'margin' | 'semble';
+export type LaneId = 'linkblog' | 'leaflet' | 'bluesky' | 'margin' | 'semble';
 
 /** One Atmosphere-row lane chip, with LANE_META already folded in. */
 export interface LaneRowVM {

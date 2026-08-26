@@ -1,6 +1,6 @@
 // How the merged discussion is ordered.
 //
-// The stream is one conversation spread across four networks, and the panel
+// The stream is one conversation spread across several networks, and the panel
 // previews only its first few rows before a fold — so the order decides what a
 // reader actually sees. It leads with the references that carried: most-liked
 // first, recency as the tiebreak.

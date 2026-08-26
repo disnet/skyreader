@@ -377,6 +377,8 @@
         // states — so the discussion's compose row never repeats it a few pixels
         // away inside the same footer band.
         return false;
+      case 'leaflet':
+        return false;
       case 'semble':
       case 'margin':
         // The collection picker is global, so these are offered wherever the
@@ -393,6 +395,7 @@
   // document's canonical URL.
   const atmosphere = useAtmosphere({
     itemUrl: () => itemUrl,
+    itemAtUri: () => (isDocumentMode && !isLinkPostMode ? document?.recordUri : undefined),
     itemTitle: () => itemTitle,
     sourceTitle: () => displayFeedTitle,
     isShared: () => currentlyShared,
@@ -405,6 +408,8 @@
     switch (id) {
       case 'linkblog':
         if (!currentlyShared) composeShare();
+        break;
+      case 'leaflet':
         break;
       case 'semble':
         saveToSemble();

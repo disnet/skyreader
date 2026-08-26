@@ -24,6 +24,7 @@ import { Database } from 'bun:sqlite';
 import { normalizeArticleUrl, constellationTargets } from './url-normalize';
 import { LANES, laneForSource, type LaneId } from './lanes';
 import { constellationGet } from './constellation-client';
+import { advertisedDocuments } from './standard-site';
 
 // DIDs paged per (collection, path). One page is exact for the common small
 // count; very popular URLs cap here and render as '<n>+'.
@@ -44,6 +45,13 @@ const HOT_RECHECK_MS = 60 * 60 * 1000;
 const COOL_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const COOL_RECHECK_MS = 12 * 60 * 60 * 1000;
 const SETTLED_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
+
+// A backstop on how long a resolved document target is trusted. Revalidation
+// normally rides the mention decay gate (a due row re-asks the origin), but the
+// warm loop resets `checked_at` without ever looking at an origin — so a feed
+// item could stay perpetually not-due and keep a removed advertisement alive.
+// This bounds that: the read path re-asks at least this often either way.
+const DOC_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface MentionLane {
   lane: LaneId;
@@ -70,9 +78,15 @@ interface MentionCacheRow {
   lanes_json: string;
   first_seen_at: number;
   checked_at: number;
+  doc_uri: string | null;
+  // When we last asked the article origin which document it advertises. Distinct
+  // from `doc_uri`: NULL means "never looked", while a stamp with a NULL doc_uri
+  // means "looked, this URL is not a document" — so a plain article doesn't pay
+  // for an origin fetch on every read.
+  doc_checked_at: number | null;
 }
 
-function hashUrl(url: string): string {
+export function hashUrl(url: string): string {
   const hasher = new Bun.CryptoHasher('sha256');
   hasher.update(url);
   return hasher.digest('hex').slice(0, 16);
@@ -119,13 +133,15 @@ async function fetchSourceDids(
  * `/links/all`, bucket them into lanes, union distinct DIDs per lane and across
  * all lanes. Returns lanes in registry (priority) order, non-empty only.
  */
-export async function computeMentions(normUrl: string): Promise<ArticleMentions> {
+export async function computeMentions(normUrl: string, docUri?: string): Promise<ArticleMentions> {
   // Probe both trailing-slash forms (Constellation matches the target string
   // exactly) and carry the matching target with each source so we fetch its DIDs
   // against the form that actually has links. See constellationTargets.
   const sources: Array<{ target: string; laneId: LaneId; collection: string; path: string }> = [];
   let queryCount = 0;
-  for (const target of constellationTargets(normUrl)) {
+  const targets = [...constellationTargets(normUrl), ...(docUri ? [docUri] : [])];
+  for (const target of targets) {
+    const isDocumentTarget = target === docUri;
     const all = await constellationGet<LinksAllResponse>('/links/all', { target });
     if (!all?.links) continue;
     // Collect the laned (collection, path) sources Constellation actually reports,
@@ -134,7 +150,7 @@ export async function computeMentions(normUrl: string): Promise<ArticleMentions>
       for (const [path, stats] of Object.entries(paths)) {
         if (!stats?.distinct_dids) continue;
         const lane = laneForSource(collection, path);
-        if (!lane) continue;
+        if (!lane || (isDocumentTarget && lane.id !== 'leaflet')) continue;
         if (queryCount >= MAX_SOURCE_QUERIES) break;
         queryCount++;
         sources.push({ target, laneId: lane.id, collection, path });
@@ -208,13 +224,20 @@ function rowToMentions(row: MentionCacheRow): ArticleMentions {
 /**
  * Read the cached mention breakdown for a raw article URL, with no network call.
  * Returns the breakdown (empty when below threshold or absent), plus whether a
- * background enrichment is warranted (missing row, or due per the decay gate).
+ * background enrichment is warranted (missing row, due per the decay gate, or
+ * carrying a document target we haven't resolved yet).
  * `normUrl` is null when the URL isn't a usable http(s) target.
+ *
+ * `resolveDocument` is the caller saying it will let the enrichment fetch the
+ * article origin (the demand-gated read path does; the warm loop doesn't), so a
+ * row that has never had its document target looked up counts as enrichable
+ * only for callers that can actually resolve it.
  */
 export function readCachedMentions(
   db: Database,
   rawUrl: string,
-  now: number
+  now: number,
+  options: { docUri?: string; resolveDocument?: boolean } = {}
 ): {
   normUrl: string | null;
   mentions: ArticleMentions;
@@ -232,7 +255,8 @@ export function readCachedMentions(
   // Surface every real reference, down to a single linker — a row with zero DIDs
   // naturally renders empty (no lanes), so no threshold is needed to suppress it.
   const mentions = rowToMentions(row);
-  return { normUrl, mentions, shouldEnrich: isDue(row, now) };
+  const needsDocLookup = Boolean(options.resolveDocument) && !row.doc_checked_at;
+  return { normUrl, mentions, shouldEnrich: needsDocLookup || isDue(row, now) };
 }
 
 /**
@@ -240,30 +264,90 @@ export function readCachedMentions(
  * decay gate first (so concurrent triggers and warm-loop overlap don't re-query
  * a settled/fresh row). Preserves `first_seen_at` across updates so the decay
  * curve is anchored to first sighting, not last check. Best-effort — never throws.
+ *
+ * `resolveDocument` allows one bounded fetch of the article origin to learn which
+ * standard.site document (if any) this URL *is* — the only way a Leaflet comment
+ * is reachable, since `pub.leaflet.comment` targets the document's at:// URI and
+ * never the https URL. It is demand-gated (the read path passes it, the feed warm
+ * loop does not) and the answer is persisted either way, so a URL costs at most
+ * one origin fetch per decay window rather than one per read.
  */
-export async function enrichMentions(db: Database, normUrl: string): Promise<void> {
+export async function enrichMentions(
+  db: Database,
+  normUrl: string,
+  options: { docUri?: string; resolveDocument?: boolean } = {}
+): Promise<void> {
+  const { docUri, resolveDocument = false } = options;
   const now = Date.now();
   const existing = db
     .query<MentionCacheRow, [string]>('SELECT * FROM mention_cache WHERE url_hash = ?')
     .get(hashUrl(normUrl));
-  if (existing && !isDue(existing, now)) return;
+  const due = !existing || isDue(existing, now);
+
+  // Ask the origin which document it advertises when we're recomputing anyway,
+  // when we've never asked, or when the last answer has aged out. A
+  // recently-resolved target is otherwise left alone — that stamp is what keeps a
+  // plain article from re-fetching its own HTML on every reader who opens it.
+  const docCheckedAt = existing?.doc_checked_at ?? null;
+  const wantDocLookup =
+    resolveDocument && (due || !docCheckedAt || now - docCheckedAt > DOC_RECHECK_MS);
+  if (existing && !due && !wantDocLookup) return;
+
+  // The document target is shared by every reader of this URL, and the origin is
+  // the only authority on it: a client-supplied candidate counts only if the page
+  // actually advertises it, and a URL-keyed item (a saved article, an RSS item)
+  // gets the page's own target with no client involvement at all. Revalidating on
+  // every due re-poll means a removed advertisement stops contributing comments.
+  let docUriChanged = false;
+  let effectiveDocUri = existing?.doc_uri ?? undefined;
+  if (wantDocLookup) {
+    const advertised = await advertisedDocuments(normUrl);
+    const resolved =
+      (docUri && advertised.includes(docUri) ? docUri : undefined) ?? advertised[0] ?? undefined;
+    docUriChanged = (resolved ?? null) !== (existing?.doc_uri ?? null);
+    effectiveDocUri = resolved;
+  }
+
+  // Nothing new to compute: a fresh row that looked for a target and found the
+  // one it already had. Still record that we looked, so the next read is free.
+  if (existing && !due && !docUriChanged) {
+    db.run('UPDATE mention_cache SET doc_checked_at = ? WHERE url_hash = ?', [
+      now,
+      hashUrl(normUrl),
+    ]);
+    return;
+  }
 
   let mentions: ArticleMentions;
   try {
-    mentions = await computeMentions(normUrl);
+    mentions = await computeMentions(normUrl, effectiveDocUri);
   } catch (error) {
     console.error(`[mentions] enrich error for ${normUrl}:`, error);
     return;
   }
 
   const firstSeen = existing?.first_seen_at ?? now;
+  // A warm-loop enrich never looked for a target, so it must not stamp
+  // `doc_checked_at` — that would tell the read path the lookup was already done.
+  const nextDocCheckedAt = wantDocLookup ? now : docCheckedAt;
   db.run(
-    `INSERT INTO mention_cache (url_hash, url, total_dids, lanes_json, first_seen_at, checked_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO mention_cache (url_hash, url, total_dids, lanes_json, first_seen_at, checked_at, doc_uri, doc_checked_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(url_hash) DO UPDATE SET
 			total_dids = excluded.total_dids,
 			lanes_json = excluded.lanes_json,
-			checked_at = excluded.checked_at`,
-    [hashUrl(normUrl), normUrl, mentions.total, JSON.stringify(mentions.lanes), firstSeen, now]
+			checked_at = excluded.checked_at,
+			doc_uri = excluded.doc_uri,
+			doc_checked_at = excluded.doc_checked_at`,
+    [
+      hashUrl(normUrl),
+      normUrl,
+      mentions.total,
+      JSON.stringify(mentions.lanes),
+      firstSeen,
+      now,
+      effectiveDocUri ?? null,
+      nextDocCheckedAt,
+    ]
   );
 }

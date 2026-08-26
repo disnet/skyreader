@@ -804,7 +804,7 @@ export async function handleV2Mentions(request: Request, env: Env): Promise<Resp
     });
   }
 
-  let body: { urls?: string[] };
+  let body: { urls?: string[]; docUris?: Record<string, string> };
   try {
     body = await request.json();
   } catch {
@@ -828,6 +828,35 @@ export async function handleV2Mentions(request: Request, env: Env): Promise<Resp
     });
   }
 
+  const docUris = body.docUris;
+  if (docUris !== undefined) {
+    if (
+      !docUris ||
+      typeof docUris !== 'object' ||
+      Array.isArray(docUris) ||
+      Object.keys(docUris).length > 50
+    ) {
+      return new Response(JSON.stringify({ error: 'Invalid docUris map' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const requestedUrls = new Set(urls);
+    const invalidEntry = Object.entries(docUris).some(
+      ([url, uri]) =>
+        !requestedUrls.has(url) ||
+        typeof uri !== 'string' ||
+        !uri.startsWith('at://') ||
+        uri.length > 2048
+    );
+    if (invalidEntry) {
+      return new Response(JSON.stringify({ error: 'Invalid docUris map' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
+
   const emptyFor = (url: string): ArticleMentionsResult => ({
     url,
     total: 0,
@@ -836,7 +865,7 @@ export async function handleV2Mentions(request: Request, env: Env): Promise<Resp
 
   try {
     const client = new FeedProxyClient(env);
-    const results = await client.fetchArticleMentions(urls);
+    const results = await client.fetchArticleMentions(urls, docUris);
     return new Response(JSON.stringify({ items: results }), {
       headers: { 'Content-Type': 'application/json' },
     });
@@ -867,7 +896,7 @@ export async function handleV2MentionLane(request: Request, env: Env): Promise<R
     });
   }
 
-  let body: { url?: string; lane?: string };
+  let body: { url?: string; lane?: string; docUri?: string };
   try {
     body = await request.json();
   } catch {
@@ -887,7 +916,7 @@ export async function handleV2MentionLane(request: Request, env: Env): Promise<R
 
   try {
     const client = new FeedProxyClient(env);
-    const result = await client.fetchMentionLaneItems(url, lane);
+    const result = await client.fetchMentionLaneItems(url, lane, body.docUri);
     return new Response(JSON.stringify(result), {
       headers: { 'Content-Type': 'application/json' },
     });
