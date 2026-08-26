@@ -34,11 +34,6 @@
     isSaved = false,
     onShare,
     shareActive = false,
-    onCommunity,
-    communityCount,
-    communityCapped = false,
-    communityActive = false,
-    communityButtonEl = $bindable(null),
     onTag,
     tagCount = 0,
     tagActive = false,
@@ -61,13 +56,6 @@
     onShare?: () => void;
     /** The item is already shared to the linkblog. */
     shareActive?: boolean;
-    /** Toggle passages highlighted by other readers on Margin. */
-    onCommunity?: () => void;
-    /** Number of fetched community highlights; undefined while loading. */
-    communityCount?: number;
-    communityCapped?: boolean;
-    communityActive?: boolean;
-    communityButtonEl?: HTMLButtonElement | null;
     onTag?: () => void;
     tagCount?: number;
     tagActive?: boolean;
@@ -143,25 +131,6 @@
         title={shareActive ? 'Shared — edit your note' : 'Share to your linkblog'}
       >
         <Icon name="share" size={20} />
-      </button>
-    {/if}
-
-    {#if onCommunity}
-      <button
-        class="bar-btn"
-        class:active={communityActive}
-        bind:this={communityButtonEl}
-        onclick={onCommunity}
-        aria-pressed={communityActive}
-        aria-label={communityCount === undefined
-          ? 'Community highlights'
-          : `${communityCount}${communityCapped ? ' or more' : ''} community highlight${communityCount === 1 ? '' : 's'}`}
-        title="Passages highlighted by readers on margin.at"
-      >
-        <Icon name="users" size={20} />
-        {#if communityCount !== undefined}
-          <span class="bar-btn-count">{communityCount}{communityCapped ? '+' : ''}</span>
-        {/if}
       </button>
     {/if}
 

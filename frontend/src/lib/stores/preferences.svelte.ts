@@ -99,7 +99,7 @@ function createPreferencesStore() {
     cardDensity: 'cozy',
     dailyMagazineMinutes: 20,
     dailyMagazineOrder: 'shuffle',
-    communityHighlights: false,
+    communityHighlights: true,
   });
 
   // Restore from localStorage on init

@@ -15,9 +15,7 @@ export function useCommunityHighlights(params: {
   /** Whether community marks should be drawn in the article. */
   enabled: () => boolean;
   /**
-   * Whether to fetch the Margin highlights. This can stay true while drawing is
-   * off so the toolbar can show how many highlights are available before the
-   * reader turns them on.
+   * Whether to fetch the Margin highlights independently of drawing them.
    */
   load?: () => boolean;
 }) {
