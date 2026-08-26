@@ -214,7 +214,8 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     const out = new Map<LaneId, ReturnType<typeof mentionLaneItemsStore.get>>();
     if (!url || !streamOpen) return out;
     for (const lane of laneRow) {
-      if (lane.count > 0) out.set(lane.id, mentionLaneItemsStore.get(url, lane.id));
+      if (lane.count > 0)
+        out.set(lane.id, mentionLaneItemsStore.get(url, lane.id, opts.itemAtUri?.()));
     }
     return out;
   });

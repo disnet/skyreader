@@ -27,8 +27,8 @@ export type LaneItemsState = {
 
 const LOADING: LaneItemsState = { loading: true, loaded: false, failed: false, entries: [] };
 
-function keyFor(url: string, lane: string): string {
-  return `${lane}|${url}`;
+function keyFor(url: string, lane: string, docUri?: string): string {
+  return `${lane}|${url}${lane === 'leaflet' ? `|${docUri ?? ''}` : ''}`;
 }
 
 function createMentionLaneItemsStore() {
@@ -46,7 +46,7 @@ function createMentionLaneItemsStore() {
   // every time a lane is expanded.
   function load(url: string, lane: string, options?: { force?: boolean; docUri?: string }): void {
     if (!url) return;
-    const key = keyFor(url, lane);
+    const key = keyFor(url, lane, options?.docUri);
     const existing = cache.get(key);
     if (existing?.loaded || inFlight.has(key)) return;
     if (existing?.failed && !options?.force) return;
@@ -77,8 +77,8 @@ function createMentionLaneItemsStore() {
 
   // The resolved state for a (url, lane), or undefined before the first load.
   // Reactive.
-  function get(url: string, lane: string): LaneItemsState | undefined {
-    return cache.get(keyFor(url, lane));
+  function get(url: string, lane: string, docUri?: string): LaneItemsState | undefined {
+    return cache.get(keyFor(url, lane, docUri));
   }
 
   return { load, get };

@@ -165,6 +165,40 @@ describe('computeMentions', () => {
     expect(result.total).toBe(3);
   });
 
+  it('uses the document target only for Leaflet sources', async () => {
+    const docUri = 'at://did:plc:publisher/site.standard.document/post1';
+    const spy = spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      const target = url.searchParams.get('target');
+      if (url.pathname === '/links/all') {
+        return new Response(
+          JSON.stringify({
+            links:
+              target === docUri
+                ? {
+                    'pub.leaflet.comment': { '.subject': { distinct_dids: 1 } },
+                    'app.bsky.feed.post': { '.embed.record.uri': { distinct_dids: 1 } },
+                  }
+                : {},
+          })
+        );
+      }
+      if (url.pathname === '/links/distinct-dids') {
+        return new Response(JSON.stringify({ total: 1, linking_dids: ['did:plc:alice'] }));
+      }
+      return new Response('{}', { status: 404 });
+    }) as unknown as typeof fetch);
+
+    const result = await computeMentions(ARTICLE, docUri);
+    expect(result.lanes.map((lane) => lane.lane)).toEqual(['leaflet']);
+    expect(
+      spy.mock.calls
+        .map(([input]) => new URL(String(input)))
+        .filter((url) => url.pathname === '/links/all')
+        .map((url) => url.searchParams.get('target'))
+    ).toContain(docUri);
+  });
+
   it('counts distinct DIDs, not raw records — one chatty account never inflates a lane', async () => {
     // Constellation's /links/distinct-dids dedups server-side: even if one account
     // posted the URL many times, it reports that account once with an honest total.

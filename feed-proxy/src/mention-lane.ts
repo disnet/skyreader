@@ -35,6 +35,7 @@ import { resolveSiteMeta, buildCanonicalUrl, parseAtUri } from './standard-site'
 import { constellationGet, constellationGetResult } from './constellation-client';
 import { fetchPostEngagement, GET_POSTS_MAX_URIS } from './bsky-appview';
 import { extractContentText } from './document-content';
+import { hashUrl } from './mentions';
 import {
   fetchSembleContext,
   isEmptySembleContext,
@@ -335,7 +336,8 @@ function recordDate(value: Record<string, unknown> | null, ...keys: string[]): s
 async function resolveEntry(
   db: Database,
   laneId: LaneId,
-  rec: { did: string; collection: string; rkey: string }
+  rec: { did: string; collection: string; rkey: string },
+  articleUrl: string
 ): Promise<MentionLaneEntry> {
   const { did, collection, rkey } = rec;
   // Identity and the record itself are independent lookups — run them together
@@ -368,6 +370,9 @@ async function resolveEntry(
       break;
     }
     case 'leaflet': {
+      // Leaflet comments are read-only here; link back to the published document
+      // so the reader can continue the conversation on its native surface.
+      url = articleUrl;
       if (value) {
         note = firstString(value.plaintext);
         verb = value.reply ? 'replied' : null;
@@ -506,7 +511,13 @@ export async function getMentionLaneItems(
   const normUrl = normalizeArticleUrl(rawUrl);
   if (!normUrl) return { entries: [] };
 
-  const key = cacheKey(laneId, normUrl, docUri);
+  const persistedDocUri = db
+    .query<{ doc_uri: string | null }, [string]>(
+      'SELECT doc_uri FROM mention_cache WHERE url_hash = ?'
+    )
+    .get(hashUrl(normUrl))?.doc_uri;
+  const effectiveDocUri = docUri ?? persistedDocUri ?? undefined;
+  const key = cacheKey(laneId, normUrl, effectiveDocUri);
   const now = Date.now();
   const cached = db
     .query<CacheRow, [string]>(
@@ -568,7 +579,10 @@ export async function getMentionLaneItems(
   // Set by any call the host didn't answer. An empty result that carries this is
   // "we don't know", not "nobody" — see MentionLaneUnavailableError.
   let unreachable = false;
-  const targets = [...constellationTargets(normUrl), ...(docUri ? [docUri] : [])];
+  const targets = [
+    ...constellationTargets(normUrl),
+    ...(laneId === 'leaflet' && effectiveDocUri ? [effectiveDocUri] : []),
+  ];
   for (const target of targets) {
     const all = await constellationGetResult<LinksAllResponse>('/links/all', { target });
     if (!all.reachable) unreachable = true;
@@ -618,7 +632,7 @@ export async function getMentionLaneItems(
   if (candidates.length === 0 && unreachable) throw new MentionLaneUnavailableError();
 
   const picked = await pickLaneRecords(laneId, candidates);
-  const entries = await Promise.all(picked.map((p) => resolveEntry(db, laneId, p.rec)));
+  const entries = await Promise.all(picked.map((p) => resolveEntry(db, laneId, p.rec, normUrl)));
   // `picked` and `entries` are index-aligned (the map above), so each entry
   // carries the count its record was ranked on.
   entries.forEach((entry, i) => {

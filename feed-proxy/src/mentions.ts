@@ -73,7 +73,7 @@ interface MentionCacheRow {
   doc_uri: string | null;
 }
 
-function hashUrl(url: string): string {
+export function hashUrl(url: string): string {
   const hasher = new Bun.CryptoHasher('sha256');
   hasher.update(url);
   return hasher.digest('hex').slice(0, 16);
@@ -128,6 +128,7 @@ export async function computeMentions(normUrl: string, docUri?: string): Promise
   let queryCount = 0;
   const targets = [...constellationTargets(normUrl), ...(docUri ? [docUri] : [])];
   for (const target of targets) {
+    const isDocumentTarget = target === docUri;
     const all = await constellationGet<LinksAllResponse>('/links/all', { target });
     if (!all?.links) continue;
     // Collect the laned (collection, path) sources Constellation actually reports,
@@ -136,7 +137,7 @@ export async function computeMentions(normUrl: string, docUri?: string): Promise
       for (const [path, stats] of Object.entries(paths)) {
         if (!stats?.distinct_dids) continue;
         const lane = laneForSource(collection, path);
-        if (!lane) continue;
+        if (!lane || (isDocumentTarget && lane.id !== 'leaflet')) continue;
         if (queryCount >= MAX_SOURCE_QUERIES) break;
         queryCount++;
         sources.push({ target, laneId: lane.id, collection, path });

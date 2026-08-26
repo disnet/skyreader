@@ -394,7 +394,7 @@
   // document's canonical URL.
   const atmosphere = useAtmosphere({
     itemUrl: () => itemUrl,
-    itemAtUri: () => (isDocumentMode ? document?.recordUri : undefined),
+    itemAtUri: () => (isDocumentMode && !isLinkPostMode ? document?.recordUri : undefined),
     itemTitle: () => itemTitle,
     sourceTitle: () => displayFeedTitle,
     isShared: () => currentlyShared,

@@ -42,7 +42,8 @@ function mockConstellation(
   linksAll: Record<string, Record<string, { distinct_dids: number }>>,
   recsBySource: Record<string, Array<{ did: string; rkey: string }>>,
   records: Record<string, Record<string, unknown>> = {},
-  appview?: AppviewMock
+  appview?: AppviewMock,
+  linksAllByTarget?: Record<string, Record<string, Record<string, { distinct_dids: number }>>>
 ) {
   return spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
     const url = new URL(String(input));
@@ -63,7 +64,8 @@ function mockConstellation(
       return new Response(JSON.stringify({ posts }));
     }
     if (url.pathname === '/links/all') {
-      return new Response(JSON.stringify({ links: linksAll }));
+      const target = url.searchParams.get('target') ?? '';
+      return new Response(JSON.stringify({ links: linksAllByTarget?.[target] ?? linksAll }));
     }
     if (url.pathname === '/links') {
       const key = `${url.searchParams.get('collection')}|${url.searchParams.get('path')}`;
@@ -95,8 +97,8 @@ describe('getMentionLaneItems', () => {
     const docUri = 'at://did:plc:publisher/site.standard.document/post1';
     seedDid(db, 'did:plc:alice', 'alice.test');
 
-    mockConstellation(
-      { 'pub.leaflet.comment': { '.subject': { distinct_dids: 1 } } },
+    const fetchSpy = mockConstellation(
+      {},
       { 'pub.leaflet.comment|.subject': [{ did: 'did:plc:alice', rkey: 'comment1' }] },
       {
         comment1: {
@@ -104,7 +106,9 @@ describe('getMentionLaneItems', () => {
           createdAt: '2026-08-25T12:00:00.000Z',
           reply: { parent: 'at://did:plc:bob/pub.leaflet.comment/parent' },
         },
-      }
+      },
+      undefined,
+      { [docUri]: { 'pub.leaflet.comment': { '.subject': { distinct_dids: 1 } } } }
     );
 
     const { entries } = await getMentionLaneItems(db, ARTICLE, 'leaflet', docUri);
@@ -113,9 +117,37 @@ describe('getMentionLaneItems', () => {
       note: 'A thoughtful comment',
       createdAt: '2026-08-25T12:00:00.000Z',
       verb: 'replied',
-      url: null,
+      url: ARTICLE,
       quote: null,
     });
+    expect(
+      fetchSpy.mock.calls
+        .map(([input]) => new URL(String(input)))
+        .filter((url) => url.pathname === '/links/all')
+        .map((url) => url.searchParams.get('target'))
+    ).toContain(docUri);
+  });
+
+  it('falls back to the document URI persisted with mention counts', async () => {
+    const db = freshDb();
+    const docUri = 'at://did:plc:publisher/site.standard.document/post1';
+    seedDid(db, 'did:plc:alice', 'alice.test');
+    db.run(
+      `INSERT INTO mention_cache
+        (url_hash, url, total_dids, lanes_json, first_seen_at, checked_at, doc_uri)
+       VALUES (?, ?, 1, '[]', ?, ?, ?)`,
+      ['11ddf42a96099890', ARTICLE, Date.now(), Date.now(), docUri]
+    );
+    mockConstellation(
+      {},
+      { 'pub.leaflet.comment|.subject': [{ did: 'did:plc:alice', rkey: 'comment1' }] },
+      { comment1: { plaintext: 'Persisted target' } },
+      undefined,
+      { [docUri]: { 'pub.leaflet.comment': { '.subject': { distinct_dids: 1 } } } }
+    );
+
+    const { entries } = await getMentionLaneItems(db, ARTICLE, 'leaflet');
+    expect(entries[0]?.note).toBe('Persisted target');
   });
 
   it('resolves a Bluesky lane: permalink + note, deduped across paths', async () => {

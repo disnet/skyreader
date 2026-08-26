@@ -110,7 +110,8 @@
 
   const atmosphere = useAtmosphere({
     itemUrl: () => itemUrl,
-    itemAtUri: () => (readerItem.type === 'document' ? readerItem.item.recordUri : undefined),
+    itemAtUri: () =>
+      readerItem.type === 'document' && !linkPostUrl ? readerItem.item.recordUri : undefined,
     itemTitle: () => title,
     // A bridge posts the publication's name as often as the headline, so the
     // note cleaner needs both to recognize a bare relink.
