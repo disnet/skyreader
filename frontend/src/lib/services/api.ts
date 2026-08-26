@@ -15,6 +15,7 @@ import type {
   ParsedFeed,
   SaveBacking,
   SembleCollection,
+  SembleCard,
   SembleConnectionType,
   SocialContextResult,
   ArticleMentions,
@@ -1070,6 +1071,10 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  }
+
+  async listSembleCards(): Promise<{ cards: SembleCard[]; truncated: boolean }> {
+    return this.fetch('/api/integrations/semble/cards');
   }
 
   /**

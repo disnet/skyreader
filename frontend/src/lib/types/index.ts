@@ -1221,6 +1221,16 @@ export interface SembleCollection {
   createdAt?: string;
 }
 
+/** A URL card from the reader's own Semble repository. */
+export interface SembleCard {
+  uri: string;
+  cid: string;
+  url: string;
+  title?: string;
+  author?: string;
+  createdAt?: string;
+}
+
 export interface MarginCollection {
   uri: string;
   cid: string;

@@ -64,6 +64,16 @@ function post(body: unknown, method = 'POST') {
   });
 }
 
+function getCards() {
+  return new IncomingRequest('http://localhost/api/integrations/semble/cards', {
+    method: 'GET',
+    headers: {
+      Cookie: `session_id=${SESSION}`,
+      Origin: env.FRONTEND_URL,
+    },
+  });
+}
+
 async function call(req: Request): Promise<{ status: number; body: any }> {
   const ctx = createExecutionContext();
   const res = await worker.fetch(req, env, ctx);
@@ -83,6 +93,65 @@ describe('the connection scope is split from the Semble scopes', () => {
     for (const scope of SEMBLE_CONNECTION_SCOPES) {
       expect(SEMBLE_SCOPES).not.toContain(scope);
     }
+  });
+});
+
+describe('GET /api/integrations/semble/cards', () => {
+  beforeEach(() => reset());
+  afterEach(() => vi.restoreAllMocks());
+
+  it('lists every URL card in the reader PDS for connection search', async () => {
+    const listAllRecords = vi.fn(async () => ({
+      success: true as const,
+      truncated: false,
+      data: [
+        {
+          uri: `at://${DID}/network.cosmik.card/c1`,
+          cid: 'bafy1',
+          value: {
+            type: 'URL',
+            content: {
+              url: TARGET,
+              metadata: { title: 'A careful rebuttal', author: 'A. Reader' },
+            },
+            createdAt: '2026-08-26T00:00:00.000Z',
+          },
+        },
+        {
+          uri: `at://${DID}/network.cosmik.card/note1`,
+          cid: 'bafy2',
+          value: { type: 'NOTE', content: {} },
+        },
+      ],
+    }));
+    vi.spyOn(pdsClient, 'createPDSClient').mockReturnValue({ listAllRecords } as never);
+
+    const { status, body } = await call(getCards());
+
+    expect(status).toBe(200);
+    expect(listAllRecords).toHaveBeenCalledWith('network.cosmik.card');
+    expect(body).toEqual({
+      cards: [
+        {
+          uri: `at://${DID}/network.cosmik.card/c1`,
+          cid: 'bafy1',
+          url: TARGET,
+          title: 'A careful rebuttal',
+          author: 'A. Reader',
+          createdAt: '2026-08-26T00:00:00.000Z',
+        },
+      ],
+      truncated: false,
+    });
+  });
+
+  it('keeps the existing Semble scope gate for listing cards', async () => {
+    await reset('repo:network.cosmik.connection');
+
+    const { status, body } = await call(getCards());
+
+    expect(status).toBe(403);
+    expect(body).toMatchObject({ error: 'scope_upgrade_required', integration: 'semble' });
   });
 });
 

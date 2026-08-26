@@ -7,12 +7,22 @@ const createSembleConnection = vi.fn(async () => ({
   rkey: 'abc',
 }));
 let scopeStatus: Record<string, boolean> = { semble: true, margin: false, sembleConnections: true };
+let sembleCards = [
+  {
+    uri: 'at://did:plc:reader/network.cosmik.card/c1',
+    cid: 'bafycard',
+    url: 'https://semble-only.test/connected-thinking',
+    title: 'Connected thinking in Semble',
+    author: 'A Semble author',
+  },
+];
 
 class FakeScopeUpgradeError extends Error {}
 
 vi.mock('$lib/services/api', () => ({
   api: {
     createSembleConnection: (...args: unknown[]) => createSembleConnection(...(args as [])),
+    listSembleCards: vi.fn(async () => ({ cards: sembleCards, truncated: false })),
     getIntegrationStatus: vi.fn(async () => ({ scopeStatus })),
   },
   ScopeUpgradeError: FakeScopeUpgradeError,
@@ -109,6 +119,15 @@ function typeInField(value: string) {
 beforeEach(() => {
   createSembleConnection.mockClear();
   scopeStatus = { semble: true, margin: false, sembleConnections: true };
+  sembleCards = [
+    {
+      uri: 'at://did:plc:reader/network.cosmik.card/c1',
+      cid: 'bafycard',
+      url: 'https://semble-only.test/connected-thinking',
+      title: 'Connected thinking in Semble',
+      author: 'A Semble author',
+    },
+  ];
 });
 
 afterEach(() => {
@@ -172,6 +191,29 @@ describe('SembleConnectionDialog', () => {
     result.click();
     flushSync();
     expect(q('.chosen-url')!.textContent).toBe('https://other.test/the-rebuttal');
+  });
+
+  it('finds cards created in Semble even when they are not saved in Skyreader', async () => {
+    render();
+    await vi.waitFor(() => {
+      flushSync();
+      typeInField('connected thinking');
+      expect(q<HTMLButtonElement>('.result')?.textContent).toContain(
+        'Connected thinking in Semble'
+      );
+    });
+
+    q<HTMLButtonElement>('.result')!.click();
+    flushSync();
+    expect(q('.chosen-url')!.textContent).toBe('https://semble-only.test/connected-thinking');
+  });
+
+  it('shows search results in an anchored popover', () => {
+    render();
+    typeInField('rebuttal');
+
+    expect(q('.results-popover')).not.toBeNull();
+    expect(q('.search-shell')?.contains(q('.results-popover'))).toBe(true);
   });
 
   it('offers no swap for a non-directional relation', () => {

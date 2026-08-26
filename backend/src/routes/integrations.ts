@@ -194,6 +194,61 @@ export async function handleCreateSembleCard(request: Request, env: Env): Promis
 }
 
 /**
+ * GET /api/integrations/semble/cards — list all URL cards in the user's PDS.
+ *
+ * This is intentionally read live rather than cached: cards may have been made
+ * in Semble itself, and the connection picker must search that whole library,
+ * not only articles the reader also saved in Skyreader.
+ */
+export async function handleListSembleCards(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const checkResult = checkIntegrationScopes(session, 'semble');
+  if (checkResult) return checkResult;
+
+  const pdsClient = createPDSClient(session);
+  const result = await pdsClient.listAllRecords<{
+    type?: string;
+    url?: string;
+    content?: { url?: string; metadata?: { title?: string; author?: string } };
+    createdAt?: string;
+  }>('network.cosmik.card');
+
+  if (!result.success) {
+    return new Response(JSON.stringify({ error: result.error }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const cards = result.data.flatMap((record) => {
+    if (record.value.type && record.value.type !== 'URL') return [];
+    const url = record.value.content?.url ?? record.value.url;
+    if (!url || !isHttpUrl(url)) return [];
+    return [
+      {
+        uri: record.uri,
+        cid: record.cid,
+        url,
+        title: record.value.content?.metadata?.title,
+        author: record.value.content?.metadata?.author,
+        createdAt: record.value.createdAt,
+      },
+    ];
+  });
+
+  return new Response(JSON.stringify({ cards, truncated: result.truncated ?? false }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+/**
  * GET /api/integrations/semble/collections — list user's network.cosmik.collection records
  */
 export async function handleListSembleCollections(request: Request, env: Env): Promise<Response> {

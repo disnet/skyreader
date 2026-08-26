@@ -83,6 +83,7 @@ import {
 import {
   handleIntegrationStatus,
   handleCreateSembleCard,
+  handleListSembleCards,
   handleCreateSembleConnection,
   handleListSembleCollections,
   handleCreateMarginBookmark,
@@ -617,13 +618,15 @@ async function route(
       break;
     case url.pathname === '/api/integrations/semble/cards':
       if (!session) return unauthorizedResponse(headers);
-      if (request.method !== 'POST') {
+      if (request.method === 'GET') {
+        response = await handleListSembleCards(request, env);
+      } else if (request.method === 'POST') {
+        response = await handleCreateSembleCard(request, env);
+      } else {
         response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
           status: 405,
           headers: { 'Content-Type': 'application/json' },
         });
-      } else {
-        response = await handleCreateSembleCard(request, env);
       }
       break;
     case url.pathname === '/api/integrations/semble/connections':

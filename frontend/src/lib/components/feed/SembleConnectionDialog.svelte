@@ -27,8 +27,17 @@
     NON_DIRECTIONAL_CONNECTION_TYPES,
     SEMBLE_CONNECTION_TYPES,
     type SavedItem,
+    type SembleCard,
     type SembleConnectionType,
   } from '$lib/types';
+
+  type SearchItem = {
+    key: string;
+    url: string;
+    title?: string;
+    author?: string;
+    domain?: string;
+  };
 
   /** Saved articles offered at once. The field is for finding one, not browsing. */
   const RESULT_LIMIT = 6;
@@ -46,6 +55,9 @@
   let connectionType = $state<SembleConnectionType>('RELATED');
   let note = $state('');
   let reversed = $state(false);
+  let sembleCards = $state<SembleCard[]>([]);
+  let cardsLoading = $state(false);
+  let cardsLoadedForOpen = false;
 
   // Whether this session can write a connection at all. Read once and cached for
   // the tab: it's a property of the session, and every existing session lacks the
@@ -61,9 +73,28 @@
       connectionType = 'RELATED';
       note = '';
       reversed = false;
+      sembleCards = [];
+      cardsLoading = false;
+      cardsLoadedForOpen = false;
       return;
     }
     void savesStore.load();
+    if (!cardsLoadedForOpen) {
+      cardsLoadedForOpen = true;
+      cardsLoading = true;
+      api
+        .listSembleCards()
+        .then(({ cards }) => {
+          sembleCards = cards;
+        })
+        .catch(() => {
+          // Local Saved search remains useful if Semble cannot be reached.
+          sembleCards = [];
+        })
+        .finally(() => {
+          cardsLoading = false;
+        });
+    }
     if (scopeChecked) return;
     scopeChecked = true;
     api
@@ -119,16 +150,35 @@
     }
   }
 
-  function savedHaystack(item: SavedItem): string {
+  function savedHaystack(item: SearchItem): string {
     return normalize([item.title, item.author, item.domain, item.url].filter(Boolean).join(' '));
   }
 
-  let results = $derived.by((): SavedItem[] => {
+  let results = $derived.by((): SearchItem[] => {
     const terms = parseQuery(query);
     if (terms.length === 0 || queryIsUrl) return [];
-    const out: SavedItem[] = [];
-    for (const item of savesStore.articles) {
+    const candidates: SearchItem[] = [
+      ...sembleCards.map((card) => ({
+        key: card.uri,
+        url: card.url,
+        title: card.title,
+        author: card.author,
+        domain: hostOf(card.url),
+      })),
+      ...savesStore.articles.map((item: SavedItem) => ({
+        key: item.uri,
+        url: item.url,
+        title: item.title ?? undefined,
+        author: item.author ?? undefined,
+        domain: item.domain ?? undefined,
+      })),
+    ];
+    const seen = new Set<string>();
+    const out: SearchItem[] = [];
+    for (const item of candidates) {
       if (item.url === articleUrl) continue;
+      if (seen.has(item.url)) continue;
+      seen.add(item.url);
       if (!matchesTerms(savedHaystack(item), terms)) continue;
       out.push(item);
       if (out.length >= RESULT_LIMIT) break;
@@ -136,7 +186,7 @@
     return out;
   });
 
-  function chooseSaved(item: SavedItem) {
+  function chooseSaved(item: SearchItem) {
     targetUrl = item.url;
     targetTitle = item.title ?? undefined;
     query = '';
@@ -247,32 +297,44 @@
         <p class="field-error">That's the article you're on. Pick a different one.</p>
       {/if}
     {:else}
-      <div class="search-row">
-        <span class="search-icon" aria-hidden="true"><Icon name="search" size={16} /></span>
-        <!-- svelte-ignore a11y_autofocus -->
-        <input
-          type="text"
-          class="search-input"
-          placeholder="Paste a URL, or search your saved articles"
-          aria-label="The other end of the connection"
-          bind:value={query}
-          autofocus
-        />
+      <div class="search-shell">
+        <div class="search-row">
+          <span class="search-icon" aria-hidden="true"><Icon name="search" size={16} /></span>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            type="text"
+            class="search-input"
+            placeholder="Paste a URL, or search your Semble cards"
+            aria-label="The other end of the connection"
+            role="combobox"
+            aria-expanded={parseQuery(query).length > 0 && !queryIsUrl}
+            aria-controls="semble-card-results"
+            aria-autocomplete="list"
+            bind:value={query}
+            autofocus
+          />
+        </div>
+        {#if parseQuery(query).length > 0 && !queryIsUrl}
+          <div class="results-popover" id="semble-card-results">
+            {#if results.length > 0}
+              <ul class="results">
+                {#each results as item (item.key)}
+                  <li>
+                    <button type="button" class="result" onclick={() => chooseSaved(item)}>
+                      <span class="result-title">{labelFor(item.url, item.title)}</span>
+                      <span class="result-host">{hostOf(item.url)}</span>
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+            {:else}
+              <p class="hint">
+                {cardsLoading ? 'Checking your Semble cards…' : 'No matches. Paste a URL instead.'}
+              </p>
+            {/if}
+          </div>
+        {/if}
       </div>
-      {#if results.length > 0}
-        <ul class="results">
-          {#each results as item (item.rkey)}
-            <li>
-              <button type="button" class="result" onclick={() => chooseSaved(item)}>
-                <span class="result-title">{labelFor(item.url, item.title)}</span>
-                <span class="result-host">{hostOf(item.url)}</span>
-              </button>
-            </li>
-          {/each}
-        </ul>
-      {:else if parseQuery(query).length > 0 && !queryIsUrl}
-        <p class="hint">Nothing saved matches. Paste a URL instead.</p>
-      {/if}
     {/if}
 
     <!-- The relation -->
@@ -416,6 +478,10 @@
   }
 
   /* ── The other end ──────────────────────────────────────────── */
+  .search-shell {
+    position: relative;
+  }
+
   .search-row {
     display: flex;
     align-items: center;
@@ -459,6 +525,21 @@
     padding: 0;
     display: flex;
     flex-direction: column;
+  }
+
+  .results-popover {
+    position: absolute;
+    z-index: 2;
+    top: calc(100% + 0.25rem);
+    left: 0;
+    right: 0;
+    max-height: 15rem;
+    overflow-y: auto;
+    padding: 0.25rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-bg);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
   }
 
   .result {
