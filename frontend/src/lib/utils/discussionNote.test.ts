@@ -38,8 +38,50 @@ describe('cleanDiscussionNote', () => {
     );
   });
 
+  it('keeps a headline phrase woven into the end of a sentence', () => {
+    const post =
+      "Paul's article prompted a long one from me: What is the purpose of protocols?\n\nconnectedplaces.online/the-purpose-...";
+    expect(cleanDiscussionNote(post, ['The Purpose of Protocols', 'Connected Places'])).toBe(
+      "Paul's article prompted a long one from me: What is the purpose of protocols?"
+    );
+  });
+
+  it('keeps a quoted headline that is the subject of the sentence', () => {
+    expect(cleanDiscussionNote('“Never Be Angry at Work” changed my management style', TITLE)).toBe(
+      '“Never Be Angry at Work” changed my management style'
+    );
+    expect(cleanDiscussionNote('"Never Be Angry at Work" is required reading', TITLE)).toBe(
+      '"Never Be Angry at Work" is required reading'
+    );
+  });
+
+  it('keeps a headline that ends in its own question mark mid-sentence', () => {
+    expect(
+      cleanDiscussionNote('What Is the Purpose of Protocols? asks Paul, and answers well', [
+        'What Is the Purpose of Protocols?',
+      ])
+    ).toBe('What Is the Purpose of Protocols? asks Paul, and answers well');
+  });
+
+  it('still strips a quoted headline a bridge sets off with a dash', () => {
+    expect(cleanDiscussionNote('“Never Be Angry at Work” — worth your time', TITLE)).toBe(
+      'worth your time'
+    );
+  });
+
   it('lines up when the title punctuation splits differently', () => {
-    expect(cleanDiscussionNote('A/B testing is underrated', 'A/B testing')).toBe('is underrated');
+    expect(cleanDiscussionNote('A/B testing is underrated', 'A/B testing')).toBe(
+      'A/B testing is underrated'
+    );
+    expect(cleanDiscussionNote('A/B testing: worth your time', 'A/B testing')).toBe(
+      'worth your time'
+    );
+  });
+
+  it('strips a headline set apart on its own line', () => {
+    expect(cleanDiscussionNote('Never Be Angry at Work\nWorth your time', TITLE)).toBe(
+      'Worth your time'
+    );
   });
 
   it('leaves a quoted phrase alone when it is not the whole headline', () => {
@@ -79,6 +121,12 @@ describe('cleanDiscussionNote', () => {
     );
   });
 
+  it('drops a note left as bare punctuation once the link is gone', () => {
+    expect(cleanDiscussionNote('Never Be Angry at Work ( https://example.com/a )', TITLE)).toBe(
+      null
+    );
+  });
+
   it('leaves ordinary prose containing a dot alone', () => {
     expect(cleanDiscussionNote('I rewrote it in node.js and regretted it.', TITLE)).toBe(
       'I rewrote it in node.js and regretted it.'
@@ -98,5 +146,14 @@ describe('cleanDiscussionNote', () => {
     expect(cleanDiscussionNote(null, TITLE)).toBe(null);
     expect(cleanDiscussionNote('   ', TITLE)).toBe(null);
     expect(cleanDiscussionNote('a plain thought', undefined)).toBe('a plain thought');
+  });
+
+  it('never exposes its internal title boundary marker', () => {
+    const cleaned = cleanDiscussionNote(
+      'Never Be Angry at Work\nA useful follow-up https://example.com/article',
+      TITLE
+    );
+    expect(cleaned).toBe('A useful follow-up');
+    expect(cleaned).not.toContain('\uE000');
   });
 });
