@@ -170,12 +170,8 @@
   const undisclosed = $derived(
     activeFilter === 'all' && settled && total > shown ? total - shown : 0
   );
-  const hasComposeRow = $derived(
-    Boolean(composeLead) || creatable.length > 0 || Boolean(onCreateConnection)
-  );
-  const showSemble = $derived(
-    Boolean(sembleContext) && (activeFilter === 'all' || activeFilter === 'semble')
-  );
+  const sembleLaneVisible = $derived(activeFilter === 'all' || activeFilter === 'semble');
+  const showSemble = $derived(Boolean(sembleContext) && sembleLaneVisible);
   // Whether Semble actually returned something to read. A context object that
   // came back empty (the saver fallback, or an API answer with nothing in it) is
   // not content: it must not stand in for the people who aren't there, or the
@@ -188,6 +184,23 @@
           sembleContext.collections.length ||
           sembleContext.connections.length)
       )
+  );
+  // Whether Semble's own block is on screen. It is where "connect this to
+  // something" lives — so on an article Semble has never seen (no block at all)
+  // the invitation has to stand on its own further down, or drawing an edge
+  // would be offered only where edges already exist.
+  const showSembleBlock = $derived(
+    showSemble && Boolean(sembleContext) && (hasSembleContent || Boolean(sembleContext?.incomplete))
+  );
+  // Exactly one connect control per panel: inside Semble's block when there is
+  // one, otherwise on its own above the compose row. The row's chip would sit a
+  // few pixels from that standalone one, saying the same thing twice.
+  const showComposeConnect = $derived(Boolean(onCreateConnection) && showSembleBlock);
+  const showStandaloneConnect = $derived(
+    Boolean(onCreateConnection) && !showSembleBlock && sembleLaneVisible
+  );
+  const hasComposeRow = $derived(
+    Boolean(composeLead) || creatable.length > 0 || showComposeConnect
   );
 
   // ── Semble's graph, folded ──────────────────────────────────────────────
@@ -372,7 +385,25 @@
   </button>
 {/snippet}
 
-{#if lanesOpen && (total > 0 || hasComposeRow)}
+<!-- The way into Semble's graph. Quiet, in the block's own disclosure
+     vocabulary — an offer, not a call to action. Rendered wherever it currently
+     belongs, so it reads the same whether or not Semble already holds anything
+     about this article. -->
+{#snippet connectCta()}
+  <button
+    type="button"
+    class="semble-disclose semble-connect"
+    onclick={(e) => {
+      e.stopPropagation();
+      onCreateConnection?.();
+    }}
+  >
+    <Icon name="link" size={12} />
+    {connectionGroups.length ? 'Connect this to something' : 'Draw the first connection'}
+  </button>
+{/snippet}
+
+{#if lanesOpen && (total > 0 || hasComposeRow || showStandaloneConnect)}
   <section class="discussion" class:no-heading={!showHeading} id={panelId} aria-label="Discussion">
     {#if showHeading}
       <div class="discussion-head">
@@ -416,7 +447,7 @@
          material: a person, and what they did with this article. Rendering it in
          the stream's own grammar (avatar, head line, payload beneath) keeps it
          from reading as a second document bolted above the discussion. -->
-    {#if showSemble && sembleContext && (hasSembleContent || sembleContext.incomplete)}
+    {#if showSembleBlock && sembleContext}
       <section class="semble-context" aria-label="What Semble holds about this article">
         {#if sembleContext.collections.length}
           <p class="semble-filed">
@@ -592,20 +623,9 @@
         {/if}
 
         <!-- Where the graph already is, so adding to it doesn't mean scrolling
-             past everything to the compose row. Quiet, in the block's own
-             disclosure vocabulary — an offer, not a call to action. -->
+             past everything to the compose row. -->
         {#if onCreateConnection}
-          <button
-            type="button"
-            class="semble-disclose semble-connect"
-            onclick={(e) => {
-              e.stopPropagation();
-              onCreateConnection?.();
-            }}
-          >
-            <Icon name="link" size={12} />
-            {connectionGroups.length ? 'Connect this to something' : 'Draw the first connection'}
-          </button>
+          {@render connectCta()}
         {/if}
 
         {#if sembleContext.cardUrl && (connectionsBeyond > 0 || collectionsBeyond > 0 || sembleContext.incomplete || sembleTruncated)}
@@ -890,6 +910,14 @@
       {/if}
     {/if}
 
+    <!-- An empty discussion is the case where drawing an edge matters most: the
+         reader has just finished something nobody else has written about, and
+         the connection they can make is the only thing there is to add. With no
+         Semble block to carry it, the invitation stands here on its own. -->
+    {#if showStandaloneConnect}
+      <div class="semble-connect-standalone">{@render connectCta()}</div>
+    {/if}
+
     {#if hasComposeRow}
       <div class="discussion-compose">
         <span class="compose-label">Add yours</span>
@@ -911,12 +939,13 @@
         {/each}
         <!-- Drawing an edge is not "adding yours" in a lane — it says something
              about how two pieces relate, not about this one. It sits last in the
-             row, in the same vocabulary, so it's reachable from every surface
-             even on an article Semble has never seen. -->
-        {#if onCreateConnection}
+             row, in the same vocabulary. Only when Semble's block is carrying
+             the other one: without it the standalone invitation above is already
+             right here, and two of them would say the same thing twice. -->
+        {#if showComposeConnect}
           <button
             type="button"
-            class="compose-btn"
+            class="compose-btn compose-connect"
             title="Connect this to another article on Semble"
             onclick={(e) => {
               e.stopPropagation();
@@ -1278,6 +1307,13 @@
     display: inline-flex;
     align-items: center;
     gap: 0.3125rem;
+  }
+
+  /* Standing on its own (no Semble block above it), it needs the breathing room
+     the block's own gap would have given it. */
+  .semble-connect-standalone {
+    display: flex;
+    margin-top: 0.5rem;
   }
 
   /* Reads as the last pill in the strip rather than a control beneath it. */

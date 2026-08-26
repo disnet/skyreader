@@ -208,12 +208,20 @@ describe('SembleConnectionDialog', () => {
     expect(q('.chosen-url')!.textContent).toBe('https://semble-only.test/connected-thinking');
   });
 
-  it('shows search results in an anchored popover', () => {
+  // Floating, so typing never reflows the dialog — and fixed rather than
+  // absolute, since the scrolling modal body clips an absolute child.
+  it('shows search results in a fixed popover anchored to the field', () => {
     render();
     typeInField('rebuttal');
 
-    expect(q('.results-popover')).not.toBeNull();
-    expect(q('.search-shell')?.contains(q('.results-popover'))).toBe(true);
+    const popover = q<HTMLElement>('.results-popover');
+    expect(popover).not.toBeNull();
+    expect(q('.search-shell')?.contains(popover)).toBe(true);
+    // Scoped component CSS isn't applied here, so the proof that the popover
+    // is placed against the field is the geometry the measure pass writes.
+    expect(popover!.style.top).not.toBe('');
+    expect(popover!.style.left).not.toBe('');
+    expect(popover!.style.maxHeight).not.toBe('');
   });
 
   it('offers no swap for a non-directional relation', () => {

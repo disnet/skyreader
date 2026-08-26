@@ -192,6 +192,67 @@
     query = '';
   }
 
+  // The results float over the dialog rather than sitting in its flow: an
+  // in-flow list reflows and resizes the modal on every keystroke. But the
+  // modal body scrolls (`overflow-y: auto`), which clips an absolutely
+  // positioned child at the footer — so the popover is `position: fixed`,
+  // whose containing block is the viewport, and is measured against the field.
+  let searchRow = $state<HTMLElement | null>(null);
+  let showResults = $derived(parseQuery(query).length > 0 && !queryIsUrl);
+  let popover = $state<{
+    top?: number;
+    bottom?: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
+
+  /** Gap between the field and the popover, and from the popover to the viewport edge. */
+  const POPOVER_GAP = 4;
+  const VIEWPORT_MARGIN = 8;
+  /** Below this much room underneath, the list is better off opening upward. */
+  const FLIP_THRESHOLD = 120;
+  const POPOVER_MAX_HEIGHT = 240;
+
+  function measurePopover() {
+    if (!searchRow) {
+      popover = null;
+      return;
+    }
+    const rect = searchRow.getBoundingClientRect();
+    const below = window.innerHeight - rect.bottom - POPOVER_GAP - VIEWPORT_MARGIN;
+    const above = rect.top - POPOVER_GAP - VIEWPORT_MARGIN;
+    const flip = below < FLIP_THRESHOLD && above > below;
+    const maxHeight = Math.max(0, Math.min(POPOVER_MAX_HEIGHT, flip ? above : below));
+    // Anchored by the edge it grows from, so a short list hugs the field
+    // either way round.
+    popover = flip
+      ? {
+          bottom: window.innerHeight - rect.top + POPOVER_GAP,
+          left: rect.left,
+          width: rect.width,
+          maxHeight,
+        }
+      : { top: rect.bottom + POPOVER_GAP, left: rect.left, width: rect.width, maxHeight };
+  }
+
+  $effect(() => {
+    if (!showResults) {
+      popover = null;
+      return;
+    }
+    // A longer list can outgrow the room below and need flipping.
+    results.length;
+    measurePopover();
+    window.addEventListener('resize', measurePopover);
+    // Capture phase: the modal body is the scroller, not the window.
+    window.addEventListener('scroll', measurePopover, true);
+    return () => {
+      window.removeEventListener('resize', measurePopover);
+      window.removeEventListener('scroll', measurePopover, true);
+    };
+  });
+
   function clearTarget() {
     targetUrl = '';
     targetTitle = undefined;
@@ -298,7 +359,7 @@
       {/if}
     {:else}
       <div class="search-shell">
-        <div class="search-row">
+        <div class="search-row" bind:this={searchRow}>
           <span class="search-icon" aria-hidden="true"><Icon name="search" size={16} /></span>
           <!-- svelte-ignore a11y_autofocus -->
           <input
@@ -307,15 +368,23 @@
             placeholder="Paste a URL, or search your Semble cards"
             aria-label="The other end of the connection"
             role="combobox"
-            aria-expanded={parseQuery(query).length > 0 && !queryIsUrl}
+            aria-expanded={showResults}
             aria-controls="semble-card-results"
             aria-autocomplete="list"
             bind:value={query}
             autofocus
           />
         </div>
-        {#if parseQuery(query).length > 0 && !queryIsUrl}
-          <div class="results-popover" id="semble-card-results">
+        {#if showResults && popover}
+          <div
+            class="results-popover"
+            id="semble-card-results"
+            style:left="{popover.left}px"
+            style:width="{popover.width}px"
+            style:max-height="{popover.maxHeight}px"
+            style:top={popover.top === undefined ? undefined : `${popover.top}px`}
+            style:bottom={popover.bottom === undefined ? undefined : `${popover.bottom}px`}
+          >
             {#if results.length > 0}
               <ul class="results">
                 {#each results as item (item.key)}
@@ -479,7 +548,7 @@
 
   /* ── The other end ──────────────────────────────────────────── */
   .search-shell {
-    position: relative;
+    min-width: 0;
   }
 
   .search-row {
@@ -527,13 +596,11 @@
     flex-direction: column;
   }
 
+  /* Fixed, not absolute: the scrolling modal body would clip an absolutely
+     positioned child. Coordinates come from `measurePopover`. */
   .results-popover {
-    position: absolute;
+    position: fixed;
     z-index: 2;
-    top: calc(100% + 0.25rem);
-    left: 0;
-    right: 0;
-    max-height: 15rem;
     overflow-y: auto;
     padding: 0.25rem;
     border: 1px solid var(--color-border);
