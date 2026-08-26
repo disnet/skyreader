@@ -1129,8 +1129,37 @@ export interface IntegrationStatus {
   scopeStatus: {
     margin: boolean;
     semble: boolean;
+    /**
+     * Writing a Semble *connection* needs a scope no pre-existing session holds,
+     * and it's checked separately from the card/collection scopes so those keep
+     * working. Optional: a backend older than the connection endpoint omits it.
+     */
+    sembleConnections?: boolean;
   };
 }
+
+/**
+ * Semble's connection types, exact casing (`network.cosmik.connection`).
+ * `RELATED` and `HELPFUL` are non-directional; the rest read source → target.
+ */
+export const SEMBLE_CONNECTION_TYPES = [
+  'RELATED',
+  'SUPPORTS',
+  'OPPOSES',
+  'ADDRESSES',
+  'HELPFUL',
+  'LEADS_TO',
+  'SUPPLEMENT',
+  'EXPLAINER',
+] as const;
+
+export type SembleConnectionType = (typeof SEMBLE_CONNECTION_TYPES)[number];
+
+/** The two relations that read the same both ways — swapping them is meaningless. */
+export const NON_DIRECTIONAL_CONNECTION_TYPES: readonly SembleConnectionType[] = [
+  'RELATED',
+  'HELPFUL',
+];
 
 // External-backed saves: which engine backs the Saved list (one per account).
 // Mirrors the backend SaveBacking union (backend/src/routes/settings.ts).
@@ -1189,6 +1218,16 @@ export interface SembleCollection {
   cid: string;
   name?: string;
   description?: string;
+  createdAt?: string;
+}
+
+/** A URL card from the reader's own Semble repository. */
+export interface SembleCard {
+  uri: string;
+  cid: string;
+  url: string;
+  title?: string;
+  author?: string;
   createdAt?: string;
 }
 

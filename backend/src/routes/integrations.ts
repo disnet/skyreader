@@ -10,15 +10,29 @@ import {
   type IntegrationProvider,
 } from '../services/integration-membership';
 import { SEMBLE_SCOPES, MARGIN_SCOPES } from './auth';
+import { SEMBLE_CONNECTION_SCOPES } from '../config/scopes';
+
+/**
+ * The scope sets a request can be gated on. `semble-connections` is a *separate*
+ * capability from `semble`, not a superset: the connection scope is newer than
+ * every live session, so folding it into the Semble set would break card saves
+ * for everyone until they re-authed (see config/scopes.ts).
+ */
+export type ScopeGate = 'semble' | 'margin' | 'semble-connections';
+
+const SCOPE_SETS: Record<ScopeGate, string[]> = {
+  semble: SEMBLE_SCOPES,
+  margin: MARGIN_SCOPES,
+  'semble-connections': SEMBLE_CONNECTION_SCOPES,
+};
 
 /**
  * Check if the session has the required scopes for a specific integration
  */
-export function hasIntegrationScopes(session: Session, integration: 'semble' | 'margin'): boolean {
+export function hasIntegrationScopes(session: Session, integration: ScopeGate): boolean {
   if (!session.grantedScopes) return false;
   const granted = new Set(session.grantedScopes.split(' '));
-  const required = integration === 'semble' ? SEMBLE_SCOPES : MARGIN_SCOPES;
-  return required.every((scope) => granted.has(scope));
+  return SCOPE_SETS[integration].every((scope) => granted.has(scope));
 }
 
 /**
@@ -38,6 +52,9 @@ export async function handleIntegrationStatus(request: Request, env: Env): Promi
       scopeStatus: {
         semble: hasIntegrationScopes(session, 'semble'),
         margin: hasIntegrationScopes(session, 'margin'),
+        // Reported separately so a surface can tell "offer the control" from
+        // "the control will trip the re-login banner" and say so up front.
+        sembleConnections: hasIntegrationScopes(session, 'semble-connections'),
       },
     }),
     { headers: { 'Content-Type': 'application/json' } }
@@ -47,16 +64,16 @@ export async function handleIntegrationStatus(request: Request, env: Env): Promi
 /**
  * Check session has required scopes for an integration
  */
-function checkIntegrationScopes(
-  session: Session,
-  integration: 'semble' | 'margin'
-): Response | null {
+function checkIntegrationScopes(session: Session, integration: ScopeGate): Response | null {
   if (!hasIntegrationScopes(session, integration)) {
+    // The body still names the *integration* the reader recognizes, not the
+    // internal gate — the frontend keys its re-login banner off this shape.
+    const name = integration === 'semble-connections' ? 'semble' : integration;
     return new Response(
       JSON.stringify({
         error: 'scope_upgrade_required',
-        message: `Additional permissions are needed for ${integration}. Please log in again.`,
-        integration,
+        message: `Additional permissions are needed for ${name}. Please log in again.`,
+        integration: name,
       }),
       { status: 403, headers: { 'Content-Type': 'application/json' } }
     );
@@ -177,6 +194,61 @@ export async function handleCreateSembleCard(request: Request, env: Env): Promis
 }
 
 /**
+ * GET /api/integrations/semble/cards — list all URL cards in the user's PDS.
+ *
+ * This is intentionally read live rather than cached: cards may have been made
+ * in Semble itself, and the connection picker must search that whole library,
+ * not only articles the reader also saved in Skyreader.
+ */
+export async function handleListSembleCards(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const checkResult = checkIntegrationScopes(session, 'semble');
+  if (checkResult) return checkResult;
+
+  const pdsClient = createPDSClient(session);
+  const result = await pdsClient.listAllRecords<{
+    type?: string;
+    url?: string;
+    content?: { url?: string; metadata?: { title?: string; author?: string } };
+    createdAt?: string;
+  }>('network.cosmik.card');
+
+  if (!result.success) {
+    return new Response(JSON.stringify({ error: result.error }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const cards = result.data.flatMap((record) => {
+    if (record.value.type && record.value.type !== 'URL') return [];
+    const url = record.value.content?.url ?? record.value.url;
+    if (!url || !isHttpUrl(url)) return [];
+    return [
+      {
+        uri: record.uri,
+        cid: record.cid,
+        url,
+        title: record.value.content?.metadata?.title,
+        author: record.value.content?.metadata?.author,
+        createdAt: record.value.createdAt,
+      },
+    ];
+  });
+
+  return new Response(JSON.stringify({ cards, truncated: result.truncated ?? false }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+/**
  * GET /api/integrations/semble/collections — list user's network.cosmik.collection records
  */
 export async function handleListSembleCollections(request: Request, env: Env): Promise<Response> {
@@ -214,6 +286,140 @@ export async function handleListSembleCollections(request: Request, env: Env): P
   }));
 
   return new Response(JSON.stringify({ collections }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+/**
+ * Semble's connection types, exact casing. `RELATED` and `HELPFUL` are
+ * non-directional; the rest read source → target.
+ */
+export const SEMBLE_CONNECTION_TYPES = [
+  'SUPPORTS',
+  'OPPOSES',
+  'ADDRESSES',
+  'HELPFUL',
+  'LEADS_TO',
+  'RELATED',
+  'SUPPLEMENT',
+  'EXPLAINER',
+] as const;
+
+/** Semble's lexicon caps the note at 1000 (atproto string maxLength = UTF-8 bytes). */
+const MAX_NOTE_BYTES = 1000;
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Build a `network.cosmik.connection` record. Kept as one function with the
+ * foreign lexicon quoted below, because `network.cosmik.*` is Semble's namespace
+ * — nothing here is validated by a schema we own, so the shape lives in one
+ * place that can be diffed against theirs.
+ *
+ * From cosmik-network/semble, `.../lexicons/connection.json` (key: tid):
+ *   source        required string  — URL or AT URI
+ *   target        required string  — URL or AT URI
+ *   connectionType         string  — one of SEMBLE_CONNECTION_TYPES
+ *   note                   string  — maxLength 1000
+ *   createdAt / updatedAt  datetime
+ */
+export function buildSembleConnectionRecord(
+  input: { source: string; target: string; connectionType?: string; note?: string },
+  now: string
+) {
+  return {
+    $type: 'network.cosmik.connection',
+    source: input.source,
+    target: input.target,
+    ...(input.connectionType ? { connectionType: input.connectionType } : {}),
+    ...(input.note ? { note: input.note } : {}),
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/**
+ * POST /api/integrations/semble/connections — create a network.cosmik.connection
+ * on the user's PDS: a typed, directional edge from one URL to another.
+ *
+ * Online-only by design (no offline queue): a connection is a deliberate act on
+ * live context, and unlike a card save there is nothing to reconcile later.
+ */
+export async function handleCreateSembleConnection(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const checkResult = checkIntegrationScopes(session, 'semble-connections');
+  if (checkResult) return checkResult;
+
+  let body: {
+    source?: string;
+    target?: string;
+    connectionType?: string;
+    note?: string;
+  };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const bad = (error: string) =>
+    new Response(JSON.stringify({ error }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+  const source = typeof body.source === 'string' ? body.source.trim() : '';
+  const target = typeof body.target === 'string' ? body.target.trim() : '';
+  if (!source || !target) return bad('source and target are required');
+  if (!isHttpUrl(source) || !isHttpUrl(target))
+    return bad('source and target must be http(s) URLs');
+  if (source === target) return bad('source and target must differ');
+
+  const connectionType = body.connectionType?.trim();
+  if (connectionType && !(SEMBLE_CONNECTION_TYPES as readonly string[]).includes(connectionType)) {
+    return bad('Unknown connectionType');
+  }
+
+  const note = body.note?.trim();
+  if (note && new TextEncoder().encode(note).length > MAX_NOTE_BYTES) {
+    return bad(`note must be ${MAX_NOTE_BYTES} bytes or fewer`);
+  }
+
+  const rkey = generateTid();
+  const record = buildSembleConnectionRecord(
+    { source, target, connectionType, note },
+    new Date().toISOString()
+  );
+
+  const pdsClient = createPDSClient(session);
+  const result = await pdsClient.putRecord('network.cosmik.connection', rkey, record);
+
+  if (!result.success) {
+    return new Response(JSON.stringify({ error: result.error }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  return new Response(JSON.stringify({ uri: result.data.uri, cid: result.data.cid, rkey }), {
+    status: 201,
     headers: { 'Content-Type': 'application/json' },
   });
 }

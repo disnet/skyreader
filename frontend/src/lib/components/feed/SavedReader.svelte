@@ -11,6 +11,8 @@
   import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
+  import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
+  import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
   import { db } from '$lib/services/db';
   import { saveCollectionPiece, isCollectionPieceSaved } from '$lib/utils/collectionPiece';
@@ -73,6 +75,23 @@
 
   function saveToMargin() {
     integrationSaveStore.openPicker('margin', extractMarginMetadata(readerItem));
+  }
+
+  // Drawing an edge from what you just read. The discussion at the end of the
+  // article offers this too, but only there — and an article nobody has written
+  // about is exactly when the connection you can draw is the only thing to add.
+  // So it also sits in the reader's own menus, where it never depends on what
+  // the Atmosphere happened to return.
+  function connectOnSemble() {
+    const data = extractSembleMetadata(readerItem);
+    sembleConnectionStore.openFor({
+      url: data.url,
+      title: data.title,
+      // Semble keys cards by the exact URL string. If the discussion below has
+      // already resolved this article's card page, that page carries the variant
+      // Semble actually holds — a plain cache read, null until then.
+      cardUrl: mentionLaneItemsStore.get(data.url, 'semble')?.sembleContext?.cardUrl ?? null,
+    });
   }
 
   let styleMenuOpen = $state(false);
@@ -580,6 +599,11 @@
         icon: 'margin',
         onclick: saveToMargin,
       });
+      items.push({
+        label: 'Connect on Semble',
+        icon: 'link',
+        onclick: connectOnSemble,
+      });
     }
 
     if (onRemove) {
@@ -1081,6 +1105,16 @@
                 >
                   <Icon name="margin" size={18} />
                   <span>Save to Margin</span>
+                </button>
+                <button
+                  class="sheet-action-btn"
+                  onclick={() => {
+                    connectOnSemble();
+                    styleSheetOpen = false;
+                  }}
+                >
+                  <Icon name="link" size={18} />
+                  <span>Connect on Semble</span>
                 </button>
               {/if}
               <button

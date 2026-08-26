@@ -100,6 +100,7 @@
     onEditShare,
     onOpenAuthor,
     onSaveConnection,
+    onCreateConnection,
     isConnectionSaved,
     onMentionClick,
     onCloseOverflow,
@@ -420,6 +421,7 @@
         {onCreateInLane}
         {onOpenAuthor}
         {onSaveConnection}
+        {onCreateConnection}
         {isConnectionSaved}
       />
       <div class="article-actions">

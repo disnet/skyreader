@@ -81,7 +81,44 @@ function createMentionLaneItemsStore() {
     return cache.get(keyFor(url, lane, docUri));
   }
 
-  return { load, get };
+  /**
+   * Show a connection the reader just drew, now.
+   *
+   * The Semble block is served from the feed proxy's mention cache and Semble's
+   * own firehose indexing, so a fresh edge is minutes-to-hours away from coming
+   * back through `load`. Rather than let the panel read as if nothing happened,
+   * the new edge is prepended into the already-resolved context for this URL.
+   * A no-op when the lane hasn't been resolved yet — there's no list to echo
+   * into, and the eventual load will carry it.
+   */
+  function addSembleConnection(url: string, connection: SembleContext['connections'][number]) {
+    const key = keyFor(url, 'semble');
+    const state = cache.get(key);
+    if (!state?.sembleContext) return;
+    const context = state.sembleContext;
+    if (context.connections.some((c) => c.id === connection.id)) return;
+    // The counts are what the "Showing 6 of 41 connections" line reads from, so
+    // they move with the list — otherwise the echo makes the panel contradict
+    // its own footer.
+    const stats = context.stats
+      ? {
+          ...context.stats,
+          connections: {
+            ...context.stats.connections,
+            total: context.stats.connections.total + 1,
+            [connection.direction === 'out' ? 'outgoing' : 'incoming']:
+              context.stats.connections[connection.direction === 'out' ? 'outgoing' : 'incoming'] +
+              1,
+          },
+        }
+      : context.stats;
+    set(key, {
+      ...state,
+      sembleContext: { ...context, stats, connections: [connection, ...context.connections] },
+    });
+  }
+
+  return { load, get, addSembleConnection };
 }
 
 export const mentionLaneItemsStore = createMentionLaneItemsStore();

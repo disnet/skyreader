@@ -11,6 +11,7 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
+  import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
   import { getExternalArticleLink } from '$lib/utils/linkPost';
@@ -145,6 +146,20 @@
     };
   }
 
+  // Gated exactly like the Semble save lane: signed in is the whole condition.
+  // A session without the connection scope still gets the dialog — it says so up
+  // front rather than hiding a capability the reader can have by logging in again.
+  function createConnection() {
+    const data = extractSembleMetadata(readerItem);
+    sembleConnectionStore.openFor({
+      url: data.url,
+      title: data.title,
+      // Semble keys cards by exact URL string, and the card page the panel
+      // resolved carries the variant Semble actually holds.
+      cardUrl: atmosphere.sembleContext?.cardUrl ?? null,
+    });
+  }
+
   function createInLane(id: LaneId) {
     if (id === 'semble') {
       integrationSaveStore.openPicker('semble', extractSembleMetadata(readerItem));
@@ -176,6 +191,7 @@
     onCreateInLane={createInLane}
     onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
     onSaveConnection={auth.user ? toggleSavedLink : undefined}
+    onCreateConnection={auth.user && itemUrl ? createConnection : undefined}
     isConnectionSaved={(url) => savesStore.isSaved(url)}
     composeLead={canShareLinkblog ? shareControl : undefined}
   />

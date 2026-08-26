@@ -49,6 +49,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
+  import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
   import { toggleSavedLink } from '$lib/utils/saveLink';
   import { preferences } from '$lib/stores/preferences.svelte';
   import ArticleCardView from './ArticleCardView.svelte';
@@ -874,6 +875,17 @@
     integrationSaveStore.openPicker('semble', integrationTarget);
   }
 
+  // Drawing an edge from this article. Gated like the Semble save lane (signed
+  // in), and handed the card page the panel resolved: Semble keys cards by exact
+  // URL string, so that variant is the one an edge has to name to roll up there.
+  function createConnection() {
+    sembleConnectionStore.openFor({
+      url: itemUrl,
+      title: itemTitle,
+      cardUrl: atmosphere.sembleContext?.cardUrl ?? null,
+    });
+  }
+
   function saveToMargin() {
     integrationSaveStore.openPicker('margin', {
       url: integrationTarget.url,
@@ -981,6 +993,7 @@
   onEditShare={editShare}
   onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
   onSaveConnection={auth.user ? toggleSavedLink : undefined}
+  onCreateConnection={auth.user && itemUrl ? createConnection : undefined}
   isConnectionSaved={(url) => savesStore.isSaved(url)}
   onMentionClick={(did) => sidebarStore.openAddFeedModalForDid(did)}
   onCloseOverflow={() => (overflowMenuOpen = false)}

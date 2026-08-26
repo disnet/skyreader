@@ -59,6 +59,7 @@ function render(props: {
   stream?: { loading: boolean; failed?: boolean; entries: DiscussionEntryVM[] };
   onSaveConnection?: (url: string) => void | Promise<void>;
   isConnectionSaved?: (url: string) => boolean;
+  onCreateConnection?: () => void;
 }): HTMLElement {
   const target = document.createElement('div');
   document.body.appendChild(target);
@@ -72,6 +73,7 @@ function render(props: {
       sembleContext: props.sembleContext,
       onSaveConnection: props.onSaveConnection,
       isConnectionSaved: props.isConnectionSaved,
+      onCreateConnection: props.onCreateConnection,
     },
   });
   flushSync();
@@ -183,6 +185,43 @@ describe('AtmospherePanel Semble connections', () => {
     const target = render({ sembleContext: emptyContext });
     expect(target.querySelector('.semble-context')).toBeNull();
     expect(target.querySelector('.discussion-empty')?.textContent).toContain('Nothing readable');
+  });
+
+  // Drawing an edge is the one thing a reader can add to an article nobody has
+  // written about — so it can't be the affordance that disappears with the
+  // Semble block it normally lives in.
+  it('offers a connection on an article Semble has never seen', () => {
+    const clicks: number[] = [];
+    const target = render({ onCreateConnection: () => clicks.push(1) });
+    expect(target.querySelector('.semble-context')).toBeNull();
+    const cta = target.querySelector('.semble-connect') as HTMLButtonElement;
+    expect(cta).not.toBeNull();
+    expect(cta.textContent?.trim()).toBe('Draw the first connection');
+    cta.click();
+    expect(clicks.length).toBe(1);
+  });
+
+  it('offers it too when the context came back with nothing in it', () => {
+    const target = render({ sembleContext: emptyContext, onCreateConnection: () => {} });
+    expect(target.querySelector('.semble-context')).toBeNull();
+    expect(target.querySelector('.semble-connect')).not.toBeNull();
+  });
+
+  // One invitation per panel: standing on its own it is already where the
+  // compose row is, and the row's chip would repeat it a few pixels away.
+  it('does not say it twice', () => {
+    const empty = render({ onCreateConnection: () => {} });
+    expect(empty.querySelectorAll('.semble-connect, .compose-connect').length).toBe(1);
+    expect(empty.querySelector('.compose-connect')).toBeNull();
+
+    const held = render({
+      sembleContext: { ...emptyContext, connections: [connection('out')] },
+      onCreateConnection: () => {},
+    });
+    // With a block to live in, the invitation is up there and the row's chip is
+    // the quick way back to it.
+    expect(held.querySelector('.semble-context .semble-connect')).not.toBeNull();
+    expect(held.querySelector('.compose-connect')).not.toBeNull();
   });
 
   it('keeps the retry when a lane failed and only Semble context came back', () => {
