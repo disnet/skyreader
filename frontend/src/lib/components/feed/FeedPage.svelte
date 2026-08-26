@@ -481,7 +481,8 @@
   // exists at all: the global `/` shortcut asks the store whether there is a
   // row to open. The view filters can't answer that — they survive unmount.
   $effect(() => {
-    savedSearchStore.setSurfaceActive(isSavedView);
+    if (isSavedView) savedSearchStore.claimSurface('saved');
+    else savedSearchStore.releaseSurface('saved');
   });
 
   onDestroy(() => {
@@ -490,7 +491,7 @@
     }
     // Leaving the surface ends the search; a stale query must not come back
     // pre-applied (and silently emptying the list) on the next visit.
-    savedSearchStore.setSurfaceActive(false);
+    savedSearchStore.releaseSurface('saved');
     document.removeEventListener('visibilitychange', handleVisibilityChange);
   });
 </script>

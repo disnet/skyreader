@@ -125,9 +125,10 @@ test.describe('Saved search', () => {
     await expect(authedPage.getByText('An Afternoon at the Café')).not.toBeVisible();
 
     // Client-side navigation, deliberately: a full reload would rebuild every
-    // store and hide the residual-state bug this covers.
-    await authedPage.getByRole('link', { name: 'Home' }).click();
-    await expect(authedPage).toHaveURL(/\/home$/);
+    // store and hide the residual-state bug this covers. Highlights rather than
+    // Home, because Home is a search surface too and would keep owning "/".
+    await authedPage.getByRole('link', { name: 'Highlights' }).click();
+    await expect(authedPage).toHaveURL(/\/highlights$/);
     await expect(authedPage.getByTestId('saved-search-input')).toHaveCount(0);
 
     // Off the saved surface, "/" is the switcher again.
@@ -137,13 +138,15 @@ test.describe('Saved search', () => {
     await authedPage.keyboard.press('Escape');
     await expect(authedPage.getByRole('listbox')).toHaveCount(0);
 
-    // And coming back is a clean list, not the query from last time.
+    // And coming back is a clean list, not the query from last time — again
+    // client-side, so the stores are the same ones that held the query. Wait for
+    // the URL first: the assertion below must read the Saved list, not the page
+    // we are leaving, which still shows the same card for a frame.
     await authedPage.getByRole('button', { name: 'Saved' }).first().click();
-    await expect(
-      authedPage
-        .getByLabel('Recently saved', { exact: true })
-        .getByRole('button', { name: 'An Afternoon at the Café' })
-    ).toBeVisible({ timeout: 15_000 });
+    await expect(authedPage).toHaveURL(/\/saved$/);
+    await expect(authedPage.getByText('An Afternoon at the Café')).toBeVisible({
+      timeout: 15_000,
+    });
     await expect(authedPage.getByTestId('saved-search-input')).toHaveCount(0);
   });
 

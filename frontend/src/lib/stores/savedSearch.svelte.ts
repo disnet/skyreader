@@ -4,6 +4,10 @@ import { api } from '$lib/services/api';
 import { syncStore } from './sync.svelte';
 import { matchesTerms, parseQuery, toIndexText } from '$lib/services/savedSearch';
 import type { SavedItem } from '$lib/types';
+import {
+  transitionSavedSearchSurface,
+  type SavedSearchSurfaceOwner,
+} from '$lib/services/savedSearchSurface';
 
 // Search over the saved library. Metadata (title/author/description/domain/url)
 // is matched synchronously inside the saved-items pipeline; full article text is
@@ -22,14 +26,17 @@ function createSavedSearchStore() {
   let appliedQuery = $state('');
   // Whether the search row is showing. Cleared with the query.
   let open = $state(false);
-  // Whether a saved surface is mounted right now, i.e. whether there is a
+  // Whether a saved or Home surface is mounted right now, i.e. whether there is a
   // search row for a global entry point like `/` to open. The view filters
   // can't answer that — they keep their last value after the page unmounts, so
   // one visit to /saved would leave `/` hijacked on every other route. The
   // saved page owns this flag; leaving the surface also drops the query, which
   // is ephemeral session state and would otherwise silently filter the list on
   // the next visit.
-  let surfaceActive = $state(false);
+  let surfaceOwner = $state<'saved' | 'home' | null>(null);
+  // A navigation from Home search to the Saved archive can carry the ephemeral
+  // query across exactly one surface transition.
+  let handoffPending = false;
   // Bumped to ask the input to take focus (opening via `/` or the toolbar button).
   let focusRequest = $state(0);
 
@@ -208,10 +215,37 @@ function createSavedSearchStore() {
     clear();
   }
 
-  function setSurfaceActive(on: boolean) {
-    if (surfaceActive === on) return;
-    surfaceActive = on;
-    if (!on) closeSearch();
+  function claimSurface(owner: 'saved' | 'home') {
+    const result = transitionSavedSearchSurface(
+      { owner: surfaceOwner, handoffPending },
+      { type: 'claim', owner }
+    );
+    surfaceOwner = result.state.owner;
+    handoffPending = result.state.handoffPending;
+    if (result.reopen && query.trim()) openSearch();
+  }
+
+  function releaseSurface(owner: SavedSearchSurfaceOwner) {
+    const result = transitionSavedSearchSurface(
+      { owner: surfaceOwner, handoffPending },
+      { type: 'release', owner }
+    );
+    surfaceOwner = result.state.owner;
+    handoffPending = result.state.handoffPending;
+    if (result.close) closeSearch();
+  }
+
+  function beginHandoff() {
+    const result = transitionSavedSearchSurface(
+      { owner: surfaceOwner, handoffPending },
+      { type: 'begin-handoff' }
+    );
+    handoffPending = result.state.handoffPending;
+  }
+
+  /** Reset for a URL-driven saved-surface change unless a handoff is in flight. */
+  function resetForSurfaceChange() {
+    if (!handoffPending) closeSearch();
   }
 
   return {
@@ -235,10 +269,13 @@ function createSavedSearchStore() {
     },
     /** True while a saved surface is mounted and can show the search row. */
     get available() {
-      return surfaceActive;
+      return surfaceOwner !== null;
     },
-    /** Saved-surface lifecycle, owned by `FeedPage`. Leaving resets the search. */
-    setSurfaceActive,
+    /** Search-surface lifecycle. A stale owner cannot revoke a newer claim. */
+    claimSurface,
+    releaseSurface,
+    /** Preserve the current query across the next search-surface transition. */
+    beginHandoff,
     get focusRequest() {
       return focusRequest;
     },
@@ -252,6 +289,7 @@ function createSavedSearchStore() {
     },
     /** Full reset, used when leaving the saved view. */
     reset: closeSearch,
+    resetForSurfaceChange,
     /**
      * Incremental cache maintenance, called from savesStore's write points. A
      * no-op until the corpus exists — the first search builds it from scratch.

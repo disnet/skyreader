@@ -15,6 +15,10 @@
   import NotificationList from '$lib/components/NotificationList.svelte';
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
   import MagazineRail from '$lib/components/feed/MagazineRail.svelte';
+  import SavedSearchBar from '$lib/components/feed/SavedSearchBar.svelte';
+  import SavedCard from '$lib/components/feed/SavedCard.svelte';
+  import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
+  import Icon from '$lib/components/Icon.svelte';
   import { goto } from '$app/navigation';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { savesStore } from '$lib/stores/saves.svelte';
@@ -26,6 +30,7 @@
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { notificationsStore } from '$lib/stores/notifications.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
+  import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
   import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
   import { useScrollDirection } from '$lib/hooks/useScrollDirection.svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
@@ -34,6 +39,8 @@
   import { preferences, type CardDensity, type DefaultView } from '$lib/stores/preferences.svelte';
   import {
     datePresetToMs,
+    feedViewStore,
+    matchesSavedSearch,
     matchesReadingLength,
     type FeedDisplayItem,
   } from '$lib/stores/feedView.svelte';
@@ -58,6 +65,7 @@
   const RECENT_CAP = 12;
   const CHANNEL_CAP = 12;
   const WORDS_PER_MIN = 200;
+  const SEARCH_PAGE_SIZE = 50;
 
   // --- Browser-tab title ---
   $effect(() => {
@@ -168,6 +176,56 @@
     }
     return out;
   });
+
+  function asDisplayItem(s: SavedItem): FeedDisplayItem {
+    return { type: 'saved', item: s, key: displayKey(s) };
+  }
+
+  let homeSearchItems = $derived.by((): FeedDisplayItem[] => {
+    if (!savedSearchStore.active) return [];
+    return enriched
+      .map((e) => asDisplayItem(e.s))
+      .filter((item) =>
+        matchesSavedSearch(item, savedSearchStore.terms, savedSearchStore.bodyMatchTerms)
+      )
+      .sort((a, b) => {
+        const aSaved = a.type === 'saved' ? new Date(a.item.savedAt).getTime() : 0;
+        const bSaved = b.type === 'saved' ? new Date(b.item.savedAt).getTime() : 0;
+        return bSaved - aSaved;
+      });
+  });
+
+  let archivedMatchCount = $derived.by(() => {
+    if (!savedSearchStore.active) return 0;
+    return savesStore.articles.filter((s) => {
+      if (!keysFor(s).some((key) => itemLabelsStore.isArchived(key))) return false;
+      return matchesSavedSearch(
+        asDisplayItem(s),
+        savedSearchStore.terms,
+        savedSearchStore.bodyMatchTerms
+      );
+    }).length;
+  });
+
+  let visibleSearchCount = $state(SEARCH_PAGE_SIZE);
+  let visibleSearchItems = $derived(homeSearchItems.slice(0, visibleSearchCount));
+
+  $effect(() => {
+    savedSearchStore.appliedQuery;
+    visibleSearchCount = SEARCH_PAGE_SIZE;
+  });
+
+  $effect(() => {
+    savedSearchStore.claimSurface('home');
+  });
+
+  onDestroy(() => savedSearchStore.releaseSurface('home'));
+
+  function openArchiveMatches() {
+    savedSearchStore.beginHandoff();
+    feedViewStore.setSavedView('archive');
+    void goto('/saved');
+  }
 
   // The Home card reflects the user's durable current magazine (if any). Mint a
   // new one on demand and open it straight away; past issues stay reachable via
@@ -337,6 +395,10 @@
     if (vm.displayItem.type === 'saved') void savesStore.prefetchContent(vm.displayItem.item.rkey);
   }
 
+  function prefetchSearchItem(item: FeedDisplayItem) {
+    if (item.type === 'saved') void savesStore.prefetchContent(item.item.rkey);
+  }
+
   // --- Mobile chrome (mirrors the feed / highlights pages) ---
   const scrollDirection = useScrollDirection();
   let feedSwitcherOpen = $state(false);
@@ -361,6 +423,17 @@
   <header class="home-header" class:scrolled>
     <div class="header-inner">
       <NavigationDropdown currentTitle="Home" />
+      <button
+        class="search-button"
+        class:active={savedSearchStore.open || savedSearchStore.active}
+        onclick={() => savedSearchStore.toggle()}
+        aria-label="Search saved items"
+        aria-pressed={savedSearchStore.open}
+        title="Search saved (/)"
+      >
+        <Icon name="search" size={16} />
+        <span>Search</span>
+      </button>
     </div>
   </header>
 
@@ -400,7 +473,11 @@
       </div>
     </div>
 
-    {#if !isLoading}
+    {#if savedSearchStore.open && !readerItem}
+      <SavedSearchBar />
+    {/if}
+
+    {#if !isLoading && !savedSearchStore.active}
       <MagazineRail
         issues={magazineStore.magazines}
         generating={magazineStore.generating}
@@ -409,7 +486,48 @@
       />
     {/if}
 
-    {#if isLoading}
+    {#if savedSearchStore.active}
+      <section class="search-results" aria-label="Saved search results">
+        <p class="match-count" aria-live="polite">
+          {homeSearchItems.length}
+          {homeSearchItems.length === 1 ? 'match' : 'matches'}
+        </p>
+
+        {#each visibleSearchItems as displayItem (displayItem.key)}
+          <SavedCard
+            {displayItem}
+            onOpen={() => reader.openReader(displayItem)}
+            onHover={() => prefetchSearchItem(displayItem)}
+            onArchive={() => handleArchive(displayItem)}
+            onRemove={() => handleRemove(displayItem)}
+          />
+        {/each}
+
+        {#if homeSearchItems.length === 0}
+          <EmptyState
+            title={`No matches for “${savedSearchStore.appliedQuery}”`}
+            description={archivedMatchCount > 0
+              ? `Nothing here matches. Your Saved archive has ${archivedMatchCount} match${archivedMatchCount === 1 ? '' : 'es'}.`
+              : 'Try fewer or different words.'}
+            actionText={archivedMatchCount > 0
+              ? `${archivedMatchCount} match${archivedMatchCount === 1 ? '' : 'es'} in your Saved archive`
+              : undefined}
+            onAction={archivedMatchCount > 0 ? openArchiveMatches : undefined}
+          />
+        {:else if archivedMatchCount > 0}
+          <button class="archive-hint" onclick={openArchiveMatches}>
+            {archivedMatchCount}
+            {archivedMatchCount === 1 ? 'match' : 'matches'} in your Saved archive
+          </button>
+        {/if}
+
+        <InfiniteScrollSentinel
+          hasMore={visibleSearchCount < homeSearchItems.length}
+          isLoading={false}
+          onLoadMore={() => (visibleSearchCount += SEARCH_PAGE_SIZE)}
+        />
+      </section>
+    {:else if isLoading}
       <HomeLane title="Continue reading" icon="clock" items={[]} loading onOpen={() => {}} />
       <HomeLane title="Random picks" icon="layers" items={[]} loading onOpen={() => {}} />
     {:else if !hasAnyLane}
@@ -486,6 +604,8 @@
       onOpenFilterSheet={() => {}}
       hasActiveFilters={false}
       hideFilterButton={true}
+      onOpenSearch={() => savedSearchStore.openSearch()}
+      searchActive={savedSearchStore.active}
     />
 
     <BottomSheet
@@ -577,6 +697,65 @@
     padding: 0.625rem 1rem;
     display: flex;
     align-items: center;
+    justify-content: space-between;
+  }
+
+  .search-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.55rem;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--color-text-secondary);
+    font: inherit;
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+
+  .search-button:hover,
+  .search-button.active {
+    background: var(--color-bg-secondary, #f5f5f5);
+    color: var(--color-text);
+  }
+
+  .search-button:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  .search-results {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .match-count {
+    margin: 0;
+    padding: 0.75rem 1rem 0.35rem;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+  }
+
+  .archive-hint {
+    align-self: center;
+    margin: 1rem;
+    padding: 0.35rem 0.55rem;
+    border: 0;
+    background: transparent;
+    color: var(--color-primary);
+    font: inherit;
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+
+  .archive-hint:hover {
+    text-decoration: underline;
+  }
+
+  .archive-hint:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
   }
 
   .home-body {
