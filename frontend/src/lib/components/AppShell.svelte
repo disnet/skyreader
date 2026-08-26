@@ -27,6 +27,10 @@
   let { children }: { children: Snippet } = $props();
 
   let pageTitle = $derived.by(() => {
+    // An open article names the tab (and so the history entry and any link
+    // preview) on its own — no unread count in front of what you're reading.
+    const override = viewTitleStore.override;
+    if (override) return `${override} - Skyreader`;
     const count = viewTitleStore.unreadCount;
     const view = viewTitleStore.current;
     const suffix = view ? `${view} - Skyreader` : 'Skyreader';

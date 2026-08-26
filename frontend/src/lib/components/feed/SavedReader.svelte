@@ -39,6 +39,7 @@
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
   import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
+  import { toastStore } from '$lib/stores/toast.svelte';
   import { shareTargetForDisplayItem } from '$lib/utils/shareTarget';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import CommunityHighlightPopover from '$lib/components/feed/CommunityHighlightPopover.svelte';
@@ -615,6 +616,12 @@
       onclick: handleOpenUrl,
     });
 
+    items.push({
+      label: 'Copy link',
+      icon: 'link',
+      onclick: handleCopyLink,
+    });
+
     return items;
   });
 
@@ -822,6 +829,18 @@
 
   function handleOpenUrl() {
     if (itemUrl) window.open(itemUrl, '_blank', 'noopener');
+  }
+
+  // The address bar already names what's open (the reader is shallow-routed, see
+  // `useReaderStack`), so a link back into Skyreader is just the current location.
+  async function handleCopyLink() {
+    const toastId = toastStore.add('Copying link…');
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      toastStore.update(toastId, 'success', 'Link copied');
+    } catch {
+      toastStore.update(toastId, 'error', 'Could not copy link');
+    }
   }
 </script>
 

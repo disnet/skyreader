@@ -40,7 +40,7 @@ export function normalizeDisplayItem(
   sub?: Subscription
 ): NormalizedDisplayItem {
   return {
-    title: getTitle(item),
+    title: getItemTitle(item),
     url: getUrl(item),
     publishedAt: getPublishedAt(item),
     displayContent: getDisplayContent(item),
@@ -50,7 +50,8 @@ export function normalizeDisplayItem(
   };
 }
 
-function getTitle(item: FeedDisplayItem): string {
+/** The item's display title, decoded — its headline in a list, reader or tab title. */
+export function getItemTitle(item: FeedDisplayItem): string {
   if (item.type === 'article') return decodeEntities(item.item.title) || item.item.url;
   if (item.type === 'document') return decodeEntities(item.item.title) || item.item.recordUri;
   if (item.type === 'saved') return decodeEntities(item.item.title) || item.item.url;

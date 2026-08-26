@@ -48,4 +48,29 @@ test.describe('offline resilience', () => {
       await context.setOffline(false);
     }
   });
+
+  // An open article is a `?read=` query on a normal surface (see `readerLink.ts`),
+  // and the app-shell handler answers navigations regardless of query — so a link
+  // into the reader must survive offline exactly like any other deep link. This
+  // suite runs without a backend or a signed-in user, so it pins the shell half of
+  // that; reopening the article itself from Dexie is covered in the main E2E suite.
+  test('a reader deep link while offline serves the precached shell', async ({
+    browserName,
+    context,
+    page,
+  }) => {
+    test.skip(browserName === 'webkit', 'Playwright webkit cannot navigate while offline');
+    await page.goto('/');
+    await waitForControl(page);
+
+    await context.setOffline(true);
+    try {
+      await page.goto('/saved?read=https%3A%2F%2Fexample.com%2Fa', {
+        waitUntil: 'domcontentloaded',
+      });
+      expect(await shellRendered(page), 'reader deep link should render offline').toBe(true);
+    } finally {
+      await context.setOffline(false);
+    }
+  });
 });

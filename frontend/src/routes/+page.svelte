@@ -21,6 +21,11 @@
     saved: '/saved',
   };
 
+  // Every branch below carries the remaining params through, which is what keeps
+  // an old link that also names an open article (`?saved=true&read=…`) working:
+  // `read` must survive to the new surface for the reader to restore there. The
+  // bare-`?view=` channel branch is the one that drops params, and it only fires
+  // when `view` is the *only* one — `?view=…&read=…` falls to the generic branch.
   function targetFor(url: URL): string {
     const sp = new URLSearchParams(url.search);
     if (sp.get('saved')) {

@@ -89,6 +89,25 @@ See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for sampling and recovery details.
 | `/auth/login`    | Bluesky handle input                           |
 | `/auth/callback` | OAuth callback handler                         |
 
+#### The `?read=` contract
+
+Any surface that hosts the fullscreen reader (`/feeds`, `/saved`, `/home`,
+`/linkblog`, `/highlights`, plus channel views under `?view=`) carries the open
+article as `?read=<FeedDisplayItem.key>`, percent-encoded. It is **shallow
+routing, not a route**: `useReaderStack` pushes a history entry per reader level
+with the URL and a `page.state.readerDepth` tag, so the list underneath never
+unmounts and Back still closes the reader and restores its scroll position. The
+param is what makes a reload, a bookmark, a shared link and Forward-reopen work —
+on a cold load the hook rewrites the current entry to the bare list URL and pushes
+the reader's, so closing always lands on the container list. Resolution
+(`src/lib/utils/readerLink.ts`) goes saves → articles → documents, with an
+`at://` network fallback; an unresolvable key toasts and strips the param.
+
+Consequence for anything that reads the URL: an effect on `$page.url` now re-runs
+when a reader opens or closes. Keep such effects idempotent under an added or
+removed `read` param — `feedViewStore.setFilters` is the precedent (it no-ops when
+the filter set is unchanged; see `src/lib/utils/urlFilters.ts`).
+
 ## Common Tasks
 
 ### Adding a New Lexicon Field
