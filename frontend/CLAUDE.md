@@ -94,10 +94,11 @@ See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for sampling and recovery details.
 ### Highlights
 
 Highlights live in the `highlights` label's opaque `props.highlights` array, merged per-highlight by
-id across alias rows (`utils/highlightAliases.ts`). Two things ride that array beyond the quote
-itself: `lastReviewedAt` (the review deck's repeat-avoidance, synced for free) and
-`sourceUrl`/`sourceTitle` (source metadata for highlights imported from Margin whose article isn't in
-any local cache). `utils/highlightSource.ts` is the shared resolver both the list and the deck use so
+id across alias rows (`utils/highlightAliases.ts`). Three things ride that array beyond the quote
+itself: `lastReviewedAt` (the review deck's repeat-avoidance, synced for free), `reviewRetiredAt`
+(the deck's "Don't show again" — the highlight stays in the list and on Margin, it just stops being
+dealt; cleared from the highlights list to put it back), and `sourceUrl`/`sourceTitle` (source
+metadata for highlights imported from Margin whose article isn't in any local cache). `utils/highlightSource.ts` is the shared resolver both the list and the deck use so
 they degrade identically. See [`docs/plans/HIGHLIGHT_REVIEW.md`](../docs/plans/HIGHLIGHT_REVIEW.md).
 
 #### The `?read=` contract

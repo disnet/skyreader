@@ -62,6 +62,7 @@
     | 'standard-site'
     | 'book-open'
     | 'align-justify'
+    | 'circle-slash'
     | 'bluesky';
 
   interface Props {
@@ -361,6 +362,9 @@
     <path d="M3 12h18" />
     <path d="M3 6h18" />
     <path d="M3 18h18" />
+  {:else if name === 'circle-slash'}
+    <circle cx="12" cy="12" r="10" />
+    <path d="m4.9 4.9 14.2 14.2" />
   {/if}
 </svg>
 

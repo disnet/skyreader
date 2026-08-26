@@ -15,6 +15,19 @@ export const HIGHLIGHT_REVIEW_COUNT_DEFAULT: HighlightReviewCount = 5;
 /** Reviewing something you highlighted minutes ago is noise, not a review. */
 export const HIGHLIGHT_REVIEW_FRESHNESS_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Is this highlight still part of the review corpus at all?
+ *
+ * Retiring ("Don't show again") is the reader saying a highlight isn't worth
+ * revisiting — not that it's worth deleting. It stays in the highlights list and
+ * on Margin; it just never comes up again, on any device, until they put it
+ * back. Unlike the daily filter this is permanent, so it's checked before the
+ * pool is built rather than inside it.
+ */
+export function isReviewable(highlight: Highlight): boolean {
+  return typeof highlight.reviewRetiredAt !== 'number';
+}
+
 /** One entry of the flattened highlight corpus (matches `itemLabelsStore.allHighlights`). */
 export interface HighlightEntry {
   itemKey: string;
@@ -95,9 +108,10 @@ function eligiblePool(
   const dayStart = startOfLocalDay(now);
   const nowMs = now.getTime();
 
+  const inRotation = entries.filter((entry) => isReviewable(entry.highlight));
   const due = options.includeReviewedToday
-    ? entries
-    : entries.filter((entry) => !reviewedToday(entry.highlight, dayStart));
+    ? inRotation
+    : inRotation.filter((entry) => !reviewedToday(entry.highlight, dayStart));
   const seasoned = due.filter(
     (entry) => nowMs - entry.highlight.createdAt >= HIGHLIGHT_REVIEW_FRESHNESS_MS
   );
@@ -124,7 +138,10 @@ export function summarizeHighlightDeck(
 ): HighlightDeckSummary {
   const pool = eligiblePool(entries, now, options);
   if (pool.length === 0) {
-    return { status: entries.length > 0 ? 'completed' : 'empty', dueCount: 0, poolSize: 0 };
+    // "Completed" has to mean "you've seen today's portion", so a corpus that is
+    // entirely retired reads as empty, not as a finished session.
+    const inRotation = entries.some((entry) => isReviewable(entry.highlight));
+    return { status: inRotation ? 'completed' : 'empty', dueCount: 0, poolSize: 0 };
   }
   return {
     status: 'available',
@@ -149,7 +166,7 @@ export function buildHighlightDeck(
   if (pool.length === 0) {
     return {
       dateKey,
-      status: entries.length > 0 ? 'completed' : 'empty',
+      status: entries.some((entry) => isReviewable(entry.highlight)) ? 'completed' : 'empty',
       cards: [],
       poolSize: 0,
     };

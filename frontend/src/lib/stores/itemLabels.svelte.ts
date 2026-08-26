@@ -1661,6 +1661,32 @@ function createItemLabelsStore() {
     );
   }
 
+  /**
+   * Retire a highlight from the review deck, or put it back ("Don't show
+   * again"). Nothing is deleted: the highlight stays in the highlights list and
+   * on Margin, it just stops being dealt. Rides the same union write as every
+   * other highlight mutation, so it syncs across devices and queues offline.
+   */
+  async function setHighlightReviewRetired(
+    itemKey: string,
+    highlightId: string,
+    retired: boolean,
+    at = Date.now()
+  ) {
+    const context = highlightContext(itemKey);
+    const mutation = mutateHighlightUnion(context.highlights, {
+      type: 'retire',
+      highlightId,
+      at: retired ? at : null,
+    });
+    if (!mutation.changed) return;
+    await persistHighlightUnion(
+      itemKey,
+      context.labels[0]?.itemType || 'saved',
+      mutation.highlights
+    );
+  }
+
   // --- Derived helpers ---
 
   function getSavedArticles(): SavedArticle[] {
@@ -1776,6 +1802,7 @@ function createItemLabelsStore() {
     setHighlightMargin,
     setHighlightNote,
     markHighlightReviewed,
+    setHighlightReviewRetired,
     // Derived helpers
     getSavedArticles,
     getSavedItemKeys,

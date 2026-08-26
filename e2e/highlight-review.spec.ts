@@ -276,7 +276,7 @@ test.describe('highlight review', () => {
 
     // The card clears the bar rather than sitting under it.
     const gap = await authedPage.evaluate(() => {
-      const card = document.querySelector('.review-body .card');
+      const card = document.querySelector('.review-body .deck-card');
       const chrome = document.querySelector('.mobile-bottom-bar');
       if (!card || !chrome) return null;
       return chrome.getBoundingClientRect().top - card.getBoundingClientRect().bottom;
@@ -358,5 +358,79 @@ test.describe('highlight review', () => {
     });
     await expect(authedPage.getByText('An Essay Elsewhere')).toBeVisible();
     await expect(authedPage.getByText('Worth coming back to')).toBeVisible();
+  });
+  test('"Don\'t show again" retires a highlight without deleting it', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedHighlights(testUser, 3);
+
+    await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByText('1 of 3')).toBeVisible({ timeout: 15_000 });
+
+    const written = authedPage.waitForResponse(
+      (res) => res.url().includes('/api/labels') && res.request().method() === 'POST'
+    );
+    await authedPage.getByRole('button', { name: "Don't show again" }).click();
+    await written;
+
+    // The card is gone and the deck is one shorter — no card was "reviewed".
+    await expect(authedPage.getByText('1 of 2')).toBeVisible();
+    await expect(authedPage.getByText("won't come up in review again")).toBeVisible();
+
+    // Nothing was deleted: all three are still in the list, one marked.
+    await authedPage.goto('/highlights');
+    await expect(authedPage.getByText('3 highlights')).toBeVisible({ timeout: 15_000 });
+    await expect(authedPage.getByText('Not in review')).toHaveCount(1);
+
+    // And the stamp survived the round trip: reopening deals two, not three.
+    await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByText('1 of 2')).toBeVisible({ timeout: 15_000 });
+  });
+
+  test('the highlights list puts a retired highlight back in rotation', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedHighlights(testUser, 2);
+
+    await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByText('1 of 2')).toBeVisible({ timeout: 15_000 });
+    const retired = authedPage.waitForResponse(
+      (res) => res.url().includes('/api/labels') && res.request().method() === 'POST'
+    );
+    await authedPage.getByRole('button', { name: "Don't show again" }).click();
+    await retired;
+
+    await authedPage.goto('/highlights');
+    const restore = authedPage.getByRole('button', { name: 'Put back in the review deck' });
+    await expect(restore).toBeVisible({ timeout: 15_000 });
+    const restored = authedPage.waitForResponse(
+      (res) => res.url().includes('/api/labels') && res.request().method() === 'POST'
+    );
+    await restore.click();
+    await restored;
+    await expect(authedPage.getByText('Not in review')).toHaveCount(0);
+
+    await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByText('1 of 2')).toBeVisible({ timeout: 15_000 });
+  });
+
+  test('the deck steps backward as well as forward', async ({ authedPage, testUser }) => {
+    await seedHighlights(testUser, 3);
+
+    await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByText('1 of 3')).toBeVisible({ timeout: 15_000 });
+
+    // Nothing behind the first card, so back is offered but inert.
+    const back = authedPage.getByRole('button', { name: 'Previous highlight' });
+    await expect(back).toBeDisabled();
+
+    await authedPage.getByRole('button', { name: 'Next' }).click();
+    await expect(authedPage.getByText('2 of 3')).toBeVisible();
+    await expect(back).toBeEnabled();
+
+    await back.click();
+    await expect(authedPage.getByText('1 of 3')).toBeVisible();
   });
 });

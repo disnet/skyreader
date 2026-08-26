@@ -1,6 +1,10 @@
 import { itemLabelsStore } from './itemLabels.svelte';
 import { preferences } from './preferences.svelte';
-import { buildHighlightDeck, summarizeHighlightDeck } from '$lib/utils/highlightReview';
+import {
+  buildHighlightDeck,
+  isReviewable,
+  summarizeHighlightDeck,
+} from '$lib/utils/highlightReview';
 
 /**
  * One shared read of "what does today's review deck hold?".
@@ -50,9 +54,14 @@ function createHighlightReviewStore() {
     get cards() {
       return cards;
     },
-    /** Does the reader have any highlights at all? False hides the nav entry. */
+    /**
+     * Does the reader have any highlight the deck could ever deal? False hides
+     * the nav entry and the "Review more" offer. Retired highlights don't count:
+     * a corpus that's entirely been told "don't show again" has nothing to
+     * offer, however many highlights the list holds.
+     */
     get hasHighlights() {
-      return itemLabelsStore.allHighlights.length > 0;
+      return itemLabelsStore.allHighlights.some((entry) => isReviewable(entry.highlight));
     },
   };
 }

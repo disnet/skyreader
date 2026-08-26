@@ -5,6 +5,7 @@ import {
   deckUntouched,
   describeHighlightSources,
   highlightDeckStatus,
+  isReviewable,
   shouldRedealAfterImport,
   startOfLocalDay,
   summarizeHighlightDeck,
@@ -32,6 +33,48 @@ function entry(id: string, extra: Partial<Highlight> = {}): HighlightEntry {
 function ids(entries: HighlightEntry[]): string[] {
   return entries.map((e) => e.highlight.id);
 }
+
+describe('retired highlights', () => {
+  const RETIRED = { reviewRetiredAt: NOW.getTime() - DAY };
+
+  it('never deals a retired highlight', () => {
+    const pool = [entry('kept'), entry('retired', RETIRED)];
+    expect(ids(buildHighlightDeck(pool, 5, NOW).cards)).toEqual(['kept']);
+  });
+
+  it('keeps them out of an encore hand too', () => {
+    const pool = [entry('retired', { ...RETIRED, lastReviewedAt: startOfLocalDay(NOW) + 60_000 })];
+    const deck = buildHighlightDeck(pool, 5, NOW, { includeReviewedToday: true });
+    expect(deck.cards).toHaveLength(0);
+  });
+
+  it('does not let a retired highlight relax the freshness filter', () => {
+    // The only seasoned highlight is retired: the fresh one should still deal
+    // (freshness relaxes) rather than the retired one sneaking back in.
+    const pool = [entry('retired', RETIRED), entry('fresh', { createdAt: NOW.getTime() - 60_000 })];
+    expect(ids(buildHighlightDeck(pool, 5, NOW).cards)).toEqual(['fresh']);
+  });
+
+  it('reads an all-retired corpus as empty, not as a finished session', () => {
+    const pool = [entry('a', RETIRED), entry('b', RETIRED)];
+    expect(buildHighlightDeck(pool, 5, NOW).status).toBe('empty');
+    expect(summarizeHighlightDeck(pool, 5, NOW).status).toBe('empty');
+    expect(highlightDeckStatus(pool, NOW)).toBe('empty');
+  });
+
+  it('still reads as completed when something in rotation was seen today', () => {
+    const pool = [
+      entry('retired', RETIRED),
+      entry('seen', { lastReviewedAt: startOfLocalDay(NOW) + 60_000 }),
+    ];
+    expect(summarizeHighlightDeck(pool, 5, NOW).status).toBe('completed');
+  });
+
+  it('flags reviewability off the retired stamp alone', () => {
+    expect(isReviewable(entry('a').highlight)).toBe(true);
+    expect(isReviewable(entry('b', RETIRED).highlight)).toBe(false);
+  });
+});
 
 describe('buildHighlightDeck', () => {
   it('is deterministic for a given day and pool', () => {

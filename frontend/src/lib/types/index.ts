@@ -1287,6 +1287,11 @@ export interface Highlight {
   // Last time this highlight came up in the review deck (epoch ms). Rides the
   // normal label sync, so "already reviewed" follows the reader across devices.
   lastReviewedAt?: number;
+  // Set when the reader retires a highlight from the review deck ("Don't show
+  // again", epoch ms). The highlight itself is untouched — it stays in the
+  // highlights list and on Margin; it just stops being dealt. Clearing the field
+  // puts it back in rotation.
+  reviewRetiredAt?: number;
   // Source metadata carried on the highlight itself, for highlights imported
   // from Margin whose article isn't in any local cache — without these the
   // highlight has no title or link to show.

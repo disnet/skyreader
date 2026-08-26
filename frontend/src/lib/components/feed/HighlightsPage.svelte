@@ -29,6 +29,7 @@
   import { formatRelativeTime } from '$lib/utils/date';
   import { buildHighlightSourceLookups, resolveHighlightSource } from '$lib/utils/highlightSource';
   import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
+  import { isReviewable } from '$lib/utils/highlightReview';
   import { maybeImportMarginHighlights } from '$lib/services/marginHighlightImport';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import type { Highlight, ItemLabelType } from '$lib/types';
@@ -66,6 +67,7 @@
     note?: string;
     createdAt: number;
     isMargin: boolean;
+    retired: boolean;
     highlight: Highlight;
   }
 
@@ -130,6 +132,7 @@
         note: highlight.note,
         createdAt: highlight.createdAt,
         isMargin: Boolean(highlight.marginUri),
+        retired: !isReviewable(highlight),
         highlight,
       });
       if (highlight.createdAt > group.latest) group.latest = highlight.createdAt;
@@ -176,6 +179,13 @@
 
   function handleSaveToMargin(group: HighlightGroup, row: HighlightRow) {
     void saveHighlightToMargin(group.itemKey, row.highlight, group.url, group.title);
+  }
+
+  // The review deck can retire a highlight ("Don't show again"). This is where
+  // that comes back: the list is the whole corpus, so it's the honest place to
+  // see what's been set aside and to put it back in rotation.
+  function toggleReviewRetired(group: HighlightGroup, row: HighlightRow) {
+    void itemLabelsStore.setHighlightReviewRetired(group.itemKey, row.id, !row.retired);
   }
 
   // Note editor — a floating popover anchored to the "add a note" button, opened
@@ -287,6 +297,12 @@
                       {:else}
                         <span class="badge badge-private">Private</span>
                       {/if}
+                      {#if row.retired}
+                        <span class="badge badge-retired">
+                          <Icon name="circle-slash" size={12} />
+                          Not in review
+                        </span>
+                      {/if}
                     </span>
                     <span class="row-actions">
                       <button
@@ -307,6 +323,20 @@
                           <Icon name="margin" size={15} />
                         </button>
                       {/if}
+                      <button
+                        class="action-btn"
+                        class:on={row.retired}
+                        onclick={() => toggleReviewRetired(group, row)}
+                        title={row.retired
+                          ? 'Put back in the review deck'
+                          : "Don't show in review again"}
+                        aria-label={row.retired
+                          ? 'Put back in the review deck'
+                          : "Don't show in review again"}
+                        aria-pressed={row.retired}
+                      >
+                        <Icon name="circle-slash" size={15} />
+                      </button>
                       <button
                         class="action-btn danger"
                         onclick={() => (removePrompt = { group, row })}
@@ -649,6 +679,13 @@
     background: var(--color-bg-secondary, #f0f0f0);
   }
 
+  /* Set aside from the review deck. Reads as a state on the highlight, not as a
+     warning: nothing was deleted. */
+  .badge-retired {
+    color: var(--color-text-secondary);
+    background: var(--color-bg-secondary, #f0f0f0);
+  }
+
   .row-actions {
     display: flex;
     align-items: center;
@@ -682,14 +719,26 @@
     background: rgba(220, 38, 38, 0.1);
   }
 
+  /* A toggle that's on, not a selected row: the tint says the state, the badge
+     beside it says what the state means. */
+  .action-btn.on {
+    color: var(--color-primary);
+    background: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
+  }
+
   @media (prefers-color-scheme: dark) {
     .group-card:hover {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.03));
     }
 
     .badge-private,
+    .badge-retired,
     .action-btn:hover {
       background: rgba(255, 255, 255, 0.08);
+    }
+
+    .action-btn.on {
+      background: var(--color-sidebar-active, rgba(77, 166, 255, 0.15));
     }
   }
 </style>

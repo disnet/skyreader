@@ -20,7 +20,8 @@ export type HighlightMutation =
       highlightId: string;
       margin: { uri: string; rkey: string } | null;
     }
-  | { type: 'reviewed'; highlightId: string; at: number };
+  | { type: 'reviewed'; highlightId: string; at: number }
+  | { type: 'retire'; highlightId: string; at: number | null };
 
 /** Resolve every persisted key for one save, preferring its article guid. */
 export function resolveHighlightAliases(
@@ -77,6 +78,15 @@ export function mutateHighlightUnion(
     else {
       const { note: _note, ...withoutNote } = current;
       next[index] = withoutNote;
+    }
+  } else if (mutation.type === 'retire') {
+    const retired = typeof current.reviewRetiredAt === 'number';
+    if (retired === (mutation.at !== null)) return { highlights, changed: false };
+    if (mutation.at === null) {
+      const { reviewRetiredAt: _retired, ...backInRotation } = current;
+      next[index] = backInRotation;
+    } else {
+      next[index] = { ...current, reviewRetiredAt: mutation.at };
     }
   } else if (mutation.type === 'reviewed') {
     // Only ever moves forward: an out-of-order write (a slow device flushing an

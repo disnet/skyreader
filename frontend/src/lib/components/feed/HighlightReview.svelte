@@ -160,10 +160,241 @@
     const entry = current;
     if (!entry) return;
     interacted = true;
+    dismissRetireNotice();
     void itemLabelsStore.markHighlightReviewed(entry.itemKey, entry.highlight.id);
     reviewed += 1;
     index += 1;
   }
+
+  // Going back is navigation, not un-reviewing: the card you already advanced
+  // past keeps its stamp, so stepping back to re-read it and moving on again
+  // doesn't double-count or resurrect it tomorrow. It exists so a mis-swipe
+  // costs a gesture rather than the passage.
+  function stepBack() {
+    if (index === 0) return;
+    interacted = true;
+    dismissRetireNotice();
+    index -= 1;
+  }
+
+  // --- Don't show again: retire from the deck without deleting anything ------
+  //
+  // The highlight stays in the highlights list and on Margin; it just stops
+  // being dealt, on every device. Not destructive, so it takes no confirmation
+  // — but the card vanishes on the press, so the undo below is what tells the
+  // reader it worked and what makes the choice cheap to make.
+  const RETIRE_UNDO_MS = 10000;
+  let retireNotice = $state<{ entry: HighlightEntry; position: number } | null>(null);
+  let retireTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function dismissRetireNotice() {
+    clearTimeout(retireTimer);
+    retireNotice = null;
+  }
+
+  function retireCurrent() {
+    const entry = current;
+    if (!entry) return;
+    interacted = true;
+    void itemLabelsStore.setHighlightReviewRetired(entry.itemKey, entry.highlight.id, true);
+    // Drop it without stamping it reviewed — it isn't a review, it's a recusal.
+    // The index stays put, so the next card slides into this one's place.
+    if (deck) deck = deck.filter((card) => card.highlight.id !== entry.highlight.id);
+    clearTimeout(retireTimer);
+    retireNotice = { entry, position: index };
+    retireTimer = setTimeout(() => (retireNotice = null), RETIRE_UNDO_MS);
+  }
+
+  function undoRetire() {
+    const pending = retireNotice;
+    dismissRetireNotice();
+    if (!pending) return;
+    void itemLabelsStore.setHighlightReviewRetired(
+      pending.entry.itemKey,
+      pending.entry.highlight.id,
+      false
+    );
+    if (!deck) return;
+    const restored = [...deck];
+    const at = Math.min(pending.position, restored.length);
+    restored.splice(at, 0, pending.entry);
+    deck = restored;
+    index = at;
+  }
+
+  // --- Swipe: the deck is a deck, so it should move like one -----------------
+  //
+  // Right carries you forward and left brings the last card back, matching the
+  // arrow keys and the Next button rather than inventing a second grammar. The
+  // card follows the finger and commits on release, so a half-swipe shows you
+  // what it would do and springs back when you don't mean it. Touch only: on a
+  // pointer, dragging a passage is how you select it.
+  const AXIS_DECIDE_PX = 8;
+  const COMMIT_RATIO = 0.22;
+  const FLICK_VELOCITY = 0.4; // px per ms
+  const EXIT_MS = 190;
+  const ENTER_MS = 260;
+  const SETTLE_MS = 240;
+
+  let cardEl = $state<HTMLElement | null>(null);
+  let dragX = $state(0);
+  let travelMs = $state(0);
+  let animating = $state(false);
+
+  // The card thins out as it leaves rather than sliding at full strength, so the
+  // passage reads as handed off instead of yanked away.
+  let cardOpacity = $derived(
+    dragX === 0 ? 1 : Math.max(0.25, 1 - Math.abs(dragX) / ((cardEl?.offsetWidth || 480) * 0.9))
+  );
+
+  function prefersReducedMotion(): boolean {
+    return (
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+    );
+  }
+
+  function resetTravel() {
+    travelMs = 0;
+    dragX = 0;
+    animating = false;
+  }
+
+  function settleBack() {
+    travelMs = prefersReducedMotion() ? 0 : SETTLE_MS;
+    dragX = 0;
+  }
+
+  /** Commit a swipe: 1 moves forward through the deck, -1 steps back. */
+  function commitSwipe(direction: 1 | -1) {
+    if (animating) return;
+    if (direction === -1 && index === 0) {
+      settleBack();
+      return;
+    }
+    if (prefersReducedMotion()) {
+      resetTravel();
+      if (direction === 1) advance();
+      else stepBack();
+      return;
+    }
+    animating = true;
+    travelMs = EXIT_MS;
+    dragX = direction * ((cardEl?.offsetWidth || 480) + 64);
+    setTimeout(() => {
+      if (direction === 1) advance();
+      else stepBack();
+      // Nothing left to fly in — the end-of-deck state takes the column.
+      if (!deck || index >= deck.length) {
+        resetTravel();
+        return;
+      }
+      // Land the incoming card from the side the outgoing one left toward.
+      travelMs = 0;
+      dragX = -direction * Math.min((cardEl?.offsetWidth || 480) * 0.18, 88);
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          travelMs = ENTER_MS;
+          dragX = 0;
+          setTimeout(() => (animating = false), ENTER_MS);
+        })
+      );
+    }, EXIT_MS);
+  }
+
+  let touchStartX = 0;
+  let touchStartY = 0;
+  let touchLastX = 0;
+  let touchLastT = 0;
+  let touchVelocity = 0;
+  let touchDecided = false;
+  let dragging = false;
+
+  function hasActiveSelection(): boolean {
+    const selection = typeof window !== 'undefined' ? window.getSelection() : null;
+    return !!selection && !selection.isCollapsed && selection.toString().trim().length > 0;
+  }
+
+  function onTouchStart(event: TouchEvent) {
+    if (animating || event.touches.length !== 1) {
+      dragging = false;
+      touchDecided = false;
+      return;
+    }
+    touchStartX = event.touches[0].clientX;
+    touchStartY = event.touches[0].clientY;
+    touchLastX = touchStartX;
+    touchLastT = performance.now();
+    touchVelocity = 0;
+    touchDecided = false;
+    dragging = false;
+  }
+
+  function onTouchMove(event: TouchEvent) {
+    if (animating || event.touches.length !== 1) return;
+    const x = event.touches[0].clientX;
+    const dx = x - touchStartX;
+    const dy = event.touches[0].clientY - touchStartY;
+    if (!touchDecided) {
+      if (Math.abs(dx) < AXIS_DECIDE_PX && Math.abs(dy) < AXIS_DECIDE_PX) return;
+      touchDecided = true;
+      // Vertical intent scrolls the page; a live selection belongs to the
+      // browser's own handles, not to us.
+      if (Math.abs(dx) > Math.abs(dy) && !hasActiveSelection()) {
+        dragging = true;
+        travelMs = 0;
+      }
+    }
+    if (!dragging) return;
+    if (hasActiveSelection()) {
+      dragging = false;
+      settleBack();
+      return;
+    }
+    if (event.cancelable) event.preventDefault();
+    // There's nothing behind the first card, so a leftward pull resists rather
+    // than promising a move that can't happen.
+    dragX = dx < 0 && index === 0 ? dx * 0.28 : dx;
+    const now = performance.now();
+    const dt = now - touchLastT;
+    if (dt > 0) touchVelocity = (x - touchLastX) / dt;
+    touchLastX = x;
+    touchLastT = now;
+  }
+
+  function onTouchEnd() {
+    const wasDragging = dragging;
+    dragging = false;
+    touchDecided = false;
+    if (!wasDragging) return;
+    const width = cardEl?.offsetWidth || 480;
+    const far = Math.abs(dragX) > width * COMMIT_RATIO;
+    const flicked = Math.abs(touchVelocity) > FLICK_VELOCITY && Math.abs(dragX) > 24;
+    if (!far && !flicked) {
+      settleBack();
+      return;
+    }
+    commitSwipe(dragX > 0 ? 1 : -1);
+  }
+
+  // touchmove has to be non-passive to claim the horizontal gesture, so it's
+  // attached by hand rather than through the (passive) on* attributes.
+  $effect(() => {
+    const el = cardEl;
+    if (!el) return;
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd, { passive: true });
+    el.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
+    };
+  });
+
+  $effect(() => () => clearTimeout(retireTimer));
 
   // --- Open the source article (in-app when we have it, else the web) ---
   let readerItem = $state<FeedDisplayItem | null>(null);
@@ -262,7 +493,10 @@
 
     if (event.key === 'ArrowRight' || event.key === ' ') {
       event.preventDefault();
-      advance();
+      if (!animating) commitSwipe(1);
+    } else if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      if (!animating && index > 0) commitSwipe(-1);
     } else if (event.key === 'o') {
       event.preventDefault();
       openSource();
@@ -290,6 +524,8 @@
     encoreMode = isEncore;
     index = 0;
     interacted = false;
+    dismissRetireNotice();
+    resetTravel();
     dealDeck();
   }
 
@@ -344,6 +580,15 @@
       <div class="header-nav"><NavigationDropdown currentTitle="Review" /></div>
       <div class="header-actions">
         {#if current}
+          <button
+            class="step-back"
+            onclick={() => commitSwipe(-1)}
+            disabled={index === 0 || animating}
+            title="Previous highlight (left arrow)"
+            aria-label="Previous highlight"
+          >
+            <Icon name="chevron-left" size={16} />
+          </button>
           <span class="progress">{index + 1} of {total}</span>
         {/if}
         <button
@@ -371,8 +616,16 @@
     {#if !ready || !deck}
       <p class="state-note" aria-live="polite">Gathering your highlights…</p>
     {:else if current && source && live}
-      <article class="card">
-        <blockquote class="quote"><mark>{live.selector.exact}</mark></blockquote>
+      <article
+        class="deck-card"
+        bind:this={cardEl}
+        style:transform={dragX === 0 ? undefined : `translate3d(${dragX}px, 0, 0)`}
+        style:opacity={cardOpacity === 1 ? undefined : cardOpacity}
+        style:transition={travelMs === 0
+          ? 'none'
+          : `transform ${travelMs}ms cubic-bezier(0.22, 1, 0.36, 1), opacity ${travelMs}ms ease`}
+      >
+        <blockquote class="passage">{live.selector.exact}</blockquote>
 
         {#if live.note}
           <p class="note">{live.note}</p>
@@ -386,10 +639,21 @@
         </button>
 
         <div class="actions">
-          <button class="next" onclick={advance}>
-            <span>{index + 1 === total ? 'Finish' : 'Next'}</span>
-            <Icon name="arrow-right" size={16} />
-          </button>
+          <div class="lead">
+            <button class="next" onclick={() => commitSwipe(1)} disabled={animating}>
+              <span>{index + 1 === total ? 'Finish' : 'Next'}</span>
+              <Icon name="arrow-right" size={16} />
+            </button>
+
+            <button
+              class="retire"
+              onclick={retireCurrent}
+              title="Keep the highlight, stop dealing it in review"
+            >
+              <Icon name="circle-slash" size={15} />
+              <span>Don't show again</span>
+            </button>
+          </div>
 
           <div class="secondary">
             <button
@@ -431,7 +695,10 @@
         </div>
       </article>
 
-      <p class="hint">→ next · o open · e note</p>
+      <p class="hint">→ next · ← back · o open · e note</p>
+      {#if index === 0 && total > 1}
+        <p class="swipe-hint">Swipe to move through the deck.</p>
+      {/if}
     {:else if done && reviewed > 0}
       <section class="state" aria-live="polite">
         <h1>That's your review</h1>
@@ -454,6 +721,13 @@
         <p>Highlight a passage while reading and it joins the deck.</p>
         <a href="/highlights">All highlights</a>
       </section>
+    {/if}
+
+    {#if retireNotice}
+      <p class="retired-note" aria-live="polite">
+        <span>Kept, but it won't come up in review again.</span>
+        <button onclick={undoRetire}>Undo</button>
+      </p>
     {/if}
   </div>
 
@@ -555,6 +829,37 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* Where you are in the deck and how to go back belong together, so the back
+     control sits with the count rather than in the card. */
+  .step-back {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    margin-right: -0.375rem;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition:
+      color 0.15s ease,
+      background-color 0.15s ease,
+      opacity 0.15s ease;
+  }
+
+  .step-back:hover:not(:disabled) {
+    color: var(--color-text);
+    background: var(--color-bg-secondary, #f5f5f5);
+  }
+
+  .step-back:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+
   .gear {
     display: inline-flex;
     align-items: center;
@@ -586,10 +891,13 @@
     border-radius: 8px;
   }
 
+  /* `overflow-x: clip` gives the card somewhere to go on a swipe without turning
+     the column into a scroll container. */
   .review-body {
     max-width: 680px;
     margin: 0 auto;
     padding: 1.5rem 1rem 4rem;
+    overflow-x: clip;
   }
 
   @media (max-width: 1000px) {
@@ -615,31 +923,31 @@
     }
   }
 
-  .card {
+  /* The card is the highlight, so marking the passage would be marking the whole
+     surface. No gold, no chrome: the reader's own article face at reading size,
+     alone in the column, with everything else stepping back to metadata scale.
+     `touch-action: pan-y` leaves vertical scrolling to the page and claims the
+     horizontal axis for the swipe. */
+  .deck-card {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    padding-top: clamp(0.5rem, 3vh, 1.5rem);
+    touch-action: pan-y;
   }
 
-  /* The 3px gold rule on a quoted highlight — the one sanctioned colored
-     side-border, as a quotation convention (DESIGN.md). */
-  .quote {
+  .passage {
     margin: 0;
-    padding: 0.125rem 0 0.125rem 1rem;
-    border-left: 3px solid color-mix(in srgb, #f5c518 70%, transparent);
-  }
-
-  .quote mark {
-    background-color: color-mix(in srgb, #f5c518 25%, transparent);
-    color: inherit;
-    border-radius: 1px;
-    font-size: var(--text-lg);
-    line-height: var(--leading-relaxed, 1.6);
+    font-family: var(--article-font);
+    font-size: calc(var(--article-font-size, 1.125rem) * 1.15);
+    line-height: 1.55;
+    color: var(--color-text);
+    text-wrap: pretty;
   }
 
   .note {
-    margin: 0;
-    padding-left: 1rem;
+    margin: 1.25rem 0 0;
+    padding-left: 0.875rem;
+    border-left: 1px solid var(--color-border);
     font-size: var(--text-md);
     line-height: var(--leading-relaxed, 1.6);
     color: var(--color-text-secondary);
@@ -652,7 +960,8 @@
     align-items: flex-start;
     gap: 0.125rem;
     width: 100%;
-    padding: 0 0 0 1rem;
+    margin-top: 2rem;
+    padding: 0;
     background: none;
     border: none;
     text-align: left;
@@ -680,10 +989,19 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem;
-    margin-top: 0.5rem;
+    gap: 0.75rem 1rem;
+    flex-wrap: wrap;
+    margin-top: 1.5rem;
     padding-top: 1rem;
     border-top: 1px solid var(--color-border);
+  }
+
+  /* The two decisions a card asks for — move on, or stop asking — sit together;
+     the icon cluster stays what it was, tools rather than decisions. */
+  .lead {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
 
   /* One primary action per card, in the one interaction blue. */
@@ -703,8 +1021,39 @@
     transition: filter 0.2s ease;
   }
 
-  .next:hover {
+  .next:hover:not(:disabled) {
     filter: brightness(0.95);
+  }
+
+  .next:disabled {
+    cursor: default;
+  }
+
+  /* Not destructive and not urgent: nothing is deleted, so it stays a quiet
+     bordered control rather than borrowing the danger red. */
+  .retire {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 44px;
+    padding: 0.5rem 0.9rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: none;
+    color: var(--color-text-secondary);
+    font: inherit;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      color 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .retire:hover {
+    color: var(--color-text);
+    border-color: var(--color-text-secondary);
   }
 
   .secondary {
@@ -739,10 +1088,37 @@
     color: var(--color-error, #cc0000);
   }
 
-  .hint {
+  .hint,
+  .swipe-hint {
     margin: 1.5rem 0 0;
     font-size: var(--text-xs);
     color: var(--color-text-secondary);
+  }
+
+  /* Retiring makes the card disappear, so this line is the only proof the press
+     did what it said — and the only cheap way back from a mis-tap. */
+  .retired-note {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.75rem;
+    margin: 1.5rem 0 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .retired-note button {
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--color-primary);
+    font: inherit;
+    font-weight: var(--weight-semibold);
+    cursor: pointer;
+  }
+
+  .retired-note button:hover {
+    text-decoration: underline;
   }
 
   .state {
@@ -806,10 +1182,47 @@
     color: var(--color-text-secondary);
   }
 
-  /* The keyboard hint is meaningless without a keyboard. */
+  /* The keyboard hint is meaningless without a keyboard, and the swipe cue is
+     meaningless with one. */
   @media (hover: none) {
     .hint {
       display: none;
+    }
+  }
+
+  @media (hover: hover) {
+    .swipe-hint {
+      display: none;
+    }
+  }
+
+  @media (max-width: 560px) {
+    /* Two decisions deserve the full width down here; the tools follow beneath. */
+    .lead {
+      width: 100%;
+    }
+
+    .retire {
+      flex: 1;
+      justify-content: center;
+    }
+
+    .secondary {
+      width: 100%;
+    }
+  }
+
+  /* The card's travel is driven from script (it follows a finger), so the
+     reduced-motion path lives there too — commits jump rather than slide. This
+     covers the declarative transitions around it. */
+  @media (prefers-reduced-motion: reduce) {
+    .step-back,
+    .next,
+    .retire,
+    .action-btn,
+    .gear,
+    .more {
+      transition: none;
     }
   }
 </style>
